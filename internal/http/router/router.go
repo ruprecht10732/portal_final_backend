@@ -52,5 +52,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *gin.Engine {
 	v1 := engine.Group("/api/v1")
 	apiHandler.RegisterRoutes(v1.Group("/auth"))
 
+	admin := v1.Group("/admin")
+	admin.Use(middleware.AuthRequired(cfg), middleware.RequireRole("admin"))
+	admin.PUT("/users/:id/roles", apiHandler.SetUserRoles)
+
 	return engine
 }

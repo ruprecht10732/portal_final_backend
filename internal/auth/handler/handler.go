@@ -11,6 +11,7 @@ import (
 	"portal_final_backend/internal/http/response"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -161,6 +162,31 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"message": "email verified"})
+}
+
+func (h *Handler) SetUserRoles(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.RoleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if err := h.svc.SetUserRoles(c.Request.Context(), userID, req.Roles); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	response.OK(c, transport.RoleUpdateResponse{UserID: userID.String(), Roles: req.Roles})
 }
 
 func (h *Handler) setRefreshCookie(c *gin.Context, value string) {

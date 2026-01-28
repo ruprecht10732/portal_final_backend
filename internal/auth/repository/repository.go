@@ -11,6 +11,7 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+var ErrInvalidRole = errors.New("invalid role")
 
 const (
 	TokenTypeEmailVerify   = "EMAIL_VERIFY"
@@ -136,4 +137,99 @@ func (r *Repository) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUI
 		WHERE user_id = $1 AND revoked_at IS NULL
 	`, userID)
 	return err
+}
+
+func (r *Repository) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT r.name
+		FROM roles r
+		JOIN user_roles ur ON ur.role_id = r.id
+		WHERE ur.user_id = $1
+		ORDER BY r.name
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	roles := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		roles = append(roles, name)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return roles, nil
+}
+
+func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
+	if len(roles) == 0 {
+		return ErrInvalidRole
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	rows, err := tx.Query(ctx, `SELECT name FROM roles WHERE name = ANY($1)`, roles)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	valid := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		valid[name] = struct{}{}
+	}
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+	if len(valid) != len(uniqueStrings(roles)) {
+		return ErrInvalidRole
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id)
+		SELECT $1, id FROM roles WHERE name = ANY($2)
+	`, userID, roles); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

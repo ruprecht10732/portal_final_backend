@@ -47,6 +47,10 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error
 		return err
 	}
 
+	if err := s.repo.SetUserRoles(ctx, user.ID, []string{"admin"}); err != nil {
+		return err
+	}
+
 	verifyToken, err := token.GenerateRandomToken(32)
 	if err != nil {
 		return err
@@ -175,7 +179,12 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 }
 
 func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
-	accessToken, err := s.signJWT(userID, s.cfg.AccessTokenTTL, accessTokenType, s.cfg.JWTAccessSecret)
+	roles, err := s.repo.GetUserRoles(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+
+	accessToken, err := s.signJWT(userID, roles, s.cfg.AccessTokenTTL, accessTokenType, s.cfg.JWTAccessSecret)
 	if err != nil {
 		return "", "", err
 	}
@@ -194,16 +203,21 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 	return accessToken, refreshToken, nil
 }
 
-func (s *Service) signJWT(userID uuid.UUID, ttl time.Duration, tokenType, secret string) (string, error) {
+func (s *Service) signJWT(userID uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
 	claims := jwt.MapClaims{
-		"sub":  userID.String(),
-		"type": tokenType,
-		"exp":  time.Now().Add(ttl).Unix(),
-		"iat":  time.Now().Unix(),
+		"sub":   userID.String(),
+		"type":  tokenType,
+		"roles": roles,
+		"exp":   time.Now().Add(ttl).Unix(),
+		"iat":   time.Now().Unix(),
 	}
 
 	tokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tokenObj.SignedString([]byte(secret))
+}
+
+func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
+	return s.repo.SetUserRoles(ctx, userID, roles)
 }
 
 func (s *Service) buildURL(path string, tokenValue string) string {

@@ -23,6 +23,15 @@ type VerifyEmailRequest struct {
 	Token string `json:"token" validate:"required"`
 }
 
+type RoleUpdateRequest struct {
+	Roles []string `json:"roles" validate:"required,min=1,dive,required"`
+}
+
+type RoleUpdateResponse struct {
+	UserID string   `json:"userId"`
+	Roles  []string `json:"roles"`
+}
+
 type AuthResponse struct {
 	AccessToken string `json:"accessToken"`
 }
