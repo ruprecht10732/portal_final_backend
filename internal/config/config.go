@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -18,10 +19,18 @@ type Config struct {
 	RefreshTokenTTL  time.Duration
 	VerifyTokenTTL   time.Duration
 	ResetTokenTTL    time.Duration
+	CORSAllowAll     bool
+	CORSOrigins      []string
 }
 
 func Load() (*Config, error) {
 	_ = godotenv.Load()
+
+	corsOrigins := splitCSV(getEnv("CORS_ORIGINS", "http://localhost:4200"))
+	corsAllowAll := strings.EqualFold(getEnv("CORS_ALLOW_ALL", "false"), "true")
+	if containsWildcard(corsOrigins) {
+		corsAllowAll = true
+	}
 
 	cfg := &Config{
 		Env:              getEnv("APP_ENV", "development"),
@@ -33,6 +42,8 @@ func Load() (*Config, error) {
 		RefreshTokenTTL:  mustDuration(getEnv("JWT_REFRESH_TTL", "720h")),
 		VerifyTokenTTL:   mustDuration(getEnv("VERIFY_TOKEN_TTL", "30m")),
 		ResetTokenTTL:    mustDuration(getEnv("RESET_TOKEN_TTL", "30m")),
+		CORSAllowAll:     corsAllowAll,
+		CORSOrigins:      corsOrigins,
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -58,4 +69,25 @@ func mustDuration(value string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	results := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			results = append(results, trimmed)
+		}
+	}
+	return results
+}
+
+func containsWildcard(values []string) bool {
+	for _, value := range values {
+		if value == "*" {
+			return true
+		}
+	}
+	return false
 }
