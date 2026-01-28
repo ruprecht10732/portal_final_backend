@@ -1,0 +1,24 @@
+.env
+.env.*
+
+# Go build
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+/vendor/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
