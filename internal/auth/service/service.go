@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/internal/auth/repository"
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/config"
+	"portal_final_backend/internal/email"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -27,35 +29,41 @@ const (
 type Service struct {
 	repo *repository.Repository
 	cfg  *config.Config
+	mail email.Sender
 }
 
-func New(repo *repository.Repository, cfg *config.Config) *Service {
-	return &Service{repo: repo, cfg: cfg}
+func New(repo *repository.Repository, cfg *config.Config, mailer email.Sender) *Service {
+	return &Service{repo: repo, cfg: cfg, mail: mailer}
 }
 
-func (s *Service) SignUp(ctx context.Context, email, plainPassword string) (string, error) {
+func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error {
 	hash, err := password.Hash(plainPassword)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	user, err := s.repo.CreateUser(ctx, email, hash)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	verifyToken, err := token.GenerateRandomToken(32)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	verifyHash := token.HashSHA256(verifyToken)
 	expiresAt := time.Now().Add(s.cfg.VerifyTokenTTL)
 	if err := s.repo.CreateUserToken(ctx, user.ID, verifyHash, repository.TokenTypeEmailVerify, expiresAt); err != nil {
-		return "", err
+		return err
 	}
 
-	return verifyToken, nil
+	verifyURL := s.buildURL("/verify-email", verifyToken)
+	if err := s.mail.SendVerificationEmail(ctx, user.Email, verifyURL); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Service) SignIn(ctx context.Context, email, plainPassword string) (string, string, error) {
@@ -96,24 +104,29 @@ func (s *Service) SignOut(ctx context.Context, refreshToken string) error {
 	return s.repo.RevokeRefreshToken(ctx, hash)
 }
 
-func (s *Service) ForgotPassword(ctx context.Context, email string) (string, error) {
+func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return "", nil
+		return nil
 	}
 
 	resetToken, err := token.GenerateRandomToken(32)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	resetHash := token.HashSHA256(resetToken)
 	expiresAt := time.Now().Add(s.cfg.ResetTokenTTL)
 	if err := s.repo.CreateUserToken(ctx, user.ID, resetHash, repository.TokenTypePasswordReset, expiresAt); err != nil {
-		return "", err
+		return err
 	}
 
-	return resetToken, nil
+	resetURL := s.buildURL("/reset-password", resetToken)
+	if err := s.mail.SendPasswordResetEmail(ctx, user.Email, resetURL); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword string) error {
@@ -183,7 +196,7 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 
 func (s *Service) signJWT(userID uuid.UUID, ttl time.Duration, tokenType, secret string) (string, error) {
 	claims := jwt.MapClaims{
-		"sub": userID.String(),
+		"sub":  userID.String(),
 		"type": tokenType,
 		"exp":  time.Now().Add(ttl).Unix(),
 		"iat":  time.Now().Unix(),
@@ -191,4 +204,9 @@ func (s *Service) signJWT(userID uuid.UUID, ttl time.Duration, tokenType, secret
 
 	tokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tokenObj.SignedString([]byte(secret))
+}
+
+func (s *Service) buildURL(path string, tokenValue string) string {
+	base := strings.TrimRight(s.cfg.AppBaseURL, "/")
+	return base + path + "?token=" + tokenValue
 }

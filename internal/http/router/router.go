@@ -1,6 +1,7 @@
 package router
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"portal_final_backend/internal/auth/repository"
 	"portal_final_backend/internal/auth/service"
 	"portal_final_backend/internal/config"
+	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/http/middleware"
 
 	"github.com/gin-contrib/cors"
@@ -24,7 +26,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *gin.Engine {
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: false,
+		AllowCredentials: cfg.CORSAllowCreds,
 		MaxAge:           12 * time.Hour,
 	}
 	if cfg.CORSAllowAll {
@@ -34,9 +36,14 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *gin.Engine {
 	}
 	engine.Use(cors.New(corsConfig))
 
+	sender, err := email.NewSender(cfg)
+	if err != nil {
+		log.Fatalf("failed to initialize email sender: %v", err)
+	}
+
 	repo := repository.New(pool)
-	svc := service.New(repo, cfg)
-	apiHandler := handler.New(svc)
+	svc := service.New(repo, cfg, sender)
+	apiHandler := handler.New(svc, cfg)
 
 	engine.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})

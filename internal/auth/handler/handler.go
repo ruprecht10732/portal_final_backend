@@ -1,12 +1,13 @@
 package handler
 
 import (
-	"log"
 	"net/http"
+	"time"
 
 	"portal_final_backend/internal/auth/service"
 	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/auth/validator"
+	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/http/response"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +15,7 @@ import (
 
 type Handler struct {
 	svc *service.Service
+	cfg *config.Config
 }
 
 const (
@@ -21,8 +23,8 @@ const (
 	msgValidationFailed = "validation failed"
 )
 
-func New(svc *service.Service) *Handler {
-	return &Handler{svc: svc}
+func New(svc *service.Service, cfg *config.Config) *Handler {
+	return &Handler{svc: svc, cfg: cfg}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -46,13 +48,10 @@ func (h *Handler) SignUp(c *gin.Context) {
 		return
 	}
 
-	verifyToken, err := h.svc.SignUp(c.Request.Context(), req.Email, req.Password)
-	if err != nil {
+	if err := h.svc.SignUp(c.Request.Context(), req.Email, req.Password); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-
-	log.Printf("verification token for %s: %s", req.Email, verifyToken)
 	response.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
 }
 
@@ -73,44 +72,37 @@ func (h *Handler) SignIn(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, transport.AuthResponse{AccessToken: accessToken, RefreshToken: refreshToken})
+	h.setRefreshCookie(c, refreshToken)
+	response.OK(c, transport.AuthResponse{AccessToken: accessToken})
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
-	var req transport.RefreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	refreshToken, err := c.Cookie(h.cfg.RefreshCookieName)
+	if err != nil || refreshToken == "" {
+		response.Error(c, http.StatusUnauthorized, service.ErrTokenInvalid.Error(), nil)
 		return
 	}
 
-	accessToken, refreshToken, err := h.svc.Refresh(c.Request.Context(), req.RefreshToken)
+	accessToken, newRefreshToken, err := h.svc.Refresh(c.Request.Context(), refreshToken)
 	if err != nil {
+		h.clearRefreshCookie(c)
 		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
 		return
 	}
 
-	response.OK(c, transport.AuthResponse{AccessToken: accessToken, RefreshToken: refreshToken})
+	h.setRefreshCookie(c, newRefreshToken)
+	response.OK(c, transport.AuthResponse{AccessToken: accessToken})
 }
 
 func (h *Handler) SignOut(c *gin.Context) {
-	var req transport.SignOutRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
+	if refreshToken, err := c.Cookie(h.cfg.RefreshCookieName); err == nil && refreshToken != "" {
+		if err := h.svc.SignOut(c.Request.Context(), refreshToken); err != nil {
+			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
 	}
 
-	if err := h.svc.SignOut(c.Request.Context(), req.RefreshToken); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
-		return
-	}
+	h.clearRefreshCookie(c)
 
 	response.OK(c, gin.H{"message": "signed out"})
 }
@@ -126,14 +118,9 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	resetToken, err := h.svc.ForgotPassword(c.Request.Context(), req.Email)
-	if err != nil {
+	if err := h.svc.ForgotPassword(c.Request.Context(), req.Email); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
-	}
-
-	if resetToken != "" {
-		log.Printf("password reset token for %s: %s", req.Email, resetToken)
 	}
 	response.OK(c, gin.H{"message": "if the account exists, a reset link will be sent"})
 }
@@ -174,4 +161,31 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"message": "email verified"})
+}
+
+func (h *Handler) setRefreshCookie(c *gin.Context, value string) {
+	maxAge := int(h.cfg.RefreshTokenTTL / time.Second)
+	c.SetSameSite(h.cfg.RefreshCookieSameSite)
+	c.SetCookie(
+		h.cfg.RefreshCookieName,
+		value,
+		maxAge,
+		h.cfg.RefreshCookiePath,
+		h.cfg.RefreshCookieDomain,
+		h.cfg.RefreshCookieSecure,
+		true,
+	)
+}
+
+func (h *Handler) clearRefreshCookie(c *gin.Context) {
+	c.SetSameSite(h.cfg.RefreshCookieSameSite)
+	c.SetCookie(
+		h.cfg.RefreshCookieName,
+		"",
+		-1,
+		h.cfg.RefreshCookiePath,
+		h.cfg.RefreshCookieDomain,
+		h.cfg.RefreshCookieSecure,
+		true,
+	)
 }
