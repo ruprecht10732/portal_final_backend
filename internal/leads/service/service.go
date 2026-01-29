@@ -100,6 +100,10 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 		serviceType := string(*req.ServiceType)
 		params.ServiceType = &serviceType
 	}
+	if req.Status != nil {
+		status := string(*req.Status)
+		params.Status = &status
+	}
 
 	lead, err := s.repo.Update(ctx, id, params)
 	if err != nil {

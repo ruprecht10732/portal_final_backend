@@ -145,6 +145,7 @@ type UpdateLeadParams struct {
 	AddressZipCode     *string
 	AddressCity        *string
 	ServiceType        *string
+	Status             *string
 }
 
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLeadParams) (Lead, error) {
@@ -200,6 +201,11 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 	if params.ServiceType != nil {
 		setClauses = append(setClauses, fmt.Sprintf("service_type = $%d", argIdx))
 		args = append(args, *params.ServiceType)
+		argIdx++
+	}
+	if params.Status != nil {
+		setClauses = append(setClauses, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, *params.Status)
 		argIdx++
 	}
 
