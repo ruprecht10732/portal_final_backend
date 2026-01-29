@@ -15,6 +15,7 @@ var (
 	ErrLeadNotFound      = errors.New("lead not found")
 	ErrDuplicatePhone    = errors.New("a lead with this phone number already exists")
 	ErrInvalidTransition = errors.New("invalid status transition")
+	ErrForbidden         = errors.New("forbidden")
 )
 
 type Service struct {
@@ -114,6 +115,38 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 	}
 
 	return toLeadResponse(lead), nil
+}
+
+func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUID, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, ErrLeadNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	if !hasRole(actorRoles, "admin") {
+		if current.AssignedAgentID == nil || *current.AssignedAgentID != actorID {
+			return transport.LeadResponse{}, ErrForbidden
+		}
+	}
+
+	params := repository.UpdateLeadParams{AssignedAgentID: assigneeID}
+	updated, err := s.repo.Update(ctx, id, params)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, ErrLeadNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	_ = s.repo.AddActivity(ctx, id, actorID, "assigned", map[string]interface{}{
+		"from": current.AssignedAgentID,
+		"to":   assigneeID,
+	})
+
+	return toLeadResponse(updated), nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.UpdateLeadStatusRequest) (transport.LeadResponse, error) {
@@ -282,4 +315,13 @@ func toLeadResponse(lead repository.Lead) transport.LeadResponse {
 	}
 
 	return resp
+}
+
+func hasRole(roles []string, target string) bool {
+	for _, role := range roles {
+		if role == target {
+			return true
+		}
+	}
+	return false
 }

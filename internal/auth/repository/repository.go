@@ -35,6 +35,12 @@ type User struct {
 	UpdatedAt     time.Time
 }
 
+type UserWithRoles struct {
+	ID    uuid.UUID
+	Email string
+	Roles []string
+}
+
 func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string) (User, error) {
 	var user User
 	err := r.pool.QueryRow(ctx, `
@@ -242,6 +248,36 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles [
 	}
 
 	return nil
+}
+
+func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.id, u.email,
+			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
+		FROM users u
+		LEFT JOIN user_roles ur ON ur.user_id = u.id
+		LEFT JOIN roles r ON r.id = ur.role_id
+		GROUP BY u.id
+		ORDER BY u.email
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]UserWithRoles, 0)
+	for rows.Next() {
+		var user UserWithRoles
+		if err := rows.Scan(&user.ID, &user.Email, &user.Roles); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return users, nil
 }
 
 func uniqueStrings(values []string) []string {

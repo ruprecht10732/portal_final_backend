@@ -9,6 +9,7 @@ import (
 	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/internal/auth/repository"
 	"portal_final_backend/internal/auth/token"
+	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/email"
 
@@ -38,6 +39,7 @@ type Profile struct {
 	ID            uuid.UUID
 	Email         string
 	EmailVerified bool
+	Roles         []string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -230,8 +232,31 @@ func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []st
 	return s.repo.SetUserRoles(ctx, userID, roles)
 }
 
+func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error) {
+	users, err := s.repo.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]transport.UserSummary, 0, len(users))
+	for _, user := range users {
+		result = append(result, transport.UserSummary{
+			ID:    user.ID.String(),
+			Email: user.Email,
+			Roles: user.Roles,
+		})
+	}
+
+	return result, nil
+}
+
 func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) {
 	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -240,6 +265,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		ID:            user.ID,
 		Email:         user.Email,
 		EmailVerified: user.EmailVerified,
+		Roles:         roles,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
 	}, nil
@@ -251,11 +277,17 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, email string) 
 		return Profile{}, err
 	}
 
+	roles, err := s.repo.GetUserRoles(ctx, userID)
+	if err != nil {
+		return Profile{}, err
+	}
+
 	if strings.EqualFold(strings.TrimSpace(email), current.Email) {
 		return Profile{
 			ID:            current.ID,
 			Email:         current.Email,
 			EmailVerified: current.EmailVerified,
+			Roles:         roles,
 			CreatedAt:     current.CreatedAt,
 			UpdatedAt:     current.UpdatedAt,
 		}, nil
@@ -292,6 +324,7 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, email string) 
 		ID:            updated.ID,
 		Email:         updated.Email,
 		EmailVerified: updated.EmailVerified,
+		Roles:         roles,
 		CreatedAt:     updated.CreatedAt,
 		UpdatedAt:     updated.UpdatedAt,
 	}, nil

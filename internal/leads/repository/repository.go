@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -146,6 +147,7 @@ type UpdateLeadParams struct {
 	AddressCity        *string
 	ServiceType        *string
 	Status             *string
+	AssignedAgentID    *uuid.UUID
 }
 
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLeadParams) (Lead, error) {
@@ -201,6 +203,11 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 	if params.ServiceType != nil {
 		setClauses = append(setClauses, fmt.Sprintf("service_type = $%d", argIdx))
 		args = append(args, *params.ServiceType)
+		argIdx++
+	}
+	if params.AssignedAgentID != nil {
+		setClauses = append(setClauses, fmt.Sprintf("assigned_agent_id = $%d", argIdx))
+		args = append(args, *params.AssignedAgentID)
 		argIdx++
 	}
 	if params.Status != nil {
@@ -268,6 +275,23 @@ func (r *Repository) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.
 		UPDATE leads SET viewed_by_id = $2, viewed_at = now(), updated_at = now()
 		WHERE id = $1
 	`, id, userID)
+	return err
+}
+
+func (r *Repository) AddActivity(ctx context.Context, leadID uuid.UUID, userID uuid.UUID, action string, meta map[string]interface{}) error {
+	var metaJSON []byte
+	if meta != nil {
+		encoded, err := json.Marshal(meta)
+		if err != nil {
+			return err
+		}
+		metaJSON = encoded
+	}
+
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO lead_activity (lead_id, user_id, action, meta)
+		VALUES ($1, $2, $3, $4)
+	`, leadID, userID, action, metaJSON)
 	return err
 }
 

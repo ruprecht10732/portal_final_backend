@@ -65,6 +65,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *gin.Engine {
 	protected := v1.Group("")
 	protected.Use(middleware.AuthRequired(cfg))
 	protected.GET("/users/me", authHandler.GetMe)
+	protected.GET("/users", authHandler.ListUsers)
 	protected.PATCH("/users/me", authHandler.UpdateMe)
 	protected.POST("/users/me/password", authHandler.ChangePassword)
 

@@ -34,6 +34,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PUT("/:id", h.Update)
 	rg.DELETE("/:id", h.Delete)
 	rg.PATCH("/:id/status", h.UpdateStatus)
+	rg.PUT(":id/assign", h.Assign)
 	rg.POST("/:id/schedule", h.ScheduleVisit)
 	rg.POST("/:id/survey", h.CompleteSurvey)
 	rg.POST("/:id/no-show", h.MarkNoShow)
@@ -105,6 +106,51 @@ func (h *Handler) Update(c *gin.Context) {
 		}
 		response.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
+	}
+
+	response.OK(c, lead)
+}
+
+func (h *Handler) Assign(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.AssignLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	actorIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	rolesValue, ok := c.Get(middleware.ContextRolesKey)
+	if !ok {
+		response.Error(c, http.StatusForbidden, "forbidden", nil)
+		return
+	}
+
+	actorID := actorIDValue.(uuid.UUID)
+	roles := rolesValue.([]string)
+
+	lead, err := h.svc.Assign(c.Request.Context(), id, req.AssigneeID, actorID, roles)
+	if err != nil {
+		switch err {
+		case service.ErrLeadNotFound:
+			response.Error(c, http.StatusNotFound, err.Error(), nil)
+			return
+		case service.ErrForbidden:
+			response.Error(c, http.StatusForbidden, err.Error(), nil)
+			return
+		default:
+			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
 	}
 
 	response.OK(c, lead)

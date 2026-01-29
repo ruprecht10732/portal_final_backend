@@ -40,6 +40,16 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/verify-email", h.VerifyEmail)
 }
 
+func (h *Handler) ListUsers(c *gin.Context) {
+	users, err := h.svc.ListUsers(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	response.OK(c, users)
+}
+
 func (h *Handler) GetMe(c *gin.Context) {
 	userID, ok := c.Get(middleware.ContextUserIDKey)
 	if !ok {
@@ -57,6 +67,7 @@ func (h *Handler) GetMe(c *gin.Context) {
 		ID:            profile.ID.String(),
 		Email:         profile.Email,
 		EmailVerified: profile.EmailVerified,
+		Roles:         profile.Roles,
 		CreatedAt:     profile.CreatedAt,
 		UpdatedAt:     profile.UpdatedAt,
 	})
@@ -96,6 +107,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 		ID:            profile.ID.String(),
 		Email:         profile.Email,
 		EmailVerified: profile.EmailVerified,
+		Roles:         profile.Roles,
 		CreatedAt:     profile.CreatedAt,
 		UpdatedAt:     profile.UpdatedAt,
 	})

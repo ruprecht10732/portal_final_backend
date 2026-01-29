@@ -42,6 +42,7 @@ type ProfileResponse struct {
 	ID            string    `json:"id"`
 	Email         string    `json:"email"`
 	EmailVerified bool      `json:"emailVerified"`
+	Roles         []string  `json:"roles"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
@@ -53,4 +54,10 @@ type UpdateProfileRequest struct {
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword" validate:"required"`
 	NewPassword     string `json:"newPassword" validate:"required,min=8"`
+}
+
+type UserSummary struct {
+	ID    string   `json:"id"`
+	Email string   `json:"email"`
+	Roles []string `json:"roles"`
 }

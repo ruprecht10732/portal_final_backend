@@ -74,6 +74,10 @@ type UpdateLeadStatusRequest struct {
 	Status LeadStatus `json:"status" validate:"required,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling"`
 }
 
+type AssignLeadRequest struct {
+	AssigneeID *uuid.UUID `json:"assigneeId" validate:"omitempty"`
+}
+
 type ScheduleVisitRequest struct {
 	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
 	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
