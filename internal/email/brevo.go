@@ -15,6 +15,7 @@ import (
 type Sender interface {
 	SendVerificationEmail(ctx context.Context, toEmail, verifyURL string) error
 	SendPasswordResetEmail(ctx context.Context, toEmail, resetURL string) error
+	SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error
 }
 
 type NoopSender struct{}
@@ -24,6 +25,10 @@ func (NoopSender) SendVerificationEmail(ctx context.Context, toEmail, verifyURL 
 }
 
 func (NoopSender) SendPasswordResetEmail(ctx context.Context, toEmail, resetURL string) error {
+	return nil
+}
+
+func (NoopSender) SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error {
 	return nil
 }
 
@@ -79,6 +84,12 @@ func (b *BrevoSender) SendPasswordResetEmail(ctx context.Context, toEmail, reset
 		"Reset password",
 		resetURL,
 	)
+	return b.send(ctx, toEmail, subject, content)
+}
+
+func (b *BrevoSender) SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error {
+	subject := "Your visit has been scheduled"
+	content := buildVisitInviteTemplate(consumerName, scheduledDate, address)
 	return b.send(ctx, toEmail, subject, content)
 }
 
@@ -162,4 +173,52 @@ func buildEmailTemplate(title, message, ctaLabel, ctaURL string) string {
   </table>
 </body>
 </html>`, title, title, message, ctaURL, ctaLabel, ctaURL, ctaURL)
+}
+
+func buildVisitInviteTemplate(consumerName, scheduledDate, address string) string {
+	return fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Visit Scheduled</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;color:#111827;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e4e7;padding:24px;">
+          <tr>
+            <td style="font-size:20px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">
+              Visit Scheduled
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top:12px;font-size:14px;line-height:1.5;color:#52525b;">
+              Dear %s,<br /><br />
+              Your visit has been scheduled for:
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top:16px;font-size:16px;font-weight:600;color:#111827;">
+              %s
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top:8px;font-size:14px;line-height:1.5;color:#52525b;">
+              at<br />
+              %s
+            </td>
+          </tr>
+          <tr>
+            <td style="padding-top:20px;font-size:12px;color:#a1a1aa;">
+              If you need to reschedule or have any questions, please contact us.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`, consumerName, scheduledDate, address)
 }

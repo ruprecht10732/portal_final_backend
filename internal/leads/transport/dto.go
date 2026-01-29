@@ -92,6 +92,7 @@ type ScheduleVisitRequest struct {
 	ServiceID     uuid.UUID  `json:"serviceId" validate:"required"`
 	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
 	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
+	SendInvite    bool       `json:"sendInvite,omitempty"`
 }
 
 type CompleteSurveyRequest struct {
@@ -112,6 +113,7 @@ type RescheduleVisitRequest struct {
 	MarkAsNoShow  bool       `json:"markAsNoShow"`
 	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
 	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
+	SendInvite    bool       `json:"sendInvite,omitempty"`
 }
 
 type BulkDeleteLeadsRequest struct {

@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/phone"
@@ -21,14 +23,16 @@ var (
 	ErrInvalidNote       = errors.New("invalid note")
 	ErrVisitNotScheduled = errors.New("visit is not scheduled")
 	ErrVisitInFuture     = errors.New("cannot complete a visit scheduled in the future")
+	ErrScheduledInPast   = errors.New("cannot schedule a visit in the past")
 )
 
 type Service struct {
-	repo *repository.Repository
+	repo   *repository.Repository
+	sender email.Sender
 }
 
-func New(repo *repository.Repository) *Service {
-	return &Service{repo: repo}
+func New(repo *repository.Repository, sender email.Sender) *Service {
+	return &Service{repo: repo, sender: sender}
 }
 
 func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (transport.LeadResponse, error) {
@@ -258,6 +262,13 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 }
 
 func (s *Service) ScheduleVisit(ctx context.Context, id uuid.UUID, req transport.ScheduleVisitRequest) (transport.LeadResponse, error) {
+	// Validate scheduled date is not in the past
+	today := time.Now().Truncate(24 * time.Hour)
+	scheduledDay := req.ScheduledDate.Truncate(24 * time.Hour)
+	if scheduledDay.Before(today) {
+		return transport.LeadResponse{}, ErrScheduledInPast
+	}
+
 	// Schedule visit on the service
 	_, err := s.repo.ScheduleServiceVisit(ctx, req.ServiceID, req.ScheduledDate, req.ScoutID)
 	if err != nil {
@@ -274,6 +285,14 @@ func (s *Service) ScheduleVisit(ctx context.Context, id uuid.UUID, req transport
 			return transport.LeadResponse{}, ErrLeadNotFound
 		}
 		return transport.LeadResponse{}, err
+	}
+
+	// Send invite email if requested and consumer has email
+	if req.SendInvite && lead.ConsumerEmail != nil && *lead.ConsumerEmail != "" {
+		consumerName := lead.ConsumerFirstName + " " + lead.ConsumerLastName
+		scheduledDateStr := req.ScheduledDate.Format("Monday, January 2, 2006 at 15:04")
+		address := fmt.Sprintf("%s %s, %s %s", lead.AddressStreet, lead.AddressHouseNumber, lead.AddressZipCode, lead.AddressCity)
+		_ = s.sender.SendVisitInviteEmail(ctx, *lead.ConsumerEmail, consumerName, scheduledDateStr, address)
 	}
 
 	return toLeadResponseWithServices(lead, services), nil
@@ -343,6 +362,13 @@ func (s *Service) MarkNoShow(ctx context.Context, id uuid.UUID, req transport.Ma
 }
 
 func (s *Service) RescheduleVisit(ctx context.Context, id uuid.UUID, req transport.RescheduleVisitRequest, actorID uuid.UUID) (transport.LeadResponse, error) {
+	// Validate scheduled date is not in the past
+	today := time.Now().Truncate(24 * time.Hour)
+	scheduledDay := req.ScheduledDate.Truncate(24 * time.Hour)
+	if scheduledDay.Before(today) {
+		return transport.LeadResponse{}, ErrScheduledInPast
+	}
+
 	// Get current service to capture old visit data for history
 	currentService, err := s.repo.GetLeadServiceByID(ctx, req.ServiceID)
 	if err != nil {
@@ -404,6 +430,14 @@ func (s *Service) RescheduleVisit(ctx context.Context, id uuid.UUID, req transpo
 			return transport.LeadResponse{}, ErrLeadNotFound
 		}
 		return transport.LeadResponse{}, err
+	}
+
+	// Send invite email if requested and consumer has email
+	if req.SendInvite && lead.ConsumerEmail != nil && *lead.ConsumerEmail != "" {
+		consumerName := lead.ConsumerFirstName + " " + lead.ConsumerLastName
+		scheduledDateStr := req.ScheduledDate.Format("Monday, January 2, 2006 at 15:04")
+		address := fmt.Sprintf("%s %s, %s %s", lead.AddressStreet, lead.AddressHouseNumber, lead.AddressZipCode, lead.AddressCity)
+		_ = s.sender.SendVisitInviteEmail(ctx, *lead.ConsumerEmail, consumerName, scheduledDateStr, address)
 	}
 
 	return toLeadResponseWithServices(lead, services), nil

@@ -51,7 +51,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *gin.Engine {
 
 	// Leads module
 	leadsRepo := leadsrepo.New(pool)
-	leadsSvc := leadsservice.New(leadsRepo)
+	leadsSvc := leadsservice.New(leadsRepo, sender)
 	leadsHandler := leadshandler.New(leadsSvc)
 
 	engine.GET("/api/health", func(c *gin.Context) {
