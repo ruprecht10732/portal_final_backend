@@ -20,6 +20,8 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 var ErrTokenExpired = errors.New("token expired")
 var ErrTokenInvalid = errors.New("token invalid")
 var ErrEmailNotVerified = errors.New("email not verified")
+var ErrEmailTaken = errors.New("email already in use")
+var ErrInvalidCurrentPassword = errors.New("current password is incorrect")
 
 const (
 	accessTokenType  = "access"
@@ -30,6 +32,14 @@ type Service struct {
 	repo *repository.Repository
 	cfg  *config.Config
 	mail email.Sender
+}
+
+type Profile struct {
+	ID            uuid.UUID
+	Email         string
+	EmailVerified bool
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func New(repo *repository.Repository, cfg *config.Config, mailer email.Sender) *Service {
@@ -218,6 +228,96 @@ func (s *Service) signJWT(userID uuid.UUID, roles []string, ttl time.Duration, t
 
 func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
 	return s.repo.SetUserRoles(ctx, userID, roles)
+}
+
+func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	return Profile{
+		ID:            user.ID,
+		Email:         user.Email,
+		EmailVerified: user.EmailVerified,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
+	}, nil
+}
+
+func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, email string) (Profile, error) {
+	current, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	if strings.EqualFold(strings.TrimSpace(email), current.Email) {
+		return Profile{
+			ID:            current.ID,
+			Email:         current.Email,
+			EmailVerified: current.EmailVerified,
+			CreatedAt:     current.CreatedAt,
+			UpdatedAt:     current.UpdatedAt,
+		}, nil
+	}
+
+	if existing, err := s.repo.GetUserByEmail(ctx, email); err == nil && existing.ID != userID {
+		return Profile{}, ErrEmailTaken
+	} else if err != nil && err != repository.ErrNotFound {
+		return Profile{}, err
+	}
+
+	updated, err := s.repo.UpdateUserEmail(ctx, userID, email)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	verifyToken, err := token.GenerateRandomToken(32)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	verifyHash := token.HashSHA256(verifyToken)
+	expiresAt := time.Now().Add(s.cfg.VerifyTokenTTL)
+	if err := s.repo.CreateUserToken(ctx, userID, verifyHash, repository.TokenTypeEmailVerify, expiresAt); err != nil {
+		return Profile{}, err
+	}
+
+	verifyURL := s.buildURL("/verify-email", verifyToken)
+	if err := s.mail.SendVerificationEmail(ctx, updated.Email, verifyURL); err != nil {
+		return Profile{}, err
+	}
+
+	return Profile{
+		ID:            updated.ID,
+		Email:         updated.Email,
+		EmailVerified: updated.EmailVerified,
+		CreatedAt:     updated.CreatedAt,
+		UpdatedAt:     updated.UpdatedAt,
+	}, nil
+}
+
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	if err := password.Compare(user.PasswordHash, currentPassword); err != nil {
+		return ErrInvalidCurrentPassword
+	}
+
+	passwordHash, err := password.Hash(newPassword)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.UpdatePassword(ctx, userID, passwordHash); err != nil {
+		return err
+	}
+
+	_ = s.repo.RevokeAllRefreshTokens(ctx, userID)
+	return nil
 }
 
 func (s *Service) buildURL(path string, tokenValue string) string {

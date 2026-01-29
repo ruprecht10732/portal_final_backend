@@ -1,5 +1,7 @@
 package transport
 
+import "time"
+
 type SignUpRequest struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=8"`
@@ -34,4 +36,21 @@ type RoleUpdateResponse struct {
 
 type AuthResponse struct {
 	AccessToken string `json:"accessToken"`
+}
+
+type ProfileResponse struct {
+	ID            string    `json:"id"`
+	Email         string    `json:"email"`
+	EmailVerified bool      `json:"emailVerified"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type UpdateProfileRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" validate:"required"`
+	NewPassword     string `json:"newPassword" validate:"required,min=8"`
 }

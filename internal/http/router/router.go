@@ -64,6 +64,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *gin.Engine {
 	// Protected routes
 	protected := v1.Group("")
 	protected.Use(middleware.AuthRequired(cfg))
+	protected.GET("/users/me", authHandler.GetMe)
+	protected.PATCH("/users/me", authHandler.UpdateMe)
+	protected.POST("/users/me/password", authHandler.ChangePassword)
 
 	// Leads routes (accessible to all authenticated users)
 	leadsHandler.RegisterRoutes(protected.Group("/leads"))

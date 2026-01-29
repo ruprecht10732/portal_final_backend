@@ -57,6 +57,18 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 	return user, err
 }
 
+func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, error) {
+	var user User
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, email, password_hash, is_email_verified, created_at, updated_at
+		FROM users WHERE id = $1
+	`, userID).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	return user, err
+}
+
 func (r *Repository) MarkEmailVerified(ctx context.Context, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE users SET is_email_verified = true, updated_at = now()
@@ -71,6 +83,17 @@ func (r *Repository) UpdatePassword(ctx context.Context, userID uuid.UUID, passw
 		WHERE id = $1
 	`, userID, passwordHash)
 	return err
+}
+
+func (r *Repository) UpdateUserEmail(ctx context.Context, userID uuid.UUID, email string) (User, error) {
+	var user User
+	err := r.pool.QueryRow(ctx, `
+		UPDATE users
+		SET email = $2, is_email_verified = false, updated_at = now()
+		WHERE id = $1
+		RETURNING id, email, password_hash, is_email_verified, created_at, updated_at
+	`, userID, email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+	return user, err
 }
 
 func (r *Repository) CreateUserToken(ctx context.Context, userID uuid.UUID, tokenHash string, tokenType string, expiresAt time.Time) error {

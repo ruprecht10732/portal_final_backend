@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/auth/validator"
 	"portal_final_backend/internal/config"
+	"portal_final_backend/internal/http/middleware"
 	"portal_final_backend/internal/http/response"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +38,96 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/forgot-password", h.ForgotPassword)
 	rg.POST("/reset-password", h.ResetPassword)
 	rg.POST("/verify-email", h.VerifyEmail)
+}
+
+func (h *Handler) GetMe(c *gin.Context) {
+	userID, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+
+	profile, err := h.svc.GetMe(c.Request.Context(), userID.(uuid.UUID))
+	if err != nil {
+		response.Error(c, http.StatusNotFound, err.Error(), nil)
+		return
+	}
+
+	response.OK(c, transport.ProfileResponse{
+		ID:            profile.ID.String(),
+		Email:         profile.Email,
+		EmailVerified: profile.EmailVerified,
+		CreatedAt:     profile.CreatedAt,
+		UpdatedAt:     profile.UpdatedAt,
+	})
+}
+
+func (h *Handler) UpdateMe(c *gin.Context) {
+	userID, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+
+	var req transport.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	profile, err := h.svc.UpdateMe(c.Request.Context(), userID.(uuid.UUID), req.Email)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrEmailTaken):
+			response.Error(c, http.StatusConflict, err.Error(), nil)
+		case errors.Is(err, service.ErrInvalidCredentials):
+			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		default:
+			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		}
+		return
+	}
+
+	response.OK(c, transport.ProfileResponse{
+		ID:            profile.ID.String(),
+		Email:         profile.Email,
+		EmailVerified: profile.EmailVerified,
+		CreatedAt:     profile.CreatedAt,
+		UpdatedAt:     profile.UpdatedAt,
+	})
+}
+
+func (h *Handler) ChangePassword(c *gin.Context) {
+	userID, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+
+	var req transport.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if err := h.svc.ChangePassword(c.Request.Context(), userID.(uuid.UUID), req.CurrentPassword, req.NewPassword); err != nil {
+		if errors.Is(err, service.ErrInvalidCurrentPassword) {
+			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
+		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	response.OK(c, gin.H{"message": "password updated"})
 }
 
 func (h *Handler) SignUp(c *gin.Context) {
