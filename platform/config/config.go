@@ -113,16 +113,16 @@ func (c *Config) GetVerifyTokenTTL() time.Duration  { return c.VerifyTokenTTL }
 func (c *Config) GetResetTokenTTL() time.Duration   { return c.ResetTokenTTL }
 
 // CookieConfig implementation
-func (c *Config) GetRefreshCookieName() string           { return c.RefreshCookieName }
-func (c *Config) GetRefreshCookieDomain() string         { return c.RefreshCookieDomain }
-func (c *Config) GetRefreshCookiePath() string           { return c.RefreshCookiePath }
-func (c *Config) GetRefreshCookieSecure() bool           { return c.RefreshCookieSecure }
+func (c *Config) GetRefreshCookieName() string            { return c.RefreshCookieName }
+func (c *Config) GetRefreshCookieDomain() string          { return c.RefreshCookieDomain }
+func (c *Config) GetRefreshCookiePath() string            { return c.RefreshCookiePath }
+func (c *Config) GetRefreshCookieSecure() bool            { return c.RefreshCookieSecure }
 func (c *Config) GetRefreshCookieSameSite() http.SameSite { return c.RefreshCookieSameSite }
 
 // EmailConfig implementation
-func (c *Config) GetEmailEnabled() bool      { return c.EmailEnabled }
-func (c *Config) GetBrevoAPIKey() string     { return c.BrevoAPIKey }
-func (c *Config) GetEmailFromName() string   { return c.EmailFromName }
+func (c *Config) GetEmailEnabled() bool       { return c.EmailEnabled }
+func (c *Config) GetBrevoAPIKey() string      { return c.BrevoAPIKey }
+func (c *Config) GetEmailFromName() string    { return c.EmailFromName }
 func (c *Config) GetEmailFromAddress() string { return c.EmailFromAddress }
 
 // NotificationConfig implementation
