@@ -12,17 +12,9 @@ import (
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
-)
-
-// Errors specific to scheduling operations.
-var (
-	ErrLeadNotFound      = errors.New("lead not found")
-	ErrServiceNotFound   = errors.New("lead service not found")
-	ErrVisitNotScheduled = errors.New("visit is not scheduled")
-	ErrVisitInFuture     = errors.New("cannot complete a visit scheduled in the future")
-	ErrScheduledInPast   = errors.New("cannot schedule a visit in the past")
 )
 
 // Repository defines the data access interface needed by the scheduling service.
@@ -52,14 +44,14 @@ func (s *Service) ScheduleVisit(ctx context.Context, leadID uuid.UUID, req trans
 	today := time.Now().Truncate(24 * time.Hour)
 	scheduledDay := req.ScheduledDate.Truncate(24 * time.Hour)
 	if scheduledDay.Before(today) {
-		return transport.LeadResponse{}, ErrScheduledInPast
+		return transport.LeadResponse{}, apperr.Validation("cannot schedule a visit in the past")
 	}
 
 	// Schedule visit on the service
 	_, err := s.repo.ScheduleServiceVisit(ctx, req.ServiceID, req.ScheduledDate, req.ScoutID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, ErrServiceNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -68,7 +60,7 @@ func (s *Service) ScheduleVisit(ctx context.Context, leadID uuid.UUID, req trans
 	lead, services, err := s.repo.GetByIDWithServices(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -99,14 +91,14 @@ func (s *Service) RescheduleVisit(ctx context.Context, leadID uuid.UUID, req tra
 	today := time.Now().Truncate(24 * time.Hour)
 	scheduledDay := req.ScheduledDate.Truncate(24 * time.Hour)
 	if scheduledDay.Before(today) {
-		return transport.LeadResponse{}, ErrScheduledInPast
+		return transport.LeadResponse{}, apperr.Validation("cannot schedule a visit in the past")
 	}
 
 	// Get current service to capture old visit data for history
 	currentService, err := s.repo.GetLeadServiceByID(ctx, req.ServiceID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, ErrServiceNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -134,7 +126,7 @@ func (s *Service) RescheduleVisit(ctx context.Context, leadID uuid.UUID, req tra
 	_, err = s.repo.RescheduleServiceVisit(ctx, req.ServiceID, req.ScheduledDate, req.ScoutID, req.NoShowNotes, req.MarkAsNoShow)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, ErrServiceNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -160,7 +152,7 @@ func (s *Service) RescheduleVisit(ctx context.Context, leadID uuid.UUID, req tra
 	lead, services, err := s.repo.GetByIDWithServices(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -193,26 +185,26 @@ func (s *Service) CompleteSurvey(ctx context.Context, leadID uuid.UUID, req tran
 	currentService, err := s.repo.GetLeadServiceByID(ctx, req.ServiceID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, ErrServiceNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 		}
 		return transport.LeadResponse{}, err
 	}
 
 	// Check if visit is scheduled
 	if currentService.VisitScheduledDate == nil {
-		return transport.LeadResponse{}, ErrVisitNotScheduled
+		return transport.LeadResponse{}, apperr.Validation("visit is not scheduled")
 	}
 
 	// Check if scheduled date is in the future
 	if currentService.VisitScheduledDate.After(time.Now()) {
-		return transport.LeadResponse{}, ErrVisitInFuture
+		return transport.LeadResponse{}, apperr.Validation("cannot complete a visit scheduled in the future")
 	}
 
 	// Complete survey on the service
 	_, err = s.repo.CompleteServiceSurvey(ctx, req.ServiceID, req.Measurements, string(req.AccessDifficulty), req.Notes)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, ErrServiceNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -221,7 +213,7 @@ func (s *Service) CompleteSurvey(ctx context.Context, leadID uuid.UUID, req tran
 	lead, services, err := s.repo.GetByIDWithServices(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -235,7 +227,7 @@ func (s *Service) MarkNoShow(ctx context.Context, leadID uuid.UUID, req transpor
 	_, err := s.repo.MarkServiceNoShow(ctx, req.ServiceID, req.Notes)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, ErrServiceNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -244,7 +236,7 @@ func (s *Service) MarkNoShow(ctx context.Context, leadID uuid.UUID, req transpor
 	lead, services, err := s.repo.GetByIDWithServices(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -257,7 +249,7 @@ func (s *Service) ListVisitHistory(ctx context.Context, leadID uuid.UUID) (trans
 	// Verify lead exists
 	if _, err := s.repo.GetByID(ctx, leadID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.VisitHistoryListResponse{}, ErrLeadNotFound
+			return transport.VisitHistoryListResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.VisitHistoryListResponse{}, err
 	}

@@ -9,16 +9,10 @@ import (
 
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
 
 	"github.com/google/uuid"
-)
-
-// Errors specific to lead management operations.
-var (
-	ErrLeadNotFound   = errors.New("lead not found")
-	ErrDuplicatePhone = errors.New("a lead with this phone number already exists")
-	ErrForbidden      = errors.New("forbidden")
 )
 
 // Repository defines the data access interface needed by the management service.
@@ -80,7 +74,7 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResp
 	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -98,7 +92,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 		lead, err := s.repo.GetByID(ctx, id)
 		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
-				return transport.LeadResponse{}, ErrLeadNotFound
+				return transport.LeadResponse{}, apperr.NotFound("lead not found")
 			}
 			return transport.LeadResponse{}, err
 		}
@@ -107,7 +101,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 
 		if !hasRole(actorRoles, "admin") {
 			if current.AssignedAgentID == nil || *current.AssignedAgentID != actorID {
-				return transport.LeadResponse{}, ErrForbidden
+				return transport.LeadResponse{}, apperr.Forbidden("forbidden")
 			}
 		}
 
@@ -148,7 +142,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 	lead, err := s.repo.Update(ctx, id, params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -171,7 +165,7 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	err := s.repo.Delete(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return ErrLeadNotFound
+			return apperr.NotFound("lead not found")
 		}
 		return err
 	}
@@ -185,7 +179,7 @@ func (s *Service) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error) 
 		return 0, err
 	}
 	if deletedCount == 0 {
-		return 0, ErrLeadNotFound
+		return 0, apperr.NotFound("no leads found to delete")
 	}
 	return deletedCount, nil
 }
@@ -263,14 +257,14 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 	current, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
 
 	if !hasRole(actorRoles, "admin") {
 		if current.AssignedAgentID == nil || *current.AssignedAgentID != actorID {
-			return transport.LeadResponse{}, ErrForbidden
+			return transport.LeadResponse{}, apperr.Forbidden("forbidden")
 		}
 	}
 
@@ -281,7 +275,7 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 	updated, err := s.repo.Update(ctx, id, params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -304,7 +298,7 @@ func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transpor
 	lead, err := s.repo.GetByID(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -332,12 +326,12 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, errors.New("lead service not found")
+			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 		}
 		return transport.LeadResponse{}, err
 	}
 	if svc.LeadID != leadID {
-		return transport.LeadResponse{}, errors.New("lead service not found")
+		return transport.LeadResponse{}, apperr.NotFound("lead service not found")
 	}
 
 	_, err = s.repo.UpdateServiceStatus(ctx, serviceID, string(req.Status))
@@ -353,7 +347,7 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 	lead, err := s.repo.UpdateStatus(ctx, id, string(req.Status))
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+			return transport.LeadResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadResponse{}, err
 	}

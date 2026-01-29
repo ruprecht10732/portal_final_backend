@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
@@ -11,19 +10,13 @@ import (
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/events"
+	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
-
-var ErrInvalidCredentials = errors.New("invalid credentials")
-var ErrTokenExpired = errors.New("token expired")
-var ErrTokenInvalid = errors.New("token invalid")
-var ErrEmailNotVerified = errors.New("email not verified")
-var ErrEmailTaken = errors.New("email already in use")
-var ErrInvalidCurrentPassword = errors.New("current password is incorrect")
 
 const (
 	accessTokenType  = "access"
@@ -97,15 +90,15 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error
 func (s *Service) SignIn(ctx context.Context, email, plainPassword string) (string, string, error) {
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return "", "", ErrInvalidCredentials
+		return "", "", apperr.Unauthorized("invalid credentials")
 	}
 
 	if err := password.Compare(user.PasswordHash, plainPassword); err != nil {
-		return "", "", ErrInvalidCredentials
+		return "", "", apperr.Unauthorized("invalid credentials")
 	}
 
 	if !user.EmailVerified {
-		return "", "", ErrEmailNotVerified
+		return "", "", apperr.Forbidden("email not verified")
 	}
 
 	return s.issueTokens(ctx, user.ID)
@@ -115,12 +108,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, str
 	hash := token.HashSHA256(refreshToken)
 	userID, expiresAt, err := s.repo.GetRefreshToken(ctx, hash)
 	if err != nil {
-		return "", "", ErrTokenInvalid
+		return "", "", apperr.Unauthorized("token invalid")
 	}
 
 	if time.Now().After(expiresAt) {
 		_ = s.repo.RevokeRefreshToken(ctx, hash)
-		return "", "", ErrTokenExpired
+		return "", "", apperr.Unauthorized("token expired")
 	}
 
 	_ = s.repo.RevokeRefreshToken(ctx, hash)
@@ -164,11 +157,11 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	hash := token.HashSHA256(rawToken)
 	userID, expiresAt, err := s.repo.GetUserToken(ctx, hash, repository.TokenTypePasswordReset)
 	if err != nil {
-		return ErrTokenInvalid
+		return apperr.Unauthorized("token invalid")
 	}
 
 	if time.Now().After(expiresAt) {
-		return ErrTokenExpired
+		return apperr.Unauthorized("token expired")
 	}
 
 	passwordHash, err := password.Hash(newPassword)
@@ -190,11 +183,11 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 	hash := token.HashSHA256(rawToken)
 	userID, expiresAt, err := s.repo.GetUserToken(ctx, hash, repository.TokenTypeEmailVerify)
 	if err != nil {
-		return ErrTokenInvalid
+		return apperr.Unauthorized("token invalid")
 	}
 
 	if time.Now().After(expiresAt) {
-		return ErrTokenExpired
+		return apperr.Unauthorized("token expired")
 	}
 
 	if err := s.repo.MarkEmailVerified(ctx, userID); err != nil {
@@ -309,7 +302,7 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, email string) 
 	}
 
 	if existing, err := s.repo.GetUserByEmail(ctx, email); err == nil && existing.ID != userID {
-		return Profile{}, ErrEmailTaken
+		return Profile{}, apperr.Conflict("email already in use")
 	} else if err != nil && err != repository.ErrNotFound {
 		return Profile{}, err
 	}
@@ -355,7 +348,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentP
 	}
 
 	if err := password.Compare(user.PasswordHash, currentPassword); err != nil {
-		return ErrInvalidCurrentPassword
+		return apperr.Validation("current password is incorrect")
 	}
 
 	passwordHash, err := password.Hash(newPassword)

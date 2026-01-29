@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 
 	"portal_final_backend/internal/leads/notes"
@@ -32,12 +31,7 @@ func (h *NotesHandler) ListNotes(c *gin.Context) {
 	}
 
 	notesList, err := h.svc.List(c.Request.Context(), id)
-	if err != nil {
-		if errors.Is(err, notes.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -69,15 +63,7 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 
 	authorID := actorIDValue.(uuid.UUID)
 	created, err := h.svc.Add(c.Request.Context(), id, authorID, req)
-	if err != nil {
-		switch {
-		case errors.Is(err, notes.ErrLeadNotFound):
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-		case errors.Is(err, notes.ErrInvalidNote):
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
-		default:
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
-		}
+	if httpkit.HandleError(c, err) {
 		return
 	}
 

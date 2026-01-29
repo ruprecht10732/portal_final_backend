@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 
 	"portal_final_backend/internal/leads/management"
@@ -67,8 +66,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 
 	lead, err := h.mgmt.Create(c.Request.Context(), req)
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -83,12 +81,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 	}
 
 	lead, err := h.mgmt.GetByID(c.Request.Context(), id)
-	if err != nil {
-		if errors.Is(err, management.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -127,18 +120,8 @@ func (h *Handler) Update(c *gin.Context) {
 	roles := rolesValue.([]string)
 
 	lead, err := h.mgmt.Update(c.Request.Context(), id, req, actorID, roles)
-	if err != nil {
-		switch {
-		case errors.Is(err, management.ErrLeadNotFound):
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		case errors.Is(err, management.ErrForbidden):
-			httpkit.Error(c, http.StatusForbidden, err.Error(), nil)
-			return
-		default:
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
-			return
-		}
+	if httpkit.HandleError(c, err) {
+		return
 	}
 
 	httpkit.OK(c, lead)
@@ -172,18 +155,8 @@ func (h *Handler) Assign(c *gin.Context) {
 	roles := rolesValue.([]string)
 
 	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, actorID, roles)
-	if err != nil {
-		switch {
-		case errors.Is(err, management.ErrLeadNotFound):
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		case errors.Is(err, management.ErrForbidden):
-			httpkit.Error(c, http.StatusForbidden, err.Error(), nil)
-			return
-		default:
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
-			return
-		}
+	if httpkit.HandleError(c, err) {
+		return
 	}
 
 	httpkit.OK(c, lead)
@@ -196,12 +169,7 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.mgmt.Delete(c.Request.Context(), id); err != nil {
-		if errors.Is(err, management.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if err := h.mgmt.Delete(c.Request.Context(), id); httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -220,12 +188,7 @@ func (h *Handler) BulkDelete(c *gin.Context) {
 	}
 
 	deletedCount, err := h.mgmt.BulkDelete(c.Request.Context(), req.IDs)
-	if err != nil {
-		if errors.Is(err, management.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -250,12 +213,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	}
 
 	lead, err := h.mgmt.UpdateStatus(c.Request.Context(), id, req)
-	if err != nil {
-		if errors.Is(err, management.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -280,12 +238,7 @@ func (h *Handler) ScheduleVisit(c *gin.Context) {
 	}
 
 	lead, err := h.scheduling.ScheduleVisit(c.Request.Context(), id, req)
-	if err != nil {
-		if errors.Is(err, scheduling.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -316,12 +269,7 @@ func (h *Handler) RescheduleVisit(c *gin.Context) {
 	}
 
 	lead, err := h.scheduling.RescheduleVisit(c.Request.Context(), id, req, actorID.(uuid.UUID))
-	if err != nil {
-		if errors.Is(err, scheduling.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -346,12 +294,7 @@ func (h *Handler) CompleteSurvey(c *gin.Context) {
 	}
 
 	lead, err := h.scheduling.CompleteSurvey(c.Request.Context(), id, req)
-	if err != nil {
-		if errors.Is(err, scheduling.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -372,12 +315,7 @@ func (h *Handler) MarkNoShow(c *gin.Context) {
 	}
 
 	lead, err := h.scheduling.MarkNoShow(c.Request.Context(), id, req)
-	if err != nil {
-		if errors.Is(err, scheduling.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -397,8 +335,7 @@ func (h *Handler) MarkViewed(c *gin.Context) {
 		return
 	}
 
-	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, userID.(uuid.UUID)); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, userID.(uuid.UUID)); httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -413,8 +350,7 @@ func (h *Handler) CheckDuplicate(c *gin.Context) {
 	}
 
 	result, err := h.mgmt.CheckDuplicate(c.Request.Context(), phone)
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -429,8 +365,7 @@ func (h *Handler) List(c *gin.Context) {
 	}
 
 	result, err := h.mgmt.List(c.Request.Context(), req)
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -445,12 +380,7 @@ func (h *Handler) ListVisitHistory(c *gin.Context) {
 	}
 
 	result, err := h.scheduling.ListVisitHistory(c.Request.Context(), id)
-	if err != nil {
-		if errors.Is(err, scheduling.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -475,12 +405,7 @@ func (h *Handler) AddService(c *gin.Context) {
 	}
 
 	lead, err := h.mgmt.AddService(c.Request.Context(), id, req)
-	if err != nil {
-		if errors.Is(err, management.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -511,12 +436,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 	}
 
 	lead, err := h.mgmt.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req)
-	if err != nil {
-		if errors.Is(err, management.ErrLeadNotFound) {
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 

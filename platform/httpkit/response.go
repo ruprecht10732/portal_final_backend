@@ -5,6 +5,8 @@ package httpkit
 import (
 	"net/http"
 
+	"portal_final_backend/platform/apperr"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,4 +29,26 @@ func Error(c *gin.Context, status int, message string, details interface{}) {
 // OK sends a 200 OK response with the given payload.
 func OK(c *gin.Context, payload interface{}) {
 	c.JSON(http.StatusOK, payload)
+}
+
+// HandleError maps domain errors to HTTP responses.
+// If the error is a typed *apperr.Error, it uses the error's Kind to determine
+// the HTTP status code. Otherwise, it defaults to 400 Bad Request.
+// Returns true if an error was handled, false otherwise.
+func HandleError(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if domainErr, ok := err.(*apperr.Error); ok {
+		c.JSON(domainErr.HTTPStatus(), ErrorResponse{
+			Error:   domainErr.Message,
+			Details: domainErr.Details,
+		})
+		return true
+	}
+
+	// Fallback for non-typed errors
+	c.JSON(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	return true
 }

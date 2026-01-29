@@ -10,14 +10,9 @@ import (
 
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
-)
-
-// Errors specific to note operations.
-var (
-	ErrLeadNotFound = errors.New("lead not found")
-	ErrInvalidNote  = errors.New("invalid note")
 )
 
 // ValidNoteTypes defines the allowed note types.
@@ -52,7 +47,7 @@ func New(repo Repository) *Service {
 func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID, req transport.CreateLeadNoteRequest) (transport.LeadNoteResponse, error) {
 	body := strings.TrimSpace(req.Body)
 	if body == "" || len(body) > 2000 {
-		return transport.LeadNoteResponse{}, ErrInvalidNote
+		return transport.LeadNoteResponse{}, apperr.Validation("note body must be between 1 and 2000 characters")
 	}
 
 	noteType := strings.TrimSpace(req.Type)
@@ -60,13 +55,13 @@ func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID,
 		noteType = "note"
 	}
 	if !ValidNoteTypes[noteType] {
-		return transport.LeadNoteResponse{}, ErrInvalidNote
+		return transport.LeadNoteResponse{}, apperr.Validation("invalid note type")
 	}
 
 	// Verify lead exists
 	if _, err := s.repo.GetByID(ctx, leadID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadNoteResponse{}, ErrLeadNotFound
+			return transport.LeadNoteResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadNoteResponse{}, err
 	}
@@ -89,7 +84,7 @@ func (s *Service) List(ctx context.Context, leadID uuid.UUID) (transport.LeadNot
 	// Verify lead exists
 	if _, err := s.repo.GetByID(ctx, leadID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadNotesResponse{}, ErrLeadNotFound
+			return transport.LeadNotesResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadNotesResponse{}, err
 	}

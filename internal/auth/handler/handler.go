@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"time"
 
@@ -41,8 +40,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 func (h *Handler) ListUsers(c *gin.Context) {
 	users, err := h.svc.ListUsers(c.Request.Context())
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -57,8 +55,7 @@ func (h *Handler) GetMe(c *gin.Context) {
 	}
 
 	profile, err := h.svc.GetMe(c.Request.Context(), userID.(uuid.UUID))
-	if err != nil {
-		httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -90,15 +87,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	}
 
 	profile, err := h.svc.UpdateMe(c.Request.Context(), userID.(uuid.UUID), req.Email)
-	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrEmailTaken):
-			httpkit.Error(c, http.StatusConflict, err.Error(), nil)
-		case errors.Is(err, service.ErrInvalidCredentials):
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
-		default:
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
-		}
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -129,12 +118,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.ChangePassword(c.Request.Context(), userID.(uuid.UUID), req.CurrentPassword, req.NewPassword); err != nil {
-		if errors.Is(err, service.ErrInvalidCurrentPassword) {
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
-			return
-		}
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, h.svc.ChangePassword(c.Request.Context(), userID.(uuid.UUID), req.CurrentPassword, req.NewPassword)) {
 		return
 	}
 
@@ -152,8 +136,7 @@ func (h *Handler) SignUp(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.SignUp(c.Request.Context(), req.Email, req.Password); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, h.svc.SignUp(c.Request.Context(), req.Email, req.Password)) {
 		return
 	}
 	httpkit.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
@@ -171,8 +154,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 	}
 
 	accessToken, refreshToken, err := h.svc.SignIn(c.Request.Context(), req.Email, req.Password)
-	if err != nil {
-		httpkit.Error(c, http.StatusUnauthorized, err.Error(), nil)
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -183,14 +165,13 @@ func (h *Handler) SignIn(c *gin.Context) {
 func (h *Handler) Refresh(c *gin.Context) {
 	refreshToken, err := c.Cookie(h.cfg.RefreshCookieName)
 	if err != nil || refreshToken == "" {
-		httpkit.Error(c, http.StatusUnauthorized, service.ErrTokenInvalid.Error(), nil)
+		httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
 		return
 	}
 
 	accessToken, newRefreshToken, err := h.svc.Refresh(c.Request.Context(), refreshToken)
-	if err != nil {
+	if httpkit.HandleError(c, err) {
 		h.clearRefreshCookie(c)
-		httpkit.Error(c, http.StatusUnauthorized, err.Error(), nil)
 		return
 	}
 
@@ -200,8 +181,7 @@ func (h *Handler) Refresh(c *gin.Context) {
 
 func (h *Handler) SignOut(c *gin.Context) {
 	if refreshToken, err := c.Cookie(h.cfg.RefreshCookieName); err == nil && refreshToken != "" {
-		if err := h.svc.SignOut(c.Request.Context(), refreshToken); err != nil {
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken)) {
 			return
 		}
 	}
@@ -222,8 +202,7 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.ForgotPassword(c.Request.Context(), req.Email); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, h.svc.ForgotPassword(c.Request.Context(), req.Email)) {
 		return
 	}
 	httpkit.OK(c, gin.H{"message": "if the account exists, a reset link will be sent"})
@@ -240,8 +219,7 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.ResetPassword(c.Request.Context(), req.Token, req.NewPassword); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, h.svc.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)) {
 		return
 	}
 
@@ -259,8 +237,7 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.VerifyEmail(c.Request.Context(), req.Token); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, h.svc.VerifyEmail(c.Request.Context(), req.Token)) {
 		return
 	}
 
@@ -284,8 +261,7 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.SetUserRoles(c.Request.Context(), userID, req.Roles); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+	if httpkit.HandleError(c, h.svc.SetUserRoles(c.Request.Context(), userID, req.Roles)) {
 		return
 	}
 
