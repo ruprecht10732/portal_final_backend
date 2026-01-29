@@ -5,12 +5,15 @@ import (
 	"net/http"
 	"time"
 
-	"portal_final_backend/internal/auth/handler"
-	"portal_final_backend/internal/auth/repository"
-	"portal_final_backend/internal/auth/service"
+	authhandler "portal_final_backend/internal/auth/handler"
+	authrepo "portal_final_backend/internal/auth/repository"
+	authservice "portal_final_backend/internal/auth/service"
 	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/http/middleware"
+	leadshandler "portal_final_backend/internal/leads/handler"
+	leadsrepo "portal_final_backend/internal/leads/repository"
+	leadsservice "portal_final_backend/internal/leads/service"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -41,20 +44,34 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *gin.Engine {
 		log.Fatalf("failed to initialize email sender: %v", err)
 	}
 
-	repo := repository.New(pool)
-	svc := service.New(repo, cfg, sender)
-	apiHandler := handler.New(svc, cfg)
+	// Auth module
+	authRepo := authrepo.New(pool)
+	authSvc := authservice.New(authRepo, cfg, sender)
+	authHandler := authhandler.New(authSvc, cfg)
+
+	// Leads module
+	leadsRepo := leadsrepo.New(pool)
+	leadsSvc := leadsservice.New(leadsRepo)
+	leadsHandler := leadshandler.New(leadsSvc)
 
 	engine.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
 	v1 := engine.Group("/api/v1")
-	apiHandler.RegisterRoutes(v1.Group("/auth"))
+	authHandler.RegisterRoutes(v1.Group("/auth"))
 
+	// Protected routes
+	protected := v1.Group("")
+	protected.Use(middleware.AuthRequired(cfg))
+
+	// Leads routes (accessible to all authenticated users)
+	leadsHandler.RegisterRoutes(protected.Group("/leads"))
+
+	// Admin routes
 	admin := v1.Group("/admin")
 	admin.Use(middleware.AuthRequired(cfg), middleware.RequireRole("admin"))
-	admin.PUT("/users/:id/roles", apiHandler.SetUserRoles)
+	admin.PUT("/users/:id/roles", authHandler.SetUserRoles)
 
 	return engine
 }
