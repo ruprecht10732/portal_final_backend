@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"time"
 
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
@@ -17,6 +18,8 @@ var (
 	ErrInvalidTransition = errors.New("invalid status transition")
 	ErrForbidden         = errors.New("forbidden")
 	ErrInvalidNote       = errors.New("invalid note")
+	ErrVisitNotScheduled = errors.New("visit is not scheduled")
+	ErrVisitInFuture     = errors.New("cannot complete a visit scheduled in the future")
 )
 
 type Service struct {
@@ -214,6 +217,25 @@ func (s *Service) ScheduleVisit(ctx context.Context, id uuid.UUID, req transport
 }
 
 func (s *Service) CompleteSurvey(ctx context.Context, id uuid.UUID, req transport.CompleteSurveyRequest) (transport.LeadResponse, error) {
+	// Get current lead to check scheduled date
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, ErrLeadNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	// Check if visit is scheduled
+	if current.VisitScheduledDate == nil {
+		return transport.LeadResponse{}, ErrVisitNotScheduled
+	}
+
+	// Check if scheduled date is in the future
+	if current.VisitScheduledDate.After(time.Now()) {
+		return transport.LeadResponse{}, ErrVisitInFuture
+	}
+
 	lead, err := s.repo.CompleteSurvey(ctx, id, req.Measurements, string(req.AccessDifficulty), req.Notes)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
