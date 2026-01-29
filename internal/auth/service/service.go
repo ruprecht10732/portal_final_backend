@@ -12,6 +12,7 @@ import (
 	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/logger"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -27,12 +28,14 @@ var ErrInvalidCurrentPassword = errors.New("current password is incorrect")
 const (
 	accessTokenType  = "access"
 	refreshTokenType = "refresh"
+	defaultUserRole  = "user" // Default role for new users (not admin)
 )
 
 type Service struct {
 	repo *repository.Repository
 	cfg  *config.Config
 	mail email.Sender
+	log  *logger.Logger
 }
 
 type Profile struct {
@@ -44,24 +47,30 @@ type Profile struct {
 	UpdatedAt     time.Time
 }
 
-func New(repo *repository.Repository, cfg *config.Config, mailer email.Sender) *Service {
-	return &Service{repo: repo, cfg: cfg, mail: mailer}
+func New(repo *repository.Repository, cfg *config.Config, mailer email.Sender, log *logger.Logger) *Service {
+	return &Service{repo: repo, cfg: cfg, mail: mailer, log: log}
 }
 
 func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error {
 	hash, err := password.Hash(plainPassword)
 	if err != nil {
+		s.log.Error("failed to hash password", "error", err)
 		return err
 	}
 
 	user, err := s.repo.CreateUser(ctx, email, hash)
 	if err != nil {
+		s.log.Error("failed to create user", "email", email, "error", err)
 		return err
 	}
 
-	if err := s.repo.SetUserRoles(ctx, user.ID, []string{"admin"}); err != nil {
+	// Assign default 'user' role - not admin
+	if err := s.repo.SetUserRoles(ctx, user.ID, []string{defaultUserRole}); err != nil {
+		s.log.Error("failed to set user roles", "user_id", user.ID, "error", err)
 		return err
 	}
+
+	s.log.AuthEvent("signup", email, true, "")
 
 	verifyToken, err := token.GenerateRandomToken(32)
 	if err != nil {

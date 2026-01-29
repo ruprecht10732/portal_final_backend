@@ -4,13 +4,16 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"portal_final_backend/internal/config"
+	"portal_final_backend/internal/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -20,11 +23,98 @@ const (
 	errInvalidToken  = "invalid token"
 )
 
-func RequestTimer() gin.HandlerFunc {
+// RequestLogger logs HTTP requests with timing
+func RequestLogger(log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+		path := c.Request.URL.Path
+
 		c.Next()
-		_ = time.Since(start)
+
+		latency := time.Since(start)
+		status := c.Writer.Status()
+		clientIP := c.ClientIP()
+
+		log.HTTPRequest(c.Request.Method, path, status, float64(latency.Milliseconds()), clientIP)
+	}
+}
+
+// SecurityHeaders adds security headers to responses
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Content-Security-Policy", "default-src 'self'")
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+		// Only add HSTS in production
+		if c.Request.TLS != nil {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+
+		c.Next()
+	}
+}
+
+// IPRateLimiter manages per-IP rate limiters
+type IPRateLimiter struct {
+	limiters sync.Map
+	rate     rate.Limit
+	burst    int
+	log      *logger.Logger
+}
+
+// NewIPRateLimiter creates a new IP-based rate limiter
+func NewIPRateLimiter(r rate.Limit, burst int, log *logger.Logger) *IPRateLimiter {
+	return &IPRateLimiter{
+		rate:  r,
+		burst: burst,
+		log:   log,
+	}
+}
+
+func (i *IPRateLimiter) getLimiter(ip string) *rate.Limiter {
+	limiter, exists := i.limiters.Load(ip)
+	if !exists {
+		newLimiter := rate.NewLimiter(i.rate, i.burst)
+		i.limiters.Store(ip, newLimiter)
+		return newLimiter
+	}
+	return limiter.(*rate.Limiter)
+}
+
+// RateLimit returns a middleware that rate limits by IP
+func (i *IPRateLimiter) RateLimit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		limiter := i.getLimiter(ip)
+
+		if !limiter.Allow() {
+			if i.log != nil {
+				i.log.RateLimitExceeded(ip, c.Request.URL.Path)
+			}
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": "rate limit exceeded",
+			})
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// AuthRateLimiter is a stricter rate limiter for auth endpoints
+type AuthRateLimiter struct {
+	*IPRateLimiter
+}
+
+// NewAuthRateLimiter creates a rate limiter for authentication endpoints
+// with stricter limits (e.g., 5 requests per minute)
+func NewAuthRateLimiter(log *logger.Logger) *AuthRateLimiter {
+	return &AuthRateLimiter{
+		IPRateLimiter: NewIPRateLimiter(rate.Limit(5.0/60.0), 5, log), // 5 requests per minute, burst of 5
 	}
 }
 

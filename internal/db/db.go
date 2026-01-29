@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"portal_final_backend/internal/config"
 
@@ -13,6 +14,13 @@ func NewPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Production-ready pool configuration
+	poolConfig.MaxConns = 25                       // Maximum number of connections
+	poolConfig.MinConns = 5                        // Minimum number of idle connections
+	poolConfig.MaxConnLifetime = 1 * time.Hour     // Maximum connection lifetime
+	poolConfig.MaxConnIdleTime = 30 * time.Minute  // Maximum idle time before closing
+	poolConfig.HealthCheckPeriod = 1 * time.Minute // Health check interval
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {

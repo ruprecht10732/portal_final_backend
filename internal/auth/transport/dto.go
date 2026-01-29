@@ -4,7 +4,7 @@ import "time"
 
 type SignUpRequest struct {
 	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=8"`
+	Password string `json:"password" validate:"required,strongpassword"`
 }
 
 type SignInRequest struct {
@@ -18,7 +18,7 @@ type ForgotPasswordRequest struct {
 
 type ResetPasswordRequest struct {
 	Token       string `json:"token" validate:"required"`
-	NewPassword string `json:"newPassword" validate:"required,min=8"`
+	NewPassword string `json:"newPassword" validate:"required,strongpassword"`
 }
 
 type VerifyEmailRequest struct {
@@ -53,7 +53,7 @@ type UpdateProfileRequest struct {
 
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword" validate:"required"`
-	NewPassword     string `json:"newPassword" validate:"required,min=8"`
+	NewPassword     string `json:"newPassword" validate:"required,strongpassword"`
 }
 
 type UserSummary struct {
