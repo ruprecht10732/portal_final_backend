@@ -274,6 +274,64 @@ func (r *Repository) MarkServiceNoShow(ctx context.Context, id uuid.UUID, notes 
 	return svc, err
 }
 
+func (r *Repository) RescheduleServiceVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID, noShowNotes string, markAsNoShow bool) (LeadService, error) {
+	var svc LeadService
+	var err error
+
+	if markAsNoShow {
+		// Build no-show note
+		noShowNote := "No show"
+		if noShowNotes != "" {
+			noShowNote = "No show: " + noShowNotes
+		}
+
+		err = r.pool.QueryRow(ctx, `
+			UPDATE lead_services SET 
+				visit_notes = COALESCE(visit_notes || E'\n', '') || $4,
+				visit_scheduled_date = $2,
+				visit_scout_id = $3,
+				visit_measurements = NULL,
+				visit_access_difficulty = NULL,
+				visit_completed_at = NULL,
+				status = 'Scheduled',
+				updated_at = now()
+			WHERE id = $1
+			RETURNING id, lead_id, service_type, status,
+				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
+				created_at, updated_at
+		`, id, scheduledDate, scoutID, noShowNote).Scan(
+			&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status,
+			&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
+			&svc.CreatedAt, &svc.UpdatedAt,
+		)
+	} else {
+		// Simple reschedule without no-show
+		err = r.pool.QueryRow(ctx, `
+			UPDATE lead_services SET 
+				visit_scheduled_date = $2,
+				visit_scout_id = $3,
+				visit_measurements = NULL,
+				visit_access_difficulty = NULL,
+				visit_completed_at = NULL,
+				status = 'Scheduled',
+				updated_at = now()
+			WHERE id = $1
+			RETURNING id, lead_id, service_type, status,
+				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
+				created_at, updated_at
+		`, id, scheduledDate, scoutID).Scan(
+			&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status,
+			&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
+			&svc.CreatedAt, &svc.UpdatedAt,
+		)
+	}
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LeadService{}, ErrServiceNotFound
+	}
+	return svc, err
+}
+
 // CloseAllActiveServices marks all non-terminal services for a lead as Closed
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `

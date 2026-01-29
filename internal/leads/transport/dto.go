@@ -89,39 +89,25 @@ type AssignLeadRequest struct {
 }
 
 type ScheduleVisitRequest struct {
-	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
-	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
-}
-
-type ServiceScheduleVisitRequest struct {
 	ServiceID     uuid.UUID  `json:"serviceId" validate:"required"`
 	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
 	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
 }
 
-type ServiceCompleteSurveyRequest struct {
+type CompleteSurveyRequest struct {
 	ServiceID        uuid.UUID        `json:"serviceId" validate:"required"`
 	Measurements     string           `json:"measurements" validate:"required,min=1,max=500"`
 	AccessDifficulty AccessDifficulty `json:"accessDifficulty" validate:"required,oneof=Low Medium High"`
 	Notes            string           `json:"notes,omitempty" validate:"max=2000"`
 }
 
-type ServiceMarkNoShowRequest struct {
+type MarkNoShowRequest struct {
 	ServiceID uuid.UUID `json:"serviceId" validate:"required"`
 	Notes     string    `json:"notes,omitempty" validate:"max=500"`
 }
 
-type CompleteSurveyRequest struct {
-	Measurements     string           `json:"measurements" validate:"required,min=1,max=500"`
-	AccessDifficulty AccessDifficulty `json:"accessDifficulty" validate:"required,oneof=Low Medium High"`
-	Notes            string           `json:"notes,omitempty" validate:"max=2000"`
-}
-
-type MarkNoShowRequest struct {
-	Notes string `json:"notes,omitempty" validate:"max=500"`
-}
-
 type RescheduleVisitRequest struct {
+	ServiceID     uuid.UUID  `json:"serviceId" validate:"required"`
 	NoShowNotes   string     `json:"noShowNotes,omitempty" validate:"max=500"`
 	MarkAsNoShow  bool       `json:"markAsNoShow"`
 	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`

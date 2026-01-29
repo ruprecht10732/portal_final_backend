@@ -258,7 +258,17 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 }
 
 func (s *Service) ScheduleVisit(ctx context.Context, id uuid.UUID, req transport.ScheduleVisitRequest) (transport.LeadResponse, error) {
-	lead, err := s.repo.ScheduleVisit(ctx, id, req.ScheduledDate, req.ScoutID)
+	// Schedule visit on the service
+	_, err := s.repo.ScheduleServiceVisit(ctx, req.ServiceID, req.ScheduledDate, req.ScoutID)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, ErrServiceNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	// Return the lead with all services
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, ErrLeadNotFound
@@ -266,30 +276,40 @@ func (s *Service) ScheduleVisit(ctx context.Context, id uuid.UUID, req transport
 		return transport.LeadResponse{}, err
 	}
 
-	return toLeadResponse(lead), nil
+	return toLeadResponseWithServices(lead, services), nil
 }
 
 func (s *Service) CompleteSurvey(ctx context.Context, id uuid.UUID, req transport.CompleteSurveyRequest) (transport.LeadResponse, error) {
-	// Get current lead to check scheduled date
-	current, err := s.repo.GetByID(ctx, id)
+	// Get current service to check scheduled date
+	currentService, err := s.repo.GetLeadServiceByID(ctx, req.ServiceID)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, ErrServiceNotFound
 		}
 		return transport.LeadResponse{}, err
 	}
 
 	// Check if visit is scheduled
-	if current.VisitScheduledDate == nil {
+	if currentService.VisitScheduledDate == nil {
 		return transport.LeadResponse{}, ErrVisitNotScheduled
 	}
 
 	// Check if scheduled date is in the future
-	if current.VisitScheduledDate.After(time.Now()) {
+	if currentService.VisitScheduledDate.After(time.Now()) {
 		return transport.LeadResponse{}, ErrVisitInFuture
 	}
 
-	lead, err := s.repo.CompleteSurvey(ctx, id, req.Measurements, string(req.AccessDifficulty), req.Notes)
+	// Complete survey on the service
+	_, err = s.repo.CompleteServiceSurvey(ctx, req.ServiceID, req.Measurements, string(req.AccessDifficulty), req.Notes)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, ErrServiceNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	// Return the lead with all services
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, ErrLeadNotFound
@@ -297,11 +317,21 @@ func (s *Service) CompleteSurvey(ctx context.Context, id uuid.UUID, req transpor
 		return transport.LeadResponse{}, err
 	}
 
-	return toLeadResponse(lead), nil
+	return toLeadResponseWithServices(lead, services), nil
 }
 
 func (s *Service) MarkNoShow(ctx context.Context, id uuid.UUID, req transport.MarkNoShowRequest) (transport.LeadResponse, error) {
-	lead, err := s.repo.MarkNoShow(ctx, id, req.Notes)
+	// Mark no-show on the service
+	_, err := s.repo.MarkServiceNoShow(ctx, req.ServiceID, req.Notes)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, ErrServiceNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	// Return the lead with all services
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, ErrLeadNotFound
@@ -309,21 +339,21 @@ func (s *Service) MarkNoShow(ctx context.Context, id uuid.UUID, req transport.Ma
 		return transport.LeadResponse{}, err
 	}
 
-	return toLeadResponse(lead), nil
+	return toLeadResponseWithServices(lead, services), nil
 }
 
 func (s *Service) RescheduleVisit(ctx context.Context, id uuid.UUID, req transport.RescheduleVisitRequest, actorID uuid.UUID) (transport.LeadResponse, error) {
-	// Get current lead to capture old visit data for history
-	current, err := s.repo.GetByID(ctx, id)
+	// Get current service to capture old visit data for history
+	currentService, err := s.repo.GetLeadServiceByID(ctx, req.ServiceID)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, ErrServiceNotFound
 		}
 		return transport.LeadResponse{}, err
 	}
 
 	// Store the old visit in history if there was a scheduled date
-	if current.VisitScheduledDate != nil {
+	if currentService.VisitScheduledDate != nil {
 		outcome := "rescheduled"
 		if req.MarkAsNoShow {
 			outcome = "no_show"
@@ -331,21 +361,21 @@ func (s *Service) RescheduleVisit(ctx context.Context, id uuid.UUID, req transpo
 
 		_, _ = s.repo.CreateVisitHistory(ctx, repository.CreateVisitHistoryParams{
 			LeadID:           id,
-			ScheduledDate:    *current.VisitScheduledDate,
-			ScoutID:          current.VisitScoutID,
+			ScheduledDate:    *currentService.VisitScheduledDate,
+			ScoutID:          currentService.VisitScoutID,
 			Outcome:          outcome,
-			Measurements:     current.VisitMeasurements,
-			AccessDifficulty: current.VisitAccessDifficulty,
+			Measurements:     currentService.VisitMeasurements,
+			AccessDifficulty: currentService.VisitAccessDifficulty,
 			Notes:            &req.NoShowNotes,
-			CompletedAt:      current.VisitCompletedAt,
+			CompletedAt:      currentService.VisitCompletedAt,
 		})
 	}
 
-	// Perform the reschedule
-	lead, err := s.repo.RescheduleVisit(ctx, id, req.ScheduledDate, req.ScoutID, req.NoShowNotes, req.MarkAsNoShow)
+	// Perform the reschedule on the service
+	_, err = s.repo.RescheduleServiceVisit(ctx, req.ServiceID, req.ScheduledDate, req.ScoutID, req.NoShowNotes, req.MarkAsNoShow)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, ErrLeadNotFound
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, ErrServiceNotFound
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -353,19 +383,30 @@ func (s *Service) RescheduleVisit(ctx context.Context, id uuid.UUID, req transpo
 	// Log the no-show to activity only if marked as no-show
 	if req.MarkAsNoShow {
 		_ = s.repo.AddActivity(ctx, id, actorID, "no_show", map[string]interface{}{
-			"previousScheduledDate": current.VisitScheduledDate,
+			"serviceId":             req.ServiceID,
+			"previousScheduledDate": currentService.VisitScheduledDate,
 			"notes":                 req.NoShowNotes,
 		})
 	}
 
 	// Log the reschedule to activity
 	_ = s.repo.AddActivity(ctx, id, actorID, "rescheduled", map[string]interface{}{
-		"previousScheduledDate": current.VisitScheduledDate,
+		"serviceId":             req.ServiceID,
+		"previousScheduledDate": currentService.VisitScheduledDate,
 		"newScheduledDate":      req.ScheduledDate,
 		"scoutId":               req.ScoutID,
 	})
 
-	return toLeadResponse(lead), nil
+	// Return the lead with all services
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, ErrLeadNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	return toLeadResponseWithServices(lead, services), nil
 }
 
 func (s *Service) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
