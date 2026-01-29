@@ -16,6 +16,14 @@ func (s *Service) AddNote(ctx context.Context, leadID uuid.UUID, authorID uuid.U
 		return transport.LeadNoteResponse{}, ErrInvalidNote
 	}
 
+	noteType := strings.TrimSpace(req.Type)
+	if noteType == "" {
+		noteType = "note"
+	}
+	if noteType != "note" && noteType != "call" && noteType != "text" && noteType != "email" && noteType != "system" {
+		return transport.LeadNoteResponse{}, ErrInvalidNote
+	}
+
 	if _, err := s.repo.GetByID(ctx, leadID); err != nil {
 		if err == repository.ErrNotFound {
 			return transport.LeadNoteResponse{}, ErrLeadNotFound
@@ -26,6 +34,7 @@ func (s *Service) AddNote(ctx context.Context, leadID uuid.UUID, authorID uuid.U
 	note, err := s.repo.CreateLeadNote(ctx, repository.CreateLeadNoteParams{
 		LeadID:   leadID,
 		AuthorID: authorID,
+		Type:     noteType,
 		Body:     body,
 	})
 	if err != nil {
@@ -62,6 +71,7 @@ func toLeadNoteResponse(note repository.LeadNote) transport.LeadNoteResponse {
 		LeadID:      note.LeadID,
 		AuthorID:    note.AuthorID,
 		AuthorEmail: note.AuthorEmail,
+		Type:        note.Type,
 		Body:        note.Body,
 		CreatedAt:   note.CreatedAt,
 		UpdatedAt:   note.UpdatedAt,

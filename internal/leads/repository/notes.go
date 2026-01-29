@@ -12,6 +12,7 @@ type LeadNote struct {
 	LeadID      uuid.UUID
 	AuthorID    uuid.UUID
 	AuthorEmail string
+	Type        string
 	Body        string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -20,6 +21,7 @@ type LeadNote struct {
 type CreateLeadNoteParams struct {
 	LeadID   uuid.UUID
 	AuthorID uuid.UUID
+	Type     string
 	Body     string
 }
 
@@ -27,20 +29,21 @@ func (r *Repository) CreateLeadNote(ctx context.Context, params CreateLeadNotePa
 	var note LeadNote
 	query := `
 		WITH inserted AS (
-			INSERT INTO lead_notes (lead_id, author_id, body)
-			VALUES ($1, $2, $3)
-			RETURNING id, lead_id, author_id, body, created_at, updated_at
+			INSERT INTO lead_notes (lead_id, author_id, type, body)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id, lead_id, author_id, type, body, created_at, updated_at
 		)
-		SELECT inserted.id, inserted.lead_id, inserted.author_id, u.email, inserted.body, inserted.created_at, inserted.updated_at
+		SELECT inserted.id, inserted.lead_id, inserted.author_id, u.email, inserted.type, inserted.body, inserted.created_at, inserted.updated_at
 		FROM inserted
 		JOIN users u ON u.id = inserted.author_id
 	`
 
-	err := r.pool.QueryRow(ctx, query, params.LeadID, params.AuthorID, params.Body).Scan(
+	err := r.pool.QueryRow(ctx, query, params.LeadID, params.AuthorID, params.Type, params.Body).Scan(
 		&note.ID,
 		&note.LeadID,
 		&note.AuthorID,
 		&note.AuthorEmail,
+		&note.Type,
 		&note.Body,
 		&note.CreatedAt,
 		&note.UpdatedAt,
@@ -50,7 +53,7 @@ func (r *Repository) CreateLeadNote(ctx context.Context, params CreateLeadNotePa
 
 func (r *Repository) ListLeadNotes(ctx context.Context, leadID uuid.UUID) ([]LeadNote, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT ln.id, ln.lead_id, ln.author_id, u.email, ln.body, ln.created_at, ln.updated_at
+		SELECT ln.id, ln.lead_id, ln.author_id, u.email, ln.type, ln.body, ln.created_at, ln.updated_at
 		FROM lead_notes ln
 		JOIN users u ON u.id = ln.author_id
 		WHERE ln.lead_id = $1
@@ -69,6 +72,7 @@ func (r *Repository) ListLeadNotes(ctx context.Context, leadID uuid.UUID) ([]Lea
 			&note.LeadID,
 			&note.AuthorID,
 			&note.AuthorEmail,
+			&note.Type,
 			&note.Body,
 			&note.CreatedAt,
 			&note.UpdatedAt,
