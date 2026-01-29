@@ -14,15 +14,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// AuthModuleConfig combines the config interfaces needed by the auth module.
+// This ensures the module only receives the configuration it actually needs.
+type AuthModuleConfig interface {
+	config.AuthServiceConfig
+	config.CookieConfig
+}
+
 // Module is the auth bounded context module implementing http.Module.
 type Module struct {
 	handler *handler.Handler
 	service *service.Service
-	cfg     *config.Config
 }
 
 // NewModule creates and initializes the auth module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, cfg *config.Config, eventBus events.Bus, log *logger.Logger) *Module {
+func NewModule(pool *pgxpool.Pool, cfg AuthModuleConfig, eventBus events.Bus, log *logger.Logger) *Module {
 	repo := repository.New(pool)
 	svc := service.New(repo, cfg, eventBus, log)
 	h := handler.New(svc, cfg)
@@ -30,7 +36,6 @@ func NewModule(pool *pgxpool.Pool, cfg *config.Config, eventBus events.Bus, log 
 	return &Module{
 		handler: h,
 		service: svc,
-		cfg:     cfg,
 	}
 }
 

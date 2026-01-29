@@ -26,7 +26,7 @@ const (
 
 type Service struct {
 	repo     *repository.Repository
-	cfg      *config.Config
+	cfg      config.AuthServiceConfig
 	eventBus events.Bus
 	log      *logger.Logger
 }
@@ -40,7 +40,7 @@ type Profile struct {
 	UpdatedAt     time.Time
 }
 
-func New(repo *repository.Repository, cfg *config.Config, eventBus events.Bus, log *logger.Logger) *Service {
+func New(repo *repository.Repository, cfg config.AuthServiceConfig, eventBus events.Bus, log *logger.Logger) *Service {
 	return &Service{repo: repo, cfg: cfg, eventBus: eventBus, log: log}
 }
 
@@ -71,7 +71,7 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error
 	}
 
 	verifyHash := token.HashSHA256(verifyToken)
-	expiresAt := time.Now().Add(s.cfg.VerifyTokenTTL)
+	expiresAt := time.Now().Add(s.cfg.GetVerifyTokenTTL())
 	if err := s.repo.CreateUserToken(ctx, user.ID, verifyHash, repository.TokenTypeEmailVerify, expiresAt); err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 	}
 
 	resetHash := token.HashSHA256(resetToken)
-	expiresAt := time.Now().Add(s.cfg.ResetTokenTTL)
+	expiresAt := time.Now().Add(s.cfg.GetResetTokenTTL())
 	if err := s.repo.CreateUserToken(ctx, user.ID, resetHash, repository.TokenTypePasswordReset, expiresAt); err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 		return "", "", err
 	}
 
-	accessToken, err := s.signJWT(userID, roles, s.cfg.AccessTokenTTL, accessTokenType, s.cfg.JWTAccessSecret)
+	accessToken, err := s.signJWT(userID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
 	if err != nil {
 		return "", "", err
 	}
@@ -215,7 +215,7 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 	}
 
 	hash := token.HashSHA256(refreshToken)
-	expiresAt := time.Now().Add(s.cfg.RefreshTokenTTL)
+	expiresAt := time.Now().Add(s.cfg.GetRefreshTokenTTL())
 	if err := s.repo.CreateRefreshToken(ctx, userID, hash, expiresAt); err != nil {
 		return "", "", err
 	}
@@ -318,7 +318,7 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, email string) 
 	}
 
 	verifyHash := token.HashSHA256(verifyToken)
-	expiresAt := time.Now().Add(s.cfg.VerifyTokenTTL)
+	expiresAt := time.Now().Add(s.cfg.GetVerifyTokenTTL())
 	if err := s.repo.CreateUserToken(ctx, userID, verifyHash, repository.TokenTypeEmailVerify, expiresAt); err != nil {
 		return Profile{}, err
 	}
@@ -362,11 +362,4 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentP
 
 	_ = s.repo.RevokeAllRefreshTokens(ctx, userID)
 	return nil
-}
-
-// buildURL is no longer used - URL building moved to notification module
-// Kept for potential future use within auth domain
-func (s *Service) buildURL(path string, tokenValue string) string {
-	base := strings.TrimRight(s.cfg.AppBaseURL, "/")
-	return base + path + "?token=" + tokenValue
 }

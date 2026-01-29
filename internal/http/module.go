@@ -31,8 +31,8 @@ type RouterContext struct {
 	Protected *gin.RouterGroup
 	// Admin is the admin-only route group under /api/v1/admin.
 	Admin *gin.RouterGroup
-	// Config is the application configuration.
-	Config *config.Config
+	// Config is the JWT configuration for auth middleware (scoped access).
+	Config config.JWTConfig
 	// AuthMiddleware provides the authentication middleware.
 	AuthMiddleware gin.HandlerFunc
 	// AuthRateLimiter is the stricter rate limiter for auth routes.

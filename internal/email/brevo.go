@@ -51,16 +51,16 @@ type brevoEmailRequest struct {
 	HTMLContent string `json:"htmlContent"`
 }
 
-func NewSender(cfg *config.Config) (Sender, error) {
-	if !cfg.EmailEnabled {
+func NewSender(cfg config.EmailConfig) (Sender, error) {
+	if !cfg.GetEmailEnabled() {
 		return NoopSender{}, nil
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	return &BrevoSender{
-		apiKey:    cfg.BrevoAPIKey,
-		fromName:  cfg.EmailFromName,
-		fromEmail: cfg.EmailFromAddress,
+		apiKey:    cfg.GetBrevoAPIKey(),
+		fromName:  cfg.GetEmailFromName(),
+		fromEmail: cfg.GetEmailFromAddress(),
 		client:    client,
 	}, nil
 }

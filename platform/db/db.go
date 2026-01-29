@@ -12,8 +12,8 @@ import (
 )
 
 // NewPool creates a new database connection pool with production-ready settings.
-func NewPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
-	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+func NewPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, error) {
+	poolConfig, err := pgxpool.ParseConfig(cfg.GetDatabaseURL())
 	if err != nil {
 		return nil, err
 	}

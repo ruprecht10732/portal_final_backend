@@ -16,7 +16,7 @@ import (
 
 type Handler struct {
 	svc *service.Service
-	cfg *config.Config
+	cfg config.CookieConfig
 }
 
 const (
@@ -24,7 +24,7 @@ const (
 	msgValidationFailed = "validation failed"
 )
 
-func New(svc *service.Service, cfg *config.Config) *Handler {
+func New(svc *service.Service, cfg config.CookieConfig) *Handler {
 	return &Handler{svc: svc, cfg: cfg}
 }
 
@@ -163,7 +163,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
-	refreshToken, err := c.Cookie(h.cfg.RefreshCookieName)
+	refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName())
 	if err != nil || refreshToken == "" {
 		httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
 		return
@@ -180,7 +180,7 @@ func (h *Handler) Refresh(c *gin.Context) {
 }
 
 func (h *Handler) SignOut(c *gin.Context) {
-	if refreshToken, err := c.Cookie(h.cfg.RefreshCookieName); err == nil && refreshToken != "" {
+	if refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName()); err == nil && refreshToken != "" {
 		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken)) {
 			return
 		}
@@ -269,28 +269,28 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 }
 
 func (h *Handler) setRefreshCookie(c *gin.Context, value string) {
-	maxAge := int(h.cfg.RefreshTokenTTL / time.Second)
-	c.SetSameSite(h.cfg.RefreshCookieSameSite)
+	maxAge := int(h.cfg.GetRefreshTokenTTL() / time.Second)
+	c.SetSameSite(h.cfg.GetRefreshCookieSameSite())
 	c.SetCookie(
-		h.cfg.RefreshCookieName,
+		h.cfg.GetRefreshCookieName(),
 		value,
 		maxAge,
-		h.cfg.RefreshCookiePath,
-		h.cfg.RefreshCookieDomain,
-		h.cfg.RefreshCookieSecure,
+		h.cfg.GetRefreshCookiePath(),
+		h.cfg.GetRefreshCookieDomain(),
+		h.cfg.GetRefreshCookieSecure(),
 		true,
 	)
 }
 
 func (h *Handler) clearRefreshCookie(c *gin.Context) {
-	c.SetSameSite(h.cfg.RefreshCookieSameSite)
+	c.SetSameSite(h.cfg.GetRefreshCookieSameSite())
 	c.SetCookie(
-		h.cfg.RefreshCookieName,
+		h.cfg.GetRefreshCookieName(),
 		"",
 		-1,
-		h.cfg.RefreshCookiePath,
-		h.cfg.RefreshCookieDomain,
-		h.cfg.RefreshCookieSecure,
+		h.cfg.GetRefreshCookiePath(),
+		h.cfg.GetRefreshCookieDomain(),
+		h.cfg.GetRefreshCookieSecure(),
 		true,
 	)
 }

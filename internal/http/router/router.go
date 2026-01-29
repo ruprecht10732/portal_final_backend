@@ -36,13 +36,13 @@ func New(app *apphttp.App) *gin.Engine {
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: cfg.CORSAllowCreds,
+		AllowCredentials: cfg.GetCORSAllowCreds(),
 		MaxAge:           12 * time.Hour,
 	}
-	if cfg.CORSAllowAll {
+	if cfg.GetCORSAllowAll() {
 		corsConfig.AllowAllOrigins = true
 	} else {
-		corsConfig.AllowOrigins = cfg.CORSOrigins
+		corsConfig.AllowOrigins = cfg.GetCORSOrigins()
 	}
 	engine.Use(cors.New(corsConfig))
 

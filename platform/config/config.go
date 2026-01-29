@@ -12,6 +12,64 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// =============================================================================
+// Module-Specific Config Interfaces (Principle of Least Privilege)
+// =============================================================================
+
+// DatabaseConfig provides database connection settings.
+type DatabaseConfig interface {
+	GetDatabaseURL() string
+}
+
+// JWTConfig provides JWT validation settings for middleware.
+type JWTConfig interface {
+	GetJWTAccessSecret() string
+}
+
+// AuthServiceConfig provides settings needed by the auth service.
+type AuthServiceConfig interface {
+	JWTConfig
+	GetAccessTokenTTL() time.Duration
+	GetRefreshTokenTTL() time.Duration
+	GetVerifyTokenTTL() time.Duration
+	GetResetTokenTTL() time.Duration
+}
+
+// CookieConfig provides settings for refresh token cookies.
+type CookieConfig interface {
+	GetRefreshCookieName() string
+	GetRefreshCookieDomain() string
+	GetRefreshCookiePath() string
+	GetRefreshCookieSecure() bool
+	GetRefreshCookieSameSite() http.SameSite
+	GetRefreshTokenTTL() time.Duration
+}
+
+// EmailConfig provides settings for email sending.
+type EmailConfig interface {
+	GetEmailEnabled() bool
+	GetBrevoAPIKey() string
+	GetEmailFromName() string
+	GetEmailFromAddress() string
+}
+
+// NotificationConfig provides settings for the notification module.
+type NotificationConfig interface {
+	GetAppBaseURL() string
+}
+
+// HTTPConfig provides settings for the HTTP server.
+type HTTPConfig interface {
+	GetHTTPAddr() string
+	GetCORSAllowAll() bool
+	GetCORSOrigins() []string
+	GetCORSAllowCreds() bool
+}
+
+// =============================================================================
+// Main Config Struct
+// =============================================================================
+
 // Config holds all application configuration values.
 type Config struct {
 	Env                   string
@@ -37,6 +95,44 @@ type Config struct {
 	RefreshCookieSecure   bool
 	RefreshCookieSameSite http.SameSite
 }
+
+// =============================================================================
+// Interface Implementations
+// =============================================================================
+
+// DatabaseConfig implementation
+func (c *Config) GetDatabaseURL() string { return c.DatabaseURL }
+
+// JWTConfig implementation
+func (c *Config) GetJWTAccessSecret() string { return c.JWTAccessSecret }
+
+// AuthServiceConfig implementation
+func (c *Config) GetAccessTokenTTL() time.Duration  { return c.AccessTokenTTL }
+func (c *Config) GetRefreshTokenTTL() time.Duration { return c.RefreshTokenTTL }
+func (c *Config) GetVerifyTokenTTL() time.Duration  { return c.VerifyTokenTTL }
+func (c *Config) GetResetTokenTTL() time.Duration   { return c.ResetTokenTTL }
+
+// CookieConfig implementation
+func (c *Config) GetRefreshCookieName() string           { return c.RefreshCookieName }
+func (c *Config) GetRefreshCookieDomain() string         { return c.RefreshCookieDomain }
+func (c *Config) GetRefreshCookiePath() string           { return c.RefreshCookiePath }
+func (c *Config) GetRefreshCookieSecure() bool           { return c.RefreshCookieSecure }
+func (c *Config) GetRefreshCookieSameSite() http.SameSite { return c.RefreshCookieSameSite }
+
+// EmailConfig implementation
+func (c *Config) GetEmailEnabled() bool      { return c.EmailEnabled }
+func (c *Config) GetBrevoAPIKey() string     { return c.BrevoAPIKey }
+func (c *Config) GetEmailFromName() string   { return c.EmailFromName }
+func (c *Config) GetEmailFromAddress() string { return c.EmailFromAddress }
+
+// NotificationConfig implementation
+func (c *Config) GetAppBaseURL() string { return c.AppBaseURL }
+
+// HTTPConfig implementation
+func (c *Config) GetHTTPAddr() string      { return c.HTTPAddr }
+func (c *Config) GetCORSAllowAll() bool    { return c.CORSAllowAll }
+func (c *Config) GetCORSOrigins() []string { return c.CORSOrigins }
+func (c *Config) GetCORSAllowCreds() bool  { return c.CORSAllowCreds }
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {

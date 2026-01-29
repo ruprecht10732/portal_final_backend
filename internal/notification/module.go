@@ -18,12 +18,12 @@ import (
 // Module handles all notification-related event subscriptions.
 type Module struct {
 	sender email.Sender
-	cfg    *config.Config
+	cfg    config.NotificationConfig
 	log    *logger.Logger
 }
 
 // New creates a new notification module.
-func New(sender email.Sender, cfg *config.Config, log *logger.Logger) *Module {
+func New(sender email.Sender, cfg config.NotificationConfig, log *logger.Logger) *Module {
 	return &Module{
 		sender: sender,
 		cfg:    cfg,
@@ -161,6 +161,6 @@ func (m *Module) handleVisitRescheduled(ctx context.Context, e events.VisitResch
 }
 
 func (m *Module) buildURL(path string, tokenValue string) string {
-	base := strings.TrimRight(m.cfg.AppBaseURL, "/")
+	base := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
 	return base + path + "?token=" + tokenValue
 }

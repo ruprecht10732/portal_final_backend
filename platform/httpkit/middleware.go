@@ -124,7 +124,7 @@ func NewAuthRateLimiter(log *logger.Logger) *AuthRateLimiter {
 }
 
 // AuthRequired returns middleware that validates JWT access tokens.
-func AuthRequired(cfg *config.Config) gin.HandlerFunc {
+func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawToken, ok := extractBearerToken(c.GetHeader("Authorization"))
 		if !ok {
@@ -210,12 +210,12 @@ func extractBearerToken(authHeader string) (string, bool) {
 	return rawToken, true
 }
 
-func parseAccessClaims(rawToken string, cfg *config.Config) (jwt.MapClaims, error) {
+func parseAccessClaims(rawToken string, cfg config.JWTConfig) (jwt.MapClaims, error) {
 	parsed, err := jwt.Parse(rawToken, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("invalid signing method")
 		}
-		return []byte(cfg.JWTAccessSecret), nil
+		return []byte(cfg.GetJWTAccessSecret()), nil
 	})
 	if err != nil || !parsed.Valid {
 		return nil, errors.New(errInvalidToken)

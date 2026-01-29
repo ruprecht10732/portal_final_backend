@@ -7,11 +7,17 @@ import (
 	"portal_final_backend/platform/logger"
 )
 
+// RouterConfig combines the config interfaces needed by the HTTP router.
+type RouterConfig interface {
+	config.HTTPConfig
+	config.JWTConfig
+}
+
 // App holds the fully initialized application dependencies.
 // This is populated by main.go (the composition root) and passed to the router.
 type App struct {
-	// Config holds the application configuration.
-	Config *config.Config
+	// Config holds the router configuration (HTTP and JWT settings only).
+	Config RouterConfig
 	// Logger is the structured logger.
 	Logger *logger.Logger
 	// EventBus is the domain event bus for cross-module communication.
