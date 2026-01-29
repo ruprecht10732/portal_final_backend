@@ -41,6 +41,10 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 		ServiceType:        string(req.ServiceType),
 	}
 
+	if req.AssigneeID.Set {
+		params.AssignedAgentID = req.AssigneeID.Value
+	}
+
 	if req.Email != "" {
 		params.ConsumerEmail = &req.Email
 	}

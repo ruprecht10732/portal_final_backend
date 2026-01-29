@@ -54,6 +54,7 @@ type CreateLeadRequest struct {
 	ZipCode      string       `json:"zipCode" validate:"required,min=1,max=20"`
 	City         string       `json:"city" validate:"required,min=1,max=100"`
 	ServiceType  ServiceType  `json:"serviceType" validate:"required,oneof=Windows Insulation Solar"`
+	AssigneeID   OptionalUUID `json:"assigneeId,omitempty" validate:"-"`
 }
 
 type UpdateLeadRequest struct {

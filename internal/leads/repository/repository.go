@@ -60,6 +60,7 @@ type CreateLeadParams struct {
 	AddressZipCode     string
 	AddressCity        string
 	ServiceType        string
+	AssignedAgentID    *uuid.UUID
 }
 
 func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead, error) {
@@ -68,8 +69,8 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		INSERT INTO leads (
 			consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New')
+			service_type, status, assigned_agent_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11)
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
@@ -78,7 +79,7 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 	`,
 		params.ConsumerFirstName, params.ConsumerLastName, params.ConsumerPhone, params.ConsumerEmail, params.ConsumerRole,
 		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity,
-		params.ServiceType,
+		params.ServiceType, params.AssignedAgentID,
 	).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
