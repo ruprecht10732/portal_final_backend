@@ -33,6 +33,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
 	rg.DELETE("/:id", h.Delete)
+	rg.POST("/bulk-delete", h.BulkDelete)
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.PUT(":id/assign", h.Assign)
 	rg.POST("/:id/schedule", h.ScheduleVisit)
@@ -192,6 +193,30 @@ func (h *Handler) Delete(c *gin.Context) {
 	}
 
 	response.OK(c, gin.H{"message": "lead deleted"})
+}
+
+func (h *Handler) BulkDelete(c *gin.Context) {
+	var req transport.BulkDeleteLeadsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	deletedCount, err := h.svc.BulkDelete(c.Request.Context(), req.IDs)
+	if err != nil {
+		if err == service.ErrLeadNotFound {
+			response.Error(c, http.StatusNotFound, err.Error(), nil)
+			return
+		}
+		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	response.OK(c, transport.BulkDeleteLeadsResponse{DeletedCount: deletedCount})
 }
 
 func (h *Handler) UpdateStatus(c *gin.Context) {

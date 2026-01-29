@@ -316,6 +316,17 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (s *Service) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error) {
+	deletedCount, err := s.repo.BulkDelete(ctx, ids)
+	if err != nil {
+		return 0, err
+	}
+	if deletedCount == 0 {
+		return 0, ErrLeadNotFound
+	}
+	return deletedCount, nil
+}
+
 func toLeadResponse(lead repository.Lead) transport.LeadResponse {
 	resp := transport.LeadResponse{
 		ID:              lead.ID,

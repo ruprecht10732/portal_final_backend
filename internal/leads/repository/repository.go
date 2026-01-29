@@ -98,7 +98,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Lead, error) {
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
-		FROM leads WHERE id = $1
+		FROM leads WHERE id = $1 AND deleted_at IS NULL
 	`, id).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
@@ -120,7 +120,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string) (Lead, error)
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
-		FROM leads WHERE consumer_phone = $1
+		FROM leads WHERE consumer_phone = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, phone).Scan(
@@ -227,7 +227,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 
 	query := fmt.Sprintf(`
 		UPDATE leads SET %s
-		WHERE id = $%d
+		WHERE id = $%d AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
@@ -253,7 +253,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status stri
 	var lead Lead
 	err := r.pool.QueryRow(ctx, `
 		UPDATE leads SET status = $2, updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
@@ -275,7 +275,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status stri
 func (r *Repository) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE leads SET viewed_by_id = $2, viewed_at = now(), updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND deleted_at IS NULL
 	`, id, userID)
 	return err
 }
@@ -305,7 +305,7 @@ func (r *Repository) ScheduleVisit(ctx context.Context, id uuid.UUID, scheduledD
 			visit_scout_id = $3,
 			status = 'Scheduled',
 			updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
@@ -338,7 +338,7 @@ func (r *Repository) CompleteSurvey(ctx context.Context, id uuid.UUID, measureme
 			visit_completed_at = now(),
 			status = 'Surveyed',
 			updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
@@ -368,7 +368,7 @@ func (r *Repository) MarkNoShow(ctx context.Context, id uuid.UUID, notes string)
 			visit_notes = COALESCE(visit_notes || E'\n', '') || COALESCE($2, 'No show'),
 			status = 'Needs_Rescheduling',
 			updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
 			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
@@ -398,7 +398,7 @@ type ListParams struct {
 }
 
 func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, error) {
-	whereClauses := []string{"1=1"}
+	whereClauses := []string{"deleted_at IS NULL"}
 	args := []interface{}{}
 	argIdx := 1
 
@@ -489,7 +489,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 }
 
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
-	result, err := r.pool.Exec(ctx, "DELETE FROM leads WHERE id = $1", id)
+	result, err := r.pool.Exec(ctx, "UPDATE leads SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL", id)
 	if err != nil {
 		return err
 	}
@@ -497,4 +497,12 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *Repository) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error) {
+	result, err := r.pool.Exec(ctx, "UPDATE leads SET deleted_at = now(), updated_at = now() WHERE id = ANY($1) AND deleted_at IS NULL", ids)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
 }

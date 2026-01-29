@@ -95,6 +95,10 @@ type MarkNoShowRequest struct {
 	Notes string `json:"notes,omitempty" validate:"max=500"`
 }
 
+type BulkDeleteLeadsRequest struct {
+	IDs []uuid.UUID `json:"ids" validate:"required,min=1,dive,required"`
+}
+
 type ListLeadsRequest struct {
 	Status      *LeadStatus  `form:"status" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling"`
 	ServiceType *ServiceType `form:"serviceType" validate:"omitempty,oneof=Windows Insulation Solar"`
@@ -155,4 +159,8 @@ type LeadListResponse struct {
 type DuplicateCheckResponse struct {
 	IsDuplicate  bool          `json:"isDuplicate"`
 	ExistingLead *LeadResponse `json:"existingLead,omitempty"`
+}
+
+type BulkDeleteLeadsResponse struct {
+	DeletedCount int `json:"deletedCount"`
 }
