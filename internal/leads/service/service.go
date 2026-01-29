@@ -6,6 +6,7 @@ import (
 
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/internal/phone"
 
 	"github.com/google/uuid"
 )
@@ -25,6 +26,8 @@ func New(repo *repository.Repository) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (transport.LeadResponse, error) {
+	req.Phone = phone.NormalizeE164(req.Phone)
+
 	params := repository.CreateLeadParams{
 		ConsumerFirstName:  req.FirstName,
 		ConsumerLastName:   req.LastName,
@@ -71,7 +74,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 		params.ConsumerLastName = req.LastName
 	}
 	if req.Phone != nil {
-		params.ConsumerPhone = req.Phone
+		normalized := phone.NormalizeE164(*req.Phone)
+		params.ConsumerPhone = &normalized
 	}
 	if req.Email != nil {
 		params.ConsumerEmail = req.Email
