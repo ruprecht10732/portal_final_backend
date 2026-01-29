@@ -37,11 +37,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.PUT(":id/assign", h.Assign)
 	rg.POST("/:id/schedule", h.ScheduleVisit)
+	rg.POST("/:id/reschedule", h.RescheduleVisit)
 	rg.POST("/:id/survey", h.CompleteSurvey)
 	rg.POST("/:id/no-show", h.MarkNoShow)
 	rg.POST("/:id/view", h.MarkViewed)
-		rg.GET("/:id/notes", h.ListNotes)
-		rg.POST("/:id/notes", h.AddNote)
+	rg.GET("/:id/notes", h.ListNotes)
+	rg.POST("/:id/notes", h.AddNote)
+	rg.GET("/:id/visit-history", h.ListVisitHistory)
 }
 
 func (h *Handler) Create(c *gin.Context) {
@@ -281,6 +283,42 @@ func (h *Handler) ScheduleVisit(c *gin.Context) {
 	response.OK(c, lead)
 }
 
+func (h *Handler) RescheduleVisit(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.RescheduleVisitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	actorID, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+
+	lead, err := h.svc.RescheduleVisit(c.Request.Context(), id, req, actorID.(uuid.UUID))
+	if err != nil {
+		if err == service.ErrLeadNotFound {
+			response.Error(c, http.StatusNotFound, err.Error(), nil)
+			return
+		}
+		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	response.OK(c, lead)
+}
+
 func (h *Handler) CompleteSurvey(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -383,6 +421,26 @@ func (h *Handler) List(c *gin.Context) {
 
 	result, err := h.svc.List(c.Request.Context(), req)
 	if err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	response.OK(c, result)
+}
+
+func (h *Handler) ListVisitHistory(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.svc.ListVisitHistory(c.Request.Context(), id)
+	if err != nil {
+		if err == service.ErrLeadNotFound {
+			response.Error(c, http.StatusNotFound, err.Error(), nil)
+			return
+		}
 		response.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}

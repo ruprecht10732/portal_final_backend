@@ -237,6 +237,62 @@ func (s *Service) MarkNoShow(ctx context.Context, id uuid.UUID, req transport.Ma
 	return toLeadResponse(lead), nil
 }
 
+func (s *Service) RescheduleVisit(ctx context.Context, id uuid.UUID, req transport.RescheduleVisitRequest, actorID uuid.UUID) (transport.LeadResponse, error) {
+	// Get current lead to capture old visit data for history
+	current, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, ErrLeadNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	// Store the old visit in history if there was a scheduled date
+	if current.VisitScheduledDate != nil {
+		outcome := "rescheduled"
+		if req.MarkAsNoShow {
+			outcome = "no_show"
+		}
+
+		_, _ = s.repo.CreateVisitHistory(ctx, repository.CreateVisitHistoryParams{
+			LeadID:           id,
+			ScheduledDate:    *current.VisitScheduledDate,
+			ScoutID:          current.VisitScoutID,
+			Outcome:          outcome,
+			Measurements:     current.VisitMeasurements,
+			AccessDifficulty: current.VisitAccessDifficulty,
+			Notes:            &req.NoShowNotes,
+			CompletedAt:      current.VisitCompletedAt,
+		})
+	}
+
+	// Perform the reschedule
+	lead, err := s.repo.RescheduleVisit(ctx, id, req.ScheduledDate, req.ScoutID, req.NoShowNotes, req.MarkAsNoShow)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, ErrLeadNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	// Log the no-show to activity only if marked as no-show
+	if req.MarkAsNoShow {
+		_ = s.repo.AddActivity(ctx, id, actorID, "no_show", map[string]interface{}{
+			"previousScheduledDate": current.VisitScheduledDate,
+			"notes":                 req.NoShowNotes,
+		})
+	}
+
+	// Log the reschedule to activity
+	_ = s.repo.AddActivity(ctx, id, actorID, "rescheduled", map[string]interface{}{
+		"previousScheduledDate": current.VisitScheduledDate,
+		"newScheduledDate":      req.ScheduledDate,
+		"scoutId":               req.ScoutID,
+	})
+
+	return toLeadResponse(lead), nil
+}
+
 func (s *Service) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
 	return s.repo.SetViewedBy(ctx, id, userID)
 }

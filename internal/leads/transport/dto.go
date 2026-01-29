@@ -95,6 +95,13 @@ type MarkNoShowRequest struct {
 	Notes string `json:"notes,omitempty" validate:"max=500"`
 }
 
+type RescheduleVisitRequest struct {
+	NoShowNotes   string     `json:"noShowNotes,omitempty" validate:"max=500"`
+	MarkAsNoShow  bool       `json:"markAsNoShow"`
+	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
+	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
+}
+
 type BulkDeleteLeadsRequest struct {
 	IDs []uuid.UUID `json:"ids" validate:"required,min=1,dive,required"`
 }
@@ -163,4 +170,31 @@ type DuplicateCheckResponse struct {
 
 type BulkDeleteLeadsResponse struct {
 	DeletedCount int `json:"deletedCount"`
+}
+
+// Visit history types
+type VisitOutcome string
+
+const (
+	VisitOutcomeCompleted   VisitOutcome = "completed"
+	VisitOutcomeNoShow      VisitOutcome = "no_show"
+	VisitOutcomeRescheduled VisitOutcome = "rescheduled"
+	VisitOutcomeCancelled   VisitOutcome = "cancelled"
+)
+
+type VisitHistoryResponse struct {
+	ID               uuid.UUID         `json:"id"`
+	LeadID           uuid.UUID         `json:"leadId"`
+	ScheduledDate    time.Time         `json:"scheduledDate"`
+	ScoutID          *uuid.UUID        `json:"scoutId,omitempty"`
+	Outcome          VisitOutcome      `json:"outcome"`
+	Measurements     *string           `json:"measurements,omitempty"`
+	AccessDifficulty *AccessDifficulty `json:"accessDifficulty,omitempty"`
+	Notes            *string           `json:"notes,omitempty"`
+	CompletedAt      *time.Time        `json:"completedAt,omitempty"`
+	CreatedAt        time.Time         `json:"createdAt"`
+}
+
+type VisitHistoryListResponse struct {
+	Items []VisitHistoryResponse `json:"items"`
 }

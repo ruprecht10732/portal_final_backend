@@ -387,6 +387,72 @@ func (r *Repository) MarkNoShow(ctx context.Context, id uuid.UUID, notes string)
 	return lead, err
 }
 
+func (r *Repository) RescheduleVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID, noShowNotes string, markAsNoShow bool) (Lead, error) {
+	var lead Lead
+	var err error
+
+	if markAsNoShow {
+		// Build no-show note
+		noShowNote := "No show"
+		if noShowNotes != "" {
+			noShowNote = "No show: " + noShowNotes
+		}
+
+		err = r.pool.QueryRow(ctx, `
+			UPDATE leads SET 
+				visit_notes = COALESCE(visit_notes || E'\n', '') || $4,
+				visit_scheduled_date = $2,
+				visit_scout_id = $3,
+				visit_measurements = NULL,
+				visit_access_difficulty = NULL,
+				visit_completed_at = NULL,
+				status = 'Scheduled',
+				updated_at = now()
+			WHERE id = $1 AND deleted_at IS NULL
+			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
+				address_street, address_house_number, address_zip_code, address_city,
+				service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
+				created_at, updated_at
+		`, id, scheduledDate, scoutID, noShowNote).Scan(
+			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
+			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
+			&lead.CreatedAt, &lead.UpdatedAt,
+		)
+	} else {
+		// Simple reschedule without no-show
+		err = r.pool.QueryRow(ctx, `
+			UPDATE leads SET 
+				visit_scheduled_date = $2,
+				visit_scout_id = $3,
+				visit_measurements = NULL,
+				visit_access_difficulty = NULL,
+				visit_completed_at = NULL,
+				status = 'Scheduled',
+				updated_at = now()
+			WHERE id = $1 AND deleted_at IS NULL
+			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
+				address_street, address_house_number, address_zip_code, address_city,
+				service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
+				created_at, updated_at
+		`, id, scheduledDate, scoutID).Scan(
+			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
+			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
+			&lead.CreatedAt, &lead.UpdatedAt,
+		)
+	}
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Lead{}, ErrNotFound
+	}
+	return lead, err
+}
+
 type ListParams struct {
 	Status      *string
 	ServiceType *string
