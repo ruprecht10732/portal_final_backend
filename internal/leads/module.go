@@ -6,27 +6,41 @@ import (
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/leads/handler"
+	"portal_final_backend/internal/leads/management"
+	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/internal/leads/service"
+	"portal_final_backend/internal/leads/scheduling"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Module is the leads bounded context module implementing http.Module.
 type Module struct {
-	handler *handler.Handler
-	service *service.Service
+	handler    *handler.Handler
+	management *management.Service
+	scheduling *scheduling.Service
+	notes      *notes.Service
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
 func NewModule(pool *pgxpool.Pool, eventBus events.Bus) *Module {
+	// Create shared repository
 	repo := repository.New(pool)
-	svc := service.New(repo, eventBus)
-	h := handler.New(svc)
+
+	// Create focused services (vertical slices)
+	mgmtSvc := management.New(repo)
+	schedulingSvc := scheduling.New(repo, eventBus)
+	notesSvc := notes.New(repo)
+
+	// Create handlers
+	notesHandler := handler.NewNotesHandler(notesSvc)
+	h := handler.New(mgmtSvc, schedulingSvc, notesHandler)
 
 	return &Module{
-		handler: h,
-		service: svc,
+		handler:    h,
+		management: mgmtSvc,
+		scheduling: schedulingSvc,
+		notes:      notesSvc,
 	}
 }
 
@@ -35,9 +49,19 @@ func (m *Module) Name() string {
 	return "leads"
 }
 
-// Service returns the leads service for external use if needed.
-func (m *Module) Service() *service.Service {
-	return m.service
+// ManagementService returns the lead management service for external use.
+func (m *Module) ManagementService() *management.Service {
+	return m.management
+}
+
+// SchedulingService returns the lead scheduling service for external use.
+func (m *Module) SchedulingService() *scheduling.Service {
+	return m.scheduling
+}
+
+// NotesService returns the lead notes service for external use.
+func (m *Module) NotesService() *notes.Service {
+	return m.notes
 }
 
 // RegisterRoutes mounts leads routes on the provided router context.

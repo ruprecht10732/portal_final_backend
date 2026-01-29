@@ -1,9 +1,10 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
-	"portal_final_backend/internal/leads/service"
+	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
@@ -12,16 +13,27 @@ import (
 	"github.com/google/uuid"
 )
 
-func (h *Handler) ListNotes(c *gin.Context) {
+// NotesHandler handles HTTP requests for lead notes.
+// This is separate from the main Handler to allow independent wiring.
+type NotesHandler struct {
+	svc *notes.Service
+}
+
+// NewNotesHandler creates a new notes handler.
+func NewNotesHandler(svc *notes.Service) *NotesHandler {
+	return &NotesHandler{svc: svc}
+}
+
+func (h *NotesHandler) ListNotes(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	notes, err := h.svc.ListNotes(c.Request.Context(), id)
+	notesList, err := h.svc.List(c.Request.Context(), id)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, notes.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -29,10 +41,10 @@ func (h *Handler) ListNotes(c *gin.Context) {
 		return
 	}
 
-	httpkit.OK(c, notes)
+	httpkit.OK(c, notesList)
 }
 
-func (h *Handler) AddNote(c *gin.Context) {
+func (h *NotesHandler) AddNote(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -56,12 +68,12 @@ func (h *Handler) AddNote(c *gin.Context) {
 	}
 
 	authorID := actorIDValue.(uuid.UUID)
-	created, err := h.svc.AddNote(c.Request.Context(), id, authorID, req)
+	created, err := h.svc.Add(c.Request.Context(), id, authorID, req)
 	if err != nil {
-		switch err {
-		case service.ErrLeadNotFound:
+		switch {
+		case errors.Is(err, notes.ErrLeadNotFound):
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-		case service.ErrInvalidNote:
+		case errors.Is(err, notes.ErrInvalidNote):
 			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		default:
 			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)

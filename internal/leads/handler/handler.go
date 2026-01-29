@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
-	"portal_final_backend/internal/leads/service"
+	"portal_final_backend/internal/leads/management"
+	"portal_final_backend/internal/leads/scheduling"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
@@ -12,8 +14,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// Handler handles HTTP requests for leads.
+// Uses focused services following vertical slicing pattern.
 type Handler struct {
-	svc *service.Service
+	mgmt         *management.Service
+	scheduling   *scheduling.Service
+	notesHandler *NotesHandler
 }
 
 const (
@@ -21,8 +27,9 @@ const (
 	msgValidationFailed = "validation failed"
 )
 
-func New(svc *service.Service) *Handler {
-	return &Handler{svc: svc}
+// New creates a new leads handler with focused services.
+func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler) *Handler {
+	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -40,8 +47,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/survey", h.CompleteSurvey)
 	rg.POST("/:id/no-show", h.MarkNoShow)
 	rg.POST("/:id/view", h.MarkViewed)
-	rg.GET("/:id/notes", h.ListNotes)
-	rg.POST("/:id/notes", h.AddNote)
+	rg.GET("/:id/notes", h.notesHandler.ListNotes)
+	rg.POST("/:id/notes", h.notesHandler.AddNote)
 	rg.GET("/:id/visit-history", h.ListVisitHistory)
 	// Service-specific routes
 	rg.POST("/:id/services", h.AddService)
@@ -59,7 +66,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.Create(c.Request.Context(), req)
+	lead, err := h.mgmt.Create(c.Request.Context(), req)
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
@@ -75,9 +82,9 @@ func (h *Handler) GetByID(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.GetByID(c.Request.Context(), id)
+	lead, err := h.mgmt.GetByID(c.Request.Context(), id)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, management.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -119,13 +126,13 @@ func (h *Handler) Update(c *gin.Context) {
 	actorID := actorIDValue.(uuid.UUID)
 	roles := rolesValue.([]string)
 
-	lead, err := h.svc.Update(c.Request.Context(), id, req, actorID, roles)
+	lead, err := h.mgmt.Update(c.Request.Context(), id, req, actorID, roles)
 	if err != nil {
-		switch err {
-		case service.ErrLeadNotFound:
+		switch {
+		case errors.Is(err, management.ErrLeadNotFound):
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
-		case service.ErrForbidden:
+		case errors.Is(err, management.ErrForbidden):
 			httpkit.Error(c, http.StatusForbidden, err.Error(), nil)
 			return
 		default:
@@ -164,13 +171,13 @@ func (h *Handler) Assign(c *gin.Context) {
 	actorID := actorIDValue.(uuid.UUID)
 	roles := rolesValue.([]string)
 
-	lead, err := h.svc.Assign(c.Request.Context(), id, req.AssigneeID, actorID, roles)
+	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, actorID, roles)
 	if err != nil {
-		switch err {
-		case service.ErrLeadNotFound:
+		switch {
+		case errors.Is(err, management.ErrLeadNotFound):
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
-		case service.ErrForbidden:
+		case errors.Is(err, management.ErrForbidden):
 			httpkit.Error(c, http.StatusForbidden, err.Error(), nil)
 			return
 		default:
@@ -189,8 +196,8 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
-		if err == service.ErrLeadNotFound {
+	if err := h.mgmt.Delete(c.Request.Context(), id); err != nil {
+		if errors.Is(err, management.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -212,9 +219,9 @@ func (h *Handler) BulkDelete(c *gin.Context) {
 		return
 	}
 
-	deletedCount, err := h.svc.BulkDelete(c.Request.Context(), req.IDs)
+	deletedCount, err := h.mgmt.BulkDelete(c.Request.Context(), req.IDs)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, management.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -242,9 +249,9 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.UpdateStatus(c.Request.Context(), id, req)
+	lead, err := h.mgmt.UpdateStatus(c.Request.Context(), id, req)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, management.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -272,9 +279,9 @@ func (h *Handler) ScheduleVisit(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.ScheduleVisit(c.Request.Context(), id, req)
+	lead, err := h.scheduling.ScheduleVisit(c.Request.Context(), id, req)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, scheduling.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -308,9 +315,9 @@ func (h *Handler) RescheduleVisit(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.RescheduleVisit(c.Request.Context(), id, req, actorID.(uuid.UUID))
+	lead, err := h.scheduling.RescheduleVisit(c.Request.Context(), id, req, actorID.(uuid.UUID))
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, scheduling.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -338,9 +345,9 @@ func (h *Handler) CompleteSurvey(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.CompleteSurvey(c.Request.Context(), id, req)
+	lead, err := h.scheduling.CompleteSurvey(c.Request.Context(), id, req)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, scheduling.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -364,9 +371,9 @@ func (h *Handler) MarkNoShow(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.MarkNoShow(c.Request.Context(), id, req)
+	lead, err := h.scheduling.MarkNoShow(c.Request.Context(), id, req)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, scheduling.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -390,7 +397,7 @@ func (h *Handler) MarkViewed(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.SetViewedBy(c.Request.Context(), id, userID.(uuid.UUID)); err != nil {
+	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, userID.(uuid.UUID)); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
@@ -405,7 +412,7 @@ func (h *Handler) CheckDuplicate(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.CheckDuplicate(c.Request.Context(), phone)
+	result, err := h.mgmt.CheckDuplicate(c.Request.Context(), phone)
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
@@ -421,7 +428,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.List(c.Request.Context(), req)
+	result, err := h.mgmt.List(c.Request.Context(), req)
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
@@ -437,9 +444,9 @@ func (h *Handler) ListVisitHistory(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.ListVisitHistory(c.Request.Context(), id)
+	result, err := h.scheduling.ListVisitHistory(c.Request.Context(), id)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, scheduling.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -467,9 +474,9 @@ func (h *Handler) AddService(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.AddService(c.Request.Context(), id, req)
+	lead, err := h.mgmt.AddService(c.Request.Context(), id, req)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		if errors.Is(err, management.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
 		}
@@ -503,19 +510,14 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req)
+	lead, err := h.mgmt.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req)
 	if err != nil {
-		switch err {
-		case service.ErrLeadNotFound:
+		if errors.Is(err, management.ErrLeadNotFound) {
 			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		case service.ErrServiceNotFound:
-			httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
-			return
-		default:
-			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 			return
 		}
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
 	}
 
 	httpkit.OK(c, lead)
