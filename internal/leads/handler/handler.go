@@ -40,6 +40,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/survey", h.CompleteSurvey)
 	rg.POST("/:id/no-show", h.MarkNoShow)
 	rg.POST("/:id/view", h.MarkViewed)
+		rg.GET("/:id/notes", h.ListNotes)
+		rg.POST("/:id/notes", h.AddNote)
 }
 
 func (h *Handler) Create(c *gin.Context) {

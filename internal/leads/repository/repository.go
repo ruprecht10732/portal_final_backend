@@ -415,8 +415,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	if params.Search != "" {
 		searchPattern := "%" + params.Search + "%"
 		whereClauses = append(whereClauses, fmt.Sprintf(
-			"(consumer_first_name ILIKE $%d OR consumer_last_name ILIKE $%d OR consumer_phone ILIKE $%d OR address_city ILIKE $%d)",
-			argIdx, argIdx, argIdx, argIdx,
+			"(consumer_first_name ILIKE $%d OR consumer_last_name ILIKE $%d OR consumer_phone ILIKE $%d OR consumer_email ILIKE $%d OR address_city ILIKE $%d)",
+			argIdx, argIdx, argIdx, argIdx, argIdx,
 		))
 		args = append(args, searchPattern)
 		argIdx++

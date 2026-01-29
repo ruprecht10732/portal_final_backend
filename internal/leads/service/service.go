@@ -16,6 +16,7 @@ var (
 	ErrDuplicatePhone    = errors.New("a lead with this phone number already exists")
 	ErrInvalidTransition = errors.New("invalid status transition")
 	ErrForbidden         = errors.New("forbidden")
+	ErrInvalidNote       = errors.New("invalid note")
 )
 
 type Service struct {
