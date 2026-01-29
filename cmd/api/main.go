@@ -7,7 +7,14 @@ import (
 	"syscall"
 	"time"
 
+	"portal_final_backend/internal/adapters"
+	"portal_final_backend/internal/auth"
+	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/events"
+	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/router"
+	"portal_final_backend/internal/leads"
+	"portal_final_backend/internal/notification"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/logger"
@@ -26,6 +33,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// ========================================================================
+	// Infrastructure Layer
+	// ========================================================================
+
 	pool, err := db.NewPool(ctx, cfg)
 	if err != nil {
 		log.Error("failed to connect to database", "error", err)
@@ -34,7 +45,46 @@ func main() {
 	defer pool.Close()
 	log.Info("database connection established")
 
-	engine := router.New(cfg, pool, log)
+	sender, err := email.NewSender(cfg)
+	if err != nil {
+		log.Error("failed to initialize email sender", "error", err)
+		panic("failed to initialize email sender: " + err.Error())
+	}
+
+	// Event bus for decoupled communication between modules
+	eventBus := events.NewInMemoryBus(log)
+
+	// ========================================================================
+	// Domain Modules (Composition Root)
+	// ========================================================================
+
+	// Notification module subscribes to domain events (not HTTP-facing)
+	notificationModule := notification.New(sender, cfg, log)
+	notificationModule.RegisterHandlers(eventBus)
+
+	// Initialize domain modules
+	authModule := auth.NewModule(pool, cfg, eventBus, log)
+	leadsModule := leads.NewModule(pool, eventBus)
+
+	// Anti-Corruption Layer: Create adapter for cross-domain communication
+	// This ensures leads module only depends on its own AgentProvider interface
+	_ = adapters.NewAuthAgentProvider(authModule.Service())
+
+	// ========================================================================
+	// HTTP Layer
+	// ========================================================================
+
+	app := &apphttp.App{
+		Config:   cfg,
+		Logger:   log,
+		EventBus: eventBus,
+		Modules: []apphttp.Module{
+			authModule,
+			leadsModule,
+		},
+	}
+
+	engine := router.New(app)
 
 	srvErr := make(chan error, 1)
 	go func() {
