@@ -44,6 +44,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:id/notes", h.ListNotes)
 	rg.POST("/:id/notes", h.AddNote)
 	rg.GET("/:id/visit-history", h.ListVisitHistory)
+	// Service-specific routes
+	rg.POST("/:id/services", h.AddService)
+	rg.PATCH("/:id/services/:serviceId/status", h.UpdateServiceStatus)
 }
 
 func (h *Handler) Create(c *gin.Context) {
@@ -446,4 +449,75 @@ func (h *Handler) ListVisitHistory(c *gin.Context) {
 	}
 
 	response.OK(c, result)
+}
+
+func (h *Handler) AddService(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.AddServiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.svc.AddService(c.Request.Context(), id, req)
+	if err != nil {
+		if err == service.ErrLeadNotFound {
+			response.Error(c, http.StatusNotFound, err.Error(), nil)
+			return
+		}
+		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	response.JSON(c, http.StatusCreated, lead)
+}
+
+func (h *Handler) UpdateServiceStatus(c *gin.Context) {
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpdateServiceStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.svc.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req)
+	if err != nil {
+		switch err {
+		case service.ErrLeadNotFound:
+			response.Error(c, http.StatusNotFound, err.Error(), nil)
+			return
+		case service.ErrServiceNotFound:
+			response.Error(c, http.StatusNotFound, err.Error(), nil)
+			return
+		default:
+			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
+	}
+
+	response.OK(c, lead)
 }

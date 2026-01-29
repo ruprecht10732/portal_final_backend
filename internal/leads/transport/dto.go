@@ -32,6 +32,7 @@ const (
 	LeadStatusSurveyed          LeadStatus = "Surveyed"
 	LeadStatusBadLead           LeadStatus = "Bad_Lead"
 	LeadStatusNeedsRescheduling LeadStatus = "Needs_Rescheduling"
+	LeadStatusClosed            LeadStatus = "Closed"
 )
 
 type AccessDifficulty string
@@ -67,13 +68,20 @@ type UpdateLeadRequest struct {
 	HouseNumber  *string       `json:"houseNumber,omitempty" validate:"omitempty,min=1,max=20"`
 	ZipCode      *string       `json:"zipCode,omitempty" validate:"omitempty,min=1,max=20"`
 	City         *string       `json:"city,omitempty" validate:"omitempty,min=1,max=100"`
-	ServiceType  *ServiceType  `json:"serviceType,omitempty" validate:"omitempty,oneof=Windows Insulation Solar"`
-	Status       *LeadStatus   `json:"status,omitempty" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling"`
 	AssigneeID   OptionalUUID  `json:"assigneeId,omitempty" validate:"-"`
 }
 
+type UpdateServiceStatusRequest struct {
+	Status LeadStatus `json:"status" validate:"required,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling Closed"`
+}
+
+type AddServiceRequest struct {
+	ServiceType        ServiceType `json:"serviceType" validate:"required,oneof=Windows Insulation Solar"`
+	CloseCurrentStatus bool        `json:"closeCurrentStatus"` // If true, auto-close current active service
+}
+
 type UpdateLeadStatusRequest struct {
-	Status LeadStatus `json:"status" validate:"required,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling"`
+	Status LeadStatus `json:"status" validate:"required,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling Closed"`
 }
 
 type AssignLeadRequest struct {
@@ -83,6 +91,24 @@ type AssignLeadRequest struct {
 type ScheduleVisitRequest struct {
 	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
 	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
+}
+
+type ServiceScheduleVisitRequest struct {
+	ServiceID     uuid.UUID  `json:"serviceId" validate:"required"`
+	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
+	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
+}
+
+type ServiceCompleteSurveyRequest struct {
+	ServiceID        uuid.UUID        `json:"serviceId" validate:"required"`
+	Measurements     string           `json:"measurements" validate:"required,min=1,max=500"`
+	AccessDifficulty AccessDifficulty `json:"accessDifficulty" validate:"required,oneof=Low Medium High"`
+	Notes            string           `json:"notes,omitempty" validate:"max=2000"`
+}
+
+type ServiceMarkNoShowRequest struct {
+	ServiceID uuid.UUID `json:"serviceId" validate:"required"`
+	Notes     string    `json:"notes,omitempty" validate:"max=500"`
 }
 
 type CompleteSurveyRequest struct {
@@ -107,7 +133,7 @@ type BulkDeleteLeadsRequest struct {
 }
 
 type ListLeadsRequest struct {
-	Status      *LeadStatus  `form:"status" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling"`
+	Status      *LeadStatus  `form:"status" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling Closed"`
 	ServiceType *ServiceType `form:"serviceType" validate:"omitempty,oneof=Windows Insulation Solar"`
 	Search      string       `form:"search" validate:"max=100"`
 	Page        int          `form:"page" validate:"min=1"`
@@ -141,18 +167,26 @@ type VisitResponse struct {
 	CompletedAt      *time.Time        `json:"completedAt,omitempty"`
 }
 
+type LeadServiceResponse struct {
+	ID               uuid.UUID         `json:"id"`
+	ServiceType      ServiceType       `json:"serviceType"`
+	Status           LeadStatus        `json:"status"`
+	Visit            VisitResponse     `json:"visit"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+}
+
 type LeadResponse struct {
-	ID              uuid.UUID        `json:"id"`
-	Consumer        ConsumerResponse `json:"consumer"`
-	Address         AddressResponse  `json:"address"`
-	ServiceType     ServiceType      `json:"serviceType"`
-	Status          LeadStatus       `json:"status"`
-	AssignedAgentID *uuid.UUID       `json:"assignedAgentId,omitempty"`
-	ViewedByID      *uuid.UUID       `json:"viewedById,omitempty"`
-	ViewedAt        *time.Time       `json:"viewedAt,omitempty"`
-	Visit           VisitResponse    `json:"visit"`
-	CreatedAt       time.Time        `json:"createdAt"`
-	UpdatedAt       time.Time        `json:"updatedAt"`
+	ID              uuid.UUID             `json:"id"`
+	Consumer        ConsumerResponse      `json:"consumer"`
+	Address         AddressResponse       `json:"address"`
+	Services        []LeadServiceResponse `json:"services"`
+	CurrentService  *LeadServiceResponse  `json:"currentService,omitempty"`
+	AssignedAgentID *uuid.UUID            `json:"assignedAgentId,omitempty"`
+	ViewedByID      *uuid.UUID            `json:"viewedById,omitempty"`
+	ViewedAt        *time.Time            `json:"viewedAt,omitempty"`
+	CreatedAt       time.Time             `json:"createdAt"`
+	UpdatedAt       time.Time             `json:"updatedAt"`
 }
 
 type LeadListResponse struct {

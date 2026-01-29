@@ -87,7 +87,20 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
-	return lead, err
+	if err != nil {
+		return Lead{}, err
+	}
+
+	// Also create a corresponding lead_service entry
+	_, err = r.CreateLeadService(ctx, CreateLeadServiceParams{
+		LeadID:      lead.ID,
+		ServiceType: params.ServiceType,
+	})
+	if err != nil {
+		return Lead{}, err
+	}
+
+	return lead, nil
 }
 
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Lead, error) {
@@ -110,6 +123,21 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Lead, error) {
 		return Lead{}, ErrNotFound
 	}
 	return lead, err
+}
+
+// GetByIDWithServices returns a lead with all its services populated
+func (r *Repository) GetByIDWithServices(ctx context.Context, id uuid.UUID) (Lead, []LeadService, error) {
+	lead, err := r.GetByID(ctx, id)
+	if err != nil {
+		return Lead{}, nil, err
+	}
+
+	services, err := r.ListLeadServices(ctx, id)
+	if err != nil {
+		return Lead{}, nil, err
+	}
+
+	return lead, services, nil
 }
 
 func (r *Repository) GetByPhone(ctx context.Context, phone string) (Lead, error) {

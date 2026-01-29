@@ -14,6 +14,7 @@ import (
 
 var (
 	ErrLeadNotFound      = errors.New("lead not found")
+	ErrServiceNotFound   = errors.New("lead service not found")
 	ErrDuplicatePhone    = errors.New("a lead with this phone number already exists")
 	ErrInvalidTransition = errors.New("invalid status transition")
 	ErrForbidden         = errors.New("forbidden")
@@ -58,11 +59,15 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 		return transport.LeadResponse{}, err
 	}
 
-	return toLeadResponse(lead), nil
+	// Fetch services for the response
+	services, _ := s.repo.ListLeadServices(ctx, lead.ID)
+	return toLeadResponseWithServices(lead, services), nil
 }
 
-func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResponse, error) {
-	lead, err := s.repo.GetByID(ctx, id)
+// AddService adds a new service to an existing lead
+func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transport.AddServiceRequest) (transport.LeadResponse, error) {
+	// Verify lead exists
+	lead, err := s.repo.GetByID(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, ErrLeadNotFound
@@ -70,7 +75,61 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResp
 		return transport.LeadResponse{}, err
 	}
 
-	return toLeadResponse(lead), nil
+	// Optionally close all active services
+	if req.CloseCurrentStatus {
+		if err := s.repo.CloseAllActiveServices(ctx, leadID); err != nil {
+			return transport.LeadResponse{}, err
+		}
+	}
+
+	// Create the new service
+	_, err = s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
+		LeadID:      leadID,
+		ServiceType: string(req.ServiceType),
+	})
+	if err != nil {
+		return transport.LeadResponse{}, err
+	}
+
+	// Fetch updated lead with services
+	services, _ := s.repo.ListLeadServices(ctx, leadID)
+	return toLeadResponseWithServices(lead, services), nil
+}
+
+// UpdateServiceStatus updates the status of a specific service
+func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, req transport.UpdateServiceStatusRequest) (transport.LeadResponse, error) {
+	// Verify service belongs to lead
+	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, ErrServiceNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+	if svc.LeadID != leadID {
+		return transport.LeadResponse{}, ErrServiceNotFound
+	}
+
+	// Update service status
+	_, err = s.repo.UpdateServiceStatus(ctx, serviceID, string(req.Status))
+	if err != nil {
+		return transport.LeadResponse{}, err
+	}
+
+	// Return updated lead
+	return s.GetByID(ctx, leadID)
+}
+
+func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResponse, error) {
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, ErrLeadNotFound
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	return toLeadResponseWithServices(lead, services), nil
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
@@ -128,14 +187,6 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 	if req.City != nil {
 		params.AddressCity = req.City
 	}
-	if req.ServiceType != nil {
-		serviceType := string(*req.ServiceType)
-		params.ServiceType = &serviceType
-	}
-	if req.Status != nil {
-		status := string(*req.Status)
-		params.Status = &status
-	}
 
 	lead, err := s.repo.Update(ctx, id, params)
 	if err != nil {
@@ -154,7 +205,9 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 		}
 	}
 
-	return toLeadResponse(lead), nil
+	// Fetch services for the response
+	services, _ := s.repo.ListLeadServices(ctx, lead.ID)
+	return toLeadResponseWithServices(lead, services), nil
 }
 
 func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUID, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
@@ -370,7 +423,9 @@ func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest) (tra
 
 	items := make([]transport.LeadResponse, len(leads))
 	for i, lead := range leads {
-		items[i] = toLeadResponse(lead)
+		// Fetch services for each lead
+		services, _ := s.repo.ListLeadServices(ctx, lead.ID)
+		items[i] = toLeadResponseWithServices(lead, services)
 	}
 
 	totalPages := (total + req.PageSize - 1) / req.PageSize
@@ -407,15 +462,14 @@ func (s *Service) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error) 
 }
 
 func toLeadResponse(lead repository.Lead) transport.LeadResponse {
-	resp := transport.LeadResponse{
+	return transport.LeadResponse{
 		ID:              lead.ID,
-		ServiceType:     transport.ServiceType(lead.ServiceType),
-		Status:          transport.LeadStatus(lead.Status),
 		AssignedAgentID: lead.AssignedAgentID,
 		ViewedByID:      lead.ViewedByID,
 		ViewedAt:        lead.ViewedAt,
 		CreatedAt:       lead.CreatedAt,
 		UpdatedAt:       lead.UpdatedAt,
+		Services:        []transport.LeadServiceResponse{},
 		Consumer: transport.ConsumerResponse{
 			FirstName: lead.ConsumerFirstName,
 			LastName:  lead.ConsumerLastName,
@@ -429,17 +483,55 @@ func toLeadResponse(lead repository.Lead) transport.LeadResponse {
 			ZipCode:     lead.AddressZipCode,
 			City:        lead.AddressCity,
 		},
+	}
+}
+
+func toLeadResponseWithServices(lead repository.Lead, services []repository.LeadService) transport.LeadResponse {
+	resp := toLeadResponse(lead)
+	
+	// Convert services
+	resp.Services = make([]transport.LeadServiceResponse, len(services))
+	for i, svc := range services {
+		resp.Services[i] = toLeadServiceResponse(svc)
+	}
+
+	// Set current service (first non-terminal or first if all terminal)
+	if len(services) > 0 {
+		for _, svc := range services {
+			if svc.Status != "Closed" && svc.Status != "Bad_Lead" && svc.Status != "Surveyed" {
+				svcResp := toLeadServiceResponse(svc)
+				resp.CurrentService = &svcResp
+				break
+			}
+		}
+		// If no active service found, use the most recent one
+		if resp.CurrentService == nil {
+			svcResp := toLeadServiceResponse(services[0])
+			resp.CurrentService = &svcResp
+		}
+	}
+
+	return resp
+}
+
+func toLeadServiceResponse(svc repository.LeadService) transport.LeadServiceResponse {
+	resp := transport.LeadServiceResponse{
+		ID:          svc.ID,
+		ServiceType: transport.ServiceType(svc.ServiceType),
+		Status:      transport.LeadStatus(svc.Status),
+		CreatedAt:   svc.CreatedAt,
+		UpdatedAt:   svc.UpdatedAt,
 		Visit: transport.VisitResponse{
-			ScheduledDate: lead.VisitScheduledDate,
-			ScoutID:       lead.VisitScoutID,
-			Measurements:  lead.VisitMeasurements,
-			Notes:         lead.VisitNotes,
-			CompletedAt:   lead.VisitCompletedAt,
+			ScheduledDate: svc.VisitScheduledDate,
+			ScoutID:       svc.VisitScoutID,
+			Measurements:  svc.VisitMeasurements,
+			Notes:         svc.VisitNotes,
+			CompletedAt:   svc.VisitCompletedAt,
 		},
 	}
 
-	if lead.VisitAccessDifficulty != nil {
-		difficulty := transport.AccessDifficulty(*lead.VisitAccessDifficulty)
+	if svc.VisitAccessDifficulty != nil {
+		difficulty := transport.AccessDifficulty(*svc.VisitAccessDifficulty)
 		resp.Visit.AccessDifficulty = &difficulty
 	}
 
