@@ -9,11 +9,13 @@ import (
 	authservice "portal_final_backend/internal/auth/service"
 	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/http/middleware"
 	leadshandler "portal_final_backend/internal/leads/handler"
 	leadsrepo "portal_final_backend/internal/leads/repository"
 	leadsservice "portal_final_backend/internal/leads/service"
 	"portal_final_backend/internal/logger"
+	"portal_final_backend/internal/notification"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -55,14 +57,21 @@ func New(cfg *config.Config, pool *pgxpool.Pool, log *logger.Logger) *gin.Engine
 		panic(err)
 	}
 
+	// Event bus for decoupled communication between modules
+	eventBus := events.NewInMemoryBus(log)
+
+	// Notification module subscribes to domain events
+	notificationModule := notification.New(sender, cfg, log)
+	notificationModule.RegisterHandlers(eventBus)
+
 	// Auth module
 	authRepo := authrepo.New(pool)
-	authSvc := authservice.New(authRepo, cfg, sender, log)
+	authSvc := authservice.New(authRepo, cfg, eventBus, log)
 	authHandler := authhandler.New(authSvc, cfg)
 
 	// Leads module
 	leadsRepo := leadsrepo.New(pool)
-	leadsSvc := leadsservice.New(leadsRepo, sender)
+	leadsSvc := leadsservice.New(leadsRepo, eventBus)
 	leadsHandler := leadshandler.New(leadsSvc)
 
 	engine.GET("/api/health", func(c *gin.Context) {

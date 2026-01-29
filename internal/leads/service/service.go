@@ -3,10 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
-	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/phone"
@@ -27,12 +26,12 @@ var (
 )
 
 type Service struct {
-	repo   *repository.Repository
-	sender email.Sender
+	repo     *repository.Repository
+	eventBus events.Bus
 }
 
-func New(repo *repository.Repository, sender email.Sender) *Service {
-	return &Service{repo: repo, sender: sender}
+func New(repo *repository.Repository, eventBus events.Bus) *Service {
+	return &Service{repo: repo, eventBus: eventBus}
 }
 
 func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (transport.LeadResponse, error) {
@@ -287,13 +286,22 @@ func (s *Service) ScheduleVisit(ctx context.Context, id uuid.UUID, req transport
 		return transport.LeadResponse{}, err
 	}
 
-	// Send invite email if requested and consumer has email
-	if req.SendInvite && lead.ConsumerEmail != nil && *lead.ConsumerEmail != "" {
-		consumerName := lead.ConsumerFirstName + " " + lead.ConsumerLastName
-		scheduledDateStr := req.ScheduledDate.Format("Monday, January 2, 2006 at 15:04")
-		address := fmt.Sprintf("%s %s, %s %s", lead.AddressStreet, lead.AddressHouseNumber, lead.AddressZipCode, lead.AddressCity)
-		_ = s.sender.SendVisitInviteEmail(ctx, *lead.ConsumerEmail, consumerName, scheduledDateStr, address)
-	}
+	// Publish event - notification module handles email sending
+	s.eventBus.Publish(ctx, events.VisitScheduled{
+		BaseEvent:          events.NewBaseEvent(),
+		LeadID:             id,
+		ServiceID:          req.ServiceID,
+		ScheduledDate:      req.ScheduledDate,
+		ScoutID:            req.ScoutID,
+		ConsumerEmail:      lead.ConsumerEmail,
+		ConsumerFirstName:  lead.ConsumerFirstName,
+		ConsumerLastName:   lead.ConsumerLastName,
+		AddressStreet:      lead.AddressStreet,
+		AddressHouseNumber: lead.AddressHouseNumber,
+		AddressZipCode:     lead.AddressZipCode,
+		AddressCity:        lead.AddressCity,
+		SendInvite:         req.SendInvite,
+	})
 
 	return toLeadResponseWithServices(lead, services), nil
 }
@@ -432,13 +440,24 @@ func (s *Service) RescheduleVisit(ctx context.Context, id uuid.UUID, req transpo
 		return transport.LeadResponse{}, err
 	}
 
-	// Send invite email if requested and consumer has email
-	if req.SendInvite && lead.ConsumerEmail != nil && *lead.ConsumerEmail != "" {
-		consumerName := lead.ConsumerFirstName + " " + lead.ConsumerLastName
-		scheduledDateStr := req.ScheduledDate.Format("Monday, January 2, 2006 at 15:04")
-		address := fmt.Sprintf("%s %s, %s %s", lead.AddressStreet, lead.AddressHouseNumber, lead.AddressZipCode, lead.AddressCity)
-		_ = s.sender.SendVisitInviteEmail(ctx, *lead.ConsumerEmail, consumerName, scheduledDateStr, address)
-	}
+	// Publish event - notification module handles email sending
+	s.eventBus.Publish(ctx, events.VisitRescheduled{
+		BaseEvent:          events.NewBaseEvent(),
+		LeadID:             id,
+		ServiceID:          req.ServiceID,
+		PreviousDate:       currentService.VisitScheduledDate,
+		NewScheduledDate:   req.ScheduledDate,
+		ScoutID:            req.ScoutID,
+		MarkedAsNoShow:     req.MarkAsNoShow,
+		ConsumerEmail:      lead.ConsumerEmail,
+		ConsumerFirstName:  lead.ConsumerFirstName,
+		ConsumerLastName:   lead.ConsumerLastName,
+		AddressStreet:      lead.AddressStreet,
+		AddressHouseNumber: lead.AddressHouseNumber,
+		AddressZipCode:     lead.AddressZipCode,
+		AddressCity:        lead.AddressCity,
+		SendInvite:         req.SendInvite,
+	})
 
 	return toLeadResponseWithServices(lead, services), nil
 }

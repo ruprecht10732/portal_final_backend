@@ -11,7 +11,7 @@ import (
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/config"
-	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/logger"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -32,10 +32,10 @@ const (
 )
 
 type Service struct {
-	repo *repository.Repository
-	cfg  *config.Config
-	mail email.Sender
-	log  *logger.Logger
+	repo     *repository.Repository
+	cfg      *config.Config
+	eventBus events.Bus
+	log      *logger.Logger
 }
 
 type Profile struct {
@@ -47,8 +47,8 @@ type Profile struct {
 	UpdatedAt     time.Time
 }
 
-func New(repo *repository.Repository, cfg *config.Config, mailer email.Sender, log *logger.Logger) *Service {
-	return &Service{repo: repo, cfg: cfg, mail: mailer, log: log}
+func New(repo *repository.Repository, cfg *config.Config, eventBus events.Bus, log *logger.Logger) *Service {
+	return &Service{repo: repo, cfg: cfg, eventBus: eventBus, log: log}
 }
 
 func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error {
@@ -83,10 +83,13 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error
 		return err
 	}
 
-	verifyURL := s.buildURL("/verify-email", verifyToken)
-	if err := s.mail.SendVerificationEmail(ctx, user.Email, verifyURL); err != nil {
-		return err
-	}
+	// Publish event - notification module handles email sending
+	s.eventBus.Publish(ctx, events.UserSignedUp{
+		BaseEvent:   events.NewBaseEvent(),
+		UserID:      user.ID,
+		Email:       user.Email,
+		VerifyToken: verifyToken,
+	})
 
 	return nil
 }
@@ -146,10 +149,13 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 		return err
 	}
 
-	resetURL := s.buildURL("/reset-password", resetToken)
-	if err := s.mail.SendPasswordResetEmail(ctx, user.Email, resetURL); err != nil {
-		return err
-	}
+	// Publish event - notification module handles email sending
+	s.eventBus.Publish(ctx, events.PasswordResetRequested{
+		BaseEvent:  events.NewBaseEvent(),
+		UserID:     user.ID,
+		Email:      user.Email,
+		ResetToken: resetToken,
+	})
 
 	return nil
 }
@@ -324,10 +330,13 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, email string) 
 		return Profile{}, err
 	}
 
-	verifyURL := s.buildURL("/verify-email", verifyToken)
-	if err := s.mail.SendVerificationEmail(ctx, updated.Email, verifyURL); err != nil {
-		return Profile{}, err
-	}
+	// Publish event - notification module handles email sending
+	s.eventBus.Publish(ctx, events.EmailVerificationRequested{
+		BaseEvent:   events.NewBaseEvent(),
+		UserID:      userID,
+		Email:       updated.Email,
+		VerifyToken: verifyToken,
+	})
 
 	return Profile{
 		ID:            updated.ID,
@@ -362,6 +371,8 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentP
 	return nil
 }
 
+// buildURL is no longer used - URL building moved to notification module
+// Kept for potential future use within auth domain
 func (s *Service) buildURL(path string, tokenValue string) string {
 	base := strings.TrimRight(s.cfg.AppBaseURL, "/")
 	return base + path + "?token=" + tokenValue
