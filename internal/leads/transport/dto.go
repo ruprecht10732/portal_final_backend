@@ -168,12 +168,12 @@ type VisitResponse struct {
 }
 
 type LeadServiceResponse struct {
-	ID               uuid.UUID         `json:"id"`
-	ServiceType      ServiceType       `json:"serviceType"`
-	Status           LeadStatus        `json:"status"`
-	Visit            VisitResponse     `json:"visit"`
-	CreatedAt        time.Time         `json:"createdAt"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
+	ID          uuid.UUID     `json:"id"`
+	ServiceType ServiceType   `json:"serviceType"`
+	Status      LeadStatus    `json:"status"`
+	Visit       VisitResponse `json:"visit"`
+	CreatedAt   time.Time     `json:"createdAt"`
+	UpdatedAt   time.Time     `json:"updatedAt"`
 }
 
 type LeadResponse struct {

@@ -488,7 +488,7 @@ func toLeadResponse(lead repository.Lead) transport.LeadResponse {
 
 func toLeadResponseWithServices(lead repository.Lead, services []repository.LeadService) transport.LeadResponse {
 	resp := toLeadResponse(lead)
-	
+
 	// Convert services
 	resp.Services = make([]transport.LeadServiceResponse, len(services))
 	for i, svc := range services {
