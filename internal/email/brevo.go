@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"portal_final_backend/internal/config"
+	"portal_final_backend/platform/config"
 )
 
 type Sender interface {

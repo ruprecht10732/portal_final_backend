@@ -7,10 +7,10 @@ import (
 	"syscall"
 	"time"
 
-	"portal_final_backend/internal/config"
-	"portal_final_backend/internal/db"
 	"portal_final_backend/internal/http/router"
-	"portal_final_backend/internal/logger"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/db"
+	"portal_final_backend/platform/logger"
 )
 
 func main() {

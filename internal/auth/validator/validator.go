@@ -4,14 +4,14 @@ import (
 	"regexp"
 	"unicode"
 
-	sharedvalidator "portal_final_backend/internal/shared/validator"
+	platformvalidator "portal_final_backend/platform/validator"
 
 	"github.com/go-playground/validator/v10"
 )
 
-// Validate is an alias to the shared validator for convenience within the auth domain.
+// Validate is an alias to the platform validator for convenience within the auth domain.
 // Auth-specific validations are registered in init().
-var Validate = sharedvalidator.Validate
+var Validate = platformvalidator.Validate
 
 func init() {
 	// Register auth-specific password validation on the shared validator

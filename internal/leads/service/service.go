@@ -8,7 +8,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
-	"portal_final_backend/internal/phone"
+	"portal_final_backend/platform/phone"
 
 	"github.com/google/uuid"
 )

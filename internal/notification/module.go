@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"strings"
 
-	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
-	"portal_final_backend/internal/logger"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/logger"
 )
 
 // Module handles all notification-related event subscriptions.

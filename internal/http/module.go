@@ -3,8 +3,8 @@
 package http
 
 import (
-	"portal_final_backend/internal/config"
-	"portal_final_backend/internal/http/middleware"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,5 +36,5 @@ type RouterContext struct {
 	// AuthMiddleware provides the authentication middleware.
 	AuthMiddleware gin.HandlerFunc
 	// AuthRateLimiter is the stricter rate limiter for auth routes.
-	AuthRateLimiter *middleware.AuthRateLimiter
+	AuthRateLimiter *httpkit.AuthRateLimiter
 }

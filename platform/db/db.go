@@ -1,3 +1,5 @@
+// Package db provides database connection infrastructure.
+// This is part of the platform layer and contains no business logic.
 package db
 
 import (
@@ -9,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// NewPool creates a new database connection pool with production-ready settings.
 func NewPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {

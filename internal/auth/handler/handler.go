@@ -8,9 +8,8 @@ import (
 	"portal_final_backend/internal/auth/service"
 	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/auth/validator"
-	"portal_final_backend/internal/config"
-	"portal_final_backend/internal/http/middleware"
-	"portal_final_backend/internal/http/response"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -43,27 +42,27 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) ListUsers(c *gin.Context) {
 	users, err := h.svc.ListUsers(c.Request.Context())
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	response.OK(c, users)
+	httpkit.OK(c, users)
 }
 
 func (h *Handler) GetMe(c *gin.Context) {
-	userID, ok := c.Get(middleware.ContextUserIDKey)
+	userID, ok := c.Get(httpkit.ContextUserIDKey)
 	if !ok {
-		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
 		return
 	}
 
 	profile, err := h.svc.GetMe(c.Request.Context(), userID.(uuid.UUID))
 	if err != nil {
-		response.Error(c, http.StatusNotFound, err.Error(), nil)
+		httpkit.Error(c, http.StatusNotFound, err.Error(), nil)
 		return
 	}
 
-	response.OK(c, transport.ProfileResponse{
+	httpkit.OK(c, transport.ProfileResponse{
 		ID:            profile.ID.String(),
 		Email:         profile.Email,
 		EmailVerified: profile.EmailVerified,
@@ -74,19 +73,19 @@ func (h *Handler) GetMe(c *gin.Context) {
 }
 
 func (h *Handler) UpdateMe(c *gin.Context) {
-	userID, ok := c.Get(middleware.ContextUserIDKey)
+	userID, ok := c.Get(httpkit.ContextUserIDKey)
 	if !ok {
-		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
 		return
 	}
 
 	var req transport.UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
@@ -94,16 +93,16 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrEmailTaken):
-			response.Error(c, http.StatusConflict, err.Error(), nil)
+			httpkit.Error(c, http.StatusConflict, err.Error(), nil)
 		case errors.Is(err, service.ErrInvalidCredentials):
-			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		default:
-			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		}
 		return
 	}
 
-	response.OK(c, transport.ProfileResponse{
+	httpkit.OK(c, transport.ProfileResponse{
 		ID:            profile.ID.String(),
 		Email:         profile.Email,
 		EmailVerified: profile.EmailVerified,
@@ -114,183 +113,183 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {
-	userID, ok := c.Get(middleware.ContextUserIDKey)
+	userID, ok := c.Get(httpkit.ContextUserIDKey)
 	if !ok {
-		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
 		return
 	}
 
 	var req transport.ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
 	if err := h.svc.ChangePassword(c.Request.Context(), userID.(uuid.UUID), req.CurrentPassword, req.NewPassword); err != nil {
 		if errors.Is(err, service.ErrInvalidCurrentPassword) {
-			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 			return
 		}
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	response.OK(c, gin.H{"message": "password updated"})
+	httpkit.OK(c, gin.H{"message": "password updated"})
 }
 
 func (h *Handler) SignUp(c *gin.Context) {
 	var req transport.SignUpRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
 	if err := h.svc.SignUp(c.Request.Context(), req.Email, req.Password); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-	response.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
+	httpkit.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
 }
 
 func (h *Handler) SignIn(c *gin.Context) {
 	var req transport.SignInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
 	accessToken, refreshToken, err := h.svc.SignIn(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
-		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
+		httpkit.Error(c, http.StatusUnauthorized, err.Error(), nil)
 		return
 	}
 
 	h.setRefreshCookie(c, refreshToken)
-	response.OK(c, transport.AuthResponse{AccessToken: accessToken})
+	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
 	refreshToken, err := c.Cookie(h.cfg.RefreshCookieName)
 	if err != nil || refreshToken == "" {
-		response.Error(c, http.StatusUnauthorized, service.ErrTokenInvalid.Error(), nil)
+		httpkit.Error(c, http.StatusUnauthorized, service.ErrTokenInvalid.Error(), nil)
 		return
 	}
 
 	accessToken, newRefreshToken, err := h.svc.Refresh(c.Request.Context(), refreshToken)
 	if err != nil {
 		h.clearRefreshCookie(c)
-		response.Error(c, http.StatusUnauthorized, err.Error(), nil)
+		httpkit.Error(c, http.StatusUnauthorized, err.Error(), nil)
 		return
 	}
 
 	h.setRefreshCookie(c, newRefreshToken)
-	response.OK(c, transport.AuthResponse{AccessToken: accessToken})
+	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
 }
 
 func (h *Handler) SignOut(c *gin.Context) {
 	if refreshToken, err := c.Cookie(h.cfg.RefreshCookieName); err == nil && refreshToken != "" {
 		if err := h.svc.SignOut(c.Request.Context(), refreshToken); err != nil {
-			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 			return
 		}
 	}
 
 	h.clearRefreshCookie(c)
 
-	response.OK(c, gin.H{"message": "signed out"})
+	httpkit.OK(c, gin.H{"message": "signed out"})
 }
 
 func (h *Handler) ForgotPassword(c *gin.Context) {
 	var req transport.ForgotPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
 	if err := h.svc.ForgotPassword(c.Request.Context(), req.Email); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-	response.OK(c, gin.H{"message": "if the account exists, a reset link will be sent"})
+	httpkit.OK(c, gin.H{"message": "if the account exists, a reset link will be sent"})
 }
 
 func (h *Handler) ResetPassword(c *gin.Context) {
 	var req transport.ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
 	if err := h.svc.ResetPassword(c.Request.Context(), req.Token, req.NewPassword); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	response.OK(c, gin.H{"message": "password reset"})
+	httpkit.OK(c, gin.H{"message": "password reset"})
 }
 
 func (h *Handler) VerifyEmail(c *gin.Context) {
 	var req transport.VerifyEmailRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
 	if err := h.svc.VerifyEmail(c.Request.Context(), req.Token); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	response.OK(c, gin.H{"message": "email verified"})
+	httpkit.OK(c, gin.H{"message": "email verified"})
 }
 
 func (h *Handler) SetUserRoles(c *gin.Context) {
 	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
 	var req transport.RoleUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 	if err := validator.Validate.Struct(req); err != nil {
-		response.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
 	if err := h.svc.SetUserRoles(c.Request.Context(), userID, req.Roles); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	response.OK(c, transport.RoleUpdateResponse{UserID: userID.String(), Roles: req.Roles})
+	httpkit.OK(c, transport.RoleUpdateResponse{UserID: userID.String(), Roles: req.Roles})
 }
 
 func (h *Handler) setRefreshCookie(c *gin.Context, value string) {

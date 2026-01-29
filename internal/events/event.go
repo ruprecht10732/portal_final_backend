@@ -1,60 +1,27 @@
-// Package events provides domain event definitions and an event bus for
-// decoupled, event-driven communication between modules.
+// Package events provides domain event definitions for decoupled,
+// event-driven communication between modules.
+// Infrastructure (Bus, Handler) is in platform/events.
 package events
 
 import (
-	"context"
 	"time"
+
+	"portal_final_backend/platform/events"
 
 	"github.com/google/uuid"
 )
 
-// Event is the base interface all domain events must implement.
-type Event interface {
-	// EventName returns a unique identifier for the event type.
-	EventName() string
-	// OccurredAt returns when the event occurred.
-	OccurredAt() time.Time
-}
+// Re-export platform types for convenience
+type (
+	Event       = events.Event
+	Bus         = events.Bus
+	Handler     = events.Handler
+	HandlerFunc = events.HandlerFunc
+	BaseEvent   = events.BaseEvent
+)
 
-// BaseEvent provides common fields for all events.
-type BaseEvent struct {
-	Timestamp time.Time `json:"timestamp"`
-}
-
-func (e BaseEvent) OccurredAt() time.Time {
-	return e.Timestamp
-}
-
-func NewBaseEvent() BaseEvent {
-	return BaseEvent{Timestamp: time.Now()}
-}
-
-// Handler processes events of a specific type.
-type Handler interface {
-	Handle(ctx context.Context, event Event) error
-}
-
-// HandlerFunc is an adapter to allow ordinary functions to be used as handlers.
-type HandlerFunc func(ctx context.Context, event Event) error
-
-func (f HandlerFunc) Handle(ctx context.Context, event Event) error {
-	return f(ctx, event)
-}
-
-// Bus is the interface for publishing and subscribing to domain events.
-type Bus interface {
-	// Publish sends an event to all registered handlers for that event type.
-	// Handlers are executed asynchronously by default.
-	Publish(ctx context.Context, event Event)
-
-	// PublishSync sends an event and waits for all handlers to complete.
-	PublishSync(ctx context.Context, event Event) error
-
-	// Subscribe registers a handler for a specific event type.
-	// The eventName should match the value returned by Event.EventName().
-	Subscribe(eventName string, handler Handler)
-}
+// Re-export platform functions
+var NewBaseEvent = events.NewBaseEvent
 
 // =============================================================================
 // Auth Domain Events

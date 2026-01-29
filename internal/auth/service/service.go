@@ -10,9 +10,9 @@ import (
 	"portal_final_backend/internal/auth/repository"
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/auth/transport"
-	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/events"
-	"portal_final_backend/internal/logger"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/logger"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"

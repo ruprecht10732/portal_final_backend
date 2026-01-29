@@ -6,10 +6,10 @@ import (
 	"portal_final_backend/internal/auth/handler"
 	"portal_final_backend/internal/auth/repository"
 	"portal_final_backend/internal/auth/service"
-	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
-	"portal_final_backend/internal/logger"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/logger"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

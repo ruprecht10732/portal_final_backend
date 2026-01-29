@@ -6,14 +6,14 @@ import (
 
 	"portal_final_backend/internal/adapters"
 	"portal_final_backend/internal/auth"
-	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
-	"portal_final_backend/internal/http/middleware"
 	"portal_final_backend/internal/leads"
-	"portal_final_backend/internal/logger"
 	"portal_final_backend/internal/notification"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/httpkit"
+	"portal_final_backend/platform/logger"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -26,13 +26,13 @@ func New(cfg *config.Config, pool *pgxpool.Pool, log *logger.Logger) *gin.Engine
 	engine.Use(gin.Recovery())
 
 	// Security headers
-	engine.Use(middleware.SecurityHeaders())
+	engine.Use(httpkit.SecurityHeaders())
 
 	// Request logging
-	engine.Use(middleware.RequestLogger(log))
+	engine.Use(httpkit.RequestLogger(log))
 
 	// Global rate limiter (100 requests per second, burst of 200)
-	globalLimiter := middleware.NewIPRateLimiter(rate.Limit(100), 200, log)
+	globalLimiter := httpkit.NewIPRateLimiter(rate.Limit(100), 200, log)
 	engine.Use(globalLimiter.RateLimit())
 
 	corsConfig := cors.Config{
@@ -70,9 +70,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool, log *logger.Logger) *gin.Engine
 	// Set up route groups
 	v1 := engine.Group("/api/v1")
 	protected := v1.Group("")
-	protected.Use(middleware.AuthRequired(cfg))
+	protected.Use(httpkit.AuthRequired(cfg))
 	admin := v1.Group("/admin")
-	admin.Use(middleware.AuthRequired(cfg), middleware.RequireRole("admin"))
+	admin.Use(httpkit.AuthRequired(cfg), httpkit.RequireRole("admin"))
 
 	// Router context provides shared dependencies to modules
 	routerCtx := &apphttp.RouterContext{
@@ -81,8 +81,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool, log *logger.Logger) *gin.Engine
 		Protected:       protected,
 		Admin:           admin,
 		Config:          cfg,
-		AuthMiddleware:  middleware.AuthRequired(cfg),
-		AuthRateLimiter: middleware.NewAuthRateLimiter(log),
+		AuthMiddleware:  httpkit.AuthRequired(cfg),
+		AuthRateLimiter: httpkit.NewAuthRateLimiter(log),
 	}
 
 	// Initialize domain modules
