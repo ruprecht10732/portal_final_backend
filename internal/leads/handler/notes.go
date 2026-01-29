@@ -16,11 +16,12 @@ import (
 // This is separate from the main Handler to allow independent wiring.
 type NotesHandler struct {
 	svc *notes.Service
+	val *validator.Validator
 }
 
 // NewNotesHandler creates a new notes handler.
-func NewNotesHandler(svc *notes.Service) *NotesHandler {
-	return &NotesHandler{svc: svc}
+func NewNotesHandler(svc *notes.Service, val *validator.Validator) *NotesHandler {
+	return &NotesHandler{svc: svc, val: val}
 }
 
 func (h *NotesHandler) ListNotes(c *gin.Context) {
@@ -50,7 +51,7 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}

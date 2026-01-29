@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scheduling"
+	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,7 +24,7 @@ type Module struct {
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus) *Module {
+func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator) *Module {
 	// Create shared repository
 	repo := repository.New(pool)
 
@@ -33,8 +34,8 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus) *Module {
 	notesSvc := notes.New(repo)
 
 	// Create handlers
-	notesHandler := handler.NewNotesHandler(notesSvc)
-	h := handler.New(mgmtSvc, schedulingSvc, notesHandler)
+	notesHandler := handler.NewNotesHandler(notesSvc, val)
+	h := handler.New(mgmtSvc, schedulingSvc, notesHandler, val)
 
 	return &Module{
 		handler:    h,

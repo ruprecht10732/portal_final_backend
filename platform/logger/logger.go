@@ -9,6 +9,18 @@ import (
 	"strings"
 )
 
+// Context key types for storing values in context
+type contextKey string
+
+const (
+	// RequestIDKey is the context key for request ID
+	RequestIDKey contextKey = "request_id"
+	// UserIDKey is the context key for user ID
+	UserIDKey contextKey = "user_id"
+	// TraceIDKey is the context key for trace ID
+	TraceIDKey contextKey = "trace_id"
+)
+
 // Logger wraps slog.Logger for structured logging
 type Logger struct {
 	*slog.Logger
@@ -34,9 +46,45 @@ func New(env string) *Logger {
 	}
 }
 
-// WithContext returns a logger with context values
+// WithContext returns a logger with context values extracted.
+// Supports request_id, user_id, and trace_id from context.
 func (l *Logger) WithContext(ctx context.Context) *Logger {
-	return l
+	if ctx == nil {
+		return l
+	}
+
+	newLogger := l
+
+	if requestID, ok := ctx.Value(RequestIDKey).(string); ok && requestID != "" {
+		newLogger = newLogger.WithRequestID(requestID)
+	}
+
+	if userID, ok := ctx.Value(UserIDKey).(string); ok && userID != "" {
+		newLogger = newLogger.WithUserID(userID)
+	}
+
+	if traceID, ok := ctx.Value(TraceIDKey).(string); ok && traceID != "" {
+		newLogger = &Logger{
+			Logger: newLogger.Logger.With(slog.String("trace_id", traceID)),
+		}
+	}
+
+	return newLogger
+}
+
+// ContextWithRequestID adds a request ID to the context
+func ContextWithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, RequestIDKey, requestID)
+}
+
+// ContextWithUserID adds a user ID to the context
+func ContextWithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, UserIDKey, userID)
+}
+
+// ContextWithTraceID adds a trace ID to the context
+func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, TraceIDKey, traceID)
 }
 
 // WithRequestID returns a logger with request ID

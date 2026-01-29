@@ -19,6 +19,7 @@ type Handler struct {
 	mgmt         *management.Service
 	scheduling   *scheduling.Service
 	notesHandler *NotesHandler
+	val          *validator.Validator
 }
 
 const (
@@ -27,8 +28,8 @@ const (
 )
 
 // New creates a new leads handler with focused services.
-func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler) *Handler {
-	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler}
+func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler, val *validator.Validator) *Handler {
+	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler, val: val}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -60,7 +61,7 @@ func (h *Handler) Create(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -100,7 +101,7 @@ func (h *Handler) Update(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -164,7 +165,7 @@ func (h *Handler) BulkDelete(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -189,7 +190,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -214,7 +215,7 @@ func (h *Handler) ScheduleVisit(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -239,7 +240,7 @@ func (h *Handler) RescheduleVisit(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -269,7 +270,7 @@ func (h *Handler) CompleteSurvey(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -379,7 +380,7 @@ func (h *Handler) AddService(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -410,7 +411,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}

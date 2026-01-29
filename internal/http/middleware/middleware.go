@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"portal_final_backend/internal/config"
-	"portal_final_backend/internal/logger"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -118,7 +118,7 @@ func NewAuthRateLimiter(log *logger.Logger) *AuthRateLimiter {
 	}
 }
 
-func AuthRequired(cfg *config.Config) gin.HandlerFunc {
+func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawToken, ok := extractBearerToken(c.GetHeader("Authorization"))
 		if !ok {
@@ -203,12 +203,12 @@ func extractBearerToken(authHeader string) (string, bool) {
 	return rawToken, true
 }
 
-func parseAccessClaims(rawToken string, cfg *config.Config) (jwt.MapClaims, error) {
+func parseAccessClaims(rawToken string, cfg config.JWTConfig) (jwt.MapClaims, error) {
 	parsed, err := jwt.Parse(rawToken, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("invalid signing method")
 		}
-		return []byte(cfg.JWTAccessSecret), nil
+		return []byte(cfg.GetJWTAccessSecret()), nil
 	})
 	if err != nil || !parsed.Valid {
 		return nil, errors.New(errInvalidToken)

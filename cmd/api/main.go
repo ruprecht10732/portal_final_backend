@@ -18,6 +18,7 @@ import (
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/validator"
 )
 
 func main() {
@@ -54,6 +55,9 @@ func main() {
 	// Event bus for decoupled communication between modules
 	eventBus := events.NewInMemoryBus(log)
 
+	// Shared validator instance for dependency injection
+	val := validator.New()
+
 	// ========================================================================
 	// Domain Modules (Composition Root)
 	// ========================================================================
@@ -63,8 +67,8 @@ func main() {
 	notificationModule.RegisterHandlers(eventBus)
 
 	// Initialize domain modules
-	authModule := auth.NewModule(pool, cfg, eventBus, log)
-	leadsModule := leads.NewModule(pool, eventBus)
+	authModule := auth.NewModule(pool, cfg, eventBus, log, val)
+	leadsModule := leads.NewModule(pool, eventBus, val)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface

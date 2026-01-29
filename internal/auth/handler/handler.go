@@ -6,9 +6,9 @@ import (
 
 	"portal_final_backend/internal/auth/service"
 	"portal_final_backend/internal/auth/transport"
-	"portal_final_backend/internal/auth/validator"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/httpkit"
+	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -17,6 +17,7 @@ import (
 type Handler struct {
 	svc *service.Service
 	cfg config.CookieConfig
+	val *validator.Validator
 }
 
 const (
@@ -24,8 +25,8 @@ const (
 	msgValidationFailed = "validation failed"
 )
 
-func New(svc *service.Service, cfg config.CookieConfig) *Handler {
-	return &Handler{svc: svc, cfg: cfg}
+func New(svc *service.Service, cfg config.CookieConfig, val *validator.Validator) *Handler {
+	return &Handler{svc: svc, cfg: cfg, val: val}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -79,7 +80,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -110,7 +111,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -128,7 +129,7 @@ func (h *Handler) SignUp(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -145,7 +146,7 @@ func (h *Handler) SignIn(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -194,7 +195,7 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -211,7 +212,7 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -229,7 +230,7 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
@@ -253,7 +254,7 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
