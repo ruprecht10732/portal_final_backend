@@ -4,13 +4,17 @@ import (
 	"regexp"
 	"unicode"
 
+	sharedvalidator "portal_final_backend/internal/shared/validator"
+
 	"github.com/go-playground/validator/v10"
 )
 
-var Validate = validator.New()
+// Validate is an alias to the shared validator for convenience within the auth domain.
+// Auth-specific validations are registered in init().
+var Validate = sharedvalidator.Validate
 
 func init() {
-	// Register custom password validation
+	// Register auth-specific password validation on the shared validator
 	_ = Validate.RegisterValidation("strongpassword", validateStrongPassword)
 }
 

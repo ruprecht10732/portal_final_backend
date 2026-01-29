@@ -3,11 +3,11 @@ package handler
 import (
 	"net/http"
 
-	"portal_final_backend/internal/auth/validator"
 	"portal_final_backend/internal/http/middleware"
 	"portal_final_backend/internal/http/response"
 	"portal_final_backend/internal/leads/service"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/internal/shared/validator"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

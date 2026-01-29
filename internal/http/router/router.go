@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"portal_final_backend/internal/adapters"
 	authhandler "portal_final_backend/internal/auth/handler"
 	authrepo "portal_final_backend/internal/auth/repository"
 	authservice "portal_final_backend/internal/auth/service"
@@ -68,6 +69,11 @@ func New(cfg *config.Config, pool *pgxpool.Pool, log *logger.Logger) *gin.Engine
 	authRepo := authrepo.New(pool)
 	authSvc := authservice.New(authRepo, cfg, eventBus, log)
 	authHandler := authhandler.New(authSvc, cfg)
+
+	// Anti-Corruption Layer: Create adapter for leads module to access agent data
+	// This ensures leads module only depends on its own AgentProvider interface,
+	// not on auth domain internals. Inject this into leads service when needed.
+	_ = adapters.NewAuthAgentProvider(authSvc)
 
 	// Leads module
 	leadsRepo := leadsrepo.New(pool)
