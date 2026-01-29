@@ -65,8 +65,31 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResp
 	return toLeadResponse(lead), nil
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest) (transport.LeadResponse, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
 	params := repository.UpdateLeadParams{}
+	var current repository.Lead
+	loadedCurrent := false
+
+	if req.AssigneeID.Set {
+		lead, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return transport.LeadResponse{}, ErrLeadNotFound
+			}
+			return transport.LeadResponse{}, err
+		}
+		current = lead
+		loadedCurrent = true
+
+		if !hasRole(actorRoles, "admin") {
+			if current.AssignedAgentID == nil || *current.AssignedAgentID != actorID {
+				return transport.LeadResponse{}, ErrForbidden
+			}
+		}
+
+		params.AssignedAgentID = req.AssigneeID.Value
+		params.AssignedAgentIDSet = true
+	}
 
 	if req.FirstName != nil {
 		params.ConsumerFirstName = req.FirstName
@@ -114,6 +137,15 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 		return transport.LeadResponse{}, err
 	}
 
+	if req.AssigneeID.Set && loadedCurrent {
+		if !equalUUIDPtrs(current.AssignedAgentID, req.AssigneeID.Value) {
+			_ = s.repo.AddActivity(ctx, id, actorID, "assigned", map[string]interface{}{
+				"from": current.AssignedAgentID,
+				"to":   req.AssigneeID.Value,
+			})
+		}
+	}
+
 	return toLeadResponse(lead), nil
 }
 
@@ -132,7 +164,10 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 		}
 	}
 
-	params := repository.UpdateLeadParams{AssignedAgentID: assigneeID}
+	params := repository.UpdateLeadParams{
+		AssignedAgentID:    assigneeID,
+		AssignedAgentIDSet: true,
+	}
 	updated, err := s.repo.Update(ctx, id, params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -324,4 +359,14 @@ func hasRole(roles []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func equalUUIDPtrs(a *uuid.UUID, b *uuid.UUID) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }

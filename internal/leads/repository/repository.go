@@ -148,6 +148,7 @@ type UpdateLeadParams struct {
 	ServiceType        *string
 	Status             *string
 	AssignedAgentID    *uuid.UUID
+	AssignedAgentIDSet bool
 }
 
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLeadParams) (Lead, error) {
@@ -205,9 +206,9 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 		args = append(args, *params.ServiceType)
 		argIdx++
 	}
-	if params.AssignedAgentID != nil {
+	if params.AssignedAgentIDSet {
 		setClauses = append(setClauses, fmt.Sprintf("assigned_agent_id = $%d", argIdx))
-		args = append(args, *params.AssignedAgentID)
+		args = append(args, params.AssignedAgentID)
 		argIdx++
 	}
 	if params.Status != nil {

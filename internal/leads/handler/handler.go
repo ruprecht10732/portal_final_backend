@@ -98,14 +98,33 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.svc.Update(c.Request.Context(), id, req)
+	actorIDValue, ok := c.Get(middleware.ContextUserIDKey)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	rolesValue, ok := c.Get(middleware.ContextRolesKey)
+	if !ok {
+		response.Error(c, http.StatusForbidden, "forbidden", nil)
+		return
+	}
+
+	actorID := actorIDValue.(uuid.UUID)
+	roles := rolesValue.([]string)
+
+	lead, err := h.svc.Update(c.Request.Context(), id, req, actorID, roles)
 	if err != nil {
-		if err == service.ErrLeadNotFound {
+		switch err {
+		case service.ErrLeadNotFound:
 			response.Error(c, http.StatusNotFound, err.Error(), nil)
 			return
+		case service.ErrForbidden:
+			response.Error(c, http.StatusForbidden, err.Error(), nil)
+			return
+		default:
+			response.Error(c, http.StatusBadRequest, err.Error(), nil)
+			return
 		}
-		response.Error(c, http.StatusBadRequest, err.Error(), nil)
-		return
 	}
 
 	response.OK(c, lead)

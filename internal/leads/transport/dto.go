@@ -68,6 +68,7 @@ type UpdateLeadRequest struct {
 	City         *string       `json:"city,omitempty" validate:"omitempty,min=1,max=100"`
 	ServiceType  *ServiceType  `json:"serviceType,omitempty" validate:"omitempty,oneof=Windows Insulation Solar"`
 	Status       *LeadStatus   `json:"status,omitempty" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling"`
+	AssigneeID   OptionalUUID  `json:"assigneeId,omitempty" validate:"-"`
 }
 
 type UpdateLeadStatusRequest struct {
