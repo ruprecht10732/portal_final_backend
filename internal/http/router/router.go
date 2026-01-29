@@ -5,16 +5,13 @@ import (
 	"time"
 
 	"portal_final_backend/internal/adapters"
-	authhandler "portal_final_backend/internal/auth/handler"
-	authrepo "portal_final_backend/internal/auth/repository"
-	authservice "portal_final_backend/internal/auth/service"
+	"portal_final_backend/internal/auth"
 	"portal_final_backend/internal/config"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
+	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/middleware"
-	leadshandler "portal_final_backend/internal/leads/handler"
-	leadsrepo "portal_final_backend/internal/leads/repository"
-	leadsservice "portal_final_backend/internal/leads/service"
+	"portal_final_backend/internal/leads"
 	"portal_final_backend/internal/logger"
 	"portal_final_backend/internal/notification"
 
@@ -61,52 +58,51 @@ func New(cfg *config.Config, pool *pgxpool.Pool, log *logger.Logger) *gin.Engine
 	// Event bus for decoupled communication between modules
 	eventBus := events.NewInMemoryBus(log)
 
-	// Notification module subscribes to domain events
+	// Notification module subscribes to domain events (not HTTP-facing)
 	notificationModule := notification.New(sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
 
-	// Auth module
-	authRepo := authrepo.New(pool)
-	authSvc := authservice.New(authRepo, cfg, eventBus, log)
-	authHandler := authhandler.New(authSvc, cfg)
-
-	// Anti-Corruption Layer: Create adapter for leads module to access agent data
-	// This ensures leads module only depends on its own AgentProvider interface,
-	// not on auth domain internals. Inject this into leads service when needed.
-	_ = adapters.NewAuthAgentProvider(authSvc)
-
-	// Leads module
-	leadsRepo := leadsrepo.New(pool)
-	leadsSvc := leadsservice.New(leadsRepo, eventBus)
-	leadsHandler := leadshandler.New(leadsSvc)
-
+	// Health check endpoint (outside versioned API)
 	engine.GET("/api/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
+	// Set up route groups
 	v1 := engine.Group("/api/v1")
-
-	// Auth routes with stricter rate limiting
-	authGroup := v1.Group("/auth")
-	authLimiter := middleware.NewAuthRateLimiter(log)
-	authGroup.Use(authLimiter.RateLimit())
-	authHandler.RegisterRoutes(authGroup)
-
-	// Protected routes
 	protected := v1.Group("")
 	protected.Use(middleware.AuthRequired(cfg))
-	protected.GET("/users/me", authHandler.GetMe)
-	protected.GET("/users", authHandler.ListUsers)
-	protected.PATCH("/users/me", authHandler.UpdateMe)
-	protected.POST("/users/me/password", authHandler.ChangePassword)
-
-	// Leads routes (accessible to all authenticated users)
-	leadsHandler.RegisterRoutes(protected.Group("/leads"))
-
-	// Admin routes
 	admin := v1.Group("/admin")
 	admin.Use(middleware.AuthRequired(cfg), middleware.RequireRole("admin"))
-	admin.PUT("/users/:id/roles", authHandler.SetUserRoles)
+
+	// Router context provides shared dependencies to modules
+	routerCtx := &apphttp.RouterContext{
+		Engine:          engine,
+		V1:              v1,
+		Protected:       protected,
+		Admin:           admin,
+		Config:          cfg,
+		AuthMiddleware:  middleware.AuthRequired(cfg),
+		AuthRateLimiter: middleware.NewAuthRateLimiter(log),
+	}
+
+	// Initialize domain modules
+	authModule := auth.NewModule(pool, cfg, eventBus, log)
+	leadsModule := leads.NewModule(pool, eventBus)
+
+	// Anti-Corruption Layer: Create adapter for cross-domain communication
+	// This ensures leads module only depends on its own AgentProvider interface
+	_ = adapters.NewAuthAgentProvider(authModule.Service())
+
+	// Register all HTTP modules
+	modules := []apphttp.Module{
+		authModule,
+		leadsModule,
+	}
+
+	for _, mod := range modules {
+		log.Info("registering module routes", "module", mod.Name())
+		mod.RegisterRoutes(routerCtx)
+	}
 
 	return engine
 }
