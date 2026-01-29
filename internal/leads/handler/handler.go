@@ -105,21 +105,12 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	actorIDValue, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-	rolesValue, ok := c.Get(httpkit.ContextRolesKey)
-	if !ok {
-		httpkit.Error(c, http.StatusForbidden, "forbidden", nil)
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
 		return
 	}
 
-	actorID := actorIDValue.(uuid.UUID)
-	roles := rolesValue.([]string)
-
-	lead, err := h.mgmt.Update(c.Request.Context(), id, req, actorID, roles)
+	lead, err := h.mgmt.Update(c.Request.Context(), id, req, identity.UserID(), identity.Roles())
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -140,21 +131,12 @@ func (h *Handler) Assign(c *gin.Context) {
 		return
 	}
 
-	actorIDValue, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-	rolesValue, ok := c.Get(httpkit.ContextRolesKey)
-	if !ok {
-		httpkit.Error(c, http.StatusForbidden, "forbidden", nil)
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
 		return
 	}
 
-	actorID := actorIDValue.(uuid.UUID)
-	roles := rolesValue.([]string)
-
-	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, actorID, roles)
+	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, identity.UserID(), identity.Roles())
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -262,13 +244,12 @@ func (h *Handler) RescheduleVisit(c *gin.Context) {
 		return
 	}
 
-	actorID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
 		return
 	}
 
-	lead, err := h.scheduling.RescheduleVisit(c.Request.Context(), id, req, actorID.(uuid.UUID))
+	lead, err := h.scheduling.RescheduleVisit(c.Request.Context(), id, req, identity.UserID())
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -329,13 +310,12 @@ func (h *Handler) MarkViewed(c *gin.Context) {
 		return
 	}
 
-	userID, exists := c.Get(httpkit.ContextUserIDKey)
-	if !exists {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
 		return
 	}
 
-	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, userID.(uuid.UUID)); httpkit.HandleError(c, err) {
+	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, identity.UserID()); httpkit.HandleError(c, err) {
 		return
 	}
 

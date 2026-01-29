@@ -55,14 +55,12 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 		return
 	}
 
-	actorIDValue, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
 		return
 	}
 
-	authorID := actorIDValue.(uuid.UUID)
-	created, err := h.svc.Add(c.Request.Context(), id, authorID, req)
+	created, err := h.svc.Add(c.Request.Context(), id, identity.UserID(), req)
 	if httpkit.HandleError(c, err) {
 		return
 	}

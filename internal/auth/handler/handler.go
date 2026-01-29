@@ -48,13 +48,12 @@ func (h *Handler) ListUsers(c *gin.Context) {
 }
 
 func (h *Handler) GetMe(c *gin.Context) {
-	userID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
 		return
 	}
 
-	profile, err := h.svc.GetMe(c.Request.Context(), userID.(uuid.UUID))
+	profile, err := h.svc.GetMe(c.Request.Context(), id.UserID())
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -70,9 +69,8 @@ func (h *Handler) GetMe(c *gin.Context) {
 }
 
 func (h *Handler) UpdateMe(c *gin.Context) {
-	userID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
 		return
 	}
 
@@ -86,7 +84,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.svc.UpdateMe(c.Request.Context(), userID.(uuid.UUID), req.Email)
+	profile, err := h.svc.UpdateMe(c.Request.Context(), id.UserID(), req.Email)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -102,9 +100,8 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {
-	userID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
 		return
 	}
 
@@ -118,7 +115,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if httpkit.HandleError(c, h.svc.ChangePassword(c.Request.Context(), userID.(uuid.UUID), req.CurrentPassword, req.NewPassword)) {
+	if httpkit.HandleError(c, h.svc.ChangePassword(c.Request.Context(), id.UserID(), req.CurrentPassword, req.NewPassword)) {
 		return
 	}
 
