@@ -17,8 +17,8 @@ UPDATE leads SET deleted_at = now(), updated_at = now()
 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 `
 
-func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, dollar_1 []pgtype.UUID) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, bulkSoftDeleteLeads, dollar_1)
+func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, ids []pgtype.UUID) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, bulkSoftDeleteLeads, ids)
 }
 
 const completeLeadServiceSurvey = `-- name: CompleteLeadServiceSurvey :one
@@ -74,7 +74,7 @@ UPDATE leads SET
     status = 'Surveyed',
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at
+RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source
 `
 
 type CompleteLeadSurveyParams struct {
@@ -117,6 +117,8 @@ func (q *Queries) CompleteLeadSurvey(ctx context.Context, arg CompleteLeadSurvey
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsumerNote,
+		&i.Source,
 	)
 	return i, err
 }
@@ -137,9 +139,10 @@ const createLead = `-- name: CreateLead :one
 INSERT INTO leads (
     consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
     address_street, address_house_number, address_zip_code, address_city,
-    service_type, status, assigned_agent_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11)
-RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at
+    service_type, status, assigned_agent_id,
+    consumer_note, source
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11, $12, $13)
+RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source
 `
 
 type CreateLeadParams struct {
@@ -154,6 +157,8 @@ type CreateLeadParams struct {
 	AddressCity        string      `json:"address_city"`
 	ServiceType        string      `json:"service_type"`
 	AssignedAgentID    pgtype.UUID `json:"assigned_agent_id"`
+	ConsumerNote       pgtype.Text `json:"consumer_note"`
+	Source             pgtype.Text `json:"source"`
 }
 
 // Leads Domain SQL Queries
@@ -170,6 +175,8 @@ func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, e
 		arg.AddressCity,
 		arg.ServiceType,
 		arg.AssignedAgentID,
+		arg.ConsumerNote,
+		arg.Source,
 	)
 	var i Lead
 	err := row.Scan(
@@ -197,6 +204,8 @@ func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, e
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsumerNote,
+		&i.Source,
 	)
 	return i, err
 }
@@ -349,7 +358,7 @@ func (q *Queries) DeleteLeadNote(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getLeadByID = `-- name: GetLeadByID :one
-SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at FROM leads WHERE id = $1 AND deleted_at IS NULL
+SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source FROM leads WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetLeadByID(ctx context.Context, id pgtype.UUID) (Lead, error) {
@@ -380,12 +389,14 @@ func (q *Queries) GetLeadByID(ctx context.Context, id pgtype.UUID) (Lead, error)
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsumerNote,
+		&i.Source,
 	)
 	return i, err
 }
 
 const getLeadByPhone = `-- name: GetLeadByPhone :one
-SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at FROM leads 
+SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source FROM leads 
 WHERE consumer_phone = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT 1
@@ -419,6 +430,8 @@ func (q *Queries) GetLeadByPhone(ctx context.Context, consumerPhone string) (Lea
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsumerNote,
+		&i.Source,
 	)
 	return i, err
 }
@@ -652,7 +665,7 @@ UPDATE leads SET
     status = 'Scheduled',
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at
+RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source
 `
 
 type ScheduleLeadVisitParams struct {
@@ -689,6 +702,8 @@ func (q *Queries) ScheduleLeadVisit(ctx context.Context, arg ScheduleLeadVisitPa
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsumerNote,
+		&i.Source,
 	)
 	return i, err
 }
@@ -778,7 +793,7 @@ func (q *Queries) UpdateLeadServiceStatus(ctx context.Context, arg UpdateLeadSer
 const updateLeadStatus = `-- name: UpdateLeadStatus :one
 UPDATE leads SET status = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at
+RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source
 `
 
 type UpdateLeadStatusParams struct {
@@ -814,6 +829,8 @@ func (q *Queries) UpdateLeadStatus(ctx context.Context, arg UpdateLeadStatusPara
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsumerNote,
+		&i.Source,
 	)
 	return i, err
 }

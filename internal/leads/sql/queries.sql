@@ -4,8 +4,9 @@
 INSERT INTO leads (
     consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
     address_street, address_house_number, address_zip_code, address_city,
-    service_type, status, assigned_agent_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11)
+    service_type, status, assigned_agent_id,
+    consumer_note, source
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11, $12, $13)
 RETURNING *;
 
 -- name: GetLeadByID :one

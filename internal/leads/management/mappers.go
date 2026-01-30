@@ -12,6 +12,8 @@ func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 		AssignedAgentID: lead.AssignedAgentID,
 		ViewedByID:      lead.ViewedByID,
 		ViewedAt:        lead.ViewedAt,
+		ConsumerNote:    lead.ConsumerNote,
+		Source:          lead.Source,
 		CreatedAt:       lead.CreatedAt,
 		UpdatedAt:       lead.UpdatedAt,
 		Services:        []transport.LeadServiceResponse{},

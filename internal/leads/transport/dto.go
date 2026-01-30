@@ -56,6 +56,8 @@ type CreateLeadRequest struct {
 	City         string       `json:"city" validate:"required,min=1,max=100"`
 	ServiceType  ServiceType  `json:"serviceType" validate:"required,oneof=Windows Insulation Solar"`
 	AssigneeID   OptionalUUID `json:"assigneeId,omitempty" validate:"-"`
+	ConsumerNote string       `json:"consumerNote,omitempty" validate:"max=2000"`
+	Source       string       `json:"source,omitempty" validate:"max=50"`
 }
 
 type UpdateLeadRequest struct {
@@ -173,6 +175,8 @@ type LeadResponse struct {
 	AssignedAgentID *uuid.UUID            `json:"assignedAgentId,omitempty"`
 	ViewedByID      *uuid.UUID            `json:"viewedById,omitempty"`
 	ViewedAt        *time.Time            `json:"viewedAt,omitempty"`
+	ConsumerNote    *string               `json:"consumerNote,omitempty"`
+	Source          *string               `json:"source,omitempty"`
 	CreatedAt       time.Time             `json:"createdAt"`
 	UpdatedAt       time.Time             `json:"updatedAt"`
 }

@@ -37,6 +37,8 @@ type Lead struct {
 	ServiceType           string
 	Status                string
 	AssignedAgentID       *uuid.UUID
+	ConsumerNote          *string
+	Source                *string
 	ViewedByID            *uuid.UUID
 	ViewedAt              *time.Time
 	VisitScheduledDate    *time.Time
@@ -61,6 +63,8 @@ type CreateLeadParams struct {
 	AddressCity        string
 	ServiceType        string
 	AssignedAgentID    *uuid.UUID
+	ConsumerNote       *string
+	Source             *string
 }
 
 func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead, error) {
@@ -69,21 +73,22 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		INSERT INTO leads (
 			consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11)
+			service_type, status, assigned_agent_id,
+			consumer_note, source
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11, $12, $13)
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`,
 		params.ConsumerFirstName, params.ConsumerLastName, params.ConsumerPhone, params.ConsumerEmail, params.ConsumerRole,
 		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity,
-		params.ServiceType, params.AssignedAgentID,
+		params.ServiceType, params.AssignedAgentID, params.ConsumerNote, params.Source,
 	).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -108,14 +113,14 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Lead, error) {
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 		FROM leads WHERE id = $1 AND deleted_at IS NULL
 	`, id).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -145,7 +150,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string) (Lead, error)
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 		FROM leads WHERE consumer_phone = $1 AND deleted_at IS NULL
@@ -154,7 +159,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string) (Lead, error)
 	`, phone).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -258,7 +263,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 		WHERE id = $%d AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, strings.Join(setClauses, ", "), argIdx)
@@ -267,7 +272,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -284,13 +289,13 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status stri
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, status).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -336,13 +341,13 @@ func (r *Repository) ScheduleVisit(ctx context.Context, id uuid.UUID, scheduledD
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, scheduledDate, scoutID).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -369,13 +374,13 @@ func (r *Repository) CompleteSurvey(ctx context.Context, id uuid.UUID, measureme
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, measurements, accessDifficulty, notesPtr).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -399,13 +404,13 @@ func (r *Repository) MarkNoShow(ctx context.Context, id uuid.UUID, notes string)
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, notesPtr).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
@@ -439,13 +444,13 @@ func (r *Repository) RescheduleVisit(ctx context.Context, id uuid.UUID, schedule
 			WHERE id = $1 AND deleted_at IS NULL
 			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 				address_street, address_house_number, address_zip_code, address_city,
-				service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+				service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 				created_at, updated_at
 		`, id, scheduledDate, scoutID, noShowNote).Scan(
 			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
 		)
@@ -463,13 +468,13 @@ func (r *Repository) RescheduleVisit(ctx context.Context, id uuid.UUID, schedule
 			WHERE id = $1 AND deleted_at IS NULL
 			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 				address_street, address_house_number, address_zip_code, address_city,
-				service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+				service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 				created_at, updated_at
 		`, id, scheduledDate, scoutID).Scan(
 			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
 		)
@@ -545,7 +550,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	query := fmt.Sprintf(`
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city,
-			service_type, status, assigned_agent_id, viewed_by_id, viewed_at,
+			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 		FROM leads
@@ -566,7 +571,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		if err := rows.Scan(
 			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
-			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ViewedByID, &lead.ViewedAt,
+			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
 		); err != nil {

@@ -33,6 +33,8 @@ type Lead struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ConsumerNote          pgtype.Text        `json:"consumer_note"`
+	Source                pgtype.Text        `json:"source"`
 }
 
 type LeadActivity struct {

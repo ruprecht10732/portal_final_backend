@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const leadNotFoundMsg = "lead not found"
+
 // Repository defines the data access interface needed by the management service.
 // This is a consumer-driven interface - only what management needs.
 type Repository interface {
@@ -50,6 +52,8 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 		AddressZipCode:     req.ZipCode,
 		AddressCity:        req.City,
 		ServiceType:        string(req.ServiceType),
+		ConsumerNote:       toPtr(req.ConsumerNote),
+		Source:             toPtr(req.Source),
 	}
 
 	if req.AssigneeID.Set {
@@ -74,7 +78,7 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResp
 	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound("lead not found")
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -84,70 +88,21 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResp
 
 // Update updates a lead's information.
 func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
-	params := repository.UpdateLeadParams{}
-	var current repository.Lead
-	loadedCurrent := false
-
-	if req.AssigneeID.Set {
-		lead, err := s.repo.GetByID(ctx, id)
-		if err != nil {
-			if errors.Is(err, repository.ErrNotFound) {
-				return transport.LeadResponse{}, apperr.NotFound("lead not found")
-			}
-			return transport.LeadResponse{}, err
-		}
-		current = lead
-		loadedCurrent = true
-
-		if !hasRole(actorRoles, "admin") {
-			if current.AssignedAgentID == nil || *current.AssignedAgentID != actorID {
-				return transport.LeadResponse{}, apperr.Forbidden("forbidden")
-			}
-		}
-
-		params.AssignedAgentID = req.AssigneeID.Value
-		params.AssignedAgentIDSet = true
+	params, current, err := s.prepareAssigneeUpdate(ctx, id, req, actorID, actorRoles)
+	if err != nil {
+		return transport.LeadResponse{}, err
 	}
-
-	if req.FirstName != nil {
-		params.ConsumerFirstName = req.FirstName
-	}
-	if req.LastName != nil {
-		params.ConsumerLastName = req.LastName
-	}
-	if req.Phone != nil {
-		normalized := phone.NormalizeE164(*req.Phone)
-		params.ConsumerPhone = &normalized
-	}
-	if req.Email != nil {
-		params.ConsumerEmail = req.Email
-	}
-	if req.ConsumerRole != nil {
-		role := string(*req.ConsumerRole)
-		params.ConsumerRole = &role
-	}
-	if req.Street != nil {
-		params.AddressStreet = req.Street
-	}
-	if req.HouseNumber != nil {
-		params.AddressHouseNumber = req.HouseNumber
-	}
-	if req.ZipCode != nil {
-		params.AddressZipCode = req.ZipCode
-	}
-	if req.City != nil {
-		params.AddressCity = req.City
-	}
+	applyUpdateFields(&params, req)
 
 	lead, err := s.repo.Update(ctx, id, params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound("lead not found")
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
 
-	if req.AssigneeID.Set && loadedCurrent {
+	if req.AssigneeID.Set && current != nil {
 		if !equalUUIDPtrs(current.AssignedAgentID, req.AssigneeID.Value) {
 			_ = s.repo.AddActivity(ctx, id, actorID, "assigned", map[string]interface{}{
 				"from": current.AssignedAgentID,
@@ -165,7 +120,7 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	err := s.repo.Delete(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return apperr.NotFound("lead not found")
+			return apperr.NotFound(leadNotFoundMsg)
 		}
 		return err
 	}
@@ -257,7 +212,7 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 	current, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound("lead not found")
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -275,7 +230,7 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 	updated, err := s.repo.Update(ctx, id, params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound("lead not found")
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -298,7 +253,7 @@ func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transpor
 	lead, err := s.repo.GetByID(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound("lead not found")
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
@@ -347,12 +302,69 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 	lead, err := s.repo.UpdateStatus(ctx, id, string(req.Status))
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound("lead not found")
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
 
 	return ToLeadResponse(lead), nil
+}
+
+func (s *Service) prepareAssigneeUpdate(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (repository.UpdateLeadParams, *repository.Lead, error) {
+	params := repository.UpdateLeadParams{}
+	if !req.AssigneeID.Set {
+		return params, nil, nil
+	}
+
+	lead, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return repository.UpdateLeadParams{}, nil, apperr.NotFound(leadNotFoundMsg)
+		}
+		return repository.UpdateLeadParams{}, nil, err
+	}
+
+	if !hasRole(actorRoles, "admin") {
+		if lead.AssignedAgentID == nil || *lead.AssignedAgentID != actorID {
+			return repository.UpdateLeadParams{}, nil, apperr.Forbidden("forbidden")
+		}
+	}
+
+	params.AssignedAgentID = req.AssigneeID.Value
+	params.AssignedAgentIDSet = true
+	return params, &lead, nil
+}
+
+func applyUpdateFields(params *repository.UpdateLeadParams, req transport.UpdateLeadRequest) {
+	if req.FirstName != nil {
+		params.ConsumerFirstName = req.FirstName
+	}
+	if req.LastName != nil {
+		params.ConsumerLastName = req.LastName
+	}
+	if req.Phone != nil {
+		normalized := phone.NormalizeE164(*req.Phone)
+		params.ConsumerPhone = &normalized
+	}
+	if req.Email != nil {
+		params.ConsumerEmail = req.Email
+	}
+	if req.ConsumerRole != nil {
+		role := string(*req.ConsumerRole)
+		params.ConsumerRole = &role
+	}
+	if req.Street != nil {
+		params.AddressStreet = req.Street
+	}
+	if req.HouseNumber != nil {
+		params.AddressHouseNumber = req.HouseNumber
+	}
+	if req.ZipCode != nil {
+		params.AddressZipCode = req.ZipCode
+	}
+	if req.City != nil {
+		params.AddressCity = req.City
+	}
 }
 
 func hasRole(roles []string, target string) bool {
@@ -372,4 +384,11 @@ func equalUUIDPtrs(a *uuid.UUID, b *uuid.UUID) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func toPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
