@@ -19,9 +19,11 @@ import (
 )
 
 const (
-	accessTokenType  = "access"
-	refreshTokenType = "refresh"
-	defaultUserRole  = "user" // Default role for new users (not admin)
+	accessTokenType     = "access"
+	refreshTokenType    = "refresh"
+	defaultUserRole     = "user" // Default role for new users (not admin)
+	tokenInvalidMessage = "token invalid"
+	tokenExpiredMessage = "token expired"
 )
 
 type Service struct {
@@ -108,12 +110,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, str
 	hash := token.HashSHA256(refreshToken)
 	userID, expiresAt, err := s.repo.GetRefreshToken(ctx, hash)
 	if err != nil {
-		return "", "", apperr.Unauthorized("token invalid")
+		return "", "", apperr.Unauthorized(tokenInvalidMessage)
 	}
 
 	if time.Now().After(expiresAt) {
 		_ = s.repo.RevokeRefreshToken(ctx, hash)
-		return "", "", apperr.Unauthorized("token expired")
+		return "", "", apperr.Unauthorized(tokenExpiredMessage)
 	}
 
 	_ = s.repo.RevokeRefreshToken(ctx, hash)
@@ -157,11 +159,11 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	hash := token.HashSHA256(rawToken)
 	userID, expiresAt, err := s.repo.GetUserToken(ctx, hash, repository.TokenTypePasswordReset)
 	if err != nil {
-		return apperr.Unauthorized("token invalid")
+		return apperr.Unauthorized(tokenInvalidMessage)
 	}
 
 	if time.Now().After(expiresAt) {
-		return apperr.Unauthorized("token expired")
+		return apperr.Unauthorized(tokenExpiredMessage)
 	}
 
 	passwordHash, err := password.Hash(newPassword)
@@ -183,11 +185,11 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 	hash := token.HashSHA256(rawToken)
 	userID, expiresAt, err := s.repo.GetUserToken(ctx, hash, repository.TokenTypeEmailVerify)
 	if err != nil {
-		return apperr.Unauthorized("token invalid")
+		return apperr.Unauthorized(tokenInvalidMessage)
 	}
 
 	if time.Now().After(expiresAt) {
-		return apperr.Unauthorized("token expired")
+		return apperr.Unauthorized(tokenExpiredMessage)
 	}
 
 	if err := s.repo.MarkEmailVerified(ctx, userID); err != nil {
