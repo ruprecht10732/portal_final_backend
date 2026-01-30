@@ -14,6 +14,7 @@ import (
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/router"
 	"portal_final_backend/internal/leads"
+	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
@@ -69,6 +70,7 @@ func main() {
 	// Initialize domain modules
 	authModule := auth.NewModule(pool, cfg, eventBus, log, val)
 	leadsModule := leads.NewModule(pool, eventBus, val)
+	mapsModule := maps.NewModule(log)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
@@ -85,6 +87,7 @@ func main() {
 		Modules: []apphttp.Module{
 			authModule,
 			leadsModule,
+			mapsModule,
 		},
 	}
 

@@ -66,7 +66,6 @@ internal/auth/sql/queries.sql
 internal/auth/token/token.go
 internal/auth/transport/dto.go
 internal/auth/validator/validator.go
-internal/config/config.go
 internal/db/db.go
 internal/email/brevo.go
 internal/events/bus.go
@@ -105,10 +104,12 @@ internal/leads/sql/queries.sql
 internal/leads/transport/dto.go
 internal/leads/transport/notes.go
 internal/leads/transport/optional.go
-internal/logger/logger.go
+internal/maps/handler.go
+internal/maps/module.go
+internal/maps/service.go
+internal/maps/types.go
 internal/notification/module.go
 internal/phone/normalize.go
-internal/shared/validator/validator.go
 migrations/001_init.sql
 migrations/002_roles.sql
 migrations/003_leads.sql
@@ -123,6 +124,7 @@ platform/config/config.go
 platform/db/db.go
 platform/events/bus.go
 platform/events/event.go
+platform/httpkit/identity.go
 platform/httpkit/middleware.go
 platform/httpkit/response.go
 platform/logger/logger.go
@@ -134,6 +136,248 @@ sqlc.yaml
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="internal/maps/handler.go">
+package maps
+
+import (
+	"net/http"
+
+	"portal_final_backend/platform/httpkit"
+
+	"github.com/gin-gonic/gin"
+)
+
+// Handler exposes the maps search endpoint.
+type Handler struct {
+	svc *Service
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// LookupAddress handles GET /api/v1/maps/address-lookup?q=...
+func (h *Handler) LookupAddress(c *gin.Context) {
+	var req LookupRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "query 'q' is required (min 3 chars)", nil)
+		return
+	}
+
+	results, err := h.svc.SearchAddress(c.Request.Context(), req.Query)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadGateway, "address lookup service unavailable", nil)
+		return
+	}
+
+	httpkit.OK(c, results)
+}
+</file>
+
+<file path="internal/maps/module.go">
+package maps
+
+import (
+	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/platform/logger"
+)
+
+// Module wires the maps address lookup HTTP routes.
+type Module struct {
+	handler *Handler
+}
+
+func NewModule(log *logger.Logger) *Module {
+	svc := NewService(log)
+	h := NewHandler(svc)
+	return &Module{handler: h}
+}
+
+func (m *Module) Name() string {
+	return "maps"
+}
+
+func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
+	group := ctx.Protected.Group("/maps")
+	group.GET("/address-lookup", m.handler.LookupAddress)
+}
+
+var _ apphttp.Module = (*Module)(nil)
+</file>
+
+<file path="internal/maps/service.go">
+package maps
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"portal_final_backend/platform/logger"
+)
+
+const nominatimURL = "https://nominatim.openstreetmap.org/search"
+
+type Service struct {
+	client *http.Client
+	log    *logger.Logger
+}
+
+func NewService(log *logger.Logger) *Service {
+	return &Service{
+		client: &http.Client{Timeout: 5 * time.Second},
+		log:    log,
+	}
+}
+
+func (s *Service) SearchAddress(ctx context.Context, query string) ([]AddressSuggestion, error) {
+	params := url.Values{}
+	params.Add("q", query)
+	params.Add("format", "json")
+	params.Add("addressdetails", "1")
+	params.Add("limit", "5")
+	params.Add("countrycodes", "nl")
+
+	reqURL := fmt.Sprintf("%s?%s", nominatimURL, params.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", "PortalApp/1.0")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		s.log.Error("nominatim request failed", "error", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		s.log.Error("nominatim upstream error", "status", resp.StatusCode)
+		return nil, fmt.Errorf("upstream api error: %d", resp.StatusCode)
+	}
+
+	var rawResults []nominatimResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rawResults); err != nil {
+		s.log.Error("failed to decode nominatim payload", "error", err)
+		return nil, err
+	}
+
+	suggestions := make([]AddressSuggestion, 0, len(rawResults))
+	for _, raw := range rawResults {
+		suggestion, ok := buildSuggestion(raw)
+		if !ok {
+			continue
+		}
+
+		suggestions = append(suggestions, suggestion)
+	}
+
+	return suggestions, nil
+}
+
+func buildSuggestion(raw nominatimResponse) (AddressSuggestion, bool) {
+	if raw.Address.Road == "" {
+		return AddressSuggestion{}, false
+	}
+
+	city := pickCity(raw.Address)
+	if city == "" {
+		return AddressSuggestion{}, false
+	}
+
+	suggestion := AddressSuggestion{
+		Street:      raw.Address.Road,
+		HouseNumber: raw.Address.HouseNumber,
+		ZipCode:     raw.Address.Postcode,
+		City:        city,
+		Lat:         raw.Lat,
+		Lon:         raw.Lon,
+	}
+
+	suggestion.Label = buildLabel(suggestion)
+
+	return suggestion, true
+}
+
+func pickCity(address nominatimAddress) string {
+	if address.City != "" {
+		return address.City
+	}
+	if address.Town != "" {
+		return address.Town
+	}
+	if address.Village != "" {
+		return address.Village
+	}
+	if address.Municipality != "" {
+		return address.Municipality
+	}
+	return address.Hamlet
+}
+
+func buildLabel(suggestion AddressSuggestion) string {
+	parts := []string{suggestion.Street}
+	if suggestion.HouseNumber != "" {
+		parts = append(parts, suggestion.HouseNumber)
+	}
+	parts = append(parts, ",")
+	if suggestion.ZipCode != "" {
+		parts = append(parts, suggestion.ZipCode)
+	}
+	parts = append(parts, suggestion.City)
+
+	label := strings.Join(parts, " ")
+	label = strings.ReplaceAll(label, " ,", ",")
+	return strings.TrimSpace(label)
+}
+</file>
+
+<file path="internal/maps/types.go">
+package maps
+
+// LookupRequest represents the query parameters from the frontend.
+type LookupRequest struct {
+	Query string `form:"q" binding:"required,min=3"`
+}
+
+// AddressSuggestion is the normalized data returned to the frontend form.
+type AddressSuggestion struct {
+	Label       string `json:"label"`
+	Street      string `json:"street"`
+	HouseNumber string `json:"houseNumber"`
+	ZipCode     string `json:"zipCode"`
+	City        string `json:"city"`
+	Lat         string `json:"lat"`
+	Lon         string `json:"lon"`
+}
+
+type nominatimAddress struct {
+	Road         string `json:"road"`
+	HouseNumber  string `json:"house_number"`
+	Postcode     string `json:"postcode"`
+	City         string `json:"city"`
+	Town         string `json:"town"`
+	Village      string `json:"village"`
+	Municipality string `json:"municipality"`
+	Hamlet       string `json:"hamlet"`
+}
+
+// nominatimResponse mirrors the relevant parts of the OSM search payload.
+type nominatimResponse struct {
+	DisplayName string `json:"display_name"`
+	Lat         string `json:"lat"`
+	Lon         string `json:"lon"`
+	Address     nominatimAddress `json:"address"`
+}
+</file>
 
 <file path=".air.toml">
 root = "."
@@ -2757,117 +3001,6 @@ func (o *OptionalUUID) UnmarshalJSON(data []byte) error {
 }
 </file>
 
-<file path="internal/logger/logger.go">
-package logger
-
-import (
-	"context"
-	"log/slog"
-	"os"
-	"strings"
-)
-
-// Logger wraps slog.Logger for structured logging
-type Logger struct {
-	*slog.Logger
-}
-
-// New creates a new logger based on environment
-func New(env string) *Logger {
-	var handler slog.Handler
-
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}
-
-	if strings.EqualFold(env, "development") {
-		opts.Level = slog.LevelDebug
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	}
-
-	return &Logger{
-		Logger: slog.New(handler),
-	}
-}
-
-// WithContext returns a logger with context values
-func (l *Logger) WithContext(ctx context.Context) *Logger {
-	return l
-}
-
-// WithRequestID returns a logger with request ID
-func (l *Logger) WithRequestID(requestID string) *Logger {
-	return &Logger{
-		Logger: l.Logger.With(slog.String("request_id", requestID)),
-	}
-}
-
-// WithUserID returns a logger with user ID
-func (l *Logger) WithUserID(userID string) *Logger {
-	return &Logger{
-		Logger: l.Logger.With(slog.String("user_id", userID)),
-	}
-}
-
-// HTTPRequest logs an HTTP request
-func (l *Logger) HTTPRequest(method, path string, status int, latencyMs float64, clientIP string) {
-	l.Info("http_request",
-		slog.String("method", method),
-		slog.String("path", path),
-		slog.Int("status", status),
-		slog.Float64("latency_ms", latencyMs),
-		slog.String("client_ip", clientIP),
-	)
-}
-
-// HTTPError logs an HTTP error
-func (l *Logger) HTTPError(method, path string, status int, err error, clientIP string) {
-	l.Error("http_error",
-		slog.String("method", method),
-		slog.String("path", path),
-		slog.Int("status", status),
-		slog.String("error", err.Error()),
-		slog.String("client_ip", clientIP),
-	)
-}
-
-// AuthEvent logs authentication events
-func (l *Logger) AuthEvent(event, email string, success bool, reason string) {
-	if success {
-		l.Info("auth_event",
-			slog.String("event", event),
-			slog.String("email", email),
-			slog.Bool("success", success),
-		)
-	} else {
-		l.Warn("auth_event",
-			slog.String("event", event),
-			slog.String("email", email),
-			slog.Bool("success", success),
-			slog.String("reason", reason),
-		)
-	}
-}
-
-// DatabaseError logs database errors
-func (l *Logger) DatabaseError(operation string, err error) {
-	l.Error("database_error",
-		slog.String("operation", operation),
-		slog.String("error", err.Error()),
-	)
-}
-
-// RateLimitExceeded logs rate limit events
-func (l *Logger) RateLimitExceeded(clientIP, path string) {
-	l.Warn("rate_limit_exceeded",
-		slog.String("client_ip", clientIP),
-		slog.String("path", path),
-	)
-}
-</file>
-
 <file path="internal/phone/normalize.go">
 package phone
 
@@ -2897,20 +3030,6 @@ func NormalizeE164(input string) string {
 
 	return phonenumbers.Format(number, phonenumbers.E164)
 }
-</file>
-
-<file path="internal/shared/validator/validator.go">
-// Package validator provides a shared validation instance for use across all
-// bounded contexts. Domain-specific validation rules should be registered in
-// their respective domains.
-package validator
-
-import "github.com/go-playground/validator/v10"
-
-// Validate is the shared validator instance used across all modules.
-// Domain-specific validation rules can be registered in their respective
-// domain packages using RegisterValidation.
-var Validate = validator.New()
 </file>
 
 <file path="migrations/001_init.sql">
@@ -3492,116 +3611,95 @@ type Bus interface {
 }
 </file>
 
-<file path="platform/logger/logger.go">
-// Package logger provides structured logging infrastructure for the application.
-// This is part of the platform layer and contains no business logic.
-package logger
+<file path="platform/httpkit/identity.go">
+// Package httpkit provides HTTP utilities including identity abstraction.
+package httpkit
 
 import (
-	"context"
-	"log/slog"
-	"os"
-	"strings"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
-// Logger wraps slog.Logger for structured logging
-type Logger struct {
-	*slog.Logger
+// Identity represents the authenticated user's identity.
+// This interface abstracts identity extraction from the web framework,
+// allowing handlers to access user information without depending on Gin.
+type Identity interface {
+	// UserID returns the authenticated user's ID.
+	UserID() uuid.UUID
+	// Roles returns the user's assigned roles.
+	Roles() []string
+	// HasRole checks if the user has a specific role.
+	HasRole(role string) bool
+	// IsAuthenticated returns true if the user is authenticated.
+	IsAuthenticated() bool
 }
 
-// New creates a new logger based on environment
-func New(env string) *Logger {
-	var handler slog.Handler
+// identity is the concrete implementation of Identity.
+type identity struct {
+	userID        uuid.UUID
+	roles         []string
+	authenticated bool
+}
 
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+func (i *identity) UserID() uuid.UUID {
+	return i.userID
+}
+
+func (i *identity) Roles() []string {
+	return i.roles
+}
+
+func (i *identity) HasRole(role string) bool {
+	for _, r := range i.roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+func (i *identity) IsAuthenticated() bool {
+	return i.authenticated
+}
+
+// GetIdentity extracts the Identity from a Gin context.
+// Returns an unauthenticated identity if user info is not present.
+func GetIdentity(c *gin.Context) Identity {
+	userID, userOK := c.Get(ContextUserIDKey)
+	roles, rolesOK := c.Get(ContextRolesKey)
+
+	if !userOK {
+		return &identity{authenticated: false}
 	}
 
-	if strings.EqualFold(env, "development") {
-		opts.Level = slog.LevelDebug
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
+	uid, ok := userID.(uuid.UUID)
+	if !ok {
+		return &identity{authenticated: false}
 	}
 
-	return &Logger{
-		Logger: slog.New(handler),
+	var roleList []string
+	if rolesOK {
+		roleList, _ = roles.([]string)
 	}
-}
 
-// WithContext returns a logger with context values
-func (l *Logger) WithContext(ctx context.Context) *Logger {
-	return l
-}
-
-// WithRequestID returns a logger with request ID
-func (l *Logger) WithRequestID(requestID string) *Logger {
-	return &Logger{
-		Logger: l.Logger.With(slog.String("request_id", requestID)),
-	}
-}
-
-// WithUserID returns a logger with user ID
-func (l *Logger) WithUserID(userID string) *Logger {
-	return &Logger{
-		Logger: l.Logger.With(slog.String("user_id", userID)),
-	}
-}
-
-// HTTPRequest logs an HTTP request
-func (l *Logger) HTTPRequest(method, path string, status int, latencyMs float64, clientIP string) {
-	l.Info("http_request",
-		slog.String("method", method),
-		slog.String("path", path),
-		slog.Int("status", status),
-		slog.Float64("latency_ms", latencyMs),
-		slog.String("client_ip", clientIP),
-	)
-}
-
-// HTTPError logs an HTTP error
-func (l *Logger) HTTPError(method, path string, status int, err error, clientIP string) {
-	l.Error("http_error",
-		slog.String("method", method),
-		slog.String("path", path),
-		slog.Int("status", status),
-		slog.String("error", err.Error()),
-		slog.String("client_ip", clientIP),
-	)
-}
-
-// AuthEvent logs authentication events
-func (l *Logger) AuthEvent(event, email string, success bool, reason string) {
-	if success {
-		l.Info("auth_event",
-			slog.String("event", event),
-			slog.String("email", email),
-			slog.Bool("success", success),
-		)
-	} else {
-		l.Warn("auth_event",
-			slog.String("event", event),
-			slog.String("email", email),
-			slog.Bool("success", success),
-			slog.String("reason", reason),
-		)
+	return &identity{
+		userID:        uid,
+		roles:         roleList,
+		authenticated: true,
 	}
 }
 
-// DatabaseError logs database errors
-func (l *Logger) DatabaseError(operation string, err error) {
-	l.Error("database_error",
-		slog.String("operation", operation),
-		slog.String("error", err.Error()),
-	)
-}
-
-// RateLimitExceeded logs rate limit events
-func (l *Logger) RateLimitExceeded(clientIP, path string) {
-	l.Warn("rate_limit_exceeded",
-		slog.String("client_ip", clientIP),
-		slog.String("path", path),
-	)
+// MustGetIdentity extracts the Identity from a Gin context.
+// If the user is not authenticated, it aborts with 401 Unauthorized and returns nil.
+func MustGetIdentity(c *gin.Context) Identity {
+	id := GetIdentity(c)
+	if !id.IsAuthenticated() {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return nil
+	}
+	return id
 }
 </file>
 
@@ -3636,21 +3734,6 @@ func NormalizeE164(input string) string {
 
 	return phonenumbers.Format(number, phonenumbers.E164)
 }
-</file>
-
-<file path="platform/validator/validator.go">
-// Package validator provides a shared validation instance for use across all
-// bounded contexts. Domain-specific validation rules should be registered in
-// their respective domains.
-// This is part of the platform layer and contains no business logic.
-package validator
-
-import "github.com/go-playground/validator/v10"
-
-// Validate is the shared validator instance used across all modules.
-// Domain-specific validation rules can be registered in their respective
-// domain packages using RegisterValidation.
-var Validate = validator.New()
 </file>
 
 <file path="sql/auth.sql">
@@ -4346,84 +4429,6 @@ func equalUUIDPtrs(a *uuid.UUID, b *uuid.UUID) bool {
 	}
 	return *a == *b
 }
-</file>
-
-<file path="internal/leads/module.go">
-// Package leads provides the lead management bounded context module.
-// This file defines the module that encapsulates all leads setup and route registration.
-package leads
-
-import (
-	"portal_final_backend/internal/events"
-	apphttp "portal_final_backend/internal/http"
-	"portal_final_backend/internal/leads/handler"
-	"portal_final_backend/internal/leads/management"
-	"portal_final_backend/internal/leads/notes"
-	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/internal/leads/scheduling"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-// Module is the leads bounded context module implementing http.Module.
-type Module struct {
-	handler    *handler.Handler
-	management *management.Service
-	scheduling *scheduling.Service
-	notes      *notes.Service
-}
-
-// NewModule creates and initializes the leads module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus) *Module {
-	// Create shared repository
-	repo := repository.New(pool)
-
-	// Create focused services (vertical slices)
-	mgmtSvc := management.New(repo)
-	schedulingSvc := scheduling.New(repo, eventBus)
-	notesSvc := notes.New(repo)
-
-	// Create handlers
-	notesHandler := handler.NewNotesHandler(notesSvc)
-	h := handler.New(mgmtSvc, schedulingSvc, notesHandler)
-
-	return &Module{
-		handler:    h,
-		management: mgmtSvc,
-		scheduling: schedulingSvc,
-		notes:      notesSvc,
-	}
-}
-
-// Name returns the module identifier.
-func (m *Module) Name() string {
-	return "leads"
-}
-
-// ManagementService returns the lead management service for external use.
-func (m *Module) ManagementService() *management.Service {
-	return m.management
-}
-
-// SchedulingService returns the lead scheduling service for external use.
-func (m *Module) SchedulingService() *scheduling.Service {
-	return m.scheduling
-}
-
-// NotesService returns the lead notes service for external use.
-func (m *Module) NotesService() *notes.Service {
-	return m.notes
-}
-
-// RegisterRoutes mounts leads routes on the provided router context.
-func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	// All leads routes require authentication
-	leadsGroup := ctx.Protected.Group("/leads")
-	m.handler.RegisterRoutes(leadsGroup)
-}
-
-// Compile-time check that Module implements http.Module
-var _ apphttp.Module = (*Module)(nil)
 </file>
 
 <file path="internal/leads/notes/service.go">
@@ -5761,6 +5766,209 @@ func HandleError(c *gin.Context, err error) bool {
 }
 </file>
 
+<file path="platform/logger/logger.go">
+// Package logger provides structured logging infrastructure for the application.
+// This is part of the platform layer and contains no business logic.
+package logger
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"strings"
+)
+
+// Context key types for storing values in context
+type contextKey string
+
+const (
+	// RequestIDKey is the context key for request ID
+	RequestIDKey contextKey = "request_id"
+	// UserIDKey is the context key for user ID
+	UserIDKey contextKey = "user_id"
+	// TraceIDKey is the context key for trace ID
+	TraceIDKey contextKey = "trace_id"
+)
+
+// Logger wraps slog.Logger for structured logging
+type Logger struct {
+	*slog.Logger
+}
+
+// New creates a new logger based on environment
+func New(env string) *Logger {
+	var handler slog.Handler
+
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}
+
+	if strings.EqualFold(env, "development") {
+		opts.Level = slog.LevelDebug
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	}
+
+	return &Logger{
+		Logger: slog.New(handler),
+	}
+}
+
+// WithContext returns a logger with context values extracted.
+// Supports request_id, user_id, and trace_id from context.
+func (l *Logger) WithContext(ctx context.Context) *Logger {
+	if ctx == nil {
+		return l
+	}
+
+	newLogger := l
+
+	if requestID, ok := ctx.Value(RequestIDKey).(string); ok && requestID != "" {
+		newLogger = newLogger.WithRequestID(requestID)
+	}
+
+	if userID, ok := ctx.Value(UserIDKey).(string); ok && userID != "" {
+		newLogger = newLogger.WithUserID(userID)
+	}
+
+	if traceID, ok := ctx.Value(TraceIDKey).(string); ok && traceID != "" {
+		newLogger = &Logger{
+			Logger: newLogger.Logger.With(slog.String("trace_id", traceID)),
+		}
+	}
+
+	return newLogger
+}
+
+// ContextWithRequestID adds a request ID to the context
+func ContextWithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, RequestIDKey, requestID)
+}
+
+// ContextWithUserID adds a user ID to the context
+func ContextWithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, UserIDKey, userID)
+}
+
+// ContextWithTraceID adds a trace ID to the context
+func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, TraceIDKey, traceID)
+}
+
+// WithRequestID returns a logger with request ID
+func (l *Logger) WithRequestID(requestID string) *Logger {
+	return &Logger{
+		Logger: l.Logger.With(slog.String("request_id", requestID)),
+	}
+}
+
+// WithUserID returns a logger with user ID
+func (l *Logger) WithUserID(userID string) *Logger {
+	return &Logger{
+		Logger: l.Logger.With(slog.String("user_id", userID)),
+	}
+}
+
+// HTTPRequest logs an HTTP request
+func (l *Logger) HTTPRequest(method, path string, status int, latencyMs float64, clientIP string) {
+	l.Info("http_request",
+		slog.String("method", method),
+		slog.String("path", path),
+		slog.Int("status", status),
+		slog.Float64("latency_ms", latencyMs),
+		slog.String("client_ip", clientIP),
+	)
+}
+
+// HTTPError logs an HTTP error
+func (l *Logger) HTTPError(method, path string, status int, err error, clientIP string) {
+	l.Error("http_error",
+		slog.String("method", method),
+		slog.String("path", path),
+		slog.Int("status", status),
+		slog.String("error", err.Error()),
+		slog.String("client_ip", clientIP),
+	)
+}
+
+// AuthEvent logs authentication events
+func (l *Logger) AuthEvent(event, email string, success bool, reason string) {
+	if success {
+		l.Info("auth_event",
+			slog.String("event", event),
+			slog.String("email", email),
+			slog.Bool("success", success),
+		)
+	} else {
+		l.Warn("auth_event",
+			slog.String("event", event),
+			slog.String("email", email),
+			slog.Bool("success", success),
+			slog.String("reason", reason),
+		)
+	}
+}
+
+// DatabaseError logs database errors
+func (l *Logger) DatabaseError(operation string, err error) {
+	l.Error("database_error",
+		slog.String("operation", operation),
+		slog.String("error", err.Error()),
+	)
+}
+
+// RateLimitExceeded logs rate limit events
+func (l *Logger) RateLimitExceeded(clientIP, path string) {
+	l.Warn("rate_limit_exceeded",
+		slog.String("client_ip", clientIP),
+		slog.String("path", path),
+	)
+}
+</file>
+
+<file path="platform/validator/validator.go">
+// Package validator provides validation infrastructure for the application.
+// This is part of the platform layer and contains no business logic.
+package validator
+
+import "github.com/go-playground/validator/v10"
+
+// Validator wraps the go-playground validator for structured validation.
+// Using a struct allows for dependency injection and easier testing.
+type Validator struct {
+	v *validator.Validate
+}
+
+// New creates a new Validator instance.
+// Domain-specific validation rules can be registered using RegisterValidation.
+func New() *Validator {
+	return &Validator{
+		v: validator.New(),
+	}
+}
+
+// Struct validates a struct based on validation tags.
+func (val *Validator) Struct(s interface{}) error {
+	return val.v.Struct(s)
+}
+
+// Var validates a single variable against a tag.
+func (val *Validator) Var(field interface{}, tag string) error {
+	return val.v.Var(field, tag)
+}
+
+// RegisterValidation registers a custom validation function.
+func (val *Validator) RegisterValidation(tag string, fn validator.Func) error {
+	return val.v.RegisterValidation(tag, fn)
+}
+
+// Validate is the shared validator instance used across all modules.
+// DEPRECATED: Use New() to create and inject a Validator instance instead.
+// This global is kept for backward compatibility during migration.
+var Validate = validator.New()
+</file>
+
 <file path="sqlc.yaml">
 version: "2"
 sql:
@@ -5791,226 +5999,6 @@ sql:
         emit_prepared_queries: false
         emit_interface: true
         emit_exact_table_names: false
-</file>
-
-<file path="internal/auth/module.go">
-// Package auth provides the authentication bounded context module.
-// This file defines the module that encapsulates all auth setup and route registration.
-package auth
-
-import (
-	"portal_final_backend/internal/auth/handler"
-	"portal_final_backend/internal/auth/repository"
-	"portal_final_backend/internal/auth/service"
-	"portal_final_backend/internal/events"
-	apphttp "portal_final_backend/internal/http"
-	"portal_final_backend/platform/config"
-	"portal_final_backend/platform/logger"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-)
-
-// AuthModuleConfig combines the config interfaces needed by the auth module.
-// This ensures the module only receives the configuration it actually needs.
-type AuthModuleConfig interface {
-	config.AuthServiceConfig
-	config.CookieConfig
-}
-
-// Module is the auth bounded context module implementing http.Module.
-type Module struct {
-	handler *handler.Handler
-	service *service.Service
-}
-
-// NewModule creates and initializes the auth module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, cfg AuthModuleConfig, eventBus events.Bus, log *logger.Logger) *Module {
-	repo := repository.New(pool)
-	svc := service.New(repo, cfg, eventBus, log)
-	h := handler.New(svc, cfg)
-
-	return &Module{
-		handler: h,
-		service: svc,
-	}
-}
-
-// Name returns the module identifier.
-func (m *Module) Name() string {
-	return "auth"
-}
-
-// Service returns the auth service for use by adapters (e.g., AgentProvider).
-func (m *Module) Service() *service.Service {
-	return m.service
-}
-
-// RegisterRoutes mounts auth routes on the provided router context.
-func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	// Public auth routes with stricter rate limiting
-	authGroup := ctx.V1.Group("/auth")
-	authGroup.Use(ctx.AuthRateLimiter.RateLimit())
-	m.handler.RegisterRoutes(authGroup)
-
-	// Protected user routes
-	ctx.Protected.GET("/users/me", m.handler.GetMe)
-	ctx.Protected.GET("/users", m.handler.ListUsers)
-	ctx.Protected.PATCH("/users/me", m.handler.UpdateMe)
-	ctx.Protected.POST("/users/me/password", m.handler.ChangePassword)
-
-	// Admin routes
-	ctx.Admin.PUT("/users/:id/roles", m.handler.SetUserRoles)
-}
-
-// Compile-time check that Module implements http.Module
-var _ apphttp.Module = (*Module)(nil)
-</file>
-
-<file path="internal/config/config.go">
-package config
-
-import (
-	"fmt"
-	"net/http"
-	"os"
-	"strings"
-	"time"
-
-	"github.com/joho/godotenv"
-)
-
-type Config struct {
-	Env                   string
-	HTTPAddr              string
-	DatabaseURL           string
-	JWTAccessSecret       string
-	JWTRefreshSecret      string
-	AccessTokenTTL        time.Duration
-	RefreshTokenTTL       time.Duration
-	VerifyTokenTTL        time.Duration
-	ResetTokenTTL         time.Duration
-	CORSAllowAll          bool
-	CORSOrigins           []string
-	CORSAllowCreds        bool
-	AppBaseURL            string
-	EmailEnabled          bool
-	BrevoAPIKey           string
-	EmailFromName         string
-	EmailFromAddress      string
-	RefreshCookieName     string
-	RefreshCookieDomain   string
-	RefreshCookiePath     string
-	RefreshCookieSecure   bool
-	RefreshCookieSameSite http.SameSite
-}
-
-func Load() (*Config, error) {
-	_ = godotenv.Load()
-
-	corsOrigins := splitCSV(getEnv("CORS_ORIGINS", "http://localhost:4200"))
-	corsAllowAll := strings.EqualFold(getEnv("CORS_ALLOW_ALL", "false"), "true")
-	if containsWildcard(corsOrigins) {
-		corsAllowAll = true
-	}
-
-	brevoAPIKey := getEnv("BREVO_API_KEY", "")
-	emailEnabled := strings.EqualFold(getEnv("EMAIL_ENABLED", "true"), "true")
-
-	refreshCookieSecure := strings.EqualFold(getEnv("REFRESH_COOKIE_SECURE", ""), "true")
-	if getEnv("REFRESH_COOKIE_SECURE", "") == "" {
-		refreshCookieSecure = strings.EqualFold(getEnv("APP_ENV", "development"), "production")
-	}
-
-	cfg := &Config{
-		Env:                   getEnv("APP_ENV", "development"),
-		HTTPAddr:              getEnv("HTTP_ADDR", ":8080"),
-		DatabaseURL:           getEnv("DATABASE_URL", ""),
-		JWTAccessSecret:       getEnv("JWT_ACCESS_SECRET", ""),
-		JWTRefreshSecret:      getEnv("JWT_REFRESH_SECRET", ""),
-		AccessTokenTTL:        mustDuration(getEnv("JWT_ACCESS_TTL", "15m")),
-		RefreshTokenTTL:       mustDuration(getEnv("JWT_REFRESH_TTL", "720h")),
-		VerifyTokenTTL:        mustDuration(getEnv("VERIFY_TOKEN_TTL", "30m")),
-		ResetTokenTTL:         mustDuration(getEnv("RESET_TOKEN_TTL", "30m")),
-		CORSAllowAll:          corsAllowAll,
-		CORSOrigins:           corsOrigins,
-		CORSAllowCreds:        strings.EqualFold(getEnv("CORS_ALLOW_CREDENTIALS", "true"), "true"),
-		AppBaseURL:            getEnv("APP_BASE_URL", "http://localhost:4200"),
-		EmailEnabled:          emailEnabled && brevoAPIKey != "",
-		BrevoAPIKey:           brevoAPIKey,
-		EmailFromName:         getEnv("EMAIL_FROM_NAME", "Portal"),
-		EmailFromAddress:      getEnv("EMAIL_FROM_ADDRESS", ""),
-		RefreshCookieName:     getEnv("REFRESH_COOKIE_NAME", "portal_refresh"),
-		RefreshCookieDomain:   getEnv("REFRESH_COOKIE_DOMAIN", ""),
-		RefreshCookiePath:     getEnv("REFRESH_COOKIE_PATH", "/api/v1/auth"),
-		RefreshCookieSecure:   refreshCookieSecure,
-		RefreshCookieSameSite: parseSameSite(getEnv("REFRESH_COOKIE_SAMESITE", "Lax")),
-	}
-
-	if cfg.DatabaseURL == "" {
-		return nil, fmt.Errorf("DATABASE_URL is required")
-	}
-	if cfg.JWTAccessSecret == "" || cfg.JWTRefreshSecret == "" {
-		return nil, fmt.Errorf("JWT_ACCESS_SECRET and JWT_REFRESH_SECRET are required")
-	}
-	if emailEnabled && cfg.BrevoAPIKey == "" {
-		return nil, fmt.Errorf("BREVO_API_KEY is required when EMAIL_ENABLED is true")
-	}
-	if cfg.EmailEnabled && cfg.EmailFromAddress == "" {
-		return nil, fmt.Errorf("EMAIL_FROM_ADDRESS is required when email is enabled")
-	}
-	if cfg.CORSAllowAll && cfg.CORSAllowCreds {
-		return nil, fmt.Errorf("CORS_ALLOW_CREDENTIALS cannot be true when CORS_ALLOW_ALL is true")
-	}
-
-	return cfg, nil
-}
-
-func getEnv(key, fallback string) string {
-	if val, ok := os.LookupEnv(key); ok {
-		return val
-	}
-	return fallback
-}
-
-func mustDuration(value string) time.Duration {
-	d, err := time.ParseDuration(value)
-	if err != nil {
-		return 0
-	}
-	return d
-}
-
-func splitCSV(value string) []string {
-	parts := strings.Split(value, ",")
-	results := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			results = append(results, trimmed)
-		}
-	}
-	return results
-}
-
-func containsWildcard(values []string) bool {
-	for _, value := range values {
-		if value == "*" {
-			return true
-		}
-	}
-	return false
-}
-
-func parseSameSite(value string) http.SameSite {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "none":
-		return http.SameSiteNoneMode
-	case "strict":
-		return http.SameSiteStrictMode
-	default:
-		return http.SameSiteLaxMode
-	}
-}
 </file>
 
 <file path="internal/db/db.go">
@@ -6093,6 +6081,85 @@ type RouterContext struct {
 	// AuthRateLimiter is the stricter rate limiter for auth routes.
 	AuthRateLimiter *httpkit.AuthRateLimiter
 }
+</file>
+
+<file path="internal/leads/module.go">
+// Package leads provides the lead management bounded context module.
+// This file defines the module that encapsulates all leads setup and route registration.
+package leads
+
+import (
+	"portal_final_backend/internal/events"
+	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/leads/handler"
+	"portal_final_backend/internal/leads/management"
+	"portal_final_backend/internal/leads/notes"
+	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/scheduling"
+	"portal_final_backend/platform/validator"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Module is the leads bounded context module implementing http.Module.
+type Module struct {
+	handler    *handler.Handler
+	management *management.Service
+	scheduling *scheduling.Service
+	notes      *notes.Service
+}
+
+// NewModule creates and initializes the leads module with all its dependencies.
+func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator) *Module {
+	// Create shared repository
+	repo := repository.New(pool)
+
+	// Create focused services (vertical slices)
+	mgmtSvc := management.New(repo)
+	schedulingSvc := scheduling.New(repo, eventBus)
+	notesSvc := notes.New(repo)
+
+	// Create handlers
+	notesHandler := handler.NewNotesHandler(notesSvc, val)
+	h := handler.New(mgmtSvc, schedulingSvc, notesHandler, val)
+
+	return &Module{
+		handler:    h,
+		management: mgmtSvc,
+		scheduling: schedulingSvc,
+		notes:      notesSvc,
+	}
+}
+
+// Name returns the module identifier.
+func (m *Module) Name() string {
+	return "leads"
+}
+
+// ManagementService returns the lead management service for external use.
+func (m *Module) ManagementService() *management.Service {
+	return m.management
+}
+
+// SchedulingService returns the lead scheduling service for external use.
+func (m *Module) SchedulingService() *scheduling.Service {
+	return m.scheduling
+}
+
+// NotesService returns the lead notes service for external use.
+func (m *Module) NotesService() *notes.Service {
+	return m.notes
+}
+
+// RegisterRoutes mounts leads routes on the provided router context.
+func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
+	// All leads routes require authentication
+	leadsGroup := ctx.Protected.Group("/leads")
+	m.handler.RegisterRoutes(leadsGroup)
+}
+
+// Compile-time check that Module implements http.Module
+var _ apphttp.Module = (*Module)(nil)
 </file>
 
 <file path="internal/notification/module.go">
@@ -6511,116 +6578,6 @@ func parseSameSite(value string) http.SameSite {
 }
 </file>
 
-<file path="cmd/api/main.go">
-package main
-
-import (
-	"context"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"portal_final_backend/internal/adapters"
-	"portal_final_backend/internal/auth"
-	"portal_final_backend/internal/email"
-	"portal_final_backend/internal/events"
-	apphttp "portal_final_backend/internal/http"
-	"portal_final_backend/internal/http/router"
-	"portal_final_backend/internal/leads"
-	"portal_final_backend/internal/notification"
-	"portal_final_backend/platform/config"
-	"portal_final_backend/platform/db"
-	"portal_final_backend/platform/logger"
-)
-
-func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		panic("failed to load config: " + err.Error())
-	}
-
-	// Initialize structured logger
-	log := logger.New(cfg.Env)
-	log.Info("starting server", "env", cfg.Env, "addr", cfg.HTTPAddr)
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// ========================================================================
-	// Infrastructure Layer
-	// ========================================================================
-
-	pool, err := db.NewPool(ctx, cfg)
-	if err != nil {
-		log.Error("failed to connect to database", "error", err)
-		panic("failed to connect to database: " + err.Error())
-	}
-	defer pool.Close()
-	log.Info("database connection established")
-
-	sender, err := email.NewSender(cfg)
-	if err != nil {
-		log.Error("failed to initialize email sender", "error", err)
-		panic("failed to initialize email sender: " + err.Error())
-	}
-
-	// Event bus for decoupled communication between modules
-	eventBus := events.NewInMemoryBus(log)
-
-	// ========================================================================
-	// Domain Modules (Composition Root)
-	// ========================================================================
-
-	// Notification module subscribes to domain events (not HTTP-facing)
-	notificationModule := notification.New(sender, cfg, log)
-	notificationModule.RegisterHandlers(eventBus)
-
-	// Initialize domain modules
-	authModule := auth.NewModule(pool, cfg, eventBus, log)
-	leadsModule := leads.NewModule(pool, eventBus)
-
-	// Anti-Corruption Layer: Create adapter for cross-domain communication
-	// This ensures leads module only depends on its own AgentProvider interface
-	_ = adapters.NewAuthAgentProvider(authModule.Service())
-
-	// ========================================================================
-	// HTTP Layer
-	// ========================================================================
-
-	app := &apphttp.App{
-		Config:   cfg,
-		Logger:   log,
-		EventBus: eventBus,
-		Modules: []apphttp.Module{
-			authModule,
-			leadsModule,
-		},
-	}
-
-	engine := router.New(app)
-
-	srvErr := make(chan error, 1)
-	go func() {
-		log.Info("server listening", "addr", cfg.HTTPAddr)
-		srvErr <- engine.Run(cfg.HTTPAddr)
-	}()
-
-	select {
-	case <-ctx.Done():
-		log.Info("shutdown signal received, gracefully shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = shutdownCtx
-	case err := <-srvErr:
-		if err != nil {
-			log.Error("server error", "error", err)
-			panic("server error: " + err.Error())
-		}
-	}
-}
-</file>
-
 <file path="go.mod">
 module portal_final_backend
 
@@ -6674,6 +6631,85 @@ require (
 	golang.org/x/tools v0.40.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+</file>
+
+<file path="internal/auth/module.go">
+// Package auth provides the authentication bounded context module.
+// This file defines the module that encapsulates all auth setup and route registration.
+package auth
+
+import (
+	"portal_final_backend/internal/auth/handler"
+	"portal_final_backend/internal/auth/repository"
+	"portal_final_backend/internal/auth/service"
+	authvalidator "portal_final_backend/internal/auth/validator"
+	"portal_final_backend/internal/events"
+	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/validator"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// AuthModuleConfig combines the config interfaces needed by the auth module.
+// This ensures the module only receives the configuration it actually needs.
+type AuthModuleConfig interface {
+	config.AuthServiceConfig
+	config.CookieConfig
+}
+
+// Module is the auth bounded context module implementing http.Module.
+type Module struct {
+	handler *handler.Handler
+	service *service.Service
+}
+
+// NewModule creates and initializes the auth module with all its dependencies.
+func NewModule(pool *pgxpool.Pool, cfg AuthModuleConfig, eventBus events.Bus, log *logger.Logger, val *validator.Validator) *Module {
+	repo := repository.New(pool)
+	svc := service.New(repo, cfg, eventBus, log)
+
+	// Register auth-specific validations on the injected validator
+	_ = authvalidator.RegisterAuthValidations(val)
+
+	h := handler.New(svc, cfg, val)
+
+	return &Module{
+		handler: h,
+		service: svc,
+	}
+}
+
+// Name returns the module identifier.
+func (m *Module) Name() string {
+	return "auth"
+}
+
+// Service returns the auth service for use by adapters (e.g., AgentProvider).
+func (m *Module) Service() *service.Service {
+	return m.service
+}
+
+// RegisterRoutes mounts auth routes on the provided router context.
+func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
+	// Public auth routes with stricter rate limiting
+	authGroup := ctx.V1.Group("/auth")
+	authGroup.Use(ctx.AuthRateLimiter.RateLimit())
+	m.handler.RegisterRoutes(authGroup)
+
+	// Protected user routes
+	ctx.Protected.GET("/users/me", m.handler.GetMe)
+	ctx.Protected.GET("/users", m.handler.ListUsers)
+	ctx.Protected.PATCH("/users/me", m.handler.UpdateMe)
+	ctx.Protected.POST("/users/me/password", m.handler.ChangePassword)
+
+	// Admin routes
+	ctx.Admin.PUT("/users/:id/roles", m.handler.SetUserRoles)
+}
+
+// Compile-time check that Module implements http.Module
+var _ apphttp.Module = (*Module)(nil)
 </file>
 
 <file path="internal/auth/repository/repository.go">
@@ -6973,73 +7009,6 @@ func uniqueStrings(values []string) []string {
 }
 </file>
 
-<file path="internal/auth/validator/validator.go">
-package validator
-
-import (
-	"regexp"
-	"unicode"
-
-	platformvalidator "portal_final_backend/platform/validator"
-
-	"github.com/go-playground/validator/v10"
-)
-
-// Validate is an alias to the platform validator for convenience within the auth domain.
-// Auth-specific validations are registered in init().
-var Validate = platformvalidator.Validate
-
-func init() {
-	// Register auth-specific password validation on the shared validator
-	_ = Validate.RegisterValidation("strongpassword", validateStrongPassword)
-}
-
-// validateStrongPassword checks for password complexity:
-// - At least 8 characters
-// - At least one uppercase letter
-// - At least one lowercase letter
-// - At least one digit
-// - At least one special character
-func validateStrongPassword(fl validator.FieldLevel) bool {
-	password := fl.Field().String()
-
-	if len(password) < 8 {
-		return false
-	}
-
-	var (
-		hasUpper   bool
-		hasLower   bool
-		hasDigit   bool
-		hasSpecial bool
-	)
-
-	for _, char := range password {
-		switch {
-		case unicode.IsUpper(char):
-			hasUpper = true
-		case unicode.IsLower(char):
-			hasLower = true
-		case unicode.IsDigit(char):
-			hasDigit = true
-		case unicode.IsPunct(char) || unicode.IsSymbol(char):
-			hasSpecial = true
-		}
-	}
-
-	return hasUpper && hasLower && hasDigit && hasSpecial
-}
-
-// PasswordPolicy describes the password requirements for API error messages
-const PasswordPolicy = "Password must be at least 8 characters and include: uppercase letter, lowercase letter, number, and special character"
-
-// IsValidEmail validates email format
-func IsValidEmail(email string) bool {
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	return emailRegex.MatchString(email)
-}
-</file>
-
 <file path="internal/email/brevo.go">
 package email
 
@@ -7267,6 +7236,196 @@ func buildVisitInviteTemplate(consumerName, scheduledDate, address string) strin
 }
 </file>
 
+<file path="cmd/api/main.go">
+package main
+
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"portal_final_backend/internal/adapters"
+	"portal_final_backend/internal/auth"
+	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/events"
+	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/http/router"
+	"portal_final_backend/internal/leads"
+	"portal_final_backend/internal/maps"
+	"portal_final_backend/internal/notification"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/db"
+	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/validator"
+)
+
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		panic("failed to load config: " + err.Error())
+	}
+
+	// Initialize structured logger
+	log := logger.New(cfg.Env)
+	log.Info("starting server", "env", cfg.Env, "addr", cfg.HTTPAddr)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// ========================================================================
+	// Infrastructure Layer
+	// ========================================================================
+
+	pool, err := db.NewPool(ctx, cfg)
+	if err != nil {
+		log.Error("failed to connect to database", "error", err)
+		panic("failed to connect to database: " + err.Error())
+	}
+	defer pool.Close()
+	log.Info("database connection established")
+
+	sender, err := email.NewSender(cfg)
+	if err != nil {
+		log.Error("failed to initialize email sender", "error", err)
+		panic("failed to initialize email sender: " + err.Error())
+	}
+
+	// Event bus for decoupled communication between modules
+	eventBus := events.NewInMemoryBus(log)
+
+	// Shared validator instance for dependency injection
+	val := validator.New()
+
+	// ========================================================================
+	// Domain Modules (Composition Root)
+	// ========================================================================
+
+	// Notification module subscribes to domain events (not HTTP-facing)
+	notificationModule := notification.New(sender, cfg, log)
+	notificationModule.RegisterHandlers(eventBus)
+
+	// Initialize domain modules
+	authModule := auth.NewModule(pool, cfg, eventBus, log, val)
+	leadsModule := leads.NewModule(pool, eventBus, val)
+	mapsModule := maps.NewModule(log)
+
+	// Anti-Corruption Layer: Create adapter for cross-domain communication
+	// This ensures leads module only depends on its own AgentProvider interface
+	_ = adapters.NewAuthAgentProvider(authModule.Service())
+
+	// ========================================================================
+	// HTTP Layer
+	// ========================================================================
+
+	app := &apphttp.App{
+		Config:   cfg,
+		Logger:   log,
+		EventBus: eventBus,
+		Modules: []apphttp.Module{
+			authModule,
+			leadsModule,
+			mapsModule,
+		},
+	}
+
+	engine := router.New(app)
+
+	srvErr := make(chan error, 1)
+	go func() {
+		log.Info("server listening", "addr", cfg.HTTPAddr)
+		srvErr <- engine.Run(cfg.HTTPAddr)
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Info("shutdown signal received, gracefully shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = shutdownCtx
+	case err := <-srvErr:
+		if err != nil {
+			log.Error("server error", "error", err)
+			panic("server error: " + err.Error())
+		}
+	}
+}
+</file>
+
+<file path="internal/auth/validator/validator.go">
+package validator
+
+import (
+	"regexp"
+	"unicode"
+
+	"portal_final_backend/platform/validator"
+
+	gpvalidator "github.com/go-playground/validator/v10"
+)
+
+// Validate is an alias to the platform validator for convenience within the auth domain.
+// DEPRECATED: Use injected validator instead. This is kept for backward compatibility.
+var Validate = validator.Validate
+
+// RegisterAuthValidations registers auth-specific validation rules on a validator instance.
+// This should be called once during module initialization with the injected validator.
+func RegisterAuthValidations(v *validator.Validator) error {
+	return v.RegisterValidation("strongpassword", validateStrongPassword)
+}
+
+func init() {
+	// Register on the global validator for backward compatibility
+	_ = Validate.RegisterValidation("strongpassword", validateStrongPassword)
+}
+
+// validateStrongPassword checks for password complexity:
+// - At least 8 characters
+// - At least one uppercase letter
+// - At least one lowercase letter
+// - At least one digit
+// - At least one special character
+func validateStrongPassword(fl gpvalidator.FieldLevel) bool {
+	password := fl.Field().String()
+
+	if len(password) < 8 {
+		return false
+	}
+
+	var (
+		hasUpper   bool
+		hasLower   bool
+		hasDigit   bool
+		hasSpecial bool
+	)
+
+	for _, char := range password {
+		switch {
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsDigit(char):
+			hasDigit = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	return hasUpper && hasLower && hasDigit && hasSpecial
+}
+
+// PasswordPolicy describes the password requirements for API error messages
+const PasswordPolicy = "Password must be at least 8 characters and include: uppercase letter, lowercase letter, number, and special character"
+
+// IsValidEmail validates email format
+func IsValidEmail(email string) bool {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email)
+}
+</file>
+
 <file path="internal/http/middleware/middleware.go">
 package middleware
 
@@ -7277,8 +7436,8 @@ import (
 	"sync"
 	"time"
 
-	"portal_final_backend/internal/config"
-	"portal_final_backend/internal/logger"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -7388,7 +7547,7 @@ func NewAuthRateLimiter(log *logger.Logger) *AuthRateLimiter {
 	}
 }
 
-func AuthRequired(cfg *config.Config) gin.HandlerFunc {
+func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawToken, ok := extractBearerToken(c.GetHeader("Authorization"))
 		if !ok {
@@ -7473,12 +7632,12 @@ func extractBearerToken(authHeader string) (string, bool) {
 	return rawToken, true
 }
 
-func parseAccessClaims(rawToken string, cfg *config.Config) (jwt.MapClaims, error) {
+func parseAccessClaims(rawToken string, cfg config.JWTConfig) (jwt.MapClaims, error) {
 	parsed, err := jwt.Parse(rawToken, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("invalid signing method")
 		}
-		return []byte(cfg.JWTAccessSecret), nil
+		return []byte(cfg.GetJWTAccessSecret()), nil
 	})
 	if err != nil || !parsed.Valid {
 		return nil, errors.New(errInvalidToken)
@@ -7503,80 +7662,6 @@ func parseUserID(claims jwt.MapClaims) (uuid.UUID, error) {
 
 func abortUnauthorized(c *gin.Context, message string) {
 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": message})
-}
-</file>
-
-<file path="internal/leads/handler/notes.go">
-package handler
-
-import (
-	"net/http"
-
-	"portal_final_backend/internal/leads/notes"
-	"portal_final_backend/internal/leads/transport"
-	"portal_final_backend/platform/httpkit"
-	"portal_final_backend/platform/validator"
-
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-)
-
-// NotesHandler handles HTTP requests for lead notes.
-// This is separate from the main Handler to allow independent wiring.
-type NotesHandler struct {
-	svc *notes.Service
-}
-
-// NewNotesHandler creates a new notes handler.
-func NewNotesHandler(svc *notes.Service) *NotesHandler {
-	return &NotesHandler{svc: svc}
-}
-
-func (h *NotesHandler) ListNotes(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	notesList, err := h.svc.List(c.Request.Context(), id)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, notesList)
-}
-
-func (h *NotesHandler) AddNote(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.CreateLeadNoteRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	actorIDValue, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-
-	authorID := actorIDValue.(uuid.UUID)
-	created, err := h.svc.Add(c.Request.Context(), id, authorID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.JSON(c, http.StatusCreated, created)
 }
 </file>
 
@@ -7646,302 +7731,76 @@ type UserSummary struct {
 }
 </file>
 
-<file path="internal/auth/handler/handler.go">
+<file path="internal/leads/handler/notes.go">
 package handler
 
 import (
 	"net/http"
-	"time"
 
-	"portal_final_backend/internal/auth/service"
-	"portal_final_backend/internal/auth/transport"
-	"portal_final_backend/internal/auth/validator"
-	"portal_final_backend/platform/config"
+	"portal_final_backend/internal/leads/notes"
+	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/httpkit"
+	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-type Handler struct {
-	svc *service.Service
-	cfg config.CookieConfig
+// NotesHandler handles HTTP requests for lead notes.
+// This is separate from the main Handler to allow independent wiring.
+type NotesHandler struct {
+	svc *notes.Service
+	val *validator.Validator
 }
 
-const (
-	msgInvalidRequest   = "invalid request"
-	msgValidationFailed = "validation failed"
-)
-
-func New(svc *service.Service, cfg config.CookieConfig) *Handler {
-	return &Handler{svc: svc, cfg: cfg}
+// NewNotesHandler creates a new notes handler.
+func NewNotesHandler(svc *notes.Service, val *validator.Validator) *NotesHandler {
+	return &NotesHandler{svc: svc, val: val}
 }
 
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.POST("/sign-up", h.SignUp)
-	rg.POST("/sign-in", h.SignIn)
-	rg.POST("/refresh", h.Refresh)
-	rg.POST("/sign-out", h.SignOut)
-	rg.POST("/forgot-password", h.ForgotPassword)
-	rg.POST("/reset-password", h.ResetPassword)
-	rg.POST("/verify-email", h.VerifyEmail)
-}
-
-func (h *Handler) ListUsers(c *gin.Context) {
-	users, err := h.svc.ListUsers(c.Request.Context())
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, users)
-}
-
-func (h *Handler) GetMe(c *gin.Context) {
-	userID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-
-	profile, err := h.svc.GetMe(c.Request.Context(), userID.(uuid.UUID))
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, transport.ProfileResponse{
-		ID:            profile.ID.String(),
-		Email:         profile.Email,
-		EmailVerified: profile.EmailVerified,
-		Roles:         profile.Roles,
-		CreatedAt:     profile.CreatedAt,
-		UpdatedAt:     profile.UpdatedAt,
-	})
-}
-
-func (h *Handler) UpdateMe(c *gin.Context) {
-	userID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-
-	var req transport.UpdateProfileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	profile, err := h.svc.UpdateMe(c.Request.Context(), userID.(uuid.UUID), req.Email)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, transport.ProfileResponse{
-		ID:            profile.ID.String(),
-		Email:         profile.Email,
-		EmailVerified: profile.EmailVerified,
-		Roles:         profile.Roles,
-		CreatedAt:     profile.CreatedAt,
-		UpdatedAt:     profile.UpdatedAt,
-	})
-}
-
-func (h *Handler) ChangePassword(c *gin.Context) {
-	userID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-
-	var req transport.ChangePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	if httpkit.HandleError(c, h.svc.ChangePassword(c.Request.Context(), userID.(uuid.UUID), req.CurrentPassword, req.NewPassword)) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "password updated"})
-}
-
-func (h *Handler) SignUp(c *gin.Context) {
-	var req transport.SignUpRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	if httpkit.HandleError(c, h.svc.SignUp(c.Request.Context(), req.Email, req.Password)) {
-		return
-	}
-	httpkit.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
-}
-
-func (h *Handler) SignIn(c *gin.Context) {
-	var req transport.SignInRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	accessToken, refreshToken, err := h.svc.SignIn(c.Request.Context(), req.Email, req.Password)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	h.setRefreshCookie(c, refreshToken)
-	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
-}
-
-func (h *Handler) Refresh(c *gin.Context) {
-	refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName())
-	if err != nil || refreshToken == "" {
-		httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
-		return
-	}
-
-	accessToken, newRefreshToken, err := h.svc.Refresh(c.Request.Context(), refreshToken)
-	if httpkit.HandleError(c, err) {
-		h.clearRefreshCookie(c)
-		return
-	}
-
-	h.setRefreshCookie(c, newRefreshToken)
-	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
-}
-
-func (h *Handler) SignOut(c *gin.Context) {
-	if refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName()); err == nil && refreshToken != "" {
-		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken)) {
-			return
-		}
-	}
-
-	h.clearRefreshCookie(c)
-
-	httpkit.OK(c, gin.H{"message": "signed out"})
-}
-
-func (h *Handler) ForgotPassword(c *gin.Context) {
-	var req transport.ForgotPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	if httpkit.HandleError(c, h.svc.ForgotPassword(c.Request.Context(), req.Email)) {
-		return
-	}
-	httpkit.OK(c, gin.H{"message": "if the account exists, a reset link will be sent"})
-}
-
-func (h *Handler) ResetPassword(c *gin.Context) {
-	var req transport.ResetPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	if httpkit.HandleError(c, h.svc.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "password reset"})
-}
-
-func (h *Handler) VerifyEmail(c *gin.Context) {
-	var req transport.VerifyEmailRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	if httpkit.HandleError(c, h.svc.VerifyEmail(c.Request.Context(), req.Token)) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "email verified"})
-}
-
-func (h *Handler) SetUserRoles(c *gin.Context) {
-	userID, err := uuid.Parse(c.Param("id"))
+func (h *NotesHandler) ListNotes(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	var req transport.RoleUpdateRequest
+	notesList, err := h.svc.List(c.Request.Context(), id)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, notesList)
+}
+
+func (h *NotesHandler) AddNote(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.CreateLeadNoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
-	if err := validator.Validate.Struct(req); err != nil {
+	if err := h.val.Struct(req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
 
-	if httpkit.HandleError(c, h.svc.SetUserRoles(c.Request.Context(), userID, req.Roles)) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
 		return
 	}
 
-	httpkit.OK(c, transport.RoleUpdateResponse{UserID: userID.String(), Roles: req.Roles})
-}
+	created, err := h.svc.Add(c.Request.Context(), id, identity.UserID(), req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
 
-func (h *Handler) setRefreshCookie(c *gin.Context, value string) {
-	maxAge := int(h.cfg.GetRefreshTokenTTL() / time.Second)
-	c.SetSameSite(h.cfg.GetRefreshCookieSameSite())
-	c.SetCookie(
-		h.cfg.GetRefreshCookieName(),
-		value,
-		maxAge,
-		h.cfg.GetRefreshCookiePath(),
-		h.cfg.GetRefreshCookieDomain(),
-		h.cfg.GetRefreshCookieSecure(),
-		true,
-	)
-}
-
-func (h *Handler) clearRefreshCookie(c *gin.Context) {
-	c.SetSameSite(h.cfg.GetRefreshCookieSameSite())
-	c.SetCookie(
-		h.cfg.GetRefreshCookieName(),
-		"",
-		-1,
-		h.cfg.GetRefreshCookiePath(),
-		h.cfg.GetRefreshCookieDomain(),
-		h.cfg.GetRefreshCookieSecure(),
-		true,
-	)
+	httpkit.JSON(c, http.StatusCreated, created)
 }
 </file>
 
@@ -8550,6 +8409,303 @@ func (r *Repository) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, erro
 }
 </file>
 
+<file path="internal/auth/handler/handler.go">
+package handler
+
+import (
+	"net/http"
+	"time"
+
+	"portal_final_backend/internal/auth/service"
+	"portal_final_backend/internal/auth/transport"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/httpkit"
+	"portal_final_backend/platform/validator"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+type Handler struct {
+	svc *service.Service
+	cfg config.CookieConfig
+	val *validator.Validator
+}
+
+const (
+	msgInvalidRequest   = "invalid request"
+	msgValidationFailed = "validation failed"
+)
+
+func New(svc *service.Service, cfg config.CookieConfig, val *validator.Validator) *Handler {
+	return &Handler{svc: svc, cfg: cfg, val: val}
+}
+
+func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
+	rg.POST("/sign-up", h.SignUp)
+	rg.POST("/sign-in", h.SignIn)
+	rg.POST("/refresh", h.Refresh)
+	rg.POST("/sign-out", h.SignOut)
+	rg.POST("/forgot-password", h.ForgotPassword)
+	rg.POST("/reset-password", h.ResetPassword)
+	rg.POST("/verify-email", h.VerifyEmail)
+}
+
+func (h *Handler) ListUsers(c *gin.Context) {
+	users, err := h.svc.ListUsers(c.Request.Context())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, users)
+}
+
+func (h *Handler) GetMe(c *gin.Context) {
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
+		return
+	}
+
+	profile, err := h.svc.GetMe(c.Request.Context(), id.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.ProfileResponse{
+		ID:            profile.ID.String(),
+		Email:         profile.Email,
+		EmailVerified: profile.EmailVerified,
+		Roles:         profile.Roles,
+		CreatedAt:     profile.CreatedAt,
+		UpdatedAt:     profile.UpdatedAt,
+	})
+}
+
+func (h *Handler) UpdateMe(c *gin.Context) {
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
+		return
+	}
+
+	var req transport.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	profile, err := h.svc.UpdateMe(c.Request.Context(), id.UserID(), req.Email)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.ProfileResponse{
+		ID:            profile.ID.String(),
+		Email:         profile.Email,
+		EmailVerified: profile.EmailVerified,
+		Roles:         profile.Roles,
+		CreatedAt:     profile.CreatedAt,
+		UpdatedAt:     profile.UpdatedAt,
+	})
+}
+
+func (h *Handler) ChangePassword(c *gin.Context) {
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
+		return
+	}
+
+	var req transport.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if httpkit.HandleError(c, h.svc.ChangePassword(c.Request.Context(), id.UserID(), req.CurrentPassword, req.NewPassword)) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "password updated"})
+}
+
+func (h *Handler) SignUp(c *gin.Context) {
+	var req transport.SignUpRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if httpkit.HandleError(c, h.svc.SignUp(c.Request.Context(), req.Email, req.Password)) {
+		return
+	}
+	httpkit.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
+}
+
+func (h *Handler) SignIn(c *gin.Context) {
+	var req transport.SignInRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	accessToken, refreshToken, err := h.svc.SignIn(c.Request.Context(), req.Email, req.Password)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	h.setRefreshCookie(c, refreshToken)
+	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
+}
+
+func (h *Handler) Refresh(c *gin.Context) {
+	refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName())
+	if err != nil || refreshToken == "" {
+		httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
+		return
+	}
+
+	accessToken, newRefreshToken, err := h.svc.Refresh(c.Request.Context(), refreshToken)
+	if httpkit.HandleError(c, err) {
+		h.clearRefreshCookie(c)
+		return
+	}
+
+	h.setRefreshCookie(c, newRefreshToken)
+	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
+}
+
+func (h *Handler) SignOut(c *gin.Context) {
+	if refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName()); err == nil && refreshToken != "" {
+		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken)) {
+			return
+		}
+	}
+
+	h.clearRefreshCookie(c)
+
+	httpkit.OK(c, gin.H{"message": "signed out"})
+}
+
+func (h *Handler) ForgotPassword(c *gin.Context) {
+	var req transport.ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if httpkit.HandleError(c, h.svc.ForgotPassword(c.Request.Context(), req.Email)) {
+		return
+	}
+	httpkit.OK(c, gin.H{"message": "if the account exists, a reset link will be sent"})
+}
+
+func (h *Handler) ResetPassword(c *gin.Context) {
+	var req transport.ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if httpkit.HandleError(c, h.svc.ResetPassword(c.Request.Context(), req.Token, req.NewPassword)) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "password reset"})
+}
+
+func (h *Handler) VerifyEmail(c *gin.Context) {
+	var req transport.VerifyEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if httpkit.HandleError(c, h.svc.VerifyEmail(c.Request.Context(), req.Token)) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "email verified"})
+}
+
+func (h *Handler) SetUserRoles(c *gin.Context) {
+	userID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.RoleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if httpkit.HandleError(c, h.svc.SetUserRoles(c.Request.Context(), userID, req.Roles)) {
+		return
+	}
+
+	httpkit.OK(c, transport.RoleUpdateResponse{UserID: userID.String(), Roles: req.Roles})
+}
+
+func (h *Handler) setRefreshCookie(c *gin.Context, value string) {
+	maxAge := int(h.cfg.GetRefreshTokenTTL() / time.Second)
+	c.SetSameSite(h.cfg.GetRefreshCookieSameSite())
+	c.SetCookie(
+		h.cfg.GetRefreshCookieName(),
+		value,
+		maxAge,
+		h.cfg.GetRefreshCookiePath(),
+		h.cfg.GetRefreshCookieDomain(),
+		h.cfg.GetRefreshCookieSecure(),
+		true,
+	)
+}
+
+func (h *Handler) clearRefreshCookie(c *gin.Context) {
+	c.SetSameSite(h.cfg.GetRefreshCookieSameSite())
+	c.SetCookie(
+		h.cfg.GetRefreshCookieName(),
+		"",
+		-1,
+		h.cfg.GetRefreshCookiePath(),
+		h.cfg.GetRefreshCookieDomain(),
+		h.cfg.GetRefreshCookieSecure(),
+		true,
+	)
+}
+</file>
+
 <file path="internal/auth/service/service.go">
 package service
 
@@ -8572,9 +8728,11 @@ import (
 )
 
 const (
-	accessTokenType  = "access"
-	refreshTokenType = "refresh"
-	defaultUserRole  = "user" // Default role for new users (not admin)
+	accessTokenType     = "access"
+	refreshTokenType    = "refresh"
+	defaultUserRole     = "user" // Default role for new users (not admin)
+	tokenInvalidMessage = "token invalid"
+	tokenExpiredMessage = "token expired"
 )
 
 type Service struct {
@@ -8661,12 +8819,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, str
 	hash := token.HashSHA256(refreshToken)
 	userID, expiresAt, err := s.repo.GetRefreshToken(ctx, hash)
 	if err != nil {
-		return "", "", apperr.Unauthorized("token invalid")
+		return "", "", apperr.Unauthorized(tokenInvalidMessage)
 	}
 
 	if time.Now().After(expiresAt) {
 		_ = s.repo.RevokeRefreshToken(ctx, hash)
-		return "", "", apperr.Unauthorized("token expired")
+		return "", "", apperr.Unauthorized(tokenExpiredMessage)
 	}
 
 	_ = s.repo.RevokeRefreshToken(ctx, hash)
@@ -8710,11 +8868,11 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	hash := token.HashSHA256(rawToken)
 	userID, expiresAt, err := s.repo.GetUserToken(ctx, hash, repository.TokenTypePasswordReset)
 	if err != nil {
-		return apperr.Unauthorized("token invalid")
+		return apperr.Unauthorized(tokenInvalidMessage)
 	}
 
 	if time.Now().After(expiresAt) {
-		return apperr.Unauthorized("token expired")
+		return apperr.Unauthorized(tokenExpiredMessage)
 	}
 
 	passwordHash, err := password.Hash(newPassword)
@@ -8736,11 +8894,11 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 	hash := token.HashSHA256(rawToken)
 	userID, expiresAt, err := s.repo.GetUserToken(ctx, hash, repository.TokenTypeEmailVerify)
 	if err != nil {
-		return apperr.Unauthorized("token invalid")
+		return apperr.Unauthorized(tokenInvalidMessage)
 	}
 
 	if time.Now().After(expiresAt) {
-		return apperr.Unauthorized("token expired")
+		return apperr.Unauthorized(tokenExpiredMessage)
 	}
 
 	if err := s.repo.MarkEmailVerified(ctx, userID); err != nil {
@@ -8915,453 +9073,6 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentP
 
 	_ = s.repo.RevokeAllRefreshTokens(ctx, userID)
 	return nil
-}
-</file>
-
-<file path="internal/leads/handler/handler.go">
-package handler
-
-import (
-	"net/http"
-
-	"portal_final_backend/internal/leads/management"
-	"portal_final_backend/internal/leads/scheduling"
-	"portal_final_backend/internal/leads/transport"
-	"portal_final_backend/platform/httpkit"
-	"portal_final_backend/platform/validator"
-
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-)
-
-// Handler handles HTTP requests for leads.
-// Uses focused services following vertical slicing pattern.
-type Handler struct {
-	mgmt         *management.Service
-	scheduling   *scheduling.Service
-	notesHandler *NotesHandler
-}
-
-const (
-	msgInvalidRequest   = "invalid request"
-	msgValidationFailed = "validation failed"
-)
-
-// New creates a new leads handler with focused services.
-func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler) *Handler {
-	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler}
-}
-
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.GET("", h.List)
-	rg.POST("", h.Create)
-	rg.GET("/check-duplicate", h.CheckDuplicate)
-	rg.GET("/:id", h.GetByID)
-	rg.PUT("/:id", h.Update)
-	rg.DELETE("/:id", h.Delete)
-	rg.POST("/bulk-delete", h.BulkDelete)
-	rg.PATCH("/:id/status", h.UpdateStatus)
-	rg.PUT(":id/assign", h.Assign)
-	rg.POST("/:id/schedule", h.ScheduleVisit)
-	rg.POST("/:id/reschedule", h.RescheduleVisit)
-	rg.POST("/:id/survey", h.CompleteSurvey)
-	rg.POST("/:id/no-show", h.MarkNoShow)
-	rg.POST("/:id/view", h.MarkViewed)
-	rg.GET("/:id/notes", h.notesHandler.ListNotes)
-	rg.POST("/:id/notes", h.notesHandler.AddNote)
-	rg.GET("/:id/visit-history", h.ListVisitHistory)
-	// Service-specific routes
-	rg.POST("/:id/services", h.AddService)
-	rg.PATCH("/:id/services/:serviceId/status", h.UpdateServiceStatus)
-}
-
-func (h *Handler) Create(c *gin.Context) {
-	var req transport.CreateLeadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.mgmt.Create(c.Request.Context(), req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.JSON(c, http.StatusCreated, lead)
-}
-
-func (h *Handler) GetByID(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	lead, err := h.mgmt.GetByID(c.Request.Context(), id)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) Update(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.UpdateLeadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	actorIDValue, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-	rolesValue, ok := c.Get(httpkit.ContextRolesKey)
-	if !ok {
-		httpkit.Error(c, http.StatusForbidden, "forbidden", nil)
-		return
-	}
-
-	actorID := actorIDValue.(uuid.UUID)
-	roles := rolesValue.([]string)
-
-	lead, err := h.mgmt.Update(c.Request.Context(), id, req, actorID, roles)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) Assign(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.AssignLeadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	actorIDValue, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-	rolesValue, ok := c.Get(httpkit.ContextRolesKey)
-	if !ok {
-		httpkit.Error(c, http.StatusForbidden, "forbidden", nil)
-		return
-	}
-
-	actorID := actorIDValue.(uuid.UUID)
-	roles := rolesValue.([]string)
-
-	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, actorID, roles)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) Delete(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	if err := h.mgmt.Delete(c.Request.Context(), id); httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "lead deleted"})
-}
-
-func (h *Handler) BulkDelete(c *gin.Context) {
-	var req transport.BulkDeleteLeadsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	deletedCount, err := h.mgmt.BulkDelete(c.Request.Context(), req.IDs)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, transport.BulkDeleteLeadsResponse{DeletedCount: deletedCount})
-}
-
-func (h *Handler) UpdateStatus(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.UpdateLeadStatusRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.mgmt.UpdateStatus(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) ScheduleVisit(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.ScheduleVisitRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.scheduling.ScheduleVisit(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) RescheduleVisit(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.RescheduleVisitRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	actorID, ok := c.Get(httpkit.ContextUserIDKey)
-	if !ok {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-
-	lead, err := h.scheduling.RescheduleVisit(c.Request.Context(), id, req, actorID.(uuid.UUID))
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) CompleteSurvey(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.CompleteSurveyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.scheduling.CompleteSurvey(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) MarkNoShow(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.MarkNoShowRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	lead, err := h.scheduling.MarkNoShow(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) MarkViewed(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	userID, exists := c.Get(httpkit.ContextUserIDKey)
-	if !exists {
-		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-
-	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, userID.(uuid.UUID)); httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "lead marked as viewed"})
-}
-
-func (h *Handler) CheckDuplicate(c *gin.Context) {
-	phone := c.Query("phone")
-	if phone == "" {
-		httpkit.Error(c, http.StatusBadRequest, "phone parameter required", nil)
-		return
-	}
-
-	result, err := h.mgmt.CheckDuplicate(c.Request.Context(), phone)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
-}
-
-func (h *Handler) List(c *gin.Context) {
-	var req transport.ListLeadsRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	result, err := h.mgmt.List(c.Request.Context(), req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
-}
-
-func (h *Handler) ListVisitHistory(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	result, err := h.scheduling.ListVisitHistory(c.Request.Context(), id)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
-}
-
-func (h *Handler) AddService(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.AddServiceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.mgmt.AddService(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.JSON(c, http.StatusCreated, lead)
-}
-
-func (h *Handler) UpdateServiceStatus(c *gin.Context) {
-	leadID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	serviceID, err := uuid.Parse(c.Param("serviceId"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.UpdateServiceStatusRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := validator.Validate.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.mgmt.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
 }
 </file>
 
@@ -9587,6 +9298,434 @@ type VisitHistoryResponse struct {
 
 type VisitHistoryListResponse struct {
 	Items []VisitHistoryResponse `json:"items"`
+}
+</file>
+
+<file path="internal/leads/handler/handler.go">
+package handler
+
+import (
+	"net/http"
+
+	"portal_final_backend/internal/leads/management"
+	"portal_final_backend/internal/leads/scheduling"
+	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/platform/httpkit"
+	"portal_final_backend/platform/validator"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
+// Handler handles HTTP requests for leads.
+// Uses focused services following vertical slicing pattern.
+type Handler struct {
+	mgmt         *management.Service
+	scheduling   *scheduling.Service
+	notesHandler *NotesHandler
+	val          *validator.Validator
+}
+
+const (
+	msgInvalidRequest   = "invalid request"
+	msgValidationFailed = "validation failed"
+)
+
+// New creates a new leads handler with focused services.
+func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler, val *validator.Validator) *Handler {
+	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler, val: val}
+}
+
+func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
+	rg.GET("", h.List)
+	rg.POST("", h.Create)
+	rg.GET("/check-duplicate", h.CheckDuplicate)
+	rg.GET("/:id", h.GetByID)
+	rg.PUT("/:id", h.Update)
+	rg.DELETE("/:id", h.Delete)
+	rg.POST("/bulk-delete", h.BulkDelete)
+	rg.PATCH("/:id/status", h.UpdateStatus)
+	rg.PUT(":id/assign", h.Assign)
+	rg.POST("/:id/schedule", h.ScheduleVisit)
+	rg.POST("/:id/reschedule", h.RescheduleVisit)
+	rg.POST("/:id/survey", h.CompleteSurvey)
+	rg.POST("/:id/no-show", h.MarkNoShow)
+	rg.POST("/:id/view", h.MarkViewed)
+	rg.GET("/:id/notes", h.notesHandler.ListNotes)
+	rg.POST("/:id/notes", h.notesHandler.AddNote)
+	rg.GET("/:id/visit-history", h.ListVisitHistory)
+	// Service-specific routes
+	rg.POST("/:id/services", h.AddService)
+	rg.PATCH("/:id/services/:serviceId/status", h.UpdateServiceStatus)
+}
+
+func (h *Handler) Create(c *gin.Context) {
+	var req transport.CreateLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.mgmt.Create(c.Request.Context(), req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, lead)
+}
+
+func (h *Handler) GetByID(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	lead, err := h.mgmt.GetByID(c.Request.Context(), id)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) Update(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpdateLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	lead, err := h.mgmt.Update(c.Request.Context(), id, req, identity.UserID(), identity.Roles())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) Assign(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.AssignLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, identity.UserID(), identity.Roles())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) Delete(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	if err := h.mgmt.Delete(c.Request.Context(), id); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "lead deleted"})
+}
+
+func (h *Handler) BulkDelete(c *gin.Context) {
+	var req transport.BulkDeleteLeadsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	deletedCount, err := h.mgmt.BulkDelete(c.Request.Context(), req.IDs)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.BulkDeleteLeadsResponse{DeletedCount: deletedCount})
+}
+
+func (h *Handler) UpdateStatus(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpdateLeadStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.mgmt.UpdateStatus(c.Request.Context(), id, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) ScheduleVisit(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.ScheduleVisitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.scheduling.ScheduleVisit(c.Request.Context(), id, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) RescheduleVisit(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.RescheduleVisitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	lead, err := h.scheduling.RescheduleVisit(c.Request.Context(), id, req, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) CompleteSurvey(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.CompleteSurveyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.scheduling.CompleteSurvey(c.Request.Context(), id, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) MarkNoShow(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.MarkNoShowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	lead, err := h.scheduling.MarkNoShow(c.Request.Context(), id, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) MarkViewed(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, identity.UserID()); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "lead marked as viewed"})
+}
+
+func (h *Handler) CheckDuplicate(c *gin.Context) {
+	phone := c.Query("phone")
+	if phone == "" {
+		httpkit.Error(c, http.StatusBadRequest, "phone parameter required", nil)
+		return
+	}
+
+	result, err := h.mgmt.CheckDuplicate(c.Request.Context(), phone)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) List(c *gin.Context) {
+	var req transport.ListLeadsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.mgmt.List(c.Request.Context(), req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) ListVisitHistory(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.scheduling.ListVisitHistory(c.Request.Context(), id)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) AddService(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.AddServiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.mgmt.AddService(c.Request.Context(), id, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, lead)
+}
+
+func (h *Handler) UpdateServiceStatus(c *gin.Context) {
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpdateServiceStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	lead, err := h.mgmt.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
 }
 </file>
 
