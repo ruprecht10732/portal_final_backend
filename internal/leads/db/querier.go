@@ -18,6 +18,8 @@ type Querier interface {
 	CountLeads(ctx context.Context) (int64, error)
 	// Leads Domain SQL Queries
 	CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, error)
+	// Lead AI Analysis Queries
+	CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnalysisParams) (LeadAiAnalysis, error)
 	// Lead Activity Queries
 	CreateLeadActivity(ctx context.Context, arg CreateLeadActivityParams) error
 	// Lead Notes Queries
@@ -27,10 +29,12 @@ type Querier interface {
 	// Visit History Queries
 	CreateVisitHistory(ctx context.Context, arg CreateVisitHistoryParams) (VisitHistory, error)
 	DeleteLeadNote(ctx context.Context, id pgtype.UUID) error
+	GetLatestLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) (LeadAiAnalysis, error)
 	GetLeadByID(ctx context.Context, id pgtype.UUID) (Lead, error)
 	GetLeadByPhone(ctx context.Context, consumerPhone string) (Lead, error)
 	GetLeadNote(ctx context.Context, id pgtype.UUID) (LeadNote, error)
 	GetLeadService(ctx context.Context, id pgtype.UUID) (LeadService, error)
+	ListLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) ([]LeadAiAnalysis, error)
 	ListLeadActivities(ctx context.Context, leadID pgtype.UUID) ([]LeadActivity, error)
 	ListLeadNotes(ctx context.Context, leadID pgtype.UUID) ([]LeadNote, error)
 	ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]LeadService, error)

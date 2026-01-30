@@ -46,6 +46,18 @@ type LeadActivity struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type LeadAiAnalysis struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	UrgencyLevel        string             `json:"urgency_level"`
+	UrgencyReason       pgtype.Text        `json:"urgency_reason"`
+	TalkingPoints       []byte             `json:"talking_points"`
+	ObjectionHandling   []byte             `json:"objection_handling"`
+	UpsellOpportunities []byte             `json:"upsell_opportunities"`
+	Summary             string             `json:"summary"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
 type LeadNote struct {
 	ID        pgtype.UUID        `json:"id"`
 	LeadID    pgtype.UUID        `json:"lead_id"`

@@ -17,8 +17,8 @@ UPDATE leads SET deleted_at = now(), updated_at = now()
 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 `
 
-func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, ids []pgtype.UUID) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, bulkSoftDeleteLeads, ids)
+func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, dollar_1 []pgtype.UUID) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, bulkSoftDeleteLeads, dollar_1)
 }
 
 const completeLeadServiceSurvey = `-- name: CompleteLeadServiceSurvey :one
@@ -210,6 +210,49 @@ func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, e
 	return i, err
 }
 
+const createLeadAIAnalysis = `-- name: CreateLeadAIAnalysis :one
+
+INSERT INTO lead_ai_analysis (lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
+`
+
+type CreateLeadAIAnalysisParams struct {
+	LeadID              pgtype.UUID `json:"lead_id"`
+	UrgencyLevel        string      `json:"urgency_level"`
+	UrgencyReason       pgtype.Text `json:"urgency_reason"`
+	TalkingPoints       []byte      `json:"talking_points"`
+	ObjectionHandling   []byte      `json:"objection_handling"`
+	UpsellOpportunities []byte      `json:"upsell_opportunities"`
+	Summary             string      `json:"summary"`
+}
+
+// Lead AI Analysis Queries
+func (q *Queries) CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnalysisParams) (LeadAiAnalysis, error) {
+	row := q.db.QueryRow(ctx, createLeadAIAnalysis,
+		arg.LeadID,
+		arg.UrgencyLevel,
+		arg.UrgencyReason,
+		arg.TalkingPoints,
+		arg.ObjectionHandling,
+		arg.UpsellOpportunities,
+		arg.Summary,
+	)
+	var i LeadAiAnalysis
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.UrgencyLevel,
+		&i.UrgencyReason,
+		&i.TalkingPoints,
+		&i.ObjectionHandling,
+		&i.UpsellOpportunities,
+		&i.Summary,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createLeadActivity = `-- name: CreateLeadActivity :exec
 
 INSERT INTO lead_activity (lead_id, user_id, action, meta)
@@ -357,6 +400,30 @@ func (q *Queries) DeleteLeadNote(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const getLatestLeadAIAnalysis = `-- name: GetLatestLeadAIAnalysis :one
+SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at FROM lead_ai_analysis
+WHERE lead_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) (LeadAiAnalysis, error) {
+	row := q.db.QueryRow(ctx, getLatestLeadAIAnalysis, leadID)
+	var i LeadAiAnalysis
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.UrgencyLevel,
+		&i.UrgencyReason,
+		&i.TalkingPoints,
+		&i.ObjectionHandling,
+		&i.UpsellOpportunities,
+		&i.Summary,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getLeadByID = `-- name: GetLeadByID :one
 SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source FROM leads WHERE id = $1 AND deleted_at IS NULL
 `
@@ -477,6 +544,42 @@ func (q *Queries) GetLeadService(ctx context.Context, id pgtype.UUID) (LeadServi
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listLeadAIAnalysis = `-- name: ListLeadAIAnalysis :many
+SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at FROM lead_ai_analysis
+WHERE lead_id = $1
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) ([]LeadAiAnalysis, error) {
+	rows, err := q.db.Query(ctx, listLeadAIAnalysis, leadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LeadAiAnalysis
+	for rows.Next() {
+		var i LeadAiAnalysis
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.UrgencyLevel,
+			&i.UrgencyReason,
+			&i.TalkingPoints,
+			&i.ObjectionHandling,
+			&i.UpsellOpportunities,
+			&i.Summary,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listLeadActivities = `-- name: ListLeadActivities :many

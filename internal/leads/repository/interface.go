@@ -83,6 +83,13 @@ type VisitHistoryStore interface {
 	GetVisitHistoryByID(ctx context.Context, id uuid.UUID) (VisitHistory, error)
 }
 
+// AIAnalysisStore manages AI-generated analyses for leads.
+type AIAnalysisStore interface {
+	CreateAIAnalysis(ctx context.Context, params CreateAIAnalysisParams) (AIAnalysis, error)
+	GetLatestAIAnalysis(ctx context.Context, leadID uuid.UUID) (AIAnalysis, error)
+	ListAIAnalyses(ctx context.Context, leadID uuid.UUID) ([]AIAnalysis, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -100,6 +107,7 @@ type LeadsRepository interface {
 	LegacyVisitManager
 	NoteStore
 	VisitHistoryStore
+	AIAnalysisStore
 }
 
 // Ensure Repository implements LeadsRepository

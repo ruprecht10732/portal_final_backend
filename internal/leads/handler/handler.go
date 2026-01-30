@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/scheduling"
 	"portal_final_backend/internal/leads/transport"
@@ -19,6 +20,7 @@ type Handler struct {
 	mgmt         *management.Service
 	scheduling   *scheduling.Service
 	notesHandler *NotesHandler
+	advisor      *agent.LeadAdvisor
 	val          *validator.Validator
 }
 
@@ -28,8 +30,8 @@ const (
 )
 
 // New creates a new leads handler with focused services.
-func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler, val *validator.Validator) *Handler {
-	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler, val: val}
+func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, val *validator.Validator) *Handler {
+	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler, advisor: advisor, val: val}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -53,6 +55,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	// Service-specific routes
 	rg.POST("/:id/services", h.AddService)
 	rg.PATCH("/:id/services/:serviceId/status", h.UpdateServiceStatus)
+	// AI Advisor routes
+	rg.POST("/:id/analyze", h.AnalyzeLead)
+	rg.GET("/:id/analysis", h.GetAnalysis)
+	rg.GET("/:id/analysis/history", h.ListAnalyses)
 }
 
 func (h *Handler) Create(c *gin.Context) {
@@ -422,4 +428,58 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 	}
 
 	httpkit.OK(c, lead)
+}
+
+// AnalyzeLead triggers AI analysis for a lead and returns the result
+func (h *Handler) AnalyzeLead(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	// Check for force parameter to bypass no_change detection
+	force := c.Query("force") == "true"
+
+	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, force)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, response)
+}
+
+// GetAnalysis returns the latest AI analysis for a lead
+func (h *Handler) GetAnalysis(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	analysis, hasAnalysis, err := h.advisor.GetLatestOrDefault(c.Request.Context(), id)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{
+		"analysis":  analysis,
+		"isDefault": !hasAnalysis,
+	})
+}
+
+// ListAnalyses returns all AI analyses for a lead
+func (h *Handler) ListAnalyses(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	analyses, err := h.advisor.ListAnalyses(c.Request.Context(), id)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"items": analyses})
 }

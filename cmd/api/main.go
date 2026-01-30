@@ -16,6 +16,7 @@ import (
 	"portal_final_backend/internal/leads"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
+	"portal_final_backend/internal/services"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/logger"
@@ -69,8 +70,13 @@ func main() {
 
 	// Initialize domain modules
 	authModule := auth.NewModule(pool, cfg, eventBus, log, val)
-	leadsModule := leads.NewModule(pool, eventBus, val, cfg, log)
+	leadsModule, err := leads.NewModule(pool, eventBus, val, cfg, log)
+	if err != nil {
+		log.Error("failed to initialize leads module", "error", err)
+		panic("failed to initialize leads module: " + err.Error())
+	}
 	mapsModule := maps.NewModule(log)
+	servicesModule := services.NewModule(pool, val, log)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
@@ -88,6 +94,7 @@ func main() {
 			authModule,
 			leadsModule,
 			mapsModule,
+			servicesModule,
 		},
 	}
 

@@ -17,12 +17,6 @@ const (
 
 type ServiceType string
 
-const (
-	ServiceTypeWindows    ServiceType = "Windows"
-	ServiceTypeInsulation ServiceType = "Insulation"
-	ServiceTypeSolar      ServiceType = "Solar"
-)
-
 type LeadStatus string
 
 const (
@@ -54,7 +48,7 @@ type CreateLeadRequest struct {
 	HouseNumber  string       `json:"houseNumber" validate:"required,min=1,max=20"`
 	ZipCode      string       `json:"zipCode" validate:"required,min=1,max=20"`
 	City         string       `json:"city" validate:"required,min=1,max=100"`
-	ServiceType  ServiceType  `json:"serviceType" validate:"required,oneof=Windows Insulation Solar"`
+	ServiceType  ServiceType  `json:"serviceType" validate:"required,min=1,max=100"`
 	AssigneeID   OptionalUUID `json:"assigneeId,omitempty" validate:"-"`
 	ConsumerNote string       `json:"consumerNote,omitempty" validate:"max=2000"`
 	Source       string       `json:"source,omitempty" validate:"max=50"`
@@ -78,7 +72,7 @@ type UpdateServiceStatusRequest struct {
 }
 
 type AddServiceRequest struct {
-	ServiceType        ServiceType `json:"serviceType" validate:"required,oneof=Windows Insulation Solar"`
+	ServiceType        ServiceType `json:"serviceType" validate:"required,min=1,max=100"`
 	CloseCurrentStatus bool        `json:"closeCurrentStatus"` // If true, auto-close current active service
 }
 
@@ -124,7 +118,7 @@ type BulkDeleteLeadsRequest struct {
 
 type ListLeadsRequest struct {
 	Status      *LeadStatus  `form:"status" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling Closed"`
-	ServiceType *ServiceType `form:"serviceType" validate:"omitempty,oneof=Windows Insulation Solar"`
+	ServiceType *ServiceType `form:"serviceType" validate:"omitempty,min=1,max=100"`
 	Search      string       `form:"search" validate:"max=100"`
 	Page        int          `form:"page" validate:"min=1"`
 	PageSize    int          `form:"pageSize" validate:"min=1,max=100"`

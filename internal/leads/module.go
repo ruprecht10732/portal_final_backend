@@ -26,16 +26,21 @@ type Module struct {
 	management *management.Service
 	scheduling *scheduling.Service
 	notes      *notes.Service
+	advisor    *agent.LeadAdvisor
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator, cfg *config.Config, log *logger.Logger) *Module {
+func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
 	// Create shared repository
 	repo := repository.New(pool)
 
-	// Active agent for lead triage
-	responder := agent.NewFirstResponder(cfg.MoonshotAPIKey, repo)
+	// AI Advisor for lead analysis
+	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo)
+	if err != nil {
+		return nil, err
+	}
 
+	// Subscribe to LeadCreated events to auto-analyze new leads
 	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadCreated)
 		if !ok {
@@ -43,8 +48,8 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 		}
 
 		go func() {
-			if err := responder.Process(context.Background(), e.LeadID); err != nil {
-				log.Error("first responder agent failed", "error", err, "leadId", e.LeadID)
+			if err := advisor.Analyze(context.Background(), e.LeadID); err != nil {
+				log.Error("lead advisor analysis failed", "error", err, "leadId", e.LeadID)
 			}
 		}()
 
@@ -58,14 +63,15 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 
 	// Create handlers
 	notesHandler := handler.NewNotesHandler(notesSvc, val)
-	h := handler.New(mgmtSvc, schedulingSvc, notesHandler, val)
+	h := handler.New(mgmtSvc, schedulingSvc, notesHandler, advisor, val)
 
 	return &Module{
 		handler:    h,
 		management: mgmtSvc,
 		scheduling: schedulingSvc,
 		notes:      notesSvc,
-	}
+		advisor:    advisor,
+	}, nil
 }
 
 // Name returns the module identifier.

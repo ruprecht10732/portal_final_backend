@@ -194,8 +194,8 @@ const getValidRoles = `-- name: GetValidRoles :many
 SELECT name FROM roles WHERE name = ANY($1::text[])
 `
 
-func (q *Queries) GetValidRoles(ctx context.Context, roleNames []string) ([]string, error) {
-	rows, err := q.db.Query(ctx, getValidRoles, roleNames)
+func (q *Queries) GetValidRoles(ctx context.Context, dollar_1 []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, getValidRoles, dollar_1)
 	if err != nil {
 		return nil, err
 	}
