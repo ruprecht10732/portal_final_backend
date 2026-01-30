@@ -41,13 +41,44 @@ func (s *Service) GetBySlug(ctx context.Context, slug string) (transport.Service
 	return toResponse(st), nil
 }
 
-// List retrieves all service types.
+// List retrieves all service types (admin default list).
 func (s *Service) List(ctx context.Context) (transport.ServiceTypeListResponse, error) {
 	items, err := s.repo.List(ctx)
 	if err != nil {
 		return transport.ServiceTypeListResponse{}, err
 	}
-	return toListResponse(items), nil
+	return toListResponseWithPagination(items, len(items), 1, len(items)), nil
+}
+
+// ListWithFilters retrieves service types with search, filters, and pagination (admin).
+func (s *Service) ListWithFilters(ctx context.Context, req transport.ListServiceTypesRequest) (transport.ServiceTypeListResponse, error) {
+	page := req.Page
+	pageSize := req.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	params := repository.ListParams{
+		Search:    req.Search,
+		IsActive:  req.IsActive,
+		Offset:    (page - 1) * pageSize,
+		Limit:     pageSize,
+		SortBy:    req.SortBy,
+		SortOrder: req.SortOrder,
+	}
+
+	items, total, err := s.repo.ListWithFilters(ctx, params)
+	if err != nil {
+		return transport.ServiceTypeListResponse{}, err
+	}
+
+	return toListResponseWithPagination(items, total, page, pageSize), nil
 }
 
 // ListActive retrieves only active service types.
@@ -56,7 +87,7 @@ func (s *Service) ListActive(ctx context.Context) (transport.ServiceTypeListResp
 	if err != nil {
 		return transport.ServiceTypeListResponse{}, err
 	}
-	return toListResponse(items), nil
+	return toListResponseWithPagination(items, len(items), 1, len(items)), nil
 }
 
 // Create creates a new service type.
@@ -185,15 +216,25 @@ func toResponse(st repository.ServiceType) transport.ServiceTypeResponse {
 	}
 }
 
-// toListResponse converts a slice of repository ServiceTypes to transport response.
-func toListResponse(items []repository.ServiceType) transport.ServiceTypeListResponse {
+// toListResponseWithPagination converts a slice of repository ServiceTypes to transport response.
+func toListResponseWithPagination(items []repository.ServiceType, total int, page int, pageSize int) transport.ServiceTypeListResponse {
 	responses := make([]transport.ServiceTypeResponse, len(items))
 	for i, item := range items {
 		responses[i] = toResponse(item)
 	}
+	if pageSize < 1 {
+		pageSize = len(items)
+	}
+	totalPages := 0
+	if pageSize > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
 	return transport.ServiceTypeListResponse{
-		Items: responses,
-		Total: len(responses),
+		Items:      responses,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
 	}
 }
 

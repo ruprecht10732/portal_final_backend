@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,8 @@ import (
 
 	"portal_final_backend/platform/apperr"
 )
+
+const serviceTypeNotFoundMessage = "service type not found"
 
 // Repo implements the Repository interface with PostgreSQL.
 type Repo struct {
@@ -42,7 +45,7 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (ServiceType, error) {
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ServiceType{}, apperr.NotFound("service type not found")
+			return ServiceType{}, apperr.NotFound(serviceTypeNotFoundMessage)
 		}
 		return ServiceType{}, fmt.Errorf("get service type by id: %w", err)
 	}
@@ -69,7 +72,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (ServiceType, error) 
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ServiceType{}, apperr.NotFound("service type not found")
+			return ServiceType{}, apperr.NotFound(serviceTypeNotFoundMessage)
 		}
 		return ServiceType{}, fmt.Errorf("get service type by slug: %w", err)
 	}
@@ -111,6 +114,76 @@ func (r *Repo) ListActive(ctx context.Context) ([]ServiceType, error) {
 	defer rows.Close()
 
 	return scanServiceTypes(rows)
+}
+
+// ListWithFilters retrieves service types with search, active filter, pagination, and sorting.
+func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error) {
+	whereClauses := []string{"1=1"}
+	args := []interface{}{}
+	argIdx := 1
+
+	if params.IsActive != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("is_active = $%d", argIdx))
+		args = append(args, *params.IsActive)
+		argIdx++
+	}
+	if params.Search != "" {
+		searchPattern := "%" + params.Search + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf("(name ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx))
+		args = append(args, searchPattern)
+		argIdx++
+	}
+
+	whereClause := strings.Join(whereClauses, " AND ")
+
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM service_types WHERE %s", whereClause)
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count service types: %w", err)
+	}
+
+	sortColumn := "display_order"
+	switch params.SortBy {
+	case "name":
+		sortColumn = "name"
+	case "slug":
+		sortColumn = "slug"
+	case "displayOrder":
+		sortColumn = "display_order"
+	case "isActive":
+		sortColumn = "is_active"
+	case "createdAt":
+		sortColumn = "created_at"
+	case "updatedAt":
+		sortColumn = "updated_at"
+	}
+	sortOrder := "ASC"
+	if params.SortOrder == "desc" {
+		sortOrder = "DESC"
+	}
+
+	args = append(args, params.Limit, params.Offset)
+
+	query := fmt.Sprintf(`
+		SELECT id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at
+		FROM service_types
+		WHERE %s
+		ORDER BY %s %s, name ASC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, sortColumn, sortOrder, argIdx, argIdx+1)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list service types: %w", err)
+	}
+	defer rows.Close()
+
+	items, err := scanServiceTypes(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
 }
 
 // Exists checks if a service type exists by ID.
@@ -178,7 +251,7 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ServiceType{}, apperr.NotFound("service type not found")
+			return ServiceType{}, apperr.NotFound(serviceTypeNotFoundMessage)
 		}
 		return ServiceType{}, fmt.Errorf("update service type: %w", err)
 	}
@@ -200,7 +273,7 @@ func (r *Repo) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperr.NotFound("service type not found")
+		return apperr.NotFound(serviceTypeNotFoundMessage)
 	}
 
 	return nil
@@ -216,7 +289,7 @@ func (r *Repo) SetActive(ctx context.Context, id uuid.UUID, isActive bool) error
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperr.NotFound("service type not found")
+		return apperr.NotFound(serviceTypeNotFoundMessage)
 	}
 
 	return nil

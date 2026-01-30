@@ -47,12 +47,23 @@ type ReorderItem struct {
 	DisplayOrder int
 }
 
+// ListParams defines filters for listing service types.
+type ListParams struct {
+	Search    string
+	IsActive  *bool
+	Offset    int
+	Limit     int
+	SortBy    string
+	SortOrder string
+}
+
 // ServiceTypeReader provides read operations for service types.
 type ServiceTypeReader interface {
 	GetByID(ctx context.Context, id uuid.UUID) (ServiceType, error)
 	GetBySlug(ctx context.Context, slug string) (ServiceType, error)
 	List(ctx context.Context) ([]ServiceType, error)
 	ListActive(ctx context.Context) ([]ServiceType, error)
+	ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error)
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 }
 

@@ -32,7 +32,13 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 // List retrieves all service types (admin only).
 // GET /api/v1/admin/service-types
 func (h *Handler) List(c *gin.Context) {
-	result, err := h.svc.List(c.Request.Context())
+	var req transport.ListServiceTypesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.svc.ListWithFilters(c.Request.Context(), req)
 	if httpkit.HandleError(c, err) {
 		return
 	}

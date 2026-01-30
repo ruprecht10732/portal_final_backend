@@ -31,6 +31,16 @@ type ReorderItem struct {
 	DisplayOrder int       `json:"displayOrder" validate:"min=0"`
 }
 
+// ListServiceTypesRequest defines query params for admin listing.
+type ListServiceTypesRequest struct {
+	Search    string `form:"search" validate:"max=100"`
+	IsActive  *bool  `form:"isActive" validate:"omitempty"`
+	Page      int    `form:"page" validate:"min=1"`
+	PageSize  int    `form:"pageSize" validate:"min=1,max=100"`
+	SortBy    string `form:"sortBy" validate:"omitempty,oneof=name slug displayOrder isActive createdAt updatedAt"`
+	SortOrder string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
+}
+
 // ServiceTypeResponse represents a service type in API responses.
 type ServiceTypeResponse struct {
 	ID           uuid.UUID `json:"id"`
@@ -47,6 +57,9 @@ type ServiceTypeResponse struct {
 
 // ServiceTypeListResponse wraps a list of service types.
 type ServiceTypeListResponse struct {
-	Items []ServiceTypeResponse `json:"items"`
-	Total int                   `json:"total"`
+	Items      []ServiceTypeResponse `json:"items"`
+	Total      int                   `json:"total"`
+	Page       int                   `json:"page"`
+	PageSize   int                   `json:"pageSize"`
+	TotalPages int                   `json:"totalPages"`
 }
