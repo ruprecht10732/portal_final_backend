@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/apperr"
@@ -30,12 +31,13 @@ type Repository interface {
 
 // Service handles lead management operations (CRUD).
 type Service struct {
-	repo Repository
+	repo     Repository
+	eventBus events.Bus
 }
 
 // New creates a new lead management service.
-func New(repo Repository) *Service {
-	return &Service{repo: repo}
+func New(repo Repository, eventBus events.Bus) *Service {
+	return &Service{repo: repo, eventBus: eventBus}
 }
 
 // Create creates a new lead.
@@ -68,6 +70,13 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 	if err != nil {
 		return transport.LeadResponse{}, err
 	}
+
+	s.eventBus.Publish(ctx, events.LeadCreated{
+		BaseEvent:       events.NewBaseEvent(),
+		LeadID:          lead.ID,
+		AssignedAgentID: lead.AssignedAgentID,
+		ServiceType:     lead.ServiceType,
+	})
 
 	services, _ := s.repo.ListLeadServices(ctx, lead.ID)
 	return ToLeadResponseWithServices(lead, services), nil

@@ -69,7 +69,7 @@ func main() {
 
 	// Initialize domain modules
 	authModule := auth.NewModule(pool, cfg, eventBus, log, val)
-	leadsModule := leads.NewModule(pool, eventBus, val)
+	leadsModule := leads.NewModule(pool, eventBus, val, cfg, log)
 	mapsModule := maps.NewModule(log)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication

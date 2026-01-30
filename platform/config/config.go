@@ -94,6 +94,7 @@ type Config struct {
 	RefreshCookiePath     string
 	RefreshCookieSecure   bool
 	RefreshCookieSameSite http.SameSite
+	MoonshotAPIKey        string
 }
 
 // =============================================================================
@@ -175,6 +176,7 @@ func Load() (*Config, error) {
 		RefreshCookiePath:     getEnv("REFRESH_COOKIE_PATH", "/api/v1/auth"),
 		RefreshCookieSecure:   refreshCookieSecure,
 		RefreshCookieSameSite: parseSameSite(getEnv("REFRESH_COOKIE_SAMESITE", "Lax")),
+		MoonshotAPIKey:        getEnv("MOONSHOT_API_KEY", ""),
 	}
 
 	if cfg.DatabaseURL == "" {

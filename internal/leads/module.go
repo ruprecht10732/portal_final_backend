@@ -3,13 +3,18 @@
 package leads
 
 import (
+	"context"
+
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/handler"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scheduling"
+	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,12 +29,30 @@ type Module struct {
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator) *Module {
+func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator, cfg *config.Config, log *logger.Logger) *Module {
 	// Create shared repository
 	repo := repository.New(pool)
 
+	// Active agent for lead triage
+	responder := agent.NewFirstResponder(cfg.MoonshotAPIKey, repo)
+
+	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.LeadCreated)
+		if !ok {
+			return nil
+		}
+
+		go func() {
+			if err := responder.Process(context.Background(), e.LeadID); err != nil {
+				log.Error("first responder agent failed", "error", err, "leadId", e.LeadID)
+			}
+		}()
+
+		return nil
+	}))
+
 	// Create focused services (vertical slices)
-	mgmtSvc := management.New(repo)
+	mgmtSvc := management.New(repo, eventBus)
 	schedulingSvc := scheduling.New(repo, eventBus)
 	notesSvc := notes.New(repo)
 
