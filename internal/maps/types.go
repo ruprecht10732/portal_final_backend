@@ -29,8 +29,8 @@ type nominatimAddress struct {
 
 // nominatimResponse mirrors the relevant parts of the OSM search payload.
 type nominatimResponse struct {
-	DisplayName string `json:"display_name"`
-	Lat         string `json:"lat"`
-	Lon         string `json:"lon"`
+	DisplayName string           `json:"display_name"`
+	Lat         string           `json:"lat"`
+	Lon         string           `json:"lon"`
 	Address     nominatimAddress `json:"address"`
 }
