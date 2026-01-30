@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
     PRIMARY KEY (user_id, role_id)
 );
 
+-- Seed default roles
 INSERT INTO roles (name)
-VALUES ('admin'), ('user')
+VALUES ('admin'), ('user'), ('agent'), ('scout'), ('partner')
 ON CONFLICT (name) DO NOTHING;

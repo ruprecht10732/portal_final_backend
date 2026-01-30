@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
 );
 
 -- Seed default roles
+-- Added 'partner' for contractors/installation partners
 INSERT INTO roles (name)
-VALUES ('admin'), ('user'), ('agent'), ('scout')
+VALUES ('admin'), ('user'), ('agent'), ('scout'), ('partner')
 ON CONFLICT (name) DO NOTHING;
