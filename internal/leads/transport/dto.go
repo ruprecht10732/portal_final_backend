@@ -79,6 +79,7 @@ type AddServiceRequest struct {
 	ServiceType        ServiceType `json:"serviceType" validate:"required,min=1,max=100"`
 	CloseCurrentStatus bool        `json:"closeCurrentStatus"` // If true, auto-close current active service
 	ConsumerNote       string      `json:"consumerNote,omitempty" validate:"max=2000"`
+	Source             string      `json:"source,omitempty" validate:"max=50"`
 }
 
 type UpdateLeadStatusRequest struct {

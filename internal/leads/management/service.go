@@ -413,6 +413,7 @@ func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transpor
 		LeadID:       leadID,
 		ServiceType:  string(req.ServiceType),
 		ConsumerNote: toPtr(req.ConsumerNote),
+		Source:       toPtr(req.Source),
 	})
 	if err != nil {
 		return transport.LeadResponse{}, err
