@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"time"
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
@@ -55,6 +56,8 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 		AddressHouseNumber: req.HouseNumber,
 		AddressZipCode:     req.ZipCode,
 		AddressCity:        req.City,
+		Latitude:           req.Latitude,
+		Longitude:          req.Longitude,
 		ServiceType:        string(req.ServiceType),
 		ConsumerNote:       toPtr(req.ConsumerNote),
 		Source:             toPtr(req.Source),
@@ -357,6 +360,30 @@ func (s *Service) GetMetrics(ctx context.Context) (transport.LeadMetricsResponse
 	}, nil
 }
 
+// GetHeatmap returns geocoded lead points for the dashboard heatmap.
+func (s *Service) GetHeatmap(ctx context.Context, startDate *time.Time, endDate *time.Time) (transport.LeadHeatmapResponse, error) {
+	var endExclusive *time.Time
+	if endDate != nil {
+		end := endDate.AddDate(0, 0, 1)
+		endExclusive = &end
+	}
+
+	points, err := s.repo.ListHeatmapPoints(ctx, startDate, endExclusive)
+	if err != nil {
+		return transport.LeadHeatmapResponse{}, err
+	}
+
+	resp := transport.LeadHeatmapResponse{Points: make([]transport.LeadHeatmapPointResponse, 0, len(points))}
+	for _, point := range points {
+		resp.Points = append(resp.Points, transport.LeadHeatmapPointResponse{
+			Latitude:  point.Latitude,
+			Longitude: point.Longitude,
+		})
+	}
+
+	return resp, nil
+}
+
 func roundToOneDecimal(value float64) float64 {
 	return math.Round(value*10) / 10
 }
@@ -399,6 +426,12 @@ func applyUpdateFields(params *repository.UpdateLeadParams, req transport.Update
 	}
 	if req.Email != nil {
 		params.ConsumerEmail = req.Email
+	}
+	if req.Latitude != nil {
+		params.Latitude = req.Latitude
+	}
+	if req.Longitude != nil {
+		params.Longitude = req.Longitude
 	}
 	if req.ConsumerRole != nil {
 		role := string(*req.ConsumerRole)

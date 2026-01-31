@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/management"
@@ -38,6 +39,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
 	rg.POST("", h.Create)
 	rg.GET("/metrics", h.GetMetrics)
+	rg.GET("/heatmap", h.GetHeatmap)
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
@@ -69,6 +71,48 @@ func (h *Handler) GetMetrics(c *gin.Context) {
 	}
 
 	httpkit.OK(c, metrics)
+}
+
+func (h *Handler) GetHeatmap(c *gin.Context) {
+	var req transport.LeadHeatmapRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	const dateLayout = "2006-01-02"
+	var startDate *time.Time
+	var endDate *time.Time
+
+	if req.StartDate != "" {
+		parsed, err := time.Parse(dateLayout, req.StartDate)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid startDate")
+			return
+		}
+		startDate = &parsed
+	}
+
+	if req.EndDate != "" {
+		parsed, err := time.Parse(dateLayout, req.EndDate)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid endDate")
+			return
+		}
+		endDate = &parsed
+	}
+
+	if startDate != nil && endDate != nil && startDate.After(*endDate) {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "startDate must be before or equal to endDate")
+		return
+	}
+
+	result, err := h.mgmt.GetHeatmap(c.Request.Context(), startDate, endDate)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 func (h *Handler) Create(c *gin.Context) {

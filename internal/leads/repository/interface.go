@@ -17,6 +17,7 @@ type LeadReader interface {
 	GetByIDWithServices(ctx context.Context, id uuid.UUID) (Lead, []LeadService, error)
 	GetByPhone(ctx context.Context, phone string) (Lead, error)
 	List(ctx context.Context, params ListParams) ([]Lead, int, error)
+	ListHeatmapPoints(ctx context.Context, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error)
 }
 
 // LeadWriter provides write operations for lead management.

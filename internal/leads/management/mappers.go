@@ -29,6 +29,8 @@ func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 			HouseNumber: lead.AddressHouseNumber,
 			ZipCode:     lead.AddressZipCode,
 			City:        lead.AddressCity,
+			Latitude:    lead.Latitude,
+			Longitude:   lead.Longitude,
 		},
 	}
 }

@@ -34,6 +34,8 @@ type Lead struct {
 	AddressHouseNumber    string
 	AddressZipCode        string
 	AddressCity           string
+	Latitude              *float64
+	Longitude             *float64
 	ServiceType           string
 	Status                string
 	AssignedAgentID       *uuid.UUID
@@ -61,6 +63,8 @@ type CreateLeadParams struct {
 	AddressHouseNumber string
 	AddressZipCode     string
 	AddressCity        string
+	Latitude           *float64
+	Longitude          *float64
 	ServiceType        string
 	AssignedAgentID    *uuid.UUID
 	ConsumerNote       *string
@@ -72,22 +76,22 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO leads (
 			consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id,
 			consumer_note, source
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'New', $11, $12, $13)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'New', $13, $14, $15)
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`,
 		params.ConsumerFirstName, params.ConsumerLastName, params.ConsumerPhone, params.ConsumerEmail, params.ConsumerRole,
-		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity,
+		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity, params.Latitude, params.Longitude,
 		params.ServiceType, params.AssignedAgentID, params.ConsumerNote, params.Source,
 	).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -112,14 +116,14 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Lead, error) {
 	var lead Lead
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 		FROM leads WHERE id = $1 AND deleted_at IS NULL
 	`, id).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -149,7 +153,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string) (Lead, error)
 	var lead Lead
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
@@ -158,7 +162,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string) (Lead, error)
 		LIMIT 1
 	`, phone).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -179,10 +183,26 @@ type UpdateLeadParams struct {
 	AddressHouseNumber *string
 	AddressZipCode     *string
 	AddressCity        *string
+	Latitude           *float64
+	Longitude          *float64
 	ServiceType        *string
 	Status             *string
 	AssignedAgentID    *uuid.UUID
 	AssignedAgentIDSet bool
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func derefFloat(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLeadParams) (Lead, error) {
@@ -190,64 +210,33 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 	args := []interface{}{}
 	argIdx := 1
 
-	if params.ConsumerFirstName != nil {
-		setClauses = append(setClauses, fmt.Sprintf("consumer_first_name = $%d", argIdx))
-		args = append(args, *params.ConsumerFirstName)
-		argIdx++
+	fields := []struct {
+		enabled bool
+		column  string
+		value   interface{}
+	}{
+		{params.ConsumerFirstName != nil, "consumer_first_name", derefString(params.ConsumerFirstName)},
+		{params.ConsumerLastName != nil, "consumer_last_name", derefString(params.ConsumerLastName)},
+		{params.ConsumerPhone != nil, "consumer_phone", derefString(params.ConsumerPhone)},
+		{params.ConsumerEmail != nil, "consumer_email", derefString(params.ConsumerEmail)},
+		{params.ConsumerRole != nil, "consumer_role", derefString(params.ConsumerRole)},
+		{params.AddressStreet != nil, "address_street", derefString(params.AddressStreet)},
+		{params.AddressHouseNumber != nil, "address_house_number", derefString(params.AddressHouseNumber)},
+		{params.AddressZipCode != nil, "address_zip_code", derefString(params.AddressZipCode)},
+		{params.AddressCity != nil, "address_city", derefString(params.AddressCity)},
+		{params.Latitude != nil, "latitude", derefFloat(params.Latitude)},
+		{params.Longitude != nil, "longitude", derefFloat(params.Longitude)},
+		{params.ServiceType != nil, "service_type", derefString(params.ServiceType)},
+		{params.AssignedAgentIDSet, "assigned_agent_id", params.AssignedAgentID},
+		{params.Status != nil, "status", derefString(params.Status)},
 	}
-	if params.ConsumerLastName != nil {
-		setClauses = append(setClauses, fmt.Sprintf("consumer_last_name = $%d", argIdx))
-		args = append(args, *params.ConsumerLastName)
-		argIdx++
-	}
-	if params.ConsumerPhone != nil {
-		setClauses = append(setClauses, fmt.Sprintf("consumer_phone = $%d", argIdx))
-		args = append(args, *params.ConsumerPhone)
-		argIdx++
-	}
-	if params.ConsumerEmail != nil {
-		setClauses = append(setClauses, fmt.Sprintf("consumer_email = $%d", argIdx))
-		args = append(args, *params.ConsumerEmail)
-		argIdx++
-	}
-	if params.ConsumerRole != nil {
-		setClauses = append(setClauses, fmt.Sprintf("consumer_role = $%d", argIdx))
-		args = append(args, *params.ConsumerRole)
-		argIdx++
-	}
-	if params.AddressStreet != nil {
-		setClauses = append(setClauses, fmt.Sprintf("address_street = $%d", argIdx))
-		args = append(args, *params.AddressStreet)
-		argIdx++
-	}
-	if params.AddressHouseNumber != nil {
-		setClauses = append(setClauses, fmt.Sprintf("address_house_number = $%d", argIdx))
-		args = append(args, *params.AddressHouseNumber)
-		argIdx++
-	}
-	if params.AddressZipCode != nil {
-		setClauses = append(setClauses, fmt.Sprintf("address_zip_code = $%d", argIdx))
-		args = append(args, *params.AddressZipCode)
-		argIdx++
-	}
-	if params.AddressCity != nil {
-		setClauses = append(setClauses, fmt.Sprintf("address_city = $%d", argIdx))
-		args = append(args, *params.AddressCity)
-		argIdx++
-	}
-	if params.ServiceType != nil {
-		setClauses = append(setClauses, fmt.Sprintf("service_type = $%d", argIdx))
-		args = append(args, *params.ServiceType)
-		argIdx++
-	}
-	if params.AssignedAgentIDSet {
-		setClauses = append(setClauses, fmt.Sprintf("assigned_agent_id = $%d", argIdx))
-		args = append(args, params.AssignedAgentID)
-		argIdx++
-	}
-	if params.Status != nil {
-		setClauses = append(setClauses, fmt.Sprintf("status = $%d", argIdx))
-		args = append(args, *params.Status)
+
+	for _, field := range fields {
+		if !field.enabled {
+			continue
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", field.column, argIdx))
+		args = append(args, field.value)
 		argIdx++
 	}
 
@@ -262,7 +251,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 		UPDATE leads SET %s
 		WHERE id = $%d AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
@@ -271,7 +260,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 	var lead Lead
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -288,13 +277,13 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status stri
 		UPDATE leads SET status = $2, updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, status).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -340,13 +329,13 @@ func (r *Repository) ScheduleVisit(ctx context.Context, id uuid.UUID, scheduledD
 			updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, scheduledDate, scoutID).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -373,13 +362,13 @@ func (r *Repository) CompleteSurvey(ctx context.Context, id uuid.UUID, measureme
 			updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, measurements, accessDifficulty, notesPtr).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -403,13 +392,13 @@ func (r *Repository) MarkNoShow(ctx context.Context, id uuid.UUID, notes string)
 			updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
 	`, id, notesPtr).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
@@ -443,13 +432,13 @@ func (r *Repository) RescheduleVisit(ctx context.Context, id uuid.UUID, schedule
 				updated_at = now()
 			WHERE id = $1 AND deleted_at IS NULL
 			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-				address_street, address_house_number, address_zip_code, address_city,
+				address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 				service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 				created_at, updated_at
 		`, id, scheduledDate, scoutID, noShowNote).Scan(
 			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
@@ -467,13 +456,13 @@ func (r *Repository) RescheduleVisit(ctx context.Context, id uuid.UUID, schedule
 				updated_at = now()
 			WHERE id = $1 AND deleted_at IS NULL
 			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-				address_street, address_house_number, address_zip_code, address_city,
+				address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 				service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 				created_at, updated_at
 		`, id, scheduledDate, scoutID).Scan(
 			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
@@ -549,7 +538,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 
 	query := fmt.Sprintf(`
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city,
+			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
 			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
 			created_at, updated_at
@@ -570,7 +559,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		var lead Lead
 		if err := rows.Scan(
 			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity,
+			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
@@ -585,6 +574,57 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	}
 
 	return leads, total, nil
+}
+
+type HeatmapPoint struct {
+	Latitude  float64
+	Longitude float64
+}
+
+func (r *Repository) ListHeatmapPoints(ctx context.Context, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error) {
+	whereClauses := []string{"deleted_at IS NULL", "latitude IS NOT NULL", "longitude IS NOT NULL"}
+	args := []interface{}{}
+	argIdx := 1
+
+	if startDate != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("created_at >= $%d", argIdx))
+		args = append(args, *startDate)
+		argIdx++
+	}
+	if endDate != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("created_at < $%d", argIdx))
+		args = append(args, *endDate)
+		argIdx++
+	}
+
+	whereClause := strings.Join(whereClauses, " AND ")
+
+	query := fmt.Sprintf(`
+		SELECT latitude, longitude
+		FROM leads
+		WHERE %s
+	`, whereClause)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	points := make([]HeatmapPoint, 0)
+	for rows.Next() {
+		var point HeatmapPoint
+		if err := rows.Scan(&point.Latitude, &point.Longitude); err != nil {
+			return nil, err
+		}
+		points = append(points, point)
+	}
+
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return points, nil
 }
 
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {

@@ -48,6 +48,8 @@ type CreateLeadRequest struct {
 	HouseNumber  string       `json:"houseNumber" validate:"required,min=1,max=20"`
 	ZipCode      string       `json:"zipCode" validate:"required,min=1,max=20"`
 	City         string       `json:"city" validate:"required,min=1,max=100"`
+	Latitude     *float64     `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
+	Longitude    *float64     `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
 	ServiceType  ServiceType  `json:"serviceType" validate:"required,min=1,max=100"`
 	AssigneeID   OptionalUUID `json:"assigneeId,omitempty" validate:"-"`
 	ConsumerNote string       `json:"consumerNote,omitempty" validate:"max=2000"`
@@ -64,6 +66,8 @@ type UpdateLeadRequest struct {
 	HouseNumber  *string       `json:"houseNumber,omitempty" validate:"omitempty,min=1,max=20"`
 	ZipCode      *string       `json:"zipCode,omitempty" validate:"omitempty,min=1,max=20"`
 	City         *string       `json:"city,omitempty" validate:"omitempty,min=1,max=100"`
+	Latitude     *float64      `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
+	Longitude    *float64      `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
 	AssigneeID   OptionalUUID  `json:"assigneeId,omitempty" validate:"-"`
 }
 
@@ -126,6 +130,11 @@ type ListLeadsRequest struct {
 	SortOrder   string       `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 }
 
+type LeadHeatmapRequest struct {
+	StartDate string `form:"startDate"`
+	EndDate   string `form:"endDate"`
+}
+
 // Response DTOs
 type ConsumerResponse struct {
 	FirstName string       `json:"firstName"`
@@ -136,10 +145,12 @@ type ConsumerResponse struct {
 }
 
 type AddressResponse struct {
-	Street      string `json:"street"`
-	HouseNumber string `json:"houseNumber"`
-	ZipCode     string `json:"zipCode"`
-	City        string `json:"city"`
+	Street      string   `json:"street"`
+	HouseNumber string   `json:"houseNumber"`
+	ZipCode     string   `json:"zipCode"`
+	City        string   `json:"city"`
+	Latitude    *float64 `json:"latitude,omitempty"`
+	Longitude   *float64 `json:"longitude,omitempty"`
 }
 
 type VisitResponse struct {
@@ -173,6 +184,15 @@ type LeadResponse struct {
 	Source          *string               `json:"source,omitempty"`
 	CreatedAt       time.Time             `json:"createdAt"`
 	UpdatedAt       time.Time             `json:"updatedAt"`
+}
+
+type LeadHeatmapPointResponse struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+type LeadHeatmapResponse struct {
+	Points []LeadHeatmapPointResponse `json:"points"`
 }
 
 type LeadListResponse struct {
