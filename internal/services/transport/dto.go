@@ -63,3 +63,8 @@ type ServiceTypeListResponse struct {
 	PageSize   int                   `json:"pageSize"`
 	TotalPages int                   `json:"totalPages"`
 }
+
+// DeleteServiceTypeResponse indicates whether a service type was deleted or deactivated.
+type DeleteServiceTypeResponse struct {
+	Status string `json:"status"`
+}

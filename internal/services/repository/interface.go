@@ -65,6 +65,7 @@ type ServiceTypeReader interface {
 	ListActive(ctx context.Context) ([]ServiceType, error)
 	ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error)
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
+	HasLeadServices(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 // ServiceTypeWriter provides write operations for service types.

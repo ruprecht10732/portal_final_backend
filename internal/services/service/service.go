@@ -64,9 +64,15 @@ func (s *Service) ListWithFilters(ctx context.Context, req transport.ListService
 		pageSize = 100
 	}
 
+	isActive := req.IsActive
+	if isActive == nil {
+		defaultActive := true
+		isActive = &defaultActive
+	}
+
 	params := repository.ListParams{
 		Search:    req.Search,
-		IsActive:  req.IsActive,
+		IsActive:  isActive,
 		Offset:    (page - 1) * pageSize,
 		Limit:     pageSize,
 		SortBy:    req.SortBy,
@@ -142,15 +148,27 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 	return toResponse(st), nil
 }
 
-// Delete removes a service type.
-func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	err := s.repo.Delete(ctx, id)
+// Delete removes or deactivates a service type based on usage.
+func (s *Service) Delete(ctx context.Context, id uuid.UUID) (transport.DeleteServiceTypeResponse, error) {
+	used, err := s.repo.HasLeadServices(ctx, id)
 	if err != nil {
-		return err
+		return transport.DeleteServiceTypeResponse{}, err
+	}
+
+	if used {
+		if err := s.repo.SetActive(ctx, id, false); err != nil {
+			return transport.DeleteServiceTypeResponse{}, err
+		}
+		s.log.Info("service type deactivated", "id", id)
+		return transport.DeleteServiceTypeResponse{Status: "deactivated"}, nil
+	}
+
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return transport.DeleteServiceTypeResponse{}, err
 	}
 
 	s.log.Info("service type deleted", "id", id)
-	return nil
+	return transport.DeleteServiceTypeResponse{Status: "deleted"}, nil
 }
 
 // ToggleActive toggles the is_active flag for a service type.

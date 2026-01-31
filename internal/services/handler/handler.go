@@ -142,10 +142,11 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.Delete(c.Request.Context(), id); httpkit.HandleError(c, err) {
+	result, err := h.svc.Delete(c.Request.Context(), id)
+	if httpkit.HandleError(c, err) {
 		return
 	}
-	c.Status(http.StatusNoContent)
+	httpkit.OK(c, result)
 }
 
 // ToggleActive toggles the is_active flag for a service type.

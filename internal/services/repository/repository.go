@@ -199,6 +199,18 @@ func (r *Repo) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
 	return exists, nil
 }
 
+// HasLeadServices checks if a service type is referenced by lead_services.
+func (r *Repo) HasLeadServices(ctx context.Context, id uuid.UUID) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM lead_services WHERE service_type_id = $1)`
+
+	var exists bool
+	if err := r.pool.QueryRow(ctx, query, id).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check service type lead services: %w", err)
+	}
+
+	return exists, nil
+}
+
 // Create creates a new service type.
 func (r *Repo) Create(ctx context.Context, params CreateParams) (ServiceType, error) {
 	query := `
@@ -264,9 +276,19 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 
 // Delete removes a service type by ID (hard delete).
 // Use SetActive(false) for soft delete.
-
 func (r *Repo) Delete(ctx context.Context, id uuid.UUID) error {
-	return r.SetActive(ctx, id, false)
+	query := `DELETE FROM service_types WHERE id = $1`
+
+	result, err := r.pool.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("delete service type: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound(serviceTypeNotFoundMessage)
+	}
+
+	return nil
 }
 
 // SetActive sets the is_active flag for a service type.
