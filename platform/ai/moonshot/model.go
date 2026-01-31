@@ -15,9 +15,10 @@ import (
 
 // Config for Kimi
 type Config struct {
-	APIKey  string
-	BaseURL string
-	Model   string
+	APIKey          string
+	BaseURL         string
+	Model           string
+	DisableThinking bool // Disable thinking mode for kimi-k2.5 (uses temp 0.6 instead of 1.0)
 }
 
 // KimiModel adapts Moonshot to the ADK model.LLM interface
@@ -100,9 +101,15 @@ func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model
 		"model":    m.config.Model,
 		"messages": messages,
 	}
-	if req.Config != nil && req.Config.Temperature != nil {
+
+	// Handle thinking mode for kimi-k2.5
+	if m.config.DisableThinking {
+		payload["thinking"] = map[string]string{"type": "disabled"}
+		// Non-thinking mode uses fixed temperature 0.6
+	} else if req.Config != nil && req.Config.Temperature != nil {
 		payload["temperature"] = float64(*req.Config.Temperature)
 	}
+
 	if len(tools) > 0 {
 		payload["tools"] = tools
 		payload["tool_choice"] = "auto"

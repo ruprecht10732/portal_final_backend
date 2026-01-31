@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,24 @@ import (
 
 	"portal_final_backend/internal/leads/repository"
 )
+
+// normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
+func normalizeUrgencyLevel(level string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(level))
+
+	switch normalized {
+	case "high", "hoog", "urgent", "spoed", "spoedeisend", "critical":
+		return "High", nil
+	case "medium", "mid", "moderate", "matig", "gemiddeld", "normal":
+		return "Medium", nil
+	case "low", "laag", "non-urgent", "niet-urgent", "minor":
+		return "Low", nil
+	default:
+		// If unrecognized, default to Medium but log it
+		log.Printf("Unrecognized urgency level '%s', defaulting to Medium", level)
+		return "Medium", nil
+	}
+}
 
 // ToolDependencies contains the dependencies needed by tools
 type ToolDependencies struct {
@@ -23,11 +42,17 @@ type ToolDependencies struct {
 func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveAnalysis",
-		Description: "Saves the complete lead analysis to the database. Call this ONCE after completing your full analysis. Include all sections: urgency, talking points, objections, upsells, and summary.",
+		Description: "Saves the complete lead analysis to the database. Call this ONCE after completing your full analysis. Include all sections: urgency (must be exactly 'High', 'Medium', or 'Low'), talking points, objections, upsells, and summary.",
 	}, func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
 		leadID, err := uuid.Parse(input.LeadID)
 		if err != nil {
 			return SaveAnalysisOutput{Success: false, Message: "Invalid lead ID"}, err
+		}
+
+		// Normalize urgency level to valid database value
+		urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
+		if err != nil {
+			return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
 		}
 
 		objections := make([]repository.ObjectionResponse, len(input.ObjectionHandling))
@@ -45,7 +70,7 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 
 		_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
 			LeadID:              leadID,
-			UrgencyLevel:        input.UrgencyLevel,
+			UrgencyLevel:        urgencyLevel,
 			UrgencyReason:       urgencyReason,
 			TalkingPoints:       input.TalkingPoints,
 			ObjectionHandling:   objections,

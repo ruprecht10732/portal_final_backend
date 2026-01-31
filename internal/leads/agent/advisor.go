@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
+	"sync"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
+	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
 	"github.com/google/uuid"
@@ -17,6 +18,30 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
 )
+
+// toolCallTracker tracks which tools have been called during a run
+type toolCallTracker struct {
+	mu                 sync.Mutex
+	saveAnalysisCalled bool
+}
+
+func (t *toolCallTracker) reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.saveAnalysisCalled = false
+}
+
+func (t *toolCallTracker) markSaveAnalysisCalled() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.saveAnalysisCalled = true
+}
+
+func (t *toolCallTracker) wasSaveAnalysisCalled() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.saveAnalysisCalled
+}
 
 // LeadAdvisor provides AI-powered lead analysis using the ADK framework
 type LeadAdvisor struct {
@@ -27,17 +52,29 @@ type LeadAdvisor struct {
 	repo           repository.LeadsRepository
 	// Store drafted emails temporarily (in production, this would be persisted to DB)
 	draftedEmails map[uuid.UUID]EmailDraft
+	// Track tool calls during runs
+	toolTracker *toolCallTracker
 }
 
 // NewLeadAdvisor builds the AI Advisor agent with Kimi model
 // Returns an error if the agent or runner cannot be initialized
 func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository) (*LeadAdvisor, error) {
-	kimi := moonshot.NewModel(moonshot.Config{APIKey: apiKey})
+	// Use kimi-k2.5 with thinking disabled for more reliable tool calling
+	// Thinking mode restricts tool_choice to only "auto" or "none"
+	// Non-thinking mode may allow more flexibility
+	kimi := moonshot.NewModel(moonshot.Config{
+		APIKey:          apiKey,
+		Model:           "kimi-k2.5",
+		DisableThinking: true,
+	})
+
+	tracker := &toolCallTracker{}
 
 	advisor := &LeadAdvisor{
 		repo:          repo,
 		draftedEmails: make(map[uuid.UUID]EmailDraft),
 		appName:       "lead_advisor",
+		toolTracker:   tracker,
 	}
 
 	// Create tool dependencies
@@ -53,13 +90,26 @@ func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository) (*LeadAdviso
 		// Continue with partial tools rather than failing completely
 	}
 
-	// Create the ADK agent
+	// Create AfterToolCallback to track SaveAnalysis calls
+	// Signature: func(ctx tool.Context, tool tool.Tool, args, result map[string]any, err error) (map[string]any, error)
+	afterToolCallback := func(ctx tool.Context, t tool.Tool, args, result map[string]any, toolErr error) (map[string]any, error) {
+		if t.Name() == "SaveAnalysis" {
+			log.Printf("SaveAnalysis tool was called with result: %v, error: %v", result, toolErr)
+			if toolErr == nil {
+				tracker.markSaveAnalysisCalled()
+			}
+		}
+		return nil, nil // Return nil to use original result
+	}
+
+	// Create the ADK agent with tool tracking callback
 	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "LeadAdvisor",
-		Model:       kimi,
-		Description: "Expert AI Sales Advisor for home services marketplace (plumbing, HVAC, electrical, carpentry) that analyzes leads and provides personalized, actionable sales guidance.",
-		Instruction: getSystemPrompt(),
-		Tools:       tools,
+		Name:               "LeadAdvisor",
+		Model:              kimi,
+		Description:        "Expert AI Sales Advisor for home services marketplace (plumbing, HVAC, electrical, carpentry) that analyzes leads and provides personalized, actionable sales guidance.",
+		Instruction:        getSystemPrompt(),
+		Tools:              tools,
+		AfterToolCallbacks: []llmagent.AfterToolCallback{afterToolCallback},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ADK agent: %w", err)
@@ -122,7 +172,9 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, f
 	}
 	defer cleanupSession()
 
-	analysisStartTime := time.Now()
+	// Reset tool tracker before run
+	la.toolTracker.reset()
+
 	output, err := la.runAdvisor(ctx, userID, sessionID, userMessage)
 	if err != nil {
 		return nil, err
@@ -130,15 +182,68 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, f
 
 	log.Printf("Lead advisor finished for lead %s. Output: %s", leadID, output)
 
-	newAnalysis, errorResponse, err := la.getLatestAnalysisOrErrorResponse(ctx, leadID)
+	// Check if SaveAnalysis was called using the tracker
+	if la.toolTracker.wasSaveAnalysisCalled() {
+		log.Printf("SaveAnalysis was called for lead %s, fetching new analysis", leadID)
+		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, leadID)
+		if err != nil {
+			return &AnalyzeResponse{
+				Status:  "error",
+				Message: "SaveAnalysis was called but failed to save. Please try again.",
+			}, nil
+		}
+		result := la.analysisToResult(newAnalysis)
+		return &AnalyzeResponse{
+			Status:   "created",
+			Message:  "New analysis generated",
+			Analysis: result,
+		}, nil
+	}
+
+	// SaveAnalysis was NOT called - retry with Moonshot's recommended prompt
+	log.Printf("WARNING: AI did not call SaveAnalysis for lead %s. Retrying with tool selection prompt.", leadID)
+
+	retryMessage := la.buildRetryMessage()
+	retrySessionID := uuid.New().String()
+	cleanupRetry, err := la.createSession(ctx, userID, retrySessionID, leadID)
 	if err != nil {
 		return nil, err
 	}
-	if errorResponse != nil {
-		return errorResponse, nil
+	defer cleanupRetry()
+
+	// Reset tracker for retry
+	la.toolTracker.reset()
+
+	retryOutput, err := la.runAdvisor(ctx, userID, retrySessionID, retryMessage)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("Lead advisor retry finished for lead %s. Output: %s", leadID, retryOutput)
+
+	// Check if retry succeeded
+	if la.toolTracker.wasSaveAnalysisCalled() {
+		log.Printf("SaveAnalysis was called on retry for lead %s", leadID)
+		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, leadID)
+		if err != nil {
+			return &AnalyzeResponse{
+				Status:  "error",
+				Message: "SaveAnalysis was called but failed to save. Please try again.",
+			}, nil
+		}
+		result := la.analysisToResult(newAnalysis)
+		return &AnalyzeResponse{
+			Status:   "created",
+			Message:  "New analysis generated",
+			Analysis: result,
+		}, nil
 	}
 
-	return la.buildPostRunResponse(*newAnalysis, analysisStartTime, leadID), nil
+	// Retry also failed
+	log.Printf("ERROR: AI did not call SaveAnalysis for lead %s even after retry.", leadID)
+	return &AnalyzeResponse{
+		Status:  "error",
+		Message: "AI kon geen analyse opslaan. Probeer het opnieuw.",
+	}, nil
 }
 
 func (la *LeadAdvisor) ensureInitialized() error {
@@ -203,6 +308,19 @@ func (la *LeadAdvisor) buildUserMessage(lead repository.Lead, notes []repository
 	}
 }
 
+// buildRetryMessage creates a retry message using Moonshot's recommended approach
+// for forcing tool selection when tool_choice=required is not supported
+func (la *LeadAdvisor) buildRetryMessage() *genai.Content {
+	// Moonshot's recommended prompt for forcing tool selection
+	// See: https://platform.moonshot.cn/docs/guide/migrating-from-openai-to-kimi
+	return &genai.Content{
+		Role: "user",
+		Parts: []*genai.Part{
+			{Text: "请选择一个工具（tool）来处理当前的问题。You MUST call the SaveAnalysis tool now with your complete analysis."},
+		},
+	}
+}
+
 func (la *LeadAdvisor) createSession(ctx context.Context, userID string, sessionID string, leadID uuid.UUID) (func(), error) {
 	_, err := la.sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   la.appName,
@@ -257,25 +375,6 @@ func (la *LeadAdvisor) getLatestAnalysisOrErrorResponse(ctx context.Context, lea
 		}, nil
 	}
 	return &newAnalysis, nil, nil
-}
-
-func (la *LeadAdvisor) buildPostRunResponse(newAnalysis repository.AIAnalysis, analysisStartTime time.Time, leadID uuid.UUID) *AnalyzeResponse {
-	if newAnalysis.CreatedAt.Before(analysisStartTime) {
-		log.Printf("WARNING: AI did not call SaveAnalysis tool for lead %s. Returning old analysis.", leadID)
-		result := la.analysisToResult(newAnalysis)
-		return &AnalyzeResponse{
-			Status:   "no_change",
-			Message:  "AI kon geen nieuwe analyse genereren. Bestaande analyse getoond.",
-			Analysis: result,
-		}
-	}
-
-	result := la.analysisToResult(newAnalysis)
-	return &AnalyzeResponse{
-		Status:   "created",
-		Message:  "New analysis generated",
-		Analysis: result,
-	}
 }
 
 // GetLatestAnalysis retrieves the most recent analysis for a lead
