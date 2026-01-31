@@ -24,33 +24,37 @@ func New(pool *pgxpool.Pool) *Repository {
 }
 
 type Lead struct {
-	ID                    uuid.UUID
-	ConsumerFirstName     string
-	ConsumerLastName      string
-	ConsumerPhone         string
-	ConsumerEmail         *string
-	ConsumerRole          string
-	AddressStreet         string
-	AddressHouseNumber    string
-	AddressZipCode        string
-	AddressCity           string
-	Latitude              *float64
-	Longitude             *float64
-	ServiceType           string
-	Status                string
-	AssignedAgentID       *uuid.UUID
-	ConsumerNote          *string
-	Source                *string
-	ViewedByID            *uuid.UUID
-	ViewedAt              *time.Time
-	VisitScheduledDate    *time.Time
-	VisitScoutID          *uuid.UUID
-	VisitMeasurements     *string
-	VisitAccessDifficulty *string
-	VisitNotes            *string
-	VisitCompletedAt      *time.Time
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID                 uuid.UUID
+	ConsumerFirstName  string
+	ConsumerLastName   string
+	ConsumerPhone      string
+	ConsumerEmail      *string
+	ConsumerRole       string
+	AddressStreet      string
+	AddressHouseNumber string
+	AddressZipCode     string
+	AddressCity        string
+	Latitude           *float64
+	Longitude          *float64
+	AssignedAgentID    *uuid.UUID
+	Source             *string
+	ViewedByID         *uuid.UUID
+	ViewedAt           *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// LeadSummary is a lightweight lead representation for returning customer detection
+type LeadSummary struct {
+	ID              uuid.UUID
+	ConsumerName    string
+	ConsumerPhone   string
+	ConsumerEmail   *string
+	AddressCity     string
+	ServiceCount    int
+	LastServiceType *string
+	LastStatus      *string
+	CreatedAt       time.Time
 }
 
 type CreateLeadParams struct {
@@ -65,9 +69,7 @@ type CreateLeadParams struct {
 	AddressCity        string
 	Latitude           *float64
 	Longitude          *float64
-	ServiceType        string
 	AssignedAgentID    *uuid.UUID
-	ConsumerNote       *string
 	Source             *string
 }
 
@@ -77,34 +79,21 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		INSERT INTO leads (
 			consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id,
-			consumer_note, source
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'New', $13, $14, $15)
+			assigned_agent_id, source
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
+			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
 	`,
 		params.ConsumerFirstName, params.ConsumerLastName, params.ConsumerPhone, params.ConsumerEmail, params.ConsumerRole,
 		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity, params.Latitude, params.Longitude,
-		params.ServiceType, params.AssignedAgentID, params.ConsumerNote, params.Source,
+		params.AssignedAgentID, params.Source,
 	).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
-	if err != nil {
-		return Lead{}, err
-	}
-
-	// Also create a corresponding lead_service entry
-	_, err = r.CreateLeadService(ctx, CreateLeadServiceParams{
-		LeadID:      lead.ID,
-		ServiceType: params.ServiceType,
-	})
 	if err != nil {
 		return Lead{}, err
 	}
@@ -117,15 +106,12 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Lead, error) {
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
+			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
 		FROM leads WHERE id = $1 AND deleted_at IS NULL
 	`, id).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -154,23 +140,70 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string) (Lead, error)
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
+			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
 		FROM leads WHERE consumer_phone = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, phone).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lead{}, ErrNotFound
 	}
 	return lead, err
+}
+
+// GetByPhoneOrEmail finds a lead matching the given phone or email for returning customer detection.
+// Returns the first matching lead with its services, or nil if not found.
+func (r *Repository) GetByPhoneOrEmail(ctx context.Context, phone string, email string) (*LeadSummary, []LeadService, error) {
+	if phone == "" && email == "" {
+		return nil, nil, nil
+	}
+
+	var summary LeadSummary
+	err := r.pool.QueryRow(ctx, `
+		SELECT 
+			l.id,
+			l.consumer_first_name || ' ' || l.consumer_last_name AS consumer_name,
+			l.consumer_phone,
+			l.consumer_email,
+			l.address_city,
+			COUNT(ls.id) AS service_count,
+			(SELECT st.name FROM lead_services ls2 
+			 JOIN service_types st ON st.id = ls2.service_type_id 
+			 WHERE ls2.lead_id = l.id ORDER BY ls2.created_at DESC LIMIT 1) AS last_service_type,
+			(SELECT ls2.status FROM lead_services ls2 
+			 WHERE ls2.lead_id = l.id ORDER BY ls2.created_at DESC LIMIT 1) AS last_status,
+			l.created_at
+		FROM leads l
+		LEFT JOIN lead_services ls ON ls.lead_id = l.id
+		WHERE l.deleted_at IS NULL 
+		  AND (($1 != '' AND l.consumer_phone = $1) OR ($2 != '' AND l.consumer_email = $2))
+		GROUP BY l.id
+		ORDER BY l.created_at DESC
+		LIMIT 1
+	`, phone, email).Scan(
+		&summary.ID, &summary.ConsumerName, &summary.ConsumerPhone, &summary.ConsumerEmail,
+		&summary.AddressCity, &summary.ServiceCount, &summary.LastServiceType, &summary.LastStatus,
+		&summary.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Fetch services for the found lead
+	services, err := r.ListLeadServices(ctx, summary.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &summary, services, nil
 }
 
 type UpdateLeadParams struct {
@@ -185,8 +218,6 @@ type UpdateLeadParams struct {
 	AddressCity        *string
 	Latitude           *float64
 	Longitude          *float64
-	ServiceType        *string
-	Status             *string
 	AssignedAgentID    *uuid.UUID
 	AssignedAgentIDSet bool
 }
@@ -226,9 +257,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 		{params.AddressCity != nil, "address_city", derefString(params.AddressCity)},
 		{params.Latitude != nil, "latitude", derefFloat(params.Latitude)},
 		{params.Longitude != nil, "longitude", derefFloat(params.Longitude)},
-		{params.ServiceType != nil, "service_type", derefString(params.ServiceType)},
 		{params.AssignedAgentIDSet, "assigned_agent_id", params.AssignedAgentID},
-		{params.Status != nil, "status", derefString(params.Status)},
 	}
 
 	for _, field := range fields {
@@ -252,40 +281,14 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, params UpdateLead
 		WHERE id = $%d AND deleted_at IS NULL
 		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
+			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
 	`, strings.Join(setClauses, ", "), argIdx)
 
 	var lead Lead
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
 		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
-		&lead.CreatedAt, &lead.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Lead{}, ErrNotFound
-	}
-	return lead, err
-}
-
-func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status string) (Lead, error) {
-	var lead Lead
-	err := r.pool.QueryRow(ctx, `
-		UPDATE leads SET status = $2, updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
-	`, id, status).Scan(
-		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -319,162 +322,6 @@ func (r *Repository) AddActivity(ctx context.Context, leadID uuid.UUID, userID u
 	return err
 }
 
-func (r *Repository) ScheduleVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID) (Lead, error) {
-	var lead Lead
-	err := r.pool.QueryRow(ctx, `
-		UPDATE leads SET 
-			visit_scheduled_date = $2, 
-			visit_scout_id = $3,
-			status = 'Scheduled',
-			updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
-	`, id, scheduledDate, scoutID).Scan(
-		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
-		&lead.CreatedAt, &lead.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Lead{}, ErrNotFound
-	}
-	return lead, err
-}
-
-func (r *Repository) CompleteSurvey(ctx context.Context, id uuid.UUID, measurements string, accessDifficulty string, notes string) (Lead, error) {
-	var lead Lead
-	var notesPtr *string
-	if notes != "" {
-		notesPtr = &notes
-	}
-	err := r.pool.QueryRow(ctx, `
-		UPDATE leads SET 
-			visit_measurements = $2,
-			visit_access_difficulty = $3,
-			visit_notes = $4,
-			visit_completed_at = now(),
-			status = 'Surveyed',
-			updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
-	`, id, measurements, accessDifficulty, notesPtr).Scan(
-		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
-		&lead.CreatedAt, &lead.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Lead{}, ErrNotFound
-	}
-	return lead, err
-}
-
-func (r *Repository) MarkNoShow(ctx context.Context, id uuid.UUID, notes string) (Lead, error) {
-	var lead Lead
-	var notesPtr *string
-	if notes != "" {
-		notesPtr = &notes
-	}
-	err := r.pool.QueryRow(ctx, `
-		UPDATE leads SET 
-			visit_notes = COALESCE(visit_notes || E'\n', '') || COALESCE($2, 'No show'),
-			status = 'Needs_Rescheduling',
-			updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
-	`, id, notesPtr).Scan(
-		&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-		&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
-		&lead.CreatedAt, &lead.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Lead{}, ErrNotFound
-	}
-	return lead, err
-}
-
-func (r *Repository) RescheduleVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID, noShowNotes string, markAsNoShow bool) (Lead, error) {
-	var lead Lead
-	var err error
-
-	if markAsNoShow {
-		// Build no-show note
-		noShowNote := "No show"
-		if noShowNotes != "" {
-			noShowNote = "No show: " + noShowNotes
-		}
-
-		err = r.pool.QueryRow(ctx, `
-			UPDATE leads SET 
-				visit_notes = COALESCE(visit_notes || E'\n', '') || $4,
-				visit_scheduled_date = $2,
-				visit_scout_id = $3,
-				visit_measurements = NULL,
-				visit_access_difficulty = NULL,
-				visit_completed_at = NULL,
-				status = 'Scheduled',
-				updated_at = now()
-			WHERE id = $1 AND deleted_at IS NULL
-			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-				address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-				service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-				created_at, updated_at
-		`, id, scheduledDate, scoutID, noShowNote).Scan(
-			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
-			&lead.CreatedAt, &lead.UpdatedAt,
-		)
-	} else {
-		// Simple reschedule without no-show
-		err = r.pool.QueryRow(ctx, `
-			UPDATE leads SET 
-				visit_scheduled_date = $2,
-				visit_scout_id = $3,
-				visit_measurements = NULL,
-				visit_access_difficulty = NULL,
-				visit_completed_at = NULL,
-				status = 'Scheduled',
-				updated_at = now()
-			WHERE id = $1 AND deleted_at IS NULL
-			RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-				address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-				service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-				visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-				created_at, updated_at
-		`, id, scheduledDate, scoutID).Scan(
-			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
-			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
-			&lead.CreatedAt, &lead.UpdatedAt,
-		)
-	}
-
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Lead{}, ErrNotFound
-	}
-	return lead, err
-}
-
 type ListParams struct {
 	Status          *string
 	ServiceType     *string
@@ -498,10 +345,10 @@ type ListParams struct {
 }
 
 func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, error) {
-	whereClause, args, argIdx := buildLeadListWhere(params)
+	whereClause, joinClause, args, argIdx := buildLeadListWhere(params)
 
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM leads WHERE %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT l.id) FROM leads l %s WHERE %s", joinClause, whereClause)
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -515,16 +362,15 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	args = append(args, params.Limit, params.Offset)
 
 	query := fmt.Sprintf(`
-		SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
-			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			service_type, status, assigned_agent_id, consumer_note, source, viewed_by_id, viewed_at,
-			visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at,
-			created_at, updated_at
-		FROM leads
+		SELECT DISTINCT l.id, l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email, l.consumer_role,
+			l.address_street, l.address_house_number, l.address_zip_code, l.address_city, l.latitude, l.longitude,
+			l.assigned_agent_id, l.source, l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at
+		FROM leads l
+		%s
 		WHERE %s
 		ORDER BY %s %s
 		LIMIT $%d OFFSET $%d
-	`, whereClause, sortColumn, sortOrder, argIdx, argIdx+1)
+	`, joinClause, whereClause, sortColumn, sortOrder, argIdx, argIdx+1)
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -538,8 +384,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		if err := rows.Scan(
 			&lead.ID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-			&lead.ServiceType, &lead.Status, &lead.AssignedAgentID, &lead.ConsumerNote, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
-			&lead.VisitScheduledDate, &lead.VisitScoutID, &lead.VisitMeasurements, &lead.VisitAccessDifficulty, &lead.VisitNotes, &lead.VisitCompletedAt,
+			&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
@@ -554,10 +399,11 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	return leads, total, nil
 }
 
-func buildLeadListWhere(params ListParams) (string, []interface{}, int) {
-	whereClauses := []string{"deleted_at IS NULL"}
+func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) {
+	whereClauses := []string{"l.deleted_at IS NULL"}
 	args := []interface{}{}
 	argIdx := 1
+	needsServiceJoin := false
 
 	addEquals := func(column string, value interface{}) {
 		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", column, argIdx))
@@ -570,94 +416,109 @@ func buildLeadListWhere(params ListParams) (string, []interface{}, int) {
 		argIdx++
 	}
 
+	// Status and ServiceType filtering now requires joining with lead_services (current service)
 	if params.Status != nil {
-		addEquals("status", *params.Status)
+		needsServiceJoin = true
+		whereClauses = append(whereClauses, fmt.Sprintf("cs.status = $%d", argIdx))
+		args = append(args, *params.Status)
+		argIdx++
 	}
 	if params.ServiceType != nil {
-		addEquals("service_type", *params.ServiceType)
+		needsServiceJoin = true
+		whereClauses = append(whereClauses, fmt.Sprintf("st.name = $%d", argIdx))
+		args = append(args, *params.ServiceType)
+		argIdx++
 	}
 	if params.Search != "" {
 		searchPattern := "%" + params.Search + "%"
 		whereClauses = append(whereClauses, fmt.Sprintf(
-			"(consumer_first_name ILIKE $%d OR consumer_last_name ILIKE $%d OR consumer_phone ILIKE $%d OR consumer_email ILIKE $%d OR address_city ILIKE $%d)",
+			"(l.consumer_first_name ILIKE $%d OR l.consumer_last_name ILIKE $%d OR l.consumer_phone ILIKE $%d OR l.consumer_email ILIKE $%d OR l.address_city ILIKE $%d)",
 			argIdx, argIdx, argIdx, argIdx, argIdx,
 		))
 		args = append(args, searchPattern)
 		argIdx++
 	}
 	if params.FirstName != nil {
-		addILike("consumer_first_name", *params.FirstName)
+		addILike("l.consumer_first_name", *params.FirstName)
 	}
 	if params.LastName != nil {
-		addILike("consumer_last_name", *params.LastName)
+		addILike("l.consumer_last_name", *params.LastName)
 	}
 	if params.Phone != nil {
-		addILike("consumer_phone", *params.Phone)
+		addILike("l.consumer_phone", *params.Phone)
 	}
 	if params.Email != nil {
-		addILike("consumer_email", *params.Email)
+		addILike("l.consumer_email", *params.Email)
 	}
 	if params.Role != nil {
-		addEquals("consumer_role", *params.Role)
+		addEquals("l.consumer_role", *params.Role)
 	}
 	if params.Street != nil {
-		addILike("address_street", *params.Street)
+		addILike("l.address_street", *params.Street)
 	}
 	if params.HouseNumber != nil {
-		addILike("address_house_number", *params.HouseNumber)
+		addILike("l.address_house_number", *params.HouseNumber)
 	}
 	if params.ZipCode != nil {
-		addILike("address_zip_code", *params.ZipCode)
+		addILike("l.address_zip_code", *params.ZipCode)
 	}
 	if params.City != nil {
-		addILike("address_city", *params.City)
+		addILike("l.address_city", *params.City)
 	}
 	if params.AssignedAgentID != nil {
-		addEquals("assigned_agent_id", *params.AssignedAgentID)
+		addEquals("l.assigned_agent_id", *params.AssignedAgentID)
 	}
 	if params.CreatedAtFrom != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("created_at >= $%d", argIdx))
+		whereClauses = append(whereClauses, fmt.Sprintf("l.created_at >= $%d", argIdx))
 		args = append(args, *params.CreatedAtFrom)
 		argIdx++
 	}
 	if params.CreatedAtTo != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("created_at < $%d", argIdx))
+		whereClauses = append(whereClauses, fmt.Sprintf("l.created_at < $%d", argIdx))
 		args = append(args, *params.CreatedAtTo)
 		argIdx++
 	}
 
-	return strings.Join(whereClauses, " AND "), args, argIdx
+	// Build join clause for current service if needed
+	joinClause := ""
+	if needsServiceJoin {
+		joinClause = `
+		LEFT JOIN LATERAL (
+			SELECT ls.id, ls.status, ls.service_type_id
+			FROM lead_services ls
+			WHERE ls.lead_id = l.id AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
+			ORDER BY ls.created_at DESC
+			LIMIT 1
+		) cs ON true
+		LEFT JOIN service_types st ON st.id = cs.service_type_id`
+	}
+
+	return strings.Join(whereClauses, " AND "), joinClause, args, argIdx
 }
 
 func mapLeadSortColumn(sortBy string) string {
-	sortColumn := "created_at"
+	sortColumn := "l.created_at"
 	switch sortBy {
-	case "scheduledDate":
-		return "visit_scheduled_date"
-	case "status":
-		return "status"
 	case "firstName":
-		return "consumer_first_name"
+		return "l.consumer_first_name"
 	case "lastName":
-		return "consumer_last_name"
+		return "l.consumer_last_name"
 	case "phone":
-		return "consumer_phone"
+		return "l.consumer_phone"
 	case "email":
-		return "consumer_email"
+		return "l.consumer_email"
 	case "role":
-		return "consumer_role"
+		return "l.consumer_role"
 	case "street":
-		return "address_street"
+		return "l.address_street"
 	case "houseNumber":
-		return "address_house_number"
+		return "l.address_house_number"
 	case "zipCode":
-		return "address_zip_code"
+		return "l.address_zip_code"
 	case "city":
-		return "address_city"
-	case "serviceType":
-		return "service_type"
+		return "l.address_city"
 	case "assignedAgentId":
-		return "assigned_agent_id"
+		return "l.assigned_agent_id"
 	default:
 		return sortColumn
 	}

@@ -31,12 +31,18 @@ func filterMeaningfulNotes(notes []repository.LeadNote) []repository.LeadNote {
 }
 
 // shouldSkipRegeneration determines if we should skip regeneration based on data changes
-func shouldSkipRegeneration(lead repository.Lead, meaningfulNotes []repository.LeadNote, existingAnalysis repository.AIAnalysis) bool {
+func shouldSkipRegeneration(lead repository.Lead, currentService *repository.LeadService, meaningfulNotes []repository.LeadNote, existingAnalysis repository.AIAnalysis) bool {
 	// Check if lead or meaningful notes have been updated since last analysis
 	latestChange := lead.UpdatedAt
 	if latestChange.IsZero() {
 		latestChange = lead.CreatedAt
 	}
+
+	// Check current service updated at
+	if currentService != nil && currentService.UpdatedAt.After(latestChange) {
+		latestChange = currentService.UpdatedAt
+	}
+
 	for _, note := range meaningfulNotes {
 		if note.CreatedAt.After(latestChange) {
 			latestChange = note.CreatedAt
@@ -71,7 +77,7 @@ func wrapUserData(content string) string {
 }
 
 // buildAnalysisPrompt creates the analysis prompt for the AI
-func buildAnalysisPrompt(lead repository.Lead, meaningfulNotes []repository.LeadNote) string {
+func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadService, meaningfulNotes []repository.LeadNote) string {
 	// Build notes section with sanitization
 	notesSection := "Geen notities beschikbaar."
 	if len(meaningfulNotes) > 0 {
@@ -93,6 +99,16 @@ func buildAnalysisPrompt(lead repository.Lead, meaningfulNotes []repository.Lead
 		} else {
 			leadAgeStr = fmt.Sprintf("%d dagen geleden", days)
 		}
+	}
+
+	// Extract service info from current service
+	serviceType := "Onbekend"
+	status := "Onbekend"
+	consumerNote := ""
+	if currentService != nil {
+		serviceType = translateService(currentService.ServiceType)
+		status = translateStatus(currentService.Status)
+		consumerNote = getValue(currentService.ConsumerNote)
 	}
 
 	return fmt.Sprintf(`Analyseer deze lead en geef bruikbaar sales advies:
@@ -141,8 +157,8 @@ Schrijf je talking points en objection responses in het Nederlands.`,
 		translateRole(lead.ConsumerRole),
 		lead.AddressStreet, lead.AddressHouseNumber,
 		lead.AddressZipCode, lead.AddressCity,
-		translateService(lead.ServiceType), translateStatus(lead.Status),
-		wrapUserData(sanitizeUserInput(getValue(lead.ConsumerNote), maxConsumerNote)),
+		serviceType, status,
+		wrapUserData(sanitizeUserInput(consumerNote, maxConsumerNote)),
 		wrapUserData(notesSection),
 		getCurrentSeason(),
 		leadAgeStr)

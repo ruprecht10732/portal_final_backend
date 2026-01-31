@@ -63,8 +63,6 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 		AddressCity:        req.City,
 		Latitude:           req.Latitude,
 		Longitude:          req.Longitude,
-		ServiceType:        string(req.ServiceType),
-		ConsumerNote:       toPtr(req.ConsumerNote),
 		Source:             toPtr(req.Source),
 	}
 
@@ -81,11 +79,21 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 		return transport.LeadResponse{}, err
 	}
 
+	// Create the initial service for the lead
+	_, err = s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
+		LeadID:       lead.ID,
+		ServiceType:  string(req.ServiceType),
+		ConsumerNote: toPtr(req.ConsumerNote),
+	})
+	if err != nil {
+		return transport.LeadResponse{}, err
+	}
+
 	s.eventBus.Publish(ctx, events.LeadCreated{
 		BaseEvent:       events.NewBaseEvent(),
 		LeadID:          lead.ID,
 		AssignedAgentID: lead.AssignedAgentID,
-		ServiceType:     lead.ServiceType,
+		ServiceType:     string(req.ServiceType),
 	})
 
 	services, _ := s.repo.ListLeadServices(ctx, lead.ID)
@@ -300,6 +308,38 @@ func (s *Service) CheckDuplicate(ctx context.Context, phoneNumber string) (trans
 	}, nil
 }
 
+// CheckReturningCustomer checks if a lead with the given phone or email already exists.
+// This is used to detect returning customers when creating a new service request.
+func (s *Service) CheckReturningCustomer(ctx context.Context, phoneNumber string, email string) (transport.ReturningCustomerResponse, error) {
+	normalizedPhone := phone.NormalizeE164(phoneNumber)
+
+	summary, services, err := s.repo.GetByPhoneOrEmail(ctx, normalizedPhone, email)
+	if err != nil {
+		return transport.ReturningCustomerResponse{}, err
+	}
+
+	if summary == nil {
+		return transport.ReturningCustomerResponse{Found: false}, nil
+	}
+
+	serviceBriefs := make([]transport.ServiceBrief, len(services))
+	for i, svc := range services {
+		serviceBriefs[i] = transport.ServiceBrief{
+			ServiceType: transport.ServiceType(svc.ServiceType),
+			Status:      transport.LeadStatus(svc.Status),
+			CreatedAt:   svc.CreatedAt,
+		}
+	}
+
+	return transport.ReturningCustomerResponse{
+		Found:         true,
+		LeadID:        &summary.ID,
+		FullName:      summary.ConsumerName,
+		TotalServices: summary.ServiceCount,
+		Services:      serviceBriefs,
+	}, nil
+}
+
 // Assign assigns or unassigns a lead to an agent.
 func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUID, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
 	current, err := s.repo.GetByID(ctx, id)
@@ -358,8 +398,9 @@ func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transpor
 	}
 
 	_, err = s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
-		LeadID:      leadID,
-		ServiceType: string(req.ServiceType),
+		LeadID:       leadID,
+		ServiceType:  string(req.ServiceType),
+		ConsumerNote: toPtr(req.ConsumerNote),
 	})
 	if err != nil {
 		return transport.LeadResponse{}, err
@@ -402,13 +443,6 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 
 	if _, err := s.repo.UpdateServiceStatus(ctx, service.ID, string(req.Status)); err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
-		}
-		return transport.LeadResponse{}, err
-	}
-
-	if _, err := s.repo.UpdateStatus(ctx, id, string(req.Status)); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err

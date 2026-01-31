@@ -12,7 +12,6 @@ func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 		AssignedAgentID: lead.AssignedAgentID,
 		ViewedByID:      lead.ViewedByID,
 		ViewedAt:        lead.ViewedAt,
-		ConsumerNote:    lead.ConsumerNote,
 		Source:          lead.Source,
 		CreatedAt:       lead.CreatedAt,
 		UpdatedAt:       lead.UpdatedAt,
@@ -50,12 +49,16 @@ func ToLeadResponseWithServices(lead repository.Lead, services []repository.Lead
 			if svc.Status != "Closed" && svc.Status != "Bad_Lead" && svc.Status != "Surveyed" {
 				svcResp := ToLeadServiceResponse(svc)
 				resp.CurrentService = &svcResp
+				status := transport.LeadStatus(svc.Status)
+				resp.AggregateStatus = &status
 				break
 			}
 		}
 		if resp.CurrentService == nil {
 			svcResp := ToLeadServiceResponse(services[0])
 			resp.CurrentService = &svcResp
+			status := transport.LeadStatus(services[0].Status)
+			resp.AggregateStatus = &status
 		}
 	}
 
@@ -65,11 +68,12 @@ func ToLeadResponseWithServices(lead repository.Lead, services []repository.Lead
 // ToLeadServiceResponse converts a repository LeadService to a transport LeadServiceResponse.
 func ToLeadServiceResponse(svc repository.LeadService) transport.LeadServiceResponse {
 	resp := transport.LeadServiceResponse{
-		ID:          svc.ID,
-		ServiceType: transport.ServiceType(svc.ServiceType),
-		Status:      transport.LeadStatus(svc.Status),
-		CreatedAt:   svc.CreatedAt,
-		UpdatedAt:   svc.UpdatedAt,
+		ID:           svc.ID,
+		ServiceType:  transport.ServiceType(svc.ServiceType),
+		Status:       transport.LeadStatus(svc.Status),
+		ConsumerNote: svc.ConsumerNote,
+		CreatedAt:    svc.CreatedAt,
+		UpdatedAt:    svc.UpdatedAt,
 		Visit: transport.VisitResponse{
 			ScheduledDate: svc.VisitScheduledDate,
 			ScoutID:       svc.VisitScoutID,

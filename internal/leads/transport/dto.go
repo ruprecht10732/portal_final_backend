@@ -78,6 +78,7 @@ type UpdateServiceStatusRequest struct {
 type AddServiceRequest struct {
 	ServiceType        ServiceType `json:"serviceType" validate:"required,min=1,max=100"`
 	CloseCurrentStatus bool        `json:"closeCurrentStatus"` // If true, auto-close current active service
+	ConsumerNote       string      `json:"consumerNote,omitempty" validate:"max=2000"`
 }
 
 type UpdateLeadStatusRequest struct {
@@ -138,7 +139,7 @@ type ListLeadsRequest struct {
 	CreatedAtTo     string        `form:"createdAtTo" validate:"omitempty"`
 	Page            int           `form:"page" validate:"min=1"`
 	PageSize        int           `form:"pageSize" validate:"min=1,max=100"`
-	SortBy          string        `form:"sortBy" validate:"omitempty,oneof=createdAt scheduledDate status firstName lastName phone email role street houseNumber zipCode city serviceType assignedAgentId"`
+	SortBy          string        `form:"sortBy" validate:"omitempty,oneof=createdAt firstName lastName phone email role street houseNumber zipCode city assignedAgentId"`
 	SortOrder       string        `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 }
 
@@ -180,12 +181,13 @@ type VisitResponse struct {
 }
 
 type LeadServiceResponse struct {
-	ID          uuid.UUID     `json:"id"`
-	ServiceType ServiceType   `json:"serviceType"`
-	Status      LeadStatus    `json:"status"`
-	Visit       VisitResponse `json:"visit"`
-	CreatedAt   time.Time     `json:"createdAt"`
-	UpdatedAt   time.Time     `json:"updatedAt"`
+	ID           uuid.UUID     `json:"id"`
+	ServiceType  ServiceType   `json:"serviceType"`
+	Status       LeadStatus    `json:"status"`
+	ConsumerNote *string       `json:"consumerNote,omitempty"`
+	Visit        VisitResponse `json:"visit"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
 }
 
 type LeadResponse struct {
@@ -194,10 +196,10 @@ type LeadResponse struct {
 	Address         AddressResponse       `json:"address"`
 	Services        []LeadServiceResponse `json:"services"`
 	CurrentService  *LeadServiceResponse  `json:"currentService,omitempty"`
+	AggregateStatus *LeadStatus           `json:"aggregateStatus,omitempty"` // Derived from current service
 	AssignedAgentID *uuid.UUID            `json:"assignedAgentId,omitempty"`
 	ViewedByID      *uuid.UUID            `json:"viewedById,omitempty"`
 	ViewedAt        *time.Time            `json:"viewedAt,omitempty"`
-	ConsumerNote    *string               `json:"consumerNote,omitempty"`
 	Source          *string               `json:"source,omitempty"`
 	CreatedAt       time.Time             `json:"createdAt"`
 	UpdatedAt       time.Time             `json:"updatedAt"`
@@ -238,6 +240,22 @@ type LeadListResponse struct {
 type DuplicateCheckResponse struct {
 	IsDuplicate  bool          `json:"isDuplicate"`
 	ExistingLead *LeadResponse `json:"existingLead,omitempty"`
+}
+
+// ReturningCustomerResponse provides information about an existing lead for returning customer detection
+type ReturningCustomerResponse struct {
+	Found         bool           `json:"found"`
+	LeadID        *uuid.UUID     `json:"leadId,omitempty"`
+	FullName      string         `json:"fullName,omitempty"`
+	TotalServices int            `json:"totalServices"`
+	Services      []ServiceBrief `json:"services,omitempty"` // Brief summary of past services
+}
+
+// ServiceBrief provides a brief summary of a service for returning customer detection
+type ServiceBrief struct {
+	ServiceType ServiceType `json:"serviceType"`
+	Status      LeadStatus  `json:"status"`
+	CreatedAt   time.Time   `json:"createdAt"`
 }
 
 type BulkDeleteLeadsResponse struct {

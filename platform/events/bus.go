@@ -28,6 +28,8 @@ func NewInMemoryBus(log *logger.Logger) *InMemoryBus {
 
 // Publish sends an event to all registered handlers asynchronously.
 // Errors are logged but do not propagate back to the publisher.
+// Note: Uses context.Background() so handlers aren't canceled when
+// the original context (e.g., HTTP request) completes.
 func (b *InMemoryBus) Publish(ctx context.Context, event Event) {
 	b.mu.RLock()
 	handlers := b.handlers[event.EventName()]
@@ -37,10 +39,11 @@ func (b *InMemoryBus) Publish(ctx context.Context, event Event) {
 		return
 	}
 
-	// Execute all handlers asynchronously
+	// Execute all handlers asynchronously with a background context
+	// to prevent cancellation when the original request completes
 	for _, h := range handlers {
 		go func(handler Handler) {
-			if err := handler.Handle(ctx, event); err != nil {
+			if err := handler.Handle(context.Background(), event); err != nil {
 				b.log.Error("event handler failed",
 					"event", event.EventName(),
 					"error", err,

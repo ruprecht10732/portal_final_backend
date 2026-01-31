@@ -16,6 +16,7 @@ type LeadReader interface {
 	GetByID(ctx context.Context, id uuid.UUID) (Lead, error)
 	GetByIDWithServices(ctx context.Context, id uuid.UUID) (Lead, []LeadService, error)
 	GetByPhone(ctx context.Context, phone string) (Lead, error)
+	GetByPhoneOrEmail(ctx context.Context, phone string, email string) (*LeadSummary, []LeadService, error)
 	List(ctx context.Context, params ListParams) ([]Lead, int, error)
 	ListHeatmapPoints(ctx context.Context, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error)
 	ListActionItems(ctx context.Context, newLeadDays int, limit int, offset int) (ActionItemListResult, error)
@@ -25,7 +26,6 @@ type LeadReader interface {
 type LeadWriter interface {
 	Create(ctx context.Context, params CreateLeadParams) (Lead, error)
 	Update(ctx context.Context, id uuid.UUID, params UpdateLeadParams) (Lead, error)
-	UpdateStatus(ctx context.Context, id uuid.UUID, status string) (Lead, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error)
 }
@@ -68,15 +68,6 @@ type VisitManager interface {
 	RescheduleServiceVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID, noShowNotes string, markAsNoShow bool) (LeadService, error)
 }
 
-// LegacyVisitManager handles legacy visit operations directly on leads (deprecated).
-// Prefer using VisitManager with lead services instead.
-type LegacyVisitManager interface {
-	ScheduleVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID) (Lead, error)
-	CompleteSurvey(ctx context.Context, id uuid.UUID, measurements string, accessDifficulty string, notes string) (Lead, error)
-	MarkNoShow(ctx context.Context, id uuid.UUID, notes string) (Lead, error)
-	RescheduleVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID, noShowNotes string, markAsNoShow bool) (Lead, error)
-}
-
 // NoteStore manages lead notes.
 type NoteStore interface {
 	CreateLeadNote(ctx context.Context, params CreateLeadNoteParams) (LeadNote, error)
@@ -112,7 +103,6 @@ type LeadsRepository interface {
 	LeadServiceReader
 	LeadServiceWriter
 	VisitManager
-	LegacyVisitManager
 	NoteStore
 	VisitHistoryStore
 	AIAnalysisStore

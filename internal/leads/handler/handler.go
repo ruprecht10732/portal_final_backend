@@ -42,6 +42,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/heatmap", h.GetHeatmap)
 	rg.GET("/action-items", h.GetActionItems)
 	rg.GET("/check-duplicate", h.CheckDuplicate)
+	rg.GET("/check-returning-customer", h.CheckReturningCustomer)
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
 	rg.DELETE("/:id", h.Delete)
@@ -417,6 +418,23 @@ func (h *Handler) CheckDuplicate(c *gin.Context) {
 	}
 
 	result, err := h.mgmt.CheckDuplicate(c.Request.Context(), phone)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) CheckReturningCustomer(c *gin.Context) {
+	phone := c.Query("phone")
+	email := c.Query("email")
+
+	if phone == "" && email == "" {
+		httpkit.Error(c, http.StatusBadRequest, "phone or email parameter required", nil)
+		return
+	}
+
+	result, err := h.mgmt.CheckReturningCustomer(c.Request.Context(), phone, email)
 	if httpkit.HandleError(c, err) {
 		return
 	}

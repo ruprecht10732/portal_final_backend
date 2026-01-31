@@ -148,7 +148,7 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, f
 		return nil, err
 	}
 
-	lead, meaningfulNotes, err := la.fetchLeadAndMeaningfulNotes(ctx, leadID)
+	lead, currentService, meaningfulNotes, err := la.fetchLeadAndMeaningfulNotes(ctx, leadID)
 	if err != nil {
 		return nil, err
 	}
@@ -158,11 +158,11 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, f
 		return nil, err
 	}
 
-	if response := la.buildNoChangeResponse(lead, meaningfulNotes, existingAnalysis, hasExisting, force); response != nil {
+	if response := la.buildNoChangeResponse(lead, currentService, meaningfulNotes, existingAnalysis, hasExisting, force); response != nil {
 		return response, nil
 	}
 
-	userMessage := la.buildUserMessage(lead, meaningfulNotes)
+	userMessage := la.buildUserMessage(lead, currentService, meaningfulNotes)
 	userID := "advisor-" + leadID.String()
 	sessionID := uuid.New().String()
 
@@ -256,10 +256,20 @@ func (la *LeadAdvisor) ensureInitialized() error {
 	return nil
 }
 
-func (la *LeadAdvisor) fetchLeadAndMeaningfulNotes(ctx context.Context, leadID uuid.UUID) (repository.Lead, []repository.LeadNote, error) {
+func (la *LeadAdvisor) fetchLeadAndMeaningfulNotes(ctx context.Context, leadID uuid.UUID) (repository.Lead, *repository.LeadService, []repository.LeadNote, error) {
 	lead, err := la.repo.GetByID(ctx, leadID)
 	if err != nil {
-		return repository.Lead{}, nil, fmt.Errorf("failed to get lead: %w", err)
+		return repository.Lead{}, nil, nil, fmt.Errorf("failed to get lead: %w", err)
+	}
+
+	// Fetch current service (most recent non-terminal service)
+	currentService, err := la.repo.GetCurrentLeadService(ctx, leadID)
+	if err != nil && err != repository.ErrServiceNotFound {
+		log.Printf("failed to fetch current service for lead %s: %v", leadID, err)
+	}
+	var currentSvc *repository.LeadService
+	if err == nil {
+		currentSvc = &currentService
 	}
 
 	notes, err := la.repo.ListLeadNotes(ctx, leadID)
@@ -269,7 +279,7 @@ func (la *LeadAdvisor) fetchLeadAndMeaningfulNotes(ctx context.Context, leadID u
 	}
 
 	meaningfulNotes := filterMeaningfulNotes(notes)
-	return lead, meaningfulNotes, nil
+	return lead, currentSvc, meaningfulNotes, nil
 }
 
 func (la *LeadAdvisor) getExistingAnalysis(ctx context.Context, leadID uuid.UUID) (*repository.AIAnalysis, bool, error) {
@@ -283,9 +293,9 @@ func (la *LeadAdvisor) getExistingAnalysis(ctx context.Context, leadID uuid.UUID
 	return &existingAnalysis, true, nil
 }
 
-func (la *LeadAdvisor) buildNoChangeResponse(lead repository.Lead, notes []repository.LeadNote, existingAnalysis *repository.AIAnalysis, hasExisting bool, force bool) *AnalyzeResponse {
+func (la *LeadAdvisor) buildNoChangeResponse(lead repository.Lead, currentService *repository.LeadService, notes []repository.LeadNote, existingAnalysis *repository.AIAnalysis, hasExisting bool, force bool) *AnalyzeResponse {
 	if hasExisting && !force && existingAnalysis != nil {
-		if shouldSkipRegeneration(lead, notes, *existingAnalysis) {
+		if shouldSkipRegeneration(lead, currentService, notes, *existingAnalysis) {
 			result := la.analysisToResult(*existingAnalysis)
 			return &AnalyzeResponse{
 				Status:   "no_change",
@@ -298,8 +308,8 @@ func (la *LeadAdvisor) buildNoChangeResponse(lead repository.Lead, notes []repos
 	return nil
 }
 
-func (la *LeadAdvisor) buildUserMessage(lead repository.Lead, notes []repository.LeadNote) *genai.Content {
-	prompt := buildAnalysisPrompt(lead, notes)
+func (la *LeadAdvisor) buildUserMessage(lead repository.Lead, currentService *repository.LeadService, notes []repository.LeadNote) *genai.Content {
+	prompt := buildAnalysisPrompt(lead, currentService, notes)
 	return &genai.Content{
 		Role: "user",
 		Parts: []*genai.Part{
