@@ -13,6 +13,7 @@ import (
 // SaveAnalysisInput is the structured input for the SaveAnalysis tool
 type SaveAnalysisInput struct {
 	LeadID              string              `json:"leadId"`
+	LeadServiceID       string              `json:"leadServiceId"`       // The specific service this analysis is for
 	UrgencyLevel        string              `json:"urgencyLevel"`        // High, Medium, Low
 	UrgencyReason       string              `json:"urgencyReason"`       // Why this urgency level
 	TalkingPoints       []string            `json:"talkingPoints"`       // Key points to discuss
@@ -97,6 +98,7 @@ type AnalyzeResponse struct {
 type AnalysisResult struct {
 	ID                  uuid.UUID           `json:"id"`
 	LeadID              uuid.UUID           `json:"leadId"`
+	LeadServiceID       *uuid.UUID          `json:"leadServiceId,omitempty"`
 	UrgencyLevel        string              `json:"urgencyLevel"`
 	UrgencyReason       *string             `json:"urgencyReason,omitempty"`
 	TalkingPoints       []string            `json:"talkingPoints"`

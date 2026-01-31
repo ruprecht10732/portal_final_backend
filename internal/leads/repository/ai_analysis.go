@@ -10,11 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// AIAnalysis represents a single AI analysis for a lead
+// AIAnalysis represents a single AI analysis for a lead service
 type AIAnalysis struct {
 	ID                  uuid.UUID
 	LeadID              uuid.UUID
-	UrgencyLevel        string // High, Medium, Low
+	LeadServiceID       *uuid.UUID // The specific service this analysis is for
+	UrgencyLevel        string     // High, Medium, Low
 	UrgencyReason       *string
 	TalkingPoints       []string
 	ObjectionHandling   []ObjectionResponse
@@ -32,6 +33,7 @@ type ObjectionResponse struct {
 // CreateAIAnalysisParams contains the parameters for creating an AI analysis
 type CreateAIAnalysisParams struct {
 	LeadID              uuid.UUID
+	LeadServiceID       *uuid.UUID // The specific service this analysis is for
 	UrgencyLevel        string
 	UrgencyReason       *string
 	TalkingPoints       []string
@@ -40,7 +42,7 @@ type CreateAIAnalysisParams struct {
 	Summary             string
 }
 
-// CreateAIAnalysis stores a new AI analysis for a lead
+// CreateAIAnalysis stores a new AI analysis for a lead service
 func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalysisParams) (AIAnalysis, error) {
 	talkingPointsJSON, _ := json.Marshal(params.TalkingPoints)
 	objectionHandlingJSON, _ := json.Marshal(params.ObjectionHandling)
@@ -48,14 +50,14 @@ func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalys
 
 	var analysis AIAnalysis
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO lead_ai_analysis (lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
+		INSERT INTO lead_ai_analysis (lead_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, lead_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
 	`,
-		params.LeadID, params.UrgencyLevel, params.UrgencyReason,
+		params.LeadID, params.LeadServiceID, params.UrgencyLevel, params.UrgencyReason,
 		talkingPointsJSON, objectionHandlingJSON, upsellJSON, params.Summary,
 	).Scan(
-		&analysis.ID, &analysis.LeadID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
+		&analysis.ID, &analysis.LeadID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
 		&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.Summary, &analysis.CreatedAt,
 	)
 	if err != nil {
@@ -69,19 +71,19 @@ func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalys
 	return analysis, nil
 }
 
-// GetLatestAIAnalysis returns the most recent AI analysis for a lead
-func (r *Repository) GetLatestAIAnalysis(ctx context.Context, leadID uuid.UUID) (AIAnalysis, error) {
+// GetLatestAIAnalysis returns the most recent AI analysis for a service
+func (r *Repository) GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUID) (AIAnalysis, error) {
 	var analysis AIAnalysis
 	var talkingPointsJSON, objectionHandlingJSON, upsellJSON []byte
 
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
+		SELECT id, lead_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
 		FROM lead_ai_analysis
-		WHERE lead_id = $1
+		WHERE lead_service_id = $1
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, leadID).Scan(
-		&analysis.ID, &analysis.LeadID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
+	`, serviceID).Scan(
+		&analysis.ID, &analysis.LeadID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
 		&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.Summary, &analysis.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -98,14 +100,14 @@ func (r *Repository) GetLatestAIAnalysis(ctx context.Context, leadID uuid.UUID) 
 	return analysis, nil
 }
 
-// ListAIAnalyses returns all AI analyses for a lead, ordered by most recent first
-func (r *Repository) ListAIAnalyses(ctx context.Context, leadID uuid.UUID) ([]AIAnalysis, error) {
+// ListAIAnalyses returns all AI analyses for a service, ordered by most recent first
+func (r *Repository) ListAIAnalyses(ctx context.Context, serviceID uuid.UUID) ([]AIAnalysis, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
+		SELECT id, lead_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
 		FROM lead_ai_analysis
-		WHERE lead_id = $1
+		WHERE lead_service_id = $1
 		ORDER BY created_at DESC
-	`, leadID)
+	`, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +119,7 @@ func (r *Repository) ListAIAnalyses(ctx context.Context, leadID uuid.UUID) ([]AI
 		var talkingPointsJSON, objectionHandlingJSON, upsellJSON []byte
 
 		if err := rows.Scan(
-			&analysis.ID, &analysis.LeadID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
+			&analysis.ID, &analysis.LeadID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
 			&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.Summary, &analysis.CreatedAt,
 		); err != nil {
 			return nil, err

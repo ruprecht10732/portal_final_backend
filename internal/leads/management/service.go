@@ -381,6 +381,18 @@ func (s *Service) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUI
 	return s.repo.SetViewedBy(ctx, id, userID)
 }
 
+// GetLeadServiceByID retrieves a lead service by its ID.
+func (s *Service) GetLeadServiceByID(ctx context.Context, serviceID uuid.UUID) (repository.LeadService, error) {
+	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return repository.LeadService{}, apperr.NotFound("lead service not found")
+		}
+		return repository.LeadService{}, err
+	}
+	return svc, nil
+}
+
 // AddService adds a new service to an existing lead.
 func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transport.AddServiceRequest) (transport.LeadResponse, error) {
 	lead, err := s.repo.GetByID(ctx, leadID)

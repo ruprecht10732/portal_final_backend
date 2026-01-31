@@ -528,7 +528,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 	httpkit.OK(c, lead)
 }
 
-// AnalyzeLead triggers AI analysis for a lead and returns the result
+// AnalyzeLead triggers AI analysis for a lead service and returns the result
 func (h *Handler) AnalyzeLead(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -536,10 +536,32 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 		return
 	}
 
+	// Parse optional serviceId
+	var serviceID *uuid.UUID
+	if svcID := c.Query("serviceId"); svcID != "" {
+		parsed, err := uuid.Parse(svcID)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, "invalid serviceId", nil)
+			return
+		}
+		serviceID = &parsed
+
+		// Validate service is not in terminal status
+		service, err := h.mgmt.GetLeadServiceByID(c.Request.Context(), parsed)
+		if err != nil {
+			httpkit.Error(c, http.StatusNotFound, "service not found", nil)
+			return
+		}
+		if isTerminalStatus(service.Status) {
+			httpkit.Error(c, http.StatusBadRequest, "cannot analyze a service in terminal status (Closed, Bad_Lead, Surveyed)", nil)
+			return
+		}
+	}
+
 	// Check for force parameter to bypass no_change detection
 	force := c.Query("force") == "true"
 
-	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, force)
+	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, serviceID, force)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -547,7 +569,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	httpkit.OK(c, response)
 }
 
-// GetAnalysis returns the latest AI analysis for a lead
+// GetAnalysis returns the latest AI analysis for a lead service
 func (h *Handler) GetAnalysis(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -555,7 +577,19 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 		return
 	}
 
-	analysis, hasAnalysis, err := h.advisor.GetLatestOrDefault(c.Request.Context(), id)
+	// Parse required serviceId
+	svcID := c.Query("serviceId")
+	if svcID == "" {
+		httpkit.Error(c, http.StatusBadRequest, "serviceId parameter required", nil)
+		return
+	}
+	serviceID, err := uuid.Parse(svcID)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid serviceId", nil)
+		return
+	}
+
+	analysis, hasAnalysis, err := h.advisor.GetLatestOrDefault(c.Request.Context(), id, serviceID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -566,18 +600,40 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 	})
 }
 
-// ListAnalyses returns all AI analyses for a lead
+// ListAnalyses returns all AI analyses for a lead service
 func (h *Handler) ListAnalyses(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
+	_, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	analyses, err := h.advisor.ListAnalyses(c.Request.Context(), id)
+	// Parse required serviceId
+	svcID := c.Query("serviceId")
+	if svcID == "" {
+		httpkit.Error(c, http.StatusBadRequest, "serviceId parameter required", nil)
+		return
+	}
+	serviceID, err := uuid.Parse(svcID)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid serviceId", nil)
+		return
+	}
+
+	analyses, err := h.advisor.ListAnalyses(c.Request.Context(), serviceID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
 	httpkit.OK(c, gin.H{"items": analyses})
+}
+
+// isTerminalStatus checks if a service status is terminal (no further actions allowed)
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "Closed", "Bad_Lead", "Surveyed":
+		return true
+	default:
+		return false
+	}
 }

@@ -49,6 +49,16 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 			return SaveAnalysisOutput{Success: false, Message: "Invalid lead ID"}, err
 		}
 
+		// Parse service ID if provided
+		var leadServiceID *uuid.UUID
+		if input.LeadServiceID != "" {
+			parsed, err := uuid.Parse(input.LeadServiceID)
+			if err != nil {
+				return SaveAnalysisOutput{Success: false, Message: "Invalid lead service ID"}, err
+			}
+			leadServiceID = &parsed
+		}
+
 		// Normalize urgency level to valid database value
 		urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
 		if err != nil {
@@ -70,6 +80,7 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 
 		_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
 			LeadID:              leadID,
+			LeadServiceID:       leadServiceID,
 			UrgencyLevel:        urgencyLevel,
 			UrgencyReason:       urgencyReason,
 			TalkingPoints:       input.TalkingPoints,

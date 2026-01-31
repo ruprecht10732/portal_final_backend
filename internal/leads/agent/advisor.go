@@ -136,34 +136,43 @@ func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository) (*LeadAdviso
 }
 
 // Analyze runs the AI advisor on a specific lead (legacy async method)
-func (la *LeadAdvisor) Analyze(ctx context.Context, leadID uuid.UUID) error {
-	_, err := la.AnalyzeAndReturn(ctx, leadID, false)
+func (la *LeadAdvisor) Analyze(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID) error {
+	_, err := la.AnalyzeAndReturn(ctx, leadID, serviceID, false)
 	return err
 }
 
 // AnalyzeAndReturn runs the AI advisor and returns the result directly
+// If serviceID is nil, it will use the current (most recent non-terminal) service
 // If force is true, it will regenerate even if no changes are detected
-func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, force bool) (*AnalyzeResponse, error) {
+func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, force bool) (*AnalyzeResponse, error) {
 	if err := la.ensureInitialized(); err != nil {
 		return nil, err
 	}
 
-	lead, currentService, meaningfulNotes, err := la.fetchLeadAndMeaningfulNotes(ctx, leadID)
+	lead, targetService, meaningfulNotes, err := la.fetchLeadAndServiceNotes(ctx, leadID, serviceID)
 	if err != nil {
 		return nil, err
 	}
 
-	existingAnalysis, hasExisting, err := la.getExistingAnalysis(ctx, leadID)
+	// Require a service to analyze
+	if targetService == nil {
+		return &AnalyzeResponse{
+			Status:  "error",
+			Message: "No service found to analyze",
+		}, nil
+	}
+
+	existingAnalysis, hasExisting, err := la.getExistingAnalysis(ctx, targetService.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	if response := la.buildNoChangeResponse(lead, currentService, meaningfulNotes, existingAnalysis, hasExisting, force); response != nil {
+	if response := la.buildNoChangeResponse(lead, targetService, meaningfulNotes, existingAnalysis, hasExisting, force); response != nil {
 		return response, nil
 	}
 
-	userMessage := la.buildUserMessage(lead, currentService, meaningfulNotes)
-	userID := "advisor-" + leadID.String()
+	userMessage := la.buildUserMessage(lead, targetService, meaningfulNotes)
+	userID := "advisor-" + leadID.String() + "-" + targetService.ID.String()
 	sessionID := uuid.New().String()
 
 	cleanupSession, err := la.createSession(ctx, userID, sessionID, leadID)
@@ -184,8 +193,8 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, f
 
 	// Check if SaveAnalysis was called using the tracker
 	if la.toolTracker.wasSaveAnalysisCalled() {
-		log.Printf("SaveAnalysis was called for lead %s, fetching new analysis", leadID)
-		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, leadID)
+		log.Printf("SaveAnalysis was called for lead %s service %s, fetching new analysis", leadID, targetService.ID)
+		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, targetService.ID)
 		if err != nil {
 			return &AnalyzeResponse{
 				Status:  "error",
@@ -222,8 +231,8 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, f
 
 	// Check if retry succeeded
 	if la.toolTracker.wasSaveAnalysisCalled() {
-		log.Printf("SaveAnalysis was called on retry for lead %s", leadID)
-		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, leadID)
+		log.Printf("SaveAnalysis was called on retry for lead %s service %s", leadID, targetService.ID)
+		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, targetService.ID)
 		if err != nil {
 			return &AnalyzeResponse{
 				Status:  "error",
@@ -239,7 +248,7 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, f
 	}
 
 	// Retry also failed
-	log.Printf("ERROR: AI did not call SaveAnalysis for lead %s even after retry.", leadID)
+	log.Printf("ERROR: AI did not call SaveAnalysis for lead %s service %s even after retry.", leadID, targetService.ID)
 	return &AnalyzeResponse{
 		Status:  "error",
 		Message: "AI kon geen analyse opslaan. Probeer het opnieuw.",
@@ -256,20 +265,32 @@ func (la *LeadAdvisor) ensureInitialized() error {
 	return nil
 }
 
-func (la *LeadAdvisor) fetchLeadAndMeaningfulNotes(ctx context.Context, leadID uuid.UUID) (repository.Lead, *repository.LeadService, []repository.LeadNote, error) {
+func (la *LeadAdvisor) fetchLeadAndServiceNotes(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID) (repository.Lead, *repository.LeadService, []repository.LeadNote, error) {
 	lead, err := la.repo.GetByID(ctx, leadID)
 	if err != nil {
 		return repository.Lead{}, nil, nil, fmt.Errorf("failed to get lead: %w", err)
 	}
 
-	// Fetch current service (most recent non-terminal service)
-	currentService, err := la.repo.GetCurrentLeadService(ctx, leadID)
-	if err != nil && err != repository.ErrServiceNotFound {
-		log.Printf("failed to fetch current service for lead %s: %v", leadID, err)
-	}
-	var currentSvc *repository.LeadService
-	if err == nil {
-		currentSvc = &currentService
+	// Determine target service
+	var targetService *repository.LeadService
+	if serviceID != nil {
+		// Fetch specific service
+		service, err := la.repo.GetLeadServiceByID(ctx, *serviceID)
+		if err != nil && err != repository.ErrServiceNotFound {
+			log.Printf("failed to fetch service %s: %v", *serviceID, err)
+		}
+		if err == nil {
+			targetService = &service
+		}
+	} else {
+		// Fetch current service (most recent non-terminal service)
+		currentService, err := la.repo.GetCurrentLeadService(ctx, leadID)
+		if err != nil && err != repository.ErrServiceNotFound {
+			log.Printf("failed to fetch current service for lead %s: %v", leadID, err)
+		}
+		if err == nil {
+			targetService = &currentService
+		}
 	}
 
 	notes, err := la.repo.ListLeadNotes(ctx, leadID)
@@ -279,11 +300,11 @@ func (la *LeadAdvisor) fetchLeadAndMeaningfulNotes(ctx context.Context, leadID u
 	}
 
 	meaningfulNotes := filterMeaningfulNotes(notes)
-	return lead, currentSvc, meaningfulNotes, nil
+	return lead, targetService, meaningfulNotes, nil
 }
 
-func (la *LeadAdvisor) getExistingAnalysis(ctx context.Context, leadID uuid.UUID) (*repository.AIAnalysis, bool, error) {
-	existingAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, leadID)
+func (la *LeadAdvisor) getExistingAnalysis(ctx context.Context, serviceID uuid.UUID) (*repository.AIAnalysis, bool, error) {
+	existingAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, serviceID)
 	if err != nil && err != repository.ErrNotFound {
 		return nil, false, fmt.Errorf("failed to check existing analysis: %w", err)
 	}
@@ -387,9 +408,9 @@ func (la *LeadAdvisor) getLatestAnalysisOrErrorResponse(ctx context.Context, lea
 	return &newAnalysis, nil, nil
 }
 
-// GetLatestAnalysis retrieves the most recent analysis for a lead
-func (la *LeadAdvisor) GetLatestAnalysis(ctx context.Context, leadID uuid.UUID) (*AnalysisResult, error) {
-	analysis, err := la.repo.GetLatestAIAnalysis(ctx, leadID)
+// GetLatestAnalysis retrieves the most recent analysis for a lead service
+func (la *LeadAdvisor) GetLatestAnalysis(ctx context.Context, serviceID uuid.UUID) (*AnalysisResult, error) {
+	analysis, err := la.repo.GetLatestAIAnalysis(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -397,8 +418,8 @@ func (la *LeadAdvisor) GetLatestAnalysis(ctx context.Context, leadID uuid.UUID) 
 }
 
 // GetLatestOrDefault retrieves the most recent analysis, or returns a default "contact lead" response
-func (la *LeadAdvisor) GetLatestOrDefault(ctx context.Context, leadID uuid.UUID) (*AnalysisResult, bool, error) {
-	analysis, err := la.GetLatestAnalysis(ctx, leadID)
+func (la *LeadAdvisor) GetLatestOrDefault(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID) (*AnalysisResult, bool, error) {
+	analysis, err := la.GetLatestAnalysis(ctx, serviceID)
 	if err == nil {
 		return analysis, true, nil
 	}
@@ -411,9 +432,9 @@ func (la *LeadAdvisor) GetLatestOrDefault(ctx context.Context, leadID uuid.UUID)
 	return nil, false, err
 }
 
-// ListAnalyses retrieves all analyses for a lead
-func (la *LeadAdvisor) ListAnalyses(ctx context.Context, leadID uuid.UUID) ([]AnalysisResult, error) {
-	analyses, err := la.repo.ListAIAnalyses(ctx, leadID)
+// ListAnalyses retrieves all analyses for a lead service
+func (la *LeadAdvisor) ListAnalyses(ctx context.Context, serviceID uuid.UUID) ([]AnalysisResult, error) {
+	analyses, err := la.repo.ListAIAnalyses(ctx, serviceID)
 	if err != nil {
 		return nil, err
 	}
