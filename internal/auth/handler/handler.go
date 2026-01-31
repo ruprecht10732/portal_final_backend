@@ -63,6 +63,9 @@ func (h *Handler) GetMe(c *gin.Context) {
 		ID:            profile.ID.String(),
 		Email:         profile.Email,
 		EmailVerified: profile.EmailVerified,
+		FirstName:     profile.FirstName,
+		LastName:      profile.LastName,
+		PreferredLang: profile.PreferredLang,
 		Roles:         profile.Roles,
 		CreatedAt:     profile.CreatedAt,
 		UpdatedAt:     profile.UpdatedAt,
@@ -85,7 +88,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.svc.UpdateMe(c.Request.Context(), id.UserID(), req.Email)
+	profile, err := h.svc.UpdateMe(c.Request.Context(), id.UserID(), req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -94,6 +97,9 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 		ID:            profile.ID.String(),
 		Email:         profile.Email,
 		EmailVerified: profile.EmailVerified,
+		FirstName:     profile.FirstName,
+		LastName:      profile.LastName,
+		PreferredLang: profile.PreferredLang,
 		Roles:         profile.Roles,
 		CreatedAt:     profile.CreatedAt,
 		UpdatedAt:     profile.UpdatedAt,

@@ -15,6 +15,9 @@ type Profile struct {
 	ID            uuid.UUID
 	Email         string
 	EmailVerified bool
+	FirstName     *string
+	LastName      *string
+	PreferredLang string
 	Roles         []string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time

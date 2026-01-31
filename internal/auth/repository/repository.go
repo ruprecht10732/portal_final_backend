@@ -31,32 +31,80 @@ type User struct {
 	Email         string
 	PasswordHash  string
 	EmailVerified bool
+	FirstName     *string
+	LastName      *string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
 
 type UserWithRoles struct {
-	ID    uuid.UUID
-	Email string
-	Roles []string
+	ID        uuid.UUID
+	Email     string
+	FirstName *string
+	LastName  *string
+	Roles     []string
 }
 
 func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string) (User, error) {
 	var user User
-	err := r.pool.QueryRow(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	err = tx.QueryRow(ctx, `
 		INSERT INTO users (email, password_hash, is_email_verified)
 		VALUES ($1, $2, false)
-		RETURNING id, email, password_hash, is_email_verified, created_at, updated_at
-	`, email, passwordHash).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
-	return user, err
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+	`, email, passwordHash).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.EmailVerified,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return User{}, err
+	}
+
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO user_settings (user_id)
+		VALUES ($1)
+		ON CONFLICT (user_id) DO NOTHING
+	`, user.ID); err != nil {
+		return User{}, err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return User{}, err
+	}
+
+	return user, nil
 }
 
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	var user User
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, is_email_verified, created_at, updated_at
+		SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
 		FROM users WHERE email = $1
-	`, email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+	`, email).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.EmailVerified,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -66,9 +114,18 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, error) {
 	var user User
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, is_email_verified, created_at, updated_at
+		SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
 		FROM users WHERE id = $1
-	`, userID).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+	`, userID).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.EmailVerified,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
@@ -97,9 +154,89 @@ func (r *Repository) UpdateUserEmail(ctx context.Context, userID uuid.UUID, emai
 		UPDATE users
 		SET email = $2, is_email_verified = false, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, password_hash, is_email_verified, created_at, updated_at
-	`, userID, email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.EmailVerified, &user.CreatedAt, &user.UpdatedAt)
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+	`, userID, email).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.EmailVerified,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
 	return user, err
+}
+
+func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firstName, lastName *string) (User, error) {
+	var user User
+	err := r.pool.QueryRow(ctx, `
+		UPDATE users
+		SET first_name = $2, last_name = $3, updated_at = now()
+		WHERE id = $1
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+	`, userID, firstName, lastName).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.EmailVerified,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	return user, err
+}
+
+func (r *Repository) EnsureUserSettings(ctx context.Context, userID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO user_settings (user_id)
+		VALUES ($1)
+		ON CONFLICT (user_id) DO NOTHING
+	`, userID)
+	return err
+}
+
+func (r *Repository) GetUserSettings(ctx context.Context, userID uuid.UUID) (string, error) {
+	var preferredLanguage string
+	err := r.pool.QueryRow(ctx, `
+		SELECT preferred_language
+		FROM user_settings
+		WHERE user_id = $1
+	`, userID).Scan(&preferredLanguage)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return preferredLanguage, err
+}
+
+func (r *Repository) UpdateUserSettings(ctx context.Context, userID uuid.UUID, preferredLanguage string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO user_settings (user_id, preferred_language)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id) DO UPDATE
+		SET preferred_language = EXCLUDED.preferred_language, updated_at = now()
+	`, userID, preferredLanguage); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(ctx, `
+		UPDATE users SET updated_at = now() WHERE id = $1
+	`, userID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) CreateUserToken(ctx context.Context, userID uuid.UUID, tokenHash string, tokenType string, expiresAt time.Time) error {
@@ -252,7 +389,7 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles [
 
 func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT u.id, u.email,
+		SELECT u.id, u.email, u.first_name, u.last_name,
 			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
 		FROM users u
 		LEFT JOIN user_roles ur ON ur.user_id = u.id
@@ -268,7 +405,7 @@ func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 	users := make([]UserWithRoles, 0)
 	for rows.Next() {
 		var user UserWithRoles
-		if err := rows.Scan(&user.ID, &user.Email, &user.Roles); err != nil {
+		if err := rows.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Roles); err != nil {
 			return nil, err
 		}
 		users = append(users, user)

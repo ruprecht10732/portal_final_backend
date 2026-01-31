@@ -37,6 +37,9 @@ type Profile struct {
 	ID            uuid.UUID
 	Email         string
 	EmailVerified bool
+	FirstName     *string
+	LastName      *string
+	PreferredLang string
 	Roles         []string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
@@ -251,9 +254,11 @@ func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error
 	result := make([]transport.UserSummary, 0, len(users))
 	for _, user := range users {
 		result = append(result, transport.UserSummary{
-			ID:    user.ID.String(),
-			Email: user.Email,
-			Roles: user.Roles,
+			ID:        user.ID.String(),
+			Email:     user.Email,
+			FirstName: user.FirstName,
+			LastName:  user.LastName,
+			Roles:     user.Roles,
 		})
 	}
 
@@ -271,76 +276,155 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		return Profile{}, err
 	}
 
+	if err := s.repo.EnsureUserSettings(ctx, userID); err != nil {
+		return Profile{}, err
+	}
+
+	preferredLang, err := s.repo.GetUserSettings(ctx, userID)
+	if err != nil {
+		return Profile{}, err
+	}
+
 	return Profile{
 		ID:            user.ID,
 		Email:         user.Email,
 		EmailVerified: user.EmailVerified,
+		FirstName:     user.FirstName,
+		LastName:      user.LastName,
+		PreferredLang: preferredLang,
 		Roles:         roles,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
 	}, nil
 }
 
-func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, email string) (Profile, error) {
-	current, err := s.repo.GetUserByID(ctx, userID)
+func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.UpdateProfileRequest) (Profile, error) {
+	current, roles, preferredLang, err := s.loadProfileContext(ctx, userID)
 	if err != nil {
 		return Profile{}, err
+	}
+
+	updatedUser, err := s.applyNameUpdates(ctx, userID, current, req)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	preferredLang, err = s.applyPreferredLanguage(ctx, userID, preferredLang, req)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	updatedUser, err = s.applyEmailUpdate(ctx, userID, current.Email, updatedUser, req)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	return s.buildProfile(updatedUser, roles, preferredLang), nil
+}
+
+func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (repository.User, []string, string, error) {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return repository.User{}, nil, "", err
 	}
 
 	roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
-		return Profile{}, err
+		return repository.User{}, nil, "", err
 	}
 
-	if strings.EqualFold(strings.TrimSpace(email), current.Email) {
-		return Profile{
-			ID:            current.ID,
-			Email:         current.Email,
-			EmailVerified: current.EmailVerified,
-			Roles:         roles,
-			CreatedAt:     current.CreatedAt,
-			UpdatedAt:     current.UpdatedAt,
-		}, nil
+	if err := s.repo.EnsureUserSettings(ctx, userID); err != nil {
+		return repository.User{}, nil, "", err
 	}
 
-	if existing, err := s.repo.GetUserByEmail(ctx, email); err == nil && existing.ID != userID {
-		return Profile{}, apperr.Conflict("email already in use")
-	} else if err != nil && err != repository.ErrNotFound {
-		return Profile{}, err
-	}
-
-	updated, err := s.repo.UpdateUserEmail(ctx, userID, email)
+	preferredLang, err := s.repo.GetUserSettings(ctx, userID)
 	if err != nil {
-		return Profile{}, err
+		return repository.User{}, nil, "", err
 	}
 
+	return user, roles, preferredLang, nil
+}
+
+func (s *Service) applyNameUpdates(ctx context.Context, userID uuid.UUID, current repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
+	if req.FirstName == nil && req.LastName == nil {
+		return current, nil
+	}
+
+	return s.repo.UpdateUserNames(ctx, userID, req.FirstName, req.LastName)
+}
+
+func (s *Service) applyPreferredLanguage(ctx context.Context, userID uuid.UUID, currentLang string, req transport.UpdateProfileRequest) (string, error) {
+	if req.PreferredLanguage == nil {
+		return currentLang, nil
+	}
+
+	preferredLang := strings.TrimSpace(*req.PreferredLanguage)
+	if err := s.repo.UpdateUserSettings(ctx, userID, preferredLang); err != nil {
+		return currentLang, err
+	}
+
+	return preferredLang, nil
+}
+
+func (s *Service) applyEmailUpdate(ctx context.Context, userID uuid.UUID, currentEmail string, updatedUser repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
+	if req.Email == nil || strings.EqualFold(strings.TrimSpace(*req.Email), currentEmail) {
+		return updatedUser, nil
+	}
+
+	newEmail := strings.TrimSpace(*req.Email)
+	if existing, err := s.repo.GetUserByEmail(ctx, newEmail); err == nil && existing.ID != userID {
+		return repository.User{}, apperr.Conflict("email already in use")
+	} else if err != nil && err != repository.ErrNotFound {
+		return repository.User{}, err
+	}
+
+	updated, err := s.repo.UpdateUserEmail(ctx, userID, newEmail)
+	if err != nil {
+		return repository.User{}, err
+	}
+
+	if err := s.enqueueEmailVerification(ctx, userID, updated.Email); err != nil {
+		return repository.User{}, err
+	}
+
+	return updated, nil
+}
+
+func (s *Service) enqueueEmailVerification(ctx context.Context, userID uuid.UUID, email string) error {
 	verifyToken, err := token.GenerateRandomToken(32)
 	if err != nil {
-		return Profile{}, err
+		return err
 	}
 
 	verifyHash := token.HashSHA256(verifyToken)
 	expiresAt := time.Now().Add(s.cfg.GetVerifyTokenTTL())
 	if err := s.repo.CreateUserToken(ctx, userID, verifyHash, repository.TokenTypeEmailVerify, expiresAt); err != nil {
-		return Profile{}, err
+		return err
 	}
 
 	// Publish event - notification module handles email sending
 	s.eventBus.Publish(ctx, events.EmailVerificationRequested{
 		BaseEvent:   events.NewBaseEvent(),
 		UserID:      userID,
-		Email:       updated.Email,
+		Email:       email,
 		VerifyToken: verifyToken,
 	})
 
+	return nil
+}
+
+func (s *Service) buildProfile(user repository.User, roles []string, preferredLang string) Profile {
 	return Profile{
-		ID:            updated.ID,
-		Email:         updated.Email,
-		EmailVerified: updated.EmailVerified,
+		ID:            user.ID,
+		Email:         user.Email,
+		EmailVerified: user.EmailVerified,
+		FirstName:     user.FirstName,
+		LastName:      user.LastName,
+		PreferredLang: preferredLang,
 		Roles:         roles,
-		CreatedAt:     updated.CreatedAt,
-		UpdatedAt:     updated.UpdatedAt,
-	}, nil
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
+	}
 }
 
 func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {

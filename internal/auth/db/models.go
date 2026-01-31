@@ -27,6 +27,8 @@ type User struct {
 	Email           string             `json:"email"`
 	PasswordHash    string             `json:"password_hash"`
 	IsEmailVerified bool               `json:"is_email_verified"`
+	FirstName       *string            `json:"first_name"`
+	LastName        *string            `json:"last_name"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }

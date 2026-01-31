@@ -42,13 +42,19 @@ type ProfileResponse struct {
 	ID            string    `json:"id"`
 	Email         string    `json:"email"`
 	EmailVerified bool      `json:"emailVerified"`
+	FirstName     *string   `json:"firstName"`
+	LastName      *string   `json:"lastName"`
+	PreferredLang string    `json:"preferredLanguage"`
 	Roles         []string  `json:"roles"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 type UpdateProfileRequest struct {
-	Email string `json:"email" validate:"required,email"`
+	Email             *string `json:"email" validate:"omitempty,email"`
+	FirstName         *string `json:"firstName" validate:"omitempty,max=100"`
+	LastName          *string `json:"lastName" validate:"omitempty,max=100"`
+	PreferredLanguage *string `json:"preferredLanguage" validate:"omitempty,oneof=en nl"`
 }
 
 type ChangePasswordRequest struct {
@@ -57,7 +63,9 @@ type ChangePasswordRequest struct {
 }
 
 type UserSummary struct {
-	ID    string   `json:"id"`
-	Email string   `json:"email"`
-	Roles []string `json:"roles"`
+	ID        string   `json:"id"`
+	Email     string   `json:"email"`
+	FirstName *string  `json:"firstName"`
+	LastName  *string  `json:"lastName"`
+	Roles     []string `json:"roles"`
 }

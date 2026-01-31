@@ -35,7 +35,7 @@ func (p *AuthAgentProvider) GetAgentByID(ctx context.Context, agentID uuid.UUID)
 	return ports.Agent{
 		ID:    profile.ID,
 		Email: profile.Email,
-		Name:  deriveNameFromEmail(profile.Email),
+		Name:  buildDisplayName(profile.FirstName, profile.LastName, profile.Email),
 	}, nil
 }
 
@@ -71,7 +71,7 @@ func (p *AuthAgentProvider) ListAgents(ctx context.Context) ([]ports.Agent, erro
 		agents = append(agents, ports.Agent{
 			ID:    id,
 			Email: user.Email,
-			Name:  deriveNameFromEmail(user.Email),
+			Name:  buildDisplayName(user.FirstName, user.LastName, user.Email),
 		})
 	}
 
@@ -79,6 +79,22 @@ func (p *AuthAgentProvider) ListAgents(ctx context.Context) ([]ports.Agent, erro
 }
 
 // deriveNameFromEmail creates a display name from an email address.
+func buildDisplayName(firstName, lastName *string, email string) string {
+	first := ""
+	last := ""
+	if firstName != nil {
+		first = strings.TrimSpace(*firstName)
+	}
+	if lastName != nil {
+		last = strings.TrimSpace(*lastName)
+	}
+	full := strings.TrimSpace(strings.Join([]string{first, last}, " "))
+	if full != "" {
+		return full
+	}
+	return deriveNameFromEmail(email)
+}
+
 func deriveNameFromEmail(email string) string {
 	parts := strings.Split(email, "@")
 	if len(parts) == 0 {

@@ -3,14 +3,14 @@
 -- name: CreateUser :one
 INSERT INTO users (email, password_hash, is_email_verified)
 VALUES ($1, $2, false)
-RETURNING id, email, password_hash, is_email_verified, created_at, updated_at;
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at;
 
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, created_at, updated_at
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
 FROM users WHERE email = $1;
 
 -- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, created_at, updated_at
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
 FROM users WHERE id = $1;
 
 -- name: MarkEmailVerified :exec
@@ -23,7 +23,7 @@ UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1;
 UPDATE users
 SET email = $2, is_email_verified = false, updated_at = now()
 WHERE id = $1
-RETURNING id, email, password_hash, is_email_verified, created_at, updated_at;
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at;
 
 -- name: CreateUserToken :exec
 INSERT INTO user_tokens (user_id, token_hash, type, expires_at)
