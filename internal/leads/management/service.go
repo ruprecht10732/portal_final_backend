@@ -310,15 +310,29 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 
 // UpdateStatus updates the status of the lead's current service.
 func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.UpdateLeadStatusRequest) (transport.LeadResponse, error) {
-	lead, err := s.repo.UpdateStatus(ctx, id, string(req.Status))
+	service, err := s.repo.GetCurrentLeadService(ctx, id)
 	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) || errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	if _, err := s.repo.UpdateServiceStatus(ctx, service.ID, string(req.Status)); err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	if _, err := s.repo.UpdateStatus(ctx, id, string(req.Status)); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
 
-	return ToLeadResponse(lead), nil
+	return s.GetByID(ctx, id)
 }
 
 // GetMetrics returns aggregated KPI metrics for the dashboard.
