@@ -38,6 +38,11 @@ type ActivityLogger interface {
 	AddActivity(ctx context.Context, leadID uuid.UUID, userID uuid.UUID, action string, meta map[string]interface{}) error
 }
 
+// MetricsReader provides access to lead KPI metrics.
+type MetricsReader interface {
+	GetMetrics(ctx context.Context) (LeadMetrics, error)
+}
+
 // LeadServiceReader provides read access to lead services.
 type LeadServiceReader interface {
 	GetLeadServiceByID(ctx context.Context, id uuid.UUID) (LeadService, error)
@@ -101,6 +106,7 @@ type LeadsRepository interface {
 	LeadWriter
 	LeadViewTracker
 	ActivityLogger
+	MetricsReader
 	LeadServiceReader
 	LeadServiceWriter
 	VisitManager

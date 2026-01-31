@@ -192,6 +192,14 @@ type BulkDeleteLeadsResponse struct {
 	DeletedCount int `json:"deletedCount"`
 }
 
+// LeadMetricsResponse provides aggregated KPIs for the dashboard.
+type LeadMetricsResponse struct {
+	TotalLeads          int     `json:"totalLeads"`
+	ProjectedValueCents int64   `json:"projectedValueCents"`
+	DisqualifiedRate    float64 `json:"disqualifiedRate"`
+	TouchpointsPerLead  float64 `json:"touchpointsPerLead"`
+}
+
 // Visit history types
 type VisitOutcome string
 

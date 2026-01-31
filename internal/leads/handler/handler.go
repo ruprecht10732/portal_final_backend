@@ -37,6 +37,7 @@ func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
 	rg.POST("", h.Create)
+	rg.GET("/metrics", h.GetMetrics)
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
@@ -59,6 +60,15 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/analyze", h.AnalyzeLead)
 	rg.GET("/:id/analysis", h.GetAnalysis)
 	rg.GET("/:id/analysis/history", h.ListAnalyses)
+}
+
+func (h *Handler) GetMetrics(c *gin.Context) {
+	metrics, err := h.mgmt.GetMetrics(c.Request.Context())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, metrics)
 }
 
 func (h *Handler) Create(c *gin.Context) {

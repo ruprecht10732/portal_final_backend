@@ -6,6 +6,7 @@ package management
 import (
 	"context"
 	"errors"
+	"math"
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
@@ -27,6 +28,7 @@ type Repository interface {
 	repository.ActivityLogger
 	repository.LeadServiceReader
 	repository.LeadServiceWriter
+	repository.MetricsReader
 }
 
 // Service handles lead management operations (CRUD).
@@ -317,6 +319,32 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 	}
 
 	return ToLeadResponse(lead), nil
+}
+
+// GetMetrics returns aggregated KPI metrics for the dashboard.
+func (s *Service) GetMetrics(ctx context.Context) (transport.LeadMetricsResponse, error) {
+	metrics, err := s.repo.GetMetrics(ctx)
+	if err != nil {
+		return transport.LeadMetricsResponse{}, err
+	}
+
+	var disqualifiedRate float64
+	var touchpointsPerLead float64
+	if metrics.TotalLeads > 0 {
+		disqualifiedRate = float64(metrics.DisqualifiedLeads) / float64(metrics.TotalLeads)
+		touchpointsPerLead = float64(metrics.Touchpoints) / float64(metrics.TotalLeads)
+	}
+
+	return transport.LeadMetricsResponse{
+		TotalLeads:          metrics.TotalLeads,
+		ProjectedValueCents: metrics.ProjectedValueCents,
+		DisqualifiedRate:    roundToOneDecimal(disqualifiedRate * 100),
+		TouchpointsPerLead:  roundToOneDecimal(touchpointsPerLead),
+	}, nil
+}
+
+func roundToOneDecimal(value float64) float64 {
+	return math.Round(value*10) / 10
 }
 
 func (s *Service) prepareAssigneeUpdate(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (repository.UpdateLeadParams, *repository.Lead, error) {
