@@ -1,0 +1,11 @@
+CREATE INDEX IF NOT EXISTS idx_leads_consumer_first_name ON leads(consumer_first_name);
+CREATE INDEX IF NOT EXISTS idx_leads_consumer_last_name ON leads(consumer_last_name);
+CREATE INDEX IF NOT EXISTS idx_leads_consumer_email ON leads(consumer_email);
+CREATE INDEX IF NOT EXISTS idx_leads_consumer_role ON leads(consumer_role);
+CREATE INDEX IF NOT EXISTS idx_leads_address_street ON leads(address_street);
+CREATE INDEX IF NOT EXISTS idx_leads_address_house_number ON leads(address_house_number);
+CREATE INDEX IF NOT EXISTS idx_leads_address_zip_code ON leads(address_zip_code);
+CREATE INDEX IF NOT EXISTS idx_leads_address_city ON leads(address_city);
+CREATE INDEX IF NOT EXISTS idx_leads_service_type ON leads(service_type);
+CREATE INDEX IF NOT EXISTS idx_leads_assigned_agent_id ON leads(assigned_agent_id);
+CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at);

@@ -121,13 +121,25 @@ type BulkDeleteLeadsRequest struct {
 }
 
 type ListLeadsRequest struct {
-	Status      *LeadStatus  `form:"status" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling Closed"`
-	ServiceType *ServiceType `form:"serviceType" validate:"omitempty,min=1,max=100"`
-	Search      string       `form:"search" validate:"max=100"`
-	Page        int          `form:"page" validate:"min=1"`
-	PageSize    int          `form:"pageSize" validate:"min=1,max=100"`
-	SortBy      string       `form:"sortBy" validate:"omitempty,oneof=createdAt scheduledDate status firstName lastName"`
-	SortOrder   string       `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
+	Status          *LeadStatus   `form:"status" validate:"omitempty,oneof=New Attempted_Contact Scheduled Surveyed Bad_Lead Needs_Rescheduling Closed"`
+	ServiceType     *ServiceType  `form:"serviceType" validate:"omitempty,min=1,max=100"`
+	Search          string        `form:"search" validate:"max=100"`
+	FirstName       string        `form:"firstName" validate:"omitempty,max=100"`
+	LastName        string        `form:"lastName" validate:"omitempty,max=100"`
+	Phone           string        `form:"phone" validate:"omitempty,max=20"`
+	Email           string        `form:"email" validate:"omitempty,max=200"`
+	Role            *ConsumerRole `form:"role" validate:"omitempty,oneof=Owner Tenant Landlord"`
+	Street          string        `form:"street" validate:"omitempty,max=200"`
+	HouseNumber     string        `form:"houseNumber" validate:"omitempty,max=20"`
+	ZipCode         string        `form:"zipCode" validate:"omitempty,max=20"`
+	City            string        `form:"city" validate:"omitempty,max=100"`
+	AssignedAgentID *uuid.UUID    `form:"assignedAgentId" validate:"omitempty"`
+	CreatedAtFrom   string        `form:"createdAtFrom" validate:"omitempty"`
+	CreatedAtTo     string        `form:"createdAtTo" validate:"omitempty"`
+	Page            int           `form:"page" validate:"min=1"`
+	PageSize        int           `form:"pageSize" validate:"min=1,max=100"`
+	SortBy          string        `form:"sortBy" validate:"omitempty,oneof=createdAt scheduledDate status firstName lastName phone email role street houseNumber zipCode city serviceType assignedAgentId"`
+	SortOrder       string        `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 }
 
 type LeadHeatmapRequest struct {

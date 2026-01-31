@@ -476,41 +476,29 @@ func (r *Repository) RescheduleVisit(ctx context.Context, id uuid.UUID, schedule
 }
 
 type ListParams struct {
-	Status      *string
-	ServiceType *string
-	Search      string
-	Offset      int
-	Limit       int
-	SortBy      string
-	SortOrder   string
+	Status          *string
+	ServiceType     *string
+	Search          string
+	FirstName       *string
+	LastName        *string
+	Phone           *string
+	Email           *string
+	Role            *string
+	Street          *string
+	HouseNumber     *string
+	ZipCode         *string
+	City            *string
+	AssignedAgentID *uuid.UUID
+	CreatedAtFrom   *time.Time
+	CreatedAtTo     *time.Time
+	Offset          int
+	Limit           int
+	SortBy          string
+	SortOrder       string
 }
 
 func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, error) {
-	whereClauses := []string{"deleted_at IS NULL"}
-	args := []interface{}{}
-	argIdx := 1
-
-	if params.Status != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", argIdx))
-		args = append(args, *params.Status)
-		argIdx++
-	}
-	if params.ServiceType != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("service_type = $%d", argIdx))
-		args = append(args, *params.ServiceType)
-		argIdx++
-	}
-	if params.Search != "" {
-		searchPattern := "%" + params.Search + "%"
-		whereClauses = append(whereClauses, fmt.Sprintf(
-			"(consumer_first_name ILIKE $%d OR consumer_last_name ILIKE $%d OR consumer_phone ILIKE $%d OR consumer_email ILIKE $%d OR address_city ILIKE $%d)",
-			argIdx, argIdx, argIdx, argIdx, argIdx,
-		))
-		args = append(args, searchPattern)
-		argIdx++
-	}
-
-	whereClause := strings.Join(whereClauses, " AND ")
+	whereClause, args, argIdx := buildLeadListWhere(params)
 
 	var total int
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM leads WHERE %s", whereClause)
@@ -518,17 +506,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		return nil, 0, err
 	}
 
-	sortColumn := "created_at"
-	switch params.SortBy {
-	case "scheduledDate":
-		sortColumn = "visit_scheduled_date"
-	case "status":
-		sortColumn = "status"
-	case "firstName":
-		sortColumn = "consumer_first_name"
-	case "lastName":
-		sortColumn = "consumer_last_name"
-	}
+	sortColumn := mapLeadSortColumn(params.SortBy)
 	sortOrder := "DESC"
 	if params.SortOrder == "asc" {
 		sortOrder = "ASC"
@@ -574,6 +552,115 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	}
 
 	return leads, total, nil
+}
+
+func buildLeadListWhere(params ListParams) (string, []interface{}, int) {
+	whereClauses := []string{"deleted_at IS NULL"}
+	args := []interface{}{}
+	argIdx := 1
+
+	addEquals := func(column string, value interface{}) {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", column, argIdx))
+		args = append(args, value)
+		argIdx++
+	}
+	addILike := func(column string, value string) {
+		whereClauses = append(whereClauses, fmt.Sprintf("%s ILIKE $%d", column, argIdx))
+		args = append(args, "%"+value+"%")
+		argIdx++
+	}
+
+	if params.Status != nil {
+		addEquals("status", *params.Status)
+	}
+	if params.ServiceType != nil {
+		addEquals("service_type", *params.ServiceType)
+	}
+	if params.Search != "" {
+		searchPattern := "%" + params.Search + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"(consumer_first_name ILIKE $%d OR consumer_last_name ILIKE $%d OR consumer_phone ILIKE $%d OR consumer_email ILIKE $%d OR address_city ILIKE $%d)",
+			argIdx, argIdx, argIdx, argIdx, argIdx,
+		))
+		args = append(args, searchPattern)
+		argIdx++
+	}
+	if params.FirstName != nil {
+		addILike("consumer_first_name", *params.FirstName)
+	}
+	if params.LastName != nil {
+		addILike("consumer_last_name", *params.LastName)
+	}
+	if params.Phone != nil {
+		addILike("consumer_phone", *params.Phone)
+	}
+	if params.Email != nil {
+		addILike("consumer_email", *params.Email)
+	}
+	if params.Role != nil {
+		addEquals("consumer_role", *params.Role)
+	}
+	if params.Street != nil {
+		addILike("address_street", *params.Street)
+	}
+	if params.HouseNumber != nil {
+		addILike("address_house_number", *params.HouseNumber)
+	}
+	if params.ZipCode != nil {
+		addILike("address_zip_code", *params.ZipCode)
+	}
+	if params.City != nil {
+		addILike("address_city", *params.City)
+	}
+	if params.AssignedAgentID != nil {
+		addEquals("assigned_agent_id", *params.AssignedAgentID)
+	}
+	if params.CreatedAtFrom != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("created_at >= $%d", argIdx))
+		args = append(args, *params.CreatedAtFrom)
+		argIdx++
+	}
+	if params.CreatedAtTo != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("created_at < $%d", argIdx))
+		args = append(args, *params.CreatedAtTo)
+		argIdx++
+	}
+
+	return strings.Join(whereClauses, " AND "), args, argIdx
+}
+
+func mapLeadSortColumn(sortBy string) string {
+	sortColumn := "created_at"
+	switch sortBy {
+	case "scheduledDate":
+		return "visit_scheduled_date"
+	case "status":
+		return "status"
+	case "firstName":
+		return "consumer_first_name"
+	case "lastName":
+		return "consumer_last_name"
+	case "phone":
+		return "consumer_phone"
+	case "email":
+		return "consumer_email"
+	case "role":
+		return "consumer_role"
+	case "street":
+		return "address_street"
+	case "houseNumber":
+		return "address_house_number"
+	case "zipCode":
+		return "address_zip_code"
+	case "city":
+		return "address_city"
+	case "serviceType":
+		return "service_type"
+	case "assignedAgentId":
+		return "assigned_agent_id"
+	default:
+		return sortColumn
+	}
 }
 
 type HeatmapPoint struct {

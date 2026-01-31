@@ -176,21 +176,9 @@ func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest) (tra
 		req.PageSize = 100
 	}
 
-	params := repository.ListParams{
-		Search:    req.Search,
-		Offset:    (req.Page - 1) * req.PageSize,
-		Limit:     req.PageSize,
-		SortBy:    req.SortBy,
-		SortOrder: req.SortOrder,
-	}
-
-	if req.Status != nil {
-		status := string(*req.Status)
-		params.Status = &status
-	}
-	if req.ServiceType != nil {
-		serviceType := string(*req.ServiceType)
-		params.ServiceType = &serviceType
+	params, err := buildListParams(req)
+	if err != nil {
+		return transport.LeadListResponse{}, err
 	}
 
 	leads, total, err := s.repo.List(ctx, params)
@@ -213,6 +201,86 @@ func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest) (tra
 		PageSize:   req.PageSize,
 		TotalPages: totalPages,
 	}, nil
+}
+
+func buildListParams(req transport.ListLeadsRequest) (repository.ListParams, error) {
+	params := repository.ListParams{
+		Search:    req.Search,
+		Offset:    (req.Page - 1) * req.PageSize,
+		Limit:     req.PageSize,
+		SortBy:    req.SortBy,
+		SortOrder: req.SortOrder,
+	}
+
+	if req.Status != nil {
+		status := string(*req.Status)
+		params.Status = &status
+	}
+	if req.ServiceType != nil {
+		serviceType := string(*req.ServiceType)
+		params.ServiceType = &serviceType
+	}
+
+	params.FirstName = optionalString(req.FirstName)
+	params.LastName = optionalString(req.LastName)
+	params.Phone = optionalString(req.Phone)
+	params.Email = optionalString(req.Email)
+	if req.Role != nil {
+		role := string(*req.Role)
+		params.Role = &role
+	}
+	params.Street = optionalString(req.Street)
+	params.HouseNumber = optionalString(req.HouseNumber)
+	params.ZipCode = optionalString(req.ZipCode)
+	params.City = optionalString(req.City)
+	params.AssignedAgentID = req.AssignedAgentID
+
+	createdFrom, createdTo, err := parseDateRange(req.CreatedAtFrom, req.CreatedAtTo)
+	if err != nil {
+		return repository.ListParams{}, apperr.Validation(err.Error())
+	}
+	params.CreatedAtFrom = createdFrom
+	params.CreatedAtTo = createdTo
+
+	return params, nil
+}
+
+func optionalString(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(value)
+	return &trimmed
+}
+
+func parseDateRange(from string, to string) (*time.Time, *time.Time, error) {
+	const dateLayout = "2006-01-02"
+
+	var start *time.Time
+	var end *time.Time
+
+	if from != "" {
+		parsed, err := time.Parse(dateLayout, from)
+		if err != nil {
+			return nil, nil, err
+		}
+		start = &parsed
+	}
+
+	if to != "" {
+		parsed, err := time.Parse(dateLayout, to)
+		if err != nil {
+			return nil, nil, err
+		}
+		endExclusive := parsed.AddDate(0, 0, 1)
+		end = &endExclusive
+	}
+
+	if start != nil && end != nil && start.After(*end) {
+		return nil, nil, errors.New("createdAtFrom must be before createdAtTo")
+	}
+
+	return start, end, nil
 }
 
 // CheckDuplicate checks if a lead with the given phone already exists.
