@@ -40,6 +40,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("", h.Create)
 	rg.GET("/metrics", h.GetMetrics)
 	rg.GET("/heatmap", h.GetHeatmap)
+	rg.GET("/action-items", h.GetActionItems)
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
@@ -108,6 +109,31 @@ func (h *Handler) GetHeatmap(c *gin.Context) {
 	}
 
 	result, err := h.mgmt.GetHeatmap(c.Request.Context(), startDate, endDate)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) GetActionItems(c *gin.Context) {
+	var req transport.ActionItemsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 5
+	}
+	if req.PageSize > 50 {
+		req.PageSize = 50
+	}
+
+	result, err := h.mgmt.GetActionItems(c.Request.Context(), req.Page, req.PageSize, 7)
 	if httpkit.HandleError(c, err) {
 		return
 	}

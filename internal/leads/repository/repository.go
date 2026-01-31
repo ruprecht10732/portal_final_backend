@@ -627,6 +627,83 @@ func (r *Repository) ListHeatmapPoints(ctx context.Context, startDate *time.Time
 	return points, nil
 }
 
+type ActionItem struct {
+	ID            uuid.UUID
+	FirstName     string
+	LastName      string
+	UrgencyLevel  *string
+	UrgencyReason *string
+	CreatedAt     time.Time
+}
+
+type ActionItemListResult struct {
+	Items []ActionItem
+	Total int
+}
+
+func (r *Repository) ListActionItems(ctx context.Context, newLeadDays int, limit int, offset int) (ActionItemListResult, error) {
+	whereClauses := []string{"l.deleted_at IS NULL"}
+	args := []interface{}{newLeadDays}
+	argIdx := 2
+
+	whereClauses = append(whereClauses, "(ai.urgency_level = 'High' OR l.created_at >= now() - ($1::int || ' days')::interval)")
+
+	whereClause := strings.Join(whereClauses, " AND ")
+
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM leads l
+		LEFT JOIN (
+			SELECT DISTINCT ON (lead_id) lead_id, urgency_level, urgency_reason, created_at
+			FROM lead_ai_analysis
+			ORDER BY lead_id, created_at DESC
+		) ai ON ai.lead_id = l.id
+		WHERE %s
+	`, whereClause)
+
+	var total int
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return ActionItemListResult{}, err
+	}
+
+	args = append(args, limit, offset)
+	query := fmt.Sprintf(`
+		SELECT l.id, l.consumer_first_name, l.consumer_last_name, ai.urgency_level, ai.urgency_reason, l.created_at
+		FROM leads l
+		LEFT JOIN (
+			SELECT DISTINCT ON (lead_id) lead_id, urgency_level, urgency_reason, created_at
+			FROM lead_ai_analysis
+			ORDER BY lead_id, created_at DESC
+		) ai ON ai.lead_id = l.id
+		WHERE %s
+		ORDER BY
+			CASE WHEN ai.urgency_level = 'High' THEN 0 ELSE 1 END,
+			l.created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, argIdx, argIdx+1)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return ActionItemListResult{}, err
+	}
+	defer rows.Close()
+
+	items := make([]ActionItem, 0)
+	for rows.Next() {
+		var item ActionItem
+		if err := rows.Scan(&item.ID, &item.FirstName, &item.LastName, &item.UrgencyLevel, &item.UrgencyReason, &item.CreatedAt); err != nil {
+			return ActionItemListResult{}, err
+		}
+		items = append(items, item)
+	}
+
+	if rows.Err() != nil {
+		return ActionItemListResult{}, rows.Err()
+	}
+
+	return ActionItemListResult{Items: items, Total: total}, nil
+}
+
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	result, err := r.pool.Exec(ctx, "UPDATE leads SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL", id)
 	if err != nil {

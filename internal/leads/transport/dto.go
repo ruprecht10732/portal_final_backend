@@ -135,6 +135,11 @@ type LeadHeatmapRequest struct {
 	EndDate   string `form:"endDate"`
 }
 
+type ActionItemsRequest struct {
+	Page     int `form:"page" validate:"min=1"`
+	PageSize int `form:"pageSize" validate:"min=1,max=50"`
+}
+
 // Response DTOs
 type ConsumerResponse struct {
 	FirstName string       `json:"firstName"`
@@ -193,6 +198,21 @@ type LeadHeatmapPointResponse struct {
 
 type LeadHeatmapResponse struct {
 	Points []LeadHeatmapPointResponse `json:"points"`
+}
+
+type ActionItemResponse struct {
+	ID            uuid.UUID `json:"id"`
+	Name          string    `json:"name"`
+	UrgencyReason *string   `json:"urgencyReason,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	IsUrgent      bool      `json:"isUrgent"`
+}
+
+type ActionItemsResponse struct {
+	Items    []ActionItemResponse `json:"items"`
+	Total    int                  `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"pageSize"`
 }
 
 type LeadListResponse struct {

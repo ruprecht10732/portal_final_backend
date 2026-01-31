@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/events"
@@ -382,6 +383,45 @@ func (s *Service) GetHeatmap(ctx context.Context, startDate *time.Time, endDate 
 	}
 
 	return resp, nil
+}
+
+// GetActionItems returns urgent or recent leads for the dashboard widget.
+func (s *Service) GetActionItems(ctx context.Context, page int, pageSize int, newLeadDays int) (transport.ActionItemsResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 5
+	}
+	if pageSize > 50 {
+		pageSize = 50
+	}
+
+	offset := (page - 1) * pageSize
+	result, err := s.repo.ListActionItems(ctx, newLeadDays, pageSize, offset)
+	if err != nil {
+		return transport.ActionItemsResponse{}, err
+	}
+
+	items := make([]transport.ActionItemResponse, 0, len(result.Items))
+	for _, item := range result.Items {
+		name := strings.TrimSpace(item.FirstName + " " + item.LastName)
+		isUrgent := item.UrgencyLevel != nil && *item.UrgencyLevel == "High"
+		items = append(items, transport.ActionItemResponse{
+			ID:            item.ID,
+			Name:          name,
+			UrgencyReason: item.UrgencyReason,
+			CreatedAt:     item.CreatedAt,
+			IsUrgent:      isUrgent,
+		})
+	}
+
+	return transport.ActionItemsResponse{
+		Items:    items,
+		Total:    result.Total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
 func roundToOneDecimal(value float64) float64 {
