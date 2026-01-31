@@ -13,6 +13,7 @@ import (
 	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scheduling"
+	"portal_final_backend/internal/maps"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
@@ -57,7 +58,8 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 	}))
 
 	// Create focused services (vertical slices)
-	mgmtSvc := management.New(repo, eventBus)
+	mapsSvc := maps.NewService(log)
+	mgmtSvc := management.New(repo, eventBus, mapsSvc)
 	schedulingSvc := scheduling.New(repo, eventBus)
 	notesSvc := notes.New(repo)
 

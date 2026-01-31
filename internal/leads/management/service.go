@@ -6,13 +6,16 @@ package management
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/internal/maps"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
 
@@ -37,11 +40,12 @@ type Repository interface {
 type Service struct {
 	repo     Repository
 	eventBus events.Bus
+	maps     *maps.Service
 }
 
 // New creates a new lead management service.
-func New(repo Repository, eventBus events.Bus) *Service {
-	return &Service{repo: repo, eventBus: eventBus}
+func New(repo Repository, eventBus events.Bus, mapsService *maps.Service) *Service {
+	return &Service{repo: repo, eventBus: eventBus, maps: mapsService}
 }
 
 // Create creates a new lead.
@@ -107,7 +111,13 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 	if err != nil {
 		return transport.LeadResponse{}, err
 	}
-	applyUpdateFields(&params, req)
+
+	addressUpdateRequested, err := s.applyAddressGeocode(ctx, id, req, &params, &current)
+	if err != nil {
+		return transport.LeadResponse{}, err
+	}
+
+	applyUpdateFields(&params, req, !addressUpdateRequested)
 
 	lead, err := s.repo.Update(ctx, id, params)
 	if err != nil {
@@ -453,7 +463,7 @@ func (s *Service) prepareAssigneeUpdate(ctx context.Context, id uuid.UUID, req t
 	return params, &lead, nil
 }
 
-func applyUpdateFields(params *repository.UpdateLeadParams, req transport.UpdateLeadRequest) {
+func applyUpdateFields(params *repository.UpdateLeadParams, req transport.UpdateLeadRequest, applyCoords bool) {
 	if req.FirstName != nil {
 		params.ConsumerFirstName = req.FirstName
 	}
@@ -467,11 +477,13 @@ func applyUpdateFields(params *repository.UpdateLeadParams, req transport.Update
 	if req.Email != nil {
 		params.ConsumerEmail = req.Email
 	}
-	if req.Latitude != nil {
-		params.Latitude = req.Latitude
-	}
-	if req.Longitude != nil {
-		params.Longitude = req.Longitude
+	if applyCoords {
+		if req.Latitude != nil {
+			params.Latitude = req.Latitude
+		}
+		if req.Longitude != nil {
+			params.Longitude = req.Longitude
+		}
 	}
 	if req.ConsumerRole != nil {
 		role := string(*req.ConsumerRole)
@@ -489,6 +501,107 @@ func applyUpdateFields(params *repository.UpdateLeadParams, req transport.Update
 	if req.City != nil {
 		params.AddressCity = req.City
 	}
+}
+
+func (s *Service) applyAddressGeocode(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, params *repository.UpdateLeadParams, current **repository.Lead) (bool, error) {
+	if !hasAddressUpdate(req) {
+		return false, nil
+	}
+
+	if *current == nil {
+		lead, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return true, apperr.NotFound(leadNotFoundMsg)
+			}
+			return true, err
+		}
+		*current = &lead
+	}
+
+	updatedAddress, changed := buildUpdatedAddress(**current, req)
+	if changed {
+		if lat, lon, ok := s.geocodeAddress(ctx, updatedAddress); ok {
+			params.Latitude = &lat
+			params.Longitude = &lon
+		}
+	}
+
+	return true, nil
+}
+
+type addressUpdate struct {
+	street      string
+	houseNumber string
+	zipCode     string
+	city        string
+}
+
+func hasAddressUpdate(req transport.UpdateLeadRequest) bool {
+	return req.Street != nil || req.HouseNumber != nil || req.ZipCode != nil || req.City != nil
+}
+
+func buildUpdatedAddress(current repository.Lead, req transport.UpdateLeadRequest) (addressUpdate, bool) {
+	updated := addressUpdate{
+		street:      current.AddressStreet,
+		houseNumber: current.AddressHouseNumber,
+		zipCode:     current.AddressZipCode,
+		city:        current.AddressCity,
+	}
+
+	changed := false
+	if req.Street != nil {
+		updated.street = strings.TrimSpace(*req.Street)
+		changed = changed || updated.street != current.AddressStreet
+	}
+	if req.HouseNumber != nil {
+		updated.houseNumber = strings.TrimSpace(*req.HouseNumber)
+		changed = changed || updated.houseNumber != current.AddressHouseNumber
+	}
+	if req.ZipCode != nil {
+		updated.zipCode = strings.TrimSpace(*req.ZipCode)
+		changed = changed || updated.zipCode != current.AddressZipCode
+	}
+	if req.City != nil {
+		updated.city = strings.TrimSpace(*req.City)
+		changed = changed || updated.city != current.AddressCity
+	}
+
+	return updated, changed
+}
+
+func (s *Service) geocodeAddress(ctx context.Context, address addressUpdate) (float64, float64, bool) {
+	if s.maps == nil {
+		return 0, 0, false
+	}
+
+	if address.street == "" || address.city == "" {
+		return 0, 0, false
+	}
+
+	query := formatGeocodeQuery(address)
+	suggestions, err := s.maps.SearchAddress(ctx, query)
+	if err != nil || len(suggestions) == 0 {
+		return 0, 0, false
+	}
+
+	lat, err := strconv.ParseFloat(suggestions[0].Lat, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	lon, err := strconv.ParseFloat(suggestions[0].Lon, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return lat, lon, true
+}
+
+func formatGeocodeQuery(address addressUpdate) string {
+	streetPart := strings.TrimSpace(strings.Join([]string{address.street, address.houseNumber}, " "))
+	cityPart := strings.TrimSpace(strings.Join([]string{address.zipCode, address.city}, " "))
+	query := strings.TrimSpace(fmt.Sprintf("%s, %s", streetPart, cityPart))
+	return strings.Trim(query, ", ")
 }
 
 func hasRole(roles []string, target string) bool {
