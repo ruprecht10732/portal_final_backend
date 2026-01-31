@@ -265,8 +265,6 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 // Delete removes a service type by ID (hard delete).
 // Use SetActive(false) for soft delete.
 
-
-
 func (r *Repo) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.SetActive(ctx, id, false)
 }
