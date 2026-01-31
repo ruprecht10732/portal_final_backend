@@ -264,19 +264,11 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 
 // Delete removes a service type by ID (hard delete).
 // Use SetActive(false) for soft delete.
+
+
+
 func (r *Repo) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM service_types WHERE id = $1`
-
-	result, err := r.pool.Exec(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("delete service type: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return apperr.NotFound(serviceTypeNotFoundMessage)
-	}
-
-	return nil
+	return r.SetActive(ctx, id, false)
 }
 
 // SetActive sets the is_active flag for a service type.
