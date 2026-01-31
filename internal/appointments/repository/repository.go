@@ -1,0 +1,369 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"portal_final_backend/internal/appointments/transport"
+	"portal_final_backend/platform/apperr"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Appointment represents the appointment database model
+type Appointment struct {
+	ID            uuid.UUID  `db:"id"`
+	UserID        uuid.UUID  `db:"user_id"`
+	LeadID        *uuid.UUID `db:"lead_id"`
+	LeadServiceID *uuid.UUID `db:"lead_service_id"`
+	Type          string     `db:"type"`
+	Title         string     `db:"title"`
+	Description   *string    `db:"description"`
+	Location      *string    `db:"location"`
+	StartTime     time.Time  `db:"start_time"`
+	EndTime       time.Time  `db:"end_time"`
+	Status        string     `db:"status"`
+	AllDay        bool       `db:"all_day"`
+	CreatedAt     time.Time  `db:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at"`
+}
+
+// LeadInfo represents basic lead information for embedding in appointment responses
+type LeadInfo struct {
+	ID          uuid.UUID `db:"id"`
+	FirstName   string    `db:"first_name"`
+	LastName    string    `db:"last_name"`
+	Phone       string    `db:"phone"`
+	Street      string    `db:"street"`
+	HouseNumber string    `db:"house_number"`
+	City        string    `db:"city"`
+}
+
+// Repository provides database operations for appointments
+type Repository struct {
+	pool *pgxpool.Pool
+}
+
+// New creates a new appointments repository
+func New(pool *pgxpool.Pool) *Repository {
+	return &Repository{pool: pool}
+}
+
+// Create inserts a new appointment
+func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
+	query := `
+		INSERT INTO appointments (
+			id, user_id, lead_id, lead_service_id, type, title, description,
+			location, start_time, end_time, status, all_day, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+		)`
+
+	_, err := r.pool.Exec(ctx, query,
+		appt.ID, appt.UserID, appt.LeadID, appt.LeadServiceID, appt.Type,
+		appt.Title, appt.Description, appt.Location, appt.StartTime, appt.EndTime,
+		appt.Status, appt.AllDay, appt.CreatedAt, appt.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create appointment: %w", err)
+	}
+
+	return nil
+}
+
+// GetByID retrieves an appointment by its ID
+func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (*Appointment, error) {
+	var appt Appointment
+	query := `SELECT id, user_id, lead_id, lead_service_id, type, title, description,
+		location, start_time, end_time, status, all_day, created_at, updated_at
+		FROM appointments WHERE id = $1`
+
+	err := r.pool.QueryRow(ctx, query, id).Scan(
+		&appt.ID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+		&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
+		&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("appointment not found")
+		}
+		return nil, fmt.Errorf("failed to get appointment: %w", err)
+	}
+
+	return &appt, nil
+}
+
+// GetByLeadServiceID retrieves an appointment by lead service ID (for sync)
+func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.UUID) (*Appointment, error) {
+	var appt Appointment
+	query := `SELECT id, user_id, lead_id, lead_service_id, type, title, description,
+		location, start_time, end_time, status, all_day, created_at, updated_at
+		FROM appointments WHERE lead_service_id = $1 AND status = 'scheduled' ORDER BY created_at DESC LIMIT 1`
+
+	err := r.pool.QueryRow(ctx, query, leadServiceID).Scan(
+		&appt.ID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+		&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
+		&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil // Not found is acceptable
+		}
+		return nil, fmt.Errorf("failed to get appointment by lead service: %w", err)
+	}
+
+	return &appt, nil
+}
+
+// Update updates an existing appointment
+func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
+	query := `
+		UPDATE appointments SET
+			title = $2,
+			description = $3,
+			location = $4,
+			start_time = $5,
+			end_time = $6,
+			all_day = $7,
+			updated_at = $8
+		WHERE id = $1`
+
+	result, err := r.pool.Exec(ctx, query,
+		appt.ID, appt.Title, appt.Description, appt.Location,
+		appt.StartTime, appt.EndTime, appt.AllDay, appt.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update appointment: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound("appointment not found")
+	}
+
+	return nil
+}
+
+// UpdateStatus updates the status of an appointment
+func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
+	query := `UPDATE appointments SET status = $2, updated_at = $3 WHERE id = $1`
+
+	result, err := r.pool.Exec(ctx, query, id, status, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to update appointment status: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound("appointment not found")
+	}
+
+	return nil
+}
+
+// Delete removes an appointment
+func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+	query := `DELETE FROM appointments WHERE id = $1`
+
+	result, err := r.pool.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete appointment: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound("appointment not found")
+	}
+
+	return nil
+}
+
+// ListParams contains parameters for listing appointments
+type ListParams struct {
+	UserID    *uuid.UUID
+	LeadID    *uuid.UUID
+	Type      *string
+	Status    *string
+	StartFrom *time.Time
+	StartTo   *time.Time
+	Page      int
+	PageSize  int
+}
+
+// ListResult contains the result of listing appointments
+type ListResult struct {
+	Items      []Appointment
+	Total      int
+	Page       int
+	PageSize   int
+	TotalPages int
+}
+
+// List retrieves appointments with optional filtering
+func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, error) {
+	// Build query
+	baseQuery := `FROM appointments WHERE 1=1`
+	args := []interface{}{}
+	argIndex := 1
+
+	if params.UserID != nil {
+		baseQuery += fmt.Sprintf(" AND user_id = $%d", argIndex)
+		args = append(args, *params.UserID)
+		argIndex++
+	}
+
+	if params.LeadID != nil {
+		baseQuery += fmt.Sprintf(" AND lead_id = $%d", argIndex)
+		args = append(args, *params.LeadID)
+		argIndex++
+	}
+
+	if params.Type != nil {
+		baseQuery += fmt.Sprintf(" AND type = $%d", argIndex)
+		args = append(args, *params.Type)
+		argIndex++
+	}
+
+	if params.Status != nil {
+		baseQuery += fmt.Sprintf(" AND status = $%d", argIndex)
+		args = append(args, *params.Status)
+		argIndex++
+	}
+
+	if params.StartFrom != nil {
+		baseQuery += fmt.Sprintf(" AND start_time >= $%d", argIndex)
+		args = append(args, *params.StartFrom)
+		argIndex++
+	}
+
+	if params.StartTo != nil {
+		baseQuery += fmt.Sprintf(" AND start_time <= $%d", argIndex)
+		args = append(args, *params.StartTo)
+		argIndex++
+	}
+
+	// Count total
+	var total int
+	countQuery := "SELECT COUNT(*) " + baseQuery
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to count appointments: %w", err)
+	}
+
+	// Calculate pagination
+	totalPages := (total + params.PageSize - 1) / params.PageSize
+	offset := (params.Page - 1) * params.PageSize
+
+	// Fetch items
+	selectQuery := fmt.Sprintf(`SELECT id, user_id, lead_id, lead_service_id, type, title, description,
+		location, start_time, end_time, status, all_day, created_at, updated_at %s ORDER BY start_time ASC LIMIT $%d OFFSET $%d`,
+		baseQuery, argIndex, argIndex+1)
+	args = append(args, params.PageSize, offset)
+
+	rows, err := r.pool.Query(ctx, selectQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list appointments: %w", err)
+	}
+	defer rows.Close()
+
+	var items []Appointment
+	for rows.Next() {
+		var appt Appointment
+		if err := rows.Scan(
+			&appt.ID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+			&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
+			&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan appointment: %w", err)
+		}
+		items = append(items, appt)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate appointments: %w", err)
+	}
+
+	return &ListResult{
+		Items:      items,
+		Total:      total,
+		Page:       params.Page,
+		PageSize:   params.PageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
+// GetLeadInfo retrieves basic lead information for embedding in appointment responses
+func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID) (*LeadInfo, error) {
+	var info LeadInfo
+	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
+		FROM leads WHERE id = $1`
+
+	err := r.pool.QueryRow(ctx, query, leadID).Scan(
+		&info.ID, &info.FirstName, &info.LastName, &info.Phone,
+		&info.Street, &info.HouseNumber, &info.City,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get lead info: %w", err)
+	}
+
+	return &info, nil
+}
+
+// GetLeadInfoBatch retrieves lead info for multiple lead IDs
+func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID) (map[uuid.UUID]*LeadInfo, error) {
+	if len(leadIDs) == 0 {
+		return make(map[uuid.UUID]*LeadInfo), nil
+	}
+
+	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
+		FROM leads WHERE id = ANY($1)`
+
+	rows, err := r.pool.Query(ctx, query, leadIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get lead info batch: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[uuid.UUID]*LeadInfo)
+	for rows.Next() {
+		var info LeadInfo
+		if err := rows.Scan(
+			&info.ID, &info.FirstName, &info.LastName, &info.Phone,
+			&info.Street, &info.HouseNumber, &info.City,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan lead info: %w", err)
+		}
+		result[info.ID] = &info
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate leads: %w", err)
+	}
+
+	return result, nil
+}
+
+// ToResponse converts an Appointment to AppointmentResponse
+func (a *Appointment) ToResponse(leadInfo *transport.AppointmentLeadInfo) transport.AppointmentResponse {
+	resp := transport.AppointmentResponse{
+		ID:            a.ID,
+		UserID:        a.UserID,
+		LeadID:        a.LeadID,
+		LeadServiceID: a.LeadServiceID,
+		Type:          transport.AppointmentType(a.Type),
+		Title:         a.Title,
+		Description:   a.Description,
+		Location:      a.Location,
+		StartTime:     a.StartTime,
+		EndTime:       a.EndTime,
+		Status:        transport.AppointmentStatus(a.Status),
+		AllDay:        a.AllDay,
+		CreatedAt:     a.CreatedAt,
+		UpdatedAt:     a.UpdatedAt,
+		Lead:          leadInfo,
+	}
+	return resp
+}

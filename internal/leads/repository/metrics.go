@@ -15,16 +15,30 @@ func (r *Repository) GetMetrics(ctx context.Context) (LeadMetrics, error) {
 	var metrics LeadMetrics
 	err := r.pool.QueryRow(ctx, `
 		SELECT
-			COUNT(*) FILTER (WHERE deleted_at IS NULL) AS total_leads,
-			COUNT(*) FILTER (WHERE deleted_at IS NULL AND status = 'Bad_Lead') AS disqualified_leads,
-			COALESCE(SUM(CASE WHEN deleted_at IS NULL THEN projected_value_cents ELSE 0 END), 0) AS projected_value_cents,
+			(
+				SELECT COUNT(*)
+				FROM leads
+				WHERE deleted_at IS NULL
+			) AS total_leads,
+			(
+				SELECT COUNT(DISTINCT l.id)
+				FROM leads l
+				LEFT JOIN lead_services ls ON ls.lead_id = l.id
+				WHERE l.deleted_at IS NULL
+					AND ls.status = 'Bad_Lead'
+			) AS disqualified_leads,
+			(
+				SELECT COALESCE(SUM(projected_value_cents), 0)
+				FROM leads
+				WHERE deleted_at IS NULL
+			) AS projected_value_cents,
 			COALESCE((
 				SELECT COUNT(*)
 				FROM lead_activity la
 				JOIN leads l ON l.id = la.lead_id
 				WHERE l.deleted_at IS NULL
 			), 0) AS touchpoints
-		FROM leads
+		
 	`).Scan(
 		&metrics.TotalLeads,
 		&metrics.DisqualifiedLeads,

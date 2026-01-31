@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/adapters"
+	"portal_final_backend/internal/appointments"
 	"portal_final_backend/internal/auth"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
@@ -77,6 +78,7 @@ func main() {
 	}
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
+	appointmentsModule := appointments.NewModule(pool, val)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
@@ -95,6 +97,7 @@ func main() {
 			leadsModule,
 			mapsModule,
 			servicesModule,
+			appointmentsModule,
 		},
 	}
 
