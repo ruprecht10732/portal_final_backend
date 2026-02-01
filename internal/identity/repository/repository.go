@@ -28,11 +28,20 @@ func New(pool *pgxpool.Pool) *Repository {
 }
 
 type Organization struct {
-	ID        uuid.UUID
-	Name      string
-	CreatedBy uuid.UUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           uuid.UUID
+	Name         string
+	Email        *string
+	Phone        *string
+	VatNumber    *string
+	KvkNumber    *string
+	AddressLine1 *string
+	AddressLine2 *string
+	PostalCode   *string
+	City         *string
+	Country      *string
+	CreatedBy    uuid.UUID
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type Invite struct {
@@ -60,24 +69,80 @@ func (r *Repository) CreateOrganization(ctx context.Context, q DBTX, name string
 func (r *Repository) GetOrganization(ctx context.Context, organizationID uuid.UUID) (Organization, error) {
 	var org Organization
 	err := r.pool.QueryRow(ctx, `
-    SELECT id, name, created_by, created_at, updated_at
+    SELECT id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
+      created_by, created_at, updated_at
     FROM organizations
     WHERE id = $1
-  `, organizationID).Scan(&org.ID, &org.Name, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+  `, organizationID).Scan(
+		&org.ID,
+		&org.Name,
+		&org.Email,
+		&org.Phone,
+		&org.VatNumber,
+		&org.KvkNumber,
+		&org.AddressLine1,
+		&org.AddressLine2,
+		&org.PostalCode,
+		&org.City,
+		&org.Country,
+		&org.CreatedBy,
+		&org.CreatedAt,
+		&org.UpdatedAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Organization{}, ErrNotFound
 	}
 	return org, err
 }
 
-func (r *Repository) UpdateOrganizationName(ctx context.Context, organizationID uuid.UUID, name string) (Organization, error) {
+func (r *Repository) UpdateOrganizationProfile(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	name *string,
+	email *string,
+	phone *string,
+	vatNumber *string,
+	kvkNumber *string,
+	addressLine1 *string,
+	addressLine2 *string,
+	postalCode *string,
+	city *string,
+	country *string,
+) (Organization, error) {
 	var org Organization
 	err := r.pool.QueryRow(ctx, `
     UPDATE organizations
-    SET name = $2, updated_at = now()
+    SET
+      name = COALESCE($2, name),
+      email = COALESCE($3, email),
+      phone = COALESCE($4, phone),
+      vat_number = COALESCE($5, vat_number),
+      kvk_number = COALESCE($6, kvk_number),
+      address_line1 = COALESCE($7, address_line1),
+      address_line2 = COALESCE($8, address_line2),
+      postal_code = COALESCE($9, postal_code),
+      city = COALESCE($10, city),
+      country = COALESCE($11, country),
+      updated_at = now()
     WHERE id = $1
-    RETURNING id, name, created_by, created_at, updated_at
-  `, organizationID, name).Scan(&org.ID, &org.Name, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
+    RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
+      created_by, created_at, updated_at
+  `, organizationID, name, email, phone, vatNumber, kvkNumber, addressLine1, addressLine2, postalCode, city, country).Scan(
+		&org.ID,
+		&org.Name,
+		&org.Email,
+		&org.Phone,
+		&org.VatNumber,
+		&org.KvkNumber,
+		&org.AddressLine1,
+		&org.AddressLine2,
+		&org.PostalCode,
+		&org.City,
+		&org.Country,
+		&org.CreatedBy,
+		&org.CreatedAt,
+		&org.UpdatedAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Organization{}, ErrNotFound
 	}

@@ -82,8 +82,17 @@ func (h *Handler) GetOrganization(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.OrganizationResponse{
-		ID:   org.ID.String(),
-		Name: org.Name,
+		ID:           org.ID.String(),
+		Name:         org.Name,
+		Email:        org.Email,
+		Phone:        org.Phone,
+		VatNumber:    org.VatNumber,
+		KvkNumber:    org.KvkNumber,
+		AddressLine1: org.AddressLine1,
+		AddressLine2: org.AddressLine2,
+		PostalCode:   org.PostalCode,
+		City:         org.City,
+		Country:      org.Country,
 	})
 }
 
@@ -109,13 +118,35 @@ func (h *Handler) UpdateOrganization(c *gin.Context) {
 		return
 	}
 
-	org, err := h.svc.UpdateOrganizationName(c.Request.Context(), *tenantID, req.Name)
+	org, err := h.svc.UpdateOrganizationProfile(
+		c.Request.Context(),
+		*tenantID,
+		req.Name,
+		req.Email,
+		req.Phone,
+		req.VatNumber,
+		req.KvkNumber,
+		req.AddressLine1,
+		req.AddressLine2,
+		req.PostalCode,
+		req.City,
+		req.Country,
+	)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
 	httpkit.OK(c, transport.OrganizationResponse{
-		ID:   org.ID.String(),
-		Name: org.Name,
+		ID:           org.ID.String(),
+		Name:         org.Name,
+		Email:        org.Email,
+		Phone:        org.Phone,
+		VatNumber:    org.VatNumber,
+		KvkNumber:    org.KvkNumber,
+		AddressLine1: org.AddressLine1,
+		AddressLine2: org.AddressLine2,
+		PostalCode:   org.PostalCode,
+		City:         org.City,
+		Country:      org.Country,
 	})
 }

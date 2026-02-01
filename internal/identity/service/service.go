@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"time"
 
@@ -74,13 +75,57 @@ func (s *Service) GetOrganization(ctx context.Context, organizationID uuid.UUID)
 	return org, nil
 }
 
-func (s *Service) UpdateOrganizationName(ctx context.Context, organizationID uuid.UUID, name string) (repository.Organization, error) {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
+func (s *Service) UpdateOrganizationProfile(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	name *string,
+	email *string,
+	phone *string,
+	vatNumber *string,
+	kvkNumber *string,
+	addressLine1 *string,
+	addressLine2 *string,
+	postalCode *string,
+	city *string,
+	country *string,
+) (repository.Organization, error) {
+	name = normalizeOptional(name)
+	email = normalizeOptional(email)
+	phone = normalizeOptional(phone)
+	vatNumber = normalizeOptional(vatNumber)
+	kvkNumber = normalizeOptional(kvkNumber)
+	addressLine1 = normalizeOptional(addressLine1)
+	addressLine2 = normalizeOptional(addressLine2)
+	postalCode = normalizeOptional(postalCode)
+	city = normalizeOptional(city)
+	country = normalizeOptional(country)
+
+	if name != nil && *name == "" {
 		return repository.Organization{}, apperr.Validation("organization name is required")
 	}
 
-	org, err := s.repo.UpdateOrganizationName(ctx, organizationID, trimmed)
+	if vatNumber != nil && !isValidNLVAT(*vatNumber) {
+		return repository.Organization{}, apperr.Validation("invalid VAT number")
+	}
+
+	if kvkNumber != nil && !isValidKVK(*kvkNumber) {
+		return repository.Organization{}, apperr.Validation("invalid KVK number")
+	}
+
+	org, err := s.repo.UpdateOrganizationProfile(
+		ctx,
+		organizationID,
+		name,
+		email,
+		phone,
+		vatNumber,
+		kvkNumber,
+		addressLine1,
+		addressLine2,
+		postalCode,
+		city,
+		country,
+	)
 	if err != nil {
 		if err == repository.ErrNotFound {
 			return repository.Organization{}, apperr.NotFound("organization not found")
@@ -89,6 +134,28 @@ func (s *Service) UpdateOrganizationName(ctx context.Context, organizationID uui
 	}
 
 	return org, nil
+}
+
+func normalizeOptional(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+var nlVATPattern = regexp.MustCompile(`^NL[0-9]{9}B[0-9]{2}$`)
+var kvkPattern = regexp.MustCompile(`^[0-9]{8}$`)
+
+func isValidNLVAT(value string) bool {
+	return nlVATPattern.MatchString(strings.ToUpper(strings.TrimSpace(value)))
+}
+
+func isValidKVK(value string) bool {
+	return kvkPattern.MatchString(strings.TrimSpace(value))
 }
 
 func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (repository.Invite, error) {
