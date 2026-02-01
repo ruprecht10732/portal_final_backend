@@ -46,15 +46,16 @@ type AuthResponse struct {
 }
 
 type ProfileResponse struct {
-	ID            string    `json:"id"`
-	Email         string    `json:"email"`
-	EmailVerified bool      `json:"emailVerified"`
-	FirstName     *string   `json:"firstName"`
-	LastName      *string   `json:"lastName"`
-	PreferredLang string    `json:"preferredLanguage"`
-	Roles         []string  `json:"roles"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID              string    `json:"id"`
+	Email           string    `json:"email"`
+	EmailVerified   bool      `json:"emailVerified"`
+	FirstName       *string   `json:"firstName"`
+	LastName        *string   `json:"lastName"`
+	PreferredLang   string    `json:"preferredLanguage"`
+	Roles           []string  `json:"roles"`
+	HasOrganization bool      `json:"hasOrganization"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type UpdateProfileRequest struct {
@@ -67,6 +68,12 @@ type UpdateProfileRequest struct {
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword" validate:"required"`
 	NewPassword     string `json:"newPassword" validate:"required,strongpassword"`
+}
+
+type CompleteOnboardingRequest struct {
+	FirstName        string  `json:"firstName" validate:"required,max=100"`
+	LastName         string  `json:"lastName" validate:"required,max=100"`
+	OrganizationName *string `json:"organizationName" validate:"omitempty,max=120"`
 }
 
 type UserSummary struct {

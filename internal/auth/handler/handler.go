@@ -61,15 +61,16 @@ func (h *Handler) GetMe(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.ProfileResponse{
-		ID:            profile.ID.String(),
-		Email:         profile.Email,
-		EmailVerified: profile.EmailVerified,
-		FirstName:     profile.FirstName,
-		LastName:      profile.LastName,
-		PreferredLang: profile.PreferredLang,
-		Roles:         profile.Roles,
-		CreatedAt:     profile.CreatedAt,
-		UpdatedAt:     profile.UpdatedAt,
+		ID:              profile.ID.String(),
+		Email:           profile.Email,
+		EmailVerified:   profile.EmailVerified,
+		FirstName:       profile.FirstName,
+		LastName:        profile.LastName,
+		PreferredLang:   profile.PreferredLang,
+		Roles:           profile.Roles,
+		HasOrganization: profile.HasOrganization,
+		CreatedAt:       profile.CreatedAt,
+		UpdatedAt:       profile.UpdatedAt,
 	})
 }
 
@@ -95,16 +96,40 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.ProfileResponse{
-		ID:            profile.ID.String(),
-		Email:         profile.Email,
-		EmailVerified: profile.EmailVerified,
-		FirstName:     profile.FirstName,
-		LastName:      profile.LastName,
-		PreferredLang: profile.PreferredLang,
-		Roles:         profile.Roles,
-		CreatedAt:     profile.CreatedAt,
-		UpdatedAt:     profile.UpdatedAt,
+		ID:              profile.ID.String(),
+		Email:           profile.Email,
+		EmailVerified:   profile.EmailVerified,
+		FirstName:       profile.FirstName,
+		LastName:        profile.LastName,
+		PreferredLang:   profile.PreferredLang,
+		Roles:           profile.Roles,
+		HasOrganization: profile.HasOrganization,
+		CreatedAt:       profile.CreatedAt,
+		UpdatedAt:       profile.UpdatedAt,
 	})
+}
+
+func (h *Handler) CompleteOnboarding(c *gin.Context) {
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
+		return
+	}
+
+	var req transport.CompleteOnboardingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if httpkit.HandleError(c, h.svc.CompleteOnboarding(c.Request.Context(), id.UserID(), req.FirstName, req.LastName, req.OrganizationName)) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "onboarding complete"})
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {

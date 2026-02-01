@@ -39,15 +39,16 @@ type Service struct {
 }
 
 type Profile struct {
-	ID            uuid.UUID
-	Email         string
-	EmailVerified bool
-	FirstName     *string
-	LastName      *string
-	PreferredLang string
-	Roles         []string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID              uuid.UUID
+	Email           string
+	EmailVerified   bool
+	FirstName       *string
+	LastName        *string
+	PreferredLang   string
+	Roles           []string
+	HasOrganization bool
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func New(repo *repository.Repository, identity *identityservice.Service, cfg config.AuthServiceConfig, eventBus events.Bus, log *logger.Logger) *Service {
@@ -107,16 +108,9 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 		if err := s.identity.UseInvite(ctx, tx, invite.ID, user.ID); err != nil {
 			return err
 		}
-	} else {
-		orgName := deriveOrganizationName(email, organizationName)
-		orgID, err := s.identity.CreateOrganizationForUser(ctx, tx, orgName, user.ID)
-		if err != nil {
-			return err
-		}
-		if err := s.identity.AddMember(ctx, tx, orgID, user.ID); err != nil {
-			return err
-		}
 	}
+	// Note: Organization is NOT created here for non-invite users.
+	// It will be created during onboarding when the user provides an organization name.
 
 	if err = tx.Commit(ctx); err != nil {
 		return err
@@ -373,16 +367,21 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		return Profile{}, err
 	}
 
+	// Check if user belongs to an organization
+	_, orgErr := s.identity.GetUserOrganizationID(ctx, userID)
+	hasOrganization := orgErr == nil
+
 	return Profile{
-		ID:            user.ID,
-		Email:         user.Email,
-		EmailVerified: user.EmailVerified,
-		FirstName:     user.FirstName,
-		LastName:      user.LastName,
-		PreferredLang: preferredLang,
-		Roles:         roles,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:              user.ID,
+		Email:           user.Email,
+		EmailVerified:   user.EmailVerified,
+		FirstName:       user.FirstName,
+		LastName:        user.LastName,
+		PreferredLang:   preferredLang,
+		Roles:           roles,
+		HasOrganization: hasOrganization,
+		CreatedAt:       user.CreatedAt,
+		UpdatedAt:       user.UpdatedAt,
 	}, nil
 }
 
@@ -553,4 +552,34 @@ func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (transport
 		Email:            invite.Email,
 		OrganizationName: org.Name,
 	}, nil
+}
+
+func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, firstName, lastName string, organizationName *string) error {
+	// Update user profile
+	_, err := s.repo.UpdateUserNames(ctx, userID, &firstName, &lastName)
+	if err != nil {
+		return err
+	}
+
+	// Check if user already has an organization
+	_, orgErr := s.identity.GetUserOrganizationID(ctx, userID)
+	hasOrganization := orgErr == nil
+
+	// If user doesn't have an organization, create one
+	if !hasOrganization {
+		if organizationName == nil || strings.TrimSpace(*organizationName) == "" {
+			return apperr.Validation("organization name is required")
+		}
+
+		orgID, err := s.identity.CreateOrganizationForUser(ctx, nil, strings.TrimSpace(*organizationName), userID)
+		if err != nil {
+			return err
+		}
+
+		if err := s.identity.AddMember(ctx, nil, orgID, userID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
