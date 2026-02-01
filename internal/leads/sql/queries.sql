@@ -27,26 +27,6 @@ RETURNING *;
 UPDATE leads SET viewed_by_id = $2, viewed_at = now(), updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL;
 
--- name: ScheduleLeadVisit :one
-UPDATE leads SET 
-    visit_scheduled_date = $2, 
-    visit_scout_id = $3,
-    status = 'Scheduled',
-    updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING *;
-
--- name: CompleteLeadSurvey :one
-UPDATE leads SET 
-    visit_measurements = $2,
-    visit_access_difficulty = $3,
-    visit_notes = $4,
-    visit_completed_at = now(),
-    status = 'Surveyed',
-    updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING *;
-
 -- name: SoftDeleteLead :exec
 UPDATE leads SET deleted_at = now(), updated_at = now() 
 WHERE id = $1 AND deleted_at IS NULL;
@@ -105,7 +85,6 @@ WITH inserted AS (
     RETURNING *
 )
 SELECT i.id, i.lead_id, st.name AS service_type, i.status,
-    i.visit_scheduled_date, i.visit_scout_id, i.visit_measurements, i.visit_access_difficulty, i.visit_notes, i.visit_completed_at,
     i.created_at, i.updated_at
 FROM inserted i
 JOIN service_types st ON st.id = i.service_type_id;
@@ -122,38 +101,6 @@ RETURNING *;
 SELECT * FROM lead_services
 WHERE lead_id = $1
 ORDER BY created_at;
-
--- name: ScheduleLeadServiceVisit :one
-UPDATE lead_services SET 
-    visit_scheduled_date = $2, 
-    visit_scout_id = $3,
-    status = 'Scheduled',
-    updated_at = now()
-WHERE id = $1
-RETURNING *;
-
--- name: CompleteLeadServiceSurvey :one
-UPDATE lead_services SET 
-    visit_measurements = $2,
-    visit_access_difficulty = $3,
-    visit_notes = $4,
-    visit_completed_at = now(),
-    status = 'Surveyed',
-    updated_at = now()
-WHERE id = $1
-RETURNING *;
-
--- Visit History Queries
-
--- name: CreateVisitHistory :one
-INSERT INTO visit_history (lead_id, scheduled_date, scout_id, outcome, measurements, access_difficulty, notes, completed_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING *;
-
--- name: ListVisitHistory :many
-SELECT * FROM visit_history
-WHERE lead_id = $1
-ORDER BY scheduled_date DESC;
 
 -- Lead AI Analysis Queries
 

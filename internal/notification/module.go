@@ -6,7 +6,6 @@ package notification
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"portal_final_backend/internal/email"
@@ -38,10 +37,6 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	bus.Subscribe(events.EmailVerificationRequested{}.EventName(), m)
 	bus.Subscribe(events.PasswordResetRequested{}.EventName(), m)
 
-	// Leads domain events
-	bus.Subscribe(events.VisitScheduled{}.EventName(), m)
-	bus.Subscribe(events.VisitRescheduled{}.EventName(), m)
-
 	m.log.Info("notification module registered event handlers")
 }
 
@@ -54,10 +49,6 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handleEmailVerificationRequested(ctx, e)
 	case events.PasswordResetRequested:
 		return m.handlePasswordResetRequested(ctx, e)
-	case events.VisitScheduled:
-		return m.handleVisitScheduled(ctx, e)
-	case events.VisitRescheduled:
-		return m.handleVisitRescheduled(ctx, e)
 	default:
 		m.log.Warn("unhandled event type", "event", event.EventName())
 		return nil
@@ -103,60 +94,6 @@ func (m *Module) handlePasswordResetRequested(ctx context.Context, e events.Pass
 		return err
 	}
 	m.log.Info("password reset email sent", "userId", e.UserID, "email", e.Email)
-	return nil
-}
-
-func (m *Module) handleVisitScheduled(ctx context.Context, e events.VisitScheduled) error {
-	if !e.SendInvite {
-		return nil
-	}
-
-	if e.ConsumerEmail == nil || *e.ConsumerEmail == "" {
-		m.log.Debug("skipping visit invite email - no consumer email", "leadId", e.LeadID)
-		return nil
-	}
-
-	consumerName := e.ConsumerFirstName + " " + e.ConsumerLastName
-	scheduledDateStr := e.ScheduledDate.Format("Monday, January 2, 2006 at 15:04")
-	address := fmt.Sprintf("%s %s, %s %s",
-		e.AddressStreet, e.AddressHouseNumber, e.AddressZipCode, e.AddressCity)
-
-	if err := m.sender.SendVisitInviteEmail(ctx, *e.ConsumerEmail, consumerName, scheduledDateStr, address); err != nil {
-		m.log.Error("failed to send visit invite email",
-			"leadId", e.LeadID,
-			"email", *e.ConsumerEmail,
-			"error", err,
-		)
-		return err
-	}
-	m.log.Info("visit invite email sent", "leadId", e.LeadID, "email", *e.ConsumerEmail)
-	return nil
-}
-
-func (m *Module) handleVisitRescheduled(ctx context.Context, e events.VisitRescheduled) error {
-	if !e.SendInvite {
-		return nil
-	}
-
-	if e.ConsumerEmail == nil || *e.ConsumerEmail == "" {
-		m.log.Debug("skipping visit invite email - no consumer email", "leadId", e.LeadID)
-		return nil
-	}
-
-	consumerName := e.ConsumerFirstName + " " + e.ConsumerLastName
-	scheduledDateStr := e.NewScheduledDate.Format("Monday, January 2, 2006 at 15:04")
-	address := fmt.Sprintf("%s %s, %s %s",
-		e.AddressStreet, e.AddressHouseNumber, e.AddressZipCode, e.AddressCity)
-
-	if err := m.sender.SendVisitInviteEmail(ctx, *e.ConsumerEmail, consumerName, scheduledDateStr, address); err != nil {
-		m.log.Error("failed to send visit invite email",
-			"leadId", e.LeadID,
-			"email", *e.ConsumerEmail,
-			"error", err,
-		)
-		return err
-	}
-	m.log.Info("visit reschedule invite email sent", "leadId", e.LeadID, "email", *e.ConsumerEmail)
 	return nil
 }
 

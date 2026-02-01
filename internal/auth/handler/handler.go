@@ -140,7 +140,7 @@ func (h *Handler) SignUp(c *gin.Context) {
 		return
 	}
 
-	if httpkit.HandleError(c, h.svc.SignUp(c.Request.Context(), req.Email, req.Password)) {
+	if httpkit.HandleError(c, h.svc.SignUp(c.Request.Context(), req.Email, req.Password, req.OrganizationName, req.InviteToken)) {
 		return
 	}
 	httpkit.JSON(c, http.StatusCreated, gin.H{"message": "account created"})

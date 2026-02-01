@@ -14,20 +14,14 @@ import (
 var ErrServiceNotFound = errors.New("lead service not found")
 
 type LeadService struct {
-	ID                    uuid.UUID
-	LeadID                uuid.UUID
-	ServiceType           string
-	Status                string
-	ConsumerNote          *string
-	Source                *string
-	VisitScheduledDate    *time.Time
-	VisitScoutID          *uuid.UUID
-	VisitMeasurements     *string
-	VisitAccessDifficulty *string
-	VisitNotes            *string
-	VisitCompletedAt      *time.Time
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID           uuid.UUID
+	LeadID       uuid.UUID
+	ServiceType  string
+	Status       string
+	ConsumerNote *string
+	Source       *string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type CreateLeadServiceParams struct {
@@ -52,13 +46,11 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 			RETURNING *
 		)
 		SELECT i.id, i.lead_id, st.name AS service_type, i.status, i.consumer_note, i.source,
-			i.visit_scheduled_date, i.visit_scout_id, i.visit_measurements, i.visit_access_difficulty, i.visit_notes, i.visit_completed_at,
 			i.created_at, i.updated_at
 		FROM inserted i
 		JOIN service_types st ON st.id = i.service_type_id
 	`, params.LeadID, params.ServiceType, params.ConsumerNote, params.Source).Scan(
 		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
 		&svc.CreatedAt, &svc.UpdatedAt,
 	)
 	return svc, err
@@ -68,14 +60,12 @@ func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID) (Lead
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, `
 		SELECT ls.id, ls.lead_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
-			ls.visit_scheduled_date, ls.visit_scout_id, ls.visit_measurements, ls.visit_access_difficulty, ls.visit_notes, ls.visit_completed_at,
 			ls.created_at, ls.updated_at
 		FROM lead_services ls
 		JOIN service_types st ON st.id = ls.service_type_id
 		WHERE ls.id = $1
 	`, id).Scan(
 		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
 		&svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -87,7 +77,6 @@ func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID) (Lead
 func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID) ([]LeadService, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT ls.id, ls.lead_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
-			ls.visit_scheduled_date, ls.visit_scout_id, ls.visit_measurements, ls.visit_access_difficulty, ls.visit_notes, ls.visit_completed_at,
 			ls.created_at, ls.updated_at
 		FROM lead_services ls
 		JOIN service_types st ON st.id = ls.service_type_id
@@ -104,7 +93,6 @@ func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID) ([]
 		var svc LeadService
 		if err := rows.Scan(
 			&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-			&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
 			&svc.CreatedAt, &svc.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -121,7 +109,6 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 	// Try to find an active (non-terminal) service first
 	err := r.pool.QueryRow(ctx, `
 		SELECT ls.id, ls.lead_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
-			ls.visit_scheduled_date, ls.visit_scout_id, ls.visit_measurements, ls.visit_access_difficulty, ls.visit_notes, ls.visit_completed_at,
 			ls.created_at, ls.updated_at
 		FROM lead_services ls
 		JOIN service_types st ON st.id = ls.service_type_id
@@ -130,14 +117,12 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 		LIMIT 1
 	`, leadID).Scan(
 		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
 		&svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Fallback to most recent service of any status
 		err = r.pool.QueryRow(ctx, `
 			SELECT ls.id, ls.lead_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
-				ls.visit_scheduled_date, ls.visit_scout_id, ls.visit_measurements, ls.visit_access_difficulty, ls.visit_notes, ls.visit_completed_at,
 				ls.created_at, ls.updated_at
 			FROM lead_services ls
 			JOIN service_types st ON st.id = ls.service_type_id
@@ -146,7 +131,6 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 			LIMIT 1
 		`, leadID).Scan(
 			&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-			&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
 			&svc.CreatedAt, &svc.UpdatedAt,
 		)
 	}
@@ -185,7 +169,6 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, params
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, st.name AS service_type, u.status, u.consumer_note, u.source,
-			u.visit_scheduled_date, u.visit_scout_id, u.visit_measurements, u.visit_access_difficulty, u.visit_notes, u.visit_completed_at,
 			u.created_at, u.updated_at
 		FROM updated u
 		JOIN service_types st ON st.id = u.service_type_id
@@ -194,7 +177,6 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, params
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
 		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
 		&svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -212,176 +194,13 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, stat
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, st.name AS service_type, u.status, u.consumer_note, u.source,
-			u.visit_scheduled_date, u.visit_scout_id, u.visit_measurements, u.visit_access_difficulty, u.visit_notes, u.visit_completed_at,
 			u.created_at, u.updated_at
 		FROM updated u
 		JOIN service_types st ON st.id = u.service_type_id
 	`, id, status).Scan(
 		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
 		&svc.CreatedAt, &svc.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LeadService{}, ErrServiceNotFound
-	}
-	return svc, err
-}
-
-func (r *Repository) ScheduleServiceVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID) (LeadService, error) {
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, `
-		WITH updated AS (
-			UPDATE lead_services SET 
-				visit_scheduled_date = $2, 
-				visit_scout_id = $3,
-				status = 'Scheduled',
-				updated_at = now()
-			WHERE id = $1
-			RETURNING *
-		)
-		SELECT u.id, u.lead_id, st.name AS service_type, u.status, u.consumer_note, u.source,
-			u.visit_scheduled_date, u.visit_scout_id, u.visit_measurements, u.visit_access_difficulty, u.visit_notes, u.visit_completed_at,
-			u.created_at, u.updated_at
-		FROM updated u
-		JOIN service_types st ON st.id = u.service_type_id
-	`, id, scheduledDate, scoutID).Scan(
-		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
-		&svc.CreatedAt, &svc.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LeadService{}, ErrServiceNotFound
-	}
-	return svc, err
-}
-
-func (r *Repository) CompleteServiceSurvey(ctx context.Context, id uuid.UUID, measurements string, accessDifficulty string, notes string) (LeadService, error) {
-	var svc LeadService
-	var notesPtr *string
-	if notes != "" {
-		notesPtr = &notes
-	}
-	err := r.pool.QueryRow(ctx, `
-		WITH updated AS (
-			UPDATE lead_services SET 
-				visit_measurements = $2,
-				visit_access_difficulty = $3,
-				visit_notes = $4,
-				visit_completed_at = now(),
-				status = 'Surveyed',
-				updated_at = now()
-			WHERE id = $1
-			RETURNING *
-		)
-		SELECT u.id, u.lead_id, st.name AS service_type, u.status, u.consumer_note, u.source,
-			u.visit_scheduled_date, u.visit_scout_id, u.visit_measurements, u.visit_access_difficulty, u.visit_notes, u.visit_completed_at,
-			u.created_at, u.updated_at
-		FROM updated u
-		JOIN service_types st ON st.id = u.service_type_id
-	`, id, measurements, accessDifficulty, notesPtr).Scan(
-		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
-		&svc.CreatedAt, &svc.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LeadService{}, ErrServiceNotFound
-	}
-	return svc, err
-}
-
-func (r *Repository) MarkServiceNoShow(ctx context.Context, id uuid.UUID, notes string) (LeadService, error) {
-	var svc LeadService
-	var notesPtr *string
-	if notes != "" {
-		notesPtr = &notes
-	}
-	err := r.pool.QueryRow(ctx, `
-		WITH updated AS (
-			UPDATE lead_services SET 
-				visit_notes = COALESCE(visit_notes || E'\n', '') || COALESCE($2, 'No show'),
-				status = 'Needs_Rescheduling',
-				updated_at = now()
-			WHERE id = $1
-			RETURNING *
-		)
-		SELECT u.id, u.lead_id, st.name AS service_type, u.status, u.consumer_note, u.source,
-			u.visit_scheduled_date, u.visit_scout_id, u.visit_measurements, u.visit_access_difficulty, u.visit_notes, u.visit_completed_at,
-			u.created_at, u.updated_at
-		FROM updated u
-		JOIN service_types st ON st.id = u.service_type_id
-	`, id, notesPtr).Scan(
-		&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-		&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
-		&svc.CreatedAt, &svc.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LeadService{}, ErrServiceNotFound
-	}
-	return svc, err
-}
-
-func (r *Repository) RescheduleServiceVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID, noShowNotes string, markAsNoShow bool) (LeadService, error) {
-	var svc LeadService
-	var err error
-
-	if markAsNoShow {
-		// Build no-show note
-		noShowNote := "No show"
-		if noShowNotes != "" {
-			noShowNote = "No show: " + noShowNotes
-		}
-
-		err = r.pool.QueryRow(ctx, `
-			WITH updated AS (
-				UPDATE lead_services SET 
-					visit_notes = COALESCE(visit_notes || E'\n', '') || $4,
-					visit_scheduled_date = $2,
-					visit_scout_id = $3,
-					visit_measurements = NULL,
-					visit_access_difficulty = NULL,
-					visit_completed_at = NULL,
-					status = 'Scheduled',
-					updated_at = now()
-				WHERE id = $1
-				RETURNING *
-			)
-			SELECT u.id, u.lead_id, st.name AS service_type, u.status, u.consumer_note, u.source,
-				u.visit_scheduled_date, u.visit_scout_id, u.visit_measurements, u.visit_access_difficulty, u.visit_notes, u.visit_completed_at,
-				u.created_at, u.updated_at
-			FROM updated u
-			JOIN service_types st ON st.id = u.service_type_id
-		`, id, scheduledDate, scoutID, noShowNote).Scan(
-			&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-			&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
-			&svc.CreatedAt, &svc.UpdatedAt,
-		)
-	} else {
-		// Simple reschedule without no-show
-		err = r.pool.QueryRow(ctx, `
-			WITH updated AS (
-				UPDATE lead_services SET 
-					visit_scheduled_date = $2,
-					visit_scout_id = $3,
-					visit_measurements = NULL,
-					visit_access_difficulty = NULL,
-					visit_completed_at = NULL,
-					status = 'Scheduled',
-					updated_at = now()
-				WHERE id = $1
-				RETURNING *
-			)
-			SELECT u.id, u.lead_id, st.name AS service_type, u.status, u.consumer_note, u.source,
-				u.visit_scheduled_date, u.visit_scout_id, u.visit_measurements, u.visit_access_difficulty, u.visit_notes, u.visit_completed_at,
-				u.created_at, u.updated_at
-			FROM updated u
-			JOIN service_types st ON st.id = u.service_type_id
-		`, id, scheduledDate, scoutID).Scan(
-			&svc.ID, &svc.LeadID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
-			&svc.VisitScheduledDate, &svc.VisitScoutID, &svc.VisitMeasurements, &svc.VisitAccessDifficulty, &svc.VisitNotes, &svc.VisitCompletedAt,
-			&svc.CreatedAt, &svc.UpdatedAt,
-		)
-	}
-
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
 	}

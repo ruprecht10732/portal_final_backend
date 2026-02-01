@@ -14,6 +14,8 @@ import (
 type Identity interface {
 	// UserID returns the authenticated user's ID.
 	UserID() uuid.UUID
+	// TenantID returns the organization ID associated with the user.
+	TenantID() *uuid.UUID
 	// Roles returns the user's assigned roles.
 	Roles() []string
 	// HasRole checks if the user has a specific role.
@@ -25,12 +27,17 @@ type Identity interface {
 // identity is the concrete implementation of Identity.
 type identity struct {
 	userID        uuid.UUID
+	tenantID      *uuid.UUID
 	roles         []string
 	authenticated bool
 }
 
 func (i *identity) UserID() uuid.UUID {
 	return i.userID
+}
+
+func (i *identity) TenantID() *uuid.UUID {
+	return i.tenantID
 }
 
 func (i *identity) Roles() []string {
@@ -55,6 +62,7 @@ func (i *identity) IsAuthenticated() bool {
 func GetIdentity(c *gin.Context) Identity {
 	userID, userOK := c.Get(ContextUserIDKey)
 	roles, rolesOK := c.Get(ContextRolesKey)
+	tenantID, tenantOK := c.Get(ContextTenantIDKey)
 
 	if !userOK {
 		return &identity{authenticated: false}
@@ -70,8 +78,16 @@ func GetIdentity(c *gin.Context) Identity {
 		roleList, _ = roles.([]string)
 	}
 
+	var tenantUUID *uuid.UUID
+	if tenantOK {
+		if rawTenantID, ok := tenantID.(uuid.UUID); ok {
+			tenantUUID = &rawTenantID
+		}
+	}
+
 	return &identity{
 		userID:        uid,
+		tenantID:      tenantUUID,
 		roles:         roleList,
 		authenticated: true,
 	}

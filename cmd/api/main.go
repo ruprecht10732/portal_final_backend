@@ -14,6 +14,7 @@ import (
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/router"
+	"portal_final_backend/internal/identity"
 	"portal_final_backend/internal/leads"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
@@ -70,15 +71,17 @@ func main() {
 	notificationModule.RegisterHandlers(eventBus)
 
 	// Initialize domain modules
-	authModule := auth.NewModule(pool, cfg, eventBus, log, val)
+	identityModule := identity.NewModule(pool, val)
+	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
 	leadsModule, err := leads.NewModule(pool, eventBus, val, cfg, log)
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
 	}
+	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
+	appointmentsModule := appointments.NewModule(pool, val, leadAssigner)
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
-	appointmentsModule := appointments.NewModule(pool, val)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
@@ -94,6 +97,7 @@ func main() {
 		EventBus: eventBus,
 		Modules: []apphttp.Module{
 			authModule,
+			identityModule,
 			leadsModule,
 			mapsModule,
 			servicesModule,

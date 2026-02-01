@@ -6,7 +6,6 @@ import (
 
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/management"
-	"portal_final_backend/internal/leads/scheduling"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
@@ -19,7 +18,6 @@ import (
 // Uses focused services following vertical slicing pattern.
 type Handler struct {
 	mgmt         *management.Service
-	scheduling   *scheduling.Service
 	notesHandler *NotesHandler
 	advisor      *agent.LeadAdvisor
 	val          *validator.Validator
@@ -31,8 +29,8 @@ const (
 )
 
 // New creates a new leads handler with focused services.
-func New(mgmt *management.Service, scheduling *scheduling.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, val *validator.Validator) *Handler {
-	return &Handler{mgmt: mgmt, scheduling: scheduling, notesHandler: notesHandler, advisor: advisor, val: val}
+func New(mgmt *management.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, val *validator.Validator) *Handler {
+	return &Handler{mgmt: mgmt, notesHandler: notesHandler, advisor: advisor, val: val}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -49,14 +47,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/bulk-delete", h.BulkDelete)
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.PUT(":id/assign", h.Assign)
-	rg.POST("/:id/schedule", h.ScheduleVisit)
-	rg.POST("/:id/reschedule", h.RescheduleVisit)
-	rg.POST("/:id/survey", h.CompleteSurvey)
-	rg.POST("/:id/no-show", h.MarkNoShow)
 	rg.POST("/:id/view", h.MarkViewed)
 	rg.GET("/:id/notes", h.notesHandler.ListNotes)
 	rg.POST("/:id/notes", h.notesHandler.AddNote)
-	rg.GET("/:id/visit-history", h.ListVisitHistory)
 	// Service-specific routes
 	rg.POST("/:id/services", h.AddService)
 	rg.PATCH("/:id/services/:serviceId/status", h.UpdateServiceStatus)
@@ -290,107 +283,6 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	httpkit.OK(c, lead)
 }
 
-func (h *Handler) ScheduleVisit(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.ScheduleVisitRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.scheduling.ScheduleVisit(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) RescheduleVisit(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.RescheduleVisitRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-
-	lead, err := h.scheduling.RescheduleVisit(c.Request.Context(), id, req, identity.UserID())
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) CompleteSurvey(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.CompleteSurveyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	lead, err := h.scheduling.CompleteSurvey(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
-func (h *Handler) MarkNoShow(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	var req transport.MarkNoShowRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	lead, err := h.scheduling.MarkNoShow(c.Request.Context(), id, req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, lead)
-}
-
 func (h *Handler) MarkViewed(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -450,21 +342,6 @@ func (h *Handler) List(c *gin.Context) {
 	}
 
 	result, err := h.mgmt.List(c.Request.Context(), req)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, result)
-}
-
-func (h *Handler) ListVisitHistory(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-
-	result, err := h.scheduling.ListVisitHistory(c.Request.Context(), id)
 	if httpkit.HandleError(c, err) {
 		return
 	}

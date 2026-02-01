@@ -12,22 +12,46 @@ import (
 	"github.com/google/uuid"
 )
 
+// LeadAssigner provides minimal lead assignment capabilities for lead visits.
+type LeadAssigner interface {
+	GetAssignedAgentID(ctx context.Context, leadID uuid.UUID) (*uuid.UUID, error)
+	AssignLead(ctx context.Context, leadID uuid.UUID, agentID uuid.UUID) error
+}
+
 // Service provides business logic for appointments
 type Service struct {
-	repo *repository.Repository
+	repo         *repository.Repository
+	leadAssigner LeadAssigner
 }
 
 // New creates a new appointments service
-func New(repo *repository.Repository) *Service {
-	return &Service{repo: repo}
+func New(repo *repository.Repository, leadAssigner LeadAssigner) *Service {
+	return &Service{repo: repo, leadAssigner: leadAssigner}
 }
 
 // Create creates a new appointment
-func (s *Service) Create(ctx context.Context, userID uuid.UUID, req transport.CreateAppointmentRequest) (*transport.AppointmentResponse, error) {
+func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.CreateAppointmentRequest) (*transport.AppointmentResponse, error) {
 	// Validate lead_visit type has required fields
 	if req.Type == transport.AppointmentTypeLeadVisit {
 		if req.LeadID == nil || req.LeadServiceID == nil {
 			return nil, apperr.BadRequest("lead_visit type requires leadId and leadServiceId")
+		}
+		if s.leadAssigner == nil {
+			return nil, apperr.BadRequest("lead assignment not configured")
+		}
+
+		assignedAgentID, err := s.leadAssigner.GetAssignedAgentID(ctx, *req.LeadID)
+		if err != nil {
+			return nil, err
+		}
+
+		if assignedAgentID != nil && *assignedAgentID != userID && !isAdmin {
+			return nil, apperr.Forbidden("not authorized to schedule visits for this lead")
+		}
+		if assignedAgentID == nil && !isAdmin {
+			if err := s.leadAssigner.AssignLead(ctx, *req.LeadID, userID); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -69,8 +93,8 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req transport.Cr
 }
 
 // GetByID retrieves an appointment by ID
-func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (*transport.AppointmentResponse, error) {
-	appt, err := s.repo.GetByID(ctx, id)
+func (s *Service) GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool) (*transport.AppointmentResponse, error) {
+	appt, err := s.ensureAccess(ctx, id, userID, isAdmin)
 	if err != nil {
 		return nil, err
 	}
@@ -184,18 +208,47 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 
 // List retrieves appointments with filtering
 func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.ListAppointmentsRequest) (*transport.AppointmentListResponse, error) {
+	// Apply pagination defaults
+	page := req.Page
+	if page == 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize == 0 {
+		pageSize = 20
+	}
+
+	// Parse UUID filters
+	var leadID *uuid.UUID
+	if req.LeadID != "" {
+		parsed, err := uuid.Parse(req.LeadID)
+		if err != nil {
+			return nil, apperr.BadRequest("invalid leadId format")
+		}
+		leadID = &parsed
+	}
+
+	var reqUserID *uuid.UUID
+	if req.UserID != "" {
+		parsed, err := uuid.Parse(req.UserID)
+		if err != nil {
+			return nil, apperr.BadRequest("invalid userId format")
+		}
+		reqUserID = &parsed
+	}
+
 	// Build params
 	params := repository.ListParams{
-		LeadID:   req.LeadID,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+		LeadID:   leadID,
+		Page:     page,
+		PageSize: pageSize,
 	}
 
 	// Non-admins can only see their own appointments
 	if !isAdmin {
 		params.UserID = &userID
-	} else if req.UserID != nil {
-		params.UserID = req.UserID
+	} else if reqUserID != nil {
+		params.UserID = reqUserID
 	}
 
 	if req.Type != nil {
@@ -281,42 +334,238 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, req 
 	}, nil
 }
 
-// CreateFromLeadVisit creates an appointment from a lead visit scheduling (for sync)
-func (s *Service) CreateFromLeadVisit(ctx context.Context, userID uuid.UUID, leadID uuid.UUID, leadServiceID uuid.UUID, scheduledDate time.Time, title string) error {
-	// Check if appointment already exists for this service
-	existing, err := s.repo.GetByLeadServiceID(ctx, leadServiceID)
+// Visit reports
+func (s *Service) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool) (*transport.AppointmentVisitReportResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+
+	report, err := s.repo.GetVisitReport(ctx, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.AppointmentVisitReportResponse{
+		AppointmentID:    report.AppointmentID,
+		Measurements:     report.Measurements,
+		AccessDifficulty: toAccessDifficulty(report.AccessDifficulty),
+		Notes:            report.Notes,
+		CreatedAt:        report.CreatedAt,
+		UpdatedAt:        report.UpdatedAt,
+	}, nil
+}
+
+func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, req transport.UpsertVisitReportRequest) (*transport.AppointmentVisitReportResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+
+	existing, _ := s.repo.GetVisitReport(ctx, appointmentID)
+	measurements := mergeString(existing, func(r *repository.VisitReport) *string { return r.Measurements }, req.Measurements)
+	accessDifficulty := mergeString(existing, func(r *repository.VisitReport) *string { return r.AccessDifficulty }, toAccessDifficultyString(req.AccessDifficulty))
+	notes := mergeString(existing, func(r *repository.VisitReport) *string { return r.Notes }, req.Notes)
+
+	saved, err := s.repo.UpsertVisitReport(ctx, repository.VisitReport{
+		AppointmentID:    appointmentID,
+		Measurements:     measurements,
+		AccessDifficulty: accessDifficulty,
+		Notes:            notes,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.AppointmentVisitReportResponse{
+		AppointmentID:    saved.AppointmentID,
+		Measurements:     saved.Measurements,
+		AccessDifficulty: toAccessDifficulty(saved.AccessDifficulty),
+		Notes:            saved.Notes,
+		CreatedAt:        saved.CreatedAt,
+		UpdatedAt:        saved.UpdatedAt,
+	}, nil
+}
+
+// Attachments
+func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, req transport.CreateAppointmentAttachmentRequest) (*transport.AppointmentAttachmentResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+
+	attachment := repository.AppointmentAttachment{
+		ID:            uuid.New(),
+		AppointmentID: appointmentID,
+		FileKey:       req.FileKey,
+		FileName:      req.FileName,
+		ContentType:   req.ContentType,
+		SizeBytes:     req.SizeBytes,
+	}
+
+	saved, err := s.repo.CreateAttachment(ctx, attachment)
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.AppointmentAttachmentResponse{
+		ID:            saved.ID,
+		AppointmentID: saved.AppointmentID,
+		FileKey:       saved.FileKey,
+		FileName:      saved.FileName,
+		ContentType:   saved.ContentType,
+		SizeBytes:     saved.SizeBytes,
+		CreatedAt:     saved.CreatedAt,
+	}, nil
+}
+
+func (s *Service) ListAttachments(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool) ([]transport.AppointmentAttachmentResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+
+	items, err := s.repo.ListAttachments(ctx, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := make([]transport.AppointmentAttachmentResponse, len(items))
+	for i, item := range items {
+		resp[i] = transport.AppointmentAttachmentResponse{
+			ID:            item.ID,
+			AppointmentID: item.AppointmentID,
+			FileKey:       item.FileKey,
+			FileName:      item.FileName,
+			ContentType:   item.ContentType,
+			SizeBytes:     item.SizeBytes,
+			CreatedAt:     item.CreatedAt,
+		}
+	}
+
+	return resp, nil
+}
+
+// Availability
+func (s *Service) CreateAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.CreateAvailabilityRuleRequest) (*transport.AvailabilityRuleResponse, error) {
+	targetUserID, err := s.resolveTargetUserID(userID, isAdmin, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	startTime, endTime, timezone, err := parseAvailabilityTimes(req.StartTime, req.EndTime, req.Timezone)
+	if err != nil {
+		return nil, err
+	}
+
+	saved, err := s.repo.CreateAvailabilityRule(ctx, repository.AvailabilityRule{
+		ID:        uuid.New(),
+		UserID:    targetUserID,
+		Weekday:   req.Weekday,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Timezone:  timezone,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAvailabilityRule(saved), nil
+}
+
+func (s *Service) ListAvailabilityRules(ctx context.Context, userID uuid.UUID, isAdmin bool, targetUserID *uuid.UUID) ([]transport.AvailabilityRuleResponse, error) {
+	resolvedUserID, err := s.resolveTargetUserID(userID, isAdmin, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := s.repo.ListAvailabilityRules(ctx, resolvedUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := make([]transport.AvailabilityRuleResponse, len(items))
+	for i, item := range items {
+		resp[i] = *mapAvailabilityRule(&item)
+	}
+
+	return resp, nil
+}
+
+func (s *Service) DeleteAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) error {
+	rule, err := s.repo.GetAvailabilityRuleByID(ctx, id)
 	if err != nil {
 		return err
 	}
-
-	if existing != nil {
-		// Update the existing appointment instead
-		existing.StartTime = scheduledDate
-		existing.EndTime = scheduledDate.Add(1 * time.Hour) // Default 1 hour duration
-		existing.UpdatedAt = time.Now()
-		return s.repo.Update(ctx, existing)
+	if !isAdmin && rule.UserID != userID {
+		return apperr.Forbidden("not authorized to delete this availability rule")
 	}
 
-	// Create new appointment
-	now := time.Now()
-	appt := &repository.Appointment{
-		ID:            uuid.New(),
-		UserID:        userID,
-		LeadID:        &leadID,
-		LeadServiceID: &leadServiceID,
-		Type:          string(transport.AppointmentTypeLeadVisit),
-		Title:         title,
-		Description:   nil,
-		Location:      nil,
-		StartTime:     scheduledDate,
-		EndTime:       scheduledDate.Add(1 * time.Hour), // Default 1 hour duration
-		Status:        string(transport.AppointmentStatusScheduled),
-		AllDay:        false,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+	return s.repo.DeleteAvailabilityRule(ctx, id)
+}
+
+func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.CreateAvailabilityOverrideRequest) (*transport.AvailabilityOverrideResponse, error) {
+	targetUserID, err := s.resolveTargetUserID(userID, isAdmin, req.UserID)
+	if err != nil {
+		return nil, err
 	}
 
-	return s.repo.Create(ctx, appt)
+	date, err := time.Parse("2006-01-02", req.Date)
+	if err != nil {
+		return nil, apperr.BadRequest("invalid date format")
+	}
+
+	startTime, endTime, timezone, err := parseAvailabilityOptionalTimes(req.StartTime, req.EndTime, req.Timezone)
+	if err != nil {
+		return nil, err
+	}
+
+	saved, err := s.repo.CreateAvailabilityOverride(ctx, repository.AvailabilityOverride{
+		ID:          uuid.New(),
+		UserID:      targetUserID,
+		Date:        date,
+		IsAvailable: req.IsAvailable,
+		StartTime:   startTime,
+		EndTime:     endTime,
+		Timezone:    timezone,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAvailabilityOverride(saved), nil
+}
+
+func (s *Service) ListAvailabilityOverrides(ctx context.Context, userID uuid.UUID, isAdmin bool, targetUserID *uuid.UUID, startDate *string, endDate *string) ([]transport.AvailabilityOverrideResponse, error) {
+	resolvedUserID, err := s.resolveTargetUserID(userID, isAdmin, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	start, end, err := parseOptionalDateRange(startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := s.repo.ListAvailabilityOverrides(ctx, resolvedUserID, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := make([]transport.AvailabilityOverrideResponse, len(items))
+	for i, item := range items {
+		resp[i] = *mapAvailabilityOverride(&item)
+	}
+
+	return resp, nil
+}
+
+func (s *Service) DeleteAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) error {
+	override, err := s.repo.GetAvailabilityOverrideByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !isAdmin && override.UserID != userID {
+		return apperr.Forbidden("not authorized to delete this availability override")
+	}
+
+	return s.repo.DeleteAvailabilityOverride(ctx, id)
 }
 
 // Helper functions
@@ -332,6 +581,157 @@ func (s *Service) getLeadInfo(ctx context.Context, leadID uuid.UUID) *transport.
 		LastName:  info.LastName,
 		Phone:     info.Phone,
 		Address:   fmt.Sprintf("%s %s, %s", info.Street, info.HouseNumber, info.City),
+	}
+}
+
+func (s *Service) ensureAccess(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool) (*repository.Appointment, error) {
+	appt, err := s.repo.GetByID(ctx, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if !isAdmin && appt.UserID != userID {
+		return nil, apperr.Forbidden("not authorized to access this appointment")
+	}
+	return appt, nil
+}
+
+func toAccessDifficulty(value *string) *transport.AccessDifficulty {
+	if value == nil {
+		return nil
+	}
+	converted := transport.AccessDifficulty(*value)
+	return &converted
+}
+
+func toAccessDifficultyString(value *transport.AccessDifficulty) *string {
+	if value == nil {
+		return nil
+	}
+	converted := string(*value)
+	return &converted
+}
+
+func mergeString(existing *repository.VisitReport, getExisting func(*repository.VisitReport) *string, next *string) *string {
+	if next != nil {
+		return next
+	}
+	if existing == nil {
+		return nil
+	}
+	return getExisting(existing)
+}
+
+func parseAvailabilityTimes(startTime string, endTime string, timezone string) (time.Time, time.Time, string, error) {
+	start, err := time.Parse("15:04", startTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, "", apperr.BadRequest("invalid startTime format")
+	}
+	end, err := time.Parse("15:04", endTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, "", apperr.BadRequest("invalid endTime format")
+	}
+	if !end.After(start) {
+		return time.Time{}, time.Time{}, "", apperr.BadRequest("endTime must be after startTime")
+	}
+	if timezone == "" {
+		timezone = "Europe/Amsterdam"
+	}
+	return start, end, timezone, nil
+}
+
+func parseAvailabilityOptionalTimes(startTime *string, endTime *string, timezone string) (*time.Time, *time.Time, string, error) {
+	if timezone == "" {
+		timezone = "Europe/Amsterdam"
+	}
+	if startTime == nil && endTime == nil {
+		return nil, nil, timezone, nil
+	}
+	if startTime == nil || endTime == nil {
+		return nil, nil, "", apperr.BadRequest("startTime and endTime must both be provided")
+	}
+	start, err := time.Parse("15:04", *startTime)
+	if err != nil {
+		return nil, nil, "", apperr.BadRequest("invalid startTime format")
+	}
+	end, err := time.Parse("15:04", *endTime)
+	if err != nil {
+		return nil, nil, "", apperr.BadRequest("invalid endTime format")
+	}
+	if !end.After(start) {
+		return nil, nil, "", apperr.BadRequest("endTime must be after startTime")
+	}
+	return &start, &end, timezone, nil
+}
+
+func parseOptionalDateRange(startDate *string, endDate *string) (*time.Time, *time.Time, error) {
+	var start *time.Time
+	var end *time.Time
+
+	if startDate != nil && *startDate != "" {
+		parsed, err := time.Parse("2006-01-02", *startDate)
+		if err != nil {
+			return nil, nil, apperr.BadRequest("invalid startDate format")
+		}
+		start = &parsed
+	}
+	if endDate != nil && *endDate != "" {
+		parsed, err := time.Parse("2006-01-02", *endDate)
+		if err != nil {
+			return nil, nil, apperr.BadRequest("invalid endDate format")
+		}
+		end = &parsed
+	}
+	if start != nil && end != nil && start.After(*end) {
+		return nil, nil, apperr.BadRequest("startDate must be before or equal to endDate")
+	}
+	return start, end, nil
+}
+
+func (s *Service) resolveTargetUserID(userID uuid.UUID, isAdmin bool, target *uuid.UUID) (uuid.UUID, error) {
+	if target == nil {
+		return userID, nil
+	}
+	if !isAdmin && *target != userID {
+		return uuid.UUID{}, apperr.Forbidden("not authorized to manage availability for this user")
+	}
+	return *target, nil
+}
+
+func mapAvailabilityRule(rule *repository.AvailabilityRule) *transport.AvailabilityRuleResponse {
+	return &transport.AvailabilityRuleResponse{
+		ID:        rule.ID,
+		UserID:    rule.UserID,
+		Weekday:   rule.Weekday,
+		StartTime: rule.StartTime.Format("15:04"),
+		EndTime:   rule.EndTime.Format("15:04"),
+		Timezone:  rule.Timezone,
+		CreatedAt: rule.CreatedAt,
+		UpdatedAt: rule.UpdatedAt,
+	}
+}
+
+func mapAvailabilityOverride(override *repository.AvailabilityOverride) *transport.AvailabilityOverrideResponse {
+	var startTime *string
+	var endTime *string
+	if override.StartTime != nil {
+		value := override.StartTime.Format("15:04")
+		startTime = &value
+	}
+	if override.EndTime != nil {
+		value := override.EndTime.Format("15:04")
+		endTime = &value
+	}
+
+	return &transport.AvailabilityOverrideResponse{
+		ID:          override.ID,
+		UserID:      override.UserID,
+		Date:        override.Date.Format("2006-01-02"),
+		IsAvailable: override.IsAvailable,
+		StartTime:   startTime,
+		EndTime:     endTime,
+		Timezone:    override.Timezone,
+		CreatedAt:   override.CreatedAt,
+		UpdatedAt:   override.UpdatedAt,
 	}
 }
 

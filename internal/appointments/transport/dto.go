@@ -25,6 +25,15 @@ const (
 	AppointmentStatusNoShow    AppointmentStatus = "no_show"
 )
 
+// AccessDifficulty defines accessibility difficulty for visit reports
+type AccessDifficulty string
+
+const (
+	AccessDifficultyLow    AccessDifficulty = "Low"
+	AccessDifficultyMedium AccessDifficulty = "Medium"
+	AccessDifficultyHigh   AccessDifficulty = "High"
+)
+
 // CreateAppointmentRequest is the request body for creating an appointment
 type CreateAppointmentRequest struct {
 	LeadID        *uuid.UUID      `json:"leadId,omitempty"`
@@ -55,14 +64,14 @@ type UpdateAppointmentStatusRequest struct {
 
 // ListAppointmentsRequest is the query parameters for listing appointments
 type ListAppointmentsRequest struct {
-	UserID    *uuid.UUID        `form:"userId"`
-	LeadID    *uuid.UUID        `form:"leadId"`
-	Type      *AppointmentType  `form:"type" validate:"omitempty,oneof=lead_visit standalone blocked"`
+	UserID    string             `form:"userId"`
+	LeadID    string             `form:"leadId"`
+	Type      *AppointmentType   `form:"type" validate:"omitempty,oneof=lead_visit standalone blocked"`
 	Status    *AppointmentStatus `form:"status" validate:"omitempty,oneof=scheduled completed cancelled no_show"`
-	StartFrom string            `form:"startFrom"` // ISO date
-	StartTo   string            `form:"startTo"`   // ISO date
-	Page      int               `form:"page" validate:"min=1"`
-	PageSize  int               `form:"pageSize" validate:"min=1,max=100"`
+	StartFrom string             `form:"startFrom"` // ISO date
+	StartTo   string             `form:"startTo"`   // ISO date
+	Page      int                `form:"page" validate:"omitempty,min=1"`
+	PageSize  int                `form:"pageSize" validate:"omitempty,min=1,max=100"`
 }
 
 // AppointmentResponse is the response body for an appointment
@@ -101,4 +110,79 @@ type AppointmentListResponse struct {
 	Page       int                   `json:"page"`
 	PageSize   int                   `json:"pageSize"`
 	TotalPages int                   `json:"totalPages"`
+}
+
+// Visit report DTOs
+type UpsertVisitReportRequest struct {
+	Measurements     *string           `json:"measurements,omitempty" validate:"omitempty,max=5000"`
+	AccessDifficulty *AccessDifficulty `json:"accessDifficulty,omitempty" validate:"omitempty,oneof=Low Medium High"`
+	Notes            *string           `json:"notes,omitempty" validate:"omitempty,max=5000"`
+}
+
+type AppointmentVisitReportResponse struct {
+	AppointmentID    uuid.UUID         `json:"appointmentId"`
+	Measurements     *string           `json:"measurements,omitempty"`
+	AccessDifficulty *AccessDifficulty `json:"accessDifficulty,omitempty"`
+	Notes            *string           `json:"notes,omitempty"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+}
+
+// Attachment DTOs
+type CreateAppointmentAttachmentRequest struct {
+	FileKey     string  `json:"fileKey" validate:"required,min=1,max=500"`
+	FileName    string  `json:"fileName" validate:"required,min=1,max=255"`
+	ContentType *string `json:"contentType,omitempty" validate:"omitempty,max=200"`
+	SizeBytes   *int64  `json:"sizeBytes,omitempty" validate:"omitempty,min=0"`
+}
+
+type AppointmentAttachmentResponse struct {
+	ID            uuid.UUID `json:"id"`
+	AppointmentID uuid.UUID `json:"appointmentId"`
+	FileKey       string    `json:"fileKey"`
+	FileName      string    `json:"fileName"`
+	ContentType   *string   `json:"contentType,omitempty"`
+	SizeBytes     *int64    `json:"sizeBytes,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// Availability DTOs
+type CreateAvailabilityRuleRequest struct {
+	UserID    *uuid.UUID `json:"userId,omitempty"`
+	Weekday   int        `json:"weekday" validate:"min=0,max=6"`
+	StartTime string     `json:"startTime" validate:"required"`
+	EndTime   string     `json:"endTime" validate:"required"`
+	Timezone  string     `json:"timezone,omitempty" validate:"omitempty,max=100"`
+}
+
+type AvailabilityRuleResponse struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"userId"`
+	Weekday   int       `json:"weekday"`
+	StartTime string    `json:"startTime"`
+	EndTime   string    `json:"endTime"`
+	Timezone  string    `json:"timezone"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type CreateAvailabilityOverrideRequest struct {
+	UserID      *uuid.UUID `json:"userId,omitempty"`
+	Date        string     `json:"date" validate:"required"`
+	IsAvailable bool       `json:"isAvailable"`
+	StartTime   *string    `json:"startTime,omitempty"`
+	EndTime     *string    `json:"endTime,omitempty"`
+	Timezone    string     `json:"timezone,omitempty" validate:"omitempty,max=100"`
+}
+
+type AvailabilityOverrideResponse struct {
+	ID          uuid.UUID `json:"id"`
+	UserID      uuid.UUID `json:"userId"`
+	Date        string    `json:"date"`
+	IsAvailable bool      `json:"isAvailable"`
+	StartTime   *string   `json:"startTime,omitempty"`
+	EndTime     *string   `json:"endTime,omitempty"`
+	Timezone    string    `json:"timezone"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }

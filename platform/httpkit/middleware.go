@@ -23,6 +23,8 @@ const (
 	ContextUserIDKey = "userID"
 	// ContextRolesKey is the gin context key for the user's roles.
 	ContextRolesKey = "roles"
+	// ContextTenantIDKey is the gin context key for the tenant (organization) ID.
+	ContextTenantIDKey = "tenantID"
 
 	errMissingToken = "missing token"
 	errInvalidToken = "invalid token"
@@ -147,6 +149,15 @@ func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 		roles := extractRoles(claims["roles"])
 		c.Set(ContextUserIDKey, userID)
 		c.Set(ContextRolesKey, roles)
+
+		if tenantID, err := parseTenantID(claims); err == nil {
+			if tenantID != nil {
+				c.Set(ContextTenantIDKey, *tenantID)
+			}
+		} else if err != nil {
+			abortUnauthorized(c, errInvalidToken)
+			return
+		}
 		c.Next()
 	}
 }
@@ -236,6 +247,18 @@ func parseAccessClaims(rawToken string, cfg config.JWTConfig) (jwt.MapClaims, er
 func parseUserID(claims jwt.MapClaims) (uuid.UUID, error) {
 	userIDRaw, _ := claims["sub"].(string)
 	return uuid.Parse(userIDRaw)
+}
+
+func parseTenantID(claims jwt.MapClaims) (*uuid.UUID, error) {
+	value, ok := claims["tenant_id"].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 func abortUnauthorized(c *gin.Context, message string) {

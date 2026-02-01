@@ -1,0 +1,43 @@
+-- +goose Up
+-- +goose StatementBegin
+
+ALTER TABLE lead_services
+    DROP COLUMN IF EXISTS visit_scheduled_date,
+    DROP COLUMN IF EXISTS visit_scout_id,
+    DROP COLUMN IF EXISTS visit_measurements,
+    DROP COLUMN IF EXISTS visit_access_difficulty,
+    DROP COLUMN IF EXISTS visit_notes,
+    DROP COLUMN IF EXISTS visit_completed_at;
+
+DROP TABLE IF EXISTS visit_history;
+
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+
+ALTER TABLE lead_services
+    ADD COLUMN IF NOT EXISTS visit_scheduled_date TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS visit_scout_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS visit_measurements TEXT,
+    ADD COLUMN IF NOT EXISTS visit_access_difficulty TEXT CHECK (visit_access_difficulty IS NULL OR visit_access_difficulty IN ('Low', 'Medium', 'High')),
+    ADD COLUMN IF NOT EXISTS visit_notes TEXT,
+    ADD COLUMN IF NOT EXISTS visit_completed_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS visit_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    scheduled_date TIMESTAMPTZ NOT NULL,
+    scout_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('completed', 'no_show', 'rescheduled', 'cancelled')),
+    measurements TEXT,
+    access_difficulty TEXT CHECK (access_difficulty IN ('Low', 'Medium', 'High')),
+    notes TEXT,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_visit_history_lead_id ON visit_history(lead_id);
+CREATE INDEX IF NOT EXISTS idx_visit_history_scheduled_date ON visit_history(scheduled_date);
+
+-- +goose StatementEnd

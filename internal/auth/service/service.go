@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/auth/transport"
 	"portal_final_backend/internal/events"
+	identityrepo "portal_final_backend/internal/identity/repository"
+	identityservice "portal_final_backend/internal/identity/service"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
@@ -22,12 +25,14 @@ const (
 	accessTokenType     = "access"
 	refreshTokenType    = "refresh"
 	defaultUserRole     = "user" // Default role for new users (not admin)
+	defaultAdminRole    = "admin"
 	tokenInvalidMessage = "token invalid"
 	tokenExpiredMessage = "token expired"
 )
 
 type Service struct {
 	repo     *repository.Repository
+	identity *identityservice.Service
 	cfg      config.AuthServiceConfig
 	eventBus events.Bus
 	log      *logger.Logger
@@ -45,28 +50,78 @@ type Profile struct {
 	UpdatedAt     time.Time
 }
 
-func New(repo *repository.Repository, cfg config.AuthServiceConfig, eventBus events.Bus, log *logger.Logger) *Service {
-	return &Service{repo: repo, cfg: cfg, eventBus: eventBus, log: log}
+func New(repo *repository.Repository, identity *identityservice.Service, cfg config.AuthServiceConfig, eventBus events.Bus, log *logger.Logger) *Service {
+	return &Service{repo: repo, identity: identity, cfg: cfg, eventBus: eventBus, log: log}
 }
 
-func (s *Service) SignUp(ctx context.Context, email, plainPassword string) error {
+func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organizationName *string, inviteToken *string) error {
 	hash, err := password.Hash(plainPassword)
 	if err != nil {
 		s.log.Error("failed to hash password", "error", err)
 		return err
 	}
 
-	user, err := s.repo.CreateUser(ctx, email, hash)
+	trimmedInvite := ""
+	if inviteToken != nil {
+		trimmedInvite = strings.TrimSpace(*inviteToken)
+	}
+	usingInvite := trimmedInvite != ""
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	user, err := s.repo.CreateUserTx(ctx, tx, email, hash)
 	if err != nil {
 		s.log.Error("failed to create user", "email", email, "error", err)
 		return err
 	}
 
-	// Assign default 'user' role - not admin
-	if err := s.repo.SetUserRoles(ctx, user.ID, []string{defaultUserRole}); err != nil {
+	roles := []string{defaultUserRole}
+	if !usingInvite {
+		roles = []string{defaultAdminRole}
+	}
+	if err := s.repo.SetUserRolesTx(ctx, tx, user.ID, roles); err != nil {
 		s.log.Error("failed to set user roles", "user_id", user.ID, "error", err)
 		return err
 	}
+
+	if usingInvite {
+		invite, err := s.identity.ResolveInvite(ctx, trimmedInvite)
+		if err != nil {
+			return err
+		}
+		if !strings.EqualFold(invite.Email, email) {
+			return apperr.Forbidden("invite does not match email")
+		}
+		if err := s.identity.AddMember(ctx, tx, invite.OrganizationID, user.ID); err != nil {
+			return err
+		}
+		if err := s.identity.UseInvite(ctx, tx, invite.ID, user.ID); err != nil {
+			return err
+		}
+	} else {
+		orgName := deriveOrganizationName(email, organizationName)
+		orgID, err := s.identity.CreateOrganizationForUser(ctx, tx, orgName, user.ID)
+		if err != nil {
+			return err
+		}
+		if err := s.identity.AddMember(ctx, tx, orgID, user.ID); err != nil {
+			return err
+		}
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
 
 	s.log.AuthEvent("signup", email, true, "")
 
@@ -209,7 +264,15 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 		return "", "", err
 	}
 
-	accessToken, err := s.signJWT(userID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
+	orgID, err := s.identity.GetUserOrganizationID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, identityrepo.ErrNotFound) {
+			return "", "", apperr.Forbidden("organization not found")
+		}
+		return "", "", err
+	}
+
+	accessToken, err := s.signJWT(userID, &orgID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
 	if err != nil {
 		return "", "", err
 	}
@@ -228,7 +291,7 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 	return accessToken, refreshToken, nil
 }
 
-func (s *Service) signJWT(userID uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
+func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":   userID.String(),
 		"type":  tokenType,
@@ -236,9 +299,34 @@ func (s *Service) signJWT(userID uuid.UUID, roles []string, ttl time.Duration, t
 		"exp":   time.Now().Add(ttl).Unix(),
 		"iat":   time.Now().Unix(),
 	}
+	if tenantID != nil {
+		claims["tenant_id"] = tenantID.String()
+	}
 
 	tokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tokenObj.SignedString([]byte(secret))
+}
+
+func deriveOrganizationName(email string, organizationName *string) string {
+	if organizationName != nil {
+		trimmed := strings.TrimSpace(*organizationName)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+
+	local := strings.SplitN(strings.TrimSpace(email), "@", 2)[0]
+	if local == "" {
+		return "My Organization"
+	}
+	return capitalizeFirst(local) + " Organization"
+}
+
+func capitalizeFirst(value string) string {
+	if value == "" {
+		return value
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }
 
 func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {

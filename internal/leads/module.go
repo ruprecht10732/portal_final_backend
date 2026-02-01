@@ -12,7 +12,6 @@ import (
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/internal/leads/scheduling"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
@@ -25,7 +24,6 @@ import (
 type Module struct {
 	handler    *handler.Handler
 	management *management.Service
-	scheduling *scheduling.Service
 	notes      *notes.Service
 	advisor    *agent.LeadAdvisor
 }
@@ -61,17 +59,15 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
 	mgmtSvc := management.New(repo, eventBus, mapsSvc)
-	schedulingSvc := scheduling.New(repo, eventBus)
 	notesSvc := notes.New(repo)
 
 	// Create handlers
 	notesHandler := handler.NewNotesHandler(notesSvc, val)
-	h := handler.New(mgmtSvc, schedulingSvc, notesHandler, advisor, val)
+	h := handler.New(mgmtSvc, notesHandler, advisor, val)
 
 	return &Module{
 		handler:    h,
 		management: mgmtSvc,
-		scheduling: schedulingSvc,
 		notes:      notesSvc,
 		advisor:    advisor,
 	}, nil
@@ -85,11 +81,6 @@ func (m *Module) Name() string {
 // ManagementService returns the lead management service for external use.
 func (m *Module) ManagementService() *management.Service {
 	return m.management
-}
-
-// SchedulingService returns the lead scheduling service for external use.
-func (m *Module) SchedulingService() *scheduling.Service {
-	return m.scheduling
 }
 
 // NotesService returns the lead notes service for external use.

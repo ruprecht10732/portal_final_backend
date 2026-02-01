@@ -3,8 +3,10 @@ package transport
 import "time"
 
 type SignUpRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,strongpassword"`
+	Email            string  `json:"email" validate:"required,email"`
+	Password         string  `json:"password" validate:"required,strongpassword"`
+	OrganizationName *string `json:"organizationName" validate:"omitempty,max=120"`
+	InviteToken      *string `json:"inviteToken" validate:"omitempty"`
 }
 
 type SignInRequest struct {

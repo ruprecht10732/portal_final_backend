@@ -379,6 +379,37 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 	return ToLeadResponse(updated), nil
 }
 
+// AssignIfUnassigned assigns a lead to the agent if it is currently unassigned.
+func (s *Service) AssignIfUnassigned(ctx context.Context, id uuid.UUID, agentID uuid.UUID) error {
+	lead, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return apperr.NotFound(leadNotFoundMsg)
+		}
+		return err
+	}
+
+	if lead.AssignedAgentID != nil {
+		return apperr.Forbidden("lead is already assigned")
+	}
+
+	params := repository.UpdateLeadParams{
+		AssignedAgentID:    &agentID,
+		AssignedAgentIDSet: true,
+	}
+
+	if _, err := s.repo.Update(ctx, id, params); err != nil {
+		return err
+	}
+
+	_ = s.repo.AddActivity(ctx, id, agentID, "assigned", map[string]interface{}{
+		"from": nil,
+		"to":   agentID,
+	})
+
+	return nil
+}
+
 // SetViewedBy marks a lead as viewed by a user.
 func (s *Service) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
 	return s.repo.SetViewedBy(ctx, id, userID)

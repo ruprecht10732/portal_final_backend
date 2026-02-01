@@ -36,13 +36,25 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PUT("/:id", h.Update)
 	rg.DELETE("/:id", h.Delete)
 	rg.PATCH("/:id/status", h.UpdateStatus)
+	rg.GET("/:id/visit-report", h.GetVisitReport)
+	rg.PUT("/:id/visit-report", h.UpsertVisitReport)
+	rg.GET("/:id/attachments", h.ListAttachments)
+	rg.POST("/:id/attachments", h.CreateAttachment)
+
+	rg.GET("/availability/rules", h.ListAvailabilityRules)
+	rg.POST("/availability/rules", h.CreateAvailabilityRule)
+	rg.DELETE("/availability/rules/:id", h.DeleteAvailabilityRule)
+
+	rg.GET("/availability/overrides", h.ListAvailabilityOverrides)
+	rg.POST("/availability/overrides", h.CreateAvailabilityOverride)
+	rg.DELETE("/availability/overrides/:id", h.DeleteAvailabilityOverride)
 }
 
 // List handles GET /api/appointments
 func (h *Handler) List(c *gin.Context) {
 	var req transport.ListAppointmentsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
 		return
 	}
 
@@ -77,7 +89,8 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.Create(c.Request.Context(), identity.UserID(), req)
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.Create(c.Request.Context(), identity.UserID(), isAdmin, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -93,7 +106,13 @@ func (h *Handler) GetByID(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.GetByID(c.Request.Context(), id)
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.GetByID(c.Request.Context(), id, identity.UserID(), isAdmin)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -184,6 +203,271 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+// GetVisitReport handles GET /api/appointments/:id/visit-report
+func (h *Handler) GetVisitReport(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.GetVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// UpsertVisitReport handles PUT /api/appointments/:id/visit-report
+func (h *Handler) UpsertVisitReport(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpsertVisitReportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.UpsertVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// CreateAttachment handles POST /api/appointments/:id/attachments
+func (h *Handler) CreateAttachment(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.CreateAppointmentAttachmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.CreateAttachment(c.Request.Context(), id, identity.UserID(), isAdmin, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// ListAttachments handles GET /api/appointments/:id/attachments
+func (h *Handler) ListAttachments(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.ListAttachments(c.Request.Context(), id, identity.UserID(), isAdmin)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// CreateAvailabilityRule handles POST /api/appointments/availability/rules
+func (h *Handler) CreateAvailabilityRule(c *gin.Context) {
+	var req transport.CreateAvailabilityRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.CreateAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// ListAvailabilityRules handles GET /api/appointments/availability/rules
+func (h *Handler) ListAvailabilityRules(c *gin.Context) {
+	var userID *uuid.UUID
+	if raw := c.Query("userId"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+			return
+		}
+		userID = &parsed
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.ListAvailabilityRules(c.Request.Context(), identity.UserID(), isAdmin, userID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// DeleteAvailabilityRule handles DELETE /api/appointments/availability/rules/:id
+func (h *Handler) DeleteAvailabilityRule(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	if err := h.svc.DeleteAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, id); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "availability rule deleted"})
+}
+
+// CreateAvailabilityOverride handles POST /api/appointments/availability/overrides
+func (h *Handler) CreateAvailabilityOverride(c *gin.Context) {
+	var req transport.CreateAvailabilityOverrideRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.CreateAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// ListAvailabilityOverrides handles GET /api/appointments/availability/overrides
+func (h *Handler) ListAvailabilityOverrides(c *gin.Context) {
+	var userID *uuid.UUID
+	if raw := c.Query("userId"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+			return
+		}
+		userID = &parsed
+	}
+
+	startDate := c.Query("startDate")
+	endDate := c.Query("endDate")
+	var startPtr *string
+	var endPtr *string
+	if startDate != "" {
+		startPtr = &startDate
+	}
+	if endDate != "" {
+		endPtr = &endDate
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.ListAvailabilityOverrides(c.Request.Context(), identity.UserID(), isAdmin, userID, startPtr, endPtr)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// DeleteAvailabilityOverride handles DELETE /api/appointments/availability/overrides/:id
+func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	if err := h.svc.DeleteAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, id); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "availability override deleted"})
 }
 
 func containsRole(roles []string, role string) bool {

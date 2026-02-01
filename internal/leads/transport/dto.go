@@ -29,14 +29,6 @@ const (
 	LeadStatusClosed            LeadStatus = "Closed"
 )
 
-type AccessDifficulty string
-
-const (
-	AccessDifficultyLow    AccessDifficulty = "Low"
-	AccessDifficultyMedium AccessDifficulty = "Medium"
-	AccessDifficultyHigh   AccessDifficulty = "High"
-)
-
 // Request DTOs
 type CreateLeadRequest struct {
 	FirstName    string       `json:"firstName" validate:"required,min=1,max=100"`
@@ -88,34 +80,6 @@ type UpdateLeadStatusRequest struct {
 
 type AssignLeadRequest struct {
 	AssigneeID *uuid.UUID `json:"assigneeId" validate:"omitempty"`
-}
-
-type ScheduleVisitRequest struct {
-	ServiceID     uuid.UUID  `json:"serviceId" validate:"required"`
-	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
-	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
-	SendInvite    bool       `json:"sendInvite,omitempty"`
-}
-
-type CompleteSurveyRequest struct {
-	ServiceID        uuid.UUID        `json:"serviceId" validate:"required"`
-	Measurements     string           `json:"measurements" validate:"required,min=1,max=500"`
-	AccessDifficulty AccessDifficulty `json:"accessDifficulty" validate:"required,oneof=Low Medium High"`
-	Notes            string           `json:"notes,omitempty" validate:"max=2000"`
-}
-
-type MarkNoShowRequest struct {
-	ServiceID uuid.UUID `json:"serviceId" validate:"required"`
-	Notes     string    `json:"notes,omitempty" validate:"max=500"`
-}
-
-type RescheduleVisitRequest struct {
-	ServiceID     uuid.UUID  `json:"serviceId" validate:"required"`
-	NoShowNotes   string     `json:"noShowNotes,omitempty" validate:"max=500"`
-	MarkAsNoShow  bool       `json:"markAsNoShow"`
-	ScheduledDate time.Time  `json:"scheduledDate" validate:"required"`
-	ScoutID       *uuid.UUID `json:"scoutId,omitempty"`
-	SendInvite    bool       `json:"sendInvite,omitempty"`
 }
 
 type BulkDeleteLeadsRequest struct {
@@ -172,23 +136,13 @@ type AddressResponse struct {
 	Longitude   *float64 `json:"longitude,omitempty"`
 }
 
-type VisitResponse struct {
-	ScheduledDate    *time.Time        `json:"scheduledDate,omitempty"`
-	ScoutID          *uuid.UUID        `json:"scoutId,omitempty"`
-	Measurements     *string           `json:"measurements,omitempty"`
-	AccessDifficulty *AccessDifficulty `json:"accessDifficulty,omitempty"`
-	Notes            *string           `json:"notes,omitempty"`
-	CompletedAt      *time.Time        `json:"completedAt,omitempty"`
-}
-
 type LeadServiceResponse struct {
-	ID           uuid.UUID     `json:"id"`
-	ServiceType  ServiceType   `json:"serviceType"`
-	Status       LeadStatus    `json:"status"`
-	ConsumerNote *string       `json:"consumerNote,omitempty"`
-	Visit        VisitResponse `json:"visit"`
-	CreatedAt    time.Time     `json:"createdAt"`
-	UpdatedAt    time.Time     `json:"updatedAt"`
+	ID           uuid.UUID   `json:"id"`
+	ServiceType  ServiceType `json:"serviceType"`
+	Status       LeadStatus  `json:"status"`
+	ConsumerNote *string     `json:"consumerNote,omitempty"`
+	CreatedAt    time.Time   `json:"createdAt"`
+	UpdatedAt    time.Time   `json:"updatedAt"`
 }
 
 type LeadResponse struct {
@@ -269,31 +223,4 @@ type LeadMetricsResponse struct {
 	ProjectedValueCents int64   `json:"projectedValueCents"`
 	DisqualifiedRate    float64 `json:"disqualifiedRate"`
 	TouchpointsPerLead  float64 `json:"touchpointsPerLead"`
-}
-
-// Visit history types
-type VisitOutcome string
-
-const (
-	VisitOutcomeCompleted   VisitOutcome = "completed"
-	VisitOutcomeNoShow      VisitOutcome = "no_show"
-	VisitOutcomeRescheduled VisitOutcome = "rescheduled"
-	VisitOutcomeCancelled   VisitOutcome = "cancelled"
-)
-
-type VisitHistoryResponse struct {
-	ID               uuid.UUID         `json:"id"`
-	LeadID           uuid.UUID         `json:"leadId"`
-	ScheduledDate    time.Time         `json:"scheduledDate"`
-	ScoutID          *uuid.UUID        `json:"scoutId,omitempty"`
-	Outcome          VisitOutcome      `json:"outcome"`
-	Measurements     *string           `json:"measurements,omitempty"`
-	AccessDifficulty *AccessDifficulty `json:"accessDifficulty,omitempty"`
-	Notes            *string           `json:"notes,omitempty"`
-	CompletedAt      *time.Time        `json:"completedAt,omitempty"`
-	CreatedAt        time.Time         `json:"createdAt"`
-}
-
-type VisitHistoryListResponse struct {
-	Items []VisitHistoryResponse `json:"items"`
 }

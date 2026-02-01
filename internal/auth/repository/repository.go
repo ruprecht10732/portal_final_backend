@@ -26,6 +26,10 @@ func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
+	return r.pool.Begin(ctx)
+}
+
 type User struct {
 	ID            uuid.UUID
 	Email         string
@@ -84,6 +88,37 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 	}
 
 	if err = tx.Commit(ctx); err != nil {
+		return User{}, err
+	}
+
+	return user, nil
+}
+
+func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwordHash string) (User, error) {
+	var user User
+	err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, password_hash, is_email_verified)
+		VALUES ($1, $2, false)
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+	`, email, passwordHash).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.EmailVerified,
+		&user.FirstName,
+		&user.LastName,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return User{}, err
+	}
+
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO user_settings (user_id)
+		VALUES ($1)
+		ON CONFLICT (user_id) DO NOTHING
+	`, user.ID); err != nil {
 		return User{}, err
 	}
 
@@ -381,6 +416,46 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles [
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, roles []string) error {
+	if len(roles) == 0 {
+		return ErrInvalidRole
+	}
+
+	rows, err := tx.Query(ctx, `SELECT name FROM roles WHERE name = ANY($1)`, roles)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	valid := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		valid[name] = struct{}{}
+	}
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+	if len(valid) != len(uniqueStrings(roles)) {
+		return ErrInvalidRole
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id)
+		SELECT $1, id FROM roles WHERE name = ANY($2)
+	`, userID, roles); err != nil {
 		return err
 	}
 

@@ -18,9 +18,9 @@ type Module struct {
 }
 
 // NewModule creates a new appointments module with all dependencies wired
-func NewModule(pool *pgxpool.Pool, val *validator.Validator) *Module {
+func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner service.LeadAssigner) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo)
+	svc := service.New(repo, leadAssigner)
 	h := handler.New(svc, val)
 
 	return &Module{

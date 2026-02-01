@@ -60,25 +60,10 @@ type LeadServiceWriter interface {
 	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID) error
 }
 
-// VisitManager handles visit scheduling and completion on services.
-type VisitManager interface {
-	ScheduleServiceVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID) (LeadService, error)
-	CompleteServiceSurvey(ctx context.Context, id uuid.UUID, measurements string, accessDifficulty string, notes string) (LeadService, error)
-	MarkServiceNoShow(ctx context.Context, id uuid.UUID, notes string) (LeadService, error)
-	RescheduleServiceVisit(ctx context.Context, id uuid.UUID, scheduledDate time.Time, scoutID *uuid.UUID, noShowNotes string, markAsNoShow bool) (LeadService, error)
-}
-
 // NoteStore manages lead notes.
 type NoteStore interface {
 	CreateLeadNote(ctx context.Context, params CreateLeadNoteParams) (LeadNote, error)
 	ListLeadNotes(ctx context.Context, leadID uuid.UUID) ([]LeadNote, error)
-}
-
-// VisitHistoryStore manages visit history records.
-type VisitHistoryStore interface {
-	CreateVisitHistory(ctx context.Context, params CreateVisitHistoryParams) (VisitHistory, error)
-	ListVisitHistory(ctx context.Context, leadID uuid.UUID) ([]VisitHistory, error)
-	GetVisitHistoryByID(ctx context.Context, id uuid.UUID) (VisitHistory, error)
 }
 
 // AIAnalysisStore manages AI-generated analyses for leads.
@@ -102,9 +87,7 @@ type LeadsRepository interface {
 	MetricsReader
 	LeadServiceReader
 	LeadServiceWriter
-	VisitManager
 	NoteStore
-	VisitHistoryStore
 	AIAnalysisStore
 }
 

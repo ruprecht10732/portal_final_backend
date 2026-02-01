@@ -74,18 +74,6 @@ func ToLeadServiceResponse(svc repository.LeadService) transport.LeadServiceResp
 		ConsumerNote: svc.ConsumerNote,
 		CreatedAt:    svc.CreatedAt,
 		UpdatedAt:    svc.UpdatedAt,
-		Visit: transport.VisitResponse{
-			ScheduledDate: svc.VisitScheduledDate,
-			ScoutID:       svc.VisitScoutID,
-			Measurements:  svc.VisitMeasurements,
-			Notes:         svc.VisitNotes,
-			CompletedAt:   svc.VisitCompletedAt,
-		},
-	}
-
-	if svc.VisitAccessDifficulty != nil {
-		difficulty := transport.AccessDifficulty(*svc.VisitAccessDifficulty)
-		resp.Visit.AccessDifficulty = &difficulty
 	}
 
 	return resp

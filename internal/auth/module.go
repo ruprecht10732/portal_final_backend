@@ -9,6 +9,7 @@ import (
 	authvalidator "portal_final_backend/internal/auth/validator"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
+	identityservice "portal_final_backend/internal/identity/service"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
@@ -30,9 +31,9 @@ type Module struct {
 }
 
 // NewModule creates and initializes the auth module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, cfg AuthModuleConfig, eventBus events.Bus, log *logger.Logger, val *validator.Validator) *Module {
+func NewModule(pool *pgxpool.Pool, identityService *identityservice.Service, cfg AuthModuleConfig, eventBus events.Bus, log *logger.Logger, val *validator.Validator) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, cfg, eventBus, log)
+	svc := service.New(repo, identityService, cfg, eventBus, log)
 
 	// Register auth-specific validations on the injected validator
 	_ = authvalidator.RegisterAuthValidations(val)
