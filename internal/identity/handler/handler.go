@@ -3,12 +3,14 @@ package handler
 import (
 	"net/http"
 
+	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/identity/transport"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -29,6 +31,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/organizations/me", h.GetOrganization)
 	rg.PATCH("/organizations/me", h.UpdateOrganization)
 	rg.POST("/organizations/invites", h.CreateInvite)
+	rg.GET("/organizations/invites", h.ListInvites)
+	rg.PATCH("/organizations/invites/:inviteID", h.UpdateInvite)
+	rg.DELETE("/organizations/invites/:inviteID", h.RevokeInvite)
 }
 
 func (h *Handler) CreateInvite(c *gin.Context) {
@@ -149,4 +154,104 @@ func (h *Handler) UpdateOrganization(c *gin.Context) {
 		City:         org.City,
 		Country:      org.Country,
 	})
+}
+
+func (h *Handler) ListInvites(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		return
+	}
+
+	invites, err := h.svc.ListInvites(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	responses := make([]transport.InviteResponse, 0, len(invites))
+	for _, invite := range invites {
+		responses = append(responses, mapInviteResponse(invite))
+	}
+
+	httpkit.OK(c, transport.ListInvitesResponse{Invites: responses})
+}
+
+func (h *Handler) UpdateInvite(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		return
+	}
+
+	inviteID, err := uuid.Parse(c.Param("inviteID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpdateInviteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	invite, tokenValue, err := h.svc.UpdateInvite(c.Request.Context(), *tenantID, inviteID, req.Email, req.Resend)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.UpdateInviteResponse{
+		Invite: mapInviteResponse(invite),
+		Token:  tokenValue,
+	})
+}
+
+func (h *Handler) RevokeInvite(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		return
+	}
+
+	inviteID, err := uuid.Parse(c.Param("inviteID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	invite, err := h.svc.RevokeInvite(c.Request.Context(), *tenantID, inviteID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, mapInviteResponse(invite))
+}
+
+func mapInviteResponse(invite repository.Invite) transport.InviteResponse {
+	return transport.InviteResponse{
+		ID:        invite.ID.String(),
+		Email:     invite.Email,
+		ExpiresAt: invite.ExpiresAt,
+		CreatedAt: invite.CreatedAt,
+		UsedAt:    invite.UsedAt,
+	}
 }

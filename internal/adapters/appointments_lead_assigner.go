@@ -17,14 +17,14 @@ func NewAppointmentsLeadAssigner(mgmt *management.Service) *AppointmentsLeadAssi
 	return &AppointmentsLeadAssigner{mgmt: mgmt}
 }
 
-func (a *AppointmentsLeadAssigner) GetAssignedAgentID(ctx context.Context, leadID uuid.UUID) (*uuid.UUID, error) {
-	lead, err := a.mgmt.GetByID(ctx, leadID)
+func (a *AppointmentsLeadAssigner) GetAssignedAgentID(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) (*uuid.UUID, error) {
+	lead, err := a.mgmt.GetByID(ctx, leadID, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	return lead.AssignedAgentID, nil
 }
 
-func (a *AppointmentsLeadAssigner) AssignLead(ctx context.Context, leadID uuid.UUID, agentID uuid.UUID) error {
-	return a.mgmt.AssignIfUnassigned(ctx, leadID, agentID)
+func (a *AppointmentsLeadAssigner) AssignLead(ctx context.Context, leadID uuid.UUID, agentID uuid.UUID, tenantID uuid.UUID) error {
+	return a.mgmt.AssignIfUnassigned(ctx, leadID, agentID, tenantID)
 }

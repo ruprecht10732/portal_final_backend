@@ -14,8 +14,8 @@ import (
 
 // LeadAssigner provides minimal lead assignment capabilities for lead visits.
 type LeadAssigner interface {
-	GetAssignedAgentID(ctx context.Context, leadID uuid.UUID) (*uuid.UUID, error)
-	AssignLead(ctx context.Context, leadID uuid.UUID, agentID uuid.UUID) error
+	GetAssignedAgentID(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) (*uuid.UUID, error)
+	AssignLead(ctx context.Context, leadID uuid.UUID, agentID uuid.UUID, tenantID uuid.UUID) error
 }
 
 // Service provides business logic for appointments
@@ -30,7 +30,7 @@ func New(repo *repository.Repository, leadAssigner LeadAssigner) *Service {
 }
 
 // Create creates a new appointment
-func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.CreateAppointmentRequest) (*transport.AppointmentResponse, error) {
+func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAppointmentRequest) (*transport.AppointmentResponse, error) {
 	// Validate lead_visit type has required fields
 	if req.Type == transport.AppointmentTypeLeadVisit {
 		if req.LeadID == nil || req.LeadServiceID == nil {
@@ -40,7 +40,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, re
 			return nil, apperr.BadRequest("lead assignment not configured")
 		}
 
-		assignedAgentID, err := s.leadAssigner.GetAssignedAgentID(ctx, *req.LeadID)
+		assignedAgentID, err := s.leadAssigner.GetAssignedAgentID(ctx, *req.LeadID, tenantID)
 		if err != nil {
 			return nil, err
 		}
@@ -49,7 +49,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, re
 			return nil, apperr.Forbidden("not authorized to schedule visits for this lead")
 		}
 		if assignedAgentID == nil && !isAdmin {
-			if err := s.leadAssigner.AssignLead(ctx, *req.LeadID, userID); err != nil {
+			if err := s.leadAssigner.AssignLead(ctx, *req.LeadID, userID, tenantID); err != nil {
 				return nil, err
 			}
 		}

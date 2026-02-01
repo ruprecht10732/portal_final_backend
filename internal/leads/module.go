@@ -48,7 +48,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 
 		go func() {
 			// Pass nil for serviceID to analyze the most recent (current) service
-			if err := advisor.Analyze(context.Background(), e.LeadID, nil); err != nil {
+			if err := advisor.Analyze(context.Background(), e.LeadID, nil, e.TenantID); err != nil {
 				log.Error("lead advisor analysis failed", "error", err, "leadId", e.LeadID)
 			}
 		}()

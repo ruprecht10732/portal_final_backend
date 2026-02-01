@@ -52,10 +52,11 @@ func New(repo Repository, eventBus events.Bus, mapsService *maps.Service) *Servi
 }
 
 // Create creates a new lead.
-func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (transport.LeadResponse, error) {
+func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
 	req.Phone = phone.NormalizeE164(req.Phone)
 
 	params := repository.CreateLeadParams{
+		OrganizationID:     tenantID,
 		ConsumerFirstName:  req.FirstName,
 		ConsumerLastName:   req.LastName,
 		ConsumerPhone:      req.Phone,
@@ -84,9 +85,10 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 
 	// Create the initial service for the lead
 	_, err = s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
-		LeadID:       lead.ID,
-		ServiceType:  string(req.ServiceType),
-		ConsumerNote: toPtr(req.ConsumerNote),
+		LeadID:         lead.ID,
+		OrganizationID: tenantID,
+		ServiceType:    string(req.ServiceType),
+		ConsumerNote:   toPtr(req.ConsumerNote),
 	})
 	if err != nil {
 		return transport.LeadResponse{}, err
@@ -95,17 +97,18 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest) (
 	s.eventBus.Publish(ctx, events.LeadCreated{
 		BaseEvent:       events.NewBaseEvent(),
 		LeadID:          lead.ID,
+		TenantID:        tenantID,
 		AssignedAgentID: lead.AssignedAgentID,
 		ServiceType:     string(req.ServiceType),
 	})
 
-	services, _ := s.repo.ListLeadServices(ctx, lead.ID)
+	services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)
 	return ToLeadResponseWithServices(lead, services), nil
 }
 
 // GetByID retrieves a lead by ID.
-func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResponse, error) {
-	lead, services, err := s.repo.GetByIDWithServices(ctx, id)
+func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (transport.LeadResponse, error) {
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
@@ -117,20 +120,20 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.LeadResp
 }
 
 // Update updates a lead's information.
-func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
-	params, current, err := s.prepareAssigneeUpdate(ctx, id, req, actorID, actorRoles)
+func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, tenantID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
+	params, current, err := s.prepareAssigneeUpdate(ctx, id, tenantID, req, actorID, actorRoles)
 	if err != nil {
 		return transport.LeadResponse{}, err
 	}
 
-	addressUpdateRequested, err := s.applyAddressGeocode(ctx, id, req, &params, &current)
+	addressUpdateRequested, err := s.applyAddressGeocode(ctx, id, tenantID, req, &params, &current)
 	if err != nil {
 		return transport.LeadResponse{}, err
 	}
 
 	applyUpdateFields(&params, req, !addressUpdateRequested)
 
-	lead, err := s.repo.Update(ctx, id, params)
+	lead, err := s.repo.Update(ctx, id, tenantID, params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
@@ -140,20 +143,20 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 
 	if req.AssigneeID.Set && current != nil {
 		if !equalUUIDPtrs(current.AssignedAgentID, req.AssigneeID.Value) {
-			_ = s.repo.AddActivity(ctx, id, actorID, "assigned", map[string]interface{}{
+			_ = s.repo.AddActivity(ctx, id, tenantID, actorID, "assigned", map[string]interface{}{
 				"from": current.AssignedAgentID,
 				"to":   req.AssigneeID.Value,
 			})
 		}
 	}
 
-	services, _ := s.repo.ListLeadServices(ctx, lead.ID)
+	services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)
 	return ToLeadResponseWithServices(lead, services), nil
 }
 
 // Delete soft-deletes a lead.
-func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	err := s.repo.Delete(ctx, id)
+func (s *Service) Delete(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) error {
+	err := s.repo.Delete(ctx, id, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return apperr.NotFound(leadNotFoundMsg)
@@ -164,8 +167,8 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 // BulkDelete deletes multiple leads.
-func (s *Service) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error) {
-	deletedCount, err := s.repo.BulkDelete(ctx, ids)
+func (s *Service) BulkDelete(ctx context.Context, ids []uuid.UUID, tenantID uuid.UUID) (int, error) {
+	deletedCount, err := s.repo.BulkDelete(ctx, ids, tenantID)
 	if err != nil {
 		return 0, err
 	}
@@ -176,7 +179,7 @@ func (s *Service) BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error) 
 }
 
 // List retrieves a paginated list of leads.
-func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest) (transport.LeadListResponse, error) {
+func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest, tenantID uuid.UUID) (transport.LeadListResponse, error) {
 	if req.Page < 1 {
 		req.Page = 1
 	}
@@ -191,6 +194,7 @@ func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest) (tra
 	if err != nil {
 		return transport.LeadListResponse{}, err
 	}
+	params.OrganizationID = tenantID
 
 	leads, total, err := s.repo.List(ctx, params)
 	if err != nil {
@@ -199,7 +203,7 @@ func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest) (tra
 
 	items := make([]transport.LeadResponse, len(leads))
 	for i, lead := range leads {
-		services, _ := s.repo.ListLeadServices(ctx, lead.ID)
+		services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)
 		items[i] = ToLeadResponseWithServices(lead, services)
 	}
 
@@ -295,8 +299,8 @@ func parseDateRange(from string, to string) (*time.Time, *time.Time, error) {
 }
 
 // CheckDuplicate checks if a lead with the given phone already exists.
-func (s *Service) CheckDuplicate(ctx context.Context, phoneNumber string) (transport.DuplicateCheckResponse, error) {
-	lead, err := s.repo.GetByPhone(ctx, phoneNumber)
+func (s *Service) CheckDuplicate(ctx context.Context, phoneNumber string, tenantID uuid.UUID) (transport.DuplicateCheckResponse, error) {
+	lead, err := s.repo.GetByPhone(ctx, phoneNumber, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.DuplicateCheckResponse{IsDuplicate: false}, nil
@@ -313,10 +317,10 @@ func (s *Service) CheckDuplicate(ctx context.Context, phoneNumber string) (trans
 
 // CheckReturningCustomer checks if a lead with the given phone or email already exists.
 // This is used to detect returning customers when creating a new service request.
-func (s *Service) CheckReturningCustomer(ctx context.Context, phoneNumber string, email string) (transport.ReturningCustomerResponse, error) {
+func (s *Service) CheckReturningCustomer(ctx context.Context, phoneNumber string, email string, tenantID uuid.UUID) (transport.ReturningCustomerResponse, error) {
 	normalizedPhone := phone.NormalizeE164(phoneNumber)
 
-	summary, services, err := s.repo.GetByPhoneOrEmail(ctx, normalizedPhone, email)
+	summary, services, err := s.repo.GetByPhoneOrEmail(ctx, normalizedPhone, email, tenantID)
 	if err != nil {
 		return transport.ReturningCustomerResponse{}, err
 	}
@@ -344,8 +348,8 @@ func (s *Service) CheckReturningCustomer(ctx context.Context, phoneNumber string
 }
 
 // Assign assigns or unassigns a lead to an agent.
-func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUID, actorID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
-	current, err := s.repo.GetByID(ctx, id)
+func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUID, actorID uuid.UUID, tenantID uuid.UUID, actorRoles []string) (transport.LeadResponse, error) {
+	current, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
@@ -363,7 +367,7 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 		AssignedAgentID:    assigneeID,
 		AssignedAgentIDSet: true,
 	}
-	updated, err := s.repo.Update(ctx, id, params)
+	updated, err := s.repo.Update(ctx, id, tenantID, params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
@@ -371,7 +375,7 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 		return transport.LeadResponse{}, err
 	}
 
-	_ = s.repo.AddActivity(ctx, id, actorID, "assigned", map[string]interface{}{
+	_ = s.repo.AddActivity(ctx, id, tenantID, actorID, "assigned", map[string]interface{}{
 		"from": current.AssignedAgentID,
 		"to":   assigneeID,
 	})
@@ -380,8 +384,8 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 }
 
 // AssignIfUnassigned assigns a lead to the agent if it is currently unassigned.
-func (s *Service) AssignIfUnassigned(ctx context.Context, id uuid.UUID, agentID uuid.UUID) error {
-	lead, err := s.repo.GetByID(ctx, id)
+func (s *Service) AssignIfUnassigned(ctx context.Context, id uuid.UUID, agentID uuid.UUID, tenantID uuid.UUID) error {
+	lead, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return apperr.NotFound(leadNotFoundMsg)
@@ -398,11 +402,11 @@ func (s *Service) AssignIfUnassigned(ctx context.Context, id uuid.UUID, agentID 
 		AssignedAgentIDSet: true,
 	}
 
-	if _, err := s.repo.Update(ctx, id, params); err != nil {
+	if _, err := s.repo.Update(ctx, id, tenantID, params); err != nil {
 		return err
 	}
 
-	_ = s.repo.AddActivity(ctx, id, agentID, "assigned", map[string]interface{}{
+	_ = s.repo.AddActivity(ctx, id, tenantID, agentID, "assigned", map[string]interface{}{
 		"from": nil,
 		"to":   agentID,
 	})
@@ -411,13 +415,13 @@ func (s *Service) AssignIfUnassigned(ctx context.Context, id uuid.UUID, agentID 
 }
 
 // SetViewedBy marks a lead as viewed by a user.
-func (s *Service) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {
-	return s.repo.SetViewedBy(ctx, id, userID)
+func (s *Service) SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUID, tenantID uuid.UUID) error {
+	return s.repo.SetViewedBy(ctx, id, tenantID, userID)
 }
 
 // GetLeadServiceByID retrieves a lead service by its ID.
-func (s *Service) GetLeadServiceByID(ctx context.Context, serviceID uuid.UUID) (repository.LeadService, error) {
-	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID)
+func (s *Service) GetLeadServiceByID(ctx context.Context, serviceID uuid.UUID, tenantID uuid.UUID) (repository.LeadService, error) {
+	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
 			return repository.LeadService{}, apperr.NotFound(leadServiceNotFoundMsg)
@@ -428,8 +432,8 @@ func (s *Service) GetLeadServiceByID(ctx context.Context, serviceID uuid.UUID) (
 }
 
 // AddService adds a new service to an existing lead.
-func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transport.AddServiceRequest) (transport.LeadResponse, error) {
-	lead, err := s.repo.GetByID(ctx, leadID)
+func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transport.AddServiceRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
+	lead, err := s.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
@@ -438,28 +442,29 @@ func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transpor
 	}
 
 	if req.CloseCurrentStatus {
-		if err := s.repo.CloseAllActiveServices(ctx, leadID); err != nil {
+		if err := s.repo.CloseAllActiveServices(ctx, leadID, tenantID); err != nil {
 			return transport.LeadResponse{}, err
 		}
 	}
 
 	_, err = s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
-		LeadID:       leadID,
-		ServiceType:  string(req.ServiceType),
-		ConsumerNote: toPtr(req.ConsumerNote),
-		Source:       toPtr(req.Source),
+		LeadID:         leadID,
+		OrganizationID: tenantID,
+		ServiceType:    string(req.ServiceType),
+		ConsumerNote:   toPtr(req.ConsumerNote),
+		Source:         toPtr(req.Source),
 	})
 	if err != nil {
 		return transport.LeadResponse{}, err
 	}
 
-	services, _ := s.repo.ListLeadServices(ctx, leadID)
+	services, _ := s.repo.ListLeadServices(ctx, leadID, tenantID)
 	return ToLeadResponseWithServices(lead, services), nil
 }
 
 // UpdateServiceStatus updates the status of a specific service.
-func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, req transport.UpdateServiceStatusRequest) (transport.LeadResponse, error) {
-	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID)
+func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, req transport.UpdateServiceStatusRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
+	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
@@ -470,17 +475,17 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 		return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
 	}
 
-	_, err = s.repo.UpdateServiceStatus(ctx, serviceID, string(req.Status))
+	_, err = s.repo.UpdateServiceStatus(ctx, serviceID, tenantID, string(req.Status))
 	if err != nil {
 		return transport.LeadResponse{}, err
 	}
 
-	return s.GetByID(ctx, leadID)
+	return s.GetByID(ctx, leadID, tenantID)
 }
 
 // UpdateStatus updates the status of the lead's current service.
-func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.UpdateLeadStatusRequest) (transport.LeadResponse, error) {
-	service, err := s.repo.GetCurrentLeadService(ctx, id)
+func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.UpdateLeadStatusRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
+	service, err := s.repo.GetCurrentLeadService(ctx, id, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) || errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
@@ -488,19 +493,19 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 		return transport.LeadResponse{}, err
 	}
 
-	if _, err := s.repo.UpdateServiceStatus(ctx, service.ID, string(req.Status)); err != nil {
+	if _, err := s.repo.UpdateServiceStatus(ctx, service.ID, tenantID, string(req.Status)); err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
 
-	return s.GetByID(ctx, id)
+	return s.GetByID(ctx, id, tenantID)
 }
 
 // GetMetrics returns aggregated KPI metrics for the dashboard.
-func (s *Service) GetMetrics(ctx context.Context) (transport.LeadMetricsResponse, error) {
-	metrics, err := s.repo.GetMetrics(ctx)
+func (s *Service) GetMetrics(ctx context.Context, tenantID uuid.UUID) (transport.LeadMetricsResponse, error) {
+	metrics, err := s.repo.GetMetrics(ctx, tenantID)
 	if err != nil {
 		return transport.LeadMetricsResponse{}, err
 	}
@@ -521,14 +526,14 @@ func (s *Service) GetMetrics(ctx context.Context) (transport.LeadMetricsResponse
 }
 
 // GetHeatmap returns geocoded lead points for the dashboard heatmap.
-func (s *Service) GetHeatmap(ctx context.Context, startDate *time.Time, endDate *time.Time) (transport.LeadHeatmapResponse, error) {
+func (s *Service) GetHeatmap(ctx context.Context, startDate *time.Time, endDate *time.Time, tenantID uuid.UUID) (transport.LeadHeatmapResponse, error) {
 	var endExclusive *time.Time
 	if endDate != nil {
 		end := endDate.AddDate(0, 0, 1)
 		endExclusive = &end
 	}
 
-	points, err := s.repo.ListHeatmapPoints(ctx, startDate, endExclusive)
+	points, err := s.repo.ListHeatmapPoints(ctx, tenantID, startDate, endExclusive)
 	if err != nil {
 		return transport.LeadHeatmapResponse{}, err
 	}
@@ -545,7 +550,7 @@ func (s *Service) GetHeatmap(ctx context.Context, startDate *time.Time, endDate 
 }
 
 // GetActionItems returns urgent or recent leads for the dashboard widget.
-func (s *Service) GetActionItems(ctx context.Context, page int, pageSize int, newLeadDays int) (transport.ActionItemsResponse, error) {
+func (s *Service) GetActionItems(ctx context.Context, page int, pageSize int, newLeadDays int, tenantID uuid.UUID) (transport.ActionItemsResponse, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -557,7 +562,7 @@ func (s *Service) GetActionItems(ctx context.Context, page int, pageSize int, ne
 	}
 
 	offset := (page - 1) * pageSize
-	result, err := s.repo.ListActionItems(ctx, newLeadDays, pageSize, offset)
+	result, err := s.repo.ListActionItems(ctx, tenantID, newLeadDays, pageSize, offset)
 	if err != nil {
 		return transport.ActionItemsResponse{}, err
 	}
@@ -587,13 +592,13 @@ func roundToOneDecimal(value float64) float64 {
 	return math.Round(value*10) / 10
 }
 
-func (s *Service) prepareAssigneeUpdate(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (repository.UpdateLeadParams, *repository.Lead, error) {
+func (s *Service) prepareAssigneeUpdate(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, actorRoles []string) (repository.UpdateLeadParams, *repository.Lead, error) {
 	params := repository.UpdateLeadParams{}
 	if !req.AssigneeID.Set {
 		return params, nil, nil
 	}
 
-	lead, err := s.repo.GetByID(ctx, id)
+	lead, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return repository.UpdateLeadParams{}, nil, apperr.NotFound(leadNotFoundMsg)
@@ -652,13 +657,13 @@ func applyUpdateFields(params *repository.UpdateLeadParams, req transport.Update
 	}
 }
 
-func (s *Service) applyAddressGeocode(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, params *repository.UpdateLeadParams, current **repository.Lead) (bool, error) {
+func (s *Service) applyAddressGeocode(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, req transport.UpdateLeadRequest, params *repository.UpdateLeadParams, current **repository.Lead) (bool, error) {
 	if !hasAddressUpdate(req) {
 		return false, nil
 	}
 
 	if *current == nil {
-		lead, err := s.repo.GetByID(ctx, id)
+		lead, err := s.repo.GetByID(ctx, id, tenantID)
 		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				return true, apperr.NotFound(leadNotFoundMsg)

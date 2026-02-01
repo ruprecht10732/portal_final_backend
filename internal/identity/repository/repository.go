@@ -221,3 +221,98 @@ func (r *Repository) UseInvite(ctx context.Context, q DBTX, inviteID, usedBy uui
   `, inviteID, usedBy)
 	return err
 }
+
+func (r *Repository) ListInvites(ctx context.Context, organizationID uuid.UUID) ([]Invite, error) {
+	rows, err := r.pool.Query(ctx, `
+    SELECT id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
+    FROM organization_invites
+    WHERE organization_id = $1
+    ORDER BY created_at DESC
+  `, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var invites []Invite
+	for rows.Next() {
+		var invite Invite
+		if err := rows.Scan(
+			&invite.ID,
+			&invite.OrganizationID,
+			&invite.Email,
+			&invite.TokenHash,
+			&invite.ExpiresAt,
+			&invite.CreatedBy,
+			&invite.CreatedAt,
+			&invite.UsedAt,
+			&invite.UsedBy,
+		); err != nil {
+			return nil, err
+		}
+		invites = append(invites, invite)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return invites, nil
+}
+
+func (r *Repository) UpdateInvite(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	inviteID uuid.UUID,
+	email *string,
+	tokenHash *string,
+	expiresAt *time.Time,
+) (Invite, error) {
+	var invite Invite
+	err := r.pool.QueryRow(ctx, `
+    UPDATE organization_invites
+    SET
+      email = COALESCE($3, email),
+      token_hash = COALESCE($4, token_hash),
+      expires_at = COALESCE($5, expires_at)
+    WHERE id = $1 AND organization_id = $2 AND used_at IS NULL
+    RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
+  `, inviteID, organizationID, email, tokenHash, expiresAt).Scan(
+		&invite.ID,
+		&invite.OrganizationID,
+		&invite.Email,
+		&invite.TokenHash,
+		&invite.ExpiresAt,
+		&invite.CreatedBy,
+		&invite.CreatedAt,
+		&invite.UsedAt,
+		&invite.UsedBy,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Invite{}, ErrNotFound
+	}
+	return invite, err
+}
+
+func (r *Repository) RevokeInvite(ctx context.Context, organizationID, inviteID uuid.UUID) (Invite, error) {
+	var invite Invite
+	err := r.pool.QueryRow(ctx, `
+    UPDATE organization_invites
+    SET expires_at = now()
+    WHERE id = $1 AND organization_id = $2 AND used_at IS NULL
+    RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
+  `, inviteID, organizationID).Scan(
+		&invite.ID,
+		&invite.OrganizationID,
+		&invite.Email,
+		&invite.TokenHash,
+		&invite.ExpiresAt,
+		&invite.CreatedBy,
+		&invite.CreatedAt,
+		&invite.UsedAt,
+		&invite.UsedBy,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Invite{}, ErrNotFound
+	}
+	return invite, err
+}

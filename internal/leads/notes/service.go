@@ -28,9 +28,10 @@ var ValidNoteTypes = map[string]bool{
 // This is a consumer-driven interface - only what notes needs.
 type Repository interface {
 	// LeadExistenceChecker
-	GetByID(ctx context.Context, id uuid.UUID) (repository.Lead, error)
+	GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.Lead, error)
 	// NoteStore
-	repository.NoteStore
+	CreateLeadNote(ctx context.Context, params repository.CreateLeadNoteParams) (repository.LeadNote, error)
+	ListLeadNotes(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]repository.LeadNote, error)
 }
 
 // Service handles lead note operations.
@@ -44,7 +45,7 @@ func New(repo Repository) *Service {
 }
 
 // Add adds a new note to a lead.
-func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID, req transport.CreateLeadNoteRequest) (transport.LeadNoteResponse, error) {
+func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID, tenantID uuid.UUID, req transport.CreateLeadNoteRequest) (transport.LeadNoteResponse, error) {
 	body := strings.TrimSpace(req.Body)
 	if body == "" || len(body) > 2000 {
 		return transport.LeadNoteResponse{}, apperr.Validation("note body must be between 1 and 2000 characters")
@@ -59,7 +60,7 @@ func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID,
 	}
 
 	// Verify lead exists
-	if _, err := s.repo.GetByID(ctx, leadID); err != nil {
+	if _, err := s.repo.GetByID(ctx, leadID, tenantID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadNoteResponse{}, apperr.NotFound("lead not found")
 		}
@@ -67,10 +68,11 @@ func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID,
 	}
 
 	note, err := s.repo.CreateLeadNote(ctx, repository.CreateLeadNoteParams{
-		LeadID:   leadID,
-		AuthorID: authorID,
-		Type:     noteType,
-		Body:     body,
+		LeadID:         leadID,
+		OrganizationID: tenantID,
+		AuthorID:       authorID,
+		Type:           noteType,
+		Body:           body,
 	})
 	if err != nil {
 		return transport.LeadNoteResponse{}, err
@@ -80,16 +82,16 @@ func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID,
 }
 
 // List retrieves all notes for a lead.
-func (s *Service) List(ctx context.Context, leadID uuid.UUID) (transport.LeadNotesResponse, error) {
+func (s *Service) List(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) (transport.LeadNotesResponse, error) {
 	// Verify lead exists
-	if _, err := s.repo.GetByID(ctx, leadID); err != nil {
+	if _, err := s.repo.GetByID(ctx, leadID, tenantID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.LeadNotesResponse{}, apperr.NotFound("lead not found")
 		}
 		return transport.LeadNotesResponse{}, err
 	}
 
-	notesList, err := s.repo.ListLeadNotes(ctx, leadID)
+	notesList, err := s.repo.ListLeadNotes(ctx, leadID, tenantID)
 	if err != nil {
 		return transport.LeadNotesResponse{}, err
 	}

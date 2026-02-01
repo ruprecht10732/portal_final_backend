@@ -28,6 +28,17 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 	return &Handler{svc: svc, val: val}
 }
 
+// mustGetTenantID extracts the tenant ID from identity and returns it.
+// Returns zero UUID and false if tenant ID is not present.
+func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
+		return uuid.UUID{}, false
+	}
+	return *tenantID, true
+}
+
 // RegisterRoutes registers the appointment routes
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
@@ -88,9 +99,13 @@ func (h *Handler) Create(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.Create(c.Request.Context(), identity.UserID(), isAdmin, req)
+	result, err := h.svc.Create(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}

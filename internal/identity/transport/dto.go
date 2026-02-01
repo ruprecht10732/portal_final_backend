@@ -11,6 +11,28 @@ type CreateInviteResponse struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+type InviteResponse struct {
+	ID        string     `json:"id"`
+	Email     string     `json:"email"`
+	ExpiresAt time.Time  `json:"expiresAt"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UsedAt    *time.Time `json:"usedAt,omitempty"`
+}
+
+type ListInvitesResponse struct {
+	Invites []InviteResponse `json:"invites"`
+}
+
+type UpdateInviteRequest struct {
+	Email  *string `json:"email" validate:"omitempty,email"`
+	Resend bool    `json:"resend"`
+}
+
+type UpdateInviteResponse struct {
+	Invite InviteResponse `json:"invite"`
+	Token  *string        `json:"token,omitempty"`
+}
+
 type UpdateOrganizationRequest struct {
 	Name         *string `json:"name" validate:"omitempty,max=120"`
 	Email        *string `json:"email" validate:"omitempty,email"`

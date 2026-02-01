@@ -13,64 +13,64 @@ import (
 
 // LeadReader provides read-only access to lead data.
 type LeadReader interface {
-	GetByID(ctx context.Context, id uuid.UUID) (Lead, error)
-	GetByIDWithServices(ctx context.Context, id uuid.UUID) (Lead, []LeadService, error)
-	GetByPhone(ctx context.Context, phone string) (Lead, error)
-	GetByPhoneOrEmail(ctx context.Context, phone string, email string) (*LeadSummary, []LeadService, error)
+	GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Lead, error)
+	GetByIDWithServices(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Lead, []LeadService, error)
+	GetByPhone(ctx context.Context, phone string, organizationID uuid.UUID) (Lead, error)
+	GetByPhoneOrEmail(ctx context.Context, phone string, email string, organizationID uuid.UUID) (*LeadSummary, []LeadService, error)
 	List(ctx context.Context, params ListParams) ([]Lead, int, error)
-	ListHeatmapPoints(ctx context.Context, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error)
-	ListActionItems(ctx context.Context, newLeadDays int, limit int, offset int) (ActionItemListResult, error)
+	ListHeatmapPoints(ctx context.Context, organizationID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error)
+	ListActionItems(ctx context.Context, organizationID uuid.UUID, newLeadDays int, limit int, offset int) (ActionItemListResult, error)
 }
 
 // LeadWriter provides write operations for lead management.
 type LeadWriter interface {
 	Create(ctx context.Context, params CreateLeadParams) (Lead, error)
-	Update(ctx context.Context, id uuid.UUID, params UpdateLeadParams) (Lead, error)
-	Delete(ctx context.Context, id uuid.UUID) error
-	BulkDelete(ctx context.Context, ids []uuid.UUID) (int, error)
+	Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadParams) (Lead, error)
+	Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
+	BulkDelete(ctx context.Context, ids []uuid.UUID, organizationID uuid.UUID) (int, error)
 }
 
 // LeadViewTracker tracks which users have viewed leads.
 type LeadViewTracker interface {
-	SetViewedBy(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
+	SetViewedBy(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, userID uuid.UUID) error
 }
 
 // ActivityLogger records activity/audit trail on leads.
 type ActivityLogger interface {
-	AddActivity(ctx context.Context, leadID uuid.UUID, userID uuid.UUID, action string, meta map[string]interface{}) error
+	AddActivity(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID, userID uuid.UUID, action string, meta map[string]interface{}) error
 }
 
 // MetricsReader provides access to lead KPI metrics.
 type MetricsReader interface {
-	GetMetrics(ctx context.Context) (LeadMetrics, error)
+	GetMetrics(ctx context.Context, organizationID uuid.UUID) (LeadMetrics, error)
 }
 
 // LeadServiceReader provides read access to lead services.
 type LeadServiceReader interface {
-	GetLeadServiceByID(ctx context.Context, id uuid.UUID) (LeadService, error)
-	ListLeadServices(ctx context.Context, leadID uuid.UUID) ([]LeadService, error)
-	GetCurrentLeadService(ctx context.Context, leadID uuid.UUID) (LeadService, error)
+	GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (LeadService, error)
+	ListLeadServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadService, error)
+	GetCurrentLeadService(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadService, error)
 }
 
 // LeadServiceWriter provides write operations for lead services.
 type LeadServiceWriter interface {
 	CreateLeadService(ctx context.Context, params CreateLeadServiceParams) (LeadService, error)
-	UpdateLeadService(ctx context.Context, id uuid.UUID, params UpdateLeadServiceParams) (LeadService, error)
-	UpdateServiceStatus(ctx context.Context, id uuid.UUID, status string) (LeadService, error)
-	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID) error
+	UpdateLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadServiceParams) (LeadService, error)
+	UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error)
+	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error
 }
 
 // NoteStore manages lead notes.
 type NoteStore interface {
 	CreateLeadNote(ctx context.Context, params CreateLeadNoteParams) (LeadNote, error)
-	ListLeadNotes(ctx context.Context, leadID uuid.UUID) ([]LeadNote, error)
+	ListLeadNotes(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadNote, error)
 }
 
 // AIAnalysisStore manages AI-generated analyses for leads.
 type AIAnalysisStore interface {
 	CreateAIAnalysis(ctx context.Context, params CreateAIAnalysisParams) (AIAnalysis, error)
-	GetLatestAIAnalysis(ctx context.Context, leadID uuid.UUID) (AIAnalysis, error)
-	ListAIAnalyses(ctx context.Context, leadID uuid.UUID) ([]AIAnalysis, error)
+	GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (AIAnalysis, error)
+	ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) ([]AIAnalysis, error)
 }
 
 // =====================================

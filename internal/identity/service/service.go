@@ -182,3 +182,60 @@ func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (repositor
 func (s *Service) UseInvite(ctx context.Context, q repository.DBTX, inviteID, userID uuid.UUID) error {
 	return s.repo.UseInvite(ctx, q, inviteID, userID)
 }
+
+func (s *Service) ListInvites(ctx context.Context, organizationID uuid.UUID) ([]repository.Invite, error) {
+	return s.repo.ListInvites(ctx, organizationID)
+}
+
+func (s *Service) UpdateInvite(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	inviteID uuid.UUID,
+	email *string,
+	resend bool,
+) (repository.Invite, *string, error) {
+	email = normalizeOptional(email)
+
+	if email == nil && !resend {
+		return repository.Invite{}, nil, apperr.Validation("no updates provided")
+	}
+
+	var tokenValue *string
+	var tokenHash *string
+	var expiresAt *time.Time
+
+	if resend {
+		rawToken, err := token.GenerateRandomToken(inviteTokenBytes)
+		if err != nil {
+			return repository.Invite{}, nil, err
+		}
+		hash := token.HashSHA256(rawToken)
+		value := rawToken
+		tokenValue = &value
+		tokenHash = &hash
+		freshExpires := time.Now().Add(inviteTTL)
+		expiresAt = &freshExpires
+	}
+
+	invite, err := s.repo.UpdateInvite(ctx, organizationID, inviteID, email, tokenHash, expiresAt)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.Invite{}, nil, apperr.NotFound("invite not found")
+		}
+		return repository.Invite{}, nil, err
+	}
+
+	return invite, tokenValue, nil
+}
+
+func (s *Service) RevokeInvite(ctx context.Context, organizationID, inviteID uuid.UUID) (repository.Invite, error) {
+	invite, err := s.repo.RevokeInvite(ctx, organizationID, inviteID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.Invite{}, apperr.NotFound("invite not found")
+		}
+		return repository.Invite{}, err
+	}
+
+	return invite, nil
+}

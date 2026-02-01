@@ -25,13 +25,22 @@ func NewNotesHandler(svc *notes.Service, val *validator.Validator) *NotesHandler
 }
 
 func (h *NotesHandler) ListNotes(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	notesList, err := h.svc.List(c.Request.Context(), id)
+	notesList, err := h.svc.List(c.Request.Context(), id, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -40,6 +49,15 @@ func (h *NotesHandler) ListNotes(c *gin.Context) {
 }
 
 func (h *NotesHandler) AddNote(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -56,12 +74,7 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 		return
 	}
 
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-
-	created, err := h.svc.Add(c.Request.Context(), id, identity.UserID(), req)
+	created, err := h.svc.Add(c.Request.Context(), id, identity.UserID(), tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}

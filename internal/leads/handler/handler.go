@@ -26,7 +26,19 @@ type Handler struct {
 const (
 	msgInvalidRequest   = "invalid request"
 	msgValidationFailed = "validation failed"
+	msgTenantRequired   = "tenant context required"
 )
+
+// mustGetTenantID extracts and dereferences the tenant ID from identity.
+// Returns the tenant ID and true if valid, or handles the error response and returns false.
+func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusForbidden, msgTenantRequired, nil)
+		return uuid.UUID{}, false
+	}
+	return *tenantID, true
+}
 
 // New creates a new leads handler with focused services.
 func New(mgmt *management.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, val *validator.Validator) *Handler {
@@ -60,7 +72,16 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) GetMetrics(c *gin.Context) {
-	metrics, err := h.mgmt.GetMetrics(c.Request.Context())
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	metrics, err := h.mgmt.GetMetrics(c.Request.Context(), tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -69,6 +90,15 @@ func (h *Handler) GetMetrics(c *gin.Context) {
 }
 
 func (h *Handler) GetHeatmap(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	var req transport.LeadHeatmapRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -102,7 +132,7 @@ func (h *Handler) GetHeatmap(c *gin.Context) {
 		return
 	}
 
-	result, err := h.mgmt.GetHeatmap(c.Request.Context(), startDate, endDate)
+	result, err := h.mgmt.GetHeatmap(c.Request.Context(), startDate, endDate, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -111,6 +141,15 @@ func (h *Handler) GetHeatmap(c *gin.Context) {
 }
 
 func (h *Handler) GetActionItems(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	var req transport.ActionItemsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -127,7 +166,7 @@ func (h *Handler) GetActionItems(c *gin.Context) {
 		req.PageSize = 50
 	}
 
-	result, err := h.mgmt.GetActionItems(c.Request.Context(), req.Page, req.PageSize, 7)
+	result, err := h.mgmt.GetActionItems(c.Request.Context(), req.Page, req.PageSize, 7, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -136,6 +175,15 @@ func (h *Handler) GetActionItems(c *gin.Context) {
 }
 
 func (h *Handler) Create(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	var req transport.CreateLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -146,7 +194,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.mgmt.Create(c.Request.Context(), req)
+	lead, err := h.mgmt.Create(c.Request.Context(), req, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -155,13 +203,22 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 func (h *Handler) GetByID(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	lead, err := h.mgmt.GetByID(c.Request.Context(), id)
+	lead, err := h.mgmt.GetByID(c.Request.Context(), id, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -190,8 +247,12 @@ func (h *Handler) Update(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	lead, err := h.mgmt.Update(c.Request.Context(), id, req, identity.UserID(), identity.Roles())
+	lead, err := h.mgmt.Update(c.Request.Context(), id, req, identity.UserID(), tenantID, identity.Roles())
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -216,8 +277,12 @@ func (h *Handler) Assign(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, identity.UserID(), identity.Roles())
+	lead, err := h.mgmt.Assign(c.Request.Context(), id, req.AssigneeID, identity.UserID(), tenantID, identity.Roles())
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -226,13 +291,22 @@ func (h *Handler) Assign(c *gin.Context) {
 }
 
 func (h *Handler) Delete(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	if err := h.mgmt.Delete(c.Request.Context(), id); httpkit.HandleError(c, err) {
+	if err := h.mgmt.Delete(c.Request.Context(), id, tenantID); httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -240,6 +314,15 @@ func (h *Handler) Delete(c *gin.Context) {
 }
 
 func (h *Handler) BulkDelete(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	var req transport.BulkDeleteLeadsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -250,7 +333,7 @@ func (h *Handler) BulkDelete(c *gin.Context) {
 		return
 	}
 
-	deletedCount, err := h.mgmt.BulkDelete(c.Request.Context(), req.IDs)
+	deletedCount, err := h.mgmt.BulkDelete(c.Request.Context(), req.IDs, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -259,6 +342,15 @@ func (h *Handler) BulkDelete(c *gin.Context) {
 }
 
 func (h *Handler) UpdateStatus(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -275,7 +367,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.mgmt.UpdateStatus(c.Request.Context(), id, req)
+	lead, err := h.mgmt.UpdateStatus(c.Request.Context(), id, req, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -294,8 +386,12 @@ func (h *Handler) MarkViewed(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, identity.UserID()); httpkit.HandleError(c, err) {
+	if err := h.mgmt.SetViewedBy(c.Request.Context(), id, identity.UserID(), tenantID); httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -303,13 +399,22 @@ func (h *Handler) MarkViewed(c *gin.Context) {
 }
 
 func (h *Handler) CheckDuplicate(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	phone := c.Query("phone")
 	if phone == "" {
 		httpkit.Error(c, http.StatusBadRequest, "phone parameter required", nil)
 		return
 	}
 
-	result, err := h.mgmt.CheckDuplicate(c.Request.Context(), phone)
+	result, err := h.mgmt.CheckDuplicate(c.Request.Context(), phone, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -318,6 +423,15 @@ func (h *Handler) CheckDuplicate(c *gin.Context) {
 }
 
 func (h *Handler) CheckReturningCustomer(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	phone := c.Query("phone")
 	email := c.Query("email")
 
@@ -326,7 +440,7 @@ func (h *Handler) CheckReturningCustomer(c *gin.Context) {
 		return
 	}
 
-	result, err := h.mgmt.CheckReturningCustomer(c.Request.Context(), phone, email)
+	result, err := h.mgmt.CheckReturningCustomer(c.Request.Context(), phone, email, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -335,13 +449,22 @@ func (h *Handler) CheckReturningCustomer(c *gin.Context) {
 }
 
 func (h *Handler) List(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	var req transport.ListLeadsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	result, err := h.mgmt.List(c.Request.Context(), req)
+	result, err := h.mgmt.List(c.Request.Context(), req, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -350,6 +473,15 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) AddService(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -366,7 +498,7 @@ func (h *Handler) AddService(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.mgmt.AddService(c.Request.Context(), id, req)
+	lead, err := h.mgmt.AddService(c.Request.Context(), id, req, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -375,6 +507,15 @@ func (h *Handler) AddService(c *gin.Context) {
 }
 
 func (h *Handler) UpdateServiceStatus(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	leadID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -397,7 +538,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.mgmt.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req)
+	lead, err := h.mgmt.UpdateServiceStatus(c.Request.Context(), leadID, serviceID, req, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -407,6 +548,15 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 
 // AnalyzeLead triggers AI analysis for a lead service and returns the result
 func (h *Handler) AnalyzeLead(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -424,7 +574,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 		serviceID = &parsed
 
 		// Validate service is not in terminal status
-		service, err := h.mgmt.GetLeadServiceByID(c.Request.Context(), parsed)
+		service, err := h.mgmt.GetLeadServiceByID(c.Request.Context(), parsed, tenantID)
 		if err != nil {
 			httpkit.Error(c, http.StatusNotFound, "service not found", nil)
 			return
@@ -438,7 +588,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	// Check for force parameter to bypass no_change detection
 	force := c.Query("force") == "true"
 
-	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, serviceID, force)
+	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, serviceID, force, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -448,6 +598,15 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 
 // GetAnalysis returns the latest AI analysis for a lead service
 func (h *Handler) GetAnalysis(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -466,7 +625,7 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 		return
 	}
 
-	analysis, hasAnalysis, err := h.advisor.GetLatestOrDefault(c.Request.Context(), id, serviceID)
+	analysis, hasAnalysis, err := h.advisor.GetLatestOrDefault(c.Request.Context(), id, serviceID, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -479,6 +638,15 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 
 // ListAnalyses returns all AI analyses for a lead service
 func (h *Handler) ListAnalyses(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
 	_, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -497,7 +665,7 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 		return
 	}
 
-	analyses, err := h.advisor.ListAnalyses(c.Request.Context(), serviceID)
+	analyses, err := h.advisor.ListAnalyses(c.Request.Context(), serviceID, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
