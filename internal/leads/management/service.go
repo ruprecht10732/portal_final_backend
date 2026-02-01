@@ -22,7 +22,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const leadNotFoundMsg = "lead not found"
+const (
+	leadNotFoundMsg        = "lead not found"
+	leadServiceNotFoundMsg = "lead service not found"
+)
 
 // Repository defines the data access interface needed by the management service.
 // This is a consumer-driven interface - only what management needs.
@@ -386,7 +389,7 @@ func (s *Service) GetLeadServiceByID(ctx context.Context, serviceID uuid.UUID) (
 	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return repository.LeadService{}, apperr.NotFound("lead service not found")
+			return repository.LeadService{}, apperr.NotFound(leadServiceNotFoundMsg)
 		}
 		return repository.LeadService{}, err
 	}
@@ -428,12 +431,12 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
-			return transport.LeadResponse{}, apperr.NotFound("lead service not found")
+			return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
 	if svc.LeadID != leadID {
-		return transport.LeadResponse{}, apperr.NotFound("lead service not found")
+		return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
 	}
 
 	_, err = s.repo.UpdateServiceStatus(ctx, serviceID, string(req.Status))
