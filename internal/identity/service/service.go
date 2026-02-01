@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/auth/token"
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/platform/apperr"
 
@@ -19,11 +20,12 @@ const (
 )
 
 type Service struct {
-	repo *repository.Repository
+	repo     *repository.Repository
+	eventBus events.Bus
 }
 
-func New(repo *repository.Repository) *Service {
-	return &Service{repo: repo}
+func New(repo *repository.Repository, eventBus events.Bus) *Service {
+	return &Service{repo: repo, eventBus: eventBus}
 }
 
 func (s *Service) GetUserOrganizationID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
@@ -59,6 +61,18 @@ func (s *Service) CreateInvite(ctx context.Context, organizationID uuid.UUID, em
 
 	if _, err := s.repo.CreateInvite(ctx, organizationID, email, tokenHash, expiresAt, createdBy); err != nil {
 		return "", time.Time{}, err
+	}
+
+	// Publish event to send invite email
+	org, err := s.repo.GetOrganization(ctx, organizationID)
+	if err == nil && s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.OrganizationInviteCreated{
+			BaseEvent:        events.NewBaseEvent(),
+			OrganizationID:   organizationID,
+			OrganizationName: org.Name,
+			Email:            email,
+			InviteToken:      rawToken,
+		})
 	}
 
 	return rawToken, expiresAt, nil
@@ -223,6 +237,20 @@ func (s *Service) UpdateInvite(
 			return repository.Invite{}, nil, apperr.NotFound("invite not found")
 		}
 		return repository.Invite{}, nil, err
+	}
+
+	// Publish event to send invite email when resending
+	if resend && tokenValue != nil && s.eventBus != nil {
+		org, err := s.repo.GetOrganization(ctx, organizationID)
+		if err == nil {
+			s.eventBus.Publish(ctx, events.OrganizationInviteCreated{
+				BaseEvent:        events.NewBaseEvent(),
+				OrganizationID:   organizationID,
+				OrganizationName: org.Name,
+				Email:            invite.Email,
+				InviteToken:      *tokenValue,
+			})
+		}
 	}
 
 	return invite, tokenValue, nil

@@ -16,6 +16,7 @@ type Sender interface {
 	SendVerificationEmail(ctx context.Context, toEmail, verifyURL string) error
 	SendPasswordResetEmail(ctx context.Context, toEmail, resetURL string) error
 	SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error
+	SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error
 }
 
 type NoopSender struct{}
@@ -29,6 +30,10 @@ func (NoopSender) SendPasswordResetEmail(ctx context.Context, toEmail, resetURL 
 }
 
 func (NoopSender) SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error {
+	return nil
+}
+
+func (NoopSender) SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error {
 	return nil
 }
 
@@ -90,6 +95,17 @@ func (b *BrevoSender) SendPasswordResetEmail(ctx context.Context, toEmail, reset
 func (b *BrevoSender) SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error {
 	subject := "Your visit has been scheduled"
 	content := buildVisitInviteTemplate(consumerName, scheduledDate, address)
+	return b.send(ctx, toEmail, subject, content)
+}
+
+func (b *BrevoSender) SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error {
+	subject := "You're invited to join " + organizationName
+	content := buildEmailTemplate(
+		"You're invited",
+		"You have been invited to join "+organizationName+". Click the button below to accept the invitation and create your account.",
+		"Accept invitation",
+		inviteURL,
+	)
 	return b.send(ctx, toEmail, subject, content)
 }
 

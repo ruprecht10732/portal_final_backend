@@ -37,6 +37,9 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	bus.Subscribe(events.EmailVerificationRequested{}.EventName(), m)
 	bus.Subscribe(events.PasswordResetRequested{}.EventName(), m)
 
+	// Identity domain events
+	bus.Subscribe(events.OrganizationInviteCreated{}.EventName(), m)
+
 	m.log.Info("notification module registered event handlers")
 }
 
@@ -49,6 +52,8 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handleEmailVerificationRequested(ctx, e)
 	case events.PasswordResetRequested:
 		return m.handlePasswordResetRequested(ctx, e)
+	case events.OrganizationInviteCreated:
+		return m.handleOrganizationInviteCreated(ctx, e)
 	default:
 		m.log.Warn("unhandled event type", "event", event.EventName())
 		return nil
@@ -94,6 +99,20 @@ func (m *Module) handlePasswordResetRequested(ctx context.Context, e events.Pass
 		return err
 	}
 	m.log.Info("password reset email sent", "userId", e.UserID, "email", e.Email)
+	return nil
+}
+
+func (m *Module) handleOrganizationInviteCreated(ctx context.Context, e events.OrganizationInviteCreated) error {
+	inviteURL := m.buildURL("/auth/register", e.InviteToken)
+	if err := m.sender.SendOrganizationInviteEmail(ctx, e.Email, e.OrganizationName, inviteURL); err != nil {
+		m.log.Error("failed to send organization invite email",
+			"organizationId", e.OrganizationID,
+			"email", e.Email,
+			"error", err,
+		)
+		return err
+	}
+	m.log.Info("organization invite email sent", "organizationId", e.OrganizationID, "email", e.Email)
 	return nil
 }
 

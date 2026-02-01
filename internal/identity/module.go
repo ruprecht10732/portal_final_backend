@@ -2,6 +2,7 @@
 package identity
 
 import (
+	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/identity/handler"
 	"portal_final_backend/internal/identity/repository"
@@ -16,9 +17,9 @@ type Module struct {
 	service *service.Service
 }
 
-func NewModule(pool *pgxpool.Pool, val *validator.Validator) *Module {
+func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo)
+	svc := service.New(repo, eventBus)
 	h := handler.New(svc, val)
 
 	return &Module{handler: h, service: svc}

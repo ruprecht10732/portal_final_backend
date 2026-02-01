@@ -80,3 +80,18 @@ type LeadAssigned struct {
 }
 
 func (e LeadAssigned) EventName() string { return "leads.lead.assigned" }
+
+// =============================================================================
+// Identity Domain Events
+// =============================================================================
+
+// OrganizationInviteCreated is published when an organization invite is created.
+type OrganizationInviteCreated struct {
+	BaseEvent
+	OrganizationID   uuid.UUID `json:"organizationId"`
+	OrganizationName string    `json:"organizationName"`
+	Email            string    `json:"email"`
+	InviteToken      string    `json:"inviteToken"`
+}
+
+func (e OrganizationInviteCreated) EventName() string { return "identity.invite.created" }
