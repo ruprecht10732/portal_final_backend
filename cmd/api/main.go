@@ -82,6 +82,7 @@ func main() {
 	appointmentsModule := appointments.NewModule(pool, val, leadAssigner)
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
+	servicesModule.RegisterHandlers(eventBus)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface

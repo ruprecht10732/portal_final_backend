@@ -43,6 +43,16 @@ func (s *Service) CreateOrganizationForUser(ctx context.Context, q repository.DB
 		return uuid.UUID{}, err
 	}
 
+	if s.eventBus != nil {
+		if err := s.eventBus.PublishSync(ctx, events.OrganizationCreated{
+			BaseEvent:      events.NewBaseEvent(),
+			OrganizationID: org.ID,
+			CreatedBy:      userID,
+		}); err != nil {
+			return uuid.UUID{}, err
+		}
+	}
+
 	return org.ID, nil
 }
 

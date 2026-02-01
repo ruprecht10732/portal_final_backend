@@ -95,3 +95,12 @@ type OrganizationInviteCreated struct {
 }
 
 func (e OrganizationInviteCreated) EventName() string { return "identity.invite.created" }
+
+// OrganizationCreated is published when a new organization is created.
+type OrganizationCreated struct {
+	BaseEvent
+	OrganizationID uuid.UUID `json:"organizationId"`
+	CreatedBy      uuid.UUID `json:"createdBy"`
+}
+
+func (e OrganizationCreated) EventName() string { return "identity.organization.created" }

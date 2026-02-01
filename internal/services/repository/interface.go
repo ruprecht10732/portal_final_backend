@@ -9,6 +9,7 @@ import (
 // ServiceType represents a service category that can be assigned to leads.
 type ServiceType struct {
 	ID           uuid.UUID `db:"id"`
+	OrganizationID uuid.UUID `db:"organization_id"`
 	Name         string    `db:"name"`
 	Slug         string    `db:"slug"`
 	Description  *string   `db:"description"`
@@ -22,6 +23,7 @@ type ServiceType struct {
 
 // CreateParams contains parameters for creating a service type.
 type CreateParams struct {
+	OrganizationID uuid.UUID
 	Name         string
 	Slug         string
 	Description  *string
@@ -33,6 +35,7 @@ type CreateParams struct {
 // UpdateParams contains parameters for updating a service type.
 type UpdateParams struct {
 	ID           uuid.UUID
+	OrganizationID uuid.UUID
 	Name         *string
 	Slug         *string
 	Description  *string
@@ -49,6 +52,7 @@ type ReorderItem struct {
 
 // ListParams defines filters for listing service types.
 type ListParams struct {
+	OrganizationID uuid.UUID
 	Search    string
 	IsActive  *bool
 	Offset    int
@@ -59,22 +63,22 @@ type ListParams struct {
 
 // ServiceTypeReader provides read operations for service types.
 type ServiceTypeReader interface {
-	GetByID(ctx context.Context, id uuid.UUID) (ServiceType, error)
-	GetBySlug(ctx context.Context, slug string) (ServiceType, error)
-	List(ctx context.Context) ([]ServiceType, error)
-	ListActive(ctx context.Context) ([]ServiceType, error)
+	GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ServiceType, error)
+	GetBySlug(ctx context.Context, organizationID uuid.UUID, slug string) (ServiceType, error)
+	List(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error)
+	ListActive(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error)
 	ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error)
-	Exists(ctx context.Context, id uuid.UUID) (bool, error)
-	HasLeadServices(ctx context.Context, id uuid.UUID) (bool, error)
+	Exists(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error)
+	HasLeadServices(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error)
 }
 
 // ServiceTypeWriter provides write operations for service types.
 type ServiceTypeWriter interface {
 	Create(ctx context.Context, params CreateParams) (ServiceType, error)
 	Update(ctx context.Context, params UpdateParams) (ServiceType, error)
-	Delete(ctx context.Context, id uuid.UUID) error
-	SetActive(ctx context.Context, id uuid.UUID, isActive bool) error
-	Reorder(ctx context.Context, items []ReorderItem) error
+	Delete(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error
+	SetActive(ctx context.Context, organizationID uuid.UUID, id uuid.UUID, isActive bool) error
+	Reorder(ctx context.Context, organizationID uuid.UUID, items []ReorderItem) error
 }
 
 // Repository combines all service type repository operations.

@@ -37,8 +37,16 @@ func (h *Handler) List(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	result, err := h.svc.ListWithFilters(c.Request.Context(), req)
+	result, err := h.svc.ListWithFilters(c.Request.Context(), tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -48,7 +56,16 @@ func (h *Handler) List(c *gin.Context) {
 // ListActive retrieves only active service types (public).
 // GET /api/v1/service-types
 func (h *Handler) ListActive(c *gin.Context) {
-	result, err := h.svc.ListActive(c.Request.Context())
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.ListActive(c.Request.Context(), tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -63,8 +80,16 @@ func (h *Handler) GetByID(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	result, err := h.svc.GetByID(c.Request.Context(), id)
+	result, err := h.svc.GetByID(c.Request.Context(), tenantID, id)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -79,8 +104,16 @@ func (h *Handler) GetBySlug(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, "slug is required", nil)
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	result, err := h.svc.GetBySlug(c.Request.Context(), slug)
+	result, err := h.svc.GetBySlug(c.Request.Context(), tenantID, slug)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -99,8 +132,16 @@ func (h *Handler) Create(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	result, err := h.svc.Create(c.Request.Context(), req)
+	result, err := h.svc.Create(c.Request.Context(), tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -125,8 +166,16 @@ func (h *Handler) Update(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	result, err := h.svc.Update(c.Request.Context(), id, req)
+	result, err := h.svc.Update(c.Request.Context(), tenantID, id, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -141,8 +190,16 @@ func (h *Handler) Delete(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	result, err := h.svc.Delete(c.Request.Context(), id)
+	result, err := h.svc.Delete(c.Request.Context(), tenantID, id)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -157,8 +214,16 @@ func (h *Handler) ToggleActive(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	result, err := h.svc.ToggleActive(c.Request.Context(), id)
+	result, err := h.svc.ToggleActive(c.Request.Context(), tenantID, id)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -177,9 +242,26 @@ func (h *Handler) Reorder(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
 		return
 	}
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
-	if err := h.svc.Reorder(c.Request.Context(), req); httpkit.HandleError(c, err) {
+	if err := h.svc.Reorder(c.Request.Context(), tenantID, req); httpkit.HandleError(c, err) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
+		return uuid.UUID{}, false
+	}
+	return *tenantID, true
 }

@@ -3,6 +3,7 @@ package httpkit
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -101,5 +102,31 @@ func MustGetIdentity(c *gin.Context) Identity {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return nil
 	}
+	if id.TenantID() == nil {
+		if !isOnboardingAllowedPath(c) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "organization required"})
+			return nil
+		}
+	}
 	return id
+}
+
+func isOnboardingAllowedPath(c *gin.Context) bool {
+	path := c.FullPath()
+	if path == "" {
+		path = c.Request.URL.Path
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	allowed := map[string]bool{
+		"/api/v1/users/me":            true,
+		"/api/v1/users/me/onboarding": true,
+		"/api/v1/users/me/password":   true,
+	}
+	if allowed[path] {
+		return true
+	}
+	return false
 }

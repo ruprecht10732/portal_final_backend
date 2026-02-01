@@ -63,6 +63,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 	now := time.Now()
 	appt := &repository.Appointment{
 		ID:            uuid.New(),
+		OrganizationID: tenantID,
 		UserID:        userID,
 		LeadID:        req.LeadID,
 		LeadServiceID: req.LeadServiceID,
@@ -85,7 +86,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 	// Get lead info if this is a lead visit
 	var leadInfo *transport.AppointmentLeadInfo
 	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID)
+		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
 	}
 
 	resp := appt.ToResponse(leadInfo)
@@ -93,15 +94,15 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 }
 
 // GetByID retrieves an appointment by ID
-func (s *Service) GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool) (*transport.AppointmentResponse, error) {
-	appt, err := s.ensureAccess(ctx, id, userID, isAdmin)
+func (s *Service) GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) (*transport.AppointmentResponse, error) {
+	appt, err := s.ensureAccess(ctx, id, userID, isAdmin, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
 	var leadInfo *transport.AppointmentLeadInfo
 	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID)
+		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
 	}
 
 	resp := appt.ToResponse(leadInfo)
@@ -109,8 +110,8 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID, i
 }
 
 // Update updates an appointment
-func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool, req transport.UpdateAppointmentRequest) (*transport.AppointmentResponse, error) {
-	appt, err := s.repo.GetByID(ctx, id)
+func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.UpdateAppointmentRequest) (*transport.AppointmentResponse, error) {
+	appt, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +154,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 
 	var leadInfo *transport.AppointmentLeadInfo
 	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID)
+		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
 	}
 
 	resp := appt.ToResponse(leadInfo)
@@ -161,8 +162,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 }
 
 // UpdateStatus updates the status of an appointment
-func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool, req transport.UpdateAppointmentStatusRequest) (*transport.AppointmentResponse, error) {
-	appt, err := s.repo.GetByID(ctx, id)
+func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.UpdateAppointmentStatusRequest) (*transport.AppointmentResponse, error) {
+	appt, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,19 +173,19 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 		return nil, apperr.Forbidden("not authorized to update this appointment")
 	}
 
-	if err := s.repo.UpdateStatus(ctx, id, string(req.Status)); err != nil {
+	if err := s.repo.UpdateStatus(ctx, id, tenantID, string(req.Status)); err != nil {
 		return nil, err
 	}
 
 	// Refetch to get updated data
-	appt, err = s.repo.GetByID(ctx, id)
+	appt, err = s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
 	var leadInfo *transport.AppointmentLeadInfo
 	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID)
+		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
 	}
 
 	resp := appt.ToResponse(leadInfo)
@@ -192,8 +193,8 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 }
 
 // Delete removes an appointment
-func (s *Service) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool) error {
-	appt, err := s.repo.GetByID(ctx, id)
+func (s *Service) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) error {
+	appt, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return err
 	}
@@ -203,11 +204,11 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 		return apperr.Forbidden("not authorized to delete this appointment")
 	}
 
-	return s.repo.Delete(ctx, id)
+	return s.repo.Delete(ctx, id, tenantID)
 }
 
 // List retrieves appointments with filtering
-func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.ListAppointmentsRequest) (*transport.AppointmentListResponse, error) {
+func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.ListAppointmentsRequest) (*transport.AppointmentListResponse, error) {
 	// Apply pagination defaults
 	page := req.Page
 	if page == 0 {
@@ -239,6 +240,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, req 
 
 	// Build params
 	params := repository.ListParams{
+		OrganizationID: tenantID,
 		LeadID:   leadID,
 		Page:     page,
 		PageSize: pageSize,
@@ -302,7 +304,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, req 
 	}
 
 	// Batch fetch lead info
-	leadInfoMap, err := s.repo.GetLeadInfoBatch(ctx, leadIDs)
+	leadInfoMap, err := s.repo.GetLeadInfoBatch(ctx, leadIDs, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -335,12 +337,12 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, req 
 }
 
 // Visit reports
-func (s *Service) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool) (*transport.AppointmentVisitReportResponse, error) {
-	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+func (s *Service) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) (*transport.AppointmentVisitReportResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID); err != nil {
 		return nil, err
 	}
 
-	report, err := s.repo.GetVisitReport(ctx, appointmentID)
+	report, err := s.repo.GetVisitReport(ctx, appointmentID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -355,18 +357,19 @@ func (s *Service) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, u
 	}, nil
 }
 
-func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, req transport.UpsertVisitReportRequest) (*transport.AppointmentVisitReportResponse, error) {
-	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.UpsertVisitReportRequest) (*transport.AppointmentVisitReportResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID); err != nil {
 		return nil, err
 	}
 
-	existing, _ := s.repo.GetVisitReport(ctx, appointmentID)
+	existing, _ := s.repo.GetVisitReport(ctx, appointmentID, tenantID)
 	measurements := mergeString(existing, func(r *repository.VisitReport) *string { return r.Measurements }, req.Measurements)
 	accessDifficulty := mergeString(existing, func(r *repository.VisitReport) *string { return r.AccessDifficulty }, toAccessDifficultyString(req.AccessDifficulty))
 	notes := mergeString(existing, func(r *repository.VisitReport) *string { return r.Notes }, req.Notes)
 
 	saved, err := s.repo.UpsertVisitReport(ctx, repository.VisitReport{
 		AppointmentID:    appointmentID,
+		OrganizationID:   tenantID,
 		Measurements:     measurements,
 		AccessDifficulty: accessDifficulty,
 		Notes:            notes,
@@ -386,14 +389,15 @@ func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID
 }
 
 // Attachments
-func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, req transport.CreateAppointmentAttachmentRequest) (*transport.AppointmentAttachmentResponse, error) {
-	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAppointmentAttachmentRequest) (*transport.AppointmentAttachmentResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID); err != nil {
 		return nil, err
 	}
 
 	attachment := repository.AppointmentAttachment{
 		ID:            uuid.New(),
 		AppointmentID: appointmentID,
+		OrganizationID: tenantID,
 		FileKey:       req.FileKey,
 		FileName:      req.FileName,
 		ContentType:   req.ContentType,
@@ -416,12 +420,12 @@ func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID,
 	}, nil
 }
 
-func (s *Service) ListAttachments(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool) ([]transport.AppointmentAttachmentResponse, error) {
-	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin); err != nil {
+func (s *Service) ListAttachments(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) ([]transport.AppointmentAttachmentResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID); err != nil {
 		return nil, err
 	}
 
-	items, err := s.repo.ListAttachments(ctx, appointmentID)
+	items, err := s.repo.ListAttachments(ctx, appointmentID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +447,7 @@ func (s *Service) ListAttachments(ctx context.Context, appointmentID uuid.UUID, 
 }
 
 // Availability
-func (s *Service) CreateAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.CreateAvailabilityRuleRequest) (*transport.AvailabilityRuleResponse, error) {
+func (s *Service) CreateAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAvailabilityRuleRequest) (*transport.AvailabilityRuleResponse, error) {
 	targetUserID, err := s.resolveTargetUserID(userID, isAdmin, req.UserID)
 	if err != nil {
 		return nil, err
@@ -456,6 +460,7 @@ func (s *Service) CreateAvailabilityRule(ctx context.Context, userID uuid.UUID, 
 
 	saved, err := s.repo.CreateAvailabilityRule(ctx, repository.AvailabilityRule{
 		ID:        uuid.New(),
+		OrganizationID: tenantID,
 		UserID:    targetUserID,
 		Weekday:   req.Weekday,
 		StartTime: startTime,
@@ -469,13 +474,13 @@ func (s *Service) CreateAvailabilityRule(ctx context.Context, userID uuid.UUID, 
 	return mapAvailabilityRule(saved), nil
 }
 
-func (s *Service) ListAvailabilityRules(ctx context.Context, userID uuid.UUID, isAdmin bool, targetUserID *uuid.UUID) ([]transport.AvailabilityRuleResponse, error) {
+func (s *Service) ListAvailabilityRules(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, targetUserID *uuid.UUID) ([]transport.AvailabilityRuleResponse, error) {
 	resolvedUserID, err := s.resolveTargetUserID(userID, isAdmin, targetUserID)
 	if err != nil {
 		return nil, err
 	}
 
-	items, err := s.repo.ListAvailabilityRules(ctx, resolvedUserID)
+	items, err := s.repo.ListAvailabilityRules(ctx, tenantID, resolvedUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -488,8 +493,8 @@ func (s *Service) ListAvailabilityRules(ctx context.Context, userID uuid.UUID, i
 	return resp, nil
 }
 
-func (s *Service) DeleteAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) error {
-	rule, err := s.repo.GetAvailabilityRuleByID(ctx, id)
+func (s *Service) DeleteAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, id uuid.UUID) error {
+	rule, err := s.repo.GetAvailabilityRuleByID(ctx, id, tenantID)
 	if err != nil {
 		return err
 	}
@@ -497,10 +502,10 @@ func (s *Service) DeleteAvailabilityRule(ctx context.Context, userID uuid.UUID, 
 		return apperr.Forbidden("not authorized to delete this availability rule")
 	}
 
-	return s.repo.DeleteAvailabilityRule(ctx, id)
+	return s.repo.DeleteAvailabilityRule(ctx, id, tenantID)
 }
 
-func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, req transport.CreateAvailabilityOverrideRequest) (*transport.AvailabilityOverrideResponse, error) {
+func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAvailabilityOverrideRequest) (*transport.AvailabilityOverrideResponse, error) {
 	targetUserID, err := s.resolveTargetUserID(userID, isAdmin, req.UserID)
 	if err != nil {
 		return nil, err
@@ -518,6 +523,7 @@ func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UU
 
 	saved, err := s.repo.CreateAvailabilityOverride(ctx, repository.AvailabilityOverride{
 		ID:          uuid.New(),
+		OrganizationID: tenantID,
 		UserID:      targetUserID,
 		Date:        date,
 		IsAvailable: req.IsAvailable,
@@ -532,7 +538,7 @@ func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UU
 	return mapAvailabilityOverride(saved), nil
 }
 
-func (s *Service) ListAvailabilityOverrides(ctx context.Context, userID uuid.UUID, isAdmin bool, targetUserID *uuid.UUID, startDate *string, endDate *string) ([]transport.AvailabilityOverrideResponse, error) {
+func (s *Service) ListAvailabilityOverrides(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, targetUserID *uuid.UUID, startDate *string, endDate *string) ([]transport.AvailabilityOverrideResponse, error) {
 	resolvedUserID, err := s.resolveTargetUserID(userID, isAdmin, targetUserID)
 	if err != nil {
 		return nil, err
@@ -543,7 +549,7 @@ func (s *Service) ListAvailabilityOverrides(ctx context.Context, userID uuid.UUI
 		return nil, err
 	}
 
-	items, err := s.repo.ListAvailabilityOverrides(ctx, resolvedUserID, start, end)
+	items, err := s.repo.ListAvailabilityOverrides(ctx, tenantID, resolvedUserID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -556,8 +562,8 @@ func (s *Service) ListAvailabilityOverrides(ctx context.Context, userID uuid.UUI
 	return resp, nil
 }
 
-func (s *Service) DeleteAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) error {
-	override, err := s.repo.GetAvailabilityOverrideByID(ctx, id)
+func (s *Service) DeleteAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, id uuid.UUID) error {
+	override, err := s.repo.GetAvailabilityOverrideByID(ctx, id, tenantID)
 	if err != nil {
 		return err
 	}
@@ -565,13 +571,13 @@ func (s *Service) DeleteAvailabilityOverride(ctx context.Context, userID uuid.UU
 		return apperr.Forbidden("not authorized to delete this availability override")
 	}
 
-	return s.repo.DeleteAvailabilityOverride(ctx, id)
+	return s.repo.DeleteAvailabilityOverride(ctx, id, tenantID)
 }
 
 // Helper functions
 
-func (s *Service) getLeadInfo(ctx context.Context, leadID uuid.UUID) *transport.AppointmentLeadInfo {
-	info, err := s.repo.GetLeadInfo(ctx, leadID)
+func (s *Service) getLeadInfo(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) *transport.AppointmentLeadInfo {
+	info, err := s.repo.GetLeadInfo(ctx, leadID, tenantID)
 	if err != nil || info == nil {
 		return nil
 	}
@@ -584,8 +590,8 @@ func (s *Service) getLeadInfo(ctx context.Context, leadID uuid.UUID) *transport.
 	}
 }
 
-func (s *Service) ensureAccess(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool) (*repository.Appointment, error) {
-	appt, err := s.repo.GetByID(ctx, appointmentID)
+func (s *Service) ensureAccess(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) (*repository.Appointment, error) {
+	appt, err := s.repo.GetByID(ctx, appointmentID, tenantID)
 	if err != nil {
 		return nil, err
 	}

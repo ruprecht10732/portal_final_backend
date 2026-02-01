@@ -73,9 +73,13 @@ func (h *Handler) List(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.List(c.Request.Context(), identity.UserID(), isAdmin, req)
+	result, err := h.svc.List(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -125,9 +129,13 @@ func (h *Handler) GetByID(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.GetByID(c.Request.Context(), id, identity.UserID(), isAdmin)
+	result, err := h.svc.GetByID(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -157,9 +165,13 @@ func (h *Handler) Update(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.Update(c.Request.Context(), id, identity.UserID(), isAdmin, req)
+	result, err := h.svc.Update(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -179,9 +191,13 @@ func (h *Handler) Delete(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	if err := h.svc.Delete(c.Request.Context(), id, identity.UserID(), isAdmin); httpkit.HandleError(c, err) {
+	if err := h.svc.Delete(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID); httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -210,9 +226,13 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.UpdateStatus(c.Request.Context(), id, identity.UserID(), isAdmin, req)
+	result, err := h.svc.UpdateStatus(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -232,9 +252,13 @@ func (h *Handler) GetVisitReport(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.GetVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin)
+	result, err := h.svc.GetVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -264,9 +288,13 @@ func (h *Handler) UpsertVisitReport(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.UpsertVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin, req)
+	result, err := h.svc.UpsertVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -296,9 +324,13 @@ func (h *Handler) CreateAttachment(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.CreateAttachment(c.Request.Context(), id, identity.UserID(), isAdmin, req)
+	result, err := h.svc.CreateAttachment(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -318,9 +350,13 @@ func (h *Handler) ListAttachments(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.ListAttachments(c.Request.Context(), id, identity.UserID(), isAdmin)
+	result, err := h.svc.ListAttachments(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -344,9 +380,13 @@ func (h *Handler) CreateAvailabilityRule(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.CreateAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, req)
+	result, err := h.svc.CreateAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -370,9 +410,13 @@ func (h *Handler) ListAvailabilityRules(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.ListAvailabilityRules(c.Request.Context(), identity.UserID(), isAdmin, userID)
+	result, err := h.svc.ListAvailabilityRules(c.Request.Context(), identity.UserID(), isAdmin, tenantID, userID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -392,9 +436,13 @@ func (h *Handler) DeleteAvailabilityRule(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	if err := h.svc.DeleteAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, id); httpkit.HandleError(c, err) {
+	if err := h.svc.DeleteAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id); httpkit.HandleError(c, err) {
 		return
 	}
 
@@ -417,9 +465,13 @@ func (h *Handler) CreateAvailabilityOverride(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.CreateAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, req)
+	result, err := h.svc.CreateAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -454,9 +506,13 @@ func (h *Handler) ListAvailabilityOverrides(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	result, err := h.svc.ListAvailabilityOverrides(c.Request.Context(), identity.UserID(), isAdmin, userID, startPtr, endPtr)
+	result, err := h.svc.ListAvailabilityOverrides(c.Request.Context(), identity.UserID(), isAdmin, tenantID, userID, startPtr, endPtr)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -476,9 +532,13 @@ func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
 	if identity == nil {
 		return
 	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
 
 	isAdmin := containsRole(identity.Roles(), "admin")
-	if err := h.svc.DeleteAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, id); httpkit.HandleError(c, err) {
+	if err := h.svc.DeleteAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id); httpkit.HandleError(c, err) {
 		return
 	}
 

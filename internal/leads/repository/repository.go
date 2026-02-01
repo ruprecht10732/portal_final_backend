@@ -177,7 +177,7 @@ func (r *Repository) GetByPhoneOrEmail(ctx context.Context, phone string, email 
 			l.address_city,
 			COUNT(ls.id) AS service_count,
 			(SELECT st.name FROM lead_services ls2 
-			 JOIN service_types st ON st.id = ls2.service_type_id 
+			 JOIN service_types st ON st.id = ls2.service_type_id AND st.organization_id = l.organization_id
 			 WHERE ls2.lead_id = l.id ORDER BY ls2.created_at DESC LIMIT 1) AS last_service_type,
 			(SELECT ls2.status FROM lead_services ls2 
 			 WHERE ls2.lead_id = l.id ORDER BY ls2.created_at DESC LIMIT 1) AS last_status,
@@ -497,7 +497,7 @@ func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) 
 			ORDER BY ls.created_at DESC
 			LIMIT 1
 		) cs ON true
-		LEFT JOIN service_types st ON st.id = cs.service_type_id`
+		LEFT JOIN service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id`
 	}
 
 	return strings.Join(whereClauses, " AND "), joinClause, args, argIdx

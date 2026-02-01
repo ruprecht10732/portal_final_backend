@@ -24,8 +24,8 @@ func New(repo repository.Repository, log *logger.Logger) *Service {
 }
 
 // GetByID retrieves a service type by ID.
-func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.ServiceTypeResponse, error) {
-	st, err := s.repo.GetByID(ctx, id)
+func (s *Service) GetByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.ServiceTypeResponse, error) {
+	st, err := s.repo.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return transport.ServiceTypeResponse{}, err
 	}
@@ -33,8 +33,8 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (transport.ServiceT
 }
 
 // GetBySlug retrieves a service type by slug.
-func (s *Service) GetBySlug(ctx context.Context, slug string) (transport.ServiceTypeResponse, error) {
-	st, err := s.repo.GetBySlug(ctx, slug)
+func (s *Service) GetBySlug(ctx context.Context, tenantID uuid.UUID, slug string) (transport.ServiceTypeResponse, error) {
+	st, err := s.repo.GetBySlug(ctx, tenantID, slug)
 	if err != nil {
 		return transport.ServiceTypeResponse{}, err
 	}
@@ -42,8 +42,8 @@ func (s *Service) GetBySlug(ctx context.Context, slug string) (transport.Service
 }
 
 // List retrieves all service types (admin default list).
-func (s *Service) List(ctx context.Context) (transport.ServiceTypeListResponse, error) {
-	items, err := s.repo.List(ctx)
+func (s *Service) List(ctx context.Context, tenantID uuid.UUID) (transport.ServiceTypeListResponse, error) {
+	items, err := s.repo.List(ctx, tenantID)
 	if err != nil {
 		return transport.ServiceTypeListResponse{}, err
 	}
@@ -51,7 +51,7 @@ func (s *Service) List(ctx context.Context) (transport.ServiceTypeListResponse, 
 }
 
 // ListWithFilters retrieves service types with search, filters, and pagination (admin).
-func (s *Service) ListWithFilters(ctx context.Context, req transport.ListServiceTypesRequest) (transport.ServiceTypeListResponse, error) {
+func (s *Service) ListWithFilters(ctx context.Context, tenantID uuid.UUID, req transport.ListServiceTypesRequest) (transport.ServiceTypeListResponse, error) {
 	page := req.Page
 	pageSize := req.PageSize
 	if page < 1 {
@@ -71,6 +71,7 @@ func (s *Service) ListWithFilters(ctx context.Context, req transport.ListService
 	}
 
 	params := repository.ListParams{
+		OrganizationID: tenantID,
 		Search:    req.Search,
 		IsActive:  isActive,
 		Offset:    (page - 1) * pageSize,
@@ -88,8 +89,8 @@ func (s *Service) ListWithFilters(ctx context.Context, req transport.ListService
 }
 
 // ListActive retrieves only active service types.
-func (s *Service) ListActive(ctx context.Context) (transport.ServiceTypeListResponse, error) {
-	items, err := s.repo.ListActive(ctx)
+func (s *Service) ListActive(ctx context.Context, tenantID uuid.UUID) (transport.ServiceTypeListResponse, error) {
+	items, err := s.repo.ListActive(ctx, tenantID)
 	if err != nil {
 		return transport.ServiceTypeListResponse{}, err
 	}
@@ -97,13 +98,14 @@ func (s *Service) ListActive(ctx context.Context) (transport.ServiceTypeListResp
 }
 
 // Create creates a new service type.
-func (s *Service) Create(ctx context.Context, req transport.CreateServiceTypeRequest) (transport.ServiceTypeResponse, error) {
+func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.CreateServiceTypeRequest) (transport.ServiceTypeResponse, error) {
 	displayOrder := 0
 	if req.DisplayOrder != nil {
 		displayOrder = *req.DisplayOrder
 	}
 
 	params := repository.CreateParams{
+		OrganizationID: tenantID,
 		Name:         req.Name,
 		Slug:         generateSlug(req.Name),
 		Description:  req.Description,
@@ -122,7 +124,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateServiceTypeReq
 }
 
 // Update updates an existing service type.
-func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.UpdateServiceTypeRequest) (transport.ServiceTypeResponse, error) {
+func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, req transport.UpdateServiceTypeRequest) (transport.ServiceTypeResponse, error) {
 	var slug *string
 	if req.Name != nil {
 		newSlug := generateSlug(*req.Name)
@@ -131,6 +133,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 
 	params := repository.UpdateParams{
 		ID:           id,
+		OrganizationID: tenantID,
 		Name:         req.Name,
 		Slug:         slug,
 		Description:  req.Description,
@@ -149,21 +152,21 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req transport.Update
 }
 
 // Delete removes or deactivates a service type based on usage.
-func (s *Service) Delete(ctx context.Context, id uuid.UUID) (transport.DeleteServiceTypeResponse, error) {
-	used, err := s.repo.HasLeadServices(ctx, id)
+func (s *Service) Delete(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.DeleteServiceTypeResponse, error) {
+	used, err := s.repo.HasLeadServices(ctx, tenantID, id)
 	if err != nil {
 		return transport.DeleteServiceTypeResponse{}, err
 	}
 
 	if used {
-		if err := s.repo.SetActive(ctx, id, false); err != nil {
+		if err := s.repo.SetActive(ctx, tenantID, id, false); err != nil {
 			return transport.DeleteServiceTypeResponse{}, err
 		}
 		s.log.Info("service type deactivated", "id", id)
 		return transport.DeleteServiceTypeResponse{Status: "deactivated"}, nil
 	}
 
-	if err := s.repo.Delete(ctx, id); err != nil {
+	if err := s.repo.Delete(ctx, tenantID, id); err != nil {
 		return transport.DeleteServiceTypeResponse{}, err
 	}
 
@@ -172,21 +175,21 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) (transport.DeleteSer
 }
 
 // ToggleActive toggles the is_active flag for a service type.
-func (s *Service) ToggleActive(ctx context.Context, id uuid.UUID) (transport.ServiceTypeResponse, error) {
+func (s *Service) ToggleActive(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.ServiceTypeResponse, error) {
 	// Get current state
-	st, err := s.repo.GetByID(ctx, id)
+	st, err := s.repo.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return transport.ServiceTypeResponse{}, err
 	}
 
 	// Toggle
 	newActive := !st.IsActive
-	if err := s.repo.SetActive(ctx, id, newActive); err != nil {
+	if err := s.repo.SetActive(ctx, tenantID, id, newActive); err != nil {
 		return transport.ServiceTypeResponse{}, err
 	}
 
 	// Get updated record
-	st, err = s.repo.GetByID(ctx, id)
+	st, err = s.repo.GetByID(ctx, tenantID, id)
 	if err != nil {
 		return transport.ServiceTypeResponse{}, err
 	}
@@ -196,7 +199,7 @@ func (s *Service) ToggleActive(ctx context.Context, id uuid.UUID) (transport.Ser
 }
 
 // Reorder updates the display order of multiple service types.
-func (s *Service) Reorder(ctx context.Context, req transport.ReorderRequest) error {
+func (s *Service) Reorder(ctx context.Context, tenantID uuid.UUID, req transport.ReorderRequest) error {
 	items := make([]repository.ReorderItem, len(req.Items))
 	for i, item := range req.Items {
 		items[i] = repository.ReorderItem{
@@ -205,7 +208,7 @@ func (s *Service) Reorder(ctx context.Context, req transport.ReorderRequest) err
 		}
 	}
 
-	if err := s.repo.Reorder(ctx, items); err != nil {
+	if err := s.repo.Reorder(ctx, tenantID, items); err != nil {
 		return err
 	}
 
@@ -214,8 +217,36 @@ func (s *Service) Reorder(ctx context.Context, req transport.ReorderRequest) err
 }
 
 // Exists checks if a service type exists by ID.
-func (s *Service) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
-	return s.repo.Exists(ctx, id)
+func (s *Service) Exists(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (bool, error) {
+	return s.repo.Exists(ctx, tenantID, id)
+}
+
+// SeedDefaults ensures a tenant has the default service types.
+func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
+	items, err := s.repo.List(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if len(items) > 0 {
+		return nil
+	}
+
+	for _, def := range defaultServiceTypes {
+		_, err := s.repo.Create(ctx, repository.CreateParams{
+			OrganizationID: tenantID,
+			Name:         def.Name,
+			Slug:         def.Slug,
+			Description:  toPtr(def.Description),
+			Icon:         toPtr(def.Icon),
+			Color:        toPtr(def.Color),
+			DisplayOrder: def.DisplayOrder,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // toResponse converts a repository ServiceType to transport response.
@@ -276,4 +307,87 @@ func generateSlug(name string) string {
 	slug = strings.Trim(slug, "-")
 
 	return slug
+}
+
+type defaultServiceType struct {
+	Name         string
+	Slug         string
+	Description  string
+	Icon         string
+	Color        string
+	DisplayOrder int
+}
+
+var defaultServiceTypes = []defaultServiceType{
+	{
+		Name:         "Windows",
+		Slug:         "windows",
+		Description:  "Window and door installation, replacement, and repairs",
+		Icon:         "window",
+		Color:        "#3B82F6",
+		DisplayOrder: 1,
+	},
+	{
+		Name:         "Insulation",
+		Slug:         "insulation",
+		Description:  "Home insulation services including roof, wall, and floor insulation",
+		Icon:         "home",
+		Color:        "#10B981",
+		DisplayOrder: 2,
+	},
+	{
+		Name:         "Solar",
+		Slug:         "solar",
+		Description:  "Solar panel installation and maintenance",
+		Icon:         "sun",
+		Color:        "#F59E0B",
+		DisplayOrder: 3,
+	},
+	{
+		Name:         "Plumbing",
+		Slug:         "plumbing",
+		Description:  "Plumbing repairs, installations, and drain services",
+		Icon:         "droplet",
+		Color:        "#0EA5E9",
+		DisplayOrder: 4,
+	},
+	{
+		Name:         "HVAC",
+		Slug:         "hvac",
+		Description:  "Heating, ventilation, air conditioning, and heat pumps",
+		Icon:         "flame",
+		Color:        "#EF4444",
+		DisplayOrder: 5,
+	},
+	{
+		Name:         "Electrical",
+		Slug:         "electrical",
+		Description:  "Electrical installations, repairs, and upgrades",
+		Icon:         "zap",
+		Color:        "#8B5CF6",
+		DisplayOrder: 6,
+	},
+	{
+		Name:         "Carpentry",
+		Slug:         "carpentry",
+		Description:  "Woodwork, doors, floors, and furniture repairs",
+		Icon:         "hammer",
+		Color:        "#D97706",
+		DisplayOrder: 7,
+	},
+	{
+		Name:         "Handyman",
+		Slug:         "handyman",
+		Description:  "General repairs and small home improvement tasks",
+		Icon:         "tool",
+		Color:        "#6B7280",
+		DisplayOrder: 8,
+	},
+}
+
+func toPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

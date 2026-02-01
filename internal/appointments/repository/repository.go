@@ -17,6 +17,7 @@ import (
 // Appointment represents the appointment database model
 type Appointment struct {
 	ID            uuid.UUID  `db:"id"`
+	OrganizationID uuid.UUID `db:"organization_id"`
 	UserID        uuid.UUID  `db:"user_id"`
 	LeadID        *uuid.UUID `db:"lead_id"`
 	LeadServiceID *uuid.UUID `db:"lead_service_id"`
@@ -57,14 +58,14 @@ func New(pool *pgxpool.Pool) *Repository {
 func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
 	query := `
 		INSERT INTO appointments (
-			id, user_id, lead_id, lead_service_id, type, title, description,
+			id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 			location, start_time, end_time, status, all_day, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		)`
 
 	_, err := r.pool.Exec(ctx, query,
-		appt.ID, appt.UserID, appt.LeadID, appt.LeadServiceID, appt.Type,
+		appt.ID, appt.OrganizationID, appt.UserID, appt.LeadID, appt.LeadServiceID, appt.Type,
 		appt.Title, appt.Description, appt.Location, appt.StartTime, appt.EndTime,
 		appt.Status, appt.AllDay, appt.CreatedAt, appt.UpdatedAt,
 	)
@@ -76,14 +77,14 @@ func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
 }
 
 // GetByID retrieves an appointment by its ID
-func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (*Appointment, error) {
+func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
 	var appt Appointment
-	query := `SELECT id, user_id, lead_id, lead_service_id, type, title, description,
+	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, start_time, end_time, status, all_day, created_at, updated_at
-		FROM appointments WHERE id = $1`
+		FROM appointments WHERE id = $1 AND organization_id = $2`
 
-	err := r.pool.QueryRow(ctx, query, id).Scan(
-		&appt.ID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
+		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
 		&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
 		&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 	)
@@ -98,14 +99,14 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (*Appointment, e
 }
 
 // GetByLeadServiceID retrieves an appointment by lead service ID (for sync)
-func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.UUID) (*Appointment, error) {
+func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
 	var appt Appointment
-	query := `SELECT id, user_id, lead_id, lead_service_id, type, title, description,
+	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, start_time, end_time, status, all_day, created_at, updated_at
-		FROM appointments WHERE lead_service_id = $1 AND status = 'scheduled' ORDER BY created_at DESC LIMIT 1`
+		FROM appointments WHERE lead_service_id = $1 AND organization_id = $2 AND status = 'scheduled' ORDER BY created_at DESC LIMIT 1`
 
-	err := r.pool.QueryRow(ctx, query, leadServiceID).Scan(
-		&appt.ID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+	err := r.pool.QueryRow(ctx, query, leadServiceID, organizationID).Scan(
+		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
 		&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
 		&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 	)
@@ -130,11 +131,11 @@ func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 			end_time = $6,
 			all_day = $7,
 			updated_at = $8
-		WHERE id = $1`
+		WHERE id = $1 AND organization_id = $9`
 
 	result, err := r.pool.Exec(ctx, query,
 		appt.ID, appt.Title, appt.Description, appt.Location,
-		appt.StartTime, appt.EndTime, appt.AllDay, appt.UpdatedAt,
+		appt.StartTime, appt.EndTime, appt.AllDay, appt.UpdatedAt, appt.OrganizationID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update appointment: %w", err)
@@ -148,10 +149,10 @@ func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 }
 
 // UpdateStatus updates the status of an appointment
-func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
-	query := `UPDATE appointments SET status = $2, updated_at = $3 WHERE id = $1`
+func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) error {
+	query := `UPDATE appointments SET status = $3, updated_at = $4 WHERE id = $1 AND organization_id = $2`
 
-	result, err := r.pool.Exec(ctx, query, id, status, time.Now())
+	result, err := r.pool.Exec(ctx, query, id, organizationID, status, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to update appointment status: %w", err)
 	}
@@ -164,10 +165,10 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, status stri
 }
 
 // Delete removes an appointment
-func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM appointments WHERE id = $1`
+func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
+	query := `DELETE FROM appointments WHERE id = $1 AND organization_id = $2`
 
-	result, err := r.pool.Exec(ctx, query, id)
+	result, err := r.pool.Exec(ctx, query, id, organizationID)
 	if err != nil {
 		return fmt.Errorf("failed to delete appointment: %w", err)
 	}
@@ -181,6 +182,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 
 // ListParams contains parameters for listing appointments
 type ListParams struct {
+	OrganizationID uuid.UUID
 	UserID    *uuid.UUID
 	LeadID    *uuid.UUID
 	Type      *string
@@ -203,9 +205,9 @@ type ListResult struct {
 // List retrieves appointments with optional filtering
 func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, error) {
 	// Build query
-	baseQuery := `FROM appointments WHERE 1=1`
-	args := []interface{}{}
-	argIndex := 1
+	baseQuery := `FROM appointments WHERE organization_id = $1`
+	args := []interface{}{params.OrganizationID}
+	argIndex := 2
 
 	if params.UserID != nil {
 		baseQuery += fmt.Sprintf(" AND user_id = $%d", argIndex)
@@ -255,7 +257,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	offset := (params.Page - 1) * params.PageSize
 
 	// Fetch items
-	selectQuery := fmt.Sprintf(`SELECT id, user_id, lead_id, lead_service_id, type, title, description,
+	selectQuery := fmt.Sprintf(`SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, start_time, end_time, status, all_day, created_at, updated_at %s ORDER BY start_time ASC LIMIT $%d OFFSET $%d`,
 		baseQuery, argIndex, argIndex+1)
 	args = append(args, params.PageSize, offset)
@@ -270,7 +272,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	for rows.Next() {
 		var appt Appointment
 		if err := rows.Scan(
-			&appt.ID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
 			&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
 			&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 		); err != nil {
@@ -293,12 +295,12 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 }
 
 // GetLeadInfo retrieves basic lead information for embedding in appointment responses
-func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID) (*LeadInfo, error) {
+func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*LeadInfo, error) {
 	var info LeadInfo
 	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
-		FROM leads WHERE id = $1`
+		FROM leads WHERE id = $1 AND organization_id = $2`
 
-	err := r.pool.QueryRow(ctx, query, leadID).Scan(
+	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(
 		&info.ID, &info.FirstName, &info.LastName, &info.Phone,
 		&info.Street, &info.HouseNumber, &info.City,
 	)
@@ -313,15 +315,15 @@ func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID) (*LeadIn
 }
 
 // GetLeadInfoBatch retrieves lead info for multiple lead IDs
-func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID) (map[uuid.UUID]*LeadInfo, error) {
+func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, organizationID uuid.UUID) (map[uuid.UUID]*LeadInfo, error) {
 	if len(leadIDs) == 0 {
 		return make(map[uuid.UUID]*LeadInfo), nil
 	}
 
 	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
-		FROM leads WHERE id = ANY($1)`
+		FROM leads WHERE id = ANY($1) AND organization_id = $2`
 
-	rows, err := r.pool.Query(ctx, query, leadIDs)
+	rows, err := r.pool.Query(ctx, query, leadIDs, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get lead info batch: %w", err)
 	}
