@@ -103,7 +103,7 @@ func (m *Module) handlePasswordResetRequested(ctx context.Context, e events.Pass
 }
 
 func (m *Module) handleOrganizationInviteCreated(ctx context.Context, e events.OrganizationInviteCreated) error {
-	inviteURL := m.buildURL("/auth/register", e.InviteToken)
+	inviteURL := m.buildURL("/sign-up", e.InviteToken)
 	if err := m.sender.SendOrganizationInviteEmail(ctx, e.Email, e.OrganizationName, inviteURL); err != nil {
 		m.log.Error("failed to send organization invite email",
 			"organizationId", e.OrganizationID,

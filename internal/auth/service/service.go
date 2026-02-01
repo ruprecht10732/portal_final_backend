@@ -537,3 +537,20 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentP
 	_ = s.repo.RevokeAllRefreshTokens(ctx, userID)
 	return nil
 }
+
+func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (transport.ResolveInviteResponse, error) {
+	invite, err := s.identity.ResolveInvite(ctx, rawToken)
+	if err != nil {
+		return transport.ResolveInviteResponse{}, err
+	}
+
+	org, err := s.identity.GetOrganization(ctx, invite.OrganizationID)
+	if err != nil {
+		return transport.ResolveInviteResponse{}, err
+	}
+
+	return transport.ResolveInviteResponse{
+		Email:            invite.Email,
+		OrganizationName: org.Name,
+	}, nil
+}

@@ -37,6 +37,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/forgot-password", h.ForgotPassword)
 	rg.POST("/reset-password", h.ResetPassword)
 	rg.POST("/verify-email", h.VerifyEmail)
+	rg.GET("/invites/resolve", h.ResolveInvite)
 }
 
 func (h *Handler) ListUsers(c *gin.Context) {
@@ -246,6 +247,21 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"message": "email verified"})
+}
+
+func (h *Handler) ResolveInvite(c *gin.Context) {
+	tokenValue := c.Query("token")
+	if tokenValue == "" {
+		httpkit.Error(c, http.StatusBadRequest, "token is required", nil)
+		return
+	}
+
+	resp, err := h.svc.ResolveInvite(c.Request.Context(), tokenValue)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, resp)
 }
 
 func (h *Handler) SetUserRoles(c *gin.Context) {

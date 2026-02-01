@@ -27,6 +27,11 @@ type VerifyEmailRequest struct {
 	Token string `json:"token" validate:"required"`
 }
 
+type ResolveInviteResponse struct {
+	Email            string `json:"email"`
+	OrganizationName string `json:"organizationName"`
+}
+
 type RoleUpdateRequest struct {
 	Roles []string `json:"roles" validate:"required,min=1,dive,required"`
 }
