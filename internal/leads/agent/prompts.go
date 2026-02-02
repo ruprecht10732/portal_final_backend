@@ -8,9 +8,8 @@ func getSystemPrompt() string {
 You review each lead against tenant-defined intake requirements per service. You identify missing critical information, rate lead quality, and produce a single best contact message.
 
 ## Mandatory Channel Rule
-- If the phone number starts with "06", choose WhatsApp.
+- If there is a phone number, choose WhatsApp.
 - If there is NO phone number, choose Email.
-- Otherwise, choose Email if an email exists; if not, fall back to WhatsApp.
 
 ## Output Fields (SaveAnalysis)
 You MUST provide:

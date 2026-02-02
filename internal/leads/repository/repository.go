@@ -434,91 +434,110 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	return leads, total, nil
 }
 
-func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) {
-	// Organization ID is always the first filter (mandatory for tenant isolation)
-	whereClauses := []string{"l.organization_id = $1", "l.deleted_at IS NULL"}
-	args := []interface{}{params.OrganizationID}
-	argIdx := 2
-	needsServiceJoin := false
+type leadListWhereBuilder struct {
+	whereClauses     []string
+	args             []interface{}
+	argIdx           int
+	needsServiceJoin bool
+}
 
-	addEquals := func(column string, value interface{}) {
-		whereClauses = append(whereClauses, fmt.Sprintf("%s = $%d", column, argIdx))
-		args = append(args, value)
-		argIdx++
+func newLeadListWhereBuilder(organizationID uuid.UUID) *leadListWhereBuilder {
+	return &leadListWhereBuilder{
+		whereClauses: []string{"l.organization_id = $1", "l.deleted_at IS NULL"},
+		args:         []interface{}{organizationID},
+		argIdx:       2,
 	}
-	addILike := func(column string, value string) {
-		whereClauses = append(whereClauses, fmt.Sprintf("%s ILIKE $%d", column, argIdx))
-		args = append(args, "%"+value+"%")
-		argIdx++
-	}
+}
 
-	// Status and ServiceType filtering now requires joining with lead_services (current service)
-	if params.Status != nil {
-		needsServiceJoin = true
-		whereClauses = append(whereClauses, fmt.Sprintf("cs.status = $%d", argIdx))
-		args = append(args, *params.Status)
-		argIdx++
-	}
-	if params.ServiceType != nil {
-		needsServiceJoin = true
-		whereClauses = append(whereClauses, fmt.Sprintf("st.name = $%d", argIdx))
-		args = append(args, *params.ServiceType)
-		argIdx++
-	}
-	if params.Search != "" {
-		searchPattern := "%" + params.Search + "%"
-		whereClauses = append(whereClauses, fmt.Sprintf(
-			"(l.consumer_first_name ILIKE $%d OR l.consumer_last_name ILIKE $%d OR l.consumer_phone ILIKE $%d OR l.consumer_email ILIKE $%d OR l.address_city ILIKE $%d)",
-			argIdx, argIdx, argIdx, argIdx, argIdx,
-		))
-		args = append(args, searchPattern)
-		argIdx++
-	}
-	if params.FirstName != nil {
-		addILike("l.consumer_first_name", *params.FirstName)
-	}
-	if params.LastName != nil {
-		addILike("l.consumer_last_name", *params.LastName)
-	}
-	if params.Phone != nil {
-		addILike("l.consumer_phone", *params.Phone)
-	}
-	if params.Email != nil {
-		addILike("l.consumer_email", *params.Email)
-	}
-	if params.Role != nil {
-		addEquals("l.consumer_role", *params.Role)
-	}
-	if params.Street != nil {
-		addILike("l.address_street", *params.Street)
-	}
-	if params.HouseNumber != nil {
-		addILike("l.address_house_number", *params.HouseNumber)
-	}
-	if params.ZipCode != nil {
-		addILike("l.address_zip_code", *params.ZipCode)
-	}
-	if params.City != nil {
-		addILike("l.address_city", *params.City)
-	}
-	if params.AssignedAgentID != nil {
-		addEquals("l.assigned_agent_id", *params.AssignedAgentID)
-	}
-	if params.CreatedAtFrom != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("l.created_at >= $%d", argIdx))
-		args = append(args, *params.CreatedAtFrom)
-		argIdx++
-	}
-	if params.CreatedAtTo != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("l.created_at < $%d", argIdx))
-		args = append(args, *params.CreatedAtTo)
-		argIdx++
-	}
+func (b *leadListWhereBuilder) addEquals(column string, value interface{}) {
+	b.whereClauses = append(b.whereClauses, fmt.Sprintf("%s = $%d", column, b.argIdx))
+	b.args = append(b.args, value)
+	b.argIdx++
+}
 
-	// Build join clause for current service if needed
-	joinClause := ""
-	if needsServiceJoin {
-		joinClause = `
+func (b *leadListWhereBuilder) addILike(column string, value string) {
+	b.whereClauses = append(b.whereClauses, fmt.Sprintf("%s ILIKE $%d", column, b.argIdx))
+	b.args = append(b.args, "%"+value+"%")
+	b.argIdx++
+}
+
+func (b *leadListWhereBuilder) addStatus(status *string) {
+	if status == nil {
+		return
+	}
+	b.needsServiceJoin = true
+	b.whereClauses = append(b.whereClauses, fmt.Sprintf("cs.status = $%d", b.argIdx))
+	b.args = append(b.args, *status)
+	b.argIdx++
+}
+
+func (b *leadListWhereBuilder) addServiceType(serviceType *string) {
+	if serviceType == nil {
+		return
+	}
+	b.needsServiceJoin = true
+	b.whereClauses = append(b.whereClauses, fmt.Sprintf("st.name = $%d", b.argIdx))
+	b.args = append(b.args, *serviceType)
+	b.argIdx++
+}
+
+func (b *leadListWhereBuilder) addSearch(search string) {
+	if search == "" {
+		return
+	}
+	searchPattern := "%" + search + "%"
+	b.whereClauses = append(b.whereClauses, fmt.Sprintf(
+		"(l.consumer_first_name ILIKE $%d OR l.consumer_last_name ILIKE $%d OR l.consumer_phone ILIKE $%d OR l.consumer_email ILIKE $%d OR l.address_city ILIKE $%d)",
+		b.argIdx, b.argIdx, b.argIdx, b.argIdx, b.argIdx,
+	))
+	b.args = append(b.args, searchPattern)
+	b.argIdx++
+}
+
+func (b *leadListWhereBuilder) addOptionalILike(column string, value *string) {
+	if value == nil {
+		return
+	}
+	b.addILike(column, *value)
+}
+
+func (b *leadListWhereBuilder) addOptionalEquals(column string, value *string) {
+	if value == nil {
+		return
+	}
+	b.addEquals(column, *value)
+}
+
+func (b *leadListWhereBuilder) addOptionalUUIDEquals(column string, value *uuid.UUID) {
+	if value == nil {
+		return
+	}
+	b.addEquals(column, *value)
+}
+
+func (b *leadListWhereBuilder) addCreatedAtFrom(value *time.Time) {
+	if value == nil {
+		return
+	}
+	b.whereClauses = append(b.whereClauses, fmt.Sprintf("l.created_at >= $%d", b.argIdx))
+	b.args = append(b.args, *value)
+	b.argIdx++
+}
+
+func (b *leadListWhereBuilder) addCreatedAtTo(value *time.Time) {
+	if value == nil {
+		return
+	}
+	b.whereClauses = append(b.whereClauses, fmt.Sprintf("l.created_at < $%d", b.argIdx))
+	b.args = append(b.args, *value)
+	b.argIdx++
+}
+
+func (b *leadListWhereBuilder) joinClause() string {
+	if !b.needsServiceJoin {
+		return ""
+	}
+	return `
 		LEFT JOIN LATERAL (
 			SELECT ls.id, ls.status, ls.service_type_id
 			FROM lead_services ls
@@ -527,9 +546,27 @@ func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) 
 			LIMIT 1
 		) cs ON true
 		LEFT JOIN service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id`
-	}
+}
 
-	return strings.Join(whereClauses, " AND "), joinClause, args, argIdx
+func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) {
+	builder := newLeadListWhereBuilder(params.OrganizationID)
+	builder.addStatus(params.Status)
+	builder.addServiceType(params.ServiceType)
+	builder.addSearch(params.Search)
+	builder.addOptionalILike("l.consumer_first_name", params.FirstName)
+	builder.addOptionalILike("l.consumer_last_name", params.LastName)
+	builder.addOptionalILike("l.consumer_phone", params.Phone)
+	builder.addOptionalILike("l.consumer_email", params.Email)
+	builder.addOptionalEquals("l.consumer_role", params.Role)
+	builder.addOptionalILike("l.address_street", params.Street)
+	builder.addOptionalILike("l.address_house_number", params.HouseNumber)
+	builder.addOptionalILike("l.address_zip_code", params.ZipCode)
+	builder.addOptionalILike("l.address_city", params.City)
+	builder.addOptionalUUIDEquals("l.assigned_agent_id", params.AssignedAgentID)
+	builder.addCreatedAtFrom(params.CreatedAtFrom)
+	builder.addCreatedAtTo(params.CreatedAtTo)
+
+	return strings.Join(builder.whereClauses, " AND "), builder.joinClause(), builder.args, builder.argIdx
 }
 
 func mapLeadSortColumn(sortBy string) string {

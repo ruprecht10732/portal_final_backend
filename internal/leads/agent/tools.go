@@ -16,6 +16,11 @@ import (
 	"portal_final_backend/internal/leads/repository"
 )
 
+const (
+	invalidLeadIDMessage        = "Invalid lead ID"
+	invalidLeadServiceIDMessage = "Invalid lead service ID"
+)
+
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
 func normalizeUrgencyLevel(level string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(level))
@@ -57,69 +62,157 @@ func (d *ToolDependencies) GetTenantID() (*uuid.UUID, bool) {
 	return d.tenantID, true
 }
 
+func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return uuid.UUID{}, errors.New(invalidMessage)
+	}
+	return parsed, nil
+}
+
+func getTenantID(deps *ToolDependencies) (uuid.UUID, error) {
+	tenantID, ok := deps.GetTenantID()
+	if !ok {
+		return uuid.UUID{}, fmt.Errorf("missing tenant context")
+	}
+	return *tenantID, nil
+}
+
+func normalizeContactChannel(channel string) (string, error) {
+	clean := strings.TrimSpace(channel)
+	switch strings.ToLower(clean) {
+	case "whatsapp":
+		return "WhatsApp", nil
+	case "email":
+		return "Email", nil
+	default:
+		return "", fmt.Errorf("invalid preferred contact channel")
+	}
+}
+
+func resolvePreferredChannel(inputChannel string, lead repository.Lead) (string, error) {
+	_, err := normalizeContactChannel(inputChannel)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(lead.ConsumerPhone) != "" {
+		return "WhatsApp", nil
+	}
+	return "Email", nil
+}
+
+func parseLeadServiceID(value string) (uuid.UUID, error) {
+	if strings.TrimSpace(value) == "" {
+		return uuid.UUID{}, fmt.Errorf("missing lead service ID")
+	}
+	return parseUUID(value, invalidLeadServiceIDMessage)
+}
+
+func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
+	leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: invalidLeadIDMessage}, err
+	}
+
+	tenantID, err := getTenantID(deps)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: "Missing tenant context"}, err
+	}
+
+	leadServiceID, err := parseLeadServiceID(input.LeadServiceID)
+	if err != nil {
+		message := err.Error()
+		if err.Error() == invalidLeadServiceIDMessage {
+			message = invalidLeadServiceIDMessage
+		}
+		return SaveAnalysisOutput{Success: false, Message: message}, err
+	}
+
+	urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
+	}
+
+	var urgencyReason *string
+	if input.UrgencyReason != "" {
+		urgencyReason = &input.UrgencyReason
+	}
+
+	lead, err := deps.Repo.GetByID(ctx, leadID, tenantID)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: "Lead not found"}, err
+	}
+
+	channel, err := resolvePreferredChannel(input.PreferredContactChannel, lead)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: "Invalid preferred contact channel"}, err
+	}
+
+	_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
+		LeadID:                  leadID,
+		OrganizationID:          tenantID,
+		LeadServiceID:           leadServiceID,
+		UrgencyLevel:            urgencyLevel,
+		UrgencyReason:           urgencyReason,
+		LeadQuality:             input.LeadQuality,
+		RecommendedAction:       input.RecommendedAction,
+		MissingInformation:      input.MissingInformation,
+		PreferredContactChannel: channel,
+		SuggestedContactMessage: input.SuggestedContactMessage,
+		Summary:                 input.Summary,
+	})
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
+	}
+
+	return SaveAnalysisOutput{Success: true, Message: "Analysis saved successfully"}, nil
+}
+
+func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
+	leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
+	if err != nil {
+		return UpdateLeadServiceTypeOutput{Success: false, Message: invalidLeadIDMessage}, err
+	}
+	leadServiceID, err := parseUUID(input.LeadServiceID, invalidLeadServiceIDMessage)
+	if err != nil {
+		return UpdateLeadServiceTypeOutput{Success: false, Message: invalidLeadServiceIDMessage}, err
+	}
+	serviceType := strings.TrimSpace(input.ServiceType)
+	if serviceType == "" {
+		return UpdateLeadServiceTypeOutput{Success: false, Message: "Missing service type"}, fmt.Errorf("missing service type")
+	}
+
+	tenantID, err := getTenantID(deps)
+	if err != nil {
+		return UpdateLeadServiceTypeOutput{Success: false, Message: "Missing tenant context"}, err
+	}
+
+	leadService, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, tenantID)
+	if err != nil {
+		return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service not found"}, err
+	}
+	if leadService.LeadID != leadID {
+		return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service does not belong to lead"}, fmt.Errorf("lead service mismatch")
+	}
+
+	_, err = deps.Repo.UpdateLeadServiceType(ctx, leadServiceID, tenantID, serviceType)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceTypeNotFound) {
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Service type not found or inactive"}, nil
+		}
+		return UpdateLeadServiceTypeOutput{Success: false, Message: "Failed to update service type"}, err
+	}
+
+	return UpdateLeadServiceTypeOutput{Success: true, Message: "Service type updated"}, nil
+}
+
 // createSaveAnalysisTool creates the SaveAnalysis tool
 func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveAnalysis",
 		Description: "Saves the gatekeeper triage analysis to the database. Call this ONCE after completing your full analysis. Include urgency, lead quality, recommended action, missing information, preferred contact channel, message, and summary.",
 	}, func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
-		leadID, err := uuid.Parse(input.LeadID)
-		if err != nil {
-			return SaveAnalysisOutput{Success: false, Message: "Invalid lead ID"}, err
-		}
-
-		tenantID, ok := deps.GetTenantID()
-		if !ok {
-			return SaveAnalysisOutput{Success: false, Message: "Missing tenant context"}, fmt.Errorf("missing tenant context")
-		}
-
-		if input.LeadServiceID == "" {
-			return SaveAnalysisOutput{Success: false, Message: "Missing lead service ID"}, fmt.Errorf("missing lead service ID")
-		}
-		leadServiceID, err := uuid.Parse(input.LeadServiceID)
-		if err != nil {
-			return SaveAnalysisOutput{Success: false, Message: "Invalid lead service ID"}, err
-		}
-
-		// Normalize urgency level to valid database value
-		urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
-		if err != nil {
-			return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
-		}
-
-		var urgencyReason *string
-		if input.UrgencyReason != "" {
-			urgencyReason = &input.UrgencyReason
-		}
-
-		channel := strings.TrimSpace(input.PreferredContactChannel)
-		switch strings.ToLower(channel) {
-		case "whatsapp":
-			channel = "WhatsApp"
-		case "email":
-			channel = "Email"
-		default:
-			return SaveAnalysisOutput{Success: false, Message: "Invalid preferred contact channel"}, fmt.Errorf("invalid preferred contact channel")
-		}
-
-		_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
-			LeadID:                  leadID,
-			OrganizationID:          *tenantID,
-			LeadServiceID:           leadServiceID,
-			UrgencyLevel:            urgencyLevel,
-			UrgencyReason:           urgencyReason,
-			LeadQuality:             input.LeadQuality,
-			RecommendedAction:       input.RecommendedAction,
-			MissingInformation:      input.MissingInformation,
-			PreferredContactChannel: channel,
-			SuggestedContactMessage: input.SuggestedContactMessage,
-			Summary:                 input.Summary,
-		})
-		if err != nil {
-			return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
-		}
-
-		return SaveAnalysisOutput{Success: true, Message: "Analysis saved successfully"}, nil
+		return handleSaveAnalysis(ctx, deps, input)
 	})
 }
 
@@ -129,41 +222,7 @@ func createUpdateLeadServiceTypeTool(deps *ToolDependencies) (tool.Tool, error) 
 		Name:        "UpdateLeadServiceType",
 		Description: "Updates the service type for a lead service when there is a confident mismatch. The service type must match an active service type name or slug.",
 	}, func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
-		leadID, err := uuid.Parse(input.LeadID)
-		if err != nil {
-			return UpdateLeadServiceTypeOutput{Success: false, Message: "Invalid lead ID"}, err
-		}
-		leadServiceID, err := uuid.Parse(input.LeadServiceID)
-		if err != nil {
-			return UpdateLeadServiceTypeOutput{Success: false, Message: "Invalid lead service ID"}, err
-		}
-		serviceType := strings.TrimSpace(input.ServiceType)
-		if serviceType == "" {
-			return UpdateLeadServiceTypeOutput{Success: false, Message: "Missing service type"}, fmt.Errorf("missing service type")
-		}
-
-		tenantID, ok := deps.GetTenantID()
-		if !ok {
-			return UpdateLeadServiceTypeOutput{Success: false, Message: "Missing tenant context"}, fmt.Errorf("missing tenant context")
-		}
-
-		leadService, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, *tenantID)
-		if err != nil {
-			return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service not found"}, err
-		}
-		if leadService.LeadID != leadID {
-			return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service does not belong to lead"}, fmt.Errorf("lead service mismatch")
-		}
-
-		_, err = deps.Repo.UpdateLeadServiceType(ctx, leadServiceID, *tenantID, serviceType)
-		if err != nil {
-			if errors.Is(err, repository.ErrServiceTypeNotFound) {
-				return UpdateLeadServiceTypeOutput{Success: false, Message: "Service type not found or inactive"}, nil
-			}
-			return UpdateLeadServiceTypeOutput{Success: false, Message: "Failed to update service type"}, err
-		}
-
-		return UpdateLeadServiceTypeOutput{Success: true, Message: "Service type updated"}, nil
+		return handleUpdateLeadServiceType(ctx, deps, input)
 	})
 }
 
@@ -173,9 +232,9 @@ func createDraftEmailTool(deps *ToolDependencies) (tool.Tool, error) {
 		Name:        "DraftFollowUpEmail",
 		Description: "Creates a draft follow-up email to send to the customer. Use this when you need more information from the customer before providing a quote, or to confirm details. The email will be saved as a draft for the sales advisor to review and send.",
 	}, func(ctx tool.Context, input DraftEmailInput) (DraftEmailOutput, error) {
-		leadID, err := uuid.Parse(input.LeadID)
+		leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
 		if err != nil {
-			return DraftEmailOutput{Success: false, Message: "Invalid lead ID"}, err
+			return DraftEmailOutput{Success: false, Message: invalidLeadIDMessage}, err
 		}
 
 		draftID := uuid.New()

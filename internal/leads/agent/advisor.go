@@ -188,78 +188,30 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 
 	userMessage := la.buildUserMessage(lead, targetService, meaningfulNotes, serviceContextList)
 	userID := "advisor-" + leadID.String() + "-" + targetService.ID.String()
-	sessionID := uuid.New().String()
 
-	cleanupSession, err := la.createSession(ctx, userID, sessionID, leadID)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanupSession()
-
-	// Reset tool tracker before run
-	la.toolTracker.reset()
-
-	output, err := la.runAdvisor(ctx, userID, sessionID, userMessage)
+	output, err := la.runWithSession(ctx, userID, leadID, userMessage)
 	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("Lead advisor finished for lead %s. Output: %s", leadID, output)
 
-	// Check if SaveAnalysis was called using the tracker
-	if la.toolTracker.wasSaveAnalysisCalled() {
-		log.Printf("SaveAnalysis was called for lead %s service %s, fetching new analysis", leadID, targetService.ID)
-		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, targetService.ID, tenantID)
-		if err != nil {
-			return &AnalyzeResponse{
-				Status:  "error",
-				Message: "SaveAnalysis was called but failed to save. Please try again.",
-			}, nil
-		}
-		result := la.analysisToResult(newAnalysis)
-		return &AnalyzeResponse{
-			Status:   "created",
-			Message:  "New analysis generated",
-			Analysis: result,
-		}, nil
+	if response, handled, err := la.getResponseIfSaved(ctx, targetService.ID, tenantID, leadID); handled {
+		return response, err
 	}
 
 	// SaveAnalysis was NOT called - retry with Moonshot's recommended prompt
 	log.Printf("WARNING: AI did not call SaveAnalysis for lead %s. Retrying with tool selection prompt.", leadID)
 
 	retryMessage := la.buildRetryMessage()
-	retrySessionID := uuid.New().String()
-	cleanupRetry, err := la.createSession(ctx, userID, retrySessionID, leadID)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanupRetry()
-
-	// Reset tracker for retry
-	la.toolTracker.reset()
-
-	retryOutput, err := la.runAdvisor(ctx, userID, retrySessionID, retryMessage)
+	retryOutput, err := la.runWithSession(ctx, userID, leadID, retryMessage)
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("Lead advisor retry finished for lead %s. Output: %s", leadID, retryOutput)
 
-	// Check if retry succeeded
-	if la.toolTracker.wasSaveAnalysisCalled() {
-		log.Printf("SaveAnalysis was called on retry for lead %s service %s", leadID, targetService.ID)
-		newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, targetService.ID, tenantID)
-		if err != nil {
-			return &AnalyzeResponse{
-				Status:  "error",
-				Message: "SaveAnalysis was called but failed to save. Please try again.",
-			}, nil
-		}
-		result := la.analysisToResult(newAnalysis)
-		return &AnalyzeResponse{
-			Status:   "created",
-			Message:  "New analysis generated",
-			Analysis: result,
-		}, nil
+	if response, handled, err := la.getResponseIfSaved(ctx, targetService.ID, tenantID, leadID); handled {
+		return response, err
 	}
 
 	// Retry also failed
@@ -268,6 +220,40 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 		Status:  "error",
 		Message: "AI kon geen analyse opslaan. Probeer het opnieuw.",
 	}, nil
+}
+
+func (la *LeadAdvisor) runWithSession(ctx context.Context, userID string, leadID uuid.UUID, userMessage *genai.Content) (string, error) {
+	sessionID := uuid.New().String()
+	cleanupSession, err := la.createSession(ctx, userID, sessionID, leadID)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupSession()
+
+	la.toolTracker.reset()
+	return la.runAdvisor(ctx, userID, sessionID, userMessage)
+}
+
+func (la *LeadAdvisor) getResponseIfSaved(ctx context.Context, serviceID uuid.UUID, tenantID uuid.UUID, leadID uuid.UUID) (*AnalyzeResponse, bool, error) {
+	if !la.toolTracker.wasSaveAnalysisCalled() {
+		return nil, false, nil
+	}
+
+	log.Printf("SaveAnalysis was called for lead %s service %s, fetching new analysis", leadID, serviceID)
+	newAnalysis, err := la.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err != nil {
+		return &AnalyzeResponse{
+			Status:  "error",
+			Message: "SaveAnalysis was called but failed to save. Please try again.",
+		}, true, nil
+	}
+
+	result := la.analysisToResult(newAnalysis)
+	return &AnalyzeResponse{
+		Status:   "created",
+		Message:  "New analysis generated",
+		Analysis: result,
+	}, true, nil
 }
 
 func (la *LeadAdvisor) ensureInitialized() error {
