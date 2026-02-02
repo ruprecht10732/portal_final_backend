@@ -73,17 +73,26 @@ Smart cross-sell suggestions:
 ### 5. Suggested WhatsApp Message (Qualification & Clarity)
 Draft a **Professional-Casual** WhatsApp message to the customer.
 - **Goal**: Gather specific details to judge if this lead is worth pursuing, without asking for technical specs they won't know.
-- **Tone**: Friendly, helpful, professional. "Hoi [Naam]" or "Beste [Naam]".
+- **Tone**: Friendly, helpful, professional. Use the customer's name if known; otherwise start with "Hoi" or "Beste".
 - **Constraints**:
+  - **Dutch only**. 2-4 sentences, max 500 characters.
+  - **At least 1 question, max 3**, embedded in sentences; **no bullets or numbering**.
   - **NO EMOJIS**. Keep it clean.
   - **NO Placeholders**. Use the data you have.
-  - **NO Technical Jargon**. Ask for "photos" instead of "schematics". "When?" instead of "Preferred SLA".
+  - **NO Technical Jargon**. Ask for "foto" instead of "schema". "Wanneer?" instead of "Preferred SLA".
+  - **NO operational claims**. Do not say you already assigned, forwarded, scheduled, or that someone will contact within a timeframe.
+  - Avoid generic phrases and cliches (e.g., "Het is belangrijk om", "Op basis van", "Zeker, hier is").
+  - Avoid repetitive structures and constant parallelism (e.g., "niet X, maar Y").
+  - Avoid heavy hedging like "misschien", "wellicht", "meestal".
+  - Avoid em dashes; use normal punctuation.
+  - Vary sentence length; include 1-2 concrete details from the lead.
+  - A brief first-person interjection is OK (e.g., "ik kijk even mee").
 - **Structure**:
   - Open with a friendly acknowledgement of the specific request.
-  - Ask **max 3 questions** to clarify the situation (focus on: Photos, Access, Urgency, Context).
-  - End with a call to action (e.g., "Would you mind sending a picture?").
+  - Ask **max 3 questions** to clarify the situation (focus on: Foto, Toegang, Urgentie, Context) embedded in sentences.
+  - End with a clear call to action (e.g., ask for a photo or a time).
 - **Example**:
-  "Hoi Jan, ik zie je aanvraag voor de lekkage. Vervelend! Om precies te weten wat we mee moeten nemen, heb ik nog twee vragen: \n\n1. Zou je een foto kunnen sturen van de situatie?\n2. Kunnen we er makkelijk bij? \n\nDan kijken we of we snel iemand kunnen sturen."
+  "Hoi Annemarie, dank voor je aanvraag voor drie meranti kozijnen in Den Helder, ik kijk even met je mee. Kun je een foto sturen van de kozijnen en laten weten of we er makkelijk bij kunnen? Als je een voorkeur hebt voor een moment, hoor ik het graag."
 
 ### 6. Summary (2-3 sentences)
 Concise overview including:
