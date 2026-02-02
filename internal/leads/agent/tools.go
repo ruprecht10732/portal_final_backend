@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -122,6 +123,50 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
+// createUpdateLeadServiceTypeTool creates the UpdateLeadServiceType tool
+func createUpdateLeadServiceTypeTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "UpdateLeadServiceType",
+		Description: "Updates the service type for a lead service when there is a confident mismatch. The service type must match an active service type name or slug.",
+	}, func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
+		leadID, err := uuid.Parse(input.LeadID)
+		if err != nil {
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Invalid lead ID"}, err
+		}
+		leadServiceID, err := uuid.Parse(input.LeadServiceID)
+		if err != nil {
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Invalid lead service ID"}, err
+		}
+		serviceType := strings.TrimSpace(input.ServiceType)
+		if serviceType == "" {
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Missing service type"}, fmt.Errorf("missing service type")
+		}
+
+		tenantID, ok := deps.GetTenantID()
+		if !ok {
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Missing tenant context"}, fmt.Errorf("missing tenant context")
+		}
+
+		leadService, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, *tenantID)
+		if err != nil {
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service not found"}, err
+		}
+		if leadService.LeadID != leadID {
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service does not belong to lead"}, fmt.Errorf("lead service mismatch")
+		}
+
+		_, err = deps.Repo.UpdateLeadServiceType(ctx, leadServiceID, *tenantID, serviceType)
+		if err != nil {
+			if errors.Is(err, repository.ErrServiceTypeNotFound) {
+				return UpdateLeadServiceTypeOutput{Success: false, Message: "Service type not found or inactive"}, nil
+			}
+			return UpdateLeadServiceTypeOutput{Success: false, Message: "Failed to update service type"}, err
+		}
+
+		return UpdateLeadServiceTypeOutput{Success: true, Message: "Service type updated"}, nil
+	})
+}
+
 // createDraftEmailTool creates the DraftFollowUpEmail tool
 func createDraftEmailTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
@@ -185,6 +230,13 @@ func buildTools(deps *ToolDependencies) ([]tool.Tool, error) {
 		errs = append(errs, fmt.Errorf("SaveAnalysis tool: %w", err))
 	} else {
 		tools = append(tools, saveAnalysisTool)
+	}
+
+	updateLeadServiceTypeTool, err := createUpdateLeadServiceTypeTool(deps)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("UpdateLeadServiceType tool: %w", err))
+	} else {
+		tools = append(tools, updateLeadServiceTypeTool)
 	}
 
 	draftEmailTool, err := createDraftEmailTool(deps)

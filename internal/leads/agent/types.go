@@ -29,6 +29,19 @@ type SaveAnalysisOutput struct {
 	Message string `json:"message"`
 }
 
+// UpdateLeadServiceTypeInput allows the agent to correct a mismatched service type.
+type UpdateLeadServiceTypeInput struct {
+	LeadID        string `json:"leadId"`
+	LeadServiceID string `json:"leadServiceId"`
+	ServiceType   string `json:"serviceType"` // Name or slug of an active service type
+	Reason        string `json:"reason"`
+}
+
+type UpdateLeadServiceTypeOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // DraftEmailInput for creating follow-up email drafts
 type DraftEmailInput struct {
 	LeadID      string   `json:"leadId"`

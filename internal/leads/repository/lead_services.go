@@ -12,6 +12,7 @@ import (
 )
 
 var ErrServiceNotFound = errors.New("lead service not found")
+var ErrServiceTypeNotFound = errors.New("service type not found")
 
 type LeadService struct {
 	ID             uuid.UUID
@@ -184,6 +185,36 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organi
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
+	}
+	return svc, err
+}
+
+// UpdateLeadServiceType updates the service type for a lead service using an active service type name/slug.
+func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error) {
+	var svc LeadService
+	err := r.pool.QueryRow(ctx, `
+		WITH target AS (
+			SELECT id FROM service_types
+			WHERE (name = $3 OR slug = $3)
+				AND organization_id = $2
+				AND is_active = true
+			LIMIT 1
+		), updated AS (
+			UPDATE lead_services
+			SET service_type_id = (SELECT id FROM target), updated_at = now()
+			WHERE id = $1 AND organization_id = $2 AND EXISTS (SELECT 1 FROM target)
+			RETURNING *
+		)
+		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.consumer_note, u.source,
+			u.created_at, u.updated_at
+		FROM updated u
+		JOIN service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+	`, id, organizationID, serviceType).Scan(
+		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
+		&svc.CreatedAt, &svc.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LeadService{}, ErrServiceTypeNotFound
 	}
 	return svc, err
 }
