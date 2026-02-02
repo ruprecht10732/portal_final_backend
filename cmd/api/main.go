@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/adapters"
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/appointments"
 	"portal_final_backend/internal/auth"
 	"portal_final_backend/internal/catalog"
@@ -63,6 +64,19 @@ func main() {
 	// Shared validator instance for dependency injection
 	val := validator.New()
 
+	// Storage service for file uploads (MinIO)
+	storageSvc, err := storage.NewMinIOService(cfg)
+	if err != nil {
+		log.Error("failed to initialize storage service", "error", err)
+		panic("failed to initialize storage service: " + err.Error())
+	}
+	// Ensure the lead-service-attachments bucket exists
+	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketLeadServiceAttachments()); err != nil {
+		log.Error("failed to ensure storage bucket exists", "error", err, "bucket", cfg.GetMinioBucketLeadServiceAttachments())
+		panic("failed to ensure storage bucket exists: " + err.Error())
+	}
+	log.Info("storage service initialized", "bucket", cfg.GetMinioBucketLeadServiceAttachments())
+
 	// ========================================================================
 	// Domain Modules (Composition Root)
 	// ========================================================================
@@ -74,7 +88,7 @@ func main() {
 	// Initialize domain modules
 	identityModule := identity.NewModule(pool, eventBus, val)
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
-	leadsModule, err := leads.NewModule(pool, eventBus, val, cfg, log)
+	leadsModule, err := leads.NewModule(pool, eventBus, storageSvc, val, cfg, log)
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())

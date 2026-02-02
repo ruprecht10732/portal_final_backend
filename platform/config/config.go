@@ -66,6 +66,17 @@ type HTTPConfig interface {
 	GetCORSAllowCreds() bool
 }
 
+// MinIOConfig provides settings for MinIO S3-compatible storage.
+type MinIOConfig interface {
+	GetMinIOEndpoint() string
+	GetMinIOAccessKey() string
+	GetMinIOSecretKey() string
+	GetMinIOUseSSL() bool
+	GetMinIOMaxFileSize() int64
+	GetMinioBucketLeadServiceAttachments() string
+	IsMinIOEnabled() bool
+}
+
 // =============================================================================
 // Main Config Struct
 // =============================================================================
@@ -93,8 +104,14 @@ type Config struct {
 	RefreshCookieDomain   string
 	RefreshCookiePath     string
 	RefreshCookieSecure   bool
-	RefreshCookieSameSite http.SameSite
-	MoonshotAPIKey        string
+	RefreshCookieSameSite              http.SameSite
+	MoonshotAPIKey                     string
+	MinIOEndpoint                      string
+	MinIOAccessKey                     string
+	MinIOSecretKey                     string
+	MinIOUseSSL                        bool
+	MinIOMaxFileSize                   int64
+	MinioBucketLeadServiceAttachments  string
 }
 
 // =============================================================================
@@ -134,6 +151,15 @@ func (c *Config) GetHTTPAddr() string      { return c.HTTPAddr }
 func (c *Config) GetCORSAllowAll() bool    { return c.CORSAllowAll }
 func (c *Config) GetCORSOrigins() []string { return c.CORSOrigins }
 func (c *Config) GetCORSAllowCreds() bool  { return c.CORSAllowCreds }
+
+// MinIOConfig implementation
+func (c *Config) GetMinIOEndpoint() string                    { return c.MinIOEndpoint }
+func (c *Config) GetMinIOAccessKey() string                   { return c.MinIOAccessKey }
+func (c *Config) GetMinIOSecretKey() string                   { return c.MinIOSecretKey }
+func (c *Config) GetMinIOUseSSL() bool                        { return c.MinIOUseSSL }
+func (c *Config) GetMinIOMaxFileSize() int64                  { return c.MinIOMaxFileSize }
+func (c *Config) GetMinioBucketLeadServiceAttachments() string { return c.MinioBucketLeadServiceAttachments }
+func (c *Config) IsMinIOEnabled() bool                        { return c.MinIOEndpoint != "" }
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
@@ -175,8 +201,14 @@ func Load() (*Config, error) {
 		RefreshCookieDomain:   getEnv("REFRESH_COOKIE_DOMAIN", ""),
 		RefreshCookiePath:     getEnv("REFRESH_COOKIE_PATH", "/api/v1/auth"),
 		RefreshCookieSecure:   refreshCookieSecure,
-		RefreshCookieSameSite: parseSameSite(getEnv("REFRESH_COOKIE_SAMESITE", "Lax")),
-		MoonshotAPIKey:        getEnv("MOONSHOT_API_KEY", ""),
+		RefreshCookieSameSite:             parseSameSite(getEnv("REFRESH_COOKIE_SAMESITE", "Lax")),
+		MoonshotAPIKey:                    getEnv("MOONSHOT_API_KEY", ""),
+		MinIOEndpoint:                     getEnv("MINIO_ENDPOINT", ""),
+		MinIOAccessKey:                    getEnv("MINIO_ACCESS_KEY", ""),
+		MinIOSecretKey:                    getEnv("MINIO_SECRET_KEY", ""),
+		MinIOUseSSL:                       strings.EqualFold(getEnv("MINIO_USE_SSL", "false"), "true"),
+		MinIOMaxFileSize:                  mustInt64(getEnv("MINIO_MAX_FILE_SIZE", "104857600")),
+		MinioBucketLeadServiceAttachments: getEnv("MINIO_BUCKET_LEAD_SERVICE_ATTACHMENTS", "lead-service-attachments"),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -211,6 +243,12 @@ func mustDuration(value string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+func mustInt64(value string) int64 {
+	var result int64
+	fmt.Sscanf(value, "%d", &result)
+	return result
 }
 
 func splitCSV(value string) []string {

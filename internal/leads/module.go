@@ -5,6 +5,7 @@ package leads
 import (
 	"context"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/leads/agent"
@@ -23,15 +24,16 @@ import (
 
 // Module is the leads bounded context module implementing http.Module.
 type Module struct {
-	handler    *handler.Handler
-	management *management.Service
-	notes      *notes.Service
-	advisor    *agent.LeadAdvisor
-	callLogger *agent.CallLogger
+	handler            *handler.Handler
+	attachmentsHandler *handler.AttachmentsHandler
+	management         *management.Service
+	notes              *notes.Service
+	advisor            *agent.LeadAdvisor
+	callLogger         *agent.CallLogger
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
+func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
 	// Create shared repository
 	repo := repository.New(pool)
 
@@ -71,14 +73,16 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 
 	// Create handlers
 	notesHandler := handler.NewNotesHandler(notesSvc, val)
+	attachmentsHandler := handler.NewAttachmentsHandler(repo, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 	h := handler.New(mgmtSvc, notesHandler, advisor, callLogger, val)
 
 	return &Module{
-		handler:    h,
-		management: mgmtSvc,
-		notes:      notesSvc,
-		advisor:    advisor,
-		callLogger: callLogger,
+		handler:            h,
+		attachmentsHandler: attachmentsHandler,
+		management:         mgmtSvc,
+		notes:              notesSvc,
+		advisor:            advisor,
+		callLogger:         callLogger,
 	}, nil
 }
 
@@ -113,6 +117,10 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	// All leads routes require authentication
 	leadsGroup := ctx.Protected.Group("/leads")
 	m.handler.RegisterRoutes(leadsGroup)
+
+	// Attachment routes: /leads/:id/services/:serviceId/attachments
+	attachmentsGroup := leadsGroup.Group("/:id/services/:serviceId/attachments")
+	m.attachmentsHandler.RegisterRoutes(attachmentsGroup)
 }
 
 // Compile-time check that Module implements http.Module

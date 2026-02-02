@@ -86,6 +86,14 @@ type AIAnalysisStore interface {
 	ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) ([]AIAnalysis, error)
 }
 
+// AttachmentStore manages file attachments for lead services.
+type AttachmentStore interface {
+	CreateAttachment(ctx context.Context, params CreateAttachmentParams) (Attachment, error)
+	GetAttachmentByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Attachment, error)
+	ListAttachmentsByService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]Attachment, error)
+	DeleteAttachment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -102,6 +110,7 @@ type LeadsRepository interface {
 	LeadServiceWriter
 	NoteStore
 	AIAnalysisStore
+	AttachmentStore
 	ServiceTypeContextReader
 }
 
