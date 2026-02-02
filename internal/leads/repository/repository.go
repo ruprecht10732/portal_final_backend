@@ -23,6 +23,35 @@ func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+// ListActiveServiceTypes returns active service types with intake guidelines for AI context.
+func (r *Repository) ListActiveServiceTypes(ctx context.Context, organizationID uuid.UUID) ([]ServiceContextDefinition, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT name, description, intake_guidelines
+		FROM service_types
+		WHERE organization_id = $1 AND is_active = true
+		ORDER BY display_order ASC, name ASC
+	`, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]ServiceContextDefinition, 0)
+	for rows.Next() {
+		var item ServiceContextDefinition
+		if err := rows.Scan(&item.Name, &item.Description, &item.IntakeGuidelines); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return items, nil
+}
+
 type Lead struct {
 	ID                 uuid.UUID
 	OrganizationID     uuid.UUID

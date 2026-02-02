@@ -32,7 +32,7 @@ var _ Repository = (*Repo)(nil)
 // GetByID retrieves a service type by its ID.
 func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
 		FROM service_types
 		WHERE id = $1 AND organization_id = $2`
 
@@ -40,7 +40,7 @@ func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UU
 	var createdAt, updatedAt time.Time
 
 	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.Icon, &st.Color,
+		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
 		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -59,7 +59,7 @@ func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UU
 // GetBySlug retrieves a service type by its slug.
 func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug string) (ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
 		FROM service_types
 		WHERE slug = $1 AND organization_id = $2`
 
@@ -67,7 +67,7 @@ func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug str
 	var createdAt, updatedAt time.Time
 
 	err := r.pool.QueryRow(ctx, query, slug, organizationID).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.Icon, &st.Color,
+		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
 		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -86,7 +86,7 @@ func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug str
 // List retrieves all service types ordered by display_order.
 func (r *Repo) List(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
 		FROM service_types
 		WHERE organization_id = $1
 		ORDER BY display_order ASC, name ASC`
@@ -103,7 +103,7 @@ func (r *Repo) List(ctx context.Context, organizationID uuid.UUID) ([]ServiceTyp
 // ListActive retrieves only active service types ordered by display_order.
 func (r *Repo) ListActive(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
 		FROM service_types
 		WHERE organization_id = $1 AND is_active = true
 		ORDER BY display_order ASC, name ASC`
@@ -166,7 +166,7 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 	args = append(args, params.Limit, params.Offset)
 
 	query := fmt.Sprintf(`
-		SELECT id, organization_id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
 		FROM service_types
 		WHERE %s
 		ORDER BY %s %s, name ASC
@@ -215,17 +215,17 @@ func (r *Repo) HasLeadServices(ctx context.Context, organizationID uuid.UUID, id
 // Create creates a new service type.
 func (r *Repo) Create(ctx context.Context, params CreateParams) (ServiceType, error) {
 	query := `
-		INSERT INTO service_types (organization_id, name, slug, description, icon, color, display_order)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, organization_id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at`
+		INSERT INTO service_types (organization_id, name, slug, description, intake_guidelines, icon, color, display_order)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at`
 
 	var st ServiceType
 	var createdAt, updatedAt time.Time
 
 	err := r.pool.QueryRow(ctx, query,
-		params.OrganizationID, params.Name, params.Slug, params.Description, params.Icon, params.Color, params.DisplayOrder,
+		params.OrganizationID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.Icon, params.Color, params.DisplayOrder,
 	).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.Icon, &st.Color,
+		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
 		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -246,20 +246,21 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 			name = COALESCE($2, name),
 			slug = COALESCE($3, slug),
 			description = COALESCE($4, description),
-			icon = COALESCE($5, icon),
-			color = COALESCE($6, color),
-			display_order = COALESCE($7, display_order),
+			intake_guidelines = COALESCE($5, intake_guidelines),
+			icon = COALESCE($6, icon),
+			color = COALESCE($7, color),
+			display_order = COALESCE($8, display_order),
 			updated_at = now()
-		WHERE id = $1 AND organization_id = $8
-		RETURNING id, organization_id, name, slug, description, icon, color, is_active, display_order, created_at, updated_at`
+		WHERE id = $1 AND organization_id = $9
+		RETURNING id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at`
 
 	var st ServiceType
 	var createdAt, updatedAt time.Time
 
 	err := r.pool.QueryRow(ctx, query,
-		params.ID, params.Name, params.Slug, params.Description, params.Icon, params.Color, params.DisplayOrder, params.OrganizationID,
+		params.ID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.Icon, params.Color, params.DisplayOrder, params.OrganizationID,
 	).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.Icon, &st.Color,
+		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
 		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -341,7 +342,7 @@ func scanServiceTypes(rows pgx.Rows) ([]ServiceType, error) {
 		var createdAt, updatedAt time.Time
 
 		err := rows.Scan(
-			&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.Icon, &st.Color,
+			&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
 			&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
 		)
 		if err != nil {

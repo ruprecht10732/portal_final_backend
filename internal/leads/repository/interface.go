@@ -60,6 +60,18 @@ type LeadServiceWriter interface {
 	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error
 }
 
+// ServiceContextDefinition provides context for the AI gatekeeper.
+type ServiceContextDefinition struct {
+	Name             string
+	Description      *string
+	IntakeGuidelines *string
+}
+
+// ServiceTypeContextReader provides read access to active service definitions for AI context.
+type ServiceTypeContextReader interface {
+	ListActiveServiceTypes(ctx context.Context, organizationID uuid.UUID) ([]ServiceContextDefinition, error)
+}
+
 // NoteStore manages lead notes.
 type NoteStore interface {
 	CreateLeadNote(ctx context.Context, params CreateLeadNoteParams) (LeadNote, error)
@@ -89,6 +101,7 @@ type LeadsRepository interface {
 	LeadServiceWriter
 	NoteStore
 	AIAnalysisStore
+	ServiceTypeContextReader
 }
 
 // Ensure Repository implements LeadsRepository

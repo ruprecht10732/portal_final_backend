@@ -60,7 +60,7 @@ func (d *ToolDependencies) GetTenantID() (*uuid.UUID, bool) {
 func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveAnalysis",
-		Description: "Saves the complete lead analysis to the database. Call this ONCE after completing your full analysis. Include all sections: urgency (must be exactly 'High', 'Medium', or 'Low'), talking points, objections, upsells, and summary.",
+		Description: "Saves the gatekeeper triage analysis to the database. Call this ONCE after completing your full analysis. Include urgency, lead quality, recommended action, missing information, preferred contact channel, message, and summary.",
 	}, func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
 		leadID, err := uuid.Parse(input.LeadID)
 		if err != nil {
@@ -72,14 +72,12 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 			return SaveAnalysisOutput{Success: false, Message: "Missing tenant context"}, fmt.Errorf("missing tenant context")
 		}
 
-		// Parse service ID if provided
-		var leadServiceID *uuid.UUID
-		if input.LeadServiceID != "" {
-			parsed, err := uuid.Parse(input.LeadServiceID)
-			if err != nil {
-				return SaveAnalysisOutput{Success: false, Message: "Invalid lead service ID"}, err
-			}
-			leadServiceID = &parsed
+		if input.LeadServiceID == "" {
+			return SaveAnalysisOutput{Success: false, Message: "Missing lead service ID"}, fmt.Errorf("missing lead service ID")
+		}
+		leadServiceID, err := uuid.Parse(input.LeadServiceID)
+		if err != nil {
+			return SaveAnalysisOutput{Success: false, Message: "Invalid lead service ID"}, err
 		}
 
 		// Normalize urgency level to valid database value
@@ -88,35 +86,33 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 			return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
 		}
 
-		objections := make([]repository.ObjectionResponse, len(input.ObjectionHandling))
-		for i, o := range input.ObjectionHandling {
-			objections[i] = repository.ObjectionResponse{
-				Objection: o.Objection,
-				Response:  o.Response,
-			}
-		}
-
 		var urgencyReason *string
 		if input.UrgencyReason != "" {
 			urgencyReason = &input.UrgencyReason
 		}
 
-		var whatsappMessage *string
-		if input.SuggestedWhatsAppMessage != "" {
-			whatsappMessage = &input.SuggestedWhatsAppMessage
+		channel := strings.TrimSpace(input.PreferredContactChannel)
+		switch strings.ToLower(channel) {
+		case "whatsapp":
+			channel = "WhatsApp"
+		case "email":
+			channel = "Email"
+		default:
+			return SaveAnalysisOutput{Success: false, Message: "Invalid preferred contact channel"}, fmt.Errorf("invalid preferred contact channel")
 		}
 
 		_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
-			LeadID:                   leadID,
-			OrganizationID:           *tenantID,
-			LeadServiceID:            leadServiceID,
-			UrgencyLevel:             urgencyLevel,
-			UrgencyReason:            urgencyReason,
-			TalkingPoints:            input.TalkingPoints,
-			ObjectionHandling:        objections,
-			UpsellOpportunities:      input.UpsellOpportunities,
-			SuggestedWhatsAppMessage: whatsappMessage,
-			Summary:                  input.Summary,
+			LeadID:                  leadID,
+			OrganizationID:          *tenantID,
+			LeadServiceID:           leadServiceID,
+			UrgencyLevel:            urgencyLevel,
+			UrgencyReason:           urgencyReason,
+			LeadQuality:             input.LeadQuality,
+			RecommendedAction:       input.RecommendedAction,
+			MissingInformation:      input.MissingInformation,
+			PreferredContactChannel: channel,
+			SuggestedContactMessage: input.SuggestedContactMessage,
+			Summary:                 input.Summary,
 		})
 		if err != nil {
 			return SaveAnalysisOutput{Success: false, Message: err.Error()}, err

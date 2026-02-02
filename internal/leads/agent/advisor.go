@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"google.golang.org/adk/agent"
@@ -180,7 +181,12 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 		return response, nil
 	}
 
-	userMessage := la.buildUserMessage(lead, targetService, meaningfulNotes)
+	serviceContextList, err := la.buildServiceContextString(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build service context: %w", err)
+	}
+
+	userMessage := la.buildUserMessage(lead, targetService, meaningfulNotes, serviceContextList)
 	userID := "advisor-" + leadID.String() + "-" + targetService.ID.String()
 	sessionID := uuid.New().String()
 
@@ -338,14 +344,38 @@ func (la *LeadAdvisor) buildNoChangeResponse(lead repository.Lead, currentServic
 	return nil
 }
 
-func (la *LeadAdvisor) buildUserMessage(lead repository.Lead, currentService *repository.LeadService, notes []repository.LeadNote) *genai.Content {
-	prompt := buildAnalysisPrompt(lead, currentService, notes)
+func (la *LeadAdvisor) buildUserMessage(lead repository.Lead, currentService *repository.LeadService, notes []repository.LeadNote, serviceContextList string) *genai.Content {
+	prompt := buildAnalysisPrompt(lead, currentService, notes, serviceContextList)
 	return &genai.Content{
 		Role: "user",
 		Parts: []*genai.Part{
 			{Text: prompt},
 		},
 	}
+}
+
+// buildServiceContextString builds the service list with intake guidelines for the prompt.
+func (la *LeadAdvisor) buildServiceContextString(ctx context.Context, tenantID uuid.UUID) (string, error) {
+	services, err := la.repo.ListActiveServiceTypes(ctx, tenantID)
+	if err != nil {
+		return "", err
+	}
+
+	var sb strings.Builder
+	for _, s := range services {
+		sb.WriteString(fmt.Sprintf("### %s\n", s.Name))
+		if s.Description != nil && *s.Description != "" {
+			sb.WriteString(fmt.Sprintf("Omschrijving: %s\n", *s.Description))
+		}
+		if s.IntakeGuidelines != nil && *s.IntakeGuidelines != "" {
+			sb.WriteString(fmt.Sprintf("HARDE EISEN (Intake Requirements): %s\n", *s.IntakeGuidelines))
+		} else {
+			sb.WriteString("EISEN: Gebruik je algemene kennis over wat nodig is voor een offerte hiervoor.\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String(), nil
 }
 
 // buildRetryMessage creates a retry message using Moonshot's recommended approach
@@ -424,7 +454,7 @@ func (la *LeadAdvisor) GetLatestOrDefault(ctx context.Context, leadID uuid.UUID,
 
 	// If no analysis found, return a default response
 	if err == repository.ErrNotFound {
-		return getDefaultAnalysis(leadID), false, nil
+		return getDefaultAnalysis(leadID, serviceID), false, nil
 	}
 
 	return nil, false, err

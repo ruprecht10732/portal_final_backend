@@ -8,40 +8,43 @@ import (
 
 // ServiceType represents a service category that can be assigned to leads.
 type ServiceType struct {
-	ID           uuid.UUID `db:"id"`
-	OrganizationID uuid.UUID `db:"organization_id"`
-	Name         string    `db:"name"`
-	Slug         string    `db:"slug"`
-	Description  *string   `db:"description"`
-	Icon         *string   `db:"icon"`
-	Color        *string   `db:"color"`
-	IsActive     bool      `db:"is_active"`
-	DisplayOrder int       `db:"display_order"`
-	CreatedAt    string    `db:"created_at"`
-	UpdatedAt    string    `db:"updated_at"`
+	ID               uuid.UUID `db:"id"`
+	OrganizationID   uuid.UUID `db:"organization_id"`
+	Name             string    `db:"name"`
+	Slug             string    `db:"slug"`
+	Description      *string   `db:"description"`
+	IntakeGuidelines *string   `db:"intake_guidelines"`
+	Icon             *string   `db:"icon"`
+	Color            *string   `db:"color"`
+	IsActive         bool      `db:"is_active"`
+	DisplayOrder     int       `db:"display_order"`
+	CreatedAt        string    `db:"created_at"`
+	UpdatedAt        string    `db:"updated_at"`
 }
 
 // CreateParams contains parameters for creating a service type.
 type CreateParams struct {
-	OrganizationID uuid.UUID
-	Name         string
-	Slug         string
-	Description  *string
-	Icon         *string
-	Color        *string
-	DisplayOrder int
+	OrganizationID   uuid.UUID
+	Name             string
+	Slug             string
+	Description      *string
+	IntakeGuidelines *string
+	Icon             *string
+	Color            *string
+	DisplayOrder     int
 }
 
 // UpdateParams contains parameters for updating a service type.
 type UpdateParams struct {
-	ID           uuid.UUID
-	OrganizationID uuid.UUID
-	Name         *string
-	Slug         *string
-	Description  *string
-	Icon         *string
-	Color        *string
-	DisplayOrder *int
+	ID               uuid.UUID
+	OrganizationID   uuid.UUID
+	Name             *string
+	Slug             *string
+	Description      *string
+	IntakeGuidelines *string
+	Icon             *string
+	Color            *string
+	DisplayOrder     *int
 }
 
 // ReorderItem represents a single item in a reorder request.
@@ -53,12 +56,12 @@ type ReorderItem struct {
 // ListParams defines filters for listing service types.
 type ListParams struct {
 	OrganizationID uuid.UUID
-	Search    string
-	IsActive  *bool
-	Offset    int
-	Limit     int
-	SortBy    string
-	SortOrder string
+	Search         string
+	IsActive       *bool
+	Offset         int
+	Limit          int
+	SortBy         string
+	SortOrder      string
 }
 
 // ServiceTypeReader provides read operations for service types.

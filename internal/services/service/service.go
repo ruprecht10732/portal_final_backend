@@ -72,12 +72,12 @@ func (s *Service) ListWithFilters(ctx context.Context, tenantID uuid.UUID, req t
 
 	params := repository.ListParams{
 		OrganizationID: tenantID,
-		Search:    req.Search,
-		IsActive:  isActive,
-		Offset:    (page - 1) * pageSize,
-		Limit:     pageSize,
-		SortBy:    req.SortBy,
-		SortOrder: req.SortOrder,
+		Search:         req.Search,
+		IsActive:       isActive,
+		Offset:         (page - 1) * pageSize,
+		Limit:          pageSize,
+		SortBy:         req.SortBy,
+		SortOrder:      req.SortOrder,
 	}
 
 	items, total, err := s.repo.ListWithFilters(ctx, params)
@@ -105,13 +105,14 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 	}
 
 	params := repository.CreateParams{
-		OrganizationID: tenantID,
-		Name:         req.Name,
-		Slug:         generateSlug(req.Name),
-		Description:  req.Description,
-		Icon:         req.Icon,
-		Color:        req.Color,
-		DisplayOrder: displayOrder,
+		OrganizationID:   tenantID,
+		Name:             req.Name,
+		Slug:             generateSlug(req.Name),
+		Description:      req.Description,
+		IntakeGuidelines: req.IntakeGuidelines,
+		Icon:             req.Icon,
+		Color:            req.Color,
+		DisplayOrder:     displayOrder,
 	}
 
 	st, err := s.repo.Create(ctx, params)
@@ -132,14 +133,15 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 	}
 
 	params := repository.UpdateParams{
-		ID:           id,
-		OrganizationID: tenantID,
-		Name:         req.Name,
-		Slug:         slug,
-		Description:  req.Description,
-		Icon:         req.Icon,
-		Color:        req.Color,
-		DisplayOrder: req.DisplayOrder,
+		ID:               id,
+		OrganizationID:   tenantID,
+		Name:             req.Name,
+		Slug:             slug,
+		Description:      req.Description,
+		IntakeGuidelines: req.IntakeGuidelines,
+		Icon:             req.Icon,
+		Color:            req.Color,
+		DisplayOrder:     req.DisplayOrder,
 	}
 
 	st, err := s.repo.Update(ctx, params)
@@ -234,12 +236,12 @@ func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
 	for _, def := range defaultServiceTypes {
 		_, err := s.repo.Create(ctx, repository.CreateParams{
 			OrganizationID: tenantID,
-			Name:         def.Name,
-			Slug:         def.Slug,
-			Description:  toPtr(def.Description),
-			Icon:         toPtr(def.Icon),
-			Color:        toPtr(def.Color),
-			DisplayOrder: def.DisplayOrder,
+			Name:           def.Name,
+			Slug:           def.Slug,
+			Description:    toPtr(def.Description),
+			Icon:           toPtr(def.Icon),
+			Color:          toPtr(def.Color),
+			DisplayOrder:   def.DisplayOrder,
 		})
 		if err != nil {
 			return err
@@ -252,16 +254,17 @@ func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
 // toResponse converts a repository ServiceType to transport response.
 func toResponse(st repository.ServiceType) transport.ServiceTypeResponse {
 	return transport.ServiceTypeResponse{
-		ID:           st.ID,
-		Name:         st.Name,
-		Slug:         st.Slug,
-		Description:  st.Description,
-		Icon:         st.Icon,
-		Color:        st.Color,
-		IsActive:     st.IsActive,
-		DisplayOrder: st.DisplayOrder,
-		CreatedAt:    st.CreatedAt,
-		UpdatedAt:    st.UpdatedAt,
+		ID:               st.ID,
+		Name:             st.Name,
+		Slug:             st.Slug,
+		Description:      st.Description,
+		IntakeGuidelines: st.IntakeGuidelines,
+		Icon:             st.Icon,
+		Color:            st.Color,
+		IsActive:         st.IsActive,
+		DisplayOrder:     st.DisplayOrder,
+		CreatedAt:        st.CreatedAt,
+		UpdatedAt:        st.UpdatedAt,
 	}
 }
 
