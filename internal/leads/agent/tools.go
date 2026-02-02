@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,23 @@ func normalizeUrgencyLevel(level string) (string, error) {
 type ToolDependencies struct {
 	Repo          repository.LeadsRepository
 	DraftedEmails map[uuid.UUID]EmailDraft
+	mu            sync.RWMutex
+	tenantID      *uuid.UUID
+}
+
+func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.tenantID = &tenantID
+}
+
+func (d *ToolDependencies) GetTenantID() (*uuid.UUID, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.tenantID == nil {
+		return nil, false
+	}
+	return d.tenantID, true
 }
 
 // createSaveAnalysisTool creates the SaveAnalysis tool
@@ -47,6 +65,11 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 		leadID, err := uuid.Parse(input.LeadID)
 		if err != nil {
 			return SaveAnalysisOutput{Success: false, Message: "Invalid lead ID"}, err
+		}
+
+		tenantID, ok := deps.GetTenantID()
+		if !ok {
+			return SaveAnalysisOutput{Success: false, Message: "Missing tenant context"}, fmt.Errorf("missing tenant context")
 		}
 
 		// Parse service ID if provided
@@ -80,6 +103,7 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 
 		_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
 			LeadID:              leadID,
+			OrganizationID:      *tenantID,
 			LeadServiceID:       leadServiceID,
 			UrgencyLevel:        urgencyLevel,
 			UrgencyReason:       urgencyReason,

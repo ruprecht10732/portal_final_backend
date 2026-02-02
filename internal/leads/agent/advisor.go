@@ -54,6 +54,8 @@ type LeadAdvisor struct {
 	draftedEmails map[uuid.UUID]EmailDraft
 	// Track tool calls during runs
 	toolTracker *toolCallTracker
+	toolDeps    *ToolDependencies
+	runMu       sync.Mutex
 }
 
 // NewLeadAdvisor builds the AI Advisor agent with Kimi model
@@ -82,6 +84,7 @@ func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository) (*LeadAdviso
 		Repo:          repo,
 		DraftedEmails: advisor.draftedEmails,
 	}
+	advisor.toolDeps = toolDeps
 
 	// Build all tools
 	tools, err := buildTools(toolDeps)
@@ -145,6 +148,12 @@ func (la *LeadAdvisor) Analyze(ctx context.Context, leadID uuid.UUID, serviceID 
 // If serviceID is nil, it will use the current (most recent non-terminal) service
 // If force is true, it will regenerate even if no changes are detected
 func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, force bool, tenantID uuid.UUID) (*AnalyzeResponse, error) {
+	la.runMu.Lock()
+	defer la.runMu.Unlock()
+	if la.toolDeps != nil {
+		la.toolDeps.SetTenantID(tenantID)
+	}
+
 	if err := la.ensureInitialized(); err != nil {
 		return nil, err
 	}
