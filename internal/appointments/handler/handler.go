@@ -59,6 +59,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/availability/overrides", h.ListAvailabilityOverrides)
 	rg.POST("/availability/overrides", h.CreateAvailabilityOverride)
 	rg.DELETE("/availability/overrides/:id", h.DeleteAvailabilityOverride)
+
+	rg.GET("/availability/slots", h.GetAvailableSlots)
 }
 
 // List handles GET /api/appointments
@@ -543,6 +545,32 @@ func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"message": "availability override deleted"})
+}
+
+// GetAvailableSlots handles GET /api/appointments/availability/slots
+func (h *Handler) GetAvailableSlots(c *gin.Context) {
+	var req transport.GetAvailableSlotsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.GetAvailableSlots(c.Request.Context(), identity.UserID(), isAdmin, tenantID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 func containsRole(roles []string, role string) bool {

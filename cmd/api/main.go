@@ -80,7 +80,12 @@ func main() {
 		panic("failed to initialize leads module: " + err.Error())
 	}
 	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
-	appointmentsModule := appointments.NewModule(pool, val, leadAssigner)
+	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender)
+
+	// Set appointment booker on leads module (breaks circular dependency)
+	appointmentBooker := adapters.NewAppointmentsAdapter(appointmentsModule.Service)
+	leadsModule.SetAppointmentBooker(appointmentBooker)
+
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)

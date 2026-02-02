@@ -16,21 +16,21 @@ import (
 
 // Appointment represents the appointment database model
 type Appointment struct {
-	ID            uuid.UUID  `db:"id"`
-	OrganizationID uuid.UUID `db:"organization_id"`
-	UserID        uuid.UUID  `db:"user_id"`
-	LeadID        *uuid.UUID `db:"lead_id"`
-	LeadServiceID *uuid.UUID `db:"lead_service_id"`
-	Type          string     `db:"type"`
-	Title         string     `db:"title"`
-	Description   *string    `db:"description"`
-	Location      *string    `db:"location"`
-	StartTime     time.Time  `db:"start_time"`
-	EndTime       time.Time  `db:"end_time"`
-	Status        string     `db:"status"`
-	AllDay        bool       `db:"all_day"`
-	CreatedAt     time.Time  `db:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
+	ID             uuid.UUID  `db:"id"`
+	OrganizationID uuid.UUID  `db:"organization_id"`
+	UserID         uuid.UUID  `db:"user_id"`
+	LeadID         *uuid.UUID `db:"lead_id"`
+	LeadServiceID  *uuid.UUID `db:"lead_service_id"`
+	Type           string     `db:"type"`
+	Title          string     `db:"title"`
+	Description    *string    `db:"description"`
+	Location       *string    `db:"location"`
+	StartTime      time.Time  `db:"start_time"`
+	EndTime        time.Time  `db:"end_time"`
+	Status         string     `db:"status"`
+	AllDay         bool       `db:"all_day"`
+	CreatedAt      time.Time  `db:"created_at"`
+	UpdatedAt      time.Time  `db:"updated_at"`
 }
 
 // LeadInfo represents basic lead information for embedding in appointment responses
@@ -183,14 +183,14 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 // ListParams contains parameters for listing appointments
 type ListParams struct {
 	OrganizationID uuid.UUID
-	UserID    *uuid.UUID
-	LeadID    *uuid.UUID
-	Type      *string
-	Status    *string
-	StartFrom *time.Time
-	StartTo   *time.Time
-	Page      int
-	PageSize  int
+	UserID         *uuid.UUID
+	LeadID         *uuid.UUID
+	Type           *string
+	Status         *string
+	StartFrom      *time.Time
+	StartTo        *time.Time
+	Page           int
+	PageSize       int
 }
 
 // ListResult contains the result of listing appointments
@@ -314,6 +314,22 @@ func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID, organiza
 	return &info, nil
 }
 
+// GetLeadEmail retrieves the email for a lead
+func (r *Repository) GetLeadEmail(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (string, error) {
+	var email string
+	query := `SELECT COALESCE(consumer_email, '') FROM leads WHERE id = $1 AND organization_id = $2`
+
+	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(&email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get lead email: %w", err)
+	}
+
+	return email, nil
+}
+
 // GetLeadInfoBatch retrieves lead info for multiple lead IDs
 func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, organizationID uuid.UUID) (map[uuid.UUID]*LeadInfo, error) {
 	if len(leadIDs) == 0 {
@@ -346,6 +362,42 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 	}
 
 	return result, nil
+}
+
+// ListForDateRange retrieves all appointments for a user within a date range (for slots computation)
+func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate, endDate time.Time) ([]Appointment, error) {
+	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
+		location, start_time, end_time, status, all_day, created_at, updated_at
+		FROM appointments 
+		WHERE organization_id = $1 AND user_id = $2 
+		AND start_time >= $3 AND start_time < $4
+		AND status = 'scheduled'
+		ORDER BY start_time ASC`
+
+	rows, err := r.pool.Query(ctx, query, organizationID, userID, startDate, endDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list appointments for date range: %w", err)
+	}
+	defer rows.Close()
+
+	var items []Appointment
+	for rows.Next() {
+		var appt Appointment
+		if err := rows.Scan(
+			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+			&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
+			&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan appointment: %w", err)
+		}
+		items = append(items, appt)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate appointments: %w", err)
+	}
+
+	return items, nil
 }
 
 // ToResponse converts an Appointment to AppointmentResponse

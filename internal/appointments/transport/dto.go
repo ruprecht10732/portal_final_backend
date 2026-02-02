@@ -36,15 +36,16 @@ const (
 
 // CreateAppointmentRequest is the request body for creating an appointment
 type CreateAppointmentRequest struct {
-	LeadID        *uuid.UUID      `json:"leadId,omitempty"`
-	LeadServiceID *uuid.UUID      `json:"leadServiceId,omitempty"`
-	Type          AppointmentType `json:"type" validate:"required,oneof=lead_visit standalone blocked"`
-	Title         string          `json:"title" validate:"required,min=1,max=200"`
-	Description   string          `json:"description,omitempty" validate:"max=2000"`
-	Location      string          `json:"location,omitempty" validate:"max=500"`
-	StartTime     time.Time       `json:"startTime" validate:"required"`
-	EndTime       time.Time       `json:"endTime" validate:"required,gtfield=StartTime"`
-	AllDay        bool            `json:"allDay"`
+	LeadID                *uuid.UUID      `json:"leadId,omitempty"`
+	LeadServiceID         *uuid.UUID      `json:"leadServiceId,omitempty"`
+	Type                  AppointmentType `json:"type" validate:"required,oneof=lead_visit standalone blocked"`
+	Title                 string          `json:"title" validate:"required,min=1,max=200"`
+	Description           string          `json:"description,omitempty" validate:"max=2000"`
+	Location              string          `json:"location,omitempty" validate:"max=500"`
+	StartTime             time.Time       `json:"startTime" validate:"required"`
+	EndTime               time.Time       `json:"endTime" validate:"required,gtfield=StartTime"`
+	AllDay                bool            `json:"allDay"`
+	SendConfirmationEmail *bool           `json:"sendConfirmationEmail,omitempty"` // If true, sends confirmation email to lead
 }
 
 // UpdateAppointmentRequest is the request body for updating an appointment
@@ -185,4 +186,29 @@ type AvailabilityOverrideResponse struct {
 	Timezone    string    `json:"timezone"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// GetAvailableSlotsRequest is the query parameters for getting available slots
+type GetAvailableSlotsRequest struct {
+	UserID       string `form:"userId"`
+	StartDate    string `form:"startDate" validate:"required"` // ISO date YYYY-MM-DD
+	EndDate      string `form:"endDate" validate:"required"`   // ISO date YYYY-MM-DD
+	SlotDuration int    `form:"slotDuration"`                  // Duration in minutes (default: 60)
+}
+
+// TimeSlot represents a single available time slot
+type TimeSlot struct {
+	StartTime time.Time `json:"startTime"`
+	EndTime   time.Time `json:"endTime"`
+}
+
+// DaySlots represents available slots for a specific day
+type DaySlots struct {
+	Date  string     `json:"date"` // ISO date YYYY-MM-DD
+	Slots []TimeSlot `json:"slots"`
+}
+
+// AvailableSlotsResponse is the response for available slots query
+type AvailableSlotsResponse struct {
+	Days []DaySlots `json:"days"`
 }

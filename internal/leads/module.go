@@ -11,6 +11,7 @@ import (
 	"portal_final_backend/internal/leads/handler"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/notes"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/platform/config"
@@ -26,6 +27,7 @@ type Module struct {
 	management *management.Service
 	notes      *notes.Service
 	advisor    *agent.LeadAdvisor
+	callLogger *agent.CallLogger
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
@@ -35,6 +37,12 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 
 	// AI Advisor for lead analysis
 	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo)
+	if err != nil {
+		return nil, err
+	}
+
+	// CallLogger for post-call processing (booker will be set later to break circular dependency)
+	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -63,13 +71,14 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator
 
 	// Create handlers
 	notesHandler := handler.NewNotesHandler(notesSvc, val)
-	h := handler.New(mgmtSvc, notesHandler, advisor, val)
+	h := handler.New(mgmtSvc, notesHandler, advisor, callLogger, val)
 
 	return &Module{
 		handler:    h,
 		management: mgmtSvc,
 		notes:      notesSvc,
 		advisor:    advisor,
+		callLogger: callLogger,
 	}, nil
 }
 
@@ -86,6 +95,17 @@ func (m *Module) ManagementService() *management.Service {
 // NotesService returns the lead notes service for external use.
 func (m *Module) NotesService() *notes.Service {
 	return m.notes
+}
+
+// CallLogger returns the call logger agent for external use.
+func (m *Module) CallLogger() *agent.CallLogger {
+	return m.callLogger
+}
+
+// SetAppointmentBooker sets the appointment booker on the CallLogger.
+// This is called after module initialization to break circular dependencies.
+func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
+	m.callLogger.SetAppointmentBooker(booker)
 }
 
 // RegisterRoutes mounts leads routes on the provided router context.

@@ -20,6 +20,7 @@ type Handler struct {
 	mgmt         *management.Service
 	notesHandler *NotesHandler
 	advisor      *agent.LeadAdvisor
+	callLogger   *agent.CallLogger
 	val          *validator.Validator
 }
 
@@ -27,6 +28,7 @@ const (
 	msgInvalidRequest   = "invalid request"
 	msgValidationFailed = "validation failed"
 	msgTenantRequired   = "tenant context required"
+	msgInvalidServiceID = "invalid serviceId"
 )
 
 // mustGetTenantID extracts and dereferences the tenant ID from identity.
@@ -41,8 +43,8 @@ func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool
 }
 
 // New creates a new leads handler with focused services.
-func New(mgmt *management.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, val *validator.Validator) *Handler {
-	return &Handler{mgmt: mgmt, notesHandler: notesHandler, advisor: advisor, val: val}
+func New(mgmt *management.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, callLogger *agent.CallLogger, val *validator.Validator) *Handler {
+	return &Handler{mgmt: mgmt, notesHandler: notesHandler, advisor: advisor, callLogger: callLogger, val: val}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -69,6 +71,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/analyze", h.AnalyzeLead)
 	rg.GET("/:id/analysis", h.GetAnalysis)
 	rg.GET("/:id/analysis/history", h.ListAnalyses)
+	// Call Logger routes
+	rg.POST("/:id/services/:serviceId/log-call", h.LogCall)
 }
 
 func (h *Handler) GetMetrics(c *gin.Context) {
@@ -568,7 +572,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	if svcID := c.Query("serviceId"); svcID != "" {
 		parsed, err := uuid.Parse(svcID)
 		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, "invalid serviceId", nil)
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidServiceID, nil)
 			return
 		}
 		serviceID = &parsed
@@ -621,7 +625,7 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 	}
 	serviceID, err := uuid.Parse(svcID)
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid serviceId", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidServiceID, nil)
 		return
 	}
 
@@ -661,7 +665,7 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 	}
 	serviceID, err := uuid.Parse(svcID)
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid serviceId", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidServiceID, nil)
 		return
 	}
 
@@ -671,6 +675,47 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"items": analyses})
+}
+
+// LogCall processes a post-call summary and executes appropriate actions (notes, status updates, appointments)
+func (h *Handler) LogCall(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.LogCallRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.callLogger.ProcessSummary(c.Request.Context(), leadID, serviceID, identity.UserID(), tenantID, req.Summary)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // isTerminalStatus checks if a service status is terminal (no further actions allowed)

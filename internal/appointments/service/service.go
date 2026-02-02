@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/appointments/transport"
+	"portal_final_backend/internal/email"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
@@ -22,11 +24,12 @@ type LeadAssigner interface {
 type Service struct {
 	repo         *repository.Repository
 	leadAssigner LeadAssigner
+	emailSender  email.Sender
 }
 
 // New creates a new appointments service
-func New(repo *repository.Repository, leadAssigner LeadAssigner) *Service {
-	return &Service{repo: repo, leadAssigner: leadAssigner}
+func New(repo *repository.Repository, leadAssigner LeadAssigner, emailSender email.Sender) *Service {
+	return &Service{repo: repo, leadAssigner: leadAssigner, emailSender: emailSender}
 }
 
 // Create creates a new appointment
@@ -62,21 +65,21 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 
 	now := time.Now()
 	appt := &repository.Appointment{
-		ID:            uuid.New(),
+		ID:             uuid.New(),
 		OrganizationID: tenantID,
-		UserID:        userID,
-		LeadID:        req.LeadID,
-		LeadServiceID: req.LeadServiceID,
-		Type:          string(req.Type),
-		Title:         req.Title,
-		Description:   nilIfEmpty(req.Description),
-		Location:      nilIfEmpty(req.Location),
-		StartTime:     req.StartTime,
-		EndTime:       req.EndTime,
-		Status:        string(transport.AppointmentStatusScheduled),
-		AllDay:        req.AllDay,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		UserID:         userID,
+		LeadID:         req.LeadID,
+		LeadServiceID:  req.LeadServiceID,
+		Type:           string(req.Type),
+		Title:          req.Title,
+		Description:    nilIfEmpty(req.Description),
+		Location:       nilIfEmpty(req.Location),
+		StartTime:      req.StartTime,
+		EndTime:        req.EndTime,
+		Status:         string(transport.AppointmentStatusScheduled),
+		AllDay:         req.AllDay,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	if err := s.repo.Create(ctx, appt); err != nil {
@@ -87,6 +90,16 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 	var leadInfo *transport.AppointmentLeadInfo
 	if appt.LeadID != nil {
 		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
+	}
+
+	// Send confirmation email if requested and this is a lead visit with lead info
+	if req.SendConfirmationEmail != nil && *req.SendConfirmationEmail && leadInfo != nil && s.emailSender != nil {
+		// Get consumer email from lead info (we need to fetch it separately)
+		if consumerEmail := s.getLeadEmail(ctx, *appt.LeadID, tenantID); consumerEmail != "" {
+			scheduledDate := appt.StartTime.Format("Monday, January 2, 2006 at 15:04")
+			_ = s.emailSender.SendVisitInviteEmail(ctx, consumerEmail, leadInfo.FirstName, scheduledDate, leadInfo.Address)
+			// We don't fail the appointment creation if email fails
+		}
 	}
 
 	resp := appt.ToResponse(leadInfo)
@@ -241,9 +254,9 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tena
 	// Build params
 	params := repository.ListParams{
 		OrganizationID: tenantID,
-		LeadID:   leadID,
-		Page:     page,
-		PageSize: pageSize,
+		LeadID:         leadID,
+		Page:           page,
+		PageSize:       pageSize,
 	}
 
 	// Non-admins can only see their own appointments
@@ -395,13 +408,13 @@ func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID,
 	}
 
 	attachment := repository.AppointmentAttachment{
-		ID:            uuid.New(),
-		AppointmentID: appointmentID,
+		ID:             uuid.New(),
+		AppointmentID:  appointmentID,
 		OrganizationID: tenantID,
-		FileKey:       req.FileKey,
-		FileName:      req.FileName,
-		ContentType:   req.ContentType,
-		SizeBytes:     req.SizeBytes,
+		FileKey:        req.FileKey,
+		FileName:       req.FileName,
+		ContentType:    req.ContentType,
+		SizeBytes:      req.SizeBytes,
 	}
 
 	saved, err := s.repo.CreateAttachment(ctx, attachment)
@@ -446,6 +459,172 @@ func (s *Service) ListAttachments(ctx context.Context, appointmentID uuid.UUID, 
 	return resp, nil
 }
 
+// GetAvailableSlots computes available time slots for a user within a date range
+func (s *Service) GetAvailableSlots(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.GetAvailableSlotsRequest) (*transport.AvailableSlotsResponse, error) {
+	// Parse target user ID
+	targetUserID, err := s.resolveTargetUserIDFromString(userID, isAdmin, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse dates
+	startDate, err := time.Parse("2006-01-02", req.StartDate)
+	if err != nil {
+		return nil, apperr.BadRequest("invalid startDate format")
+	}
+	endDate, err := time.Parse("2006-01-02", req.EndDate)
+	if err != nil {
+		return nil, apperr.BadRequest("invalid endDate format")
+	}
+
+	// Validate date range
+	if endDate.Before(startDate) {
+		return nil, apperr.BadRequest("endDate must be after startDate")
+	}
+	maxDays := 14
+	if endDate.Sub(startDate).Hours()/24 > float64(maxDays) {
+		return nil, apperr.BadRequest(fmt.Sprintf("date range cannot exceed %d days", maxDays))
+	}
+
+	// Default slot duration
+	slotDuration := req.SlotDuration
+	if slotDuration <= 0 {
+		slotDuration = 60
+	}
+
+	// Fetch availability rules for the user
+	rules, err := s.repo.ListAvailabilityRules(ctx, tenantID, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch overrides for the date range
+	overrides, err := s.repo.ListAvailabilityOverrides(ctx, tenantID, targetUserID, &startDate, &endDate)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build override map (date string -> override)
+	overrideMap := make(map[string]*repository.AvailabilityOverride)
+	for i := range overrides {
+		dateKey := overrides[i].Date.Format("2006-01-02")
+		overrideMap[dateKey] = &overrides[i]
+	}
+
+	// Fetch existing appointments in the date range
+	endOfRange := endDate.AddDate(0, 0, 1) // Make endDate inclusive
+	appointments, err := s.repo.ListForDateRange(ctx, tenantID, targetUserID, startDate, endOfRange)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build appointment map by date for quick lookup
+	appointmentsByDate := make(map[string][]repository.Appointment)
+	for _, appt := range appointments {
+		dateKey := appt.StartTime.Format("2006-01-02")
+		appointmentsByDate[dateKey] = append(appointmentsByDate[dateKey], appt)
+	}
+
+	// Generate slots for each day
+	var days []transport.DaySlots
+	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+		dateKey := d.Format("2006-01-02")
+		weekday := int(d.Weekday())
+
+		daySlots := transport.DaySlots{
+			Date:  dateKey,
+			Slots: []transport.TimeSlot{},
+		}
+
+		// Check for override on this day
+		if override, exists := overrideMap[dateKey]; exists {
+			if !override.IsAvailable {
+				// Day is blocked
+				days = append(days, daySlots)
+				continue
+			}
+			// Override with custom hours
+			if override.StartTime != nil && override.EndTime != nil {
+				slots := generateSlotsForWindow(d, *override.StartTime, *override.EndTime, slotDuration, appointmentsByDate[dateKey])
+				daySlots.Slots = slots
+			}
+			days = append(days, daySlots)
+			continue
+		}
+
+		// Find rules for this weekday
+		var dayRules []repository.AvailabilityRule
+		for _, rule := range rules {
+			if rule.Weekday == weekday {
+				dayRules = append(dayRules, rule)
+			}
+		}
+
+		// Generate slots from rules
+		for _, rule := range dayRules {
+			slots := generateSlotsForWindow(d, rule.StartTime, rule.EndTime, slotDuration, appointmentsByDate[dateKey])
+			daySlots.Slots = append(daySlots.Slots, slots...)
+		}
+
+		// Sort slots by start time
+		sort.Slice(daySlots.Slots, func(i, j int) bool {
+			return daySlots.Slots[i].StartTime.Before(daySlots.Slots[j].StartTime)
+		})
+
+		days = append(days, daySlots)
+	}
+
+	return &transport.AvailableSlotsResponse{Days: days}, nil
+}
+
+// generateSlotsForWindow generates available slots within a time window, excluding existing appointments
+func generateSlotsForWindow(date time.Time, windowStart, windowEnd time.Time, slotDurationMinutes int, appointments []repository.Appointment) []transport.TimeSlot {
+	var slots []transport.TimeSlot
+	slotDuration := time.Duration(slotDurationMinutes) * time.Minute
+
+	// Construct full datetime for start and end of window
+	start := time.Date(date.Year(), date.Month(), date.Day(), windowStart.Hour(), windowStart.Minute(), 0, 0, time.UTC)
+	end := time.Date(date.Year(), date.Month(), date.Day(), windowEnd.Hour(), windowEnd.Minute(), 0, 0, time.UTC)
+
+	// Generate slots
+	for slotStart := start; slotStart.Add(slotDuration).Before(end) || slotStart.Add(slotDuration).Equal(end); slotStart = slotStart.Add(slotDuration) {
+		slotEnd := slotStart.Add(slotDuration)
+
+		// Check if slot conflicts with any appointment
+		conflicts := false
+		for _, appt := range appointments {
+			// Check for overlap: slot overlaps if it starts before appt ends AND ends after appt starts
+			if slotStart.Before(appt.EndTime) && slotEnd.After(appt.StartTime) {
+				conflicts = true
+				break
+			}
+		}
+
+		if !conflicts {
+			slots = append(slots, transport.TimeSlot{
+				StartTime: slotStart,
+				EndTime:   slotEnd,
+			})
+		}
+	}
+
+	return slots
+}
+
+func (s *Service) resolveTargetUserIDFromString(userID uuid.UUID, isAdmin bool, target string) (uuid.UUID, error) {
+	if target == "" {
+		return userID, nil
+	}
+	parsed, err := uuid.Parse(target)
+	if err != nil {
+		return uuid.UUID{}, apperr.BadRequest("invalid userId format")
+	}
+	if !isAdmin && parsed != userID {
+		return uuid.UUID{}, apperr.Forbidden("not authorized to view availability for this user")
+	}
+	return parsed, nil
+}
+
 // Availability
 func (s *Service) CreateAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAvailabilityRuleRequest) (*transport.AvailabilityRuleResponse, error) {
 	targetUserID, err := s.resolveTargetUserID(userID, isAdmin, req.UserID)
@@ -459,13 +638,13 @@ func (s *Service) CreateAvailabilityRule(ctx context.Context, userID uuid.UUID, 
 	}
 
 	saved, err := s.repo.CreateAvailabilityRule(ctx, repository.AvailabilityRule{
-		ID:        uuid.New(),
+		ID:             uuid.New(),
 		OrganizationID: tenantID,
-		UserID:    targetUserID,
-		Weekday:   req.Weekday,
-		StartTime: startTime,
-		EndTime:   endTime,
-		Timezone:  timezone,
+		UserID:         targetUserID,
+		Weekday:        req.Weekday,
+		StartTime:      startTime,
+		EndTime:        endTime,
+		Timezone:       timezone,
 	})
 	if err != nil {
 		return nil, err
@@ -522,14 +701,14 @@ func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UU
 	}
 
 	saved, err := s.repo.CreateAvailabilityOverride(ctx, repository.AvailabilityOverride{
-		ID:          uuid.New(),
+		ID:             uuid.New(),
 		OrganizationID: tenantID,
-		UserID:      targetUserID,
-		Date:        date,
-		IsAvailable: req.IsAvailable,
-		StartTime:   startTime,
-		EndTime:     endTime,
-		Timezone:    timezone,
+		UserID:         targetUserID,
+		Date:           date,
+		IsAvailable:    req.IsAvailable,
+		StartTime:      startTime,
+		EndTime:        endTime,
+		Timezone:       timezone,
 	})
 	if err != nil {
 		return nil, err
@@ -588,6 +767,14 @@ func (s *Service) getLeadInfo(ctx context.Context, leadID uuid.UUID, tenantID uu
 		Phone:     info.Phone,
 		Address:   fmt.Sprintf("%s %s, %s", info.Street, info.HouseNumber, info.City),
 	}
+}
+
+func (s *Service) getLeadEmail(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) string {
+	email, err := s.repo.GetLeadEmail(ctx, leadID, tenantID)
+	if err != nil {
+		return ""
+	}
+	return email
 }
 
 func (s *Service) ensureAccess(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) (*repository.Appointment, error) {

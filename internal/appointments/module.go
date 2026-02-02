@@ -5,6 +5,7 @@ import (
 	"portal_final_backend/internal/appointments/handler"
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/appointments/service"
+	"portal_final_backend/internal/email"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/platform/validator"
 
@@ -18,9 +19,9 @@ type Module struct {
 }
 
 // NewModule creates a new appointments module with all dependencies wired
-func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner service.LeadAssigner) *Module {
+func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner service.LeadAssigner, emailSender email.Sender) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, leadAssigner)
+	svc := service.New(repo, leadAssigner, emailSender)
 	h := handler.New(svc, val)
 
 	return &Module{

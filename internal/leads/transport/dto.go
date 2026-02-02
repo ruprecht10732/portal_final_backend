@@ -224,3 +224,16 @@ type LeadMetricsResponse struct {
 	DisqualifiedRate    float64 `json:"disqualifiedRate"`
 	TouchpointsPerLead  float64 `json:"touchpointsPerLead"`
 }
+
+// LogCallRequest is the request body for processing a post-call summary
+type LogCallRequest struct {
+	Summary string `json:"summary" validate:"required,min=1,max=5000"`
+}
+
+// LogCallResponse is the response for a processed call log
+type LogCallResponse struct {
+	NoteCreated       bool       `json:"noteCreated"`
+	StatusUpdated     *string    `json:"statusUpdated,omitempty"`
+	AppointmentBooked *time.Time `json:"appointmentBooked,omitempty"`
+	Message           string     `json:"message"`
+}
