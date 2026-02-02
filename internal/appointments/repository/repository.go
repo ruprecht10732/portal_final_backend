@@ -103,7 +103,7 @@ func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.
 	var appt Appointment
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, start_time, end_time, status, all_day, created_at, updated_at
-		FROM appointments WHERE lead_service_id = $1 AND organization_id = $2 AND status = 'scheduled' ORDER BY created_at DESC LIMIT 1`
+		FROM appointments WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'cancelled' ORDER BY created_at DESC LIMIT 1`
 
 	err := r.pool.QueryRow(ctx, query, leadServiceID, organizationID).Scan(
 		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,

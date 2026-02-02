@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/appointments/transport"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/platform/apperr"
+	"portal_final_backend/platform/sanitize"
 
 	"github.com/google/uuid"
 )
@@ -71,8 +72,8 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 		LeadID:         req.LeadID,
 		LeadServiceID:  req.LeadServiceID,
 		Type:           string(req.Type),
-		Title:          req.Title,
-		Description:    nilIfEmpty(req.Description),
+		Title:          sanitize.Text(req.Title),
+		Description:    sanitize.TextPtr(nilIfEmpty(req.Description)),
 		Location:       nilIfEmpty(req.Location),
 		StartTime:      req.StartTime,
 		EndTime:        req.EndTime,
@@ -134,12 +135,12 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 		return nil, apperr.Forbidden("not authorized to update this appointment")
 	}
 
-	// Apply updates
+	// Apply updates (sanitize user input)
 	if req.Title != nil {
-		appt.Title = *req.Title
+		appt.Title = sanitize.Text(*req.Title)
 	}
 	if req.Description != nil {
-		appt.Description = req.Description
+		appt.Description = sanitize.TextPtr(req.Description)
 	}
 	if req.Location != nil {
 		appt.Location = req.Location
@@ -379,9 +380,9 @@ func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID
 	}
 
 	existing, _ := s.repo.GetVisitReport(ctx, appointmentID, tenantID)
-	measurements := mergeString(existing, func(r *repository.VisitReport) *string { return r.Measurements }, req.Measurements)
+	measurements := mergeString(existing, func(r *repository.VisitReport) *string { return r.Measurements }, sanitize.TextPtr(req.Measurements))
 	accessDifficulty := mergeString(existing, func(r *repository.VisitReport) *string { return r.AccessDifficulty }, toAccessDifficultyString(req.AccessDifficulty))
-	notes := mergeString(existing, func(r *repository.VisitReport) *string { return r.Notes }, req.Notes)
+	notes := mergeString(existing, func(r *repository.VisitReport) *string { return r.Notes }, sanitize.TextPtr(req.Notes))
 
 	saved, err := s.repo.UpsertVisitReport(ctx, repository.VisitReport{
 		AppointmentID:    appointmentID,
@@ -514,18 +515,28 @@ func (s *Service) GetAvailableSlots(ctx context.Context, userID uuid.UUID, isAdm
 		overrideMap[dateKey] = &overrides[i]
 	}
 
-	// Fetch existing appointments in the date range
-	endOfRange := endDate.AddDate(0, 0, 1) // Make endDate inclusive
-	appointments, err := s.repo.ListForDateRange(ctx, tenantID, targetUserID, startDate, endOfRange)
+	// Fetch existing appointments in the date range (extend slightly to catch boundary overlaps)
+	fetchStart := startDate.AddDate(0, 0, -1)
+	fetchEnd := endDate.AddDate(0, 0, 2)
+	appointments, err := s.repo.ListForDateRange(ctx, tenantID, targetUserID, fetchStart, fetchEnd)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build appointment map by date for quick lookup
-	appointmentsByDate := make(map[string][]repository.Appointment)
-	for _, appt := range appointments {
-		dateKey := appt.StartTime.Format("2006-01-02")
-		appointmentsByDate[dateKey] = append(appointmentsByDate[dateKey], appt)
+	// Helper to process a time window in a specific timezone
+	processWindow := func(d time.Time, tzName string, startClock, endClock time.Time, slotDurationMinutes int) []transport.TimeSlot {
+		loc, err := time.LoadLocation(tzName)
+		if err != nil {
+			// Fallback to UTC if timezone is invalid
+			loc = time.UTC
+		}
+
+		// Construct absolute start/end times in the rule's timezone
+		windowStart := time.Date(d.Year(), d.Month(), d.Day(), startClock.Hour(), startClock.Minute(), 0, 0, loc)
+		windowEnd := time.Date(d.Year(), d.Month(), d.Day(), endClock.Hour(), endClock.Minute(), 0, 0, loc)
+
+		// Convert to UTC for conflict checking
+		return generateSlotsForWindow(windowStart.UTC(), windowEnd.UTC(), slotDurationMinutes, appointments)
 	}
 
 	// Generate slots for each day
@@ -548,25 +559,19 @@ func (s *Service) GetAvailableSlots(ctx context.Context, userID uuid.UUID, isAdm
 			}
 			// Override with custom hours
 			if override.StartTime != nil && override.EndTime != nil {
-				slots := generateSlotsForWindow(d, *override.StartTime, *override.EndTime, slotDuration, appointmentsByDate[dateKey])
+				slots := processWindow(d, override.Timezone, *override.StartTime, *override.EndTime, slotDuration)
 				daySlots.Slots = slots
 			}
 			days = append(days, daySlots)
 			continue
 		}
 
-		// Find rules for this weekday
-		var dayRules []repository.AvailabilityRule
+		// Find rules for this weekday and generate slots
 		for _, rule := range rules {
 			if rule.Weekday == weekday {
-				dayRules = append(dayRules, rule)
+				slots := processWindow(d, rule.Timezone, rule.StartTime, rule.EndTime, slotDuration)
+				daySlots.Slots = append(daySlots.Slots, slots...)
 			}
-		}
-
-		// Generate slots from rules
-		for _, rule := range dayRules {
-			slots := generateSlotsForWindow(d, rule.StartTime, rule.EndTime, slotDuration, appointmentsByDate[dateKey])
-			daySlots.Slots = append(daySlots.Slots, slots...)
 		}
 
 		// Sort slots by start time
@@ -580,17 +585,13 @@ func (s *Service) GetAvailableSlots(ctx context.Context, userID uuid.UUID, isAdm
 	return &transport.AvailableSlotsResponse{Days: days}, nil
 }
 
-// generateSlotsForWindow generates available slots within a time window, excluding existing appointments
-func generateSlotsForWindow(date time.Time, windowStart, windowEnd time.Time, slotDurationMinutes int, appointments []repository.Appointment) []transport.TimeSlot {
+// generateSlotsForWindow generates available slots within a time window (UTC), excluding existing appointments
+func generateSlotsForWindow(windowStart, windowEnd time.Time, slotDurationMinutes int, appointments []repository.Appointment) []transport.TimeSlot {
 	var slots []transport.TimeSlot
 	slotDuration := time.Duration(slotDurationMinutes) * time.Minute
 
-	// Construct full datetime for start and end of window
-	start := time.Date(date.Year(), date.Month(), date.Day(), windowStart.Hour(), windowStart.Minute(), 0, 0, time.UTC)
-	end := time.Date(date.Year(), date.Month(), date.Day(), windowEnd.Hour(), windowEnd.Minute(), 0, 0, time.UTC)
-
 	// Generate slots
-	for slotStart := start; slotStart.Add(slotDuration).Before(end) || slotStart.Add(slotDuration).Equal(end); slotStart = slotStart.Add(slotDuration) {
+	for slotStart := windowStart; slotStart.Add(slotDuration).Before(windowEnd) || slotStart.Add(slotDuration).Equal(windowEnd); slotStart = slotStart.Add(slotDuration) {
 		slotEnd := slotStart.Add(slotDuration)
 
 		// Check if slot conflicts with any appointment
