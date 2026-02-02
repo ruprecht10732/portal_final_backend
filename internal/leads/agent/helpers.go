@@ -201,16 +201,17 @@ func (la *LeadAdvisor) analysisToResult(analysis repository.AIAnalysis) *Analysi
 	}
 
 	return &AnalysisResult{
-		ID:                  analysis.ID,
-		LeadID:              analysis.LeadID,
-		LeadServiceID:       analysis.LeadServiceID,
-		UrgencyLevel:        analysis.UrgencyLevel,
-		UrgencyReason:       analysis.UrgencyReason,
-		TalkingPoints:       analysis.TalkingPoints,
-		ObjectionHandling:   objections,
-		UpsellOpportunities: analysis.UpsellOpportunities,
-		Summary:             analysis.Summary,
-		CreatedAt:           analysis.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:                       analysis.ID,
+		LeadID:                   analysis.LeadID,
+		LeadServiceID:            analysis.LeadServiceID,
+		UrgencyLevel:             analysis.UrgencyLevel,
+		UrgencyReason:            analysis.UrgencyReason,
+		TalkingPoints:            analysis.TalkingPoints,
+		ObjectionHandling:        objections,
+		UpsellOpportunities:      analysis.UpsellOpportunities,
+		SuggestedWhatsAppMessage: analysis.SuggestedWhatsAppMessage,
+		Summary:                  analysis.Summary,
+		CreatedAt:                analysis.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 

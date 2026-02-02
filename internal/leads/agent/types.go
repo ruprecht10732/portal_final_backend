@@ -12,14 +12,15 @@ import (
 
 // SaveAnalysisInput is the structured input for the SaveAnalysis tool
 type SaveAnalysisInput struct {
-	LeadID              string              `json:"leadId"`
-	LeadServiceID       string              `json:"leadServiceId"`       // The specific service this analysis is for
-	UrgencyLevel        string              `json:"urgencyLevel"`        // High, Medium, Low
-	UrgencyReason       string              `json:"urgencyReason"`       // Why this urgency level
-	TalkingPoints       []string            `json:"talkingPoints"`       // Key points to discuss
-	ObjectionHandling   []ObjectionResponse `json:"objectionHandling"`   // Likely objections with responses
-	UpsellOpportunities []string            `json:"upsellOpportunities"` // Additional services to suggest
-	Summary             string              `json:"summary"`             // Brief overall analysis
+	LeadID                   string              `json:"leadId"`
+	LeadServiceID            string              `json:"leadServiceId"`            // The specific service this analysis is for
+	UrgencyLevel             string              `json:"urgencyLevel"`             // High, Medium, Low
+	UrgencyReason            string              `json:"urgencyReason"`            // Why this urgency level
+	TalkingPoints            []string            `json:"talkingPoints"`            // Key points to discuss
+	ObjectionHandling        []ObjectionResponse `json:"objectionHandling"`        // Likely objections with responses
+	UpsellOpportunities      []string            `json:"upsellOpportunities"`      // Additional services to suggest
+	SuggestedWhatsAppMessage string              `json:"suggestedWhatsAppMessage"` // New field for professional-casual message
+	Summary                  string              `json:"summary"`                  // Brief overall analysis
 }
 
 type SaveAnalysisOutput struct {
@@ -96,14 +97,15 @@ type AnalyzeResponse struct {
 
 // AnalysisResult represents the analysis returned to API consumers
 type AnalysisResult struct {
-	ID                  uuid.UUID           `json:"id"`
-	LeadID              uuid.UUID           `json:"leadId"`
-	LeadServiceID       *uuid.UUID          `json:"leadServiceId,omitempty"`
-	UrgencyLevel        string              `json:"urgencyLevel"`
-	UrgencyReason       *string             `json:"urgencyReason,omitempty"`
-	TalkingPoints       []string            `json:"talkingPoints"`
-	ObjectionHandling   []ObjectionResponse `json:"objectionHandling"`
-	UpsellOpportunities []string            `json:"upsellOpportunities"`
-	Summary             string              `json:"summary"`
-	CreatedAt           string              `json:"createdAt"`
+	ID                       uuid.UUID           `json:"id"`
+	LeadID                   uuid.UUID           `json:"leadId"`
+	LeadServiceID            *uuid.UUID          `json:"leadServiceId,omitempty"`
+	UrgencyLevel             string              `json:"urgencyLevel"`
+	UrgencyReason            *string             `json:"urgencyReason,omitempty"`
+	TalkingPoints            []string            `json:"talkingPoints"`
+	ObjectionHandling        []ObjectionResponse `json:"objectionHandling"`
+	UpsellOpportunities      []string            `json:"upsellOpportunities"`
+	SuggestedWhatsAppMessage *string             `json:"suggestedWhatsAppMessage,omitempty"`
+	Summary                  string              `json:"summary"`
+	CreatedAt                string              `json:"createdAt"`
 }

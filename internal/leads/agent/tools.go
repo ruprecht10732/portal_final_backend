@@ -101,16 +101,22 @@ func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 			urgencyReason = &input.UrgencyReason
 		}
 
+		var whatsappMessage *string
+		if input.SuggestedWhatsAppMessage != "" {
+			whatsappMessage = &input.SuggestedWhatsAppMessage
+		}
+
 		_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
-			LeadID:              leadID,
-			OrganizationID:      *tenantID,
-			LeadServiceID:       leadServiceID,
-			UrgencyLevel:        urgencyLevel,
-			UrgencyReason:       urgencyReason,
-			TalkingPoints:       input.TalkingPoints,
-			ObjectionHandling:   objections,
-			UpsellOpportunities: input.UpsellOpportunities,
-			Summary:             input.Summary,
+			LeadID:                   leadID,
+			OrganizationID:           *tenantID,
+			LeadServiceID:            leadServiceID,
+			UrgencyLevel:             urgencyLevel,
+			UrgencyReason:            urgencyReason,
+			TalkingPoints:            input.TalkingPoints,
+			ObjectionHandling:        objections,
+			UpsellOpportunities:      input.UpsellOpportunities,
+			SuggestedWhatsAppMessage: whatsappMessage,
+			Summary:                  input.Summary,
 		})
 		if err != nil {
 			return SaveAnalysisOutput{Success: false, Message: err.Error()}, err

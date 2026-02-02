@@ -27,3 +27,17 @@ sql:
         emit_prepared_queries: false
         emit_interface: true
         emit_exact_table_names: false
+
+  # Catalog Domain - products and VAT rates
+  - schema: "internal/catalog/migrations"
+    queries: "internal/catalog/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "catalogdb"
+        out: "internal/catalog/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false

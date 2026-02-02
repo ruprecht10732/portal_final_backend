@@ -12,17 +12,18 @@ import (
 
 // AIAnalysis represents a single AI analysis for a lead service
 type AIAnalysis struct {
-	ID                  uuid.UUID
-	LeadID              uuid.UUID
-	OrganizationID      uuid.UUID
-	LeadServiceID       *uuid.UUID // The specific service this analysis is for
-	UrgencyLevel        string     // High, Medium, Low
-	UrgencyReason       *string
-	TalkingPoints       []string
-	ObjectionHandling   []ObjectionResponse
-	UpsellOpportunities []string
-	Summary             string
-	CreatedAt           time.Time
+	ID                       uuid.UUID
+	LeadID                   uuid.UUID
+	OrganizationID           uuid.UUID
+	LeadServiceID            *uuid.UUID // The specific service this analysis is for
+	UrgencyLevel             string     // High, Medium, Low
+	UrgencyReason            *string
+	TalkingPoints            []string
+	ObjectionHandling        []ObjectionResponse
+	UpsellOpportunities      []string
+	SuggestedWhatsAppMessage *string
+	Summary                  string
+	CreatedAt                time.Time
 }
 
 // ObjectionResponse represents an objection and its suggested response
@@ -33,15 +34,16 @@ type ObjectionResponse struct {
 
 // CreateAIAnalysisParams contains the parameters for creating an AI analysis
 type CreateAIAnalysisParams struct {
-	LeadID              uuid.UUID
-	OrganizationID      uuid.UUID
-	LeadServiceID       *uuid.UUID // The specific service this analysis is for
-	UrgencyLevel        string
-	UrgencyReason       *string
-	TalkingPoints       []string
-	ObjectionHandling   []ObjectionResponse
-	UpsellOpportunities []string
-	Summary             string
+	LeadID                   uuid.UUID
+	OrganizationID           uuid.UUID
+	LeadServiceID            *uuid.UUID // The specific service this analysis is for
+	UrgencyLevel             string
+	UrgencyReason            *string
+	TalkingPoints            []string
+	ObjectionHandling        []ObjectionResponse
+	UpsellOpportunities      []string
+	SuggestedWhatsAppMessage *string
+	Summary                  string
 }
 
 // CreateAIAnalysis stores a new AI analysis for a lead service
@@ -52,15 +54,15 @@ func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalys
 
 	var analysis AIAnalysis
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO lead_ai_analysis (lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
+		INSERT INTO lead_ai_analysis (lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, suggested_whatsapp_message, summary)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, suggested_whatsapp_message, summary, created_at
 	`,
 		params.LeadID, params.OrganizationID, params.LeadServiceID, params.UrgencyLevel, params.UrgencyReason,
-		talkingPointsJSON, objectionHandlingJSON, upsellJSON, params.Summary,
+		talkingPointsJSON, objectionHandlingJSON, upsellJSON, params.SuggestedWhatsAppMessage, params.Summary,
 	).Scan(
 		&analysis.ID, &analysis.LeadID, &analysis.OrganizationID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
-		&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.Summary, &analysis.CreatedAt,
+		&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.SuggestedWhatsAppMessage, &analysis.Summary, &analysis.CreatedAt,
 	)
 	if err != nil {
 		return AIAnalysis{}, err
@@ -79,14 +81,14 @@ func (r *Repository) GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUI
 	var talkingPointsJSON, objectionHandlingJSON, upsellJSON []byte
 
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
+		SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, suggested_whatsapp_message, summary, created_at
 		FROM lead_ai_analysis
 		WHERE lead_service_id = $1 AND organization_id = $2
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, serviceID, organizationID).Scan(
 		&analysis.ID, &analysis.LeadID, &analysis.OrganizationID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
-		&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.Summary, &analysis.CreatedAt,
+		&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.SuggestedWhatsAppMessage, &analysis.Summary, &analysis.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AIAnalysis{}, ErrNotFound
@@ -105,7 +107,7 @@ func (r *Repository) GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUI
 // ListAIAnalyses returns all AI analyses for a service, ordered by most recent first
 func (r *Repository) ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) ([]AIAnalysis, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
+		SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, suggested_whatsapp_message, summary, created_at
 		FROM lead_ai_analysis
 		WHERE lead_service_id = $1 AND organization_id = $2
 		ORDER BY created_at DESC
@@ -122,7 +124,7 @@ func (r *Repository) ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, or
 
 		if err := rows.Scan(
 			&analysis.ID, &analysis.LeadID, &analysis.OrganizationID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
-			&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.Summary, &analysis.CreatedAt,
+			&talkingPointsJSON, &objectionHandlingJSON, &upsellJSON, &analysis.SuggestedWhatsAppMessage, &analysis.Summary, &analysis.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -1,0 +1,73 @@
+// Package catalog provides the catalog bounded context module.
+package catalog
+
+import (
+	"portal_final_backend/internal/catalog/handler"
+	"portal_final_backend/internal/catalog/repository"
+	"portal_final_backend/internal/catalog/service"
+	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/validator"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Module is the catalog bounded context module implementing http.Module.
+type Module struct {
+	handler *handler.Handler
+	service *service.Service
+	repo    repository.Repository
+}
+
+// NewModule creates and initializes the catalog module.
+func NewModule(pool *pgxpool.Pool, val *validator.Validator, log *logger.Logger) *Module {
+	repo := repository.New(pool)
+	svc := service.New(repo, log)
+	h := handler.New(svc, val)
+
+	return &Module{
+		handler: h,
+		service: svc,
+		repo:    repo,
+	}
+}
+
+// Name returns the module identifier.
+func (m *Module) Name() string {
+	return "catalog"
+}
+
+// Service returns the service layer for external use.
+func (m *Module) Service() *service.Service {
+	return m.service
+}
+
+// Repository returns the repository for direct access if needed.
+func (m *Module) Repository() repository.Repository {
+	return m.repo
+}
+
+// RegisterRoutes mounts catalog routes on the provided router context.
+func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
+	// Protected read-only endpoints
+	ctx.Protected.GET("/catalog/vat-rates", m.handler.ListVatRates)
+	ctx.Protected.GET("/catalog/vat-rates/:id", m.handler.GetVatRateByID)
+	ctx.Protected.GET("/catalog/products", m.handler.ListProducts)
+	ctx.Protected.GET("/catalog/products/:id", m.handler.GetProductByID)
+	ctx.Protected.GET("/catalog/products/:id/materials", m.handler.ListProductMaterials)
+
+	// Admin CRUD endpoints
+	adminGroup := ctx.Admin.Group("/catalog")
+	adminGroup.POST("/vat-rates", m.handler.CreateVatRate)
+	adminGroup.PUT("/vat-rates/:id", m.handler.UpdateVatRate)
+	adminGroup.DELETE("/vat-rates/:id", m.handler.DeleteVatRate)
+
+	adminGroup.POST("/products", m.handler.CreateProduct)
+	adminGroup.PUT("/products/:id", m.handler.UpdateProduct)
+	adminGroup.DELETE("/products/:id", m.handler.DeleteProduct)
+	adminGroup.POST("/products/:id/materials", m.handler.AddProductMaterials)
+	adminGroup.DELETE("/products/:id/materials", m.handler.RemoveProductMaterials)
+}
+
+// Compile-time check that Module implements http.Module
+var _ apphttp.Module = (*Module)(nil)

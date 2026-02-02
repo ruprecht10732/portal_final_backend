@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/adapters"
 	"portal_final_backend/internal/appointments"
 	"portal_final_backend/internal/auth"
+	"portal_final_backend/internal/catalog"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
@@ -83,6 +84,7 @@ func main() {
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)
+	catalogModule := catalog.NewModule(pool, val, log)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
@@ -102,6 +104,7 @@ func main() {
 			leadsModule,
 			mapsModule,
 			servicesModule,
+			catalogModule,
 			appointmentsModule,
 		},
 	}

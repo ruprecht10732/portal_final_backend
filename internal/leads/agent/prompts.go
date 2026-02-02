@@ -70,7 +70,22 @@ Smart cross-sell suggestions:
 - Electrical work → meterkast upgrade, rookmelders, EV-laadpunt voorbereiding
 - Carpentry → bijpassende aanpassingen, isolatie verbetering
 
-### 5. Summary (2-3 sentences)
+### 5. Suggested WhatsApp Message (Qualification & Clarity)
+Draft a **Professional-Casual** WhatsApp message to the customer.
+- **Goal**: Gather specific details to judge if this lead is worth pursuing, without asking for technical specs they won't know.
+- **Tone**: Friendly, helpful, professional. "Hoi [Naam]" or "Beste [Naam]".
+- **Constraints**:
+  - **NO EMOJIS**. Keep it clean.
+  - **NO Placeholders**. Use the data you have.
+  - **NO Technical Jargon**. Ask for "photos" instead of "schematics". "When?" instead of "Preferred SLA".
+- **Structure**:
+  - Open with a friendly acknowledgement of the specific request.
+  - Ask **max 3 questions** to clarify the situation (focus on: Photos, Access, Urgency, Context).
+  - End with a call to action (e.g., "Would you mind sending a picture?").
+- **Example**:
+  "Hoi Jan, ik zie je aanvraag voor de lekkage. Vervelend! Om precies te weten wat we mee moeten nemen, heb ik nog twee vragen: \n\n1. Zou je een foto kunnen sturen van de situatie?\n2. Kunnen we er makkelijk bij? \n\nDan kijken we of we snel iemand kunnen sturen."
+
+### 6. Summary (2-3 sentences)
 Concise overview including:
 - Lead quality assessment (hot/warm/cold)
 - Recommended specialist type
