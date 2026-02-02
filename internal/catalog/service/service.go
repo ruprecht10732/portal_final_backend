@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/catalog/transport"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/sanitize"
 )
 
 // Service provides business logic for catalog.
@@ -173,7 +174,7 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 		VatRateID:      req.VatRateID,
 		Title:          strings.TrimSpace(req.Title),
 		Reference:      strings.TrimSpace(req.Reference),
-		Description:    req.Description,
+		Description:    sanitize.TextPtr(req.Description),
 		PriceCents:     req.PriceCents,
 		Type:           req.Type,
 		PeriodCount:    req.PeriodCount,
@@ -219,7 +220,7 @@ func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 		VatRateID:      req.VatRateID,
 		Title:          trimPtr(req.Title),
 		Reference:      trimPtr(req.Reference),
-		Description:    req.Description,
+		Description:    sanitize.TextPtr(req.Description),
 		PriceCents:     req.PriceCents,
 		Type:           req.Type,
 		PeriodCount:    req.PeriodCount,
@@ -272,6 +273,20 @@ func (s *Service) AddProductMaterials(ctx context.Context, tenantID uuid.UUID, p
 	for _, material := range materials {
 		if material.Type != "material" {
 			return apperr.Validation("only material products can be linked")
+		}
+	}
+
+	// Defense-in-depth: verify materials don't have their own children.
+	// The type system already prevents this (only "material" types can be added,
+	// and "material" types cannot have children), but this check ensures
+	// future changes don't accidentally create circular dependencies.
+	for _, material := range materials {
+		hasChildren, err := s.repo.HasProductMaterials(ctx, tenantID, material.ID)
+		if err != nil {
+			return err
+		}
+		if hasChildren {
+			return apperr.Validation("cannot add a material that is composed of other materials")
 		}
 	}
 

@@ -44,7 +44,7 @@ type CreateProductRequest struct {
 	Title       string    `json:"title" validate:"required,min=1,max=200"`
 	Reference   string    `json:"reference" validate:"required,min=1,max=100"`
 	Description *string   `json:"description,omitempty" validate:"omitempty,max=1000"`
-	PriceCents  int       `json:"priceCents" validate:"required,min=0"`
+	PriceCents  int64     `json:"priceCents" validate:"required,min=0"`
 	VatRateID   uuid.UUID `json:"vatRateId" validate:"required"`
 	Type        string    `json:"type" validate:"required,oneof=digital_service service product material"`
 	PeriodCount *int      `json:"periodCount,omitempty" validate:"omitempty,min=1"`
@@ -55,7 +55,7 @@ type UpdateProductRequest struct {
 	Title       *string    `json:"title,omitempty" validate:"omitempty,min=1,max=200"`
 	Reference   *string    `json:"reference,omitempty" validate:"omitempty,min=1,max=100"`
 	Description *string    `json:"description,omitempty" validate:"omitempty,max=1000"`
-	PriceCents  *int       `json:"priceCents,omitempty" validate:"omitempty,min=0"`
+	PriceCents  *int64     `json:"priceCents,omitempty" validate:"omitempty,min=0"`
 	VatRateID   *uuid.UUID `json:"vatRateId,omitempty" validate:"omitempty"`
 	Type        *string    `json:"type,omitempty" validate:"omitempty,oneof=digital_service service product material"`
 	PeriodCount *int       `json:"periodCount,omitempty" validate:"omitempty,min=1"`
@@ -78,7 +78,7 @@ type ProductResponse struct {
 	Title       string    `json:"title"`
 	Reference   string    `json:"reference"`
 	Description *string   `json:"description,omitempty"`
-	PriceCents  int       `json:"priceCents"`
+	PriceCents  int64     `json:"priceCents"`
 	Type        string    `json:"type"`
 	PeriodCount *int      `json:"periodCount,omitempty"`
 	PeriodUnit  *string   `json:"periodUnit,omitempty"`
