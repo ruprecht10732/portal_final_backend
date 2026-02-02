@@ -395,12 +395,13 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 }
 
 // ListForDateRange retrieves all appointments for a user within a date range (for slots computation)
+// Uses proper overlap detection: an appointment overlaps if it starts before the window ends AND ends after the window starts
 func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate, endDate time.Time) ([]Appointment, error) {
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, start_time, end_time, status, all_day, created_at, updated_at
 		FROM appointments 
 		WHERE organization_id = $1 AND user_id = $2 
-		AND start_time >= $3 AND start_time < $4
+		AND start_time < $4 AND end_time > $3
 		AND status = 'scheduled'
 		ORDER BY start_time ASC`
 

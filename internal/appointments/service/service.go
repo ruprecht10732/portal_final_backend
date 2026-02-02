@@ -64,6 +64,18 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 		return nil, apperr.BadRequest("endTime must be after startTime")
 	}
 
+	// Check for conflicting appointments
+	existing, err := s.repo.ListForDateRange(ctx, tenantID, userID, req.StartTime, req.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	for _, appt := range existing {
+		// Check for overlap: new appointment overlaps if it starts before existing ends AND ends after existing starts
+		if req.StartTime.Before(appt.EndTime) && req.EndTime.After(appt.StartTime) {
+			return nil, apperr.Conflict("timeslot already booked")
+		}
+	}
+
 	now := time.Now()
 	appt := &repository.Appointment{
 		ID:             uuid.New(),
@@ -158,6 +170,24 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 	// Validate time range after updates
 	if !appt.EndTime.After(appt.StartTime) {
 		return nil, apperr.BadRequest("endTime must be after startTime")
+	}
+
+	// Check for conflicting appointments (only if times were changed)
+	if req.StartTime != nil || req.EndTime != nil {
+		existing, err := s.repo.ListForDateRange(ctx, tenantID, appt.UserID, appt.StartTime, appt.EndTime)
+		if err != nil {
+			return nil, err
+		}
+		for _, other := range existing {
+			// Skip self
+			if other.ID == appt.ID {
+				continue
+			}
+			// Check for overlap
+			if appt.StartTime.Before(other.EndTime) && appt.EndTime.After(other.StartTime) {
+				return nil, apperr.Conflict("timeslot already booked")
+			}
+		}
 	}
 
 	appt.UpdatedAt = time.Now()
