@@ -257,6 +257,9 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tena
 		LeadID:         leadID,
 		Page:           page,
 		PageSize:       pageSize,
+		Search:         req.Search,
+		SortBy:         req.SortBy,
+		SortOrder:      req.SortOrder,
 	}
 
 	// Non-admins can only see their own appointments
@@ -684,6 +687,51 @@ func (s *Service) DeleteAvailabilityRule(ctx context.Context, userID uuid.UUID, 
 	return s.repo.DeleteAvailabilityRule(ctx, id, tenantID)
 }
 
+func (s *Service) UpdateAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, id uuid.UUID, req transport.UpdateAvailabilityRuleRequest) (*transport.AvailabilityRuleResponse, error) {
+	rule, err := s.repo.GetAvailabilityRuleByID(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !isAdmin && rule.UserID != userID {
+		return nil, apperr.Forbidden("not authorized to update this availability rule")
+	}
+
+	// Apply partial updates
+	if req.Weekday != nil {
+		rule.Weekday = *req.Weekday
+	}
+
+	timezone := rule.Timezone
+	if req.Timezone != nil {
+		timezone = *req.Timezone
+	}
+
+	startTimeStr := rule.StartTime.Format("15:04")
+	endTimeStr := rule.EndTime.Format("15:04")
+	if req.StartTime != nil {
+		startTimeStr = *req.StartTime
+	}
+	if req.EndTime != nil {
+		endTimeStr = *req.EndTime
+	}
+
+	startTime, endTime, parsedTimezone, err := parseAvailabilityTimes(startTimeStr, endTimeStr, timezone)
+	if err != nil {
+		return nil, err
+	}
+
+	rule.StartTime = startTime
+	rule.EndTime = endTime
+	rule.Timezone = parsedTimezone
+
+	saved, err := s.repo.UpdateAvailabilityRule(ctx, id, tenantID, *rule)
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAvailabilityRule(saved), nil
+}
+
 func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAvailabilityOverrideRequest) (*transport.AvailabilityOverrideResponse, error) {
 	targetUserID, err := s.resolveTargetUserID(userID, isAdmin, req.UserID)
 	if err != nil {
@@ -751,6 +799,67 @@ func (s *Service) DeleteAvailabilityOverride(ctx context.Context, userID uuid.UU
 	}
 
 	return s.repo.DeleteAvailabilityOverride(ctx, id, tenantID)
+}
+
+func (s *Service) UpdateAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, id uuid.UUID, req transport.UpdateAvailabilityOverrideRequest) (*transport.AvailabilityOverrideResponse, error) {
+	override, err := s.repo.GetAvailabilityOverrideByID(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !isAdmin && override.UserID != userID {
+		return nil, apperr.Forbidden("not authorized to update this availability override")
+	}
+
+	// Apply partial updates
+	if req.Date != nil {
+		date, err := time.Parse("2006-01-02", *req.Date)
+		if err != nil {
+			return nil, apperr.BadRequest("invalid date format")
+		}
+		override.Date = date
+	}
+	if req.IsAvailable != nil {
+		override.IsAvailable = *req.IsAvailable
+	}
+
+	timezone := override.Timezone
+	if req.Timezone != nil {
+		timezone = *req.Timezone
+	}
+
+	// Handle time updates
+	var startTimeStr *string
+	var endTimeStr *string
+	if override.StartTime != nil {
+		str := override.StartTime.Format("15:04")
+		startTimeStr = &str
+	}
+	if override.EndTime != nil {
+		str := override.EndTime.Format("15:04")
+		endTimeStr = &str
+	}
+	if req.StartTime != nil {
+		startTimeStr = req.StartTime
+	}
+	if req.EndTime != nil {
+		endTimeStr = req.EndTime
+	}
+
+	startTime, endTime, parsedTimezone, err := parseAvailabilityOptionalTimes(startTimeStr, endTimeStr, timezone)
+	if err != nil {
+		return nil, err
+	}
+
+	override.StartTime = startTime
+	override.EndTime = endTime
+	override.Timezone = parsedTimezone
+
+	saved, err := s.repo.UpdateAvailabilityOverride(ctx, id, tenantID, *override)
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAvailabilityOverride(saved), nil
 }
 
 // Helper functions

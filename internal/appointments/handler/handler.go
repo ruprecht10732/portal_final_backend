@@ -54,10 +54,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 	rg.GET("/availability/rules", h.ListAvailabilityRules)
 	rg.POST("/availability/rules", h.CreateAvailabilityRule)
+	rg.PUT("/availability/rules/:id", h.UpdateAvailabilityRule)
 	rg.DELETE("/availability/rules/:id", h.DeleteAvailabilityRule)
 
 	rg.GET("/availability/overrides", h.ListAvailabilityOverrides)
 	rg.POST("/availability/overrides", h.CreateAvailabilityOverride)
+	rg.PUT("/availability/overrides/:id", h.UpdateAvailabilityOverride)
 	rg.DELETE("/availability/overrides/:id", h.DeleteAvailabilityOverride)
 
 	rg.GET("/availability/slots", h.GetAvailableSlots)
@@ -451,6 +453,42 @@ func (h *Handler) DeleteAvailabilityRule(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "availability rule deleted"})
 }
 
+// UpdateAvailabilityRule handles PUT /api/appointments/availability/rules/:id
+func (h *Handler) UpdateAvailabilityRule(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpdateAvailabilityRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.UpdateAvailabilityRule(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
 // CreateAvailabilityOverride handles POST /api/appointments/availability/overrides
 func (h *Handler) CreateAvailabilityOverride(c *gin.Context) {
 	var req transport.CreateAvailabilityOverrideRequest
@@ -545,6 +583,42 @@ func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"message": "availability override deleted"})
+}
+
+// UpdateAvailabilityOverride handles PUT /api/appointments/availability/overrides/:id
+func (h *Handler) UpdateAvailabilityOverride(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.UpdateAvailabilityOverrideRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.UpdateAvailabilityOverride(c.Request.Context(), identity.UserID(), isAdmin, tenantID, id, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // GetAvailableSlots handles GET /api/appointments/availability/slots

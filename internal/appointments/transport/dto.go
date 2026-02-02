@@ -71,6 +71,9 @@ type ListAppointmentsRequest struct {
 	Status    *AppointmentStatus `form:"status" validate:"omitempty,oneof=scheduled completed cancelled no_show"`
 	StartFrom string             `form:"startFrom"` // ISO date
 	StartTo   string             `form:"startTo"`   // ISO date
+	Search    string             `form:"search"`    // Search term for title/location
+	SortBy    string             `form:"sortBy" validate:"omitempty,oneof=title type status startTime endTime createdAt"`
+	SortOrder string             `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 	Page      int                `form:"page" validate:"omitempty,min=1"`
 	PageSize  int                `form:"pageSize" validate:"omitempty,min=1,max=100"`
 }
@@ -156,6 +159,13 @@ type CreateAvailabilityRuleRequest struct {
 	Timezone  string     `json:"timezone,omitempty" validate:"omitempty,max=100"`
 }
 
+type UpdateAvailabilityRuleRequest struct {
+	Weekday   *int    `json:"weekday,omitempty" validate:"omitempty,min=0,max=6"`
+	StartTime *string `json:"startTime,omitempty"`
+	EndTime   *string `json:"endTime,omitempty"`
+	Timezone  *string `json:"timezone,omitempty" validate:"omitempty,max=100"`
+}
+
 type AvailabilityRuleResponse struct {
 	ID        uuid.UUID `json:"id"`
 	UserID    uuid.UUID `json:"userId"`
@@ -174,6 +184,14 @@ type CreateAvailabilityOverrideRequest struct {
 	StartTime   *string    `json:"startTime,omitempty"`
 	EndTime     *string    `json:"endTime,omitempty"`
 	Timezone    string     `json:"timezone,omitempty" validate:"omitempty,max=100"`
+}
+
+type UpdateAvailabilityOverrideRequest struct {
+	Date        *string `json:"date,omitempty"`
+	IsAvailable *bool   `json:"isAvailable,omitempty"`
+	StartTime   *string `json:"startTime,omitempty"`
+	EndTime     *string `json:"endTime,omitempty"`
+	Timezone    *string `json:"timezone,omitempty" validate:"omitempty,max=100"`
 }
 
 type AvailabilityOverrideResponse struct {

@@ -13,28 +13,28 @@ import (
 )
 
 type AvailabilityRule struct {
-	ID        uuid.UUID
+	ID             uuid.UUID
 	OrganizationID uuid.UUID
-	UserID    uuid.UUID
-	Weekday   int
-	StartTime time.Time
-	EndTime   time.Time
-	Timezone  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	UserID         uuid.UUID
+	Weekday        int
+	StartTime      time.Time
+	EndTime        time.Time
+	Timezone       string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type AvailabilityOverride struct {
-	ID          uuid.UUID
+	ID             uuid.UUID
 	OrganizationID uuid.UUID
-	UserID      uuid.UUID
-	Date        time.Time
-	IsAvailable bool
-	StartTime   *time.Time
-	EndTime     *time.Time
-	Timezone    string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	UserID         uuid.UUID
+	Date           time.Time
+	IsAvailable    bool
+	StartTime      *time.Time
+	EndTime        *time.Time
+	Timezone       string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 func (r *Repository) CreateAvailabilityRule(ctx context.Context, rule AvailabilityRule) (*AvailabilityRule, error) {
@@ -139,6 +139,46 @@ func (r *Repository) DeleteAvailabilityRule(ctx context.Context, id uuid.UUID, o
 		return fmt.Errorf("failed to delete availability rule: %w", err)
 	}
 	return nil
+}
+
+func (r *Repository) UpdateAvailabilityRule(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, rule AvailabilityRule) (*AvailabilityRule, error) {
+	query := `
+		UPDATE appointment_availability_rules SET
+			weekday = $3,
+			start_time = $4,
+			end_time = $5,
+			timezone = $6,
+			updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+		RETURNING id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at`
+
+	var saved AvailabilityRule
+	err := r.pool.QueryRow(ctx, query,
+		id,
+		organizationID,
+		rule.Weekday,
+		rule.StartTime,
+		rule.EndTime,
+		rule.Timezone,
+	).Scan(
+		&saved.ID,
+		&saved.OrganizationID,
+		&saved.UserID,
+		&saved.Weekday,
+		&saved.StartTime,
+		&saved.EndTime,
+		&saved.Timezone,
+		&saved.CreatedAt,
+		&saved.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.NotFound("availability rule not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to update availability rule: %w", err)
+	}
+
+	return &saved, nil
 }
 
 func (r *Repository) CreateAvailabilityOverride(ctx context.Context, override AvailabilityOverride) (*AvailabilityOverride, error) {
@@ -262,4 +302,47 @@ func (r *Repository) DeleteAvailabilityOverride(ctx context.Context, id uuid.UUI
 		return fmt.Errorf("failed to delete availability override: %w", err)
 	}
 	return nil
+}
+
+func (r *Repository) UpdateAvailabilityOverride(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, override AvailabilityOverride) (*AvailabilityOverride, error) {
+	query := `
+		UPDATE appointment_availability_overrides SET
+			date = $3,
+			is_available = $4,
+			start_time = $5,
+			end_time = $6,
+			timezone = $7,
+			updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+		RETURNING id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at`
+
+	var saved AvailabilityOverride
+	err := r.pool.QueryRow(ctx, query,
+		id,
+		organizationID,
+		override.Date,
+		override.IsAvailable,
+		override.StartTime,
+		override.EndTime,
+		override.Timezone,
+	).Scan(
+		&saved.ID,
+		&saved.OrganizationID,
+		&saved.UserID,
+		&saved.Date,
+		&saved.IsAvailable,
+		&saved.StartTime,
+		&saved.EndTime,
+		&saved.Timezone,
+		&saved.CreatedAt,
+		&saved.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.NotFound("availability override not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to update availability override: %w", err)
+	}
+
+	return &saved, nil
 }

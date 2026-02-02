@@ -189,6 +189,9 @@ type ListParams struct {
 	Status         *string
 	StartFrom      *time.Time
 	StartTo        *time.Time
+	Search         string
+	SortBy         string
+	SortOrder      string
 	Page           int
 	PageSize       int
 }
@@ -245,6 +248,12 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		argIndex++
 	}
 
+	if params.Search != "" {
+		baseQuery += fmt.Sprintf(" AND (title ILIKE $%d OR location ILIKE $%d)", argIndex, argIndex)
+		args = append(args, "%"+params.Search+"%")
+		argIndex++
+	}
+
 	// Count total
 	var total int
 	countQuery := "SELECT COUNT(*) " + baseQuery
@@ -256,10 +265,31 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	totalPages := (total + params.PageSize - 1) / params.PageSize
 	offset := (params.Page - 1) * params.PageSize
 
+	// Build ORDER BY clause
+	orderBy := "start_time"
+	if params.SortBy != "" {
+		// Map frontend column names to database columns
+		columnMap := map[string]string{
+			"title":     "title",
+			"type":      "type",
+			"status":    "status",
+			"startTime": "start_time",
+			"endTime":   "end_time",
+			"createdAt": "created_at",
+		}
+		if col, ok := columnMap[params.SortBy]; ok {
+			orderBy = col
+		}
+	}
+	sortDir := "ASC"
+	if params.SortOrder == "desc" {
+		sortDir = "DESC"
+	}
+
 	// Fetch items
 	selectQuery := fmt.Sprintf(`SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, start_time, end_time, status, all_day, created_at, updated_at %s ORDER BY start_time ASC LIMIT $%d OFFSET $%d`,
-		baseQuery, argIndex, argIndex+1)
+		location, start_time, end_time, status, all_day, created_at, updated_at %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		baseQuery, orderBy, sortDir, argIndex, argIndex+1)
 	args = append(args, params.PageSize, offset)
 
 	rows, err := r.pool.Query(ctx, selectQuery, args...)
