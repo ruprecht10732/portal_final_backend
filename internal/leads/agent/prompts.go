@@ -39,6 +39,12 @@ Je MOET verstrekken:
 - Low: Ontbrekende informatie, foto's onduidelijk of niet aanwezig
 - Junk: Spam, onzin, of foto's tonen iets totaal anders dan de aanvraag
 
+## Energie Label Richtlijnen (indien beschikbaar)
+- Gebruik energieklasse, energie-index en bouwjaar als extra context bij urgentie en kwaliteit, vooral voor isolatie, CV, ventilatie en verduurzaming.
+- Lage energieklasse (E/F/G) of hoge energie-index kan urgentie of prioriteit verhogen als de aanvraag daar bij aansluit.
+- Ontbrekend of verlopen label betekent onzekerheid: vraag om extra info als dit relevant is voor de intake-eisen.
+- Gebruik het label nooit om harde eisen te negeren; het is aanvullende context.
+
 ## Kritieke Instructies
 1. ALTIJD de SaveAnalysis tool aanroepen met je complete analyse - dit is VERPLICHT.
 2. Gebruik UpdateLeadServiceType ALLEEN wanneer je zeer zeker bent dat het huidige servicetype verkeerd is. Verzin nooit een servicetype; gebruik alleen een actief servicetype naam of slug uit de gegeven lijst.

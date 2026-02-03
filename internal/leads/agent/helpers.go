@@ -119,6 +119,16 @@ func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadSe
 		photoAnalysisSection = buildPhotoAnalysisSection(photoAnalysis)
 	}
 
+	energyClass := formatOptionalString(lead.EnergyClass)
+	energyIndex := formatOptionalFloat(lead.EnergyIndex, 2)
+	energyBouwjaar := formatOptionalInt(lead.EnergyBouwjaar)
+	energyGebouwtype := formatOptionalString(lead.EnergyGebouwtype)
+	energyValidUntil := formatOptionalTime(lead.EnergyLabelValidUntil, "02-01-2006")
+	energyRegisteredAt := formatOptionalTime(lead.EnergyLabelRegisteredAt, "02-01-2006")
+	energyPrimair := formatOptionalFloat(lead.EnergyPrimairFossiel, 2)
+	energyBagID := formatOptionalString(lead.EnergyBAGVerblijfsobjectID)
+	energyFetchedAt := formatOptionalTime(lead.EnergyLabelFetchedAt, "02-01-2006 15:04")
+
 	return fmt.Sprintf(`Analyseer deze lead met de Gatekeeper triage-opdracht:
 
 ## Lead Informatie
@@ -136,6 +146,17 @@ func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadSe
 - **Adres**: %s %s
 - **Postcode**: %s
 - **Plaats**: %s
+
+## Energie Label
+- **Energieklasse**: %s
+- **Energie-index**: %s
+- **Bouwjaar**: %s
+- **Gebouwtype**: %s
+- **Geldig tot**: %s
+- **Registratiedatum**: %s
+- **Primair fossiel (kWh/m2/jaar)**: %s
+- **BAG object ID**: %s
+- **Laatst opgehaald**: %s
 
 ## Aanvraag Details
 - **Dienst**: %s
@@ -206,6 +227,15 @@ Let specifiek op:
 		translateRole(lead.ConsumerRole),
 		lead.AddressStreet, lead.AddressHouseNumber,
 		lead.AddressZipCode, lead.AddressCity,
+		energyClass,
+		energyIndex,
+		energyBouwjaar,
+		energyGebouwtype,
+		energyValidUntil,
+		energyRegisteredAt,
+		energyPrimair,
+		energyBagID,
+		energyFetchedAt,
 		serviceType, status,
 		wrapUserData(sanitizeUserInput(consumerNote, maxConsumerNote)),
 		wrapUserData(notesSection),
@@ -356,6 +386,39 @@ func getValue(s *string) string {
 		return "Niet opgegeven"
 	}
 	return *s
+}
+
+func formatOptionalString(value *string) string {
+	if value == nil {
+		return "Niet opgegeven"
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return "Niet opgegeven"
+	}
+	return trimmed
+}
+
+func formatOptionalInt(value *int) string {
+	if value == nil {
+		return "Niet opgegeven"
+	}
+	return fmt.Sprintf("%d", *value)
+}
+
+func formatOptionalFloat(value *float64, precision int) string {
+	if value == nil {
+		return "Niet opgegeven"
+	}
+	format := fmt.Sprintf("%%.%df", precision)
+	return fmt.Sprintf(format, *value)
+}
+
+func formatOptionalTime(value *time.Time, layout string) string {
+	if value == nil {
+		return "Niet opgegeven"
+	}
+	return value.Format(layout)
 }
 
 // translateRole converts English role to Dutch
