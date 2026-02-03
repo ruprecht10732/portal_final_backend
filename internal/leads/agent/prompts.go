@@ -40,9 +40,11 @@ Je MOET verstrekken:
 - Junk: Spam, onzin, of foto's tonen iets totaal anders dan de aanvraag
 
 ## Energie Label Richtlijnen (indien beschikbaar)
-- Gebruik energieklasse, energie-index en bouwjaar als extra context bij urgentie en kwaliteit, vooral voor isolatie, CV, ventilatie en verduurzaming.
-- Lage energieklasse (E/F/G) of hoge energie-index kan urgentie of prioriteit verhogen als de aanvraag daar bij aansluit.
-- Ontbrekend of verlopen label betekent onzekerheid: vraag om extra info als dit relevant is voor de intake-eisen.
+- Pas energie-label weging alleen toe bij relevante diensten (isolatie, CV/HVAC, ventilatie, verduurzaming).
+- Klasse E/F/G of energie-index > 2.0: verhoog urgentie/priority met 1 niveau als de aanvraag energie- of comfort-gerelateerd is.
+- Energie-index 1.2–2.0: gebruik als ondersteunend signaal, geen automatische verhoging.
+- Bouwjaar < 1980: lichte verhoging van prioriteit bij isolatie/ventilatie als comfort- of energieklachten genoemd zijn.
+- Ontbrekend of verlopen label: markeer onzekerheid en vraag 1 extra intake-vraag indien relevant voor de harde eisen.
 - Gebruik het label nooit om harde eisen te negeren; het is aanvullende context.
 
 ## Kritieke Instructies
