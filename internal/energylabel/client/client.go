@@ -7,11 +7,60 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/energylabel/transport"
 	"portal_final_backend/platform/logger"
 )
+
+// flexTime handles EP-Online timestamps that may lack timezone info.
+type flexTime struct {
+	time.Time
+}
+
+func (ft *flexTime) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(string(data), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+
+	// Try standard RFC3339 first
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		ft.Time = t
+		return nil
+	}
+
+	// EP-Online often returns local timestamps without timezone
+	layouts := []string{
+		"2006-01-02T15:04:05.9999999",
+		"2006-01-02T15:04:05.999999",
+		"2006-01-02T15:04:05.99999",
+		"2006-01-02T15:04:05.9999",
+		"2006-01-02T15:04:05.999",
+		"2006-01-02T15:04:05.99",
+		"2006-01-02T15:04:05.9",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			ft.Time = t
+			return nil
+		}
+	}
+
+	return fmt.Errorf("cannot parse %q as time", s)
+}
+
+func (ft *flexTime) ToTimePtr() *time.Time {
+	if ft == nil || ft.Time.IsZero() {
+		return nil
+	}
+	t := ft.Time
+	return &t
+}
 
 const (
 	baseURL    = "https://public.ep-online.nl"
@@ -131,54 +180,54 @@ func (c *Client) doRequest(ctx context.Context, reqURL string) ([]transport.Ener
 
 // apiEnergyLabel is the raw response from EP-Online API (PandEnergielabelV5).
 type apiEnergyLabel struct {
-	Registratiedatum                        *time.Time `json:"Registratiedatum"`
-	Opnamedatum                             *time.Time `json:"Opnamedatum"`
-	GeldigTot                               *time.Time `json:"Geldig_tot"`
-	Certificaathouder                       *string    `json:"Certificaathouder"`
-	SoortOpname                             *string    `json:"Soort_opname"`
-	Status                                  *string    `json:"Status"`
-	Berekeningstype                         *string    `json:"Berekeningstype"`
-	IsVereenvoudigdLabel                    *bool      `json:"IsVereenvoudigdLabel"`
-	OpBasisVanReferentiegebouw              bool       `json:"Op_basis_van_referentiegebouw"`
-	Gebouwklasse                            *string    `json:"Gebouwklasse"`
-	Gebouwtype                              *string    `json:"Gebouwtype"`
-	Gebouwsubtype                           *string    `json:"Gebouwsubtype"`
-	SBIcode                                 *string    `json:"SBIcode"`
-	Postcode                                *string    `json:"Postcode"`
-	Huisnummer                              int        `json:"Huisnummer"`
-	Huisletter                              *string    `json:"Huisletter"`
-	Huisnummertoevoeging                    *string    `json:"Huisnummertoevoeging"`
-	Detailaanduiding                        *string    `json:"Detailaanduiding"`
-	BAGVerblijfsobjectID                    *string    `json:"BAGVerblijfsobjectID"`
-	BAGLigplaatsID                          *string    `json:"BAGLigplaatsID"`
-	BAGStandplaatsID                        *string    `json:"BAGStandplaatsID"`
-	BAGPandIDs                              []string   `json:"BAGPandIDs"`
-	Bouwjaar                                int        `json:"Bouwjaar"`
-	GebruiksoppervlakteThermischeZone       *float64   `json:"Gebruiksoppervlakte_thermische_zone"`
-	Compactheid                             *float64   `json:"Compactheid"`
-	Energieklasse                           *string    `json:"Energieklasse"`
-	EnergieIndex                            *float64   `json:"EnergieIndex"`
-	EnergieIndexEMGForfaitair               *float64   `json:"EnergieIndex_EMG_forfaitair"`
-	Energiebehoefte                         *float64   `json:"Energiebehoefte"`
-	PrimaireFossieleEnergie                 *float64   `json:"PrimaireFossieleEnergie"`
-	PrimaireFossieleEnergieEMGForfaitair    *float64   `json:"Primaire_fossiele_energie_EMG_forfaitair"`
-	AandeelHernieuwbareEnergie              *float64   `json:"Aandeel_hernieuwbare_energie"`
-	AandeelHernieuwbareEnergieEMGForfaitair *float64   `json:"Aandeel_hernieuwbare_energie_EMG_forfaitair"`
-	Temperatuuroverschrijding               *float64   `json:"Temperatuuroverschrijding"`
-	Warmtebehoefte                          *float64   `json:"Warmtebehoefte"`
-	EisEnergiebehoefte                      *float64   `json:"Eis_energiebehoefte"`
-	EisPrimaireFossieleEnergie              *float64   `json:"Eis_primaire_fossiele_energie"`
-	EisAandeelHernieuwbareEnergie           *float64   `json:"Eis_aandeel_hernieuwbare_energie"`
-	EisTemperatuuroverschrijding            *float64   `json:"Eis_temperatuuroverschrijding"`
-	BerekendeCO2Emissie                     *float64   `json:"BerekendeCO2Emissie"`
-	BerekendeEnergieverbruik                *float64   `json:"BerekendeEnergieverbruik"`
+	Registratiedatum                        *flexTime `json:"Registratiedatum"`
+	Opnamedatum                             *flexTime `json:"Opnamedatum"`
+	GeldigTot                               *flexTime `json:"Geldig_tot"`
+	Certificaathouder                       *string   `json:"Certificaathouder"`
+	SoortOpname                             *string   `json:"Soort_opname"`
+	Status                                  *string   `json:"Status"`
+	Berekeningstype                         *string   `json:"Berekeningstype"`
+	IsVereenvoudigdLabel                    *bool     `json:"IsVereenvoudigdLabel"`
+	OpBasisVanReferentiegebouw              bool      `json:"Op_basis_van_referentiegebouw"`
+	Gebouwklasse                            *string   `json:"Gebouwklasse"`
+	Gebouwtype                              *string   `json:"Gebouwtype"`
+	Gebouwsubtype                           *string   `json:"Gebouwsubtype"`
+	SBIcode                                 *string   `json:"SBIcode"`
+	Postcode                                *string   `json:"Postcode"`
+	Huisnummer                              int       `json:"Huisnummer"`
+	Huisletter                              *string   `json:"Huisletter"`
+	Huisnummertoevoeging                    *string   `json:"Huisnummertoevoeging"`
+	Detailaanduiding                        *string   `json:"Detailaanduiding"`
+	BAGVerblijfsobjectID                    *string   `json:"BAGVerblijfsobjectID"`
+	BAGLigplaatsID                          *string   `json:"BAGLigplaatsID"`
+	BAGStandplaatsID                        *string   `json:"BAGStandplaatsID"`
+	BAGPandIDs                              []string  `json:"BAGPandIDs"`
+	Bouwjaar                                int       `json:"Bouwjaar"`
+	GebruiksoppervlakteThermischeZone       *float64  `json:"Gebruiksoppervlakte_thermische_zone"`
+	Compactheid                             *float64  `json:"Compactheid"`
+	Energieklasse                           *string   `json:"Energieklasse"`
+	EnergieIndex                            *float64  `json:"EnergieIndex"`
+	EnergieIndexEMGForfaitair               *float64  `json:"EnergieIndex_EMG_forfaitair"`
+	Energiebehoefte                         *float64  `json:"Energiebehoefte"`
+	PrimaireFossieleEnergie                 *float64  `json:"PrimaireFossieleEnergie"`
+	PrimaireFossieleEnergieEMGForfaitair    *float64  `json:"Primaire_fossiele_energie_EMG_forfaitair"`
+	AandeelHernieuwbareEnergie              *float64  `json:"Aandeel_hernieuwbare_energie"`
+	AandeelHernieuwbareEnergieEMGForfaitair *float64  `json:"Aandeel_hernieuwbare_energie_EMG_forfaitair"`
+	Temperatuuroverschrijding               *float64  `json:"Temperatuuroverschrijding"`
+	Warmtebehoefte                          *float64  `json:"Warmtebehoefte"`
+	EisEnergiebehoefte                      *float64  `json:"Eis_energiebehoefte"`
+	EisPrimaireFossieleEnergie              *float64  `json:"Eis_primaire_fossiele_energie"`
+	EisAandeelHernieuwbareEnergie           *float64  `json:"Eis_aandeel_hernieuwbare_energie"`
+	EisTemperatuuroverschrijding            *float64  `json:"Eis_temperatuuroverschrijding"`
+	BerekendeCO2Emissie                     *float64  `json:"BerekendeCO2Emissie"`
+	BerekendeEnergieverbruik                *float64  `json:"BerekendeEnergieverbruik"`
 }
 
 func (a *apiEnergyLabel) toTransport() transport.EnergyLabel {
 	label := transport.EnergyLabel{
-		Registratiedatum:                  a.Registratiedatum,
-		Opnamedatum:                       a.Opnamedatum,
-		GeldigTot:                         a.GeldigTot,
+		Registratiedatum:                  a.Registratiedatum.ToTimePtr(),
+		Opnamedatum:                       a.Opnamedatum.ToTimePtr(),
+		GeldigTot:                         a.GeldigTot.ToTimePtr(),
 		Huisnummer:                        a.Huisnummer,
 		Bouwjaar:                          a.Bouwjaar,
 		OpBasisVanReferentiegebouw:        a.OpBasisVanReferentiegebouw,
