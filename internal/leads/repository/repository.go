@@ -53,25 +53,34 @@ func (r *Repository) ListActiveServiceTypes(ctx context.Context, organizationID 
 }
 
 type Lead struct {
-	ID                 uuid.UUID
-	OrganizationID     uuid.UUID
-	ConsumerFirstName  string
-	ConsumerLastName   string
-	ConsumerPhone      string
-	ConsumerEmail      *string
-	ConsumerRole       string
-	AddressStreet      string
-	AddressHouseNumber string
-	AddressZipCode     string
-	AddressCity        string
-	Latitude           *float64
-	Longitude          *float64
-	AssignedAgentID    *uuid.UUID
-	Source             *string
-	ViewedByID         *uuid.UUID
-	ViewedAt           *time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                         uuid.UUID
+	OrganizationID             uuid.UUID
+	ConsumerFirstName          string
+	ConsumerLastName           string
+	ConsumerPhone              string
+	ConsumerEmail              *string
+	ConsumerRole               string
+	AddressStreet              string
+	AddressHouseNumber         string
+	AddressZipCode             string
+	AddressCity                string
+	Latitude                   *float64
+	Longitude                  *float64
+	AssignedAgentID            *uuid.UUID
+	Source                     *string
+	EnergyClass                *string
+	EnergyIndex                *float64
+	EnergyBouwjaar             *int
+	EnergyGebouwtype           *string
+	EnergyLabelValidUntil      *time.Time
+	EnergyLabelRegisteredAt    *time.Time
+	EnergyPrimairFossiel       *float64
+	EnergyBAGVerblijfsobjectID *string
+	EnergyLabelFetchedAt       *time.Time
+	ViewedByID                 *uuid.UUID
+	ViewedAt                   *time.Time
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
 }
 
 // LeadSummary is a lightweight lead representation for returning customer detection
@@ -115,7 +124,9 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
+			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
+			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
 	`,
 		params.OrganizationID, params.ConsumerFirstName, params.ConsumerLastName, params.ConsumerPhone, params.ConsumerEmail, params.ConsumerRole,
 		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity, params.Latitude, params.Longitude,
@@ -123,7 +134,9 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 	).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
+		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if err != nil {
@@ -138,12 +151,16 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
+			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
+			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
 		FROM leads WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 	`, id, organizationID).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
+		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -172,14 +189,18 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string, organizationI
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
+			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
+			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
 		FROM leads WHERE consumer_phone = $1 AND organization_id = $2 AND deleted_at IS NULL
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, phone, organizationID).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
+		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -256,6 +277,18 @@ type UpdateLeadParams struct {
 	AssignedAgentIDSet bool
 }
 
+type UpdateEnergyLabelParams struct {
+	Class          *string
+	Index          *float64
+	Bouwjaar       *int
+	Gebouwtype     *string
+	ValidUntil     *time.Time
+	RegisteredAt   *time.Time
+	PrimairFossiel *float64
+	BAGObjectID    *string
+	FetchedAt      time.Time
+}
+
 func derefString(value *string) string {
 	if value == nil {
 		return ""
@@ -266,6 +299,13 @@ func derefString(value *string) string {
 func derefFloat(value *float64) float64 {
 	if value == nil {
 		return 0
+	}
+	return *value
+}
+
+func nullable[T any](value *T) interface{} {
+	if value == nil {
+		return nil
 	}
 	return *value
 }
@@ -315,20 +355,61 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 		WHERE id = $%d AND organization_id = $%d AND deleted_at IS NULL
 		RETURNING id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, viewed_by_id, viewed_at, created_at, updated_at
+			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
+			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
 	`, strings.Join(setClauses, ", "), argIdx, argIdx+1)
 
 	var lead Lead
 	err := r.pool.QueryRow(ctx, query, args...).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
+		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lead{}, ErrNotFound
 	}
 	return lead, err
+}
+
+func (r *Repository) UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateEnergyLabelParams) error {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE leads
+		SET energy_class = $3,
+			energy_index = $4,
+			energy_bouwjaar = $5,
+			energy_gebouwtype = $6,
+			energy_label_valid_until = $7,
+			energy_label_registered_at = $8,
+			energy_primair_fossiel = $9,
+			energy_bag_verblijfsobject_id = $10,
+			energy_label_fetched_at = $11,
+			updated_at = $12
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+	`,
+		id,
+		organizationID,
+		nullable(params.Class),
+		nullable(params.Index),
+		nullable(params.Bouwjaar),
+		nullable(params.Gebouwtype),
+		nullable(params.ValidUntil),
+		nullable(params.RegisteredAt),
+		nullable(params.PrimairFossiel),
+		nullable(params.BAGObjectID),
+		params.FetchedAt,
+		params.FetchedAt,
+	)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *Repository) SetViewedBy(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, userID uuid.UUID) error {
@@ -399,7 +480,9 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	query := fmt.Sprintf(`
 		SELECT DISTINCT l.id, l.organization_id, l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email, l.consumer_role,
 			l.address_street, l.address_house_number, l.address_zip_code, l.address_city, l.latitude, l.longitude,
-			l.assigned_agent_id, l.source, l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at
+			l.assigned_agent_id, l.source, l.energy_class, l.energy_index, l.energy_bouwjaar, l.energy_gebouwtype,
+			l.energy_label_valid_until, l.energy_label_registered_at, l.energy_primair_fossiel, l.energy_bag_verblijfsobject_id,
+			l.energy_label_fetched_at, l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at
 		FROM leads l
 		%s
 		WHERE %s
@@ -419,7 +502,9 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		if err := rows.Scan(
 			&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-			&lead.AssignedAgentID, &lead.Source, &lead.ViewedByID, &lead.ViewedAt,
+			&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+			&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
+			&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
 		); err != nil {
 			return nil, 0, err

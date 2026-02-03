@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	leadNotFoundMsg        = "lead not found"
-	leadServiceNotFoundMsg = "lead service not found"
+	leadNotFoundMsg            = "lead not found"
+	leadServiceNotFoundMsg     = "lead service not found"
+	energyLabelRefreshInterval = 30 * 24 * time.Hour
 )
 
 // Repository defines the data access interface needed by the management service.
@@ -38,6 +39,7 @@ type Repository interface {
 	repository.LeadServiceReader
 	repository.LeadServiceWriter
 	repository.MetricsReader
+	UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateEnergyLabelParams) error
 }
 
 // Service handles lead management operations (CRUD).
@@ -114,7 +116,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 	resp := ToLeadResponseWithServices(lead, services)
 
 	// Enrich with energy label data (fire and forget - don't fail lead creation)
-	s.enrichWithEnergyLabel(ctx, &resp)
+	s.enrichWithEnergyLabel(ctx, tenantID, &lead, &resp)
 
 	return resp, nil
 }
@@ -132,40 +134,112 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID)
 	resp := ToLeadResponseWithServices(lead, services)
 
 	// Enrich with energy label data
-	s.enrichWithEnergyLabel(ctx, &resp)
+	s.enrichWithEnergyLabel(ctx, tenantID, &lead, &resp)
 
 	return resp, nil
 }
 
-// enrichWithEnergyLabel adds energy label data to the lead response.
-// This is a best-effort operation - errors are logged but don't fail the request.
-func (s *Service) enrichWithEnergyLabel(ctx context.Context, resp *transport.LeadResponse) {
+// enrichWithEnergyLabel ensures the lead has up-to-date energy label data.
+// This is a best-effort operation - failures do not block the request flow.
+func (s *Service) enrichWithEnergyLabel(ctx context.Context, tenantID uuid.UUID, lead *repository.Lead, resp *transport.LeadResponse) {
+	// Always apply whatever data we currently have stored
+	resp.EnergyLabel = energyLabelFromLead(*lead)
+
 	if s.energyEnricher == nil {
 		return
 	}
 
+	if lead.EnergyLabelFetchedAt != nil {
+		if time.Since(*lead.EnergyLabelFetchedAt) < energyLabelRefreshInterval {
+			return
+		}
+	}
+
 	params := ports.EnrichLeadParams{
-		Postcode:   resp.Address.ZipCode,
-		Huisnummer: resp.Address.HouseNumber,
+		Postcode:   lead.AddressZipCode,
+		Huisnummer: lead.AddressHouseNumber,
 	}
 
 	data, err := s.energyEnricher.EnrichLead(ctx, params)
 	if err != nil {
-		// Log but don't fail - energy label is optional enrichment
 		return
 	}
 
+	fetchedAt := time.Now().UTC()
+
+	var classPtr *string
+	var indexPtr *float64
+	var bouwjaarPtr *int
+	var gebouwtypePtr *string
+	var validUntilPtr *time.Time
+	var registeredPtr *time.Time
+	var primairPtr *float64
+	var bagPtr *string
+
 	if data != nil {
-		resp.EnergyLabel = &transport.EnergyLabelResponse{
-			Energieklasse:           data.Energieklasse,
-			EnergieIndex:            data.EnergieIndex,
-			Bouwjaar:                data.Bouwjaar,
-			GeldigTot:               data.GeldigTot,
-			Gebouwtype:              data.Gebouwtype,
-			Registratiedatum:        data.Registratiedatum,
-			PrimaireFossieleEnergie: data.PrimaireFossieleEnergie,
+		if data.Energieklasse != "" {
+			val := data.Energieklasse
+			classPtr = &val
+		}
+		if data.EnergieIndex != nil {
+			val := *data.EnergieIndex
+			indexPtr = &val
+		}
+		if data.Bouwjaar != 0 {
+			val := data.Bouwjaar
+			bouwjaarPtr = &val
+		}
+		if data.Gebouwtype != "" {
+			val := data.Gebouwtype
+			gebouwtypePtr = &val
+		}
+		if data.GeldigTot != nil {
+			val := *data.GeldigTot
+			validUntilPtr = &val
+		}
+		if data.Registratiedatum != nil {
+			val := *data.Registratiedatum
+			registeredPtr = &val
+		}
+		if data.PrimaireFossieleEnergie != nil {
+			val := *data.PrimaireFossieleEnergie
+			primairPtr = &val
+		}
+		if data.BAGVerblijfsobjectID != "" {
+			val := data.BAGVerblijfsobjectID
+			bagPtr = &val
 		}
 	}
+
+	updateParams := repository.UpdateEnergyLabelParams{
+		Class:          classPtr,
+		Index:          indexPtr,
+		Bouwjaar:       bouwjaarPtr,
+		Gebouwtype:     gebouwtypePtr,
+		ValidUntil:     validUntilPtr,
+		RegisteredAt:   registeredPtr,
+		PrimairFossiel: primairPtr,
+		BAGObjectID:    bagPtr,
+		FetchedAt:      fetchedAt,
+	}
+
+	if err := s.repo.UpdateEnergyLabel(ctx, lead.ID, tenantID, updateParams); err != nil {
+		return
+	}
+
+	// Update in-memory lead state
+	lead.EnergyClass = classPtr
+	lead.EnergyIndex = indexPtr
+	lead.EnergyBouwjaar = bouwjaarPtr
+	lead.EnergyGebouwtype = gebouwtypePtr
+	lead.EnergyLabelValidUntil = validUntilPtr
+	lead.EnergyLabelRegisteredAt = registeredPtr
+	lead.EnergyPrimairFossiel = primairPtr
+	lead.EnergyBAGVerblijfsobjectID = bagPtr
+	leadFetchedAt := fetchedAt
+	lead.EnergyLabelFetchedAt = &leadFetchedAt
+
+	resp.EnergyLabel = energyLabelFromLead(*lead)
 }
 
 // Update updates a lead's information.

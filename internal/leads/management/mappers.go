@@ -5,6 +5,30 @@ import (
 	"portal_final_backend/internal/leads/transport"
 )
 
+func energyLabelFromLead(lead repository.Lead) *transport.EnergyLabelResponse {
+	if lead.EnergyClass == nil {
+		return nil
+	}
+
+	resp := &transport.EnergyLabelResponse{
+		Energieklasse:           *lead.EnergyClass,
+		EnergieIndex:            lead.EnergyIndex,
+		GeldigTot:               lead.EnergyLabelValidUntil,
+		Registratiedatum:        lead.EnergyLabelRegisteredAt,
+		PrimaireFossieleEnergie: lead.EnergyPrimairFossiel,
+	}
+
+	if lead.EnergyBouwjaar != nil {
+		resp.Bouwjaar = *lead.EnergyBouwjaar
+	}
+
+	if lead.EnergyGebouwtype != nil {
+		resp.Gebouwtype = *lead.EnergyGebouwtype
+	}
+
+	return resp
+}
+
 // ToLeadResponse converts a repository Lead to a transport LeadResponse.
 func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 	return transport.LeadResponse{
@@ -16,6 +40,7 @@ func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 		CreatedAt:       lead.CreatedAt,
 		UpdatedAt:       lead.UpdatedAt,
 		Services:        []transport.LeadServiceResponse{},
+		EnergyLabel:     energyLabelFromLead(lead),
 		Consumer: transport.ConsumerResponse{
 			FirstName: lead.ConsumerFirstName,
 			LastName:  lead.ConsumerLastName,
