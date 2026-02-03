@@ -201,7 +201,9 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 	// Run photo analysis if images exist for this service
 	var photoAnalysis *repository.PhotoAnalysis
 	if la.photoAnalyzer != nil && la.storageSvc != nil && targetService != nil {
-		photoAnalysis, err = la.runPhotoAnalysisIfNeeded(ctx, leadID, targetService.ID, tenantID)
+		// Get intake guidelines for the specific service to pass to photo analyzer
+		intakeGuidelines := la.getIntakeGuidelinesForService(ctx, tenantID, targetService.ServiceType)
+		photoAnalysis, err = la.runPhotoAnalysisIfNeeded(ctx, leadID, targetService.ID, tenantID, intakeGuidelines)
 		if err != nil {
 			log.Printf("Warning: photo analysis failed for lead %s service %s: %v", leadID, targetService.ID, err)
 			// Continue without photo analysis - it's not critical
@@ -386,6 +388,24 @@ func (la *LeadAdvisor) buildServiceContextString(ctx context.Context, tenantID u
 	return sb.String(), nil
 }
 
+// getIntakeGuidelinesForService retrieves intake guidelines for a specific service type
+func (la *LeadAdvisor) getIntakeGuidelinesForService(ctx context.Context, tenantID uuid.UUID, serviceTypeName string) string {
+	services, err := la.repo.ListActiveServiceTypes(ctx, tenantID)
+	if err != nil {
+		log.Printf("warning: failed to list service types for intake guidelines: %v", err)
+		return ""
+	}
+
+	for _, s := range services {
+		if s.Name == serviceTypeName {
+			if s.IntakeGuidelines != nil && *s.IntakeGuidelines != "" {
+				return *s.IntakeGuidelines
+			}
+		}
+	}
+	return ""
+}
+
 // buildRetryMessage creates a retry message using Moonshot's recommended approach
 // for forcing tool selection when tool_choice=required is not supported
 func (la *LeadAdvisor) buildRetryMessage() *genai.Content {
@@ -510,7 +530,8 @@ func (la *LeadAdvisor) DeleteDraftedEmail(draftID uuid.UUID) {
 
 // runPhotoAnalysisIfNeeded checks for image attachments and runs photo analysis if needed
 // Returns existing recent analysis if available, otherwise runs new analysis
-func (la *LeadAdvisor) runPhotoAnalysisIfNeeded(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) (*repository.PhotoAnalysis, error) {
+// intakeRequirements contains the hard requirements for the service type
+func (la *LeadAdvisor) runPhotoAnalysisIfNeeded(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, intakeRequirements string) (*repository.PhotoAnalysis, error) {
 	// First check if recent photo analysis exists
 	existingAnalysis, err := la.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID)
 	if err == nil {
@@ -563,8 +584,8 @@ func (la *LeadAdvisor) runPhotoAnalysisIfNeeded(ctx context.Context, leadID, ser
 
 	log.Printf("Running photo analysis for lead %s service %s with %d images", leadID, serviceID, len(images))
 
-	// Run photo analysis
-	result, err := la.photoAnalyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, "")
+	// Run photo analysis with intake requirements
+	result, err := la.photoAnalyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, "", intakeRequirements)
 	if err != nil {
 		return nil, fmt.Errorf("photo analysis failed: %w", err)
 	}

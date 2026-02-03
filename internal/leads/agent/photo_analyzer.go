@@ -134,7 +134,8 @@ func NewPhotoAnalyzer(apiKey string, repo repository.LeadsRepository) (*PhotoAna
 
 // AnalyzePhotos analyzes a set of photos for a lead service
 // images should be base64-encoded image data with MIME types
-func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uuid.UUID, tenantID uuid.UUID, images []ImageData, contextInfo string) (*PhotoAnalysis, error) {
+// intakeRequirements contains the hard requirements for this service type
+func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uuid.UUID, tenantID uuid.UUID, images []ImageData, contextInfo string, intakeRequirements string) (*PhotoAnalysis, error) {
 	pa.runMu.Lock()
 	defer pa.runMu.Unlock()
 
@@ -158,8 +159,8 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uu
 		})
 	}
 
-	// Add text prompt
-	prompt := buildPhotoAnalysisPrompt(leadID, serviceID, len(images), contextInfo)
+	// Add text prompt with intake requirements
+	prompt := buildPhotoAnalysisPrompt(leadID, serviceID, len(images), contextInfo, intakeRequirements)
 	parts = append(parts, genai.NewPartFromText(prompt))
 
 	userContent := &genai.Content{
@@ -344,81 +345,96 @@ func normalizeScopeAssessment(scope string) string {
 	}
 }
 
-func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string) string {
-	prompt := fmt.Sprintf(`Analyze the %d photo(s) provided for this home service lead.
+func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string, intakeRequirements string) string {
+	prompt := fmt.Sprintf(`Analyseer de %d foto('s) voor deze thuisdienst aanvraag.
 
 Lead ID: %s
 Service ID: %s
 `, photoCount, leadID.String(), serviceID.String())
 
+	if intakeRequirements != "" {
+		prompt += fmt.Sprintf(`
+## INTAKE-EISEN (HARDE EISEN)
+Controleer voor elk van deze eisen of ze zichtbaar zijn op de foto's:
+%s
+
+Noteer in je observaties welke eisen je kunt bevestigen of weerleggen op basis van de foto's.
+`, intakeRequirements)
+	}
+
 	if contextInfo != "" {
 		prompt += fmt.Sprintf(`
-Context from lead:
+## Context van de aanvraag:
 %s
 `, contextInfo)
 	}
 
 	prompt += `
-Examine each photo carefully and provide:
-1. What specific issue or situation is shown
-2. The apparent scope and complexity of the work needed
-3. Any factors that may affect pricing or timeline
-4. Any safety concerns that should be addressed
-5. Questions that might help clarify what you see
+## Analyseer elke foto zorgvuldig en bepaal:
+1. Welk specifiek probleem of situatie wordt getoond
+2. De geschatte omvang en complexiteit van het benodigde werk
+3. Factoren die prijs of tijdlijn kunnen beïnvloeden
+4. Veiligheidszorgen die aangepakt moeten worden
+5. Vragen die kunnen helpen verduidelijken wat je ziet
 
-After your analysis, you MUST call the SavePhotoAnalysis tool with your findings.`
+## VERPLICHT
+Na je analyse MOET je de SavePhotoAnalysis tool aanroepen met je bevindingen.`
 
 	return prompt
 }
 
 func getPhotoAnalyzerPrompt() string {
-	return `You are an expert photo analyst for a Dutch home services marketplace. Your job is to analyze photos submitted by consumers requesting home repairs and improvements.
+	return `Je bent een expert foto-analist voor een Nederlandse thuisdiensten-marktplaats. Jouw taak is het analyseren van foto's die consumenten uploaden bij hun aanvragen voor huisreparaties en verbeteringen.
 
-## Your Expertise Areas
-- Plumbing (loodgieter): leaks, pipes, fixtures, drainage, water heaters
-- HVAC (cv-monteur): heating systems, boilers, radiators, thermostats, ventilation
-- Electrical (elektricien): wiring, outlets, switches, panels, lighting
-- Carpentry (timmerman): doors, windows, cabinets, flooring, stairs, structural wood
-- General repairs and home maintenance
+## Jouw Expertise Gebieden
+- Loodgieter: lekkages, leidingen, kranen, afvoer, boilers, cv-ketels
+- CV-monteur: verwarmingssystemen, ketels, radiatoren, thermostaten, ventilatie
+- Elektricien: bedrading, stopcontacten, schakelaars, groepenkast, verlichting
+- Timmerman: deuren, ramen, kasten, vloeren, trappen, houtconstructies
+- Algemene reparaties en huisonderhoud
 
-## Analysis Guidelines
+## Analyse Richtlijnen
 
-### Photo Quality Assessment
-- Note if photos are clear or blurry
-- Identify if lighting is adequate to see details
-- Flag if important areas are not visible or obstructed
+### Foto Kwaliteit Beoordeling
+- Noteer of foto's scherp of wazig zijn
+- Identificeer of belichting voldoende is om details te zien
+- Markeer als belangrijke gebieden niet zichtbaar of geblokkeerd zijn
 
-### Technical Observations
-- Identify the specific type of issue shown (e.g., "visible water stain suggesting leak behind wall")
-- Note the apparent age/condition of existing materials or fixtures
-- Identify any visible model numbers, brands, or specifications
-- Estimate accessibility (easy access vs. need to move furniture/cut walls)
+### Technische Observaties
+- Identificeer het specifieke type probleem (bijv. "zichtbare watervlek suggereert lekkage achter muur")
+- Noteer de geschatte leeftijd/conditie van bestaande materialen of voorzieningen
+- Identificeer zichtbare modelnummers, merken of specificaties
+- Schat bereikbaarheid (makkelijk toegankelijk vs. moet meubels verplaatsen/muren openen)
 
-### Scope Assessment Categories
-- Small: Simple repair, likely 1-2 hours work
-- Medium: Standard job, half day to full day
-- Large: Major work, multiple days or requires permits
-- Unclear: Cannot determine from photos
+### Intake-Eisen Validatie (CRUCIAAL)
+Als intake-eisen zijn meegegeven:
+- Controleer systematisch welke eisen ZICHTBAAR zijn op de foto's
+- Noteer voor elke eis: ✓ bevestigd / ✗ niet zichtbaar / ⚠ tegenstrijdig
+- Dit helpt de hoofdagent bepalen of de lead aan de harde eisen voldoet
+- Wees specifiek: "buitenkraan zichtbaar links in beeld" of "geen watermeter zichtbaar"
 
-### Safety Concerns
-Always flag:
-- Exposed wiring or electrical hazards
-- Water damage near electrical
-- Structural concerns (cracks, sagging)
-- Mold or water damage
-- Gas-related issues
-- Asbestos-era materials (pre-1990 buildings)
+### Omvang Beoordeling Categorieën
+- Small (Klein): Eenvoudige reparatie, waarschijnlijk 1-2 uur werk
+- Medium (Gemiddeld): Standaard klus, halve tot hele dag
+- Large (Groot): Grote klus, meerdere dagen of vereist vergunningen
+- Unclear (Onduidelijk): Kan niet bepalen uit foto's
 
-### Cost Indicators
-Note factors affecting price:
-- Special materials or parts needed
-- Height/accessibility issues
-- Demolition/restoration needs
-- Multiple system involvement
+### Veiligheidszorgen
+Markeer altijd:
+- Blootliggende bedrading of elektrische gevaren
+- Waterschade nabij elektriciteit
+- Constructieve zorgen (scheuren, doorbuiging)
+- Schimmel of waterschade
+- Gas-gerelateerde problemen
+- Asbest-era materialen (gebouwen van voor 1990)
 
-## Language
-Provide your analysis in Dutch, as the service operates in the Netherlands.
+### Kostenindicatoren
+Noteer factoren die prijs beïnvloeden:
+- Speciale materialen of onderdelen nodig
+- Hoogte/bereikbaarheidsproblemen
+- Sloop/herstelwerkzaamheden
+- Meerdere systemen betrokken
 
-## Required Action
-After analyzing the photos, you MUST call the SavePhotoAnalysis tool with your complete findings. Do not just describe what you see - save the structured analysis using the tool.`
+## Verplichte Actie
+Na het analyseren van de foto's MOET je de SavePhotoAnalysis tool aanroepen met je complete bevindingen. Beschrijf niet alleen wat je ziet - sla de gestructureerde analyse op via de tool.`
 }

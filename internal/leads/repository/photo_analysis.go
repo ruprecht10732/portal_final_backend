@@ -14,20 +14,20 @@ var ErrPhotoAnalysisNotFound = errors.New("photo analysis not found")
 
 // PhotoAnalysis represents an AI analysis of photos for a lead service.
 type PhotoAnalysis struct {
-	ID              uuid.UUID
-	LeadID          uuid.UUID
-	ServiceID       uuid.UUID
-	OrganizationID  uuid.UUID
-	Summary         string
-	Observations    []string
-	ScopeAssessment string
-	CostIndicators  string
-	SafetyConcerns  []string
-	AdditionalInfo  []string
-	ConfidenceLevel string
-	PhotoCount      int
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID              uuid.UUID `json:"id"`
+	LeadID          uuid.UUID `json:"leadId"`
+	ServiceID       uuid.UUID `json:"serviceId"`
+	OrganizationID  uuid.UUID `json:"-"`
+	Summary         string    `json:"summary"`
+	Observations    []string  `json:"observations"`
+	ScopeAssessment string    `json:"scopeAssessment"`
+	CostIndicators  string    `json:"costIndicators"`
+	SafetyConcerns  []string  `json:"safetyConcerns"`
+	AdditionalInfo  []string  `json:"additionalInfo"`
+	ConfidenceLevel string    `json:"confidenceLevel"`
+	PhotoCount      int       `json:"photoCount"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // CreatePhotoAnalysisParams contains parameters for creating a photo analysis.

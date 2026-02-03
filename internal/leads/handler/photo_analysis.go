@@ -153,7 +153,9 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 	}
 
 	// Run photo analysis
-	result, err := h.analyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, contextInfo)
+	// Note: intake requirements are not fetched here since this is a direct API call.
+	// The main LeadAdvisor flow handles intake requirements for the triage.
+	result, err := h.analyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, contextInfo, "")
 	if err != nil {
 		h.sse.Publish(userID, sse.Event{
 			Type:      sse.EventPhotoAnalysisComplete,
@@ -217,7 +219,7 @@ func (h *PhotoAnalysisHandler) GetPhotoAnalysis(c *gin.Context) {
 
 	analysis, err := h.repo.GetLatestPhotoAnalysis(c.Request.Context(), serviceID, *tenantID)
 	if err == repository.ErrPhotoAnalysisNotFound {
-		httpkit.Error(c, http.StatusNotFound, "no photo analysis found", nil)
+		httpkit.OK(c, gin.H{"analysis": nil})
 		return
 	}
 	if err != nil {
@@ -225,7 +227,7 @@ func (h *PhotoAnalysisHandler) GetPhotoAnalysis(c *gin.Context) {
 		return
 	}
 
-	httpkit.OK(c, analysis)
+	httpkit.OK(c, gin.H{"analysis": analysis})
 }
 
 // ListPhotoAnalyses retrieves all photo analyses for a service.
