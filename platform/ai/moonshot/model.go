@@ -3,6 +3,7 @@ package moonshot
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -52,12 +53,26 @@ func (m *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 	}
 }
 
+// openAIMessage represents a message in OpenAI/Kimi API format
+// Content can be either a string (text-only) or array of content parts (multimodal)
 type openAIMessage struct {
 	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
+	Content    interface{}      `json:"content,omitempty"` // string or []contentPart for multimodal
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 	Name       string           `json:"name,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
+}
+
+// contentPart represents a part of multimodal content (text or image)
+type contentPart struct {
+	Type     string    `json:"type"`                // "text" or "image_url"
+	Text     string    `json:"text,omitempty"`      // for type="text"
+	ImageURL *imageURL `json:"image_url,omitempty"` // for type="image_url"
+}
+
+// imageURL contains the URL for an image (base64 data URL for Kimi)
+type imageURL struct {
+	URL string `json:"url"` // "data:image/png;base64,..." format
 }
 
 type openAIToolCall struct {
@@ -174,12 +189,22 @@ func (m *KimiModel) convertMessages(contents []*genai.Content) []openAIMessage {
 		}
 
 		role := roleForContent(content.Role)
-		text, toolCalls, toolMessages := extractContentMessages(content)
+		contentBody, toolCalls, toolMessages := extractContentMessages(content)
 		messages = append(messages, toolMessages...)
-		if text != "" || len(toolCalls) > 0 {
+
+		// Check if we have content to add
+		hasContent := false
+		switch v := contentBody.(type) {
+		case string:
+			hasContent = v != ""
+		case []contentPart:
+			hasContent = len(v) > 0
+		}
+
+		if hasContent || len(toolCalls) > 0 {
 			messages = append(messages, openAIMessage{
 				Role:      role,
-				Content:   text,
+				Content:   contentBody,
 				ToolCalls: toolCalls,
 			})
 		}
@@ -194,10 +219,12 @@ func roleForContent(role string) string {
 	return "user"
 }
 
-func extractContentMessages(content *genai.Content) (string, []openAIToolCall, []openAIMessage) {
+func extractContentMessages(content *genai.Content) (interface{}, []openAIToolCall, []openAIMessage) {
 	var toolCalls []openAIToolCall
 	var toolMessages []openAIMessage
 	var textBuilder strings.Builder
+	var imageParts []contentPart
+	hasImages := false
 
 	for _, part := range content.Parts {
 		if part == nil {
@@ -211,10 +238,40 @@ func extractContentMessages(content *genai.Content) (string, []openAIToolCall, [
 			toolCalls = append(toolCalls, call)
 			continue
 		}
+		// Check for inline image data (multimodal)
+		if part.InlineData != nil && strings.HasPrefix(part.InlineData.MIMEType, "image/") {
+			hasImages = true
+			dataURL := fmt.Sprintf("data:%s;base64,%s",
+				part.InlineData.MIMEType,
+				base64.StdEncoding.EncodeToString(part.InlineData.Data))
+			imageParts = append(imageParts, contentPart{
+				Type:     "image_url",
+				ImageURL: &imageURL{URL: dataURL},
+			})
+			continue
+		}
 		appendText(&textBuilder, part.Text)
 	}
 
-	return strings.TrimSpace(textBuilder.String()), toolCalls, toolMessages
+	text := strings.TrimSpace(textBuilder.String())
+
+	// If we have images, return multimodal content array
+	if hasImages {
+		var parts []contentPart
+		// Add images first
+		parts = append(parts, imageParts...)
+		// Add text if present
+		if text != "" {
+			parts = append(parts, contentPart{
+				Type: "text",
+				Text: text,
+			})
+		}
+		return parts, toolCalls, toolMessages
+	}
+
+	// Text-only: return string
+	return text, toolCalls, toolMessages
 }
 
 func buildToolResponseMessage(part *genai.Part) (openAIMessage, bool) {

@@ -39,6 +39,27 @@ func normalizeUrgencyLevel(level string) (string, error) {
 	}
 }
 
+// normalizeLeadQuality converts various lead quality formats to the required values: Junk, Low, Potential, High, Urgent
+func normalizeLeadQuality(quality string) string {
+	normalized := strings.ToLower(strings.TrimSpace(quality))
+
+	switch normalized {
+	case "junk", "spam", "rommel", "onzin", "fake":
+		return "Junk"
+	case "low", "laag":
+		return "Low"
+	case "potential", "potentieel", "medium", "gemiddeld", "moderate", "mid":
+		return "Potential"
+	case "high", "hoog", "good", "goed":
+		return "High"
+	case "urgent", "spoed", "critical", "kritiek":
+		return "Urgent"
+	default:
+		log.Printf("Unrecognized lead quality '%s', defaulting to Potential", quality)
+		return "Potential"
+	}
+}
+
 // ToolDependencies contains the dependencies needed by tools
 type ToolDependencies struct {
 	Repo          repository.LeadsRepository
@@ -80,14 +101,28 @@ func getTenantID(deps *ToolDependencies) (uuid.UUID, error) {
 
 func normalizeContactChannel(channel string) (string, error) {
 	clean := strings.TrimSpace(channel)
-	switch strings.ToLower(clean) {
-	case "whatsapp":
+	normalized := strings.ToLower(clean)
+
+	// WhatsApp variations
+	if strings.Contains(normalized, "whatsapp") || normalized == "wa" {
 		return "WhatsApp", nil
-	case "email":
-		return "Email", nil
-	default:
-		return "", fmt.Errorf("invalid preferred contact channel")
 	}
+
+	// Email variations
+	if strings.Contains(normalized, "email") || strings.Contains(normalized, "e-mail") || normalized == "mail" {
+		return "Email", nil
+	}
+
+	// Phone/call variations - map to WhatsApp since it's our phone-based channel
+	if strings.Contains(normalized, "phone") || strings.Contains(normalized, "telefoon") ||
+		strings.Contains(normalized, "call") || strings.Contains(normalized, "bel") ||
+		normalized == "tel" || normalized == "sms" {
+		return "WhatsApp", nil
+	}
+
+	// If unrecognized, default to Email and log
+	log.Printf("Unrecognized contact channel '%s', defaulting to Email", channel)
+	return "Email", nil
 }
 
 func resolvePreferredChannel(inputChannel string, lead repository.Lead) (string, error) {
@@ -148,13 +183,16 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		return SaveAnalysisOutput{Success: false, Message: "Invalid preferred contact channel"}, err
 	}
 
+	// Normalize lead quality to valid enum value
+	leadQuality := normalizeLeadQuality(input.LeadQuality)
+
 	_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
 		LeadID:                  leadID,
 		OrganizationID:          tenantID,
 		LeadServiceID:           leadServiceID,
 		UrgencyLevel:            urgencyLevel,
 		UrgencyReason:           urgencyReason,
-		LeadQuality:             input.LeadQuality,
+		LeadQuality:             leadQuality,
 		RecommendedAction:       input.RecommendedAction,
 		MissingInformation:      input.MissingInformation,
 		PreferredContactChannel: channel,

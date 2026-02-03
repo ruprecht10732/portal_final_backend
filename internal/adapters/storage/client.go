@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"path"
 	"strings"
@@ -108,6 +109,16 @@ func (s *MinIOService) GenerateDownloadURL(ctx context.Context, bucket, fileKey 
 		FileKey:   fileKey,
 		ExpiresAt: expiresAt,
 	}, nil
+}
+
+// DownloadFile downloads a file directly from storage.
+// The caller is responsible for closing the returned io.ReadCloser.
+func (s *MinIOService) DownloadFile(ctx context.Context, bucket, fileKey string) (io.ReadCloser, error) {
+	obj, err := s.client.GetObject(ctx, bucket, fileKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object %s: %w", fileKey, err)
+	}
+	return obj, nil
 }
 
 // DeleteObject removes an object from storage.

@@ -15,21 +15,32 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/maps"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/config"
+	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Module is the leads bounded context module implementing http.Module.
 type Module struct {
-	handler            *handler.Handler
-	attachmentsHandler *handler.AttachmentsHandler
-	management         *management.Service
-	notes              *notes.Service
-	advisor            *agent.LeadAdvisor
-	callLogger         *agent.CallLogger
+	handler              *handler.Handler
+	attachmentsHandler   *handler.AttachmentsHandler
+	photoAnalysisHandler *handler.PhotoAnalysisHandler
+	management           *management.Service
+	notes                *notes.Service
+	advisor              *agent.LeadAdvisor
+	photoAnalyzer        *agent.PhotoAnalyzer
+	callLogger           *agent.CallLogger
+	sse                  *sse.Service
+	repo                 repository.LeadsRepository
+	storage              storage.StorageService
+	attachmentsBucket    string
+	log                  *logger.Logger
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
@@ -37,8 +48,14 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// Create shared repository
 	repo := repository.New(pool)
 
-	// AI Advisor for lead analysis
-	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo)
+	// Photo Analyzer for image analysis (must be created first as advisor depends on it)
+	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
+	if err != nil {
+		return nil, err
+	}
+
+	// AI Advisor for lead analysis (orchestrates PhotoAnalyzer internally)
+	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo, photoAnalyzer, storageSvc, cfg.GetMinioBucketLeadServiceAttachments())
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +66,9 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		return nil, err
 	}
 
+	// SSE service for real-time notifications
+	sseService := sse.New()
+
 	// Subscribe to LeadCreated events to auto-analyze new leads
 	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadCreated)
@@ -58,6 +78,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 
 		go func() {
 			// Pass nil for serviceID to analyze the most recent (current) service
+			// The advisor will automatically orchestrate photo analysis if images exist
 			if err := advisor.Analyze(context.Background(), e.LeadID, nil, e.TenantID); err != nil {
 				log.Error("lead advisor analysis failed", "error", err, "leadId", e.LeadID)
 			}
@@ -74,15 +95,23 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// Create handlers
 	notesHandler := handler.NewNotesHandler(notesSvc, val)
 	attachmentsHandler := handler.NewAttachmentsHandler(repo, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
+	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(photoAnalyzer, repo, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), sseService, val)
 	h := handler.New(mgmtSvc, notesHandler, advisor, callLogger, val)
 
 	return &Module{
-		handler:            h,
-		attachmentsHandler: attachmentsHandler,
-		management:         mgmtSvc,
-		notes:              notesSvc,
-		advisor:            advisor,
-		callLogger:         callLogger,
+		handler:              h,
+		attachmentsHandler:   attachmentsHandler,
+		photoAnalysisHandler: photoAnalysisHandler,
+		management:           mgmtSvc,
+		notes:                notesSvc,
+		advisor:              advisor,
+		photoAnalyzer:        photoAnalyzer,
+		callLogger:           callLogger,
+		sse:                  sseService,
+		repo:                 repo,
+		storage:              storageSvc,
+		attachmentsBucket:    cfg.GetMinioBucketLeadServiceAttachments(),
+		log:                  log,
 	}, nil
 }
 
@@ -106,6 +135,21 @@ func (m *Module) CallLogger() *agent.CallLogger {
 	return m.callLogger
 }
 
+// PhotoAnalyzer returns the photo analyzer agent for external use.
+func (m *Module) PhotoAnalyzer() *agent.PhotoAnalyzer {
+	return m.photoAnalyzer
+}
+
+// SSE returns the SSE service for external use.
+func (m *Module) SSE() *sse.Service {
+	return m.sse
+}
+
+// Repository returns the leads repository for external use.
+func (m *Module) Repository() repository.LeadsRepository {
+	return m.repo
+}
+
 // SetAppointmentBooker sets the appointment booker on the CallLogger.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
@@ -121,6 +165,37 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	// Attachment routes: /leads/:id/services/:serviceId/attachments
 	attachmentsGroup := leadsGroup.Group("/:id/services/:serviceId/attachments")
 	m.attachmentsHandler.RegisterRoutes(attachmentsGroup)
+
+	// Photo analysis routes: /leads/:id/services/:serviceId/...
+	photoAnalysisGroup := leadsGroup.Group("/:id/services/:serviceId")
+	m.photoAnalysisHandler.RegisterRoutes(photoAnalysisGroup)
+
+	// SSE endpoint for real-time notifications (user-specific)
+	ctx.Protected.GET("/events", m.sseHandler())
+}
+
+// sseHandler returns the SSE handler with user ID extraction
+func (m *Module) sseHandler() func(c *gin.Context) {
+	return m.sse.Handler(
+		func(c *gin.Context) (uuid.UUID, bool) {
+			id := httpkit.GetIdentity(c)
+			if id == nil || !id.IsAuthenticated() {
+				return uuid.UUID{}, false
+			}
+			return id.UserID(), true
+		},
+		func(c *gin.Context) (uuid.UUID, bool) {
+			id := httpkit.GetIdentity(c)
+			if id == nil || !id.IsAuthenticated() {
+				return uuid.UUID{}, false
+			}
+			tenantID := id.TenantID()
+			if tenantID == nil {
+				return uuid.UUID{}, false
+			}
+			return *tenantID, true
+		},
+	)
 }
 
 // Compile-time check that Module implements http.Module

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
 )
@@ -51,6 +53,12 @@ type LeadAdvisor struct {
 	sessionService session.Service
 	appName        string
 	repo           repository.LeadsRepository
+	// PhotoAnalyzer for image analysis (orchestrated during lead analysis)
+	photoAnalyzer *PhotoAnalyzer
+	// Storage service for fetching image attachments
+	storageSvc storage.StorageService
+	// Bucket name for lead service attachments
+	attachmentsBucket string
 	// Store drafted emails temporarily (in production, this would be persisted to DB)
 	draftedEmails map[uuid.UUID]EmailDraft
 	// Track tool calls during runs
@@ -61,7 +69,8 @@ type LeadAdvisor struct {
 
 // NewLeadAdvisor builds the AI Advisor agent with Kimi model
 // Returns an error if the agent or runner cannot be initialized
-func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository) (*LeadAdvisor, error) {
+// PhotoAnalyzer, storageSvc, and attachmentsBucket are optional - if provided, enables photo analysis during lead analysis
+func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository, photoAnalyzer *PhotoAnalyzer, storageSvc storage.StorageService, attachmentsBucket string) (*LeadAdvisor, error) {
 	// Use kimi-k2.5 with thinking disabled for more reliable tool calling
 	// Thinking mode restricts tool_choice to only "auto" or "none"
 	// Non-thinking mode may allow more flexibility
@@ -74,10 +83,13 @@ func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository) (*LeadAdviso
 	tracker := &toolCallTracker{}
 
 	advisor := &LeadAdvisor{
-		repo:          repo,
-		draftedEmails: make(map[uuid.UUID]EmailDraft),
-		appName:       "lead_advisor",
-		toolTracker:   tracker,
+		repo:              repo,
+		photoAnalyzer:     photoAnalyzer,
+		storageSvc:        storageSvc,
+		attachmentsBucket: attachmentsBucket,
+		draftedEmails:     make(map[uuid.UUID]EmailDraft),
+		appName:           "lead_advisor",
+		toolTracker:       tracker,
 	}
 
 	// Create tool dependencies
@@ -186,7 +198,17 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 		return nil, fmt.Errorf("failed to build service context: %w", err)
 	}
 
-	userMessage := la.buildUserMessage(lead, targetService, meaningfulNotes, serviceContextList)
+	// Run photo analysis if images exist for this service
+	var photoAnalysis *repository.PhotoAnalysis
+	if la.photoAnalyzer != nil && la.storageSvc != nil && targetService != nil {
+		photoAnalysis, err = la.runPhotoAnalysisIfNeeded(ctx, leadID, targetService.ID, tenantID)
+		if err != nil {
+			log.Printf("Warning: photo analysis failed for lead %s service %s: %v", leadID, targetService.ID, err)
+			// Continue without photo analysis - it's not critical
+		}
+	}
+
+	userMessage := la.buildUserMessage(lead, targetService, meaningfulNotes, serviceContextList, photoAnalysis)
 	userID := "advisor-" + leadID.String() + "-" + targetService.ID.String()
 
 	output, err := la.runWithSession(ctx, userID, leadID, userMessage)
@@ -330,8 +352,8 @@ func (la *LeadAdvisor) buildNoChangeResponse(lead repository.Lead, currentServic
 	return nil
 }
 
-func (la *LeadAdvisor) buildUserMessage(lead repository.Lead, currentService *repository.LeadService, notes []repository.LeadNote, serviceContextList string) *genai.Content {
-	prompt := buildAnalysisPrompt(lead, currentService, notes, serviceContextList)
+func (la *LeadAdvisor) buildUserMessage(lead repository.Lead, currentService *repository.LeadService, notes []repository.LeadNote, serviceContextList string, photoAnalysis *repository.PhotoAnalysis) *genai.Content {
+	prompt := buildAnalysisPrompt(lead, currentService, notes, serviceContextList, photoAnalysis)
 	return &genai.Content{
 		Role: "user",
 		Parts: []*genai.Part{
@@ -484,4 +506,98 @@ func (la *LeadAdvisor) GetDraftedEmailsForLead(leadID uuid.UUID) []EmailDraft {
 // DeleteDraftedEmail removes a drafted email (e.g., after it's been sent)
 func (la *LeadAdvisor) DeleteDraftedEmail(draftID uuid.UUID) {
 	delete(la.draftedEmails, draftID)
+}
+
+// runPhotoAnalysisIfNeeded checks for image attachments and runs photo analysis if needed
+// Returns existing recent analysis if available, otherwise runs new analysis
+func (la *LeadAdvisor) runPhotoAnalysisIfNeeded(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) (*repository.PhotoAnalysis, error) {
+	// First check if recent photo analysis exists
+	existingAnalysis, err := la.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID)
+	if err == nil {
+		log.Printf("Found existing photo analysis for service %s", serviceID)
+		return &existingAnalysis, nil
+	}
+
+	// Fetch attachments for this service
+	attachments, err := la.repo.ListAttachmentsByService(ctx, serviceID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list attachments: %w", err)
+	}
+
+	if len(attachments) == 0 {
+		return nil, nil // No attachments, no photo analysis needed
+	}
+
+	// Filter for images and download them
+	var images []ImageData
+	for _, att := range attachments {
+		if att.ContentType != nil && isImageContentType(*att.ContentType) {
+			// Download image from storage
+			data, err := la.storageSvc.DownloadFile(ctx, la.attachmentsBucket, att.FileKey)
+			if err != nil {
+				log.Printf("warning: failed to download image %s for photo analysis: %v", att.FileKey, err)
+				continue
+			}
+			imgData, err := io.ReadAll(data)
+			data.Close()
+			if err != nil {
+				log.Printf("warning: failed to read image data for %s: %v", att.FileKey, err)
+				continue
+			}
+
+			mimeType := "image/jpeg"
+			if att.ContentType != nil {
+				mimeType = *att.ContentType
+			}
+			images = append(images, ImageData{
+				MIMEType: mimeType,
+				Data:     imgData,
+				Filename: att.FileName,
+			})
+		}
+	}
+
+	if len(images) == 0 {
+		return nil, nil // No image attachments found
+	}
+
+	log.Printf("Running photo analysis for lead %s service %s with %d images", leadID, serviceID, len(images))
+
+	// Run photo analysis
+	result, err := la.photoAnalyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, "")
+	if err != nil {
+		return nil, fmt.Errorf("photo analysis failed: %w", err)
+	}
+
+	// Save to database
+	result.PhotoCount = len(images)
+	analysis, err := la.repo.CreatePhotoAnalysis(ctx, repository.CreatePhotoAnalysisParams{
+		LeadID:          leadID,
+		ServiceID:       serviceID,
+		OrganizationID:  tenantID,
+		Summary:         result.Summary,
+		Observations:    result.Observations,
+		ScopeAssessment: result.ScopeAssessment,
+		CostIndicators:  result.CostIndicators,
+		SafetyConcerns:  result.SafetyConcerns,
+		AdditionalInfo:  result.AdditionalInfo,
+		ConfidenceLevel: result.ConfidenceLevel,
+		PhotoCount:      result.PhotoCount,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to save photo analysis: %w", err)
+	}
+
+	log.Printf("Photo analysis saved for lead %s service %s", leadID, serviceID)
+	return &analysis, nil
+}
+
+// isImageContentType checks if a content type is a supported image type
+func isImageContentType(contentType string) bool {
+	switch contentType {
+	case "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif":
+		return true
+	default:
+		return false
+	}
 }

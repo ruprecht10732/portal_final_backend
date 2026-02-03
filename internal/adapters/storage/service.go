@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -24,6 +25,10 @@ type StorageService interface {
 
 	// GenerateDownloadURL creates a presigned URL for downloading a file.
 	GenerateDownloadURL(ctx context.Context, bucket, fileKey string) (*PresignedURL, error)
+
+	// DownloadFile downloads a file directly from storage.
+	// The caller is responsible for closing the returned io.ReadCloser.
+	DownloadFile(ctx context.Context, bucket, fileKey string) (io.ReadCloser, error)
 
 	// DeleteObject removes an object from storage.
 	DeleteObject(ctx context.Context, bucket, fileKey string) error

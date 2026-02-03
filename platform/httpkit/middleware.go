@@ -126,12 +126,17 @@ func NewAuthRateLimiter(log *logger.Logger) *AuthRateLimiter {
 }
 
 // AuthRequired returns middleware that validates JWT access tokens.
+// Supports token via Authorization header (Bearer) or query param (for SSE).
 func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rawToken, ok := extractBearerToken(c.GetHeader("Authorization"))
 		if !ok {
-			abortUnauthorized(c, errMissingToken)
-			return
+			// Fallback to query param for SSE connections
+			rawToken = c.Query("token")
+			if rawToken == "" {
+				abortUnauthorized(c, errMissingToken)
+				return
+			}
 		}
 
 		claims, err := parseAccessClaims(rawToken, cfg)
