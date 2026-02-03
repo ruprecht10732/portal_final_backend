@@ -129,6 +129,24 @@ func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadSe
 	energyBagID := formatOptionalString(lead.EnergyBAGVerblijfsobjectID)
 	energyFetchedAt := formatOptionalTime(lead.EnergyLabelFetchedAt, "02-01-2006 15:04")
 
+	enrichmentSource := formatOptionalString(lead.LeadEnrichmentSource)
+	enrichmentPostcode6 := formatOptionalString(lead.LeadEnrichmentPostcode6)
+	enrichmentBuurtcode := formatOptionalString(lead.LeadEnrichmentBuurtcode)
+	enrichmentGas := formatOptionalFloat(lead.LeadEnrichmentGemAardgasverbruik, 0)
+	enrichmentHuishouden := formatOptionalFloat(lead.LeadEnrichmentHuishoudenGrootte, 1)
+	enrichmentKoopPct := formatOptionalFloat(lead.LeadEnrichmentKoopwoningenPct, 1)
+	enrichmentBouwjaarPct := formatOptionalFloat(lead.LeadEnrichmentBouwjaarVanaf2000Pct, 1)
+	enrichmentVermogen := formatOptionalFloat(lead.LeadEnrichmentMediaanVermogenX1000, 0)
+	enrichmentKinderenPct := formatOptionalFloat(lead.LeadEnrichmentHuishoudensMetKinderenPct, 1)
+	enrichmentConfidence := formatOptionalFloat(lead.LeadEnrichmentConfidence, 2)
+	enrichmentFetchedAt := formatOptionalTime(lead.LeadEnrichmentFetchedAt, "02-01-2006 15:04")
+
+	leadScore := formatOptionalInt(lead.LeadScore)
+	leadScorePreAI := formatOptionalInt(lead.LeadScorePreAI)
+	leadScoreVersion := formatOptionalString(lead.LeadScoreVersion)
+	leadScoreUpdatedAt := formatOptionalTime(lead.LeadScoreUpdatedAt, "02-01-2006 15:04")
+	leadScoreFactors := formatOptionalJSON(lead.LeadScoreFactors)
+
 	return fmt.Sprintf(`Analyseer deze lead met de Gatekeeper triage-opdracht:
 
 ## Lead Informatie
@@ -157,6 +175,26 @@ func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadSe
 - **Primair fossiel (kWh/m2/jaar)**: %s
 - **BAG object ID**: %s
 - **Laatst opgehaald**: %s
+
+## Lead Enrichment (PDOK/CBS)
+- **Bron**: %s
+- **Postcode6**: %s
+- **Buurtcode**: %s
+- **Gem. aardgasverbruik**: %s
+- **Huishouden grootte**: %s
+- **Koopwoningen %%**: %s
+- **Bouwjaar vanaf 2000 %%**: %s
+- **Mediaan vermogen (x1000 EUR)**: %s
+- **Huishoudens met kinderen %%**: %s
+- **Confidence**: %s
+- **Laatst opgehaald**: %s
+
+## Lead Score
+- **Score (final)**: %s
+- **Score (pre-AI)**: %s
+- **Score versie**: %s
+- **Score factoren (JSON)**: %s
+- **Laatst bijgewerkt**: %s
 
 ## Aanvraag Details
 - **Dienst**: %s
@@ -236,6 +274,22 @@ Let specifiek op:
 		energyPrimair,
 		energyBagID,
 		energyFetchedAt,
+		enrichmentSource,
+		enrichmentPostcode6,
+		enrichmentBuurtcode,
+		enrichmentGas,
+		enrichmentHuishouden,
+		enrichmentKoopPct,
+		enrichmentBouwjaarPct,
+		enrichmentVermogen,
+		enrichmentKinderenPct,
+		enrichmentConfidence,
+		enrichmentFetchedAt,
+		leadScore,
+		leadScorePreAI,
+		leadScoreVersion,
+		leadScoreFactors,
+		leadScoreUpdatedAt,
 		serviceType, status,
 		wrapUserData(sanitizeUserInput(consumerNote, maxConsumerNote)),
 		wrapUserData(notesSection),
@@ -419,6 +473,13 @@ func formatOptionalTime(value *time.Time, layout string) string {
 		return "Niet opgegeven"
 	}
 	return value.Format(layout)
+}
+
+func formatOptionalJSON(value []byte) string {
+	if len(value) == 0 {
+		return "Niet opgegeven"
+	}
+	return string(value)
 }
 
 // translateRole converts English role to Dutch

@@ -53,34 +53,58 @@ func (r *Repository) ListActiveServiceTypes(ctx context.Context, organizationID 
 }
 
 type Lead struct {
-	ID                         uuid.UUID
-	OrganizationID             uuid.UUID
-	ConsumerFirstName          string
-	ConsumerLastName           string
-	ConsumerPhone              string
-	ConsumerEmail              *string
-	ConsumerRole               string
-	AddressStreet              string
-	AddressHouseNumber         string
-	AddressZipCode             string
-	AddressCity                string
-	Latitude                   *float64
-	Longitude                  *float64
-	AssignedAgentID            *uuid.UUID
-	Source                     *string
-	EnergyClass                *string
-	EnergyIndex                *float64
-	EnergyBouwjaar             *int
-	EnergyGebouwtype           *string
-	EnergyLabelValidUntil      *time.Time
-	EnergyLabelRegisteredAt    *time.Time
-	EnergyPrimairFossiel       *float64
-	EnergyBAGVerblijfsobjectID *string
-	EnergyLabelFetchedAt       *time.Time
-	ViewedByID                 *uuid.UUID
-	ViewedAt                   *time.Time
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	ID                                      uuid.UUID
+	OrganizationID                          uuid.UUID
+	ConsumerFirstName                       string
+	ConsumerLastName                        string
+	ConsumerPhone                           string
+	ConsumerEmail                           *string
+	ConsumerRole                            string
+	AddressStreet                           string
+	AddressHouseNumber                      string
+	AddressZipCode                          string
+	AddressCity                             string
+	Latitude                                *float64
+	Longitude                               *float64
+	AssignedAgentID                         *uuid.UUID
+	Source                                  *string
+	EnergyClass                             *string
+	EnergyIndex                             *float64
+	EnergyBouwjaar                          *int
+	EnergyGebouwtype                        *string
+	EnergyLabelValidUntil                   *time.Time
+	EnergyLabelRegisteredAt                 *time.Time
+	EnergyPrimairFossiel                    *float64
+	EnergyBAGVerblijfsobjectID              *string
+	EnergyLabelFetchedAt                    *time.Time
+	LeadEnrichmentSource                    *string
+	LeadEnrichmentPostcode6                 *string
+	LeadEnrichmentPostcode4                 *string
+	LeadEnrichmentBuurtcode                 *string
+	LeadEnrichmentDataYear                  *int
+	LeadEnrichmentGemAardgasverbruik        *float64
+	LeadEnrichmentGemElektriciteitsverbruik *float64
+	LeadEnrichmentHuishoudenGrootte         *float64
+	LeadEnrichmentKoopwoningenPct           *float64
+	LeadEnrichmentBouwjaarVanaf2000Pct      *float64
+	LeadEnrichmentWOZWaarde                 *float64
+	LeadEnrichmentMediaanVermogenX1000      *float64
+	LeadEnrichmentGemInkomen                *float64
+	LeadEnrichmentPctHoogInkomen            *float64
+	LeadEnrichmentPctLaagInkomen            *float64
+	LeadEnrichmentHuishoudensMetKinderenPct *float64
+	LeadEnrichmentStedelijkheid             *int
+	LeadEnrichmentConfidence                *float64
+	LeadEnrichmentFetchedAt                 *time.Time
+	LeadScore                               *int
+	LeadScorePreAI                          *int
+	LeadScoreFactors                        []byte
+	LeadScoreVersion                        *string
+	LeadScoreUpdatedAt                      *time.Time
+	ViewedByID                              *uuid.UUID
+	ViewedAt                                *time.Time
+	CreatedAt                               time.Time
+	UpdatedAt                               time.Time
 }
 
 // LeadSummary is a lightweight lead representation for returning customer detection
@@ -126,7 +150,14 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
-			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
+			energy_label_fetched_at,
+			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
+			lead_enrichment_gem_aardgasverbruik, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_huishouden_grootte,
+			lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_woz_waarde,
+			lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen,
+			lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_stedelijkheid, lead_enrichment_confidence, lead_enrichment_fetched_at,
+			lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at,
+			viewed_by_id, viewed_at, created_at, updated_at
 	`,
 		params.OrganizationID, params.ConsumerFirstName, params.ConsumerLastName, params.ConsumerPhone, params.ConsumerEmail, params.ConsumerRole,
 		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity, params.Latitude, params.Longitude,
@@ -136,7 +167,14 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
-		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.EnergyLabelFetchedAt,
+		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
+		&lead.LeadEnrichmentGemAardgasverbruik, &lead.LeadEnrichmentGemElektriciteitsverbruik, &lead.LeadEnrichmentHuishoudenGrootte,
+		&lead.LeadEnrichmentKoopwoningenPct, &lead.LeadEnrichmentBouwjaarVanaf2000Pct, &lead.LeadEnrichmentWOZWaarde,
+		&lead.LeadEnrichmentMediaanVermogenX1000, &lead.LeadEnrichmentGemInkomen, &lead.LeadEnrichmentPctHoogInkomen, &lead.LeadEnrichmentPctLaagInkomen,
+		&lead.LeadEnrichmentHuishoudensMetKinderenPct, &lead.LeadEnrichmentStedelijkheid, &lead.LeadEnrichmentConfidence, &lead.LeadEnrichmentFetchedAt,
+		&lead.LeadScore, &lead.LeadScorePreAI, &lead.LeadScoreFactors, &lead.LeadScoreVersion, &lead.LeadScoreUpdatedAt,
+		&lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if err != nil {
@@ -153,14 +191,28 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
-			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
+			energy_label_fetched_at,
+			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
+			lead_enrichment_gem_aardgasverbruik, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_huishouden_grootte,
+			lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_woz_waarde,
+			lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen,
+			lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_stedelijkheid, lead_enrichment_confidence, lead_enrichment_fetched_at,
+			lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at,
+			viewed_by_id, viewed_at, created_at, updated_at
 		FROM leads WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 	`, id, organizationID).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
-		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.EnergyLabelFetchedAt,
+		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
+		&lead.LeadEnrichmentGemAardgasverbruik, &lead.LeadEnrichmentGemElektriciteitsverbruik, &lead.LeadEnrichmentHuishoudenGrootte,
+		&lead.LeadEnrichmentKoopwoningenPct, &lead.LeadEnrichmentBouwjaarVanaf2000Pct, &lead.LeadEnrichmentWOZWaarde,
+		&lead.LeadEnrichmentMediaanVermogenX1000, &lead.LeadEnrichmentGemInkomen, &lead.LeadEnrichmentPctHoogInkomen, &lead.LeadEnrichmentPctLaagInkomen,
+		&lead.LeadEnrichmentHuishoudensMetKinderenPct, &lead.LeadEnrichmentStedelijkheid, &lead.LeadEnrichmentConfidence, &lead.LeadEnrichmentFetchedAt,
+		&lead.LeadScore, &lead.LeadScorePreAI, &lead.LeadScoreFactors, &lead.LeadScoreVersion, &lead.LeadScoreUpdatedAt,
+		&lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -191,7 +243,14 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string, organizationI
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
-			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
+			energy_label_fetched_at,
+			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
+			lead_enrichment_gem_aardgasverbruik, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_huishouden_grootte,
+			lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_woz_waarde,
+			lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen,
+			lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_stedelijkheid, lead_enrichment_confidence, lead_enrichment_fetched_at,
+			lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at,
+			viewed_by_id, viewed_at, created_at, updated_at
 		FROM leads WHERE consumer_phone = $1 AND organization_id = $2 AND deleted_at IS NULL
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -200,7 +259,14 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string, organizationI
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
-		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.EnergyLabelFetchedAt,
+		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
+		&lead.LeadEnrichmentGemAardgasverbruik, &lead.LeadEnrichmentGemElektriciteitsverbruik, &lead.LeadEnrichmentHuishoudenGrootte,
+		&lead.LeadEnrichmentKoopwoningenPct, &lead.LeadEnrichmentBouwjaarVanaf2000Pct, &lead.LeadEnrichmentWOZWaarde,
+		&lead.LeadEnrichmentMediaanVermogenX1000, &lead.LeadEnrichmentGemInkomen, &lead.LeadEnrichmentPctHoogInkomen, &lead.LeadEnrichmentPctLaagInkomen,
+		&lead.LeadEnrichmentHuishoudensMetKinderenPct, &lead.LeadEnrichmentStedelijkheid, &lead.LeadEnrichmentConfidence, &lead.LeadEnrichmentFetchedAt,
+		&lead.LeadScore, &lead.LeadScorePreAI, &lead.LeadScoreFactors, &lead.LeadScoreVersion, &lead.LeadScoreUpdatedAt,
+		&lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -289,6 +355,41 @@ type UpdateEnergyLabelParams struct {
 	FetchedAt      time.Time
 }
 
+type UpdateLeadEnrichmentParams struct {
+	Source                    *string
+	Postcode6                 *string
+	Postcode4                 *string
+	Buurtcode                 *string
+	DataYear                  *int
+	GemAardgasverbruik        *float64
+	GemElektriciteitsverbruik *float64
+	HuishoudenGrootte         *float64
+	KoopwoningenPct           *float64
+	BouwjaarVanaf2000Pct      *float64
+	WOZWaarde                 *float64
+	MediaanVermogenX1000      *float64
+	GemInkomen                *float64
+	PctHoogInkomen            *float64
+	PctLaagInkomen            *float64
+	HuishoudensMetKinderenPct *float64
+	Stedelijkheid             *int
+	Confidence                *float64
+	FetchedAt                 time.Time
+	Score                     *int
+	ScorePreAI                *int
+	ScoreFactors              []byte
+	ScoreVersion              *string
+	ScoreUpdatedAt            *time.Time
+}
+
+type UpdateLeadScoreParams struct {
+	Score          *int
+	ScorePreAI     *int
+	ScoreFactors   []byte
+	ScoreVersion   *string
+	ScoreUpdatedAt time.Time
+}
+
 func derefString(value *string) string {
 	if value == nil {
 		return ""
@@ -357,7 +458,14 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
-			energy_label_fetched_at, viewed_by_id, viewed_at, created_at, updated_at
+			energy_label_fetched_at,
+			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
+			lead_enrichment_gem_aardgasverbruik, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_huishouden_grootte,
+			lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_woz_waarde,
+			lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen,
+			lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_stedelijkheid, lead_enrichment_confidence, lead_enrichment_fetched_at,
+			lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at,
+			viewed_by_id, viewed_at, created_at, updated_at
 	`, strings.Join(setClauses, ", "), argIdx, argIdx+1)
 
 	var lead Lead
@@ -366,7 +474,14 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
-		&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
+		&lead.EnergyLabelFetchedAt,
+		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
+		&lead.LeadEnrichmentGemAardgasverbruik, &lead.LeadEnrichmentGemElektriciteitsverbruik, &lead.LeadEnrichmentHuishoudenGrootte,
+		&lead.LeadEnrichmentKoopwoningenPct, &lead.LeadEnrichmentBouwjaarVanaf2000Pct, &lead.LeadEnrichmentWOZWaarde,
+		&lead.LeadEnrichmentMediaanVermogenX1000, &lead.LeadEnrichmentGemInkomen, &lead.LeadEnrichmentPctHoogInkomen, &lead.LeadEnrichmentPctLaagInkomen,
+		&lead.LeadEnrichmentHuishoudensMetKinderenPct, &lead.LeadEnrichmentStedelijkheid, &lead.LeadEnrichmentConfidence, &lead.LeadEnrichmentFetchedAt,
+		&lead.LeadScore, &lead.LeadScorePreAI, &lead.LeadScoreFactors, &lead.LeadScoreVersion, &lead.LeadScoreUpdatedAt,
+		&lead.ViewedByID, &lead.ViewedAt,
 		&lead.CreatedAt, &lead.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -402,6 +517,102 @@ func (r *Repository) UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organi
 		nullable(params.BAGObjectID),
 		params.FetchedAt,
 		params.FetchedAt,
+	)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadEnrichmentParams) error {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE leads
+		SET lead_enrichment_source = $3,
+			lead_enrichment_postcode6 = $4,
+			lead_enrichment_postcode4 = $5,
+			lead_enrichment_buurtcode = $6,
+			lead_enrichment_data_year = $7,
+			lead_enrichment_gem_aardgasverbruik = $8,
+			lead_enrichment_gem_elektriciteitsverbruik = $9,
+			lead_enrichment_huishouden_grootte = $10,
+			lead_enrichment_koopwoningen_pct = $11,
+			lead_enrichment_bouwjaar_vanaf2000_pct = $12,
+			lead_enrichment_woz_waarde = $13,
+			lead_enrichment_mediaan_vermogen_x1000 = $14,
+			lead_enrichment_gem_inkomen = $15,
+			lead_enrichment_pct_hoog_inkomen = $16,
+			lead_enrichment_pct_laag_inkomen = $17,
+			lead_enrichment_huishoudens_met_kinderen_pct = $18,
+			lead_enrichment_stedelijkheid = $19,
+			lead_enrichment_confidence = $20,
+			lead_enrichment_fetched_at = $21,
+			lead_score = $22,
+			lead_score_pre_ai = $23,
+			lead_score_factors = $24,
+			lead_score_version = $25,
+			lead_score_updated_at = $26,
+			updated_at = $27
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+	`,
+		id,
+		organizationID,
+		nullable(params.Source),
+		nullable(params.Postcode6),
+		nullable(params.Postcode4),
+		nullable(params.Buurtcode),
+		nullable(params.DataYear),
+		nullable(params.GemAardgasverbruik),
+		nullable(params.GemElektriciteitsverbruik),
+		nullable(params.HuishoudenGrootte),
+		nullable(params.KoopwoningenPct),
+		nullable(params.BouwjaarVanaf2000Pct),
+		nullable(params.WOZWaarde),
+		nullable(params.MediaanVermogenX1000),
+		nullable(params.GemInkomen),
+		nullable(params.PctHoogInkomen),
+		nullable(params.PctLaagInkomen),
+		nullable(params.HuishoudensMetKinderenPct),
+		nullable(params.Stedelijkheid),
+		nullable(params.Confidence),
+		params.FetchedAt,
+		nullable(params.Score),
+		nullable(params.ScorePreAI),
+		params.ScoreFactors,
+		nullable(params.ScoreVersion),
+		nullable(params.ScoreUpdatedAt),
+		params.FetchedAt,
+	)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) UpdateLeadScore(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadScoreParams) error {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE leads
+		SET lead_score = $3,
+			lead_score_pre_ai = $4,
+			lead_score_factors = $5,
+			lead_score_version = $6,
+			lead_score_updated_at = $7,
+			updated_at = $8
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+	`,
+		id,
+		organizationID,
+		nullable(params.Score),
+		nullable(params.ScorePreAI),
+		params.ScoreFactors,
+		nullable(params.ScoreVersion),
+		params.ScoreUpdatedAt,
+		params.ScoreUpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -482,7 +693,14 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 			l.address_street, l.address_house_number, l.address_zip_code, l.address_city, l.latitude, l.longitude,
 			l.assigned_agent_id, l.source, l.energy_class, l.energy_index, l.energy_bouwjaar, l.energy_gebouwtype,
 			l.energy_label_valid_until, l.energy_label_registered_at, l.energy_primair_fossiel, l.energy_bag_verblijfsobject_id,
-			l.energy_label_fetched_at, l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at
+			l.energy_label_fetched_at,
+			l.lead_enrichment_source, l.lead_enrichment_postcode6, l.lead_enrichment_postcode4, l.lead_enrichment_buurtcode, l.lead_enrichment_data_year,
+			l.lead_enrichment_gem_aardgasverbruik, l.lead_enrichment_gem_elektriciteitsverbruik, l.lead_enrichment_huishouden_grootte,
+			l.lead_enrichment_koopwoningen_pct, l.lead_enrichment_bouwjaar_vanaf2000_pct, l.lead_enrichment_woz_waarde,
+			l.lead_enrichment_mediaan_vermogen_x1000, l.lead_enrichment_gem_inkomen, l.lead_enrichment_pct_hoog_inkomen, l.lead_enrichment_pct_laag_inkomen,
+			l.lead_enrichment_huishoudens_met_kinderen_pct, l.lead_enrichment_stedelijkheid, l.lead_enrichment_confidence, l.lead_enrichment_fetched_at,
+			l.lead_score, l.lead_score_pre_ai, l.lead_score_factors, l.lead_score_version, l.lead_score_updated_at,
+			l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at
 		FROM leads l
 		%s
 		WHERE %s
@@ -504,7 +722,14 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 			&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 			&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
-			&lead.EnergyLabelFetchedAt, &lead.ViewedByID, &lead.ViewedAt,
+			&lead.EnergyLabelFetchedAt,
+			&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
+			&lead.LeadEnrichmentGemAardgasverbruik, &lead.LeadEnrichmentGemElektriciteitsverbruik, &lead.LeadEnrichmentHuishoudenGrootte,
+			&lead.LeadEnrichmentKoopwoningenPct, &lead.LeadEnrichmentBouwjaarVanaf2000Pct, &lead.LeadEnrichmentWOZWaarde,
+			&lead.LeadEnrichmentMediaanVermogenX1000, &lead.LeadEnrichmentGemInkomen, &lead.LeadEnrichmentPctHoogInkomen, &lead.LeadEnrichmentPctLaagInkomen,
+			&lead.LeadEnrichmentHuishoudensMetKinderenPct, &lead.LeadEnrichmentStedelijkheid, &lead.LeadEnrichmentConfidence, &lead.LeadEnrichmentFetchedAt,
+			&lead.LeadScore, &lead.LeadScorePreAI, &lead.LeadScoreFactors, &lead.LeadScoreVersion, &lead.LeadScoreUpdatedAt,
+			&lead.ViewedByID, &lead.ViewedAt,
 			&lead.CreatedAt, &lead.UpdatedAt,
 		); err != nil {
 			return nil, 0, err

@@ -18,6 +18,7 @@ import (
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/router"
 	"portal_final_backend/internal/identity"
+	"portal_final_backend/internal/leadenrichment"
 	"portal_final_backend/internal/leads"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
@@ -107,6 +108,11 @@ func main() {
 		energyLabelEnricher := adapters.NewEnergyLabelAdapter(energyLabelModule.Service())
 		leadsModule.SetEnergyLabelEnricher(energyLabelEnricher)
 	}
+
+	// Lead enrichment module for PDOK/CBS signals
+	leadEnrichmentModule := leadenrichment.NewModule(log)
+	leadEnricher := adapters.NewLeadEnrichmentAdapter(leadEnrichmentModule.Service())
+	leadsModule.SetLeadEnricher(leadEnricher)
 
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)

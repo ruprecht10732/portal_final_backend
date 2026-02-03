@@ -14,6 +14,7 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/scoring"
 )
 
 const (
@@ -64,6 +65,7 @@ func normalizeLeadQuality(quality string) string {
 type ToolDependencies struct {
 	Repo          repository.LeadsRepository
 	DraftedEmails map[uuid.UUID]EmailDraft
+	Scorer        *scoring.Service
 	mu            sync.RWMutex
 	tenantID      *uuid.UUID
 }
@@ -201,6 +203,18 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	})
 	if err != nil {
 		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
+	}
+
+	if deps.Scorer != nil {
+		if scoreResult, scoreErr := deps.Scorer.Recalculate(ctx, leadID, &leadServiceID, tenantID, true); scoreErr == nil {
+			_ = deps.Repo.UpdateLeadScore(ctx, leadID, tenantID, repository.UpdateLeadScoreParams{
+				Score:          &scoreResult.Score,
+				ScorePreAI:     &scoreResult.ScorePreAI,
+				ScoreFactors:   scoreResult.FactorsJSON,
+				ScoreVersion:   &scoreResult.Version,
+				ScoreUpdatedAt: scoreResult.UpdatedAt,
+			})
+		}
 	}
 
 	return SaveAnalysisOutput{Success: true, Message: "Analysis saved successfully"}, nil

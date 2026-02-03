@@ -30,6 +30,12 @@ type LeadWriter interface {
 	BulkDelete(ctx context.Context, ids []uuid.UUID, organizationID uuid.UUID) (int, error)
 }
 
+// LeadEnrichmentWriter updates enrichment and scoring data for leads.
+type LeadEnrichmentWriter interface {
+	UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadEnrichmentParams) error
+	UpdateLeadScore(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadScoreParams) error
+}
+
 // LeadViewTracker tracks which users have viewed leads.
 type LeadViewTracker interface {
 	SetViewedBy(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, userID uuid.UUID) error
@@ -103,6 +109,20 @@ type PhotoAnalysisStore interface {
 	ListPhotoAnalysesByLead(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]PhotoAnalysis, error)
 }
 
+// LeadAppointmentStats holds appointment statistics for scoring.
+type LeadAppointmentStats struct {
+	Total       int
+	Scheduled   int
+	Completed   int
+	Cancelled   int
+	HasUpcoming bool
+}
+
+// AppointmentStatsReader provides appointment stats for leads (for scoring).
+type AppointmentStatsReader interface {
+	GetLeadAppointmentStats(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadAppointmentStats, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -112,6 +132,7 @@ type PhotoAnalysisStore interface {
 type LeadsRepository interface {
 	LeadReader
 	LeadWriter
+	LeadEnrichmentWriter
 	LeadViewTracker
 	ActivityLogger
 	MetricsReader
@@ -122,6 +143,7 @@ type LeadsRepository interface {
 	AttachmentStore
 	PhotoAnalysisStore
 	ServiceTypeContextReader
+	AppointmentStatsReader
 }
 
 // Ensure Repository implements LeadsRepository

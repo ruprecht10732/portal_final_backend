@@ -19,6 +19,7 @@ import (
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/platform/ai/moonshot"
 )
 
@@ -70,7 +71,7 @@ type LeadAdvisor struct {
 // NewLeadAdvisor builds the AI Advisor agent with Kimi model
 // Returns an error if the agent or runner cannot be initialized
 // PhotoAnalyzer, storageSvc, and attachmentsBucket are optional - if provided, enables photo analysis during lead analysis
-func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository, photoAnalyzer *PhotoAnalyzer, storageSvc storage.StorageService, attachmentsBucket string) (*LeadAdvisor, error) {
+func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository, photoAnalyzer *PhotoAnalyzer, storageSvc storage.StorageService, attachmentsBucket string, scorer *scoring.Service) (*LeadAdvisor, error) {
 	// Use kimi-k2.5 with thinking disabled for more reliable tool calling
 	// Thinking mode restricts tool_choice to only "auto" or "none"
 	// Non-thinking mode may allow more flexibility
@@ -96,6 +97,7 @@ func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository, photoAnalyze
 	toolDeps := &ToolDependencies{
 		Repo:          repo,
 		DraftedEmails: advisor.draftedEmails,
+		Scorer:        scorer,
 	}
 	advisor.toolDeps = toolDeps
 

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -155,20 +156,52 @@ type EnergyLabelResponse struct {
 	PrimaireFossieleEnergie *float64   `json:"primaireFossieleEnergie,omitempty"` // Primary fossil energy use (kWh/m2·jaar)
 }
 
+type LeadEnrichmentResponse struct {
+	Source                    *string    `json:"source,omitempty"`
+	Postcode6                 *string    `json:"postcode6,omitempty"`
+	Postcode4                 *string    `json:"postcode4,omitempty"`
+	Buurtcode                 *string    `json:"buurtcode,omitempty"`
+	DataYear                  *int       `json:"dataYear,omitempty"` // Year of CBS statistics data (e.g. 2022, 2023, 2024)
+	GemAardgasverbruik        *float64   `json:"gemAardgasverbruik,omitempty"`
+	GemElektriciteitsverbruik *float64   `json:"gemElektriciteitsverbruik,omitempty"`
+	HuishoudenGrootte         *float64   `json:"huishoudenGrootte,omitempty"`
+	KoopwoningenPct           *float64   `json:"koopwoningenPct,omitempty"`
+	BouwjaarVanaf2000Pct      *float64   `json:"bouwjaarVanaf2000Pct,omitempty"`
+	WOZWaarde                 *float64   `json:"wozWaarde,omitempty"` // Average WOZ property value in thousands
+	MediaanVermogenX1000      *float64   `json:"mediaanVermogenX1000,omitempty"`
+	GemInkomen                *float64   `json:"gemInkomen,omitempty"` // Average income in thousands
+	PctHoogInkomen            *float64   `json:"pctHoogInkomen,omitempty"`
+	PctLaagInkomen            *float64   `json:"pctLaagInkomen,omitempty"`
+	HuishoudensMetKinderenPct *float64   `json:"huishoudensMetKinderenPct,omitempty"`
+	Stedelijkheid             *int       `json:"stedelijkheid,omitempty"` // 1=very urban to 5=rural
+	Confidence                *float64   `json:"confidence,omitempty"`
+	FetchedAt                 *time.Time `json:"fetchedAt,omitempty"`
+}
+
+type LeadScoreResponse struct {
+	Score     *int            `json:"score,omitempty"`
+	PreAI     *int            `json:"preAi,omitempty"`
+	Factors   json.RawMessage `json:"factors,omitempty"`
+	Version   *string         `json:"version,omitempty"`
+	UpdatedAt *time.Time      `json:"updatedAt,omitempty"`
+}
+
 type LeadResponse struct {
-	ID              uuid.UUID             `json:"id"`
-	Consumer        ConsumerResponse      `json:"consumer"`
-	Address         AddressResponse       `json:"address"`
-	Services        []LeadServiceResponse `json:"services"`
-	CurrentService  *LeadServiceResponse  `json:"currentService,omitempty"`
-	AggregateStatus *LeadStatus           `json:"aggregateStatus,omitempty"` // Derived from current service
-	EnergyLabel     *EnergyLabelResponse  `json:"energyLabel,omitempty"`     // Energy label data from EP-Online
-	AssignedAgentID *uuid.UUID            `json:"assignedAgentId,omitempty"`
-	ViewedByID      *uuid.UUID            `json:"viewedById,omitempty"`
-	ViewedAt        *time.Time            `json:"viewedAt,omitempty"`
-	Source          *string               `json:"source,omitempty"`
-	CreatedAt       time.Time             `json:"createdAt"`
-	UpdatedAt       time.Time             `json:"updatedAt"`
+	ID              uuid.UUID               `json:"id"`
+	Consumer        ConsumerResponse        `json:"consumer"`
+	Address         AddressResponse         `json:"address"`
+	Services        []LeadServiceResponse   `json:"services"`
+	CurrentService  *LeadServiceResponse    `json:"currentService,omitempty"`
+	AggregateStatus *LeadStatus             `json:"aggregateStatus,omitempty"` // Derived from current service
+	EnergyLabel     *EnergyLabelResponse    `json:"energyLabel,omitempty"`     // Energy label data from EP-Online
+	LeadEnrichment  *LeadEnrichmentResponse `json:"leadEnrichment,omitempty"`
+	LeadScore       *LeadScoreResponse      `json:"leadScore,omitempty"`
+	AssignedAgentID *uuid.UUID              `json:"assignedAgentId,omitempty"`
+	ViewedByID      *uuid.UUID              `json:"viewedById,omitempty"`
+	ViewedAt        *time.Time              `json:"viewedAt,omitempty"`
+	Source          *string                 `json:"source,omitempty"`
+	CreatedAt       time.Time               `json:"createdAt"`
+	UpdatedAt       time.Time               `json:"updatedAt"`
 }
 
 type LeadHeatmapPointResponse struct {

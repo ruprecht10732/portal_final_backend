@@ -1,6 +1,8 @@
 package management
 
 import (
+	"encoding/json"
+
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 )
@@ -29,6 +31,53 @@ func energyLabelFromLead(lead repository.Lead) *transport.EnergyLabelResponse {
 	return resp
 }
 
+func leadEnrichmentFromLead(lead repository.Lead) *transport.LeadEnrichmentResponse {
+	if lead.LeadEnrichmentSource == nil && lead.LeadEnrichmentFetchedAt == nil {
+		return nil
+	}
+
+	return &transport.LeadEnrichmentResponse{
+		Source:                    lead.LeadEnrichmentSource,
+		Postcode6:                 lead.LeadEnrichmentPostcode6,
+		Postcode4:                 lead.LeadEnrichmentPostcode4,
+		Buurtcode:                 lead.LeadEnrichmentBuurtcode,
+		DataYear:                  lead.LeadEnrichmentDataYear,
+		GemAardgasverbruik:        lead.LeadEnrichmentGemAardgasverbruik,
+		GemElektriciteitsverbruik: lead.LeadEnrichmentGemElektriciteitsverbruik,
+		HuishoudenGrootte:         lead.LeadEnrichmentHuishoudenGrootte,
+		KoopwoningenPct:           lead.LeadEnrichmentKoopwoningenPct,
+		BouwjaarVanaf2000Pct:      lead.LeadEnrichmentBouwjaarVanaf2000Pct,
+		WOZWaarde:                 lead.LeadEnrichmentWOZWaarde,
+		MediaanVermogenX1000:      lead.LeadEnrichmentMediaanVermogenX1000,
+		GemInkomen:                lead.LeadEnrichmentGemInkomen,
+		PctHoogInkomen:            lead.LeadEnrichmentPctHoogInkomen,
+		PctLaagInkomen:            lead.LeadEnrichmentPctLaagInkomen,
+		HuishoudensMetKinderenPct: lead.LeadEnrichmentHuishoudensMetKinderenPct,
+		Stedelijkheid:             lead.LeadEnrichmentStedelijkheid,
+		Confidence:                lead.LeadEnrichmentConfidence,
+		FetchedAt:                 lead.LeadEnrichmentFetchedAt,
+	}
+}
+
+func leadScoreFromLead(lead repository.Lead) *transport.LeadScoreResponse {
+	if lead.LeadScore == nil && lead.LeadScorePreAI == nil {
+		return nil
+	}
+
+	var factors json.RawMessage
+	if len(lead.LeadScoreFactors) > 0 {
+		factors = json.RawMessage(lead.LeadScoreFactors)
+	}
+
+	return &transport.LeadScoreResponse{
+		Score:     lead.LeadScore,
+		PreAI:     lead.LeadScorePreAI,
+		Factors:   factors,
+		Version:   lead.LeadScoreVersion,
+		UpdatedAt: lead.LeadScoreUpdatedAt,
+	}
+}
+
 // ToLeadResponse converts a repository Lead to a transport LeadResponse.
 func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 	return transport.LeadResponse{
@@ -41,6 +90,8 @@ func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 		UpdatedAt:       lead.UpdatedAt,
 		Services:        []transport.LeadServiceResponse{},
 		EnergyLabel:     energyLabelFromLead(lead),
+		LeadEnrichment:  leadEnrichmentFromLead(lead),
+		LeadScore:       leadScoreFromLead(lead),
 		Consumer: transport.ConsumerResponse{
 			FirstName: lead.ConsumerFirstName,
 			LastName:  lead.ConsumerLastName,

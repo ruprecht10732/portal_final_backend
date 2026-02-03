@@ -15,6 +15,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/platform/apperr"
@@ -24,9 +25,10 @@ import (
 )
 
 const (
-	leadNotFoundMsg            = "lead not found"
-	leadServiceNotFoundMsg     = "lead service not found"
-	energyLabelRefreshInterval = 30 * 24 * time.Hour
+	leadNotFoundMsg               = "lead not found"
+	leadServiceNotFoundMsg        = "lead service not found"
+	energyLabelRefreshInterval    = 30 * 24 * time.Hour
+	leadEnrichmentRefreshInterval = 365 * 24 * time.Hour
 )
 
 // Repository defines the data access interface needed by the management service.
@@ -40,6 +42,7 @@ type Repository interface {
 	repository.LeadServiceWriter
 	repository.MetricsReader
 	UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateEnergyLabelParams) error
+	UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateLeadEnrichmentParams) error
 }
 
 // Service handles lead management operations (CRUD).
@@ -48,6 +51,8 @@ type Service struct {
 	eventBus       events.Bus
 	maps           *maps.Service
 	energyEnricher ports.EnergyLabelEnricher
+	leadEnricher   ports.LeadEnricher
+	scorer         *scoring.Service
 }
 
 // New creates a new lead management service.
@@ -59,6 +64,16 @@ func New(repo Repository, eventBus events.Bus, mapsService *maps.Service) *Servi
 // This is called after module initialization to break circular dependencies.
 func (s *Service) SetEnergyLabelEnricher(enricher ports.EnergyLabelEnricher) {
 	s.energyEnricher = enricher
+}
+
+// SetLeadEnricher sets the lead enrichment provider.
+func (s *Service) SetLeadEnricher(enricher ports.LeadEnricher) {
+	s.leadEnricher = enricher
+}
+
+// SetLeadScorer sets the lead scoring service.
+func (s *Service) SetLeadScorer(scorer *scoring.Service) {
+	s.scorer = scorer
 }
 
 // Create creates a new lead.
@@ -117,6 +132,8 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 
 	// Enrich with energy label data (fire and forget - don't fail lead creation)
 	s.enrichWithEnergyLabel(ctx, tenantID, &lead, &resp)
+	// Enrich with lead data (fire and forget - don't fail lead creation)
+	s.enrichWithLeadData(ctx, tenantID, &lead, &resp)
 
 	return resp, nil
 }
@@ -135,6 +152,8 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID)
 
 	// Enrich with energy label data
 	s.enrichWithEnergyLabel(ctx, tenantID, &lead, &resp)
+	// Enrich with lead data
+	s.enrichWithLeadData(ctx, tenantID, &lead, &resp)
 
 	return resp, nil
 }
@@ -240,6 +259,105 @@ func (s *Service) enrichWithEnergyLabel(ctx context.Context, tenantID uuid.UUID,
 	lead.EnergyLabelFetchedAt = &leadFetchedAt
 
 	resp.EnergyLabel = energyLabelFromLead(*lead)
+}
+
+// enrichWithLeadData ensures the lead has up-to-date enrichment and score data.
+// This is a best-effort operation - failures do not block the request flow.
+func (s *Service) enrichWithLeadData(ctx context.Context, tenantID uuid.UUID, lead *repository.Lead, resp *transport.LeadResponse) {
+	resp.LeadEnrichment = leadEnrichmentFromLead(*lead)
+	resp.LeadScore = leadScoreFromLead(*lead)
+
+	if s.leadEnricher == nil {
+		return
+	}
+
+	if lead.LeadEnrichmentFetchedAt != nil {
+		if time.Since(*lead.LeadEnrichmentFetchedAt) < leadEnrichmentRefreshInterval {
+			return
+		}
+	}
+
+	data, err := s.leadEnricher.EnrichLead(ctx, lead.AddressZipCode)
+	if err != nil || data == nil {
+		return
+	}
+
+	fetchedAt := time.Now().UTC()
+
+	var serviceID *uuid.UUID
+	if resp.CurrentService != nil {
+		serviceID = &resp.CurrentService.ID
+	}
+
+	var scoreResult *scoring.Result
+	if s.scorer != nil {
+		scoreResult, _ = s.scorer.Recalculate(ctx, lead.ID, serviceID, tenantID, false)
+	}
+
+	updateParams := repository.UpdateLeadEnrichmentParams{
+		Source:                    toPtrString(data.Source),
+		Postcode6:                 toPtrString(data.Postcode6),
+		Postcode4:                 toPtrString(data.Postcode4),
+		Buurtcode:                 toPtrString(data.Buurtcode),
+		DataYear:                  data.DataYear,
+		GemAardgasverbruik:        data.GemAardgasverbruik,
+		GemElektriciteitsverbruik: data.GemElektriciteitsverbruik,
+		HuishoudenGrootte:         data.HuishoudenGrootte,
+		KoopwoningenPct:           data.KoopwoningenPct,
+		BouwjaarVanaf2000Pct:      data.BouwjaarVanaf2000Pct,
+		WOZWaarde:                 data.WOZWaarde,
+		MediaanVermogenX1000:      data.MediaanVermogenX1000,
+		GemInkomen:                data.GemInkomenHuishouden,
+		PctHoogInkomen:            data.PctHoogInkomen,
+		PctLaagInkomen:            data.PctLaagInkomen,
+		HuishoudensMetKinderenPct: data.HuishoudensMetKinderenPct,
+		Stedelijkheid:             data.Stedelijkheid,
+		Confidence:                data.Confidence,
+		FetchedAt:                 fetchedAt,
+	}
+
+	if scoreResult != nil {
+		updateParams.Score = &scoreResult.Score
+		updateParams.ScorePreAI = &scoreResult.ScorePreAI
+		updateParams.ScoreFactors = scoreResult.FactorsJSON
+		updateParams.ScoreVersion = toPtrString(scoreResult.Version)
+		updateParams.ScoreUpdatedAt = &scoreResult.UpdatedAt
+	}
+
+	if err := s.repo.UpdateLeadEnrichment(ctx, lead.ID, tenantID, updateParams); err != nil {
+		return
+	}
+
+	lead.LeadEnrichmentSource = updateParams.Source
+	lead.LeadEnrichmentPostcode6 = updateParams.Postcode6
+	lead.LeadEnrichmentPostcode4 = updateParams.Postcode4
+	lead.LeadEnrichmentBuurtcode = updateParams.Buurtcode
+	lead.LeadEnrichmentDataYear = updateParams.DataYear
+	lead.LeadEnrichmentGemAardgasverbruik = updateParams.GemAardgasverbruik
+	lead.LeadEnrichmentGemElektriciteitsverbruik = updateParams.GemElektriciteitsverbruik
+	lead.LeadEnrichmentHuishoudenGrootte = updateParams.HuishoudenGrootte
+	lead.LeadEnrichmentKoopwoningenPct = updateParams.KoopwoningenPct
+	lead.LeadEnrichmentBouwjaarVanaf2000Pct = updateParams.BouwjaarVanaf2000Pct
+	lead.LeadEnrichmentWOZWaarde = updateParams.WOZWaarde
+	lead.LeadEnrichmentMediaanVermogenX1000 = updateParams.MediaanVermogenX1000
+	lead.LeadEnrichmentGemInkomen = updateParams.GemInkomen
+	lead.LeadEnrichmentPctHoogInkomen = updateParams.PctHoogInkomen
+	lead.LeadEnrichmentPctLaagInkomen = updateParams.PctLaagInkomen
+	lead.LeadEnrichmentHuishoudensMetKinderenPct = updateParams.HuishoudensMetKinderenPct
+	lead.LeadEnrichmentStedelijkheid = updateParams.Stedelijkheid
+	lead.LeadEnrichmentConfidence = updateParams.Confidence
+	lead.LeadEnrichmentFetchedAt = &fetchedAt
+
+	if scoreResult != nil {
+		lead.LeadScore = updateParams.Score
+		lead.LeadScorePreAI = updateParams.ScorePreAI
+		lead.LeadScoreFactors = updateParams.ScoreFactors
+		lead.LeadScoreVersion = updateParams.ScoreVersion
+		lead.LeadScoreUpdatedAt = updateParams.ScoreUpdatedAt
+	}
+
+	resp.LeadEnrichment = leadEnrichmentFromLead(*lead)
+	resp.LeadScore = leadScoreFromLead(*lead)
 }
 
 // Update updates a lead's information.
@@ -905,4 +1023,8 @@ func toPtr(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func toPtrString(value string) *string {
+	return toPtr(value)
 }

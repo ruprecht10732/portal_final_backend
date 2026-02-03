@@ -14,6 +14,7 @@ import (
 	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/config"
@@ -41,12 +42,16 @@ type Module struct {
 	storage              storage.StorageService
 	attachmentsBucket    string
 	log                  *logger.Logger
+	scorer               *scoring.Service
 }
 
 // NewModule creates and initializes the leads module with all its dependencies.
 func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
 	// Create shared repository
 	repo := repository.New(pool)
+
+	// Score service for lead scoring
+	scorer := scoring.New(repo, log)
 
 	// Photo Analyzer for image analysis (must be created first as advisor depends on it)
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
@@ -55,7 +60,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	}
 
 	// AI Advisor for lead analysis (orchestrates PhotoAnalyzer internally)
-	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo, photoAnalyzer, storageSvc, cfg.GetMinioBucketLeadServiceAttachments())
+	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo, photoAnalyzer, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), scorer)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +95,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
 	mgmtSvc := management.New(repo, eventBus, mapsSvc)
+	mgmtSvc.SetLeadScorer(scorer)
 	notesSvc := notes.New(repo)
 
 	// Create handlers
@@ -112,6 +118,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		storage:              storageSvc,
 		attachmentsBucket:    cfg.GetMinioBucketLeadServiceAttachments(),
 		log:                  log,
+		scorer:               scorer,
 	}, nil
 }
 
@@ -160,6 +167,17 @@ func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetEnergyLabelEnricher(enricher ports.EnergyLabelEnricher) {
 	m.management.SetEnergyLabelEnricher(enricher)
+}
+
+// SetLeadEnricher sets the lead enrichment provider.
+func (m *Module) SetLeadEnricher(enricher ports.LeadEnricher) {
+	m.management.SetLeadEnricher(enricher)
+}
+
+// SetLeadScorer sets the scoring service for lead updates.
+func (m *Module) SetLeadScorer(scorer *scoring.Service) {
+	m.management.SetLeadScorer(scorer)
+	m.scorer = scorer
 }
 
 // RegisterRoutes mounts leads routes on the provided router context.
