@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/maps"
@@ -41,14 +42,21 @@ type Repository interface {
 
 // Service handles lead management operations (CRUD).
 type Service struct {
-	repo     Repository
-	eventBus events.Bus
-	maps     *maps.Service
+	repo           Repository
+	eventBus       events.Bus
+	maps           *maps.Service
+	energyEnricher ports.EnergyLabelEnricher
 }
 
 // New creates a new lead management service.
 func New(repo Repository, eventBus events.Bus, mapsService *maps.Service) *Service {
 	return &Service{repo: repo, eventBus: eventBus, maps: mapsService}
+}
+
+// SetEnergyLabelEnricher sets the energy label enricher for lead enrichment.
+// This is called after module initialization to break circular dependencies.
+func (s *Service) SetEnergyLabelEnricher(enricher ports.EnergyLabelEnricher) {
+	s.energyEnricher = enricher
 }
 
 // Create creates a new lead.
@@ -103,7 +111,12 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 	})
 
 	services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)
-	return ToLeadResponseWithServices(lead, services), nil
+	resp := ToLeadResponseWithServices(lead, services)
+
+	// Enrich with energy label data (fire and forget - don't fail lead creation)
+	s.enrichWithEnergyLabel(ctx, &resp)
+
+	return resp, nil
 }
 
 // GetByID retrieves a lead by ID.
@@ -116,7 +129,43 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID)
 		return transport.LeadResponse{}, err
 	}
 
-	return ToLeadResponseWithServices(lead, services), nil
+	resp := ToLeadResponseWithServices(lead, services)
+
+	// Enrich with energy label data
+	s.enrichWithEnergyLabel(ctx, &resp)
+
+	return resp, nil
+}
+
+// enrichWithEnergyLabel adds energy label data to the lead response.
+// This is a best-effort operation - errors are logged but don't fail the request.
+func (s *Service) enrichWithEnergyLabel(ctx context.Context, resp *transport.LeadResponse) {
+	if s.energyEnricher == nil {
+		return
+	}
+
+	params := ports.EnrichLeadParams{
+		Postcode:   resp.Address.ZipCode,
+		Huisnummer: resp.Address.HouseNumber,
+	}
+
+	data, err := s.energyEnricher.EnrichLead(ctx, params)
+	if err != nil {
+		// Log but don't fail - energy label is optional enrichment
+		return
+	}
+
+	if data != nil {
+		resp.EnergyLabel = &transport.EnergyLabelResponse{
+			Energieklasse:           data.Energieklasse,
+			EnergieIndex:            data.EnergieIndex,
+			Bouwjaar:                data.Bouwjaar,
+			GeldigTot:               data.GeldigTot,
+			Gebouwtype:              data.Gebouwtype,
+			Registratiedatum:        data.Registratiedatum,
+			PrimaireFossieleEnergie: data.PrimaireFossieleEnergie,
+		}
+	}
 }
 
 // Update updates a lead's information.

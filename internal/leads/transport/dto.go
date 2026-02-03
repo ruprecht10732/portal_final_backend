@@ -145,6 +145,16 @@ type LeadServiceResponse struct {
 	UpdatedAt    time.Time   `json:"updatedAt"`
 }
 
+type EnergyLabelResponse struct {
+	Energieklasse           string     `json:"energieklasse"`                     // Energy label class (A+++, A++, A+, A, B, C, D, E, F, G)
+	EnergieIndex            *float64   `json:"energieIndex,omitempty"`            // Energy index value
+	Bouwjaar                int        `json:"bouwjaar,omitempty"`                // Construction year
+	GeldigTot               *time.Time `json:"geldigTot,omitempty"`               // Label validity end date
+	Gebouwtype              string     `json:"gebouwtype,omitempty"`              // Building type
+	Registratiedatum        *time.Time `json:"registratiedatum,omitempty"`        // When the label was registered
+	PrimaireFossieleEnergie *float64   `json:"primaireFossieleEnergie,omitempty"` // Primary fossil energy use (kWh/m2·jaar)
+}
+
 type LeadResponse struct {
 	ID              uuid.UUID             `json:"id"`
 	Consumer        ConsumerResponse      `json:"consumer"`
@@ -152,6 +162,7 @@ type LeadResponse struct {
 	Services        []LeadServiceResponse `json:"services"`
 	CurrentService  *LeadServiceResponse  `json:"currentService,omitempty"`
 	AggregateStatus *LeadStatus           `json:"aggregateStatus,omitempty"` // Derived from current service
+	EnergyLabel     *EnergyLabelResponse  `json:"energyLabel,omitempty"`     // Energy label data from EP-Online
 	AssignedAgentID *uuid.UUID            `json:"assignedAgentId,omitempty"`
 	ViewedByID      *uuid.UUID            `json:"viewedById,omitempty"`
 	ViewedAt        *time.Time            `json:"viewedAt,omitempty"`

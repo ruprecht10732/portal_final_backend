@@ -13,6 +13,7 @@ import (
 	"portal_final_backend/internal/auth"
 	"portal_final_backend/internal/catalog"
 	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/energylabel"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/router"
@@ -99,6 +100,13 @@ func main() {
 	// Set appointment booker on leads module (breaks circular dependency)
 	appointmentBooker := adapters.NewAppointmentsAdapter(appointmentsModule.Service)
 	leadsModule.SetAppointmentBooker(appointmentBooker)
+
+	// Energy label module for lead enrichment
+	energyLabelModule := energylabel.NewModule(cfg, log)
+	if energyLabelModule.IsEnabled() {
+		energyLabelEnricher := adapters.NewEnergyLabelAdapter(energyLabelModule.Service())
+		leadsModule.SetEnergyLabelEnricher(energyLabelEnricher)
+	}
 
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)

@@ -156,6 +156,12 @@ func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
 	m.callLogger.SetAppointmentBooker(booker)
 }
 
+// SetEnergyLabelEnricher sets the energy label enricher on the management service.
+// This is called after module initialization to break circular dependencies.
+func (m *Module) SetEnergyLabelEnricher(enricher ports.EnergyLabelEnricher) {
+	m.management.SetEnergyLabelEnricher(enricher)
+}
+
 // RegisterRoutes mounts leads routes on the provided router context.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	// All leads routes require authentication

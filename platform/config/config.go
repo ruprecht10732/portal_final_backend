@@ -77,41 +77,48 @@ type MinIOConfig interface {
 	IsMinIOEnabled() bool
 }
 
+// EnergyLabelConfig provides settings for EP-Online energy label API.
+type EnergyLabelConfig interface {
+	GetEPOnlineAPIKey() string
+	IsEnergyLabelEnabled() bool
+}
+
 // =============================================================================
 // Main Config Struct
 // =============================================================================
 
 // Config holds all application configuration values.
 type Config struct {
-	Env                   string
-	HTTPAddr              string
-	DatabaseURL           string
-	JWTAccessSecret       string
-	JWTRefreshSecret      string
-	AccessTokenTTL        time.Duration
-	RefreshTokenTTL       time.Duration
-	VerifyTokenTTL        time.Duration
-	ResetTokenTTL         time.Duration
-	CORSAllowAll          bool
-	CORSOrigins           []string
-	CORSAllowCreds        bool
-	AppBaseURL            string
-	EmailEnabled          bool
-	BrevoAPIKey           string
-	EmailFromName         string
-	EmailFromAddress      string
-	RefreshCookieName     string
-	RefreshCookieDomain   string
-	RefreshCookiePath     string
-	RefreshCookieSecure   bool
-	RefreshCookieSameSite              http.SameSite
-	MoonshotAPIKey                     string
-	MinIOEndpoint                      string
-	MinIOAccessKey                     string
-	MinIOSecretKey                     string
-	MinIOUseSSL                        bool
-	MinIOMaxFileSize                   int64
-	MinioBucketLeadServiceAttachments  string
+	Env                               string
+	HTTPAddr                          string
+	DatabaseURL                       string
+	JWTAccessSecret                   string
+	JWTRefreshSecret                  string
+	AccessTokenTTL                    time.Duration
+	RefreshTokenTTL                   time.Duration
+	VerifyTokenTTL                    time.Duration
+	ResetTokenTTL                     time.Duration
+	CORSAllowAll                      bool
+	CORSOrigins                       []string
+	CORSAllowCreds                    bool
+	AppBaseURL                        string
+	EmailEnabled                      bool
+	BrevoAPIKey                       string
+	EmailFromName                     string
+	EmailFromAddress                  string
+	RefreshCookieName                 string
+	RefreshCookieDomain               string
+	RefreshCookiePath                 string
+	RefreshCookieSecure               bool
+	RefreshCookieSameSite             http.SameSite
+	MoonshotAPIKey                    string
+	EPOnlineAPIKey                    string
+	MinIOEndpoint                     string
+	MinIOAccessKey                    string
+	MinIOSecretKey                    string
+	MinIOUseSSL                       bool
+	MinIOMaxFileSize                  int64
+	MinioBucketLeadServiceAttachments string
 }
 
 // =============================================================================
@@ -153,13 +160,19 @@ func (c *Config) GetCORSOrigins() []string { return c.CORSOrigins }
 func (c *Config) GetCORSAllowCreds() bool  { return c.CORSAllowCreds }
 
 // MinIOConfig implementation
-func (c *Config) GetMinIOEndpoint() string                    { return c.MinIOEndpoint }
-func (c *Config) GetMinIOAccessKey() string                   { return c.MinIOAccessKey }
-func (c *Config) GetMinIOSecretKey() string                   { return c.MinIOSecretKey }
-func (c *Config) GetMinIOUseSSL() bool                        { return c.MinIOUseSSL }
-func (c *Config) GetMinIOMaxFileSize() int64                  { return c.MinIOMaxFileSize }
-func (c *Config) GetMinioBucketLeadServiceAttachments() string { return c.MinioBucketLeadServiceAttachments }
-func (c *Config) IsMinIOEnabled() bool                        { return c.MinIOEndpoint != "" }
+func (c *Config) GetMinIOEndpoint() string   { return c.MinIOEndpoint }
+func (c *Config) GetMinIOAccessKey() string  { return c.MinIOAccessKey }
+func (c *Config) GetMinIOSecretKey() string  { return c.MinIOSecretKey }
+func (c *Config) GetMinIOUseSSL() bool       { return c.MinIOUseSSL }
+func (c *Config) GetMinIOMaxFileSize() int64 { return c.MinIOMaxFileSize }
+func (c *Config) GetMinioBucketLeadServiceAttachments() string {
+	return c.MinioBucketLeadServiceAttachments
+}
+func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
+
+// EnergyLabelConfig implementation
+func (c *Config) GetEPOnlineAPIKey() string  { return c.EPOnlineAPIKey }
+func (c *Config) IsEnergyLabelEnabled() bool { return c.EPOnlineAPIKey != "" }
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
@@ -180,29 +193,30 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Env:                   getEnv("APP_ENV", "development"),
-		HTTPAddr:              getEnv("HTTP_ADDR", ":8080"),
-		DatabaseURL:           getEnv("DATABASE_URL", ""),
-		JWTAccessSecret:       getEnv("JWT_ACCESS_SECRET", ""),
-		JWTRefreshSecret:      getEnv("JWT_REFRESH_SECRET", ""),
-		AccessTokenTTL:        mustDuration(getEnv("JWT_ACCESS_TTL", "15m")),
-		RefreshTokenTTL:       mustDuration(getEnv("JWT_REFRESH_TTL", "720h")),
-		VerifyTokenTTL:        mustDuration(getEnv("VERIFY_TOKEN_TTL", "30m")),
-		ResetTokenTTL:         mustDuration(getEnv("RESET_TOKEN_TTL", "30m")),
-		CORSAllowAll:          corsAllowAll,
-		CORSOrigins:           corsOrigins,
-		CORSAllowCreds:        strings.EqualFold(getEnv("CORS_ALLOW_CREDENTIALS", "true"), "true"),
-		AppBaseURL:            getEnv("APP_BASE_URL", "http://localhost:4200"),
-		EmailEnabled:          emailEnabled && brevoAPIKey != "",
-		BrevoAPIKey:           brevoAPIKey,
-		EmailFromName:         getEnv("EMAIL_FROM_NAME", "Portal"),
-		EmailFromAddress:      getEnv("EMAIL_FROM_ADDRESS", ""),
-		RefreshCookieName:     getEnv("REFRESH_COOKIE_NAME", "portal_refresh"),
-		RefreshCookieDomain:   getEnv("REFRESH_COOKIE_DOMAIN", ""),
-		RefreshCookiePath:     getEnv("REFRESH_COOKIE_PATH", "/api/v1/auth"),
-		RefreshCookieSecure:   refreshCookieSecure,
+		Env:                               getEnv("APP_ENV", "development"),
+		HTTPAddr:                          getEnv("HTTP_ADDR", ":8080"),
+		DatabaseURL:                       getEnv("DATABASE_URL", ""),
+		JWTAccessSecret:                   getEnv("JWT_ACCESS_SECRET", ""),
+		JWTRefreshSecret:                  getEnv("JWT_REFRESH_SECRET", ""),
+		AccessTokenTTL:                    mustDuration(getEnv("JWT_ACCESS_TTL", "15m")),
+		RefreshTokenTTL:                   mustDuration(getEnv("JWT_REFRESH_TTL", "720h")),
+		VerifyTokenTTL:                    mustDuration(getEnv("VERIFY_TOKEN_TTL", "30m")),
+		ResetTokenTTL:                     mustDuration(getEnv("RESET_TOKEN_TTL", "30m")),
+		CORSAllowAll:                      corsAllowAll,
+		CORSOrigins:                       corsOrigins,
+		CORSAllowCreds:                    strings.EqualFold(getEnv("CORS_ALLOW_CREDENTIALS", "true"), "true"),
+		AppBaseURL:                        getEnv("APP_BASE_URL", "http://localhost:4200"),
+		EmailEnabled:                      emailEnabled && brevoAPIKey != "",
+		BrevoAPIKey:                       brevoAPIKey,
+		EmailFromName:                     getEnv("EMAIL_FROM_NAME", "Portal"),
+		EmailFromAddress:                  getEnv("EMAIL_FROM_ADDRESS", ""),
+		RefreshCookieName:                 getEnv("REFRESH_COOKIE_NAME", "portal_refresh"),
+		RefreshCookieDomain:               getEnv("REFRESH_COOKIE_DOMAIN", ""),
+		RefreshCookiePath:                 getEnv("REFRESH_COOKIE_PATH", "/api/v1/auth"),
+		RefreshCookieSecure:               refreshCookieSecure,
 		RefreshCookieSameSite:             parseSameSite(getEnv("REFRESH_COOKIE_SAMESITE", "Lax")),
 		MoonshotAPIKey:                    getEnv("MOONSHOT_API_KEY", ""),
+		EPOnlineAPIKey:                    getEnv("EP_ONLINE_API_KEY", ""),
 		MinIOEndpoint:                     getEnv("MINIO_ENDPOINT", ""),
 		MinIOAccessKey:                    getEnv("MINIO_ACCESS_KEY", ""),
 		MinIOSecretKey:                    getEnv("MINIO_SECRET_KEY", ""),
