@@ -348,6 +348,8 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 			sortColumn = "price_cents"
 		case "type":
 			sortColumn = "type"
+		case "createdAt":
+			sortColumn = "created_at"
 		case "updatedAt":
 			sortColumn = "updated_at"
 		default:
