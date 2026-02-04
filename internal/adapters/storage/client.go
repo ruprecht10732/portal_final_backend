@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ func (s *MinIOService) GenerateUploadURL(ctx context.Context, bucket, folder, fi
 	ext := path.Ext(fileName)
 	baseName := strings.TrimSuffix(fileName, ext)
 	uniqueFileName := fmt.Sprintf("%s_%s%s", baseName, uuid.New().String()[:8], ext)
-	fileKey := path.Join(folder, uniqueFileName)
+	fileKey := filepath.ToSlash(filepath.Join(folder, uniqueFileName))
 
 	// Generate presigned PUT URL
 	expiresAt := time.Now().Add(PresignedURLTTL)

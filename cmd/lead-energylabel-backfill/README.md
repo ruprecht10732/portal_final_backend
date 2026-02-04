@@ -7,6 +7,7 @@ go run ./cmd/lead-energylabel-backfill
 ```
 
 Environment requirements:
+
 - `DATABASE_URL`, `JWT_ACCESS_SECRET`, and `JWT_REFRESH_SECRET` must be set (config loader validation).
 - `EP_ONLINE_API_KEY` must be present; otherwise the command exits immediately.
 

@@ -743,8 +743,8 @@ func (s *Service) ListAvailabilityRules(ctx context.Context, userID uuid.UUID, i
 	}
 
 	resp := make([]transport.AvailabilityRuleResponse, len(items))
-	for i, item := range items {
-		resp[i] = *mapAvailabilityRule(&item)
+	for i := range items {
+		resp[i] = *mapAvailabilityRule(&items[i])
 	}
 
 	return resp, nil
@@ -865,8 +865,8 @@ func (s *Service) ListAvailabilityOverrides(ctx context.Context, userID uuid.UUI
 	}
 
 	resp := make([]transport.AvailabilityOverrideResponse, len(items))
-	for i, item := range items {
-		resp[i] = *mapAvailabilityOverride(&item)
+	for i := range items {
+		resp[i] = *mapAvailabilityOverride(&items[i])
 	}
 
 	return resp, nil
