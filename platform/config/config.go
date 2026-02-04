@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -266,8 +267,10 @@ func mustDuration(value string) time.Duration {
 }
 
 func mustInt64(value string) int64 {
-	var result int64
-	fmt.Sscanf(value, "%d", &result)
+	result, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
 	return result
 }
 

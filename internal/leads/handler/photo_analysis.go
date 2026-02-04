@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"io"
+	"log"
 	"net/http"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -155,7 +156,9 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 			// Log error but continue with other images
 			continue
 		}
-		defer data.Close()
+		defer func() {
+			_ = data.Close()
+		}()
 
 		imgData, err := io.ReadAll(data)
 		if err != nil {
@@ -217,7 +220,7 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 		PhotoCount:      result.PhotoCount,
 	})
 	if dbErr != nil {
-		// Log but don't fail - we still have the result
+		log.Printf("warning: failed to persist photo analysis for lead %s service %s: %v", leadID, serviceID, dbErr)
 	}
 
 	// Send SSE notification

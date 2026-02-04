@@ -11,6 +11,8 @@ import (
 	"portal_final_backend/internal/leads/ports"
 
 	"github.com/google/uuid"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // AuthAgentProvider adapts the auth service to satisfy the RAC_leads domain's
@@ -104,7 +106,7 @@ func deriveNameFromEmail(email string) string {
 	name = strings.ReplaceAll(name, ".", " ")
 	name = strings.ReplaceAll(name, "_", " ")
 	name = strings.ReplaceAll(name, "-", " ")
-	return strings.Title(name)
+	return cases.Title(language.Und).String(name)
 }
 
 // Compile-time check that AuthAgentProvider implements ports.AgentProvider

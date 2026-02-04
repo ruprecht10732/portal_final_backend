@@ -626,7 +626,9 @@ func (la *LeadAdvisor) loadImageData(ctx context.Context, att repository.Attachm
 		log.Printf("warning: failed to download image %s for photo analysis: %v", att.FileKey, err)
 		return nil, "", false
 	}
-	defer data.Close()
+	defer func() {
+		_ = data.Close()
+	}()
 
 	imgData, err := io.ReadAll(data)
 	if err != nil {

@@ -317,28 +317,6 @@ func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string,
 	return tokenObj.SignedString([]byte(secret))
 }
 
-func deriveOrganizationName(email string, organizationName *string) string {
-	if organizationName != nil {
-		trimmed := strings.TrimSpace(*organizationName)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-
-	local := strings.SplitN(strings.TrimSpace(email), "@", 2)[0]
-	if local == "" {
-		return "My Organization"
-	}
-	return capitalizeFirst(local) + " Organization"
-}
-
-func capitalizeFirst(value string) string {
-	if value == "" {
-		return value
-	}
-	return strings.ToUpper(value[:1]) + value[1:]
-}
-
 func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
 	return s.repo.SetUserRoles(ctx, userID, roles)
 }

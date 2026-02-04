@@ -357,7 +357,9 @@ func (r *Repo) Reorder(ctx context.Context, organizationID uuid.UUID, items []Re
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	query := `UPDATE RAC_service_types SET display_order = $2, updated_at = now() WHERE id = $1 AND organization_id = $3`
 

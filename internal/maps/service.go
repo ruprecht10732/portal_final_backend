@@ -48,7 +48,9 @@ func (s *Service) SearchAddress(ctx context.Context, query string) ([]AddressSug
 		s.log.Error("nominatim request failed", "error", err)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		s.log.Error("nominatim upstream error", "status", resp.StatusCode)

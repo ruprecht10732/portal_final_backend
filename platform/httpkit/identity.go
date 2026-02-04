@@ -125,8 +125,5 @@ func isOnboardingAllowedPath(c *gin.Context) bool {
 		"/api/v1/users/me/onboarding": true,
 		"/api/v1/users/me/password":   true,
 	}
-	if allowed[path] {
-		return true
-	}
-	return false
+	return allowed[path]
 }

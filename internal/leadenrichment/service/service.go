@@ -361,7 +361,3 @@ func normalizePostcode(value string) string {
 	cleaned = strings.ReplaceAll(cleaned, "-", "")
 	return strings.TrimSpace(cleaned)
 }
-
-func toPtr(value float64) *float64 {
-	return &value
-}

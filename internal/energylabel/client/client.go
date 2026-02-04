@@ -55,7 +55,7 @@ func (ft *flexTime) UnmarshalJSON(data []byte) error {
 }
 
 func (ft *flexTime) ToTimePtr() *time.Time {
-	if ft == nil || ft.Time.IsZero() {
+	if ft == nil || ft.IsZero() {
 		return nil
 	}
 	t := ft.Time
@@ -121,7 +121,9 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ping failed: status %d", resp.StatusCode)
@@ -144,7 +146,9 @@ func (c *Client) doRequest(ctx context.Context, reqURL string) ([]transport.Ener
 		c.log.Error("ep-online request failed", "error", err, "url", reqURL)
 		return nil, fmt.Errorf("http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	switch resp.StatusCode {
 	case http.StatusOK:

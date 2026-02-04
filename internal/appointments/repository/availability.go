@@ -222,17 +222,14 @@ func (r *Repository) ListAvailabilityOverrides(ctx context.Context, organization
 	baseQuery := `SELECT id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at
 		FROM appointment_availability_overrides WHERE organization_id = $1 AND user_id = $2`
 	args := []interface{}{organizationID, userID}
-	argIndex := 3
 
 	if startDate != nil {
-		baseQuery += fmt.Sprintf(" AND date >= $%d", argIndex)
+		baseQuery += fmt.Sprintf(" AND date >= $%d", len(args)+1)
 		args = append(args, *startDate)
-		argIndex++
 	}
 	if endDate != nil {
-		baseQuery += fmt.Sprintf(" AND date <= $%d", argIndex)
+		baseQuery += fmt.Sprintf(" AND date <= $%d", len(args)+1)
 		args = append(args, *endDate)
-		argIndex++
 	}
 
 	baseQuery += " ORDER BY date ASC"

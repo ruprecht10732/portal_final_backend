@@ -20,13 +20,6 @@ const (
 
 	// Base score - RAC_leads start at 50 and factors add/subtract from this.
 	baseScore = 50.0
-
-	// Maximum theoretical contribution from each factor category.
-	// This ensures scores remain within 0-100 range.
-	maxDemographicContribution = 35.0 // Ownership, wealth, income, household, children
-	maxPropertyContribution    = 30.0 // Energy label, gas, electricity, building age
-	maxBehavioralContribution  = 25.0 // Lead age, notes, photo, service status
-	maxAIContribution          = 20.0 // AI urgency and quality
 )
 
 // serviceWeights defines how important each factor is for a specific service type.

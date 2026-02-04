@@ -137,7 +137,9 @@ func (b *BrevoSender) send(ctx context.Context, toEmail, subject, htmlContent st
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(resp.Body)

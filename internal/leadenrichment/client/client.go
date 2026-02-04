@@ -146,7 +146,9 @@ func (c *Client) fetchPC6(ctx context.Context, params url.Values) (pc6Response, 
 		c.log.Error("pdok pc6 request failed", "error", err)
 		return pc6Response{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		c.log.Error("pdok pc6 request error", "status", resp.StatusCode)
@@ -296,7 +298,9 @@ func (c *Client) GetBuurtcode(ctx context.Context, postcode6 string) (string, er
 		c.log.Error("pdok locatie request failed", "error", err)
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("pdok locatie status %d", resp.StatusCode)
@@ -337,7 +341,9 @@ func (c *Client) GetBuurt(ctx context.Context, buurtcode string) (*BuurtProperti
 		c.log.Error("pdok buurt request failed", "error", err)
 		return nil, false, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		c.log.Error("pdok buurt request error", "status", resp.StatusCode)
@@ -410,7 +416,9 @@ func (c *Client) GetCBSBuurtData(ctx context.Context, buurtcode string) (*CBSBuu
 		c.log.Error("cbs odata request failed", "error", err)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		c.log.Error("cbs odata request error", "status", resp.StatusCode)
@@ -589,7 +597,9 @@ func (c *Client) fetchPC4Year(ctx context.Context, postcode4 string, year int) (
 		c.log.Error("pdok pc4 request failed", "error", err)
 		return nil, false, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		c.log.Error("pdok pc4 request error", "status", resp.StatusCode)

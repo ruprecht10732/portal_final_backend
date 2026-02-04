@@ -162,7 +162,9 @@ func (m *KimiModel) doRequest(ctx context.Context, payload map[string]interface{
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	result, err := decodeResponse(resp)
 	if err != nil {

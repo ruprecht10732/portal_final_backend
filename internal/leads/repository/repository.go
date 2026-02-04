@@ -933,17 +933,14 @@ type HeatmapPoint struct {
 func (r *Repository) ListHeatmapPoints(ctx context.Context, organizationID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error) {
 	whereClauses := []string{"organization_id = $1", "deleted_at IS NULL", "latitude IS NOT NULL", "longitude IS NOT NULL"}
 	args := []interface{}{organizationID}
-	argIdx := 2
 
 	if startDate != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("created_at >= $%d", argIdx))
+		whereClauses = append(whereClauses, fmt.Sprintf("created_at >= $%d", len(args)+1))
 		args = append(args, *startDate)
-		argIdx++
 	}
 	if endDate != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("created_at < $%d", argIdx))
+		whereClauses = append(whereClauses, fmt.Sprintf("created_at < $%d", len(args)+1))
 		args = append(args, *endDate)
-		argIdx++
 	}
 
 	whereClause := strings.Join(whereClauses, " AND ")

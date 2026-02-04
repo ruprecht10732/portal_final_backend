@@ -65,7 +65,7 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 
 	if traceID, ok := ctx.Value(TraceIDKey).(string); ok && traceID != "" {
 		newLogger = &Logger{
-			Logger: newLogger.Logger.With(slog.String("trace_id", traceID)),
+			Logger: newLogger.With(slog.String("trace_id", traceID)),
 		}
 	}
 
@@ -90,14 +90,14 @@ func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
 // WithRequestID returns a logger with request ID
 func (l *Logger) WithRequestID(requestID string) *Logger {
 	return &Logger{
-		Logger: l.Logger.With(slog.String("request_id", requestID)),
+		Logger: l.With(slog.String("request_id", requestID)),
 	}
 }
 
 // WithUserID returns a logger with user ID
 func (l *Logger) WithUserID(userID string) *Logger {
 	return &Logger{
-		Logger: l.Logger.With(slog.String("user_id", userID)),
+		Logger: l.With(slog.String("user_id", userID)),
 	}
 }
 
