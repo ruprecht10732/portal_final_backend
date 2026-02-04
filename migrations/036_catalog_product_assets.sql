@@ -4,7 +4,7 @@
 CREATE TABLE catalog_product_assets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL,
-    product_id UUID NOT NULL REFERENCES catalog_products(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES RAC_catalog_products(id) ON DELETE CASCADE,
     asset_type TEXT NOT NULL,
     file_key TEXT,
     file_name TEXT,

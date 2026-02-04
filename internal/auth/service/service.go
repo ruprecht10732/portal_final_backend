@@ -24,7 +24,7 @@ import (
 const (
 	accessTokenType     = "access"
 	refreshTokenType    = "refresh"
-	defaultUserRole     = "user" // Default role for new users (not admin)
+	defaultUserRole     = "user" // Default role for new RAC_users (not admin)
 	defaultAdminRole    = "admin"
 	tokenInvalidMessage = "token invalid"
 	tokenExpiredMessage = "token expired"
@@ -85,12 +85,12 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 		return err
 	}
 
-	roles := []string{defaultUserRole}
+	RAC_roles := []string{defaultUserRole}
 	if !usingInvite {
-		roles = []string{defaultAdminRole}
+		RAC_roles = []string{defaultAdminRole}
 	}
-	if err := s.repo.SetUserRolesTx(ctx, tx, user.ID, roles); err != nil {
-		s.log.Error("failed to set user roles", "user_id", user.ID, "error", err)
+	if err := s.repo.SetUserRolesTx(ctx, tx, user.ID, RAC_roles); err != nil {
+		s.log.Error("failed to set user RAC_roles", "user_id", user.ID, "error", err)
 		return err
 	}
 
@@ -109,7 +109,7 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 			return err
 		}
 	}
-	// Note: Organization is NOT created here for non-invite users.
+	// Note: Organization is NOT created here for non-invite RAC_users.
 	// It will be created during onboarding when the user provides an organization name.
 
 	if err = tx.Commit(ctx); err != nil {
@@ -253,7 +253,7 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 }
 
 func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
-	roles, err := s.repo.GetUserRoles(ctx, userID)
+	RAC_roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return "", "", err
 	}
@@ -266,7 +266,7 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 		return "", "", err
 	}
 
-	accessToken, err := s.signJWT(userID, &orgID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
+	accessToken, err := s.signJWT(userID, &orgID, RAC_roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
 	if err != nil {
 		return "", "", err
 	}
@@ -285,11 +285,11 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 	return accessToken, refreshToken, nil
 }
 
-func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
+func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, RAC_roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":   userID.String(),
 		"type":  tokenType,
-		"roles": roles,
+		"RAC_roles": RAC_roles,
 		"exp":   time.Now().Add(ttl).Unix(),
 		"iat":   time.Now().Unix(),
 	}
@@ -323,18 +323,18 @@ func capitalizeFirst(value string) string {
 	return strings.ToUpper(value[:1]) + value[1:]
 }
 
-func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
-	return s.repo.SetUserRoles(ctx, userID, roles)
+func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_roles []string) error {
+	return s.repo.SetUserRoles(ctx, userID, RAC_roles)
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error) {
-	users, err := s.repo.ListUsers(ctx)
+	RAC_users, err := s.repo.ListUsers(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]transport.UserSummary, 0, len(users))
-	for _, user := range users {
+	result := make([]transport.UserSummary, 0, len(RAC_users))
+	for _, user := range RAC_users {
 		result = append(result, transport.UserSummary{
 			ID:        user.ID.String(),
 			Email:     user.Email,
@@ -353,7 +353,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		return Profile{}, err
 	}
 
-	roles, err := s.repo.GetUserRoles(ctx, userID)
+	RAC_roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -378,7 +378,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		FirstName:       user.FirstName,
 		LastName:        user.LastName,
 		PreferredLang:   preferredLang,
-		Roles:           roles,
+		Roles:           RAC_roles,
 		HasOrganization: hasOrganization,
 		CreatedAt:       user.CreatedAt,
 		UpdatedAt:       user.UpdatedAt,
@@ -386,7 +386,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 }
 
 func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.UpdateProfileRequest) (Profile, error) {
-	current, roles, preferredLang, err := s.loadProfileContext(ctx, userID)
+	current, RAC_roles, preferredLang, err := s.loadProfileContext(ctx, userID)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -406,7 +406,7 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.
 		return Profile{}, err
 	}
 
-	return s.buildProfile(updatedUser, roles, preferredLang), nil
+	return s.buildProfile(updatedUser, RAC_roles, preferredLang), nil
 }
 
 func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (repository.User, []string, string, error) {
@@ -415,7 +415,7 @@ func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (rep
 		return repository.User{}, nil, "", err
 	}
 
-	roles, err := s.repo.GetUserRoles(ctx, userID)
+	RAC_roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return repository.User{}, nil, "", err
 	}
@@ -429,7 +429,7 @@ func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (rep
 		return repository.User{}, nil, "", err
 	}
 
-	return user, roles, preferredLang, nil
+	return user, RAC_roles, preferredLang, nil
 }
 
 func (s *Service) applyNameUpdates(ctx context.Context, userID uuid.UUID, current repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
@@ -500,7 +500,7 @@ func (s *Service) enqueueEmailVerification(ctx context.Context, userID uuid.UUID
 	return nil
 }
 
-func (s *Service) buildProfile(user repository.User, roles []string, preferredLang string) Profile {
+func (s *Service) buildProfile(user repository.User, RAC_roles []string, preferredLang string) Profile {
 	return Profile{
 		ID:            user.ID,
 		Email:         user.Email,
@@ -508,7 +508,7 @@ func (s *Service) buildProfile(user repository.User, roles []string, preferredLa
 		FirstName:     user.FirstName,
 		LastName:      user.LastName,
 		PreferredLang: preferredLang,
-		Roles:         roles,
+		Roles:         RAC_roles,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
 	}

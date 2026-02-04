@@ -8,8 +8,8 @@ import (
 	"portal_final_backend/internal/leads/ports"
 )
 
-// AppointmentsAdapter adapts the appointments service for use by the leads domain.
-// It implements the leads/ports.AppointmentBooker interface.
+// AppointmentsAdapter adapts the appointments service for use by the RAC_leads domain.
+// It implements the RAC_leads/ports.AppointmentBooker interface.
 type AppointmentsAdapter struct {
 	apptService *service.Service
 }
@@ -20,7 +20,7 @@ func NewAppointmentsAdapter(apptService *service.Service) *AppointmentsAdapter {
 }
 
 // BookLeadVisit creates a visit appointment for a specific lead and service.
-// It translates the leads domain's BookVisitParams into the appointments domain's
+// It translates the RAC_leads domain's BookVisitParams into the appointments domain's
 // CreateAppointmentRequest and calls the appointments service.
 func (a *AppointmentsAdapter) BookLeadVisit(ctx context.Context, params ports.BookVisitParams) error {
 	sendEmail := params.SendConfirmationEmail

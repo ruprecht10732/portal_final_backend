@@ -1,6 +1,6 @@
 // Package management handles lead CRUD operations.
 // This is a vertically sliced feature package containing service logic
-// for creating, reading, updating, and deleting leads.
+// for creating, reading, updating, and deleting RAC_leads.
 package management
 
 import (
@@ -167,11 +167,8 @@ func (s *Service) enrichWithEnergyLabel(ctx context.Context, tenantID uuid.UUID,
 	if s.energyEnricher == nil {
 		return
 	}
-
-	if lead.EnergyLabelFetchedAt != nil {
-		if time.Since(*lead.EnergyLabelFetchedAt) < energyLabelRefreshInterval {
-			return
-		}
+	if !shouldRefreshEnergyLabel(lead) {
+		return
 	}
 
 	params := ports.EnrichLeadParams{
@@ -185,60 +182,16 @@ func (s *Service) enrichWithEnergyLabel(ctx context.Context, tenantID uuid.UUID,
 	}
 
 	fetchedAt := time.Now().UTC()
-
-	var classPtr *string
-	var indexPtr *float64
-	var bouwjaarPtr *int
-	var gebouwtypePtr *string
-	var validUntilPtr *time.Time
-	var registeredPtr *time.Time
-	var primairPtr *float64
-	var bagPtr *string
-
-	if data != nil {
-		if data.Energieklasse != "" {
-			val := data.Energieklasse
-			classPtr = &val
-		}
-		if data.EnergieIndex != nil {
-			val := *data.EnergieIndex
-			indexPtr = &val
-		}
-		if data.Bouwjaar != 0 {
-			val := data.Bouwjaar
-			bouwjaarPtr = &val
-		}
-		if data.Gebouwtype != "" {
-			val := data.Gebouwtype
-			gebouwtypePtr = &val
-		}
-		if data.GeldigTot != nil {
-			val := *data.GeldigTot
-			validUntilPtr = &val
-		}
-		if data.Registratiedatum != nil {
-			val := *data.Registratiedatum
-			registeredPtr = &val
-		}
-		if data.PrimaireFossieleEnergie != nil {
-			val := *data.PrimaireFossieleEnergie
-			primairPtr = &val
-		}
-		if data.BAGVerblijfsobjectID != "" {
-			val := data.BAGVerblijfsobjectID
-			bagPtr = &val
-		}
-	}
-
+	ptrs := buildEnergyLabelPointers(data)
 	updateParams := repository.UpdateEnergyLabelParams{
-		Class:          classPtr,
-		Index:          indexPtr,
-		Bouwjaar:       bouwjaarPtr,
-		Gebouwtype:     gebouwtypePtr,
-		ValidUntil:     validUntilPtr,
-		RegisteredAt:   registeredPtr,
-		PrimairFossiel: primairPtr,
-		BAGObjectID:    bagPtr,
+		Class:          ptrs.class,
+		Index:          ptrs.index,
+		Bouwjaar:       ptrs.bouwjaar,
+		Gebouwtype:     ptrs.gebouwtype,
+		ValidUntil:     ptrs.validUntil,
+		RegisteredAt:   ptrs.registeredAt,
+		PrimairFossiel: ptrs.primairFossiel,
+		BAGObjectID:    ptrs.bagObjectID,
 		FetchedAt:      fetchedAt,
 	}
 
@@ -246,19 +199,82 @@ func (s *Service) enrichWithEnergyLabel(ctx context.Context, tenantID uuid.UUID,
 		return
 	}
 
-	// Update in-memory lead state
-	lead.EnergyClass = classPtr
-	lead.EnergyIndex = indexPtr
-	lead.EnergyBouwjaar = bouwjaarPtr
-	lead.EnergyGebouwtype = gebouwtypePtr
-	lead.EnergyLabelValidUntil = validUntilPtr
-	lead.EnergyLabelRegisteredAt = registeredPtr
-	lead.EnergyPrimairFossiel = primairPtr
-	lead.EnergyBAGVerblijfsobjectID = bagPtr
-	leadFetchedAt := fetchedAt
-	lead.EnergyLabelFetchedAt = &leadFetchedAt
+	applyEnergyLabelUpdate(lead, updateParams)
 
 	resp.EnergyLabel = energyLabelFromLead(*lead)
+}
+
+type energyLabelPointers struct {
+	class          *string
+	index          *float64
+	bouwjaar       *int
+	gebouwtype     *string
+	validUntil     *time.Time
+	registeredAt   *time.Time
+	primairFossiel *float64
+	bagObjectID    *string
+}
+
+func shouldRefreshEnergyLabel(lead *repository.Lead) bool {
+	if lead.EnergyLabelFetchedAt == nil {
+		return true
+	}
+	return time.Since(*lead.EnergyLabelFetchedAt) >= energyLabelRefreshInterval
+}
+
+func buildEnergyLabelPointers(data *ports.LeadEnergyData) energyLabelPointers {
+	var ptrs energyLabelPointers
+	if data == nil {
+		return ptrs
+	}
+
+	if data.Energieklasse != "" {
+		val := data.Energieklasse
+		ptrs.class = &val
+	}
+	if data.EnergieIndex != nil {
+		val := *data.EnergieIndex
+		ptrs.index = &val
+	}
+	if data.Bouwjaar != 0 {
+		val := data.Bouwjaar
+		ptrs.bouwjaar = &val
+	}
+	if data.Gebouwtype != "" {
+		val := data.Gebouwtype
+		ptrs.gebouwtype = &val
+	}
+	if data.GeldigTot != nil {
+		val := *data.GeldigTot
+		ptrs.validUntil = &val
+	}
+	if data.Registratiedatum != nil {
+		val := *data.Registratiedatum
+		ptrs.registeredAt = &val
+	}
+	if data.PrimaireFossieleEnergie != nil {
+		val := *data.PrimaireFossieleEnergie
+		ptrs.primairFossiel = &val
+	}
+	if data.BAGVerblijfsobjectID != "" {
+		val := data.BAGVerblijfsobjectID
+		ptrs.bagObjectID = &val
+	}
+
+	return ptrs
+}
+
+func applyEnergyLabelUpdate(lead *repository.Lead, params repository.UpdateEnergyLabelParams) {
+	lead.EnergyClass = params.Class
+	lead.EnergyIndex = params.Index
+	lead.EnergyBouwjaar = params.Bouwjaar
+	lead.EnergyGebouwtype = params.Gebouwtype
+	lead.EnergyLabelValidUntil = params.ValidUntil
+	lead.EnergyLabelRegisteredAt = params.RegisteredAt
+	lead.EnergyPrimairFossiel = params.PrimairFossiel
+	lead.EnergyBAGVerblijfsobjectID = params.BAGObjectID
+	fetchedAt := params.FetchedAt
+	lead.EnergyLabelFetchedAt = &fetchedAt
 }
 
 // enrichWithLeadData ensures the lead has up-to-date enrichment and score data.
@@ -407,19 +423,19 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) 
 	return nil
 }
 
-// BulkDelete deletes multiple leads.
+// BulkDelete deletes multiple RAC_leads.
 func (s *Service) BulkDelete(ctx context.Context, ids []uuid.UUID, tenantID uuid.UUID) (int, error) {
 	deletedCount, err := s.repo.BulkDelete(ctx, ids, tenantID)
 	if err != nil {
 		return 0, err
 	}
 	if deletedCount == 0 {
-		return 0, apperr.NotFound("no leads found to delete")
+		return 0, apperr.NotFound("no RAC_leads found to delete")
 	}
 	return deletedCount, nil
 }
 
-// List retrieves a paginated list of leads.
+// List retrieves a paginated list of RAC_leads.
 func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest, tenantID uuid.UUID) (transport.LeadListResponse, error) {
 	if req.Page < 1 {
 		req.Page = 1
@@ -437,13 +453,13 @@ func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest, tena
 	}
 	params.OrganizationID = tenantID
 
-	leads, total, err := s.repo.List(ctx, params)
+	RAC_leads, total, err := s.repo.List(ctx, params)
 	if err != nil {
 		return transport.LeadListResponse{}, err
 	}
 
-	items := make([]transport.LeadResponse, len(leads))
-	for i, lead := range leads {
+	items := make([]transport.LeadResponse, len(RAC_leads))
+	for i, lead := range RAC_leads {
 		services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)
 		items[i] = ToLeadResponseWithServices(lead, services)
 	}
@@ -790,7 +806,7 @@ func (s *Service) GetHeatmap(ctx context.Context, startDate *time.Time, endDate 
 	return resp, nil
 }
 
-// GetActionItems returns urgent or recent leads for the dashboard widget.
+// GetActionItems returns urgent or recent RAC_leads for the dashboard widget.
 func (s *Service) GetActionItems(ctx context.Context, page int, pageSize int, newLeadDays int, tenantID uuid.UUID) (transport.ActionItemsResponse, error) {
 	if page < 1 {
 		page = 1
@@ -999,8 +1015,8 @@ func formatGeocodeQuery(address addressUpdate) string {
 	return strings.Trim(query, ", ")
 }
 
-func hasRole(roles []string, target string) bool {
-	for _, role := range roles {
+func hasRole(RAC_roles []string, target string) bool {
+	for _, role := range RAC_roles {
 		if role == target {
 			return true
 		}

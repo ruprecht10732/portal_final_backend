@@ -398,7 +398,7 @@ func buildSaveNoteTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 	})
 }
 
-// validLeadStatuses defines the allowed status values for leads
+// validLeadStatuses defines the allowed status values for RAC_leads
 var validLeadStatuses = map[string]bool{
 	"New":                true,
 	"Attempted_Contact":  true,

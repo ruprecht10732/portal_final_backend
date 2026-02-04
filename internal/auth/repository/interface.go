@@ -44,7 +44,7 @@ type RefreshTokenStore interface {
 // RoleManager provides role-based access control operations.
 type RoleManager interface {
 	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]string, error)
-	SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error
+	SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_roles []string) error
 }
 
 // =====================================

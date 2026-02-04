@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 
-ALTER TABLE lead_services
+ALTER TABLE RAC_lead_services
     DROP COLUMN IF EXISTS visit_scheduled_date,
     DROP COLUMN IF EXISTS visit_scout_id,
     DROP COLUMN IF EXISTS visit_measurements,
@@ -16,9 +16,9 @@ DROP TABLE IF EXISTS visit_history;
 -- +goose Down
 -- +goose StatementBegin
 
-ALTER TABLE lead_services
+ALTER TABLE RAC_lead_services
     ADD COLUMN IF NOT EXISTS visit_scheduled_date TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS visit_scout_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS visit_scout_id UUID REFERENCES RAC_users(id) ON DELETE SET NULL,
     ADD COLUMN IF NOT EXISTS visit_measurements TEXT,
     ADD COLUMN IF NOT EXISTS visit_access_difficulty TEXT CHECK (visit_access_difficulty IS NULL OR visit_access_difficulty IN ('Low', 'Medium', 'High')),
     ADD COLUMN IF NOT EXISTS visit_notes TEXT,
@@ -26,9 +26,9 @@ ALTER TABLE lead_services
 
 CREATE TABLE IF NOT EXISTS visit_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    lead_id UUID NOT NULL REFERENCES RAC_leads(id) ON DELETE CASCADE,
     scheduled_date TIMESTAMPTZ NOT NULL,
-    scout_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    scout_id UUID REFERENCES RAC_users(id) ON DELETE SET NULL,
     outcome TEXT NOT NULL CHECK (outcome IN ('completed', 'no_show', 'rescheduled', 'cancelled')),
     measurements TEXT,
     access_difficulty TEXT CHECK (access_difficulty IN ('Low', 'Medium', 'High')),

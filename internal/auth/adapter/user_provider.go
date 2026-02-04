@@ -40,7 +40,7 @@ func (a *UserProviderAdapter) GetUserByID(ctx context.Context, userID uuid.UUID)
 // Ensure UserProviderAdapter implements ports.UserProvider
 var _ ports.UserProvider = (*UserProviderAdapter)(nil)
 
-// UserExistenceAdapter implements leads/ports.UserExistenceChecker.
+// UserExistenceAdapter implements RAC_leads/ports.UserExistenceChecker.
 type UserExistenceAdapter struct {
 	repo repository.UserReader
 }

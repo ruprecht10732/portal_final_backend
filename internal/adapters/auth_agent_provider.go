@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// AuthAgentProvider adapts the auth service to satisfy the leads domain's
+// AuthAgentProvider adapts the auth service to satisfy the RAC_leads domain's
 // AgentProvider interface. This is the Anti-Corruption Layer implementation
-// that ensures the leads domain doesn't need to know about auth domain internals.
+// that ensures the RAC_leads domain doesn't need to know about auth domain internals.
 type AuthAgentProvider struct {
 	authSvc *authservice.Service
 }
@@ -57,13 +57,13 @@ func (p *AuthAgentProvider) GetAgentsByIDs(ctx context.Context, agentIDs []uuid.
 
 // ListAgents returns all available agents.
 func (p *AuthAgentProvider) ListAgents(ctx context.Context) ([]ports.Agent, error) {
-	users, err := p.authSvc.ListUsers(ctx)
+	RAC_users, err := p.authSvc.ListUsers(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	agents := make([]ports.Agent, 0, len(users))
-	for _, user := range users {
+	agents := make([]ports.Agent, 0, len(RAC_users))
+	for _, user := range RAC_users {
 		id, err := uuid.Parse(user.ID)
 		if err != nil {
 			continue

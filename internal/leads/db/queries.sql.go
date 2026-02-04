@@ -13,7 +13,7 @@ import (
 )
 
 const bulkSoftDeleteLeads = `-- name: BulkSoftDeleteLeads :execresult
-UPDATE leads SET deleted_at = now(), updated_at = now() 
+UPDATE RAC_leads SET deleted_at = now(), updated_at = now() 
 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 `
 
@@ -21,110 +21,8 @@ func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, dollar_1 []pgtype.UUI
 	return q.db.Exec(ctx, bulkSoftDeleteLeads, dollar_1)
 }
 
-const completeLeadServiceSurvey = `-- name: CompleteLeadServiceSurvey :one
-UPDATE lead_services SET 
-    visit_measurements = $2,
-    visit_access_difficulty = $3,
-    visit_notes = $4,
-    visit_completed_at = now(),
-    status = 'Surveyed',
-    updated_at = now()
-WHERE id = $1
-RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at
-`
-
-type CompleteLeadServiceSurveyParams struct {
-	ID                    pgtype.UUID `json:"id"`
-	VisitMeasurements     pgtype.Text `json:"visit_measurements"`
-	VisitAccessDifficulty pgtype.Text `json:"visit_access_difficulty"`
-	VisitNotes            pgtype.Text `json:"visit_notes"`
-}
-
-func (q *Queries) CompleteLeadServiceSurvey(ctx context.Context, arg CompleteLeadServiceSurveyParams) (LeadService, error) {
-	row := q.db.QueryRow(ctx, completeLeadServiceSurvey,
-		arg.ID,
-		arg.VisitMeasurements,
-		arg.VisitAccessDifficulty,
-		arg.VisitNotes,
-	)
-	var i LeadService
-	err := row.Scan(
-		&i.ID,
-		&i.LeadID,
-		&i.ServiceType,
-		&i.Status,
-		&i.VisitScheduledDate,
-		&i.VisitScoutID,
-		&i.VisitMeasurements,
-		&i.VisitAccessDifficulty,
-		&i.VisitNotes,
-		&i.VisitCompletedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const completeLeadSurvey = `-- name: CompleteLeadSurvey :one
-UPDATE leads SET 
-    visit_measurements = $2,
-    visit_access_difficulty = $3,
-    visit_notes = $4,
-    visit_completed_at = now(),
-    status = 'Surveyed',
-    updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source
-`
-
-type CompleteLeadSurveyParams struct {
-	ID                    pgtype.UUID `json:"id"`
-	VisitMeasurements     pgtype.Text `json:"visit_measurements"`
-	VisitAccessDifficulty pgtype.Text `json:"visit_access_difficulty"`
-	VisitNotes            pgtype.Text `json:"visit_notes"`
-}
-
-func (q *Queries) CompleteLeadSurvey(ctx context.Context, arg CompleteLeadSurveyParams) (Lead, error) {
-	row := q.db.QueryRow(ctx, completeLeadSurvey,
-		arg.ID,
-		arg.VisitMeasurements,
-		arg.VisitAccessDifficulty,
-		arg.VisitNotes,
-	)
-	var i Lead
-	err := row.Scan(
-		&i.ID,
-		&i.ConsumerFirstName,
-		&i.ConsumerLastName,
-		&i.ConsumerPhone,
-		&i.ConsumerEmail,
-		&i.ConsumerRole,
-		&i.AddressStreet,
-		&i.AddressHouseNumber,
-		&i.AddressZipCode,
-		&i.AddressCity,
-		&i.ServiceType,
-		&i.Status,
-		&i.AssignedAgentID,
-		&i.ViewedByID,
-		&i.ViewedAt,
-		&i.VisitScheduledDate,
-		&i.VisitScoutID,
-		&i.VisitMeasurements,
-		&i.VisitAccessDifficulty,
-		&i.VisitNotes,
-		&i.VisitCompletedAt,
-		&i.DeletedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ConsumerNote,
-		&i.Source,
-	)
-	return i, err
-}
-
 const countLeads = `-- name: CountLeads :one
-SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL
+SELECT COUNT(*) FROM RAC_leads WHERE deleted_at IS NULL
 `
 
 func (q *Queries) CountLeads(ctx context.Context) (int64, error) {
@@ -136,7 +34,7 @@ func (q *Queries) CountLeads(ctx context.Context) (int64, error) {
 
 const createLead = `-- name: CreateLead :one
 
-INSERT INTO leads (
+INSERT INTO RAC_leads (
     consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
     address_street, address_house_number, address_zip_code, address_city,
     service_type, status, assigned_agent_id,
@@ -162,7 +60,7 @@ type CreateLeadParams struct {
 }
 
 // Leads Domain SQL Queries
-func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, error) {
+func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (RacLead, error) {
 	row := q.db.QueryRow(ctx, createLead,
 		arg.ConsumerFirstName,
 		arg.ConsumerLastName,
@@ -178,7 +76,7 @@ func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, e
 		arg.ConsumerNote,
 		arg.Source,
 	)
-	var i Lead
+	var i RacLead
 	err := row.Scan(
 		&i.ID,
 		&i.ConsumerFirstName,
@@ -212,7 +110,7 @@ func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, e
 
 const createLeadAIAnalysis = `-- name: CreateLeadAIAnalysis :one
 
-INSERT INTO lead_ai_analysis (lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary)
+INSERT INTO RAC_lead_ai_analysis (lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at
 `
@@ -228,7 +126,7 @@ type CreateLeadAIAnalysisParams struct {
 }
 
 // Lead AI Analysis Queries
-func (q *Queries) CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnalysisParams) (LeadAiAnalysis, error) {
+func (q *Queries) CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnalysisParams) (RacLeadAiAnalysis, error) {
 	row := q.db.QueryRow(ctx, createLeadAIAnalysis,
 		arg.LeadID,
 		arg.UrgencyLevel,
@@ -238,7 +136,7 @@ func (q *Queries) CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnal
 		arg.UpsellOpportunities,
 		arg.Summary,
 	)
-	var i LeadAiAnalysis
+	var i RacLeadAiAnalysis
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -255,7 +153,7 @@ func (q *Queries) CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnal
 
 const createLeadActivity = `-- name: CreateLeadActivity :exec
 
-INSERT INTO lead_activity (lead_id, user_id, action, meta)
+INSERT INTO RAC_lead_activity (lead_id, user_id, action, meta)
 VALUES ($1, $2, $3, $4)
 `
 
@@ -279,7 +177,7 @@ func (q *Queries) CreateLeadActivity(ctx context.Context, arg CreateLeadActivity
 
 const createLeadNote = `-- name: CreateLeadNote :one
 
-INSERT INTO lead_notes (lead_id, author_id, body, type)
+INSERT INTO RAC_lead_notes (lead_id, author_id, body, type)
 VALUES ($1, $2, $3, $4)
 RETURNING id, lead_id, author_id, body, type, created_at, updated_at
 `
@@ -292,14 +190,14 @@ type CreateLeadNoteParams struct {
 }
 
 // Lead Notes Queries
-func (q *Queries) CreateLeadNote(ctx context.Context, arg CreateLeadNoteParams) (LeadNote, error) {
+func (q *Queries) CreateLeadNote(ctx context.Context, arg CreateLeadNoteParams) (RacLeadNote, error) {
 	row := q.db.QueryRow(ctx, createLeadNote,
 		arg.LeadID,
 		arg.AuthorID,
 		arg.Body,
 		arg.Type,
 	)
-	var i LeadNote
+	var i RacLeadNote
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -314,85 +212,52 @@ func (q *Queries) CreateLeadNote(ctx context.Context, arg CreateLeadNoteParams) 
 
 const createLeadService = `-- name: CreateLeadService :one
 
-INSERT INTO lead_services (lead_id, service_type, status)
-VALUES ($1, $2, 'New')
-RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at
+WITH inserted AS (
+    INSERT INTO RAC_lead_services (lead_id, service_type_id, status)
+    VALUES (
+        $1,
+        (SELECT st.id FROM RAC_service_types st WHERE st.name = $2 OR st.slug = $2 LIMIT 1),
+        'New'
+    )
+    RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id
+)
+SELECT i.id, i.lead_id, st.name AS service_type, i.status,
+    i.created_at, i.updated_at
+FROM inserted i
+JOIN RAC_service_types st ON st.id = i.service_type_id
 `
 
 type CreateLeadServiceParams struct {
-	LeadID      pgtype.UUID `json:"lead_id"`
-	ServiceType string      `json:"service_type"`
+	LeadID pgtype.UUID `json:"lead_id"`
+	Name   string      `json:"name"`
+}
+
+type CreateLeadServiceRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	LeadID      pgtype.UUID        `json:"lead_id"`
+	ServiceType string             `json:"service_type"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 // Lead Services Queries
-func (q *Queries) CreateLeadService(ctx context.Context, arg CreateLeadServiceParams) (LeadService, error) {
-	row := q.db.QueryRow(ctx, createLeadService, arg.LeadID, arg.ServiceType)
-	var i LeadService
+func (q *Queries) CreateLeadService(ctx context.Context, arg CreateLeadServiceParams) (CreateLeadServiceRow, error) {
+	row := q.db.QueryRow(ctx, createLeadService, arg.LeadID, arg.Name)
+	var i CreateLeadServiceRow
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
 		&i.ServiceType,
 		&i.Status,
-		&i.VisitScheduledDate,
-		&i.VisitScoutID,
-		&i.VisitMeasurements,
-		&i.VisitAccessDifficulty,
-		&i.VisitNotes,
-		&i.VisitCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const createVisitHistory = `-- name: CreateVisitHistory :one
-
-INSERT INTO visit_history (lead_id, scheduled_date, scout_id, outcome, measurements, access_difficulty, notes, completed_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, lead_id, scheduled_date, scout_id, outcome, measurements, access_difficulty, notes, completed_at, created_at
-`
-
-type CreateVisitHistoryParams struct {
-	LeadID           pgtype.UUID        `json:"lead_id"`
-	ScheduledDate    pgtype.Timestamptz `json:"scheduled_date"`
-	ScoutID          pgtype.UUID        `json:"scout_id"`
-	Outcome          string             `json:"outcome"`
-	Measurements     pgtype.Text        `json:"measurements"`
-	AccessDifficulty pgtype.Text        `json:"access_difficulty"`
-	Notes            pgtype.Text        `json:"notes"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
-}
-
-// Visit History Queries
-func (q *Queries) CreateVisitHistory(ctx context.Context, arg CreateVisitHistoryParams) (VisitHistory, error) {
-	row := q.db.QueryRow(ctx, createVisitHistory,
-		arg.LeadID,
-		arg.ScheduledDate,
-		arg.ScoutID,
-		arg.Outcome,
-		arg.Measurements,
-		arg.AccessDifficulty,
-		arg.Notes,
-		arg.CompletedAt,
-	)
-	var i VisitHistory
-	err := row.Scan(
-		&i.ID,
-		&i.LeadID,
-		&i.ScheduledDate,
-		&i.ScoutID,
-		&i.Outcome,
-		&i.Measurements,
-		&i.AccessDifficulty,
-		&i.Notes,
-		&i.CompletedAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const deleteLeadNote = `-- name: DeleteLeadNote :exec
-DELETE FROM lead_notes WHERE id = $1
+DELETE FROM RAC_lead_notes WHERE id = $1
 `
 
 func (q *Queries) DeleteLeadNote(ctx context.Context, id pgtype.UUID) error {
@@ -401,15 +266,15 @@ func (q *Queries) DeleteLeadNote(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getLatestLeadAIAnalysis = `-- name: GetLatestLeadAIAnalysis :one
-SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at FROM lead_ai_analysis
+SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at FROM RAC_lead_ai_analysis
 WHERE lead_id = $1
 ORDER BY created_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLatestLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) (LeadAiAnalysis, error) {
+func (q *Queries) GetLatestLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) (RacLeadAiAnalysis, error) {
 	row := q.db.QueryRow(ctx, getLatestLeadAIAnalysis, leadID)
-	var i LeadAiAnalysis
+	var i RacLeadAiAnalysis
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -425,12 +290,12 @@ func (q *Queries) GetLatestLeadAIAnalysis(ctx context.Context, leadID pgtype.UUI
 }
 
 const getLeadByID = `-- name: GetLeadByID :one
-SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source FROM leads WHERE id = $1 AND deleted_at IS NULL
+SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source FROM RAC_leads WHERE id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) GetLeadByID(ctx context.Context, id pgtype.UUID) (Lead, error) {
+func (q *Queries) GetLeadByID(ctx context.Context, id pgtype.UUID) (RacLead, error) {
 	row := q.db.QueryRow(ctx, getLeadByID, id)
-	var i Lead
+	var i RacLead
 	err := row.Scan(
 		&i.ID,
 		&i.ConsumerFirstName,
@@ -463,15 +328,15 @@ func (q *Queries) GetLeadByID(ctx context.Context, id pgtype.UUID) (Lead, error)
 }
 
 const getLeadByPhone = `-- name: GetLeadByPhone :one
-SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source FROM leads 
+SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source FROM RAC_leads 
 WHERE consumer_phone = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLeadByPhone(ctx context.Context, consumerPhone string) (Lead, error) {
+func (q *Queries) GetLeadByPhone(ctx context.Context, consumerPhone string) (RacLead, error) {
 	row := q.db.QueryRow(ctx, getLeadByPhone, consumerPhone)
-	var i Lead
+	var i RacLead
 	err := row.Scan(
 		&i.ID,
 		&i.ConsumerFirstName,
@@ -504,12 +369,12 @@ func (q *Queries) GetLeadByPhone(ctx context.Context, consumerPhone string) (Lea
 }
 
 const getLeadNote = `-- name: GetLeadNote :one
-SELECT id, lead_id, author_id, body, type, created_at, updated_at FROM lead_notes WHERE id = $1
+SELECT id, lead_id, author_id, body, type, created_at, updated_at FROM RAC_lead_notes WHERE id = $1
 `
 
-func (q *Queries) GetLeadNote(ctx context.Context, id pgtype.UUID) (LeadNote, error) {
+func (q *Queries) GetLeadNote(ctx context.Context, id pgtype.UUID) (RacLeadNote, error) {
 	row := q.db.QueryRow(ctx, getLeadNote, id)
-	var i LeadNote
+	var i RacLeadNote
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -523,12 +388,12 @@ func (q *Queries) GetLeadNote(ctx context.Context, id pgtype.UUID) (LeadNote, er
 }
 
 const getLeadService = `-- name: GetLeadService :one
-SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at FROM lead_services WHERE id = $1
+SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id FROM RAC_lead_services WHERE id = $1
 `
 
-func (q *Queries) GetLeadService(ctx context.Context, id pgtype.UUID) (LeadService, error) {
+func (q *Queries) GetLeadService(ctx context.Context, id pgtype.UUID) (RacLeadService, error) {
 	row := q.db.QueryRow(ctx, getLeadService, id)
-	var i LeadService
+	var i RacLeadService
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -542,25 +407,26 @@ func (q *Queries) GetLeadService(ctx context.Context, id pgtype.UUID) (LeadServi
 		&i.VisitCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ServiceTypeID,
 	)
 	return i, err
 }
 
 const listLeadAIAnalysis = `-- name: ListLeadAIAnalysis :many
-SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at FROM lead_ai_analysis
+SELECT id, lead_id, urgency_level, urgency_reason, talking_points, objection_handling, upsell_opportunities, summary, created_at FROM RAC_lead_ai_analysis
 WHERE lead_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) ([]LeadAiAnalysis, error) {
+func (q *Queries) ListLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) ([]RacLeadAiAnalysis, error) {
 	rows, err := q.db.Query(ctx, listLeadAIAnalysis, leadID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LeadAiAnalysis
+	var items []RacLeadAiAnalysis
 	for rows.Next() {
-		var i LeadAiAnalysis
+		var i RacLeadAiAnalysis
 		if err := rows.Scan(
 			&i.ID,
 			&i.LeadID,
@@ -583,20 +449,20 @@ func (q *Queries) ListLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) ([
 }
 
 const listLeadActivities = `-- name: ListLeadActivities :many
-SELECT id, lead_id, user_id, action, meta, created_at FROM lead_activity
+SELECT id, lead_id, user_id, action, meta, created_at FROM RAC_lead_activity
 WHERE lead_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListLeadActivities(ctx context.Context, leadID pgtype.UUID) ([]LeadActivity, error) {
+func (q *Queries) ListLeadActivities(ctx context.Context, leadID pgtype.UUID) ([]RacLeadActivity, error) {
 	rows, err := q.db.Query(ctx, listLeadActivities, leadID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LeadActivity
+	var items []RacLeadActivity
 	for rows.Next() {
-		var i LeadActivity
+		var i RacLeadActivity
 		if err := rows.Scan(
 			&i.ID,
 			&i.LeadID,
@@ -616,20 +482,20 @@ func (q *Queries) ListLeadActivities(ctx context.Context, leadID pgtype.UUID) ([
 }
 
 const listLeadNotes = `-- name: ListLeadNotes :many
-SELECT id, lead_id, author_id, body, type, created_at, updated_at FROM lead_notes
+SELECT id, lead_id, author_id, body, type, created_at, updated_at FROM RAC_lead_notes
 WHERE lead_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListLeadNotes(ctx context.Context, leadID pgtype.UUID) ([]LeadNote, error) {
+func (q *Queries) ListLeadNotes(ctx context.Context, leadID pgtype.UUID) ([]RacLeadNote, error) {
 	rows, err := q.db.Query(ctx, listLeadNotes, leadID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LeadNote
+	var items []RacLeadNote
 	for rows.Next() {
-		var i LeadNote
+		var i RacLeadNote
 		if err := rows.Scan(
 			&i.ID,
 			&i.LeadID,
@@ -650,20 +516,20 @@ func (q *Queries) ListLeadNotes(ctx context.Context, leadID pgtype.UUID) ([]Lead
 }
 
 const listLeadServices = `-- name: ListLeadServices :many
-SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at FROM lead_services
+SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id FROM RAC_lead_services
 WHERE lead_id = $1
 ORDER BY created_at
 `
 
-func (q *Queries) ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]LeadService, error) {
+func (q *Queries) ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]RacLeadService, error) {
 	rows, err := q.db.Query(ctx, listLeadServices, leadID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LeadService
+	var items []RacLeadService
 	for rows.Next() {
-		var i LeadService
+		var i RacLeadService
 		if err := rows.Scan(
 			&i.ID,
 			&i.LeadID,
@@ -677,6 +543,7 @@ func (q *Queries) ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]L
 			&i.VisitCompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ServiceTypeID,
 		); err != nil {
 			return nil, err
 		}
@@ -686,133 +553,10 @@ func (q *Queries) ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]L
 		return nil, err
 	}
 	return items, nil
-}
-
-const listVisitHistory = `-- name: ListVisitHistory :many
-SELECT id, lead_id, scheduled_date, scout_id, outcome, measurements, access_difficulty, notes, completed_at, created_at FROM visit_history
-WHERE lead_id = $1
-ORDER BY scheduled_date DESC
-`
-
-func (q *Queries) ListVisitHistory(ctx context.Context, leadID pgtype.UUID) ([]VisitHistory, error) {
-	rows, err := q.db.Query(ctx, listVisitHistory, leadID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []VisitHistory
-	for rows.Next() {
-		var i VisitHistory
-		if err := rows.Scan(
-			&i.ID,
-			&i.LeadID,
-			&i.ScheduledDate,
-			&i.ScoutID,
-			&i.Outcome,
-			&i.Measurements,
-			&i.AccessDifficulty,
-			&i.Notes,
-			&i.CompletedAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const scheduleLeadServiceVisit = `-- name: ScheduleLeadServiceVisit :one
-UPDATE lead_services SET 
-    visit_scheduled_date = $2, 
-    visit_scout_id = $3,
-    status = 'Scheduled',
-    updated_at = now()
-WHERE id = $1
-RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at
-`
-
-type ScheduleLeadServiceVisitParams struct {
-	ID                 pgtype.UUID        `json:"id"`
-	VisitScheduledDate pgtype.Timestamptz `json:"visit_scheduled_date"`
-	VisitScoutID       pgtype.UUID        `json:"visit_scout_id"`
-}
-
-func (q *Queries) ScheduleLeadServiceVisit(ctx context.Context, arg ScheduleLeadServiceVisitParams) (LeadService, error) {
-	row := q.db.QueryRow(ctx, scheduleLeadServiceVisit, arg.ID, arg.VisitScheduledDate, arg.VisitScoutID)
-	var i LeadService
-	err := row.Scan(
-		&i.ID,
-		&i.LeadID,
-		&i.ServiceType,
-		&i.Status,
-		&i.VisitScheduledDate,
-		&i.VisitScoutID,
-		&i.VisitMeasurements,
-		&i.VisitAccessDifficulty,
-		&i.VisitNotes,
-		&i.VisitCompletedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const scheduleLeadVisit = `-- name: ScheduleLeadVisit :one
-UPDATE leads SET 
-    visit_scheduled_date = $2, 
-    visit_scout_id = $3,
-    status = 'Scheduled',
-    updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source
-`
-
-type ScheduleLeadVisitParams struct {
-	ID                 pgtype.UUID        `json:"id"`
-	VisitScheduledDate pgtype.Timestamptz `json:"visit_scheduled_date"`
-	VisitScoutID       pgtype.UUID        `json:"visit_scout_id"`
-}
-
-func (q *Queries) ScheduleLeadVisit(ctx context.Context, arg ScheduleLeadVisitParams) (Lead, error) {
-	row := q.db.QueryRow(ctx, scheduleLeadVisit, arg.ID, arg.VisitScheduledDate, arg.VisitScoutID)
-	var i Lead
-	err := row.Scan(
-		&i.ID,
-		&i.ConsumerFirstName,
-		&i.ConsumerLastName,
-		&i.ConsumerPhone,
-		&i.ConsumerEmail,
-		&i.ConsumerRole,
-		&i.AddressStreet,
-		&i.AddressHouseNumber,
-		&i.AddressZipCode,
-		&i.AddressCity,
-		&i.ServiceType,
-		&i.Status,
-		&i.AssignedAgentID,
-		&i.ViewedByID,
-		&i.ViewedAt,
-		&i.VisitScheduledDate,
-		&i.VisitScoutID,
-		&i.VisitMeasurements,
-		&i.VisitAccessDifficulty,
-		&i.VisitNotes,
-		&i.VisitCompletedAt,
-		&i.DeletedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ConsumerNote,
-		&i.Source,
-	)
-	return i, err
 }
 
 const setLeadViewedBy = `-- name: SetLeadViewedBy :exec
-UPDATE leads SET viewed_by_id = $2, viewed_at = now(), updated_at = now()
+UPDATE RAC_leads SET viewed_by_id = $2, viewed_at = now(), updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -827,7 +571,7 @@ func (q *Queries) SetLeadViewedBy(ctx context.Context, arg SetLeadViewedByParams
 }
 
 const softDeleteLead = `-- name: SoftDeleteLead :exec
-UPDATE leads SET deleted_at = now(), updated_at = now() 
+UPDATE RAC_leads SET deleted_at = now(), updated_at = now() 
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -837,7 +581,7 @@ func (q *Queries) SoftDeleteLead(ctx context.Context, id pgtype.UUID) error {
 }
 
 const updateLeadNote = `-- name: UpdateLeadNote :one
-UPDATE lead_notes SET body = $2, updated_at = now()
+UPDATE RAC_lead_notes SET body = $2, updated_at = now()
 WHERE id = $1
 RETURNING id, lead_id, author_id, body, type, created_at, updated_at
 `
@@ -847,9 +591,9 @@ type UpdateLeadNoteParams struct {
 	Body string      `json:"body"`
 }
 
-func (q *Queries) UpdateLeadNote(ctx context.Context, arg UpdateLeadNoteParams) (LeadNote, error) {
+func (q *Queries) UpdateLeadNote(ctx context.Context, arg UpdateLeadNoteParams) (RacLeadNote, error) {
 	row := q.db.QueryRow(ctx, updateLeadNote, arg.ID, arg.Body)
-	var i LeadNote
+	var i RacLeadNote
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -863,9 +607,9 @@ func (q *Queries) UpdateLeadNote(ctx context.Context, arg UpdateLeadNoteParams) 
 }
 
 const updateLeadServiceStatus = `-- name: UpdateLeadServiceStatus :one
-UPDATE lead_services SET status = $2, updated_at = now()
+UPDATE RAC_lead_services SET status = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at
+RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id
 `
 
 type UpdateLeadServiceStatusParams struct {
@@ -873,9 +617,9 @@ type UpdateLeadServiceStatusParams struct {
 	Status string      `json:"status"`
 }
 
-func (q *Queries) UpdateLeadServiceStatus(ctx context.Context, arg UpdateLeadServiceStatusParams) (LeadService, error) {
+func (q *Queries) UpdateLeadServiceStatus(ctx context.Context, arg UpdateLeadServiceStatusParams) (RacLeadService, error) {
 	row := q.db.QueryRow(ctx, updateLeadServiceStatus, arg.ID, arg.Status)
-	var i LeadService
+	var i RacLeadService
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -889,12 +633,13 @@ func (q *Queries) UpdateLeadServiceStatus(ctx context.Context, arg UpdateLeadSer
 		&i.VisitCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ServiceTypeID,
 	)
 	return i, err
 }
 
 const updateLeadStatus = `-- name: UpdateLeadStatus :one
-UPDATE leads SET status = $2, updated_at = now()
+UPDATE RAC_leads SET status = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, service_type, status, assigned_agent_id, viewed_by_id, viewed_at, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, deleted_at, created_at, updated_at, consumer_note, source
 `
@@ -904,9 +649,9 @@ type UpdateLeadStatusParams struct {
 	Status string      `json:"status"`
 }
 
-func (q *Queries) UpdateLeadStatus(ctx context.Context, arg UpdateLeadStatusParams) (Lead, error) {
+func (q *Queries) UpdateLeadStatus(ctx context.Context, arg UpdateLeadStatusParams) (RacLead, error) {
 	row := q.db.QueryRow(ctx, updateLeadStatus, arg.ID, arg.Status)
-	var i Lead
+	var i RacLead
 	err := row.Scan(
 		&i.ID,
 		&i.ConsumerFirstName,

@@ -28,7 +28,7 @@ func NewAttachmentsHandler(repo repository.AttachmentStore, storageSvc storage.S
 }
 
 // RegisterRoutes adds attachment routes to a service-specific router group.
-// Expected route: /leads/:id/services/:serviceId/attachments
+// Expected route: /RAC_leads/:id/services/:serviceId/attachments
 func (h *AttachmentsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/presign", h.GetPresignedUploadURL)
 	rg.POST("", h.CreateAttachment)

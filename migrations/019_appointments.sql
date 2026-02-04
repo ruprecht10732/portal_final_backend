@@ -5,9 +5,9 @@
 -- Supports three types: lead_visit (linked to lead service), standalone (personal), blocked (time off)
 CREATE TABLE appointments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    lead_id UUID REFERENCES leads(id) ON DELETE SET NULL,
-    lead_service_id UUID REFERENCES lead_services(id) ON DELETE SET NULL,
+    user_id UUID NOT NULL REFERENCES RAC_users(id) ON DELETE CASCADE,
+    lead_id UUID REFERENCES RAC_leads(id) ON DELETE SET NULL,
+    lead_service_id UUID REFERENCES RAC_lead_services(id) ON DELETE SET NULL,
     type TEXT NOT NULL CHECK (type IN ('lead_visit', 'standalone', 'blocked')),
     title TEXT NOT NULL,
     description TEXT,

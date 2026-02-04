@@ -7,6 +7,7 @@ import (
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -14,13 +15,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// Handler handles HTTP requests for leads.
+// Handler handles HTTP requests for RAC_leads.
 // Uses focused services following vertical slicing pattern.
 type Handler struct {
 	mgmt         *management.Service
 	notesHandler *NotesHandler
 	advisor      *agent.LeadAdvisor
 	callLogger   *agent.CallLogger
+	sse          *sse.Service
 	val          *validator.Validator
 }
 
@@ -42,9 +44,9 @@ func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool
 	return *tenantID, true
 }
 
-// New creates a new leads handler with focused services.
-func New(mgmt *management.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, callLogger *agent.CallLogger, val *validator.Validator) *Handler {
-	return &Handler{mgmt: mgmt, notesHandler: notesHandler, advisor: advisor, callLogger: callLogger, val: val}
+// New creates a new RAC_leads handler with focused services.
+func New(mgmt *management.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, callLogger *agent.CallLogger, sseService *sse.Service, val *validator.Validator) *Handler {
+	return &Handler{mgmt: mgmt, notesHandler: notesHandler, advisor: advisor, callLogger: callLogger, sse: sseService, val: val}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -203,6 +205,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
+	h.publishLeadUpdate(tenantID, &lead.ID, "created")
 	httpkit.JSON(c, http.StatusCreated, lead)
 }
 
@@ -261,6 +264,7 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
+	h.publishLeadUpdate(tenantID, &lead.ID, "updated")
 	httpkit.OK(c, lead)
 }
 
@@ -291,6 +295,7 @@ func (h *Handler) Assign(c *gin.Context) {
 		return
 	}
 
+	h.publishLeadUpdate(tenantID, &lead.ID, "assigned")
 	httpkit.OK(c, lead)
 }
 
@@ -314,6 +319,7 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
+	h.publishLeadUpdate(tenantID, &id, "deleted")
 	httpkit.OK(c, gin.H{"message": "lead deleted"})
 }
 
@@ -342,6 +348,7 @@ func (h *Handler) BulkDelete(c *gin.Context) {
 		return
 	}
 
+	h.publishLeadUpdate(tenantID, nil, "bulk_deleted")
 	httpkit.OK(c, transport.BulkDeleteLeadsResponse{DeletedCount: deletedCount})
 }
 
@@ -376,6 +383,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
+	h.publishLeadUpdate(tenantID, &lead.ID, "status_updated")
 	httpkit.OK(c, lead)
 }
 
@@ -508,6 +516,23 @@ func (h *Handler) AddService(c *gin.Context) {
 	}
 
 	httpkit.JSON(c, http.StatusCreated, lead)
+}
+
+func (h *Handler) publishLeadUpdate(tenantID uuid.UUID, leadID *uuid.UUID, action string) {
+	if h.sse == nil {
+		return
+	}
+
+	event := sse.Event{
+		Type:    sse.EventLeadUpdated,
+		Message: "Lead updated",
+		Data:    gin.H{"action": action},
+	}
+	if leadID != nil {
+		event.LeadID = *leadID
+	}
+
+	h.sse.PublishToOrganization(tenantID, event)
 }
 
 func (h *Handler) UpdateServiceStatus(c *gin.Context) {

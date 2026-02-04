@@ -30,18 +30,18 @@ type LeadWriter interface {
 	BulkDelete(ctx context.Context, ids []uuid.UUID, organizationID uuid.UUID) (int, error)
 }
 
-// LeadEnrichmentWriter updates enrichment and scoring data for leads.
+// LeadEnrichmentWriter updates enrichment and scoring data for RAC_leads.
 type LeadEnrichmentWriter interface {
 	UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadEnrichmentParams) error
 	UpdateLeadScore(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadScoreParams) error
 }
 
-// LeadViewTracker tracks which users have viewed leads.
+// LeadViewTracker tracks which RAC_users have viewed RAC_leads.
 type LeadViewTracker interface {
 	SetViewedBy(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, userID uuid.UUID) error
 }
 
-// ActivityLogger records activity/audit trail on leads.
+// ActivityLogger records activity/audit trail on RAC_leads.
 type ActivityLogger interface {
 	AddActivity(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID, userID uuid.UUID, action string, meta map[string]interface{}) error
 }
@@ -85,7 +85,7 @@ type NoteStore interface {
 	ListLeadNotes(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadNote, error)
 }
 
-// AIAnalysisStore manages AI-generated analyses for leads.
+// AIAnalysisStore manages AI-generated analyses for RAC_leads.
 type AIAnalysisStore interface {
 	CreateAIAnalysis(ctx context.Context, params CreateAIAnalysisParams) (AIAnalysis, error)
 	GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (AIAnalysis, error)
@@ -118,7 +118,7 @@ type LeadAppointmentStats struct {
 	HasUpcoming bool
 }
 
-// AppointmentStatsReader provides appointment stats for leads (for scoring).
+// AppointmentStatsReader provides appointment stats for RAC_leads (for scoring).
 type AppointmentStatsReader interface {
 	GetLeadAppointmentStats(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadAppointmentStats, error)
 }
@@ -127,7 +127,7 @@ type AppointmentStatsReader interface {
 // Composite Interface (for backward compatibility)
 // =====================================
 
-// LeadsRepository defines the complete interface for leads data operations.
+// LeadsRepository defines the complete interface for RAC_leads data operations.
 // Composed of smaller, focused interfaces for better testability and flexibility.
 type LeadsRepository interface {
 	LeadReader

@@ -27,7 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Module is the leads bounded context module implementing http.Module.
+// Module is the RAC_leads bounded context module implementing http.Module.
 type Module struct {
 	handler              *handler.Handler
 	attachmentsHandler   *handler.AttachmentsHandler
@@ -45,7 +45,7 @@ type Module struct {
 	scorer               *scoring.Service
 }
 
-// NewModule creates and initializes the leads module with all its dependencies.
+// NewModule creates and initializes the RAC_leads module with all its dependencies.
 func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
 	// Create shared repository
 	repo := repository.New(pool)
@@ -74,7 +74,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// SSE service for real-time notifications
 	sseService := sse.New()
 
-	// Subscribe to LeadCreated events to auto-analyze new leads
+	// Subscribe to LeadCreated events to auto-analyze new RAC_leads
 	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadCreated)
 		if !ok {
@@ -102,7 +102,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	notesHandler := handler.NewNotesHandler(notesSvc, val)
 	attachmentsHandler := handler.NewAttachmentsHandler(repo, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(photoAnalyzer, repo, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), sseService, val)
-	h := handler.New(mgmtSvc, notesHandler, advisor, callLogger, val)
+	h := handler.New(mgmtSvc, notesHandler, advisor, callLogger, sseService, val)
 
 	return &Module{
 		handler:              h,
@@ -124,7 +124,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 
 // Name returns the module identifier.
 func (m *Module) Name() string {
-	return "leads"
+	return "RAC_leads"
 }
 
 // ManagementService returns the lead management service for external use.
@@ -152,7 +152,7 @@ func (m *Module) SSE() *sse.Service {
 	return m.sse
 }
 
-// Repository returns the leads repository for external use.
+// Repository returns the RAC_leads repository for external use.
 func (m *Module) Repository() repository.LeadsRepository {
 	return m.repo
 }
@@ -180,17 +180,17 @@ func (m *Module) SetLeadScorer(scorer *scoring.Service) {
 	m.scorer = scorer
 }
 
-// RegisterRoutes mounts leads routes on the provided router context.
+// RegisterRoutes mounts RAC_leads routes on the provided router context.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	// All leads routes require authentication
+	// All RAC_leads routes require authentication
 	leadsGroup := ctx.Protected.Group("/leads")
 	m.handler.RegisterRoutes(leadsGroup)
 
-	// Attachment routes: /leads/:id/services/:serviceId/attachments
+	// Attachment routes: /RAC_leads/:id/services/:serviceId/attachments
 	attachmentsGroup := leadsGroup.Group("/:id/services/:serviceId/attachments")
 	m.attachmentsHandler.RegisterRoutes(attachmentsGroup)
 
-	// Photo analysis routes: /leads/:id/services/:serviceId/...
+	// Photo analysis routes: /RAC_leads/:id/services/:serviceId/...
 	photoAnalysisGroup := leadsGroup.Group("/:id/services/:serviceId")
 	m.photoAnalysisHandler.RegisterRoutes(photoAnalysisGroup)
 

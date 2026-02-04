@@ -1,7 +1,7 @@
--- Migration: Create service_types table for dynamic service management
+-- Migration: Create RAC_service_types table for dynamic service management
 -- This replaces the hardcoded ServiceType enum (Windows, Insulation, Solar)
 
-CREATE TABLE IF NOT EXISTS service_types (
+CREATE TABLE IF NOT EXISTS RAC_service_types (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL UNIQUE,
     slug TEXT NOT NULL UNIQUE,
@@ -15,12 +15,12 @@ CREATE TABLE IF NOT EXISTS service_types (
 );
 
 -- Indexes for common queries
-CREATE INDEX idx_service_types_slug ON service_types(slug);
-CREATE INDEX idx_service_types_active ON service_types(is_active) WHERE is_active = true;
-CREATE INDEX idx_service_types_display_order ON service_types(display_order);
+CREATE INDEX idx_service_types_slug ON RAC_service_types(slug);
+CREATE INDEX idx_service_types_active ON RAC_service_types(is_active) WHERE is_active = true;
+CREATE INDEX idx_service_types_display_order ON RAC_service_types(display_order);
 
 -- Seed initial service types (migrate from existing hardcoded values)
-INSERT INTO service_types (name, slug, description, icon, color, display_order) VALUES
+INSERT INTO RAC_service_types (name, slug, description, icon, color, display_order) VALUES
     ('Windows', 'windows', 'Window and door installation, replacement, and repairs', 'window', '#3B82F6', 1),
     ('Insulation', 'insulation', 'Home insulation services including roof, wall, and floor insulation', 'home', '#10B981', 2),
     ('Solar', 'solar', 'Solar panel installation and maintenance', 'sun', '#F59E0B', 3),
@@ -31,24 +31,24 @@ INSERT INTO service_types (name, slug, description, icon, color, display_order) 
     ('Carpentry', 'carpentry', 'Woodwork, doors, floors, and furniture repairs', 'hammer', '#D97706', 7),
     ('Handyman', 'handyman', 'General repairs and small home improvement tasks', 'tool', '#6B7280', 8);
 
--- Add service_type_id column to lead_services (keep service_type TEXT temporarily for migration)
-ALTER TABLE lead_services ADD COLUMN IF NOT EXISTS service_type_id UUID REFERENCES service_types(id);
+-- Add service_type_id column to RAC_lead_services (keep service_type TEXT temporarily for migration)
+ALTER TABLE RAC_lead_services ADD COLUMN IF NOT EXISTS service_type_id UUID REFERENCES RAC_service_types(id);
 
--- Migrate existing lead_services data
-UPDATE lead_services ls 
+-- Migrate existing RAC_lead_services data
+UPDATE RAC_lead_services ls 
 SET service_type_id = st.id
-FROM service_types st 
+FROM RAC_service_types st 
 WHERE LOWER(st.slug) = LOWER(ls.service_type)
   AND ls.service_type_id IS NULL;
 
 -- For any unmapped service types, default to 'handyman'
-UPDATE lead_services 
-SET service_type_id = (SELECT id FROM service_types WHERE slug = 'handyman')
+UPDATE RAC_lead_services 
+SET service_type_id = (SELECT id FROM RAC_service_types WHERE slug = 'handyman')
 WHERE service_type_id IS NULL;
 
 -- Now make service_type_id required
-ALTER TABLE lead_services ALTER COLUMN service_type_id SET NOT NULL;
+ALTER TABLE RAC_lead_services ALTER COLUMN service_type_id SET NOT NULL;
 
 -- Drop the old CHECK constraint and TEXT column
-ALTER TABLE lead_services DROP CONSTRAINT IF EXISTS lead_services_service_type_check;
-ALTER TABLE lead_services DROP COLUMN IF EXISTS service_type;
+ALTER TABLE RAC_lead_services DROP CONSTRAINT IF EXISTS lead_services_service_type_check;
+ALTER TABLE RAC_lead_services DROP COLUMN IF EXISTS service_type;

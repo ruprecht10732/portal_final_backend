@@ -13,39 +13,32 @@ import (
 
 type Querier interface {
 	BulkSoftDeleteLeads(ctx context.Context, dollar_1 []pgtype.UUID) (pgconn.CommandTag, error)
-	CompleteLeadServiceSurvey(ctx context.Context, arg CompleteLeadServiceSurveyParams) (LeadService, error)
-	CompleteLeadSurvey(ctx context.Context, arg CompleteLeadSurveyParams) (Lead, error)
 	CountLeads(ctx context.Context) (int64, error)
 	// Leads Domain SQL Queries
-	CreateLead(ctx context.Context, arg CreateLeadParams) (Lead, error)
+	CreateLead(ctx context.Context, arg CreateLeadParams) (RacLead, error)
 	// Lead AI Analysis Queries
-	CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnalysisParams) (LeadAiAnalysis, error)
+	CreateLeadAIAnalysis(ctx context.Context, arg CreateLeadAIAnalysisParams) (RacLeadAiAnalysis, error)
 	// Lead Activity Queries
 	CreateLeadActivity(ctx context.Context, arg CreateLeadActivityParams) error
 	// Lead Notes Queries
-	CreateLeadNote(ctx context.Context, arg CreateLeadNoteParams) (LeadNote, error)
+	CreateLeadNote(ctx context.Context, arg CreateLeadNoteParams) (RacLeadNote, error)
 	// Lead Services Queries
-	CreateLeadService(ctx context.Context, arg CreateLeadServiceParams) (LeadService, error)
-	// Visit History Queries
-	CreateVisitHistory(ctx context.Context, arg CreateVisitHistoryParams) (VisitHistory, error)
+	CreateLeadService(ctx context.Context, arg CreateLeadServiceParams) (CreateLeadServiceRow, error)
 	DeleteLeadNote(ctx context.Context, id pgtype.UUID) error
-	GetLatestLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) (LeadAiAnalysis, error)
-	GetLeadByID(ctx context.Context, id pgtype.UUID) (Lead, error)
-	GetLeadByPhone(ctx context.Context, consumerPhone string) (Lead, error)
-	GetLeadNote(ctx context.Context, id pgtype.UUID) (LeadNote, error)
-	GetLeadService(ctx context.Context, id pgtype.UUID) (LeadService, error)
-	ListLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) ([]LeadAiAnalysis, error)
-	ListLeadActivities(ctx context.Context, leadID pgtype.UUID) ([]LeadActivity, error)
-	ListLeadNotes(ctx context.Context, leadID pgtype.UUID) ([]LeadNote, error)
-	ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]LeadService, error)
-	ListVisitHistory(ctx context.Context, leadID pgtype.UUID) ([]VisitHistory, error)
-	ScheduleLeadServiceVisit(ctx context.Context, arg ScheduleLeadServiceVisitParams) (LeadService, error)
-	ScheduleLeadVisit(ctx context.Context, arg ScheduleLeadVisitParams) (Lead, error)
+	GetLatestLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) (RacLeadAiAnalysis, error)
+	GetLeadByID(ctx context.Context, id pgtype.UUID) (RacLead, error)
+	GetLeadByPhone(ctx context.Context, consumerPhone string) (RacLead, error)
+	GetLeadNote(ctx context.Context, id pgtype.UUID) (RacLeadNote, error)
+	GetLeadService(ctx context.Context, id pgtype.UUID) (RacLeadService, error)
+	ListLeadAIAnalysis(ctx context.Context, leadID pgtype.UUID) ([]RacLeadAiAnalysis, error)
+	ListLeadActivities(ctx context.Context, leadID pgtype.UUID) ([]RacLeadActivity, error)
+	ListLeadNotes(ctx context.Context, leadID pgtype.UUID) ([]RacLeadNote, error)
+	ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]RacLeadService, error)
 	SetLeadViewedBy(ctx context.Context, arg SetLeadViewedByParams) error
 	SoftDeleteLead(ctx context.Context, id pgtype.UUID) error
-	UpdateLeadNote(ctx context.Context, arg UpdateLeadNoteParams) (LeadNote, error)
-	UpdateLeadServiceStatus(ctx context.Context, arg UpdateLeadServiceStatusParams) (LeadService, error)
-	UpdateLeadStatus(ctx context.Context, arg UpdateLeadStatusParams) (Lead, error)
+	UpdateLeadNote(ctx context.Context, arg UpdateLeadNoteParams) (RacLeadNote, error)
+	UpdateLeadServiceStatus(ctx context.Context, arg UpdateLeadServiceStatusParams) (RacLeadService, error)
+	UpdateLeadStatus(ctx context.Context, arg UpdateLeadStatusParams) (RacLead, error)
 }
 
 var _ Querier = (*Queries)(nil)

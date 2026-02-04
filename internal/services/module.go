@@ -1,5 +1,5 @@
 // Package services provides the service types bounded context module.
-// This module manages dynamic service categories that can be assigned to leads.
+// This module manages dynamic service categories that can be assigned to RAC_leads.
 package services
 
 import (

@@ -52,7 +52,7 @@ func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalys
 
 	var analysis AIAnalysis
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO lead_ai_analysis (
+		INSERT INTO RAC_lead_ai_analysis (
 			lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
 			lead_quality, recommended_action, missing_information,
 			preferred_contact_channel, suggested_contact_message, summary
@@ -88,7 +88,7 @@ func (r *Repository) GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUI
 		SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
 			lead_quality, recommended_action, missing_information,
 			preferred_contact_channel, suggested_contact_message, summary, created_at
-		FROM lead_ai_analysis
+		FROM RAC_lead_ai_analysis
 		WHERE lead_service_id = $1 AND organization_id = $2
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -115,7 +115,7 @@ func (r *Repository) ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, or
 		SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
 			lead_quality, recommended_action, missing_information,
 			preferred_contact_channel, suggested_contact_message, summary, created_at
-		FROM lead_ai_analysis
+		FROM RAC_lead_ai_analysis
 		WHERE lead_service_id = $1 AND organization_id = $2
 		ORDER BY created_at DESC
 	`, serviceID, organizationID)

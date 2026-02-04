@@ -68,7 +68,7 @@ type LeadCreated struct {
 	ServiceType     string     `json:"serviceType"`
 }
 
-func (e LeadCreated) EventName() string { return "leads.lead.created" }
+func (e LeadCreated) EventName() string { return "RAC_leads.lead.created" }
 
 // LeadAssigned is published when a lead is assigned to an agent.
 type LeadAssigned struct {
@@ -79,7 +79,7 @@ type LeadAssigned struct {
 	AssignedByID  uuid.UUID  `json:"assignedById"`
 }
 
-func (e LeadAssigned) EventName() string { return "leads.lead.assigned" }
+func (e LeadAssigned) EventName() string { return "RAC_leads.lead.assigned" }
 
 // =============================================================================
 // Identity Domain Events

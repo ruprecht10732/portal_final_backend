@@ -33,7 +33,7 @@ var _ Repository = (*Repo)(nil)
 func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ServiceType, error) {
 	query := `
 		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
-		FROM service_types
+		FROM RAC_service_types
 		WHERE id = $1 AND organization_id = $2`
 
 	var st ServiceType
@@ -60,7 +60,7 @@ func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UU
 func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug string) (ServiceType, error) {
 	query := `
 		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
-		FROM service_types
+		FROM RAC_service_types
 		WHERE slug = $1 AND organization_id = $2`
 
 	var st ServiceType
@@ -87,7 +87,7 @@ func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug str
 func (r *Repo) List(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
 	query := `
 		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
-		FROM service_types
+		FROM RAC_service_types
 		WHERE organization_id = $1
 		ORDER BY display_order ASC, name ASC`
 
@@ -104,7 +104,7 @@ func (r *Repo) List(ctx context.Context, organizationID uuid.UUID) ([]ServiceTyp
 func (r *Repo) ListActive(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
 	query := `
 		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
-		FROM service_types
+		FROM RAC_service_types
 		WHERE organization_id = $1 AND is_active = true
 		ORDER BY display_order ASC, name ASC`
 
@@ -138,7 +138,7 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 	whereClause := strings.Join(whereClauses, " AND ")
 
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM service_types WHERE %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM RAC_service_types WHERE %s", whereClause)
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count service types: %w", err)
 	}
@@ -167,7 +167,7 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 
 	query := fmt.Sprintf(`
 		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
-		FROM service_types
+		FROM RAC_service_types
 		WHERE %s
 		ORDER BY %s %s, name ASC
 		LIMIT $%d OFFSET $%d
@@ -189,7 +189,7 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 
 // Exists checks if a service type exists by ID.
 func (r *Repo) Exists(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM service_types WHERE id = $1 AND organization_id = $2)`
+	query := `SELECT EXISTS(SELECT 1 FROM RAC_service_types WHERE id = $1 AND organization_id = $2)`
 
 	var exists bool
 	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists)
@@ -200,9 +200,9 @@ func (r *Repo) Exists(ctx context.Context, organizationID uuid.UUID, id uuid.UUI
 	return exists, nil
 }
 
-// HasLeadServices checks if a service type is referenced by lead_services.
+// HasLeadServices checks if a service type is referenced by RAC_lead_services.
 func (r *Repo) HasLeadServices(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM lead_services WHERE service_type_id = $1 AND organization_id = $2)`
+	query := `SELECT EXISTS(SELECT 1 FROM RAC_lead_services WHERE service_type_id = $1 AND organization_id = $2)`
 
 	var exists bool
 	if err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists); err != nil {
@@ -215,7 +215,7 @@ func (r *Repo) HasLeadServices(ctx context.Context, organizationID uuid.UUID, id
 // Create creates a new service type.
 func (r *Repo) Create(ctx context.Context, params CreateParams) (ServiceType, error) {
 	query := `
-		INSERT INTO service_types (organization_id, name, slug, description, intake_guidelines, icon, color, display_order)
+		INSERT INTO RAC_service_types (organization_id, name, slug, description, intake_guidelines, icon, color, display_order)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at`
 
@@ -242,7 +242,7 @@ func (r *Repo) Create(ctx context.Context, params CreateParams) (ServiceType, er
 func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, error) {
 	// Build dynamic update query
 	query := `
-		UPDATE service_types SET
+		UPDATE RAC_service_types SET
 			name = COALESCE($2, name),
 			slug = COALESCE($3, slug),
 			description = COALESCE($4, description),
@@ -279,7 +279,7 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 // Delete removes a service type by ID (hard delete).
 // Use SetActive(false) for soft delete.
 func (r *Repo) Delete(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
-	query := `DELETE FROM service_types WHERE id = $1 AND organization_id = $2`
+	query := `DELETE FROM RAC_service_types WHERE id = $1 AND organization_id = $2`
 
 	result, err := r.pool.Exec(ctx, query, id, organizationID)
 	if err != nil {
@@ -295,7 +295,7 @@ func (r *Repo) Delete(ctx context.Context, organizationID uuid.UUID, id uuid.UUI
 
 // SetActive sets the is_active flag for a service type.
 func (r *Repo) SetActive(ctx context.Context, organizationID uuid.UUID, id uuid.UUID, isActive bool) error {
-	query := `UPDATE service_types SET is_active = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`
+	query := `UPDATE RAC_service_types SET is_active = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`
 
 	result, err := r.pool.Exec(ctx, query, id, organizationID, isActive)
 	if err != nil {
@@ -317,7 +317,7 @@ func (r *Repo) Reorder(ctx context.Context, organizationID uuid.UUID, items []Re
 	}
 	defer tx.Rollback(ctx)
 
-	query := `UPDATE service_types SET display_order = $2, updated_at = now() WHERE id = $1 AND organization_id = $3`
+	query := `UPDATE RAC_service_types SET display_order = $2, updated_at = now() WHERE id = $1 AND organization_id = $3`
 
 	for _, item := range items {
 		_, err := tx.Exec(ctx, query, item.ID, item.DisplayOrder, organizationID)

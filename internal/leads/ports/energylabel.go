@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// LeadEnergyData contains the energy label data relevant for leads.
-// This is defined by the leads domain - only the fields leads cares about.
+// LeadEnergyData contains the energy label data relevant for RAC_leads.
+// This is defined by the RAC_leads domain - only the fields RAC_leads cares about.
 type LeadEnergyData struct {
 	Energieklasse           string     `json:"energieklasse"`                     // Energy label class (A+++, A++, A+, A, B, C, D, E, F, G)
 	EnergieIndex            *float64   `json:"energieIndex,omitempty"`            // Energy index value
@@ -26,7 +26,7 @@ type EnrichLeadParams struct {
 	Toevoeging string
 }
 
-// EnergyLabelEnricher is the interface that the leads domain uses to enrich leads
+// EnergyLabelEnricher is the interface that the RAC_leads domain uses to enrich RAC_leads
 // with energy label data. The implementation is provided by the composition root
 // and wraps the energylabel service.
 type EnergyLabelEnricher interface {

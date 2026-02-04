@@ -13,12 +13,12 @@ import (
 type Querier interface {
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
 	// Auth Domain SQL Queries
-	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	CreateUserToken(ctx context.Context, arg CreateUserTokenParams) error
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	GetRefreshToken(ctx context.Context, tokenHash string) (GetRefreshTokenRow, error)
-	GetUserByEmail(ctx context.Context, email string) (User, error)
-	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
+	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
+	GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error)
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	GetUserToken(ctx context.Context, arg GetUserTokenParams) (GetUserTokenRow, error)
 	GetValidRoles(ctx context.Context, dollar_1 []string) ([]string, error)
@@ -28,7 +28,7 @@ type Querier interface {
 	RevokeAllRefreshTokens(ctx context.Context, userID pgtype.UUID) error
 	RevokeRefreshToken(ctx context.Context, tokenHash string) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
-	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (User, error)
+	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (UpdateUserEmailRow, error)
 	UseUserToken(ctx context.Context, arg UseUserTokenParams) error
 }
 

@@ -117,7 +117,7 @@ func (s *Service) PublishToOrganization(orgID uuid.UUID, event Event) {
 		s.Publish(userID, event)
 	}
 
-	log.Printf("SSE: Published event %s to org %s (%d users)", event.Type, orgID, len(seen))
+	log.Printf("SSE: Published event %s to org %s (%d RAC_users)", event.Type, orgID, len(seen))
 }
 
 // Handler returns a Gin handler for SSE connections

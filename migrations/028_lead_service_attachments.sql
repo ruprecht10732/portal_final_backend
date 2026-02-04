@@ -3,13 +3,13 @@
 
 CREATE TABLE lead_service_attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lead_service_id UUID NOT NULL REFERENCES lead_services(id) ON DELETE CASCADE,
+    lead_service_id UUID NOT NULL REFERENCES RAC_lead_services(id) ON DELETE CASCADE,
     organization_id UUID NOT NULL,
     file_key TEXT NOT NULL,
     file_name TEXT NOT NULL,
     content_type TEXT,
     size_bytes BIGINT,
-    uploaded_by UUID REFERENCES users(id),
+    uploaded_by UUID REFERENCES RAC_users(id),
     created_at TIMESTAMPTZ DEFAULT now()
 );
 

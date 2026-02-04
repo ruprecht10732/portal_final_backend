@@ -7,7 +7,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 )
 
-// LeadEnrichmentAdapter adapts the lead enrichment service for the leads domain.
+// LeadEnrichmentAdapter adapts the lead enrichment service for the RAC_leads domain.
 type LeadEnrichmentAdapter struct {
 	svc *service.Service
 }

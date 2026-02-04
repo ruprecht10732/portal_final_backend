@@ -124,7 +124,7 @@ func NewLeadAdvisor(apiKey string, repo repository.LeadsRepository, photoAnalyze
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:               "LeadAdvisor",
 		Model:              kimi,
-		Description:        "Expert AI Sales Advisor for home services marketplace (plumbing, HVAC, electrical, carpentry) that analyzes leads and provides personalized, actionable sales guidance.",
+		Description:        "Expert AI Sales Advisor for home services marketplace (plumbing, HVAC, electrical, carpentry) that analyzes RAC_leads and provides personalized, actionable sales guidance.",
 		Instruction:        getSystemPrompt(),
 		Tools:              tools,
 		AfterToolCallbacks: []llmagent.AfterToolCallback{afterToolCallback},

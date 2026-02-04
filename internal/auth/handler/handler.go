@@ -41,12 +41,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) ListUsers(c *gin.Context) {
-	users, err := h.svc.ListUsers(c.Request.Context())
+	RAC_users, err := h.svc.ListUsers(c.Request.Context())
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	httpkit.OK(c, users)
+	httpkit.OK(c, RAC_users)
 }
 
 func (h *Handler) GetMe(c *gin.Context) {

@@ -35,7 +35,7 @@ var _ Repository = (*Repo)(nil)
 // CreateVatRate creates a VAT rate.
 func (r *Repo) CreateVatRate(ctx context.Context, params CreateVatRateParams) (VatRate, error) {
 	query := `
-		INSERT INTO catalog_vat_rates (organization_id, name, rate_bps)
+		INSERT INTO RAC_catalog_vat_rates (organization_id, name, rate_bps)
 		VALUES ($1, $2, $3)
 		RETURNING id, organization_id, name, rate_bps, created_at, updated_at`
 
@@ -55,7 +55,7 @@ func (r *Repo) CreateVatRate(ctx context.Context, params CreateVatRateParams) (V
 // UpdateVatRate updates a VAT rate.
 func (r *Repo) UpdateVatRate(ctx context.Context, params UpdateVatRateParams) (VatRate, error) {
 	query := `
-		UPDATE catalog_vat_rates
+		UPDATE RAC_catalog_vat_rates
 		SET name = COALESCE($3, name),
 			rate_bps = COALESCE($4, rate_bps),
 			updated_at = now()
@@ -80,7 +80,7 @@ func (r *Repo) UpdateVatRate(ctx context.Context, params UpdateVatRateParams) (V
 
 // DeleteVatRate deletes a VAT rate.
 func (r *Repo) DeleteVatRate(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
-	query := `DELETE FROM catalog_vat_rates WHERE id = $1 AND organization_id = $2`
+	query := `DELETE FROM RAC_catalog_vat_rates WHERE id = $1 AND organization_id = $2`
 	result, err := r.pool.Exec(ctx, query, id, organizationID)
 	if err != nil {
 		return fmt.Errorf("delete vat rate: %w", err)
@@ -95,7 +95,7 @@ func (r *Repo) DeleteVatRate(ctx context.Context, organizationID uuid.UUID, id u
 func (r *Repo) GetVatRateByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (VatRate, error) {
 	query := `
 		SELECT id, organization_id, name, rate_bps, created_at, updated_at
-		FROM catalog_vat_rates
+		FROM RAC_catalog_vat_rates
 		WHERE id = $1 AND organization_id = $2`
 
 	var rate VatRate
@@ -128,7 +128,7 @@ func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]V
 
 	whereClause := strings.Join(whereClauses, " AND ")
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM catalog_vat_rates WHERE %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM RAC_catalog_vat_rates WHERE %s", whereClause)
 	var total int
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count vat rates: %w", err)
@@ -152,7 +152,7 @@ func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]V
 	args = append(args, params.Limit, params.Offset)
 	query := fmt.Sprintf(`
 		SELECT id, organization_id, name, rate_bps, created_at, updated_at
-		FROM catalog_vat_rates
+		FROM RAC_catalog_vat_rates
 		WHERE %s
 		ORDER BY %s %s, name ASC
 		LIMIT $%d OFFSET $%d
@@ -184,7 +184,7 @@ func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]V
 
 // HasProductsWithVatRate checks if any products reference a VAT rate.
 func (r *Repo) HasProductsWithVatRate(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM catalog_products WHERE vat_rate_id = $1 AND organization_id = $2)`
+	query := `SELECT EXISTS(SELECT 1 FROM RAC_catalog_products WHERE vat_rate_id = $1 AND organization_id = $2)`
 	var exists bool
 	if err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check vat rate usage: %w", err)
@@ -195,7 +195,7 @@ func (r *Repo) HasProductsWithVatRate(ctx context.Context, organizationID uuid.U
 // CreateProduct creates a product.
 func (r *Repo) CreateProduct(ctx context.Context, params CreateProductParams) (Product, error) {
 	query := `
-		INSERT INTO catalog_products (
+		INSERT INTO RAC_catalog_products (
 			organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at`
@@ -221,7 +221,7 @@ func (r *Repo) CreateProduct(ctx context.Context, params CreateProductParams) (P
 // UpdateProduct updates a product.
 func (r *Repo) UpdateProduct(ctx context.Context, params UpdateProductParams) (Product, error) {
 	query := `
-		UPDATE catalog_products
+		UPDATE RAC_catalog_products
 		SET
 			vat_rate_id = COALESCE($3, vat_rate_id),
 			title = COALESCE($4, title),
@@ -258,7 +258,7 @@ func (r *Repo) UpdateProduct(ctx context.Context, params UpdateProductParams) (P
 
 // DeleteProduct deletes a product.
 func (r *Repo) DeleteProduct(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
-	query := `DELETE FROM catalog_products WHERE id = $1 AND organization_id = $2`
+	query := `DELETE FROM RAC_catalog_products WHERE id = $1 AND organization_id = $2`
 	result, err := r.pool.Exec(ctx, query, id, organizationID)
 	if err != nil {
 		return fmt.Errorf("delete product: %w", err)
@@ -273,7 +273,7 @@ func (r *Repo) DeleteProduct(ctx context.Context, organizationID uuid.UUID, id u
 func (r *Repo) GetProductByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (Product, error) {
 	query := `
 		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-		FROM catalog_products
+		FROM RAC_catalog_products
 		WHERE id = $1 AND organization_id = $2`
 
 	var product Product
@@ -320,7 +320,7 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 
 	whereClause := strings.Join(whereClauses, " AND ")
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM catalog_products WHERE %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM RAC_catalog_products WHERE %s", whereClause)
 	var total int
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count products: %w", err)
@@ -348,7 +348,7 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 	args = append(args, params.Limit, params.Offset)
 	query := fmt.Sprintf(`
 		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-		FROM catalog_products
+		FROM RAC_catalog_products
 		WHERE %s
 		ORDER BY %s %s, created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -386,7 +386,7 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 func (r *Repo) GetProductsByIDs(ctx context.Context, organizationID uuid.UUID, ids []uuid.UUID) ([]Product, error) {
 	query := `
 		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-		FROM catalog_products
+		FROM RAC_catalog_products
 		WHERE organization_id = $1 AND id = ANY($2)
 	`
 
@@ -421,7 +421,7 @@ func (r *Repo) GetProductsByIDs(ctx context.Context, organizationID uuid.UUID, i
 // AddProductMaterials adds materials to a product.
 func (r *Repo) AddProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error {
 	query := `
-		INSERT INTO catalog_product_materials (organization_id, product_id, material_id)
+		INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id)
 		SELECT $1, $2, unnest($3::uuid[])
 		ON CONFLICT DO NOTHING`
 
@@ -434,7 +434,7 @@ func (r *Repo) AddProductMaterials(ctx context.Context, organizationID uuid.UUID
 // RemoveProductMaterials removes materials from a product.
 func (r *Repo) RemoveProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error {
 	query := `
-		DELETE FROM catalog_product_materials
+		DELETE FROM RAC_catalog_product_materials
 		WHERE organization_id = $1 AND product_id = $2 AND material_id = ANY($3::uuid[])`
 
 	if _, err := r.pool.Exec(ctx, query, organizationID, productID, materialIDs); err != nil {
@@ -447,8 +447,8 @@ func (r *Repo) RemoveProductMaterials(ctx context.Context, organizationID uuid.U
 func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) ([]Product, error) {
 	query := `
 		SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at
-		FROM catalog_products p
-		JOIN catalog_product_materials pm
+		FROM RAC_catalog_products p
+		JOIN RAC_catalog_product_materials pm
 		  ON pm.material_id = p.id AND pm.organization_id = p.organization_id
 		WHERE pm.organization_id = $1 AND pm.product_id = $2
 		ORDER BY p.title ASC`
@@ -483,7 +483,7 @@ func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUI
 
 // HasProductMaterials checks if a product has any materials linked.
 func (r *Repo) HasProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM catalog_product_materials WHERE organization_id = $1 AND product_id = $2)`
+	query := `SELECT EXISTS(SELECT 1 FROM RAC_catalog_product_materials WHERE organization_id = $1 AND product_id = $2)`
 	var exists bool
 	if err := r.pool.QueryRow(ctx, query, organizationID, productID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check product materials: %w", err)

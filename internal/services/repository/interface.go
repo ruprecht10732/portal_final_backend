@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// ServiceType represents a service category that can be assigned to leads.
+// ServiceType represents a service category that can be assigned to RAC_leads.
 type ServiceType struct {
 	ID               uuid.UUID `db:"id"`
 	OrganizationID   uuid.UUID `db:"organization_id"`

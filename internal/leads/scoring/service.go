@@ -18,7 +18,7 @@ const (
 	// Bump this when changing scoring logic significantly.
 	scoreVersion = "2026-v2"
 
-	// Base score - leads start at 50 and factors add/subtract from this.
+	// Base score - RAC_leads start at 50 and factors add/subtract from this.
 	baseScore = 50.0
 
 	// Maximum theoretical contribution from each factor category.
@@ -281,7 +281,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		electricity:   0.0,
 		buildingAge:   0.7,
 		wozValue:      0.5,
-		leadAge:       1.3, // Fresh leads convert best
+		leadAge:       1.3, // Fresh RAC_leads convert best
 		activity:      1.4, // Engagement is key
 		photo:         1.3,
 		status:        1.2,
@@ -490,7 +490,7 @@ func (s *Service) computePreAIScore(lead repository.Lead, svc *repository.LeadSe
 	// ========== BEHAVIORAL FACTORS (max ~25 points) ==========
 	// These factors describe lead ENGAGEMENT and TIMING
 
-	// Lead age: Fresh leads convert better (recency bias)
+	// Lead age: Fresh RAC_leads convert better (recency bias)
 	// Score: -6 to +8
 	leadAgeScore := s.scoreLeadAge(lead) * weights.leadAge
 	score += s.addFactor(factors, "lead_age", leadAgeScore)
@@ -896,7 +896,7 @@ func (s *Service) scoreWOZ(lead repository.Lead) float64 {
 }
 
 // scoreLeadAge evaluates how fresh the lead is.
-// Fresh leads have higher conversion rates (recency bias).
+// Fresh RAC_leads have higher conversion rates (recency bias).
 func (s *Service) scoreLeadAge(lead repository.Lead) float64 {
 	age := time.Since(lead.CreatedAt)
 	hours := age.Hours()
@@ -1095,7 +1095,7 @@ func (s *Service) scoreSource(lead repository.Lead, svc *repository.LeadService)
 }
 
 // scoreAssigned evaluates whether an agent is actively working the lead.
-// Assigned leads have follow-up in progress, unassigned haven't started.
+// Assigned RAC_leads have follow-up in progress, unassigned haven't started.
 func (s *Service) scoreAssigned(lead repository.Lead) float64 {
 	if lead.AssignedAgentID == nil {
 		return 0 // Not assigned - neutral

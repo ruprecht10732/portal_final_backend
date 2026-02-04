@@ -3,8 +3,8 @@
 
 CREATE TABLE IF NOT EXISTS lead_photo_analyses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-    service_id UUID NOT NULL REFERENCES lead_services(id) ON DELETE CASCADE,
+    lead_id UUID NOT NULL REFERENCES RAC_leads(id) ON DELETE CASCADE,
+    service_id UUID NOT NULL REFERENCES RAC_lead_services(id) ON DELETE CASCADE,
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     
     -- Analysis content

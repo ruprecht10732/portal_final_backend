@@ -9,8 +9,8 @@ import (
 	"portal_final_backend/internal/leads/ports"
 )
 
-// EnergyLabelAdapter adapts the energylabel service for use by the leads domain.
-// It implements the leads/ports.EnergyLabelEnricher interface.
+// EnergyLabelAdapter adapts the energylabel service for use by the RAC_leads domain.
+// It implements the RAC_leads/ports.EnergyLabelEnricher interface.
 type EnergyLabelAdapter struct {
 	svc *service.Service
 }
@@ -25,8 +25,8 @@ func NewEnergyLabelAdapter(svc *service.Service) *EnergyLabelAdapter {
 }
 
 // EnrichLead fetches energy label data for a lead's address.
-// Translates the leads domain's EnrichLeadParams into energylabel service call
-// and maps the response back to the leads domain's LeadEnergyData.
+// Translates the RAC_leads domain's EnrichLeadParams into energylabel service call
+// and maps the response back to the RAC_leads domain's LeadEnergyData.
 func (a *EnergyLabelAdapter) EnrichLead(ctx context.Context, params ports.EnrichLeadParams) (*ports.LeadEnergyData, error) {
 	if a == nil || a.svc == nil {
 		return nil, nil // Graceful degradation when disabled
@@ -46,7 +46,7 @@ func (a *EnergyLabelAdapter) EnrichLead(ctx context.Context, params ports.Enrich
 		return nil, nil // No label found
 	}
 
-	// Map energylabel transport to leads port format
+	// Map energylabel transport to RAC_leads port format
 	return &ports.LeadEnergyData{
 		Energieklasse:           label.Energieklasse,
 		EnergieIndex:            label.EnergieIndex,

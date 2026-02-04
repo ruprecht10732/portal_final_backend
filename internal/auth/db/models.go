@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type RefreshToken struct {
+type RacRefreshToken struct {
 	ID        pgtype.UUID        `json:"id"`
 	UserID    pgtype.UUID        `json:"user_id"`
 	TokenHash string             `json:"token_hash"`
@@ -17,29 +17,36 @@ type RefreshToken struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
-type Role struct {
+type RacRole struct {
 	ID   pgtype.UUID `json:"id"`
 	Name string      `json:"name"`
 }
 
-type User struct {
+type RacUser struct {
 	ID              pgtype.UUID        `json:"id"`
 	Email           string             `json:"email"`
 	PasswordHash    string             `json:"password_hash"`
 	IsEmailVerified bool               `json:"is_email_verified"`
-	FirstName       *string            `json:"first_name"`
-	LastName        *string            `json:"last_name"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	FirstName       pgtype.Text        `json:"first_name"`
+	LastName        pgtype.Text        `json:"last_name"`
 }
 
-type UserRole struct {
+type RacUserRole struct {
 	UserID    pgtype.UUID        `json:"user_id"`
 	RoleID    pgtype.UUID        `json:"role_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
-type UserToken struct {
+type RacUserSetting struct {
+	UserID            pgtype.UUID        `json:"user_id"`
+	PreferredLanguage string             `json:"preferred_language"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacUserToken struct {
 	ID        pgtype.UUID        `json:"id"`
 	UserID    pgtype.UUID        `json:"user_id"`
 	TokenHash string             `json:"token_hash"`

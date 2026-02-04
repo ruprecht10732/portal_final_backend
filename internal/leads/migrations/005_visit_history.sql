@@ -3,9 +3,9 @@
 
 CREATE TABLE IF NOT EXISTS visit_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    lead_id UUID NOT NULL REFERENCES RAC_leads(id) ON DELETE CASCADE,
     scheduled_date TIMESTAMPTZ NOT NULL,
-    scout_id UUID,                 -- References users.id (soft reference)
+    scout_id UUID,                 -- References RAC_users.id (soft reference)
     outcome TEXT NOT NULL CHECK (outcome IN ('completed', 'no_show', 'rescheduled', 'cancelled')),
     measurements TEXT,
     access_difficulty TEXT CHECK (access_difficulty IN ('Low', 'Medium', 'High')),

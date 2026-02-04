@@ -35,7 +35,7 @@ type UserSummary struct {
 type Service interface {
 	// GetMe returns the profile of the user with the given ID.
 	GetMe(ctx context.Context, userID uuid.UUID) (Profile, error)
-	// ListUsers returns a list of all users (for admin purposes).
+	// ListUsers returns a list of all RAC_users (for admin purposes).
 	ListUsers(ctx context.Context) ([]UserSummary, error)
 }
 
@@ -44,6 +44,6 @@ type Service interface {
 type UserProvider interface {
 	// GetUserByID returns basic user information needed by other domains.
 	GetUserByID(ctx context.Context, userID uuid.UUID) (Profile, error)
-	// GetUsersByIDs returns user information for multiple users at once.
+	// GetUsersByIDs returns user information for multiple RAC_users at once.
 	GetUsersByIDs(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]Profile, error)
 }

@@ -21,11 +21,11 @@ type Lead struct {
 type Service interface {
 	// GetLeadByID returns minimal lead information for a given ID.
 	GetLeadByID(ctx context.Context, id uuid.UUID) (Lead, error)
-	// GetLeadsForAgent returns leads assigned to a specific agent.
+	// GetLeadsForAgent returns RAC_leads assigned to a specific agent.
 	GetLeadsForAgent(ctx context.Context, agentID uuid.UUID) ([]Lead, error)
 }
 
-// Note: The full leads service with all CRUD operations is intended for use
+// Note: The full RAC_leads service with all CRUD operations is intended for use
 // within the HTTP handler layer only. Other domains should use the minimal
 // Service interface above or define their own interfaces for the specific
 // data they need (see AgentProvider pattern below).

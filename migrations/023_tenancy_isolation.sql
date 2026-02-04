@@ -6,27 +6,27 @@
 -- LEADS DOMAIN
 -- ============================================
 
--- Truncate leads-related tables (dev mode - no data preservation needed)
-TRUNCATE TABLE lead_ai_analysis CASCADE;
-TRUNCATE TABLE lead_notes CASCADE;
-TRUNCATE TABLE lead_activity CASCADE;
-TRUNCATE TABLE lead_services CASCADE;
-TRUNCATE TABLE leads CASCADE;
+-- Truncate RAC_leads-related tables (dev mode - no data preservation needed)
+TRUNCATE TABLE RAC_lead_ai_analysis CASCADE;
+TRUNCATE TABLE RAC_lead_notes CASCADE;
+TRUNCATE TABLE RAC_lead_activity CASCADE;
+TRUNCATE TABLE RAC_lead_services CASCADE;
+TRUNCATE TABLE RAC_leads CASCADE;
 
--- Add organization_id to leads table
-ALTER TABLE leads ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
+-- Add organization_id to RAC_leads table
+ALTER TABLE RAC_leads ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
 
--- Add organization_id to lead_services table
-ALTER TABLE lead_services ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
+-- Add organization_id to RAC_lead_services table
+ALTER TABLE RAC_lead_services ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
 
--- Add organization_id to lead_activity table
-ALTER TABLE lead_activity ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
+-- Add organization_id to RAC_lead_activity table
+ALTER TABLE RAC_lead_activity ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
 
--- Add organization_id to lead_notes table
-ALTER TABLE lead_notes ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
+-- Add organization_id to RAC_lead_notes table
+ALTER TABLE RAC_lead_notes ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
 
--- Add organization_id to lead_ai_analysis table
-ALTER TABLE lead_ai_analysis ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
+-- Add organization_id to RAC_lead_ai_analysis table
+ALTER TABLE RAC_lead_ai_analysis ADD COLUMN organization_id UUID NOT NULL REFERENCES organizations(id);
 
 -- ============================================
 -- APPOINTMENTS DOMAIN
@@ -59,12 +59,12 @@ ALTER TABLE appointment_availability_overrides ADD COLUMN organization_id UUID N
 -- ============================================
 
 -- Leads domain indexes
-CREATE INDEX idx_leads_org ON leads(organization_id);
-CREATE INDEX idx_leads_org_deleted ON leads(organization_id, deleted_at) WHERE deleted_at IS NULL;
-CREATE INDEX idx_lead_services_org ON lead_services(organization_id);
-CREATE INDEX idx_lead_activity_org ON lead_activity(organization_id);
-CREATE INDEX idx_lead_notes_org ON lead_notes(organization_id);
-CREATE INDEX idx_lead_ai_analysis_org ON lead_ai_analysis(organization_id);
+CREATE INDEX idx_leads_org ON RAC_leads(organization_id);
+CREATE INDEX idx_leads_org_deleted ON RAC_leads(organization_id, deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_lead_services_org ON RAC_lead_services(organization_id);
+CREATE INDEX idx_lead_activity_org ON RAC_lead_activity(organization_id);
+CREATE INDEX idx_lead_notes_org ON RAC_lead_notes(organization_id);
+CREATE INDEX idx_lead_ai_analysis_org ON RAC_lead_ai_analysis(organization_id);
 
 -- Appointments domain indexes
 CREATE INDEX idx_appointments_org ON appointments(organization_id);
@@ -75,5 +75,5 @@ CREATE INDEX idx_appointment_availability_rules_org ON appointment_availability_
 CREATE INDEX idx_appointment_availability_overrides_org ON appointment_availability_overrides(organization_id);
 
 -- Composite indexes for common query patterns
-CREATE INDEX idx_leads_org_assigned ON leads(organization_id, assigned_agent_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_leads_org_assigned ON RAC_leads(organization_id, assigned_agent_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_appointments_org_time ON appointments(organization_id, start_time, end_time);

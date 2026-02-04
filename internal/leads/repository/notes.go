@@ -31,13 +31,13 @@ func (r *Repository) CreateLeadNote(ctx context.Context, params CreateLeadNotePa
 	var note LeadNote
 	query := `
 		WITH inserted AS (
-			INSERT INTO lead_notes (lead_id, organization_id, author_id, type, body)
+			INSERT INTO RAC_lead_notes (lead_id, organization_id, author_id, type, body)
 			VALUES ($1, $2, $3, $4, $5)
 			RETURNING id, lead_id, organization_id, author_id, type, body, created_at, updated_at
 		)
 		SELECT inserted.id, inserted.lead_id, inserted.organization_id, inserted.author_id, u.email, inserted.type, inserted.body, inserted.created_at, inserted.updated_at
 		FROM inserted
-		JOIN users u ON u.id = inserted.author_id
+		JOIN RAC_users u ON u.id = inserted.author_id
 	`
 
 	err := r.pool.QueryRow(ctx, query, params.LeadID, params.OrganizationID, params.AuthorID, params.Type, params.Body).Scan(
@@ -57,8 +57,8 @@ func (r *Repository) CreateLeadNote(ctx context.Context, params CreateLeadNotePa
 func (r *Repository) ListLeadNotes(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadNote, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT ln.id, ln.lead_id, ln.organization_id, ln.author_id, u.email, ln.type, ln.body, ln.created_at, ln.updated_at
-		FROM lead_notes ln
-		JOIN users u ON u.id = ln.author_id
+		FROM RAC_lead_notes ln
+		JOIN RAC_users u ON u.id = ln.author_id
 		WHERE ln.lead_id = $1 AND ln.organization_id = $2
 		ORDER BY ln.created_at DESC
 	`, leadID, organizationID)

@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS appointment_availability_rules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES RAC_users(id) ON DELETE CASCADE,
     weekday SMALLINT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_availability_rules_user_id ON appointment_availab
 
 CREATE TABLE IF NOT EXISTS appointment_availability_overrides (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES RAC_users(id) ON DELETE CASCADE,
     date DATE NOT NULL,
     is_available BOOLEAN NOT NULL DEFAULT false,
     start_time TIME,

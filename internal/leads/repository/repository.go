@@ -27,7 +27,7 @@ func New(pool *pgxpool.Pool) *Repository {
 func (r *Repository) ListActiveServiceTypes(ctx context.Context, organizationID uuid.UUID) ([]ServiceContextDefinition, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT name, description, intake_guidelines
-		FROM service_types
+		FROM RAC_service_types
 		WHERE organization_id = $1 AND is_active = true
 		ORDER BY display_order ASC, name ASC
 	`, organizationID)
@@ -141,7 +141,7 @@ type CreateLeadParams struct {
 func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead, error) {
 	var lead Lead
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO leads (
+		INSERT INTO RAC_leads (
 			organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source
@@ -199,7 +199,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 			lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_stedelijkheid, lead_enrichment_confidence, lead_enrichment_fetched_at,
 			lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at,
 			viewed_by_id, viewed_at, created_at, updated_at
-		FROM leads WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+		FROM RAC_leads WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 	`, id, organizationID).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
@@ -251,7 +251,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string, organizationI
 			lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_stedelijkheid, lead_enrichment_confidence, lead_enrichment_fetched_at,
 			lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at,
 			viewed_by_id, viewed_at, created_at, updated_at
-		FROM leads WHERE consumer_phone = $1 AND organization_id = $2 AND deleted_at IS NULL
+		FROM RAC_leads WHERE consumer_phone = $1 AND organization_id = $2 AND deleted_at IS NULL
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, phone, organizationID).Scan(
@@ -292,14 +292,14 @@ func (r *Repository) GetByPhoneOrEmail(ctx context.Context, phone string, email 
 			l.consumer_email,
 			l.address_city,
 			COUNT(ls.id) AS service_count,
-			(SELECT st.name FROM lead_services ls2 
-			 JOIN service_types st ON st.id = ls2.service_type_id AND st.organization_id = l.organization_id
+			(SELECT st.name FROM RAC_lead_services ls2 
+			 JOIN RAC_service_types st ON st.id = ls2.service_type_id AND st.organization_id = l.organization_id
 			 WHERE ls2.lead_id = l.id ORDER BY ls2.created_at DESC LIMIT 1) AS last_service_type,
-			(SELECT ls2.status FROM lead_services ls2 
+			(SELECT ls2.status FROM RAC_lead_services ls2 
 			 WHERE ls2.lead_id = l.id ORDER BY ls2.created_at DESC LIMIT 1) AS last_status,
 			l.created_at
-		FROM leads l
-		LEFT JOIN lead_services ls ON ls.lead_id = l.id
+		FROM RAC_leads l
+		LEFT JOIN RAC_lead_services ls ON ls.lead_id = l.id
 		WHERE l.deleted_at IS NULL 
 		  AND l.organization_id = $3
 		  AND (($1 != '' AND l.consumer_phone = $1) OR ($2 != '' AND l.consumer_email = $2))
@@ -452,7 +452,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 	args = append(args, id, organizationID)
 
 	query := fmt.Sprintf(`
-		UPDATE leads SET %s
+		UPDATE RAC_leads SET %s
 		WHERE id = $%d AND organization_id = $%d AND deleted_at IS NULL
 		RETURNING id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
@@ -492,7 +492,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 
 func (r *Repository) UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateEnergyLabelParams) error {
 	result, err := r.pool.Exec(ctx, `
-		UPDATE leads
+		UPDATE RAC_leads
 		SET energy_class = $3,
 			energy_index = $4,
 			energy_bouwjaar = $5,
@@ -529,7 +529,7 @@ func (r *Repository) UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organi
 
 func (r *Repository) UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadEnrichmentParams) error {
 	result, err := r.pool.Exec(ctx, `
-		UPDATE leads
+		UPDATE RAC_leads
 		SET lead_enrichment_source = $3,
 			lead_enrichment_postcode6 = $4,
 			lead_enrichment_postcode4 = $5,
@@ -596,7 +596,7 @@ func (r *Repository) UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, org
 
 func (r *Repository) UpdateLeadScore(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadScoreParams) error {
 	result, err := r.pool.Exec(ctx, `
-		UPDATE leads
+		UPDATE RAC_leads
 		SET lead_score = $3,
 			lead_score_pre_ai = $4,
 			lead_score_factors = $5,
@@ -625,7 +625,7 @@ func (r *Repository) UpdateLeadScore(ctx context.Context, id uuid.UUID, organiza
 
 func (r *Repository) SetViewedBy(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE leads SET viewed_by_id = $3, viewed_at = now(), updated_at = now()
+		UPDATE RAC_leads SET viewed_by_id = $3, viewed_at = now(), updated_at = now()
 		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 	`, id, organizationID, userID)
 	return err
@@ -642,7 +642,7 @@ func (r *Repository) AddActivity(ctx context.Context, leadID uuid.UUID, organiza
 	}
 
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO lead_activity (lead_id, organization_id, user_id, action, meta)
+		INSERT INTO RAC_lead_activity (lead_id, organization_id, user_id, action, meta)
 		VALUES ($1, $2, $3, $4, $5)
 	`, leadID, organizationID, userID, action, metaJSON)
 	return err
@@ -675,7 +675,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	whereClause, joinClause, args, argIdx := buildLeadListWhere(params)
 
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT l.id) FROM leads l %s WHERE %s", joinClause, whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT l.id) FROM RAC_leads l %s WHERE %s", joinClause, whereClause)
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -701,7 +701,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 			l.lead_enrichment_huishoudens_met_kinderen_pct, l.lead_enrichment_stedelijkheid, l.lead_enrichment_confidence, l.lead_enrichment_fetched_at,
 			l.lead_score, l.lead_score_pre_ai, l.lead_score_factors, l.lead_score_version, l.lead_score_updated_at,
 			l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at
-		FROM leads l
+		FROM RAC_leads l
 		%s
 		WHERE %s
 		ORDER BY %s %s
@@ -714,7 +714,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	}
 	defer rows.Close()
 
-	leads := make([]Lead, 0)
+	RAC_leads := make([]Lead, 0)
 	for rows.Next() {
 		var lead Lead
 		if err := rows.Scan(
@@ -734,14 +734,14 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		); err != nil {
 			return nil, 0, err
 		}
-		leads = append(leads, lead)
+		RAC_leads = append(RAC_leads, lead)
 	}
 
 	if rows.Err() != nil {
 		return nil, 0, rows.Err()
 	}
 
-	return leads, total, nil
+	return RAC_leads, total, nil
 }
 
 type leadListWhereBuilder struct {
@@ -850,12 +850,12 @@ func (b *leadListWhereBuilder) joinClause() string {
 	return `
 		LEFT JOIN LATERAL (
 			SELECT ls.id, ls.status, ls.service_type_id
-			FROM lead_services ls
+			FROM RAC_lead_services ls
 			WHERE ls.lead_id = l.id AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
 			ORDER BY ls.created_at DESC
 			LIMIT 1
 		) cs ON true
-		LEFT JOIN service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id`
+		LEFT JOIN RAC_service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id`
 }
 
 func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) {
@@ -932,7 +932,7 @@ func (r *Repository) ListHeatmapPoints(ctx context.Context, organizationID uuid.
 
 	query := fmt.Sprintf(`
 		SELECT latitude, longitude
-		FROM leads
+		FROM RAC_leads
 		WHERE %s
 	`, whereClause)
 
@@ -983,10 +983,10 @@ func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UU
 
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*)
-		FROM leads l
+		FROM RAC_leads l
 		LEFT JOIN (
 			SELECT DISTINCT ON (lead_id) lead_id, urgency_level, urgency_reason, created_at
-			FROM lead_ai_analysis
+			FROM RAC_lead_ai_analysis
 			ORDER BY lead_id, created_at DESC
 		) ai ON ai.lead_id = l.id
 		WHERE %s
@@ -1000,10 +1000,10 @@ func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UU
 	args = append(args, limit, offset)
 	query := fmt.Sprintf(`
 		SELECT l.id, l.consumer_first_name, l.consumer_last_name, ai.urgency_level, ai.urgency_reason, l.created_at
-		FROM leads l
+		FROM RAC_leads l
 		LEFT JOIN (
 			SELECT DISTINCT ON (lead_id) lead_id, urgency_level, urgency_reason, created_at
-			FROM lead_ai_analysis
+			FROM RAC_lead_ai_analysis
 			ORDER BY lead_id, created_at DESC
 		) ai ON ai.lead_id = l.id
 		WHERE %s
@@ -1036,7 +1036,7 @@ func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UU
 }
 
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	result, err := r.pool.Exec(ctx, "UPDATE leads SET deleted_at = now(), updated_at = now() WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL", id, organizationID)
+	result, err := r.pool.Exec(ctx, "UPDATE RAC_leads SET deleted_at = now(), updated_at = now() WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL", id, organizationID)
 	if err != nil {
 		return err
 	}
@@ -1047,7 +1047,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 }
 
 func (r *Repository) BulkDelete(ctx context.Context, ids []uuid.UUID, organizationID uuid.UUID) (int, error) {
-	result, err := r.pool.Exec(ctx, "UPDATE leads SET deleted_at = now(), updated_at = now() WHERE id = ANY($1) AND organization_id = $2 AND deleted_at IS NULL", ids, organizationID)
+	result, err := r.pool.Exec(ctx, "UPDATE RAC_leads SET deleted_at = now(), updated_at = now() WHERE id = ANY($1) AND organization_id = $2 AND deleted_at IS NULL", ids, organizationID)
 	if err != nil {
 		return 0, err
 	}

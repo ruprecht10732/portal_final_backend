@@ -38,11 +38,11 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, `
 		WITH inserted AS (
-			INSERT INTO lead_services (lead_id, organization_id, service_type_id, status, consumer_note, source)
+			INSERT INTO RAC_lead_services (lead_id, organization_id, service_type_id, status, consumer_note, source)
 			VALUES (
 				$1,
 				$2,
-				(SELECT id FROM service_types WHERE (name = $3 OR slug = $3) AND organization_id = $2 LIMIT 1),
+				(SELECT id FROM RAC_service_types WHERE (name = $3 OR slug = $3) AND organization_id = $2 LIMIT 1),
 				'New',
 				$4,
 				$5
@@ -52,7 +52,7 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 		SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.consumer_note, i.source,
 			i.created_at, i.updated_at
 		FROM inserted i
-		JOIN service_types st ON st.id = i.service_type_id AND st.organization_id = i.organization_id
+		JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = i.organization_id
 	`, params.LeadID, params.OrganizationID, params.ServiceType, params.ConsumerNote, params.Source).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
 		&svc.CreatedAt, &svc.UpdatedAt,
@@ -65,8 +65,8 @@ func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organ
 	err := r.pool.QueryRow(ctx, `
 		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
 			ls.created_at, ls.updated_at
-		FROM lead_services ls
-		JOIN service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+		FROM RAC_lead_services ls
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		WHERE ls.id = $1 AND ls.organization_id = $2
 	`, id, organizationID).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
@@ -82,8 +82,8 @@ func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, org
 	rows, err := r.pool.Query(ctx, `
 		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
 			ls.created_at, ls.updated_at
-		FROM lead_services ls
-		JOIN service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+		FROM RAC_lead_services ls
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		WHERE ls.lead_id = $1 AND ls.organization_id = $2
 		ORDER BY ls.created_at DESC
 	`, leadID, organizationID)
@@ -114,8 +114,8 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 	err := r.pool.QueryRow(ctx, `
 		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
 			ls.created_at, ls.updated_at
-		FROM lead_services ls
-		JOIN service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+		FROM RAC_lead_services ls
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
 		ORDER BY ls.created_at DESC
 		LIMIT 1
@@ -128,8 +128,8 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 		err = r.pool.QueryRow(ctx, `
 			SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.consumer_note, ls.source,
 				ls.created_at, ls.updated_at
-			FROM lead_services ls
-			JOIN service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+			FROM RAC_lead_services ls
+			JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 			WHERE ls.lead_id = $1 AND ls.organization_id = $2
 			ORDER BY ls.created_at DESC
 			LIMIT 1
@@ -168,14 +168,14 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organi
 
 	query := fmt.Sprintf(`
 		WITH updated AS (
-			UPDATE lead_services SET %s
+			UPDATE RAC_lead_services SET %s
 			WHERE id = $%d AND organization_id = $%d
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.consumer_note, u.source,
 			u.created_at, u.updated_at
 		FROM updated u
-		JOIN service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, strings.Join(setClauses, ", "), argIdx, argIdx+1)
 
 	var svc LeadService
@@ -194,13 +194,13 @@ func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, or
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, `
 		WITH target AS (
-			SELECT id FROM service_types
+			SELECT id FROM RAC_service_types
 			WHERE (name = $3 OR slug = $3)
 				AND organization_id = $2
 				AND is_active = true
 			LIMIT 1
 		), updated AS (
-			UPDATE lead_services
+			UPDATE RAC_lead_services
 			SET service_type_id = (SELECT id FROM target), updated_at = now()
 			WHERE id = $1 AND organization_id = $2 AND EXISTS (SELECT 1 FROM target)
 			RETURNING *
@@ -208,7 +208,7 @@ func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, or
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.consumer_note, u.source,
 			u.created_at, u.updated_at
 		FROM updated u
-		JOIN service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, id, organizationID, serviceType).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
 		&svc.CreatedAt, &svc.UpdatedAt,
@@ -223,14 +223,14 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, `
 		WITH updated AS (
-			UPDATE lead_services SET status = $3, updated_at = now()
+			UPDATE RAC_lead_services SET status = $3, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.consumer_note, u.source,
 			u.created_at, u.updated_at
 		FROM updated u
-		JOIN service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, id, organizationID, status).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
 		&svc.CreatedAt, &svc.UpdatedAt,
@@ -244,7 +244,7 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 // CloseAllActiveServices marks all non-terminal services for a lead as Closed
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE lead_services 
+		UPDATE RAC_lead_services 
 		SET status = 'Closed', updated_at = now()
 		WHERE lead_id = $1 AND organization_id = $2 AND status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
 	`, leadID, organizationID)

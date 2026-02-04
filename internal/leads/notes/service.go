@@ -1,6 +1,6 @@
 // Package notes handles lead note operations.
 // This is a vertically sliced feature package containing service logic
-// for creating and listing notes on leads.
+// for creating and listing notes on RAC_leads.
 package notes
 
 import (

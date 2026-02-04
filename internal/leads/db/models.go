@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type Lead struct {
+type RacLead struct {
 	ID                    pgtype.UUID        `json:"id"`
 	ConsumerFirstName     string             `json:"consumer_first_name"`
 	ConsumerLastName      string             `json:"consumer_last_name"`
@@ -37,7 +37,7 @@ type Lead struct {
 	Source                pgtype.Text        `json:"source"`
 }
 
-type LeadActivity struct {
+type RacLeadActivity struct {
 	ID        pgtype.UUID        `json:"id"`
 	LeadID    pgtype.UUID        `json:"lead_id"`
 	UserID    pgtype.UUID        `json:"user_id"`
@@ -46,7 +46,7 @@ type LeadActivity struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
-type LeadAiAnalysis struct {
+type RacLeadAiAnalysis struct {
 	ID                  pgtype.UUID        `json:"id"`
 	LeadID              pgtype.UUID        `json:"lead_id"`
 	UrgencyLevel        string             `json:"urgency_level"`
@@ -58,7 +58,7 @@ type LeadAiAnalysis struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
-type LeadNote struct {
+type RacLeadNote struct {
 	ID        pgtype.UUID        `json:"id"`
 	LeadID    pgtype.UUID        `json:"lead_id"`
 	AuthorID  pgtype.UUID        `json:"author_id"`
@@ -68,7 +68,7 @@ type LeadNote struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
-type LeadService struct {
+type RacLeadService struct {
 	ID                    pgtype.UUID        `json:"id"`
 	LeadID                pgtype.UUID        `json:"lead_id"`
 	ServiceType           string             `json:"service_type"`
@@ -81,6 +81,20 @@ type LeadService struct {
 	VisitCompletedAt      pgtype.Timestamptz `json:"visit_completed_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	ServiceTypeID         pgtype.UUID        `json:"service_type_id"`
+}
+
+type RacServiceType struct {
+	ID           pgtype.UUID        `json:"id"`
+	Name         string             `json:"name"`
+	Slug         string             `json:"slug"`
+	Description  pgtype.Text        `json:"description"`
+	Icon         pgtype.Text        `json:"icon"`
+	Color        pgtype.Text        `json:"color"`
+	IsActive     bool               `json:"is_active"`
+	DisplayOrder int32              `json:"display_order"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type VisitHistory struct {

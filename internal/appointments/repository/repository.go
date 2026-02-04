@@ -330,7 +330,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*LeadInfo, error) {
 	var info LeadInfo
 	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
-		FROM leads WHERE id = $1 AND organization_id = $2`
+		FROM RAC_leads WHERE id = $1 AND organization_id = $2`
 
 	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(
 		&info.ID, &info.FirstName, &info.LastName, &info.Phone,
@@ -349,7 +349,7 @@ func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID, organiza
 // GetLeadEmail retrieves the email for a lead
 func (r *Repository) GetLeadEmail(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (string, error) {
 	var email string
-	query := `SELECT COALESCE(consumer_email, '') FROM leads WHERE id = $1 AND organization_id = $2`
+	query := `SELECT COALESCE(consumer_email, '') FROM RAC_leads WHERE id = $1 AND organization_id = $2`
 
 	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(&email)
 	if err != nil {
@@ -369,7 +369,7 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 	}
 
 	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
-		FROM leads WHERE id = ANY($1) AND organization_id = $2`
+		FROM RAC_leads WHERE id = ANY($1) AND organization_id = $2`
 
 	rows, err := r.pool.Query(ctx, query, leadIDs, organizationID)
 	if err != nil {
@@ -390,7 +390,7 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate leads: %w", err)
+		return nil, fmt.Errorf("failed to iterate RAC_leads: %w", err)
 	}
 
 	return result, nil

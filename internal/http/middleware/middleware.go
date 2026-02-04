@@ -18,7 +18,7 @@ import (
 
 const (
 	ContextUserIDKey = "userID"
-	ContextRolesKey  = "roles"
+	ContextRolesKey  = "RAC_roles"
 	errMissingToken  = "missing token"
 	errInvalidToken  = "invalid token"
 )
@@ -138,22 +138,22 @@ func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 			return
 		}
 
-		roles := extractRoles(claims["roles"])
+		RAC_roles := extractRoles(claims["RAC_roles"])
 		c.Set(ContextUserIDKey, userID)
-		c.Set(ContextRolesKey, roles)
+		c.Set(ContextRolesKey, RAC_roles)
 		c.Next()
 	}
 }
 
 func RequireRole(role string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		roles, ok := c.Get(ContextRolesKey)
+		RAC_roles, ok := c.Get(ContextRolesKey)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
 		}
 
-		roleList, ok := roles.([]string)
+		roleList, ok := RAC_roles.([]string)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -171,23 +171,23 @@ func RequireRole(role string) gin.HandlerFunc {
 }
 
 func extractRoles(value interface{}) []string {
-	roles := make([]string, 0)
+	RAC_roles := make([]string, 0)
 	if value == nil {
-		return roles
+		return RAC_roles
 	}
 
 	switch typed := value.(type) {
 	case []string:
-		return append(roles, typed...)
+		return append(RAC_roles, typed...)
 	case []interface{}:
 		for _, item := range typed {
 			if text, ok := item.(string); ok {
-				roles = append(roles, text)
+				RAC_roles = append(RAC_roles, text)
 			}
 		}
 	}
 
-	return roles
+	return RAC_roles
 }
 
 func extractBearerToken(authHeader string) (string, bool) {

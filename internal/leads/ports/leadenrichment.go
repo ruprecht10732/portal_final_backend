@@ -2,7 +2,7 @@ package ports
 
 import "context"
 
-// LeadEnrichmentData contains enrichment data relevant for leads.
+// LeadEnrichmentData contains enrichment data relevant for RAC_leads.
 type LeadEnrichmentData struct {
 	Source    string
 	Postcode6 string
