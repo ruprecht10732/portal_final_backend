@@ -155,13 +155,11 @@ func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 		c.Set(ContextUserIDKey, userID)
 		c.Set(ContextRolesKey, roles)
 
-		if tenantID, err := parseTenantID(claims); err == nil {
-			if tenantID != nil {
-				c.Set(ContextTenantIDKey, *tenantID)
-			}
-		} else if err != nil {
+		if tenantID, err := parseTenantID(claims); err != nil {
 			abortUnauthorized(c, errInvalidToken)
 			return
+		} else if tenantID != nil {
+			c.Set(ContextTenantIDKey, *tenantID)
 		}
 		c.Next()
 	}
