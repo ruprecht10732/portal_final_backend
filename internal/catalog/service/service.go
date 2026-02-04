@@ -194,28 +194,14 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 
 // UpdateProduct updates an existing product.
 func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, req transport.UpdateProductRequest) (transport.ProductResponse, error) {
-	if req.VatRateID != nil {
-		if _, err := s.repo.GetVatRateByID(ctx, tenantID, *req.VatRateID); err != nil {
-			return transport.ProductResponse{}, err
-		}
+	if err := s.ensureVatRateExists(ctx, tenantID, req.VatRateID); err != nil {
+		return transport.ProductResponse{}, err
 	}
-
-	if req.PeriodCount != nil || req.PeriodUnit != nil {
-		if err := s.validatePeriod(req.PeriodCount, req.PeriodUnit); err != nil {
-			return transport.ProductResponse{}, err
-		}
+	if err := s.validatePeriodUpdate(req); err != nil {
+		return transport.ProductResponse{}, err
 	}
-
-	if req.Type != nil {
-		if *req.Type != "service" {
-			hasMaterials, err := s.repo.HasProductMaterials(ctx, tenantID, id)
-			if err != nil {
-				return transport.ProductResponse{}, err
-			}
-			if hasMaterials {
-				return transport.ProductResponse{}, apperr.Conflict("product has materials and cannot change type")
-			}
-		}
+	if err := s.ensureTypeChangeAllowed(ctx, tenantID, id, req.Type); err != nil {
+		return transport.ProductResponse{}, err
 	}
 
 	params := repository.UpdateProductParams{
@@ -251,47 +237,19 @@ func (s *Service) DeleteProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 
 // AddProductMaterials adds material products to a service product.
 func (s *Service) AddProductMaterials(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error {
-	product, err := s.repo.GetProductByID(ctx, tenantID, productID)
+	if err := s.ensureServiceProduct(ctx, tenantID, productID); err != nil {
+		return err
+	}
+	uniqueIDs, err := s.ensureValidMaterialIDs(productID, materialIDs)
 	if err != nil {
 		return err
 	}
-	if product.Type != "service" {
-		return apperr.Validation("materials can only be linked to service products")
-	}
-
-	uniqueIDs := uniqueUUIDs(materialIDs)
-	for _, id := range uniqueIDs {
-		if id == productID {
-			return apperr.Validation("product cannot reference itself as a material")
-		}
-	}
-
-	materials, err := s.repo.GetProductsByIDs(ctx, tenantID, uniqueIDs)
+	materials, err := s.loadAndValidateMaterials(ctx, tenantID, uniqueIDs)
 	if err != nil {
 		return err
 	}
-	if len(materials) != len(uniqueIDs) {
-		return apperr.Validation("one or more materials were not found")
-	}
-
-	for _, material := range materials {
-		if material.Type != "material" {
-			return apperr.Validation("only material products can be linked")
-		}
-	}
-
-	// Defense-in-depth: verify materials don't have their own children.
-	// The type system already prevents this (only "material" types can be added,
-	// and "material" types cannot have children), but this check ensures
-	// future changes don't accidentally create circular dependencies.
-	for _, material := range materials {
-		hasChildren, err := s.repo.HasProductMaterials(ctx, tenantID, material.ID)
-		if err != nil {
-			return err
-		}
-		if hasChildren {
-			return apperr.Validation("cannot add a material that is composed of other materials")
-		}
+	if err := s.ensureMaterialsNoChildren(ctx, tenantID, materials); err != nil {
+		return err
 	}
 
 	if err := s.repo.AddProductMaterials(ctx, tenantID, productID, uniqueIDs); err != nil {
@@ -310,6 +268,89 @@ func (s *Service) RemoveProductMaterials(ctx context.Context, tenantID uuid.UUID
 	}
 
 	s.log.Info("product materials removed", "productId", productID, "count", len(uniqueIDs))
+	return nil
+}
+
+func (s *Service) ensureVatRateExists(ctx context.Context, tenantID uuid.UUID, vatRateID *uuid.UUID) error {
+	if vatRateID == nil {
+		return nil
+	}
+	_, err := s.repo.GetVatRateByID(ctx, tenantID, *vatRateID)
+	return err
+}
+
+func (s *Service) validatePeriodUpdate(req transport.UpdateProductRequest) error {
+	if req.PeriodCount == nil && req.PeriodUnit == nil {
+		return nil
+	}
+	return s.validatePeriod(req.PeriodCount, req.PeriodUnit)
+}
+
+func (s *Service) ensureTypeChangeAllowed(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, productType *string) error {
+	if productType == nil || *productType == "service" {
+		return nil
+	}
+	hasMaterials, err := s.repo.HasProductMaterials(ctx, tenantID, productID)
+	if err != nil {
+		return err
+	}
+	if hasMaterials {
+		return apperr.Conflict("product has materials and cannot change type")
+	}
+	return nil
+}
+
+func (s *Service) ensureServiceProduct(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID) error {
+	product, err := s.repo.GetProductByID(ctx, tenantID, productID)
+	if err != nil {
+		return err
+	}
+	if product.Type != "service" {
+		return apperr.Validation("materials can only be linked to service products")
+	}
+	return nil
+}
+
+func (s *Service) ensureValidMaterialIDs(productID uuid.UUID, materialIDs []uuid.UUID) ([]uuid.UUID, error) {
+	uniqueIDs := uniqueUUIDs(materialIDs)
+	for _, id := range uniqueIDs {
+		if id == productID {
+			return nil, apperr.Validation("product cannot reference itself as a material")
+		}
+	}
+	return uniqueIDs, nil
+}
+
+func (s *Service) loadAndValidateMaterials(ctx context.Context, tenantID uuid.UUID, materialIDs []uuid.UUID) ([]repository.Product, error) {
+	materials, err := s.repo.GetProductsByIDs(ctx, tenantID, materialIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(materials) != len(materialIDs) {
+		return nil, apperr.Validation("one or more materials were not found")
+	}
+	for _, material := range materials {
+		if material.Type != "material" {
+			return nil, apperr.Validation("only material products can be linked")
+		}
+	}
+	return materials, nil
+}
+
+func (s *Service) ensureMaterialsNoChildren(ctx context.Context, tenantID uuid.UUID, materials []repository.Product) error {
+	// Defense-in-depth: verify materials don't have their own children.
+	// The type system already prevents this (only "material" types can be added,
+	// and "material" types cannot have children), but this check ensures
+	// future changes don't accidentally create circular dependencies.
+	for _, material := range materials {
+		hasChildren, err := s.repo.HasProductMaterials(ctx, tenantID, material.ID)
+		if err != nil {
+			return err
+		}
+		if hasChildren {
+			return apperr.Validation("cannot add a material that is composed of other materials")
+		}
+	}
 	return nil
 }
 
