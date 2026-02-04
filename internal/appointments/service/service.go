@@ -771,18 +771,32 @@ func (s *Service) UpdateAvailabilityRule(ctx context.Context, userID uuid.UUID, 
 		return nil, apperr.Forbidden("not authorized to update this availability rule")
 	}
 
-	// Apply partial updates
-	if req.Weekday != nil {
-		rule.Weekday = *req.Weekday
+	updated, err := applyAvailabilityRuleUpdates(rule, req)
+	if err != nil {
+		return nil, err
 	}
 
-	timezone := rule.Timezone
+	saved, err := s.repo.UpdateAvailabilityRule(ctx, id, tenantID, updated)
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAvailabilityRule(saved), nil
+}
+
+func applyAvailabilityRuleUpdates(rule *repository.AvailabilityRule, req transport.UpdateAvailabilityRuleRequest) (repository.AvailabilityRule, error) {
+	updated := *rule
+	if req.Weekday != nil {
+		updated.Weekday = *req.Weekday
+	}
+
+	timezone := updated.Timezone
 	if req.Timezone != nil {
 		timezone = *req.Timezone
 	}
 
-	startTimeStr := rule.StartTime.Format("15:04")
-	endTimeStr := rule.EndTime.Format("15:04")
+	startTimeStr := updated.StartTime.Format("15:04")
+	endTimeStr := updated.EndTime.Format("15:04")
 	if req.StartTime != nil {
 		startTimeStr = *req.StartTime
 	}
@@ -792,19 +806,13 @@ func (s *Service) UpdateAvailabilityRule(ctx context.Context, userID uuid.UUID, 
 
 	startTime, endTime, parsedTimezone, err := parseAvailabilityTimes(startTimeStr, endTimeStr, timezone)
 	if err != nil {
-		return nil, err
+		return repository.AvailabilityRule{}, err
 	}
 
-	rule.StartTime = startTime
-	rule.EndTime = endTime
-	rule.Timezone = parsedTimezone
-
-	saved, err := s.repo.UpdateAvailabilityRule(ctx, id, tenantID, *rule)
-	if err != nil {
-		return nil, err
-	}
-
-	return mapAvailabilityRule(saved), nil
+	updated.StartTime = startTime
+	updated.EndTime = endTime
+	updated.Timezone = parsedTimezone
+	return updated, nil
 }
 
 func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAvailabilityOverrideRequest) (*transport.AvailabilityOverrideResponse, error) {

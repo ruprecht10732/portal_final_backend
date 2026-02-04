@@ -100,7 +100,6 @@ func (s *Service) GetOrganization(ctx context.Context, organizationID uuid.UUID)
 	return org, nil
 }
 
-
 type OrganizationProfileUpdate struct {
 	Name         *string
 	Email        *string
@@ -134,16 +133,18 @@ func (s *Service) UpdateOrganizationProfile(
 	org, err := s.repo.UpdateOrganizationProfile(
 		ctx,
 		organizationID,
-		update.Name,
-		update.Email,
-		update.Phone,
-		update.VATNumber,
-		update.KVKNumber,
-		update.AddressLine1,
-		update.AddressLine2,
-		update.PostalCode,
-		update.City,
-		update.Country,
+		repository.OrganizationProfileUpdate{
+			Name:         update.Name,
+			Email:        update.Email,
+			Phone:        update.Phone,
+			VatNumber:    update.VATNumber,
+			KvkNumber:    update.KVKNumber,
+			AddressLine1: update.AddressLine1,
+			AddressLine2: update.AddressLine2,
+			PostalCode:   update.PostalCode,
+			City:         update.City,
+			Country:      update.Country,
+		},
 	)
 	if err != nil {
 		if err == repository.ErrNotFound {

@@ -44,6 +44,19 @@ type Organization struct {
 	UpdatedAt    time.Time
 }
 
+type OrganizationProfileUpdate struct {
+	Name         *string
+	Email        *string
+	Phone        *string
+	VatNumber    *string
+	KvkNumber    *string
+	AddressLine1 *string
+	AddressLine2 *string
+	PostalCode   *string
+	City         *string
+	Country      *string
+}
+
 type Invite struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
@@ -98,16 +111,7 @@ func (r *Repository) GetOrganization(ctx context.Context, organizationID uuid.UU
 func (r *Repository) UpdateOrganizationProfile(
 	ctx context.Context,
 	organizationID uuid.UUID,
-	name *string,
-	email *string,
-	phone *string,
-	vatNumber *string,
-	kvkNumber *string,
-	addressLine1 *string,
-	addressLine2 *string,
-	postalCode *string,
-	city *string,
-	country *string,
+	update OrganizationProfileUpdate,
 ) (Organization, error) {
 	var org Organization
 	err := r.pool.QueryRow(ctx, `
@@ -127,7 +131,7 @@ func (r *Repository) UpdateOrganizationProfile(
     WHERE id = $1
     RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
       created_by, created_at, updated_at
-  `, organizationID, name, email, phone, vatNumber, kvkNumber, addressLine1, addressLine2, postalCode, city, country).Scan(
+	`, organizationID, update.Name, update.Email, update.Phone, update.VatNumber, update.KvkNumber, update.AddressLine1, update.AddressLine2, update.PostalCode, update.City, update.Country).Scan(
 		&org.ID,
 		&org.Name,
 		&org.Email,
