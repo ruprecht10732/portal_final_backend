@@ -50,65 +50,99 @@ type PhotoAnalysisRequest struct {
 	Context string `json:"context"` // Optional context about the issue
 }
 
+const (
+	errTenantContextRequired = "tenant context required"
+	errInvalidServiceID      = "invalid service id"
+)
+
 // AnalyzePhotos triggers AI analysis of photos for a lead service.
 // This analyzes all attachments that are images for the given service.
 func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, "tenant context required", nil)
+	identity, tenantID, ok := h.getIdentityAndTenant(c)
+	if !ok {
 		return
 	}
 
-	leadID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid lead id", nil)
+	leadID, serviceID, ok := h.parseLeadServiceIDs(c)
+	if !ok {
 		return
 	}
 
-	serviceID, err := uuid.Parse(c.Param("serviceId"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid service id", nil)
+	contextInfo := parsePhotoAnalysisContext(c)
+
+	imageAttachments, ok := h.loadImageAttachments(c, serviceID, *tenantID)
+	if !ok {
 		return
 	}
 
-	var req PhotoAnalysisRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		// Context is optional, so empty body is fine
-		req = PhotoAnalysisRequest{}
-	}
-
-	// Fetch all attachments for the service
-	attachments, err := h.repo.ListAttachmentsByService(c.Request.Context(), serviceID, *tenantID)
-	if err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to fetch attachments", nil)
-		return
-	}
-
-	// Filter for image attachments
-	var imageAttachments []repository.Attachment
-	for _, att := range attachments {
-		if att.ContentType != nil && isImageContentType(*att.ContentType) {
-			imageAttachments = append(imageAttachments, att)
-		}
-	}
-
-	if len(imageAttachments) == 0 {
-		httpkit.Error(c, http.StatusBadRequest, "no image attachments found for this service", nil)
-		return
-	}
-
-	// Start analysis in background
-	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, *tenantID, identity.UserID(), imageAttachments, req.Context)
+	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, *tenantID, identity.UserID(), imageAttachments, contextInfo)
 
 	httpkit.OK(c, gin.H{
 		"status":     "processing",
 		"message":    "Photo analysis started",
 		"photoCount": len(imageAttachments),
 	})
+}
+
+func (h *PhotoAnalysisHandler) getIdentityAndTenant(c *gin.Context) (httpkit.Identity, *uuid.UUID, bool) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return nil, nil, false
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusForbidden, errTenantContextRequired, nil)
+		return nil, nil, false
+	}
+	return identity, tenantID, true
+}
+
+func (h *PhotoAnalysisHandler) parseLeadServiceIDs(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid lead id", nil)
+		return uuid.UUID{}, uuid.UUID{}, false
+	}
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, errInvalidServiceID, nil)
+		return uuid.UUID{}, uuid.UUID{}, false
+	}
+	return leadID, serviceID, true
+}
+
+func parsePhotoAnalysisContext(c *gin.Context) string {
+	var req PhotoAnalysisRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return ""
+	}
+	return req.Context
+}
+
+func (h *PhotoAnalysisHandler) loadImageAttachments(c *gin.Context, serviceID, tenantID uuid.UUID) ([]repository.Attachment, bool) {
+	attachments, err := h.repo.ListAttachmentsByService(c.Request.Context(), serviceID, tenantID)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to fetch attachments", nil)
+		return nil, false
+	}
+
+	imageAttachments := filterImageAttachments(attachments)
+	if len(imageAttachments) == 0 {
+		httpkit.Error(c, http.StatusBadRequest, "no image attachments found for this service", nil)
+		return nil, false
+	}
+
+	return imageAttachments, true
+}
+
+func filterImageAttachments(attachments []repository.Attachment) []repository.Attachment {
+	imageAttachments := make([]repository.Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		if att.ContentType != nil && isImageContentType(*att.ContentType) {
+			imageAttachments = append(imageAttachments, att)
+		}
+	}
+	return imageAttachments
 }
 
 // runPhotoAnalysis performs the photo analysis in the background and sends SSE notification when done.
@@ -207,13 +241,13 @@ func (h *PhotoAnalysisHandler) GetPhotoAnalysis(c *gin.Context) {
 	}
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, "tenant context required", nil)
+		httpkit.Error(c, http.StatusForbidden, errTenantContextRequired, nil)
 		return
 	}
 
 	serviceID, err := uuid.Parse(c.Param("serviceId"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid service id", nil)
+		httpkit.Error(c, http.StatusBadRequest, errInvalidServiceID, nil)
 		return
 	}
 
@@ -238,13 +272,13 @@ func (h *PhotoAnalysisHandler) ListPhotoAnalyses(c *gin.Context) {
 	}
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, "tenant context required", nil)
+		httpkit.Error(c, http.StatusForbidden, errTenantContextRequired, nil)
 		return
 	}
 
 	serviceID, err := uuid.Parse(c.Param("serviceId"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid service id", nil)
+		httpkit.Error(c, http.StatusBadRequest, errInvalidServiceID, nil)
 		return
 	}
 
