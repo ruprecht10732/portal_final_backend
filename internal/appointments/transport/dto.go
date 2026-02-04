@@ -42,6 +42,7 @@ type CreateAppointmentRequest struct {
 	Title                 string          `json:"title" validate:"required,min=1,max=200"`
 	Description           string          `json:"description,omitempty" validate:"max=2000"`
 	Location              string          `json:"location,omitempty" validate:"max=500"`
+	MeetingLink           string          `json:"meetingLink,omitempty" validate:"max=500"`
 	StartTime             time.Time       `json:"startTime" validate:"required"`
 	EndTime               time.Time       `json:"endTime" validate:"required,gtfield=StartTime"`
 	AllDay                bool            `json:"allDay"`
@@ -53,6 +54,7 @@ type UpdateAppointmentRequest struct {
 	Title       *string    `json:"title,omitempty" validate:"omitempty,min=1,max=200"`
 	Description *string    `json:"description,omitempty" validate:"omitempty,max=2000"`
 	Location    *string    `json:"location,omitempty" validate:"omitempty,max=500"`
+	MeetingLink *string    `json:"meetingLink,omitempty" validate:"omitempty,max=500"`
 	StartTime   *time.Time `json:"startTime,omitempty"`
 	EndTime     *time.Time `json:"endTime,omitempty"`
 	AllDay      *bool      `json:"allDay,omitempty"`
@@ -71,7 +73,7 @@ type ListAppointmentsRequest struct {
 	Status    *AppointmentStatus `form:"status" validate:"omitempty,oneof=scheduled completed cancelled no_show"`
 	StartFrom string             `form:"startFrom"` // ISO date
 	StartTo   string             `form:"startTo"`   // ISO date
-	Search    string             `form:"search"`    // Search term for title/location
+	Search    string             `form:"search"`    // Search term for title/location/meeting link
 	SortBy    string             `form:"sortBy" validate:"omitempty,oneof=title type status startTime endTime createdAt"`
 	SortOrder string             `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 	Page      int                `form:"page" validate:"omitempty,min=1"`
@@ -88,6 +90,7 @@ type AppointmentResponse struct {
 	Title         string            `json:"title"`
 	Description   *string           `json:"description,omitempty"`
 	Location      *string           `json:"location,omitempty"`
+	MeetingLink   *string           `json:"meetingLink,omitempty"`
 	StartTime     time.Time         `json:"startTime"`
 	EndTime       time.Time         `json:"endTime"`
 	Status        AppointmentStatus `json:"status"`

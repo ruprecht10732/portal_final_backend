@@ -2,6 +2,7 @@
 package catalog
 
 import (
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/catalog/handler"
 	"portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/catalog/service"
@@ -20,9 +21,9 @@ type Module struct {
 }
 
 // NewModule creates and initializes the catalog module.
-func NewModule(pool *pgxpool.Pool, val *validator.Validator, log *logger.Logger) *Module {
+func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket string, val *validator.Validator, log *logger.Logger) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, log)
+	svc := service.New(repo, storageSvc, bucket, log)
 	h := handler.New(svc, val)
 
 	return &Module{
@@ -55,6 +56,8 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	ctx.Protected.GET("/catalog/products", m.handler.ListProducts)
 	ctx.Protected.GET("/catalog/products/:id", m.handler.GetProductByID)
 	ctx.Protected.GET("/catalog/products/:id/materials", m.handler.ListProductMaterials)
+	ctx.Protected.GET("/catalog/products/:id/assets", m.handler.ListCatalogAssets)
+	ctx.Protected.GET("/catalog/products/:id/assets/:assetId/download", m.handler.GetCatalogAssetDownloadURL)
 
 	// Admin CRUD endpoints
 	adminGroup := ctx.Admin.Group("/catalog")
@@ -67,6 +70,10 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.DELETE("/products/:id", m.handler.DeleteProduct)
 	adminGroup.POST("/products/:id/materials", m.handler.AddProductMaterials)
 	adminGroup.DELETE("/products/:id/materials", m.handler.RemoveProductMaterials)
+	adminGroup.POST("/products/:id/assets/presign", m.handler.GetCatalogAssetPresign)
+	adminGroup.POST("/products/:id/assets", m.handler.CreateCatalogAsset)
+	adminGroup.POST("/products/:id/assets/url", m.handler.CreateCatalogURLAsset)
+	adminGroup.DELETE("/products/:id/assets/:assetId", m.handler.DeleteCatalogAsset)
 }
 
 // Compile-time check that Module implements http.Module

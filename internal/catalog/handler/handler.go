@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -403,6 +404,208 @@ func (h *Handler) RemoveProductMaterials(c *gin.Context) {
 	if err := h.svc.RemoveProductMaterials(c.Request.Context(), tenantID, id, req.MaterialIDs); httpkit.HandleError(c, err) {
 		return
 	}
+	c.Status(http.StatusNoContent)
+}
+
+// GetCatalogAssetPresign generates a presigned URL for uploading a catalog asset.
+// POST /api/v1/admin/catalog/products/:id/assets/presign
+func (h *Handler) GetCatalogAssetPresign(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	productID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+		return
+	}
+
+	var req transport.PresignCatalogAssetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.svc.GetCatalogAssetPresign(c.Request.Context(), tenantID, productID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// CreateCatalogAsset creates a catalog asset after upload to MinIO.
+// POST /api/v1/admin/catalog/products/:id/assets
+func (h *Handler) CreateCatalogAsset(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	productID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+		return
+	}
+
+	var req transport.CreateCatalogAssetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.svc.CreateCatalogAsset(c.Request.Context(), tenantID, productID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// CreateCatalogURLAsset creates a URL-based catalog asset (terms URL).
+// POST /api/v1/admin/catalog/products/:id/assets/url
+func (h *Handler) CreateCatalogURLAsset(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	productID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+		return
+	}
+
+	var req transport.CreateCatalogURLAssetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.svc.CreateCatalogURLAsset(c.Request.Context(), tenantID, productID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// ListCatalogAssets lists assets for a product.
+// GET /api/v1/catalog/products/:id/assets
+func (h *Handler) ListCatalogAssets(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	productID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+		return
+	}
+
+	var assetType *string
+	if queryType := strings.TrimSpace(c.Query("type")); queryType != "" {
+		assetType = &queryType
+	}
+
+	result, err := h.svc.ListCatalogAssets(c.Request.Context(), tenantID, productID, assetType)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// GetCatalogAssetDownloadURL returns a presigned download URL or external URL.
+// GET /api/v1/catalog/products/:id/assets/:assetId/download
+func (h *Handler) GetCatalogAssetDownloadURL(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	productID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+		return
+	}
+
+	assetID, err := uuid.Parse(c.Param("assetId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.svc.GetCatalogAssetDownloadURL(c.Request.Context(), tenantID, productID, assetID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// DeleteCatalogAsset deletes a catalog asset and removes it from storage when applicable.
+// DELETE /api/v1/admin/catalog/products/:id/assets/:assetId
+func (h *Handler) DeleteCatalogAsset(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	productID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+		return
+	}
+
+	assetID, err := uuid.Parse(c.Param("assetId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	if err := h.svc.DeleteCatalogAsset(c.Request.Context(), tenantID, productID, assetID); httpkit.HandleError(c, err) {
+		return
+	}
+
 	c.Status(http.StatusNoContent)
 }
 

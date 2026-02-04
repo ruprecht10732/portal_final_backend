@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/catalog/transport"
 	"portal_final_backend/platform/apperr"
@@ -15,13 +17,15 @@ import (
 
 // Service provides business logic for catalog.
 type Service struct {
-	repo repository.Repository
-	log  *logger.Logger
+	repo    repository.Repository
+	storage storage.StorageService
+	bucket  string
+	log     *logger.Logger
 }
 
 // New creates a new catalog service.
-func New(repo repository.Repository, log *logger.Logger) *Service {
-	return &Service{repo: repo, log: log}
+func New(repo repository.Repository, storageSvc storage.StorageService, bucket string, log *logger.Logger) *Service {
+	return &Service{repo: repo, storage: storageSvc, bucket: bucket, log: log}
 }
 
 // GetVatRateByID retrieves a VAT rate by ID.
@@ -435,5 +439,209 @@ func toProductListResponse(items []repository.Product, total int, page int, page
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
+	}
+}
+
+// Asset operations
+
+func (s *Service) GetCatalogAssetPresign(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, req transport.PresignCatalogAssetRequest) (transport.PresignedUploadResponse, error) {
+	if _, err := s.repo.GetProductByID(ctx, tenantID, productID); err != nil {
+		return transport.PresignedUploadResponse{}, err
+	}
+
+	if err := s.storage.ValidateContentType(req.ContentType); err != nil {
+		return transport.PresignedUploadResponse{}, apperr.Validation("file type not allowed")
+	}
+	if err := s.storage.ValidateFileSize(req.SizeBytes); err != nil {
+		return transport.PresignedUploadResponse{}, apperr.Validation(err.Error())
+	}
+	if err := validateAssetType(req.AssetType, req.ContentType); err != nil {
+		return transport.PresignedUploadResponse{}, err
+	}
+
+	folder := fmt.Sprintf("%s/%s/%s", tenantID.String(), productID.String(), req.AssetType)
+	presigned, err := s.storage.GenerateUploadURL(ctx, s.bucket, folder, req.FileName, req.ContentType, req.SizeBytes)
+	if err != nil {
+		return transport.PresignedUploadResponse{}, err
+	}
+
+	return transport.PresignedUploadResponse{
+		UploadURL: presigned.URL,
+		FileKey:   presigned.FileKey,
+		ExpiresAt: presigned.ExpiresAt.Unix(),
+	}, nil
+}
+
+func (s *Service) CreateCatalogAsset(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, req transport.CreateCatalogAssetRequest) (transport.CatalogAssetResponse, error) {
+	if _, err := s.repo.GetProductByID(ctx, tenantID, productID); err != nil {
+		return transport.CatalogAssetResponse{}, err
+	}
+
+	if err := s.storage.ValidateContentType(req.ContentType); err != nil {
+		return transport.CatalogAssetResponse{}, apperr.Validation("file type not allowed")
+	}
+	if err := s.storage.ValidateFileSize(req.SizeBytes); err != nil {
+		return transport.CatalogAssetResponse{}, apperr.Validation(err.Error())
+	}
+
+	if err := validateAssetType(req.AssetType, req.ContentType); err != nil {
+		return transport.CatalogAssetResponse{}, err
+	}
+
+	fileKey := strings.TrimSpace(req.FileKey)
+	fileName := strings.TrimSpace(req.FileName)
+	contentType := strings.TrimSpace(req.ContentType)
+	sizeBytes := req.SizeBytes
+
+	asset, err := s.repo.CreateProductAsset(ctx, repository.CreateProductAssetParams{
+		OrganizationID: tenantID,
+		ProductID:      productID,
+		AssetType:      req.AssetType,
+		FileKey:        &fileKey,
+		FileName:       &fileName,
+		ContentType:    &contentType,
+		SizeBytes:      &sizeBytes,
+		URL:            nil,
+	})
+	if err != nil {
+		return transport.CatalogAssetResponse{}, err
+	}
+
+	s.log.Info("catalog asset created", "productId", productID, "assetId", asset.ID, "type", asset.AssetType)
+	return toCatalogAssetResponse(asset), nil
+}
+
+func (s *Service) CreateCatalogURLAsset(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, req transport.CreateCatalogURLAssetRequest) (transport.CatalogAssetResponse, error) {
+	if _, err := s.repo.GetProductByID(ctx, tenantID, productID); err != nil {
+		return transport.CatalogAssetResponse{}, err
+	}
+
+	if req.AssetType != "terms_url" {
+		return transport.CatalogAssetResponse{}, apperr.Validation("invalid assetType")
+	}
+
+	url := strings.TrimSpace(req.URL)
+	var label *string
+	if req.Label != nil {
+		trimmed := strings.TrimSpace(*req.Label)
+		label = &trimmed
+	}
+
+	asset, err := s.repo.CreateProductAsset(ctx, repository.CreateProductAssetParams{
+		OrganizationID: tenantID,
+		ProductID:      productID,
+		AssetType:      req.AssetType,
+		FileName:       label,
+		URL:            &url,
+	})
+	if err != nil {
+		return transport.CatalogAssetResponse{}, err
+	}
+
+	s.log.Info("catalog url asset created", "productId", productID, "assetId", asset.ID)
+	return toCatalogAssetResponse(asset), nil
+}
+
+func (s *Service) ListCatalogAssets(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, assetType *string) (transport.CatalogAssetListResponse, error) {
+	if _, err := s.repo.GetProductByID(ctx, tenantID, productID); err != nil {
+		return transport.CatalogAssetListResponse{}, err
+	}
+
+	items, err := s.repo.ListProductAssets(ctx, repository.ListProductAssetsParams{
+		OrganizationID: tenantID,
+		ProductID:      productID,
+		AssetType:      assetType,
+	})
+	if err != nil {
+		return transport.CatalogAssetListResponse{}, err
+	}
+
+	responses := make([]transport.CatalogAssetResponse, len(items))
+	for i, item := range items {
+		responses[i] = toCatalogAssetResponse(item)
+	}
+
+	return transport.CatalogAssetListResponse{Items: responses}, nil
+}
+
+func (s *Service) GetCatalogAssetDownloadURL(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, assetID uuid.UUID) (transport.PresignedDownloadResponse, error) {
+	asset, err := s.repo.GetProductAssetByID(ctx, tenantID, assetID)
+	if err != nil {
+		return transport.PresignedDownloadResponse{}, err
+	}
+	if asset.ProductID != productID {
+		return transport.PresignedDownloadResponse{}, apperr.NotFound("product asset not found")
+	}
+
+	if asset.URL != nil {
+		return transport.PresignedDownloadResponse{DownloadURL: *asset.URL}, nil
+	}
+	if asset.FileKey == nil {
+		return transport.PresignedDownloadResponse{}, apperr.Validation("missing file key")
+	}
+
+	presigned, err := s.storage.GenerateDownloadURL(ctx, s.bucket, *asset.FileKey)
+	if err != nil {
+		return transport.PresignedDownloadResponse{}, err
+	}
+	expiresAt := presigned.ExpiresAt.Unix()
+
+	return transport.PresignedDownloadResponse{
+		DownloadURL: presigned.URL,
+		ExpiresAt:   &expiresAt,
+	}, nil
+}
+
+func (s *Service) DeleteCatalogAsset(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, assetID uuid.UUID) error {
+	asset, err := s.repo.GetProductAssetByID(ctx, tenantID, assetID)
+	if err != nil {
+		return err
+	}
+	if asset.ProductID != productID {
+		return apperr.NotFound("product asset not found")
+	}
+
+	if asset.FileKey != nil {
+		if err := s.storage.DeleteObject(ctx, s.bucket, *asset.FileKey); err != nil {
+			return err
+		}
+	}
+
+	if err := s.repo.DeleteProductAsset(ctx, tenantID, assetID); err != nil {
+		return err
+	}
+
+	s.log.Info("catalog asset deleted", "productId", productID, "assetId", assetID)
+	return nil
+}
+
+func validateAssetType(assetType string, contentType string) error {
+	normalized := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	switch assetType {
+	case "image":
+		if !storage.IsImageContentType(normalized) {
+			return apperr.Validation("assetType image requires image content type")
+		}
+	case "document":
+		if !storage.IsDocumentContentType(normalized) {
+			return apperr.Validation("assetType document requires document content type")
+		}
+	default:
+		return apperr.Validation("invalid assetType")
+	}
+	return nil
+}
+
+func toCatalogAssetResponse(asset repository.ProductAsset) transport.CatalogAssetResponse {
+	return transport.CatalogAssetResponse{
+		ID:          asset.ID,
+		ProductID:   asset.ProductID,
+		AssetType:   asset.AssetType,
+		FileKey:     asset.FileKey,
+		FileName:    asset.FileName,
+		ContentType: asset.ContentType,
+		SizeBytes:   asset.SizeBytes,
+		URL:         asset.URL,
+		CreatedAt:   asset.CreatedAt,
 	}
 }

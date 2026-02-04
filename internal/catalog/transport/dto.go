@@ -94,6 +94,56 @@ type ProductListResponse struct {
 	TotalPages int               `json:"totalPages"`
 }
 
+// Assets
+
+type PresignCatalogAssetRequest struct {
+	FileName    string `json:"fileName" validate:"required,min=1,max=255"`
+	ContentType string `json:"contentType" validate:"required,min=1,max=255"`
+	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1"`
+	AssetType   string `json:"assetType" validate:"required,oneof=image document"`
+}
+
+type PresignedUploadResponse struct {
+	UploadURL string `json:"uploadUrl"`
+	FileKey   string `json:"fileKey"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
+
+type CreateCatalogAssetRequest struct {
+	AssetType   string `json:"assetType" validate:"required,oneof=image document"`
+	FileKey     string `json:"fileKey" validate:"required,min=1"`
+	FileName    string `json:"fileName" validate:"required,min=1,max=255"`
+	ContentType string `json:"contentType" validate:"required,min=1,max=255"`
+	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1"`
+}
+
+type CreateCatalogURLAssetRequest struct {
+	AssetType string  `json:"assetType" validate:"required,oneof=terms_url"`
+	URL       string  `json:"url" validate:"required,url,max=2048"`
+	Label     *string `json:"label,omitempty" validate:"omitempty,max=255"`
+}
+
+type CatalogAssetResponse struct {
+	ID          uuid.UUID `json:"id"`
+	ProductID   uuid.UUID `json:"productId"`
+	AssetType   string    `json:"assetType"`
+	FileKey     *string   `json:"fileKey,omitempty"`
+	FileName    *string   `json:"fileName,omitempty"`
+	ContentType *string   `json:"contentType,omitempty"`
+	SizeBytes   *int64    `json:"sizeBytes,omitempty"`
+	URL         *string   `json:"url,omitempty"`
+	CreatedAt   string    `json:"createdAt"`
+}
+
+type CatalogAssetListResponse struct {
+	Items []CatalogAssetResponse `json:"items"`
+}
+
+type PresignedDownloadResponse struct {
+	DownloadURL string `json:"downloadUrl"`
+	ExpiresAt   *int64 `json:"expiresAt,omitempty"`
+}
+
 // Materials
 
 type ProductMaterialsRequest struct {

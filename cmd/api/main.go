@@ -77,7 +77,12 @@ func main() {
 		log.Error("failed to ensure storage bucket exists", "error", err, "bucket", cfg.GetMinioBucketLeadServiceAttachments())
 		panic("failed to ensure storage bucket exists: " + err.Error())
 	}
-	log.Info("storage service initialized", "bucket", cfg.GetMinioBucketLeadServiceAttachments())
+	// Ensure the catalog assets bucket exists
+	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketCatalogAssets()); err != nil {
+		log.Error("failed to ensure storage bucket exists", "error", err, "bucket", cfg.GetMinioBucketCatalogAssets())
+		panic("failed to ensure storage bucket exists: " + err.Error())
+	}
+	log.Info("storage service initialized", "leadAttachmentsBucket", cfg.GetMinioBucketLeadServiceAttachments(), "catalogAssetsBucket", cfg.GetMinioBucketCatalogAssets())
 
 	// ========================================================================
 	// Domain Modules (Composition Root)
@@ -117,7 +122,7 @@ func main() {
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)
-	catalogModule := catalog.NewModule(pool, val, log)
+	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, log)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface

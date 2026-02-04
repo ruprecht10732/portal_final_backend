@@ -87,6 +87,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 		Title:          sanitize.Text(req.Title),
 		Description:    sanitize.TextPtr(nilIfEmpty(req.Description)),
 		Location:       nilIfEmpty(req.Location),
+		MeetingLink:    sanitize.TextPtr(nilIfEmpty(req.MeetingLink)),
 		StartTime:      req.StartTime,
 		EndTime:        req.EndTime,
 		Status:         string(transport.AppointmentStatusScheduled),
@@ -156,6 +157,9 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 	}
 	if req.Location != nil {
 		appt.Location = req.Location
+	}
+	if req.MeetingLink != nil {
+		appt.MeetingLink = sanitize.TextPtr(nilIfEmpty(*req.MeetingLink))
 	}
 	if req.StartTime != nil {
 		appt.StartTime = *req.StartTime

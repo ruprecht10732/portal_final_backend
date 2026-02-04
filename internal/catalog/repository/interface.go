@@ -32,6 +32,20 @@ type Product struct {
 	UpdatedAt      string    `db:"updated_at"`
 }
 
+// ProductAsset represents an asset linked to a catalog product.
+type ProductAsset struct {
+	ID             uuid.UUID `db:"id"`
+	OrganizationID uuid.UUID `db:"organization_id"`
+	ProductID      uuid.UUID `db:"product_id"`
+	AssetType      string    `db:"asset_type"`
+	FileKey        *string   `db:"file_key"`
+	FileName       *string   `db:"file_name"`
+	ContentType    *string   `db:"content_type"`
+	SizeBytes      *int64    `db:"size_bytes"`
+	URL            *string   `db:"url"`
+	CreatedAt      string    `db:"created_at"`
+}
+
 // CreateVatRateParams contains data for creating a VAT rate.
 type CreateVatRateParams struct {
 	OrganizationID uuid.UUID
@@ -84,6 +98,25 @@ type UpdateProductParams struct {
 	PeriodUnit     *string
 }
 
+// CreateProductAssetParams contains data for creating a product asset.
+type CreateProductAssetParams struct {
+	OrganizationID uuid.UUID
+	ProductID      uuid.UUID
+	AssetType      string
+	FileKey        *string
+	FileName       *string
+	ContentType    *string
+	SizeBytes      *int64
+	URL            *string
+}
+
+// ListProductAssetsParams defines filters for listing product assets.
+type ListProductAssetsParams struct {
+	OrganizationID uuid.UUID
+	ProductID      uuid.UUID
+	AssetType      *string
+}
+
 // ListProductsParams defines filters for listing products.
 type ListProductsParams struct {
 	OrganizationID uuid.UUID
@@ -111,6 +144,11 @@ type Repository interface {
 	GetProductByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (Product, error)
 	ListProducts(ctx context.Context, params ListProductsParams) ([]Product, int, error)
 	GetProductsByIDs(ctx context.Context, organizationID uuid.UUID, ids []uuid.UUID) ([]Product, error)
+
+	CreateProductAsset(ctx context.Context, params CreateProductAssetParams) (ProductAsset, error)
+	GetProductAssetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ProductAsset, error)
+	ListProductAssets(ctx context.Context, params ListProductAssetsParams) ([]ProductAsset, error)
+	DeleteProductAsset(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error
 
 	AddProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error
 	RemoveProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error

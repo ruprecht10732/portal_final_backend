@@ -74,6 +74,7 @@ type MinIOConfig interface {
 	GetMinIOUseSSL() bool
 	GetMinIOMaxFileSize() int64
 	GetMinioBucketLeadServiceAttachments() string
+	GetMinioBucketCatalogAssets() string
 	IsMinIOEnabled() bool
 }
 
@@ -119,6 +120,7 @@ type Config struct {
 	MinIOUseSSL                       bool
 	MinIOMaxFileSize                  int64
 	MinioBucketLeadServiceAttachments string
+	MinioBucketCatalogAssets          string
 }
 
 // =============================================================================
@@ -167,6 +169,9 @@ func (c *Config) GetMinIOUseSSL() bool       { return c.MinIOUseSSL }
 func (c *Config) GetMinIOMaxFileSize() int64 { return c.MinIOMaxFileSize }
 func (c *Config) GetMinioBucketLeadServiceAttachments() string {
 	return c.MinioBucketLeadServiceAttachments
+}
+func (c *Config) GetMinioBucketCatalogAssets() string {
+	return c.MinioBucketCatalogAssets
 }
 func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
 
@@ -223,6 +228,7 @@ func Load() (*Config, error) {
 		MinIOUseSSL:                       strings.EqualFold(getEnv("MINIO_USE_SSL", "false"), "true"),
 		MinIOMaxFileSize:                  mustInt64(getEnv("MINIO_MAX_FILE_SIZE", "104857600")),
 		MinioBucketLeadServiceAttachments: getEnv("MINIO_BUCKET_LEAD_SERVICE_ATTACHMENTS", "lead-service-attachments"),
+		MinioBucketCatalogAssets:          getEnv("MINIO_BUCKET_CATALOG_ASSETS", "catalog-assets"),
 	}
 
 	if cfg.DatabaseURL == "" {

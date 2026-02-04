@@ -25,6 +25,7 @@ type Appointment struct {
 	Title          string     `db:"title"`
 	Description    *string    `db:"description"`
 	Location       *string    `db:"location"`
+	MeetingLink    *string    `db:"meeting_link"`
 	StartTime      time.Time  `db:"start_time"`
 	EndTime        time.Time  `db:"end_time"`
 	Status         string     `db:"status"`
@@ -59,15 +60,15 @@ func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
 	query := `
 		INSERT INTO appointments (
 			id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-			location, start_time, end_time, status, all_day, created_at, updated_at
+			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		)`
 
 	_, err := r.pool.Exec(ctx, query,
 		appt.ID, appt.OrganizationID, appt.UserID, appt.LeadID, appt.LeadServiceID, appt.Type,
-		appt.Title, appt.Description, appt.Location, appt.StartTime, appt.EndTime,
-		appt.Status, appt.AllDay, appt.CreatedAt, appt.UpdatedAt,
+		appt.Title, appt.Description, appt.Location, appt.MeetingLink, appt.StartTime,
+		appt.EndTime, appt.Status, appt.AllDay, appt.CreatedAt, appt.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create appointment: %w", err)
@@ -80,13 +81,13 @@ func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
 	var appt Appointment
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, start_time, end_time, status, all_day, created_at, updated_at
+		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
 		FROM appointments WHERE id = $1 AND organization_id = $2`
 
 	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
 		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-		&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
-		&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
+		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -102,13 +103,13 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
 	var appt Appointment
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, start_time, end_time, status, all_day, created_at, updated_at
+		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
 		FROM appointments WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'cancelled' ORDER BY created_at DESC LIMIT 1`
 
 	err := r.pool.QueryRow(ctx, query, leadServiceID, organizationID).Scan(
 		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-		&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
-		&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
+		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -127,14 +128,15 @@ func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 			title = $2,
 			description = $3,
 			location = $4,
-			start_time = $5,
-			end_time = $6,
-			all_day = $7,
-			updated_at = $8
-		WHERE id = $1 AND organization_id = $9`
+			meeting_link = $5,
+			start_time = $6,
+			end_time = $7,
+			all_day = $8,
+			updated_at = $9
+		WHERE id = $1 AND organization_id = $10`
 
 	result, err := r.pool.Exec(ctx, query,
-		appt.ID, appt.Title, appt.Description, appt.Location,
+		appt.ID, appt.Title, appt.Description, appt.Location, appt.MeetingLink,
 		appt.StartTime, appt.EndTime, appt.AllDay, appt.UpdatedAt, appt.OrganizationID,
 	)
 	if err != nil {
@@ -249,7 +251,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	}
 
 	if params.Search != "" {
-		baseQuery += fmt.Sprintf(" AND (title ILIKE $%d OR location ILIKE $%d)", argIndex, argIndex)
+		baseQuery += fmt.Sprintf(" AND (title ILIKE $%d OR location ILIKE $%d OR meeting_link ILIKE $%d)", argIndex, argIndex, argIndex)
 		args = append(args, "%"+params.Search+"%")
 		argIndex++
 	}
@@ -288,7 +290,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 
 	// Fetch items
 	selectQuery := fmt.Sprintf(`SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, start_time, end_time, status, all_day, created_at, updated_at %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
 		baseQuery, orderBy, sortDir, argIndex, argIndex+1)
 	args = append(args, params.PageSize, offset)
 
@@ -303,8 +305,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		var appt Appointment
 		if err := rows.Scan(
 			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-			&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
-			&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
+			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan appointment: %w", err)
 		}
@@ -398,7 +400,7 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 // Uses proper overlap detection: an appointment overlaps if it starts before the window ends AND ends after the window starts
 func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate, endDate time.Time) ([]Appointment, error) {
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, start_time, end_time, status, all_day, created_at, updated_at
+		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
 		FROM appointments 
 		WHERE organization_id = $1 AND user_id = $2 
 		AND start_time < $4 AND end_time > $3
@@ -416,8 +418,8 @@ func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.U
 		var appt Appointment
 		if err := rows.Scan(
 			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-			&appt.Title, &appt.Description, &appt.Location, &appt.StartTime, &appt.EndTime,
-			&appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
+			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan appointment: %w", err)
 		}
@@ -442,6 +444,7 @@ func (a *Appointment) ToResponse(leadInfo *transport.AppointmentLeadInfo) transp
 		Title:         a.Title,
 		Description:   a.Description,
 		Location:      a.Location,
+		MeetingLink:   a.MeetingLink,
 		StartTime:     a.StartTime,
 		EndTime:       a.EndTime,
 		Status:        transport.AppointmentStatus(a.Status),
