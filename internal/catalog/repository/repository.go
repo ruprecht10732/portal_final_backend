@@ -19,6 +19,42 @@ const (
 	productNotFoundMessage = "product not found"
 )
 
+// productSortColumns maps API field names to database column names.
+var productSortColumns = map[string]string{
+	"title":      "title",
+	"reference":  "reference",
+	"priceCents": "price_cents",
+	"type":       "type",
+	"createdAt":  "created_at",
+	"updatedAt":  "updated_at",
+}
+
+// mapProductSortColumn returns the database column for sorting.
+func mapProductSortColumn(sortBy string) (string, error) {
+	if sortBy == "" {
+		return "created_at", nil
+	}
+	if col, ok := productSortColumns[sortBy]; ok {
+		return col, nil
+	}
+	return "", apperr.BadRequest("invalid sort field")
+}
+
+// mapSortOrder returns validated sort order.
+func mapSortOrder(sortOrder string) (string, error) {
+	if sortOrder == "" {
+		return "DESC", nil
+	}
+	switch sortOrder {
+	case "asc":
+		return "ASC", nil
+	case "desc":
+		return "DESC", nil
+	default:
+		return "", apperr.BadRequest("invalid sort order")
+	}
+}
+
 // Repo implements the catalog repository.
 type Repo struct {
 	pool *pgxpool.Pool
@@ -331,45 +367,34 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 
 	whereClause := strings.Join(whereClauses, " AND ")
 
+	total, err := r.countProducts(ctx, whereClause, args)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	sortColumn, err := mapProductSortColumn(params.SortBy)
+	if err != nil {
+		return nil, 0, err
+	}
+	sortOrder, err := mapSortOrder(params.SortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return r.fetchProducts(ctx, whereClause, sortColumn, sortOrder, args, argIdx, params.Limit, params.Offset, total)
+}
+
+func (r *Repo) countProducts(ctx context.Context, whereClause string, args []interface{}) (int, error) {
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM RAC_catalog_products WHERE %s", whereClause)
 	var total int
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count products: %w", err)
+		return 0, fmt.Errorf("count products: %w", err)
 	}
+	return total, nil
+}
 
-	sortColumn := "created_at"
-	if params.SortBy != "" {
-		switch params.SortBy {
-		case "title":
-			sortColumn = "title"
-		case "reference":
-			sortColumn = "reference"
-		case "priceCents":
-			sortColumn = "price_cents"
-		case "type":
-			sortColumn = "type"
-		case "createdAt":
-			sortColumn = "created_at"
-		case "updatedAt":
-			sortColumn = "updated_at"
-		default:
-			return nil, 0, apperr.BadRequest("invalid sort field")
-		}
-	}
-
-	sortOrder := "DESC"
-	if params.SortOrder != "" {
-		switch params.SortOrder {
-		case "asc":
-			sortOrder = "ASC"
-		case "desc":
-			sortOrder = "DESC"
-		default:
-			return nil, 0, apperr.BadRequest("invalid sort order")
-		}
-	}
-
-	args = append(args, params.Limit, params.Offset)
+func (r *Repo) fetchProducts(ctx context.Context, whereClause, sortColumn, sortOrder string, args []interface{}, argIdx, limit, offset, total int) ([]Product, int, error) {
+	args = append(args, limit, offset)
 	query := fmt.Sprintf(`
 		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
 		FROM RAC_catalog_products
@@ -384,6 +409,14 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 	}
 	defer rows.Close()
 
+	items, err := scanProducts(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func scanProducts(rows pgx.Rows) ([]Product, error) {
 	items := make([]Product, 0)
 	for rows.Next() {
 		var product Product
@@ -393,17 +426,16 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 			&product.Description, &product.PriceCents, &product.Type, &product.PeriodCount, &product.PeriodUnit,
 			&createdAt, &updatedAt,
 		); err != nil {
-			return nil, 0, fmt.Errorf("scan product: %w", err)
+			return nil, fmt.Errorf("scan product: %w", err)
 		}
 		product.CreatedAt = createdAt.Format(time.RFC3339)
 		product.UpdatedAt = updatedAt.Format(time.RFC3339)
 		items = append(items, product)
 	}
 	if rows.Err() != nil {
-		return nil, 0, fmt.Errorf("iterate products: %w", rows.Err())
+		return nil, fmt.Errorf("iterate products: %w", rows.Err())
 	}
-
-	return items, total, nil
+	return items, nil
 }
 
 // GetProductsByIDs retrieves products by IDs within an organization.

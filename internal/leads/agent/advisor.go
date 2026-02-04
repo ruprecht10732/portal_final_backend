@@ -165,11 +165,8 @@ func (la *LeadAdvisor) Analyze(ctx context.Context, leadID uuid.UUID, serviceID 
 func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, force bool, tenantID uuid.UUID) (*AnalyzeResponse, error) {
 	la.runMu.Lock()
 	defer la.runMu.Unlock()
-	if la.toolDeps != nil {
-		la.toolDeps.SetTenantID(tenantID)
-	}
 
-	if err := la.ensureInitialized(); err != nil {
+	if err := la.prepareForAnalysis(tenantID); err != nil {
 		return nil, err
 	}
 
@@ -178,12 +175,8 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 		return nil, err
 	}
 
-	// Require a service to analyze
 	if targetService == nil {
-		return &AnalyzeResponse{
-			Status:  "error",
-			Message: "No service found to analyze",
-		}, nil
+		return &AnalyzeResponse{Status: "error", Message: "No service found to analyze"}, nil
 	}
 
 	existingAnalysis, hasExisting, err := la.getExistingAnalysis(ctx, targetService.ID, tenantID)
@@ -195,57 +188,75 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 		return response, nil
 	}
 
+	return la.executeAnalysis(ctx, lead, targetService, meaningfulNotes, tenantID, leadID)
+}
+
+// prepareForAnalysis sets tenant and ensures initialization.
+func (la *LeadAdvisor) prepareForAnalysis(tenantID uuid.UUID) error {
+	if la.toolDeps != nil {
+		la.toolDeps.SetTenantID(tenantID)
+	}
+	return la.ensureInitialized()
+}
+
+// executeAnalysis runs the AI analysis flow with retry.
+func (la *LeadAdvisor) executeAnalysis(ctx context.Context, lead repository.Lead, targetService *repository.LeadService, meaningfulNotes []repository.LeadNote, tenantID, leadID uuid.UUID) (*AnalyzeResponse, error) {
 	serviceContextList, err := la.buildServiceContextString(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build service context: %w", err)
 	}
 
-	// Run photo analysis if images exist for this service
-	var photoAnalysis *repository.PhotoAnalysis
-	if la.photoAnalyzer != nil && la.storageSvc != nil {
-		// Get intake guidelines for the specific service to pass to photo analyzer
-		intakeGuidelines := la.getIntakeGuidelinesForService(ctx, tenantID, targetService.ServiceType)
-		photoAnalysis, err = la.runPhotoAnalysisIfNeeded(ctx, leadID, targetService.ID, tenantID, intakeGuidelines)
-		if err != nil {
-			log.Printf("Warning: photo analysis failed for lead %s service %s: %v", leadID, targetService.ID, err)
-			// Continue without photo analysis - it's not critical
-		}
-	}
-
+	photoAnalysis := la.tryPhotoAnalysis(ctx, leadID, targetService, tenantID)
 	userMessage := la.buildUserMessage(lead, targetService, meaningfulNotes, serviceContextList, photoAnalysis)
 	userID := "advisor-" + leadID.String() + "-" + targetService.ID.String()
 
+	if response, err := la.runAnalysisWithRetry(ctx, userID, leadID, targetService.ID, tenantID, userMessage); response != nil || err != nil {
+		return response, err
+	}
+
+	log.Printf("ERROR: AI did not call SaveAnalysis for lead %s service %s even after retry.", leadID, targetService.ID)
+	return &AnalyzeResponse{Status: "error", Message: "AI kon geen analyse opslaan. Probeer het opnieuw."}, nil
+}
+
+// tryPhotoAnalysis attempts photo analysis if analyzer is available.
+func (la *LeadAdvisor) tryPhotoAnalysis(ctx context.Context, leadID uuid.UUID, targetService *repository.LeadService, tenantID uuid.UUID) *repository.PhotoAnalysis {
+	if la.photoAnalyzer == nil || la.storageSvc == nil {
+		return nil
+	}
+	intakeGuidelines := la.getIntakeGuidelinesForService(ctx, tenantID, targetService.ServiceType)
+	analysis, err := la.runPhotoAnalysisIfNeeded(ctx, leadID, targetService.ID, tenantID, intakeGuidelines)
+	if err != nil {
+		log.Printf("Warning: photo analysis failed for lead %s service %s: %v", leadID, targetService.ID, err)
+		return nil
+	}
+	return analysis
+}
+
+// runAnalysisWithRetry runs the advisor and retries once if SaveAnalysis wasn't called.
+func (la *LeadAdvisor) runAnalysisWithRetry(ctx context.Context, userID string, leadID, serviceID, tenantID uuid.UUID, userMessage *genai.Content) (*AnalyzeResponse, error) {
 	output, err := la.runWithSession(ctx, userID, leadID, userMessage)
 	if err != nil {
 		return nil, err
 	}
-
 	log.Printf("Lead advisor finished for lead %s. Output: %s", leadID, output)
 
-	if response, handled, err := la.getResponseIfSaved(ctx, targetService.ID, tenantID, leadID); handled {
+	if response, handled, err := la.getResponseIfSaved(ctx, serviceID, tenantID, leadID); handled {
 		return response, err
 	}
 
-	// SaveAnalysis was NOT called - retry with Moonshot's recommended prompt
+	// Retry with tool selection prompt
 	log.Printf("WARNING: AI did not call SaveAnalysis for lead %s. Retrying with tool selection prompt.", leadID)
-
-	retryMessage := la.buildRetryMessage()
-	retryOutput, err := la.runWithSession(ctx, userID, leadID, retryMessage)
+	retryOutput, err := la.runWithSession(ctx, userID, leadID, la.buildRetryMessage())
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("Lead advisor retry finished for lead %s. Output: %s", leadID, retryOutput)
 
-	if response, handled, err := la.getResponseIfSaved(ctx, targetService.ID, tenantID, leadID); handled {
+	if response, handled, err := la.getResponseIfSaved(ctx, serviceID, tenantID, leadID); handled {
 		return response, err
 	}
 
-	// Retry also failed
-	log.Printf("ERROR: AI did not call SaveAnalysis for lead %s service %s even after retry.", leadID, targetService.ID)
-	return &AnalyzeResponse{
-		Status:  "error",
-		Message: "AI kon geen analyse opslaan. Probeer het opnieuw.",
-	}, nil
+	return nil, nil // Signal that retry also failed
 }
 
 func (la *LeadAdvisor) runWithSession(ctx context.Context, userID string, leadID uuid.UUID, userMessage *genai.Content) (string, error) {

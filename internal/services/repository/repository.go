@@ -118,7 +118,56 @@ func (r *Repo) ListActive(ctx context.Context, organizationID uuid.UUID) ([]Serv
 }
 
 // ListWithFilters retrieves service types with search, active filter, pagination, and sorting.
+// Service type sort column mappings.
+var serviceTypeSortColumns = map[string]string{
+	"name":         "name",
+	"slug":         "slug",
+	"displayOrder": "display_order",
+	"isActive":     "is_active",
+	"createdAt":    "created_at",
+	"updatedAt":    "updated_at",
+}
+
+// mapServiceTypeSortColumn returns the DB column for sorting.
+func mapServiceTypeSortColumn(sortBy string) (string, error) {
+	if sortBy == "" {
+		return "display_order", nil
+	}
+	if col, ok := serviceTypeSortColumns[sortBy]; ok {
+		return col, nil
+	}
+	return "", apperr.BadRequest("invalid sort field")
+}
+
 func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error) {
+	whereClauses, args := r.buildServiceTypeFilters(params)
+	whereClause := strings.Join(whereClauses, " AND ")
+
+	total, err := r.countServiceTypes(ctx, whereClause, args)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	sortColumn, err := mapServiceTypeSortColumn(params.SortBy)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	sortOrder, err := mapSortOrderASC(params.SortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	items, err := r.fetchServiceTypes(ctx, whereClause, sortColumn, sortOrder, args, params.Limit, params.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return items, total, nil
+}
+
+// buildServiceTypeFilters constructs WHERE clause predicates.
+func (r *Repo) buildServiceTypeFilters(params ListParams) ([]string, []interface{}) {
 	whereClauses := []string{"organization_id = $1"}
 	args := []interface{}{params.OrganizationID}
 	argIdx := 2
@@ -132,50 +181,36 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 		searchPattern := "%" + params.Search + "%"
 		whereClauses = append(whereClauses, fmt.Sprintf("(name ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx))
 		args = append(args, searchPattern)
-		argIdx++
 	}
+	return whereClauses, args
+}
 
-	whereClause := strings.Join(whereClauses, " AND ")
-
+// countServiceTypes returns the total count matching the filter.
+func (r *Repo) countServiceTypes(ctx context.Context, whereClause string, args []interface{}) (int, error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM RAC_service_types WHERE %s", whereClause)
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM RAC_service_types WHERE %s", whereClause)
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count service types: %w", err)
+	if err := r.pool.QueryRow(ctx, query, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count service types: %w", err)
 	}
+	return total, nil
+}
 
-	sortColumn := "display_order"
-	if params.SortBy != "" {
-		switch params.SortBy {
-		case "name":
-			sortColumn = "name"
-		case "slug":
-			sortColumn = "slug"
-		case "displayOrder":
-			sortColumn = "display_order"
-		case "isActive":
-			sortColumn = "is_active"
-		case "createdAt":
-			sortColumn = "created_at"
-		case "updatedAt":
-			sortColumn = "updated_at"
-		default:
-			return nil, 0, apperr.BadRequest("invalid sort field")
-		}
+// mapSortOrderASC returns validated sort order, defaulting to ASC.
+func mapSortOrderASC(sortOrder string) (string, error) {
+	switch sortOrder {
+	case "", "asc":
+		return "ASC", nil
+	case "desc":
+		return "DESC", nil
+	default:
+		return "", apperr.BadRequest("invalid sort order")
 	}
+}
 
-	sortOrder := "ASC"
-	if params.SortOrder != "" {
-		switch params.SortOrder {
-		case "asc":
-			sortOrder = "ASC"
-		case "desc":
-			sortOrder = "DESC"
-		default:
-			return nil, 0, apperr.BadRequest("invalid sort order")
-		}
-	}
-
-	args = append(args, params.Limit, params.Offset)
+// fetchServiceTypes executes the paginated query.
+func (r *Repo) fetchServiceTypes(ctx context.Context, whereClause, sortColumn, sortOrder string, args []interface{}, limit, offset int) ([]ServiceType, error) {
+	argIdx := len(args) + 1
+	args = append(args, limit, offset)
 
 	query := fmt.Sprintf(`
 		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
@@ -187,16 +222,11 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("list service types: %w", err)
+		return nil, fmt.Errorf("list service types: %w", err)
 	}
 	defer rows.Close()
 
-	items, err := scanServiceTypes(rows)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return items, total, nil
+	return scanServiceTypes(rows)
 }
 
 // Exists checks if a service type exists by ID.

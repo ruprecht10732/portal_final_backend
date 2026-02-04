@@ -257,88 +257,55 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 
 // List retrieves appointments with filtering
 func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.ListAppointmentsRequest) (*transport.AppointmentListResponse, error) {
-	// Apply pagination defaults
-	page := req.Page
-	if page == 0 {
-		page = 1
-	}
-	pageSize := req.PageSize
-	if pageSize == 0 {
-		pageSize = 20
-	}
-
 	// Parse UUID filters
-	var leadID *uuid.UUID
-	if req.LeadID != "" {
-		parsed, err := uuid.Parse(req.LeadID)
-		if err != nil {
-			return nil, apperr.BadRequest("invalid leadId format")
-		}
-		leadID = &parsed
+	leadID, err := parseUUIDFilter(req.LeadID, "leadId")
+	if err != nil {
+		return nil, err
+	}
+	reqUserID, err := parseUUIDFilter(req.UserID, "userId")
+	if err != nil {
+		return nil, err
 	}
 
-	var reqUserID *uuid.UUID
-	if req.UserID != "" {
-		parsed, err := uuid.Parse(req.UserID)
-		if err != nil {
-			return nil, apperr.BadRequest("invalid userId format")
-		}
-		reqUserID = &parsed
+	// Parse date filters
+	startFrom, err := parseDateFilter(req.StartFrom, "startFrom")
+	if err != nil {
+		return nil, err
+	}
+	startTo, err := parseDateFilter(req.StartTo, "startTo")
+	if err != nil {
+		return nil, err
+	}
+	// Extend end date to include full day
+	if startTo != nil {
+		endOfDay := startTo.Add(24*time.Hour - time.Nanosecond)
+		startTo = &endOfDay
 	}
 
-	// Build params
+	// Build params with defaults
 	params := repository.ListParams{
 		OrganizationID: tenantID,
 		LeadID:         leadID,
-		Page:           page,
-		PageSize:       pageSize,
+		Page:           max(req.Page, 1),
+		PageSize:       clampPageSize(req.PageSize),
 		Search:         req.Search,
 		SortBy:         req.SortBy,
 		SortOrder:      req.SortOrder,
+		StartFrom:      startFrom,
+		StartTo:        startTo,
 	}
 
-	// Non-admins can only see their own appointments
-	if !isAdmin {
-		params.UserID = &userID
-	} else if reqUserID != nil {
-		params.UserID = reqUserID
-	}
+	// Apply user filter based on admin status
+	params.UserID = resolveUserIDFilter(userID, isAdmin, reqUserID)
 
+	// Apply type/status filters
 	if req.Type != nil {
 		t := string(*req.Type)
 		params.Type = &t
 	}
-
 	if req.Status != nil {
 		st := string(*req.Status)
 		params.Status = &st
-	}
-
-	// Parse date filters
-	if req.StartFrom != "" {
-		t, err := time.Parse("2006-01-02", req.StartFrom)
-		if err != nil {
-			return nil, apperr.BadRequest(fmt.Sprintf("invalid startFrom date format: %s", req.StartFrom))
-		}
-		params.StartFrom = &t
-	}
-
-	if req.StartTo != "" {
-		t, err := time.Parse("2006-01-02", req.StartTo)
-		if err != nil {
-			return nil, apperr.BadRequest(fmt.Sprintf("invalid startTo date format: %s", req.StartTo))
-		}
-		// Add a day to include the full end date
-		endOfDay := t.Add(24*time.Hour - time.Nanosecond)
-		params.StartTo = &endOfDay
-	}
-
-	// Default pagination
-	if params.Page < 1 {
-		params.Page = 1
-	}
-	if params.PageSize < 1 || params.PageSize > 100 {
-		params.PageSize = 50
 	}
 
 	result, err := s.repo.List(ctx, params)
@@ -346,8 +313,29 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tena
 		return nil, err
 	}
 
+	return s.buildListResponse(ctx, result, tenantID)
+}
+
+// resolveUserIDFilter determines which user to filter by based on admin status.
+func resolveUserIDFilter(currentUser uuid.UUID, isAdmin bool, requestedUser *uuid.UUID) *uuid.UUID {
+	if !isAdmin {
+		return &currentUser // Non-admins can only see own appointments
+	}
+	return requestedUser // Admins can filter by any user (or nil for all)
+}
+
+// clampPageSize ensures page size is within valid range.
+func clampPageSize(size int) int {
+	if size < 1 || size > 100 {
+		return 50
+	}
+	return size
+}
+
+// buildListResponse converts repository results to transport response.
+func (s *Service) buildListResponse(ctx context.Context, result *repository.ListResult, tenantID uuid.UUID) (*transport.AppointmentListResponse, error) {
 	// Build lead ID list for batch fetching
-	leadIDs := make([]uuid.UUID, 0)
+	leadIDs := make([]uuid.UUID, 0, len(result.Items))
 	for _, appt := range result.Items {
 		if appt.LeadID != nil {
 			leadIDs = append(leadIDs, *appt.LeadID)
@@ -363,18 +351,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tena
 	// Convert to responses
 	items := make([]transport.AppointmentResponse, len(result.Items))
 	for i, appt := range result.Items {
-		var leadInfo *transport.AppointmentLeadInfo
-		if appt.LeadID != nil {
-			if info, ok := leadInfoMap[*appt.LeadID]; ok && info != nil {
-				leadInfo = &transport.AppointmentLeadInfo{
-					ID:        info.ID,
-					FirstName: info.FirstName,
-					LastName:  info.LastName,
-					Phone:     info.Phone,
-					Address:   fmt.Sprintf("%s %s, %s", info.Street, info.HouseNumber, info.City),
-				}
-			}
-		}
+		leadInfo := buildLeadInfo(appt.LeadID, leadInfoMap)
 		items[i] = appt.ToResponse(leadInfo)
 	}
 
@@ -385,6 +362,24 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tena
 		PageSize:   result.PageSize,
 		TotalPages: result.TotalPages,
 	}, nil
+}
+
+// buildLeadInfo constructs lead info from the map if available.
+func buildLeadInfo(leadID *uuid.UUID, leadInfoMap map[uuid.UUID]*repository.LeadInfo) *transport.AppointmentLeadInfo {
+	if leadID == nil {
+		return nil
+	}
+	info, ok := leadInfoMap[*leadID]
+	if !ok || info == nil {
+		return nil
+	}
+	return &transport.AppointmentLeadInfo{
+		ID:        info.ID,
+		FirstName: info.FirstName,
+		LastName:  info.LastName,
+		Phone:     info.Phone,
+		Address:   fmt.Sprintf("%s %s, %s", info.Street, info.HouseNumber, info.City),
+	}
 }
 
 // Visit reports
@@ -499,124 +494,133 @@ func (s *Service) ListAttachments(ctx context.Context, appointmentID uuid.UUID, 
 
 // GetAvailableSlots computes available time slots for a user within a date range
 func (s *Service) GetAvailableSlots(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.GetAvailableSlotsRequest) (*transport.AvailableSlotsResponse, error) {
-	// Parse target user ID
+	// Parse and validate inputs
 	targetUserID, err := s.resolveTargetUserIDFromString(userID, isAdmin, req.UserID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse dates
-	startDate, err := time.Parse("2006-01-02", req.StartDate)
-	if err != nil {
-		return nil, apperr.BadRequest("invalid startDate format")
-	}
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
-	if err != nil {
-		return nil, apperr.BadRequest("invalid endDate format")
-	}
-
-	// Validate date range
-	if endDate.Before(startDate) {
-		return nil, apperr.BadRequest("endDate must be after startDate")
-	}
-	maxDays := 14
-	if endDate.Sub(startDate).Hours()/24 > float64(maxDays) {
-		return nil, apperr.BadRequest(fmt.Sprintf("date range cannot exceed %d days", maxDays))
-	}
-
-	// Default slot duration
-	slotDuration := req.SlotDuration
-	if slotDuration <= 0 {
-		slotDuration = 60
-	}
-
-	// Fetch availability rules for the user
-	rules, err := s.repo.ListAvailabilityRules(ctx, tenantID, targetUserID)
+	startDate, endDate, err := parseAndValidateDateRange(req.StartDate, req.EndDate, 14)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fetch overrides for the date range
-	overrides, err := s.repo.ListAvailabilityOverrides(ctx, tenantID, targetUserID, &startDate, &endDate)
+	slotDuration := max(req.SlotDuration, 60)
+
+	// Fetch availability data
+	rules, overrideMap, appointments, err := s.fetchAvailabilityData(ctx, tenantID, targetUserID, startDate, endDate)
 	if err != nil {
 		return nil, err
-	}
-
-	// Build override map (date string -> override)
-	overrideMap := make(map[string]*repository.AvailabilityOverride)
-	for i := range overrides {
-		dateKey := overrides[i].Date.Format("2006-01-02")
-		overrideMap[dateKey] = &overrides[i]
-	}
-
-	// Fetch existing appointments in the date range (extend slightly to catch boundary overlaps)
-	fetchStart := startDate.AddDate(0, 0, -1)
-	fetchEnd := endDate.AddDate(0, 0, 2)
-	appointments, err := s.repo.ListForDateRange(ctx, tenantID, targetUserID, fetchStart, fetchEnd)
-	if err != nil {
-		return nil, err
-	}
-
-	// Helper to process a time window in a specific timezone
-	processWindow := func(d time.Time, tzName string, startClock, endClock time.Time, slotDurationMinutes int) []transport.TimeSlot {
-		loc, err := time.LoadLocation(tzName)
-		if err != nil {
-			// Fallback to UTC if timezone is invalid
-			loc = time.UTC
-		}
-
-		// Construct absolute start/end times in the rule's timezone
-		windowStart := time.Date(d.Year(), d.Month(), d.Day(), startClock.Hour(), startClock.Minute(), 0, 0, loc)
-		windowEnd := time.Date(d.Year(), d.Month(), d.Day(), endClock.Hour(), endClock.Minute(), 0, 0, loc)
-
-		// Convert to UTC for conflict checking
-		return generateSlotsForWindow(windowStart.UTC(), windowEnd.UTC(), slotDurationMinutes, appointments)
 	}
 
 	// Generate slots for each day
+	days := s.generateDaySlots(startDate, endDate, rules, overrideMap, appointments, slotDuration)
+
+	return &transport.AvailableSlotsResponse{Days: days}, nil
+}
+
+// parseAndValidateDateRange parses dates and validates the range.
+func parseAndValidateDateRange(startStr, endStr string, maxDays int) (time.Time, time.Time, error) {
+	startDate, err := time.Parse("2006-01-02", startStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, apperr.BadRequest("invalid startDate format")
+	}
+	endDate, err := time.Parse("2006-01-02", endStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, apperr.BadRequest("invalid endDate format")
+	}
+	if endDate.Before(startDate) {
+		return time.Time{}, time.Time{}, apperr.BadRequest("endDate must be after startDate")
+	}
+	if endDate.Sub(startDate).Hours()/24 > float64(maxDays) {
+		return time.Time{}, time.Time{}, apperr.BadRequest(fmt.Sprintf("date range cannot exceed %d days", maxDays))
+	}
+	return startDate, endDate, nil
+}
+
+// fetchAvailabilityData fetches rules, overrides, and appointments for slot generation.
+func (s *Service) fetchAvailabilityData(ctx context.Context, tenantID, userID uuid.UUID, startDate, endDate time.Time) ([]repository.AvailabilityRule, map[string]*repository.AvailabilityOverride, []repository.Appointment, error) {
+	rules, err := s.repo.ListAvailabilityRules(ctx, tenantID, userID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	overrides, err := s.repo.ListAvailabilityOverrides(ctx, tenantID, userID, &startDate, &endDate)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	overrideMap := make(map[string]*repository.AvailabilityOverride)
+	for i := range overrides {
+		overrideMap[overrides[i].Date.Format("2006-01-02")] = &overrides[i]
+	}
+
+	fetchStart := startDate.AddDate(0, 0, -1)
+	fetchEnd := endDate.AddDate(0, 0, 2)
+	appointments, err := s.repo.ListForDateRange(ctx, tenantID, userID, fetchStart, fetchEnd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return rules, overrideMap, appointments, nil
+}
+
+// generateDaySlots generates time slots for each day in the range.
+func (s *Service) generateDaySlots(startDate, endDate time.Time, rules []repository.AvailabilityRule, overrideMap map[string]*repository.AvailabilityOverride, appointments []repository.Appointment, slotDuration int) []transport.DaySlots {
 	var days []transport.DaySlots
+
 	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
-		dateKey := d.Format("2006-01-02")
-		weekday := int(d.Weekday())
-
-		daySlots := transport.DaySlots{
-			Date:  dateKey,
-			Slots: []transport.TimeSlot{},
-		}
-
-		// Check for override on this day
-		if override, exists := overrideMap[dateKey]; exists {
-			if !override.IsAvailable {
-				// Day is blocked
-				days = append(days, daySlots)
-				continue
-			}
-			// Override with custom hours
-			if override.StartTime != nil && override.EndTime != nil {
-				slots := processWindow(d, override.Timezone, *override.StartTime, *override.EndTime, slotDuration)
-				daySlots.Slots = slots
-			}
-			days = append(days, daySlots)
-			continue
-		}
-
-		// Find rules for this weekday and generate slots
-		for _, rule := range rules {
-			if rule.Weekday == weekday {
-				slots := processWindow(d, rule.Timezone, rule.StartTime, rule.EndTime, slotDuration)
-				daySlots.Slots = append(daySlots.Slots, slots...)
-			}
-		}
-
-		// Sort slots by start time
-		sort.Slice(daySlots.Slots, func(i, j int) bool {
-			return daySlots.Slots[i].StartTime.Before(daySlots.Slots[j].StartTime)
-		})
-
+		daySlots := s.generateDaySlotsForDate(d, rules, overrideMap, appointments, slotDuration)
 		days = append(days, daySlots)
 	}
 
-	return &transport.AvailableSlotsResponse{Days: days}, nil
+	return days
+}
+
+// generateDaySlotsForDate generates slots for a single day.
+func (s *Service) generateDaySlotsForDate(d time.Time, rules []repository.AvailabilityRule, overrideMap map[string]*repository.AvailabilityOverride, appointments []repository.Appointment, slotDuration int) transport.DaySlots {
+	dateKey := d.Format("2006-01-02")
+	daySlots := transport.DaySlots{Date: dateKey, Slots: []transport.TimeSlot{}}
+
+	// Check for override
+	if override, exists := overrideMap[dateKey]; exists {
+		if !override.IsAvailable {
+			return daySlots // Day blocked
+		}
+		if override.StartTime != nil && override.EndTime != nil {
+			daySlots.Slots = processTimeWindow(d, override.Timezone, *override.StartTime, *override.EndTime, slotDuration, appointments)
+		}
+		return daySlots
+	}
+
+	// Apply rules for this weekday
+	weekday := int(d.Weekday())
+	for _, rule := range rules {
+		if rule.Weekday == weekday {
+			slots := processTimeWindow(d, rule.Timezone, rule.StartTime, rule.EndTime, slotDuration, appointments)
+			daySlots.Slots = append(daySlots.Slots, slots...)
+		}
+	}
+
+	// Sort slots by start time
+	sort.Slice(daySlots.Slots, func(i, j int) bool {
+		return daySlots.Slots[i].StartTime.Before(daySlots.Slots[j].StartTime)
+	})
+
+	return daySlots
+}
+
+// processTimeWindow generates slots for a time window on a given date.
+func processTimeWindow(d time.Time, tzName string, startClock, endClock time.Time, slotDurationMinutes int, appointments []repository.Appointment) []transport.TimeSlot {
+	loc, err := time.LoadLocation(tzName)
+	if err != nil {
+		loc = time.UTC
+	}
+
+	windowStart := time.Date(d.Year(), d.Month(), d.Day(), startClock.Hour(), startClock.Minute(), 0, 0, loc)
+	windowEnd := time.Date(d.Year(), d.Month(), d.Day(), endClock.Hour(), endClock.Minute(), 0, 0, loc)
+
+	return generateSlotsForWindow(windowStart.UTC(), windowEnd.UTC(), slotDurationMinutes, appointments)
 }
 
 // generateSlotsForWindow generates available slots within a time window (UTC), excluding existing appointments
@@ -1077,4 +1081,30 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// parseUUIDFilter parses an optional UUID string filter.
+// Returns nil if empty, error if invalid format.
+func parseUUIDFilter(s string, fieldName string) (*uuid.UUID, error) {
+	if s == "" {
+		return nil, nil
+	}
+	parsed, err := uuid.Parse(s)
+	if err != nil {
+		return nil, apperr.BadRequest(fmt.Sprintf("invalid %s format", fieldName))
+	}
+	return &parsed, nil
+}
+
+// parseDateFilter parses date string in 2006-01-02 format.
+// Returns nil if empty, error if invalid format.
+func parseDateFilter(s string, fieldName string) (*time.Time, error) {
+	if s == "" {
+		return nil, nil
+	}
+	t, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		return nil, apperr.BadRequest(fmt.Sprintf("invalid %s date format: %s", fieldName, s))
+	}
+	return &t, nil
 }

@@ -1051,6 +1051,27 @@ func (s *Service) scoreConsumerNote(svc *repository.LeadService) float64 {
 	return clampFloat(score, 0, 8)
 }
 
+// sourceScoreTable maps source keywords to their quality scores.
+// Higher scores indicate better lead quality based on conversion rates.
+var sourceScoreTable = []struct {
+	keywords []string
+	score    float64
+}{
+	// Best: Direct/referrals show high intent
+	{[]string{"referral", "verwijzing"}, 6},
+	{[]string{"direct", "inbound"}, 5},
+	{[]string{"website", "organic"}, 4},
+	// Good: Targeted campaigns
+	{[]string{"email", "newsletter"}, 3},
+	{[]string{"social", "facebook", "linkedin"}, 2},
+	// Average: Paid acquisition
+	{[]string{"google", "search"}, 2},
+	{[]string{"partner", "affiliate"}, 1},
+	// Lower: Mass market
+	{[]string{"cold", "outbound"}, -1},
+	{[]string{"purchased", "bought"}, -2},
+}
+
 // scoreSource evaluates lead acquisition channel quality.
 // Different sources have different conversion rates.
 func (s *Service) scoreSource(lead repository.Lead, svc *repository.LeadService) float64 {
@@ -1065,33 +1086,22 @@ func (s *Service) scoreSource(lead repository.Lead, svc *repository.LeadService)
 		return 0
 	}
 
-	// Source quality hierarchy based on typical conversion rates
-	switch {
-	// Best: Direct/referrals show high intent
-	case strings.Contains(source, "referral") || strings.Contains(source, "verwijzing"):
-		return 6
-	case strings.Contains(source, "direct") || strings.Contains(source, "inbound"):
-		return 5
-	case strings.Contains(source, "website") || strings.Contains(source, "organic"):
-		return 4
-	// Good: Targeted campaigns
-	case strings.Contains(source, "email") || strings.Contains(source, "newsletter"):
-		return 3
-	case strings.Contains(source, "social") || strings.Contains(source, "facebook") || strings.Contains(source, "linkedin"):
-		return 2
-	// Average: Paid acquisition
-	case strings.Contains(source, "google") || strings.Contains(source, "search"):
-		return 2
-	case strings.Contains(source, "partner") || strings.Contains(source, "affiliate"):
-		return 1
-	// Lower: Mass market
-	case strings.Contains(source, "cold") || strings.Contains(source, "outbound"):
-		return -1
-	case strings.Contains(source, "purchased") || strings.Contains(source, "bought"):
-		return -2
-	default:
-		return 0 // Unknown source
+	for _, entry := range sourceScoreTable {
+		if containsAny(source, entry.keywords) {
+			return entry.score
+		}
 	}
+	return 0 // Unknown source
+}
+
+// containsAny checks if s contains any of the keywords.
+func containsAny(s string, keywords []string) bool {
+	for _, kw := range keywords {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // scoreAssigned evaluates whether an agent is actively working the lead.
