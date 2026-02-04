@@ -211,72 +211,77 @@ type ListResult struct {
 
 // List retrieves RAC_appointments with optional filtering
 func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, error) {
-	// Build query
-	baseQuery := `FROM RAC_appointments WHERE organization_id = $1`
-	args := []interface{}{params.OrganizationID}
-	argIndex := 2
+	filters := appointmentListFilters{
+		userID:    optionalParam(params.UserID),
+		leadID:    optionalParam(params.LeadID),
+		typeValue: optionalParam(params.Type),
+		status:    optionalParam(params.Status),
+		startFrom: optionalParam(params.StartFrom),
+		startTo:   optionalParam(params.StartTo),
+		search:    optionalSearchParam(params.Search),
+	}
 
-	addFilter(&baseQuery, &args, &argIndex, params.UserID != nil, " AND user_id = $%d", derefUUID(params.UserID))
-	addFilter(&baseQuery, &args, &argIndex, params.LeadID != nil, " AND lead_id = $%d", derefUUID(params.LeadID))
-	addFilter(&baseQuery, &args, &argIndex, params.Type != nil, " AND type = $%d", derefString(params.Type))
-	addFilter(&baseQuery, &args, &argIndex, params.Status != nil, " AND status = $%d", derefString(params.Status))
-	addFilter(&baseQuery, &args, &argIndex, params.StartFrom != nil, " AND start_time >= $%d", derefTime(params.StartFrom))
-	addFilter(&baseQuery, &args, &argIndex, params.StartTo != nil, " AND start_time <= $%d", derefTime(params.StartTo))
-	addFilter(
-		&baseQuery,
-		&args,
-		&argIndex,
-		params.Search != "",
-		" AND (title ILIKE $%d OR location ILIKE $%d OR meeting_link ILIKE $%d)",
-		"%"+params.Search+"%",
-	)
+	sortBy, err := resolveAppointmentSortBy(params.SortBy)
+	if err != nil {
+		return nil, err
+	}
 
-	// Count total
+	sortOrder, err := resolveAppointmentSortOrder(params.SortOrder)
+	if err != nil {
+		return nil, err
+	}
+
+	baseQuery := `
+		FROM RAC_appointments
+		WHERE organization_id = $1
+			AND ($2::uuid IS NULL OR user_id = $2)
+			AND ($3::uuid IS NULL OR lead_id = $3)
+			AND ($4::text IS NULL OR type = $4)
+			AND ($5::text IS NULL OR status = $5)
+			AND ($6::timestamptz IS NULL OR start_time >= $6)
+			AND ($7::timestamptz IS NULL OR start_time <= $7)
+			AND ($8::text IS NULL OR title ILIKE $8 OR location ILIKE $8 OR meeting_link ILIKE $8)
+	`
+	args := []interface{}{
+		params.OrganizationID,
+		filters.userID,
+		filters.leadID,
+		filters.typeValue,
+		filters.status,
+		filters.startFrom,
+		filters.startTo,
+		filters.search,
+	}
+
 	var total int
 	countQuery := "SELECT COUNT(*) " + baseQuery
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, fmt.Errorf("failed to count RAC_appointments: %w", err)
 	}
 
-	// Calculate pagination
 	totalPages := (total + params.PageSize - 1) / params.PageSize
 	offset := (params.Page - 1) * params.PageSize
 
-	// Build ORDER BY clause
-	orderBy := "start_time"
-	if params.SortBy != "" {
-		// Map frontend column names to database columns
-		columnMap := map[string]string{
-			"title":     "title",
-			"type":      "type",
-			"status":    "status",
-			"startTime": "start_time",
-			"endTime":   "end_time",
-			"createdAt": "created_at",
-		}
-		col, ok := columnMap[params.SortBy]
-		if !ok {
-			return nil, apperr.BadRequest("invalid sort field")
-		}
-		orderBy = col
-	}
-	sortDir := "ASC"
-	if params.SortOrder != "" {
-		switch params.SortOrder {
-		case "asc":
-			sortDir = "ASC"
-		case "desc":
-			sortDir = "DESC"
-		default:
-			return nil, apperr.BadRequest("invalid sort order")
-		}
-	}
+	selectQuery := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
+		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
+		` + baseQuery + `
+		ORDER BY
+			CASE WHEN $9 = 'title' AND $10 = 'asc' THEN title END ASC,
+			CASE WHEN $9 = 'title' AND $10 = 'desc' THEN title END DESC,
+			CASE WHEN $9 = 'type' AND $10 = 'asc' THEN type END ASC,
+			CASE WHEN $9 = 'type' AND $10 = 'desc' THEN type END DESC,
+			CASE WHEN $9 = 'status' AND $10 = 'asc' THEN status END ASC,
+			CASE WHEN $9 = 'status' AND $10 = 'desc' THEN status END DESC,
+			CASE WHEN $9 = 'startTime' AND $10 = 'asc' THEN start_time END ASC,
+			CASE WHEN $9 = 'startTime' AND $10 = 'desc' THEN start_time END DESC,
+			CASE WHEN $9 = 'endTime' AND $10 = 'asc' THEN end_time END ASC,
+			CASE WHEN $9 = 'endTime' AND $10 = 'desc' THEN end_time END DESC,
+			CASE WHEN $9 = 'createdAt' AND $10 = 'asc' THEN created_at END ASC,
+			CASE WHEN $9 = 'createdAt' AND $10 = 'desc' THEN created_at END DESC,
+			start_time ASC
+		LIMIT $11 OFFSET $12`
 
-	// Fetch items
-	selectQuery := fmt.Sprintf(`SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
-		baseQuery, orderBy, sortDir, argIndex, argIndex+1)
-	args = append(args, params.PageSize, offset)
+	args = append(args, sortBy, sortOrder, params.PageSize, offset)
 
 	rows, err := r.pool.Query(ctx, selectQuery, args...)
 	if err != nil {
@@ -308,6 +313,54 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		PageSize:   params.PageSize,
 		TotalPages: totalPages,
 	}, nil
+}
+
+type appointmentListFilters struct {
+	userID    interface{}
+	leadID    interface{}
+	typeValue interface{}
+	status    interface{}
+	startFrom interface{}
+	startTo   interface{}
+	search    interface{}
+}
+
+func optionalParam[T any](value *T) interface{} {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func optionalSearchParam(value string) interface{} {
+	if value == "" {
+		return nil
+	}
+	return "%" + value + "%"
+}
+
+func resolveAppointmentSortBy(sortBy string) (string, error) {
+	if sortBy == "" {
+		return "startTime", nil
+	}
+	switch sortBy {
+	case "title", "type", "status", "startTime", "endTime", "createdAt":
+		return sortBy, nil
+	default:
+		return "", apperr.BadRequest("invalid sort field")
+	}
+}
+
+func resolveAppointmentSortOrder(sortOrder string) (string, error) {
+	if sortOrder == "" {
+		return "asc", nil
+	}
+	switch sortOrder {
+	case "asc", "desc":
+		return sortOrder, nil
+	default:
+		return "", apperr.BadRequest("invalid sort order")
+	}
 }
 
 // GetLeadInfo retrieves basic lead information for embedding in appointment responses
@@ -438,34 +491,4 @@ func (a *Appointment) ToResponse(leadInfo *transport.AppointmentLeadInfo) transp
 		Lead:          leadInfo,
 	}
 	return resp
-}
-
-func addFilter(baseQuery *string, args *[]interface{}, argIndex *int, apply bool, clause string, value interface{}) {
-	if !apply {
-		return
-	}
-	*baseQuery += fmt.Sprintf(clause, *argIndex)
-	*args = append(*args, value)
-	*argIndex++
-}
-
-func derefUUID(value *uuid.UUID) uuid.UUID {
-	if value == nil {
-		return uuid.UUID{}
-	}
-	return *value
-}
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-func derefTime(value *time.Time) time.Time {
-	if value == nil {
-		return time.Time{}
-	}
-	return *value
 }

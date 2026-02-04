@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,93 +139,86 @@ func mapServiceTypeSortColumn(sortBy string) (string, error) {
 }
 
 func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error) {
-	whereClauses, args := r.buildServiceTypeFilters(params)
-	whereClause := strings.Join(whereClauses, " AND ")
-
-	total, err := r.countServiceTypes(ctx, whereClause, args)
-	if err != nil {
-		return nil, 0, err
+	var searchParam interface{}
+	if params.Search != "" {
+		searchParam = "%" + params.Search + "%"
+	}
+	var isActiveParam interface{}
+	if params.IsActive != nil {
+		isActiveParam = *params.IsActive
 	}
 
-	sortColumn, err := mapServiceTypeSortColumn(params.SortBy)
-	if err != nil {
-		return nil, 0, err
+	sortBy := "displayOrder"
+	if params.SortBy != "" {
+		switch params.SortBy {
+		case "name", "slug", "displayOrder", "isActive", "createdAt", "updatedAt":
+			sortBy = params.SortBy
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort field")
+		}
 	}
 
-	sortOrder, err := mapSortOrderASC(params.SortOrder)
-	if err != nil {
-		return nil, 0, err
+	sortOrder := "asc"
+	if params.SortOrder != "" {
+		switch params.SortOrder {
+		case "asc", "desc":
+			sortOrder = params.SortOrder
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort order")
+		}
 	}
 
-	items, err := r.fetchServiceTypes(ctx, whereClause, sortColumn, sortOrder, args, params.Limit, params.Offset)
+	args := []interface{}{params.OrganizationID, searchParam, isActiveParam}
+
+	countQuery := `
+		SELECT COUNT(*)
+		FROM RAC_service_types
+		WHERE organization_id = $1
+			AND ($2::text IS NULL OR name ILIKE $2 OR slug ILIKE $2)
+			AND ($3::boolean IS NULL OR is_active = $3)
+	`
+
+	var total int
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count service types: %w", err)
+	}
+
+	query := `
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
+		FROM RAC_service_types
+		WHERE organization_id = $1
+			AND ($2::text IS NULL OR name ILIKE $2 OR slug ILIKE $2)
+			AND ($3::boolean IS NULL OR is_active = $3)
+		ORDER BY
+			CASE WHEN $4 = 'name' AND $5 = 'asc' THEN name END ASC,
+			CASE WHEN $4 = 'name' AND $5 = 'desc' THEN name END DESC,
+			CASE WHEN $4 = 'slug' AND $5 = 'asc' THEN slug END ASC,
+			CASE WHEN $4 = 'slug' AND $5 = 'desc' THEN slug END DESC,
+			CASE WHEN $4 = 'displayOrder' AND $5 = 'asc' THEN display_order END ASC,
+			CASE WHEN $4 = 'displayOrder' AND $5 = 'desc' THEN display_order END DESC,
+			CASE WHEN $4 = 'isActive' AND $5 = 'asc' THEN is_active END ASC,
+			CASE WHEN $4 = 'isActive' AND $5 = 'desc' THEN is_active END DESC,
+			CASE WHEN $4 = 'createdAt' AND $5 = 'asc' THEN created_at END ASC,
+			CASE WHEN $4 = 'createdAt' AND $5 = 'desc' THEN created_at END DESC,
+			CASE WHEN $4 = 'updatedAt' AND $5 = 'asc' THEN updated_at END ASC,
+			CASE WHEN $4 = 'updatedAt' AND $5 = 'desc' THEN updated_at END DESC,
+			display_order ASC, name ASC
+		LIMIT $6 OFFSET $7
+	`
+
+	args = append(args, sortBy, sortOrder, params.Limit, params.Offset)
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list service types: %w", err)
+	}
+	defer rows.Close()
+
+	items, err := scanServiceTypes(rows)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	return items, total, nil
-}
-
-// buildServiceTypeFilters constructs WHERE clause predicates.
-func (r *Repo) buildServiceTypeFilters(params ListParams) ([]string, []interface{}) {
-	whereClauses := []string{"organization_id = $1"}
-	args := []interface{}{params.OrganizationID}
-	argIdx := 2
-
-	if params.IsActive != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("is_active = $%d", argIdx))
-		args = append(args, *params.IsActive)
-		argIdx++
-	}
-	if params.Search != "" {
-		searchPattern := "%" + params.Search + "%"
-		whereClauses = append(whereClauses, fmt.Sprintf("(name ILIKE $%d OR slug ILIKE $%d)", argIdx, argIdx))
-		args = append(args, searchPattern)
-	}
-	return whereClauses, args
-}
-
-// countServiceTypes returns the total count matching the filter.
-func (r *Repo) countServiceTypes(ctx context.Context, whereClause string, args []interface{}) (int, error) {
-	query := fmt.Sprintf("SELECT COUNT(*) FROM RAC_service_types WHERE %s", whereClause)
-	var total int
-	if err := r.pool.QueryRow(ctx, query, args...).Scan(&total); err != nil {
-		return 0, fmt.Errorf("count service types: %w", err)
-	}
-	return total, nil
-}
-
-// mapSortOrderASC returns validated sort order, defaulting to ASC.
-func mapSortOrderASC(sortOrder string) (string, error) {
-	switch sortOrder {
-	case "", "asc":
-		return "ASC", nil
-	case "desc":
-		return "DESC", nil
-	default:
-		return "", apperr.BadRequest("invalid sort order")
-	}
-}
-
-// fetchServiceTypes executes the paginated query.
-func (r *Repo) fetchServiceTypes(ctx context.Context, whereClause, sortColumn, sortOrder string, args []interface{}, limit, offset int) ([]ServiceType, error) {
-	argIdx := len(args) + 1
-	args = append(args, limit, offset)
-
-	query := fmt.Sprintf(`
-		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
-		FROM RAC_service_types
-		WHERE %s
-		ORDER BY %s %s, name ASC
-		LIMIT $%d OFFSET $%d
-	`, whereClause, sortColumn, sortOrder, argIdx, argIdx+1)
-
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list service types: %w", err)
-	}
-	defer rows.Close()
-
-	return scanServiceTypes(rows)
 }
 
 // Exists checks if a service type exists by ID.

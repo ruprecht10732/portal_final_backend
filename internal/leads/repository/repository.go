@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -392,20 +390,6 @@ type UpdateLeadScoreParams struct {
 	ScoreUpdatedAt time.Time
 }
 
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-func derefFloat(value *float64) float64 {
-	if value == nil {
-		return 0
-	}
-	return *value
-}
-
 func nullable[T any](value *T) interface{} {
 	if value == nil {
 		return nil
@@ -414,48 +398,40 @@ func nullable[T any](value *T) interface{} {
 }
 
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadParams) (Lead, error) {
-	setClauses := []string{}
-	args := []interface{}{}
-	argIdx := 1
+	hasUpdates := params.ConsumerFirstName != nil ||
+		params.ConsumerLastName != nil ||
+		params.ConsumerPhone != nil ||
+		params.ConsumerEmail != nil ||
+		params.ConsumerRole != nil ||
+		params.AddressStreet != nil ||
+		params.AddressHouseNumber != nil ||
+		params.AddressZipCode != nil ||
+		params.AddressCity != nil ||
+		params.Latitude != nil ||
+		params.Longitude != nil ||
+		params.AssignedAgentIDSet
 
-	fields := []struct {
-		enabled bool
-		column  string
-		value   interface{}
-	}{
-		{params.ConsumerFirstName != nil, "consumer_first_name", derefString(params.ConsumerFirstName)},
-		{params.ConsumerLastName != nil, "consumer_last_name", derefString(params.ConsumerLastName)},
-		{params.ConsumerPhone != nil, "consumer_phone", derefString(params.ConsumerPhone)},
-		{params.ConsumerEmail != nil, "consumer_email", derefString(params.ConsumerEmail)},
-		{params.ConsumerRole != nil, "consumer_role", derefString(params.ConsumerRole)},
-		{params.AddressStreet != nil, "address_street", derefString(params.AddressStreet)},
-		{params.AddressHouseNumber != nil, "address_house_number", derefString(params.AddressHouseNumber)},
-		{params.AddressZipCode != nil, "address_zip_code", derefString(params.AddressZipCode)},
-		{params.AddressCity != nil, "address_city", derefString(params.AddressCity)},
-		{params.Latitude != nil, "latitude", derefFloat(params.Latitude)},
-		{params.Longitude != nil, "longitude", derefFloat(params.Longitude)},
-		{params.AssignedAgentIDSet, "assigned_agent_id", params.AssignedAgentID},
-	}
-
-	for _, field := range fields {
-		if !field.enabled {
-			continue
-		}
-		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", field.column, argIdx))
-		args = append(args, field.value)
-		argIdx++
-	}
-
-	if len(setClauses) == 0 {
+	if !hasUpdates {
 		return r.GetByID(ctx, id, organizationID)
 	}
 
-	setClauses = append(setClauses, "updated_at = now()")
-	args = append(args, id, organizationID)
-
-	query := fmt.Sprintf(`
-		UPDATE RAC_leads SET %s
-		WHERE id = $%d AND organization_id = $%d AND deleted_at IS NULL
+	query := `
+		UPDATE RAC_leads
+		SET
+			consumer_first_name = COALESCE($3, consumer_first_name),
+			consumer_last_name = COALESCE($4, consumer_last_name),
+			consumer_phone = COALESCE($5, consumer_phone),
+			consumer_email = COALESCE($6, consumer_email),
+			consumer_role = COALESCE($7, consumer_role),
+			address_street = COALESCE($8, address_street),
+			address_house_number = COALESCE($9, address_house_number),
+			address_zip_code = COALESCE($10, address_zip_code),
+			address_city = COALESCE($11, address_city),
+			latitude = COALESCE($12, latitude),
+			longitude = COALESCE($13, longitude),
+			assigned_agent_id = CASE WHEN $15 THEN $14 ELSE assigned_agent_id END,
+			updated_at = now()
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 		RETURNING id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
@@ -468,10 +444,33 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 			lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_stedelijkheid, lead_enrichment_confidence, lead_enrichment_fetched_at,
 			lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at,
 			viewed_by_id, viewed_at, created_at, updated_at
-	`, strings.Join(setClauses, ", "), argIdx, argIdx+1)
+	`
+
+	var assignedAgentParam interface{}
+	if params.AssignedAgentIDSet {
+		assignedAgentParam = params.AssignedAgentID
+	}
 
 	var lead Lead
-	err := r.pool.QueryRow(ctx, query, args...).Scan(
+	err := r.pool.QueryRow(
+		ctx,
+		query,
+		id,
+		organizationID,
+		nullable(params.ConsumerFirstName),
+		nullable(params.ConsumerLastName),
+		nullable(params.ConsumerPhone),
+		nullable(params.ConsumerEmail),
+		nullable(params.ConsumerRole),
+		nullable(params.AddressStreet),
+		nullable(params.AddressHouseNumber),
+		nullable(params.AddressZipCode),
+		nullable(params.AddressCity),
+		nullable(params.Latitude),
+		nullable(params.Longitude),
+		assignedAgentParam,
+		params.AssignedAgentIDSet,
+	).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
 		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
@@ -674,33 +673,75 @@ type ListParams struct {
 }
 
 func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, error) {
-	whereClause, joinClause, args, argIdx := buildLeadListWhere(params)
+	filters := buildLeadListFilters(params)
+
+	sortBy, err := resolveLeadSortBy(params.SortBy)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	sortOrder, err := resolveLeadSortOrder(params.SortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	baseQuery := `
+		FROM RAC_leads l
+		LEFT JOIN LATERAL (
+			SELECT ls.id, ls.status, ls.service_type_id
+			FROM RAC_lead_services ls
+			WHERE ls.lead_id = l.id AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
+			ORDER BY ls.created_at DESC
+			LIMIT 1
+		) cs ON true
+		LEFT JOIN RAC_service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id
+		WHERE l.organization_id = $1
+			AND l.deleted_at IS NULL
+			AND ($2::text IS NULL OR cs.status = $2)
+			AND ($3::text IS NULL OR st.name = $3)
+			AND ($4::text IS NULL OR (
+				l.consumer_first_name ILIKE $4 OR l.consumer_last_name ILIKE $4 OR l.consumer_phone ILIKE $4 OR l.consumer_email ILIKE $4 OR l.address_city ILIKE $4
+			))
+			AND ($5::text IS NULL OR l.consumer_first_name ILIKE $5)
+			AND ($6::text IS NULL OR l.consumer_last_name ILIKE $6)
+			AND ($7::text IS NULL OR l.consumer_phone ILIKE $7)
+			AND ($8::text IS NULL OR l.consumer_email ILIKE $8)
+			AND ($9::text IS NULL OR l.consumer_role = $9)
+			AND ($10::text IS NULL OR l.address_street ILIKE $10)
+			AND ($11::text IS NULL OR l.address_house_number ILIKE $11)
+			AND ($12::text IS NULL OR l.address_zip_code ILIKE $12)
+			AND ($13::text IS NULL OR l.address_city ILIKE $13)
+			AND ($14::uuid IS NULL OR l.assigned_agent_id = $14)
+			AND ($15::timestamptz IS NULL OR l.created_at >= $15)
+			AND ($16::timestamptz IS NULL OR l.created_at < $16)
+	`
+
+	args := []interface{}{
+		params.OrganizationID,
+		filters.status,
+		filters.serviceType,
+		filters.search,
+		filters.firstName,
+		filters.lastName,
+		filters.phone,
+		filters.email,
+		filters.role,
+		filters.street,
+		filters.houseNumber,
+		filters.zipCode,
+		filters.city,
+		filters.assignedAgentID,
+		filters.createdAtFrom,
+		filters.createdAtTo,
+	}
 
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT l.id) FROM RAC_leads l %s WHERE %s", joinClause, whereClause)
+	countQuery := "SELECT COUNT(DISTINCT l.id) " + baseQuery
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	sortColumn, err := mapLeadSortColumn(params.SortBy)
-	if err != nil {
-		return nil, 0, err
-	}
-	sortOrder := "DESC"
-	if params.SortOrder != "" {
-		switch params.SortOrder {
-		case "asc":
-			sortOrder = "ASC"
-		case "desc":
-			sortOrder = "DESC"
-		default:
-			return nil, 0, apperr.BadRequest("invalid sort order")
-		}
-	}
-
-	args = append(args, params.Limit, params.Offset)
-
-	query := fmt.Sprintf(`
+	innerQuery := `
 		SELECT DISTINCT l.id, l.organization_id, l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email, l.consumer_role,
 			l.address_street, l.address_house_number, l.address_zip_code, l.address_city, l.latitude, l.longitude,
 			l.assigned_agent_id, l.source, l.energy_class, l.energy_index, l.energy_bouwjaar, l.energy_gebouwtype,
@@ -713,12 +754,41 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 			l.lead_enrichment_huishoudens_met_kinderen_pct, l.lead_enrichment_stedelijkheid, l.lead_enrichment_confidence, l.lead_enrichment_fetched_at,
 			l.lead_score, l.lead_score_pre_ai, l.lead_score_factors, l.lead_score_version, l.lead_score_updated_at,
 			l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at
-		FROM RAC_leads l
-		%s
-		WHERE %s
-		ORDER BY %s %s
-		LIMIT $%d OFFSET $%d
-	`, joinClause, whereClause, sortColumn, sortOrder, argIdx, argIdx+1)
+		` + baseQuery + `
+	`
+
+	query := `
+		SELECT * FROM (
+			` + innerQuery + `
+		) leads
+		ORDER BY
+			CASE WHEN $17 = 'createdAt' AND $18 = 'asc' THEN leads.created_at END ASC,
+			CASE WHEN $17 = 'createdAt' AND $18 = 'desc' THEN leads.created_at END DESC,
+			CASE WHEN $17 = 'firstName' AND $18 = 'asc' THEN leads.consumer_first_name END ASC,
+			CASE WHEN $17 = 'firstName' AND $18 = 'desc' THEN leads.consumer_first_name END DESC,
+			CASE WHEN $17 = 'lastName' AND $18 = 'asc' THEN leads.consumer_last_name END ASC,
+			CASE WHEN $17 = 'lastName' AND $18 = 'desc' THEN leads.consumer_last_name END DESC,
+			CASE WHEN $17 = 'phone' AND $18 = 'asc' THEN leads.consumer_phone END ASC,
+			CASE WHEN $17 = 'phone' AND $18 = 'desc' THEN leads.consumer_phone END DESC,
+			CASE WHEN $17 = 'email' AND $18 = 'asc' THEN leads.consumer_email END ASC,
+			CASE WHEN $17 = 'email' AND $18 = 'desc' THEN leads.consumer_email END DESC,
+			CASE WHEN $17 = 'role' AND $18 = 'asc' THEN leads.consumer_role END ASC,
+			CASE WHEN $17 = 'role' AND $18 = 'desc' THEN leads.consumer_role END DESC,
+			CASE WHEN $17 = 'street' AND $18 = 'asc' THEN leads.address_street END ASC,
+			CASE WHEN $17 = 'street' AND $18 = 'desc' THEN leads.address_street END DESC,
+			CASE WHEN $17 = 'houseNumber' AND $18 = 'asc' THEN leads.address_house_number END ASC,
+			CASE WHEN $17 = 'houseNumber' AND $18 = 'desc' THEN leads.address_house_number END DESC,
+			CASE WHEN $17 = 'zipCode' AND $18 = 'asc' THEN leads.address_zip_code END ASC,
+			CASE WHEN $17 = 'zipCode' AND $18 = 'desc' THEN leads.address_zip_code END DESC,
+			CASE WHEN $17 = 'city' AND $18 = 'asc' THEN leads.address_city END ASC,
+			CASE WHEN $17 = 'city' AND $18 = 'desc' THEN leads.address_city END DESC,
+			CASE WHEN $17 = 'assignedAgentId' AND $18 = 'asc' THEN leads.assigned_agent_id END ASC,
+			CASE WHEN $17 = 'assignedAgentId' AND $18 = 'desc' THEN leads.assigned_agent_id END DESC,
+			leads.created_at DESC
+		LIMIT $19 OFFSET $20
+	`
+
+	args = append(args, sortBy, sortOrder, params.Limit, params.Offset)
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -756,172 +826,79 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	return leads, total, nil
 }
 
-type leadListWhereBuilder struct {
-	whereClauses     []string
-	args             []interface{}
-	argIdx           int
-	needsServiceJoin bool
+type leadListFilters struct {
+	status          interface{}
+	serviceType     interface{}
+	search          interface{}
+	firstName       interface{}
+	lastName        interface{}
+	phone           interface{}
+	email           interface{}
+	role            interface{}
+	street          interface{}
+	houseNumber     interface{}
+	zipCode         interface{}
+	city            interface{}
+	assignedAgentID interface{}
+	createdAtFrom   interface{}
+	createdAtTo     interface{}
 }
 
-func newLeadListWhereBuilder(organizationID uuid.UUID) *leadListWhereBuilder {
-	return &leadListWhereBuilder{
-		whereClauses: []string{"l.organization_id = $1", "l.deleted_at IS NULL"},
-		args:         []interface{}{organizationID},
-		argIdx:       2,
+func buildLeadListFilters(params ListParams) leadListFilters {
+	return leadListFilters{
+		status:          nullable(params.Status),
+		serviceType:     nullable(params.ServiceType),
+		search:          optionalSearchParam(params.Search),
+		firstName:       optionalLikeParam(params.FirstName),
+		lastName:        optionalLikeParam(params.LastName),
+		phone:           optionalLikeParam(params.Phone),
+		email:           optionalLikeParam(params.Email),
+		role:            nullable(params.Role),
+		street:          optionalLikeParam(params.Street),
+		houseNumber:     optionalLikeParam(params.HouseNumber),
+		zipCode:         optionalLikeParam(params.ZipCode),
+		city:            optionalLikeParam(params.City),
+		assignedAgentID: nullable(params.AssignedAgentID),
+		createdAtFrom:   nullable(params.CreatedAtFrom),
+		createdAtTo:     nullable(params.CreatedAtTo),
 	}
 }
 
-func (b *leadListWhereBuilder) addEquals(column string, value interface{}) {
-	b.whereClauses = append(b.whereClauses, fmt.Sprintf("%s = $%d", column, b.argIdx))
-	b.args = append(b.args, value)
-	b.argIdx++
-}
-
-func (b *leadListWhereBuilder) addILike(column string, value string) {
-	b.whereClauses = append(b.whereClauses, fmt.Sprintf("%s ILIKE $%d", column, b.argIdx))
-	b.args = append(b.args, "%"+value+"%")
-	b.argIdx++
-}
-
-func (b *leadListWhereBuilder) addStatus(status *string) {
-	if status == nil {
-		return
-	}
-	b.needsServiceJoin = true
-	b.whereClauses = append(b.whereClauses, fmt.Sprintf("cs.status = $%d", b.argIdx))
-	b.args = append(b.args, *status)
-	b.argIdx++
-}
-
-func (b *leadListWhereBuilder) addServiceType(serviceType *string) {
-	if serviceType == nil {
-		return
-	}
-	b.needsServiceJoin = true
-	b.whereClauses = append(b.whereClauses, fmt.Sprintf("st.name = $%d", b.argIdx))
-	b.args = append(b.args, *serviceType)
-	b.argIdx++
-}
-
-func (b *leadListWhereBuilder) addSearch(search string) {
-	if search == "" {
-		return
-	}
-	searchPattern := "%" + search + "%"
-	b.whereClauses = append(b.whereClauses, fmt.Sprintf(
-		"(l.consumer_first_name ILIKE $%d OR l.consumer_last_name ILIKE $%d OR l.consumer_phone ILIKE $%d OR l.consumer_email ILIKE $%d OR l.address_city ILIKE $%d)",
-		b.argIdx, b.argIdx, b.argIdx, b.argIdx, b.argIdx,
-	))
-	b.args = append(b.args, searchPattern)
-	b.argIdx++
-}
-
-func (b *leadListWhereBuilder) addOptionalILike(column string, value *string) {
+func optionalLikeParam(value *string) interface{} {
 	if value == nil {
-		return
+		return nil
 	}
-	b.addILike(column, *value)
+	return "%" + *value + "%"
 }
 
-func (b *leadListWhereBuilder) addOptionalEquals(column string, value *string) {
-	if value == nil {
-		return
+func optionalSearchParam(value string) interface{} {
+	if value == "" {
+		return nil
 	}
-	b.addEquals(column, *value)
+	return "%" + value + "%"
 }
 
-func (b *leadListWhereBuilder) addOptionalUUIDEquals(column string, value *uuid.UUID) {
-	if value == nil {
-		return
-	}
-	b.addEquals(column, *value)
-}
-
-func (b *leadListWhereBuilder) addCreatedAtFrom(value *time.Time) {
-	if value == nil {
-		return
-	}
-	b.whereClauses = append(b.whereClauses, fmt.Sprintf("l.created_at >= $%d", b.argIdx))
-	b.args = append(b.args, *value)
-	b.argIdx++
-}
-
-func (b *leadListWhereBuilder) addCreatedAtTo(value *time.Time) {
-	if value == nil {
-		return
-	}
-	b.whereClauses = append(b.whereClauses, fmt.Sprintf("l.created_at < $%d", b.argIdx))
-	b.args = append(b.args, *value)
-	b.argIdx++
-}
-
-func (b *leadListWhereBuilder) joinClause() string {
-	if !b.needsServiceJoin {
-		return ""
-	}
-	return `
-		LEFT JOIN LATERAL (
-			SELECT ls.id, ls.status, ls.service_type_id
-			FROM RAC_lead_services ls
-			WHERE ls.lead_id = l.id AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
-			ORDER BY ls.created_at DESC
-			LIMIT 1
-		) cs ON true
-		LEFT JOIN RAC_service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id`
-}
-
-func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) {
-	builder := newLeadListWhereBuilder(params.OrganizationID)
-	builder.addStatus(params.Status)
-	builder.addServiceType(params.ServiceType)
-	builder.addSearch(params.Search)
-	builder.addOptionalILike("l.consumer_first_name", params.FirstName)
-	builder.addOptionalILike("l.consumer_last_name", params.LastName)
-	builder.addOptionalILike("l.consumer_phone", params.Phone)
-	builder.addOptionalILike("l.consumer_email", params.Email)
-	builder.addOptionalEquals("l.consumer_role", params.Role)
-	builder.addOptionalILike("l.address_street", params.Street)
-	builder.addOptionalILike("l.address_house_number", params.HouseNumber)
-	builder.addOptionalILike("l.address_zip_code", params.ZipCode)
-	builder.addOptionalILike("l.address_city", params.City)
-	builder.addOptionalUUIDEquals("l.assigned_agent_id", params.AssignedAgentID)
-	builder.addCreatedAtFrom(params.CreatedAtFrom)
-	builder.addCreatedAtTo(params.CreatedAtTo)
-
-	return strings.Join(builder.whereClauses, " AND "), builder.joinClause(), builder.args, builder.argIdx
-}
-
-func mapLeadSortColumn(sortBy string) (string, error) {
-	sortColumn := "l.created_at"
+func resolveLeadSortBy(sortBy string) (string, error) {
 	if sortBy == "" {
-		return sortColumn, nil
+		return "createdAt", nil
 	}
-
 	switch sortBy {
-	case "createdAt":
-		return "l.created_at", nil
-	case "firstName":
-		return "l.consumer_first_name", nil
-	case "lastName":
-		return "l.consumer_last_name", nil
-	case "phone":
-		return "l.consumer_phone", nil
-	case "email":
-		return "l.consumer_email", nil
-	case "role":
-		return "l.consumer_role", nil
-	case "street":
-		return "l.address_street", nil
-	case "houseNumber":
-		return "l.address_house_number", nil
-	case "zipCode":
-		return "l.address_zip_code", nil
-	case "city":
-		return "l.address_city", nil
-	case "assignedAgentId":
-		return "l.assigned_agent_id", nil
+	case "createdAt", "firstName", "lastName", "phone", "email", "role", "street", "houseNumber", "zipCode", "city", "assignedAgentId":
+		return sortBy, nil
 	default:
 		return "", apperr.BadRequest("invalid sort field")
+	}
+}
+
+func resolveLeadSortOrder(sortOrder string) (string, error) {
+	if sortOrder == "" {
+		return "desc", nil
+	}
+	switch sortOrder {
+	case "asc", "desc":
+		return sortOrder, nil
+	default:
+		return "", apperr.BadRequest("invalid sort order")
 	}
 }
 
@@ -931,27 +908,27 @@ type HeatmapPoint struct {
 }
 
 func (r *Repository) ListHeatmapPoints(ctx context.Context, organizationID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error) {
-	whereClauses := []string{"organization_id = $1", "deleted_at IS NULL", "latitude IS NOT NULL", "longitude IS NOT NULL"}
-	args := []interface{}{organizationID}
-
+	var startParam interface{}
 	if startDate != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("created_at >= $%d", len(args)+1))
-		args = append(args, *startDate)
+		startParam = *startDate
 	}
+	var endParam interface{}
 	if endDate != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("created_at < $%d", len(args)+1))
-		args = append(args, *endDate)
+		endParam = *endDate
 	}
 
-	whereClause := strings.Join(whereClauses, " AND ")
-
-	query := fmt.Sprintf(`
+	query := `
 		SELECT latitude, longitude
 		FROM RAC_leads
-		WHERE %s
-	`, whereClause)
+		WHERE organization_id = $1
+			AND deleted_at IS NULL
+			AND latitude IS NOT NULL
+			AND longitude IS NOT NULL
+			AND ($2::timestamptz IS NULL OR created_at >= $2)
+			AND ($3::timestamptz IS NULL OR created_at < $3)
+	`
 
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, query, organizationID, startParam, endParam)
 	if err != nil {
 		return nil, err
 	}
@@ -988,15 +965,7 @@ type ActionItemListResult struct {
 }
 
 func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UUID, newLeadDays int, limit int, offset int) (ActionItemListResult, error) {
-	whereClauses := []string{"l.organization_id = $1", "l.deleted_at IS NULL"}
-	args := []interface{}{organizationID, newLeadDays}
-	argIdx := 3
-
-	whereClauses = append(whereClauses, "(ai.urgency_level = 'High' OR l.created_at >= now() - ($2::int || ' days')::interval)")
-
-	whereClause := strings.Join(whereClauses, " AND ")
-
-	countQuery := fmt.Sprintf(`
+	countQuery := `
 		SELECT COUNT(*)
 		FROM RAC_leads l
 		LEFT JOIN (
@@ -1004,16 +973,17 @@ func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UU
 			FROM RAC_lead_ai_analysis
 			ORDER BY lead_id, created_at DESC
 		) ai ON ai.lead_id = l.id
-		WHERE %s
-	`, whereClause)
+		WHERE l.organization_id = $1
+			AND l.deleted_at IS NULL
+			AND (ai.urgency_level = 'High' OR l.created_at >= now() - ($2::int || ' days')::interval)
+	`
 
 	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, countQuery, organizationID, newLeadDays).Scan(&total); err != nil {
 		return ActionItemListResult{}, err
 	}
 
-	args = append(args, limit, offset)
-	query := fmt.Sprintf(`
+	query := `
 		SELECT l.id, l.consumer_first_name, l.consumer_last_name, ai.urgency_level, ai.urgency_reason, l.created_at
 		FROM RAC_leads l
 		LEFT JOIN (
@@ -1021,14 +991,16 @@ func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UU
 			FROM RAC_lead_ai_analysis
 			ORDER BY lead_id, created_at DESC
 		) ai ON ai.lead_id = l.id
-		WHERE %s
+		WHERE l.organization_id = $1
+			AND l.deleted_at IS NULL
+			AND (ai.urgency_level = 'High' OR l.created_at >= now() - ($2::int || ' days')::interval)
 		ORDER BY
 			CASE WHEN ai.urgency_level = 'High' THEN 0 ELSE 1 END,
 			l.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, whereClause, argIdx, argIdx+1)
+		LIMIT $3 OFFSET $4
+	`
 
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, query, organizationID, newLeadDays, limit, offset)
 	if err != nil {
 		return ActionItemListResult{}, err
 	}

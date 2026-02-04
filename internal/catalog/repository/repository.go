@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,37 +18,35 @@ const (
 	productNotFoundMessage = "product not found"
 )
 
-// productSortColumns maps API field names to database column names.
-var productSortColumns = map[string]string{
-	"title":      "title",
-	"reference":  "reference",
-	"priceCents": "price_cents",
-	"type":       "type",
-	"createdAt":  "created_at",
-	"updatedAt":  "updated_at",
+// productSortFields maps API field names to allowed sort keys.
+var productSortFields = map[string]struct{}{
+	"title":      {},
+	"reference":  {},
+	"priceCents": {},
+	"type":       {},
+	"createdAt":  {},
+	"updatedAt":  {},
 }
 
-// mapProductSortColumn returns the database column for sorting.
+// mapProductSortColumn returns the validated sort key.
 func mapProductSortColumn(sortBy string) (string, error) {
 	if sortBy == "" {
-		return "created_at", nil
+		return "createdAt", nil
 	}
-	if col, ok := productSortColumns[sortBy]; ok {
-		return col, nil
+	if _, ok := productSortFields[sortBy]; ok {
+		return sortBy, nil
 	}
 	return "", apperr.BadRequest("invalid sort field")
 }
 
-// mapSortOrder returns validated sort order.
+// mapSortOrder returns validated sort order key.
 func mapSortOrder(sortOrder string) (string, error) {
 	if sortOrder == "" {
-		return "DESC", nil
+		return "desc", nil
 	}
 	switch sortOrder {
-	case "asc":
-		return "ASC", nil
-	case "desc":
-		return "DESC", nil
+	case "asc", "desc":
+		return sortOrder, nil
 	default:
 		return "", apperr.BadRequest("invalid sort order")
 	}
@@ -152,60 +149,62 @@ func (r *Repo) GetVatRateByID(ctx context.Context, organizationID uuid.UUID, id 
 
 // ListVatRates lists VAT rates with filters and pagination.
 func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]VatRate, int, error) {
-	whereClauses := []string{"organization_id = $1"}
-	args := []interface{}{params.OrganizationID}
-	argIdx := 2
-
+	var searchParam interface{}
 	if params.Search != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("name ILIKE $%d", argIdx))
-		args = append(args, "%"+params.Search+"%")
-		argIdx++
+		searchParam = "%" + params.Search + "%"
 	}
 
-	whereClause := strings.Join(whereClauses, " AND ")
-
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM RAC_catalog_vat_rates WHERE %s", whereClause)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count vat rates: %w", err)
-	}
-
-	sortColumn := "name"
+	sortBy := "name"
 	if params.SortBy != "" {
 		switch params.SortBy {
-		case "rateBps":
-			sortColumn = "rate_bps"
-		case "createdAt":
-			sortColumn = "created_at"
-		case "updatedAt":
-			sortColumn = "updated_at"
+		case "name", "rateBps", "createdAt", "updatedAt":
+			sortBy = params.SortBy
 		default:
 			return nil, 0, apperr.BadRequest("invalid sort field")
 		}
 	}
 
-	sortOrder := "ASC"
+	sortOrder := "asc"
 	if params.SortOrder != "" {
 		switch params.SortOrder {
-		case "asc":
-			sortOrder = "ASC"
-		case "desc":
-			sortOrder = "DESC"
+		case "asc", "desc":
+			sortOrder = params.SortOrder
 		default:
 			return nil, 0, apperr.BadRequest("invalid sort order")
 		}
 	}
 
-	args = append(args, params.Limit, params.Offset)
-	query := fmt.Sprintf(`
+	countQuery := `
+		SELECT COUNT(*)
+		FROM RAC_catalog_vat_rates
+		WHERE organization_id = $1
+			AND ($2::text IS NULL OR name ILIKE $2)
+	`
+
+	var total int
+	if err := r.pool.QueryRow(ctx, countQuery, params.OrganizationID, searchParam).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count vat rates: %w", err)
+	}
+
+	query := `
 		SELECT id, organization_id, name, rate_bps, created_at, updated_at
 		FROM RAC_catalog_vat_rates
-		WHERE %s
-		ORDER BY %s %s, name ASC
-		LIMIT $%d OFFSET $%d
-	`, whereClause, sortColumn, sortOrder, argIdx, argIdx+1)
+		WHERE organization_id = $1
+			AND ($2::text IS NULL OR name ILIKE $2)
+		ORDER BY
+			CASE WHEN $3 = 'name' AND $4 = 'asc' THEN name END ASC,
+			CASE WHEN $3 = 'name' AND $4 = 'desc' THEN name END DESC,
+			CASE WHEN $3 = 'rateBps' AND $4 = 'asc' THEN rate_bps END ASC,
+			CASE WHEN $3 = 'rateBps' AND $4 = 'desc' THEN rate_bps END DESC,
+			CASE WHEN $3 = 'createdAt' AND $4 = 'asc' THEN created_at END ASC,
+			CASE WHEN $3 = 'createdAt' AND $4 = 'desc' THEN created_at END DESC,
+			CASE WHEN $3 = 'updatedAt' AND $4 = 'asc' THEN updated_at END ASC,
+			CASE WHEN $3 = 'updatedAt' AND $4 = 'desc' THEN updated_at END DESC,
+			name ASC
+		LIMIT $5 OFFSET $6
+	`
 
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, query, params.OrganizationID, searchParam, sortBy, sortOrder, params.Limit, params.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list vat rates: %w", err)
 	}
@@ -343,36 +342,20 @@ func (r *Repo) GetProductByID(ctx context.Context, organizationID uuid.UUID, id 
 
 // ListProducts lists products with filters and pagination.
 func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]Product, int, error) {
-	whereClauses := []string{"organization_id = $1"}
-	args := []interface{}{params.OrganizationID}
-	argIdx := 2
-
+	var searchParam interface{}
 	if params.Search != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(title ILIKE $%d OR reference ILIKE $%d)", argIdx, argIdx))
-		args = append(args, "%"+params.Search+"%")
-		argIdx++
+		searchParam = "%" + params.Search + "%"
 	}
-
+	var typeParam interface{}
 	if params.Type != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("type = $%d", argIdx))
-		args = append(args, params.Type)
-		argIdx++
+		typeParam = params.Type
 	}
-
+	var vatRateParam interface{}
 	if params.VatRateID != nil {
-		whereClauses = append(whereClauses, fmt.Sprintf("vat_rate_id = $%d", argIdx))
-		args = append(args, *params.VatRateID)
-		argIdx++
+		vatRateParam = *params.VatRateID
 	}
 
-	whereClause := strings.Join(whereClauses, " AND ")
-
-	total, err := r.countProducts(ctx, whereClause, args)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	sortColumn, err := mapProductSortColumn(params.SortBy)
+	sortBy, err := mapProductSortColumn(params.SortBy)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -381,50 +364,45 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 		return nil, 0, err
 	}
 
-	return r.fetchProducts(ctx, fetchProductsParams{
-		whereClause: whereClause,
-		sortColumn:  sortColumn,
-		sortOrder:   sortOrder,
-		args:        args,
-		argIdx:      argIdx,
-		limit:       params.Limit,
-		offset:      params.Offset,
-		total:       total,
-	})
-}
+	countQuery := `
+		SELECT COUNT(*)
+		FROM RAC_catalog_products
+		WHERE organization_id = $1
+			AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
+			AND ($3::text IS NULL OR type = $3)
+			AND ($4::uuid IS NULL OR vat_rate_id = $4)
+	`
 
-func (r *Repo) countProducts(ctx context.Context, whereClause string, args []interface{}) (int, error) {
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM RAC_catalog_products WHERE %s", whereClause)
 	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return 0, fmt.Errorf("count products: %w", err)
+	if err := r.pool.QueryRow(ctx, countQuery, params.OrganizationID, searchParam, typeParam, vatRateParam).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count products: %w", err)
 	}
-	return total, nil
-}
 
-// fetchProductsParams groups parameters for fetchProducts to reduce argument count.
-type fetchProductsParams struct {
-	whereClause string
-	sortColumn  string
-	sortOrder   string
-	args        []interface{}
-	argIdx      int
-	limit       int
-	offset      int
-	total       int
-}
-
-func (r *Repo) fetchProducts(ctx context.Context, p fetchProductsParams) ([]Product, int, error) {
-	p.args = append(p.args, p.limit, p.offset)
-	query := fmt.Sprintf(`
+	query := `
 		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
 		FROM RAC_catalog_products
-		WHERE %s
-		ORDER BY %s %s, created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, p.whereClause, p.sortColumn, p.sortOrder, p.argIdx, p.argIdx+1)
+		WHERE organization_id = $1
+			AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
+			AND ($3::text IS NULL OR type = $3)
+			AND ($4::uuid IS NULL OR vat_rate_id = $4)
+		ORDER BY
+			CASE WHEN $5 = 'title' AND $6 = 'asc' THEN title END ASC,
+			CASE WHEN $5 = 'title' AND $6 = 'desc' THEN title END DESC,
+			CASE WHEN $5 = 'reference' AND $6 = 'asc' THEN reference END ASC,
+			CASE WHEN $5 = 'reference' AND $6 = 'desc' THEN reference END DESC,
+			CASE WHEN $5 = 'priceCents' AND $6 = 'asc' THEN price_cents END ASC,
+			CASE WHEN $5 = 'priceCents' AND $6 = 'desc' THEN price_cents END DESC,
+			CASE WHEN $5 = 'type' AND $6 = 'asc' THEN type END ASC,
+			CASE WHEN $5 = 'type' AND $6 = 'desc' THEN type END DESC,
+			CASE WHEN $5 = 'createdAt' AND $6 = 'asc' THEN created_at END ASC,
+			CASE WHEN $5 = 'createdAt' AND $6 = 'desc' THEN created_at END DESC,
+			CASE WHEN $5 = 'updatedAt' AND $6 = 'asc' THEN updated_at END ASC,
+			CASE WHEN $5 = 'updatedAt' AND $6 = 'desc' THEN updated_at END DESC,
+			created_at DESC
+		LIMIT $7 OFFSET $8
+	`
 
-	rows, err := r.pool.Query(ctx, query, p.args...)
+	rows, err := r.pool.Query(ctx, query, params.OrganizationID, searchParam, typeParam, vatRateParam, sortBy, sortOrder, params.Limit, params.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list products: %w", err)
 	}
@@ -434,7 +412,7 @@ func (r *Repo) fetchProducts(ctx context.Context, p fetchProductsParams) ([]Prod
 	if err != nil {
 		return nil, 0, err
 	}
-	return items, p.total, nil
+	return items, total, nil
 }
 
 func scanProducts(rows pgx.Rows) ([]Product, error) {

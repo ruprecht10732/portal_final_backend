@@ -219,22 +219,23 @@ func (r *Repository) CreateAvailabilityOverride(ctx context.Context, override Av
 }
 
 func (r *Repository) ListAvailabilityOverrides(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]AvailabilityOverride, error) {
-	baseQuery := `SELECT id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at
-		FROM RAC_appointment_availability_overrides WHERE organization_id = $1 AND user_id = $2`
-	args := []interface{}{organizationID, userID}
+	query := `SELECT id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at
+		FROM RAC_appointment_availability_overrides
+		WHERE organization_id = $1 AND user_id = $2
+			AND ($3::date IS NULL OR date >= $3)
+			AND ($4::date IS NULL OR date <= $4)
+		ORDER BY date ASC`
 
+	var startParam interface{}
 	if startDate != nil {
-		baseQuery += fmt.Sprintf(" AND date >= $%d", len(args)+1)
-		args = append(args, *startDate)
+		startParam = *startDate
 	}
+	var endParam interface{}
 	if endDate != nil {
-		baseQuery += fmt.Sprintf(" AND date <= $%d", len(args)+1)
-		args = append(args, *endDate)
+		endParam = *endDate
 	}
 
-	baseQuery += " ORDER BY date ASC"
-
-	rows, err := r.pool.Query(ctx, baseQuery, args...)
+	rows, err := r.pool.Query(ctx, query, organizationID, userID, startParam, endParam)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list availability overrides: %w", err)
 	}
