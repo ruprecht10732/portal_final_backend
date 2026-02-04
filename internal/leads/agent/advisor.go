@@ -202,7 +202,7 @@ func (la *LeadAdvisor) AnalyzeAndReturn(ctx context.Context, leadID uuid.UUID, s
 
 	// Run photo analysis if images exist for this service
 	var photoAnalysis *repository.PhotoAnalysis
-	if la.photoAnalyzer != nil && la.storageSvc != nil && targetService != nil {
+	if la.photoAnalyzer != nil && la.storageSvc != nil {
 		// Get intake guidelines for the specific service to pass to photo analyzer
 		intakeGuidelines := la.getIntakeGuidelinesForService(ctx, tenantID, targetService.ServiceType)
 		photoAnalysis, err = la.runPhotoAnalysisIfNeeded(ctx, leadID, targetService.ID, tenantID, intakeGuidelines)
@@ -541,43 +541,9 @@ func (la *LeadAdvisor) runPhotoAnalysisIfNeeded(ctx context.Context, leadID, ser
 		return &existingAnalysis, nil
 	}
 
-	// Fetch attachments for this service
-	attachments, err := la.repo.ListAttachmentsByService(ctx, serviceID, tenantID)
+	images, err := la.collectAttachmentImages(ctx, serviceID, tenantID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list attachments: %w", err)
-	}
-
-	if len(attachments) == 0 {
-		return nil, nil // No attachments, no photo analysis needed
-	}
-
-	// Filter for images and download them
-	var images []ImageData
-	for _, att := range attachments {
-		if att.ContentType != nil && isImageContentType(*att.ContentType) {
-			// Download image from storage
-			data, err := la.storageSvc.DownloadFile(ctx, la.attachmentsBucket, att.FileKey)
-			if err != nil {
-				log.Printf("warning: failed to download image %s for photo analysis: %v", att.FileKey, err)
-				continue
-			}
-			imgData, err := io.ReadAll(data)
-			data.Close()
-			if err != nil {
-				log.Printf("warning: failed to read image data for %s: %v", att.FileKey, err)
-				continue
-			}
-
-			mimeType := "image/jpeg"
-			if att.ContentType != nil {
-				mimeType = *att.ContentType
-			}
-			images = append(images, ImageData{
-				MIMEType: mimeType,
-				Data:     imgData,
-				Filename: att.FileName,
-			})
-		}
+		return nil, err
 	}
 
 	if len(images) == 0 {
@@ -613,6 +579,56 @@ func (la *LeadAdvisor) runPhotoAnalysisIfNeeded(ctx context.Context, leadID, ser
 
 	log.Printf("Photo analysis saved for lead %s service %s", leadID, serviceID)
 	return &analysis, nil
+}
+
+func (la *LeadAdvisor) collectAttachmentImages(ctx context.Context, serviceID, tenantID uuid.UUID) ([]ImageData, error) {
+	attachments, err := la.repo.ListAttachmentsByService(ctx, serviceID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list attachments: %w", err)
+	}
+	if len(attachments) == 0 {
+		return nil, nil
+	}
+
+	images := make([]ImageData, 0)
+	for _, att := range attachments {
+		if att.ContentType == nil || !isImageContentType(*att.ContentType) {
+			continue
+		}
+		imgData, mimeType, ok := la.loadImageData(ctx, att)
+		if !ok {
+			continue
+		}
+		images = append(images, ImageData{
+			MIMEType: mimeType,
+			Data:     imgData,
+			Filename: att.FileName,
+		})
+	}
+
+	return images, nil
+}
+
+func (la *LeadAdvisor) loadImageData(ctx context.Context, att repository.Attachment) ([]byte, string, bool) {
+	data, err := la.storageSvc.DownloadFile(ctx, la.attachmentsBucket, att.FileKey)
+	if err != nil {
+		log.Printf("warning: failed to download image %s for photo analysis: %v", att.FileKey, err)
+		return nil, "", false
+	}
+	defer data.Close()
+
+	imgData, err := io.ReadAll(data)
+	if err != nil {
+		log.Printf("warning: failed to read image data for %s: %v", att.FileKey, err)
+		return nil, "", false
+	}
+
+	mimeType := "image/jpeg"
+	if att.ContentType != nil {
+		mimeType = *att.ContentType
+	}
+
+	return imgData, mimeType, true
 }
 
 // isImageContentType checks if a content type is a supported image type

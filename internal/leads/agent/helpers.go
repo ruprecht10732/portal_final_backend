@@ -12,10 +12,14 @@ import (
 )
 
 const (
-	maxNoteLength   = 2000
-	maxConsumerNote = 1000
-	userDataBegin   = "<<<BEGIN_USER_DATA>>>"
-	userDataEnd     = "<<<END_USER_DATA>>>"
+	maxNoteLength    = 2000
+	maxConsumerNote  = 1000
+	userDataBegin    = "<<<BEGIN_USER_DATA>>>"
+	userDataEnd      = "<<<END_USER_DATA>>>"
+	dateTimeLayout   = "02-01-2006 15:04"
+	dateLayout       = "02-01-2006"
+	bulletLine       = "- %s\n"
+	valueNotProvided = "Niet opgegeven"
 )
 
 // filterMeaningfulNotes filters out system notes that don't count as meaningful information
@@ -84,7 +88,7 @@ func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadSe
 		var noteLines string
 		for _, note := range meaningfulNotes {
 			sanitizedBody := sanitizeUserInput(note.Body, maxNoteLength)
-			noteLines += fmt.Sprintf("- [%s] %s: %s\n", note.Type, note.CreatedAt.Format("02-01-2006 15:04"), sanitizedBody)
+			noteLines += fmt.Sprintf("- [%s] %s: %s\n", note.Type, note.CreatedAt.Format(dateTimeLayout), sanitizedBody)
 		}
 		notesSection = noteLines
 	}
@@ -123,11 +127,11 @@ func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadSe
 	energyIndex := formatOptionalFloat(lead.EnergyIndex, 2)
 	energyBouwjaar := formatOptionalInt(lead.EnergyBouwjaar)
 	energyGebouwtype := formatOptionalString(lead.EnergyGebouwtype)
-	energyValidUntil := formatOptionalTime(lead.EnergyLabelValidUntil, "02-01-2006")
-	energyRegisteredAt := formatOptionalTime(lead.EnergyLabelRegisteredAt, "02-01-2006")
+	energyValidUntil := formatOptionalTime(lead.EnergyLabelValidUntil, dateLayout)
+	energyRegisteredAt := formatOptionalTime(lead.EnergyLabelRegisteredAt, dateLayout)
 	energyPrimair := formatOptionalFloat(lead.EnergyPrimairFossiel, 2)
 	energyBagID := formatOptionalString(lead.EnergyBAGVerblijfsobjectID)
-	energyFetchedAt := formatOptionalTime(lead.EnergyLabelFetchedAt, "02-01-2006 15:04")
+	energyFetchedAt := formatOptionalTime(lead.EnergyLabelFetchedAt, dateTimeLayout)
 
 	enrichmentSource := formatOptionalString(lead.LeadEnrichmentSource)
 	enrichmentPostcode6 := formatOptionalString(lead.LeadEnrichmentPostcode6)
@@ -139,12 +143,12 @@ func buildAnalysisPrompt(lead repository.Lead, currentService *repository.LeadSe
 	enrichmentVermogen := formatOptionalFloat(lead.LeadEnrichmentMediaanVermogenX1000, 0)
 	enrichmentKinderenPct := formatOptionalFloat(lead.LeadEnrichmentHuishoudensMetKinderenPct, 1)
 	enrichmentConfidence := formatOptionalFloat(lead.LeadEnrichmentConfidence, 2)
-	enrichmentFetchedAt := formatOptionalTime(lead.LeadEnrichmentFetchedAt, "02-01-2006 15:04")
+	enrichmentFetchedAt := formatOptionalTime(lead.LeadEnrichmentFetchedAt, dateTimeLayout)
 
 	leadScore := formatOptionalInt(lead.LeadScore)
 	leadScorePreAI := formatOptionalInt(lead.LeadScorePreAI)
 	leadScoreVersion := formatOptionalString(lead.LeadScoreVersion)
-	leadScoreUpdatedAt := formatOptionalTime(lead.LeadScoreUpdatedAt, "02-01-2006 15:04")
+	leadScoreUpdatedAt := formatOptionalTime(lead.LeadScoreUpdatedAt, dateTimeLayout)
 	leadScoreFactors := formatOptionalJSON(lead.LeadScoreFactors)
 
 	return fmt.Sprintf(`Analyseer deze lead met de Gatekeeper triage-opdracht:
@@ -259,7 +263,7 @@ Let specifiek op:
 `,
 		lead.ID,
 		serviceID,
-		lead.CreatedAt.Format("02-01-2006"),
+		lead.CreatedAt.Format(dateLayout),
 		lead.ConsumerFirstName, lead.ConsumerLastName,
 		lead.ConsumerPhone, getValue(lead.ConsumerEmail),
 		translateRole(lead.ConsumerRole),
@@ -322,7 +326,7 @@ func buildPhotoAnalysisSection(photoAnalysis *repository.PhotoAnalysis) string {
 	if len(photoAnalysis.Observations) > 0 {
 		sb.WriteString("**📋 Visuele Observaties** (gebruik deze om HARDE EISEN te valideren):\n")
 		for _, obs := range photoAnalysis.Observations {
-			sb.WriteString(fmt.Sprintf("- %s\n", obs))
+			sb.WriteString(fmt.Sprintf(bulletLine, obs))
 		}
 		sb.WriteString("\n")
 	}
@@ -342,7 +346,7 @@ func buildPhotoAnalysisSection(photoAnalysis *repository.PhotoAnalysis) string {
 	if len(photoAnalysis.SafetyConcerns) > 0 {
 		sb.WriteString("**⚠️ VEILIGHEIDSZORGEN** (verhoog urgentie als aanwezig!):\n")
 		for _, concern := range photoAnalysis.SafetyConcerns {
-			sb.WriteString(fmt.Sprintf("- %s\n", concern))
+			sb.WriteString(fmt.Sprintf(bulletLine, concern))
 		}
 		sb.WriteString("\n")
 	}
@@ -351,7 +355,7 @@ func buildPhotoAnalysisSection(photoAnalysis *repository.PhotoAnalysis) string {
 	if len(photoAnalysis.AdditionalInfo) > 0 {
 		sb.WriteString("**Aanvullende info/vragen**:\n")
 		for _, info := range photoAnalysis.AdditionalInfo {
-			sb.WriteString(fmt.Sprintf("- %s\n", info))
+			sb.WriteString(fmt.Sprintf(bulletLine, info))
 		}
 		sb.WriteString("\n")
 	}
@@ -437,32 +441,32 @@ func (la *LeadAdvisor) analysisToResult(analysis repository.AIAnalysis) *Analysi
 
 func getValue(s *string) string {
 	if s == nil {
-		return "Niet opgegeven"
+		return valueNotProvided
 	}
 	return *s
 }
 
 func formatOptionalString(value *string) string {
 	if value == nil {
-		return "Niet opgegeven"
+		return valueNotProvided
 	}
 	trimmed := strings.TrimSpace(*value)
 	if trimmed == "" {
-		return "Niet opgegeven"
+		return valueNotProvided
 	}
 	return trimmed
 }
 
 func formatOptionalInt(value *int) string {
 	if value == nil {
-		return "Niet opgegeven"
+		return valueNotProvided
 	}
 	return fmt.Sprintf("%d", *value)
 }
 
 func formatOptionalFloat(value *float64, precision int) string {
 	if value == nil {
-		return "Niet opgegeven"
+		return valueNotProvided
 	}
 	format := fmt.Sprintf("%%.%df", precision)
 	return fmt.Sprintf(format, *value)
@@ -470,14 +474,14 @@ func formatOptionalFloat(value *float64, precision int) string {
 
 func formatOptionalTime(value *time.Time, layout string) string {
 	if value == nil {
-		return "Niet opgegeven"
+		return valueNotProvided
 	}
 	return value.Format(layout)
 }
 
 func formatOptionalJSON(value []byte) string {
 	if len(value) == 0 {
-		return "Niet opgegeven"
+		return valueNotProvided
 	}
 	return string(value)
 }

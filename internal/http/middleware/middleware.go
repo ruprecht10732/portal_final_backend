@@ -138,22 +138,22 @@ func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 			return
 		}
 
-		RAC_roles := extractRoles(claims["RAC_roles"])
+		roles := extractRoles(claims["RAC_roles"])
 		c.Set(ContextUserIDKey, userID)
-		c.Set(ContextRolesKey, RAC_roles)
+		c.Set(ContextRolesKey, roles)
 		c.Next()
 	}
 }
 
 func RequireRole(role string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		RAC_roles, ok := c.Get(ContextRolesKey)
+		roles, ok := c.Get(ContextRolesKey)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
 		}
 
-		roleList, ok := RAC_roles.([]string)
+		roleList, ok := roles.([]string)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
@@ -171,23 +171,23 @@ func RequireRole(role string) gin.HandlerFunc {
 }
 
 func extractRoles(value interface{}) []string {
-	RAC_roles := make([]string, 0)
+	roles := make([]string, 0)
 	if value == nil {
-		return RAC_roles
+		return roles
 	}
 
 	switch typed := value.(type) {
 	case []string:
-		return append(RAC_roles, typed...)
+		return append(roles, typed...)
 	case []interface{}:
 		for _, item := range typed {
 			if text, ok := item.(string); ok {
-				RAC_roles = append(RAC_roles, text)
+				roles = append(roles, text)
 			}
 		}
 	}
 
-	return RAC_roles
+	return roles
 }
 
 func extractBearerToken(authHeader string) (string, bool) {

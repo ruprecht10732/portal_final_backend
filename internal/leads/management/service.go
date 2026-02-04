@@ -453,13 +453,13 @@ func (s *Service) List(ctx context.Context, req transport.ListLeadsRequest, tena
 	}
 	params.OrganizationID = tenantID
 
-	RAC_leads, total, err := s.repo.List(ctx, params)
+	leads, total, err := s.repo.List(ctx, params)
 	if err != nil {
 		return transport.LeadListResponse{}, err
 	}
 
-	items := make([]transport.LeadResponse, len(RAC_leads))
-	for i, lead := range RAC_leads {
+	items := make([]transport.LeadResponse, len(leads))
+	for i, lead := range leads {
 		services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)
 		items[i] = ToLeadResponseWithServices(lead, services)
 	}
@@ -1015,8 +1015,8 @@ func formatGeocodeQuery(address addressUpdate) string {
 	return strings.Trim(query, ", ")
 }
 
-func hasRole(RAC_roles []string, target string) bool {
-	for _, role := range RAC_roles {
+func hasRole(roles []string, target string) bool {
+	for _, role := range roles {
 		if role == target {
 			return true
 		}

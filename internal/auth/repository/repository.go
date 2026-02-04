@@ -353,23 +353,23 @@ func (r *Repository) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]stri
 	}
 	defer rows.Close()
 
-	RAC_roles := make([]string, 0)
+	roles := make([]string, 0)
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		RAC_roles = append(RAC_roles, name)
+		roles = append(roles, name)
 	}
 	if rows.Err() != nil {
 		return nil, rows.Err()
 	}
 
-	return RAC_roles, nil
+	return roles, nil
 }
 
-func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_roles []string) error {
-	if len(RAC_roles) == 0 {
+func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
+	if len(roles) == 0 {
 		return ErrInvalidRole
 	}
 
@@ -383,7 +383,7 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_rol
 		}
 	}()
 
-	rows, err := tx.Query(ctx, `SELECT name FROM RAC_roles WHERE name = ANY($1)`, RAC_roles)
+	rows, err := tx.Query(ctx, `SELECT name FROM RAC_roles WHERE name = ANY($1)`, roles)
 	if err != nil {
 		return err
 	}
@@ -400,7 +400,7 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_rol
 	if rows.Err() != nil {
 		return rows.Err()
 	}
-	if len(valid) != len(uniqueStrings(RAC_roles)) {
+	if len(valid) != len(uniqueStrings(roles)) {
 		return ErrInvalidRole
 	}
 
@@ -411,7 +411,7 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_rol
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO RAC_user_roles (user_id, role_id)
 		SELECT $1, id FROM RAC_roles WHERE name = ANY($2)
-	`, userID, RAC_roles); err != nil {
+	`, userID, roles); err != nil {
 		return err
 	}
 
@@ -422,12 +422,12 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_rol
 	return nil
 }
 
-func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, RAC_roles []string) error {
-	if len(RAC_roles) == 0 {
+func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, roles []string) error {
+	if len(roles) == 0 {
 		return ErrInvalidRole
 	}
 
-	rows, err := tx.Query(ctx, `SELECT name FROM RAC_roles WHERE name = ANY($1)`, RAC_roles)
+	rows, err := tx.Query(ctx, `SELECT name FROM RAC_roles WHERE name = ANY($1)`, roles)
 	if err != nil {
 		return err
 	}
@@ -444,7 +444,7 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 	if rows.Err() != nil {
 		return rows.Err()
 	}
-	if len(valid) != len(uniqueStrings(RAC_roles)) {
+	if len(valid) != len(uniqueStrings(roles)) {
 		return ErrInvalidRole
 	}
 
@@ -455,7 +455,7 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO RAC_user_roles (user_id, role_id)
 		SELECT $1, id FROM RAC_roles WHERE name = ANY($2)
-	`, userID, RAC_roles); err != nil {
+	`, userID, roles); err != nil {
 		return err
 	}
 
@@ -477,19 +477,19 @@ func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 	}
 	defer rows.Close()
 
-	RAC_users := make([]UserWithRoles, 0)
+	users := make([]UserWithRoles, 0)
 	for rows.Next() {
 		var user UserWithRoles
 		if err := rows.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Roles); err != nil {
 			return nil, err
 		}
-		RAC_users = append(RAC_users, user)
+		users = append(users, user)
 	}
 	if rows.Err() != nil {
 		return nil, rows.Err()
 	}
 
-	return RAC_users, nil
+	return users, nil
 }
 
 func uniqueStrings(values []string) []string {

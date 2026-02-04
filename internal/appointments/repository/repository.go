@@ -50,6 +50,8 @@ type Repository struct {
 	pool *pgxpool.Pool
 }
 
+const appointmentNotFoundMsg = "appointment not found"
+
 // New creates a new appointments repository
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
@@ -91,7 +93,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.NotFound("appointment not found")
+			return nil, apperr.NotFound(appointmentNotFoundMsg)
 		}
 		return nil, fmt.Errorf("failed to get appointment: %w", err)
 	}
@@ -144,7 +146,7 @@ func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperr.NotFound("appointment not found")
+		return apperr.NotFound(appointmentNotFoundMsg)
 	}
 
 	return nil
@@ -160,7 +162,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, organizatio
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperr.NotFound("appointment not found")
+		return apperr.NotFound(appointmentNotFoundMsg)
 	}
 
 	return nil
@@ -176,7 +178,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 	}
 
 	if result.RowsAffected() == 0 {
-		return apperr.NotFound("appointment not found")
+		return apperr.NotFound(appointmentNotFoundMsg)
 	}
 
 	return nil
@@ -214,47 +216,20 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	args := []interface{}{params.OrganizationID}
 	argIndex := 2
 
-	if params.UserID != nil {
-		baseQuery += fmt.Sprintf(" AND user_id = $%d", argIndex)
-		args = append(args, *params.UserID)
-		argIndex++
-	}
-
-	if params.LeadID != nil {
-		baseQuery += fmt.Sprintf(" AND lead_id = $%d", argIndex)
-		args = append(args, *params.LeadID)
-		argIndex++
-	}
-
-	if params.Type != nil {
-		baseQuery += fmt.Sprintf(" AND type = $%d", argIndex)
-		args = append(args, *params.Type)
-		argIndex++
-	}
-
-	if params.Status != nil {
-		baseQuery += fmt.Sprintf(" AND status = $%d", argIndex)
-		args = append(args, *params.Status)
-		argIndex++
-	}
-
-	if params.StartFrom != nil {
-		baseQuery += fmt.Sprintf(" AND start_time >= $%d", argIndex)
-		args = append(args, *params.StartFrom)
-		argIndex++
-	}
-
-	if params.StartTo != nil {
-		baseQuery += fmt.Sprintf(" AND start_time <= $%d", argIndex)
-		args = append(args, *params.StartTo)
-		argIndex++
-	}
-
-	if params.Search != "" {
-		baseQuery += fmt.Sprintf(" AND (title ILIKE $%d OR location ILIKE $%d OR meeting_link ILIKE $%d)", argIndex, argIndex, argIndex)
-		args = append(args, "%"+params.Search+"%")
-		argIndex++
-	}
+	addFilter(&baseQuery, &args, &argIndex, params.UserID != nil, " AND user_id = $%d", derefUUID(params.UserID))
+	addFilter(&baseQuery, &args, &argIndex, params.LeadID != nil, " AND lead_id = $%d", derefUUID(params.LeadID))
+	addFilter(&baseQuery, &args, &argIndex, params.Type != nil, " AND type = $%d", derefString(params.Type))
+	addFilter(&baseQuery, &args, &argIndex, params.Status != nil, " AND status = $%d", derefString(params.Status))
+	addFilter(&baseQuery, &args, &argIndex, params.StartFrom != nil, " AND start_time >= $%d", derefTime(params.StartFrom))
+	addFilter(&baseQuery, &args, &argIndex, params.StartTo != nil, " AND start_time <= $%d", derefTime(params.StartTo))
+	addFilter(
+		&baseQuery,
+		&args,
+		&argIndex,
+		params.Search != "",
+		" AND (title ILIKE $%d OR location ILIKE $%d OR meeting_link ILIKE $%d)",
+		"%"+params.Search+"%",
+	)
 
 	// Count total
 	var total int
@@ -454,4 +429,34 @@ func (a *Appointment) ToResponse(leadInfo *transport.AppointmentLeadInfo) transp
 		Lead:          leadInfo,
 	}
 	return resp
+}
+
+func addFilter(baseQuery *string, args *[]interface{}, argIndex *int, apply bool, clause string, value interface{}) {
+	if !apply {
+		return
+	}
+	*baseQuery += fmt.Sprintf(clause, *argIndex)
+	*args = append(*args, value)
+	*argIndex++
+}
+
+func derefUUID(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.UUID{}
+	}
+	return *value
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func derefTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
 }

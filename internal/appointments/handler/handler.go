@@ -647,8 +647,8 @@ func (h *Handler) GetAvailableSlots(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-func containsRole(RAC_roles []string, role string) bool {
-	for _, r := range RAC_roles {
+func containsRole(roles []string, role string) bool {
+	for _, r := range roles {
 		if r == role {
 			return true
 		}

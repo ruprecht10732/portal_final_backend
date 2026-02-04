@@ -714,7 +714,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	}
 	defer rows.Close()
 
-	RAC_leads := make([]Lead, 0)
+	leads := make([]Lead, 0)
 	for rows.Next() {
 		var lead Lead
 		if err := rows.Scan(
@@ -734,14 +734,14 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		); err != nil {
 			return nil, 0, err
 		}
-		RAC_leads = append(RAC_leads, lead)
+		leads = append(leads, lead)
 	}
 
 	if rows.Err() != nil {
 		return nil, 0, rows.Err()
 	}
 
-	return RAC_leads, total, nil
+	return leads, total, nil
 }
 
 type leadListWhereBuilder struct {

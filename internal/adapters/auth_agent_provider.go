@@ -57,13 +57,13 @@ func (p *AuthAgentProvider) GetAgentsByIDs(ctx context.Context, agentIDs []uuid.
 
 // ListAgents returns all available agents.
 func (p *AuthAgentProvider) ListAgents(ctx context.Context) ([]ports.Agent, error) {
-	RAC_users, err := p.authSvc.ListUsers(ctx)
+	racUsers, err := p.authSvc.ListUsers(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	agents := make([]ports.Agent, 0, len(RAC_users))
-	for _, user := range RAC_users {
+	agents := make([]ports.Agent, 0, len(racUsers))
+	for _, user := range racUsers {
 		id, err := uuid.Parse(user.ID)
 		if err != nil {
 			continue

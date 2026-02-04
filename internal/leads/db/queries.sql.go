@@ -17,8 +17,8 @@ UPDATE RAC_leads SET deleted_at = now(), updated_at = now()
 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 `
 
-func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, dollar_1 []pgtype.UUID) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, bulkSoftDeleteLeads, dollar_1)
+func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, leadIDs []pgtype.UUID) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, bulkSoftDeleteLeads, leadIDs)
 }
 
 const countLeads = `-- name: CountLeads :one

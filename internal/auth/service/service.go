@@ -19,6 +19,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -62,11 +63,7 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 		return err
 	}
 
-	trimmedInvite := ""
-	if inviteToken != nil {
-		trimmedInvite = strings.TrimSpace(*inviteToken)
-	}
-	usingInvite := trimmedInvite != ""
+	trimmedInvite, usingInvite := normalizeInviteToken(inviteToken)
 
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -85,27 +82,14 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 		return err
 	}
 
-	RAC_roles := []string{defaultUserRole}
-	if !usingInvite {
-		RAC_roles = []string{defaultAdminRole}
-	}
-	if err := s.repo.SetUserRolesTx(ctx, tx, user.ID, RAC_roles); err != nil {
+	roles := rolesForSignup(usingInvite)
+	if err := s.repo.SetUserRolesTx(ctx, tx, user.ID, roles); err != nil {
 		s.log.Error("failed to set user RAC_roles", "user_id", user.ID, "error", err)
 		return err
 	}
 
 	if usingInvite {
-		invite, err := s.identity.ResolveInvite(ctx, trimmedInvite)
-		if err != nil {
-			return err
-		}
-		if !strings.EqualFold(invite.Email, email) {
-			return apperr.Forbidden("invite does not match email")
-		}
-		if err := s.identity.AddMember(ctx, tx, invite.OrganizationID, user.ID); err != nil {
-			return err
-		}
-		if err := s.identity.UseInvite(ctx, tx, invite.ID, user.ID); err != nil {
+		if err := s.applyInvite(ctx, tx, trimmedInvite, email, user.ID); err != nil {
 			return err
 		}
 	}
@@ -138,6 +122,38 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 		VerifyToken: verifyToken,
 	})
 
+	return nil
+}
+
+func normalizeInviteToken(inviteToken *string) (string, bool) {
+	if inviteToken == nil {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(*inviteToken)
+	return trimmed, trimmed != ""
+}
+
+func rolesForSignup(usingInvite bool) []string {
+	if usingInvite {
+		return []string{defaultUserRole}
+	}
+	return []string{defaultAdminRole}
+}
+
+func (s *Service) applyInvite(ctx context.Context, tx pgx.Tx, tokenValue, email string, userID uuid.UUID) error {
+	invite, err := s.identity.ResolveInvite(ctx, tokenValue)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(invite.Email, email) {
+		return apperr.Forbidden("invite does not match email")
+	}
+	if err := s.identity.AddMember(ctx, tx, invite.OrganizationID, userID); err != nil {
+		return err
+	}
+	if err := s.identity.UseInvite(ctx, tx, invite.ID, userID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -253,7 +269,7 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 }
 
 func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
-	RAC_roles, err := s.repo.GetUserRoles(ctx, userID)
+	roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return "", "", err
 	}
@@ -266,7 +282,7 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 		return "", "", err
 	}
 
-	accessToken, err := s.signJWT(userID, &orgID, RAC_roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
+	accessToken, err := s.signJWT(userID, &orgID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
 	if err != nil {
 		return "", "", err
 	}
@@ -285,13 +301,13 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 	return accessToken, refreshToken, nil
 }
 
-func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, RAC_roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
+func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
 	claims := jwt.MapClaims{
-		"sub":   userID.String(),
-		"type":  tokenType,
-		"RAC_roles": RAC_roles,
-		"exp":   time.Now().Add(ttl).Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":       userID.String(),
+		"type":      tokenType,
+		"RAC_roles": roles,
+		"exp":       time.Now().Add(ttl).Unix(),
+		"iat":       time.Now().Unix(),
 	}
 	if tenantID != nil {
 		claims["tenant_id"] = tenantID.String()
@@ -323,18 +339,18 @@ func capitalizeFirst(value string) string {
 	return strings.ToUpper(value[:1]) + value[1:]
 }
 
-func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, RAC_roles []string) error {
-	return s.repo.SetUserRoles(ctx, userID, RAC_roles)
+func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
+	return s.repo.SetUserRoles(ctx, userID, roles)
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error) {
-	RAC_users, err := s.repo.ListUsers(ctx)
+	users, err := s.repo.ListUsers(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]transport.UserSummary, 0, len(RAC_users))
-	for _, user := range RAC_users {
+	result := make([]transport.UserSummary, 0, len(users))
+	for _, user := range users {
 		result = append(result, transport.UserSummary{
 			ID:        user.ID.String(),
 			Email:     user.Email,
@@ -353,7 +369,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		return Profile{}, err
 	}
 
-	RAC_roles, err := s.repo.GetUserRoles(ctx, userID)
+	roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -378,7 +394,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		FirstName:       user.FirstName,
 		LastName:        user.LastName,
 		PreferredLang:   preferredLang,
-		Roles:           RAC_roles,
+		Roles:           roles,
 		HasOrganization: hasOrganization,
 		CreatedAt:       user.CreatedAt,
 		UpdatedAt:       user.UpdatedAt,
@@ -386,7 +402,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 }
 
 func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.UpdateProfileRequest) (Profile, error) {
-	current, RAC_roles, preferredLang, err := s.loadProfileContext(ctx, userID)
+	current, roles, preferredLang, err := s.loadProfileContext(ctx, userID)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -406,7 +422,7 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.
 		return Profile{}, err
 	}
 
-	return s.buildProfile(updatedUser, RAC_roles, preferredLang), nil
+	return s.buildProfile(updatedUser, roles, preferredLang), nil
 }
 
 func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (repository.User, []string, string, error) {
@@ -415,7 +431,7 @@ func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (rep
 		return repository.User{}, nil, "", err
 	}
 
-	RAC_roles, err := s.repo.GetUserRoles(ctx, userID)
+	roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return repository.User{}, nil, "", err
 	}
@@ -429,7 +445,7 @@ func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (rep
 		return repository.User{}, nil, "", err
 	}
 
-	return user, RAC_roles, preferredLang, nil
+	return user, roles, preferredLang, nil
 }
 
 func (s *Service) applyNameUpdates(ctx context.Context, userID uuid.UUID, current repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
@@ -500,7 +516,7 @@ func (s *Service) enqueueEmailVerification(ctx context.Context, userID uuid.UUID
 	return nil
 }
 
-func (s *Service) buildProfile(user repository.User, RAC_roles []string, preferredLang string) Profile {
+func (s *Service) buildProfile(user repository.User, roles []string, preferredLang string) Profile {
 	return Profile{
 		ID:            user.ID,
 		Email:         user.Email,
@@ -508,7 +524,7 @@ func (s *Service) buildProfile(user repository.User, RAC_roles []string, preferr
 		FirstName:     user.FirstName,
 		LastName:      user.LastName,
 		PreferredLang: preferredLang,
-		Roles:         RAC_roles,
+		Roles:         roles,
 		CreatedAt:     user.CreatedAt,
 		UpdatedAt:     user.UpdatedAt,
 	}
