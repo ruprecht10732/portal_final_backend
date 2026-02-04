@@ -17,6 +17,7 @@ import (
 const (
 	inviteTokenBytes = 32
 	inviteTTL        = 72 * time.Hour
+	inviteNotFound   = "invite not found"
 )
 
 type Service struct {
@@ -99,56 +100,50 @@ func (s *Service) GetOrganization(ctx context.Context, organizationID uuid.UUID)
 	return org, nil
 }
 
+
+type OrganizationProfileUpdate struct {
+	Name         *string
+	Email        *string
+	Phone        *string
+	VATNumber    *string
+	KVKNumber    *string
+	AddressLine1 *string
+	AddressLine2 *string
+	PostalCode   *string
+	City         *string
+	Country      *string
+}
+
 func (s *Service) UpdateOrganizationProfile(
 	ctx context.Context,
 	organizationID uuid.UUID,
-	name *string,
-	email *string,
-	phone *string,
-	vatNumber *string,
-	kvkNumber *string,
-	addressLine1 *string,
-	addressLine2 *string,
-	postalCode *string,
-	city *string,
-	country *string,
+	update OrganizationProfileUpdate,
 ) (repository.Organization, error) {
-	name = normalizeOptional(name)
-	email = normalizeOptional(email)
-	phone = normalizeOptional(phone)
-	vatNumber = normalizeOptional(vatNumber)
-	kvkNumber = normalizeOptional(kvkNumber)
-	addressLine1 = normalizeOptional(addressLine1)
-	addressLine2 = normalizeOptional(addressLine2)
-	postalCode = normalizeOptional(postalCode)
-	city = normalizeOptional(city)
-	country = normalizeOptional(country)
+	update = normalizeOrganizationProfileUpdate(update)
 
-	if name != nil && *name == "" {
+	if update.Name != nil && *update.Name == "" {
 		return repository.Organization{}, apperr.Validation("organization name is required")
 	}
-
-	if vatNumber != nil && !isValidNLVAT(*vatNumber) {
+	if update.VATNumber != nil && !isValidNLVAT(*update.VATNumber) {
 		return repository.Organization{}, apperr.Validation("invalid VAT number")
 	}
-
-	if kvkNumber != nil && !isValidKVK(*kvkNumber) {
+	if update.KVKNumber != nil && !isValidKVK(*update.KVKNumber) {
 		return repository.Organization{}, apperr.Validation("invalid KVK number")
 	}
 
 	org, err := s.repo.UpdateOrganizationProfile(
 		ctx,
 		organizationID,
-		name,
-		email,
-		phone,
-		vatNumber,
-		kvkNumber,
-		addressLine1,
-		addressLine2,
-		postalCode,
-		city,
-		country,
+		update.Name,
+		update.Email,
+		update.Phone,
+		update.VATNumber,
+		update.KVKNumber,
+		update.AddressLine1,
+		update.AddressLine2,
+		update.PostalCode,
+		update.City,
+		update.Country,
 	)
 	if err != nil {
 		if err == repository.ErrNotFound {
@@ -158,6 +153,20 @@ func (s *Service) UpdateOrganizationProfile(
 	}
 
 	return org, nil
+}
+
+func normalizeOrganizationProfileUpdate(update OrganizationProfileUpdate) OrganizationProfileUpdate {
+	update.Name = normalizeOptional(update.Name)
+	update.Email = normalizeOptional(update.Email)
+	update.Phone = normalizeOptional(update.Phone)
+	update.VATNumber = normalizeOptional(update.VATNumber)
+	update.KVKNumber = normalizeOptional(update.KVKNumber)
+	update.AddressLine1 = normalizeOptional(update.AddressLine1)
+	update.AddressLine2 = normalizeOptional(update.AddressLine2)
+	update.PostalCode = normalizeOptional(update.PostalCode)
+	update.City = normalizeOptional(update.City)
+	update.Country = normalizeOptional(update.Country)
+	return update
 }
 
 func normalizeOptional(value *string) *string {
@@ -187,7 +196,7 @@ func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (repositor
 	invite, err := s.repo.GetInviteByToken(ctx, tokenHash)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Invite{}, apperr.NotFound("invite not found")
+			return repository.Invite{}, apperr.NotFound(inviteNotFound)
 		}
 		return repository.Invite{}, err
 	}
@@ -224,53 +233,79 @@ func (s *Service) UpdateInvite(
 		return repository.Invite{}, nil, apperr.Validation("no updates provided")
 	}
 
-	var tokenValue *string
-	var tokenHash *string
-	var expiresAt *time.Time
-
-	if resend {
-		rawToken, err := token.GenerateRandomToken(inviteTokenBytes)
-		if err != nil {
-			return repository.Invite{}, nil, err
-		}
-		hash := token.HashSHA256(rawToken)
-		value := rawToken
-		tokenValue = &value
-		tokenHash = &hash
-		freshExpires := time.Now().Add(inviteTTL)
-		expiresAt = &freshExpires
+	resendData, err := buildInviteResendData(resend)
+	if err != nil {
+		return repository.Invite{}, nil, err
 	}
 
-	invite, err := s.repo.UpdateInvite(ctx, organizationID, inviteID, email, tokenHash, expiresAt)
+	invite, err := s.repo.UpdateInvite(ctx, organizationID, inviteID, email, resendData.tokenHash, resendData.expiresAt)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Invite{}, nil, apperr.NotFound("invite not found")
+			return repository.Invite{}, nil, apperr.NotFound(inviteNotFound)
 		}
 		return repository.Invite{}, nil, err
 	}
 
 	// Publish event to send invite email when resending
-	if resend && tokenValue != nil && s.eventBus != nil {
-		org, err := s.repo.GetOrganization(ctx, organizationID)
-		if err == nil {
-			s.eventBus.Publish(ctx, events.OrganizationInviteCreated{
-				BaseEvent:        events.NewBaseEvent(),
-				OrganizationID:   organizationID,
-				OrganizationName: org.Name,
-				Email:            invite.Email,
-				InviteToken:      *tokenValue,
-			})
-		}
+	if resend && resendData.tokenValue != nil && s.eventBus != nil {
+		s.publishInviteResend(ctx, organizationID, invite.Email, *resendData.tokenValue)
 	}
 
-	return invite, tokenValue, nil
+	return invite, resendData.tokenValue, nil
+}
+
+type inviteResendData struct {
+	tokenValue *string
+	tokenHash  *string
+	expiresAt  *time.Time
+}
+
+func buildInviteResendData(resend bool) (inviteResendData, error) {
+	if !resend {
+		return inviteResendData{}, nil
+	}
+
+	rawToken, err := token.GenerateRandomToken(inviteTokenBytes)
+	if err != nil {
+		return inviteResendData{}, err
+	}
+
+	hash := token.HashSHA256(rawToken)
+	value := rawToken
+	freshExpires := time.Now().Add(inviteTTL)
+
+	return inviteResendData{
+		tokenValue: &value,
+		tokenHash:  &hash,
+		expiresAt:  &freshExpires,
+	}, nil
+}
+
+func (s *Service) publishInviteResend(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	email string,
+	tokenValue string,
+) {
+	org, err := s.repo.GetOrganization(ctx, organizationID)
+	if err != nil {
+		return
+	}
+
+	s.eventBus.Publish(ctx, events.OrganizationInviteCreated{
+		BaseEvent:        events.NewBaseEvent(),
+		OrganizationID:   organizationID,
+		OrganizationName: org.Name,
+		Email:            email,
+		InviteToken:      tokenValue,
+	})
 }
 
 func (s *Service) RevokeInvite(ctx context.Context, organizationID, inviteID uuid.UUID) (repository.Invite, error) {
 	invite, err := s.repo.RevokeInvite(ctx, organizationID, inviteID)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Invite{}, apperr.NotFound("invite not found")
+			return repository.Invite{}, apperr.NotFound(inviteNotFound)
 		}
 		return repository.Invite{}, err
 	}

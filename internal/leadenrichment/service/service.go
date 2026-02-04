@@ -163,7 +163,12 @@ func (s *Service) enrichFromPC6(ctx context.Context, postcode string, result *En
 		return
 	}
 
-	// Only fill in missing fields
+	fillMissingPC6Fields(result, pc6Data)
+	fillPC6BouwjaarPct(result, pc6Data)
+	result.Source = appendSource(result.Source, "pc6", "pdok_pc6")
+}
+
+func fillMissingPC6Fields(result *EnrichmentData, pc6Data *client.PC6Properties) {
 	if result.HuishoudenGrootte == nil {
 		result.HuishoudenGrootte = pc6Data.GemiddeldHuishoudensgrootte.ToFloat64Ptr()
 	}
@@ -179,61 +184,78 @@ func (s *Service) enrichFromPC6(ctx context.Context, postcode string, result *En
 	if result.AantalHuishoudens == nil {
 		result.AantalHuishoudens = pc6Data.AantalHuishoudens.ToIntPtr()
 	}
+}
 
-	// Calculate bouwjaar from PC6 if not available from PC4
-	if result.BouwjaarVanaf2000Pct == nil {
-		totalPtr := pc6Data.AantalWoningen.ToFloat64Ptr()
-		bouwjaar05Tot15Ptr := pc6Data.WoningenBouwjaar05Tot15.ToFloat64Ptr()
-		bouwjaar15EnLaterPtr := pc6Data.WoningenBouwjaar15EnLater.ToFloat64Ptr()
-		if totalPtr != nil && bouwjaar05Tot15Ptr != nil && bouwjaar15EnLaterPtr != nil {
-			total := *totalPtr
-			if total > 0 {
-				recent := *bouwjaar05Tot15Ptr + *bouwjaar15EnLaterPtr
-				pct := (recent / total) * 100
-				result.BouwjaarVanaf2000Pct = &pct
-			}
-		}
+func fillPC6BouwjaarPct(result *EnrichmentData, pc6Data *client.PC6Properties) {
+	if result.BouwjaarVanaf2000Pct != nil {
+		return
 	}
-
-	if result.Source == "pdok" {
-		result.Source = "pdok_pc6"
-	} else {
-		result.Source = result.Source + "+pc6"
+	totalPtr := pc6Data.AantalWoningen.ToFloat64Ptr()
+	bouwjaar05Tot15Ptr := pc6Data.WoningenBouwjaar05Tot15.ToFloat64Ptr()
+	bouwjaar15EnLaterPtr := pc6Data.WoningenBouwjaar15EnLater.ToFloat64Ptr()
+	if totalPtr == nil || bouwjaar05Tot15Ptr == nil || bouwjaar15EnLaterPtr == nil {
+		return
 	}
+	total := *totalPtr
+	if total <= 0 {
+		return
+	}
+	recent := *bouwjaar05Tot15Ptr + *bouwjaar15EnLaterPtr
+	pct := (recent / total) * 100
+	result.BouwjaarVanaf2000Pct = &pct
 }
 
 // enrichFromBuurt fills in any missing fields from buurt-level statistics.
 func (s *Service) enrichFromBuurt(ctx context.Context, postcode string, result *EnrichmentData) {
-	buurtcode, err := s.client.GetBuurtcode(ctx, postcode)
-	if err != nil {
-		s.log.Debug("buurtcode lookup failed", "postcode", postcode, "error", err)
-		return
-	}
+	buurtcode := s.getBuurtcode(ctx, postcode)
 	if buurtcode == "" {
 		return
 	}
 
 	result.Buurtcode = buurtcode
 
-	// Fetch CBS OData vermogen data first (only available via CBS OData)
-	cbsData, err := s.client.GetCBSBuurtData(ctx, buurtcode)
-	if err != nil {
-		s.log.Debug("cbs odata lookup failed", "buurtcode", buurtcode, "error", err)
-	} else if cbsData != nil && cbsData.MediaanVermogen != nil {
-		result.MediaanVermogenX1000 = cbsData.MediaanVermogen
-	}
+	s.applyCBSBuurtData(ctx, buurtcode, result)
 
-	// Fetch PDOK buurt data
-	buurtData, _, err := s.client.GetBuurt(ctx, buurtcode)
-	if err != nil {
-		s.log.Debug("buurt lookup failed", "buurtcode", buurtcode, "error", err)
-		return
-	}
+	buurtData := s.getBuurtData(ctx, buurtcode)
 	if buurtData == nil {
 		return
 	}
 
-	// Fill in missing fields from buurt data
+	fillMissingBuurtFields(result, buurtData)
+	result.Source = appendSource(result.Source, "buurt", "pdok_buurt")
+}
+
+func (s *Service) getBuurtcode(ctx context.Context, postcode string) string {
+	buurtcode, err := s.client.GetBuurtcode(ctx, postcode)
+	if err != nil {
+		s.log.Debug("buurtcode lookup failed", "postcode", postcode, "error", err)
+		return ""
+	}
+	return buurtcode
+}
+
+func (s *Service) applyCBSBuurtData(ctx context.Context, buurtcode string, result *EnrichmentData) {
+	cbsData, err := s.client.GetCBSBuurtData(ctx, buurtcode)
+	if err != nil {
+		s.log.Debug("cbs odata lookup failed", "buurtcode", buurtcode, "error", err)
+		return
+	}
+	if cbsData == nil || cbsData.MediaanVermogen == nil {
+		return
+	}
+	result.MediaanVermogenX1000 = cbsData.MediaanVermogen
+}
+
+func (s *Service) getBuurtData(ctx context.Context, buurtcode string) *client.BuurtProperties {
+	buurtData, _, err := s.client.GetBuurt(ctx, buurtcode)
+	if err != nil {
+		s.log.Debug("buurt lookup failed", "buurtcode", buurtcode, "error", err)
+		return nil
+	}
+	return buurtData
+}
+
+func fillMissingBuurtFields(result *EnrichmentData, buurtData *client.BuurtProperties) {
 	if result.KoopwoningenPct == nil {
 		result.KoopwoningenPct = buurtData.KoopwoningenPct.ToFloat64Ptr()
 	}
@@ -252,12 +274,13 @@ func (s *Service) enrichFromBuurt(ctx context.Context, postcode string, result *
 	if result.AantalHuishoudens == nil {
 		result.AantalHuishoudens = buurtData.AantalHuishoudens.ToIntPtr()
 	}
+}
 
-	if result.Source == "pdok" {
-		result.Source = "pdok_buurt"
-	} else {
-		result.Source = result.Source + "+buurt"
+func appendSource(current, suffix, replacement string) string {
+	if current == "pdok" {
+		return replacement
 	}
+	return current + "+" + suffix
 }
 
 // calculateConfidence returns a confidence score based on data completeness.

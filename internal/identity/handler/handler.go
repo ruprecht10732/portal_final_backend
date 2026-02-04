@@ -127,16 +127,18 @@ func (h *Handler) UpdateOrganization(c *gin.Context) {
 	org, err := h.svc.UpdateOrganizationProfile(
 		c.Request.Context(),
 		*tenantID,
-		req.Name,
-		req.Email,
-		req.Phone,
-		req.VatNumber,
-		req.KvkNumber,
-		req.AddressLine1,
-		req.AddressLine2,
-		req.PostalCode,
-		req.City,
-		req.Country,
+		service.OrganizationProfileUpdate{
+			Name:         req.Name,
+			Email:        req.Email,
+			Phone:        req.Phone,
+			VATNumber:    req.VatNumber,
+			KVKNumber:    req.KvkNumber,
+			AddressLine1: req.AddressLine1,
+			AddressLine2: req.AddressLine2,
+			PostalCode:   req.PostalCode,
+			City:         req.City,
+			Country:      req.Country,
+		},
 	)
 	if httpkit.HandleError(c, err) {
 		return
