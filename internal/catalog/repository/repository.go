@@ -18,25 +18,44 @@ const (
 	productNotFoundMessage = "product not found"
 )
 
-// productSortFields maps API field names to allowed sort keys.
-var productSortFields = map[string]struct{}{
-	"title":      {},
-	"reference":  {},
-	"priceCents": {},
-	"type":       {},
-	"createdAt":  {},
-	"updatedAt":  {},
+// productSortFields maps API field names to allowed database sort columns.
+var productSortFields = map[string]string{
+	"title":      "title",
+	"reference":  "reference",
+	"priceCents": "price_cents",
+	"type":       "type",
+	"createdAt":  "created_at",
+	"updatedAt":  "updated_at",
 }
 
-// mapProductSortColumn returns the validated sort key.
+// mapProductSortColumn returns the validated database sort column.
 func mapProductSortColumn(sortBy string) (string, error) {
 	if sortBy == "" {
-		return "createdAt", nil
+		return "created_at", nil
 	}
-	if _, ok := productSortFields[sortBy]; ok {
-		return sortBy, nil
+	if column, ok := productSortFields[sortBy]; ok {
+		return column, nil
 	}
 	return "", apperr.BadRequest("invalid sort field")
+}
+
+// mapVatRateSortColumn returns the validated database sort column.
+func mapVatRateSortColumn(sortBy string) (string, error) {
+	if sortBy == "" {
+		return "name", nil
+	}
+	switch sortBy {
+	case "name":
+		return "name", nil
+	case "rateBps":
+		return "rate_bps", nil
+	case "createdAt":
+		return "created_at", nil
+	case "updatedAt":
+		return "updated_at", nil
+	default:
+		return "", apperr.BadRequest("invalid sort field")
+	}
 }
 
 // mapSortOrder returns validated sort order key.
@@ -154,24 +173,13 @@ func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]V
 		searchParam = "%" + params.Search + "%"
 	}
 
-	sortBy := "name"
-	if params.SortBy != "" {
-		switch params.SortBy {
-		case "name", "rateBps", "createdAt", "updatedAt":
-			sortBy = params.SortBy
-		default:
-			return nil, 0, apperr.BadRequest("invalid sort field")
-		}
+	sortBy, err := mapVatRateSortColumn(params.SortBy)
+	if err != nil {
+		return nil, 0, err
 	}
-
-	sortOrder := "asc"
-	if params.SortOrder != "" {
-		switch params.SortOrder {
-		case "asc", "desc":
-			sortOrder = params.SortOrder
-		default:
-			return nil, 0, apperr.BadRequest("invalid sort order")
-		}
+	sortOrder, err := mapSortOrder(params.SortOrder)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	countQuery := `
@@ -186,25 +194,17 @@ func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]V
 		return nil, 0, fmt.Errorf("count vat rates: %w", err)
 	}
 
-	query := `
+	orderBy := fmt.Sprintf("%s %s, name ASC", sortBy, sortOrder)
+	query := fmt.Sprintf(`
 		SELECT id, organization_id, name, rate_bps, created_at, updated_at
 		FROM RAC_catalog_vat_rates
 		WHERE organization_id = $1
 			AND ($2::text IS NULL OR name ILIKE $2)
-		ORDER BY
-			CASE WHEN $3 = 'name' AND $4 = 'asc' THEN name END ASC,
-			CASE WHEN $3 = 'name' AND $4 = 'desc' THEN name END DESC,
-			CASE WHEN $3 = 'rateBps' AND $4 = 'asc' THEN rate_bps END ASC,
-			CASE WHEN $3 = 'rateBps' AND $4 = 'desc' THEN rate_bps END DESC,
-			CASE WHEN $3 = 'createdAt' AND $4 = 'asc' THEN created_at END ASC,
-			CASE WHEN $3 = 'createdAt' AND $4 = 'desc' THEN created_at END DESC,
-			CASE WHEN $3 = 'updatedAt' AND $4 = 'asc' THEN updated_at END ASC,
-			CASE WHEN $3 = 'updatedAt' AND $4 = 'desc' THEN updated_at END DESC,
-			name ASC
-		LIMIT $5 OFFSET $6
-	`
+		ORDER BY %s
+		LIMIT $3 OFFSET $4
+	`, orderBy)
 
-	rows, err := r.pool.Query(ctx, query, params.OrganizationID, searchParam, sortBy, sortOrder, params.Limit, params.Offset)
+	rows, err := r.pool.Query(ctx, query, params.OrganizationID, searchParam, params.Limit, params.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list vat rates: %w", err)
 	}
@@ -378,31 +378,19 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 		return nil, 0, fmt.Errorf("count products: %w", err)
 	}
 
-	query := `
+	orderBy := fmt.Sprintf("%s %s, created_at DESC", sortBy, sortOrder)
+	query := fmt.Sprintf(`
 		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
 		FROM RAC_catalog_products
 		WHERE organization_id = $1
 			AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
 			AND ($3::text IS NULL OR type = $3)
 			AND ($4::uuid IS NULL OR vat_rate_id = $4)
-		ORDER BY
-			CASE WHEN $5 = 'title' AND $6 = 'asc' THEN title END ASC,
-			CASE WHEN $5 = 'title' AND $6 = 'desc' THEN title END DESC,
-			CASE WHEN $5 = 'reference' AND $6 = 'asc' THEN reference END ASC,
-			CASE WHEN $5 = 'reference' AND $6 = 'desc' THEN reference END DESC,
-			CASE WHEN $5 = 'priceCents' AND $6 = 'asc' THEN price_cents END ASC,
-			CASE WHEN $5 = 'priceCents' AND $6 = 'desc' THEN price_cents END DESC,
-			CASE WHEN $5 = 'type' AND $6 = 'asc' THEN type END ASC,
-			CASE WHEN $5 = 'type' AND $6 = 'desc' THEN type END DESC,
-			CASE WHEN $5 = 'createdAt' AND $6 = 'asc' THEN created_at END ASC,
-			CASE WHEN $5 = 'createdAt' AND $6 = 'desc' THEN created_at END DESC,
-			CASE WHEN $5 = 'updatedAt' AND $6 = 'asc' THEN updated_at END ASC,
-			CASE WHEN $5 = 'updatedAt' AND $6 = 'desc' THEN updated_at END DESC,
-			created_at DESC
-		LIMIT $7 OFFSET $8
-	`
+		ORDER BY %s
+		LIMIT $5 OFFSET $6
+	`, orderBy)
 
-	rows, err := r.pool.Query(ctx, query, params.OrganizationID, searchParam, typeParam, vatRateParam, sortBy, sortOrder, params.Limit, params.Offset)
+	rows, err := r.pool.Query(ctx, query, params.OrganizationID, searchParam, typeParam, vatRateParam, params.Limit, params.Offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list products: %w", err)
 	}
