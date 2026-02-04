@@ -31,11 +31,7 @@ type energyLabelUpdater interface {
 }
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		panic("failed to load config: " + err.Error())
-	}
-
+	cfg := mustLoadConfig()
 	log := logger.New(cfg.Env)
 	log.Info("starting energy label backfill")
 
@@ -45,27 +41,52 @@ func main() {
 	}
 
 	ctx := context.Background()
+	pool := mustOpenPool(ctx, cfg, log)
+	defer pool.Close()
+
+	enricher := setupEnricher(cfg, log)
+	if enricher == nil {
+		return
+	}
+
+	repo := repository.New(pool)
+	runBackfill(ctx, pool, repo, enricher, log)
+}
+
+func mustLoadConfig() *config.Config {
+	cfg, err := config.Load()
+	if err != nil {
+		panic("failed to load config: " + err.Error())
+	}
+	return cfg
+}
+
+func mustOpenPool(ctx context.Context, cfg *config.Config, log *logger.Logger) *pgxpool.Pool {
 	pool, err := db.NewPool(ctx, cfg)
 	if err != nil {
 		log.Error("failed to connect to database", "error", err)
 		panic("failed to connect to database: " + err.Error())
 	}
-	defer pool.Close()
+	return pool
+}
 
+func setupEnricher(cfg *config.Config, log *logger.Logger) ports.EnergyLabelEnricher {
 	energyModule := energylabel.NewModule(cfg, log)
 	if !energyModule.IsEnabled() {
 		log.Warn("energy label service not available, skipping backfill")
-		return
+		return nil
 	}
 
 	enricher := adapters.NewEnergyLabelAdapter(energyModule.Service())
 	if enricher == nil {
 		log.Warn("energy label enricher unavailable, skipping backfill")
-		return
+		return nil
 	}
 
-	repo := repository.New(pool)
+	return enricher
+}
 
+func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo energyLabelUpdater, enricher ports.EnergyLabelEnricher, log *logger.Logger) {
 	const batchSize = 25
 	const delayBetweenCalls = 500 * time.Millisecond
 
