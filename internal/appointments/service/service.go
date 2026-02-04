@@ -273,48 +273,73 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 
 // List retrieves appointments with filtering
 func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.ListAppointmentsRequest) (*transport.AppointmentListResponse, error) {
-	// Parse UUID filters
-	leadID, err := parseUUIDFilter(req.LeadID, "leadId")
-	if err != nil {
-		return nil, err
-	}
-	reqUserID, err := parseUUIDFilter(req.UserID, "userId")
+	filters, err := parseListFilters(req)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse date filters
-	startFrom, err := parseDateFilter(req.StartFrom, "startFrom")
+	params := buildListParams(tenantID, req, filters, userID, isAdmin)
+	result, err := s.repo.List(ctx, params)
 	if err != nil {
 		return nil, err
+	}
+
+	return s.buildListResponse(ctx, result, tenantID)
+}
+
+type listFilterValues struct {
+	leadID    *uuid.UUID
+	reqUserID *uuid.UUID
+	startFrom *time.Time
+	startTo   *time.Time
+}
+
+func parseListFilters(req transport.ListAppointmentsRequest) (listFilterValues, error) {
+	leadID, err := parseUUIDFilter(req.LeadID, "leadId")
+	if err != nil {
+		return listFilterValues{}, err
+	}
+	reqUserID, err := parseUUIDFilter(req.UserID, "userId")
+	if err != nil {
+		return listFilterValues{}, err
+	}
+
+	startFrom, err := parseDateFilter(req.StartFrom, "startFrom")
+	if err != nil {
+		return listFilterValues{}, err
 	}
 	startTo, err := parseDateFilter(req.StartTo, "startTo")
 	if err != nil {
-		return nil, err
+		return listFilterValues{}, err
 	}
-	// Extend end date to include full day
 	if startTo != nil {
 		endOfDay := startTo.Add(24*time.Hour - time.Nanosecond)
 		startTo = &endOfDay
 	}
 
-	// Build params with defaults
+	return listFilterValues{
+		leadID:    leadID,
+		reqUserID: reqUserID,
+		startFrom: startFrom,
+		startTo:   startTo,
+	}, nil
+}
+
+func buildListParams(tenantID uuid.UUID, req transport.ListAppointmentsRequest, filters listFilterValues, userID uuid.UUID, isAdmin bool) repository.ListParams {
 	params := repository.ListParams{
 		OrganizationID: tenantID,
-		LeadID:         leadID,
+		LeadID:         filters.leadID,
 		Page:           max(req.Page, 1),
 		PageSize:       clampPageSize(req.PageSize),
 		Search:         req.Search,
 		SortBy:         req.SortBy,
 		SortOrder:      req.SortOrder,
-		StartFrom:      startFrom,
-		StartTo:        startTo,
+		StartFrom:      filters.startFrom,
+		StartTo:        filters.startTo,
 	}
 
-	// Apply user filter based on admin status
-	params.UserID = resolveUserIDFilter(userID, isAdmin, reqUserID)
+	params.UserID = resolveUserIDFilter(userID, isAdmin, filters.reqUserID)
 
-	// Apply type/status filters
 	if req.Type != nil {
 		t := string(*req.Type)
 		params.Type = &t
@@ -324,12 +349,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, isAdmin bool, tena
 		params.Status = &st
 	}
 
-	result, err := s.repo.List(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-
-	return s.buildListResponse(ctx, result, tenantID)
+	return params
 }
 
 // resolveUserIDFilter determines which user to filter by based on admin status.
