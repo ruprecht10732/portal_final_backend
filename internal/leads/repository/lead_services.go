@@ -3,8 +3,6 @@ package repository
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -149,37 +147,24 @@ type UpdateLeadServiceParams struct {
 }
 
 func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadServiceParams) (LeadService, error) {
-	setClauses := []string{}
-	args := []interface{}{}
-	argIdx := 1
-
-	if params.Status != nil {
-		setClauses = append(setClauses, fmt.Sprintf("status = $%d", argIdx))
-		args = append(args, *params.Status)
-		argIdx++
-	}
-
-	if len(setClauses) == 0 {
+	if params.Status == nil {
 		return r.GetLeadServiceByID(ctx, id, organizationID)
 	}
 
-	setClauses = append(setClauses, "updated_at = now()")
-	args = append(args, id, organizationID)
-
-	query := fmt.Sprintf(`
+	query := `
 		WITH updated AS (
-			UPDATE RAC_lead_services SET %s
-			WHERE id = $%d AND organization_id = $%d
+			UPDATE RAC_lead_services SET status = $3, updated_at = now()
+			WHERE id = $1 AND organization_id = $2
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.consumer_note, u.source,
 			u.created_at, u.updated_at
 		FROM updated u
 		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
-	`, strings.Join(setClauses, ", "), argIdx, argIdx+1)
+	`
 
 	var svc LeadService
-	err := r.pool.QueryRow(ctx, query, args...).Scan(
+	err := r.pool.QueryRow(ctx, query, id, organizationID, *params.Status).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.ConsumerNote, &svc.Source,
 		&svc.CreatedAt, &svc.UpdatedAt,
 	)

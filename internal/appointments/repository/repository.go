@@ -254,13 +254,22 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 			"endTime":   "end_time",
 			"createdAt": "created_at",
 		}
-		if col, ok := columnMap[params.SortBy]; ok {
-			orderBy = col
+		col, ok := columnMap[params.SortBy]
+		if !ok {
+			return nil, apperr.BadRequest("invalid sort field")
 		}
+		orderBy = col
 	}
 	sortDir := "ASC"
-	if params.SortOrder == "desc" {
-		sortDir = "DESC"
+	if params.SortOrder != "" {
+		switch params.SortOrder {
+		case "asc":
+			sortDir = "ASC"
+		case "desc":
+			sortDir = "DESC"
+		default:
+			return nil, apperr.BadRequest("invalid sort order")
+		}
 	}
 
 	// Fetch items

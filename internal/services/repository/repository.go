@@ -144,23 +144,35 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 	}
 
 	sortColumn := "display_order"
-	switch params.SortBy {
-	case "name":
-		sortColumn = "name"
-	case "slug":
-		sortColumn = "slug"
-	case "displayOrder":
-		sortColumn = "display_order"
-	case "isActive":
-		sortColumn = "is_active"
-	case "createdAt":
-		sortColumn = "created_at"
-	case "updatedAt":
-		sortColumn = "updated_at"
+	if params.SortBy != "" {
+		switch params.SortBy {
+		case "name":
+			sortColumn = "name"
+		case "slug":
+			sortColumn = "slug"
+		case "displayOrder":
+			sortColumn = "display_order"
+		case "isActive":
+			sortColumn = "is_active"
+		case "createdAt":
+			sortColumn = "created_at"
+		case "updatedAt":
+			sortColumn = "updated_at"
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort field")
+		}
 	}
+
 	sortOrder := "ASC"
-	if params.SortOrder == "desc" {
-		sortOrder = "DESC"
+	if params.SortOrder != "" {
+		switch params.SortOrder {
+		case "asc":
+			sortOrder = "ASC"
+		case "desc":
+			sortOrder = "DESC"
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort order")
+		}
 	}
 
 	args = append(args, params.Limit, params.Offset)

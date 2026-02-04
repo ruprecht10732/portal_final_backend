@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"portal_final_backend/platform/apperr"
 )
 
 var ErrNotFound = errors.New("lead not found")
@@ -680,10 +682,20 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		return nil, 0, err
 	}
 
-	sortColumn := mapLeadSortColumn(params.SortBy)
+	sortColumn, err := mapLeadSortColumn(params.SortBy)
+	if err != nil {
+		return nil, 0, err
+	}
 	sortOrder := "DESC"
-	if params.SortOrder == "asc" {
-		sortOrder = "ASC"
+	if params.SortOrder != "" {
+		switch params.SortOrder {
+		case "asc":
+			sortOrder = "ASC"
+		case "desc":
+			sortOrder = "DESC"
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort order")
+		}
 	}
 
 	args = append(args, params.Limit, params.Offset)
@@ -879,31 +891,35 @@ func buildLeadListWhere(params ListParams) (string, string, []interface{}, int) 
 	return strings.Join(builder.whereClauses, " AND "), builder.joinClause(), builder.args, builder.argIdx
 }
 
-func mapLeadSortColumn(sortBy string) string {
+func mapLeadSortColumn(sortBy string) (string, error) {
 	sortColumn := "l.created_at"
+	if sortBy == "" {
+		return sortColumn, nil
+	}
+
 	switch sortBy {
 	case "firstName":
-		return "l.consumer_first_name"
+		return "l.consumer_first_name", nil
 	case "lastName":
-		return "l.consumer_last_name"
+		return "l.consumer_last_name", nil
 	case "phone":
-		return "l.consumer_phone"
+		return "l.consumer_phone", nil
 	case "email":
-		return "l.consumer_email"
+		return "l.consumer_email", nil
 	case "role":
-		return "l.consumer_role"
+		return "l.consumer_role", nil
 	case "street":
-		return "l.address_street"
+		return "l.address_street", nil
 	case "houseNumber":
-		return "l.address_house_number"
+		return "l.address_house_number", nil
 	case "zipCode":
-		return "l.address_zip_code"
+		return "l.address_zip_code", nil
 	case "city":
-		return "l.address_city"
+		return "l.address_city", nil
 	case "assignedAgentId":
-		return "l.assigned_agent_id"
+		return "l.assigned_agent_id", nil
 	default:
-		return sortColumn
+		return "", apperr.BadRequest("invalid sort field")
 	}
 }
 

@@ -135,18 +135,29 @@ func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]V
 	}
 
 	sortColumn := "name"
-	switch params.SortBy {
-	case "rateBps":
-		sortColumn = "rate_bps"
-	case "createdAt":
-		sortColumn = "created_at"
-	case "updatedAt":
-		sortColumn = "updated_at"
+	if params.SortBy != "" {
+		switch params.SortBy {
+		case "rateBps":
+			sortColumn = "rate_bps"
+		case "createdAt":
+			sortColumn = "created_at"
+		case "updatedAt":
+			sortColumn = "updated_at"
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort field")
+		}
 	}
 
 	sortOrder := "ASC"
-	if params.SortOrder == "desc" {
-		sortOrder = "DESC"
+	if params.SortOrder != "" {
+		switch params.SortOrder {
+		case "asc":
+			sortOrder = "ASC"
+		case "desc":
+			sortOrder = "DESC"
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort order")
+		}
 	}
 
 	args = append(args, params.Limit, params.Offset)
@@ -327,22 +338,33 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 	}
 
 	sortColumn := "created_at"
-	switch params.SortBy {
-	case "title":
-		sortColumn = "title"
-	case "reference":
-		sortColumn = "reference"
-	case "priceCents":
-		sortColumn = "price_cents"
-	case "type":
-		sortColumn = "type"
-	case "updatedAt":
-		sortColumn = "updated_at"
+	if params.SortBy != "" {
+		switch params.SortBy {
+		case "title":
+			sortColumn = "title"
+		case "reference":
+			sortColumn = "reference"
+		case "priceCents":
+			sortColumn = "price_cents"
+		case "type":
+			sortColumn = "type"
+		case "updatedAt":
+			sortColumn = "updated_at"
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort field")
+		}
 	}
 
 	sortOrder := "DESC"
-	if params.SortOrder == "asc" {
-		sortOrder = "ASC"
+	if params.SortOrder != "" {
+		switch params.SortOrder {
+		case "asc":
+			sortOrder = "ASC"
+		case "desc":
+			sortOrder = "DESC"
+		default:
+			return nil, 0, apperr.BadRequest("invalid sort order")
+		}
 	}
 
 	args = append(args, params.Limit, params.Offset)
