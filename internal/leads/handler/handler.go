@@ -31,6 +31,7 @@ const (
 	msgValidationFailed = "validation failed"
 	msgTenantRequired   = "tenant context required"
 	msgInvalidServiceID = "invalid serviceId"
+	dateLayout          = "2006-01-02"
 )
 
 // mustGetTenantID extracts and dereferences the tenant ID from identity.
@@ -111,30 +112,9 @@ func (h *Handler) GetHeatmap(c *gin.Context) {
 		return
 	}
 
-	const dateLayout = "2006-01-02"
-	var startDate *time.Time
-	var endDate *time.Time
-
-	if req.StartDate != "" {
-		parsed, err := time.Parse(dateLayout, req.StartDate)
-		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid startDate")
-			return
-		}
-		startDate = &parsed
-	}
-
-	if req.EndDate != "" {
-		parsed, err := time.Parse(dateLayout, req.EndDate)
-		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid endDate")
-			return
-		}
-		endDate = &parsed
-	}
-
-	if startDate != nil && endDate != nil && startDate.After(*endDate) {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "startDate must be before or equal to endDate")
+	startDate, endDate, errMsg := parseDateRange(req.StartDate, req.EndDate)
+	if errMsg != "" {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, errMsg)
 		return
 	}
 
@@ -592,32 +572,17 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 		return
 	}
 
-	// Parse optional serviceId
-	var serviceID *uuid.UUID
-	if svcID := c.Query("serviceId"); svcID != "" {
-		parsed, err := uuid.Parse(svcID)
-		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidServiceID, nil)
-			return
-		}
-		serviceID = &parsed
-
-		// Validate service is not in terminal status
-		service, err := h.mgmt.GetLeadServiceByID(c.Request.Context(), parsed, tenantID)
-		if err != nil {
-			httpkit.Error(c, http.StatusNotFound, "service not found", nil)
-			return
-		}
-		if isTerminalStatus(service.Status) {
-			httpkit.Error(c, http.StatusBadRequest, "cannot analyze a service in terminal status (Closed, Bad_Lead, Surveyed)", nil)
-			return
-		}
+	// Validate optional serviceId with terminal status check
+	validation := h.validateServiceForAnalysis(c, c.Query("serviceId"), tenantID)
+	if validation.ErrMsg != "" {
+		httpkit.Error(c, validation.ErrStatus, validation.ErrMsg, nil)
+		return
 	}
 
 	// Check for force parameter to bypass no_change detection
 	force := c.Query("force") == "true"
 
-	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, serviceID, force, tenantID)
+	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, validation.ServiceID, force, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -751,4 +716,60 @@ func isTerminalStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// parseDateRange parses optional start and end date strings and validates the range.
+// Returns nil dates for empty strings. Returns an error message if parsing fails or dates are invalid.
+func parseDateRange(startDateStr, endDateStr string) (startDate, endDate *time.Time, errMsg string) {
+	if startDateStr != "" {
+		parsed, err := time.Parse(dateLayout, startDateStr)
+		if err != nil {
+			return nil, nil, "invalid startDate"
+		}
+		startDate = &parsed
+	}
+
+	if endDateStr != "" {
+		parsed, err := time.Parse(dateLayout, endDateStr)
+		if err != nil {
+			return nil, nil, "invalid endDate"
+		}
+		endDate = &parsed
+	}
+
+	if startDate != nil && endDate != nil && startDate.After(*endDate) {
+		return nil, nil, "startDate must be before or equal to endDate"
+	}
+
+	return startDate, endDate, ""
+}
+
+// serviceValidationResult holds the result of validating a service ID for analysis.
+type serviceValidationResult struct {
+	ServiceID *uuid.UUID
+	ErrMsg    string
+	ErrStatus int
+}
+
+// validateServiceForAnalysis validates and parses an optional service ID, checking terminal status.
+func (h *Handler) validateServiceForAnalysis(ctx *gin.Context, svcIDStr string, tenantID uuid.UUID) serviceValidationResult {
+	if svcIDStr == "" {
+		return serviceValidationResult{}
+	}
+
+	parsed, err := uuid.Parse(svcIDStr)
+	if err != nil {
+		return serviceValidationResult{ErrMsg: msgInvalidServiceID, ErrStatus: http.StatusBadRequest}
+	}
+
+	service, err := h.mgmt.GetLeadServiceByID(ctx.Request.Context(), parsed, tenantID)
+	if err != nil {
+		return serviceValidationResult{ErrMsg: "service not found", ErrStatus: http.StatusNotFound}
+	}
+
+	if isTerminalStatus(service.Status) {
+		return serviceValidationResult{ErrMsg: "cannot analyze a service in terminal status (Closed, Bad_Lead, Surveyed)", ErrStatus: http.StatusBadRequest}
+	}
+
+	return serviceValidationResult{ServiceID: &parsed}
 }
