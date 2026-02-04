@@ -898,6 +898,8 @@ func mapLeadSortColumn(sortBy string) (string, error) {
 	}
 
 	switch sortBy {
+	case "createdAt":
+		return "l.created_at", nil
 	case "firstName":
 		return "l.consumer_first_name", nil
 	case "lastName":

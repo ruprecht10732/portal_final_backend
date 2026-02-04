@@ -151,7 +151,7 @@ func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 			return
 		}
 
-		roles := extractRoles(claims["roles"])
+		roles := extractRoles(claims["RAC_roles"])
 		c.Set(ContextUserIDKey, userID)
 		c.Set(ContextRolesKey, roles)
 
