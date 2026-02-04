@@ -109,6 +109,25 @@ type openAIResponse struct {
 }
 
 func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+	payload := m.buildPayload(req)
+
+	result, err := m.doRequest(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	choice := result.Choices[0].Message
+	parts := buildResponseParts(choice)
+
+	return &model.LLMResponse{
+		Content: &genai.Content{
+			Role:  genai.RoleModel,
+			Parts: parts,
+		},
+	}, nil
+}
+
+func (m *KimiModel) buildPayload(req *model.LLMRequest) map[string]interface{} {
 	messages := m.convertMessages(req.Contents)
 	tools := m.convertTools(req)
 
@@ -130,6 +149,10 @@ func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model
 		payload["tool_choice"] = "auto"
 	}
 
+	return payload
+}
+
+func (m *KimiModel) doRequest(ctx context.Context, payload map[string]interface{}) (*openAIResponse, error) {
 	jsonBody, _ := json.Marshal(payload)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", m.config.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	httpReq.Header.Set("Authorization", "Bearer "+m.config.APIKey)
@@ -141,6 +164,14 @@ func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model
 	}
 	defer resp.Body.Close()
 
+	result, err := decodeResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func decodeResponse(resp *http.Response) (*openAIResponse, error) {
 	var result openAIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode kimi response: %v", err)
@@ -151,34 +182,38 @@ func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model
 	if len(result.Choices) == 0 {
 		return nil, fmt.Errorf("kimi api error: empty choices")
 	}
+	return &result, nil
+}
 
-	choice := result.Choices[0].Message
+func buildResponseParts(choice struct {
+	Role      string           `json:"role"`
+	Content   string           `json:"content"`
+	ToolCalls []openAIToolCall `json:"tool_calls"`
+}) []*genai.Part {
 	parts := make([]*genai.Part, 0, 1+len(choice.ToolCalls))
 	if strings.TrimSpace(choice.Content) != "" {
 		parts = append(parts, genai.NewPartFromText(choice.Content))
 	}
 	for _, tc := range choice.ToolCalls {
-		args := map[string]any{}
-		if tc.Function.Arguments != "" {
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				args = map[string]any{"_raw": tc.Function.Arguments}
-			}
-		}
-		parts = append(parts, &genai.Part{
-			FunctionCall: &genai.FunctionCall{
-				ID:   tc.ID,
-				Name: tc.Function.Name,
-				Args: args,
-			},
-		})
+		parts = append(parts, buildToolCallPart(tc))
 	}
+	return parts
+}
 
-	return &model.LLMResponse{
-		Content: &genai.Content{
-			Role:  genai.RoleModel,
-			Parts: parts,
+func buildToolCallPart(tc openAIToolCall) *genai.Part {
+	args := map[string]any{}
+	if tc.Function.Arguments != "" {
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			args = map[string]any{"_raw": tc.Function.Arguments}
+		}
+	}
+	return &genai.Part{
+		FunctionCall: &genai.FunctionCall{
+			ID:   tc.ID,
+			Name: tc.Function.Name,
+			Args: args,
 		},
-	}, nil
+	}
 }
 
 func (m *KimiModel) convertMessages(contents []*genai.Content) []openAIMessage {
