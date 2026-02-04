@@ -324,53 +324,14 @@ func (s *Service) Recalculate(ctx context.Context, leadID uuid.UUID, serviceID *
 		return nil, err
 	}
 
-	notes, err := s.repo.ListLeadNotes(ctx, leadID, tenantID)
-	if err != nil {
-		notes = nil
-	}
-
-	// Fetch appointment statistics for scoring
-	apptStats, err := s.repo.GetLeadAppointmentStats(ctx, leadID, tenantID)
-	if err != nil {
-		apptStats = repository.LeadAppointmentStats{}
-	}
-
-	var photo *repository.PhotoAnalysis
-	if svc != nil {
-		if found, err := s.repo.GetLatestPhotoAnalysis(ctx, svc.ID, tenantID); err == nil {
-			photo = &found
-		}
-	}
-
-	var ai *repository.AIAnalysis
-	if includeAI && svc != nil {
-		if found, err := s.repo.GetLatestAIAnalysis(ctx, svc.ID, tenantID); err == nil {
-			ai = &found
-		}
-	}
-
-	// Get service type for weight selection
-	serviceType := "default"
-	if svc != nil && svc.ServiceType != "" {
-		serviceType = strings.ToLower(svc.ServiceType)
-	}
+	data := s.fetchScoringData(ctx, leadID, tenantID, svc, includeAI)
 
 	now := time.Now().UTC()
-	preAI, factors := s.computePreAIScore(lead, svc, notes, photo, apptStats, serviceType)
-	finalScore, aiFactors := s.applyAIFactors(preAI, ai)
-	if len(aiFactors) > 0 {
-		for k, v := range aiFactors {
-			factors[k] = v
-		}
-	}
+	preAI, factors := s.computePreAIScore(lead, svc, data.notes, data.photo, data.apptStats, data.serviceType)
+	finalScore, aiFactors := s.applyAIFactors(preAI, data.ai)
+	mergeFactors(factors, aiFactors)
 
-	factorsJSON, err := json.Marshal(factors)
-	if err != nil {
-		if s.log != nil {
-			s.log.Error("lead score factors marshal failed", "error", err)
-		}
-		factorsJSON = nil
-	}
+	factorsJSON := s.marshalFactors(factors)
 
 	return &Result{
 		Score:       finalScore,
@@ -379,6 +340,73 @@ func (s *Service) Recalculate(ctx context.Context, leadID uuid.UUID, serviceID *
 		Version:     scoreVersion,
 		UpdatedAt:   now,
 	}, nil
+}
+
+// scoringData holds optional data fetched for scoring calculations.
+type scoringData struct {
+	notes       []repository.LeadNote
+	apptStats   repository.LeadAppointmentStats
+	photo       *repository.PhotoAnalysis
+	ai          *repository.AIAnalysis
+	serviceType string
+}
+
+// fetchScoringData gathers all optional data needed for score calculation.
+func (s *Service) fetchScoringData(ctx context.Context, leadID, tenantID uuid.UUID, svc *repository.LeadService, includeAI bool) scoringData {
+	data := scoringData{serviceType: "default"}
+
+	if notes, err := s.repo.ListLeadNotes(ctx, leadID, tenantID); err == nil {
+		data.notes = notes
+	}
+
+	if stats, err := s.repo.GetLeadAppointmentStats(ctx, leadID, tenantID); err == nil {
+		data.apptStats = stats
+	}
+
+	if svc == nil {
+		return data
+	}
+
+	data.serviceType = determineServiceType(svc)
+
+	if photo, err := s.repo.GetLatestPhotoAnalysis(ctx, svc.ID, tenantID); err == nil {
+		data.photo = &photo
+	}
+
+	if includeAI {
+		if ai, err := s.repo.GetLatestAIAnalysis(ctx, svc.ID, tenantID); err == nil {
+			data.ai = &ai
+		}
+	}
+
+	return data
+}
+
+// determineServiceType returns the service type in lowercase, defaulting to "default".
+func determineServiceType(svc *repository.LeadService) string {
+	if svc.ServiceType != "" {
+		return strings.ToLower(svc.ServiceType)
+	}
+	return "default"
+}
+
+// mergeFactors copies aiFactors into factors map.
+func mergeFactors(factors map[string]float64, aiFactors map[string]float64) {
+	for k, v := range aiFactors {
+		factors[k] = v
+	}
+}
+
+// marshalFactors serializes factors to JSON, returning nil on error.
+func (s *Service) marshalFactors(factors map[string]float64) []byte {
+	data, err := json.Marshal(factors)
+	if err != nil {
+		if s.log != nil {
+			s.log.Error("lead score factors marshal failed", "error", err)
+		}
+		return nil
+	}
+	return data
 }
 
 func (s *Service) resolveService(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, tenantID uuid.UUID) (*repository.LeadService, error) {

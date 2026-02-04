@@ -15,6 +15,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// Date/time format and error message constants.
+const (
+	dateFormat           = "2006-01-02"
+	errEndTimeAfterStart = "endTime must be after startTime"
+)
+
 // LeadAssigner provides minimal lead assignment capabilities for lead visits.
 type LeadAssigner interface {
 	GetAssignedAgentID(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) (*uuid.UUID, error)
@@ -35,49 +41,78 @@ func New(repo *repository.Repository, leadAssigner LeadAssigner, emailSender ema
 
 // Create creates a new appointment
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAppointmentRequest) (*transport.AppointmentResponse, error) {
-	// Validate lead_visit type has required fields
-	if req.Type == transport.AppointmentTypeLeadVisit {
-		if req.LeadID == nil || req.LeadServiceID == nil {
-			return nil, apperr.BadRequest("lead_visit type requires leadId and leadServiceId")
-		}
-		if s.leadAssigner == nil {
-			return nil, apperr.BadRequest("lead assignment not configured")
-		}
-
-		assignedAgentID, err := s.leadAssigner.GetAssignedAgentID(ctx, *req.LeadID, tenantID)
-		if err != nil {
-			return nil, err
-		}
-
-		if assignedAgentID != nil && *assignedAgentID != userID && !isAdmin {
-			return nil, apperr.Forbidden("not authorized to schedule visits for this lead")
-		}
-		if assignedAgentID == nil && !isAdmin {
-			if err := s.leadAssigner.AssignLead(ctx, *req.LeadID, userID, tenantID); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	// Validate time range
-	if !req.EndTime.After(req.StartTime) {
-		return nil, apperr.BadRequest("endTime must be after startTime")
-	}
-
-	// Check for conflicting appointments
-	existing, err := s.repo.ListForDateRange(ctx, tenantID, userID, req.StartTime, req.EndTime)
-	if err != nil {
+	if err := s.validateLeadVisit(ctx, req, userID, isAdmin, tenantID); err != nil {
 		return nil, err
 	}
-	for _, appt := range existing {
-		// Check for overlap: new appointment overlaps if it starts before existing ends AND ends after existing starts
-		if req.StartTime.Before(appt.EndTime) && req.EndTime.After(appt.StartTime) {
-			return nil, apperr.Conflict("timeslot already booked")
-		}
+
+	if !req.EndTime.After(req.StartTime) {
+		return nil, apperr.BadRequest(errEndTimeAfterStart)
 	}
 
+	if err := s.checkTimeConflict(ctx, tenantID, userID, req.StartTime, req.EndTime, uuid.Nil); err != nil {
+		return nil, err
+	}
+
+	appt := s.buildAppointment(userID, tenantID, req)
+	if err := s.repo.Create(ctx, appt); err != nil {
+		return nil, err
+	}
+
+	leadInfo := s.getLeadInfoIfPresent(ctx, appt.LeadID, tenantID)
+	s.sendConfirmationEmailIfNeeded(ctx, req.SendConfirmationEmail, appt, leadInfo, tenantID)
+
+	resp := appt.ToResponse(leadInfo)
+	return &resp, nil
+}
+
+// validateLeadVisit validates lead_visit type requirements.
+func (s *Service) validateLeadVisit(ctx context.Context, req transport.CreateAppointmentRequest, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) error {
+	if req.Type != transport.AppointmentTypeLeadVisit {
+		return nil
+	}
+
+	if req.LeadID == nil || req.LeadServiceID == nil {
+		return apperr.BadRequest("lead_visit type requires leadId and leadServiceId")
+	}
+	if s.leadAssigner == nil {
+		return apperr.BadRequest("lead assignment not configured")
+	}
+
+	assignedAgentID, err := s.leadAssigner.GetAssignedAgentID(ctx, *req.LeadID, tenantID)
+	if err != nil {
+		return err
+	}
+
+	if assignedAgentID != nil && *assignedAgentID != userID && !isAdmin {
+		return apperr.Forbidden("not authorized to schedule visits for this lead")
+	}
+	if assignedAgentID == nil && !isAdmin {
+		return s.leadAssigner.AssignLead(ctx, *req.LeadID, userID, tenantID)
+	}
+	return nil
+}
+
+// checkTimeConflict checks for overlapping appointments, excluding excludeID if non-nil.
+func (s *Service) checkTimeConflict(ctx context.Context, tenantID, userID uuid.UUID, startTime, endTime time.Time, excludeID uuid.UUID) error {
+	existing, err := s.repo.ListForDateRange(ctx, tenantID, userID, startTime, endTime)
+	if err != nil {
+		return err
+	}
+	for _, appt := range existing {
+		if excludeID != uuid.Nil && appt.ID == excludeID {
+			continue
+		}
+		if startTime.Before(appt.EndTime) && endTime.After(appt.StartTime) {
+			return apperr.Conflict("timeslot already booked")
+		}
+	}
+	return nil
+}
+
+// buildAppointment creates a new Appointment from the request.
+func (s *Service) buildAppointment(userID, tenantID uuid.UUID, req transport.CreateAppointmentRequest) *repository.Appointment {
 	now := time.Now()
-	appt := &repository.Appointment{
+	return &repository.Appointment{
 		ID:             uuid.New(),
 		OrganizationID: tenantID,
 		UserID:         userID,
@@ -95,29 +130,25 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+}
 
-	if err := s.repo.Create(ctx, appt); err != nil {
-		return nil, err
+// getLeadInfoIfPresent returns lead info if leadID is not nil.
+func (s *Service) getLeadInfoIfPresent(ctx context.Context, leadID *uuid.UUID, tenantID uuid.UUID) *transport.AppointmentLeadInfo {
+	if leadID == nil {
+		return nil
 	}
+	return s.getLeadInfo(ctx, *leadID, tenantID)
+}
 
-	// Get lead info if this is a lead visit
-	var leadInfo *transport.AppointmentLeadInfo
-	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
+// sendConfirmationEmailIfNeeded sends confirmation email if conditions are met.
+func (s *Service) sendConfirmationEmailIfNeeded(ctx context.Context, sendEmail *bool, appt *repository.Appointment, leadInfo *transport.AppointmentLeadInfo, tenantID uuid.UUID) {
+	if sendEmail == nil || !*sendEmail || leadInfo == nil || s.emailSender == nil || appt.LeadID == nil {
+		return
 	}
-
-	// Send confirmation email if requested and this is a lead visit with lead info
-	if req.SendConfirmationEmail != nil && *req.SendConfirmationEmail && leadInfo != nil && s.emailSender != nil {
-		// Get consumer email from lead info (we need to fetch it separately)
-		if consumerEmail := s.getLeadEmail(ctx, *appt.LeadID, tenantID); consumerEmail != "" {
-			scheduledDate := appt.StartTime.Format("Monday, January 2, 2006 at 15:04")
-			_ = s.emailSender.SendVisitInviteEmail(ctx, consumerEmail, leadInfo.FirstName, scheduledDate, leadInfo.Address)
-			// We don't fail the appointment creation if email fails
-		}
+	if consumerEmail := s.getLeadEmail(ctx, *appt.LeadID, tenantID); consumerEmail != "" {
+		scheduledDate := appt.StartTime.Format("Monday, January 2, 2006 at 15:04")
+		_ = s.emailSender.SendVisitInviteEmail(ctx, consumerEmail, leadInfo.FirstName, scheduledDate, leadInfo.Address)
 	}
-
-	resp := appt.ToResponse(leadInfo)
-	return &resp, nil
 }
 
 // GetByID retrieves an appointment by ID
@@ -143,12 +174,34 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 		return nil, err
 	}
 
-	// Check ownership (admin can update any)
 	if !isAdmin && appt.UserID != userID {
 		return nil, apperr.Forbidden("not authorized to update this appointment")
 	}
 
-	// Apply updates (sanitize user input)
+	applyAppointmentUpdates(appt, req)
+
+	if !appt.EndTime.After(appt.StartTime) {
+		return nil, apperr.BadRequest(errEndTimeAfterStart)
+	}
+
+	if req.StartTime != nil || req.EndTime != nil {
+		if err := s.checkTimeConflict(ctx, tenantID, appt.UserID, appt.StartTime, appt.EndTime, appt.ID); err != nil {
+			return nil, err
+		}
+	}
+
+	appt.UpdatedAt = time.Now()
+	if err := s.repo.Update(ctx, appt); err != nil {
+		return nil, err
+	}
+
+	leadInfo := s.getLeadInfoIfPresent(ctx, appt.LeadID, tenantID)
+	resp := appt.ToResponse(leadInfo)
+	return &resp, nil
+}
+
+// applyAppointmentUpdates applies partial updates from the request to the appointment.
+func applyAppointmentUpdates(appt *repository.Appointment, req transport.UpdateAppointmentRequest) {
 	if req.Title != nil {
 		appt.Title = sanitize.Text(*req.Title)
 	}
@@ -170,43 +223,6 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 	if req.AllDay != nil {
 		appt.AllDay = *req.AllDay
 	}
-
-	// Validate time range after updates
-	if !appt.EndTime.After(appt.StartTime) {
-		return nil, apperr.BadRequest("endTime must be after startTime")
-	}
-
-	// Check for conflicting appointments (only if times were changed)
-	if req.StartTime != nil || req.EndTime != nil {
-		existing, err := s.repo.ListForDateRange(ctx, tenantID, appt.UserID, appt.StartTime, appt.EndTime)
-		if err != nil {
-			return nil, err
-		}
-		for _, other := range existing {
-			// Skip self
-			if other.ID == appt.ID {
-				continue
-			}
-			// Check for overlap
-			if appt.StartTime.Before(other.EndTime) && appt.EndTime.After(other.StartTime) {
-				return nil, apperr.Conflict("timeslot already booked")
-			}
-		}
-	}
-
-	appt.UpdatedAt = time.Now()
-
-	if err := s.repo.Update(ctx, appt); err != nil {
-		return nil, err
-	}
-
-	var leadInfo *transport.AppointmentLeadInfo
-	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
-	}
-
-	resp := appt.ToResponse(leadInfo)
-	return &resp, nil
 }
 
 // UpdateStatus updates the status of an appointment
@@ -521,11 +537,11 @@ func (s *Service) GetAvailableSlots(ctx context.Context, userID uuid.UUID, isAdm
 
 // parseAndValidateDateRange parses dates and validates the range.
 func parseAndValidateDateRange(startStr, endStr string, maxDays int) (time.Time, time.Time, error) {
-	startDate, err := time.Parse("2006-01-02", startStr)
+	startDate, err := time.Parse(dateFormat, startStr)
 	if err != nil {
 		return time.Time{}, time.Time{}, apperr.BadRequest("invalid startDate format")
 	}
-	endDate, err := time.Parse("2006-01-02", endStr)
+	endDate, err := time.Parse(dateFormat, endStr)
 	if err != nil {
 		return time.Time{}, time.Time{}, apperr.BadRequest("invalid endDate format")
 	}
@@ -552,7 +568,7 @@ func (s *Service) fetchAvailabilityData(ctx context.Context, tenantID, userID uu
 
 	overrideMap := make(map[string]*repository.AvailabilityOverride)
 	for i := range overrides {
-		overrideMap[overrides[i].Date.Format("2006-01-02")] = &overrides[i]
+		overrideMap[overrides[i].Date.Format(dateFormat)] = &overrides[i]
 	}
 
 	fetchStart := startDate.AddDate(0, 0, -1)
@@ -579,7 +595,7 @@ func (s *Service) generateDaySlots(startDate, endDate time.Time, rules []reposit
 
 // generateDaySlotsForDate generates slots for a single day.
 func (s *Service) generateDaySlotsForDate(d time.Time, rules []repository.AvailabilityRule, overrideMap map[string]*repository.AvailabilityOverride, appointments []repository.Appointment, slotDuration int) transport.DaySlots {
-	dateKey := d.Format("2006-01-02")
+	dateKey := d.Format(dateFormat)
 	daySlots := transport.DaySlots{Date: dateKey, Slots: []transport.TimeSlot{}}
 
 	// Check for override
@@ -777,7 +793,7 @@ func (s *Service) CreateAvailabilityOverride(ctx context.Context, userID uuid.UU
 		return nil, err
 	}
 
-	date, err := time.Parse("2006-01-02", req.Date)
+	date, err := time.Parse(dateFormat, req.Date)
 	if err != nil {
 		return nil, apperr.BadRequest("invalid date format")
 	}
@@ -851,7 +867,7 @@ func (s *Service) UpdateAvailabilityOverride(ctx context.Context, userID uuid.UU
 
 	// Apply partial updates
 	if req.Date != nil {
-		date, err := time.Parse("2006-01-02", *req.Date)
+		date, err := time.Parse(dateFormat, *req.Date)
 		if err != nil {
 			return nil, apperr.BadRequest("invalid date format")
 		}
@@ -972,7 +988,7 @@ func parseAvailabilityTimes(startTime string, endTime string, timezone string) (
 		return time.Time{}, time.Time{}, "", apperr.BadRequest("invalid endTime format")
 	}
 	if !end.After(start) {
-		return time.Time{}, time.Time{}, "", apperr.BadRequest("endTime must be after startTime")
+		return time.Time{}, time.Time{}, "", apperr.BadRequest(errEndTimeAfterStart)
 	}
 	if timezone == "" {
 		timezone = "Europe/Amsterdam"
@@ -999,7 +1015,7 @@ func parseAvailabilityOptionalTimes(startTime *string, endTime *string, timezone
 		return nil, nil, "", apperr.BadRequest("invalid endTime format")
 	}
 	if !end.After(start) {
-		return nil, nil, "", apperr.BadRequest("endTime must be after startTime")
+		return nil, nil, "", apperr.BadRequest(errEndTimeAfterStart)
 	}
 	return &start, &end, timezone, nil
 }
@@ -1009,14 +1025,14 @@ func parseOptionalDateRange(startDate *string, endDate *string) (*time.Time, *ti
 	var end *time.Time
 
 	if startDate != nil && *startDate != "" {
-		parsed, err := time.Parse("2006-01-02", *startDate)
+		parsed, err := time.Parse(dateFormat, *startDate)
 		if err != nil {
 			return nil, nil, apperr.BadRequest("invalid startDate format")
 		}
 		start = &parsed
 	}
 	if endDate != nil && *endDate != "" {
-		parsed, err := time.Parse("2006-01-02", *endDate)
+		parsed, err := time.Parse(dateFormat, *endDate)
 		if err != nil {
 			return nil, nil, apperr.BadRequest("invalid endDate format")
 		}
@@ -1066,7 +1082,7 @@ func mapAvailabilityOverride(override *repository.AvailabilityOverride) *transpo
 	return &transport.AvailabilityOverrideResponse{
 		ID:          override.ID,
 		UserID:      override.UserID,
-		Date:        override.Date.Format("2006-01-02"),
+		Date:        override.Date.Format(dateFormat),
 		IsAvailable: override.IsAvailable,
 		StartTime:   startTime,
 		EndTime:     endTime,
@@ -1102,7 +1118,7 @@ func parseDateFilter(s string, fieldName string) (*time.Time, error) {
 	if s == "" {
 		return nil, nil
 	}
-	t, err := time.Parse("2006-01-02", s)
+	t, err := time.Parse(dateFormat, s)
 	if err != nil {
 		return nil, apperr.BadRequest(fmt.Sprintf("invalid %s date format: %s", fieldName, s))
 	}

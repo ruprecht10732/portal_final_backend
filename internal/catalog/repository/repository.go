@@ -381,7 +381,16 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 		return nil, 0, err
 	}
 
-	return r.fetchProducts(ctx, whereClause, sortColumn, sortOrder, args, argIdx, params.Limit, params.Offset, total)
+	return r.fetchProducts(ctx, fetchProductsParams{
+		whereClause: whereClause,
+		sortColumn:  sortColumn,
+		sortOrder:   sortOrder,
+		args:        args,
+		argIdx:      argIdx,
+		limit:       params.Limit,
+		offset:      params.Offset,
+		total:       total,
+	})
 }
 
 func (r *Repo) countProducts(ctx context.Context, whereClause string, args []interface{}) (int, error) {
@@ -393,17 +402,29 @@ func (r *Repo) countProducts(ctx context.Context, whereClause string, args []int
 	return total, nil
 }
 
-func (r *Repo) fetchProducts(ctx context.Context, whereClause, sortColumn, sortOrder string, args []interface{}, argIdx, limit, offset, total int) ([]Product, int, error) {
-	args = append(args, limit, offset)
+// fetchProductsParams groups parameters for fetchProducts to reduce argument count.
+type fetchProductsParams struct {
+	whereClause string
+	sortColumn  string
+	sortOrder   string
+	args        []interface{}
+	argIdx      int
+	limit       int
+	offset      int
+	total       int
+}
+
+func (r *Repo) fetchProducts(ctx context.Context, p fetchProductsParams) ([]Product, int, error) {
+	p.args = append(p.args, p.limit, p.offset)
 	query := fmt.Sprintf(`
 		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
 		FROM RAC_catalog_products
 		WHERE %s
 		ORDER BY %s %s, created_at DESC
 		LIMIT $%d OFFSET $%d
-	`, whereClause, sortColumn, sortOrder, argIdx, argIdx+1)
+	`, p.whereClause, p.sortColumn, p.sortOrder, p.argIdx, p.argIdx+1)
 
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, query, p.args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list products: %w", err)
 	}
@@ -413,7 +434,7 @@ func (r *Repo) fetchProducts(ctx context.Context, whereClause, sortColumn, sortO
 	if err != nil {
 		return nil, 0, err
 	}
-	return items, total, nil
+	return items, p.total, nil
 }
 
 func scanProducts(rows pgx.Rows) ([]Product, error) {
