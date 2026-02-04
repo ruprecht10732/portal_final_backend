@@ -21,6 +21,7 @@ type Handler struct {
 const (
 	msgInvalidRequest   = "invalid request"
 	msgValidationFailed = "validation failed"
+	msgTenantNotSet     = "tenant not set"
 )
 
 func New(svc *service.Service, val *validator.Validator) *Handler {
@@ -44,7 +45,7 @@ func (h *Handler) CreateInvite(c *gin.Context) {
 
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
 		return
 	}
 
@@ -77,7 +78,7 @@ func (h *Handler) GetOrganization(c *gin.Context) {
 
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
 		return
 	}
 
@@ -109,7 +110,7 @@ func (h *Handler) UpdateOrganization(c *gin.Context) {
 
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
 		return
 	}
 
@@ -164,7 +165,7 @@ func (h *Handler) ListInvites(c *gin.Context) {
 
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
 		return
 	}
 
@@ -189,7 +190,7 @@ func (h *Handler) UpdateInvite(c *gin.Context) {
 
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
 		return
 	}
 
@@ -228,7 +229,7 @@ func (h *Handler) RevokeInvite(c *gin.Context) {
 
 	tenantID := identity.TenantID()
 	if tenantID == nil {
-		httpkit.Error(c, http.StatusBadRequest, "tenant not set", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
 		return
 	}
 

@@ -58,6 +58,11 @@ func main() {
 	repo := repository.New(pool)
 	scorer := scoring.New(repo, log)
 
+	runBackfill(ctx, pool, repo, scorer, enricher, log)
+}
+
+func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo leadEnrichmentUpdater, scorer *scoring.Service, enricher ports.LeadEnricher, log *logger.Logger) {
+
 	const batchSize = 50
 	const delayBetweenCalls = 300 * time.Millisecond
 

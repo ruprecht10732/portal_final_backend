@@ -42,6 +42,10 @@ func main() {
 
 	mapsService := maps.NewService(log)
 
+	runGeocodeBackfill(ctx, pool, mapsService, log)
+}
+
+func runGeocodeBackfill(ctx context.Context, pool *pgxpool.Pool, mapsService *maps.Service, log *logger.Logger) {
 	const batchSize = 25
 	for {
 		leads, err := listLeadsMissingCoordinates(ctx, pool, batchSize)
@@ -57,46 +61,9 @@ func main() {
 		progress := false
 
 		for _, lead := range leads {
-			if lead.street == "Unknown" || lead.city == "Unknown" || lead.zipCode == "0000XX" {
-				log.Info("skipping invalid address", "leadId", lead.id)
-				continue
+			if geocodeLead(ctx, pool, mapsService, lead, log) {
+				progress = true
 			}
-
-			address := fmt.Sprintf("%s %s, %s %s", lead.street, lead.houseNumber, lead.zipCode, lead.city)
-			suggestions, err := mapsService.SearchAddress(ctx, address)
-			if err != nil {
-				log.Error("geocode failed", "leadId", lead.id, "error", err)
-				time.Sleep(time.Second)
-				continue
-			}
-			if len(suggestions) == 0 {
-				log.Info("no geocode result", "leadId", lead.id, "address", address)
-				time.Sleep(time.Second)
-				continue
-			}
-
-			lat, err := strconv.ParseFloat(suggestions[0].Lat, 64)
-			if err != nil {
-				log.Error("invalid latitude", "leadId", lead.id, "value", suggestions[0].Lat)
-				time.Sleep(time.Second)
-				continue
-			}
-			lon, err := strconv.ParseFloat(suggestions[0].Lon, 64)
-			if err != nil {
-				log.Error("invalid longitude", "leadId", lead.id, "value", suggestions[0].Lon)
-				time.Sleep(time.Second)
-				continue
-			}
-
-			if err := updateLeadCoordinates(ctx, pool, lead.id, lat, lon); err != nil {
-				log.Error("failed to update lead", "leadId", lead.id, "error", err)
-				time.Sleep(time.Second)
-				continue
-			}
-
-			log.Info("lead geocoded", "leadId", lead.id, "lat", lat, "lon", lon)
-			progress = true
-			time.Sleep(time.Second)
 		}
 
 		if !progress {
@@ -104,6 +71,60 @@ func main() {
 			return
 		}
 	}
+}
+
+func geocodeLead(ctx context.Context, pool *pgxpool.Pool, mapsService *maps.Service, lead leadAddress, log *logger.Logger) bool {
+	if isInvalidAddress(lead) {
+		log.Info("skipping invalid address", "leadId", lead.id)
+		return false
+	}
+
+	address := fmt.Sprintf("%s %s, %s %s", lead.street, lead.houseNumber, lead.zipCode, lead.city)
+	suggestions, err := mapsService.SearchAddress(ctx, address)
+	if err != nil {
+		log.Error("geocode failed", "leadId", lead.id, "error", err)
+		time.Sleep(time.Second)
+		return false
+	}
+	if len(suggestions) == 0 {
+		log.Info("no geocode result", "leadId", lead.id, "address", address)
+		time.Sleep(time.Second)
+		return false
+	}
+
+	lat, err := parseCoordinate("latitude", suggestions[0].Lat, lead.id, log)
+	if err != nil {
+		time.Sleep(time.Second)
+		return false
+	}
+	long, err := parseCoordinate("longitude", suggestions[0].Lon, lead.id, log)
+	if err != nil {
+		time.Sleep(time.Second)
+		return false
+	}
+
+	if err := updateLeadCoordinates(ctx, pool, lead.id, lat, long); err != nil {
+		log.Error("failed to update lead", "leadId", lead.id, "error", err)
+		time.Sleep(time.Second)
+		return false
+	}
+
+	log.Info("lead geocoded", "leadId", lead.id, "lat", lat, "lon", long)
+	time.Sleep(time.Second)
+	return true
+}
+
+func isInvalidAddress(lead leadAddress) bool {
+	return lead.street == "Unknown" || lead.city == "Unknown" || lead.zipCode == "0000XX"
+}
+
+func parseCoordinate(kind string, value string, leadID uuid.UUID, log *logger.Logger) (float64, error) {
+	coordinate, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		log.Error("invalid "+kind, "leadId", leadID, "value", value)
+		return 0, err
+	}
+	return coordinate, nil
 }
 
 func listLeadsMissingCoordinates(ctx context.Context, pool *pgxpool.Pool, limit int) ([]leadAddress, error) {
