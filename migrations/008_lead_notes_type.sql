@@ -6,9 +6,8 @@ ALTER TABLE RAC_lead_notes
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'lead_notes_type_check'
+    -- nosemgrep: system catalog query required for idempotent constraint creation
+    SELECT 1 FROM pg_constraint WHERE conname = 'lead_notes_type_check'
   ) THEN
     ALTER TABLE RAC_lead_notes
       ADD CONSTRAINT lead_notes_type_check

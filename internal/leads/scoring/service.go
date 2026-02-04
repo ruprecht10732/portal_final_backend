@@ -51,7 +51,7 @@ type serviceWeights struct {
 	consumerNote float64 // Customer provided description
 	source       float64 // Lead source quality
 	assigned     float64 // Has assigned agent
-	appointments float64 // Appointment activity
+	RAC_appointments float64 // Appointment activity
 }
 
 // defaultServiceWeights returns weights for services with unknown/generic type.
@@ -76,7 +76,7 @@ var defaultServiceWeights = serviceWeights{
 	consumerNote:  1.0,
 	source:        1.0,
 	assigned:      1.0,
-	appointments:  1.0,
+	RAC_appointments:  1.0,
 }
 
 // Service-type-specific weights based on industry research:
@@ -106,7 +106,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.1, // Detailed requests show intent
 		source:        1.0,
 		assigned:      0.8, // Less important - solar is consultative
-		appointments:  1.1, // Site survey critical
+		RAC_appointments:  1.1, // Site survey critical
 	},
 
 	// Insulation: Poor energy labels are gold, high gas usage, older buildings
@@ -131,7 +131,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.2, // Problem description helps scope
 		source:        1.0,
 		assigned:      0.9,
-		appointments:  1.0,
+		RAC_appointments:  1.0,
 	},
 
 	// HVAC/Heat pumps: High gas usage (replacing boilers), good insulation preferred
@@ -156,7 +156,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.1,
 		source:        1.0,
 		assigned:      0.9,
-		appointments:  1.1, // Technical assessment needed
+		RAC_appointments:  1.1, // Technical assessment needed
 	},
 
 	// Windows: Building age matters, energy performance relevant
@@ -181,7 +181,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.1,
 		source:        1.0,
 		assigned:      0.9,
-		appointments:  1.0,
+		RAC_appointments:  1.0,
 	},
 
 	// Plumbing: Less demographic, more activity-focused
@@ -206,7 +206,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.4, // Problem description crucial for plumbing
 		source:        1.0,
 		assigned:      1.2, // Quick response important
-		appointments:  1.3, // Urgency - need quick appointment
+		RAC_appointments:  1.3, // Urgency - need quick appointment
 	},
 
 	// Electrical: Similar to plumbing, activity important
@@ -231,7 +231,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.3, // Safety context important
 		source:        1.0,
 		assigned:      1.2, // Quick response for safety
-		appointments:  1.2,
+		RAC_appointments:  1.2,
 	},
 
 	// Carpentry: Building age and property value
@@ -256,7 +256,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.2, // Project scope from description
 		source:        1.0,
 		assigned:      1.0,
-		appointments:  1.0,
+		RAC_appointments:  1.0,
 	},
 
 	// Handyman: Most activity-focused, least demographic
@@ -281,7 +281,7 @@ var serviceWeightsMap = map[string]serviceWeights{
 		consumerNote:  1.3, // Task description important
 		source:        1.1,
 		assigned:      1.1,
-		appointments:  1.2,
+		RAC_appointments:  1.2,
 	},
 }
 
@@ -546,10 +546,10 @@ func (s *Service) computePreAIScore(lead repository.Lead, svc *repository.LeadSe
 	assignedScore := s.scoreAssigned(lead) * weights.assigned
 	score += s.addFactor(factors, "assigned", assignedScore)
 
-	// Appointments: Scheduled/completed appointments show commitment
+	// Appointments: Scheduled/completed RAC_appointments show commitment
 	// Score: -3 to +10
-	appointmentScore := s.scoreAppointments(apptStats) * weights.appointments
-	score += s.addFactor(factors, "appointments", appointmentScore)
+	appointmentScore := s.scoreAppointments(apptStats) * weights.RAC_appointments
+	score += s.addFactor(factors, "RAC_appointments", appointmentScore)
 
 	return clampScore(score), factors
 }
@@ -1136,10 +1136,10 @@ func (s *Service) scoreAssigned(lead repository.Lead) float64 {
 }
 
 // scoreAppointments evaluates appointment activity.
-// Scheduled/completed appointments indicate serious buyer engagement.
+// Scheduled/completed RAC_appointments indicate serious buyer engagement.
 func (s *Service) scoreAppointments(stats repository.LeadAppointmentStats) float64 {
 	if stats.Total == 0 {
-		return 0 // No appointments yet - neutral
+		return 0 // No RAC_appointments yet - neutral
 	}
 
 	score := 0.0
@@ -1149,7 +1149,7 @@ func (s *Service) scoreAppointments(stats repository.LeadAppointmentStats) float
 		score += 4
 	}
 
-	// Completed appointments show progress
+	// Completed RAC_appointments show progress
 	score += float64(stats.Completed) * 2
 	if stats.Completed >= 2 {
 		score += 2 // Multiple visits = serious
@@ -1158,7 +1158,7 @@ func (s *Service) scoreAppointments(stats repository.LeadAppointmentStats) float
 	// Scheduled but not completed yet
 	score += float64(stats.Scheduled) * 1.5
 
-	// Cancelled appointments are negative signal
+	// Cancelled RAC_appointments are negative signal
 	if stats.Cancelled > 0 {
 		cancellationRate := float64(stats.Cancelled) / float64(stats.Total)
 		if cancellationRate >= 0.5 {

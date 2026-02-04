@@ -65,7 +65,7 @@ type UpdateAppointmentStatusRequest struct {
 	Status AppointmentStatus `json:"status" validate:"required,oneof=scheduled completed cancelled no_show"`
 }
 
-// ListAppointmentsRequest is the query parameters for listing appointments
+// ListAppointmentsRequest is the query parameters for listing RAC_appointments
 type ListAppointmentsRequest struct {
 	UserID    string             `form:"userId"`
 	LeadID    string             `form:"leadId"`
@@ -110,7 +110,7 @@ type AppointmentLeadInfo struct {
 	Address   string    `json:"address"`
 }
 
-// AppointmentListResponse is the paginated response for listing appointments
+// AppointmentListResponse is the paginated response for listing RAC_appointments
 type AppointmentListResponse struct {
 	Items      []AppointmentResponse `json:"items"`
 	Total      int                   `json:"total"`

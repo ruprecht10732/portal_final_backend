@@ -27,6 +27,13 @@ func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+func (r *Repository) getDB(q DBTX) DBTX {
+	if q != nil {
+		return q
+	}
+	return r.pool
+}
+
 type Organization struct {
 	ID           uuid.UUID
 	Name         string
@@ -71,8 +78,8 @@ type Invite struct {
 
 func (r *Repository) CreateOrganization(ctx context.Context, q DBTX, name string, createdBy uuid.UUID) (Organization, error) {
 	var org Organization
-	err := q.QueryRow(ctx, `
-    INSERT INTO organizations (name, created_by)
+	err := r.getDB(q).QueryRow(ctx, `
+    INSERT INTO RAC_organizations (name, created_by)
     VALUES ($1, $2)
     RETURNING id, name, created_by, created_at, updated_at
   `, name, createdBy).Scan(&org.ID, &org.Name, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
@@ -84,7 +91,7 @@ func (r *Repository) GetOrganization(ctx context.Context, organizationID uuid.UU
 	err := r.pool.QueryRow(ctx, `
     SELECT id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
       created_by, created_at, updated_at
-    FROM organizations
+    FROM RAC_organizations
     WHERE id = $1
   `, organizationID).Scan(
 		&org.ID,
@@ -115,7 +122,7 @@ func (r *Repository) UpdateOrganizationProfile(
 ) (Organization, error) {
 	var org Organization
 	err := r.pool.QueryRow(ctx, `
-    UPDATE organizations
+    UPDATE RAC_organizations
     SET
       name = COALESCE($2, name),
       email = COALESCE($3, email),
@@ -154,8 +161,8 @@ func (r *Repository) UpdateOrganizationProfile(
 }
 
 func (r *Repository) AddMember(ctx context.Context, q DBTX, organizationID, userID uuid.UUID) error {
-	_, err := q.Exec(ctx, `
-    INSERT INTO organization_members (organization_id, user_id)
+	_, err := r.getDB(q).Exec(ctx, `
+    INSERT INTO RAC_organization_members (organization_id, user_id)
     VALUES ($1, $2)
   `, organizationID, userID)
 	return err
@@ -165,7 +172,7 @@ func (r *Repository) GetUserOrganizationID(ctx context.Context, userID uuid.UUID
 	var orgID uuid.UUID
 	err := r.pool.QueryRow(ctx, `
     SELECT organization_id
-    FROM organization_members
+    FROM RAC_organization_members
     WHERE user_id = $1
   `, userID).Scan(&orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -177,7 +184,7 @@ func (r *Repository) GetUserOrganizationID(ctx context.Context, userID uuid.UUID
 func (r *Repository) CreateInvite(ctx context.Context, organizationID uuid.UUID, email, tokenHash string, expiresAt time.Time, createdBy uuid.UUID) (Invite, error) {
 	var invite Invite
 	err := r.pool.QueryRow(ctx, `
-    INSERT INTO organization_invites (organization_id, email, token_hash, expires_at, created_by)
+    INSERT INTO RAC_organization_invites (organization_id, email, token_hash, expires_at, created_by)
     VALUES ($1, $2, $3, $4, $5)
     RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
   `, organizationID, email, tokenHash, expiresAt, createdBy).Scan(
@@ -198,7 +205,7 @@ func (r *Repository) GetInviteByToken(ctx context.Context, tokenHash string) (In
 	var invite Invite
 	err := r.pool.QueryRow(ctx, `
     SELECT id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
-    FROM organization_invites
+    FROM RAC_organization_invites
     WHERE token_hash = $1
   `, tokenHash).Scan(
 		&invite.ID,
@@ -218,8 +225,8 @@ func (r *Repository) GetInviteByToken(ctx context.Context, tokenHash string) (In
 }
 
 func (r *Repository) UseInvite(ctx context.Context, q DBTX, inviteID, usedBy uuid.UUID) error {
-	_, err := q.Exec(ctx, `
-    UPDATE organization_invites
+	_, err := r.getDB(q).Exec(ctx, `
+    UPDATE RAC_organization_invites
     SET used_at = now(), used_by = $2
     WHERE id = $1 AND used_at IS NULL
   `, inviteID, usedBy)
@@ -229,7 +236,7 @@ func (r *Repository) UseInvite(ctx context.Context, q DBTX, inviteID, usedBy uui
 func (r *Repository) ListInvites(ctx context.Context, organizationID uuid.UUID) ([]Invite, error) {
 	rows, err := r.pool.Query(ctx, `
     SELECT id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
-    FROM organization_invites
+    FROM RAC_organization_invites
     WHERE organization_id = $1
     ORDER BY created_at DESC
   `, organizationID)
@@ -273,7 +280,7 @@ func (r *Repository) UpdateInvite(
 ) (Invite, error) {
 	var invite Invite
 	err := r.pool.QueryRow(ctx, `
-    UPDATE organization_invites
+    UPDATE RAC_organization_invites
     SET
       email = COALESCE($3, email),
       token_hash = COALESCE($4, token_hash),
@@ -300,7 +307,7 @@ func (r *Repository) UpdateInvite(
 func (r *Repository) RevokeInvite(ctx context.Context, organizationID, inviteID uuid.UUID) (Invite, error) {
 	var invite Invite
 	err := r.pool.QueryRow(ctx, `
-    UPDATE organization_invites
+    UPDATE RAC_organization_invites
     SET expires_at = now()
     WHERE id = $1 AND organization_id = $2 AND used_at IS NULL
     RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by

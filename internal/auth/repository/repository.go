@@ -465,7 +465,7 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT u.id, u.email, u.first_name, u.last_name,
-			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS RAC_roles
+			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
 		FROM RAC_users u
 		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
 		LEFT JOIN RAC_roles r ON r.id = ur.role_id

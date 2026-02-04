@@ -305,10 +305,10 @@ IMPORTANT RULES:
    - Not interested/declined/bad fit → "Bad_Lead"
    - Survey/inspection completed → "Surveyed"
    - Needs to reschedule/postponed → "Needs_Rescheduling"
-5. When booking appointments, also update status to "Scheduled".
+5. When booking RAC_appointments, also update status to "Scheduled".
 6. Use 24-hour time format (e.g., 09:00, 14:30).
 7. Do NOT make up information. Only act on what is explicitly stated in the summary.
-8. Email confirmation behavior for appointments:
+8. Email confirmation behavior for RAC_appointments:
    - By default, sendConfirmationEmail should be TRUE (send email)
    - Only set sendConfirmationEmail to FALSE if the call notes explicitly mention:
      - "no email", "don't send email", "skip email", "no confirmation email"

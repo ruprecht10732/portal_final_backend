@@ -17,13 +17,13 @@ const (
 	msgValidationFailed = "validation failed"
 )
 
-// Handler handles HTTP requests for appointments
+// Handler handles HTTP requests for RAC_appointments
 type Handler struct {
 	svc *service.Service
 	val *validator.Validator
 }
 
-// New creates a new appointments handler
+// New creates a new RAC_appointments handler
 func New(svc *service.Service, val *validator.Validator) *Handler {
 	return &Handler{svc: svc, val: val}
 }
@@ -65,7 +65,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/availability/slots", h.GetAvailableSlots)
 }
 
-// List handles GET /api/appointments
+// List handles GET /api/RAC_appointments
 func (h *Handler) List(c *gin.Context) {
 	var req transport.ListAppointmentsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -91,7 +91,7 @@ func (h *Handler) List(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// Create handles POST /api/appointments
+// Create handles POST /api/RAC_appointments
 func (h *Handler) Create(c *gin.Context) {
 	var req transport.CreateAppointmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -121,7 +121,7 @@ func (h *Handler) Create(c *gin.Context) {
 	httpkit.JSON(c, http.StatusCreated, result)
 }
 
-// GetByID handles GET /api/appointments/:id
+// GetByID handles GET /api/RAC_appointments/:id
 func (h *Handler) GetByID(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -147,7 +147,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// Update handles PUT /api/appointments/:id
+// Update handles PUT /api/RAC_appointments/:id
 func (h *Handler) Update(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -183,7 +183,7 @@ func (h *Handler) Update(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// Delete handles DELETE /api/appointments/:id
+// Delete handles DELETE /api/RAC_appointments/:id
 func (h *Handler) Delete(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -208,7 +208,7 @@ func (h *Handler) Delete(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "appointment deleted"})
 }
 
-// UpdateStatus handles PATCH /api/appointments/:id/status
+// UpdateStatus handles PATCH /api/RAC_appointments/:id/status
 func (h *Handler) UpdateStatus(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -244,7 +244,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// GetVisitReport handles GET /api/appointments/:id/visit-report
+// GetVisitReport handles GET /api/RAC_appointments/:id/visit-report
 func (h *Handler) GetVisitReport(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -270,7 +270,7 @@ func (h *Handler) GetVisitReport(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// UpsertVisitReport handles PUT /api/appointments/:id/visit-report
+// UpsertVisitReport handles PUT /api/RAC_appointments/:id/visit-report
 func (h *Handler) UpsertVisitReport(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -306,7 +306,7 @@ func (h *Handler) UpsertVisitReport(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// CreateAttachment handles POST /api/appointments/:id/attachments
+// CreateAttachment handles POST /api/RAC_appointments/:id/attachments
 func (h *Handler) CreateAttachment(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -342,7 +342,7 @@ func (h *Handler) CreateAttachment(c *gin.Context) {
 	httpkit.JSON(c, http.StatusCreated, result)
 }
 
-// ListAttachments handles GET /api/appointments/:id/attachments
+// ListAttachments handles GET /api/RAC_appointments/:id/attachments
 func (h *Handler) ListAttachments(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -368,7 +368,7 @@ func (h *Handler) ListAttachments(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// CreateAvailabilityRule handles POST /api/appointments/availability/rules
+// CreateAvailabilityRule handles POST /api/RAC_appointments/availability/rules
 func (h *Handler) CreateAvailabilityRule(c *gin.Context) {
 	var req transport.CreateAvailabilityRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -398,7 +398,7 @@ func (h *Handler) CreateAvailabilityRule(c *gin.Context) {
 	httpkit.JSON(c, http.StatusCreated, result)
 }
 
-// ListAvailabilityRules handles GET /api/appointments/availability/rules
+// ListAvailabilityRules handles GET /api/RAC_appointments/availability/rules
 func (h *Handler) ListAvailabilityRules(c *gin.Context) {
 	var userID *uuid.UUID
 	if raw := c.Query("userId"); raw != "" {
@@ -428,7 +428,7 @@ func (h *Handler) ListAvailabilityRules(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// DeleteAvailabilityRule handles DELETE /api/appointments/availability/rules/:id
+// DeleteAvailabilityRule handles DELETE /api/RAC_appointments/availability/rules/:id
 func (h *Handler) DeleteAvailabilityRule(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -453,7 +453,7 @@ func (h *Handler) DeleteAvailabilityRule(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "availability rule deleted"})
 }
 
-// UpdateAvailabilityRule handles PUT /api/appointments/availability/rules/:id
+// UpdateAvailabilityRule handles PUT /api/RAC_appointments/availability/rules/:id
 func (h *Handler) UpdateAvailabilityRule(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -489,7 +489,7 @@ func (h *Handler) UpdateAvailabilityRule(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// CreateAvailabilityOverride handles POST /api/appointments/availability/overrides
+// CreateAvailabilityOverride handles POST /api/RAC_appointments/availability/overrides
 func (h *Handler) CreateAvailabilityOverride(c *gin.Context) {
 	var req transport.CreateAvailabilityOverrideRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -519,7 +519,7 @@ func (h *Handler) CreateAvailabilityOverride(c *gin.Context) {
 	httpkit.JSON(c, http.StatusCreated, result)
 }
 
-// ListAvailabilityOverrides handles GET /api/appointments/availability/overrides
+// ListAvailabilityOverrides handles GET /api/RAC_appointments/availability/overrides
 func (h *Handler) ListAvailabilityOverrides(c *gin.Context) {
 	var userID *uuid.UUID
 	if raw := c.Query("userId"); raw != "" {
@@ -560,7 +560,7 @@ func (h *Handler) ListAvailabilityOverrides(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// DeleteAvailabilityOverride handles DELETE /api/appointments/availability/overrides/:id
+// DeleteAvailabilityOverride handles DELETE /api/RAC_appointments/availability/overrides/:id
 func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -585,7 +585,7 @@ func (h *Handler) DeleteAvailabilityOverride(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "availability override deleted"})
 }
 
-// UpdateAvailabilityOverride handles PUT /api/appointments/availability/overrides/:id
+// UpdateAvailabilityOverride handles PUT /api/RAC_appointments/availability/overrides/:id
 func (h *Handler) UpdateAvailabilityOverride(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -621,7 +621,7 @@ func (h *Handler) UpdateAvailabilityOverride(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// GetAvailableSlots handles GET /api/appointments/availability/slots
+// GetAvailableSlots handles GET /api/RAC_appointments/availability/slots
 func (h *Handler) GetAvailableSlots(c *gin.Context) {
 	var req transport.GetAvailableSlotsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {

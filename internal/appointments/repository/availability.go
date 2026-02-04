@@ -39,7 +39,7 @@ type AvailabilityOverride struct {
 
 func (r *Repository) CreateAvailabilityRule(ctx context.Context, rule AvailabilityRule) (*AvailabilityRule, error) {
 	query := `
-		INSERT INTO appointment_availability_rules
+		INSERT INTO RAC_appointment_availability_rules
 			(id, organization_id, user_id, weekday, start_time, end_time, timezone)
 		VALUES
 			($1, $2, $3, $4, $5, $6, $7)
@@ -74,7 +74,7 @@ func (r *Repository) CreateAvailabilityRule(ctx context.Context, rule Availabili
 
 func (r *Repository) ListAvailabilityRules(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID) ([]AvailabilityRule, error) {
 	query := `SELECT id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at
-		FROM appointment_availability_rules WHERE organization_id = $1 AND user_id = $2 ORDER BY weekday, start_time`
+		FROM RAC_appointment_availability_rules WHERE organization_id = $1 AND user_id = $2 ORDER BY weekday, start_time`
 
 	rows, err := r.pool.Query(ctx, query, organizationID, userID)
 	if err != nil {
@@ -109,7 +109,7 @@ func (r *Repository) ListAvailabilityRules(ctx context.Context, organizationID u
 
 func (r *Repository) GetAvailabilityRuleByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*AvailabilityRule, error) {
 	query := `SELECT id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at
-		FROM appointment_availability_rules WHERE id = $1 AND organization_id = $2`
+		FROM RAC_appointment_availability_rules WHERE id = $1 AND organization_id = $2`
 
 	var item AvailabilityRule
 	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
@@ -134,7 +134,7 @@ func (r *Repository) GetAvailabilityRuleByID(ctx context.Context, id uuid.UUID, 
 }
 
 func (r *Repository) DeleteAvailabilityRule(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM appointment_availability_rules WHERE id = $1 AND organization_id = $2`, id, organizationID)
+	_, err := r.pool.Exec(ctx, `DELETE FROM RAC_appointment_availability_rules WHERE id = $1 AND organization_id = $2`, id, organizationID)
 	if err != nil {
 		return fmt.Errorf("failed to delete availability rule: %w", err)
 	}
@@ -143,7 +143,7 @@ func (r *Repository) DeleteAvailabilityRule(ctx context.Context, id uuid.UUID, o
 
 func (r *Repository) UpdateAvailabilityRule(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, rule AvailabilityRule) (*AvailabilityRule, error) {
 	query := `
-		UPDATE appointment_availability_rules SET
+		UPDATE RAC_appointment_availability_rules SET
 			weekday = $3,
 			start_time = $4,
 			end_time = $5,
@@ -183,7 +183,7 @@ func (r *Repository) UpdateAvailabilityRule(ctx context.Context, id uuid.UUID, o
 
 func (r *Repository) CreateAvailabilityOverride(ctx context.Context, override AvailabilityOverride) (*AvailabilityOverride, error) {
 	query := `
-		INSERT INTO appointment_availability_overrides
+		INSERT INTO RAC_appointment_availability_overrides
 			(id, organization_id, user_id, date, is_available, start_time, end_time, timezone)
 		VALUES
 			($1, $2, $3, $4, $5, $6, $7, $8)
@@ -220,7 +220,7 @@ func (r *Repository) CreateAvailabilityOverride(ctx context.Context, override Av
 
 func (r *Repository) ListAvailabilityOverrides(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]AvailabilityOverride, error) {
 	baseQuery := `SELECT id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at
-		FROM appointment_availability_overrides WHERE organization_id = $1 AND user_id = $2`
+		FROM RAC_appointment_availability_overrides WHERE organization_id = $1 AND user_id = $2`
 	args := []interface{}{organizationID, userID}
 
 	if startDate != nil {
@@ -268,7 +268,7 @@ func (r *Repository) ListAvailabilityOverrides(ctx context.Context, organization
 
 func (r *Repository) GetAvailabilityOverrideByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*AvailabilityOverride, error) {
 	query := `SELECT id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at
-		FROM appointment_availability_overrides WHERE id = $1 AND organization_id = $2`
+		FROM RAC_appointment_availability_overrides WHERE id = $1 AND organization_id = $2`
 
 	var item AvailabilityOverride
 	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
@@ -294,7 +294,7 @@ func (r *Repository) GetAvailabilityOverrideByID(ctx context.Context, id uuid.UU
 }
 
 func (r *Repository) DeleteAvailabilityOverride(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM appointment_availability_overrides WHERE id = $1 AND organization_id = $2`, id, organizationID)
+	_, err := r.pool.Exec(ctx, `DELETE FROM RAC_appointment_availability_overrides WHERE id = $1 AND organization_id = $2`, id, organizationID)
 	if err != nil {
 		return fmt.Errorf("failed to delete availability override: %w", err)
 	}
@@ -303,7 +303,7 @@ func (r *Repository) DeleteAvailabilityOverride(ctx context.Context, id uuid.UUI
 
 func (r *Repository) UpdateAvailabilityOverride(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, override AvailabilityOverride) (*AvailabilityOverride, error) {
 	query := `
-		UPDATE appointment_availability_overrides SET
+		UPDATE RAC_appointment_availability_overrides SET
 			date = $3,
 			is_available = $4,
 			start_time = $5,

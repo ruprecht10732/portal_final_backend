@@ -8,20 +8,20 @@ import (
 	"portal_final_backend/internal/leads/ports"
 )
 
-// AppointmentsAdapter adapts the appointments service for use by the RAC_leads domain.
+// AppointmentsAdapter adapts the RAC_appointments service for use by the RAC_leads domain.
 // It implements the RAC_leads/ports.AppointmentBooker interface.
 type AppointmentsAdapter struct {
 	apptService *service.Service
 }
 
-// NewAppointmentsAdapter creates a new adapter that wraps the appointments service.
+// NewAppointmentsAdapter creates a new adapter that wraps the RAC_appointments service.
 func NewAppointmentsAdapter(apptService *service.Service) *AppointmentsAdapter {
 	return &AppointmentsAdapter{apptService: apptService}
 }
 
 // BookLeadVisit creates a visit appointment for a specific lead and service.
-// It translates the RAC_leads domain's BookVisitParams into the appointments domain's
-// CreateAppointmentRequest and calls the appointments service.
+// It translates the RAC_leads domain's BookVisitParams into the RAC_appointments domain's
+// CreateAppointmentRequest and calls the RAC_appointments service.
 func (a *AppointmentsAdapter) BookLeadVisit(ctx context.Context, params ports.BookVisitParams) error {
 	sendEmail := params.SendConfirmationEmail
 	req := transport.CreateAppointmentRequest{
@@ -36,7 +36,7 @@ func (a *AppointmentsAdapter) BookLeadVisit(ctx context.Context, params ports.Bo
 		SendConfirmationEmail: &sendEmail,
 	}
 
-	// Call the appointments service as the user performing the action.
+	// Call the RAC_appointments service as the user performing the action.
 	// We pass isAdmin=false since the agent is booking on their own behalf.
 	_, err := a.apptService.Create(ctx, params.UserID, false, params.TenantID, req)
 	return err

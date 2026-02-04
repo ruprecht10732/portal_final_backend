@@ -116,8 +116,7 @@ func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (GetRef
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
-FROM RAC_users WHERE email = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE email = $1
 `
 
 type GetUserByEmailRow struct {
@@ -148,8 +147,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
-FROM RAC_users WHERE id = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE id = $1
 `
 
 type GetUserByIDRow struct {
@@ -180,8 +178,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 }
 
 const getUserRoles = `-- name: GetUserRoles :many
-SELECT r.name
-FROM RAC_roles r
+SELECT r.name FROM RAC_roles r
 JOIN RAC_user_roles ur ON ur.role_id = r.id
 WHERE ur.user_id = $1
 ORDER BY r.name
@@ -233,8 +230,8 @@ const getValidRoles = `-- name: GetValidRoles :many
 SELECT name FROM RAC_roles WHERE name = ANY($1::text[])
 `
 
-func (q *Queries) GetValidRoles(ctx context.Context, roleNames []string) ([]string, error) {
-	rows, err := q.db.Query(ctx, getValidRoles, roleNames)
+func (q *Queries) GetValidRoles(ctx context.Context, dollar_1 []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, getValidRoles, dollar_1)
 	if err != nil {
 		return nil, err
 	}
@@ -269,9 +266,7 @@ func (q *Queries) InsertUserRoles(ctx context.Context, arg InsertUserRolesParams
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT u.id, u.email,
-    COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS RAC_roles
-FROM RAC_users u
+SELECT u.id, u.email, COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles FROM RAC_users u
 LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
 LEFT JOIN RAC_roles r ON r.id = ur.role_id
 GROUP BY u.id

@@ -12,7 +12,7 @@ import (
 )
 
 // BookVisitParams contains the parameters needed to book a lead visit appointment.
-// This is defined by the RAC_leads domain, not by the appointments domain.
+// This is defined by the RAC_leads domain, not by the RAC_appointments domain.
 type BookVisitParams struct {
 	TenantID              uuid.UUID
 	UserID                uuid.UUID // The agent booking the visit (and likely attending)
@@ -25,9 +25,9 @@ type BookVisitParams struct {
 	SendConfirmationEmail bool // If true, sends confirmation email to lead
 }
 
-// AppointmentBooker is the interface that the RAC_leads domain uses to book appointments.
+// AppointmentBooker is the interface that the RAC_leads domain uses to book RAC_appointments.
 // The implementation is provided by the composition root (main/router) and wraps
-// the appointments service. This ensures RAC_leads never directly imports the appointments domain.
+// the RAC_appointments service. This ensures RAC_leads never directly imports the RAC_appointments domain.
 type AppointmentBooker interface {
 	// BookLeadVisit creates a visit appointment for a specific lead and service.
 	// Returns an error if the appointment cannot be booked.

@@ -8,21 +8,18 @@ VALUES ($1, $2, $3)
 RETURNING id, organization_id, name, rate_bps, created_at, updated_at;
 
 -- name: GetVatRateByID :one
-SELECT id, organization_id, name, rate_bps, created_at, updated_at
-FROM RAC_catalog_vat_rates
+SELECT id, organization_id, name, rate_bps, created_at, updated_at FROM RAC_catalog_vat_rates
 WHERE id = $1 AND organization_id = $2;
 
 -- name: ListVatRates :many
-SELECT id, organization_id, name, rate_bps, created_at, updated_at
-FROM RAC_catalog_vat_rates
+SELECT id, organization_id, name, rate_bps, created_at, updated_at FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
   AND ($2 = '' OR name ILIKE $2)
 ORDER BY name ASC
 LIMIT $3 OFFSET $4;
 
 -- name: CountVatRates :one
-SELECT COUNT(*)
-FROM RAC_catalog_vat_rates
+SELECT COUNT(*) FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
   AND ($2 = '' OR name ILIKE $2);
 
@@ -40,11 +37,7 @@ DELETE FROM RAC_catalog_vat_rates
 WHERE id = $1 AND organization_id = $2;
 
 -- name: HasProductsWithVatRate :one
-SELECT EXISTS(
-  SELECT 1
-  FROM RAC_catalog_products
-  WHERE vat_rate_id = $1 AND organization_id = $2
-);
+SELECT EXISTS(SELECT 1 FROM RAC_catalog_products WHERE vat_rate_id = $1 AND organization_id = $2);
 
 -- Products
 
@@ -55,13 +48,11 @@ INSERT INTO RAC_catalog_products (
 RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at;
 
 -- name: GetProductByID :one
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
 WHERE id = $1 AND organization_id = $2;
 
 -- name: ListProducts :many
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
 WHERE organization_id = $1
   AND ($2 = '' OR title ILIKE $2 OR reference ILIKE $2)
   AND ($3 = '' OR type = $3)
@@ -70,8 +61,7 @@ ORDER BY created_at DESC
 LIMIT $5 OFFSET $6;
 
 -- name: CountProducts :one
-SELECT COUNT(*)
-FROM RAC_catalog_products
+SELECT COUNT(*) FROM RAC_catalog_products
 WHERE organization_id = $1
   AND ($2 = '' OR title ILIKE $2 OR reference ILIKE $2)
   AND ($3 = '' OR type = $3)
@@ -97,15 +87,17 @@ DELETE FROM RAC_catalog_products
 WHERE id = $1 AND organization_id = $2;
 
 -- name: GetProductsByIDs :many
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
 WHERE organization_id = $1 AND id = ANY($2::uuid[]);
 
 -- Materials
 
 -- name: AddProductMaterials :exec
 INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id)
-SELECT $1, $2, unnest($3::uuid[])
+SELECT $1, $2, material_id
+FROM RAC_catalog_products p
+CROSS JOIN LATERAL unnest($3::uuid[]) AS material_id
+WHERE p.id = $2 AND p.organization_id = $1
 ON CONFLICT DO NOTHING;
 
 -- name: RemoveProductMaterials :exec
@@ -113,16 +105,11 @@ DELETE FROM RAC_catalog_product_materials
 WHERE organization_id = $1 AND product_id = $2 AND material_id = ANY($3::uuid[]);
 
 -- name: ListProductMaterials :many
-SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at
-FROM RAC_catalog_products p
+SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at FROM RAC_catalog_products p
 JOIN RAC_catalog_product_materials pm
   ON pm.material_id = p.id AND pm.organization_id = p.organization_id
 WHERE pm.organization_id = $1 AND pm.product_id = $2
 ORDER BY p.title ASC;
 
 -- name: HasProductMaterials :one
-SELECT EXISTS(
-  SELECT 1
-  FROM RAC_catalog_product_materials
-  WHERE organization_id = $1 AND product_id = $2
-);
+SELECT EXISTS(SELECT 1 FROM RAC_catalog_product_materials WHERE organization_id = $1 AND product_id = $2);

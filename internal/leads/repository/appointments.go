@@ -18,11 +18,11 @@ func (r *Repository) GetLeadAppointmentStats(ctx context.Context, leadID uuid.UU
 			COUNT(*) FILTER (WHERE status = 'Completed') AS completed,
 			COUNT(*) FILTER (WHERE status = 'Cancelled') AS cancelled,
 			EXISTS(
-				SELECT 1 FROM appointments
+				SELECT 1 FROM RAC_appointments
 				WHERE lead_id = $1 AND organization_id = $2
 				AND status = 'Scheduled' AND start_time > NOW()
 			) AS has_upcoming
-		FROM appointments
+		FROM RAC_appointments
 		WHERE lead_id = $1 AND organization_id = $2
 	`
 
@@ -34,7 +34,7 @@ func (r *Repository) GetLeadAppointmentStats(ctx context.Context, leadID uuid.UU
 		&stats.HasUpcoming,
 	)
 	if err != nil {
-		// Return zero stats on error (no appointments is valid)
+		// Return zero stats on error (no RAC_appointments is valid)
 		return LeadAppointmentStats{}, nil
 	}
 
@@ -48,7 +48,7 @@ func (r *Repository) GetLatestAppointment(ctx context.Context, leadID uuid.UUID,
 
 	query := `
 		SELECT start_time, status
-		FROM appointments
+		FROM RAC_appointments
 		WHERE lead_id = $1 AND organization_id = $2
 		ORDER BY start_time DESC
 		LIMIT 1

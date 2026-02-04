@@ -45,14 +45,14 @@ type LeadInfo struct {
 	City        string    `db:"city"`
 }
 
-// Repository provides database operations for appointments
+// Repository provides database operations for RAC_appointments
 type Repository struct {
 	pool *pgxpool.Pool
 }
 
 const appointmentNotFoundMsg = "appointment not found"
 
-// New creates a new appointments repository
+// New creates a new RAC_appointments repository
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
@@ -60,7 +60,7 @@ func New(pool *pgxpool.Pool) *Repository {
 // Create inserts a new appointment
 func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
 	query := `
-		INSERT INTO appointments (
+		INSERT INTO RAC_appointments (
 			id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
 		) VALUES (
@@ -84,7 +84,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 	var appt Appointment
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM appointments WHERE id = $1 AND organization_id = $2`
+		FROM RAC_appointments WHERE id = $1 AND organization_id = $2`
 
 	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
 		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
@@ -106,7 +106,7 @@ func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.
 	var appt Appointment
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM appointments WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'cancelled' ORDER BY created_at DESC LIMIT 1`
+		FROM RAC_appointments WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'cancelled' ORDER BY created_at DESC LIMIT 1`
 
 	err := r.pool.QueryRow(ctx, query, leadServiceID, organizationID).Scan(
 		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
@@ -126,7 +126,7 @@ func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.
 // Update updates an existing appointment
 func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 	query := `
-		UPDATE appointments SET
+		UPDATE RAC_appointments SET
 			title = $2,
 			description = $3,
 			location = $4,
@@ -154,7 +154,7 @@ func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 
 // UpdateStatus updates the status of an appointment
 func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) error {
-	query := `UPDATE appointments SET status = $3, updated_at = $4 WHERE id = $1 AND organization_id = $2`
+	query := `UPDATE RAC_appointments SET status = $3, updated_at = $4 WHERE id = $1 AND organization_id = $2`
 
 	result, err := r.pool.Exec(ctx, query, id, organizationID, status, time.Now())
 	if err != nil {
@@ -170,7 +170,7 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, organizatio
 
 // Delete removes an appointment
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	query := `DELETE FROM appointments WHERE id = $1 AND organization_id = $2`
+	query := `DELETE FROM RAC_appointments WHERE id = $1 AND organization_id = $2`
 
 	result, err := r.pool.Exec(ctx, query, id, organizationID)
 	if err != nil {
@@ -184,7 +184,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 	return nil
 }
 
-// ListParams contains parameters for listing appointments
+// ListParams contains parameters for listing RAC_appointments
 type ListParams struct {
 	OrganizationID uuid.UUID
 	UserID         *uuid.UUID
@@ -200,7 +200,7 @@ type ListParams struct {
 	PageSize       int
 }
 
-// ListResult contains the result of listing appointments
+// ListResult contains the result of listing RAC_appointments
 type ListResult struct {
 	Items      []Appointment
 	Total      int
@@ -209,10 +209,10 @@ type ListResult struct {
 	TotalPages int
 }
 
-// List retrieves appointments with optional filtering
+// List retrieves RAC_appointments with optional filtering
 func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, error) {
 	// Build query
-	baseQuery := `FROM appointments WHERE organization_id = $1`
+	baseQuery := `FROM RAC_appointments WHERE organization_id = $1`
 	args := []interface{}{params.OrganizationID}
 	argIndex := 2
 
@@ -235,7 +235,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	var total int
 	countQuery := "SELECT COUNT(*) " + baseQuery
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, fmt.Errorf("failed to count appointments: %w", err)
+		return nil, fmt.Errorf("failed to count RAC_appointments: %w", err)
 	}
 
 	// Calculate pagination
@@ -280,7 +280,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 
 	rows, err := r.pool.Query(ctx, selectQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list appointments: %w", err)
+		return nil, fmt.Errorf("failed to list RAC_appointments: %w", err)
 	}
 	defer rows.Close()
 
@@ -298,7 +298,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate appointments: %w", err)
+		return nil, fmt.Errorf("failed to iterate RAC_appointments: %w", err)
 	}
 
 	return &ListResult{
@@ -380,12 +380,12 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 	return result, nil
 }
 
-// ListForDateRange retrieves all appointments for a user within a date range (for slots computation)
+// ListForDateRange retrieves all RAC_appointments for a user within a date range (for slots computation)
 // Uses proper overlap detection: an appointment overlaps if it starts before the window ends AND ends after the window starts
 func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate, endDate time.Time) ([]Appointment, error) {
 	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM appointments 
+		FROM RAC_appointments 
 		WHERE organization_id = $1 AND user_id = $2 
 		AND start_time < $4 AND end_time > $3
 		AND status = 'scheduled'
@@ -393,7 +393,7 @@ func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.U
 
 	rows, err := r.pool.Query(ctx, query, organizationID, userID, startDate, endDate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list appointments for date range: %w", err)
+		return nil, fmt.Errorf("failed to list RAC_appointments for date range: %w", err)
 	}
 	defer rows.Close()
 
@@ -411,7 +411,7 @@ func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.U
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate appointments: %w", err)
+		return nil, fmt.Errorf("failed to iterate RAC_appointments: %w", err)
 	}
 
 	return items, nil

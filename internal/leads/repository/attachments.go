@@ -39,7 +39,7 @@ type CreateAttachmentParams struct {
 func (r *Repository) CreateAttachment(ctx context.Context, params CreateAttachmentParams) (Attachment, error) {
 	var att Attachment
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO lead_service_attachments (lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by)
+		INSERT INTO RAC_lead_service_attachments (lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
 	`, params.LeadServiceID, params.OrganizationID, params.FileKey, params.FileName, params.ContentType, params.SizeBytes, params.UploadedBy).Scan(
@@ -53,7 +53,7 @@ func (r *Repository) GetAttachmentByID(ctx context.Context, id uuid.UUID, organi
 	var att Attachment
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
-		FROM lead_service_attachments
+		FROM RAC_lead_service_attachments
 		WHERE id = $1 AND organization_id = $2
 	`, id, organizationID).Scan(
 		&att.ID, &att.LeadServiceID, &att.OrganizationID, &att.FileKey, &att.FileName, &att.ContentType, &att.SizeBytes, &att.UploadedBy, &att.CreatedAt,
@@ -68,7 +68,7 @@ func (r *Repository) GetAttachmentByID(ctx context.Context, id uuid.UUID, organi
 func (r *Repository) ListAttachmentsByService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]Attachment, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
-		FROM lead_service_attachments
+		FROM RAC_lead_service_attachments
 		WHERE lead_service_id = $1 AND organization_id = $2
 		ORDER BY created_at DESC
 	`, leadServiceID, organizationID)
@@ -93,7 +93,7 @@ func (r *Repository) ListAttachmentsByService(ctx context.Context, leadServiceID
 // DeleteAttachment removes an attachment record by ID.
 func (r *Repository) DeleteAttachment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
 	result, err := r.pool.Exec(ctx, `
-		DELETE FROM lead_service_attachments
+		DELETE FROM RAC_lead_service_attachments
 		WHERE id = $1 AND organization_id = $2
 	`, id, organizationID)
 	if err != nil {

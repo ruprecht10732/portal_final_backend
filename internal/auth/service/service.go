@@ -303,11 +303,11 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 
 func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
 	claims := jwt.MapClaims{
-		"sub":       userID.String(),
-		"type":      tokenType,
-		"RAC_roles": roles,
-		"exp":       time.Now().Add(ttl).Unix(),
-		"iat":       time.Now().Unix(),
+		"sub":   userID.String(),
+		"type":  tokenType,
+		"roles": roles,
+		"exp":   time.Now().Add(ttl).Unix(),
+		"iat":   time.Now().Unix(),
 	}
 	if tenantID != nil {
 		claims["tenant_id"] = tenantID.String()

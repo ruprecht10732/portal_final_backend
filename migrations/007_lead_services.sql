@@ -41,18 +41,8 @@ INSERT INTO RAC_lead_services (
     created_at,
     updated_at
 )
-SELECT 
-    id,
-    service_type,
-    status,
-    visit_scheduled_date,
-    visit_scout_id,
-    visit_measurements,
-    visit_access_difficulty,
-    visit_notes,
-    visit_completed_at,
-    created_at,
-    updated_at
+SELECT id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements,
+    visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at
 FROM RAC_leads
 WHERE deleted_at IS NULL;
 

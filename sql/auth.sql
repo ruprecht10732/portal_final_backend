@@ -3,8 +3,7 @@ INSERT INTO RAC_users (email, password_hash, is_email_verified)
 VALUES ($1, $2, false) RETURNING id, email, password_hash, is_email_verified, created_at, updated_at;
 
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, created_at, updated_at
-FROM RAC_users WHERE email = $1;
+SELECT id, email, password_hash, is_email_verified, created_at, updated_at FROM RAC_users WHERE email = $1;
 
 -- name: MarkEmailVerified :exec
 UPDATE RAC_users SET is_email_verified = true, updated_at = now() WHERE id = $1;

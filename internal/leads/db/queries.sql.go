@@ -17,8 +17,8 @@ UPDATE RAC_leads SET deleted_at = now(), updated_at = now()
 WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
 `
 
-func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, leadIDs []pgtype.UUID) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, bulkSoftDeleteLeads, leadIDs)
+func (q *Queries) BulkSoftDeleteLeads(ctx context.Context, dollar_1 []pgtype.UUID) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, bulkSoftDeleteLeads, dollar_1)
 }
 
 const countLeads = `-- name: CountLeads :one
@@ -221,9 +221,7 @@ WITH inserted AS (
     )
     RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id
 )
-SELECT i.id, i.lead_id, st.name AS service_type, i.status,
-    i.created_at, i.updated_at
-FROM inserted i
+SELECT i.id, i.lead_id, st.name AS service_type, i.status, i.created_at, i.updated_at FROM inserted i
 JOIN RAC_service_types st ON st.id = i.service_type_id
 `
 

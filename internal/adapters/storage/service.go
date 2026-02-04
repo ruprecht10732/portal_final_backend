@@ -1,5 +1,5 @@
 // Package storage provides a domain-agnostic interface for S3-compatible object storage.
-// This adapter can be reused across different domains (RAC_leads, appointments, etc.).
+// This adapter can be reused across different domains (RAC_leads, RAC_appointments, etc.).
 package storage
 
 import (

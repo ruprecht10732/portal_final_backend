@@ -17,7 +17,7 @@ const productAssetNotFoundMessage = "product asset not found"
 // CreateProductAsset creates a catalog product asset.
 func (r *Repo) CreateProductAsset(ctx context.Context, params CreateProductAssetParams) (ProductAsset, error) {
 	query := `
-        INSERT INTO catalog_product_assets (
+        INSERT INTO RAC_catalog_product_assets (
             organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id, organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url, created_at`
@@ -56,7 +56,7 @@ func (r *Repo) CreateProductAsset(ctx context.Context, params CreateProductAsset
 func (r *Repo) GetProductAssetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ProductAsset, error) {
 	query := `
         SELECT id, organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url, created_at
-        FROM catalog_product_assets
+        FROM RAC_catalog_product_assets
         WHERE id = $1 AND organization_id = $2`
 
 	var asset ProductAsset
@@ -95,7 +95,7 @@ func (r *Repo) ListProductAssets(ctx context.Context, params ListProductAssetsPa
 
 	query := fmt.Sprintf(`
         SELECT id, organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url, created_at
-        FROM catalog_product_assets
+        FROM RAC_catalog_product_assets
         WHERE %s
         ORDER BY created_at DESC`, whereClause)
 
@@ -135,7 +135,7 @@ func (r *Repo) ListProductAssets(ctx context.Context, params ListProductAssetsPa
 
 // DeleteProductAsset deletes a product asset by ID.
 func (r *Repo) DeleteProductAsset(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
-	query := `DELETE FROM catalog_product_assets WHERE id = $1 AND organization_id = $2`
+	query := `DELETE FROM RAC_catalog_product_assets WHERE id = $1 AND organization_id = $2`
 	result, err := r.pool.Exec(ctx, query, id, organizationID)
 	if err != nil {
 		return fmt.Errorf("delete product asset: %w", err)

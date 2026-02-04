@@ -667,7 +667,7 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 	httpkit.OK(c, gin.H{"items": analyses})
 }
 
-// LogCall processes a post-call summary and executes appropriate actions (notes, status updates, appointments)
+// LogCall processes a post-call summary and executes appropriate actions (notes, status updates, RAC_appointments)
 func (h *Handler) LogCall(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {

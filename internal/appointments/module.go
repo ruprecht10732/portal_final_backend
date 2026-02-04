@@ -1,4 +1,4 @@
-// Package appointments provides the appointments domain module.
+// Package RAC_appointments provides the RAC_appointments domain module.
 package appointments
 
 import (
@@ -12,13 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Module represents the appointments domain module
+// Module represents the RAC_appointments domain module
 type Module struct {
 	handler *handler.Handler
 	Service *service.Service
 }
 
-// NewModule creates a new appointments module with all dependencies wired
+// NewModule creates a new RAC_appointments module with all dependencies wired
 func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner service.LeadAssigner, emailSender email.Sender) *Module {
 	repo := repository.New(pool)
 	svc := service.New(repo, leadAssigner, emailSender)
@@ -32,10 +32,10 @@ func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner servic
 
 // Name returns the module name for logging
 func (m *Module) Name() string {
-	return "appointments"
+	return "RAC_appointments"
 }
 
-// RegisterRoutes registers the module's routes under /api/appointments
+// RegisterRoutes registers the module's routes under /api/RAC_appointments
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	appointments := ctx.Protected.Group("/appointments")
 	m.handler.RegisterRoutes(appointments)

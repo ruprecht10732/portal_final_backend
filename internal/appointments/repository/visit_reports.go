@@ -36,7 +36,7 @@ type AppointmentAttachment struct {
 func (r *Repository) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, organizationID uuid.UUID) (*VisitReport, error) {
 	var report VisitReport
 	query := `SELECT appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at
-		FROM appointment_visit_reports WHERE appointment_id = $1 AND organization_id = $2`
+		FROM RAC_appointment_visit_reports WHERE appointment_id = $1 AND organization_id = $2`
 
 	err := r.pool.QueryRow(ctx, query, appointmentID, organizationID).Scan(
 		&report.AppointmentID,
@@ -59,7 +59,7 @@ func (r *Repository) GetVisitReport(ctx context.Context, appointmentID uuid.UUID
 
 func (r *Repository) UpsertVisitReport(ctx context.Context, report VisitReport) (*VisitReport, error) {
 	query := `
-		INSERT INTO appointment_visit_reports
+		INSERT INTO RAC_appointment_visit_reports
 			(appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at)
 		VALUES
 			($1, $2, $3, $4, $5, now(), now())
@@ -96,7 +96,7 @@ func (r *Repository) UpsertVisitReport(ctx context.Context, report VisitReport) 
 
 func (r *Repository) CreateAttachment(ctx context.Context, attachment AppointmentAttachment) (*AppointmentAttachment, error) {
 	query := `
-		INSERT INTO appointment_attachments
+		INSERT INTO RAC_appointment_attachments
 			(id, appointment_id, organization_id, file_key, file_name, content_type, size_bytes)
 		VALUES
 			($1, $2, $3, $4, $5, $6, $7)
@@ -130,7 +130,7 @@ func (r *Repository) CreateAttachment(ctx context.Context, attachment Appointmen
 
 func (r *Repository) ListAttachments(ctx context.Context, appointmentID uuid.UUID, organizationID uuid.UUID) ([]AppointmentAttachment, error) {
 	query := `SELECT id, appointment_id, organization_id, file_key, file_name, content_type, size_bytes, created_at
-		FROM appointment_attachments WHERE appointment_id = $1 AND organization_id = $2 ORDER BY created_at ASC`
+		FROM RAC_appointment_attachments WHERE appointment_id = $1 AND organization_id = $2 ORDER BY created_at ASC`
 
 	rows, err := r.pool.Query(ctx, query, appointmentID, organizationID)
 	if err != nil {

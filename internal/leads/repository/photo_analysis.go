@@ -53,7 +53,7 @@ func (r *Repository) CreatePhotoAnalysis(ctx context.Context, params CreatePhoto
 
 	var pa PhotoAnalysis
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO lead_photo_analyses 
+		INSERT INTO RAC_lead_photo_analyses 
 			(lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators, safety_concerns, additional_info, confidence_level, photo_count)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators, safety_concerns, additional_info, confidence_level, photo_count, created_at, updated_at
@@ -82,7 +82,7 @@ func (r *Repository) GetPhotoAnalysisByID(ctx context.Context, id uuid.UUID, org
 
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators, safety_concerns, additional_info, confidence_level, photo_count, created_at, updated_at
-		FROM lead_photo_analyses
+		FROM RAC_lead_photo_analyses
 		WHERE id = $1 AND org_id = $2
 	`, id, organizationID).Scan(
 		&pa.ID, &pa.LeadID, &pa.ServiceID, &pa.OrganizationID, &pa.Summary, &observationsJSON, &pa.ScopeAssessment,
@@ -109,7 +109,7 @@ func (r *Repository) GetLatestPhotoAnalysis(ctx context.Context, serviceID uuid.
 
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators, safety_concerns, additional_info, confidence_level, photo_count, created_at, updated_at
-		FROM lead_photo_analyses
+		FROM RAC_lead_photo_analyses
 		WHERE service_id = $1 AND org_id = $2
 		ORDER BY created_at DESC
 		LIMIT 1
@@ -135,7 +135,7 @@ func (r *Repository) GetLatestPhotoAnalysis(ctx context.Context, serviceID uuid.
 func (r *Repository) ListPhotoAnalysesByService(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) ([]PhotoAnalysis, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators, safety_concerns, additional_info, confidence_level, photo_count, created_at, updated_at
-		FROM lead_photo_analyses
+		FROM RAC_lead_photo_analyses
 		WHERE service_id = $1 AND org_id = $2
 		ORDER BY created_at DESC
 	`, serviceID, organizationID)
@@ -169,7 +169,7 @@ func (r *Repository) ListPhotoAnalysesByService(ctx context.Context, serviceID u
 func (r *Repository) ListPhotoAnalysesByLead(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]PhotoAnalysis, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators, safety_concerns, additional_info, confidence_level, photo_count, created_at, updated_at
-		FROM lead_photo_analyses
+		FROM RAC_lead_photo_analyses
 		WHERE lead_id = $1 AND org_id = $2
 		ORDER BY created_at DESC
 	`, leadID, organizationID)

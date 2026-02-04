@@ -6,12 +6,10 @@ VALUES ($1, $2, false)
 RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at;
 
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
-FROM RAC_users WHERE email = $1;
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE email = $1;
 
 -- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
-FROM RAC_users WHERE id = $1;
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE id = $1;
 
 -- name: MarkEmailVerified :exec
 UPDATE RAC_users SET is_email_verified = true, updated_at = now() WHERE id = $1;
@@ -54,16 +52,13 @@ UPDATE RAC_refresh_tokens SET revoked_at = now()
 WHERE user_id = $1 AND revoked_at IS NULL;
 
 -- name: GetUserRoles :many
-SELECT r.name
-FROM RAC_roles r
+SELECT r.name FROM RAC_roles r
 JOIN RAC_user_roles ur ON ur.role_id = r.id
 WHERE ur.user_id = $1
 ORDER BY r.name;
 
 -- name: ListUsers :many
-SELECT u.id, u.email,
-    COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
-FROM RAC_users u
+SELECT u.id, u.email, COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles FROM RAC_users u
 LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
 LEFT JOIN RAC_roles r ON r.id = ur.role_id
 GROUP BY u.id

@@ -14,7 +14,10 @@ import (
 const addProductMaterials = `-- name: AddProductMaterials :exec
 
 INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id)
-SELECT $1, $2, unnest($3::uuid[])
+SELECT $1, $2, material_id
+FROM RAC_catalog_products p
+CROSS JOIN LATERAL unnest($3::uuid[]) AS material_id
+WHERE p.id = $2 AND p.organization_id = $1
 ON CONFLICT DO NOTHING
 `
 
@@ -31,8 +34,7 @@ func (q *Queries) AddProductMaterials(ctx context.Context, arg AddProductMateria
 }
 
 const countProducts = `-- name: CountProducts :one
-SELECT COUNT(*)
-FROM RAC_catalog_products
+SELECT COUNT(*) FROM RAC_catalog_products
 WHERE organization_id = $1
   AND ($2 = '' OR title ILIKE $2 OR reference ILIKE $2)
   AND ($3 = '' OR type = $3)
@@ -59,8 +61,7 @@ func (q *Queries) CountProducts(ctx context.Context, arg CountProductsParams) (i
 }
 
 const countVatRates = `-- name: CountVatRates :one
-SELECT COUNT(*)
-FROM RAC_catalog_vat_rates
+SELECT COUNT(*) FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
   AND ($2 = '' OR name ILIKE $2)
 `
@@ -189,8 +190,7 @@ func (q *Queries) DeleteVatRate(ctx context.Context, arg DeleteVatRateParams) er
 }
 
 const getProductByID = `-- name: GetProductByID :one
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
 WHERE id = $1 AND organization_id = $2
 `
 
@@ -220,8 +220,7 @@ func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) 
 }
 
 const getProductsByIDs = `-- name: GetProductsByIDs :many
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
 WHERE organization_id = $1 AND id = ANY($2::uuid[])
 `
 
@@ -264,8 +263,7 @@ func (q *Queries) GetProductsByIDs(ctx context.Context, arg GetProductsByIDsPara
 }
 
 const getVatRateByID = `-- name: GetVatRateByID :one
-SELECT id, organization_id, name, rate_bps, created_at, updated_at
-FROM RAC_catalog_vat_rates
+SELECT id, organization_id, name, rate_bps, created_at, updated_at FROM RAC_catalog_vat_rates
 WHERE id = $1 AND organization_id = $2
 `
 
@@ -289,11 +287,7 @@ func (q *Queries) GetVatRateByID(ctx context.Context, arg GetVatRateByIDParams) 
 }
 
 const hasProductMaterials = `-- name: HasProductMaterials :one
-SELECT EXISTS(
-  SELECT 1
-  FROM RAC_catalog_product_materials
-  WHERE organization_id = $1 AND product_id = $2
-)
+SELECT EXISTS(SELECT 1 FROM RAC_catalog_product_materials WHERE organization_id = $1 AND product_id = $2)
 `
 
 type HasProductMaterialsParams struct {
@@ -309,11 +303,7 @@ func (q *Queries) HasProductMaterials(ctx context.Context, arg HasProductMateria
 }
 
 const hasProductsWithVatRate = `-- name: HasProductsWithVatRate :one
-SELECT EXISTS(
-  SELECT 1
-  FROM RAC_catalog_products
-  WHERE vat_rate_id = $1 AND organization_id = $2
-)
+SELECT EXISTS(SELECT 1 FROM RAC_catalog_products WHERE vat_rate_id = $1 AND organization_id = $2)
 `
 
 type HasProductsWithVatRateParams struct {
@@ -329,8 +319,7 @@ func (q *Queries) HasProductsWithVatRate(ctx context.Context, arg HasProductsWit
 }
 
 const listProductMaterials = `-- name: ListProductMaterials :many
-SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at
-FROM RAC_catalog_products p
+SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at FROM RAC_catalog_products p
 JOIN RAC_catalog_product_materials pm
   ON pm.material_id = p.id AND pm.organization_id = p.organization_id
 WHERE pm.organization_id = $1 AND pm.product_id = $2
@@ -376,8 +365,7 @@ func (q *Queries) ListProductMaterials(ctx context.Context, arg ListProductMater
 }
 
 const listProducts = `-- name: ListProducts :many
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
-FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
 WHERE organization_id = $1
   AND ($2 = '' OR title ILIKE $2 OR reference ILIKE $2)
   AND ($3 = '' OR type = $3)
@@ -436,8 +424,7 @@ func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]R
 }
 
 const listVatRates = `-- name: ListVatRates :many
-SELECT id, organization_id, name, rate_bps, created_at, updated_at
-FROM RAC_catalog_vat_rates
+SELECT id, organization_id, name, rate_bps, created_at, updated_at FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
   AND ($2 = '' OR name ILIKE $2)
 ORDER BY name ASC

@@ -84,9 +84,7 @@ WITH inserted AS (
     )
     RETURNING *
 )
-SELECT i.id, i.lead_id, st.name AS service_type, i.status,
-    i.created_at, i.updated_at
-FROM inserted i
+SELECT i.id, i.lead_id, st.name AS service_type, i.status, i.created_at, i.updated_at FROM inserted i
 JOIN RAC_service_types st ON st.id = i.service_type_id;
 
 -- name: GetLeadService :one
