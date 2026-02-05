@@ -52,11 +52,13 @@ Intake Requirements:
 %s
 
 Instruction:
+If you find high-confidence (>=90%%) errors in lead contact or address details, call UpdateLeadDetails.
+Only update fields you are confident about. Include a short Dutch reason and your confidence.
 0) If the service type is clearly wrong, you may call UpdateLeadServiceType ONLY when you are highly confident (>=90%%).
-	If you update the service type, do it BEFORE UpdatePipelineStage.
-	Only change the service type when there is a clear positive match to another service based on notes/service note.
-	Missing intake information alone is NOT a reason to switch service type.
-	If the intent is ambiguous, keep the current service type and move to Nurturing with a short Dutch reason.
+If you update the service type, do it BEFORE UpdatePipelineStage.
+Only change the service type when there is a clear positive match to another service based on notes/service note.
+Missing intake information alone is NOT a reason to switch service type.
+If the intent is ambiguous, keep the current service type and move to Nurturing with a short Dutch reason.
 1) Validate intake requirements for the selected service type.
 2) Treat rule-based missing items as critical unless the info is clearly present elsewhere.
 3) Call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,

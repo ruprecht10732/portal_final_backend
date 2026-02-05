@@ -16,6 +16,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
+	"portal_final_backend/platform/phone"
 )
 
 const (
@@ -60,6 +61,20 @@ func normalizeLeadQuality(quality string) string {
 	default:
 		log.Printf("Unrecognized lead quality '%s', defaulting to Potential", quality)
 		return "Potential"
+	}
+}
+
+func normalizeConsumerRole(role string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	switch normalized {
+	case "owner":
+		return "Owner", nil
+	case "tenant":
+		return "Tenant", nil
+	case "landlord":
+		return "Landlord", nil
+	default:
+		return "", fmt.Errorf("invalid consumer role")
 	}
 }
 
@@ -385,6 +400,195 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 	return UpdateLeadServiceTypeOutput{Success: true, Message: "Service type updated"}, nil
 }
 
+func handleUpdateLeadDetails(ctx tool.Context, deps *ToolDependencies, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
+	leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
+	if err != nil {
+		return UpdateLeadDetailsOutput{Success: false, Message: invalidLeadIDMessage}, err
+	}
+
+	tenantID, err := getTenantID(deps)
+	if err != nil {
+		return UpdateLeadDetailsOutput{Success: false, Message: missingTenantContextMessage}, err
+	}
+
+	current, err := deps.Repo.GetByID(ctx, leadID, tenantID)
+	if err != nil {
+		return UpdateLeadDetailsOutput{Success: false, Message: "Lead not found"}, err
+	}
+
+	params := repository.UpdateLeadParams{}
+	updatedFields := make([]string, 0, 10)
+
+	if input.FirstName != nil {
+		value := strings.TrimSpace(*input.FirstName)
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid first name"}, fmt.Errorf("invalid first name")
+		}
+		params.ConsumerFirstName = &value
+		if value != current.ConsumerFirstName {
+			updatedFields = append(updatedFields, "firstName")
+		}
+	}
+
+	if input.LastName != nil {
+		value := strings.TrimSpace(*input.LastName)
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid last name"}, fmt.Errorf("invalid last name")
+		}
+		params.ConsumerLastName = &value
+		if value != current.ConsumerLastName {
+			updatedFields = append(updatedFields, "lastName")
+		}
+	}
+
+	if input.Phone != nil {
+		value := phone.NormalizeE164(strings.TrimSpace(*input.Phone))
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid phone"}, fmt.Errorf("invalid phone")
+		}
+		params.ConsumerPhone = &value
+		if value != current.ConsumerPhone {
+			updatedFields = append(updatedFields, "phone")
+		}
+	}
+
+	if input.Email != nil {
+		value := strings.TrimSpace(*input.Email)
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid email"}, fmt.Errorf("invalid email")
+		}
+		params.ConsumerEmail = &value
+		if current.ConsumerEmail == nil || *current.ConsumerEmail != value {
+			updatedFields = append(updatedFields, "email")
+		}
+	}
+
+	if input.ConsumerRole != nil {
+		role, err := normalizeConsumerRole(*input.ConsumerRole)
+		if err != nil {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid consumer role"}, err
+		}
+		params.ConsumerRole = &role
+		if role != current.ConsumerRole {
+			updatedFields = append(updatedFields, "consumerRole")
+		}
+	}
+
+	if input.Street != nil {
+		value := strings.TrimSpace(*input.Street)
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid street"}, fmt.Errorf("invalid street")
+		}
+		params.AddressStreet = &value
+		if value != current.AddressStreet {
+			updatedFields = append(updatedFields, "street")
+		}
+	}
+
+	if input.HouseNumber != nil {
+		value := strings.TrimSpace(*input.HouseNumber)
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid house number"}, fmt.Errorf("invalid house number")
+		}
+		params.AddressHouseNumber = &value
+		if value != current.AddressHouseNumber {
+			updatedFields = append(updatedFields, "houseNumber")
+		}
+	}
+
+	if input.ZipCode != nil {
+		value := strings.TrimSpace(*input.ZipCode)
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid zip code"}, fmt.Errorf("invalid zip code")
+		}
+		params.AddressZipCode = &value
+		if value != current.AddressZipCode {
+			updatedFields = append(updatedFields, "zipCode")
+		}
+	}
+
+	if input.City != nil {
+		value := strings.TrimSpace(*input.City)
+		if value == "" {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid city"}, fmt.Errorf("invalid city")
+		}
+		params.AddressCity = &value
+		if value != current.AddressCity {
+			updatedFields = append(updatedFields, "city")
+		}
+	}
+
+	if input.Latitude != nil {
+		if *input.Latitude < -90 || *input.Latitude > 90 {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid latitude"}, fmt.Errorf("invalid latitude")
+		}
+		params.Latitude = input.Latitude
+		if current.Latitude == nil || *current.Latitude != *input.Latitude {
+			updatedFields = append(updatedFields, "latitude")
+		}
+	}
+
+	if input.Longitude != nil {
+		if *input.Longitude < -180 || *input.Longitude > 180 {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid longitude"}, fmt.Errorf("invalid longitude")
+		}
+		params.Longitude = input.Longitude
+		if current.Longitude == nil || *current.Longitude != *input.Longitude {
+			updatedFields = append(updatedFields, "longitude")
+		}
+	}
+
+	if len(updatedFields) == 0 {
+		return UpdateLeadDetailsOutput{Success: true, Message: "No updates required"}, nil
+	}
+
+	_, err = deps.Repo.Update(ctx, leadID, tenantID, params)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return UpdateLeadDetailsOutput{Success: false, Message: "Lead not found"}, err
+		}
+		return UpdateLeadDetailsOutput{Success: false, Message: "Failed to update lead"}, err
+	}
+
+	actorType, actorName := deps.GetActor()
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		reason = "Leadgegevens bijgewerkt"
+	}
+	metadata := map[string]any{
+		"updatedFields": updatedFields,
+	}
+	if input.Confidence != nil {
+		metadata["confidence"] = *input.Confidence
+	}
+
+	var serviceID *uuid.UUID
+	if _, svcID, ok := deps.GetLeadContext(); ok {
+		serviceID = &svcID
+	}
+
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      serviceID,
+		OrganizationID: tenantID,
+		ActorType:      actorType,
+		ActorName:      actorName,
+		EventType:      "lead_update",
+		Title:          "Leadgegevens bijgewerkt",
+		Summary:        &reason,
+		Metadata:       metadata,
+	})
+
+	log.Printf(
+		"gatekeeper UpdateLeadDetails: leadId=%s fields=%v reason=%s",
+		leadID,
+		updatedFields,
+		reason,
+	)
+
+	return UpdateLeadDetailsOutput{Success: true, Message: "Lead updated", UpdatedFields: updatedFields}, nil
+}
+
 // createSaveAnalysisTool creates the SaveAnalysis tool
 func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
@@ -402,6 +606,15 @@ func createUpdateLeadServiceTypeTool(deps *ToolDependencies) (tool.Tool, error) 
 		Description: "Updates the service type for a lead service when there is a confident mismatch. The service type must match an active service type name or slug.",
 	}, func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
 		return handleUpdateLeadServiceType(ctx, deps, input)
+	})
+}
+
+func createUpdateLeadDetailsTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "UpdateLeadDetails",
+		Description: "Updates lead contact or address details when you are highly confident the current data is wrong.",
+	}, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
+		return handleUpdateLeadDetails(ctx, deps, input)
 	})
 }
 

@@ -3,6 +3,8 @@ package leads
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/repository"
@@ -12,15 +14,17 @@ import (
 // Orchestrator routes pipeline events to specialized agents.
 type Orchestrator struct {
 	gatekeeper *agent.Gatekeeper
+	advisor    *agent.LeadAdvisor
 	estimator  *agent.Estimator
 	dispatcher *agent.Dispatcher
 	repo       repository.LeadsRepository
 	log        *logger.Logger
 }
 
-func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, log *logger.Logger) *Orchestrator {
+func NewOrchestrator(gatekeeper *agent.Gatekeeper, advisor *agent.LeadAdvisor, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, log *logger.Logger) *Orchestrator {
 	return &Orchestrator{
 		gatekeeper: gatekeeper,
+		advisor:    advisor,
 		estimator:  estimator,
 		dispatcher: dispatcher,
 		repo:       repo,
@@ -39,9 +43,11 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 	if svc.PipelineStage == "Triage" || svc.PipelineStage == "Nurturing" {
 		o.log.Info("orchestrator: data changed, waking gatekeeper", "leadId", evt.LeadID)
 		go func() {
-			if err := o.gatekeeper.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			ctx := context.Background()
+			if err := o.gatekeeper.Run(ctx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
 				o.log.Error("orchestrator: gatekeeper failed", "error", err)
 			}
+			o.ensureAnalysis(ctx, evt.LeadID, evt.LeadServiceID, evt.TenantID)
 		}()
 		return
 	}
@@ -53,6 +59,22 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 				o.log.Error("orchestrator: estimator failed", "error", err)
 			}
 		}()
+	}
+}
+
+func (o *Orchestrator) ensureAnalysis(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) {
+	if o.advisor == nil {
+		return
+	}
+	if _, err := o.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID); err == nil {
+		return
+	} else if err != nil && err != repository.ErrNotFound {
+		o.log.Error("orchestrator: failed to check analysis", "error", err)
+		return
+	}
+
+	if _, err := o.advisor.AnalyzeAndReturn(ctx, leadID, &serviceID, false, tenantID); err != nil {
+		o.log.Error("orchestrator: auto analysis failed", "error", err)
 	}
 }
 

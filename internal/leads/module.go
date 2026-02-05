@@ -66,7 +66,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	sseService := sse.New()
 
 	// Subscribe to LeadCreated events to kick off gatekeeper triage
-	subscribeLeadCreated(eventBus, repo, gatekeeper, log)
+	subscribeLeadCreated(eventBus, repo, gatekeeper, advisor, log)
 
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
@@ -75,7 +75,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	notesSvc := notes.New(repo)
 
 	// Create orchestrator and event listeners
-	orchestrator := NewOrchestrator(gatekeeper, estimator, dispatcher, repo, log)
+	orchestrator := NewOrchestrator(gatekeeper, advisor, estimator, dispatcher, repo, log)
 	subscribeOrchestrator(eventBus, orchestrator)
 
 	// Create handlers
@@ -149,7 +149,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 	return photoAnalyzer, advisor, callLogger, gatekeeper, estimator, dispatcher, nil
 }
 
-func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
+func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, advisor *agent.LeadAdvisor, log *logger.Logger) {
 	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadCreated)
 		if !ok {
@@ -157,13 +157,21 @@ func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, 
 		}
 
 		go func() {
-			service, err := repo.GetCurrentLeadService(context.Background(), e.LeadID, e.TenantID)
+			bg := context.Background()
+			service, err := repo.GetCurrentLeadService(bg, e.LeadID, e.TenantID)
 			if err != nil {
 				log.Error("gatekeeper: failed to load current service", "error", err, "leadId", e.LeadID)
 				return
 			}
-			if err := gatekeeper.Run(context.Background(), e.LeadID, service.ID, e.TenantID); err != nil {
+			if err := gatekeeper.Run(bg, e.LeadID, service.ID, e.TenantID); err != nil {
 				log.Error("gatekeeper run failed", "error", err, "leadId", e.LeadID)
+			}
+			if advisor != nil {
+				if _, err := repo.GetLatestAIAnalysis(bg, service.ID, e.TenantID); err == repository.ErrNotFound {
+					if _, err := advisor.AnalyzeAndReturn(bg, e.LeadID, &service.ID, false, e.TenantID); err != nil {
+						log.Error("lead advisor auto analysis failed", "error", err, "leadId", e.LeadID)
+					}
+				}
 			}
 		}()
 

@@ -56,13 +56,17 @@ func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus even
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdateLeadServiceType tool: %w", err)
 	}
+	updateLeadDetailsTool, err := createUpdateLeadDetailsTool(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build UpdateLeadDetails tool: %w", err)
+	}
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Gatekeeper",
 		Model:       kimi,
 		Description: "Validates intake requirements and advances the lead pipeline.",
 		Instruction: "You validate intake requirements and advance the pipeline stage.",
-		Tools:       []tool.Tool{saveAnalysisTool, updateServiceTypeTool, updateStageTool},
+		Tools:       []tool.Tool{saveAnalysisTool, updateLeadDetailsTool, updateServiceTypeTool, updateStageTool},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatekeeper agent: %w", err)
