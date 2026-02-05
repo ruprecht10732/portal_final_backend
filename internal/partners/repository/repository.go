@@ -35,9 +35,12 @@ type Partner struct {
 	VATNumber       string
 	AddressLine1    string
 	AddressLine2    *string
+	HouseNumber     *string
 	PostalCode      string
 	City            string
 	Country         string
+	Latitude        *float64
+	Longitude       *float64
 	ContactName     string
 	ContactEmail    string
 	ContactPhone    string
@@ -57,9 +60,12 @@ type PartnerUpdate struct {
 	VATNumber      *string
 	AddressLine1   *string
 	AddressLine2   *string
+	HouseNumber    *string
 	PostalCode     *string
 	City           *string
 	Country        *string
+	Latitude       *float64
+	Longitude      *float64
 	ContactName    *string
 	ContactEmail   *string
 	ContactPhone   *string
@@ -118,12 +124,14 @@ func (r *Repository) Create(ctx context.Context, partner Partner) (Partner, erro
 	query := `
 		INSERT INTO RAC_partners (
 			id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, postal_code, city, country,
+			address_line1, address_line2, house_number, postal_code, city, country,
+			latitude, longitude,
 			contact_name, contact_email, contact_phone, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9, $10,
-			$11, $12, $13, $14, $15
+			$6, $7, $8, $9, $10, $11,
+			$12, $13,
+			$14, $15, $16, $17, $18
 		)
 	`
 
@@ -135,9 +143,12 @@ func (r *Repository) Create(ctx context.Context, partner Partner) (Partner, erro
 		partner.VATNumber,
 		partner.AddressLine1,
 		partner.AddressLine2,
+		partner.HouseNumber,
 		partner.PostalCode,
 		partner.City,
 		partner.Country,
+		partner.Latitude,
+		partner.Longitude,
 		partner.ContactName,
 		partner.ContactEmail,
 		partner.ContactPhone,
@@ -154,7 +165,8 @@ func (r *Repository) Create(ctx context.Context, partner Partner) (Partner, erro
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Partner, error) {
 	query := `
 		SELECT id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, postal_code, city, country,
+			address_line1, address_line2, house_number, postal_code, city, country,
+			latitude, longitude,
 			contact_name, contact_email, contact_phone,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
@@ -171,9 +183,12 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 		&partner.VATNumber,
 		&partner.AddressLine1,
 		&partner.AddressLine2,
+		&partner.HouseNumber,
 		&partner.PostalCode,
 		&partner.City,
 		&partner.Country,
+		&partner.Latitude,
+		&partner.Longitude,
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
@@ -203,16 +218,20 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 			vat_number = COALESCE($5, vat_number),
 			address_line1 = COALESCE($6, address_line1),
 			address_line2 = COALESCE($7, address_line2),
-			postal_code = COALESCE($8, postal_code),
-			city = COALESCE($9, city),
-			country = COALESCE($10, country),
-			contact_name = COALESCE($11, contact_name),
-			contact_email = COALESCE($12, contact_email),
-			contact_phone = COALESCE($13, contact_phone),
+			house_number = COALESCE($8, house_number),
+			postal_code = COALESCE($9, postal_code),
+			city = COALESCE($10, city),
+			country = COALESCE($11, country),
+			latitude = COALESCE($12, latitude),
+			longitude = COALESCE($13, longitude),
+			contact_name = COALESCE($14, contact_name),
+			contact_email = COALESCE($15, contact_email),
+			contact_phone = COALESCE($16, contact_phone),
 			updated_at = now()
 		WHERE id = $1 AND organization_id = $2
 		RETURNING id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, postal_code, city, country,
+			address_line1, address_line2, house_number, postal_code, city, country,
+			latitude, longitude,
 			contact_name, contact_email, contact_phone,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
@@ -227,9 +246,12 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		update.VATNumber,
 		update.AddressLine1,
 		update.AddressLine2,
+		update.HouseNumber,
 		update.PostalCode,
 		update.City,
 		update.Country,
+		update.Latitude,
+		update.Longitude,
 		update.ContactName,
 		update.ContactEmail,
 		update.ContactPhone,
@@ -241,9 +263,12 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		&partner.VATNumber,
 		&partner.AddressLine1,
 		&partner.AddressLine2,
+		&partner.HouseNumber,
 		&partner.PostalCode,
 		&partner.City,
 		&partner.Country,
+		&partner.Latitude,
+		&partner.Longitude,
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
@@ -321,7 +346,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 
 	selectQuery := `
 		SELECT id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, postal_code, city, country,
+			address_line1, address_line2, house_number, postal_code, city, country,
+			latitude, longitude,
 			contact_name, contact_email, contact_phone,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
@@ -355,9 +381,12 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 			&partner.VATNumber,
 			&partner.AddressLine1,
 			&partner.AddressLine2,
+			&partner.HouseNumber,
 			&partner.PostalCode,
 			&partner.City,
 			&partner.Country,
+			&partner.Latitude,
+			&partner.Longitude,
 			&partner.ContactName,
 			&partner.ContactEmail,
 			&partner.ContactPhone,
@@ -592,7 +621,8 @@ func (r *Repository) UpdateLogo(ctx context.Context, organizationID, partnerID u
 			updated_at = now()
 		WHERE id = $1 AND organization_id = $2
 		RETURNING id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, postal_code, city, country,
+			address_line1, address_line2, house_number, postal_code, city, country,
+			latitude, longitude,
 			contact_name, contact_email, contact_phone,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
@@ -614,9 +644,12 @@ func (r *Repository) UpdateLogo(ctx context.Context, organizationID, partnerID u
 		&partner.VATNumber,
 		&partner.AddressLine1,
 		&partner.AddressLine2,
+		&partner.HouseNumber,
 		&partner.PostalCode,
 		&partner.City,
 		&partner.Country,
+		&partner.Latitude,
+		&partner.Longitude,
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
@@ -647,7 +680,8 @@ func (r *Repository) ClearLogo(ctx context.Context, organizationID, partnerID uu
 			updated_at = now()
 		WHERE id = $1 AND organization_id = $2
 		RETURNING id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, postal_code, city, country,
+			address_line1, address_line2, house_number, postal_code, city, country,
+			latitude, longitude,
 			contact_name, contact_email, contact_phone,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
@@ -662,9 +696,12 @@ func (r *Repository) ClearLogo(ctx context.Context, organizationID, partnerID uu
 		&partner.VATNumber,
 		&partner.AddressLine1,
 		&partner.AddressLine2,
+		&partner.HouseNumber,
 		&partner.PostalCode,
 		&partner.City,
 		&partner.Country,
+		&partner.Latitude,
+		&partner.Longitude,
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
