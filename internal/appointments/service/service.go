@@ -167,6 +167,24 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID, i
 	return &resp, nil
 }
 
+// GetByLeadServiceID retrieves the latest non-cancelled appointment for a lead service.
+func (s *Service) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) (*transport.AppointmentResponse, error) {
+	appt, err := s.repo.GetByLeadServiceID(ctx, leadServiceID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if appt == nil {
+		return nil, apperr.NotFound("appointment not found")
+	}
+	if !isAdmin && appt.UserID != userID {
+		return nil, apperr.Forbidden("not authorized to access this appointment")
+	}
+
+	leadInfo := s.getLeadInfoIfPresent(ctx, appt.LeadID, tenantID)
+	resp := appt.ToResponse(leadInfo)
+	return &resp, nil
+}
+
 // Update updates an appointment
 func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.UpdateAppointmentRequest) (*transport.AppointmentResponse, error) {
 	appt, err := s.repo.GetByID(ctx, id, tenantID)

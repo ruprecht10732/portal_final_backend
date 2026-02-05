@@ -252,6 +252,24 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
 	}
 
+	actorType, actorName := deps.GetActor()
+	if len(input.MissingInformation) > 0 {
+		summary := buildMissingInfoSummary(input.MissingInformation)
+		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &leadServiceID,
+			OrganizationID: tenantID,
+			ActorType:      actorType,
+			ActorName:      actorName,
+			EventType:      "analysis",
+			Title:          "Ontbrekende informatie",
+			Summary:        &summary,
+			Metadata: map[string]any{
+				"missingInformation": input.MissingInformation,
+			},
+		})
+	}
+
 	if deps.Scorer != nil {
 		if scoreResult, scoreErr := deps.Scorer.Recalculate(ctx, leadID, &leadServiceID, tenantID, true); scoreErr == nil {
 			_ = deps.Repo.UpdateLeadScore(ctx, leadID, tenantID, repository.UpdateLeadScoreParams{
@@ -261,10 +279,64 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 				ScoreVersion:   &scoreResult.Version,
 				ScoreUpdatedAt: scoreResult.UpdatedAt,
 			})
+
+			summary := buildLeadScoreSummary(scoreResult)
+			_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+				LeadID:         leadID,
+				ServiceID:      &leadServiceID,
+				OrganizationID: tenantID,
+				ActorType:      actorType,
+				ActorName:      actorName,
+				EventType:      "analysis",
+				Title:          "Leadscore bijgewerkt",
+				Summary:        &summary,
+				Metadata: map[string]any{
+					"leadScore":        scoreResult.Score,
+					"leadScorePreAI":   scoreResult.ScorePreAI,
+					"leadScoreVersion": scoreResult.Version,
+				},
+			})
 		}
 	}
 
+	log.Printf(
+		"gatekeeper SaveAnalysis: leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d",
+		leadID,
+		leadServiceID,
+		urgencyLevel,
+		leadQuality,
+		input.RecommendedAction,
+		len(input.MissingInformation),
+	)
+
 	return SaveAnalysisOutput{Success: true, Message: "Analysis saved successfully"}, nil
+}
+
+func buildMissingInfoSummary(items []string) string {
+	cleaned := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value != "" {
+			cleaned = append(cleaned, value)
+		}
+	}
+	if len(cleaned) == 0 {
+		return "Ontbrekende informatie bijgewerkt"
+	}
+
+	limit := 4
+	if len(cleaned) < limit {
+		limit = len(cleaned)
+	}
+	preview := strings.Join(cleaned[:limit], "; ")
+	if len(cleaned) > limit {
+		return fmt.Sprintf("Ontbrekende informatie: %s (+%d)", preview, len(cleaned)-limit)
+	}
+	return fmt.Sprintf("Ontbrekende informatie: %s", preview)
+}
+
+func buildLeadScoreSummary(result *scoring.Result) string {
+	return fmt.Sprintf("Leadscore %d (pre-AI %d)", result.Score, result.ScorePreAI)
 }
 
 func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
@@ -301,6 +373,14 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 		}
 		return UpdateLeadServiceTypeOutput{Success: false, Message: "Failed to update service type"}, err
 	}
+
+	log.Printf(
+		"gatekeeper UpdateLeadServiceType: leadId=%s serviceId=%s from=%s to=%s",
+		leadID,
+		leadServiceID,
+		leadService.ServiceType,
+		serviceType,
+	)
 
 	return UpdateLeadServiceTypeOutput{Success: true, Message: "Service type updated"}, nil
 }
@@ -452,6 +532,18 @@ func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
 				NewStage:      input.Stage,
 			})
 		}
+
+		if reason == "" {
+			reason = "(no reason provided)"
+		}
+		log.Printf(
+			"gatekeeper UpdatePipelineStage: leadId=%s serviceId=%s from=%s to=%s reason=%s",
+			leadID,
+			serviceID,
+			oldStage,
+			input.Stage,
+			reason,
+		)
 
 		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
 	})

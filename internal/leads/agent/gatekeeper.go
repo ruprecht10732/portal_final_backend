@@ -48,6 +48,10 @@ func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus even
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
+	saveAnalysisTool, err := createSaveAnalysisTool(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build SaveAnalysis tool: %w", err)
+	}
 	updateServiceTypeTool, err := createUpdateLeadServiceTypeTool(deps)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdateLeadServiceType tool: %w", err)
@@ -58,7 +62,7 @@ func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus even
 		Model:       kimi,
 		Description: "Validates intake requirements and advances the lead pipeline.",
 		Instruction: "You validate intake requirements and advance the pipeline stage.",
-		Tools:       []tool.Tool{updateServiceTypeTool, updateStageTool},
+		Tools:       []tool.Tool{saveAnalysisTool, updateServiceTypeTool, updateStageTool},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatekeeper agent: %w", err)

@@ -766,19 +766,33 @@ func (h *Handler) LogCall(c *gin.Context) {
 		return
 	}
 
+	actorName := identity.UserID().String()
+	if result.AuthorEmail != "" {
+		actorName = result.AuthorEmail
+	}
+
+	summaryText := req.Summary
+	if result.NoteBody != "" {
+		summaryText = result.NoteBody
+	}
+
 	h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &serviceID,
 		OrganizationID: tenantID,
 		ActorType:      "User",
-		ActorName:      identity.UserID().String(),
+		ActorName:      actorName,
 		EventType:      "call_log",
 		Title:          "Call logged",
-		Summary:        summaryPointer(req.Summary, 400),
+		Summary:        summaryPointer(summaryText, 400),
 		Metadata: map[string]any{
-			"noteCreated":       result.NoteCreated,
-			"statusUpdated":     result.StatusUpdated,
-			"appointmentBooked": result.AppointmentBooked,
+			"callOutcome":            result.CallOutcome,
+			"noteCreated":            result.NoteCreated,
+			"statusUpdated":          result.StatusUpdated,
+			"pipelineStageUpdated":   result.PipelineStageUpdated,
+			"appointmentBooked":      result.AppointmentBooked,
+			"appointmentRescheduled": result.AppointmentRescheduled,
+			"appointmentCancelled":   result.AppointmentCancelled,
 		},
 	})
 

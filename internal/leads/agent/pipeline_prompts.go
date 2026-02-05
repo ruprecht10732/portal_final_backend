@@ -52,18 +52,21 @@ Intake Requirements:
 %s
 
 Instruction:
-0) If the service type is clearly wrong, you may call UpdateLeadServiceType ONLY when you are highly confident (>=90%).
+0) If the service type is clearly wrong, you may call UpdateLeadServiceType ONLY when you are highly confident (>=90%%).
 	If you update the service type, do it BEFORE UpdatePipelineStage.
 	Only change the service type when there is a clear positive match to another service based on notes/service note.
 	Missing intake information alone is NOT a reason to switch service type.
 	If the intent is ambiguous, keep the current service type and move to Nurturing with a short Dutch reason.
 1) Validate intake requirements for the selected service type.
 2) Treat rule-based missing items as critical unless the info is clearly present elsewhere.
-2) If all required info is present, call UpdatePipelineStage with stage="Ready_For_Estimator".
-3) If anything critical is missing, call UpdatePipelineStage with stage="Nurturing".
-4) Include a short reason in UpdatePipelineStage, written in Dutch.
+3) Call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,
+   a short Dutch summary, and a Dutch list of missingInformation (empty list if nothing missing).
+   Call SaveAnalysis BEFORE UpdatePipelineStage.
+4) If all required info is present, call UpdatePipelineStage with stage="Ready_For_Estimator".
+5) If anything critical is missing, call UpdatePipelineStage with stage="Nurturing".
+6) Include a short reason in UpdatePipelineStage, written in Dutch.
 
-You MUST call UpdatePipelineStage and respond ONLY with tool calls.
+You MUST call SaveAnalysis and UpdatePipelineStage, and respond ONLY with tool calls.
 `,
 		lead.ID,
 		service.ID,

@@ -302,8 +302,14 @@ type LogCallRequest struct {
 
 // LogCallResponse is the response for a processed call log
 type LogCallResponse struct {
-	NoteCreated       bool       `json:"noteCreated"`
-	StatusUpdated     *string    `json:"statusUpdated,omitempty"`
-	AppointmentBooked *time.Time `json:"appointmentBooked,omitempty"`
-	Message           string     `json:"message"`
+	NoteCreated            bool       `json:"noteCreated"`
+	NoteBody               string     `json:"noteBody,omitempty"`
+	AuthorEmail            string     `json:"authorEmail,omitempty"`
+	CallOutcome            *string    `json:"callOutcome,omitempty"`
+	StatusUpdated          *string    `json:"statusUpdated,omitempty"`
+	PipelineStageUpdated   *string    `json:"pipelineStageUpdated,omitempty"`
+	AppointmentBooked      *time.Time `json:"appointmentBooked,omitempty"`
+	AppointmentRescheduled *time.Time `json:"appointmentRescheduled,omitempty"`
+	AppointmentCancelled   bool       `json:"appointmentCancelled,omitempty"`
+	Message                string     `json:"message"`
 }

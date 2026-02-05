@@ -126,7 +126,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, err
 	}
 
-	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil)
+	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil, eventBus)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
