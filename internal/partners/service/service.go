@@ -36,10 +36,8 @@ func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.St
 }
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.CreatePartnerRequest) (transport.PartnerResponse, error) {
-	if len(req.ServiceTypeIDs) > 0 {
-		if err := s.repo.ValidateServiceTypeIDs(ctx, tenantID, req.ServiceTypeIDs); err != nil {
-			return transport.PartnerResponse{}, err
-		}
+	if err := s.ensureServiceTypeIDsValid(ctx, tenantID, req.ServiceTypeIDs); err != nil {
+		return transport.PartnerResponse{}, err
 	}
 
 	partner := repository.Partner{
@@ -92,7 +90,7 @@ func (s *Service) GetByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID)
 
 func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, req transport.UpdatePartnerRequest) (transport.PartnerResponse, error) {
 	if req.ServiceTypeIDs != nil {
-		if err := s.repo.ValidateServiceTypeIDs(ctx, tenantID, *req.ServiceTypeIDs); err != nil {
+		if err := s.ensureServiceTypeIDsValid(ctx, tenantID, *req.ServiceTypeIDs); err != nil {
 			return transport.PartnerResponse{}, err
 		}
 	}
@@ -113,18 +111,8 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 		ContactPhone:   normalizeOptionalString(req.ContactPhone, strings.TrimSpace),
 	}
 
-	if update.KVKNumber != nil || update.VATNumber != nil {
-		kvk := ""
-		vat := ""
-		if update.KVKNumber != nil {
-			kvk = *update.KVKNumber
-		}
-		if update.VATNumber != nil {
-			vat = *update.VATNumber
-		}
-		if err := validatePartnerNumbers(kvk, vat); err != nil {
-			return transport.PartnerResponse{}, err
-		}
+	if err := validatePartnerNumbersUpdate(update); err != nil {
+		return transport.PartnerResponse{}, err
 	}
 
 	updated, err := s.repo.Update(ctx, update)
@@ -132,17 +120,9 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 		return transport.PartnerResponse{}, err
 	}
 
-	var serviceTypeIDs []uuid.UUID
-	if req.ServiceTypeIDs != nil {
-		if err := s.repo.ReplaceServiceTypes(ctx, id, *req.ServiceTypeIDs); err != nil {
-			return transport.PartnerResponse{}, err
-		}
-		serviceTypeIDs = *req.ServiceTypeIDs
-	} else {
-		serviceTypeIDs, err = s.repo.ListServiceTypeIDs(ctx, tenantID, id)
-		if err != nil {
-			return transport.PartnerResponse{}, err
-		}
+	serviceTypeIDs, err := s.resolveServiceTypeIDs(ctx, tenantID, id, req.ServiceTypeIDs)
+	if err != nil {
+		return transport.PartnerResponse{}, err
 	}
 
 	return mapPartnerResponse(updated, serviceTypeIDs), nil
@@ -441,6 +421,13 @@ func (s *Service) ensurePartnerExists(ctx context.Context, tenantID uuid.UUID, p
 	return nil
 }
 
+func (s *Service) ensureServiceTypeIDsValid(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.repo.ValidateServiceTypeIDs(ctx, tenantID, ids)
+}
+
 func (s *Service) ensureLeadExists(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID) error {
 	exists, err := s.repo.LeadExists(ctx, leadID, tenantID)
 	if err != nil {
@@ -461,6 +448,16 @@ func (s *Service) ensureLeadServiceExists(ctx context.Context, tenantID uuid.UUI
 		return apperr.NotFound("lead service not found")
 	}
 	return nil
+}
+
+func (s *Service) resolveServiceTypeIDs(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID, ids *[]uuid.UUID) ([]uuid.UUID, error) {
+	if ids != nil {
+		if err := s.repo.ReplaceServiceTypes(ctx, partnerID, *ids); err != nil {
+			return nil, err
+		}
+		return *ids, nil
+	}
+	return s.repo.ListServiceTypeIDs(ctx, tenantID, partnerID)
 }
 
 func mapPartnerResponse(partner repository.Partner, serviceTypeIDs []uuid.UUID) transport.PartnerResponse {
@@ -531,6 +528,21 @@ func normalizeOptionalString(value *string, normalize func(string) string) *stri
 		return nil
 	}
 	return &normalized
+}
+
+func validatePartnerNumbersUpdate(update repository.PartnerUpdate) error {
+	if update.KVKNumber == nil && update.VATNumber == nil {
+		return nil
+	}
+	kvk := ""
+	vat := ""
+	if update.KVKNumber != nil {
+		kvk = *update.KVKNumber
+	}
+	if update.VATNumber != nil {
+		vat = *update.VATNumber
+	}
+	return validatePartnerNumbers(kvk, vat)
 }
 
 var nlVATPattern = regexp.MustCompile(`^NL[0-9]{9}B[0-9]{2}$`)

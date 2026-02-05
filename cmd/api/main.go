@@ -30,6 +30,9 @@ import (
 	"portal_final_backend/platform/validator"
 )
 
+const storageBucketEnsureErrPrefix = "failed to ensure storage bucket exists: "
+const storageBucketEnsureErrMsg = "failed to ensure storage bucket exists"
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -75,18 +78,18 @@ func main() {
 	}
 	// Ensure the lead-service-attachments bucket exists
 	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketLeadServiceAttachments()); err != nil {
-		log.Error("failed to ensure storage bucket exists", "error", err, "bucket", cfg.GetMinioBucketLeadServiceAttachments())
-		panic("failed to ensure storage bucket exists: " + err.Error())
+		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketLeadServiceAttachments())
+		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
 	// Ensure the catalog assets bucket exists
 	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketCatalogAssets()); err != nil {
-		log.Error("failed to ensure storage bucket exists", "error", err, "bucket", cfg.GetMinioBucketCatalogAssets())
-		panic("failed to ensure storage bucket exists: " + err.Error())
+		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketCatalogAssets())
+		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
 	// Ensure the partner logos bucket exists
 	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketPartnerLogos()); err != nil {
-		log.Error("failed to ensure storage bucket exists", "error", err, "bucket", cfg.GetMinioBucketPartnerLogos())
-		panic("failed to ensure storage bucket exists: " + err.Error())
+		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketPartnerLogos())
+		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
 	log.Info(
 		"storage service initialized",

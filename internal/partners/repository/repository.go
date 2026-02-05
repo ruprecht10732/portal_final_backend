@@ -15,6 +15,7 @@ import (
 
 const partnerNotFoundMsg = "partner not found"
 const partnerInviteNotFoundMsg = "partner invite not found"
+const replacePartnerServiceTypesErr = "replace partner service types: %w"
 
 // Repository provides database operations for partners.
 type Repository struct {
@@ -723,12 +724,12 @@ func (r *Repository) ValidateServiceTypeIDs(ctx context.Context, organizationID 
 func (r *Repository) ReplaceServiceTypes(ctx context.Context, partnerID uuid.UUID, ids []uuid.UUID) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("replace partner service types: %w", err)
+		return fmt.Errorf(replacePartnerServiceTypesErr, err)
 	}
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `DELETE FROM RAC_partner_service_types WHERE partner_id = $1`, partnerID); err != nil {
-		return fmt.Errorf("replace partner service types: %w", err)
+		return fmt.Errorf(replacePartnerServiceTypesErr, err)
 	}
 
 	for _, id := range ids {
@@ -738,12 +739,12 @@ func (r *Repository) ReplaceServiceTypes(ctx context.Context, partnerID uuid.UUI
 			partnerID,
 			id,
 		); err != nil {
-			return fmt.Errorf("replace partner service types: %w", err)
+			return fmt.Errorf(replacePartnerServiceTypesErr, err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("replace partner service types: %w", err)
+		return fmt.Errorf(replacePartnerServiceTypesErr, err)
 	}
 	return nil
 }
