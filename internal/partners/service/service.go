@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/partners/repository"
@@ -23,16 +24,24 @@ const (
 
 // Service provides business logic for partners.
 type Service struct {
-	repo     *repository.Repository
-	eventBus events.Bus
+	repo       *repository.Repository
+	eventBus   events.Bus
+	storage    storage.StorageService
+	logoBucket string
 }
 
 // New creates a new partners service.
-func New(repo *repository.Repository, eventBus events.Bus) *Service {
-	return &Service{repo: repo, eventBus: eventBus}
+func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string) *Service {
+	return &Service{repo: repo, eventBus: eventBus, storage: storageSvc, logoBucket: logoBucket}
 }
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.CreatePartnerRequest) (transport.PartnerResponse, error) {
+	if len(req.ServiceTypeIDs) > 0 {
+		if err := s.repo.ValidateServiceTypeIDs(ctx, tenantID, req.ServiceTypeIDs); err != nil {
+			return transport.PartnerResponse{}, err
+		}
+	}
+
 	partner := repository.Partner{
 		ID:             uuid.New(),
 		OrganizationID: tenantID,
@@ -60,7 +69,13 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 		return transport.PartnerResponse{}, err
 	}
 
-	return mapPartnerResponse(created), nil
+	if len(req.ServiceTypeIDs) > 0 {
+		if err := s.repo.ReplaceServiceTypes(ctx, created.ID, req.ServiceTypeIDs); err != nil {
+			return transport.PartnerResponse{}, err
+		}
+	}
+
+	return mapPartnerResponse(created, req.ServiceTypeIDs), nil
 }
 
 func (s *Service) GetByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.PartnerResponse, error) {
@@ -68,10 +83,20 @@ func (s *Service) GetByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID)
 	if err != nil {
 		return transport.PartnerResponse{}, err
 	}
-	return mapPartnerResponse(partner), nil
+	serviceTypeIDs, err := s.repo.ListServiceTypeIDs(ctx, tenantID, id)
+	if err != nil {
+		return transport.PartnerResponse{}, err
+	}
+	return mapPartnerResponse(partner, serviceTypeIDs), nil
 }
 
 func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, req transport.UpdatePartnerRequest) (transport.PartnerResponse, error) {
+	if req.ServiceTypeIDs != nil {
+		if err := s.repo.ValidateServiceTypeIDs(ctx, tenantID, *req.ServiceTypeIDs); err != nil {
+			return transport.PartnerResponse{}, err
+		}
+	}
+
 	update := repository.PartnerUpdate{
 		ID:             id,
 		OrganizationID: tenantID,
@@ -107,7 +132,20 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 		return transport.PartnerResponse{}, err
 	}
 
-	return mapPartnerResponse(updated), nil
+	var serviceTypeIDs []uuid.UUID
+	if req.ServiceTypeIDs != nil {
+		if err := s.repo.ReplaceServiceTypes(ctx, id, *req.ServiceTypeIDs); err != nil {
+			return transport.PartnerResponse{}, err
+		}
+		serviceTypeIDs = *req.ServiceTypeIDs
+	} else {
+		serviceTypeIDs, err = s.repo.ListServiceTypeIDs(ctx, tenantID, id)
+		if err != nil {
+			return transport.PartnerResponse{}, err
+		}
+	}
+
+	return mapPartnerResponse(updated, serviceTypeIDs), nil
 }
 
 func (s *Service) Delete(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) error {
@@ -129,7 +167,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, req transport.Li
 
 	items := make([]transport.PartnerResponse, 0, len(result.Items))
 	for _, partner := range result.Items {
-		items = append(items, mapPartnerResponse(partner))
+		items = append(items, mapPartnerResponse(partner, nil))
 	}
 
 	return transport.ListPartnersResponse{
@@ -139,6 +177,115 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, req transport.Li
 		PageSize:   result.PageSize,
 		TotalPages: result.TotalPages,
 	}, nil
+}
+
+func (s *Service) PresignLogoUpload(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID, req transport.PartnerLogoPresignRequest) (transport.PartnerLogoPresignResponse, error) {
+	if err := s.ensurePartnerExists(ctx, tenantID, partnerID); err != nil {
+		return transport.PartnerLogoPresignResponse{}, err
+	}
+	if !storage.IsImageContentType(req.ContentType) {
+		return transport.PartnerLogoPresignResponse{}, apperr.Validation("logo must be an image")
+	}
+
+	presigned, err := s.storage.GenerateUploadURL(
+		ctx,
+		s.logoBucket,
+		logoFolder(tenantID, partnerID),
+		req.FileName,
+		req.ContentType,
+		req.SizeBytes,
+	)
+	if err != nil {
+		return transport.PartnerLogoPresignResponse{}, err
+	}
+
+	return transport.PartnerLogoPresignResponse{
+		UploadURL: presigned.URL,
+		FileKey:   presigned.FileKey,
+		ExpiresAt: presigned.ExpiresAt.Unix(),
+	}, nil
+}
+
+func (s *Service) SetLogo(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID, req transport.SetPartnerLogoRequest) (transport.PartnerResponse, error) {
+	partner, err := s.repo.GetByID(ctx, partnerID, tenantID)
+	if err != nil {
+		return transport.PartnerResponse{}, err
+	}
+	if !storage.IsImageContentType(req.ContentType) {
+		return transport.PartnerResponse{}, apperr.Validation("logo must be an image")
+	}
+	if err := s.storage.ValidateContentType(req.ContentType); err != nil {
+		return transport.PartnerResponse{}, err
+	}
+	if err := s.storage.ValidateFileSize(req.SizeBytes); err != nil {
+		return transport.PartnerResponse{}, err
+	}
+	if !strings.HasPrefix(req.FileKey, logoFolder(tenantID, partnerID)+"/") {
+		return transport.PartnerResponse{}, apperr.Validation("invalid logo file key")
+	}
+
+	if partner.LogoFileKey != nil && *partner.LogoFileKey != req.FileKey {
+		_ = s.storage.DeleteObject(ctx, s.logoBucket, *partner.LogoFileKey)
+	}
+
+	updated, err := s.repo.UpdateLogo(ctx, tenantID, partnerID, repository.PartnerLogo{
+		FileKey:     req.FileKey,
+		FileName:    req.FileName,
+		ContentType: req.ContentType,
+		SizeBytes:   req.SizeBytes,
+	})
+	if err != nil {
+		return transport.PartnerResponse{}, err
+	}
+
+	serviceTypeIDs, err := s.repo.ListServiceTypeIDs(ctx, tenantID, partnerID)
+	if err != nil {
+		return transport.PartnerResponse{}, err
+	}
+
+	return mapPartnerResponse(updated, serviceTypeIDs), nil
+}
+
+func (s *Service) GetLogoDownloadURL(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID) (transport.PartnerLogoDownloadResponse, error) {
+	partner, err := s.repo.GetByID(ctx, partnerID, tenantID)
+	if err != nil {
+		return transport.PartnerLogoDownloadResponse{}, err
+	}
+	if partner.LogoFileKey == nil || *partner.LogoFileKey == "" {
+		return transport.PartnerLogoDownloadResponse{}, apperr.NotFound("logo not found")
+	}
+
+	presigned, err := s.storage.GenerateDownloadURL(ctx, s.logoBucket, *partner.LogoFileKey)
+	if err != nil {
+		return transport.PartnerLogoDownloadResponse{}, err
+	}
+
+	return transport.PartnerLogoDownloadResponse{
+		DownloadURL: presigned.URL,
+		ExpiresAt:   presigned.ExpiresAt.Unix(),
+	}, nil
+}
+
+func (s *Service) DeleteLogo(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID) (transport.PartnerResponse, error) {
+	partner, err := s.repo.GetByID(ctx, partnerID, tenantID)
+	if err != nil {
+		return transport.PartnerResponse{}, err
+	}
+	if partner.LogoFileKey != nil && *partner.LogoFileKey != "" {
+		_ = s.storage.DeleteObject(ctx, s.logoBucket, *partner.LogoFileKey)
+	}
+
+	updated, err := s.repo.ClearLogo(ctx, tenantID, partnerID)
+	if err != nil {
+		return transport.PartnerResponse{}, err
+	}
+
+	serviceTypeIDs, err := s.repo.ListServiceTypeIDs(ctx, tenantID, partnerID)
+	if err != nil {
+		return transport.PartnerResponse{}, err
+	}
+
+	return mapPartnerResponse(updated, serviceTypeIDs), nil
 }
 
 func (s *Service) LinkLead(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID, leadID uuid.UUID) error {
@@ -316,23 +463,32 @@ func (s *Service) ensureLeadServiceExists(ctx context.Context, tenantID uuid.UUI
 	return nil
 }
 
-func mapPartnerResponse(partner repository.Partner) transport.PartnerResponse {
+func mapPartnerResponse(partner repository.Partner, serviceTypeIDs []uuid.UUID) transport.PartnerResponse {
 	return transport.PartnerResponse{
-		ID:           partner.ID,
-		BusinessName: partner.BusinessName,
-		KVKNumber:    partner.KVKNumber,
-		VATNumber:    partner.VATNumber,
-		AddressLine1: partner.AddressLine1,
-		AddressLine2: partner.AddressLine2,
-		PostalCode:   partner.PostalCode,
-		City:         partner.City,
-		Country:      partner.Country,
-		ContactName:  partner.ContactName,
-		ContactEmail: partner.ContactEmail,
-		ContactPhone: partner.ContactPhone,
-		CreatedAt:    partner.CreatedAt,
-		UpdatedAt:    partner.UpdatedAt,
+		ID:              partner.ID,
+		BusinessName:    partner.BusinessName,
+		KVKNumber:       partner.KVKNumber,
+		VATNumber:       partner.VATNumber,
+		AddressLine1:    partner.AddressLine1,
+		AddressLine2:    partner.AddressLine2,
+		PostalCode:      partner.PostalCode,
+		City:            partner.City,
+		Country:         partner.Country,
+		ContactName:     partner.ContactName,
+		ContactEmail:    partner.ContactEmail,
+		ContactPhone:    partner.ContactPhone,
+		LogoFileKey:     partner.LogoFileKey,
+		LogoFileName:    partner.LogoFileName,
+		LogoContentType: partner.LogoContentType,
+		LogoSizeBytes:   partner.LogoSizeBytes,
+		ServiceTypeIDs:  serviceTypeIDs,
+		CreatedAt:       partner.CreatedAt,
+		UpdatedAt:       partner.UpdatedAt,
 	}
+}
+
+func logoFolder(tenantID uuid.UUID, partnerID uuid.UUID) string {
+	return "partners/" + tenantID.String() + "/" + partnerID.String()
 }
 
 func formatAddress(street string, houseNumber string, city string) string {

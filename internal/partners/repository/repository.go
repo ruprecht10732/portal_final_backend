@@ -27,21 +27,25 @@ func New(pool *pgxpool.Pool) *Repository {
 }
 
 type Partner struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	BusinessName   string
-	KVKNumber      string
-	VATNumber      string
-	AddressLine1   string
-	AddressLine2   *string
-	PostalCode     string
-	City           string
-	Country        string
-	ContactName    string
-	ContactEmail   string
-	ContactPhone   string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID              uuid.UUID
+	OrganizationID  uuid.UUID
+	BusinessName    string
+	KVKNumber       string
+	VATNumber       string
+	AddressLine1    string
+	AddressLine2    *string
+	PostalCode      string
+	City            string
+	Country         string
+	ContactName     string
+	ContactEmail    string
+	ContactPhone    string
+	LogoFileKey     *string
+	LogoFileName    *string
+	LogoContentType *string
+	LogoSizeBytes   *int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type PartnerUpdate struct {
@@ -58,6 +62,13 @@ type PartnerUpdate struct {
 	ContactName    *string
 	ContactEmail   *string
 	ContactPhone   *string
+}
+
+type PartnerLogo struct {
+	FileKey     string
+	FileName    string
+	ContentType string
+	SizeBytes   int64
 }
 
 type ListParams struct {
@@ -143,7 +154,9 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 	query := `
 		SELECT id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, postal_code, city, country,
-			contact_name, contact_email, contact_phone, created_at, updated_at
+			contact_name, contact_email, contact_phone,
+			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
+			created_at, updated_at
 		FROM RAC_partners
 		WHERE id = $1 AND organization_id = $2
 	`
@@ -163,6 +176,10 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
+		&partner.LogoFileKey,
+		&partner.LogoFileName,
+		&partner.LogoContentType,
+		&partner.LogoSizeBytes,
 		&partner.CreatedAt,
 		&partner.UpdatedAt,
 	)
@@ -195,7 +212,9 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		WHERE id = $1 AND organization_id = $2
 		RETURNING id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, postal_code, city, country,
-			contact_name, contact_email, contact_phone, created_at, updated_at
+			contact_name, contact_email, contact_phone,
+			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
+			created_at, updated_at
 	`
 
 	var partner Partner
@@ -227,6 +246,10 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
+		&partner.LogoFileKey,
+		&partner.LogoFileName,
+		&partner.LogoContentType,
+		&partner.LogoSizeBytes,
 		&partner.CreatedAt,
 		&partner.UpdatedAt,
 	)
@@ -298,7 +321,9 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 	selectQuery := `
 		SELECT id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, postal_code, city, country,
-			contact_name, contact_email, contact_phone, created_at, updated_at
+			contact_name, contact_email, contact_phone,
+			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
+			created_at, updated_at
 		` + baseQuery + `
 		ORDER BY
 			CASE WHEN $3 = 'businessName' AND $4 = 'asc' THEN business_name END ASC,
@@ -335,6 +360,10 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 			&partner.ContactName,
 			&partner.ContactEmail,
 			&partner.ContactPhone,
+			&partner.LogoFileKey,
+			&partner.LogoFileName,
+			&partner.LogoContentType,
+			&partner.LogoSizeBytes,
 			&partner.CreatedAt,
 			&partner.UpdatedAt,
 		); err != nil {
@@ -550,6 +579,202 @@ func (r *Repository) RevokeInvite(ctx context.Context, organizationID, inviteID 
 	}
 
 	return invite, nil
+}
+
+func (r *Repository) UpdateLogo(ctx context.Context, organizationID, partnerID uuid.UUID, logo PartnerLogo) (Partner, error) {
+	query := `
+		UPDATE RAC_partners
+		SET logo_file_key = $3,
+			logo_file_name = $4,
+			logo_content_type = $5,
+			logo_size_bytes = $6,
+			updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+		RETURNING id, organization_id, business_name, kvk_number, vat_number,
+			address_line1, address_line2, postal_code, city, country,
+			contact_name, contact_email, contact_phone,
+			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
+			created_at, updated_at
+	`
+
+	var partner Partner
+	err := r.pool.QueryRow(ctx, query,
+		partnerID,
+		organizationID,
+		logo.FileKey,
+		logo.FileName,
+		logo.ContentType,
+		logo.SizeBytes,
+	).Scan(
+		&partner.ID,
+		&partner.OrganizationID,
+		&partner.BusinessName,
+		&partner.KVKNumber,
+		&partner.VATNumber,
+		&partner.AddressLine1,
+		&partner.AddressLine2,
+		&partner.PostalCode,
+		&partner.City,
+		&partner.Country,
+		&partner.ContactName,
+		&partner.ContactEmail,
+		&partner.ContactPhone,
+		&partner.LogoFileKey,
+		&partner.LogoFileName,
+		&partner.LogoContentType,
+		&partner.LogoSizeBytes,
+		&partner.CreatedAt,
+		&partner.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Partner{}, apperr.NotFound(partnerNotFoundMsg)
+		}
+		return Partner{}, fmt.Errorf("update partner logo: %w", err)
+	}
+
+	return partner, nil
+}
+
+func (r *Repository) ClearLogo(ctx context.Context, organizationID, partnerID uuid.UUID) (Partner, error) {
+	query := `
+		UPDATE RAC_partners
+		SET logo_file_key = NULL,
+			logo_file_name = NULL,
+			logo_content_type = NULL,
+			logo_size_bytes = NULL,
+			updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+		RETURNING id, organization_id, business_name, kvk_number, vat_number,
+			address_line1, address_line2, postal_code, city, country,
+			contact_name, contact_email, contact_phone,
+			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
+			created_at, updated_at
+	`
+
+	var partner Partner
+	err := r.pool.QueryRow(ctx, query, partnerID, organizationID).Scan(
+		&partner.ID,
+		&partner.OrganizationID,
+		&partner.BusinessName,
+		&partner.KVKNumber,
+		&partner.VATNumber,
+		&partner.AddressLine1,
+		&partner.AddressLine2,
+		&partner.PostalCode,
+		&partner.City,
+		&partner.Country,
+		&partner.ContactName,
+		&partner.ContactEmail,
+		&partner.ContactPhone,
+		&partner.LogoFileKey,
+		&partner.LogoFileName,
+		&partner.LogoContentType,
+		&partner.LogoSizeBytes,
+		&partner.CreatedAt,
+		&partner.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Partner{}, apperr.NotFound(partnerNotFoundMsg)
+		}
+		return Partner{}, fmt.Errorf("clear partner logo: %w", err)
+	}
+
+	return partner, nil
+}
+
+func (r *Repository) ValidateServiceTypeIDs(ctx context.Context, organizationID uuid.UUID, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	uniqueIDs := make([]uuid.UUID, 0, len(ids))
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+
+	query := `SELECT id FROM RAC_service_types WHERE organization_id = $1 AND id = ANY($2)`
+	rows, err := r.pool.Query(ctx, query, organizationID, uniqueIDs)
+	if err != nil {
+		return fmt.Errorf("validate service types: %w", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("validate service types: %w", err)
+	}
+	if count != len(uniqueIDs) {
+		return apperr.Validation("invalid service type id")
+	}
+
+	return nil
+}
+
+func (r *Repository) ReplaceServiceTypes(ctx context.Context, partnerID uuid.UUID, ids []uuid.UUID) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("replace partner service types: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM RAC_partner_service_types WHERE partner_id = $1`, partnerID); err != nil {
+		return fmt.Errorf("replace partner service types: %w", err)
+	}
+
+	for _, id := range ids {
+		if _, err := tx.Exec(
+			ctx,
+			`INSERT INTO RAC_partner_service_types (partner_id, service_type_id) VALUES ($1, $2)`,
+			partnerID,
+			id,
+		); err != nil {
+			return fmt.Errorf("replace partner service types: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("replace partner service types: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) ListServiceTypeIDs(ctx context.Context, organizationID, partnerID uuid.UUID) ([]uuid.UUID, error) {
+	query := `
+		SELECT pst.service_type_id
+		FROM RAC_partner_service_types pst
+		JOIN RAC_service_types st ON st.id = pst.service_type_id
+		WHERE pst.partner_id = $1 AND st.organization_id = $2
+		ORDER BY st.display_order ASC, st.name ASC
+	`
+	rows, err := r.pool.Query(ctx, query, partnerID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list partner service types: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan partner service type: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate partner service types: %w", err)
+	}
+
+	return ids, nil
 }
 
 func (r *Repository) GetOrganizationName(ctx context.Context, organizationID uuid.UUID) (string, error) {

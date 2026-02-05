@@ -7,48 +7,55 @@ import (
 )
 
 type CreatePartnerRequest struct {
-	BusinessName string `json:"businessName" validate:"required,min=1,max=200"`
-	KVKNumber    string `json:"kvkNumber" validate:"required,max=20"`
-	VATNumber    string `json:"vatNumber" validate:"required,max=20"`
-	AddressLine1 string `json:"addressLine1" validate:"required,max=200"`
-	AddressLine2 string `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
-	PostalCode   string `json:"postalCode" validate:"required,max=20"`
-	City         string `json:"city" validate:"required,max=120"`
-	Country      string `json:"country" validate:"required,max=120"`
-	ContactName  string `json:"contactName" validate:"required,max=120"`
-	ContactEmail string `json:"contactEmail" validate:"required,email"`
-	ContactPhone string `json:"contactPhone" validate:"required,max=50"`
+	BusinessName   string      `json:"businessName" validate:"required,min=1,max=200"`
+	KVKNumber      string      `json:"kvkNumber" validate:"required,max=20"`
+	VATNumber      string      `json:"vatNumber" validate:"required,max=20"`
+	AddressLine1   string      `json:"addressLine1" validate:"required,max=200"`
+	AddressLine2   string      `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
+	PostalCode     string      `json:"postalCode" validate:"required,max=20"`
+	City           string      `json:"city" validate:"required,max=120"`
+	Country        string      `json:"country" validate:"required,max=120"`
+	ContactName    string      `json:"contactName" validate:"required,max=120"`
+	ContactEmail   string      `json:"contactEmail" validate:"required,email"`
+	ContactPhone   string      `json:"contactPhone" validate:"required,max=50"`
+	ServiceTypeIDs []uuid.UUID `json:"serviceTypeIds,omitempty" validate:"omitempty,dive,required"`
 }
 
 type UpdatePartnerRequest struct {
-	BusinessName *string `json:"businessName,omitempty" validate:"omitempty,min=1,max=200"`
-	KVKNumber    *string `json:"kvkNumber,omitempty" validate:"omitempty,max=20"`
-	VATNumber    *string `json:"vatNumber,omitempty" validate:"omitempty,max=20"`
-	AddressLine1 *string `json:"addressLine1,omitempty" validate:"omitempty,max=200"`
-	AddressLine2 *string `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
-	PostalCode   *string `json:"postalCode,omitempty" validate:"omitempty,max=20"`
-	City         *string `json:"city,omitempty" validate:"omitempty,max=120"`
-	Country      *string `json:"country,omitempty" validate:"omitempty,max=120"`
-	ContactName  *string `json:"contactName,omitempty" validate:"omitempty,max=120"`
-	ContactEmail *string `json:"contactEmail,omitempty" validate:"omitempty,email"`
-	ContactPhone *string `json:"contactPhone,omitempty" validate:"omitempty,max=50"`
+	BusinessName   *string      `json:"businessName,omitempty" validate:"omitempty,min=1,max=200"`
+	KVKNumber      *string      `json:"kvkNumber,omitempty" validate:"omitempty,max=20"`
+	VATNumber      *string      `json:"vatNumber,omitempty" validate:"omitempty,max=20"`
+	AddressLine1   *string      `json:"addressLine1,omitempty" validate:"omitempty,max=200"`
+	AddressLine2   *string      `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
+	PostalCode     *string      `json:"postalCode,omitempty" validate:"omitempty,max=20"`
+	City           *string      `json:"city,omitempty" validate:"omitempty,max=120"`
+	Country        *string      `json:"country,omitempty" validate:"omitempty,max=120"`
+	ContactName    *string      `json:"contactName,omitempty" validate:"omitempty,max=120"`
+	ContactEmail   *string      `json:"contactEmail,omitempty" validate:"omitempty,email"`
+	ContactPhone   *string      `json:"contactPhone,omitempty" validate:"omitempty,max=50"`
+	ServiceTypeIDs *[]uuid.UUID `json:"serviceTypeIds,omitempty" validate:"omitempty,dive,required"`
 }
 
 type PartnerResponse struct {
-	ID           uuid.UUID `json:"id"`
-	BusinessName string    `json:"businessName"`
-	KVKNumber    string    `json:"kvkNumber"`
-	VATNumber    string    `json:"vatNumber"`
-	AddressLine1 string    `json:"addressLine1"`
-	AddressLine2 *string   `json:"addressLine2,omitempty"`
-	PostalCode   string    `json:"postalCode"`
-	City         string    `json:"city"`
-	Country      string    `json:"country"`
-	ContactName  string    `json:"contactName"`
-	ContactEmail string    `json:"contactEmail"`
-	ContactPhone string    `json:"contactPhone"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID              uuid.UUID   `json:"id"`
+	BusinessName    string      `json:"businessName"`
+	KVKNumber       string      `json:"kvkNumber"`
+	VATNumber       string      `json:"vatNumber"`
+	AddressLine1    string      `json:"addressLine1"`
+	AddressLine2    *string     `json:"addressLine2,omitempty"`
+	PostalCode      string      `json:"postalCode"`
+	City            string      `json:"city"`
+	Country         string      `json:"country"`
+	ContactName     string      `json:"contactName"`
+	ContactEmail    string      `json:"contactEmail"`
+	ContactPhone    string      `json:"contactPhone"`
+	LogoFileKey     *string     `json:"logoFileKey,omitempty"`
+	LogoFileName    *string     `json:"logoFileName,omitempty"`
+	LogoContentType *string     `json:"logoContentType,omitempty"`
+	LogoSizeBytes   *int64      `json:"logoSizeBytes,omitempty"`
+	ServiceTypeIDs  []uuid.UUID `json:"serviceTypeIds,omitempty"`
+	CreatedAt       time.Time   `json:"createdAt"`
+	UpdatedAt       time.Time   `json:"updatedAt"`
 }
 
 type ListPartnersRequest struct {

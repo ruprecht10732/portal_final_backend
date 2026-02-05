@@ -2,6 +2,7 @@
 package partners
 
 import (
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/partners/handler"
@@ -19,9 +20,15 @@ type Module struct {
 }
 
 // NewModule creates and initializes the partners module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus, val *validator.Validator) *Module {
+func NewModule(
+	pool *pgxpool.Pool,
+	eventBus events.Bus,
+	storageSvc storage.StorageService,
+	logoBucket string,
+	val *validator.Validator,
+) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, eventBus)
+	svc := service.New(repo, eventBus, storageSvc, logoBucket)
 	h := handler.New(svc, val)
 
 	return &Module{handler: h, service: svc}
