@@ -17,6 +17,7 @@ type Sender interface {
 	SendPasswordResetEmail(ctx context.Context, toEmail, resetURL string) error
 	SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error
 	SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error
+	SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error
 }
 
 type NoopSender struct{}
@@ -34,6 +35,10 @@ func (NoopSender) SendVisitInviteEmail(ctx context.Context, toEmail, consumerNam
 }
 
 func (NoopSender) SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error {
+	return nil
+}
+
+func (NoopSender) SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error {
 	return nil
 }
 
@@ -104,6 +109,17 @@ func (b *BrevoSender) SendOrganizationInviteEmail(ctx context.Context, toEmail, 
 		"You're invited",
 		"You have been invited to join "+organizationName+". Click the button below to accept the invitation and create your account.",
 		"Accept invitation",
+		inviteURL,
+	)
+	return b.send(ctx, toEmail, subject, content)
+}
+
+func (b *BrevoSender) SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error {
+	subject := "New job invitation from " + organizationName
+	content := buildEmailTemplate(
+		"You're invited",
+		""+organizationName+" invited "+partnerName+" to take on a new job. Click the button below to review the details and respond.",
+		"Review invitation",
 		inviteURL,
 	)
 	return b.send(ctx, toEmail, subject, content)

@@ -22,6 +22,7 @@ import (
 	"portal_final_backend/internal/leads"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
+	"portal_final_backend/internal/partners"
 	"portal_final_backend/internal/services"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
@@ -123,6 +124,7 @@ func main() {
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, log)
+	partnersModule := partners.NewModule(pool, eventBus, val)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
@@ -144,6 +146,7 @@ func main() {
 			servicesModule,
 			catalogModule,
 			appointmentsModule,
+			partnersModule,
 		},
 	}
 

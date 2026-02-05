@@ -39,6 +39,8 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 
 	// Identity domain events
 	bus.Subscribe(events.OrganizationInviteCreated{}.EventName(), m)
+	// Partners domain events
+	bus.Subscribe(events.PartnerInviteCreated{}.EventName(), m)
 
 	m.log.Info("notification module registered event handlers")
 }
@@ -54,6 +56,8 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handlePasswordResetRequested(ctx, e)
 	case events.OrganizationInviteCreated:
 		return m.handleOrganizationInviteCreated(ctx, e)
+	case events.PartnerInviteCreated:
+		return m.handlePartnerInviteCreated(ctx, e)
 	default:
 		m.log.Warn("unhandled event type", "event", event.EventName())
 		return nil
@@ -113,6 +117,21 @@ func (m *Module) handleOrganizationInviteCreated(ctx context.Context, e events.O
 		return err
 	}
 	m.log.Info("organization invite email sent", "organizationId", e.OrganizationID, "email", e.Email)
+	return nil
+}
+
+func (m *Module) handlePartnerInviteCreated(ctx context.Context, e events.PartnerInviteCreated) error {
+	inviteURL := m.buildURL("/partner-invite", e.InviteToken)
+	if err := m.sender.SendPartnerInviteEmail(ctx, e.Email, e.OrganizationName, e.PartnerName, inviteURL); err != nil {
+		m.log.Error("failed to send partner invite email",
+			"organizationId", e.OrganizationID,
+			"partnerId", e.PartnerID,
+			"email", e.Email,
+			"error", err,
+		)
+		return err
+	}
+	m.log.Info("partner invite email sent", "organizationId", e.OrganizationID, "partnerId", e.PartnerID, "email", e.Email)
 	return nil
 }
 

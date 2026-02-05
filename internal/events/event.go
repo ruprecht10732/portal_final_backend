@@ -104,3 +104,22 @@ type OrganizationCreated struct {
 }
 
 func (e OrganizationCreated) EventName() string { return "identity.organization.created" }
+
+// =============================================================================
+// Partners Domain Events
+// =============================================================================
+
+// PartnerInviteCreated is published when a partner invite is created.
+type PartnerInviteCreated struct {
+	BaseEvent
+	OrganizationID   uuid.UUID  `json:"organizationId"`
+	OrganizationName string     `json:"organizationName"`
+	PartnerID        uuid.UUID  `json:"partnerId"`
+	PartnerName      string     `json:"partnerName"`
+	Email            string     `json:"email"`
+	InviteToken      string     `json:"inviteToken"`
+	LeadID           *uuid.UUID `json:"leadId,omitempty"`
+	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
+}
+
+func (e PartnerInviteCreated) EventName() string { return "partners.invite.created" }
