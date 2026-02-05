@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,13 +18,18 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
+	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/phone"
+	"portal_final_backend/platform/qdrant"
 )
 
 const (
 	invalidLeadIDMessage        = "Invalid lead ID"
 	invalidLeadServiceIDMessage = "Invalid lead service ID"
 	missingTenantContextMessage = "Missing tenant context"
+	leadNotFoundMessage         = "Lead not found"
+	leadServiceNotFoundMessage  = "Lead service not found"
+	invalidFieldFormat          = "invalid %s"
 )
 
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
@@ -122,6 +129,8 @@ type ToolDependencies struct {
 	DraftedEmails        map[uuid.UUID]EmailDraft
 	Scorer               *scoring.Service
 	EventBus             events.Bus
+	EmbeddingClient      *embeddings.Client
+	QdrantClient         *qdrant.Client
 	mu                   sync.RWMutex
 	tenantID             *uuid.UUID
 	leadID               *uuid.UUID
@@ -233,6 +242,11 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.lastAnalysisMetadata = nil
 }
 
+// IsProductSearchEnabled returns true if both embedding and Qdrant clients are configured.
+func (d *ToolDependencies) IsProductSearchEnabled() bool {
+	return d.EmbeddingClient != nil && d.QdrantClient != nil
+}
+
 func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
 	parsed, err := uuid.Parse(value)
 	if err != nil {
@@ -337,7 +351,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 
 	lead, err := deps.Repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
-		return SaveAnalysisOutput{Success: false, Message: "Lead not found"}, err
+		return SaveAnalysisOutput{Success: false, Message: leadNotFoundMessage}, err
 	}
 
 	channel, err := resolvePreferredChannel(input.PreferredContactChannel, lead)
@@ -405,34 +419,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	log.Printf("SaveAnalysis: stored analysis metadata for lead=%s service=%s channel=%s action=%s",
 		leadID, leadServiceID, channel, recommendedAction)
 
-	if deps.Scorer != nil {
-		if scoreResult, scoreErr := deps.Scorer.Recalculate(ctx, leadID, &leadServiceID, tenantID, true); scoreErr == nil {
-			_ = deps.Repo.UpdateLeadScore(ctx, leadID, tenantID, repository.UpdateLeadScoreParams{
-				Score:          &scoreResult.Score,
-				ScorePreAI:     &scoreResult.ScorePreAI,
-				ScoreFactors:   scoreResult.FactorsJSON,
-				ScoreVersion:   &scoreResult.Version,
-				ScoreUpdatedAt: scoreResult.UpdatedAt,
-			})
-
-			summary := buildLeadScoreSummary(scoreResult)
-			_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-				LeadID:         leadID,
-				ServiceID:      &leadServiceID,
-				OrganizationID: tenantID,
-				ActorType:      actorType,
-				ActorName:      actorName,
-				EventType:      "analysis",
-				Title:          "Leadscore bijgewerkt",
-				Summary:        &summary,
-				Metadata: map[string]any{
-					"leadScore":        scoreResult.Score,
-					"leadScorePreAI":   scoreResult.ScorePreAI,
-					"leadScoreVersion": scoreResult.Version,
-				},
-			})
-		}
-	}
+	recalculateAndRecordScore(ctx, deps, leadID, leadServiceID, tenantID, actorType, actorName)
 
 	log.Printf(
 		"gatekeeper SaveAnalysis: leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d",
@@ -446,6 +433,40 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 
 	deps.MarkSaveAnalysisCalled()
 	return SaveAnalysisOutput{Success: true, Message: "Analysis saved successfully"}, nil
+}
+
+func recalculateAndRecordScore(ctx tool.Context, deps *ToolDependencies, leadID, leadServiceID, tenantID uuid.UUID, actorType, actorName string) {
+	if deps.Scorer == nil {
+		return
+	}
+	scoreResult, scoreErr := deps.Scorer.Recalculate(ctx, leadID, &leadServiceID, tenantID, true)
+	if scoreErr != nil {
+		return
+	}
+	_ = deps.Repo.UpdateLeadScore(ctx, leadID, tenantID, repository.UpdateLeadScoreParams{
+		Score:          &scoreResult.Score,
+		ScorePreAI:     &scoreResult.ScorePreAI,
+		ScoreFactors:   scoreResult.FactorsJSON,
+		ScoreVersion:   &scoreResult.Version,
+		ScoreUpdatedAt: scoreResult.UpdatedAt,
+	})
+
+	summary := buildLeadScoreSummary(scoreResult)
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &leadServiceID,
+		OrganizationID: tenantID,
+		ActorType:      actorType,
+		ActorName:      actorName,
+		EventType:      "analysis",
+		Title:          "Leadscore bijgewerkt",
+		Summary:        &summary,
+		Metadata: map[string]any{
+			"leadScore":        scoreResult.Score,
+			"leadScorePreAI":   scoreResult.ScorePreAI,
+			"leadScoreVersion": scoreResult.Version,
+		},
+	})
 }
 
 func buildMissingInfoSummary(items []string) string {
@@ -496,7 +517,7 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 
 	leadService, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, tenantID)
 	if err != nil {
-		return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service not found"}, err
+		return UpdateLeadServiceTypeOutput{Success: false, Message: leadServiceNotFoundMessage}, err
 	}
 	if leadService.LeadID != leadID {
 		return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service does not belong to lead"}, fmt.Errorf("lead service mismatch")
@@ -521,6 +542,130 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 	return UpdateLeadServiceTypeOutput{Success: true, Message: "Service type updated"}, nil
 }
 
+// leadDetailsBuilder encapsulates field update logic for handleUpdateLeadDetails
+type leadDetailsBuilder struct {
+	params        repository.UpdateLeadParams
+	updatedFields []string
+}
+
+func newLeadDetailsBuilder() *leadDetailsBuilder {
+	return &leadDetailsBuilder{
+		params:        repository.UpdateLeadParams{},
+		updatedFields: make([]string, 0, 10),
+	}
+}
+
+func (b *leadDetailsBuilder) setStringField(input *string, current string, fieldName string, setter func(*string)) error {
+	if input == nil {
+		return nil
+	}
+	value := strings.TrimSpace(*input)
+	if value == "" {
+		return fmt.Errorf(invalidFieldFormat, fieldName)
+	}
+	setter(&value)
+	if value != current {
+		b.updatedFields = append(b.updatedFields, fieldName)
+	}
+	return nil
+}
+
+func (b *leadDetailsBuilder) setOptionalStringField(input *string, current *string, fieldName string, setter func(*string)) error {
+	if input == nil {
+		return nil
+	}
+	value := strings.TrimSpace(*input)
+	if value == "" {
+		return fmt.Errorf(invalidFieldFormat, fieldName)
+	}
+	setter(&value)
+	if current == nil || *current != value {
+		b.updatedFields = append(b.updatedFields, fieldName)
+	}
+	return nil
+}
+
+func (b *leadDetailsBuilder) setPhoneField(input *string, current string) error {
+	if input == nil {
+		return nil
+	}
+	value := phone.NormalizeE164(strings.TrimSpace(*input))
+	if value == "" {
+		return fmt.Errorf("invalid phone")
+	}
+	b.params.ConsumerPhone = &value
+	if value != current {
+		b.updatedFields = append(b.updatedFields, "phone")
+	}
+	return nil
+}
+
+func (b *leadDetailsBuilder) setConsumerRole(input *string, current string) error {
+	if input == nil {
+		return nil
+	}
+	role, err := normalizeConsumerRole(*input)
+	if err != nil {
+		return fmt.Errorf("invalid consumer role")
+	}
+	b.params.ConsumerRole = &role
+	if role != current {
+		b.updatedFields = append(b.updatedFields, "consumerRole")
+	}
+	return nil
+}
+
+func (b *leadDetailsBuilder) setCoordinate(input *float64, current *float64, fieldName string, min, max float64, setter func(*float64)) error {
+	if input == nil {
+		return nil
+	}
+	if *input < min || *input > max {
+		return fmt.Errorf(invalidFieldFormat, fieldName)
+	}
+	setter(input)
+	if current == nil || *current != *input {
+		b.updatedFields = append(b.updatedFields, fieldName)
+	}
+	return nil
+}
+
+func (b *leadDetailsBuilder) buildFromInput(input UpdateLeadDetailsInput, current repository.Lead) error {
+	if err := b.setStringField(input.FirstName, current.ConsumerFirstName, "firstName", func(v *string) { b.params.ConsumerFirstName = v }); err != nil {
+		return err
+	}
+	if err := b.setStringField(input.LastName, current.ConsumerLastName, "lastName", func(v *string) { b.params.ConsumerLastName = v }); err != nil {
+		return err
+	}
+	if err := b.setPhoneField(input.Phone, current.ConsumerPhone); err != nil {
+		return err
+	}
+	if err := b.setOptionalStringField(input.Email, current.ConsumerEmail, "email", func(v *string) { b.params.ConsumerEmail = v }); err != nil {
+		return err
+	}
+	if err := b.setConsumerRole(input.ConsumerRole, current.ConsumerRole); err != nil {
+		return err
+	}
+	if err := b.setStringField(input.Street, current.AddressStreet, "street", func(v *string) { b.params.AddressStreet = v }); err != nil {
+		return err
+	}
+	if err := b.setStringField(input.HouseNumber, current.AddressHouseNumber, "houseNumber", func(v *string) { b.params.AddressHouseNumber = v }); err != nil {
+		return err
+	}
+	if err := b.setStringField(input.ZipCode, current.AddressZipCode, "zipCode", func(v *string) { b.params.AddressZipCode = v }); err != nil {
+		return err
+	}
+	if err := b.setStringField(input.City, current.AddressCity, "city", func(v *string) { b.params.AddressCity = v }); err != nil {
+		return err
+	}
+	if err := b.setCoordinate(input.Latitude, current.Latitude, "latitude", -90, 90, func(v *float64) { b.params.Latitude = v }); err != nil {
+		return err
+	}
+	if err := b.setCoordinate(input.Longitude, current.Longitude, "longitude", -180, 180, func(v *float64) { b.params.Longitude = v }); err != nil {
+		return err
+	}
+	return nil
+}
+
 func handleUpdateLeadDetails(ctx tool.Context, deps *ToolDependencies, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
 	leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
 	if err != nil {
@@ -534,153 +679,41 @@ func handleUpdateLeadDetails(ctx tool.Context, deps *ToolDependencies, input Upd
 
 	current, err := deps.Repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
-		return UpdateLeadDetailsOutput{Success: false, Message: "Lead not found"}, err
+		return UpdateLeadDetailsOutput{Success: false, Message: leadNotFoundMessage}, err
 	}
 
-	params := repository.UpdateLeadParams{}
-	updatedFields := make([]string, 0, 10)
-
-	if input.FirstName != nil {
-		value := strings.TrimSpace(*input.FirstName)
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid first name"}, fmt.Errorf("invalid first name")
-		}
-		params.ConsumerFirstName = &value
-		if value != current.ConsumerFirstName {
-			updatedFields = append(updatedFields, "firstName")
-		}
+	builder := newLeadDetailsBuilder()
+	if err := builder.buildFromInput(input, current); err != nil {
+		return UpdateLeadDetailsOutput{Success: false, Message: err.Error()}, err
 	}
 
-	if input.LastName != nil {
-		value := strings.TrimSpace(*input.LastName)
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid last name"}, fmt.Errorf("invalid last name")
-		}
-		params.ConsumerLastName = &value
-		if value != current.ConsumerLastName {
-			updatedFields = append(updatedFields, "lastName")
-		}
-	}
-
-	if input.Phone != nil {
-		value := phone.NormalizeE164(strings.TrimSpace(*input.Phone))
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid phone"}, fmt.Errorf("invalid phone")
-		}
-		params.ConsumerPhone = &value
-		if value != current.ConsumerPhone {
-			updatedFields = append(updatedFields, "phone")
-		}
-	}
-
-	if input.Email != nil {
-		value := strings.TrimSpace(*input.Email)
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid email"}, fmt.Errorf("invalid email")
-		}
-		params.ConsumerEmail = &value
-		if current.ConsumerEmail == nil || *current.ConsumerEmail != value {
-			updatedFields = append(updatedFields, "email")
-		}
-	}
-
-	if input.ConsumerRole != nil {
-		role, err := normalizeConsumerRole(*input.ConsumerRole)
-		if err != nil {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid consumer role"}, err
-		}
-		params.ConsumerRole = &role
-		if role != current.ConsumerRole {
-			updatedFields = append(updatedFields, "consumerRole")
-		}
-	}
-
-	if input.Street != nil {
-		value := strings.TrimSpace(*input.Street)
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid street"}, fmt.Errorf("invalid street")
-		}
-		params.AddressStreet = &value
-		if value != current.AddressStreet {
-			updatedFields = append(updatedFields, "street")
-		}
-	}
-
-	if input.HouseNumber != nil {
-		value := strings.TrimSpace(*input.HouseNumber)
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid house number"}, fmt.Errorf("invalid house number")
-		}
-		params.AddressHouseNumber = &value
-		if value != current.AddressHouseNumber {
-			updatedFields = append(updatedFields, "houseNumber")
-		}
-	}
-
-	if input.ZipCode != nil {
-		value := strings.TrimSpace(*input.ZipCode)
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid zip code"}, fmt.Errorf("invalid zip code")
-		}
-		params.AddressZipCode = &value
-		if value != current.AddressZipCode {
-			updatedFields = append(updatedFields, "zipCode")
-		}
-	}
-
-	if input.City != nil {
-		value := strings.TrimSpace(*input.City)
-		if value == "" {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid city"}, fmt.Errorf("invalid city")
-		}
-		params.AddressCity = &value
-		if value != current.AddressCity {
-			updatedFields = append(updatedFields, "city")
-		}
-	}
-
-	if input.Latitude != nil {
-		if *input.Latitude < -90 || *input.Latitude > 90 {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid latitude"}, fmt.Errorf("invalid latitude")
-		}
-		params.Latitude = input.Latitude
-		if current.Latitude == nil || *current.Latitude != *input.Latitude {
-			updatedFields = append(updatedFields, "latitude")
-		}
-	}
-
-	if input.Longitude != nil {
-		if *input.Longitude < -180 || *input.Longitude > 180 {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Invalid longitude"}, fmt.Errorf("invalid longitude")
-		}
-		params.Longitude = input.Longitude
-		if current.Longitude == nil || *current.Longitude != *input.Longitude {
-			updatedFields = append(updatedFields, "longitude")
-		}
-	}
-
-	if len(updatedFields) == 0 {
+	if len(builder.updatedFields) == 0 {
 		return UpdateLeadDetailsOutput{Success: true, Message: "No updates required"}, nil
 	}
 
-	_, err = deps.Repo.Update(ctx, leadID, tenantID, params)
+	_, err = deps.Repo.Update(ctx, leadID, tenantID, builder.params)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return UpdateLeadDetailsOutput{Success: false, Message: "Lead not found"}, err
+			return UpdateLeadDetailsOutput{Success: false, Message: leadNotFoundMessage}, err
 		}
 		return UpdateLeadDetailsOutput{Success: false, Message: "Failed to update lead"}, err
 	}
 
+	recordLeadDetailsUpdate(ctx, deps, leadID, tenantID, builder.updatedFields, input.Reason, input.Confidence)
+	return UpdateLeadDetailsOutput{Success: true, Message: "Lead updated", UpdatedFields: builder.updatedFields}, nil
+}
+
+func recordLeadDetailsUpdate(ctx tool.Context, deps *ToolDependencies, leadID, tenantID uuid.UUID, updatedFields []string, reason string, confidence *float64) {
 	actorType, actorName := deps.GetActor()
-	reason := strings.TrimSpace(input.Reason)
-	if reason == "" {
-		reason = "Leadgegevens bijgewerkt"
+	reasonText := strings.TrimSpace(reason)
+	if reasonText == "" {
+		reasonText = "Leadgegevens bijgewerkt"
 	}
 	metadata := map[string]any{
 		"updatedFields": updatedFields,
 	}
-	if input.Confidence != nil {
-		metadata["confidence"] = *input.Confidence
+	if confidence != nil {
+		metadata["confidence"] = *confidence
 	}
 
 	var serviceID *uuid.UUID
@@ -696,18 +729,11 @@ func handleUpdateLeadDetails(ctx tool.Context, deps *ToolDependencies, input Upd
 		ActorName:      actorName,
 		EventType:      "lead_update",
 		Title:          "Leadgegevens bijgewerkt",
-		Summary:        &reason,
+		Summary:        &reasonText,
 		Metadata:       metadata,
 	})
 
-	log.Printf(
-		"gatekeeper UpdateLeadDetails: leadId=%s fields=%v reason=%s",
-		leadID,
-		updatedFields,
-		reason,
-	)
-
-	return UpdateLeadDetailsOutput{Success: true, Message: "Lead updated", UpdatedFields: updatedFields}, nil
+	log.Printf("gatekeeper UpdateLeadDetails: leadId=%s fields=%v reason=%s", leadID, updatedFields, reasonText)
 }
 
 // createSaveAnalysisTool creates the SaveAnalysis tool
@@ -804,86 +830,104 @@ var validPipelineStages = map[string]bool{
 	"Lost":                true,
 }
 
+func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+	if !validPipelineStages[input.Stage] {
+		return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
+	}
+
+	tenantID, err := getTenantID(deps)
+	if err != nil {
+		return UpdatePipelineStageOutput{Success: false, Message: missingTenantContextMessage}, err
+	}
+
+	leadID, serviceID, err := getLeadContext(deps)
+	if err != nil {
+		return UpdatePipelineStageOutput{Success: false, Message: "Missing lead context"}, err
+	}
+
+	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, err
+	}
+	oldStage := svc.PipelineStage
+
+	_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
+	if err != nil {
+		return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
+	}
+
+	recordPipelineStageChange(ctx, deps, stageChangeParams{
+		leadID:    leadID,
+		serviceID: serviceID,
+		tenantID:  tenantID,
+		oldStage:  oldStage,
+		newStage:  input.Stage,
+		reason:    input.Reason,
+	})
+	deps.MarkStageUpdateCalled()
+	return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
+}
+
+// stageChangeParams groups parameters for recording a pipeline stage change.
+type stageChangeParams struct {
+	leadID    uuid.UUID
+	serviceID uuid.UUID
+	tenantID  uuid.UUID
+	oldStage  string
+	newStage  string
+	reason    string
+}
+
+func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stageChangeParams) {
+	actorType, actorName := deps.GetActor()
+	reasonText := strings.TrimSpace(p.reason)
+	var summary *string
+	if reasonText != "" {
+		summary = &reasonText
+	}
+
+	stageMetadata := map[string]any{
+		"oldStage": p.oldStage,
+		"newStage": p.newStage,
+	}
+
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         p.leadID,
+		ServiceID:      &p.serviceID,
+		OrganizationID: p.tenantID,
+		ActorType:      actorType,
+		ActorName:      actorName,
+		EventType:      "stage_change",
+		Title:          "Stage Updated",
+		Summary:        summary,
+		Metadata:       stageMetadata,
+	})
+
+	if deps.EventBus != nil {
+		deps.EventBus.Publish(ctx, events.PipelineStageChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        p.leadID,
+			LeadServiceID: p.serviceID,
+			TenantID:      p.tenantID,
+			OldStage:      p.oldStage,
+			NewStage:      p.newStage,
+		})
+	}
+
+	logReason := reasonText
+	if logReason == "" {
+		logReason = "(no reason provided)"
+	}
+	log.Printf("gatekeeper UpdatePipelineStage: leadId=%s serviceId=%s from=%s to=%s reason=%s",
+		p.leadID, p.serviceID, p.oldStage, p.newStage, logReason)
+}
+
 func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdatePipelineStage",
 		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
 	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		if !validPipelineStages[input.Stage] {
-			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
-		}
-
-		tenantID, err := getTenantID(deps)
-		if err != nil {
-			return UpdatePipelineStageOutput{Success: false, Message: missingTenantContextMessage}, err
-		}
-
-		leadID, serviceID, err := getLeadContext(deps)
-		if err != nil {
-			return UpdatePipelineStageOutput{Success: false, Message: "Missing lead context"}, err
-		}
-
-		svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
-		if err != nil {
-			return UpdatePipelineStageOutput{Success: false, Message: "Lead service not found"}, err
-		}
-		oldStage := svc.PipelineStage
-
-		_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
-		if err != nil {
-			return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
-		}
-
-		actorType, actorName := deps.GetActor()
-		reason := strings.TrimSpace(input.Reason)
-		var summary *string
-		if reason != "" {
-			summary = &reason
-		}
-
-		// Stage change event only contains stage transition info - analysis data is in separate "ai" event
-		stageMetadata := map[string]any{
-			"oldStage": oldStage,
-			"newStage": input.Stage,
-		}
-
-		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-			LeadID:         leadID,
-			ServiceID:      &serviceID,
-			OrganizationID: tenantID,
-			ActorType:      actorType,
-			ActorName:      actorName,
-			EventType:      "stage_change",
-			Title:          "Stage Updated",
-			Summary:        summary,
-			Metadata:       stageMetadata,
-		})
-
-		if deps.EventBus != nil {
-			deps.EventBus.Publish(ctx, events.PipelineStageChanged{
-				BaseEvent:     events.NewBaseEvent(),
-				LeadID:        leadID,
-				LeadServiceID: serviceID,
-				TenantID:      tenantID,
-				OldStage:      oldStage,
-				NewStage:      input.Stage,
-			})
-		}
-
-		if reason == "" {
-			reason = "(no reason provided)"
-		}
-		log.Printf(
-			"gatekeeper UpdatePipelineStage: leadId=%s serviceId=%s from=%s to=%s reason=%s",
-			leadID,
-			serviceID,
-			oldStage,
-			input.Stage,
-			reason,
-		)
-
-		deps.MarkStageUpdateCalled()
-		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
+		return handleUpdatePipelineStage(ctx, deps, input)
 	})
 }
 
@@ -982,6 +1026,145 @@ func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 		}
 
 		return SaveEstimationOutput{Success: true, Message: "Estimation saved"}, nil
+	})
+}
+
+func createCalculateEstimateTool() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "CalculateEstimate",
+		Description: "Calculates material subtotal, labor subtotal range, and total range from structured inputs.",
+	}, func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
+		_ = ctx
+		materialSubtotal := 0.0
+		for _, item := range input.MaterialItems {
+			if item.UnitPrice <= 0 || item.Quantity <= 0 {
+				continue
+			}
+			materialSubtotal += item.UnitPrice * item.Quantity
+		}
+
+		laborLow := clampNonNegative(input.LaborHoursLow) * clampNonNegative(input.HourlyRateLow)
+		laborHigh := clampNonNegative(input.LaborHoursHigh) * clampNonNegative(input.HourlyRateHigh)
+		if laborHigh < laborLow {
+			laborLow, laborHigh = laborHigh, laborLow
+		}
+
+		extra := clampNonNegative(input.ExtraCosts)
+
+		return CalculateEstimateOutput{
+			MaterialSubtotal:  round2(materialSubtotal),
+			LaborSubtotalLow:  round2(laborLow),
+			LaborSubtotalHigh: round2(laborHigh),
+			TotalLow:          round2(materialSubtotal + laborLow + extra),
+			TotalHigh:         round2(materialSubtotal + laborHigh + extra),
+			AppliedExtraCosts: round2(extra),
+		}, nil
+	})
+}
+
+func round2(value float64) float64 {
+	return math.Round(value*100) / 100
+}
+
+func clampNonNegative(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
+	if !deps.IsProductSearchEnabled() {
+		return SearchProductMaterialsOutput{Products: nil, Message: "Product search is not configured"}, nil
+	}
+
+	query := strings.TrimSpace(input.Query)
+	if query == "" {
+		return SearchProductMaterialsOutput{Products: nil, Message: "Query cannot be empty"}, fmt.Errorf("empty query")
+	}
+
+	limit := normalizeLimit(input.Limit, 5, 20)
+
+	vector, err := deps.EmbeddingClient.Embed(ctx, query)
+	if err != nil {
+		log.Printf("SearchProductMaterials: embedding failed: %v", err)
+		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to generate embedding for query"}, err
+	}
+
+	results, err := deps.QdrantClient.Search(ctx, vector, limit)
+	if err != nil {
+		log.Printf("SearchProductMaterials: qdrant search failed: %v", err)
+		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to search product catalog"}, err
+	}
+
+	products := convertSearchResults(results)
+	log.Printf("SearchProductMaterials: query=%q found %d products", query, len(products))
+
+	return SearchProductMaterialsOutput{
+		Products: products,
+		Message:  fmt.Sprintf("Found %d matching products", len(products)),
+	}, nil
+}
+
+func normalizeLimit(limit, defaultVal, maxVal int) int {
+	if limit <= 0 {
+		return defaultVal
+	}
+	if limit > maxVal {
+		return maxVal
+	}
+	return limit
+}
+
+func convertSearchResults(results []qdrant.SearchResult) []ProductResult {
+	products := make([]ProductResult, 0, len(results))
+	for _, r := range results {
+		product := extractProductFromPayload(r.Payload, r.Score)
+		if product.Name != "" {
+			products = append(products, product)
+		}
+	}
+
+	// Prefer lower-priced items; treat missing/zero price as lowest priority.
+	sort.SliceStable(products, func(i, j int) bool {
+		pi := products[i].Price
+		pj := products[j].Price
+		iMissing := pi <= 0
+		jMissing := pj <= 0
+		if iMissing != jMissing {
+			return !iMissing
+		}
+		if pi == pj {
+			return products[i].Score > products[j].Score
+		}
+		return pi < pj
+	})
+	return products
+}
+
+func extractProductFromPayload(payload map[string]any, score float64) ProductResult {
+	product := ProductResult{Score: score}
+	if name, ok := payload["name"].(string); ok {
+		product.Name = name
+	}
+	if desc, ok := payload["description"].(string); ok {
+		product.Description = desc
+	}
+	if price, ok := payload["price"].(float64); ok {
+		product.Price = price
+	}
+	if unit, ok := payload["unit"].(string); ok {
+		product.Unit = unit
+	}
+	return product
+}
+
+func createSearchProductMaterialsTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "SearchProductMaterials",
+		Description: "Searches the product catalog for materials and their prices. Use this to find relevant products for estimation. Returns product names, descriptions, prices, and units.",
+	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
+		return handleSearchProductMaterials(ctx, deps, input)
 	})
 }
 

@@ -26,7 +26,9 @@ import (
 
 // Error messages
 const (
-	errMsgMissingContext = "Missing context"
+	errMsgMissingContext       = "Missing context"
+	errMsgBookingNotConfigured = "Appointment booking not configured"
+	errBookerNotConfigured     = "booker not configured"
 )
 
 // Sentinel errors
@@ -583,6 +585,7 @@ func normalizeCallNoteBody(body string) string {
 }
 
 func buildNormalizeCallNoteTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+	_ = deps
 	return functiontool.New(functiontool.Config{
 		Name:        "NormalizeCallNote",
 		Description: "Cleans and normalizes a drafted call note. Use before SaveNote.",
@@ -702,7 +705,7 @@ func executeScheduleVisit(deps *CallLoggerToolDeps, input ScheduleVisitInput) (S
 	}
 
 	if deps.Booker == nil {
-		return ScheduleVisitOutput{Success: false, Message: "Appointment booking not configured"}, fmt.Errorf("booker not configured")
+		return ScheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, fmt.Errorf(errBookerNotConfigured)
 	}
 
 	startTime, err := time.Parse(time.RFC3339, input.StartTime)
@@ -815,7 +818,7 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 	}
 
 	if deps.Booker == nil {
-		return RescheduleVisitOutput{Success: false, Message: "Appointment booking not configured"}, fmt.Errorf("booker not configured")
+		return RescheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, fmt.Errorf(errBookerNotConfigured)
 	}
 
 	startTime, err := time.Parse(time.RFC3339, input.StartTime)
@@ -858,13 +861,14 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 }
 
 func executeCancelVisit(deps *CallLoggerToolDeps, input CancelVisitInput) (CancelVisitOutput, error) {
+	_ = input
 	tenantID, userID, _, serviceID, ok := deps.GetContext()
 	if !ok {
 		return CancelVisitOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
 	}
 
 	if deps.Booker == nil {
-		return CancelVisitOutput{Success: false, Message: "Appointment booking not configured"}, fmt.Errorf("booker not configured")
+		return CancelVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, fmt.Errorf(errBookerNotConfigured)
 	}
 
 	err := deps.Booker.CancelLeadVisit(context.Background(), ports.CancelVisitParams{

@@ -148,6 +148,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 
 // createFallbackAnalysis creates a minimal analysis when the agent fails to call SaveAnalysis
 func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository.Lead, service repository.LeadService, leadID, serviceID, tenantID uuid.UUID) {
+	_ = service
 	// Determine preferred channel based on available contact info
 	channel := "Email"
 	if strings.TrimSpace(lead.ConsumerPhone) != "" {

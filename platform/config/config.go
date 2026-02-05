@@ -86,6 +86,21 @@ type EnergyLabelConfig interface {
 	IsEnergyLabelEnabled() bool
 }
 
+// QdrantConfig provides settings for Qdrant vector database.
+type QdrantConfig interface {
+	GetQdrantURL() string
+	GetQdrantAPIKey() string
+	GetQdrantCollection() string
+	IsQdrantEnabled() bool
+}
+
+// EmbeddingConfig provides settings for the embedding API service.
+type EmbeddingConfig interface {
+	GetEmbeddingAPIURL() string
+	GetEmbeddingAPIKey() string
+	IsEmbeddingEnabled() bool
+}
+
 // =============================================================================
 // Main Config Struct
 // =============================================================================
@@ -124,6 +139,11 @@ type Config struct {
 	MinioBucketLeadServiceAttachments string
 	MinioBucketCatalogAssets          string
 	MinioBucketPartnerLogos           string
+	QdrantURL                         string
+	QdrantAPIKey                      string
+	QdrantCollection                  string
+	EmbeddingAPIURL                   string
+	EmbeddingAPIKey                   string
 }
 
 // =============================================================================
@@ -185,6 +205,19 @@ func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
 func (c *Config) GetEPOnlineAPIKey() string  { return c.EPOnlineAPIKey }
 func (c *Config) IsEnergyLabelEnabled() bool { return c.EPOnlineAPIKey != "" }
 
+// QdrantConfig implementation
+func (c *Config) GetQdrantURL() string        { return c.QdrantURL }
+func (c *Config) GetQdrantAPIKey() string     { return c.QdrantAPIKey }
+func (c *Config) GetQdrantCollection() string { return c.QdrantCollection }
+func (c *Config) IsQdrantEnabled() bool {
+	return c.QdrantURL != "" && c.QdrantCollection != ""
+}
+
+// EmbeddingConfig implementation
+func (c *Config) GetEmbeddingAPIURL() string { return c.EmbeddingAPIURL }
+func (c *Config) GetEmbeddingAPIKey() string { return c.EmbeddingAPIKey }
+func (c *Config) IsEmbeddingEnabled() bool   { return c.EmbeddingAPIURL != "" }
+
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
 	_ = godotenv.Load()
@@ -236,6 +269,11 @@ func Load() (*Config, error) {
 		MinioBucketLeadServiceAttachments: getEnv("MINIO_BUCKET_LEAD_SERVICE_ATTACHMENTS", "lead-service-attachments"),
 		MinioBucketCatalogAssets:          getEnv("MINIO_BUCKET_CATALOG_ASSETS", "catalog-assets"),
 		MinioBucketPartnerLogos:           getEnv("MINIO_BUCKET_PARTNER_LOGOS", "partner-logos"),
+		QdrantURL:                         getEnv("QDRANT_URL", ""),
+		QdrantAPIKey:                      getEnv("QDRANT_API_KEY", ""),
+		QdrantCollection:                  getEnv("QDRANT_COLLECTION", ""),
+		EmbeddingAPIURL:                   getEnv("EMBEDDING_API_URL", ""),
+		EmbeddingAPIKey:                   getEnv("EMBEDDING_API_KEY", ""),
 	}
 
 	if cfg.DatabaseURL == "" {

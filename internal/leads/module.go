@@ -17,9 +17,11 @@ import (
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/qdrant"
 	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
@@ -114,6 +116,8 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 }
 
 func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, error) {
+	_ = storageSvc
+	_ = scorer
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -129,7 +133,32 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, err
 	}
 
-	estimator, err := agent.NewEstimator(cfg.MoonshotAPIKey, repo, eventBus)
+	// Create embedding and qdrant clients if configured
+	var embeddingClient *embeddings.Client
+	var qdrantClient *qdrant.Client
+
+	if cfg.IsEmbeddingEnabled() {
+		embeddingClient = embeddings.NewClient(embeddings.Config{
+			BaseURL: cfg.GetEmbeddingAPIURL(),
+			APIKey:  cfg.GetEmbeddingAPIKey(),
+		})
+	}
+
+	if cfg.IsQdrantEnabled() {
+		qdrantClient = qdrant.NewClient(qdrant.Config{
+			BaseURL:    cfg.GetQdrantURL(),
+			APIKey:     cfg.GetQdrantAPIKey(),
+			Collection: cfg.GetQdrantCollection(),
+		})
+	}
+
+	estimator, err := agent.NewEstimator(agent.EstimatorConfig{
+		APIKey:          cfg.MoonshotAPIKey,
+		Repo:            repo,
+		EventBus:        eventBus,
+		EmbeddingClient: embeddingClient,
+		QdrantClient:    qdrantClient,
+	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}

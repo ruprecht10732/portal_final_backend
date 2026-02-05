@@ -162,6 +162,52 @@ type SaveEstimationOutput struct {
 	Message string `json:"message"`
 }
 
+// SearchProductMaterialsInput searches the product catalog for matching materials.
+type SearchProductMaterialsInput struct {
+	Query string `json:"query"` // Natural language description of materials needed
+	Limit int    `json:"limit"` // Max number of results (default 5)
+}
+
+// ProductResult represents a product found in the catalog.
+type ProductResult struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description,omitempty"`
+	Price       float64 `json:"price"`
+	Unit        string  `json:"unit,omitempty"` // e.g., "per m2", "per piece", "per meter"
+	Score       float64 `json:"score"`          // Similarity score
+}
+
+// SearchProductMaterialsOutput contains the search results.
+type SearchProductMaterialsOutput struct {
+	Products []ProductResult `json:"products"`
+	Message  string          `json:"message"`
+}
+
+// CalculateEstimateInput performs deterministic totals for materials and labor.
+type CalculateEstimateInput struct {
+	MaterialItems  []EstimateItem `json:"materialItems"`
+	LaborHoursLow  float64        `json:"laborHoursLow"`
+	LaborHoursHigh float64        `json:"laborHoursHigh"`
+	HourlyRateLow  float64        `json:"hourlyRateLow"`
+	HourlyRateHigh float64        `json:"hourlyRateHigh"`
+	ExtraCosts     float64        `json:"extraCosts,omitempty"`
+}
+
+type EstimateItem struct {
+	Label     string  `json:"label"`
+	UnitPrice float64 `json:"unitPrice"`
+	Quantity  float64 `json:"quantity"`
+}
+
+type CalculateEstimateOutput struct {
+	MaterialSubtotal  float64 `json:"materialSubtotal"`
+	LaborSubtotalLow  float64 `json:"laborSubtotalLow"`
+	LaborSubtotalHigh float64 `json:"laborSubtotalHigh"`
+	TotalLow          float64 `json:"totalLow"`
+	TotalHigh         float64 `json:"totalHigh"`
+	AppliedExtraCosts float64 `json:"appliedExtraCosts"`
+}
+
 // AnalyzeResponse represents the result of an analysis request
 type AnalyzeResponse struct {
 	Status   string          `json:"status"` // "created", "no_change", "error"

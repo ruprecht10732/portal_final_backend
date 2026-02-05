@@ -16,7 +16,9 @@ import (
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/qdrant"
 )
 
 // Estimator determines scope and pricing estimates.
@@ -30,17 +32,28 @@ type Estimator struct {
 	runMu          sync.Mutex
 }
 
+// EstimatorConfig holds configuration for creating an Estimator agent.
+type EstimatorConfig struct {
+	APIKey          string
+	Repo            repository.LeadsRepository
+	EventBus        events.Bus
+	EmbeddingClient *embeddings.Client // Optional: enables product search
+	QdrantClient    *qdrant.Client     // Optional: enables product search
+}
+
 // NewEstimator creates an Estimator agent.
-func NewEstimator(apiKey string, repo repository.LeadsRepository, eventBus events.Bus) (*Estimator, error) {
+func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 	kimi := moonshot.NewModel(moonshot.Config{
-		APIKey:          apiKey,
+		APIKey:          cfg.APIKey,
 		Model:           "kimi-k2.5",
 		DisableThinking: true,
 	})
 
 	deps := &ToolDependencies{
-		Repo:     repo,
-		EventBus: eventBus,
+		Repo:            cfg.Repo,
+		EventBus:        cfg.EventBus,
+		EmbeddingClient: cfg.EmbeddingClient,
+		QdrantClient:    cfg.QdrantClient,
 	}
 
 	saveEstimationTool, err := createSaveEstimationTool(deps)
@@ -53,12 +66,32 @@ func NewEstimator(apiKey string, repo repository.LeadsRepository, eventBus event
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
 
+	calculateEstimateTool, err := createCalculateEstimateTool()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build CalculateEstimate tool: %w", err)
+	}
+
+	// Build the tools list
+	tools := []tool.Tool{calculateEstimateTool, saveEstimationTool, updateStageTool}
+
+	// Add product search tool if configured
+	if deps.IsProductSearchEnabled() {
+		searchProductsTool, err := createSearchProductMaterialsTool(deps)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build SearchProductMaterials tool: %w", err)
+		}
+		tools = append(tools, searchProductsTool)
+		log.Printf("Estimator: product search enabled")
+	} else {
+		log.Printf("Estimator: product search disabled (embedding or qdrant client not configured)")
+	}
+
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Estimator",
 		Model:       kimi,
 		Description: "Technical estimator that scopes work and suggests price ranges.",
 		Instruction: "You are a Technical Estimator.",
-		Tools:       []tool.Tool{saveEstimationTool, updateStageTool},
+		Tools:       tools,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create estimator agent: %w", err)
@@ -79,7 +112,7 @@ func NewEstimator(apiKey string, repo repository.LeadsRepository, eventBus event
 		runner:         r,
 		sessionService: sessionService,
 		appName:        "estimator",
-		repo:           repo,
+		repo:           cfg.Repo,
 		toolDeps:       deps,
 	}, nil
 }
