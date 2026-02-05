@@ -96,6 +96,48 @@ type SuggestSpecialistOutput struct {
 	QuestionsToAsk        []string `json:"questionsToAsk"`
 }
 
+// UpdatePipelineStageInput updates the pipeline stage for the lead service.
+type UpdatePipelineStageInput struct {
+	Stage  string `json:"stage"`
+	Reason string `json:"reason"`
+}
+
+type UpdatePipelineStageOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// FindMatchingPartnersInput searches for partner matches.
+type FindMatchingPartnersInput struct {
+	ServiceType string `json:"serviceType"`
+	ZipCode     string `json:"zipCode"`
+	RadiusKm    int    `json:"radiusKm"`
+}
+
+type PartnerMatch struct {
+	PartnerID    string  `json:"partnerId"`
+	BusinessName string  `json:"businessName"`
+	Email        string  `json:"email"`
+	DistanceKm   float64 `json:"distanceKm"`
+}
+
+type FindMatchingPartnersOutput struct {
+	Matches []PartnerMatch `json:"matches"`
+}
+
+// SaveEstimationInput stores scope and price range in the timeline.
+type SaveEstimationInput struct {
+	Scope      string `json:"scope"`
+	PriceRange string `json:"priceRange"`
+	Notes      string `json:"notes"`
+	Summary    string `json:"summary"`
+}
+
+type SaveEstimationOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // AnalyzeResponse represents the result of an analysis request
 type AnalyzeResponse struct {
 	Status   string          `json:"status"` // "created", "no_change", "error"

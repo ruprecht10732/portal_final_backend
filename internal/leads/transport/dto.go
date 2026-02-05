@@ -30,6 +30,20 @@ const (
 	LeadStatusClosed            LeadStatus = "Closed"
 )
 
+type PipelineStage string
+
+const (
+	PipelineStageTriage             PipelineStage = "Triage"
+	PipelineStageNurturing          PipelineStage = "Nurturing"
+	PipelineStageReadyForEstimator  PipelineStage = "Ready_For_Estimator"
+	PipelineStageReadyForPartner    PipelineStage = "Ready_For_Partner"
+	PipelineStagePartnerMatching    PipelineStage = "Partner_Matching"
+	PipelineStagePartnerAssigned    PipelineStage = "Partner_Assigned"
+	PipelineStageManualIntervention PipelineStage = "Manual_Intervention"
+	PipelineStageCompleted          PipelineStage = "Completed"
+	PipelineStageLost               PipelineStage = "Lost"
+)
+
 // Request DTOs
 type CreateLeadRequest struct {
 	FirstName    string       `json:"firstName" validate:"required,min=1,max=100"`
@@ -138,12 +152,13 @@ type AddressResponse struct {
 }
 
 type LeadServiceResponse struct {
-	ID           uuid.UUID   `json:"id"`
-	ServiceType  ServiceType `json:"serviceType"`
-	Status       LeadStatus  `json:"status"`
-	ConsumerNote *string     `json:"consumerNote,omitempty"`
-	CreatedAt    time.Time   `json:"createdAt"`
-	UpdatedAt    time.Time   `json:"updatedAt"`
+	ID            uuid.UUID     `json:"id"`
+	ServiceType   ServiceType   `json:"serviceType"`
+	Status        LeadStatus    `json:"status"`
+	PipelineStage PipelineStage `json:"pipelineStage"`
+	ConsumerNote  *string       `json:"consumerNote,omitempty"`
+	CreatedAt     time.Time     `json:"createdAt"`
+	UpdatedAt     time.Time     `json:"updatedAt"`
 }
 
 type EnergyLabelResponse struct {
@@ -267,6 +282,17 @@ type LeadMetricsResponse struct {
 	ProjectedValueCents int64   `json:"projectedValueCents"`
 	DisqualifiedRate    float64 `json:"disqualifiedRate"`
 	TouchpointsPerLead  float64 `json:"touchpointsPerLead"`
+}
+
+// TimelineItem represents an entry in the lead timeline feed.
+type TimelineItem struct {
+	ID        uuid.UUID      `json:"id"`
+	Type      string         `json:"type"` // 'ai', 'user', 'stage'
+	Title     string         `json:"title"`
+	Summary   string         `json:"summary"`
+	Timestamp time.Time      `json:"timestamp"`
+	Actor     string         `json:"actor"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 // LogCallRequest is the request body for processing a post-call summary

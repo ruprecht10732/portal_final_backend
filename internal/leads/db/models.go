@@ -5,8 +5,74 @@
 package leadsdb
 
 import (
+	"database/sql/driver"
+	"fmt"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type PipelineStage string
+
+const (
+	PipelineStageTriage             PipelineStage = "Triage"
+	PipelineStageNurturing          PipelineStage = "Nurturing"
+	PipelineStageReadyForEstimator  PipelineStage = "Ready_For_Estimator"
+	PipelineStageReadyForPartner    PipelineStage = "Ready_For_Partner"
+	PipelineStagePartnerMatching    PipelineStage = "Partner_Matching"
+	PipelineStagePartnerAssigned    PipelineStage = "Partner_Assigned"
+	PipelineStageManualIntervention PipelineStage = "Manual_Intervention"
+	PipelineStageCompleted          PipelineStage = "Completed"
+	PipelineStageLost               PipelineStage = "Lost"
+)
+
+func (e *PipelineStage) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = PipelineStage(s)
+	case string:
+		*e = PipelineStage(s)
+	default:
+		return fmt.Errorf("unsupported scan type for PipelineStage: %T", src)
+	}
+	return nil
+}
+
+type NullPipelineStage struct {
+	PipelineStage PipelineStage `json:"pipeline_stage"`
+	Valid         bool          `json:"valid"` // Valid is true if PipelineStage is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullPipelineStage) Scan(value interface{}) error {
+	if value == nil {
+		ns.PipelineStage, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.PipelineStage.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullPipelineStage) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.PipelineStage), nil
+}
+
+type LeadTimelineEvent struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorName      string             `json:"actor_name"`
+	EventType      string             `json:"event_type"`
+	Title          string             `json:"title"`
+	Summary        pgtype.Text        `json:"summary"`
+	Metadata       []byte             `json:"metadata"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
 
 type RacLead struct {
 	ID                    pgtype.UUID        `json:"id"`
@@ -82,6 +148,7 @@ type RacLeadService struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 	ServiceTypeID         pgtype.UUID        `json:"service_type_id"`
+	PipelineStage         PipelineStage      `json:"pipeline_stage"`
 }
 
 type RacServiceType struct {

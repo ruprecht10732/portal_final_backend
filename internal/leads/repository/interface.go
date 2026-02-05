@@ -64,6 +64,7 @@ type LeadServiceWriter interface {
 	UpdateLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadServiceParams) (LeadService, error)
 	UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error)
 	UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error)
+	UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error)
 	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error
 }
 
@@ -83,6 +84,12 @@ type ServiceTypeContextReader interface {
 type NoteStore interface {
 	CreateLeadNote(ctx context.Context, params CreateLeadNoteParams) (LeadNote, error)
 	ListLeadNotes(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadNote, error)
+}
+
+// TimelineEventStore manages immutable lead timeline events.
+type TimelineEventStore interface {
+	CreateTimelineEvent(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, error)
+	ListTimelineEvents(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]TimelineEvent, error)
 }
 
 // AIAnalysisStore manages AI-generated analyses for RAC_leads.
@@ -123,6 +130,11 @@ type AppointmentStatsReader interface {
 	GetLeadAppointmentStats(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadAppointmentStats, error)
 }
 
+// PartnerMatcher provides partner search based on service type and location.
+type PartnerMatcher interface {
+	FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int) ([]PartnerMatch, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -139,11 +151,13 @@ type LeadsRepository interface {
 	LeadServiceReader
 	LeadServiceWriter
 	NoteStore
+	TimelineEventStore
 	AIAnalysisStore
 	AttachmentStore
 	PhotoAnalysisStore
 	ServiceTypeContextReader
 	AppointmentStatsReader
+	PartnerMatcher
 }
 
 // Ensure Repository implements LeadsRepository

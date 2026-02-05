@@ -41,6 +41,7 @@ type Repository interface {
 	repository.LeadServiceReader
 	repository.LeadServiceWriter
 	repository.MetricsReader
+	repository.TimelineEventStore
 	UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateEnergyLabelParams) error
 	UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateLeadEnrichmentParams) error
 }
@@ -843,6 +844,50 @@ func (s *Service) GetActionItems(ctx context.Context, page int, pageSize int, ne
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+// GetTimeline returns the lead timeline events in reverse chronological order.
+func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) ([]transport.TimelineItem, error) {
+	if _, err := s.repo.GetByID(ctx, leadID, tenantID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NotFound(leadNotFoundMsg)
+		}
+		return nil, err
+	}
+
+	events, err := s.repo.ListTimelineEvents(ctx, leadID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]transport.TimelineItem, len(events))
+	for i, event := range events {
+		timelineType := "user"
+		if event.EventType == "stage_change" {
+			timelineType = "stage"
+		} else if event.ActorType == "AI" {
+			timelineType = "ai"
+		}
+
+		items[i] = transport.TimelineItem{
+			ID:        event.ID,
+			Type:      timelineType,
+			Title:     event.Title,
+			Summary:   summaryValue(event.Summary),
+			Timestamp: event.CreatedAt,
+			Actor:     event.ActorName,
+			Metadata:  event.Metadata,
+		}
+	}
+
+	return items, nil
+}
+
+func summaryValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func roundToOneDecimal(value float64) float64 {

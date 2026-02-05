@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 )
@@ -20,6 +21,7 @@ import (
 const (
 	invalidLeadIDMessage        = "Invalid lead ID"
 	invalidLeadServiceIDMessage = "Invalid lead service ID"
+	missingTenantContextMessage = "Missing tenant context"
 )
 
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
@@ -66,8 +68,13 @@ type ToolDependencies struct {
 	Repo          repository.LeadsRepository
 	DraftedEmails map[uuid.UUID]EmailDraft
 	Scorer        *scoring.Service
+	EventBus      events.Bus
 	mu            sync.RWMutex
 	tenantID      *uuid.UUID
+	leadID        *uuid.UUID
+	serviceID     *uuid.UUID
+	actorType     string
+	actorName     string
 }
 
 func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
@@ -85,6 +92,38 @@ func (d *ToolDependencies) GetTenantID() (*uuid.UUID, bool) {
 	return d.tenantID, true
 }
 
+func (d *ToolDependencies) SetLeadContext(leadID, serviceID uuid.UUID) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.leadID = &leadID
+	d.serviceID = &serviceID
+}
+
+func (d *ToolDependencies) GetLeadContext() (uuid.UUID, uuid.UUID, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.leadID == nil || d.serviceID == nil {
+		return uuid.UUID{}, uuid.UUID{}, false
+	}
+	return *d.leadID, *d.serviceID, true
+}
+
+func (d *ToolDependencies) SetActor(actorType, actorName string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.actorType = actorType
+	d.actorName = actorName
+}
+
+func (d *ToolDependencies) GetActor() (string, string) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.actorType == "" {
+		return "AI", "Agent"
+	}
+	return d.actorType, d.actorName
+}
+
 func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
 	parsed, err := uuid.Parse(value)
 	if err != nil {
@@ -99,6 +138,14 @@ func getTenantID(deps *ToolDependencies) (uuid.UUID, error) {
 		return uuid.UUID{}, fmt.Errorf("missing tenant context")
 	}
 	return *tenantID, nil
+}
+
+func getLeadContext(deps *ToolDependencies) (uuid.UUID, uuid.UUID, error) {
+	leadID, serviceID, ok := deps.GetLeadContext()
+	if !ok {
+		return uuid.UUID{}, uuid.UUID{}, fmt.Errorf("missing lead context")
+	}
+	return leadID, serviceID, nil
 }
 
 func normalizeContactChannel(channel string) (string, error) {
@@ -153,7 +200,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 
 	tenantID, err := getTenantID(deps)
 	if err != nil {
-		return SaveAnalysisOutput{Success: false, Message: "Missing tenant context"}, err
+		return SaveAnalysisOutput{Success: false, Message: missingTenantContextMessage}, err
 	}
 
 	leadServiceID, err := parseLeadServiceID(input.LeadServiceID)
@@ -236,7 +283,7 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 
 	tenantID, err := getTenantID(deps)
 	if err != nil {
-		return UpdateLeadServiceTypeOutput{Success: false, Message: "Missing tenant context"}, err
+		return UpdateLeadServiceTypeOutput{Success: false, Message: missingTenantContextMessage}, err
 	}
 
 	leadService, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, tenantID)
@@ -328,6 +375,183 @@ func createSuggestSpecialistTool() (tool.Tool, error) {
 		Description: "Analyzes a problem description and recommends the most appropriate type of specialist (plumber, electrician, HVAC technician, carpenter, handyman, etc.). Use this when the customer's problem spans multiple trades or when it's unclear which specialist they need.",
 	}, func(ctx tool.Context, input SuggestSpecialistInput) (SuggestSpecialistOutput, error) {
 		return suggestSpecialist(input.ProblemDescription, input.ServiceCategory), nil
+	})
+}
+
+var validPipelineStages = map[string]bool{
+	"Triage":              true,
+	"Nurturing":           true,
+	"Ready_For_Estimator": true,
+	"Ready_For_Partner":   true,
+	"Partner_Matching":    true,
+	"Partner_Assigned":    true,
+	"Manual_Intervention": true,
+	"Completed":           true,
+	"Lost":                true,
+}
+
+func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "UpdatePipelineStage",
+		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
+	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+		if !validPipelineStages[input.Stage] {
+			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
+		}
+
+		tenantID, err := getTenantID(deps)
+		if err != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: missingTenantContextMessage}, err
+		}
+
+		leadID, serviceID, err := getLeadContext(deps)
+		if err != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: "Missing lead context"}, err
+		}
+
+		svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+		if err != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: "Lead service not found"}, err
+		}
+		oldStage := svc.PipelineStage
+
+		_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
+		if err != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
+		}
+
+		actorType, actorName := deps.GetActor()
+		reason := strings.TrimSpace(input.Reason)
+		var summary *string
+		if reason != "" {
+			summary = &reason
+		}
+
+		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &serviceID,
+			OrganizationID: tenantID,
+			ActorType:      actorType,
+			ActorName:      actorName,
+			EventType:      "stage_change",
+			Title:          "Stage Updated",
+			Summary:        summary,
+			Metadata: map[string]any{
+				"oldStage": oldStage,
+				"newStage": input.Stage,
+			},
+		})
+
+		if deps.EventBus != nil {
+			deps.EventBus.Publish(ctx, events.PipelineStageChanged{
+				BaseEvent:     events.NewBaseEvent(),
+				LeadID:        leadID,
+				LeadServiceID: serviceID,
+				TenantID:      tenantID,
+				OldStage:      oldStage,
+				NewStage:      input.Stage,
+			})
+		}
+
+		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
+	})
+}
+
+func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "FindMatchingPartners",
+		Description: "Finds partner matches by service type and distance radius.",
+	}, func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
+		tenantID, err := getTenantID(deps)
+		if err != nil {
+			return FindMatchingPartnersOutput{Matches: nil}, err
+		}
+
+		leadID, serviceID, err := getLeadContext(deps)
+		if err != nil {
+			return FindMatchingPartnersOutput{Matches: nil}, err
+		}
+
+		matches, err := deps.Repo.FindMatchingPartners(ctx, tenantID, input.ServiceType, input.ZipCode, input.RadiusKm)
+		if err != nil {
+			return FindMatchingPartnersOutput{Matches: nil}, err
+		}
+
+		actorType, actorName := deps.GetActor()
+		summary := fmt.Sprintf("Found %d partner(s)", len(matches))
+		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &serviceID,
+			OrganizationID: tenantID,
+			ActorType:      actorType,
+			ActorName:      actorName,
+			EventType:      "partner_search",
+			Title:          "Partner search",
+			Summary:        &summary,
+			Metadata: map[string]any{
+				"serviceType": input.ServiceType,
+				"zipCode":     input.ZipCode,
+				"radiusKm":    input.RadiusKm,
+				"matches":     matches,
+			},
+		})
+
+		output := make([]PartnerMatch, 0, len(matches))
+		for _, match := range matches {
+			output = append(output, PartnerMatch{
+				PartnerID:    match.ID.String(),
+				BusinessName: match.BusinessName,
+				Email:        match.Email,
+				DistanceKm:   match.DistanceKm,
+			})
+		}
+
+		return FindMatchingPartnersOutput{Matches: output}, nil
+	})
+}
+
+func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "SaveEstimation",
+		Description: "Saves estimation metadata (scope and price range) to the lead timeline.",
+	}, func(ctx tool.Context, input SaveEstimationInput) (SaveEstimationOutput, error) {
+		tenantID, err := getTenantID(deps)
+		if err != nil {
+			return SaveEstimationOutput{Success: false, Message: missingTenantContextMessage}, err
+		}
+
+		leadID, serviceID, err := getLeadContext(deps)
+		if err != nil {
+			return SaveEstimationOutput{Success: false, Message: "Missing lead context"}, err
+		}
+
+		actorType, actorName := deps.GetActor()
+		summary := strings.TrimSpace(input.Summary)
+		var summaryPtr *string
+		if summary != "" {
+			summaryPtr = &summary
+		}
+
+		_, err = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &serviceID,
+			OrganizationID: tenantID,
+			ActorType:      actorType,
+			ActorName:      actorName,
+			EventType:      "analysis",
+			Title:          "Estimation saved",
+			Summary:        summaryPtr,
+			Metadata: map[string]any{
+				"scope":      input.Scope,
+				"priceRange": input.PriceRange,
+				"notes":      input.Notes,
+			},
+		})
+		if err != nil {
+			return SaveEstimationOutput{Success: false, Message: "Failed to save estimation"}, err
+		}
+
+		return SaveEstimationOutput{Success: true, Message: "Estimation saved"}, nil
 	})
 }
 

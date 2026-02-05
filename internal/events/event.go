@@ -81,6 +81,29 @@ type LeadAssigned struct {
 
 func (e LeadAssigned) EventName() string { return "RAC_leads.lead.assigned" }
 
+// LeadDataChanged is published when a user updates lead data such as notes or call logs.
+type LeadDataChanged struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	Source        string    `json:"source"` // "call_log", "note", "user_update"
+}
+
+func (e LeadDataChanged) EventName() string { return "leads.data.changed" }
+
+// PipelineStageChanged is published when the pipeline stage for a lead service changes.
+type PipelineStageChanged struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	OldStage      string    `json:"oldStage"`
+	NewStage      string    `json:"newStage"`
+}
+
+func (e PipelineStageChanged) EventName() string { return "leads.pipeline.changed" }
+
 // =============================================================================
 // Identity Domain Events
 // =============================================================================

@@ -35,6 +35,10 @@ type Module struct {
 	management           *management.Service
 	notes                *notes.Service
 	advisor              *agent.LeadAdvisor
+	gatekeeper           *agent.Gatekeeper
+	estimator            *agent.Estimator
+	dispatcher           *agent.Dispatcher
+	orchestrator         *Orchestrator
 	photoAnalyzer        *agent.PhotoAnalyzer
 	callLogger           *agent.CallLogger
 	sse                  *sse.Service
@@ -53,20 +57,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
-	// Photo Analyzer for image analysis (must be created first as advisor depends on it)
-	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
-	if err != nil {
-		return nil, err
-	}
-
-	// AI Advisor for lead analysis (orchestrates PhotoAnalyzer internally)
-	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo, photoAnalyzer, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), scorer)
-	if err != nil {
-		return nil, err
-	}
-
-	// CallLogger for post-call processing (booker will be set later to break circular dependency)
-	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil)
+	photoAnalyzer, advisor, callLogger, gatekeeper, estimator, dispatcher, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
 	if err != nil {
 		return nil, err
 	}
@@ -74,23 +65,8 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// SSE service for real-time notifications
 	sseService := sse.New()
 
-	// Subscribe to LeadCreated events to auto-analyze new RAC_leads
-	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.LeadCreated)
-		if !ok {
-			return nil
-		}
-
-		go func() {
-			// Pass nil for serviceID to analyze the most recent (current) service
-			// The advisor will automatically orchestrate photo analysis if images exist
-			if err := advisor.Analyze(context.Background(), e.LeadID, nil, e.TenantID); err != nil {
-				log.Error("lead advisor analysis failed", "error", err, "leadId", e.LeadID)
-			}
-		}()
-
-		return nil
-	}))
+	// Subscribe to LeadCreated events to kick off gatekeeper triage
+	subscribeLeadCreated(eventBus, repo, gatekeeper, log)
 
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
@@ -98,11 +74,24 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	mgmtSvc.SetLeadScorer(scorer)
 	notesSvc := notes.New(repo)
 
+	// Create orchestrator and event listeners
+	orchestrator := NewOrchestrator(gatekeeper, estimator, dispatcher, repo, log)
+	subscribeOrchestrator(eventBus, orchestrator)
+
 	// Create handlers
-	notesHandler := handler.NewNotesHandler(notesSvc, val)
-	attachmentsHandler := handler.NewAttachmentsHandler(repo, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
-	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(photoAnalyzer, repo, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), sseService, val)
-	h := handler.New(mgmtSvc, notesHandler, advisor, callLogger, sseService, val)
+	h, attachmentsHandler, photoAnalysisHandler := buildHandlers(buildHandlersDeps{
+		MgmtSvc:       mgmtSvc,
+		NotesSvc:      notesSvc,
+		Advisor:       advisor,
+		CallLogger:    callLogger,
+		SSEService:    sseService,
+		EventBus:      eventBus,
+		Repo:          repo,
+		StorageSvc:    storageSvc,
+		Config:        cfg,
+		Validator:     val,
+		PhotoAnalyzer: photoAnalyzer,
+	})
 
 	return &Module{
 		handler:              h,
@@ -111,6 +100,10 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		management:           mgmtSvc,
 		notes:                notesSvc,
 		advisor:              advisor,
+		gatekeeper:           gatekeeper,
+		estimator:            estimator,
+		dispatcher:           dispatcher,
+		orchestrator:         orchestrator,
 		photoAnalyzer:        photoAnalyzer,
 		callLogger:           callLogger,
 		sse:                  sseService,
@@ -120,6 +113,114 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		log:                  log,
 		scorer:               scorer,
 	}, nil
+}
+
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.LeadAdvisor, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, error) {
+	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo, photoAnalyzer, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), scorer)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	estimator, err := agent.NewEstimator(cfg.MoonshotAPIKey, repo, eventBus)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, repo, eventBus)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	return photoAnalyzer, advisor, callLogger, gatekeeper, estimator, dispatcher, nil
+}
+
+func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
+	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.LeadCreated)
+		if !ok {
+			return nil
+		}
+
+		go func() {
+			service, err := repo.GetCurrentLeadService(context.Background(), e.LeadID, e.TenantID)
+			if err != nil {
+				log.Error("gatekeeper: failed to load current service", "error", err, "leadId", e.LeadID)
+				return
+			}
+			if err := gatekeeper.Run(context.Background(), e.LeadID, service.ID, e.TenantID); err != nil {
+				log.Error("gatekeeper run failed", "error", err, "leadId", e.LeadID)
+			}
+		}()
+
+		return nil
+	}))
+}
+
+func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.LeadDataChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.LeadDataChanged)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnDataChange(ctx, e)
+		return nil
+	}))
+
+	eventBus.Subscribe(events.PipelineStageChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PipelineStageChanged)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnStageChange(ctx, e)
+		return nil
+	}))
+}
+
+type buildHandlersDeps struct {
+	MgmtSvc       *management.Service
+	NotesSvc      *notes.Service
+	Advisor       *agent.LeadAdvisor
+	CallLogger    *agent.CallLogger
+	SSEService    *sse.Service
+	EventBus      events.Bus
+	Repo          repository.LeadsRepository
+	StorageSvc    storage.StorageService
+	Config        *config.Config
+	Validator     *validator.Validator
+	PhotoAnalyzer *agent.PhotoAnalyzer
+}
+
+func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.AttachmentsHandler, *handler.PhotoAnalysisHandler) {
+	notesHandler := handler.NewNotesHandler(deps.NotesSvc, deps.Repo, deps.EventBus, deps.Validator)
+	attachmentsHandler := handler.NewAttachmentsHandler(deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.Validator)
+	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator)
+	h := handler.New(handler.HandlerDeps{
+		Mgmt:         deps.MgmtSvc,
+		NotesHandler: notesHandler,
+		Advisor:      deps.Advisor,
+		CallLogger:   deps.CallLogger,
+		SSE:          deps.SSEService,
+		EventBus:     deps.EventBus,
+		Repo:         deps.Repo,
+		Validator:    deps.Validator,
+	})
+
+	return h, attachmentsHandler, photoAnalysisHandler
 }
 
 // Name returns the module identifier.

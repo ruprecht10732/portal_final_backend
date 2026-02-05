@@ -2,8 +2,11 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/notes"
+	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
@@ -15,13 +18,15 @@ import (
 // NotesHandler handles HTTP requests for lead notes.
 // This is separate from the main Handler to allow independent wiring.
 type NotesHandler struct {
-	svc *notes.Service
-	val *validator.Validator
+	svc      *notes.Service
+	repo     repository.LeadsRepository
+	eventBus events.Bus
+	val      *validator.Validator
 }
 
 // NewNotesHandler creates a new notes handler.
-func NewNotesHandler(svc *notes.Service, val *validator.Validator) *NotesHandler {
-	return &NotesHandler{svc: svc, val: val}
+func NewNotesHandler(svc *notes.Service, repo repository.LeadsRepository, eventBus events.Bus, val *validator.Validator) *NotesHandler {
+	return &NotesHandler{svc: svc, repo: repo, eventBus: eventBus, val: val}
 }
 
 func (h *NotesHandler) ListNotes(c *gin.Context) {
@@ -79,5 +84,50 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 		return
 	}
 
+	serviceID, ok := h.getCurrentServiceID(c, id, tenantID)
+	if ok {
+		h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
+			LeadID:         id,
+			ServiceID:      &serviceID,
+			OrganizationID: tenantID,
+			ActorType:      "User",
+			ActorName:      created.AuthorEmail,
+			EventType:      "note",
+			Title:          "Note added",
+			Summary:        toSummaryPointer(created.Body, 400),
+			Metadata: map[string]any{
+				"noteId":   created.ID,
+				"noteType": created.Type,
+			},
+		})
+
+		h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        id,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			Source:        "note",
+		})
+	}
+
 	httpkit.JSON(c, http.StatusCreated, created)
+}
+
+func (h *NotesHandler) getCurrentServiceID(c *gin.Context, leadID, tenantID uuid.UUID) (uuid.UUID, bool) {
+	svc, err := h.repo.GetCurrentLeadService(c.Request.Context(), leadID, tenantID)
+	if err != nil {
+		return uuid.UUID{}, false
+	}
+	return svc.ID, true
+}
+
+func toSummaryPointer(text string, maxLen int) *string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) > maxLen {
+		trimmed = trimmed[:maxLen] + "..."
+	}
+	return &trimmed
 }

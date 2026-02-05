@@ -2,10 +2,13 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/management"
+	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/httpkit"
@@ -23,7 +26,21 @@ type Handler struct {
 	advisor      *agent.LeadAdvisor
 	callLogger   *agent.CallLogger
 	sse          *sse.Service
+	eventBus     events.Bus
+	repo         repository.LeadsRepository
 	val          *validator.Validator
+}
+
+// HandlerDeps bundles dependencies for Handler construction.
+type HandlerDeps struct {
+	Mgmt         *management.Service
+	NotesHandler *NotesHandler
+	Advisor      *agent.LeadAdvisor
+	CallLogger   *agent.CallLogger
+	SSE          *sse.Service
+	EventBus     events.Bus
+	Repo         repository.LeadsRepository
+	Validator    *validator.Validator
 }
 
 const (
@@ -46,8 +63,17 @@ func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool
 }
 
 // New creates a new RAC_leads handler with focused services.
-func New(mgmt *management.Service, notesHandler *NotesHandler, advisor *agent.LeadAdvisor, callLogger *agent.CallLogger, sseService *sse.Service, val *validator.Validator) *Handler {
-	return &Handler{mgmt: mgmt, notesHandler: notesHandler, advisor: advisor, callLogger: callLogger, sse: sseService, val: val}
+func New(deps HandlerDeps) *Handler {
+	return &Handler{
+		mgmt:         deps.Mgmt,
+		notesHandler: deps.NotesHandler,
+		advisor:      deps.Advisor,
+		callLogger:   deps.CallLogger,
+		sse:          deps.SSE,
+		eventBus:     deps.EventBus,
+		repo:         deps.Repo,
+		val:          deps.Validator,
+	}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -59,6 +85,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/check-returning-customer", h.CheckReturningCustomer)
 	rg.GET("/:id", h.GetByID)
+	rg.GET("/:id/timeline", h.GetTimeline)
 	rg.PUT("/:id", h.Update)
 	rg.DELETE("/:id", h.Delete)
 	rg.POST("/bulk-delete", h.BulkDelete)
@@ -213,6 +240,30 @@ func (h *Handler) GetByID(c *gin.Context) {
 	httpkit.OK(c, lead)
 }
 
+func (h *Handler) GetTimeline(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	items, err := h.mgmt.GetTimeline(c.Request.Context(), leadID, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"items": items})
+}
+
 func (h *Handler) Update(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -242,6 +293,16 @@ func (h *Handler) Update(c *gin.Context) {
 	lead, err := h.mgmt.Update(c.Request.Context(), id, req, identity.UserID(), tenantID, identity.Roles())
 	if httpkit.HandleError(c, err) {
 		return
+	}
+
+	if lead.CurrentService != nil {
+		h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        lead.ID,
+			LeadServiceID: lead.CurrentService.ID,
+			TenantID:      tenantID,
+			Source:        "user_update",
+		})
 	}
 
 	h.publishLeadUpdate(tenantID, &lead.ID, "updated")
@@ -705,7 +766,42 @@ func (h *Handler) LogCall(c *gin.Context) {
 		return
 	}
 
+	h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      "User",
+		ActorName:      identity.UserID().String(),
+		EventType:      "call_log",
+		Title:          "Call logged",
+		Summary:        summaryPointer(req.Summary, 400),
+		Metadata: map[string]any{
+			"noteCreated":       result.NoteCreated,
+			"statusUpdated":     result.StatusUpdated,
+			"appointmentBooked": result.AppointmentBooked,
+		},
+	})
+
+	h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		TenantID:      tenantID,
+		Source:        "call_log",
+	})
+
 	httpkit.OK(c, result)
+}
+
+func summaryPointer(text string, maxLen int) *string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) > maxLen {
+		trimmed = trimmed[:maxLen] + "..."
+	}
+	return &trimmed
 }
 
 // isTerminalStatus checks if a service status is terminal (no further actions allowed)

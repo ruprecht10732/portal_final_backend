@@ -219,7 +219,7 @@ WITH inserted AS (
         (SELECT st.id FROM RAC_service_types st WHERE st.name = $2 OR st.slug = $2 LIMIT 1),
         'New'
     )
-    RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id
+    RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id, pipeline_stage
 )
 SELECT i.id, i.lead_id, st.name AS service_type, i.status, i.created_at, i.updated_at FROM inserted i
 JOIN RAC_service_types st ON st.id = i.service_type_id
@@ -386,7 +386,7 @@ func (q *Queries) GetLeadNote(ctx context.Context, id pgtype.UUID) (RacLeadNote,
 }
 
 const getLeadService = `-- name: GetLeadService :one
-SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id FROM RAC_lead_services WHERE id = $1
+SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id, pipeline_stage FROM RAC_lead_services WHERE id = $1
 `
 
 func (q *Queries) GetLeadService(ctx context.Context, id pgtype.UUID) (RacLeadService, error) {
@@ -406,6 +406,7 @@ func (q *Queries) GetLeadService(ctx context.Context, id pgtype.UUID) (RacLeadSe
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ServiceTypeID,
+		&i.PipelineStage,
 	)
 	return i, err
 }
@@ -514,7 +515,7 @@ func (q *Queries) ListLeadNotes(ctx context.Context, leadID pgtype.UUID) ([]RacL
 }
 
 const listLeadServices = `-- name: ListLeadServices :many
-SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id FROM RAC_lead_services
+SELECT id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id, pipeline_stage FROM RAC_lead_services
 WHERE lead_id = $1
 ORDER BY created_at
 `
@@ -542,6 +543,7 @@ func (q *Queries) ListLeadServices(ctx context.Context, leadID pgtype.UUID) ([]R
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ServiceTypeID,
+			&i.PipelineStage,
 		); err != nil {
 			return nil, err
 		}
@@ -607,7 +609,7 @@ func (q *Queries) UpdateLeadNote(ctx context.Context, arg UpdateLeadNoteParams) 
 const updateLeadServiceStatus = `-- name: UpdateLeadServiceStatus :one
 UPDATE RAC_lead_services SET status = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id
+RETURNING id, lead_id, service_type, status, visit_scheduled_date, visit_scout_id, visit_measurements, visit_access_difficulty, visit_notes, visit_completed_at, created_at, updated_at, service_type_id, pipeline_stage
 `
 
 type UpdateLeadServiceStatusParams struct {
@@ -632,6 +634,7 @@ func (q *Queries) UpdateLeadServiceStatus(ctx context.Context, arg UpdateLeadSer
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ServiceTypeID,
+		&i.PipelineStage,
 	)
 	return i, err
 }

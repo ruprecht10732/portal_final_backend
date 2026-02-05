@@ -1,0 +1,151 @@
+package agent
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"sync"
+
+	"github.com/google/uuid"
+	"google.golang.org/adk/agent"
+	"google.golang.org/adk/agent/llmagent"
+	"google.golang.org/adk/runner"
+	"google.golang.org/adk/session"
+	"google.golang.org/adk/tool"
+	"google.golang.org/genai"
+
+	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/platform/ai/moonshot"
+)
+
+// Estimator determines scope and pricing estimates.
+type Estimator struct {
+	agent          agent.Agent
+	runner         *runner.Runner
+	sessionService session.Service
+	appName        string
+	repo           repository.LeadsRepository
+	toolDeps       *ToolDependencies
+	runMu          sync.Mutex
+}
+
+// NewEstimator creates an Estimator agent.
+func NewEstimator(apiKey string, repo repository.LeadsRepository, eventBus events.Bus) (*Estimator, error) {
+	kimi := moonshot.NewModel(moonshot.Config{
+		APIKey:          apiKey,
+		Model:           "kimi-k2.5",
+		DisableThinking: true,
+	})
+
+	deps := &ToolDependencies{
+		Repo:     repo,
+		EventBus: eventBus,
+	}
+
+	saveEstimationTool, err := createSaveEstimationTool(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build SaveEstimation tool: %w", err)
+	}
+
+	updateStageTool, err := createUpdatePipelineStageTool(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
+	}
+
+	adkAgent, err := llmagent.New(llmagent.Config{
+		Name:        "Estimator",
+		Model:       kimi,
+		Description: "Technical estimator that scopes work and suggests price ranges.",
+		Instruction: "You are a Technical Estimator.",
+		Tools:       []tool.Tool{saveEstimationTool, updateStageTool},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create estimator agent: %w", err)
+	}
+
+	sessionService := session.InMemoryService()
+	r, err := runner.New(runner.Config{
+		AppName:        "estimator",
+		Agent:          adkAgent,
+		SessionService: sessionService,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create estimator runner: %w", err)
+	}
+
+	return &Estimator{
+		agent:          adkAgent,
+		runner:         r,
+		sessionService: sessionService,
+		appName:        "estimator",
+		repo:           repo,
+		toolDeps:       deps,
+	}, nil
+}
+
+// Run executes estimation for a lead service.
+func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
+	e.runMu.Lock()
+	defer e.runMu.Unlock()
+
+	e.toolDeps.SetTenantID(tenantID)
+	e.toolDeps.SetLeadContext(leadID, serviceID)
+	e.toolDeps.SetActor("AI", "Estimator")
+
+	lead, err := e.repo.GetByID(ctx, leadID, tenantID)
+	if err != nil {
+		return err
+	}
+	service, err := e.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return err
+	}
+
+	notes, err := e.repo.ListLeadNotes(ctx, leadID, tenantID)
+	if err != nil {
+		log.Printf("estimator notes fetch failed: %v", err)
+		notes = nil
+	}
+
+	var photo *repository.PhotoAnalysis
+	if analysis, err := e.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID); err == nil {
+		photo = &analysis
+	}
+
+	promptText := buildEstimatorPrompt(lead, service, notes, photo)
+	return e.runWithPrompt(ctx, promptText, leadID)
+}
+
+func (e *Estimator) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {
+	sessionID := uuid.New().String()
+	userID := "estimator-" + leadID.String()
+
+	_, err := e.sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   e.appName,
+		UserID:    userID,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create estimator session: %w", err)
+	}
+	defer func() {
+		_ = e.sessionService.Delete(ctx, &session.DeleteRequest{
+			AppName:   e.appName,
+			UserID:    userID,
+			SessionID: sessionID,
+		})
+	}()
+
+	userMessage := &genai.Content{
+		Role:  "user",
+		Parts: []*genai.Part{{Text: promptText}},
+	}
+
+	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
+	for event := range e.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
+		_ = event
+	}
+
+	return nil
+}
