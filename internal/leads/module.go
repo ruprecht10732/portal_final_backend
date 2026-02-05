@@ -34,7 +34,6 @@ type Module struct {
 	photoAnalysisHandler *handler.PhotoAnalysisHandler
 	management           *management.Service
 	notes                *notes.Service
-	advisor              *agent.LeadAdvisor
 	gatekeeper           *agent.Gatekeeper
 	estimator            *agent.Estimator
 	dispatcher           *agent.Dispatcher
@@ -57,7 +56,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
-	photoAnalyzer, advisor, callLogger, gatekeeper, estimator, dispatcher, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
+	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +65,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	sseService := sse.New()
 
 	// Subscribe to LeadCreated events to kick off gatekeeper triage
-	subscribeLeadCreated(eventBus, repo, gatekeeper, advisor, log)
+	subscribeLeadCreated(eventBus, repo, gatekeeper, log)
 
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
@@ -75,14 +74,14 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	notesSvc := notes.New(repo)
 
 	// Create orchestrator and event listeners
-	orchestrator := NewOrchestrator(gatekeeper, advisor, estimator, dispatcher, repo, log)
+	orchestrator := NewOrchestrator(gatekeeper, estimator, dispatcher, repo, log)
 	subscribeOrchestrator(eventBus, orchestrator)
 
 	// Create handlers
 	h, attachmentsHandler, photoAnalysisHandler := buildHandlers(buildHandlersDeps{
 		MgmtSvc:       mgmtSvc,
 		NotesSvc:      notesSvc,
-		Advisor:       advisor,
+		Gatekeeper:    gatekeeper,
 		CallLogger:    callLogger,
 		SSEService:    sseService,
 		EventBus:      eventBus,
@@ -99,7 +98,6 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		photoAnalysisHandler: photoAnalysisHandler,
 		management:           mgmtSvc,
 		notes:                notesSvc,
-		advisor:              advisor,
 		gatekeeper:           gatekeeper,
 		estimator:            estimator,
 		dispatcher:           dispatcher,
@@ -115,41 +113,36 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	}, nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.LeadAdvisor, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, error) {
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
-	}
-
-	advisor, err := agent.NewLeadAdvisor(cfg.MoonshotAPIKey, repo, photoAnalyzer, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), scorer)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	estimator, err := agent.NewEstimator(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
-	return photoAnalyzer, advisor, callLogger, gatekeeper, estimator, dispatcher, nil
+	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, nil
 }
 
-func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, advisor *agent.LeadAdvisor, log *logger.Logger) {
+func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
 	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadCreated)
 		if !ok {
@@ -165,13 +158,6 @@ func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, 
 			}
 			if err := gatekeeper.Run(bg, e.LeadID, service.ID, e.TenantID); err != nil {
 				log.Error("gatekeeper run failed", "error", err, "leadId", e.LeadID)
-			}
-			if advisor != nil {
-				if _, err := repo.GetLatestAIAnalysis(bg, service.ID, e.TenantID); err == repository.ErrNotFound {
-					if _, err := advisor.AnalyzeAndReturn(bg, e.LeadID, &service.ID, false, e.TenantID); err != nil {
-						log.Error("lead advisor auto analysis failed", "error", err, "leadId", e.LeadID)
-					}
-				}
 			}
 		}()
 
@@ -202,7 +188,7 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 type buildHandlersDeps struct {
 	MgmtSvc       *management.Service
 	NotesSvc      *notes.Service
-	Advisor       *agent.LeadAdvisor
+	Gatekeeper    *agent.Gatekeeper
 	CallLogger    *agent.CallLogger
 	SSEService    *sse.Service
 	EventBus      events.Bus
@@ -220,7 +206,7 @@ func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.Attachmen
 	h := handler.New(handler.HandlerDeps{
 		Mgmt:         deps.MgmtSvc,
 		NotesHandler: notesHandler,
-		Advisor:      deps.Advisor,
+		Gatekeeper:   deps.Gatekeeper,
 		CallLogger:   deps.CallLogger,
 		SSE:          deps.SSEService,
 		EventBus:     deps.EventBus,

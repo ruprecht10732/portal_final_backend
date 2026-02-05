@@ -421,24 +421,6 @@ func getDefaultAnalysis(leadID uuid.UUID, serviceID uuid.UUID) *AnalysisResult {
 	}
 }
 
-// analysisToResult converts a repository AIAnalysis to an AnalysisResult
-func (la *LeadAdvisor) analysisToResult(analysis repository.AIAnalysis) *AnalysisResult {
-	return &AnalysisResult{
-		ID:                      analysis.ID,
-		LeadID:                  analysis.LeadID,
-		LeadServiceID:           analysis.LeadServiceID,
-		UrgencyLevel:            analysis.UrgencyLevel,
-		UrgencyReason:           analysis.UrgencyReason,
-		LeadQuality:             analysis.LeadQuality,
-		RecommendedAction:       analysis.RecommendedAction,
-		MissingInformation:      analysis.MissingInformation,
-		PreferredContactChannel: analysis.PreferredContactChannel,
-		SuggestedContactMessage: analysis.SuggestedContactMessage,
-		Summary:                 analysis.Summary,
-		CreatedAt:               analysis.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-	}
-}
-
 func getValue(s *string) string {
 	if s == nil {
 		return valueNotProvided

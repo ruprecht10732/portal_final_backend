@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ import (
 type Handler struct {
 	mgmt         *management.Service
 	notesHandler *NotesHandler
-	advisor      *agent.LeadAdvisor
+	gatekeeper   *agent.Gatekeeper
 	callLogger   *agent.CallLogger
 	sse          *sse.Service
 	eventBus     events.Bus
@@ -35,7 +36,7 @@ type Handler struct {
 type HandlerDeps struct {
 	Mgmt         *management.Service
 	NotesHandler *NotesHandler
-	Advisor      *agent.LeadAdvisor
+	Gatekeeper   *agent.Gatekeeper
 	CallLogger   *agent.CallLogger
 	SSE          *sse.Service
 	EventBus     events.Bus
@@ -67,7 +68,7 @@ func New(deps HandlerDeps) *Handler {
 	return &Handler{
 		mgmt:         deps.Mgmt,
 		notesHandler: deps.NotesHandler,
-		advisor:      deps.Advisor,
+		gatekeeper:   deps.Gatekeeper,
 		callLogger:   deps.CallLogger,
 		sse:          deps.SSE,
 		eventBus:     deps.EventBus,
@@ -616,7 +617,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 	httpkit.OK(c, lead)
 }
 
-// AnalyzeLead triggers AI analysis for a lead service and returns the result
+// AnalyzeLead triggers gatekeeper analysis for a lead service
 func (h *Handler) AnalyzeLead(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {
@@ -640,15 +641,27 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 		return
 	}
 
-	// Check for force parameter to bypass no_change detection
-	force := c.Query("force") == "true"
+	// Trigger gatekeeper analysis asynchronously
+	go func() {
+		ctx := context.Background()
+		serviceID := validation.ServiceID
+		if serviceID == nil {
+			// Get current service if not specified
+			svc, err := h.repo.GetCurrentLeadService(ctx, id, tenantID)
+			if err != nil {
+				return
+			}
+			serviceID = &svc.ID
+		}
+		if err := h.gatekeeper.Run(ctx, id, *serviceID, tenantID); err != nil {
+			// Log error but don't expose to client
+		}
+	}()
 
-	response, err := h.advisor.AnalyzeAndReturn(c.Request.Context(), id, validation.ServiceID, force, tenantID)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, response)
+	httpkit.OK(c, gin.H{
+		"message": "Analysis triggered successfully",
+		"leadId":  id,
+	})
 }
 
 // GetAnalysis returns the latest AI analysis for a lead service
@@ -680,14 +693,26 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 		return
 	}
 
-	analysis, hasAnalysis, err := h.advisor.GetLatestOrDefault(c.Request.Context(), id, serviceID, tenantID)
-	if httpkit.HandleError(c, err) {
-		return
+	// Get latest analysis from repository
+	analysis, err := h.repo.GetLatestAIAnalysis(c.Request.Context(), serviceID, tenantID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			// Return default/empty analysis
+			httpkit.OK(c, gin.H{
+				"analysis":  nil,
+				"isDefault": true,
+				"leadId":    id,
+			})
+			return
+		}
+		if httpkit.HandleError(c, err) {
+			return
+		}
 	}
 
 	httpkit.OK(c, gin.H{
 		"analysis":  analysis,
-		"isDefault": !hasAnalysis,
+		"isDefault": false,
 	})
 }
 
@@ -720,7 +745,8 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 		return
 	}
 
-	analyses, err := h.advisor.ListAnalyses(c.Request.Context(), serviceID, tenantID)
+	// Get all analyses from repository
+	analyses, err := h.repo.ListAIAnalyses(c.Request.Context(), serviceID, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

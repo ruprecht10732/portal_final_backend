@@ -100,6 +100,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	g.toolDeps.SetTenantID(tenantID)
 	g.toolDeps.SetLeadContext(leadID, serviceID)
 	g.toolDeps.SetActor("AI", "Gatekeeper")
+	g.toolDeps.ResetToolCallTracking() // Reset before each run
 
 	lead, err := g.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
@@ -125,7 +126,79 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	intakeContext := g.buildServiceContext(ctx, tenantID)
 	promptText := buildGatekeeperPrompt(lead, service, notes, intakeContext, attachments)
 
-	return g.runWithPrompt(ctx, promptText, leadID)
+	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", leadID, serviceID)
+	if err := g.runWithPrompt(ctx, promptText, leadID); err != nil {
+		log.Printf("gatekeeper: runWithPrompt failed for lead=%s: %v", leadID, err)
+		return err
+	}
+	log.Printf("gatekeeper: runWithPrompt completed for lead=%s", leadID)
+
+	// Validate that SaveAnalysis was called - if not, create fallback
+	wasCalled := g.toolDeps.WasSaveAnalysisCalled()
+	log.Printf("gatekeeper: WasSaveAnalysisCalled()=%v for lead=%s service=%s", wasCalled, leadID, serviceID)
+	if !wasCalled {
+		log.Printf("gatekeeper: SaveAnalysis was NOT called by agent for lead=%s service=%s, creating fallback", leadID, serviceID)
+		g.createFallbackAnalysis(ctx, lead, service, leadID, serviceID, tenantID)
+	} else {
+		log.Printf("gatekeeper: SaveAnalysis was called successfully for lead=%s service=%s", leadID, serviceID)
+	}
+
+	return nil
+}
+
+// createFallbackAnalysis creates a minimal analysis when the agent fails to call SaveAnalysis
+func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository.Lead, service repository.LeadService, leadID, serviceID, tenantID uuid.UUID) {
+	// Determine preferred channel based on available contact info
+	channel := "Email"
+	if strings.TrimSpace(lead.ConsumerPhone) != "" {
+		channel = "WhatsApp"
+	}
+
+	// Create a default analysis record
+	_, err := g.repo.CreateAIAnalysis(ctx, repository.CreateAIAnalysisParams{
+		LeadID:                  leadID,
+		OrganizationID:          tenantID,
+		LeadServiceID:           serviceID,
+		UrgencyLevel:            "Medium",
+		UrgencyReason:           nil,
+		LeadQuality:             "Potential",
+		RecommendedAction:       "RequestInfo",
+		MissingInformation:      []string{"Intake validatie niet voltooid door AI"},
+		PreferredContactChannel: channel,
+		SuggestedContactMessage: fmt.Sprintf("Beste %s, bedankt voor uw aanvraag. Kunt u ons meer details geven over uw project?", lead.ConsumerFirstName),
+		Summary:                 "AI analyse kon niet worden voltooid. Handmatige beoordeling vereist.",
+	})
+	if err != nil {
+		log.Printf("gatekeeper: failed to create fallback analysis: %v", err)
+		return
+	}
+
+	// Create timeline event for the fallback
+	summary := "AI analyse kon niet worden voltooid. Handmatige beoordeling vereist."
+	analysisMetadata := map[string]any{
+		"urgencyLevel":            "Medium",
+		"recommendedAction":       "RequestInfo",
+		"leadQuality":             "Potential",
+		"preferredContactChannel": channel,
+		"suggestedContactMessage": fmt.Sprintf("Beste %s, bedankt voor uw aanvraag. Kunt u ons meer details geven over uw project?", lead.ConsumerFirstName),
+		"missingInformation":      []string{"Intake validatie niet voltooid door AI"},
+		"fallback":                true,
+	}
+	_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      "AI",
+		ActorName:      "Gatekeeper",
+		EventType:      "ai",
+		Title:          "Gatekeeper-triage (fallback)",
+		Summary:        &summary,
+		Metadata:       analysisMetadata,
+	})
+
+	// Store for stage_change event if needed
+	g.toolDeps.SetLastAnalysisMetadata(analysisMetadata)
+	log.Printf("gatekeeper: created fallback analysis for lead=%s service=%s", leadID, serviceID)
 }
 
 func (g *Gatekeeper) buildServiceContext(ctx context.Context, tenantID uuid.UUID) string {

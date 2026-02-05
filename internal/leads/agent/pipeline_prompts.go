@@ -51,6 +51,11 @@ Rule-based checks (heuristic):
 Intake Requirements:
 %s
 
+CRITICAL REQUIRED TOOL CALLS:
+You MUST call BOTH SaveAnalysis AND UpdatePipelineStage in EVERY response.
+SaveAnalysis MUST be called BEFORE UpdatePipelineStage.
+If you skip SaveAnalysis, the lead timeline will be broken - this is NOT optional.
+
 Instruction:
 If you find high-confidence (>=90%%) errors in lead contact or address details, call UpdateLeadDetails.
 Only update fields you are confident about. Include a short Dutch reason and your confidence.
@@ -61,14 +66,12 @@ Missing intake information alone is NOT a reason to switch service type.
 If the intent is ambiguous, keep the current service type and move to Nurturing with a short Dutch reason.
 1) Validate intake requirements for the selected service type.
 2) Treat rule-based missing items as critical unless the info is clearly present elsewhere.
-3) Call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,
+3) FIRST call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,
    a short Dutch summary, and a Dutch list of missingInformation (empty list if nothing missing).
-   Call SaveAnalysis BEFORE UpdatePipelineStage.
-4) If all required info is present, call UpdatePipelineStage with stage="Ready_For_Estimator".
-5) If anything critical is missing, call UpdatePipelineStage with stage="Nurturing".
-6) Include a short reason in UpdatePipelineStage, written in Dutch.
+4) THEN call UpdatePipelineStage with stage="Ready_For_Estimator" (if all required info is present) or stage="Nurturing" (if critical info is missing).
+5) Include a short reason in UpdatePipelineStage, written in Dutch.
 
-You MUST call SaveAnalysis and UpdatePipelineStage, and respond ONLY with tool calls.
+FINAL REMINDER: You MUST output SaveAnalysis followed by UpdatePipelineStage. No exceptions.
 `,
 		lead.ID,
 		service.ID,

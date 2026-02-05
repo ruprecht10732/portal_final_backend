@@ -104,6 +104,19 @@ type PipelineStageChanged struct {
 
 func (e PipelineStageChanged) EventName() string { return "leads.pipeline.changed" }
 
+// ManualInterventionRequired is published when a lead service requires manual review.
+// This occurs when automated processing fails or identifies edge cases that need human attention.
+type ManualInterventionRequired struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	Reason        string    `json:"reason"` // "no_partners_found", "estimation_ambiguous", "special_requirements"
+	Context       string    `json:"context,omitempty"`
+}
+
+func (e ManualInterventionRequired) EventName() string { return "leads.manual_intervention.required" }
+
 // =============================================================================
 // Identity Domain Events
 // =============================================================================

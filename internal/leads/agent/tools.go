@@ -64,6 +64,44 @@ func normalizeLeadQuality(quality string) string {
 	}
 }
 
+// normalizeRecommendedAction converts various action formats to valid values: Reject, RequestInfo, ScheduleSurvey, CallImmediately
+func normalizeRecommendedAction(action string) string {
+	normalized := strings.ToLower(strings.TrimSpace(action))
+
+	// Check for exact matches first
+	switch normalized {
+	case "reject", "afwijzen", "weigeren":
+		return "Reject"
+	case "requestinfo", "request_info", "request info":
+		return "RequestInfo"
+	case "schedulesurvey", "schedule_survey", "schedule survey", "survey", "opname", "inmeten":
+		return "ScheduleSurvey"
+	case "callimmediately", "call_immediately", "call immediately", "call", "bellen":
+		return "CallImmediately"
+	}
+
+	// Check for partial matches (LLM often sends descriptive text)
+	if strings.Contains(normalized, "reject") || strings.Contains(normalized, "spam") || strings.Contains(normalized, "junk") {
+		return "Reject"
+	}
+	if strings.Contains(normalized, "call") || strings.Contains(normalized, "bel") || strings.Contains(normalized, "phone") {
+		return "CallImmediately"
+	}
+	if strings.Contains(normalized, "survey") || strings.Contains(normalized, "opname") || strings.Contains(normalized, "inmeten") || strings.Contains(normalized, "schedule") {
+		return "ScheduleSurvey"
+	}
+	// Default: anything about info, contact, nurture, clarification → RequestInfo
+	if strings.Contains(normalized, "info") || strings.Contains(normalized, "contact") ||
+		strings.Contains(normalized, "nurtur") || strings.Contains(normalized, "clarif") ||
+		strings.Contains(normalized, "request") || strings.Contains(normalized, "more") ||
+		strings.Contains(normalized, "review") {
+		return "RequestInfo"
+	}
+
+	log.Printf("Unrecognized recommended action '%s', defaulting to RequestInfo", action)
+	return "RequestInfo"
+}
+
 func normalizeConsumerRole(role string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(role))
 	switch normalized {
@@ -80,16 +118,19 @@ func normalizeConsumerRole(role string) (string, error) {
 
 // ToolDependencies contains the dependencies needed by tools
 type ToolDependencies struct {
-	Repo          repository.LeadsRepository
-	DraftedEmails map[uuid.UUID]EmailDraft
-	Scorer        *scoring.Service
-	EventBus      events.Bus
-	mu            sync.RWMutex
-	tenantID      *uuid.UUID
-	leadID        *uuid.UUID
-	serviceID     *uuid.UUID
-	actorType     string
-	actorName     string
+	Repo                 repository.LeadsRepository
+	DraftedEmails        map[uuid.UUID]EmailDraft
+	Scorer               *scoring.Service
+	EventBus             events.Bus
+	mu                   sync.RWMutex
+	tenantID             *uuid.UUID
+	leadID               *uuid.UUID
+	serviceID            *uuid.UUID
+	actorType            string
+	actorName            string
+	lastAnalysisMetadata map[string]any // Populated by SaveAnalysis for use in stage_change events
+	saveAnalysisCalled   bool           // Track if SaveAnalysis was called
+	stageUpdateCalled    bool           // Track if UpdatePipelineStage was called
 }
 
 func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
@@ -137,6 +178,59 @@ func (d *ToolDependencies) GetActor() (string, string) {
 		return "AI", "Agent"
 	}
 	return d.actorType, d.actorName
+}
+
+// SetLastAnalysisMetadata stores the analysis metadata for inclusion in subsequent events
+func (d *ToolDependencies) SetLastAnalysisMetadata(metadata map[string]any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastAnalysisMetadata = metadata
+}
+
+// GetLastAnalysisMetadata retrieves the analysis metadata saved by SaveAnalysis
+func (d *ToolDependencies) GetLastAnalysisMetadata() map[string]any {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastAnalysisMetadata
+}
+
+// MarkSaveAnalysisCalled marks that SaveAnalysis tool was called
+func (d *ToolDependencies) MarkSaveAnalysisCalled() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.saveAnalysisCalled = true
+	log.Printf("ToolDependencies: MarkSaveAnalysisCalled() - set to true")
+}
+
+// MarkStageUpdateCalled marks that UpdatePipelineStage tool was called
+func (d *ToolDependencies) MarkStageUpdateCalled() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stageUpdateCalled = true
+}
+
+// WasSaveAnalysisCalled returns whether SaveAnalysis was called
+func (d *ToolDependencies) WasSaveAnalysisCalled() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.saveAnalysisCalled
+}
+
+// WasStageUpdateCalled returns whether UpdatePipelineStage was called
+func (d *ToolDependencies) WasStageUpdateCalled() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.stageUpdateCalled
+}
+
+// ResetToolCallTracking resets the tool call tracking flags
+func (d *ToolDependencies) ResetToolCallTracking() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	log.Printf("ToolDependencies: ResetToolCallTracking() - resetting flags (was saveAnalysisCalled=%v)", d.saveAnalysisCalled)
+	d.saveAnalysisCalled = false
+	d.stageUpdateCalled = false
+	d.lastAnalysisMetadata = nil
 }
 
 func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
@@ -208,8 +302,12 @@ func parseLeadServiceID(value string) (uuid.UUID, error) {
 }
 
 func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
+	log.Printf("handleSaveAnalysis: CALLED with leadID=%s serviceID=%s urgency=%s action=%s",
+		input.LeadID, input.LeadServiceID, input.UrgencyLevel, input.RecommendedAction)
+
 	leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
 	if err != nil {
+		log.Printf("handleSaveAnalysis: FAILED - invalid leadID: %s", input.LeadID)
 		return SaveAnalysisOutput{Success: false, Message: invalidLeadIDMessage}, err
 	}
 
@@ -250,6 +348,10 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	// Normalize lead quality to valid enum value
 	leadQuality := normalizeLeadQuality(input.LeadQuality)
 
+	// Normalize recommended action to valid enum value
+	recommendedAction := normalizeRecommendedAction(input.RecommendedAction)
+	log.Printf("handleSaveAnalysis: normalized recommendedAction '%s' -> '%s'", input.RecommendedAction, recommendedAction)
+
 	_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
 		LeadID:                  leadID,
 		OrganizationID:          tenantID,
@@ -257,7 +359,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		UrgencyLevel:            urgencyLevel,
 		UrgencyReason:           urgencyReason,
 		LeadQuality:             leadQuality,
-		RecommendedAction:       input.RecommendedAction,
+		RecommendedAction:       recommendedAction,
 		MissingInformation:      input.MissingInformation,
 		PreferredContactChannel: channel,
 		SuggestedContactMessage: input.SuggestedContactMessage,
@@ -268,22 +370,40 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	}
 
 	actorType, actorName := deps.GetActor()
-	if len(input.MissingInformation) > 0 {
-		summary := buildMissingInfoSummary(input.MissingInformation)
-		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-			LeadID:         leadID,
-			ServiceID:      &leadServiceID,
-			OrganizationID: tenantID,
-			ActorType:      actorType,
-			ActorName:      actorName,
-			EventType:      "analysis",
-			Title:          "Ontbrekende informatie",
-			Summary:        &summary,
-			Metadata: map[string]any{
-				"missingInformation": input.MissingInformation,
-			},
-		})
+
+	// Create comprehensive analysis timeline event for frontend rendering
+	analysisSummary := input.Summary
+	if analysisSummary == "" {
+		analysisSummary = fmt.Sprintf("AI analyse voltooid: %s urgentie, aanbevolen actie: %s", urgencyLevel, recommendedAction)
 	}
+	analysisMetadata := map[string]any{
+		"urgencyLevel":      urgencyLevel,
+		"recommendedAction": recommendedAction,
+		"leadQuality":       leadQuality,
+	}
+	if input.SuggestedContactMessage != "" {
+		analysisMetadata["suggestedContactMessage"] = input.SuggestedContactMessage
+		analysisMetadata["preferredContactChannel"] = string(channel)
+	}
+	if len(input.MissingInformation) > 0 {
+		analysisMetadata["missingInformation"] = input.MissingInformation
+	}
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &leadServiceID,
+		OrganizationID: tenantID,
+		ActorType:      actorType,
+		ActorName:      actorName,
+		EventType:      "ai",
+		Title:          "Gatekeeper analyse voltooid",
+		Summary:        &analysisSummary,
+		Metadata:       analysisMetadata,
+	})
+
+	// Store analysis metadata for use in stage_change events
+	deps.SetLastAnalysisMetadata(analysisMetadata)
+	log.Printf("SaveAnalysis: stored analysis metadata for lead=%s service=%s channel=%s action=%s",
+		leadID, leadServiceID, channel, recommendedAction)
 
 	if deps.Scorer != nil {
 		if scoreResult, scoreErr := deps.Scorer.Recalculate(ctx, leadID, &leadServiceID, tenantID, true); scoreErr == nil {
@@ -320,10 +440,11 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		leadServiceID,
 		urgencyLevel,
 		leadQuality,
-		input.RecommendedAction,
+		recommendedAction,
 		len(input.MissingInformation),
 	)
 
+	deps.MarkSaveAnalysisCalled()
 	return SaveAnalysisOutput{Success: true, Message: "Analysis saved successfully"}, nil
 }
 
@@ -720,6 +841,12 @@ func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
 			summary = &reason
 		}
 
+		// Stage change event only contains stage transition info - analysis data is in separate "ai" event
+		stageMetadata := map[string]any{
+			"oldStage": oldStage,
+			"newStage": input.Stage,
+		}
+
 		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 			LeadID:         leadID,
 			ServiceID:      &serviceID,
@@ -729,10 +856,7 @@ func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
 			EventType:      "stage_change",
 			Title:          "Stage Updated",
 			Summary:        summary,
-			Metadata: map[string]any{
-				"oldStage": oldStage,
-				"newStage": input.Stage,
-			},
+			Metadata:       stageMetadata,
 		})
 
 		if deps.EventBus != nil {
@@ -758,6 +882,7 @@ func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
 			reason,
 		)
 
+		deps.MarkStageUpdateCalled()
 		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
 	})
 }
