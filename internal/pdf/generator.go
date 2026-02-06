@@ -127,13 +127,13 @@ type quoteViewModel struct {
 }
 
 type itemViewModel struct {
-	Description       string
-	Quantity          string
+	Description        string
+	Quantity           string
 	UnitPriceFormatted string
-	VatPctFormatted   string
+	VatPctFormatted    string
 	LineTotalFormatted string
-	IsOptional        bool
-	IsSelected        bool
+	IsOptional         bool
+	IsSelected         bool
 }
 
 type vatLineViewModel struct {

@@ -543,6 +543,20 @@ func (r *Repository) GetPDFFileKeyByQuoteID(ctx context.Context, quoteID uuid.UU
 	return *fileKey, nil
 }
 
+// GetOrganizationIDByQuoteID returns the organization ID for a quote (no org scoping).
+func (r *Repository) GetOrganizationIDByQuoteID(ctx context.Context, quoteID uuid.UUID) (uuid.UUID, error) {
+	var orgID uuid.UUID
+	query := `SELECT organization_id FROM RAC_quotes WHERE id = $1`
+	err := r.pool.QueryRow(ctx, query, quoteID).Scan(&orgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, apperr.NotFound(quoteNotFoundMsg)
+		}
+		return uuid.Nil, fmt.Errorf("failed to get organization ID: %w", err)
+	}
+	return orgID, nil
+}
+
 // GetItemByID retrieves a single quote item by its ID and quote ID.
 func (r *Repository) GetItemByID(ctx context.Context, itemID, quoteID uuid.UUID) (*QuoteItem, error) {
 	var it QuoteItem

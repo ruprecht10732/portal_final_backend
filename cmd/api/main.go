@@ -12,7 +12,6 @@ import (
 	"portal_final_backend/internal/adapters"
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/appointments"
-	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/auth"
 	"portal_final_backend/internal/catalog"
 	"portal_final_backend/internal/email"
@@ -26,6 +25,7 @@ import (
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/partners"
+	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/services"
 	"portal_final_backend/platform/config"
@@ -187,8 +187,9 @@ func main() {
 	quotesModule.Service().SetQuoteContactReader(quotesContacts)
 
 	// Wire quote acceptance processor: PDF generation + upload + emails
-	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), storageSvc, cfg)
+	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), quotesContacts, storageSvc, cfg)
 	notificationModule.SetQuoteAcceptanceProcessor(quotePDFProcessor)
+	quotesModule.SetPDFGenerator(quotePDFProcessor)
 
 	// Wire quote activity writer so notification handlers persist activity history
 	quoteActivityWriter := adapters.NewQuoteActivityWriter(quotesModule.Repository())

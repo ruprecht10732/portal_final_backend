@@ -41,19 +41,21 @@ type QuoteOrgReader interface {
 // QuoteAcceptanceProcessor implements notification.QuoteAcceptanceProcessor.
 // It generates the quote PDF, uploads it to MinIO, and persists the file key.
 type QuoteAcceptanceProcessor struct {
-	repo       QuoteDataReader
-	orgReader  QuoteOrgReader
-	storage    storage.StorageService
-	cfg        QuotePDFBucketConfig
+	repo           QuoteDataReader
+	orgReader      QuoteOrgReader
+	contactReader  service.QuoteContactReader
+	storage        storage.StorageService
+	cfg            QuotePDFBucketConfig
 }
 
 // NewQuoteAcceptanceProcessor creates a new processor adapter.
-func NewQuoteAcceptanceProcessor(repo QuoteDataReader, orgReader QuoteOrgReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig) *QuoteAcceptanceProcessor {
+func NewQuoteAcceptanceProcessor(repo QuoteDataReader, orgReader QuoteOrgReader, contactReader service.QuoteContactReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig) *QuoteAcceptanceProcessor {
 	return &QuoteAcceptanceProcessor{
-		repo:      repo,
-		orgReader: orgReader,
-		storage:   storageSvc,
-		cfg:       cfg,
+		repo:          repo,
+		orgReader:     orgReader,
+		contactReader: contactReader,
+		storage:       storageSvc,
+		cfg:           cfg,
 	}
 }
 
@@ -185,8 +187,6 @@ func derefStr(s *string) string {
 	return *s
 }
 
-
-
 // buildPDFItems converts repository QuoteItems into transport PublicQuoteItemResponse
 // suitable for the PDF generator, including per-line tax calculations.
 func buildPDFItems(items []repository.QuoteItem, pricingMode string) []transport.PublicQuoteItemResponse {
@@ -244,6 +244,48 @@ func roundC(f float64) int64 {
 
 // Compile-time check.
 var _ notification.QuoteAcceptanceProcessor = (*QuoteAcceptanceProcessor)(nil)
+
+// RegeneratePDF generates and stores the quote PDF on demand, looking up all
+// required metadata (org name, customer name, signature name) from the database.
+// This is used for lazy/on-demand PDF generation in download endpoints.
+func (p *QuoteAcceptanceProcessor) RegeneratePDF(
+	ctx context.Context,
+	quoteID, organizationID uuid.UUID,
+) (string, []byte, error) {
+	// Fetch quote to get LeadID & SignatureName
+	quote, err := p.repo.GetByID(ctx, quoteID, organizationID)
+	if err != nil {
+		return "", nil, fmt.Errorf("fetch quote for PDF regeneration: %w", err)
+	}
+
+	signatureName := ""
+	if quote.SignatureName != nil {
+		signatureName = *quote.SignatureName
+	}
+
+	// Resolve org name and customer name from the lead contact data
+	orgName := ""
+	customerName := signatureName // fallback to signature name
+	if p.contactReader != nil {
+		contactData, contactErr := p.contactReader.GetQuoteContactData(ctx, quote.LeadID, organizationID)
+		if contactErr == nil {
+			orgName = contactData.OrganizationName
+			if contactData.ConsumerName != "" {
+				customerName = contactData.ConsumerName
+			}
+		}
+	}
+
+	// Fallback: get org name from org reader if contact reader didn't provide it
+	if orgName == "" {
+		org, orgErr := p.orgReader.GetOrganization(ctx, organizationID)
+		if orgErr == nil {
+			orgName = org.Name
+		}
+	}
+
+	return p.GenerateAndStorePDF(ctx, quoteID, organizationID, orgName, customerName, signatureName)
+}
 
 // decodeSignatureDataURL strips the "data:image/png;base64," prefix from
 // a data URL and decodes the remaining base64 payload into raw PNG bytes.

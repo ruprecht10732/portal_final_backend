@@ -64,6 +64,12 @@ func (m *Module) SetStorageForPDF(svc storage.StorageService, bucket string) {
 	m.publicHandler.SetStorageForPDF(svc, bucket)
 }
 
+// SetPDFGenerator injects the on-demand PDF generator for lazy PDF creation in download endpoints.
+func (m *Module) SetPDFGenerator(gen handler.PDFOnDemandGenerator) {
+	m.handler.SetPDFGenerator(gen)
+	m.publicHandler.SetPDFGenerator(gen)
+}
+
 // RegisterRoutes registers the module's routes
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	quotes := ctx.Protected.Group("/quotes")

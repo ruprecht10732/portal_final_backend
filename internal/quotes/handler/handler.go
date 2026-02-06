@@ -26,6 +26,7 @@ type Handler struct {
 	val        *validator.Validator
 	storageSvc storage.StorageService
 	pdfBucket  string
+	pdfGen     PDFOnDemandGenerator
 }
 
 // New creates a new quotes handler
@@ -37,6 +38,11 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 func (h *Handler) SetStorageForPDF(svc storage.StorageService, bucket string) {
 	h.storageSvc = svc
 	h.pdfBucket = bucket
+}
+
+// SetPDFGenerator injects the on-demand PDF generator for lazy PDF creation.
+func (h *Handler) SetPDFGenerator(gen PDFOnDemandGenerator) {
+	h.pdfGen = gen
 }
 
 // RegisterRoutes registers the quote routes
@@ -330,6 +336,21 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 	}
 
 	if result.PDFFileKey == nil || *result.PDFFileKey == "" {
+		// Lazy generation: if no PDF is stored yet, generate on the fly
+		if h.pdfGen != nil {
+			fileKey, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), id, tenantID)
+			if genErr != nil {
+				httpkit.Error(c, http.StatusInternalServerError, "PDF generatie mislukt", genErr.Error())
+				return
+			}
+
+			fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
+			c.Header("Content-Type", "application/pdf")
+			c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+			c.Data(http.StatusOK, "application/pdf", pdfBytes)
+			_ = fileKey
+			return
+		}
 		httpkit.Error(c, http.StatusNotFound, "no PDF available for this quote", nil)
 		return
 	}

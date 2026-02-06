@@ -230,7 +230,7 @@ func (c *Config) GetMinioBucketQuotePDFs() string {
 func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
 
 // GotenbergConfig implementation
-func (c *Config) GetGotenbergURL() string { return c.GotenbergURL }
+func (c *Config) GetGotenbergURL() string  { return c.GotenbergURL }
 func (c *Config) IsGotenbergEnabled() bool { return c.GotenbergURL != "" }
 
 // EnergyLabelConfig implementation

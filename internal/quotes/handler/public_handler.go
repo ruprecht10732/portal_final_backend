@@ -17,6 +17,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// PDFOnDemandGenerator generates and stores a quote PDF on the fly.
+// Used for lazy PDF generation when the PDF wasn't created at acceptance time.
+type PDFOnDemandGenerator interface {
+	RegeneratePDF(ctx context.Context, quoteID, organizationID uuid.UUID) (fileKey string, pdfBytes []byte, err error)
+}
+
 // PublicHandler handles unauthenticated HTTP requests for public quote proposals.
 type PublicHandler struct {
 	svc        *service.Service
@@ -24,6 +30,7 @@ type PublicHandler struct {
 	sse        *sse.Service
 	storageSvc storage.StorageService
 	pdfBucket  string
+	pdfGen     PDFOnDemandGenerator
 }
 
 // NewPublicHandler creates a new public quotes handler.
@@ -40,6 +47,11 @@ func (h *PublicHandler) SetSSE(s *sse.Service) {
 func (h *PublicHandler) SetStorageForPDF(svc storage.StorageService, bucket string) {
 	h.storageSvc = svc
 	h.pdfBucket = bucket
+}
+
+// SetPDFGenerator injects the on-demand PDF generator for lazy PDF creation.
+func (h *PublicHandler) SetPDFGenerator(gen PDFOnDemandGenerator) {
+	h.pdfGen = gen
 }
 
 // RegisterRoutes registers the public quote routes (no auth middleware).
@@ -188,6 +200,28 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 
 	pdfFileKey, err := h.svc.GetPDFFileKey(c.Request.Context(), quoteID)
 	if err != nil || pdfFileKey == "" {
+		// Lazy generation: if no PDF is stored yet but the quote is accepted, generate on the fly
+		if h.pdfGen != nil {
+			orgID, orgErr := h.svc.GetOrganizationID(c.Request.Context(), quoteID)
+			if orgErr != nil {
+				httpkit.Error(c, http.StatusInternalServerError, "failed to resolve organization", nil)
+				return
+			}
+
+			fileKey, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), quoteID, orgID)
+			if genErr != nil {
+				httpkit.Error(c, http.StatusInternalServerError, "PDF generatie mislukt", genErr.Error())
+				return
+			}
+
+			// Serve the freshly generated PDF directly
+			fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
+			c.Header("Content-Type", "application/pdf")
+			c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+			c.Data(http.StatusOK, "application/pdf", pdfBytes)
+			_ = fileKey // stored by the processor
+			return
+		}
 		httpkit.Error(c, http.StatusNotFound, "no PDF available for this quote", nil)
 		return
 	}

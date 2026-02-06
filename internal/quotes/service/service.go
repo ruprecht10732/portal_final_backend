@@ -483,6 +483,11 @@ func (s *Service) GetPDFFileKey(ctx context.Context, quoteID uuid.UUID) (string,
 	return s.repo.GetPDFFileKeyByQuoteID(ctx, quoteID)
 }
 
+// GetOrganizationID returns the organization ID for a quote (no org scoping).
+func (s *Service) GetOrganizationID(ctx context.Context, quoteID uuid.UUID) (uuid.UUID, error) {
+	return s.repo.GetOrganizationIDByQuoteID(ctx, quoteID)
+}
+
 // GetPublic retrieves a quote by its public token for unauthenticated lead access.
 func (s *Service) GetPublic(ctx context.Context, token string) (*transport.PublicQuoteResponse, error) {
 	quote, err := s.repo.GetByPublicToken(ctx, token)
