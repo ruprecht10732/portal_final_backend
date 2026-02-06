@@ -82,6 +82,12 @@ type MinIOConfig interface {
 	IsMinIOEnabled() bool
 }
 
+// GotenbergConfig provides settings for the Gotenberg HTML-to-PDF service.
+type GotenbergConfig interface {
+	GetGotenbergURL() string
+	IsGotenbergEnabled() bool
+}
+
 // EnergyLabelConfig provides settings for EP-Online energy label API.
 type EnergyLabelConfig interface {
 	GetEPOnlineAPIKey() string
@@ -151,6 +157,7 @@ type Config struct {
 	MinioBucketPartnerLogos           string
 	MinioBucketOrganizationLogos      string
 	MinioBucketQuotePDFs              string
+	GotenbergURL                      string
 	QdrantURL                         string
 	QdrantAPIKey                      string
 	QdrantCollection                  string
@@ -221,6 +228,10 @@ func (c *Config) GetMinioBucketQuotePDFs() string {
 	return c.MinioBucketQuotePDFs
 }
 func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
+
+// GotenbergConfig implementation
+func (c *Config) GetGotenbergURL() string { return c.GotenbergURL }
+func (c *Config) IsGotenbergEnabled() bool { return c.GotenbergURL != "" }
 
 // EnergyLabelConfig implementation
 func (c *Config) GetEPOnlineAPIKey() string  { return c.EPOnlineAPIKey }
@@ -302,6 +313,7 @@ func Load() (*Config, error) {
 		MinioBucketPartnerLogos:           getEnv("MINIO_BUCKET_PARTNER_LOGOS", "partner-logos"),
 		MinioBucketOrganizationLogos:      getEnv("MINIO_BUCKET_ORGANIZATION_LOGOS", "organization-logos"),
 		MinioBucketQuotePDFs:              getEnv("MINIO_BUCKET_QUOTE_PDFS", "quote-pdfs"),
+		GotenbergURL:                      getEnv("GOTENBERG_URL", ""),
 		QdrantURL:                         getEnv("QDRANT_URL", ""),
 		QdrantAPIKey:                      getEnv("QDRANT_API_KEY", ""),
 		QdrantCollection:                  getEnv("QDRANT_COLLECTION", ""),

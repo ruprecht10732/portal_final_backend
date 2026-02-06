@@ -17,7 +17,6 @@ import (
 	"portal_final_backend/internal/quotes/transport"
 
 	"github.com/google/uuid"
-	"github.com/johnfercher/maroto/v2/pkg/consts/extension"
 )
 
 // QuoteDataReader is the narrow interface the acceptance processor uses
@@ -109,14 +108,14 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 
 	// 6. Download organization logo from MinIO (if available)
 	var logoBytes []byte
-	var logoExt extension.Type
+	var logoMime string
 	if orgErr == nil && org.LogoFileKey != nil && *org.LogoFileKey != "" {
 		logoBucket := p.cfg.GetMinioBucketOrganizationLogos()
 		logoReader, dlErr := p.storage.DownloadFile(ctx, logoBucket, *org.LogoFileKey)
 		if dlErr == nil {
 			defer logoReader.Close()
 			logoBytes, _ = io.ReadAll(logoReader)
-			logoExt = contentTypeToExt(org.LogoContentType)
+			logoMime = contentTypeToMime(org.LogoContentType)
 		}
 	}
 
@@ -140,7 +139,7 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		TotalCents:       calc.TotalCents,
 		VatBreakdown:     calc.VatBreakdown,
 		OrgLogo:          logoBytes,
-		OrgLogoExt:       logoExt,
+		OrgLogoMime:      logoMime,
 	}
 
 	// Populate org details if available
@@ -189,16 +188,16 @@ func derefStr(s *string) string {
 	return *s
 }
 
-// contentTypeToExt maps a MIME content type to a maroto extension type.
-func contentTypeToExt(ct *string) extension.Type {
+// contentTypeToMime maps an optional MIME content-type pointer to a concrete MIME string.
+func contentTypeToMime(ct *string) string {
 	if ct == nil {
-		return extension.Png
+		return "image/png"
 	}
 	switch strings.ToLower(*ct) {
 	case "image/jpeg", "image/jpg":
-		return extension.Jpg
+		return "image/jpeg"
 	default:
-		return extension.Png
+		return "image/png"
 	}
 }
 

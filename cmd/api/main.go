@@ -12,6 +12,7 @@ import (
 	"portal_final_backend/internal/adapters"
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/appointments"
+	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/auth"
 	"portal_final_backend/internal/catalog"
 	"portal_final_backend/internal/email"
@@ -119,6 +120,15 @@ func main() {
 		"organizationLogosBucket", cfg.GetMinioBucketOrganizationLogos(),
 		"quotePDFsBucket", cfg.GetMinioBucketQuotePDFs(),
 	)
+
+	// Gotenberg PDF generator
+	if cfg.IsGotenbergEnabled() {
+		if err := pdf.Init(cfg.GetGotenbergURL()); err != nil {
+			log.Error("failed to initialize PDF generator", "error", err)
+			panic("failed to initialize PDF generator: " + err.Error())
+		}
+		log.Info("gotenberg PDF generator initialized", "url", cfg.GetGotenbergURL())
+	}
 
 	// ========================================================================
 	// Domain Modules (Composition Root)

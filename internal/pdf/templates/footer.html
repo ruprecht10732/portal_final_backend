@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&display=swap');
+
+        body {
+            font-family: 'Barlow', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 7pt;
+            color: #6b7280;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        .footer {
+            width: 100%;
+            text-align: center;
+            border-top: 2px solid #F59E0B;
+            padding-top: 6px;
+            padding-bottom: 0;
+        }
+        .footer-text {
+            font-size: 6.5pt;
+            color: #9ca3af;
+            letter-spacing: 0.3px;
+            font-weight: 500;
+        }
+        .page-number {
+            font-size: 6.5pt;
+            color: #9ca3af;
+            margin-top: 2px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="footer">
+        <div class="footer-text">{{.FooterText}}</div>
+        <div class="page-number">Pagina <span class="pageNumber"></span> van <span class="totalPages"></span></div>
+    </div>
+</body>
+</html>
