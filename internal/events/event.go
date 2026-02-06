@@ -159,3 +159,85 @@ type PartnerInviteCreated struct {
 }
 
 func (e PartnerInviteCreated) EventName() string { return "partners.invite.created" }
+
+// =============================================================================
+// Quotes Domain Events
+// =============================================================================
+
+// QuoteSent is published when an agent sends a quote proposal to a lead via magic link.
+type QuoteSent struct {
+	BaseEvent
+	QuoteID          uuid.UUID  `json:"quoteId"`
+	OrganizationID   uuid.UUID  `json:"organizationId"`
+	LeadID           uuid.UUID  `json:"leadId"`
+	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
+	PublicToken      string     `json:"publicToken"`
+	QuoteNumber      string     `json:"quoteNumber"`
+	AgentID          uuid.UUID  `json:"agentId"`
+	ConsumerEmail    string     `json:"consumerEmail"`
+	ConsumerName     string     `json:"consumerName"`
+	OrganizationName string     `json:"organizationName"`
+}
+
+func (e QuoteSent) EventName() string { return "quotes.quote.sent" }
+
+// QuoteViewed is published when a lead first opens the public proposal link.
+type QuoteViewed struct {
+	BaseEvent
+	QuoteID        uuid.UUID `json:"quoteId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	LeadID         uuid.UUID `json:"leadId"`
+	ViewerIP       string    `json:"viewerIp"`
+}
+
+func (e QuoteViewed) EventName() string { return "quotes.quote.viewed" }
+
+// QuoteUpdatedByCustomer is published when a lead toggles optional line items.
+type QuoteUpdatedByCustomer struct {
+	BaseEvent
+	QuoteID        uuid.UUID `json:"quoteId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	ItemID         uuid.UUID `json:"itemId"`
+	IsSelected     bool      `json:"isSelected"`
+	NewTotalCents  int64     `json:"newTotalCents"`
+}
+
+func (e QuoteUpdatedByCustomer) EventName() string { return "quotes.quote.updated_by_customer" }
+
+// QuoteAnnotated is published when a customer or agent adds an annotation to a line item.
+type QuoteAnnotated struct {
+	BaseEvent
+	QuoteID        uuid.UUID `json:"quoteId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	ItemID         uuid.UUID `json:"itemId"`
+	AuthorType     string    `json:"authorType"` // "customer" or "agent"
+	AuthorID       string    `json:"authorId"`
+	Text           string    `json:"text"`
+}
+
+func (e QuoteAnnotated) EventName() string { return "quotes.quote.annotated" }
+
+// QuoteAccepted is published when a lead accepts and signs the quote.
+type QuoteAccepted struct {
+	BaseEvent
+	QuoteID        uuid.UUID  `json:"quoteId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         uuid.UUID  `json:"leadId"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
+	SignatureName  string     `json:"signatureName"`
+	TotalCents     int64      `json:"totalCents"`
+}
+
+func (e QuoteAccepted) EventName() string { return "quotes.quote.accepted" }
+
+// QuoteRejected is published when a lead rejects the quote.
+type QuoteRejected struct {
+	BaseEvent
+	QuoteID        uuid.UUID  `json:"quoteId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         uuid.UUID  `json:"leadId"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
+	Reason         string     `json:"reason"`
+}
+
+func (e QuoteRejected) EventName() string { return "quotes.quote.rejected" }

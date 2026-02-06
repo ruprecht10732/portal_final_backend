@@ -1,4 +1,3 @@
--- +goose Up
 
 -- 1. Service types: intake guidelines for tenant-defined requirements
 ALTER TABLE RAC_service_types
@@ -38,21 +37,3 @@ DELETE FROM RAC_lead_ai_analysis WHERE lead_service_id IS NULL;
 ALTER TABLE RAC_lead_ai_analysis
 ALTER COLUMN lead_service_id SET NOT NULL;
 
--- +goose Down
-ALTER TABLE RAC_lead_ai_analysis
-ALTER COLUMN lead_service_id DROP NOT NULL;
-
-ALTER TABLE RAC_lead_ai_analysis
-DROP COLUMN IF EXISTS suggested_contact_message,
-DROP COLUMN IF EXISTS preferred_contact_channel,
-DROP COLUMN IF EXISTS missing_information,
-DROP COLUMN IF EXISTS recommended_action,
-DROP COLUMN IF EXISTS lead_quality;
-
-ALTER TABLE RAC_lead_ai_analysis
-ADD COLUMN IF NOT EXISTS suggested_whatsapp_message TEXT,
-ADD COLUMN IF NOT EXISTS talking_points JSONB NOT NULL DEFAULT '[]'::jsonb,
-ADD COLUMN IF NOT EXISTS objection_handling JSONB NOT NULL DEFAULT '[]'::jsonb,
-ADD COLUMN IF NOT EXISTS upsell_opportunities JSONB NOT NULL DEFAULT '[]'::jsonb;
-
-ALTER TABLE RAC_service_types DROP COLUMN IF EXISTS intake_guidelines;

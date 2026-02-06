@@ -38,6 +38,16 @@ import (
 const storageBucketEnsureErrPrefix = "failed to ensure storage bucket exists: "
 const storageBucketEnsureErrMsg = "failed to ensure storage bucket exists"
 
+// ensureBucket wraps the retry logic for verifying a MinIO bucket exists.
+func ensureBucket(ctx context.Context, log *logger.Logger, storageSvc storage.StorageService, name, bucket string) {
+	if err := withRetry(ctx, log, "ensure "+name+" bucket", 5, 2*time.Second, func() error {
+		return storageSvc.EnsureBucketExists(ctx, bucket)
+	}); err != nil {
+		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", bucket)
+		panic(storageBucketEnsureErrPrefix + err.Error())
+	}
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -96,40 +106,18 @@ func main() {
 		log.Error("failed to initialize storage service", "error", err)
 		panic("failed to initialize storage service: " + err.Error())
 	}
-	// Ensure the lead-service-attachments bucket exists
-	if err := withRetry(ctx, log, "ensure lead-service-attachments bucket", 5, 2*time.Second, func() error {
-		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketLeadServiceAttachments())
-	}); err != nil {
-		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketLeadServiceAttachments())
-		panic(storageBucketEnsureErrPrefix + err.Error())
-	}
-	// Ensure the catalog assets bucket exists
-	if err := withRetry(ctx, log, "ensure catalog assets bucket", 5, 2*time.Second, func() error {
-		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketCatalogAssets())
-	}); err != nil {
-		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketCatalogAssets())
-		panic(storageBucketEnsureErrPrefix + err.Error())
-	}
-	// Ensure the partner logos bucket exists
-	if err := withRetry(ctx, log, "ensure partner logos bucket", 5, 2*time.Second, func() error {
-		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketPartnerLogos())
-	}); err != nil {
-		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketPartnerLogos())
-		panic(storageBucketEnsureErrPrefix + err.Error())
-	}
-	// Ensure the organization logos bucket exists
-	if err := withRetry(ctx, log, "ensure organization logos bucket", 5, 2*time.Second, func() error {
-		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketOrganizationLogos())
-	}); err != nil {
-		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketOrganizationLogos())
-		panic(storageBucketEnsureErrPrefix + err.Error())
-	}
+	ensureBucket(ctx, log, storageSvc, "lead-service-attachments", cfg.GetMinioBucketLeadServiceAttachments())
+	ensureBucket(ctx, log, storageSvc, "catalog-assets", cfg.GetMinioBucketCatalogAssets())
+	ensureBucket(ctx, log, storageSvc, "partner-logos", cfg.GetMinioBucketPartnerLogos())
+	ensureBucket(ctx, log, storageSvc, "organization-logos", cfg.GetMinioBucketOrganizationLogos())
+	ensureBucket(ctx, log, storageSvc, "quote-pdfs", cfg.GetMinioBucketQuotePDFs())
 	log.Info(
 		"storage service initialized",
 		"leadAttachmentsBucket", cfg.GetMinioBucketLeadServiceAttachments(),
 		"catalogAssetsBucket", cfg.GetMinioBucketCatalogAssets(),
 		"partnerLogosBucket", cfg.GetMinioBucketPartnerLogos(),
 		"organizationLogosBucket", cfg.GetMinioBucketOrganizationLogos(),
+		"quotePDFsBucket", cfg.GetMinioBucketQuotePDFs(),
 	)
 
 	// ========================================================================
@@ -148,6 +136,9 @@ func main() {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
 	}
+
+	// Share SSE service with notification module so quote events reach agents
+	notificationModule.SetSSE(leadsModule.SSE())
 	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
 	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender)
 
@@ -172,11 +163,15 @@ func main() {
 	servicesModule.RegisterHandlers(eventBus)
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
-	quotesModule := quotes.NewModule(pool, val)
+	quotesModule := quotes.NewModule(pool, eventBus, val)
 
 	// Wire timeline integration: quotes → leads timeline
 	quotesTimeline := adapters.NewQuotesTimelineWriter(leadsModule.Repository())
 	quotesModule.Service().SetTimelineWriter(quotesTimeline)
+
+	// Wire contact reader: quotes → leads + identity (for email enrichment)
+	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service())
+	quotesModule.Service().SetQuoteContactReader(quotesContacts)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface

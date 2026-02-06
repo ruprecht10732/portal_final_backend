@@ -1,4 +1,3 @@
--- +goose Up
 CREATE TABLE RAC_lead_ai_analysis (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     lead_id UUID NOT NULL REFERENCES RAC_leads(id) ON DELETE CASCADE,
@@ -14,5 +13,3 @@ CREATE TABLE RAC_lead_ai_analysis (
 CREATE INDEX idx_lead_ai_analysis_lead_id ON RAC_lead_ai_analysis(lead_id);
 CREATE INDEX idx_lead_ai_analysis_created_at ON RAC_lead_ai_analysis(created_at DESC);
 
--- +goose Down
-DROP TABLE IF EXISTS RAC_lead_ai_analysis;

@@ -1,4 +1,3 @@
--- +goose Up
 -- 1. Enable earthdistance for partner search (if not enabled)
 CREATE EXTENSION IF NOT EXISTS cube;
 CREATE EXTENSION IF NOT EXISTS earthdistance;
@@ -48,7 +47,3 @@ CREATE TABLE lead_timeline_events (
 
 CREATE INDEX idx_timeline_lookup ON lead_timeline_events(lead_id, created_at DESC);
 
--- +goose Down
-DROP TABLE IF EXISTS lead_timeline_events;
-ALTER TABLE RAC_lead_services DROP COLUMN pipeline_stage;
-DROP TYPE pipeline_stage;

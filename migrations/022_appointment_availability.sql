@@ -1,4 +1,3 @@
--- +goose Up
 -- +goose StatementBegin
 
 CREATE TABLE IF NOT EXISTS appointment_availability_rules (
@@ -32,10 +31,3 @@ CREATE INDEX IF NOT EXISTS idx_availability_overrides_user_date ON appointment_a
 
 -- +goose StatementEnd
 
--- +goose Down
--- +goose StatementBegin
-
-DROP TABLE IF EXISTS appointment_availability_overrides;
-DROP TABLE IF EXISTS appointment_availability_rules;
-
--- +goose StatementEnd

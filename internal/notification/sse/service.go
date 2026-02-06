@@ -18,6 +18,13 @@ const (
 	EventAnalysisComplete      EventType = "analysis_complete"
 	EventPhotoAnalysisComplete EventType = "photo_analysis_complete"
 	EventLeadUpdated           EventType = "lead_updated"
+
+	// Quote events (pushed to agents watching a quote)
+	EventQuoteViewed      EventType = "quote_viewed"
+	EventQuoteItemToggled EventType = "quote_item_toggled"
+	EventQuoteAnnotated   EventType = "quote_annotated"
+	EventQuoteAccepted    EventType = "quote_accepted"
+	EventQuoteRejected    EventType = "quote_rejected"
 )
 
 // Event represents an SSE event payload
@@ -118,6 +125,18 @@ func (s *Service) PublishToOrganization(orgID uuid.UUID, event Event) {
 	}
 
 	log.Printf("SSE: Published event %s to org %s (%d RAC_users)", event.Type, orgID, len(seen))
+}
+
+// PublishQuoteEvent is a convenience wrapper that broadcasts a quote-related
+// event to every connected agent in the organisation.
+func (s *Service) PublishQuoteEvent(orgID uuid.UUID, eventType EventType, quoteID uuid.UUID, data interface{}) {
+	s.PublishToOrganization(orgID, Event{
+		Type: eventType,
+		Data: map[string]interface{}{
+			"quoteId": quoteID,
+			"payload": data,
+		},
+	})
 }
 
 // Handler returns a Gin handler for SSE connections

@@ -131,6 +131,22 @@ func (s *MinIOService) DeleteObject(ctx context.Context, bucket, fileKey string)
 	return nil
 }
 
+// UploadFile uploads a file directly to storage from an io.Reader and returns the file key.
+func (s *MinIOService) UploadFile(ctx context.Context, bucket, folder, fileName, contentType string, reader io.Reader, size int64) (string, error) {
+	ext := path.Ext(fileName)
+	baseName := strings.TrimSuffix(fileName, ext)
+	uniqueFileName := fmt.Sprintf("%s_%s%s", baseName, uuid.New().String()[:8], ext)
+	fileKey := filepath.ToSlash(filepath.Join(folder, uniqueFileName))
+
+	_, err := s.client.PutObject(ctx, bucket, fileKey, reader, size, minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload file %s: %w", fileKey, err)
+	}
+	return fileKey, nil
+}
+
 // GetMaxFileSize returns the configured maximum file size in bytes.
 func (s *MinIOService) GetMaxFileSize() int64 {
 	return s.maxFileSize

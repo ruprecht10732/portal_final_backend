@@ -26,6 +26,7 @@ type QuoteItemRequest struct {
 	UnitPriceCents int64  `json:"unitPriceCents" validate:"min=0"`
 	TaxRateBps     int    `json:"taxRateBps" validate:"min=0"`
 	IsOptional     bool   `json:"isOptional"`
+	IsSelected     bool   `json:"isSelected"`
 }
 
 // CreateQuoteRequest is the request body for creating a new quote
@@ -84,6 +85,7 @@ type QuoteItemResponse struct {
 	UnitPriceCents      int64     `json:"unitPriceCents"`
 	TaxRateBps          int       `json:"taxRateBps"`
 	IsOptional          bool      `json:"isOptional"`
+	IsSelected          bool      `json:"isSelected"`
 	SortOrder           int       `json:"sortOrder"`
 	TotalBeforeTaxCents int64     `json:"totalBeforeTaxCents"`
 	TotalTaxCents       int64     `json:"totalTaxCents"`
@@ -107,6 +109,10 @@ type QuoteResponse struct {
 	ValidUntil          *time.Time          `json:"validUntil,omitempty"`
 	Notes               *string             `json:"notes,omitempty"`
 	Items               []QuoteItemResponse `json:"items"`
+	ViewedAt            *time.Time          `json:"viewedAt,omitempty"`
+	AcceptedAt          *time.Time          `json:"acceptedAt,omitempty"`
+	RejectedAt          *time.Time          `json:"rejectedAt,omitempty"`
+	PDFFileKey          *string             `json:"pdfFileKey,omitempty"`
 	CreatedAt           time.Time           `json:"createdAt"`
 	UpdatedAt           time.Time           `json:"updatedAt"`
 }
@@ -133,6 +139,7 @@ type CalculatedLineItem struct {
 	UnitPriceCents      int64  `json:"unitPriceCents"`
 	TaxRateBps          int    `json:"taxRateBps"`
 	IsOptional          bool   `json:"isOptional"`
+	IsSelected          bool   `json:"isSelected"`
 	TotalBeforeTaxCents int64  `json:"totalBeforeTaxCents"`
 	TotalTaxCents       int64  `json:"totalTaxCents"`
 	LineTotalCents      int64  `json:"lineTotalCents"`
@@ -146,4 +153,85 @@ type QuoteCalculationResponse struct {
 	VatTotalCents       int64                `json:"vatTotalCents"`
 	VatBreakdown        []VatBreakdown       `json:"vatBreakdown"`
 	TotalCents          int64                `json:"totalCents"`
+}
+
+// ── Public Quote DTOs ─────────────────────────────────────────────────────────
+
+// AnnotationResponse is the response for a single annotation on a line item.
+type AnnotationResponse struct {
+	ID         uuid.UUID  `json:"id"`
+	ItemID     uuid.UUID  `json:"itemId"`
+	AuthorType string     `json:"authorType"`
+	AuthorID   *uuid.UUID `json:"authorId,omitempty"`
+	Text       string     `json:"text"`
+	IsResolved bool       `json:"isResolved"`
+	CreatedAt  time.Time  `json:"createdAt"`
+}
+
+// PublicQuoteItemResponse is the public-facing response for a line item (includes annotations).
+type PublicQuoteItemResponse struct {
+	ID                  uuid.UUID            `json:"id"`
+	Description         string               `json:"description"`
+	Quantity            string               `json:"quantity"`
+	UnitPriceCents      int64                `json:"unitPriceCents"`
+	TaxRateBps          int                  `json:"taxRateBps"`
+	IsOptional          bool                 `json:"isOptional"`
+	IsSelected          bool                 `json:"isSelected"`
+	SortOrder           int                  `json:"sortOrder"`
+	TotalBeforeTaxCents int64                `json:"totalBeforeTaxCents"`
+	TotalTaxCents       int64                `json:"totalTaxCents"`
+	LineTotalCents      int64                `json:"lineTotalCents"`
+	Annotations         []AnnotationResponse `json:"annotations"`
+}
+
+// PublicQuoteResponse is the public-facing response for a quote proposal.
+type PublicQuoteResponse struct {
+	ID                  uuid.UUID                 `json:"id"`
+	QuoteNumber         string                    `json:"quoteNumber"`
+	Status              QuoteStatus               `json:"status"`
+	PricingMode         string                    `json:"pricingMode"`
+	OrganizationName    string                    `json:"organizationName"`
+	CustomerName        string                    `json:"customerName"`
+	DiscountType        string                    `json:"discountType"`
+	DiscountValue       int64                     `json:"discountValue"`
+	SubtotalCents       int64                     `json:"subtotalCents"`
+	DiscountAmountCents int64                     `json:"discountAmountCents"`
+	TaxTotalCents       int64                     `json:"taxTotalCents"`
+	TotalCents          int64                     `json:"totalCents"`
+	VatBreakdown        []VatBreakdown            `json:"vatBreakdown"`
+	ValidUntil          *time.Time                `json:"validUntil,omitempty"`
+	Notes               *string                   `json:"notes,omitempty"`
+	Items               []PublicQuoteItemResponse `json:"items"`
+	AcceptedAt          *time.Time                `json:"acceptedAt,omitempty"`
+	RejectedAt          *time.Time                `json:"rejectedAt,omitempty"`
+}
+
+// ToggleItemRequest is the request body for toggling an optional item.
+type ToggleItemRequest struct {
+	IsSelected bool `json:"isSelected"`
+}
+
+// ToggleItemResponse is returned after toggling an item, with recalculated totals.
+type ToggleItemResponse struct {
+	SubtotalCents       int64          `json:"subtotalCents"`
+	DiscountAmountCents int64          `json:"discountAmountCents"`
+	TaxTotalCents       int64          `json:"taxTotalCents"`
+	TotalCents          int64          `json:"totalCents"`
+	VatBreakdown        []VatBreakdown `json:"vatBreakdown"`
+}
+
+// AnnotateItemRequest is the request body for creating an annotation on a line item.
+type AnnotateItemRequest struct {
+	Text string `json:"text" validate:"required,min=1,max=2000"`
+}
+
+// AcceptQuoteRequest is the request body for accepting a quote.
+type AcceptQuoteRequest struct {
+	SignatureName string `json:"signatureName" validate:"required,min=1,max=255"`
+	SignatureData string `json:"signatureData" validate:"required"`
+}
+
+// RejectQuoteRequest is the request body for rejecting a quote.
+type RejectQuoteRequest struct {
+	Reason string `json:"reason" validate:"max=2000"`
 }

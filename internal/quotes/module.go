@@ -6,6 +6,7 @@ import (
 	"portal_final_backend/internal/quotes/handler"
 	"portal_final_backend/internal/quotes/repository"
 	"portal_final_backend/internal/quotes/service"
+	"portal_final_backend/platform/events"
 	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,19 +14,23 @@ import (
 
 // Module represents the quotes domain module
 type Module struct {
-	handler *handler.Handler
-	service *service.Service
+	handler       *handler.Handler
+	publicHandler *handler.PublicHandler
+	service       *service.Service
 }
 
 // NewModule creates a new quotes module with all dependencies wired
-func NewModule(pool *pgxpool.Pool, val *validator.Validator) *Module {
+func NewModule(pool *pgxpool.Pool, eventBus *events.InMemoryBus, val *validator.Validator) *Module {
 	repo := repository.New(pool)
 	svc := service.New(repo)
+	svc.SetEventBus(eventBus)
 	h := handler.New(svc, val)
+	ph := handler.NewPublicHandler(svc, val)
 
 	return &Module{
-		handler: h,
-		service: svc,
+		handler:       h,
+		publicHandler: ph,
+		service:       svc,
 	}
 }
 
@@ -43,6 +48,10 @@ func (m *Module) Service() *service.Service {
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	quotes := ctx.Protected.Group("/quotes")
 	m.handler.RegisterRoutes(quotes)
+
+	// Public routes — no auth middleware
+	publicQuotes := ctx.V1.Group("/public/quotes")
+	m.publicHandler.RegisterRoutes(publicQuotes)
 }
 
 // Compile-time check that Module implements http.Module

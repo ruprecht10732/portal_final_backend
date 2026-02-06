@@ -101,12 +101,14 @@ func CalculateQuote(req transport.QuoteCalculationRequest) transport.QuoteCalcul
 			UnitPriceCents:      item.UnitPriceCents,
 			TaxRateBps:          item.TaxRateBps,
 			IsOptional:          item.IsOptional,
+			IsSelected:          item.IsSelected,
 			TotalBeforeTaxCents: roundCents(lineSubtotal),
 			TotalTaxCents:       roundCents(lineVat),
 			LineTotalCents:      roundCents(lineSubtotal + lineVat),
 		})
 
-		if !item.IsOptional {
+		// Include in totals if: non-optional, OR optional AND selected by customer
+		if !item.IsOptional || item.IsSelected {
 			subtotalFloat += lineSubtotal
 			vatMap[item.TaxRateBps] += lineVat
 		}

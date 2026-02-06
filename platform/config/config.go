@@ -78,6 +78,7 @@ type MinIOConfig interface {
 	GetMinioBucketCatalogAssets() string
 	GetMinioBucketPartnerLogos() string
 	GetMinioBucketOrganizationLogos() string
+	GetMinioBucketQuotePDFs() string
 	IsMinIOEnabled() bool
 }
 
@@ -149,6 +150,7 @@ type Config struct {
 	MinioBucketCatalogAssets          string
 	MinioBucketPartnerLogos           string
 	MinioBucketOrganizationLogos      string
+	MinioBucketQuotePDFs              string
 	QdrantURL                         string
 	QdrantAPIKey                      string
 	QdrantCollection                  string
@@ -214,6 +216,9 @@ func (c *Config) GetMinioBucketPartnerLogos() string {
 }
 func (c *Config) GetMinioBucketOrganizationLogos() string {
 	return c.MinioBucketOrganizationLogos
+}
+func (c *Config) GetMinioBucketQuotePDFs() string {
+	return c.MinioBucketQuotePDFs
 }
 func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
 
@@ -296,6 +301,7 @@ func Load() (*Config, error) {
 		MinioBucketCatalogAssets:          getEnv("MINIO_BUCKET_CATALOG_ASSETS", "catalog-assets"),
 		MinioBucketPartnerLogos:           getEnv("MINIO_BUCKET_PARTNER_LOGOS", "partner-logos"),
 		MinioBucketOrganizationLogos:      getEnv("MINIO_BUCKET_ORGANIZATION_LOGOS", "organization-logos"),
+		MinioBucketQuotePDFs:              getEnv("MINIO_BUCKET_QUOTE_PDFS", "quote-pdfs"),
 		QdrantURL:                         getEnv("QDRANT_URL", ""),
 		QdrantAPIKey:                      getEnv("QDRANT_API_KEY", ""),
 		QdrantCollection:                  getEnv("QDRANT_COLLECTION", ""),

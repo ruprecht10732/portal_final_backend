@@ -36,6 +36,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
+	rg.POST("/:id/send", h.Send)
+	rg.POST("/:id/items/:itemId/annotations", h.AgentAnnotate)
 	rg.DELETE("/:id", h.Delete)
 }
 
@@ -205,6 +207,68 @@ func (h *Handler) PreviewCalculation(c *gin.Context) {
 
 	result := service.CalculateQuote(req)
 	httpkit.OK(c, result)
+}
+
+// Send handles POST /api/v1/quotes/:id/send
+// Generates a public token and transitions the quote to "Sent" status.
+func (h *Handler) Send(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	result, err := h.svc.Send(c.Request.Context(), id, tenantID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// AgentAnnotate handles POST /api/v1/quotes/:id/items/:itemId/annotations
+// Allows an authenticated agent to add an annotation to a quote item.
+func (h *Handler) AgentAnnotate(c *gin.Context) {
+	quoteID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	itemID, err := uuid.Parse(c.Param("itemId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		return
+	}
+
+	var req transport.AnnotateItemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	result, err := h.svc.AgentAnnotateItem(c.Request.Context(), quoteID, itemID, tenantID, identity.UserID(), req.Text)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
 }
 
 // mustGetTenantID extracts the tenant ID from identity.

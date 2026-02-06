@@ -1,4 +1,3 @@
--- +goose Up
 -- +goose StatementBegin
 
 -- Appointments table for calendar management
@@ -41,7 +40,3 @@ CREATE INDEX idx_appointments_lead_service_id ON appointments(lead_service_id) W
 
 -- +goose StatementEnd
 
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS appointments;
--- +goose StatementEnd

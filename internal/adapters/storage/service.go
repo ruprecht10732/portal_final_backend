@@ -33,6 +33,10 @@ type StorageService interface {
 	// DeleteObject removes an object from storage.
 	DeleteObject(ctx context.Context, bucket, fileKey string) error
 
+	// UploadFile uploads a file directly to storage from an io.Reader.
+	// Returns the full file key used for storage.
+	UploadFile(ctx context.Context, bucket, folder, fileName, contentType string, reader io.Reader, size int64) (string, error)
+
 	// EnsureBucketExists creates the bucket if it doesn't exist.
 	EnsureBucketExists(ctx context.Context, bucket string) error
 

@@ -28,6 +28,8 @@ const (
 	KindBadRequest
 	// KindInternal indicates an unexpected internal error.
 	KindInternal
+	// KindGone indicates a resource that existed but is no longer available.
+	KindGone
 )
 
 // Error is a domain error with a typed Kind for HTTP mapping.
@@ -67,6 +69,8 @@ func (e *Error) HTTPStatus() int {
 		return http.StatusUnauthorized
 	case KindInternal:
 		return http.StatusInternalServerError
+	case KindGone:
+		return http.StatusGone
 	default:
 		return http.StatusBadRequest
 	}
@@ -129,6 +133,11 @@ func BadRequest(message string) *Error {
 // Internal creates an internal server error.
 func Internal(message string) *Error {
 	return New(KindInternal, message)
+}
+
+// Gone creates a gone error (resource expired/removed).
+func Gone(message string) *Error {
+	return New(KindGone, message)
 }
 
 // GetKind extracts the error kind from an error.

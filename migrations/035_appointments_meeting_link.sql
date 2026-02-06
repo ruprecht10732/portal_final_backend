@@ -1,4 +1,3 @@
--- +goose Up
 -- +goose StatementBegin
 
 ALTER TABLE appointments
@@ -6,10 +5,3 @@ ALTER TABLE appointments
 
 -- +goose StatementEnd
 
--- +goose Down
--- +goose StatementBegin
-
-ALTER TABLE appointments
-  DROP COLUMN IF EXISTS meeting_link;
-
--- +goose StatementEnd

@@ -18,6 +18,8 @@ type Sender interface {
 	SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error
 	SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error
 	SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error
+	SendQuoteProposalEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber, proposalURL string) error
+	SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName, quoteNumber, consumerName string, totalCents int64) error
 }
 
 type NoopSender struct{}
@@ -39,6 +41,14 @@ func (NoopSender) SendOrganizationInviteEmail(ctx context.Context, toEmail, orga
 }
 
 func (NoopSender) SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error {
+	return nil
+}
+
+func (NoopSender) SendQuoteProposalEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber, proposalURL string) error {
+	return nil
+}
+
+func (NoopSender) SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName, quoteNumber, consumerName string, totalCents int64) error {
 	return nil
 }
 
@@ -121,6 +131,28 @@ func (b *BrevoSender) SendPartnerInviteEmail(ctx context.Context, toEmail, organ
 		""+organizationName+" invited "+partnerName+" to take on a new job. Click the button below to review the details and respond.",
 		"Review invitation",
 		inviteURL,
+	)
+	return b.send(ctx, toEmail, subject, content)
+}
+
+func (b *BrevoSender) SendQuoteProposalEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber, proposalURL string) error {
+	subject := "Offerte " + quoteNumber + " van " + organizationName
+	content := buildEmailTemplate(
+		"Uw offerte is klaar",
+		fmt.Sprintf("Beste %s,<br/><br/>%s heeft offerte %s voor u klaargezet. Bekijk de offerte, selecteer eventuele opties en accepteer of wijs de offerte af.", consumerName, organizationName, quoteNumber),
+		"Bekijk offerte",
+		proposalURL,
+	)
+	return b.send(ctx, toEmail, subject, content)
+}
+
+func (b *BrevoSender) SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName, quoteNumber, consumerName string, totalCents int64) error {
+	subject := "Offerte " + quoteNumber + " geaccepteerd"
+	content := buildEmailTemplate(
+		"Offerte geaccepteerd",
+		fmt.Sprintf("Beste %s,<br/><br/>%s heeft offerte %s geaccepteerd (totaal: €%.2f). Bekijk de details in het portaal.", agentName, consumerName, quoteNumber, float64(totalCents)/100),
+		"Bekijk details",
+		"", // No CTA URL — internal notification
 	)
 	return b.send(ctx, toEmail, subject, content)
 }

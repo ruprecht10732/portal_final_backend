@@ -1,4 +1,3 @@
--- +goose Up
 -- Create partner invites tracking table for dispatcher workflow
 CREATE TABLE partner_invites (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -28,5 +27,3 @@ CREATE INDEX idx_invites_by_org ON partner_invites(organization_id, invited_at D
 -- Prevent duplicate invites for same partner/service
 CREATE UNIQUE INDEX idx_unique_partner_service_invite ON partner_invites(lead_service_id, partner_id);
 
--- +goose Down
-DROP TABLE IF EXISTS partner_invites;
