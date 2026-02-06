@@ -195,11 +195,12 @@ func (e QuoteViewed) EventName() string { return "quotes.quote.viewed" }
 // QuoteUpdatedByCustomer is published when a lead toggles optional line items.
 type QuoteUpdatedByCustomer struct {
 	BaseEvent
-	QuoteID        uuid.UUID `json:"quoteId"`
-	OrganizationID uuid.UUID `json:"organizationId"`
-	ItemID         uuid.UUID `json:"itemId"`
-	IsSelected     bool      `json:"isSelected"`
-	NewTotalCents  int64     `json:"newTotalCents"`
+	QuoteID         uuid.UUID `json:"quoteId"`
+	OrganizationID  uuid.UUID `json:"organizationId"`
+	ItemID          uuid.UUID `json:"itemId"`
+	ItemDescription string    `json:"itemDescription"`
+	IsSelected      bool      `json:"isSelected"`
+	NewTotalCents   int64     `json:"newTotalCents"`
 }
 
 func (e QuoteUpdatedByCustomer) EventName() string { return "quotes.quote.updated_by_customer" }

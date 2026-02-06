@@ -20,6 +20,7 @@ const (
 	EventLeadUpdated           EventType = "lead_updated"
 
 	// Quote events (pushed to agents watching a quote)
+	EventQuoteSent        EventType = "quote_sent"
 	EventQuoteViewed      EventType = "quote_viewed"
 	EventQuoteItemToggled EventType = "quote_item_toggled"
 	EventQuoteAnnotated   EventType = "quote_annotated"

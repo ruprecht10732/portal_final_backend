@@ -216,7 +216,7 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 	}
 
 	// Push SSE event so the agent dashboard updates
-	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteViewed, e.QuoteID, map[string]interface{}{
+	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteSent, e.QuoteID, map[string]interface{}{
 		"quoteNumber": e.QuoteNumber,
 		"status":      "Sent",
 	})
@@ -243,17 +243,22 @@ func (m *Module) handleQuoteViewed(ctx context.Context, e events.QuoteViewed) er
 
 func (m *Module) handleQuoteUpdatedByCustomer(ctx context.Context, e events.QuoteUpdatedByCustomer) error {
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteItemToggled, e.QuoteID, map[string]interface{}{
-		"itemId":        e.ItemID,
-		"isSelected":    e.IsSelected,
-		"newTotalCents": e.NewTotalCents,
+		"itemId":          e.ItemID,
+		"itemDescription": e.ItemDescription,
+		"isSelected":      e.IsSelected,
+		"newTotalCents":   e.NewTotalCents,
 	})
 	action := "uitgeschakeld"
 	if e.IsSelected {
 		action = "ingeschakeld"
 	}
+	desc := e.ItemDescription
+	if desc == "" {
+		desc = "een item"
+	}
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_item_toggled",
-		"Klant heeft een item "+action,
-		map[string]interface{}{"itemId": e.ItemID.String(), "isSelected": e.IsSelected, "newTotalCents": e.NewTotalCents})
+		"Klant heeft '"+truncate(desc, 60)+"' "+action,
+		map[string]interface{}{"itemId": e.ItemID.String(), "itemDescription": e.ItemDescription, "isSelected": e.IsSelected, "newTotalCents": e.NewTotalCents})
 	m.log.Info("quote item toggled event processed", "quoteId", e.QuoteID, "itemId", e.ItemID)
 	return nil
 }

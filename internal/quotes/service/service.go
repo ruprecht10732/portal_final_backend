@@ -299,7 +299,9 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID)
 		return nil, err
 	}
 
-	return s.buildResponse(quote, items), nil
+	annotations, _ := s.repo.ListAnnotationsByQuoteID(ctx, id)
+
+	return s.buildResponse(quote, items, annotations), nil
 }
 
 // List retrieves quotes with filtering and pagination
@@ -566,12 +568,13 @@ func (s *Service) ToggleLineItem(ctx context.Context, token string, itemID uuid.
 
 	if s.eventBus != nil {
 		s.eventBus.Publish(ctx, events.QuoteUpdatedByCustomer{
-			BaseEvent:      events.NewBaseEvent(),
-			QuoteID:        quote.ID,
-			OrganizationID: quote.OrganizationID,
-			ItemID:         itemID,
-			IsSelected:     req.IsSelected,
-			NewTotalCents:  calc.TotalCents,
+			BaseEvent:       events.NewBaseEvent(),
+			QuoteID:         quote.ID,
+			OrganizationID:  quote.OrganizationID,
+			ItemID:          itemID,
+			ItemDescription: item.Description,
+			IsSelected:      req.IsSelected,
+			NewTotalCents:   calc.TotalCents,
 		})
 	}
 
@@ -927,10 +930,26 @@ func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.Qu
 }
 
 // buildResponse converts a repository Quote + items into a transport response
-func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteItem) *transport.QuoteResponse {
+func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteItem, annotations ...[]repository.QuoteAnnotation) *transport.QuoteResponse {
 	pricingMode := q.PricingMode
 	if pricingMode == "" {
 		pricingMode = "exclusive"
+	}
+
+	// Index annotations by item ID
+	annotationsByItem := make(map[uuid.UUID][]transport.AnnotationResponse)
+	if len(annotations) > 0 {
+		for _, a := range annotations[0] {
+			annotationsByItem[a.QuoteItemID] = append(annotationsByItem[a.QuoteItemID], transport.AnnotationResponse{
+				ID:         a.ID,
+				ItemID:     a.QuoteItemID,
+				AuthorType: a.AuthorType,
+				AuthorID:   a.AuthorID,
+				Text:       a.Text,
+				IsResolved: a.IsResolved,
+				CreatedAt:  a.CreatedAt,
+			})
+		}
 	}
 
 	respItems := make([]transport.QuoteItemResponse, len(items))
@@ -959,6 +978,10 @@ func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteIte
 			TotalBeforeTaxCents: roundCents(lineSubtotal),
 			TotalTaxCents:       roundCents(lineVat),
 			LineTotalCents:      roundCents(lineSubtotal + lineVat),
+			Annotations:         annotationsByItem[it.ID],
+		}
+		if respItems[i].Annotations == nil {
+			respItems[i].Annotations = []transport.AnnotationResponse{}
 		}
 	}
 

@@ -79,17 +79,18 @@ type ListQuotesRequest struct {
 
 // QuoteItemResponse is the response for a single line item
 type QuoteItemResponse struct {
-	ID                  uuid.UUID `json:"id"`
-	Description         string    `json:"description"`
-	Quantity            string    `json:"quantity"`
-	UnitPriceCents      int64     `json:"unitPriceCents"`
-	TaxRateBps          int       `json:"taxRateBps"`
-	IsOptional          bool      `json:"isOptional"`
-	IsSelected          bool      `json:"isSelected"`
-	SortOrder           int       `json:"sortOrder"`
-	TotalBeforeTaxCents int64     `json:"totalBeforeTaxCents"`
-	TotalTaxCents       int64     `json:"totalTaxCents"`
-	LineTotalCents      int64     `json:"lineTotalCents"`
+	ID                  uuid.UUID            `json:"id"`
+	Description         string               `json:"description"`
+	Quantity            string               `json:"quantity"`
+	UnitPriceCents      int64                `json:"unitPriceCents"`
+	TaxRateBps          int                  `json:"taxRateBps"`
+	IsOptional          bool                 `json:"isOptional"`
+	IsSelected          bool                 `json:"isSelected"`
+	SortOrder           int                  `json:"sortOrder"`
+	TotalBeforeTaxCents int64                `json:"totalBeforeTaxCents"`
+	TotalTaxCents       int64                `json:"totalTaxCents"`
+	LineTotalCents      int64                `json:"lineTotalCents"`
+	Annotations         []AnnotationResponse `json:"annotations"`
 }
 
 // QuoteResponse is the response for a quote
