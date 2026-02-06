@@ -22,6 +22,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/apperr"
 )
 
 // Error messages
@@ -31,6 +32,9 @@ const (
 	errBookerNotConfigured     = "booker not configured"
 )
 
+// Date/time layout used for short human-readable timestamps
+const dateTimeShortLayout = "2006-01-02 15:04"
+
 // Sentinel errors
 var (
 	errMissingContext = errors.New("missing context")
@@ -38,16 +42,17 @@ var (
 
 // CallLogResult represents the result of processing a call summary
 type CallLogResult struct {
-	NoteCreated            bool       `json:"noteCreated"`
-	NoteBody               string     `json:"noteBody,omitempty"`
-	AuthorEmail            string     `json:"authorEmail,omitempty"`
-	CallOutcome            *string    `json:"callOutcome,omitempty"`
-	StatusUpdated          *string    `json:"statusUpdated,omitempty"`
-	PipelineStageUpdated   *string    `json:"pipelineStageUpdated,omitempty"`
-	AppointmentBooked      *time.Time `json:"appointmentBooked,omitempty"`
-	AppointmentRescheduled *time.Time `json:"appointmentRescheduled,omitempty"`
-	AppointmentCancelled   bool       `json:"appointmentCancelled,omitempty"`
-	Message                string     `json:"message"`
+	NoteCreated                   bool       `json:"noteCreated"`
+	NoteBody                      string     `json:"noteBody,omitempty"`
+	AuthorEmail                   string     `json:"authorEmail,omitempty"`
+	CallOutcome                   *string    `json:"callOutcome,omitempty"`
+	StatusUpdated                 *string    `json:"statusUpdated,omitempty"`
+	PipelineStageUpdated          *string    `json:"pipelineStageUpdated,omitempty"`
+	AppointmentBooked             *time.Time `json:"appointmentBooked,omitempty"`
+	AppointmentRescheduled        *time.Time `json:"appointmentRescheduled,omitempty"`
+	AppointmentRescheduleFallback bool       `json:"appointmentRescheduleFallback,omitempty"`
+	AppointmentCancelled          bool       `json:"appointmentCancelled,omitempty"`
+	Message                       string     `json:"message"`
 }
 
 // CallLogger processes post-call summaries into structured actions
@@ -84,6 +89,10 @@ type CallLoggerToolDeps struct {
 
 	// Track results during the run
 	result CallLogResult
+
+	// Drafted note content (persisted after the run finishes)
+	noteDraftBody string
+	noteDrafted   bool
 }
 
 func (d *CallLoggerToolDeps) SetContext(tenantID, userID, leadID, serviceID uuid.UUID) {
@@ -94,6 +103,8 @@ func (d *CallLoggerToolDeps) SetContext(tenantID, userID, leadID, serviceID uuid
 	d.leadID = &leadID
 	d.serviceID = &serviceID
 	d.result = CallLogResult{} // Reset result
+	d.noteDraftBody = ""
+	d.noteDrafted = false
 }
 
 func (d *CallLoggerToolDeps) GetContext() (tenantID, userID, leadID, serviceID uuid.UUID, ok bool) {
@@ -109,6 +120,19 @@ func (d *CallLoggerToolDeps) MarkNoteCreated() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.result.NoteCreated = true
+}
+
+func (d *CallLoggerToolDeps) SetNoteDraft(body string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.noteDraftBody = body
+	d.noteDrafted = true
+}
+
+func (d *CallLoggerToolDeps) GetNoteDraft() (string, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.noteDraftBody, d.noteDrafted
 }
 
 func (d *CallLoggerToolDeps) SetNoteDetails(body, authorEmail string) {
@@ -134,6 +158,12 @@ func (d *CallLoggerToolDeps) MarkAppointmentRescheduled(startTime time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.result.AppointmentRescheduled = &startTime
+}
+
+func (d *CallLoggerToolDeps) MarkRescheduleFallback() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.result.AppointmentRescheduleFallback = true
 }
 
 func (d *CallLoggerToolDeps) MarkAppointmentCancelled() {
@@ -215,6 +245,70 @@ func NewCallLogger(apiKey string, repo repository.LeadsRepository, booker ports.
 	return logger, nil
 }
 
+// resolveExistingAppointment checks whether the lead already has a booked visit
+// and returns a human-readable timestamp or "None".
+func (c *CallLogger) resolveExistingAppointment(ctx context.Context, tenantID, serviceID, userID uuid.UUID) string {
+	if c.booker == nil {
+		return "None"
+	}
+
+	visit, err := c.booker.GetLeadVisitByService(ctx, tenantID, serviceID, userID)
+	if err == nil && visit != nil {
+		return visit.StartTime.Format(dateTimeShortLayout)
+	}
+	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
+		log.Printf("CallLogger warning: failed to check existing appointment: %v", err)
+	}
+	return "None"
+}
+
+// executeAgentRun creates an ephemeral session, runs the agent, and returns the
+// concatenated text output.
+func (c *CallLogger) executeAgentRun(ctx context.Context, userIDStr, sessionID, promptText string) (string, error) {
+	_, err := c.sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   c.appName,
+		UserID:    userIDStr,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
+	}
+	defer func() {
+		if deleteErr := c.sessionService.Delete(ctx, &session.DeleteRequest{
+			AppName:   c.appName,
+			UserID:    userIDStr,
+			SessionID: sessionID,
+		}); deleteErr != nil {
+			log.Printf("warning: failed to delete call logger session: %v", deleteErr)
+		}
+	}()
+
+	userMessage := &genai.Content{
+		Role: "user",
+		Parts: []*genai.Part{
+			{Text: promptText},
+		},
+	}
+
+	runConfig := agent.RunConfig{
+		StreamingMode: agent.StreamingModeNone,
+	}
+
+	var outputText string
+	for event, err := range c.runner.Run(ctx, userIDStr, sessionID, userMessage, runConfig) {
+		if err != nil {
+			return "", fmt.Errorf("call logger run failed: %w", err)
+		}
+		if event.Content != nil {
+			for _, part := range event.Content.Parts {
+				outputText += part.Text
+			}
+		}
+	}
+
+	return outputText, nil
+}
+
 // ProcessSummary is the main entry point for processing a call summary
 func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) (*CallLogResult, error) {
 	c.runMu.Lock()
@@ -223,12 +317,15 @@ func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, user
 	// Set context for tools
 	c.toolDeps.SetContext(tenantID, userID, leadID, serviceID)
 
+	existingAppointment := c.resolveExistingAppointment(ctx, tenantID, serviceID, userID)
+
 	// Construct the prompt with context
 	promptText := fmt.Sprintf(`Analysis Context:
 - Current Time: %s
 - Lead ID: %s
 - Service ID: %s
 - Agent User ID: %s
+- Existing Appointment: %s
 
 The agent provided this post-call summary:
 "%s"
@@ -253,6 +350,7 @@ Task:
    - Assume 1 hour duration unless specified otherwise
 4. If an existing appointment must be rescheduled and a new time is provided:
    - Use 'RescheduleVisit' with the new start/end time
+	- Only reschedule if Existing Appointment is not "None"; otherwise schedule a new appointment and write "Nieuwe afspraak ingepland"
 5. If the appointment is cancelled:
    - Use 'CancelVisit'
 6. Set a call outcome using 'SetCallOutcome' (short label, e.g., Scheduled, Attempted_Contact, Bad_Lead, Needs_Rescheduling).
@@ -269,62 +367,62 @@ Execute the appropriate tools now.`,
 		leadID.String(),
 		serviceID.String(),
 		userID.String(),
+		existingAppointment,
 		summary,
 	)
 
-	// Create ephemeral session
 	sessionID := uuid.New().String()
 	userIDStr := userID.String()
 
-	_, err := c.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   c.appName,
-		UserID:    userIDStr,
-		SessionID: sessionID,
-	})
+	outputText, err := c.executeAgentRun(ctx, userIDStr, sessionID, promptText)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
-	defer func() {
-		if deleteErr := c.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   c.appName,
-			UserID:    userIDStr,
-			SessionID: sessionID,
-		}); deleteErr != nil {
-			log.Printf("warning: failed to delete call logger session: %v", deleteErr)
-		}
-	}()
-
-	// Run the agent
-	userMessage := &genai.Content{
-		Role: "user",
-		Parts: []*genai.Part{
-			{Text: promptText},
-		},
-	}
-
-	runConfig := agent.RunConfig{
-		StreamingMode: agent.StreamingModeNone,
-	}
-
-	var outputText string
-	for event, err := range c.runner.Run(ctx, userIDStr, sessionID, userMessage, runConfig) {
-		if err != nil {
-			return nil, fmt.Errorf("call logger run failed: %w", err)
-		}
-		if event.Content != nil {
-			for _, part := range event.Content.Parts {
-				outputText += part.Text
-			}
-		}
+		return nil, err
 	}
 
 	log.Printf("CallLogger finished. Output: %s", outputText)
+
+	if err := c.persistDraftedNote(ctx); err != nil {
+		return nil, err
+	}
 
 	// Get the result and build message
 	result := c.toolDeps.GetResult()
 	result.Message = buildResultMessage(result)
 
 	return &result, nil
+}
+
+func (c *CallLogger) persistDraftedNote(ctx context.Context) error {
+	body, ok := c.toolDeps.GetNoteDraft()
+	if !ok {
+		return nil
+	}
+
+	result := c.toolDeps.GetResult()
+	finalBody := body
+	if result.AppointmentRescheduleFallback && result.AppointmentBooked != nil {
+		finalBody = appendRescheduleFallbackNote(finalBody, *result.AppointmentBooked)
+	}
+
+	tenantID, userID, leadID, _, ok := c.toolDeps.GetContext()
+	if !ok {
+		return errMissingContext
+	}
+
+	note, err := c.repo.CreateLeadNote(ctx, repository.CreateLeadNoteParams{
+		LeadID:         leadID,
+		OrganizationID: tenantID,
+		AuthorID:       userID,
+		Type:           "call",
+		Body:           finalBody,
+	})
+	if err != nil {
+		return err
+	}
+
+	c.toolDeps.MarkNoteCreated()
+	c.toolDeps.SetNoteDetails(finalBody, note.AuthorEmail)
+	return nil
 }
 
 // buildResultMessage constructs a human-readable message from the call log result
@@ -343,10 +441,10 @@ func buildResultMessage(result CallLogResult) string {
 		messages = append(messages, fmt.Sprintf("Pipeline stage updated to %s", *result.PipelineStageUpdated))
 	}
 	if result.AppointmentBooked != nil {
-		messages = append(messages, fmt.Sprintf("Appointment booked for %s", result.AppointmentBooked.Format("2006-01-02 15:04")))
+		messages = append(messages, fmt.Sprintf("Appointment booked for %s", result.AppointmentBooked.Format(dateTimeShortLayout)))
 	}
 	if result.AppointmentRescheduled != nil {
-		messages = append(messages, fmt.Sprintf("Appointment rescheduled for %s", result.AppointmentRescheduled.Format("2006-01-02 15:04")))
+		messages = append(messages, fmt.Sprintf("Appointment rescheduled for %s", result.AppointmentRescheduled.Format(dateTimeShortLayout)))
 	}
 	if result.AppointmentCancelled {
 		messages = append(messages, "Appointment cancelled")
@@ -375,16 +473,17 @@ IMPORTANT RULES:
    - "on the 15th" = the 15th of the current or next month
 4. Default appointment duration is 1 hour unless explicitly stated.
 5. Set a call outcome using SetCallOutcome (short label like Scheduled, Attempted_Contact, Bad_Lead, Needs_Rescheduling).
-6. Status mapping:
+6. If the context says Existing Appointment is None, do NOT say "verplaatst". Schedule a new appointment and write "Nieuwe afspraak ingepland" in the note.
+7. Status mapping:
    - Appointment scheduled/booked → "Scheduled"
    - No answer/voicemail/try again → "Attempted_Contact"  
    - Not interested/declined/bad fit → "Bad_Lead"
    - Survey/inspection completed → "Surveyed"
    - Needs to reschedule/postponed → "Needs_Rescheduling"
-7. When booking RAC_appointments, also update status to "Scheduled".
-8. Use 24-hour time format (e.g., 09:00, 14:30).
-9. Do NOT make up information. Only act on what is explicitly stated in the summary.
-10. Email confirmation behavior for RAC_appointments:
+8. When booking RAC_appointments, also update status to "Scheduled".
+9. Use 24-hour time format (e.g., 09:00, 14:30).
+10. Do NOT make up information. Only act on what is explicitly stated in the summary.
+11. Email confirmation behavior for RAC_appointments:
    - By default, sendConfirmationEmail should be TRUE (send email)
    - Only set sendConfirmationEmail to FALSE if the call notes explicitly mention:
      - "no email", "don't send email", "skip email", "no confirmation email"
@@ -532,25 +631,12 @@ func buildSaveNoteTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 		Name:        "SaveNote",
 		Description: "Saves the call summary as a note on the lead. ALWAYS call this tool to record the call outcome.",
 	}, func(ctx tool.Context, input SaveNoteInput) (SaveNoteOutput, error) {
-		tenantID, userID, leadID, _, ok := deps.GetContext()
-		if !ok {
+		if _, _, _, _, ok := deps.GetContext(); !ok {
 			return SaveNoteOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
 		}
 
-		note, err := deps.Repo.CreateLeadNote(context.Background(), repository.CreateLeadNoteParams{
-			LeadID:         leadID,
-			OrganizationID: tenantID,
-			AuthorID:       userID,
-			Type:           "call",
-			Body:           input.Body,
-		})
-		if err != nil {
-			return SaveNoteOutput{Success: false, Message: err.Error()}, err
-		}
-
-		deps.MarkNoteCreated()
-		deps.SetNoteDetails(input.Body, note.AuthorEmail)
-		return SaveNoteOutput{Success: true, Message: "Note saved"}, nil
+		deps.SetNoteDraft(input.Body)
+		return SaveNoteOutput{Success: true, Message: "Note drafted"}, nil
 	})
 }
 
@@ -582,6 +668,20 @@ func normalizeCallNoteBody(body string) string {
 	}
 
 	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
+
+func appendRescheduleFallbackNote(body string, startTime time.Time) string {
+	lower := strings.ToLower(body)
+	if strings.Contains(lower, "geen bestaande afspraak") || strings.Contains(lower, "nieuwe afspraak") {
+		return body
+	}
+
+	correction := fmt.Sprintf("Let op: er was geen bestaande afspraak. Nieuwe afspraak ingepland op %s.", startTime.Format(dateTimeShortLayout))
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return correction
+	}
+	return strings.TrimRight(body, "\n") + "\n\n" + correction
 }
 
 func buildNormalizeCallNoteTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
@@ -819,6 +919,22 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 
 	if deps.Booker == nil {
 		return RescheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, fmt.Errorf(errBookerNotConfigured)
+	}
+
+	if _, err := deps.Booker.GetLeadVisitByService(context.Background(), tenantID, serviceID, userID); err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			deps.MarkRescheduleFallback()
+			scheduled, scheduleErr := executeScheduleVisit(deps, ScheduleVisitInput{
+				StartTime: input.StartTime,
+				EndTime:   input.EndTime,
+				Title:     input.Title,
+			})
+			if scheduleErr != nil {
+				return RescheduleVisitOutput{Success: false, Message: scheduled.Message}, scheduleErr
+			}
+			return RescheduleVisitOutput{Success: true, Message: "Appointment scheduled"}, nil
+		}
+		return RescheduleVisitOutput{Success: false, Message: err.Error()}, err
 	}
 
 	startTime, err := time.Parse(time.RFC3339, input.StartTime)

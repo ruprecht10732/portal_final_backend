@@ -25,6 +25,7 @@ import (
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/partners"
+	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/services"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
@@ -171,6 +172,11 @@ func main() {
 	servicesModule.RegisterHandlers(eventBus)
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
+	quotesModule := quotes.NewModule(pool, val)
+
+	// Wire timeline integration: quotes → leads timeline
+	quotesTimeline := adapters.NewQuotesTimelineWriter(leadsModule.Repository())
+	quotesModule.Service().SetTimelineWriter(quotesTimeline)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
@@ -194,6 +200,7 @@ func main() {
 			catalogModule,
 			appointmentsModule,
 			partnersModule,
+			quotesModule,
 		},
 	}
 
