@@ -51,6 +51,7 @@ func DefaultContentOpts() ConvertOpts {
 		MarginBottom: "0.7",
 		MarginLeft:   "0.5",
 		MarginRight:  "0.5",
+		WaitDelay:    "1s",
 	}
 }
 
@@ -82,7 +83,7 @@ func (g *GotenbergClient) ConvertHTML(ctx context.Context, indexHTML []byte, opt
 	}
 	if opts.WaitDelay != "" {
 		fields["waitDelay"] = opts.WaitDelay
-		fields["skipNetworkIdleEvent"] = "false"
+		fields["skipNetworkIdleEvent"] = "true"
 	}
 	for k, v := range fields {
 		if err := writer.WriteField(k, v); err != nil {

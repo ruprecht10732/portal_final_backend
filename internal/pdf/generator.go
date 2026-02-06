@@ -190,7 +190,6 @@ func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 	// ── Convert quote HTML → PDF (with margins + footer) ────────────────
 	contentOpts := DefaultContentOpts()
 	contentOpts.FooterHTML = footerHTML
-	contentOpts.WaitDelay = "1s"
 	contentPDF, err := gotenbergClient.ConvertHTML(ctx, quoteHTML, contentOpts)
 	if err != nil {
 		return nil, fmt.Errorf("convert content to PDF: %w", err)
