@@ -9,23 +9,19 @@
             box-sizing: border-box;
         }
 
-        @page {
-            size: A4;
-            margin: 0;
-        }
-
         body {
             font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
             color: #111827;
             font-size: 9pt;
             line-height: 1.5;
-            max-width: 210mm;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
         }
 
         .page {
+            width: 100%;
             padding: 0;
+            overflow: hidden;
         }
 
         /* ── Accent color from cover page ─────────────────── */
@@ -99,7 +95,7 @@
         }
 
         .address-col.meta {
-            flex: 0 0 200px;
+            flex: 0 0 35%;
             text-align: right;
         }
 
@@ -182,6 +178,7 @@
         .items-table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
             margin-bottom: 16px;
         }
 
@@ -192,7 +189,7 @@
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            padding: 9px 10px;
+            padding: 8px 6px;
             text-align: left;
         }
 
@@ -202,13 +199,18 @@
 
         .items-table tbody td {
             font-size: 8.5pt;
-            padding: 8px 10px;
+            padding: 7px 6px;
             border-bottom: 1px solid var(--gray-200);
             vertical-align: top;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .items-table tbody td.right {
             text-align: right;
+            white-space: nowrap;
         }
 
         .items-table tbody tr:nth-child(even) {
@@ -232,7 +234,8 @@
         /* ── Totals ────────────────────────────────────────── */
         .totals-block {
             margin-left: auto;
-            width: 300px;
+            width: 48%;
+            min-width: 200px;
             border-top: 2px solid var(--gray-200);
             padding-top: 8px;
         }
@@ -378,6 +381,12 @@
 
         @media print {
             body { background: none; padding: 0; margin: 0; }
+            .items-table { page-break-inside: auto; }
+            .items-table tr { page-break-inside: avoid; }
+            .totals-block { page-break-inside: avoid; }
+            .signature-block { page-break-inside: avoid; }
+            .legal-terms { page-break-inside: avoid; }
+            .notes-block { page-break-inside: avoid; }
         }
     </style>
 </head>
@@ -438,10 +447,10 @@
         <table class="items-table">
             <thead>
                 <tr>
-                    <th style="width: 42%">Omschrijving</th>
+                    <th style="width: 44%">Omschrijving</th>
                     <th style="width: 10%">Aantal</th>
-                    <th style="width: 16%" class="right">Stuksprijs</th>
-                    <th style="width: 10%" class="right">BTW</th>
+                    <th style="width: 15%" class="right">Stuksprijs</th>
+                    <th style="width: 9%" class="right">BTW</th>
                     <th style="width: 22%" class="right">Bedrag</th>
                 </tr>
             </thead>

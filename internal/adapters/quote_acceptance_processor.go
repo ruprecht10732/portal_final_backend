@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -110,12 +111,27 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 
 	// 6. Download organization logo from MinIO (if available)
 	var logoBytes []byte
-	if orgErr == nil && org.LogoFileKey != nil && *org.LogoFileKey != "" {
+	if orgErr != nil {
+		slog.Warn("could not fetch organization for logo", "error", orgErr)
+	} else if org.LogoFileKey == nil || *org.LogoFileKey == "" {
+		slog.Info("organization has no logo file key", "orgID", organizationID)
+	} else {
 		logoBucket := p.cfg.GetMinioBucketOrganizationLogos()
+		slog.Info("downloading org logo", "bucket", logoBucket, "key", *org.LogoFileKey)
 		logoReader, dlErr := p.storage.DownloadFile(ctx, logoBucket, *org.LogoFileKey)
-		if dlErr == nil {
+		if dlErr != nil {
+			slog.Warn("logo download failed", "bucket", logoBucket, "key", *org.LogoFileKey, "error", dlErr)
+		} else {
 			defer logoReader.Close()
-			logoBytes, _ = io.ReadAll(logoReader)
+			data, readErr := io.ReadAll(logoReader)
+			if readErr != nil {
+				slog.Warn("failed to read logo bytes", "key", *org.LogoFileKey, "error", readErr)
+			} else if len(data) == 0 {
+				slog.Warn("logo file is empty", "key", *org.LogoFileKey)
+			} else {
+				slog.Info("logo loaded", "key", *org.LogoFileKey, "bytes", len(data))
+				logoBytes = data
+			}
 		}
 	}
 
