@@ -165,6 +165,9 @@ func main() {
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 
+	// Share SSE service with quotes module so public viewers get real-time updates
+	quotesModule.SetSSE(leadsModule.SSE())
+
 	// Wire timeline integration: quotes → leads timeline
 	quotesTimeline := adapters.NewQuotesTimelineWriter(leadsModule.Repository())
 	quotesModule.Service().SetTimelineWriter(quotesTimeline)

@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/quotes/service"
 	"portal_final_backend/internal/quotes/transport"
 	"portal_final_backend/platform/httpkit"
@@ -16,11 +18,17 @@ import (
 type PublicHandler struct {
 	svc *service.Service
 	val *validator.Validator
+	sse *sse.Service
 }
 
 // NewPublicHandler creates a new public quotes handler.
 func NewPublicHandler(svc *service.Service, val *validator.Validator) *PublicHandler {
 	return &PublicHandler{svc: svc, val: val}
+}
+
+// SetSSE injects the SSE service for public real-time events.
+func (h *PublicHandler) SetSSE(s *sse.Service) {
+	h.sse = s
 }
 
 // RegisterRoutes registers the public quote routes (no auth middleware).
@@ -30,6 +38,17 @@ func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:token/items/:itemId/annotations", h.AnnotateItem)
 	rg.POST("/:token/accept", h.Accept)
 	rg.POST("/:token/reject", h.Reject)
+
+	// Public SSE — customer page gets real-time updates
+	if h.sse != nil {
+		rg.GET("/:token/events", h.sse.PublicQuoteHandler(h.resolveQuoteID))
+	}
+}
+
+// resolveQuoteID maps a public token to a quote UUID.
+func (h *PublicHandler) resolveQuoteID(token string) (uuid.UUID, error) {
+	ctx := context.Background()
+	return h.svc.GetPublicQuoteID(ctx, token)
 }
 
 // GetPublicQuote handles GET /api/v1/public/quotes/:token

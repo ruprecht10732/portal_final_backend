@@ -3,6 +3,7 @@ package quotes
 
 import (
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/quotes/handler"
 	"portal_final_backend/internal/quotes/repository"
 	"portal_final_backend/internal/quotes/service"
@@ -49,6 +50,11 @@ func (m *Module) Service() *service.Service {
 // Repository returns the repository for use by adapters (e.g., PDF generation).
 func (m *Module) Repository() *repository.Repository {
 	return m.repository
+}
+
+// SetSSE injects the SSE service so public viewers get real-time quote updates.
+func (m *Module) SetSSE(s *sse.Service) {
+	m.publicHandler.SetSSE(s)
 }
 
 // RegisterRoutes registers the module's routes

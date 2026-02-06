@@ -44,18 +44,26 @@ type client struct {
 	events chan Event
 }
 
+// quoteClient represents a public (unauthenticated) SSE viewer on a quote page.
+type quoteClient struct {
+	quoteID uuid.UUID
+	events  chan Event
+}
+
 // Service manages SSE connections and event broadcasting
 type Service struct {
-	mu      sync.RWMutex
-	clients map[uuid.UUID][]*client   // userID -> clients
-	orgMap  map[uuid.UUID][]uuid.UUID // orgID -> userIDs
+	mu           sync.RWMutex
+	clients      map[uuid.UUID][]*client      // userID -> clients
+	orgMap       map[uuid.UUID][]uuid.UUID    // orgID -> userIDs
+	quoteClients map[uuid.UUID][]*quoteClient // quoteID -> public viewers
 }
 
 // New creates a new SSE service
 func New() *Service {
 	return &Service{
-		clients: make(map[uuid.UUID][]*client),
-		orgMap:  make(map[uuid.UUID][]uuid.UUID),
+		clients:      make(map[uuid.UUID][]*client),
+		orgMap:       make(map[uuid.UUID][]uuid.UUID),
+		quoteClients: make(map[uuid.UUID][]*quoteClient),
 	}
 }
 
@@ -129,15 +137,111 @@ func (s *Service) PublishToOrganization(orgID uuid.UUID, event Event) {
 }
 
 // PublishQuoteEvent is a convenience wrapper that broadcasts a quote-related
-// event to every connected agent in the organisation.
+// event to every connected agent in the organisation AND to any public viewers.
 func (s *Service) PublishQuoteEvent(orgID uuid.UUID, eventType EventType, quoteID uuid.UUID, data interface{}) {
-	s.PublishToOrganization(orgID, Event{
+	evt := Event{
 		Type: eventType,
 		Data: map[string]interface{}{
 			"quoteId": quoteID,
 			"payload": data,
 		},
-	})
+	}
+	s.PublishToOrganization(orgID, evt)
+	s.PublishToQuote(quoteID, evt)
+}
+
+// PublishToQuote sends an event to all public viewers of a quote.
+func (s *Service) PublishToQuote(quoteID uuid.UUID, event Event) {
+	s.mu.RLock()
+	viewers := make([]*quoteClient, len(s.quoteClients[quoteID]))
+	copy(viewers, s.quoteClients[quoteID])
+	s.mu.RUnlock()
+
+	for _, v := range viewers {
+		select {
+		case v.events <- event:
+		default:
+			log.Printf("SSE: Quote event buffer full for quote %s", quoteID)
+		}
+	}
+
+	if len(viewers) > 0 {
+		log.Printf("SSE: Published event %s to quote %s (%d public viewers)", event.Type, quoteID, len(viewers))
+	}
+}
+
+// PublicQuoteHandler returns a Gin handler for unauthenticated SSE connections
+// on a specific quote (used by the public proposal page).
+func (s *Service) PublicQuoteHandler(resolveQuoteID func(token string) (uuid.UUID, error)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.Param("token")
+		if token == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			return
+		}
+
+		quoteID, err := resolveQuoteID(token)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "quote not found"})
+			return
+		}
+
+		// SSE headers
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+
+		qc := &quoteClient{
+			quoteID: quoteID,
+			events:  make(chan Event, 32),
+		}
+
+		// Register
+		s.mu.Lock()
+		s.quoteClients[quoteID] = append(s.quoteClients[quoteID], qc)
+		s.mu.Unlock()
+
+		// Deregister on disconnect
+		defer func() {
+			s.mu.Lock()
+			viewers := s.quoteClients[quoteID]
+			for i, v := range viewers {
+				if v == qc {
+					s.quoteClients[quoteID] = append(viewers[:i], viewers[i+1:]...)
+					break
+				}
+			}
+			if len(s.quoteClients[quoteID]) == 0 {
+				delete(s.quoteClients, quoteID)
+			}
+			s.mu.Unlock()
+			close(qc.events)
+		}()
+
+		// Connected signal
+		c.SSEvent("connected", gin.H{"quoteId": quoteID})
+		c.Writer.Flush()
+
+		log.Printf("SSE: Public viewer connected for quote %s", quoteID)
+
+		clientGone := c.Request.Context().Done()
+		for {
+			select {
+			case <-clientGone:
+				log.Printf("SSE: Public viewer disconnected for quote %s", quoteID)
+				return
+			case event, ok := <-qc.events:
+				if !ok {
+					return
+				}
+				data, _ := json.Marshal(event)
+				c.SSEvent(string(event.Type), string(data))
+				c.Writer.Flush()
+			}
+		}
+	}
 }
 
 // Handler returns a Gin handler for SSE connections
@@ -202,6 +306,12 @@ func (s *Service) Close() {
 			close(c.events)
 		}
 	}
+	for _, viewers := range s.quoteClients {
+		for _, v := range viewers {
+			close(v.events)
+		}
+	}
 	s.clients = make(map[uuid.UUID][]*client)
 	s.orgMap = make(map[uuid.UUID][]uuid.UUID)
+	s.quoteClients = make(map[uuid.UUID][]*quoteClient)
 }

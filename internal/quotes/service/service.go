@@ -467,6 +467,15 @@ func (s *Service) Send(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, ag
 	return resp, nil
 }
 
+// GetPublicQuoteID resolves a public token to its quote UUID (for SSE subscription).
+func (s *Service) GetPublicQuoteID(ctx context.Context, token string) (uuid.UUID, error) {
+	quote, err := s.repo.GetByPublicToken(ctx, token)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return quote.ID, nil
+}
+
 // GetPublic retrieves a quote by its public token for unauthenticated lead access.
 func (s *Service) GetPublic(ctx context.Context, token string) (*transport.PublicQuoteResponse, error) {
 	quote, err := s.repo.GetByPublicToken(ctx, token)
