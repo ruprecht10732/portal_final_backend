@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -130,8 +131,14 @@ type ListProductAssetsParams struct {
 type ListProductsParams struct {
 	OrganizationID uuid.UUID
 	Search         string
+	Title          string
+	Reference      string
 	Type           string
 	VatRateID      *uuid.UUID
+	CreatedAtFrom  *time.Time
+	CreatedAtTo    *time.Time
+	UpdatedAtFrom  *time.Time
+	UpdatedAtTo    *time.Time
 	Offset         int
 	Limit          int
 	SortBy         string

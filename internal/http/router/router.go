@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -48,6 +49,14 @@ func New(app *apphttp.App) *gin.Engine {
 
 	// Health check endpoint (outside versioned API)
 	engine.GET("/api/health", func(c *gin.Context) {
+		if app.Health != nil {
+			timeoutCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+			if err := app.Health.Ping(timeoutCtx); err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy"})
+				return
+			}
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 

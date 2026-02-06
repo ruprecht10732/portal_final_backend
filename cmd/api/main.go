@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +30,8 @@ import (
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const storageBucketEnsureErrPrefix = "failed to ensure storage bucket exists: "
@@ -50,8 +54,23 @@ func main() {
 	// Infrastructure Layer
 	// ========================================================================
 
-	pool, err := db.NewPool(ctx, cfg)
-	if err != nil {
+	if err := withRetry(ctx, log, "database migrations", 5, 2*time.Second, func() error {
+		return db.RunMigrations(ctx, cfg, "migrations")
+	}); err != nil {
+		log.Error("failed to run database migrations", "error", err)
+		panic("failed to run database migrations: " + err.Error())
+	}
+	log.Info("database migrations complete")
+
+	var pool *pgxpool.Pool
+	if err := withRetry(ctx, log, "database connection", 5, 2*time.Second, func() error {
+		p, err := db.NewPool(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		pool = p
+		return nil
+	}); err != nil {
 		log.Error("failed to connect to database", "error", err)
 		panic("failed to connect to database: " + err.Error())
 	}
@@ -77,22 +96,30 @@ func main() {
 		panic("failed to initialize storage service: " + err.Error())
 	}
 	// Ensure the lead-service-attachments bucket exists
-	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketLeadServiceAttachments()); err != nil {
+	if err := withRetry(ctx, log, "ensure lead-service-attachments bucket", 5, 2*time.Second, func() error {
+		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketLeadServiceAttachments())
+	}); err != nil {
 		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketLeadServiceAttachments())
 		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
 	// Ensure the catalog assets bucket exists
-	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketCatalogAssets()); err != nil {
+	if err := withRetry(ctx, log, "ensure catalog assets bucket", 5, 2*time.Second, func() error {
+		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketCatalogAssets())
+	}); err != nil {
 		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketCatalogAssets())
 		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
 	// Ensure the partner logos bucket exists
-	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketPartnerLogos()); err != nil {
+	if err := withRetry(ctx, log, "ensure partner logos bucket", 5, 2*time.Second, func() error {
+		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketPartnerLogos())
+	}); err != nil {
 		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketPartnerLogos())
 		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
 	// Ensure the organization logos bucket exists
-	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketOrganizationLogos()); err != nil {
+	if err := withRetry(ctx, log, "ensure organization logos bucket", 5, 2*time.Second, func() error {
+		return storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketOrganizationLogos())
+	}); err != nil {
 		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketOrganizationLogos())
 		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
@@ -156,6 +183,7 @@ func main() {
 	app := &apphttp.App{
 		Config:   cfg,
 		Logger:   log,
+		Health:   db.NewPoolAdapter(pool),
 		EventBus: eventBus,
 		Modules: []apphttp.Module{
 			authModule,
@@ -189,4 +217,34 @@ func main() {
 			panic("server error: " + err.Error())
 		}
 	}
+}
+
+func withRetry(ctx context.Context, log *logger.Logger, name string, attempts int, baseDelay time.Duration, fn func() error) error {
+	if attempts < 1 {
+		return fmt.Errorf("%s: invalid retry attempts", name)
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := fn(); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			log.Warn("retryable operation failed", "operation", name, "attempt", attempt, "error", err)
+		}
+
+		if attempt < attempts {
+			delay := time.Duration(attempt*attempt) * baseDelay
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+
+	return errors.New(name + ": " + lastErr.Error())
 }

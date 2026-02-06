@@ -24,6 +24,7 @@ var productSortFields = map[string]string{
 	"reference":  "reference",
 	"priceCents": "price_cents",
 	"type":       "type",
+	"vatRateId":  "vat_rate_id",
 	"createdAt":  "created_at",
 	"updatedAt":  "updated_at",
 }
@@ -349,6 +350,14 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 	if params.Search != "" {
 		searchParam = "%" + params.Search + "%"
 	}
+	var titleParam interface{}
+	if params.Title != "" {
+		titleParam = "%" + params.Title + "%"
+	}
+	var referenceParam interface{}
+	if params.Reference != "" {
+		referenceParam = "%" + params.Reference + "%"
+	}
 	var typeParam interface{}
 	if params.Type != "" {
 		typeParam = params.Type
@@ -356,6 +365,22 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 	var vatRateParam interface{}
 	if params.VatRateID != nil {
 		vatRateParam = *params.VatRateID
+	}
+	var createdAtFrom interface{}
+	if params.CreatedAtFrom != nil {
+		createdAtFrom = *params.CreatedAtFrom
+	}
+	var createdAtTo interface{}
+	if params.CreatedAtTo != nil {
+		createdAtTo = *params.CreatedAtTo
+	}
+	var updatedAtFrom interface{}
+	if params.UpdatedAtFrom != nil {
+		updatedAtFrom = *params.UpdatedAtFrom
+	}
+	var updatedAtTo interface{}
+	if params.UpdatedAtTo != nil {
+		updatedAtTo = *params.UpdatedAtTo
 	}
 
 	sortBy, err := mapProductSortColumn(params.SortBy)
@@ -372,12 +397,29 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 		FROM RAC_catalog_products
 		WHERE organization_id = $1
 			AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
-			AND ($3::text IS NULL OR type = $3)
-			AND ($4::uuid IS NULL OR vat_rate_id = $4)
+			AND ($3::text IS NULL OR title ILIKE $3)
+			AND ($4::text IS NULL OR reference ILIKE $4)
+			AND ($5::text IS NULL OR type = $5)
+			AND ($6::uuid IS NULL OR vat_rate_id = $6)
+			AND ($7::timestamptz IS NULL OR created_at >= $7)
+			AND ($8::timestamptz IS NULL OR created_at <= $8)
+			AND ($9::timestamptz IS NULL OR updated_at >= $9)
+			AND ($10::timestamptz IS NULL OR updated_at <= $10)
 	`
 
 	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, params.OrganizationID, searchParam, typeParam, vatRateParam).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, countQuery,
+		params.OrganizationID,
+		searchParam,
+		titleParam,
+		referenceParam,
+		typeParam,
+		vatRateParam,
+		createdAtFrom,
+		createdAtTo,
+		updatedAtFrom,
+		updatedAtTo,
+	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count products: %w", err)
 	}
 
@@ -387,13 +429,32 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 		FROM RAC_catalog_products
 		WHERE organization_id = $1
 			AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
-			AND ($3::text IS NULL OR type = $3)
-			AND ($4::uuid IS NULL OR vat_rate_id = $4)
+			AND ($3::text IS NULL OR title ILIKE $3)
+			AND ($4::text IS NULL OR reference ILIKE $4)
+			AND ($5::text IS NULL OR type = $5)
+			AND ($6::uuid IS NULL OR vat_rate_id = $6)
+			AND ($7::timestamptz IS NULL OR created_at >= $7)
+			AND ($8::timestamptz IS NULL OR created_at <= $8)
+			AND ($9::timestamptz IS NULL OR updated_at >= $9)
+			AND ($10::timestamptz IS NULL OR updated_at <= $10)
 		ORDER BY %s
-		LIMIT $5 OFFSET $6
+		LIMIT $11 OFFSET $12
 	`, orderBy)
 
-	rows, err := r.pool.Query(ctx, query, params.OrganizationID, searchParam, typeParam, vatRateParam, params.Limit, params.Offset)
+	rows, err := r.pool.Query(ctx, query,
+		params.OrganizationID,
+		searchParam,
+		titleParam,
+		referenceParam,
+		typeParam,
+		vatRateParam,
+		createdAtFrom,
+		createdAtTo,
+		updatedAtFrom,
+		updatedAtTo,
+		params.Limit,
+		params.Offset,
+	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list products: %w", err)
 	}

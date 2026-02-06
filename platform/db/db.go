@@ -11,6 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// PoolAdapter wraps pgxpool.Pool to expose a minimal interface for health checks.
+type PoolAdapter struct {
+	*pgxpool.Pool
+}
+
+// NewPoolAdapter creates a health-check adapter for a pool.
+func NewPoolAdapter(pool *pgxpool.Pool) *PoolAdapter {
+	return &PoolAdapter{Pool: pool}
+}
+
 // NewPool creates a new database connection pool with production-ready settings.
 func NewPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.GetDatabaseURL())

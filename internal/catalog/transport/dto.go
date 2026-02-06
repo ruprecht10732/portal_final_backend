@@ -69,13 +69,19 @@ type UpdateProductRequest struct {
 }
 
 type ListProductsRequest struct {
-	Search    string `form:"search" validate:"max=100"`
-	Type      string `form:"type" validate:"omitempty,oneof=digital_service service product material"`
-	VatRateID string `form:"vatRateId" validate:"omitempty"`
-	Page      int    `form:"page" validate:"omitempty,min=1"`
-	PageSize  int    `form:"pageSize" validate:"omitempty,min=1,max=100"`
-	SortBy    string `form:"sortBy" validate:"omitempty,oneof=title reference priceCents type createdAt updatedAt"`
-	SortOrder string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
+	Search        string `form:"search" validate:"max=100"`
+	Title         string `form:"title" validate:"omitempty,max=200"`
+	Reference     string `form:"reference" validate:"omitempty,max=100"`
+	Type          string `form:"type" validate:"omitempty,oneof=digital_service service product material"`
+	VatRateID     string `form:"vatRateId" validate:"omitempty"`
+	CreatedAtFrom string `form:"createdAtFrom" validate:"omitempty,max=50"`
+	CreatedAtTo   string `form:"createdAtTo" validate:"omitempty,max=50"`
+	UpdatedAtFrom string `form:"updatedAtFrom" validate:"omitempty,max=50"`
+	UpdatedAtTo   string `form:"updatedAtTo" validate:"omitempty,max=50"`
+	Page          int    `form:"page" validate:"omitempty,min=1"`
+	PageSize      int    `form:"pageSize" validate:"omitempty,min=1,max=100"`
+	SortBy        string `form:"sortBy" validate:"omitempty,oneof=title reference priceCents type vatRateId createdAt updatedAt"`
+	SortOrder     string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 }
 
 type ProductResponse struct {

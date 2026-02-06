@@ -1,0 +1,10 @@
+.env
+.git
+.tmp
+.tmp/
+*.exe
+*.log
+repomix-output.xml
+
+# Local tooling
+.air.toml

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -155,11 +156,34 @@ func (s *Service) ListProductsWithFilters(ctx context.Context, tenantID uuid.UUI
 		pageSize = 100
 	}
 
+	createdAtFrom, err := parseOptionalTime(req.CreatedAtFrom)
+	if err != nil {
+		return transport.ProductListResponse{}, err
+	}
+	createdAtTo, err := parseOptionalTime(req.CreatedAtTo)
+	if err != nil {
+		return transport.ProductListResponse{}, err
+	}
+	updatedAtFrom, err := parseOptionalTime(req.UpdatedAtFrom)
+	if err != nil {
+		return transport.ProductListResponse{}, err
+	}
+	updatedAtTo, err := parseOptionalTime(req.UpdatedAtTo)
+	if err != nil {
+		return transport.ProductListResponse{}, err
+	}
+
 	params := repository.ListProductsParams{
 		OrganizationID: tenantID,
 		Search:         strings.TrimSpace(req.Search),
+		Title:          strings.TrimSpace(req.Title),
+		Reference:      strings.TrimSpace(req.Reference),
 		Type:           strings.TrimSpace(req.Type),
 		VatRateID:      vatRateID,
+		CreatedAtFrom:  createdAtFrom,
+		CreatedAtTo:    createdAtTo,
+		UpdatedAtFrom:  updatedAtFrom,
+		UpdatedAtTo:    updatedAtTo,
 		Offset:         (page - 1) * pageSize,
 		Limit:          pageSize,
 		SortBy:         req.SortBy,
@@ -172,6 +196,20 @@ func (s *Service) ListProductsWithFilters(ctx context.Context, tenantID uuid.UUI
 	}
 
 	return toProductListResponse(items, total, page, pageSize), nil
+}
+
+func parseOptionalTime(value string) (*time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return &parsed, nil
+	}
+	if parsed, err := time.Parse("2006-01-02", trimmed); err == nil {
+		return &parsed, nil
+	}
+	return nil, apperr.Validation("invalid date format")
 }
 
 // CreateProduct creates a new product.
