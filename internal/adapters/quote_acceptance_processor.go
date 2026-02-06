@@ -108,14 +108,12 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 
 	// 6. Download organization logo from MinIO (if available)
 	var logoBytes []byte
-	var logoMime string
 	if orgErr == nil && org.LogoFileKey != nil && *org.LogoFileKey != "" {
 		logoBucket := p.cfg.GetMinioBucketOrganizationLogos()
 		logoReader, dlErr := p.storage.DownloadFile(ctx, logoBucket, *org.LogoFileKey)
 		if dlErr == nil {
 			defer logoReader.Close()
 			logoBytes, _ = io.ReadAll(logoReader)
-			logoMime = contentTypeToMime(org.LogoContentType)
 		}
 	}
 
@@ -139,7 +137,6 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		TotalCents:       calc.TotalCents,
 		VatBreakdown:     calc.VatBreakdown,
 		OrgLogo:          logoBytes,
-		OrgLogoMime:      logoMime,
 	}
 
 	// Populate org details if available
@@ -188,18 +185,7 @@ func derefStr(s *string) string {
 	return *s
 }
 
-// contentTypeToMime maps an optional MIME content-type pointer to a concrete MIME string.
-func contentTypeToMime(ct *string) string {
-	if ct == nil {
-		return "image/png"
-	}
-	switch strings.ToLower(*ct) {
-	case "image/jpeg", "image/jpg":
-		return "image/jpeg"
-	default:
-		return "image/png"
-	}
-}
+
 
 // buildPDFItems converts repository QuoteItems into transport PublicQuoteItemResponse
 // suitable for the PDF generator, including per-line tax calculations.

@@ -1,7 +1,7 @@
-// Package pdf provides quote PDF generation using Gotenberg (Chromium HTML→PDF).
-// The generated document meets Dutch legal requirements for commercial quotes
-// (offerte) and includes organization branding, KVK/BTW numbers, addresses,
-// line-item details, and a signature block.
+// Package pdf generates quote PDFs using Gotenberg (HTML→PDF via Chromium).
+// The cover page uses an industrial "construction proposal" design with the
+// Barlow font; the detail page contains all quote data, line-items, totals,
+// legal terms, and the signature block.
 package pdf
 
 import (
@@ -11,280 +11,273 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html/template"
-	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"portal_final_backend/internal/quotes/transport"
-
-	gotenberg "github.com/starwalkn/gotenberg-go-client/v8"
-	"github.com/starwalkn/gotenberg-go-client/v8/document"
 )
 
 //go:embed templates/*.html
 var templateFS embed.FS
 
-// gotenbergClient is the package-level Gotenberg API client.
-var gotenbergClient *gotenberg.Client
+// ── Package-level Gotenberg client ──────────────────────────────────────
 
-// Init initialises the Gotenberg client. Must be called once at startup.
-func Init(gotenbergURL string) error {
-	c, err := gotenberg.NewClient(gotenbergURL, &http.Client{Timeout: 60 * time.Second})
-	if err != nil {
-		return fmt.Errorf("create gotenberg client: %w", err)
+var gotenbergClient *GotenbergClient
+
+// Init initialises the Gotenberg client. Must be called before GenerateQuotePDF.
+func Init(gotenbergURL string) {
+	if gotenbergURL != "" {
+		gotenbergClient = NewGotenbergClient(gotenbergURL)
 	}
-	gotenbergClient = c
-	return nil
 }
 
-// ─── Public Data Types ───────────────────────────────────────────────────────
+// ── Data structs ────────────────────────────────────────────────────────
 
-// QuotePDFData contains all information needed to render a quote PDF.
+// QuotePDFData holds all data needed to generate a quote PDF.
 type QuotePDFData struct {
-	QuoteNumber      string
+	// Quote
+	QuoteNumber string
+	Status      string
+	PricingMode string
+	ValidUntil  *time.Time
+	CreatedAt   time.Time
+	Notes       *string
+
+	// Organization
 	OrganizationName string
-	CustomerName     string
-	Status           string
-	PricingMode      string
-	ValidUntil       *time.Time
-	CreatedAt        time.Time
-	Notes            *string
-	SignatureName    *string
-	SignatureImage   []byte // raw PNG bytes of the drawn signature
-	AcceptedAt       *time.Time
+	OrgEmail         string
+	OrgPhone         string
+	OrgVatNumber     string
+	OrgKvkNumber     string
+	OrgAddressLine1  string
+	OrgAddressLine2  string
+	OrgPostalCode    string
+	OrgCity          string
+	OrgCountry       string
+	OrgLogo          []byte // raw image bytes (PNG or JPEG)
 
-	// Line items (already calculated by the service layer)
-	Items []transport.PublicQuoteItemResponse
+	// Customer
+	CustomerName string
 
-	// Totals
+	// Signature (populated when accepted)
+	SignatureName  *string
+	SignatureImage []byte // raw PNG bytes of the drawn signature
+	AcceptedAt     *time.Time
+
+	// Line items & totals
+	Items          []transport.PublicQuoteItemResponse
 	SubtotalCents  int64
 	DiscountAmount int64
 	TaxTotalCents  int64
 	TotalCents     int64
 	VatBreakdown   []transport.VatBreakdown
-
-	// Organization branding
-	OrgLogo     []byte // raw logo image bytes
-	OrgLogoMime string // MIME type for the logo, e.g. "image/png"
-
-	// Organization details
-	OrgEmail        string
-	OrgPhone        string
-	OrgVatNumber    string
-	OrgKvkNumber    string
-	OrgAddressLine1 string
-	OrgAddressLine2 string
-	OrgPostalCode   string
-	OrgCity         string
-	OrgCountry      string
 }
 
-// ─── Template View Models ────────────────────────────────────────────────────
+// ── Template view models ────────────────────────────────────────────────
 
-type templateData struct {
+type coverViewModel struct {
 	LogoBase64          string
 	LogoMimeType        string
 	OrganizationName    string
-	QuoteNumber         string
 	CustomerName        string
-	Status              string
-	StatusClass         string
-	StatusLabel         string
+	QuoteNumber         string
+	QuoteSequenceNumber string
 	CreatedAtFormatted  string
 	ValidUntilFormatted string
+	OrgAddressLine1     string
+	OrgPostalCode       string
+	OrgCity             string
+	OrgPhone            string
+	OrgEmail            string
+}
+
+type quoteViewModel struct {
+	LogoBase64          string
+	LogoMimeType        string
+	OrganizationName    string
+	CustomerName        string
+	QuoteNumber         string
+	CreatedAtFormatted  string
+	ValidUntilFormatted string
+	Status              string
+	StatusLabel         string
+	StatusClass         string
+	OrgAddressLine1     string
+	OrgAddressLine2     string
+	OrgPostalCode       string
+	OrgCity             string
+	OrgEmail            string
+	OrgPhone            string
+	OrgKvkNumber        string
+	OrgVatNumber        string
 	AcceptedAtFormatted string
+	Items               []itemViewModel
+	SubtotalFormatted   string
+	HasDiscount         bool
+	DiscountFormatted   string
+	VatBreakdown        []vatLineViewModel
+	TotalFormatted      string
+	Notes               string
 	HasSignature        bool
 	SignatureName       string
 	SignatureBase64     string
-	Notes               string
-	HasDiscount         bool
-	SubtotalFormatted   string
-	DiscountFormatted   string
-	TotalFormatted      string
-	Items               []templateItem
-	VatBreakdown        []templateVatLine
-
-	// Organization address details
-	OrgEmail        string
-	OrgPhone        string
-	OrgVatNumber    string
-	OrgKvkNumber    string
-	OrgAddressLine1 string
-	OrgAddressLine2 string
-	OrgPostalCode   string
-	OrgCity         string
 }
 
-type templateItem struct {
-	Description        string
-	Quantity           string
+type itemViewModel struct {
+	Description       string
+	Quantity          string
 	UnitPriceFormatted string
-	VatPctFormatted    string
+	VatPctFormatted   string
 	LineTotalFormatted string
-	IsOptional         bool
-	IsSelected         bool
+	IsOptional        bool
+	IsSelected        bool
 }
 
-type templateVatLine struct {
+type vatLineViewModel struct {
 	PctFormatted    string
 	AmountFormatted string
 }
 
-type footerData struct {
+type footerViewModel struct {
 	FooterText string
 }
 
-// ─── PDF Generation ──────────────────────────────────────────────────────────
+// ── Public API ──────────────────────────────────────────────────────────
 
-// GenerateQuotePDF renders the quote as a professional PDF via Gotenberg.
+// GenerateQuotePDF creates a professional multi-page PDF document.
+// Page 1 = cover page (industrial Barlow design).
+// Page 2+ = quote details with line items, totals, legal terms, and signature.
 func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 	if gotenbergClient == nil {
 		return nil, fmt.Errorf("gotenberg client not initialized — call pdf.Init first")
 	}
 
-	// 1. Build template view models
-	td := buildTemplateData(data)
-	fd := footerData{FooterText: buildFooterText(data)}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
 
-	// 2. Render HTML templates
-	mainHTML, err := renderTemplate("templates/quote.html", td)
+	// ── Build view models ───────────────────────────────────────────────
+	logoB64, logoMime := encodeLogoBase64(data.OrgLogo)
+
+	cover := buildCoverVM(data, logoB64, logoMime)
+	quote := buildQuoteVM(data, logoB64, logoMime)
+	footer := buildFooterVM(data)
+
+	// ── Render HTML templates ───────────────────────────────────────────
+	coverHTML, err := renderTemplate("templates/cover.html", cover)
+	if err != nil {
+		return nil, fmt.Errorf("render cover template: %w", err)
+	}
+
+	quoteHTML, err := renderTemplate("templates/quote.html", quote)
 	if err != nil {
 		return nil, fmt.Errorf("render quote template: %w", err)
 	}
 
-	footerHTML, err := renderTemplate("templates/footer.html", fd)
+	footerHTML, err := renderTemplate("templates/footer.html", footer)
 	if err != nil {
 		return nil, fmt.Errorf("render footer template: %w", err)
 	}
 
-	// 3. Create Gotenberg documents from rendered HTML bytes
-	indexDoc, err := document.FromBytes("index.html", mainHTML)
+	// ── Convert cover HTML → PDF (full-bleed, no footer) ────────────────
+	coverPDF, err := gotenbergClient.ConvertHTML(ctx, coverHTML, CoverPageOpts())
 	if err != nil {
-		return nil, fmt.Errorf("create index document: %w", err)
+		return nil, fmt.Errorf("convert cover to PDF: %w", err)
 	}
 
-	footerDoc, err := document.FromBytes("footer.html", footerHTML)
+	// ── Convert quote HTML → PDF (with margins + footer) ────────────────
+	contentOpts := DefaultContentOpts()
+	contentOpts.FooterHTML = footerHTML
+	contentOpts.WaitDelay = "1s"
+	contentPDF, err := gotenbergClient.ConvertHTML(ctx, quoteHTML, contentOpts)
 	if err != nil {
-		return nil, fmt.Errorf("create footer document: %w", err)
+		return nil, fmt.Errorf("convert content to PDF: %w", err)
 	}
 
-	// 4. Build the HTML-to-PDF conversion request
-	req := gotenberg.NewHTMLRequest(indexDoc)
-	req.PaperSize(gotenberg.A4)
-	req.Margins(gotenberg.PageMargins{
-		Top:    0.6,
-		Bottom: 0.8,
-		Left:   0.6,
-		Right:  0.6,
-		Unit:   gotenberg.IN,
+	// ── Merge cover + content into one document ─────────────────────────
+	merged, err := gotenbergClient.MergePDFs(ctx, map[string][]byte{
+		"01_cover.pdf":   coverPDF,
+		"02_content.pdf": contentPDF,
 	})
-	req.PrintBackground()
-	req.Footer(footerDoc)
-
-	// 5. Send to Gotenberg and read response
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	resp, err := gotenbergClient.Send(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("gotenberg send: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("gotenberg returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("merge PDFs: %w", err)
 	}
 
-	pdfBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read gotenberg response: %w", err)
-	}
-
-	return pdfBytes, nil
+	return merged, nil
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ── View model builders ─────────────────────────────────────────────────
 
-// renderTemplate parses an embedded template and executes it with the given data.
-func renderTemplate(name string, data any) ([]byte, error) {
-	tmplBytes, err := templateFS.ReadFile(name)
-	if err != nil {
-		return nil, fmt.Errorf("read embedded template %s: %w", name, err)
+func buildCoverVM(data QuotePDFData, logoB64, logoMime string) coverViewModel {
+	vm := coverViewModel{
+		LogoBase64:         logoB64,
+		LogoMimeType:       logoMime,
+		OrganizationName:   data.OrganizationName,
+		CustomerName:       data.CustomerName,
+		QuoteNumber:        data.QuoteNumber,
+		CreatedAtFormatted: data.CreatedAt.Format("02-01-2006"),
+		OrgAddressLine1:    data.OrgAddressLine1,
+		OrgPostalCode:      data.OrgPostalCode,
+		OrgCity:            data.OrgCity,
+		OrgPhone:           data.OrgPhone,
+		OrgEmail:           data.OrgEmail,
 	}
-
-	tmpl, err := template.New(name).Parse(string(tmplBytes))
-	if err != nil {
-		return nil, fmt.Errorf("parse template %s: %w", name, err)
+	if data.ValidUntil != nil {
+		vm.ValidUntilFormatted = data.ValidUntil.Format("02-01-2006")
 	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return nil, fmt.Errorf("execute template %s: %w", name, err)
-	}
-
-	return buf.Bytes(), nil
+	vm.QuoteSequenceNumber = extractSequenceNumber(data.QuoteNumber)
+	return vm
 }
 
-// buildTemplateData maps QuotePDFData to the flat template view model.
-func buildTemplateData(d QuotePDFData) templateData {
-	td := templateData{
-		OrganizationName:   d.OrganizationName,
-		QuoteNumber:        d.QuoteNumber,
-		CustomerName:       d.CustomerName,
-		Status:             d.Status,
-		StatusClass:        statusClass(d.Status),
-		StatusLabel:        translateStatus(d.Status),
-		CreatedAtFormatted: d.CreatedAt.Format("02-01-2006"),
-		SubtotalFormatted:  formatCurrency(d.SubtotalCents),
-		TotalFormatted:     formatCurrency(d.TotalCents),
-		HasDiscount:        d.DiscountAmount > 0,
-		DiscountFormatted:  formatCurrency(d.DiscountAmount),
-
-		OrgEmail:        d.OrgEmail,
-		OrgPhone:        d.OrgPhone,
-		OrgVatNumber:    d.OrgVatNumber,
-		OrgKvkNumber:    d.OrgKvkNumber,
-		OrgAddressLine1: d.OrgAddressLine1,
-		OrgAddressLine2: d.OrgAddressLine2,
-		OrgPostalCode:   d.OrgPostalCode,
-		OrgCity:         d.OrgCity,
+func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
+	vm := quoteViewModel{
+		LogoBase64:         logoB64,
+		LogoMimeType:       logoMime,
+		OrganizationName:   data.OrganizationName,
+		CustomerName:       data.CustomerName,
+		QuoteNumber:        data.QuoteNumber,
+		CreatedAtFormatted: data.CreatedAt.Format("02-01-2006"),
+		Status:             data.Status,
+		StatusLabel:        translateStatus(data.Status),
+		StatusClass:        statusCSSClass(data.Status),
+		OrgAddressLine1:    data.OrgAddressLine1,
+		OrgAddressLine2:    data.OrgAddressLine2,
+		OrgPostalCode:      data.OrgPostalCode,
+		OrgCity:            data.OrgCity,
+		OrgEmail:           data.OrgEmail,
+		OrgPhone:           data.OrgPhone,
+		OrgKvkNumber:       data.OrgKvkNumber,
+		OrgVatNumber:       data.OrgVatNumber,
+		SubtotalFormatted:  formatCurrency(data.SubtotalCents),
+		HasDiscount:        data.DiscountAmount > 0,
+		DiscountFormatted:  formatCurrency(data.DiscountAmount),
+		TotalFormatted:     formatCurrency(data.TotalCents),
 	}
-
-	// Logo
-	if len(d.OrgLogo) > 0 && d.OrgLogoMime != "" {
-		td.LogoBase64 = base64.StdEncoding.EncodeToString(d.OrgLogo)
-		td.LogoMimeType = d.OrgLogoMime
+	if data.ValidUntil != nil {
+		vm.ValidUntilFormatted = data.ValidUntil.Format("02-01-2006")
 	}
-
-	// Dates
-	if d.ValidUntil != nil {
-		td.ValidUntilFormatted = d.ValidUntil.Format("02-01-2006")
+	if data.AcceptedAt != nil {
+		vm.AcceptedAtFormatted = data.AcceptedAt.Format("02-01-2006 15:04")
 	}
-	if d.AcceptedAt != nil {
-		td.AcceptedAtFormatted = d.AcceptedAt.Format("02-01-2006")
-	}
-
-	// Notes
-	if d.Notes != nil && *d.Notes != "" {
-		td.Notes = *d.Notes
+	if data.Notes != nil && *data.Notes != "" {
+		vm.Notes = *data.Notes
 	}
 
 	// Signature
-	if d.SignatureName != nil && *d.SignatureName != "" {
-		td.HasSignature = true
-		td.SignatureName = *d.SignatureName
-	}
-	if len(d.SignatureImage) > 0 {
-		td.HasSignature = true
-		td.SignatureBase64 = base64.StdEncoding.EncodeToString(d.SignatureImage)
+	if data.SignatureName != nil && data.AcceptedAt != nil {
+		vm.HasSignature = true
+		vm.SignatureName = *data.SignatureName
+		if len(data.SignatureImage) > 0 {
+			vm.SignatureBase64 = base64.StdEncoding.EncodeToString(data.SignatureImage)
+		}
 	}
 
 	// Items
-	td.Items = make([]templateItem, len(d.Items))
-	for i, it := range d.Items {
-		td.Items[i] = templateItem{
+	vm.Items = make([]itemViewModel, len(data.Items))
+	for i, it := range data.Items {
+		vm.Items[i] = itemViewModel{
 			Description:        it.Description,
 			Quantity:           it.Quantity,
 			UnitPriceFormatted: formatCurrency(it.UnitPriceCents),
@@ -296,116 +289,126 @@ func buildTemplateData(d QuotePDFData) templateData {
 	}
 
 	// VAT breakdown
-	td.VatBreakdown = make([]templateVatLine, len(d.VatBreakdown))
-	for i, vb := range d.VatBreakdown {
-		td.VatBreakdown[i] = templateVatLine{
-			PctFormatted:    fmt.Sprintf("%.0f%%", float64(vb.RateBps)/100.0),
-			AmountFormatted: formatCurrency(vb.AmountCents),
+	vm.VatBreakdown = make([]vatLineViewModel, len(data.VatBreakdown))
+	for i, vat := range data.VatBreakdown {
+		vm.VatBreakdown[i] = vatLineViewModel{
+			PctFormatted:    fmt.Sprintf("%.0f%%", float64(vat.RateBps)/100.0),
+			AmountFormatted: formatCurrency(vat.AmountCents),
 		}
 	}
 
-	return td
+	return vm
 }
 
-// buildFooterText returns the single-line footer text with org info.
-func buildFooterText(d QuotePDFData) string {
-	parts := []string{d.OrganizationName}
-	if d.OrgAddressLine1 != "" {
-		parts = append(parts, d.OrgAddressLine1)
+func buildFooterVM(data QuotePDFData) footerViewModel {
+	parts := []string{data.OrganizationName}
+	if data.OrgKvkNumber != "" {
+		parts = append(parts, "KVK: "+data.OrgKvkNumber)
 	}
-	loc := joinParts(", ", d.OrgPostalCode, d.OrgCity)
-	if loc != "" {
-		parts = append(parts, loc)
+	if data.OrgVatNumber != "" {
+		parts = append(parts, "BTW: "+data.OrgVatNumber)
 	}
-	if d.OrgKvkNumber != "" {
-		parts = append(parts, "KVK: "+d.OrgKvkNumber)
+	if data.OrgPhone != "" {
+		parts = append(parts, "Tel: "+data.OrgPhone)
 	}
-	if d.OrgVatNumber != "" {
-		parts = append(parts, "BTW: "+d.OrgVatNumber)
+	if data.OrgEmail != "" {
+		parts = append(parts, data.OrgEmail)
 	}
-	return strings.Join(parts, "  |  ")
+	return footerViewModel{
+		FooterText: strings.Join(parts, "  ·  "),
+	}
 }
 
-// statusClass returns the CSS class suffix for the quote status.
-func statusClass(status string) string {
-	switch strings.ToLower(status) {
-	case "accepted":
+// ── Template rendering ──────────────────────────────────────────────────
+
+func renderTemplate(name string, data any) ([]byte, error) {
+	raw, err := templateFS.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("read embedded template %s: %w", name, err)
+	}
+
+	tmpl, err := template.New(name).Parse(string(raw))
+	if err != nil {
+		return nil, fmt.Errorf("parse template %s: %w", name, err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("execute template %s: %w", name, err)
+	}
+	return buf.Bytes(), nil
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+func encodeLogoBase64(logo []byte) (string, string) {
+	if len(logo) == 0 {
+		return "", ""
+	}
+	mime := http.DetectContentType(logo)
+	// Normalise to common image types
+	switch {
+	case strings.Contains(mime, "jpeg"):
+		mime = "image/jpeg"
+	case strings.Contains(mime, "png"):
+		mime = "image/png"
+	case strings.Contains(mime, "gif"):
+		mime = "image/gif"
+	case strings.Contains(mime, "svg"):
+		mime = "image/svg+xml"
+	default:
+		mime = "image/png"
+	}
+	return base64.StdEncoding.EncodeToString(logo), mime
+}
+
+var seqNumberRe = regexp.MustCompile(`(\d+)$`)
+
+// extractSequenceNumber pulls the trailing numeric part from a quote number.
+// e.g. "OFF-2026-0042" → "42", "Q-001" → "01"
+func extractSequenceNumber(qn string) string {
+	m := seqNumberRe.FindString(qn)
+	if m == "" {
+		return "01"
+	}
+	// Strip leading zeroes for display, but keep at least two digits
+	n, err := strconv.Atoi(m)
+	if err != nil {
+		return m
+	}
+	return fmt.Sprintf("%02d", n)
+}
+
+func statusCSSClass(status string) string {
+	switch status {
+	case "Accepted":
 		return "status-accepted"
-	case "rejected":
+	case "Rejected":
 		return "status-rejected"
-	case "sent":
+	case "Sent":
 		return "status-sent"
 	default:
 		return "status-default"
 	}
 }
 
-// translateStatus returns the Dutch label for a quote status.
 func translateStatus(status string) string {
-	switch strings.ToLower(status) {
-	case "draft":
+	switch status {
+	case "Draft":
 		return "Concept"
-	case "sent":
+	case "Sent":
 		return "Verzonden"
-	case "accepted":
+	case "Accepted":
 		return "Geaccepteerd"
-	case "rejected":
+	case "Rejected":
 		return "Afgewezen"
-	case "expired":
+	case "Expired":
 		return "Verlopen"
 	default:
 		return status
 	}
 }
 
-// formatCurrency formats cents as a Euro string: "€ 1.234,56".
 func formatCurrency(cents int64) string {
-	negative := cents < 0
-	if negative {
-		cents = -cents
-	}
-
-	euros := cents / 100
-	remainder := cents % 100
-
-	// Format with thousands separator (dot in NL)
-	euroStr := formatThousands(euros)
-
-	result := fmt.Sprintf("€ %s,%02d", euroStr, remainder)
-	if negative {
-		result = "-" + result
-	}
-	return result
-}
-
-// formatThousands formats an integer with dots as thousands separators (Dutch convention).
-func formatThousands(n int64) string {
-	if n < 1000 {
-		return fmt.Sprintf("%d", n)
-	}
-
-	s := fmt.Sprintf("%d", n)
-	var buf strings.Builder
-	offset := len(s) % 3
-	if offset > 0 {
-		buf.WriteString(s[:offset])
-	}
-	for i := offset; i < len(s); i += 3 {
-		if buf.Len() > 0 {
-			buf.WriteByte('.')
-		}
-		buf.WriteString(s[i : i+3])
-	}
-	return buf.String()
-}
-
-// joinParts joins non-empty strings with a separator.
-func joinParts(sep string, parts ...string) string {
-	var nonEmpty []string
-	for _, p := range parts {
-		if p != "" {
-			nonEmpty = append(nonEmpty, p)
-		}
-	}
-	return strings.Join(nonEmpty, sep)
+	return fmt.Sprintf("€ %.2f", float64(cents)/100.0)
 }

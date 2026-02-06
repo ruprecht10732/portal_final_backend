@@ -12,7 +12,6 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/minio/minio-go/v7 v7.0.98
 	github.com/nyaruka/phonenumbers v1.6.8
-	github.com/starwalkn/gotenberg-go-client/v8 v8.12.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/text v0.33.0
 	golang.org/x/time v0.14.0

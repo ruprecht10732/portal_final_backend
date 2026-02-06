@@ -123,10 +123,7 @@ func main() {
 
 	// Gotenberg PDF generator
 	if cfg.IsGotenbergEnabled() {
-		if err := pdf.Init(cfg.GetGotenbergURL()); err != nil {
-			log.Error("failed to initialize PDF generator", "error", err)
-			panic("failed to initialize PDF generator: " + err.Error())
-		}
+		pdf.Init(cfg.GetGotenbergURL())
 		log.Info("gotenberg PDF generator initialized", "url", cfg.GetGotenbergURL())
 	}
 
