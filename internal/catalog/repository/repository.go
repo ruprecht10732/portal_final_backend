@@ -242,18 +242,18 @@ func (r *Repo) HasProductsWithVatRate(ctx context.Context, organizationID uuid.U
 func (r *Repo) CreateProduct(ctx context.Context, params CreateProductParams) (Product, error) {
 	query := `
 		INSERT INTO RAC_catalog_products (
-			organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at`
+			organization_id, vat_rate_id, title, reference, description, price_cents, unit_price_cents, unit_label, labor_time_text, type, period_count, period_unit
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, unit_price_cents, unit_label, labor_time_text, type, period_count, period_unit, created_at, updated_at`
 
 	var product Product
 	var createdAt, updatedAt time.Time
 	if err := r.pool.QueryRow(ctx, query,
 		params.OrganizationID, params.VatRateID, params.Title, params.Reference, params.Description,
-		params.PriceCents, params.Type, params.PeriodCount, params.PeriodUnit,
+		params.PriceCents, params.UnitPriceCents, params.UnitLabel, params.LaborTimeText, params.Type, params.PeriodCount, params.PeriodUnit,
 	).Scan(
 		&product.ID, &product.OrganizationID, &product.VatRateID, &product.Title, &product.Reference,
-		&product.Description, &product.PriceCents, &product.Type, &product.PeriodCount, &product.PeriodUnit,
+		&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PeriodCount, &product.PeriodUnit,
 		&createdAt, &updatedAt,
 	); err != nil {
 		return Product{}, fmt.Errorf("create product: %w", err)
@@ -274,21 +274,24 @@ func (r *Repo) UpdateProduct(ctx context.Context, params UpdateProductParams) (P
 			reference = COALESCE($5, reference),
 			description = COALESCE($6, description),
 			price_cents = COALESCE($7, price_cents),
-			type = COALESCE($8, type),
-			period_count = COALESCE($9, period_count),
-			period_unit = COALESCE($10, period_unit),
+			unit_price_cents = COALESCE($8, unit_price_cents),
+			unit_label = COALESCE($9, unit_label),
+			labor_time_text = COALESCE($10, labor_time_text),
+			type = COALESCE($11, type),
+			period_count = COALESCE($12, period_count),
+			period_unit = COALESCE($13, period_unit),
 			updated_at = now()
 		WHERE id = $1 AND organization_id = $2
-		RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at`
+		RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, unit_price_cents, unit_label, labor_time_text, type, period_count, period_unit, created_at, updated_at`
 
 	var product Product
 	var createdAt, updatedAt time.Time
 	if err := r.pool.QueryRow(ctx, query,
 		params.ID, params.OrganizationID, params.VatRateID, params.Title, params.Reference, params.Description,
-		params.PriceCents, params.Type, params.PeriodCount, params.PeriodUnit,
+		params.PriceCents, params.UnitPriceCents, params.UnitLabel, params.LaborTimeText, params.Type, params.PeriodCount, params.PeriodUnit,
 	).Scan(
 		&product.ID, &product.OrganizationID, &product.VatRateID, &product.Title, &product.Reference,
-		&product.Description, &product.PriceCents, &product.Type, &product.PeriodCount, &product.PeriodUnit,
+		&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PeriodCount, &product.PeriodUnit,
 		&createdAt, &updatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -318,7 +321,7 @@ func (r *Repo) DeleteProduct(ctx context.Context, organizationID uuid.UUID, id u
 // GetProductByID retrieves a product by ID.
 func (r *Repo) GetProductByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (Product, error) {
 	query := `
-		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
+		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, unit_price_cents, unit_label, labor_time_text, type, period_count, period_unit, created_at, updated_at
 		FROM RAC_catalog_products
 		WHERE id = $1 AND organization_id = $2`
 
@@ -326,7 +329,7 @@ func (r *Repo) GetProductByID(ctx context.Context, organizationID uuid.UUID, id 
 	var createdAt, updatedAt time.Time
 	if err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
 		&product.ID, &product.OrganizationID, &product.VatRateID, &product.Title, &product.Reference,
-		&product.Description, &product.PriceCents, &product.Type, &product.PeriodCount, &product.PeriodUnit,
+		&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PeriodCount, &product.PeriodUnit,
 		&createdAt, &updatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -380,7 +383,7 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 
 	orderBy := fmt.Sprintf("%s %s, created_at DESC", sortBy, sortOrder)
 	query := fmt.Sprintf(`
-		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
+		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, unit_price_cents, unit_label, labor_time_text, type, period_count, period_unit, created_at, updated_at
 		FROM RAC_catalog_products
 		WHERE organization_id = $1
 			AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
@@ -410,7 +413,7 @@ func scanProducts(rows pgx.Rows) ([]Product, error) {
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(
 			&product.ID, &product.OrganizationID, &product.VatRateID, &product.Title, &product.Reference,
-			&product.Description, &product.PriceCents, &product.Type, &product.PeriodCount, &product.PeriodUnit,
+			&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PeriodCount, &product.PeriodUnit,
 			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan product: %w", err)
@@ -428,7 +431,7 @@ func scanProducts(rows pgx.Rows) ([]Product, error) {
 // GetProductsByIDs retrieves products by IDs within an organization.
 func (r *Repo) GetProductsByIDs(ctx context.Context, organizationID uuid.UUID, ids []uuid.UUID) ([]Product, error) {
 	query := `
-		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
+		SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, unit_price_cents, unit_label, labor_time_text, type, period_count, period_unit, created_at, updated_at
 		FROM RAC_catalog_products
 		WHERE organization_id = $1 AND id = ANY($2)
 	`
@@ -445,7 +448,7 @@ func (r *Repo) GetProductsByIDs(ctx context.Context, organizationID uuid.UUID, i
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(
 			&product.ID, &product.OrganizationID, &product.VatRateID, &product.Title, &product.Reference,
-			&product.Description, &product.PriceCents, &product.Type, &product.PeriodCount, &product.PeriodUnit,
+			&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PeriodCount, &product.PeriodUnit,
 			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan product: %w", err)
@@ -489,7 +492,7 @@ func (r *Repo) RemoveProductMaterials(ctx context.Context, organizationID uuid.U
 // ListProductMaterials lists materials for a product.
 func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) ([]Product, error) {
 	query := `
-		SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at
+		SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at
 		FROM RAC_catalog_products p
 		JOIN RAC_catalog_product_materials pm
 		  ON pm.material_id = p.id AND pm.organization_id = p.organization_id
@@ -508,7 +511,7 @@ func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUI
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(
 			&product.ID, &product.OrganizationID, &product.VatRateID, &product.Title, &product.Reference,
-			&product.Description, &product.PriceCents, &product.Type, &product.PeriodCount, &product.PeriodUnit,
+			&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PeriodCount, &product.PeriodUnit,
 			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan product material: %w", err)

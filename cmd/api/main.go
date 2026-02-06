@@ -91,11 +91,17 @@ func main() {
 		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketPartnerLogos())
 		panic(storageBucketEnsureErrPrefix + err.Error())
 	}
+	// Ensure the organization logos bucket exists
+	if err := storageSvc.EnsureBucketExists(ctx, cfg.GetMinioBucketOrganizationLogos()); err != nil {
+		log.Error(storageBucketEnsureErrMsg, "error", err, "bucket", cfg.GetMinioBucketOrganizationLogos())
+		panic(storageBucketEnsureErrPrefix + err.Error())
+	}
 	log.Info(
 		"storage service initialized",
 		"leadAttachmentsBucket", cfg.GetMinioBucketLeadServiceAttachments(),
 		"catalogAssetsBucket", cfg.GetMinioBucketCatalogAssets(),
 		"partnerLogosBucket", cfg.GetMinioBucketPartnerLogos(),
+		"organizationLogosBucket", cfg.GetMinioBucketOrganizationLogos(),
 	)
 
 	// ========================================================================
@@ -107,7 +113,7 @@ func main() {
 	notificationModule.RegisterHandlers(eventBus)
 
 	// Initialize domain modules
-	identityModule := identity.NewModule(pool, eventBus, val)
+	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val)
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
 	leadsModule, err := leads.NewModule(pool, eventBus, storageSvc, val, cfg, log)
 	if err != nil {
@@ -136,7 +142,7 @@ func main() {
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)
-	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, log)
+	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication

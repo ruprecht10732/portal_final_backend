@@ -35,20 +35,31 @@ func (r *Repository) getDB(q DBTX) DBTX {
 }
 
 type Organization struct {
-	ID           uuid.UUID
-	Name         string
-	Email        *string
-	Phone        *string
-	VatNumber    *string
-	KvkNumber    *string
-	AddressLine1 *string
-	AddressLine2 *string
-	PostalCode   *string
-	City         *string
-	Country      *string
-	CreatedBy    uuid.UUID
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID              uuid.UUID
+	Name            string
+	Email           *string
+	Phone           *string
+	VatNumber       *string
+	KvkNumber       *string
+	AddressLine1    *string
+	AddressLine2    *string
+	PostalCode      *string
+	City            *string
+	Country         *string
+	LogoFileKey     *string
+	LogoFileName    *string
+	LogoContentType *string
+	LogoSizeBytes   *int64
+	CreatedBy       uuid.UUID
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type OrganizationLogo struct {
+	FileKey     string
+	FileName    string
+	ContentType string
+	SizeBytes   int64
 }
 
 type OrganizationProfileUpdate struct {
@@ -90,6 +101,7 @@ func (r *Repository) GetOrganization(ctx context.Context, organizationID uuid.UU
 	var org Organization
 	err := r.pool.QueryRow(ctx, `
     SELECT id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
+      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
       created_by, created_at, updated_at
     FROM RAC_organizations
     WHERE id = $1
@@ -105,6 +117,10 @@ func (r *Repository) GetOrganization(ctx context.Context, organizationID uuid.UU
 		&org.PostalCode,
 		&org.City,
 		&org.Country,
+		&org.LogoFileKey,
+		&org.LogoFileName,
+		&org.LogoContentType,
+		&org.LogoSizeBytes,
 		&org.CreatedBy,
 		&org.CreatedAt,
 		&org.UpdatedAt,
@@ -137,6 +153,7 @@ func (r *Repository) UpdateOrganizationProfile(
       updated_at = now()
     WHERE id = $1
     RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
+      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
       created_by, created_at, updated_at
 	`, organizationID, update.Name, update.Email, update.Phone, update.VatNumber, update.KvkNumber, update.AddressLine1, update.AddressLine2, update.PostalCode, update.City, update.Country).Scan(
 		&org.ID,
@@ -150,6 +167,97 @@ func (r *Repository) UpdateOrganizationProfile(
 		&org.PostalCode,
 		&org.City,
 		&org.Country,
+		&org.LogoFileKey,
+		&org.LogoFileName,
+		&org.LogoContentType,
+		&org.LogoSizeBytes,
+		&org.CreatedBy,
+		&org.CreatedAt,
+		&org.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Organization{}, ErrNotFound
+	}
+	return org, err
+}
+
+func (r *Repository) UpdateOrganizationLogo(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	logo OrganizationLogo,
+) (Organization, error) {
+	var org Organization
+	err := r.pool.QueryRow(ctx, `
+    UPDATE RAC_organizations
+    SET
+      logo_file_key = $2,
+      logo_file_name = $3,
+      logo_content_type = $4,
+      logo_size_bytes = $5,
+      updated_at = now()
+    WHERE id = $1
+    RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
+      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
+      created_by, created_at, updated_at
+	`, organizationID, logo.FileKey, logo.FileName, logo.ContentType, logo.SizeBytes).Scan(
+		&org.ID,
+		&org.Name,
+		&org.Email,
+		&org.Phone,
+		&org.VatNumber,
+		&org.KvkNumber,
+		&org.AddressLine1,
+		&org.AddressLine2,
+		&org.PostalCode,
+		&org.City,
+		&org.Country,
+		&org.LogoFileKey,
+		&org.LogoFileName,
+		&org.LogoContentType,
+		&org.LogoSizeBytes,
+		&org.CreatedBy,
+		&org.CreatedAt,
+		&org.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Organization{}, ErrNotFound
+	}
+	return org, err
+}
+
+func (r *Repository) ClearOrganizationLogo(
+	ctx context.Context,
+	organizationID uuid.UUID,
+) (Organization, error) {
+	var org Organization
+	err := r.pool.QueryRow(ctx, `
+    UPDATE RAC_organizations
+    SET
+      logo_file_key = NULL,
+      logo_file_name = NULL,
+      logo_content_type = NULL,
+      logo_size_bytes = NULL,
+      updated_at = now()
+    WHERE id = $1
+    RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
+      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
+      created_by, created_at, updated_at
+	`, organizationID).Scan(
+		&org.ID,
+		&org.Name,
+		&org.Email,
+		&org.Phone,
+		&org.VatNumber,
+		&org.KvkNumber,
+		&org.AddressLine1,
+		&org.AddressLine2,
+		&org.PostalCode,
+		&org.City,
+		&org.Country,
+		&org.LogoFileKey,
+		&org.LogoFileName,
+		&org.LogoContentType,
+		&org.LogoSizeBytes,
 		&org.CreatedBy,
 		&org.CreatedAt,
 		&org.UpdatedAt,

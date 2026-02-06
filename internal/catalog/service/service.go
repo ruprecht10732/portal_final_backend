@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/catalog/transport"
+	"portal_final_backend/platform/ai/embeddingapi"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/sanitize"
@@ -17,15 +18,24 @@ import (
 
 // Service provides business logic for catalog.
 type Service struct {
-	repo    repository.Repository
-	storage storage.StorageService
-	bucket  string
-	log     *logger.Logger
+	repo                repository.Repository
+	storage             storage.StorageService
+	bucket              string
+	log                 *logger.Logger
+	embeddingClient     *embeddingapi.Client
+	embeddingCollection string
 }
 
 // New creates a new catalog service.
-func New(repo repository.Repository, storageSvc storage.StorageService, bucket string, log *logger.Logger) *Service {
-	return &Service{repo: repo, storage: storageSvc, bucket: bucket, log: log}
+func New(repo repository.Repository, storageSvc storage.StorageService, bucket string, log *logger.Logger, embeddingClient *embeddingapi.Client, embeddingCollection string) *Service {
+	return &Service{
+		repo:                repo,
+		storage:             storageSvc,
+		bucket:              bucket,
+		log:                 log,
+		embeddingClient:     embeddingClient,
+		embeddingCollection: strings.TrimSpace(embeddingCollection),
+	}
 }
 
 // GetVatRateByID retrieves a VAT rate by ID.
@@ -169,6 +179,10 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 	if err := s.validatePeriod(req.PeriodCount, req.PeriodUnit); err != nil {
 		return transport.ProductResponse{}, err
 	}
+	unitLabel, err := s.validatePricingCreate(req.PriceCents, req.UnitPriceCents, req.UnitLabel)
+	if err != nil {
+		return transport.ProductResponse{}, err
+	}
 	if _, err := s.repo.GetVatRateByID(ctx, tenantID, req.VatRateID); err != nil {
 		return transport.ProductResponse{}, err
 	}
@@ -180,6 +194,9 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 		Reference:      strings.TrimSpace(req.Reference),
 		Description:    sanitize.TextPtr(req.Description),
 		PriceCents:     req.PriceCents,
+		UnitPriceCents: req.UnitPriceCents,
+		UnitLabel:      unitLabel,
+		LaborTimeText:  trimPtr(req.LaborTimeText),
 		Type:           req.Type,
 		PeriodCount:    req.PeriodCount,
 		PeriodUnit:     req.PeriodUnit,
@@ -189,12 +206,17 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 	}
 
 	s.log.Info("product created", "id", product.ID, "reference", product.Reference)
+	s.indexProductAsync(ctx, tenantID, product, "create")
 	return toProductResponse(product), nil
 }
 
 // UpdateProduct updates an existing product.
 func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, req transport.UpdateProductRequest) (transport.ProductResponse, error) {
 	if err := s.ensureVatRateExists(ctx, tenantID, req.VatRateID); err != nil {
+		return transport.ProductResponse{}, err
+	}
+	unitLabel, err := s.validatePricingUpdate(req.PriceCents, req.UnitPriceCents, req.UnitLabel)
+	if err != nil {
 		return transport.ProductResponse{}, err
 	}
 	if err := s.validatePeriodUpdate(req); err != nil {
@@ -212,6 +234,9 @@ func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 		Reference:      trimPtr(req.Reference),
 		Description:    sanitize.TextPtr(req.Description),
 		PriceCents:     req.PriceCents,
+		UnitPriceCents: req.UnitPriceCents,
+		UnitLabel:      unitLabel,
+		LaborTimeText:  trimPtr(req.LaborTimeText),
 		Type:           req.Type,
 		PeriodCount:    req.PeriodCount,
 		PeriodUnit:     req.PeriodUnit,
@@ -223,7 +248,70 @@ func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 	}
 
 	s.log.Info("product updated", "id", product.ID, "reference", product.Reference)
+	s.indexProductAsync(ctx, tenantID, product, "update")
 	return toProductResponse(product), nil
+}
+
+func (s *Service) indexProductAsync(ctx context.Context, tenantID uuid.UUID, product repository.Product, reason string) {
+	if s.embeddingClient == nil {
+		return
+	}
+
+	request := embeddingapi.AddDocumentsRequest{
+		Documents:  []map[string]any{s.buildCatalogDocument(tenantID, product)},
+		TextFields: []string{"name", "description", "reference", "type", "labor_time_text"},
+		IDField:    "id",
+		Collection: s.embeddingCollection,
+	}
+
+	loggerWithCtx := s.log.WithContext(ctx)
+	go func() {
+		resp, err := s.embeddingClient.AddDocuments(context.Background(), request)
+		if err != nil {
+			loggerWithCtx.Error("catalog indexing failed", "error", err, "productId", product.ID, "reason", reason)
+			return
+		}
+		loggerWithCtx.Info("catalog indexed", "productId", product.ID, "documentsAdded", resp.DocumentsAdded, "reason", reason)
+	}()
+}
+
+func (s *Service) buildCatalogDocument(tenantID uuid.UUID, product repository.Product) map[string]any {
+	document := map[string]any{
+		"id":               product.ID.String(),
+		"organization_id":  tenantID.String(),
+		"name":             product.Title,
+		"reference":        product.Reference,
+		"type":             product.Type,
+		"price":            float64(product.PriceCents) / 100,
+		"price_cents":      product.PriceCents,
+		"unit_price":       float64(product.UnitPriceCents) / 100,
+		"unit_price_cents": product.UnitPriceCents,
+		"vat_rate_id":      product.VatRateID.String(),
+	}
+	if product.UnitLabel != nil && strings.TrimSpace(*product.UnitLabel) != "" {
+		document["unit_label"] = strings.TrimSpace(*product.UnitLabel)
+	}
+	if product.LaborTimeText != nil {
+		trimmed := strings.TrimSpace(*product.LaborTimeText)
+		if trimmed != "" {
+			document["labor_time_text"] = trimmed
+		}
+	}
+
+	if product.Description != nil {
+		trimmed := strings.TrimSpace(*product.Description)
+		if trimmed != "" {
+			document["description"] = trimmed
+		}
+	}
+	if product.PeriodCount != nil {
+		document["period_count"] = *product.PeriodCount
+	}
+	if product.PeriodUnit != nil {
+		document["period_unit"] = *product.PeriodUnit
+	}
+
+	return document
 }
 
 // DeleteProduct deletes a product.
@@ -448,18 +536,60 @@ func toVatRateListResponse(items []repository.VatRate, total int, page int, page
 
 func toProductResponse(product repository.Product) transport.ProductResponse {
 	return transport.ProductResponse{
-		ID:          product.ID,
-		VatRateID:   product.VatRateID,
-		Title:       product.Title,
-		Reference:   product.Reference,
-		Description: product.Description,
-		PriceCents:  product.PriceCents,
-		Type:        product.Type,
-		PeriodCount: product.PeriodCount,
-		PeriodUnit:  product.PeriodUnit,
-		CreatedAt:   product.CreatedAt,
-		UpdatedAt:   product.UpdatedAt,
+		ID:             product.ID,
+		VatRateID:      product.VatRateID,
+		Title:          product.Title,
+		Reference:      product.Reference,
+		Description:    product.Description,
+		PriceCents:     product.PriceCents,
+		UnitPriceCents: product.UnitPriceCents,
+		UnitLabel:      product.UnitLabel,
+		LaborTimeText:  product.LaborTimeText,
+		Type:           product.Type,
+		PeriodCount:    product.PeriodCount,
+		PeriodUnit:     product.PeriodUnit,
+		CreatedAt:      product.CreatedAt,
+		UpdatedAt:      product.UpdatedAt,
 	}
+}
+
+func (s *Service) validatePricingCreate(priceCents int64, unitPriceCents int64, unitLabel *string) (*string, error) {
+	trimmed := trimPtr(unitLabel)
+	if priceCents > 0 && unitPriceCents > 0 {
+		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
+	}
+	if priceCents <= 0 && unitPriceCents <= 0 {
+		return nil, apperr.Validation("priceCents or unitPriceCents is required")
+	}
+	if unitPriceCents > 0 && (trimmed == nil || *trimmed == "") {
+		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")
+	}
+	return trimmed, nil
+}
+
+func (s *Service) validatePricingUpdate(priceCents *int64, unitPriceCents *int64, unitLabel *string) (*string, error) {
+	trimmed := trimPtr(unitLabel)
+	if priceCents == nil && unitPriceCents == nil {
+		return trimmed, nil
+	}
+	price := int64(0)
+	unitPrice := int64(0)
+	if priceCents != nil {
+		price = *priceCents
+	}
+	if unitPriceCents != nil {
+		unitPrice = *unitPriceCents
+	}
+	if price > 0 && unitPrice > 0 {
+		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
+	}
+	if price <= 0 && unitPrice <= 0 {
+		return nil, apperr.Validation("priceCents or unitPriceCents is required")
+	}
+	if unitPrice > 0 && (trimmed == nil || *trimmed == "") {
+		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")
+	}
+	return trimmed, nil
 }
 
 func toProductListResponse(items []repository.Product, total int, page int, pageSize int) transport.ProductListResponse {

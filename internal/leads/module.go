@@ -136,6 +136,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 	// Create embedding and qdrant clients if configured
 	var embeddingClient *embeddings.Client
 	var qdrantClient *qdrant.Client
+	var catalogQdrantClient *qdrant.Client
 
 	if cfg.IsEmbeddingEnabled() {
 		embeddingClient = embeddings.NewClient(embeddings.Config{
@@ -152,12 +153,21 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		})
 	}
 
+	if cfg.GetQdrantURL() != "" && cfg.GetCatalogEmbeddingCollection() != "" {
+		catalogQdrantClient = qdrant.NewClient(qdrant.Config{
+			BaseURL:    cfg.GetQdrantURL(),
+			APIKey:     cfg.GetQdrantAPIKey(),
+			Collection: cfg.GetCatalogEmbeddingCollection(),
+		})
+	}
+
 	estimator, err := agent.NewEstimator(agent.EstimatorConfig{
-		APIKey:          cfg.MoonshotAPIKey,
-		Repo:            repo,
-		EventBus:        eventBus,
-		EmbeddingClient: embeddingClient,
-		QdrantClient:    qdrantClient,
+		APIKey:              cfg.MoonshotAPIKey,
+		Repo:                repo,
+		EventBus:            eventBus,
+		EmbeddingClient:     embeddingClient,
+		QdrantClient:        qdrantClient,
+		CatalogQdrantClient: catalogQdrantClient,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, err

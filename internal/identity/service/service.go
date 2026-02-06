@@ -6,9 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
+	"portal_final_backend/internal/identity/transport"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
@@ -21,12 +23,14 @@ const (
 )
 
 type Service struct {
-	repo     *repository.Repository
-	eventBus events.Bus
+	repo       *repository.Repository
+	eventBus   events.Bus
+	storage    storage.StorageService
+	logoBucket string
 }
 
-func New(repo *repository.Repository, eventBus events.Bus) *Service {
-	return &Service{repo: repo, eventBus: eventBus}
+func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string) *Service {
+	return &Service{repo: repo, eventBus: eventBus, storage: storageSvc, logoBucket: logoBucket}
 }
 
 func (s *Service) GetUserOrganizationID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
@@ -312,4 +316,127 @@ func (s *Service) RevokeInvite(ctx context.Context, organizationID, inviteID uui
 	}
 
 	return invite, nil
+}
+
+// PresignLogoUpload generates a presigned URL for uploading an organization logo.
+func (s *Service) PresignLogoUpload(ctx context.Context, organizationID uuid.UUID, req transport.OrgLogoPresignRequest) (transport.OrgLogoPresignResponse, error) {
+	if !storage.IsImageContentType(req.ContentType) {
+		return transport.OrgLogoPresignResponse{}, apperr.Validation("logo must be an image")
+	}
+
+	presigned, err := s.storage.GenerateUploadURL(
+		ctx,
+		s.logoBucket,
+		logoFolder(organizationID),
+		req.FileName,
+		req.ContentType,
+		req.SizeBytes,
+	)
+	if err != nil {
+		return transport.OrgLogoPresignResponse{}, err
+	}
+
+	return transport.OrgLogoPresignResponse{
+		UploadURL: presigned.URL,
+		FileKey:   presigned.FileKey,
+		ExpiresAt: presigned.ExpiresAt.Unix(),
+	}, nil
+}
+
+// SetLogo stores logo metadata after the client has uploaded the file to MinIO.
+func (s *Service) SetLogo(ctx context.Context, organizationID uuid.UUID, req transport.SetOrgLogoRequest) (repository.Organization, error) {
+	org, err := s.repo.GetOrganization(ctx, organizationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.Organization{}, apperr.NotFound("organization not found")
+		}
+		return repository.Organization{}, err
+	}
+
+	if !storage.IsImageContentType(req.ContentType) {
+		return repository.Organization{}, apperr.Validation("logo must be an image")
+	}
+	if err := s.storage.ValidateContentType(req.ContentType); err != nil {
+		return repository.Organization{}, err
+	}
+	if err := s.storage.ValidateFileSize(req.SizeBytes); err != nil {
+		return repository.Organization{}, err
+	}
+	if !strings.HasPrefix(req.FileKey, logoFolder(organizationID)+"/") {
+		return repository.Organization{}, apperr.Validation("invalid logo file key")
+	}
+
+	// Delete old logo if it was a different file
+	if org.LogoFileKey != nil && *org.LogoFileKey != req.FileKey {
+		_ = s.storage.DeleteObject(ctx, s.logoBucket, *org.LogoFileKey)
+	}
+
+	updated, err := s.repo.UpdateOrganizationLogo(ctx, organizationID, repository.OrganizationLogo{
+		FileKey:     req.FileKey,
+		FileName:    req.FileName,
+		ContentType: req.ContentType,
+		SizeBytes:   req.SizeBytes,
+	})
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.Organization{}, apperr.NotFound("organization not found")
+		}
+		return repository.Organization{}, err
+	}
+
+	return updated, nil
+}
+
+// GetLogoDownloadURL generates a presigned download URL for the organization logo.
+func (s *Service) GetLogoDownloadURL(ctx context.Context, organizationID uuid.UUID) (transport.OrgLogoDownloadResponse, error) {
+	org, err := s.repo.GetOrganization(ctx, organizationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return transport.OrgLogoDownloadResponse{}, apperr.NotFound("organization not found")
+		}
+		return transport.OrgLogoDownloadResponse{}, err
+	}
+
+	if org.LogoFileKey == nil || *org.LogoFileKey == "" {
+		return transport.OrgLogoDownloadResponse{}, apperr.NotFound("logo not found")
+	}
+
+	presigned, err := s.storage.GenerateDownloadURL(ctx, s.logoBucket, *org.LogoFileKey)
+	if err != nil {
+		return transport.OrgLogoDownloadResponse{}, err
+	}
+
+	return transport.OrgLogoDownloadResponse{
+		DownloadURL: presigned.URL,
+		ExpiresAt:   presigned.ExpiresAt.Unix(),
+	}, nil
+}
+
+// DeleteLogo removes the organization logo from storage and clears the metadata.
+func (s *Service) DeleteLogo(ctx context.Context, organizationID uuid.UUID) (repository.Organization, error) {
+	org, err := s.repo.GetOrganization(ctx, organizationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.Organization{}, apperr.NotFound("organization not found")
+		}
+		return repository.Organization{}, err
+	}
+
+	if org.LogoFileKey != nil && *org.LogoFileKey != "" {
+		_ = s.storage.DeleteObject(ctx, s.logoBucket, *org.LogoFileKey)
+	}
+
+	updated, err := s.repo.ClearOrganizationLogo(ctx, organizationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.Organization{}, apperr.NotFound("organization not found")
+		}
+		return repository.Organization{}, err
+	}
+
+	return updated, nil
+}
+
+func logoFolder(organizationID uuid.UUID) string {
+	return "organizations/" + organizationID.String()
 }

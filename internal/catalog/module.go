@@ -7,6 +7,8 @@ import (
 	"portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/catalog/service"
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/platform/ai/embeddingapi"
+	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
 
@@ -21,9 +23,19 @@ type Module struct {
 }
 
 // NewModule creates and initializes the catalog module.
-func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket string, val *validator.Validator, log *logger.Logger) *Module {
+func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket string, val *validator.Validator, cfg *config.Config, log *logger.Logger) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, storageSvc, bucket, log)
+
+	var embedClient *embeddingapi.Client
+	if cfg.IsCatalogEmbeddingEnabled() {
+		embedClient = embeddingapi.NewClient(embeddingapi.Config{
+			BaseURL:    cfg.GetCatalogEmbeddingAPIURL(),
+			APIKey:     cfg.GetCatalogEmbeddingAPIKey(),
+			Collection: cfg.GetCatalogEmbeddingCollection(),
+		})
+	}
+
+	svc := service.New(repo, storageSvc, bucket, log, embedClient, cfg.GetCatalogEmbeddingCollection())
 	h := handler.New(svc, val)
 
 	return &Module{

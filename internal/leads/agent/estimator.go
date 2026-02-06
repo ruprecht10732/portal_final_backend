@@ -34,11 +34,12 @@ type Estimator struct {
 
 // EstimatorConfig holds configuration for creating an Estimator agent.
 type EstimatorConfig struct {
-	APIKey          string
-	Repo            repository.LeadsRepository
-	EventBus        events.Bus
-	EmbeddingClient *embeddings.Client // Optional: enables product search
-	QdrantClient    *qdrant.Client     // Optional: enables product search
+	APIKey              string
+	Repo                repository.LeadsRepository
+	EventBus            events.Bus
+	EmbeddingClient     *embeddings.Client // Optional: enables product search
+	QdrantClient        *qdrant.Client     // Optional: fallback collection search
+	CatalogQdrantClient *qdrant.Client     // Optional: catalog collection search
 }
 
 // NewEstimator creates an Estimator agent.
@@ -50,10 +51,11 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 	})
 
 	deps := &ToolDependencies{
-		Repo:            cfg.Repo,
-		EventBus:        cfg.EventBus,
-		EmbeddingClient: cfg.EmbeddingClient,
-		QdrantClient:    cfg.QdrantClient,
+		Repo:                cfg.Repo,
+		EventBus:            cfg.EventBus,
+		EmbeddingClient:     cfg.EmbeddingClient,
+		QdrantClient:        cfg.QdrantClient,
+		CatalogQdrantClient: cfg.CatalogQdrantClient,
 	}
 
 	saveEstimationTool, err := createSaveEstimationTool(deps)

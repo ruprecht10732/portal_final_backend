@@ -41,25 +41,31 @@ type VatRateListResponse struct {
 // Products
 
 type CreateProductRequest struct {
-	Title       string    `json:"title" validate:"required,min=1,max=200"`
-	Reference   string    `json:"reference" validate:"required,min=1,max=100"`
-	Description *string   `json:"description,omitempty" validate:"omitempty,max=1000"`
-	PriceCents  int64     `json:"priceCents" validate:"required,min=0"`
-	VatRateID   uuid.UUID `json:"vatRateId" validate:"required"`
-	Type        string    `json:"type" validate:"required,oneof=digital_service service product material"`
-	PeriodCount *int      `json:"periodCount,omitempty" validate:"omitempty,min=1"`
-	PeriodUnit  *string   `json:"periodUnit,omitempty" validate:"omitempty,oneof=day week month quarter year"`
+	Title          string    `json:"title" validate:"required,min=1,max=200"`
+	Reference      string    `json:"reference" validate:"required,min=1,max=100"`
+	Description    *string   `json:"description,omitempty" validate:"omitempty,max=1000"`
+	PriceCents     int64     `json:"priceCents" validate:"min=0"`
+	UnitPriceCents int64     `json:"unitPriceCents,omitempty" validate:"min=0"`
+	UnitLabel      *string   `json:"unitLabel,omitempty" validate:"omitempty,max=50"`
+	LaborTimeText  *string   `json:"laborTimeText,omitempty" validate:"omitempty,max=100"`
+	VatRateID      uuid.UUID `json:"vatRateId" validate:"required"`
+	Type           string    `json:"type" validate:"required,oneof=digital_service service product material"`
+	PeriodCount    *int      `json:"periodCount,omitempty" validate:"omitempty,min=1"`
+	PeriodUnit     *string   `json:"periodUnit,omitempty" validate:"omitempty,oneof=day week month quarter year"`
 }
 
 type UpdateProductRequest struct {
-	Title       *string    `json:"title,omitempty" validate:"omitempty,min=1,max=200"`
-	Reference   *string    `json:"reference,omitempty" validate:"omitempty,min=1,max=100"`
-	Description *string    `json:"description,omitempty" validate:"omitempty,max=1000"`
-	PriceCents  *int64     `json:"priceCents,omitempty" validate:"omitempty,min=0"`
-	VatRateID   *uuid.UUID `json:"vatRateId,omitempty" validate:"omitempty"`
-	Type        *string    `json:"type,omitempty" validate:"omitempty,oneof=digital_service service product material"`
-	PeriodCount *int       `json:"periodCount,omitempty" validate:"omitempty,min=1"`
-	PeriodUnit  *string    `json:"periodUnit,omitempty" validate:"omitempty,oneof=day week month quarter year"`
+	Title          *string    `json:"title,omitempty" validate:"omitempty,min=1,max=200"`
+	Reference      *string    `json:"reference,omitempty" validate:"omitempty,min=1,max=100"`
+	Description    *string    `json:"description,omitempty" validate:"omitempty,max=1000"`
+	PriceCents     *int64     `json:"priceCents,omitempty" validate:"omitempty,min=0"`
+	UnitPriceCents *int64     `json:"unitPriceCents,omitempty" validate:"omitempty,min=0"`
+	UnitLabel      *string    `json:"unitLabel,omitempty" validate:"omitempty,max=50"`
+	LaborTimeText  *string    `json:"laborTimeText,omitempty" validate:"omitempty,max=100"`
+	VatRateID      *uuid.UUID `json:"vatRateId,omitempty" validate:"omitempty"`
+	Type           *string    `json:"type,omitempty" validate:"omitempty,oneof=digital_service service product material"`
+	PeriodCount    *int       `json:"periodCount,omitempty" validate:"omitempty,min=1"`
+	PeriodUnit     *string    `json:"periodUnit,omitempty" validate:"omitempty,oneof=day week month quarter year"`
 }
 
 type ListProductsRequest struct {
@@ -73,17 +79,20 @@ type ListProductsRequest struct {
 }
 
 type ProductResponse struct {
-	ID          uuid.UUID `json:"id"`
-	VatRateID   uuid.UUID `json:"vatRateId"`
-	Title       string    `json:"title"`
-	Reference   string    `json:"reference"`
-	Description *string   `json:"description,omitempty"`
-	PriceCents  int64     `json:"priceCents"`
-	Type        string    `json:"type"`
-	PeriodCount *int      `json:"periodCount,omitempty"`
-	PeriodUnit  *string   `json:"periodUnit,omitempty"`
-	CreatedAt   string    `json:"createdAt"`
-	UpdatedAt   string    `json:"updatedAt"`
+	ID             uuid.UUID `json:"id"`
+	VatRateID      uuid.UUID `json:"vatRateId"`
+	Title          string    `json:"title"`
+	Reference      string    `json:"reference"`
+	Description    *string   `json:"description,omitempty"`
+	PriceCents     int64     `json:"priceCents"`
+	UnitPriceCents int64     `json:"unitPriceCents"`
+	UnitLabel      *string   `json:"unitLabel,omitempty"`
+	LaborTimeText  *string   `json:"laborTimeText,omitempty"`
+	Type           string    `json:"type"`
+	PeriodCount    *int      `json:"periodCount,omitempty"`
+	PeriodUnit     *string   `json:"periodUnit,omitempty"`
+	CreatedAt      string    `json:"createdAt"`
+	UpdatedAt      string    `json:"updatedAt"`
 }
 
 type ProductListResponse struct {

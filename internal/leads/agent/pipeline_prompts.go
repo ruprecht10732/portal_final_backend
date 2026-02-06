@@ -134,14 +134,17 @@ Photo Analysis:
 Instruction:
 1) Identify the materials/products needed based on the service description and photos.
 2) Call SearchProductMaterials with a query describing the materials needed (e.g., "isolation panels", "wood planks", "roofing materials").
+   Always prefer the catalog collection by default.
+   If the user explicitly says not to use the catalog (e.g., "ignore catalog", "no catalog", "zonder catalogus"), set useCatalog=false.
    You may call SearchProductMaterials multiple times for different material categories.
 	Use standard, mid-range materials unless the request explicitly calls for heavy-duty or premium.
 	If multiple products are returned, prefer the most typical/affordable option for the scenario.
 3) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
 	Provide structured inputs (material items, quantities, labor hours range, hourly rate range, optional extra costs).
+	If catalog search results include a labor time, use it as the baseline for labor hours (adjust if the scope indicates otherwise).
 4) Determine scope: Small, Medium, or Large based on work complexity.
 5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
-	Include the products found and their prices in the notes.
+	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
 	Format notes as multiline Markdown with blank lines between sections.
 	Use headings (bold labels) and bullet/numbered lists so each item is on its own line.
 	Example structure:

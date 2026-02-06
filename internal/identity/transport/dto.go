@@ -47,15 +47,47 @@ type UpdateOrganizationRequest struct {
 }
 
 type OrganizationResponse struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Email        *string `json:"email,omitempty"`
-	Phone        *string `json:"phone,omitempty"`
-	VatNumber    *string `json:"vatNumber,omitempty"`
-	KvkNumber    *string `json:"kvkNumber,omitempty"`
-	AddressLine1 *string `json:"addressLine1,omitempty"`
-	AddressLine2 *string `json:"addressLine2,omitempty"`
-	PostalCode   *string `json:"postalCode,omitempty"`
-	City         *string `json:"city,omitempty"`
-	Country      *string `json:"country,omitempty"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Email           *string `json:"email,omitempty"`
+	Phone           *string `json:"phone,omitempty"`
+	VatNumber       *string `json:"vatNumber,omitempty"`
+	KvkNumber       *string `json:"kvkNumber,omitempty"`
+	AddressLine1    *string `json:"addressLine1,omitempty"`
+	AddressLine2    *string `json:"addressLine2,omitempty"`
+	PostalCode      *string `json:"postalCode,omitempty"`
+	City            *string `json:"city,omitempty"`
+	Country         *string `json:"country,omitempty"`
+	LogoFileKey     *string `json:"logoFileKey,omitempty"`
+	LogoFileName    *string `json:"logoFileName,omitempty"`
+	LogoContentType *string `json:"logoContentType,omitempty"`
+	LogoSizeBytes   *int64  `json:"logoSizeBytes,omitempty"`
+}
+
+// OrgLogoPresignRequest is the request for a presigned organization logo upload URL.
+type OrgLogoPresignRequest struct {
+	FileName    string `json:"fileName" validate:"required,min=1,max=255"`
+	ContentType string `json:"contentType" validate:"required,min=1,max=100"`
+	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1"`
+}
+
+// OrgLogoPresignResponse returns a presigned logo upload URL.
+type OrgLogoPresignResponse struct {
+	UploadURL string `json:"uploadUrl"`
+	FileKey   string `json:"fileKey"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
+
+// SetOrgLogoRequest stores logo metadata after upload.
+type SetOrgLogoRequest struct {
+	FileKey     string `json:"fileKey" validate:"required,min=1,max=500"`
+	FileName    string `json:"fileName" validate:"required,min=1,max=255"`
+	ContentType string `json:"contentType" validate:"required,min=1,max=100"`
+	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1"`
+}
+
+// OrgLogoDownloadResponse returns a presigned download URL.
+type OrgLogoDownloadResponse struct {
+	DownloadURL string `json:"downloadUrl"`
+	ExpiresAt   int64  `json:"expiresAt"`
 }

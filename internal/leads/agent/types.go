@@ -92,21 +92,6 @@ type EmailDraft struct {
 	CreatedAt   time.Time
 }
 
-// GetPricingInput for service pricing lookup
-type GetPricingInput struct {
-	ServiceCategory string `json:"serviceCategory"` // "plumbing", "hvac", "electrical", "carpentry", "general"
-	ServiceType     string `json:"serviceType"`     // specific service like "leaky_faucet", "boiler_repair", etc.
-	Urgency         string `json:"urgency"`         // "normal", "same_day", "emergency"
-}
-
-type GetPricingOutput struct {
-	PriceRangeLow    int      `json:"priceRangeLow"`
-	PriceRangeHigh   int      `json:"priceRangeHigh"`
-	TypicalDuration  string   `json:"typicalDuration"`
-	IncludedServices []string `json:"includedServices"`
-	Notes            string   `json:"notes"`
-}
-
 // SuggestSpecialistInput for recommending the right specialist
 type SuggestSpecialistInput struct {
 	ProblemDescription string `json:"problemDescription"`
@@ -164,8 +149,9 @@ type SaveEstimationOutput struct {
 
 // SearchProductMaterialsInput searches the product catalog for matching materials.
 type SearchProductMaterialsInput struct {
-	Query string `json:"query"` // Natural language description of materials needed
-	Limit int    `json:"limit"` // Max number of results (default 5)
+	Query      string `json:"query"`                // Natural language description of materials needed
+	Limit      int    `json:"limit"`                // Max number of results (default 5)
+	UseCatalog *bool  `json:"useCatalog,omitempty"` // Prefer catalog collection when true
 }
 
 // ProductResult represents a product found in the catalog.
@@ -174,7 +160,8 @@ type ProductResult struct {
 	Description string  `json:"description,omitempty"`
 	Price       float64 `json:"price"`
 	Unit        string  `json:"unit,omitempty"` // e.g., "per m2", "per piece", "per meter"
-	Score       float64 `json:"score"`          // Similarity score
+	LaborTime   string  `json:"laborTime,omitempty"`
+	Score       float64 `json:"score"` // Similarity score
 }
 
 // SearchProductMaterialsOutput contains the search results.

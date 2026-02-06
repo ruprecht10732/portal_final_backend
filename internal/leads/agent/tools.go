@@ -131,6 +131,7 @@ type ToolDependencies struct {
 	EventBus             events.Bus
 	EmbeddingClient      *embeddings.Client
 	QdrantClient         *qdrant.Client
+	CatalogQdrantClient  *qdrant.Client
 	mu                   sync.RWMutex
 	tenantID             *uuid.UUID
 	leadID               *uuid.UUID
@@ -244,7 +245,7 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 
 // IsProductSearchEnabled returns true if both embedding and Qdrant clients are configured.
 func (d *ToolDependencies) IsProductSearchEnabled() bool {
-	return d.EmbeddingClient != nil && d.QdrantClient != nil
+	return d.EmbeddingClient != nil && (d.CatalogQdrantClient != nil || d.QdrantClient != nil)
 }
 
 func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
@@ -798,16 +799,6 @@ func createDraftEmailTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
-// createGetPricingTool creates the GetServicePricing tool
-func createGetPricingTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "GetServicePricing",
-		Description: "Retrieves typical pricing information for home services. Use this to help with objection handling around pricing, or to give customers realistic expectations. Returns price ranges, typical duration, and what's included.",
-	}, func(ctx tool.Context, input GetPricingInput) (GetPricingOutput, error) {
-		return getServicePricing(input.ServiceCategory, input.ServiceType, input.Urgency), nil
-	})
-}
-
 // createSuggestSpecialistTool creates the SuggestSpecialist tool
 func createSuggestSpecialistTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
@@ -1084,6 +1075,10 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	}
 
 	limit := normalizeLimit(input.Limit, 5, 20)
+	useCatalog := true
+	if input.UseCatalog != nil {
+		useCatalog = *input.UseCatalog
+	}
 
 	vector, err := deps.EmbeddingClient.Embed(ctx, query)
 	if err != nil {
@@ -1091,14 +1086,35 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to generate embedding for query"}, err
 	}
 
+	if useCatalog && deps.CatalogQdrantClient != nil {
+		results, err := deps.CatalogQdrantClient.Search(ctx, vector, limit)
+		if err != nil {
+			log.Printf("SearchProductMaterials: catalog search failed: %v", err)
+		} else {
+			products := convertSearchResults(results)
+			if len(products) > 0 {
+				log.Printf("SearchProductMaterials: catalog query=%q found %d products", query, len(products))
+				return SearchProductMaterialsOutput{
+					Products: products,
+					Message:  fmt.Sprintf("Found %d matching products", len(products)),
+				}, nil
+			}
+			log.Printf("SearchProductMaterials: catalog query=%q found 0 products, falling back", query)
+		}
+	}
+
+	if deps.QdrantClient == nil {
+		return SearchProductMaterialsOutput{Products: nil, Message: "Fallback product search is not configured"}, nil
+	}
+
 	results, err := deps.QdrantClient.Search(ctx, vector, limit)
 	if err != nil {
-		log.Printf("SearchProductMaterials: qdrant search failed: %v", err)
+		log.Printf("SearchProductMaterials: fallback search failed: %v", err)
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to search product catalog"}, err
 	}
 
 	products := convertSearchResults(results)
-	log.Printf("SearchProductMaterials: query=%q found %d products", query, len(products))
+	log.Printf("SearchProductMaterials: fallback query=%q found %d products", query, len(products))
 
 	return SearchProductMaterialsOutput{
 		Products: products,
@@ -1153,8 +1169,18 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 	if price, ok := payload["price"].(float64); ok {
 		product.Price = price
 	}
-	if unit, ok := payload["unit"].(string); ok {
+	if unitLabel, ok := payload["unit_label"].(string); ok {
+		product.Unit = unitLabel
+	} else if unit, ok := payload["unit"].(string); ok {
 		product.Unit = unit
+	}
+	if laborTime, ok := payload["labor_time_text"].(string); ok {
+		product.LaborTime = strings.TrimSpace(laborTime)
+	}
+	if product.Price <= 0 {
+		if unitPrice, ok := payload["unit_price"].(float64); ok {
+			product.Price = unitPrice
+		}
 	}
 	return product
 }
@@ -1162,7 +1188,7 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 func createSearchProductMaterialsTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SearchProductMaterials",
-		Description: "Searches the product catalog for materials and their prices. Use this to find relevant products for estimation. Returns product names, descriptions, prices, and units.",
+		Description: "Searches the product catalog for materials and their prices. Use this to find relevant products for estimation. Returns product names, descriptions, prices, units, and labor time when available.",
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
 	})
@@ -1192,13 +1218,6 @@ func buildTools(deps *ToolDependencies) ([]tool.Tool, error) {
 		errs = append(errs, fmt.Errorf("DraftFollowUpEmail tool: %w", err))
 	} else {
 		tools = append(tools, draftEmailTool)
-	}
-
-	getPricingTool, err := createGetPricingTool()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("GetServicePricing tool: %w", err))
-	} else {
-		tools = append(tools, getPricingTool)
 	}
 
 	suggestSpecialistTool, err := createSuggestSpecialistTool()

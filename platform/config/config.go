@@ -77,6 +77,7 @@ type MinIOConfig interface {
 	GetMinioBucketLeadServiceAttachments() string
 	GetMinioBucketCatalogAssets() string
 	GetMinioBucketPartnerLogos() string
+	GetMinioBucketOrganizationLogos() string
 	IsMinIOEnabled() bool
 }
 
@@ -99,6 +100,14 @@ type EmbeddingConfig interface {
 	GetEmbeddingAPIURL() string
 	GetEmbeddingAPIKey() string
 	IsEmbeddingEnabled() bool
+}
+
+// CatalogEmbeddingConfig provides settings for catalog embedding indexing.
+type CatalogEmbeddingConfig interface {
+	GetCatalogEmbeddingAPIURL() string
+	GetCatalogEmbeddingAPIKey() string
+	GetCatalogEmbeddingCollection() string
+	IsCatalogEmbeddingEnabled() bool
 }
 
 // =============================================================================
@@ -139,11 +148,15 @@ type Config struct {
 	MinioBucketLeadServiceAttachments string
 	MinioBucketCatalogAssets          string
 	MinioBucketPartnerLogos           string
+	MinioBucketOrganizationLogos      string
 	QdrantURL                         string
 	QdrantAPIKey                      string
 	QdrantCollection                  string
 	EmbeddingAPIURL                   string
 	EmbeddingAPIKey                   string
+	CatalogEmbeddingAPIURL            string
+	CatalogEmbeddingAPIKey            string
+	CatalogEmbeddingCollection        string
 }
 
 // =============================================================================
@@ -199,6 +212,9 @@ func (c *Config) GetMinioBucketCatalogAssets() string {
 func (c *Config) GetMinioBucketPartnerLogos() string {
 	return c.MinioBucketPartnerLogos
 }
+func (c *Config) GetMinioBucketOrganizationLogos() string {
+	return c.MinioBucketOrganizationLogos
+}
 func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
 
 // EnergyLabelConfig implementation
@@ -217,6 +233,16 @@ func (c *Config) IsQdrantEnabled() bool {
 func (c *Config) GetEmbeddingAPIURL() string { return c.EmbeddingAPIURL }
 func (c *Config) GetEmbeddingAPIKey() string { return c.EmbeddingAPIKey }
 func (c *Config) IsEmbeddingEnabled() bool   { return c.EmbeddingAPIURL != "" }
+
+// CatalogEmbeddingConfig implementation
+func (c *Config) GetCatalogEmbeddingAPIURL() string { return c.CatalogEmbeddingAPIURL }
+func (c *Config) GetCatalogEmbeddingAPIKey() string { return c.CatalogEmbeddingAPIKey }
+func (c *Config) GetCatalogEmbeddingCollection() string {
+	return c.CatalogEmbeddingCollection
+}
+func (c *Config) IsCatalogEmbeddingEnabled() bool {
+	return c.CatalogEmbeddingAPIURL != ""
+}
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
@@ -269,11 +295,15 @@ func Load() (*Config, error) {
 		MinioBucketLeadServiceAttachments: getEnv("MINIO_BUCKET_LEAD_SERVICE_ATTACHMENTS", "lead-service-attachments"),
 		MinioBucketCatalogAssets:          getEnv("MINIO_BUCKET_CATALOG_ASSETS", "catalog-assets"),
 		MinioBucketPartnerLogos:           getEnv("MINIO_BUCKET_PARTNER_LOGOS", "partner-logos"),
+		MinioBucketOrganizationLogos:      getEnv("MINIO_BUCKET_ORGANIZATION_LOGOS", "organization-logos"),
 		QdrantURL:                         getEnv("QDRANT_URL", ""),
 		QdrantAPIKey:                      getEnv("QDRANT_API_KEY", ""),
 		QdrantCollection:                  getEnv("QDRANT_COLLECTION", ""),
 		EmbeddingAPIURL:                   getEnv("EMBEDDING_API_URL", ""),
 		EmbeddingAPIKey:                   getEnv("EMBEDDING_API_KEY", ""),
+		CatalogEmbeddingAPIURL:            getEnv("CATALOG_EMBEDDING_API_URL", ""),
+		CatalogEmbeddingAPIKey:            getEnv("CATALOG_EMBEDDING_API_KEY", ""),
+		CatalogEmbeddingCollection:        getEnv("CATALOG_EMBEDDING_COLLECTION", "catalog"),
 	}
 
 	if cfg.DatabaseURL == "" {

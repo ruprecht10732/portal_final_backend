@@ -25,6 +25,9 @@ type Product struct {
 	Reference      string    `db:"reference"`
 	Description    *string   `db:"description"`
 	PriceCents     int64     `db:"price_cents"`
+	UnitPriceCents int64     `db:"unit_price_cents"`
+	UnitLabel      *string   `db:"unit_label"`
+	LaborTimeText  *string   `db:"labor_time_text"`
 	Type           string    `db:"type"`
 	PeriodCount    *int      `db:"period_count"`
 	PeriodUnit     *string   `db:"period_unit"`
@@ -79,6 +82,9 @@ type CreateProductParams struct {
 	Reference      string
 	Description    *string
 	PriceCents     int64
+	UnitPriceCents int64
+	UnitLabel      *string
+	LaborTimeText  *string
 	Type           string
 	PeriodCount    *int
 	PeriodUnit     *string
@@ -93,6 +99,9 @@ type UpdateProductParams struct {
 	Reference      *string
 	Description    *string
 	PriceCents     *int64
+	UnitPriceCents *int64
+	UnitLabel      *string
+	LaborTimeText  *string
 	Type           *string
 	PeriodCount    *int
 	PeriodUnit     *string

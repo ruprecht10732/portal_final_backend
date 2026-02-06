@@ -26,7 +26,7 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 
 	rows, err := r.pool.Query(ctx, `
 		SELECT p.id, p.business_name, p.contact_email,
-			(point(p.longitude, p.latitude) <@> point($1, $2)) * 1.60934 AS dist_km
+			earth_distance(ll_to_earth($2, $1), ll_to_earth(p.latitude, p.longitude)) / 1000.0 AS dist_km
 		FROM RAC_partners p
 		JOIN RAC_partner_service_types pst ON pst.partner_id = p.id
 		JOIN RAC_service_types st ON st.id = pst.service_type_id AND st.organization_id = p.organization_id
@@ -34,7 +34,7 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 			AND st.is_active = true
 			AND (st.name = $4 OR st.slug = $4)
 			AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-			AND (point(p.longitude, p.latitude) <@> point($1, $2)) < ($5 / 1.60934)
+			AND earth_distance(ll_to_earth($2, $1), ll_to_earth(p.latitude, p.longitude)) <= ($5 * 1000.0)
 		ORDER BY dist_km ASC
 		LIMIT 5
 	`, lon, lat, organizationID, serviceType, radiusKm)
