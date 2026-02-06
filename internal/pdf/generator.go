@@ -9,10 +9,12 @@ import (
 
 	"github.com/johnfercher/maroto/v2"
 	"github.com/johnfercher/maroto/v2/pkg/components/col"
+	"github.com/johnfercher/maroto/v2/pkg/components/image"
 	"github.com/johnfercher/maroto/v2/pkg/components/row"
 	"github.com/johnfercher/maroto/v2/pkg/components/text"
 	"github.com/johnfercher/maroto/v2/pkg/config"
 	"github.com/johnfercher/maroto/v2/pkg/consts/align"
+	"github.com/johnfercher/maroto/v2/pkg/consts/extension"
 	"github.com/johnfercher/maroto/v2/pkg/consts/fontstyle"
 	"github.com/johnfercher/maroto/v2/pkg/core"
 	"github.com/johnfercher/maroto/v2/pkg/props"
@@ -28,6 +30,7 @@ type QuotePDFData struct {
 	ValidUntil       *time.Time
 	Notes            *string
 	SignatureName    *string
+	SignatureImage   []byte // raw PNG bytes of the drawn signature
 	AcceptedAt       *time.Time
 	Items            []transport.PublicQuoteItemResponse
 	SubtotalCents    int64
@@ -248,13 +251,32 @@ func notesRows(notes string) []core.Row {
 }
 
 func signatureRows(data QuotePDFData) []core.Row {
-	return []core.Row{
+	rows := []core.Row{
 		separatorRow(),
 		row.New(8).Add(
 			col.New(6).Add(text.New(fmt.Sprintf("Geaccepteerd door: %s", *data.SignatureName), props.Text{Size: 9, Style: fontstyle.Bold})),
 			col.New(6).Add(text.New(fmt.Sprintf("Datum: %s", data.AcceptedAt.Format("02-01-2006 15:04")), props.Text{Size: 9, Align: align.Right, Color: grayColor()})),
 		),
 	}
+
+	// Render the drawn signature image if available
+	if len(data.SignatureImage) > 0 {
+		rows = append(rows,
+			row.New(4), // spacer
+			row.New(25).Add(
+				col.New(2).Add(text.New("Handtekening:", props.Text{Size: 8, Color: grayColor(), Top: 8})),
+				col.New(5).Add(
+					image.NewFromBytes(data.SignatureImage, extension.Png, props.Rect{
+						Center:  false,
+						Percent: 90,
+					}),
+				),
+				col.New(5), // empty right space
+			),
+		)
+	}
+
+	return rows
 }
 
 func statusColor(status string) *props.Color {

@@ -17,12 +17,27 @@ import (
 	"github.com/google/uuid"
 )
 
+// QuoteAcceptanceProcessor handles the post-acceptance side effects:
+// PDF generation, upload to storage, and persisting the file key.
+type QuoteAcceptanceProcessor interface {
+	// GenerateAndStorePDF builds the quote PDF, uploads it to storage,
+	// and persists the file key. Returns the file key, the raw PDF bytes, or an error.
+	GenerateAndStorePDF(ctx context.Context, quoteID, organizationID uuid.UUID, orgName, customerName, signatureName string) (fileKey string, pdfBytes []byte, err error)
+}
+
+// QuoteActivityWriter persists activity log entries for quotes.
+type QuoteActivityWriter interface {
+	CreateActivity(ctx context.Context, quoteID, orgID uuid.UUID, eventType, message string, metadata map[string]interface{}) error
+}
+
 // Module handles all notification-related event subscriptions.
 type Module struct {
-	sender email.Sender
-	cfg    config.NotificationConfig
-	log    *logger.Logger
-	sse    *sse.Service
+	sender    email.Sender
+	cfg       config.NotificationConfig
+	log       *logger.Logger
+	sse       *sse.Service
+	pdfProc   QuoteAcceptanceProcessor
+	actWriter QuoteActivityWriter
 }
 
 // New creates a new notification module.
@@ -36,6 +51,12 @@ func New(sender email.Sender, cfg config.NotificationConfig, log *logger.Logger)
 
 // SetSSE injects the SSE service so quote events can be pushed to agents.
 func (m *Module) SetSSE(s *sse.Service) { m.sse = s }
+
+// SetQuoteAcceptanceProcessor injects the processor for PDF generation on quote acceptance.
+func (m *Module) SetQuoteAcceptanceProcessor(p QuoteAcceptanceProcessor) { m.pdfProc = p }
+
+// SetQuoteActivityWriter injects the writer for persisting quote activity log entries.
+func (m *Module) SetQuoteActivityWriter(w QuoteActivityWriter) { m.actWriter = w }
 
 // RegisterHandlers subscribes to all relevant domain events on the event bus.
 func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
@@ -199,51 +220,139 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 		"quoteNumber": e.QuoteNumber,
 		"status":      "Sent",
 	})
+
+	// Persist activity
+	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_sent",
+		"Offerte verstuurd naar "+e.ConsumerName,
+		map[string]interface{}{"quoteNumber": e.QuoteNumber, "consumerEmail": e.ConsumerEmail})
+
 	m.log.Info("quote sent event processed", "quoteId", e.QuoteID)
 	return nil
 }
 
-func (m *Module) handleQuoteViewed(_ context.Context, e events.QuoteViewed) error {
+func (m *Module) handleQuoteViewed(ctx context.Context, e events.QuoteViewed) error {
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteViewed, e.QuoteID, map[string]interface{}{
 		"viewerIp": e.ViewerIP,
 	})
+	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_viewed",
+		"Klant heeft de offerte geopend",
+		map[string]interface{}{"viewerIp": e.ViewerIP})
 	m.log.Info("quote viewed event processed", "quoteId", e.QuoteID)
 	return nil
 }
 
-func (m *Module) handleQuoteUpdatedByCustomer(_ context.Context, e events.QuoteUpdatedByCustomer) error {
+func (m *Module) handleQuoteUpdatedByCustomer(ctx context.Context, e events.QuoteUpdatedByCustomer) error {
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteItemToggled, e.QuoteID, map[string]interface{}{
 		"itemId":        e.ItemID,
 		"isSelected":    e.IsSelected,
 		"newTotalCents": e.NewTotalCents,
 	})
+	action := "uitgeschakeld"
+	if e.IsSelected {
+		action = "ingeschakeld"
+	}
+	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_item_toggled",
+		"Klant heeft een item "+action,
+		map[string]interface{}{"itemId": e.ItemID.String(), "isSelected": e.IsSelected, "newTotalCents": e.NewTotalCents})
 	m.log.Info("quote item toggled event processed", "quoteId", e.QuoteID, "itemId", e.ItemID)
 	return nil
 }
 
-func (m *Module) handleQuoteAnnotated(_ context.Context, e events.QuoteAnnotated) error {
+func (m *Module) handleQuoteAnnotated(ctx context.Context, e events.QuoteAnnotated) error {
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteAnnotated, e.QuoteID, map[string]interface{}{
 		"itemId":     e.ItemID,
 		"authorType": e.AuthorType,
 		"text":       e.Text,
 	})
+	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_annotated",
+		"Nieuwe vraag: \""+truncate(e.Text, 80)+"\"",
+		map[string]interface{}{"itemId": e.ItemID.String(), "authorType": e.AuthorType, "text": e.Text})
 	m.log.Info("quote annotated event processed", "quoteId", e.QuoteID, "itemId", e.ItemID)
 	return nil
 }
 
-func (m *Module) handleQuoteAccepted(_ context.Context, e events.QuoteAccepted) error {
+func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted) error {
+	// 1. Generate PDF, upload to MinIO, and persist file key
+	var pdfBytes []byte
+	if m.pdfProc != nil {
+		fileKey, generatedPDF, err := m.pdfProc.GenerateAndStorePDF(ctx, e.QuoteID, e.OrganizationID, e.OrganizationName, e.ConsumerName, e.SignatureName)
+		if err != nil {
+			m.log.Error("failed to generate/store acceptance PDF",
+				"quoteId", e.QuoteID,
+				"error", err,
+			)
+			// Non-fatal: continue with emails and SSE even if PDF fails
+		} else {
+			pdfBytes = generatedPDF
+			m.log.Info("acceptance PDF generated and stored",
+				"quoteId", e.QuoteID,
+				"fileKey", fileKey,
+			)
+		}
+	}
+
+	// 2. Send "thank you" email to customer — with PDF attached if available
+	if e.ConsumerEmail != "" {
+		var attachments []email.Attachment
+		if len(pdfBytes) > 0 {
+			attachments = append(attachments, email.Attachment{
+				Content:  pdfBytes,
+				FileName: "offerte-" + e.QuoteNumber + ".pdf",
+				MIMEType: "application/pdf",
+			})
+		}
+		if err := m.sender.SendQuoteAcceptedThankYouEmail(ctx, e.ConsumerEmail, e.ConsumerName, e.OrganizationName, e.QuoteNumber, attachments...); err != nil {
+			m.log.Error("failed to send acceptance thank-you email to customer",
+				"quoteId", e.QuoteID,
+				"email", e.ConsumerEmail,
+				"error", err,
+			)
+		} else {
+			m.log.Info("acceptance thank-you email sent to customer",
+				"quoteId", e.QuoteID,
+				"email", e.ConsumerEmail,
+			)
+		}
+	}
+
+	// 3. Send acceptance notification email to the agent
+	if e.AgentEmail != "" {
+		if err := m.sender.SendQuoteAcceptedEmail(ctx, e.AgentEmail, e.AgentName, e.QuoteNumber, e.ConsumerName, e.TotalCents); err != nil {
+			m.log.Error("failed to send acceptance notification email to agent",
+				"quoteId", e.QuoteID,
+				"email", e.AgentEmail,
+				"error", err,
+			)
+		} else {
+			m.log.Info("acceptance notification email sent to agent",
+				"quoteId", e.QuoteID,
+				"email", e.AgentEmail,
+			)
+		}
+	}
+
+	// 4. Push SSE event so the agent dashboard updates in real time
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteAccepted, e.QuoteID, map[string]interface{}{
 		"signatureName": e.SignatureName,
 		"totalCents":    e.TotalCents,
 	})
+
+	// 5. Persist activity
+	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_accepted",
+		"Offerte geaccepteerd door "+e.SignatureName,
+		map[string]interface{}{"signatureName": e.SignatureName, "totalCents": e.TotalCents, "consumerName": e.ConsumerName})
+
 	m.log.Info("quote accepted event processed", "quoteId", e.QuoteID)
 	return nil
 }
 
-func (m *Module) handleQuoteRejected(_ context.Context, e events.QuoteRejected) error {
+func (m *Module) handleQuoteRejected(ctx context.Context, e events.QuoteRejected) error {
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteRejected, e.QuoteID, map[string]interface{}{
 		"reason": e.Reason,
 	})
+	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_rejected",
+		"Offerte afgewezen door klant",
+		map[string]interface{}{"reason": e.Reason})
 	m.log.Info("quote rejected event processed", "quoteId", e.QuoteID)
 	return nil
 }
@@ -254,4 +363,26 @@ func (m *Module) pushQuoteSSE(orgID uuid.UUID, eventType sse.EventType, quoteID 
 		return
 	}
 	m.sse.PublishQuoteEvent(orgID, eventType, quoteID, data)
+}
+
+// logQuoteActivity persists an activity record for a quote. Failures are logged but non-fatal.
+func (m *Module) logQuoteActivity(ctx context.Context, quoteID, orgID uuid.UUID, eventType, message string, metadata map[string]interface{}) {
+	if m.actWriter == nil {
+		return
+	}
+	if err := m.actWriter.CreateActivity(ctx, quoteID, orgID, eventType, message, metadata); err != nil {
+		m.log.Error("failed to persist quote activity",
+			"quoteId", quoteID,
+			"eventType", eventType,
+			"error", err,
+		)
+	}
+}
+
+// truncate shortens a string to max characters, appending "…" when truncated.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }

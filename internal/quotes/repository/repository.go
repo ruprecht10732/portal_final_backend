@@ -611,6 +611,53 @@ func (r *Repository) ListAnnotationsByQuoteID(ctx context.Context, quoteID uuid.
 	return annotations, rows.Err()
 }
 
+// ── Activity Methods ──────────────────────────────────────────────────────────
+
+// QuoteActivity is the database model for a quote activity log entry
+type QuoteActivity struct {
+	ID             uuid.UUID  `db:"id"`
+	QuoteID        uuid.UUID  `db:"quote_id"`
+	OrganizationID uuid.UUID  `db:"organization_id"`
+	EventType      string     `db:"event_type"`
+	Message        string     `db:"message"`
+	Metadata       []byte     `db:"metadata"`
+	CreatedAt      time.Time  `db:"created_at"`
+}
+
+// CreateActivity inserts a new activity log entry for a quote.
+func (r *Repository) CreateActivity(ctx context.Context, a *QuoteActivity) error {
+	query := `INSERT INTO RAC_quote_activity (id, quote_id, organization_id, event_type, message, metadata, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := r.pool.Exec(ctx, query, a.ID, a.QuoteID, a.OrganizationID, a.EventType, a.Message, a.Metadata, a.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create quote activity: %w", err)
+	}
+	return nil
+}
+
+// ListActivities retrieves all activity log entries for a quote, newest first.
+func (r *Repository) ListActivities(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]QuoteActivity, error) {
+	query := `
+		SELECT id, quote_id, organization_id, event_type, message, metadata, created_at
+		FROM RAC_quote_activity
+		WHERE quote_id = $1 AND organization_id = $2
+		ORDER BY created_at DESC`
+	rows, err := r.pool.Query(ctx, query, quoteID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list quote activities: %w", err)
+	}
+	defer rows.Close()
+	var activities []QuoteActivity
+	for rows.Next() {
+		var a QuoteActivity
+		if err := rows.Scan(&a.ID, &a.QuoteID, &a.OrganizationID, &a.EventType, &a.Message, &a.Metadata, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan quote activity: %w", err)
+		}
+		activities = append(activities, a)
+	}
+	return activities, rows.Err()
+}
+
 // ── Sorting Helpers ───────────────────────────────────────────────────────────
 
 func resolveSortBy(sortBy string) (string, error) {

@@ -26,8 +26,9 @@ type AuthModuleConfig interface {
 
 // Module is the auth bounded context module implementing http.Module.
 type Module struct {
-	handler *handler.Handler
-	service *service.Service
+	handler    *handler.Handler
+	service    *service.Service
+	repository *repository.Repository
 }
 
 // NewModule creates and initializes the auth module with all its dependencies.
@@ -41,8 +42,9 @@ func NewModule(pool *pgxpool.Pool, identityService *identityservice.Service, cfg
 	h := handler.New(svc, cfg, val)
 
 	return &Module{
-		handler: h,
-		service: svc,
+		handler:    h,
+		service:    svc,
+		repository: repo,
 	}
 }
 
@@ -54,6 +56,11 @@ func (m *Module) Name() string {
 // Service returns the auth service for use by adapters (e.g., AgentProvider).
 func (m *Module) Service() *service.Service {
 	return m.service
+}
+
+// Repository returns the auth repository for use by adapters (e.g., agent email lookup).
+func (m *Module) Repository() *repository.Repository {
+	return m.repository
 }
 
 // RegisterRoutes mounts auth routes on the provided router context.

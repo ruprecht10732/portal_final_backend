@@ -220,12 +220,18 @@ func (e QuoteAnnotated) EventName() string { return "quotes.quote.annotated" }
 // QuoteAccepted is published when a lead accepts and signs the quote.
 type QuoteAccepted struct {
 	BaseEvent
-	QuoteID        uuid.UUID  `json:"quoteId"`
-	OrganizationID uuid.UUID  `json:"organizationId"`
-	LeadID         uuid.UUID  `json:"leadId"`
-	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
-	SignatureName  string     `json:"signatureName"`
-	TotalCents     int64      `json:"totalCents"`
+	QuoteID          uuid.UUID  `json:"quoteId"`
+	OrganizationID   uuid.UUID  `json:"organizationId"`
+	LeadID           uuid.UUID  `json:"leadId"`
+	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
+	SignatureName    string     `json:"signatureName"`
+	TotalCents       int64      `json:"totalCents"`
+	QuoteNumber      string     `json:"quoteNumber"`
+	ConsumerEmail    string     `json:"consumerEmail"`
+	ConsumerName     string     `json:"consumerName"`
+	OrganizationName string     `json:"organizationName"`
+	AgentEmail       string     `json:"agentEmail"`
+	AgentName        string     `json:"agentName"`
 }
 
 func (e QuoteAccepted) EventName() string { return "quotes.quote.accepted" }

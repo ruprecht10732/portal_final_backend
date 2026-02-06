@@ -38,6 +38,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.POST("/:id/send", h.Send)
 	rg.POST("/:id/items/:itemId/annotations", h.AgentAnnotate)
+	rg.GET("/:id/activities", h.ListActivities)
 	rg.DELETE("/:id", h.Delete)
 }
 
@@ -269,6 +270,27 @@ func (h *Handler) AgentAnnotate(c *gin.Context) {
 	}
 
 	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// ListActivities handles GET /api/v1/quotes/:id/activities
+func (h *Handler) ListActivities(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	activities, err := h.svc.ListActivities(c.Request.Context(), id, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, activities)
 }
 
 // mustGetTenantID extracts the tenant ID from identity.

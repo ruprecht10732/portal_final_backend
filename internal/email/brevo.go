@@ -3,6 +3,7 @@ package email
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,13 @@ import (
 	"portal_final_backend/platform/config"
 )
 
+// Attachment represents a file attachment for an email.
+type Attachment struct {
+	Content  []byte // raw file bytes (will be base64-encoded for Brevo)
+	FileName string // e.g. "offerte-Q-00042.pdf"
+	MIMEType string // e.g. "application/pdf"
+}
+
 type Sender interface {
 	SendVerificationEmail(ctx context.Context, toEmail, verifyURL string) error
 	SendPasswordResetEmail(ctx context.Context, toEmail, resetURL string) error
@@ -20,6 +28,7 @@ type Sender interface {
 	SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error
 	SendQuoteProposalEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber, proposalURL string) error
 	SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName, quoteNumber, consumerName string, totalCents int64) error
+	SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber string, attachments ...Attachment) error
 }
 
 type NoopSender struct{}
@@ -52,11 +61,20 @@ func (NoopSender) SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName
 	return nil
 }
 
+func (NoopSender) SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber string, attachments ...Attachment) error {
+	return nil
+}
+
 type BrevoSender struct {
 	apiKey    string
 	fromName  string
 	fromEmail string
 	client    *http.Client
+}
+
+type brevoAttachment struct {
+	Content string `json:"content"` // base64-encoded file content
+	Name    string `json:"name"`
 }
 
 type brevoEmailRequest struct {
@@ -67,8 +85,9 @@ type brevoEmailRequest struct {
 	To []struct {
 		Email string `json:"email"`
 	} `json:"to"`
-	Subject     string `json:"subject"`
-	HTMLContent string `json:"htmlContent"`
+	Subject     string            `json:"subject"`
+	HTMLContent string            `json:"htmlContent"`
+	Attachment  []brevoAttachment `json:"attachment,omitempty"`
 }
 
 func NewSender(cfg config.EmailConfig) (Sender, error) {
@@ -157,7 +176,28 @@ func (b *BrevoSender) SendQuoteAcceptedEmail(ctx context.Context, toEmail, agent
 	return b.send(ctx, toEmail, subject, content)
 }
 
+func (b *BrevoSender) SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber string, attachments ...Attachment) error {
+	subject := "Bedankt voor uw akkoord — offerte " + quoteNumber
+
+	attachmentNote := ""
+	if len(attachments) > 0 {
+		attachmentNote = "<br/><br/>In de bijlage vindt u een PDF-kopie van de getekende offerte voor uw administratie."
+	}
+
+	content := buildEmailTemplate(
+		"Bedankt voor uw akkoord",
+		fmt.Sprintf("Beste %s,<br/><br/>Bedankt dat u offerte %s van %s heeft geaccepteerd. Wij nemen zo snel mogelijk contact met u op om de volgende stappen te bespreken.%s<br/><br/>Met vriendelijke groet,<br/>%s", consumerName, quoteNumber, organizationName, attachmentNote, organizationName),
+		"",
+		"",
+	)
+	return b.sendWithAttachments(ctx, toEmail, subject, content, attachments...)
+}
+
 func (b *BrevoSender) send(ctx context.Context, toEmail, subject, htmlContent string) error {
+	return b.sendWithAttachments(ctx, toEmail, subject, htmlContent)
+}
+
+func (b *BrevoSender) sendWithAttachments(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error {
 	payload := brevoEmailRequest{
 		Subject:     subject,
 		HTMLContent: htmlContent,
@@ -167,6 +207,13 @@ func (b *BrevoSender) send(ctx context.Context, toEmail, subject, htmlContent st
 	payload.To = []struct {
 		Email string `json:"email"`
 	}{{Email: toEmail}}
+
+	for _, att := range attachments {
+		payload.Attachment = append(payload.Attachment, brevoAttachment{
+			Content: base64.StdEncoding.EncodeToString(att.Content),
+			Name:    att.FileName,
+		})
+	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {

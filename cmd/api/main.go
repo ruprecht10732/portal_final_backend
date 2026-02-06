@@ -169,9 +169,17 @@ func main() {
 	quotesTimeline := adapters.NewQuotesTimelineWriter(leadsModule.Repository())
 	quotesModule.Service().SetTimelineWriter(quotesTimeline)
 
-	// Wire contact reader: quotes → leads + identity (for email enrichment)
-	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service())
+	// Wire contact reader: quotes → leads + identity + auth (for email enrichment)
+	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service(), authModule.Repository())
 	quotesModule.Service().SetQuoteContactReader(quotesContacts)
+
+	// Wire quote acceptance processor: PDF generation + upload + emails
+	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), storageSvc, cfg)
+	notificationModule.SetQuoteAcceptanceProcessor(quotePDFProcessor)
+
+	// Wire quote activity writer so notification handlers persist activity history
+	quoteActivityWriter := adapters.NewQuoteActivityWriter(quotesModule.Repository())
+	notificationModule.SetQuoteActivityWriter(quoteActivityWriter)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -41,11 +42,13 @@ type TimelineEventParams struct {
 	Metadata       map[string]any
 }
 
-// QuoteContactData holds the consumer/organization info needed to send the quote email.
+// QuoteContactData holds the consumer/organization/agent info needed for quote emails.
 type QuoteContactData struct {
 	ConsumerEmail    string
 	ConsumerName     string
 	OrganizationName string
+	AgentEmail       string
+	AgentName        string
 }
 
 // QuoteContactReader is a narrow interface the quotes service uses to look up lead and
@@ -724,7 +727,7 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 	}
 
 	if s.eventBus != nil {
-		s.eventBus.Publish(ctx, events.QuoteAccepted{
+		evt := events.QuoteAccepted{
 			BaseEvent:      events.NewBaseEvent(),
 			QuoteID:        quote.ID,
 			OrganizationID: quote.OrganizationID,
@@ -732,7 +735,20 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 			LeadServiceID:  quote.LeadServiceID,
 			SignatureName:  req.SignatureName,
 			TotalCents:     quote.TotalCents,
-		})
+			QuoteNumber:    quote.QuoteNumber,
+		}
+		// Enrich event with contact + agent data for email delivery and PDF
+		if s.contacts != nil {
+			contactData, lookupErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, quote.OrganizationID)
+			if lookupErr == nil {
+				evt.ConsumerEmail = contactData.ConsumerEmail
+				evt.ConsumerName = contactData.ConsumerName
+				evt.OrganizationName = contactData.OrganizationName
+				evt.AgentEmail = contactData.AgentEmail
+				evt.AgentName = contactData.AgentName
+			}
+		}
+		s.eventBus.Publish(ctx, evt)
 	}
 
 	s.emitTimelineEvent(ctx, TimelineEventParams{
@@ -1008,4 +1024,28 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// ListActivities returns the persisted activity log for a quote.
+func (s *Service) ListActivities(ctx context.Context, quoteID, tenantID uuid.UUID) ([]transport.QuoteActivityResponse, error) {
+	activities, err := s.repo.ListActivities(ctx, quoteID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list quote activities: %w", err)
+	}
+
+	out := make([]transport.QuoteActivityResponse, len(activities))
+	for i, a := range activities {
+		var meta map[string]interface{}
+		if len(a.Metadata) > 0 {
+			_ = json.Unmarshal(a.Metadata, &meta)
+		}
+		out[i] = transport.QuoteActivityResponse{
+			ID:        a.ID,
+			EventType: a.EventType,
+			Message:   a.Message,
+			Metadata:  meta,
+			CreatedAt: a.CreatedAt,
+		}
+	}
+	return out, nil
 }

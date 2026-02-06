@@ -17,6 +17,7 @@ type Module struct {
 	handler       *handler.Handler
 	publicHandler *handler.PublicHandler
 	service       *service.Service
+	repository    *repository.Repository
 }
 
 // NewModule creates a new quotes module with all dependencies wired
@@ -31,6 +32,7 @@ func NewModule(pool *pgxpool.Pool, eventBus *events.InMemoryBus, val *validator.
 		handler:       h,
 		publicHandler: ph,
 		service:       svc,
+		repository:    repo,
 	}
 }
 
@@ -42,6 +44,11 @@ func (m *Module) Name() string {
 // Service returns the service layer for external use
 func (m *Module) Service() *service.Service {
 	return m.service
+}
+
+// Repository returns the repository for use by adapters (e.g., PDF generation).
+func (m *Module) Repository() *repository.Repository {
+	return m.repository
 }
 
 // RegisterRoutes registers the module's routes

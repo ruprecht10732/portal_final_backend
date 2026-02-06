@@ -235,3 +235,12 @@ type AcceptQuoteRequest struct {
 type RejectQuoteRequest struct {
 	Reason string `json:"reason" validate:"max=2000"`
 }
+
+// QuoteActivityResponse is the response for a single activity log entry.
+type QuoteActivityResponse struct {
+	ID        uuid.UUID              `json:"id"`
+	EventType string                 `json:"eventType"`
+	Message   string                 `json:"message"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt time.Time              `json:"createdAt"`
+}
