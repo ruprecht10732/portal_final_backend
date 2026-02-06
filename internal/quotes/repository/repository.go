@@ -526,6 +526,23 @@ func (r *Repository) SetPDFFileKey(ctx context.Context, quoteID uuid.UUID, fileK
 	return nil
 }
 
+// GetPDFFileKeyByQuoteID returns the PDF file key for a quote (no org scoping).
+func (r *Repository) GetPDFFileKeyByQuoteID(ctx context.Context, quoteID uuid.UUID) (string, error) {
+	var fileKey *string
+	query := `SELECT pdf_file_key FROM RAC_quotes WHERE id = $1`
+	err := r.pool.QueryRow(ctx, query, quoteID).Scan(&fileKey)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", apperr.NotFound(quoteNotFoundMsg)
+		}
+		return "", fmt.Errorf("failed to get PDF file key: %w", err)
+	}
+	if fileKey == nil {
+		return "", nil
+	}
+	return *fileKey, nil
+}
+
 // GetItemByID retrieves a single quote item by its ID and quote ID.
 func (r *Repository) GetItemByID(ctx context.Context, itemID, quoteID uuid.UUID) (*QuoteItem, error) {
 	var it QuoteItem

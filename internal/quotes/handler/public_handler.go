@@ -2,8 +2,11 @@ package handler
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/quotes/service"
 	"portal_final_backend/internal/quotes/transport"
@@ -16,9 +19,11 @@ import (
 
 // PublicHandler handles unauthenticated HTTP requests for public quote proposals.
 type PublicHandler struct {
-	svc *service.Service
-	val *validator.Validator
-	sse *sse.Service
+	svc        *service.Service
+	val        *validator.Validator
+	sse        *sse.Service
+	storageSvc storage.StorageService
+	pdfBucket  string
 }
 
 // NewPublicHandler creates a new public quotes handler.
@@ -31,6 +36,12 @@ func (h *PublicHandler) SetSSE(s *sse.Service) {
 	h.sse = s
 }
 
+// SetStorageForPDF injects the storage service and bucket for PDF downloads.
+func (h *PublicHandler) SetStorageForPDF(svc storage.StorageService, bucket string) {
+	h.storageSvc = svc
+	h.pdfBucket = bucket
+}
+
 // RegisterRoutes registers the public quote routes (no auth middleware).
 func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:token", h.GetPublicQuote)
@@ -38,6 +49,7 @@ func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:token/items/:itemId/annotations", h.AnnotateItem)
 	rg.POST("/:token/accept", h.Accept)
 	rg.POST("/:token/reject", h.Reject)
+	rg.GET("/:token/pdf", h.DownloadPDF)
 
 	// Public SSE — customer page gets real-time updates
 	if h.sse != nil {
@@ -140,6 +152,61 @@ func (h *PublicHandler) Accept(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+// DownloadPDF handles GET /api/v1/public/quotes/:token/pdf
+// Allows customers to download the generated PDF using the public token.
+func (h *PublicHandler) DownloadPDF(c *gin.Context) {
+	if h.storageSvc == nil {
+		httpkit.Error(c, http.StatusServiceUnavailable, "PDF downloads are not configured", nil)
+		return
+	}
+
+	token := c.Param("token")
+	if token == "" {
+		httpkit.Error(c, http.StatusBadRequest, "token is required", nil)
+		return
+	}
+
+	result, err := h.svc.GetPublic(c.Request.Context(), token)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	// Only accepted quotes have a PDF
+	if result.Status != transport.QuoteStatusAccepted {
+		httpkit.Error(c, http.StatusNotFound, "PDF is alleen beschikbaar voor geaccepteerde offertes", nil)
+		return
+	}
+
+	// We need to get the internal quote to access the PDF file key (not exposed in public response)
+	quoteID, err := h.svc.GetPublicQuoteID(c.Request.Context(), token)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to resolve quote", nil)
+		return
+	}
+
+	pdfFileKey, err := h.svc.GetPDFFileKey(c.Request.Context(), quoteID)
+	if err != nil || pdfFileKey == "" {
+		httpkit.Error(c, http.StatusNotFound, "no PDF available for this quote", nil)
+		return
+	}
+
+	reader, err := h.storageSvc.DownloadFile(c.Request.Context(), h.pdfBucket, pdfFileKey)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to retrieve PDF", err.Error())
+		return
+	}
+	defer reader.Close()
+
+	fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
+	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+	c.Status(http.StatusOK)
+
+	if _, err := io.Copy(c.Writer, reader); err != nil {
+		_ = c.Error(err)
+	}
 }
 
 // Reject handles POST /api/v1/public/quotes/:token/reject

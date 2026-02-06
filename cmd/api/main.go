@@ -168,6 +168,9 @@ func main() {
 	// Share SSE service with quotes module so public viewers get real-time updates
 	quotesModule.SetSSE(leadsModule.SSE())
 
+	// Inject storage for PDF download endpoints
+	quotesModule.SetStorageForPDF(storageSvc, cfg.GetMinioBucketQuotePDFs())
+
 	// Wire timeline integration: quotes → leads timeline
 	quotesTimeline := adapters.NewQuotesTimelineWriter(leadsModule.Repository())
 	quotesModule.Service().SetTimelineWriter(quotesTimeline)

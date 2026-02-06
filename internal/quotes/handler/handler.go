@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/quotes/service"
 	"portal_final_backend/internal/quotes/transport"
 	"portal_final_backend/platform/httpkit"
@@ -19,13 +22,21 @@ const (
 
 // Handler handles HTTP requests for quotes
 type Handler struct {
-	svc *service.Service
-	val *validator.Validator
+	svc        *service.Service
+	val        *validator.Validator
+	storageSvc storage.StorageService
+	pdfBucket  string
 }
 
 // New creates a new quotes handler
 func New(svc *service.Service, val *validator.Validator) *Handler {
 	return &Handler{svc: svc, val: val}
+}
+
+// SetStorageForPDF injects the storage service and bucket for PDF downloads.
+func (h *Handler) SetStorageForPDF(svc storage.StorageService, bucket string) {
+	h.storageSvc = svc
+	h.pdfBucket = bucket
 }
 
 // RegisterRoutes registers the quote routes
@@ -39,6 +50,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/send", h.Send)
 	rg.POST("/:id/items/:itemId/annotations", h.AgentAnnotate)
 	rg.GET("/:id/activities", h.ListActivities)
+	rg.GET("/:id/pdf", h.DownloadPDF)
 	rg.DELETE("/:id", h.Delete)
 }
 
@@ -291,6 +303,53 @@ func (h *Handler) ListActivities(c *gin.Context) {
 	}
 
 	httpkit.OK(c, activities)
+}
+
+// DownloadPDF handles GET /api/v1/quotes/:id/pdf
+// Streams the generated PDF directly from object storage.
+func (h *Handler) DownloadPDF(c *gin.Context) {
+	if h.storageSvc == nil {
+		httpkit.Error(c, http.StatusServiceUnavailable, "PDF downloads are not configured", nil)
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetByID(c.Request.Context(), id, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	if result.PDFFileKey == nil || *result.PDFFileKey == "" {
+		httpkit.Error(c, http.StatusNotFound, "no PDF available for this quote", nil)
+		return
+	}
+
+	reader, err := h.storageSvc.DownloadFile(c.Request.Context(), h.pdfBucket, *result.PDFFileKey)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to retrieve PDF", err.Error())
+		return
+	}
+	defer reader.Close()
+
+	fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
+	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+	c.Status(http.StatusOK)
+
+	if _, err := io.Copy(c.Writer, reader); err != nil {
+		// Headers already sent — can't return a JSON error at this point
+		_ = c.Error(err)
+	}
 }
 
 // mustGetTenantID extracts the tenant ID from identity.
