@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 
 	"portal_final_backend/internal/adapters/storage"
+	identityrepo "portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes/repository"
@@ -15,6 +17,7 @@ import (
 	"portal_final_backend/internal/quotes/transport"
 
 	"github.com/google/uuid"
+	"github.com/johnfercher/maroto/v2/pkg/consts/extension"
 )
 
 // QuoteDataReader is the narrow interface the acceptance processor uses
@@ -28,22 +31,30 @@ type QuoteDataReader interface {
 // QuotePDFBucketConfig is the narrow config interface for the PDF bucket name.
 type QuotePDFBucketConfig interface {
 	GetMinioBucketQuotePDFs() string
+	GetMinioBucketOrganizationLogos() string
+}
+
+// QuoteOrgReader is the narrow interface for fetching organization profile data.
+type QuoteOrgReader interface {
+	GetOrganization(ctx context.Context, organizationID uuid.UUID) (identityrepo.Organization, error)
 }
 
 // QuoteAcceptanceProcessor implements notification.QuoteAcceptanceProcessor.
 // It generates the quote PDF, uploads it to MinIO, and persists the file key.
 type QuoteAcceptanceProcessor struct {
-	repo    QuoteDataReader
-	storage storage.StorageService
-	cfg     QuotePDFBucketConfig
+	repo       QuoteDataReader
+	orgReader  QuoteOrgReader
+	storage    storage.StorageService
+	cfg        QuotePDFBucketConfig
 }
 
 // NewQuoteAcceptanceProcessor creates a new processor adapter.
-func NewQuoteAcceptanceProcessor(repo QuoteDataReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig) *QuoteAcceptanceProcessor {
+func NewQuoteAcceptanceProcessor(repo QuoteDataReader, orgReader QuoteOrgReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig) *QuoteAcceptanceProcessor {
 	return &QuoteAcceptanceProcessor{
-		repo:    repo,
-		storage: storageSvc,
-		cfg:     cfg,
+		repo:      repo,
+		orgReader: orgReader,
+		storage:   storageSvc,
+		cfg:       cfg,
 	}
 }
 
@@ -65,7 +76,10 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		return "", nil, fmt.Errorf("fetch quote items for PDF: %w", err)
 	}
 
-	// 2. Calculate totals + VAT breakdown using the service calculator
+	// 2. Fetch full organization profile
+	org, orgErr := p.orgReader.GetOrganization(ctx, organizationID)
+
+	// 3. Calculate totals + VAT breakdown using the service calculator
 	itemReqs := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
 		itemReqs[i] = transport.QuoteItemRequest{
@@ -84,16 +98,29 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		DiscountValue: quote.DiscountValue,
 	})
 
-	// 3. Build public-style item responses for the PDF
+	// 4. Build public-style item responses for the PDF
 	pdfItems := buildPDFItems(items, quote.PricingMode)
 
-	// 4. Decode drawn signature image (base64 data URL → raw PNG bytes)
+	// 5. Decode drawn signature image (base64 data URL → raw PNG bytes)
 	var signatureImageBytes []byte
 	if quote.SignatureData != nil && *quote.SignatureData != "" {
 		signatureImageBytes = decodeSignatureDataURL(*quote.SignatureData)
 	}
 
-	// 5. Build QuotePDFData
+	// 6. Download organization logo from MinIO (if available)
+	var logoBytes []byte
+	var logoExt extension.Type
+	if orgErr == nil && org.LogoFileKey != nil && *org.LogoFileKey != "" {
+		logoBucket := p.cfg.GetMinioBucketOrganizationLogos()
+		logoReader, dlErr := p.storage.DownloadFile(ctx, logoBucket, *org.LogoFileKey)
+		if dlErr == nil {
+			defer logoReader.Close()
+			logoBytes, _ = io.ReadAll(logoReader)
+			logoExt = contentTypeToExt(org.LogoContentType)
+		}
+	}
+
+	// 7. Build QuotePDFData with full org profile
 	pdfData := pdf.QuotePDFData{
 		QuoteNumber:      quote.QuoteNumber,
 		OrganizationName: orgName,
@@ -101,6 +128,7 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		Status:           quote.Status,
 		PricingMode:      quote.PricingMode,
 		ValidUntil:       quote.ValidUntil,
+		CreatedAt:        quote.CreatedAt,
 		Notes:            quote.Notes,
 		SignatureName:    &signatureName,
 		SignatureImage:   signatureImageBytes,
@@ -111,15 +139,30 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		TaxTotalCents:    calc.VatTotalCents,
 		TotalCents:       calc.TotalCents,
 		VatBreakdown:     calc.VatBreakdown,
+		OrgLogo:          logoBytes,
+		OrgLogoExt:       logoExt,
 	}
 
-	// 6. Generate PDF bytes
+	// Populate org details if available
+	if orgErr == nil {
+		pdfData.OrgEmail = derefStr(org.Email)
+		pdfData.OrgPhone = derefStr(org.Phone)
+		pdfData.OrgVatNumber = derefStr(org.VatNumber)
+		pdfData.OrgKvkNumber = derefStr(org.KvkNumber)
+		pdfData.OrgAddressLine1 = derefStr(org.AddressLine1)
+		pdfData.OrgAddressLine2 = derefStr(org.AddressLine2)
+		pdfData.OrgPostalCode = derefStr(org.PostalCode)
+		pdfData.OrgCity = derefStr(org.City)
+		pdfData.OrgCountry = derefStr(org.Country)
+	}
+
+	// 8. Generate PDF bytes
 	pdfBytes, err := pdf.GenerateQuotePDF(pdfData)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate PDF: %w", err)
 	}
 
-	// 7. Upload to MinIO
+	// 9. Upload to MinIO
 	bucket := p.cfg.GetMinioBucketQuotePDFs()
 	folder := organizationID.String()
 	fileName := fmt.Sprintf("%s.pdf", quote.QuoteNumber)
@@ -130,12 +173,33 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		return "", nil, fmt.Errorf("upload PDF to storage: %w", err)
 	}
 
-	// 8. Persist file key on the quote record
+	// 10. Persist file key on the quote record
 	if err := p.repo.SetPDFFileKey(ctx, quoteID, fileKey); err != nil {
 		return "", nil, fmt.Errorf("persist PDF file key: %w", err)
 	}
 
 	return fileKey, pdfBytes, nil
+}
+
+// derefStr safely dereferences a *string, returning "" if nil.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// contentTypeToExt maps a MIME content type to a maroto extension type.
+func contentTypeToExt(ct *string) extension.Type {
+	if ct == nil {
+		return extension.Png
+	}
+	switch strings.ToLower(*ct) {
+	case "image/jpeg", "image/jpg":
+		return extension.Jpg
+	default:
+		return extension.Png
+	}
 }
 
 // buildPDFItems converts repository QuoteItems into transport PublicQuoteItemResponse
