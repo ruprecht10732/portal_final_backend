@@ -14,14 +14,19 @@ import (
 
 // GotenbergClient converts HTML to PDF via a Gotenberg instance.
 type GotenbergClient struct {
-	baseURL string
-	http    *http.Client
+	baseURL  string
+	username string
+	password string
+	http     *http.Client
 }
 
 // NewGotenbergClient creates a client pointing at the given Gotenberg URL.
-func NewGotenbergClient(baseURL string) *GotenbergClient {
+// If username and password are non-empty, every request will include HTTP Basic Auth.
+func NewGotenbergClient(baseURL, username, password string) *GotenbergClient {
 	return &GotenbergClient{
-		baseURL: baseURL,
+		baseURL:  baseURL,
+		username: username,
+		password: password,
 		http: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -129,6 +134,9 @@ func (g *GotenbergClient) doPost(ctx context.Context, path string, body *bytes.B
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
+	if g.username != "" && g.password != "" {
+		req.SetBasicAuth(g.username, g.password)
+	}
 
 	resp, err := g.http.Do(req)
 	if err != nil {

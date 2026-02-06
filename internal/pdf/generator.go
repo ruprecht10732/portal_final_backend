@@ -28,9 +28,9 @@ var templateFS embed.FS
 var gotenbergClient *GotenbergClient
 
 // Init initialises the Gotenberg client. Must be called before GenerateQuotePDF.
-func Init(gotenbergURL string) {
+func Init(gotenbergURL, username, password string) {
 	if gotenbergURL != "" {
-		gotenbergClient = NewGotenbergClient(gotenbergURL)
+		gotenbergClient = NewGotenbergClient(gotenbergURL, username, password)
 	}
 }
 

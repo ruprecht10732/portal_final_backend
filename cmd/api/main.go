@@ -123,7 +123,7 @@ func main() {
 
 	// Gotenberg PDF generator
 	if cfg.IsGotenbergEnabled() {
-		pdf.Init(cfg.GetGotenbergURL())
+		pdf.Init(cfg.GetGotenbergURL(), cfg.GetGotenbergUsername(), cfg.GetGotenbergPassword())
 		log.Info("gotenberg PDF generator initialized", "url", cfg.GetGotenbergURL())
 	}
 

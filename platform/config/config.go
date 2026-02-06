@@ -85,6 +85,8 @@ type MinIOConfig interface {
 // GotenbergConfig provides settings for the Gotenberg HTML-to-PDF service.
 type GotenbergConfig interface {
 	GetGotenbergURL() string
+	GetGotenbergUsername() string
+	GetGotenbergPassword() string
 	IsGotenbergEnabled() bool
 }
 
@@ -158,6 +160,8 @@ type Config struct {
 	MinioBucketOrganizationLogos      string
 	MinioBucketQuotePDFs              string
 	GotenbergURL                      string
+	GotenbergUsername                  string
+	GotenbergPassword                  string
 	QdrantURL                         string
 	QdrantAPIKey                      string
 	QdrantCollection                  string
@@ -230,8 +234,10 @@ func (c *Config) GetMinioBucketQuotePDFs() string {
 func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
 
 // GotenbergConfig implementation
-func (c *Config) GetGotenbergURL() string  { return c.GotenbergURL }
-func (c *Config) IsGotenbergEnabled() bool { return c.GotenbergURL != "" }
+func (c *Config) GetGotenbergURL() string      { return c.GotenbergURL }
+func (c *Config) GetGotenbergUsername() string  { return c.GotenbergUsername }
+func (c *Config) GetGotenbergPassword() string  { return c.GotenbergPassword }
+func (c *Config) IsGotenbergEnabled() bool      { return c.GotenbergURL != "" }
 
 // EnergyLabelConfig implementation
 func (c *Config) GetEPOnlineAPIKey() string  { return c.EPOnlineAPIKey }
@@ -314,6 +320,8 @@ func Load() (*Config, error) {
 		MinioBucketOrganizationLogos:      getEnv("MINIO_BUCKET_ORGANIZATION_LOGOS", "organization-logos"),
 		MinioBucketQuotePDFs:              getEnv("MINIO_BUCKET_QUOTE_PDFS", "quote-pdfs"),
 		GotenbergURL:                      getEnv("GOTENBERG_URL", ""),
+		GotenbergUsername:                  getEnv("GOTENBERG_USERNAME", ""),
+		GotenbergPassword:                  getEnv("GOTENBERG_PASSWORD", ""),
 		QdrantURL:                         getEnv("QDRANT_URL", ""),
 		QdrantAPIKey:                      getEnv("QDRANT_API_KEY", ""),
 		QdrantCollection:                  getEnv("QDRANT_COLLECTION", ""),
