@@ -297,7 +297,7 @@ func (s *Service) indexProductAsync(ctx context.Context, tenantID uuid.UUID, pro
 
 	request := embeddingapi.AddDocumentsRequest{
 		Documents:  []map[string]any{s.buildCatalogDocument(tenantID, product)},
-		TextFields: []string{"name", "description", "reference", "type", "labor_time_text"},
+		TextFields: []string{"name", "description", "reference", "type", "labor_time_text", "unit_label"},
 		IDField:    "id",
 		Collection: s.embeddingCollection,
 	}
