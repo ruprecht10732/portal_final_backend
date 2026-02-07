@@ -117,27 +117,6 @@ func (r *Repo) ListActive(ctx context.Context, organizationID uuid.UUID) ([]Serv
 }
 
 // ListWithFilters retrieves service types with search, active filter, pagination, and sorting.
-// Service type sort column mappings.
-var serviceTypeSortColumns = map[string]string{
-	"name":         "name",
-	"slug":         "slug",
-	"displayOrder": "display_order",
-	"isActive":     "is_active",
-	"createdAt":    "created_at",
-	"updatedAt":    "updated_at",
-}
-
-// mapServiceTypeSortColumn returns the DB column for sorting.
-func mapServiceTypeSortColumn(sortBy string) (string, error) {
-	if sortBy == "" {
-		return "display_order", nil
-	}
-	if col, ok := serviceTypeSortColumns[sortBy]; ok {
-		return col, nil
-	}
-	return "", apperr.BadRequest("invalid sort field")
-}
-
 func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error) {
 	var searchParam interface{}
 	if params.Search != "" {

@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/tool"
@@ -127,7 +126,6 @@ func normalizeConsumerRole(role string) (string, error) {
 // ToolDependencies contains the dependencies needed by tools
 type ToolDependencies struct {
 	Repo                 repository.LeadsRepository
-	DraftedEmails        map[uuid.UUID]EmailDraft
 	Scorer               *scoring.Service
 	EventBus             events.Bus
 	EmbeddingClient      *embeddings.Client
@@ -473,29 +471,6 @@ func recalculateAndRecordScore(ctx tool.Context, deps *ToolDependencies, leadID,
 	})
 }
 
-func buildMissingInfoSummary(items []string) string {
-	cleaned := make([]string, 0, len(items))
-	for _, item := range items {
-		value := strings.TrimSpace(item)
-		if value != "" {
-			cleaned = append(cleaned, value)
-		}
-	}
-	if len(cleaned) == 0 {
-		return "Ontbrekende informatie bijgewerkt"
-	}
-
-	limit := 4
-	if len(cleaned) < limit {
-		limit = len(cleaned)
-	}
-	preview := strings.Join(cleaned[:limit], "; ")
-	if len(cleaned) > limit {
-		return fmt.Sprintf("Ontbrekende informatie: %s (+%d)", preview, len(cleaned)-limit)
-	}
-	return fmt.Sprintf("Ontbrekende informatie: %s", preview)
-}
-
 func buildLeadScoreSummary(result *scoring.Result) string {
 	return fmt.Sprintf("Leadscore %d (pre-AI %d)", result.Score, result.ScorePreAI)
 }
@@ -766,49 +741,6 @@ func createUpdateLeadDetailsTool(deps *ToolDependencies) (tool.Tool, error) {
 		Description: "Updates lead contact or address details when you are highly confident the current data is wrong.",
 	}, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
 		return handleUpdateLeadDetails(ctx, deps, input)
-	})
-}
-
-// createDraftEmailTool creates the DraftFollowUpEmail tool
-func createDraftEmailTool(deps *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "DraftFollowUpEmail",
-		Description: "Creates a draft follow-up email to send to the customer. Use this when you need more information from the customer before providing a quote, or to confirm details. The email will be saved as a draft for the sales advisor to review and send.",
-	}, func(ctx tool.Context, input DraftEmailInput) (DraftEmailOutput, error) {
-		leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
-		if err != nil {
-			return DraftEmailOutput{Success: false, Message: invalidLeadIDMessage}, err
-		}
-
-		draftID := uuid.New()
-		draft := EmailDraft{
-			ID:          draftID,
-			LeadID:      leadID,
-			Subject:     input.Subject,
-			Body:        input.Body,
-			Purpose:     input.Purpose,
-			MissingInfo: input.MissingInfo,
-			CreatedAt:   time.Now(),
-		}
-
-		deps.DraftedEmails[draftID] = draft
-		log.Printf("Email draft created for lead %s: %s", leadID, input.Subject)
-
-		return DraftEmailOutput{
-			Success: true,
-			Message: fmt.Sprintf("Email draft created: '%s'. Saved for review.", input.Subject),
-			DraftID: draftID.String(),
-		}, nil
-	})
-}
-
-// createSuggestSpecialistTool creates the SuggestSpecialist tool
-func createSuggestSpecialistTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "SuggestSpecialist",
-		Description: "Analyzes a problem description and recommends the most appropriate type of specialist (plumber, electrician, HVAC technician, carpenter, handyman, etc.). Use this when the customer's problem spans multiple trades or when it's unclear which specialist they need.",
-	}, func(ctx tool.Context, input SuggestSpecialistInput) (SuggestSpecialistOutput, error) {
-		return suggestSpecialist(input.ProblemDescription, input.ServiceCategory), nil
 	})
 }
 
@@ -1355,42 +1287,4 @@ Ad-hoc items (not found in catalog) should omit catalogProductId.`,
 	})
 }
 
-// buildTools creates all tools for the LeadAdvisor agent
-func buildTools(deps *ToolDependencies) ([]tool.Tool, error) {
-	var tools []tool.Tool
-	var errs []error
 
-	saveAnalysisTool, err := createSaveAnalysisTool(deps)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("SaveAnalysis tool: %w", err))
-	} else {
-		tools = append(tools, saveAnalysisTool)
-	}
-
-	updateLeadServiceTypeTool, err := createUpdateLeadServiceTypeTool(deps)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("UpdateLeadServiceType tool: %w", err))
-	} else {
-		tools = append(tools, updateLeadServiceTypeTool)
-	}
-
-	draftEmailTool, err := createDraftEmailTool(deps)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("DraftFollowUpEmail tool: %w", err))
-	} else {
-		tools = append(tools, draftEmailTool)
-	}
-
-	suggestSpecialistTool, err := createSuggestSpecialistTool()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("SuggestSpecialist tool: %w", err))
-	} else {
-		tools = append(tools, suggestSpecialistTool)
-	}
-
-	if len(errs) > 0 {
-		return tools, fmt.Errorf("failed to create some tools: %v", errs)
-	}
-
-	return tools, nil
-}

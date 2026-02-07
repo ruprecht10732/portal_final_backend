@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"time"
-
 	"github.com/google/uuid"
 )
 
@@ -66,45 +64,6 @@ type UpdateLeadDetailsOutput struct {
 	UpdatedFields []string `json:"updatedFields,omitempty"`
 }
 
-// DraftEmailInput for creating follow-up email drafts
-type DraftEmailInput struct {
-	LeadID      string   `json:"leadId"`
-	Subject     string   `json:"subject"`
-	Body        string   `json:"body"`
-	Purpose     string   `json:"purpose"`               // "request_info", "confirm_appointment", "quote_followup", "general"
-	MissingInfo []string `json:"missingInfo,omitempty"` // What information we need from customer
-}
-
-type DraftEmailOutput struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	DraftID string `json:"draftId,omitempty"`
-}
-
-// EmailDraft represents a drafted email
-type EmailDraft struct {
-	ID          uuid.UUID
-	LeadID      uuid.UUID
-	Subject     string
-	Body        string
-	Purpose     string
-	MissingInfo []string
-	CreatedAt   time.Time
-}
-
-// SuggestSpecialistInput for recommending the right specialist
-type SuggestSpecialistInput struct {
-	ProblemDescription string `json:"problemDescription"`
-	ServiceCategory    string `json:"serviceCategory,omitempty"` // optional hint
-}
-
-type SuggestSpecialistOutput struct {
-	RecommendedSpecialist string   `json:"recommendedSpecialist"`
-	Reason                string   `json:"reason"`
-	AlternativeOptions    []string `json:"alternativeOptions,omitempty"`
-	QuestionsToAsk        []string `json:"questionsToAsk"`
-}
-
 // UpdatePipelineStageInput updates the pipeline stage for the lead service.
 type UpdatePipelineStageInput struct {
 	Stage  string `json:"stage"`
@@ -156,15 +115,15 @@ type SearchProductMaterialsInput struct {
 
 // ProductResult represents a product found in the catalog.
 type ProductResult struct {
-	ID          string  `json:"id,omitempty"`          // Catalog product UUID (present for catalog items)
-	Name        string  `json:"name"`
-	Description string  `json:"description,omitempty"`
-	Price       float64 `json:"price"`
-	Unit        string  `json:"unit,omitempty"`         // e.g., "per m2", "per piece", "per meter"
-	LaborTime   string  `json:"laborTime,omitempty"`
-	VatRateBps  int     `json:"vatRateBps,omitempty"`   // VAT rate in basis points (e.g. 2100 = 21%)
-	Materials   []string `json:"materials,omitempty"`   // Included materials (human-readable names)
-	Score       float64 `json:"score"`                  // Similarity score
+	ID          string   `json:"id,omitempty"` // Catalog product UUID (present for catalog items)
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Price       float64  `json:"price"`
+	Unit        string   `json:"unit,omitempty"` // e.g., "per m2", "per piece", "per meter"
+	LaborTime   string   `json:"laborTime,omitempty"`
+	VatRateBps  int      `json:"vatRateBps,omitempty"` // VAT rate in basis points (e.g. 2100 = 21%)
+	Materials   []string `json:"materials,omitempty"`  // Included materials (human-readable names)
+	Score       float64  `json:"score"`                // Similarity score
 }
 
 // SearchProductMaterialsOutput contains the search results.
@@ -201,7 +160,7 @@ type CalculateEstimateOutput struct {
 // DraftQuoteItem represents a single line item for the DraftQuote tool.
 type DraftQuoteItem struct {
 	Description      string  `json:"description"`
-	Quantity         string  `json:"quantity"`         // e.g. "3", "1"
+	Quantity         string  `json:"quantity"` // e.g. "3", "1"
 	UnitPriceCents   int64   `json:"unitPriceCents"`
 	TaxRateBps       int     `json:"taxRateBps"`
 	IsOptional       bool    `json:"isOptional,omitempty"`
