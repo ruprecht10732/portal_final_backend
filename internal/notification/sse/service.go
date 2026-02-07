@@ -32,6 +32,9 @@ const (
 	EventAppointmentCreated       EventType = "appointment_created"
 	EventAppointmentUpdated       EventType = "appointment_updated"
 	EventAppointmentStatusChanged EventType = "appointment_status_changed"
+
+	// Pipeline events (pushed to org members for dashboard alerts)
+	EventManualIntervention EventType = "manual_intervention"
 )
 
 // Event represents an SSE event payload
