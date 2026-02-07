@@ -64,6 +64,16 @@ func (m *Module) SetStorageForPDF(svc storage.StorageService, bucket string) {
 	m.publicHandler.SetStorageForPDF(svc, bucket)
 }
 
+// SetAttachmentBucket injects the bucket name for manual quote attachment uploads.
+func (m *Module) SetAttachmentBucket(bucket string) {
+	m.handler.SetAttachmentBucket(bucket)
+}
+
+// SetCatalogBucket injects the bucket name for catalog asset downloads via attachment preview.
+func (m *Module) SetCatalogBucket(bucket string) {
+	m.handler.SetCatalogBucket(bucket)
+}
+
 // SetPDFGenerator injects the on-demand PDF generator for lazy PDF creation in download endpoints.
 func (m *Module) SetPDFGenerator(gen handler.PDFOnDemandGenerator) {
 	m.handler.SetPDFGenerator(gen)

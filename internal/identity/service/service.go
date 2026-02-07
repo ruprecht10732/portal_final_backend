@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	inviteTokenBytes = 32
-	inviteTTL        = 72 * time.Hour
-	inviteNotFound   = "invite not found"
+	inviteTokenBytes     = 32
+	inviteTTL            = 72 * time.Hour
+	inviteNotFound       = "invite not found"
+	organizationNotFound = "organization not found"
 )
 
 type Service struct {
@@ -97,11 +98,23 @@ func (s *Service) GetOrganization(ctx context.Context, organizationID uuid.UUID)
 	org, err := s.repo.GetOrganization(ctx, organizationID)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Organization{}, apperr.NotFound("organization not found")
+			return repository.Organization{}, apperr.NotFound(organizationNotFound)
 		}
 		return repository.Organization{}, err
 	}
 	return org, nil
+}
+
+func (s *Service) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (repository.OrganizationSettings, error) {
+	return s.repo.GetOrganizationSettings(ctx, organizationID)
+}
+
+func (s *Service) UpdateOrganizationSettings(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	update repository.OrganizationSettingsUpdate,
+) (repository.OrganizationSettings, error) {
+	return s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
 }
 
 type OrganizationProfileUpdate struct {
@@ -152,7 +165,7 @@ func (s *Service) UpdateOrganizationProfile(
 	)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Organization{}, apperr.NotFound("organization not found")
+			return repository.Organization{}, apperr.NotFound(organizationNotFound)
 		}
 		return repository.Organization{}, err
 	}
@@ -348,7 +361,7 @@ func (s *Service) SetLogo(ctx context.Context, organizationID uuid.UUID, req tra
 	org, err := s.repo.GetOrganization(ctx, organizationID)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Organization{}, apperr.NotFound("organization not found")
+			return repository.Organization{}, apperr.NotFound(organizationNotFound)
 		}
 		return repository.Organization{}, err
 	}
@@ -379,7 +392,7 @@ func (s *Service) SetLogo(ctx context.Context, organizationID uuid.UUID, req tra
 	})
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Organization{}, apperr.NotFound("organization not found")
+			return repository.Organization{}, apperr.NotFound(organizationNotFound)
 		}
 		return repository.Organization{}, err
 	}
@@ -392,7 +405,7 @@ func (s *Service) GetLogoDownloadURL(ctx context.Context, organizationID uuid.UU
 	org, err := s.repo.GetOrganization(ctx, organizationID)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return transport.OrgLogoDownloadResponse{}, apperr.NotFound("organization not found")
+			return transport.OrgLogoDownloadResponse{}, apperr.NotFound(organizationNotFound)
 		}
 		return transport.OrgLogoDownloadResponse{}, err
 	}
@@ -417,7 +430,7 @@ func (s *Service) DeleteLogo(ctx context.Context, organizationID uuid.UUID) (rep
 	org, err := s.repo.GetOrganization(ctx, organizationID)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Organization{}, apperr.NotFound("organization not found")
+			return repository.Organization{}, apperr.NotFound(organizationNotFound)
 		}
 		return repository.Organization{}, err
 	}
@@ -429,7 +442,7 @@ func (s *Service) DeleteLogo(ctx context.Context, organizationID uuid.UUID) (rep
 	updated, err := s.repo.ClearOrganizationLogo(ctx, organizationID)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.Organization{}, apperr.NotFound("organization not found")
+			return repository.Organization{}, apperr.NotFound(organizationNotFound)
 		}
 		return repository.Organization{}, err
 	}

@@ -22,11 +22,13 @@ const (
 
 // Handler handles HTTP requests for quotes
 type Handler struct {
-	svc        *service.Service
-	val        *validator.Validator
-	storageSvc storage.StorageService
-	pdfBucket  string
-	pdfGen     PDFOnDemandGenerator
+	svc              *service.Service
+	val              *validator.Validator
+	storageSvc       storage.StorageService
+	pdfBucket        string
+	attachmentBucket string
+	catalogBucket    string
+	pdfGen           PDFOnDemandGenerator
 }
 
 // New creates a new quotes handler
@@ -38,6 +40,16 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 func (h *Handler) SetStorageForPDF(svc storage.StorageService, bucket string) {
 	h.storageSvc = svc
 	h.pdfBucket = bucket
+}
+
+// SetAttachmentBucket injects the bucket name for manual quote attachments.
+func (h *Handler) SetAttachmentBucket(bucket string) {
+	h.attachmentBucket = bucket
+}
+
+// SetCatalogBucket injects the bucket name for catalog asset downloads.
+func (h *Handler) SetCatalogBucket(bucket string) {
+	h.catalogBucket = bucket
 }
 
 // SetPDFGenerator injects the on-demand PDF generator for lazy PDF creation.
@@ -58,6 +70,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/items/:itemId/annotations", h.AgentAnnotate)
 	rg.GET("/:id/activities", h.ListActivities)
 	rg.GET("/:id/pdf", h.DownloadPDF)
+	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
+	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 	rg.DELETE("/:id", h.Delete)
 }
 
@@ -368,9 +382,9 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 			}
 
 			fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
-			c.Header("Content-Type", "application/pdf")
+			c.Header("Content-Type", contentTypePDF)
 			c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-			c.Data(http.StatusOK, "application/pdf", pdfBytes)
+			c.Data(http.StatusOK, contentTypePDF, pdfBytes)
 			_ = fileKey
 			return
 		}
@@ -386,7 +400,7 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 	defer reader.Close()
 
 	fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
-	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Type", contentTypePDF)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
 	c.Status(http.StatusOK)
 
@@ -394,6 +408,124 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 		// Headers already sent — can't return a JSON error at this point
 		_ = c.Error(err)
 	}
+}
+
+// PresignAttachmentUpload handles POST /api/v1/quotes/:id/attachments/presign
+// Generates a presigned URL for uploading a manual PDF attachment.
+func (h *Handler) PresignAttachmentUpload(c *gin.Context) {
+	if h.storageSvc == nil || h.attachmentBucket == "" {
+		httpkit.Error(c, http.StatusServiceUnavailable, "attachment uploads are not configured", nil)
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	// Verify the quote exists and belongs to this tenant
+	if _, err := h.svc.GetByID(c.Request.Context(), id, tenantID); err != nil {
+		if httpkit.HandleError(c, err) {
+			return
+		}
+		return
+	}
+
+	var req transport.PresignAttachmentUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	// Validate via storage service
+	if err := h.storageSvc.ValidateContentType(req.ContentType); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "file type not allowed", nil)
+		return
+	}
+	if err := h.storageSvc.ValidateFileSize(req.SizeBytes); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	// Folder path: {org_id}/quotes/{quote_id}
+	folder := fmt.Sprintf("%s/quotes/%s", tenantID.String(), id.String())
+
+	presigned, err := h.storageSvc.GenerateUploadURL(c.Request.Context(), h.attachmentBucket, folder, req.FileName, req.ContentType, req.SizeBytes)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to generate upload URL", nil)
+		return
+	}
+
+	httpkit.OK(c, transport.PresignedUploadResponse{
+		UploadURL: presigned.URL,
+		FileKey:   presigned.FileKey,
+		ExpiresAt: presigned.ExpiresAt.Unix(),
+	})
+}
+
+// GetAttachmentDownloadURL handles GET /api/v1/quotes/:id/attachments/:attachmentId/download
+// Returns a presigned download URL for the attachment, resolving the bucket by source.
+func (h *Handler) GetAttachmentDownloadURL(c *gin.Context) {
+	if h.storageSvc == nil {
+		httpkit.Error(c, http.StatusServiceUnavailable, "storage is not configured", nil)
+		return
+	}
+
+	quoteID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	att, err := h.svc.GetAttachmentByID(c.Request.Context(), attachmentID, quoteID, tenantID)
+	if err != nil {
+		if httpkit.HandleError(c, err) {
+			return
+		}
+		return
+	}
+
+	bucket := h.attachmentBucket
+	if att.Source == "catalog" {
+		bucket = h.catalogBucket
+	}
+
+	if bucket == "" {
+		httpkit.Error(c, http.StatusServiceUnavailable, "storage bucket not configured for source: "+att.Source, nil)
+		return
+	}
+
+	presigned, err := h.storageSvc.GenerateDownloadURL(c.Request.Context(), bucket, att.FileKey)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to generate download URL", nil)
+		return
+	}
+
+	httpkit.OK(c, transport.PresignedDownloadResponse{
+		DownloadURL: presigned.URL,
+		ExpiresAt:   presigned.ExpiresAt.Unix(),
+	})
 }
 
 // mustGetTenantID extracts the tenant ID from identity.

@@ -21,34 +21,56 @@ const (
 
 // QuoteItemRequest is the input for a single line item
 type QuoteItemRequest struct {
-	Description    string `json:"description" validate:"required"`
-	Quantity       string `json:"quantity" validate:"required"`
-	UnitPriceCents int64  `json:"unitPriceCents" validate:"min=0"`
-	TaxRateBps     int    `json:"taxRateBps" validate:"min=0"`
-	IsOptional     bool   `json:"isOptional"`
-	IsSelected     bool   `json:"isSelected"`
+	Description      string     `json:"description" validate:"required"`
+	Quantity         string     `json:"quantity" validate:"required"`
+	UnitPriceCents   int64      `json:"unitPriceCents" validate:"min=0"`
+	TaxRateBps       int        `json:"taxRateBps" validate:"min=0"`
+	IsOptional       bool       `json:"isOptional"`
+	IsSelected       bool       `json:"isSelected"`
+	CatalogProductID *uuid.UUID `json:"catalogProductId,omitempty"`
+}
+
+// QuoteAttachmentRequest is the input for a document attachment on a quote.
+type QuoteAttachmentRequest struct {
+	Filename         string     `json:"filename" validate:"required,min=1,max=500"`
+	FileKey          string     `json:"fileKey" validate:"required,min=1,max=1000"`
+	Source           string     `json:"source" validate:"required,oneof=catalog manual"`
+	CatalogProductID *uuid.UUID `json:"catalogProductId,omitempty"`
+	Enabled          bool       `json:"enabled"`
+	SortOrder        int        `json:"sortOrder" validate:"min=0"`
+}
+
+// QuoteURLRequest is the input for a URL attachment on a quote.
+type QuoteURLRequest struct {
+	Label            string     `json:"label" validate:"required,min=1,max=500"`
+	Href             string     `json:"href" validate:"required,url,max=2000"`
+	CatalogProductID *uuid.UUID `json:"catalogProductId,omitempty"`
 }
 
 // CreateQuoteRequest is the request body for creating a new quote
 type CreateQuoteRequest struct {
-	LeadID        uuid.UUID          `json:"leadId" validate:"required"`
-	LeadServiceID *uuid.UUID         `json:"leadServiceId"`
-	PricingMode   string             `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
-	DiscountType  string             `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
-	DiscountValue int64              `json:"discountValue" validate:"min=0"`
-	ValidUntil    *time.Time         `json:"validUntil"`
-	Notes         string             `json:"notes"`
-	Items         []QuoteItemRequest `json:"items" validate:"required,dive"`
+	LeadID        uuid.UUID                `json:"leadId" validate:"required"`
+	LeadServiceID *uuid.UUID               `json:"leadServiceId"`
+	PricingMode   string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
+	DiscountType  string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
+	DiscountValue int64                    `json:"discountValue" validate:"min=0"`
+	ValidUntil    *time.Time               `json:"validUntil"`
+	Notes         string                   `json:"notes"`
+	Items         []QuoteItemRequest       `json:"items" validate:"required,dive"`
+	Attachments   []QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
+	URLs          []QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
 }
 
 // UpdateQuoteRequest is the request body for updating a quote
 type UpdateQuoteRequest struct {
-	PricingMode   *string             `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
-	DiscountType  *string             `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
-	DiscountValue *int64              `json:"discountValue" validate:"omitempty,min=0"`
-	ValidUntil    *time.Time          `json:"validUntil"`
-	Notes         *string             `json:"notes"`
-	Items         *[]QuoteItemRequest `json:"items" validate:"omitempty,dive"`
+	PricingMode   *string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
+	DiscountType  *string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
+	DiscountValue *int64                    `json:"discountValue" validate:"omitempty,min=0"`
+	ValidUntil    *time.Time                `json:"validUntil"`
+	Notes         *string                   `json:"notes"`
+	Items         *[]QuoteItemRequest       `json:"items" validate:"omitempty,dive"`
+	Attachments   *[]QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
+	URLs          *[]QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
 }
 
 // UpdateQuoteStatusRequest is the request body for updating a quote's status
@@ -96,44 +118,92 @@ type QuoteItemResponse struct {
 	TotalBeforeTaxCents int64                `json:"totalBeforeTaxCents"`
 	TotalTaxCents       int64                `json:"totalTaxCents"`
 	LineTotalCents      int64                `json:"lineTotalCents"`
+	CatalogProductID    *uuid.UUID           `json:"catalogProductId,omitempty"`
 	Annotations         []AnnotationResponse `json:"annotations"`
+}
+
+// QuoteAttachmentResponse is the response for a document attachment.
+type QuoteAttachmentResponse struct {
+	ID               uuid.UUID  `json:"id"`
+	Filename         string     `json:"filename"`
+	FileKey          string     `json:"fileKey"`
+	Source           string     `json:"source"`
+	CatalogProductID *uuid.UUID `json:"catalogProductId,omitempty"`
+	Enabled          bool       `json:"enabled"`
+	SortOrder        int        `json:"sortOrder"`
+	CreatedAt        time.Time  `json:"createdAt"`
+}
+
+// QuoteURLResponse is the response for a URL attachment.
+type QuoteURLResponse struct {
+	ID               uuid.UUID  `json:"id"`
+	Label            string     `json:"label"`
+	Href             string     `json:"href"`
+	Accepted         bool       `json:"accepted"`
+	CatalogProductID *uuid.UUID `json:"catalogProductId,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+}
+
+// ── Presigned Upload ─────────────────────────────────────────────────────────
+
+// PresignAttachmentUploadRequest is the request for generating a presigned URL
+// for uploading a manual PDF attachment to a quote.
+type PresignAttachmentUploadRequest struct {
+	FileName    string `json:"fileName" validate:"required,min=1,max=255"`
+	ContentType string `json:"contentType" validate:"required,eq=application/pdf"`
+	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1"`
+}
+
+// PresignedUploadResponse is the generic presigned upload URL response.
+type PresignedUploadResponse struct {
+	UploadURL string `json:"uploadUrl"`
+	FileKey   string `json:"fileKey"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
+
+// PresignedDownloadResponse is the presigned URL for downloading an attachment.
+type PresignedDownloadResponse struct {
+	DownloadURL string `json:"downloadUrl"`
+	ExpiresAt   int64  `json:"expiresAt"`
 }
 
 // QuoteResponse is the response for a quote
 type QuoteResponse struct {
-	ID                         uuid.UUID           `json:"id"`
-	QuoteNumber                string              `json:"quoteNumber"`
-	LeadID                     uuid.UUID           `json:"leadId"`
-	LeadServiceID              *uuid.UUID          `json:"leadServiceId,omitempty"`
-	CreatedByID                *uuid.UUID          `json:"createdById,omitempty"`
-	CreatedByFirstName         *string             `json:"createdByFirstName,omitempty"`
-	CreatedByLastName          *string             `json:"createdByLastName,omitempty"`
-	CreatedByEmail             *string             `json:"createdByEmail,omitempty"`
-	CustomerFirstName          *string             `json:"customerFirstName,omitempty"`
-	CustomerLastName           *string             `json:"customerLastName,omitempty"`
-	CustomerPhone              *string             `json:"customerPhone,omitempty"`
-	CustomerEmail              *string             `json:"customerEmail,omitempty"`
-	CustomerAddressStreet      *string             `json:"customerAddressStreet,omitempty"`
-	CustomerAddressHouseNumber *string             `json:"customerAddressHouseNumber,omitempty"`
-	CustomerAddressZipCode     *string             `json:"customerAddressZipCode,omitempty"`
-	CustomerAddressCity        *string             `json:"customerAddressCity,omitempty"`
-	Status                     QuoteStatus         `json:"status"`
-	PricingMode                string              `json:"pricingMode"`
-	DiscountType               string              `json:"discountType"`
-	DiscountValue              int64               `json:"discountValue"`
-	SubtotalCents              int64               `json:"subtotalCents"`
-	DiscountAmountCents        int64               `json:"discountAmountCents"`
-	TaxTotalCents              int64               `json:"taxTotalCents"`
-	TotalCents                 int64               `json:"totalCents"`
-	ValidUntil                 *time.Time          `json:"validUntil,omitempty"`
-	Notes                      *string             `json:"notes,omitempty"`
-	Items                      []QuoteItemResponse `json:"items"`
-	ViewedAt                   *time.Time          `json:"viewedAt,omitempty"`
-	AcceptedAt                 *time.Time          `json:"acceptedAt,omitempty"`
-	RejectedAt                 *time.Time          `json:"rejectedAt,omitempty"`
-	PDFFileKey                 *string             `json:"pdfFileKey,omitempty"`
-	CreatedAt                  time.Time           `json:"createdAt"`
-	UpdatedAt                  time.Time           `json:"updatedAt"`
+	ID                         uuid.UUID                 `json:"id"`
+	QuoteNumber                string                    `json:"quoteNumber"`
+	LeadID                     uuid.UUID                 `json:"leadId"`
+	LeadServiceID              *uuid.UUID                `json:"leadServiceId,omitempty"`
+	CreatedByID                *uuid.UUID                `json:"createdById,omitempty"`
+	CreatedByFirstName         *string                   `json:"createdByFirstName,omitempty"`
+	CreatedByLastName          *string                   `json:"createdByLastName,omitempty"`
+	CreatedByEmail             *string                   `json:"createdByEmail,omitempty"`
+	CustomerFirstName          *string                   `json:"customerFirstName,omitempty"`
+	CustomerLastName           *string                   `json:"customerLastName,omitempty"`
+	CustomerPhone              *string                   `json:"customerPhone,omitempty"`
+	CustomerEmail              *string                   `json:"customerEmail,omitempty"`
+	CustomerAddressStreet      *string                   `json:"customerAddressStreet,omitempty"`
+	CustomerAddressHouseNumber *string                   `json:"customerAddressHouseNumber,omitempty"`
+	CustomerAddressZipCode     *string                   `json:"customerAddressZipCode,omitempty"`
+	CustomerAddressCity        *string                   `json:"customerAddressCity,omitempty"`
+	Status                     QuoteStatus               `json:"status"`
+	PricingMode                string                    `json:"pricingMode"`
+	DiscountType               string                    `json:"discountType"`
+	DiscountValue              int64                     `json:"discountValue"`
+	SubtotalCents              int64                     `json:"subtotalCents"`
+	DiscountAmountCents        int64                     `json:"discountAmountCents"`
+	TaxTotalCents              int64                     `json:"taxTotalCents"`
+	TotalCents                 int64                     `json:"totalCents"`
+	ValidUntil                 *time.Time                `json:"validUntil,omitempty"`
+	Notes                      *string                   `json:"notes,omitempty"`
+	Items                      []QuoteItemResponse       `json:"items"`
+	Attachments                []QuoteAttachmentResponse `json:"attachments"`
+	URLs                       []QuoteURLResponse        `json:"urls"`
+	ViewedAt                   *time.Time                `json:"viewedAt,omitempty"`
+	AcceptedAt                 *time.Time                `json:"acceptedAt,omitempty"`
+	RejectedAt                 *time.Time                `json:"rejectedAt,omitempty"`
+	PDFFileKey                 *string                   `json:"pdfFileKey,omitempty"`
+	CreatedAt                  time.Time                 `json:"createdAt"`
+	UpdatedAt                  time.Time                 `json:"updatedAt"`
 }
 
 // QuoteListResponse is the paginated list response
@@ -227,6 +297,8 @@ type PublicQuoteResponse struct {
 	ValidUntil          *time.Time                `json:"validUntil,omitempty"`
 	Notes               *string                   `json:"notes,omitempty"`
 	Items               []PublicQuoteItemResponse `json:"items"`
+	Attachments         []QuoteAttachmentResponse `json:"attachments"`
+	URLs                []QuoteURLResponse        `json:"urls"`
 	AcceptedAt          *time.Time                `json:"acceptedAt,omitempty"`
 	RejectedAt          *time.Time                `json:"rejectedAt,omitempty"`
 	IsReadOnly          bool                      `json:"isReadOnly,omitempty"`

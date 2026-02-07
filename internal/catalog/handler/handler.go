@@ -609,6 +609,36 @@ func (h *Handler) DeleteCatalogAsset(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// SearchProductsForAutocomplete handles GET /api/v1/catalog/products/search
+// Lightweight search endpoint optimized for quote line autocomplete.
+func (h *Handler) SearchProductsForAutocomplete(c *gin.Context) {
+	var req transport.AutocompleteSearchRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.SearchForAutocomplete(c.Request.Context(), tenantID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
 func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
 	tenantID := identity.TenantID()
 	if tenantID == nil {

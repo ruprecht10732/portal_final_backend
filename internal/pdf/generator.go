@@ -20,6 +20,11 @@ import (
 	"portal_final_backend/internal/quotes/transport"
 )
 
+const (
+	dateFormatDMY     = "02-01-2006"
+	dateTimeFormatDMY = "02-01-2006 15:04"
+)
+
 //go:embed templates/*.html
 var templateFS embed.FS
 
@@ -74,6 +79,28 @@ type QuotePDFData struct {
 	TaxTotalCents  int64
 	TotalCents     int64
 	VatBreakdown   []transport.VatBreakdown
+
+	// Organization settings for PDF terms
+	PaymentDays    int
+	QuoteValidDays int
+
+	// Document attachments: pre-downloaded PDF bytes to merge after the content page.
+	AttachmentPDFs []AttachmentPDFEntry
+
+	// URLs for the signature/acceptance page (terms & conditions links).
+	URLs []QuoteURLEntry
+}
+
+// AttachmentPDFEntry holds a pre-downloaded PDF to be appended to the quote document.
+type AttachmentPDFEntry struct {
+	Filename string
+	PDFBytes []byte
+}
+
+// QuoteURLEntry holds a terms & conditions URL for display on the signature page.
+type QuoteURLEntry struct {
+	Label string
+	Href  string
 }
 
 // ── Template view models ────────────────────────────────────────────────
@@ -121,9 +148,8 @@ type quoteViewModel struct {
 	VatBreakdown        []vatLineViewModel
 	TotalFormatted      string
 	Notes               string
-	HasSignature        bool
-	SignatureName       string
-	SignatureBase64     string
+	PaymentDays         int
+	QuoteValidDays      int
 }
 
 type itemViewModel struct {
@@ -145,11 +171,31 @@ type footerViewModel struct {
 	FooterText string
 }
 
+type signatureViewModel struct {
+	LogoBase64          string
+	LogoMimeType        string
+	OrganizationName    string
+	QuoteNumber         string
+	HasSignature        bool
+	SignatureName       string
+	SignatureBase64     string
+	AcceptedAtFormatted string
+	HasURLs             bool
+	URLs                []urlViewModel
+}
+
+type urlViewModel struct {
+	Label string
+	Href  string
+}
+
 // ── Public API ──────────────────────────────────────────────────────────
 
 // GenerateQuotePDF creates a professional multi-page PDF document.
 // Page 1 = cover page (industrial Barlow design).
-// Page 2+ = quote details with line items, totals, legal terms, and signature.
+// Page 2+ = quote details with line items, totals, legal terms.
+// Attachments = any enabled PDF documents from the catalog or uploaded manually.
+// Final page = signature/acceptance page with URL checkboxes and signature block.
 func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 	if gotenbergClient == nil {
 		return nil, fmt.Errorf("gotenberg client not initialized — call pdf.Init first")
@@ -195,16 +241,58 @@ func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 		return nil, fmt.Errorf("convert content to PDF: %w", err)
 	}
 
-	// ── Merge cover + content into one document ─────────────────────────
-	merged, err := gotenbergClient.MergePDFs(ctx, map[string][]byte{
+	// ── Build merge map: cover → content → attachments → signature ──────
+	mergeMap := map[string][]byte{
 		"01_cover.pdf":   coverPDF,
 		"02_content.pdf": contentPDF,
-	})
+	}
+
+	// Add enabled attachment PDFs with zero-padded sort keys
+	addAttachmentPDFs(mergeMap, data.AttachmentPDFs)
+
+	// Generate signature/acceptance page if needed (signature OR URLs)
+	if err := addSignaturePageIfNeeded(mergeMap, data, logoB64, logoMime, contentOpts); err != nil {
+		return nil, err
+	}
+
+	// ── Merge all PDFs into one document ────────────────────────────────
+	merged, err := gotenbergClient.MergePDFs(ctx, mergeMap)
 	if err != nil {
 		return nil, fmt.Errorf("merge PDFs: %w", err)
 	}
 
 	return merged, nil
+}
+
+func addAttachmentPDFs(mergeMap map[string][]byte, attachments []AttachmentPDFEntry) {
+	for i, att := range attachments {
+		if len(att.PDFBytes) > 0 {
+			key := fmt.Sprintf("03_attachment_%03d.pdf", i)
+			mergeMap[key] = att.PDFBytes
+		}
+	}
+}
+
+func addSignaturePageIfNeeded(mergeMap map[string][]byte, data QuotePDFData, logoB64, logoMime string, opts ConvertOpts) error {
+	needsPage := (data.SignatureName != nil && data.AcceptedAt != nil) || len(data.URLs) > 0
+	if !needsPage {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sigVM := buildSignatureVM(data, logoB64, logoMime)
+	sigHTML, err := renderTemplate("templates/signature.html", sigVM)
+	if err != nil {
+		return fmt.Errorf("render signature template: %w", err)
+	}
+	sigPDF, err := gotenbergClient.ConvertHTML(ctx, sigHTML, opts)
+	if err != nil {
+		return fmt.Errorf("convert signature to PDF: %w", err)
+	}
+	mergeMap["04_signature.pdf"] = sigPDF
+	return nil
 }
 
 // ── View model builders ─────────────────────────────────────────────────
@@ -216,7 +304,7 @@ func buildCoverVM(data QuotePDFData, logoB64, logoMime string) coverViewModel {
 		OrganizationName:   data.OrganizationName,
 		CustomerName:       data.CustomerName,
 		QuoteNumber:        data.QuoteNumber,
-		CreatedAtFormatted: data.CreatedAt.Format("02-01-2006"),
+		CreatedAtFormatted: data.CreatedAt.Format(dateFormatDMY),
 		OrgAddressLine1:    data.OrgAddressLine1,
 		OrgPostalCode:      data.OrgPostalCode,
 		OrgCity:            data.OrgCity,
@@ -224,7 +312,7 @@ func buildCoverVM(data QuotePDFData, logoB64, logoMime string) coverViewModel {
 		OrgEmail:           data.OrgEmail,
 	}
 	if data.ValidUntil != nil {
-		vm.ValidUntilFormatted = data.ValidUntil.Format("02-01-2006")
+		vm.ValidUntilFormatted = data.ValidUntil.Format(dateFormatDMY)
 	}
 	vm.QuoteSequenceNumber = extractSequenceNumber(data.QuoteNumber)
 	return vm
@@ -237,7 +325,7 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 		OrganizationName:   data.OrganizationName,
 		CustomerName:       data.CustomerName,
 		QuoteNumber:        data.QuoteNumber,
-		CreatedAtFormatted: data.CreatedAt.Format("02-01-2006"),
+		CreatedAtFormatted: data.CreatedAt.Format(dateFormatDMY),
 		Status:             data.Status,
 		StatusLabel:        translateStatus(data.Status),
 		StatusClass:        statusCSSClass(data.Status),
@@ -255,22 +343,13 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 		TotalFormatted:     formatCurrency(data.TotalCents),
 	}
 	if data.ValidUntil != nil {
-		vm.ValidUntilFormatted = data.ValidUntil.Format("02-01-2006")
+		vm.ValidUntilFormatted = data.ValidUntil.Format(dateFormatDMY)
 	}
 	if data.AcceptedAt != nil {
-		vm.AcceptedAtFormatted = data.AcceptedAt.Format("02-01-2006 15:04")
+		vm.AcceptedAtFormatted = data.AcceptedAt.Format(dateTimeFormatDMY)
 	}
 	if data.Notes != nil && *data.Notes != "" {
 		vm.Notes = *data.Notes
-	}
-
-	// Signature
-	if data.SignatureName != nil && data.AcceptedAt != nil {
-		vm.HasSignature = true
-		vm.SignatureName = *data.SignatureName
-		if len(data.SignatureImage) > 0 {
-			vm.SignatureBase64 = base64.StdEncoding.EncodeToString(data.SignatureImage)
-		}
 	}
 
 	// Items
@@ -294,6 +373,45 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 			PctFormatted:    fmt.Sprintf("%.0f%%", float64(vat.RateBps)/100.0),
 			AmountFormatted: formatCurrency(vat.AmountCents),
 		}
+	}
+
+	// Organization settings — use defaults if not provided
+	vm.PaymentDays = data.PaymentDays
+	if vm.PaymentDays <= 0 {
+		vm.PaymentDays = 7
+	}
+	vm.QuoteValidDays = data.QuoteValidDays
+	if vm.QuoteValidDays <= 0 {
+		vm.QuoteValidDays = 14
+	}
+
+	return vm
+}
+
+func buildSignatureVM(data QuotePDFData, logoB64, logoMime string) signatureViewModel {
+	vm := signatureViewModel{
+		LogoBase64:       logoB64,
+		LogoMimeType:     logoMime,
+		OrganizationName: data.OrganizationName,
+		QuoteNumber:      data.QuoteNumber,
+		HasURLs:          len(data.URLs) > 0,
+	}
+
+	if data.AcceptedAt != nil {
+		vm.AcceptedAtFormatted = data.AcceptedAt.Format(dateTimeFormatDMY)
+	}
+
+	if data.SignatureName != nil && data.AcceptedAt != nil {
+		vm.HasSignature = true
+		vm.SignatureName = *data.SignatureName
+		if len(data.SignatureImage) > 0 {
+			vm.SignatureBase64 = base64.StdEncoding.EncodeToString(data.SignatureImage)
+		}
+	}
+
+	vm.URLs = make([]urlViewModel, len(data.URLs))
+	for i, u := range data.URLs {
+		vm.URLs[i] = urlViewModel{Label: u.Label, Href: u.Href}
 	}
 
 	return vm

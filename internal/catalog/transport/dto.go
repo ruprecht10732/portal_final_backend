@@ -159,6 +159,36 @@ type PresignedDownloadResponse struct {
 	ExpiresAt   *int64 `json:"expiresAt,omitempty"`
 }
 
+// ── Autocomplete Search ──────────────────────────────────────────────────────
+
+type AutocompleteSearchRequest struct {
+	Query string `form:"q" validate:"required,min=1,max=200"`
+	Limit int    `form:"limit" validate:"omitempty,min=1,max=20"`
+}
+
+type AutocompleteDocumentResponse struct {
+	Filename string `json:"filename"`
+	FileKey  string `json:"fileKey"`
+}
+
+type AutocompleteURLResponse struct {
+	Label string `json:"label"`
+	Href  string `json:"href"`
+}
+
+type AutocompleteItemResponse struct {
+	ID             uuid.UUID                      `json:"id"`
+	Title          string                         `json:"title"`
+	Description    *string                        `json:"description,omitempty"`
+	PriceCents     int64                          `json:"priceCents"`
+	UnitPriceCents int64                          `json:"unitPriceCents"`
+	UnitLabel      *string                        `json:"unitLabel,omitempty"`
+	VatRateID      uuid.UUID                      `json:"vatRateId"`
+	VatRateBps     int                            `json:"vatRateBps"`
+	Documents      []AutocompleteDocumentResponse `json:"documents"`
+	URLs           []AutocompleteURLResponse      `json:"urls"`
+}
+
 // Materials
 
 type ProductMaterialsRequest struct {

@@ -79,6 +79,7 @@ type MinIOConfig interface {
 	GetMinioBucketPartnerLogos() string
 	GetMinioBucketOrganizationLogos() string
 	GetMinioBucketQuotePDFs() string
+	GetMinioBucketQuoteAttachments() string
 	IsMinIOEnabled() bool
 }
 
@@ -159,6 +160,7 @@ type Config struct {
 	MinioBucketPartnerLogos           string
 	MinioBucketOrganizationLogos      string
 	MinioBucketQuotePDFs              string
+	MinioBucketQuoteAttachments       string
 	GotenbergURL                      string
 	GotenbergUsername                 string
 	GotenbergPassword                 string
@@ -230,6 +232,9 @@ func (c *Config) GetMinioBucketOrganizationLogos() string {
 }
 func (c *Config) GetMinioBucketQuotePDFs() string {
 	return c.MinioBucketQuotePDFs
+}
+func (c *Config) GetMinioBucketQuoteAttachments() string {
+	return c.MinioBucketQuoteAttachments
 }
 func (c *Config) IsMinIOEnabled() bool { return c.MinIOEndpoint != "" }
 
@@ -319,6 +324,7 @@ func Load() (*Config, error) {
 		MinioBucketPartnerLogos:           getEnv("MINIO_BUCKET_PARTNER_LOGOS", "partner-logos"),
 		MinioBucketOrganizationLogos:      getEnv("MINIO_BUCKET_ORGANIZATION_LOGOS", "organization-logos"),
 		MinioBucketQuotePDFs:              getEnv("MINIO_BUCKET_QUOTE_PDFS", "quote-pdfs"),
+		MinioBucketQuoteAttachments:       getEnv("MINIO_BUCKET_QUOTE_ATTACHMENTS", "quote-attachments"),
 		GotenbergURL:                      getEnv("GOTENBERG_URL", ""),
 		GotenbergUsername:                 getEnv("GOTENBERG_USERNAME", ""),
 		GotenbergPassword:                 getEnv("GOTENBERG_PASSWORD", ""),

@@ -179,6 +179,12 @@ func main() {
 	// Inject storage for PDF download endpoints
 	quotesModule.SetStorageForPDF(storageSvc, cfg.GetMinioBucketQuotePDFs())
 
+	// Inject bucket for manual quote attachment uploads
+	quotesModule.SetAttachmentBucket(cfg.GetMinioBucketQuoteAttachments())
+
+	// Inject catalog bucket for attachment preview (catalog-sourced docs)
+	quotesModule.SetCatalogBucket(cfg.GetMinioBucketCatalogAssets())
+
 	// Wire timeline integration: quotes → leads timeline
 	quotesTimeline := adapters.NewQuotesTimelineWriter(leadsModule.Repository())
 	quotesModule.Service().SetTimelineWriter(quotesTimeline)
@@ -187,8 +193,12 @@ func main() {
 	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service(), authModule.Repository())
 	quotesModule.Service().SetQuoteContactReader(quotesContacts)
 
+	// Wire org settings reader: quotes → identity settings (for quote defaults)
+	orgSettingsAdapter := adapters.NewOrgSettingsAdapter(identityModule.Service())
+	quotesModule.Service().SetOrgSettingsReader(orgSettingsAdapter)
+
 	// Wire quote acceptance processor: PDF generation + upload + emails
-	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), quotesContacts, storageSvc, cfg)
+	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), quotesContacts, storageSvc, cfg, identityModule.Service())
 	notificationModule.SetQuoteAcceptanceProcessor(quotePDFProcessor)
 	quotesModule.SetPDFGenerator(quotePDFProcessor)
 

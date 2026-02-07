@@ -75,6 +75,19 @@ type OrganizationProfileUpdate struct {
 	Country      *string
 }
 
+type OrganizationSettings struct {
+	OrganizationID   uuid.UUID
+	QuotePaymentDays int
+	QuoteValidDays   int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type OrganizationSettingsUpdate struct {
+	QuotePaymentDays *int
+	QuoteValidDays   *int
+}
+
 type Invite struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
@@ -266,6 +279,57 @@ func (r *Repository) ClearOrganizationLogo(
 		return Organization{}, ErrNotFound
 	}
 	return org, err
+}
+
+func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
+	var s OrganizationSettings
+	err := r.pool.QueryRow(ctx, `
+    SELECT organization_id, quote_payment_days, quote_valid_days, created_at, updated_at
+    FROM RAC_organization_settings
+    WHERE organization_id = $1
+  `, organizationID).Scan(
+		&s.OrganizationID,
+		&s.QuotePaymentDays,
+		&s.QuoteValidDays,
+		&s.CreatedAt,
+		&s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Return defaults if no row exists yet
+		return OrganizationSettings{
+			OrganizationID:   organizationID,
+			QuotePaymentDays: 7,
+			QuoteValidDays:   14,
+		}, nil
+	}
+	return s, err
+}
+
+func (r *Repository) UpsertOrganizationSettings(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	update OrganizationSettingsUpdate,
+) (OrganizationSettings, error) {
+	var s OrganizationSettings
+	err := r.pool.QueryRow(ctx, `
+    INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days)
+    VALUES ($1, COALESCE($2, 7), COALESCE($3, 14))
+    ON CONFLICT (organization_id) DO UPDATE SET
+      quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
+      quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
+      updated_at         = now()
+    RETURNING organization_id, quote_payment_days, quote_valid_days, created_at, updated_at
+  `, organizationID, update.QuotePaymentDays, update.QuoteValidDays).Scan(
+		&s.OrganizationID,
+		&s.QuotePaymentDays,
+		&s.QuoteValidDays,
+		&s.CreatedAt,
+		&s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationSettings{}, ErrNotFound
+	}
+	return s, err
 }
 
 func (r *Repository) AddMember(ctx context.Context, q DBTX, organizationID, userID uuid.UUID) error {

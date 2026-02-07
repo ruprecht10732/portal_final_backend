@@ -876,6 +876,195 @@ func (r *Repository) ListActivities(ctx context.Context, quoteID uuid.UUID, orgI
 	return activities, rows.Err()
 }
 
+// ── Attachment & URL Methods ──────────────────────────────────────────────────
+
+// QuoteAttachment is the database model for a quote document attachment.
+type QuoteAttachment struct {
+	ID               uuid.UUID  `db:"id"`
+	QuoteID          uuid.UUID  `db:"quote_id"`
+	OrganizationID   uuid.UUID  `db:"organization_id"`
+	Filename         string     `db:"filename"`
+	FileKey          string     `db:"file_key"`
+	Source           string     `db:"source"`
+	CatalogProductID *uuid.UUID `db:"catalog_product_id"`
+	Enabled          bool       `db:"enabled"`
+	SortOrder        int        `db:"sort_order"`
+	CreatedAt        time.Time  `db:"created_at"`
+}
+
+// QuoteURL is the database model for a quote URL attachment.
+type QuoteURL struct {
+	ID               uuid.UUID  `db:"id"`
+	QuoteID          uuid.UUID  `db:"quote_id"`
+	OrganizationID   uuid.UUID  `db:"organization_id"`
+	Label            string     `db:"label"`
+	Href             string     `db:"href"`
+	Accepted         bool       `db:"accepted"`
+	CatalogProductID *uuid.UUID `db:"catalog_product_id"`
+	CreatedAt        time.Time  `db:"created_at"`
+}
+
+// ReplaceAttachments atomically replaces all attachments for a quote (delete + insert).
+func (r *Repository) ReplaceAttachments(ctx context.Context, quoteID, orgID uuid.UUID, attachments []QuoteAttachment) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM RAC_quote_attachments WHERE quote_id = $1 AND organization_id = $2`,
+		quoteID, orgID,
+	); err != nil {
+		return fmt.Errorf("delete old attachments: %w", err)
+	}
+
+	query := `INSERT INTO RAC_quote_attachments
+		(id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+
+	for _, a := range attachments {
+		if _, err := tx.Exec(ctx, query,
+			a.ID, a.QuoteID, a.OrganizationID, a.Filename, a.FileKey,
+			a.Source, a.CatalogProductID, a.Enabled, a.SortOrder, a.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("insert attachment: %w", err)
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+// ReplaceURLs atomically replaces all URLs for a quote (delete + insert).
+func (r *Repository) ReplaceURLs(ctx context.Context, quoteID, orgID uuid.UUID, urls []QuoteURL) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM RAC_quote_urls WHERE quote_id = $1 AND organization_id = $2`,
+		quoteID, orgID,
+	); err != nil {
+		return fmt.Errorf("delete old urls: %w", err)
+	}
+
+	query := `INSERT INTO RAC_quote_urls
+		(id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+
+	for _, u := range urls {
+		if _, err := tx.Exec(ctx, query,
+			u.ID, u.QuoteID, u.OrganizationID, u.Label, u.Href,
+			u.Accepted, u.CatalogProductID, u.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("insert url: %w", err)
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+// GetAttachmentsByQuoteID retrieves all attachments for a quote ordered by sort_order.
+func (r *Repository) GetAttachmentsByQuoteID(ctx context.Context, quoteID, orgID uuid.UUID) ([]QuoteAttachment, error) {
+	query := `SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
+		FROM RAC_quote_attachments WHERE quote_id = $1 AND organization_id = $2 ORDER BY sort_order ASC`
+	rows, err := r.pool.Query(ctx, query, quoteID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("query attachments: %w", err)
+	}
+	defer rows.Close()
+	var result []QuoteAttachment
+	for rows.Next() {
+		var a QuoteAttachment
+		if err := rows.Scan(&a.ID, &a.QuoteID, &a.OrganizationID, &a.Filename, &a.FileKey, &a.Source, &a.CatalogProductID, &a.Enabled, &a.SortOrder, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan attachment: %w", err)
+		}
+		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
+// GetURLsByQuoteID retrieves all URLs for a quote.
+func (r *Repository) GetURLsByQuoteID(ctx context.Context, quoteID, orgID uuid.UUID) ([]QuoteURL, error) {
+	query := `SELECT id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at
+		FROM RAC_quote_urls WHERE quote_id = $1 AND organization_id = $2 ORDER BY created_at ASC`
+	rows, err := r.pool.Query(ctx, query, quoteID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("query urls: %w", err)
+	}
+	defer rows.Close()
+	var result []QuoteURL
+	for rows.Next() {
+		var u QuoteURL
+		if err := rows.Scan(&u.ID, &u.QuoteID, &u.OrganizationID, &u.Label, &u.Href, &u.Accepted, &u.CatalogProductID, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan url: %w", err)
+		}
+		result = append(result, u)
+	}
+	return result, rows.Err()
+}
+
+// GetAttachmentsByQuoteIDNoOrg retrieves all attachments for a quote without org scoping (for public/PDF access).
+func (r *Repository) GetAttachmentsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UUID) ([]QuoteAttachment, error) {
+	query := `SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
+		FROM RAC_quote_attachments WHERE quote_id = $1 ORDER BY sort_order ASC`
+	rows, err := r.pool.Query(ctx, query, quoteID)
+	if err != nil {
+		return nil, fmt.Errorf("query attachments: %w", err)
+	}
+	defer rows.Close()
+	var result []QuoteAttachment
+	for rows.Next() {
+		var a QuoteAttachment
+		if err := rows.Scan(&a.ID, &a.QuoteID, &a.OrganizationID, &a.Filename, &a.FileKey, &a.Source, &a.CatalogProductID, &a.Enabled, &a.SortOrder, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan attachment: %w", err)
+		}
+		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
+// GetURLsByQuoteIDNoOrg retrieves all URLs for a quote without org scoping (for public access).
+func (r *Repository) GetURLsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UUID) ([]QuoteURL, error) {
+	query := `SELECT id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at
+		FROM RAC_quote_urls WHERE quote_id = $1 ORDER BY created_at ASC`
+	rows, err := r.pool.Query(ctx, query, quoteID)
+	if err != nil {
+		return nil, fmt.Errorf("query urls: %w", err)
+	}
+	defer rows.Close()
+	var result []QuoteURL
+	for rows.Next() {
+		var u QuoteURL
+		if err := rows.Scan(&u.ID, &u.QuoteID, &u.OrganizationID, &u.Label, &u.Href, &u.Accepted, &u.CatalogProductID, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan url: %w", err)
+		}
+		result = append(result, u)
+	}
+	return result, rows.Err()
+}
+
+// GetAttachmentByID returns a single attachment by ID, scoped to quote + org.
+func (r *Repository) GetAttachmentByID(ctx context.Context, attachmentID, quoteID, orgID uuid.UUID) (*QuoteAttachment, error) {
+	query := `SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
+		FROM "RAC_quote_attachments" WHERE id = $1 AND quote_id = $2 AND organization_id = $3`
+
+	var a QuoteAttachment
+	err := r.pool.QueryRow(ctx, query, attachmentID, quoteID, orgID).Scan(
+		&a.ID, &a.QuoteID, &a.OrganizationID, &a.Filename, &a.FileKey,
+		&a.Source, &a.CatalogProductID, &a.Enabled, &a.SortOrder, &a.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("attachment not found")
+		}
+		return nil, fmt.Errorf("get attachment by id: %w", err)
+	}
+	return &a, nil
+}
+
 // ── Sorting Helpers ───────────────────────────────────────────────────────────
 
 func resolveSortBy(sortBy string) (string, error) {

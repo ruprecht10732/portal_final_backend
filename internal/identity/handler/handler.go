@@ -31,6 +31,8 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/organizations/me", h.GetOrganization)
 	rg.PATCH("/organizations/me", h.UpdateOrganization)
+	rg.GET("/organizations/me/settings", h.GetOrganizationSettings)
+	rg.PATCH("/organizations/me/settings", h.UpdateOrganizationSettings)
 	rg.POST("/organizations/me/logo/presign", h.PresignLogo)
 	rg.POST("/organizations/me/logo", h.SetLogo)
 	rg.GET("/organizations/me/logo/download", h.GetLogoDownload)
@@ -289,6 +291,65 @@ func mapOrgResponse(org repository.Organization) transport.OrganizationResponse 
 		LogoContentType: org.LogoContentType,
 		LogoSizeBytes:   org.LogoSizeBytes,
 	}
+}
+
+func (h *Handler) GetOrganizationSettings(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	settings, err := h.svc.GetOrganizationSettings(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.OrganizationSettingsResponse{
+		QuotePaymentDays: settings.QuotePaymentDays,
+		QuoteValidDays:   settings.QuoteValidDays,
+	})
+}
+
+func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	var req transport.UpdateOrganizationSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	settings, err := h.svc.UpdateOrganizationSettings(c.Request.Context(), *tenantID, repository.OrganizationSettingsUpdate{
+		QuotePaymentDays: req.QuotePaymentDays,
+		QuoteValidDays:   req.QuoteValidDays,
+	})
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.OrganizationSettingsResponse{
+		QuotePaymentDays: settings.QuotePaymentDays,
+		QuoteValidDays:   settings.QuoteValidDays,
+	})
 }
 
 func (h *Handler) PresignLogo(c *gin.Context) {

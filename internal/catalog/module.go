@@ -67,6 +67,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	ctx.Protected.GET("/catalog/vat-rates/:id", m.handler.GetVatRateByID)
 	ctx.Protected.GET("/catalog/products", m.handler.ListProducts)
 	ctx.Protected.GET("/catalog/products/:id", m.handler.GetProductByID)
+	ctx.Protected.GET("/catalog/products/search", m.handler.SearchProductsForAutocomplete)
 	ctx.Protected.GET("/catalog/products/:id/materials", m.handler.ListProductMaterials)
 	ctx.Protected.GET("/catalog/products/:id/assets", m.handler.ListCatalogAssets)
 	ctx.Protected.GET("/catalog/products/:id/assets/:assetId/download", m.handler.GetCatalogAssetDownloadURL)

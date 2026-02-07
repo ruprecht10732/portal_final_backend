@@ -91,3 +91,15 @@ type OrgLogoDownloadResponse struct {
 	DownloadURL string `json:"downloadUrl"`
 	ExpiresAt   int64  `json:"expiresAt"`
 }
+
+// OrganizationSettingsResponse returns the organization's quote defaults.
+type OrganizationSettingsResponse struct {
+	QuotePaymentDays int `json:"quotePaymentDays"`
+	QuoteValidDays   int `json:"quoteValidDays"`
+}
+
+// UpdateOrganizationSettingsRequest updates quote default settings.
+type UpdateOrganizationSettingsRequest struct {
+	QuotePaymentDays *int `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
+	QuoteValidDays   *int `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
+}

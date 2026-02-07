@@ -25,6 +25,8 @@ import (
 type QuoteDataReader interface {
 	GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*repository.Quote, error)
 	GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]repository.QuoteItem, error)
+	GetAttachmentsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]repository.QuoteAttachment, error)
+	GetURLsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]repository.QuoteURL, error)
 	SetPDFFileKey(ctx context.Context, quoteID uuid.UUID, fileKey string) error
 }
 
@@ -32,6 +34,8 @@ type QuoteDataReader interface {
 type QuotePDFBucketConfig interface {
 	GetMinioBucketQuotePDFs() string
 	GetMinioBucketOrganizationLogos() string
+	GetMinioBucketCatalogAssets() string
+	GetMinioBucketQuoteAttachments() string
 }
 
 // QuoteOrgReader is the narrow interface for fetching organization profile data.
@@ -47,16 +51,18 @@ type QuoteAcceptanceProcessor struct {
 	contactReader  service.QuoteContactReader
 	storage        storage.StorageService
 	cfg            QuotePDFBucketConfig
+	settingsReader OrgSettingsReaderRepo
 }
 
 // NewQuoteAcceptanceProcessor creates a new processor adapter.
-func NewQuoteAcceptanceProcessor(repo QuoteDataReader, orgReader QuoteOrgReader, contactReader service.QuoteContactReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig) *QuoteAcceptanceProcessor {
+func NewQuoteAcceptanceProcessor(repo QuoteDataReader, orgReader QuoteOrgReader, contactReader service.QuoteContactReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig, settingsReader OrgSettingsReaderRepo) *QuoteAcceptanceProcessor {
 	return &QuoteAcceptanceProcessor{
-		repo:          repo,
-		orgReader:     orgReader,
-		contactReader: contactReader,
-		storage:       storageSvc,
-		cfg:           cfg,
+		repo:           repo,
+		orgReader:      orgReader,
+		contactReader:  contactReader,
+		storage:        storageSvc,
+		cfg:            cfg,
+		settingsReader: settingsReader,
 	}
 }
 
@@ -82,6 +88,31 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 	org, orgErr := p.orgReader.GetOrganization(ctx, organizationID)
 
 	// 3. Calculate totals + VAT breakdown using the service calculator
+	calc := service.CalculateQuote(buildCalcRequest(items, quote))
+
+	// 4. Build PDF data
+	bc := pdfBuildContext{
+		org:            org,
+		orgErr:         orgErr,
+		organizationID: organizationID,
+		orgName:        orgName,
+		customerName:   customerName,
+		signatureName:  signatureName,
+	}
+	pdfData := p.buildPDFData(ctx, quote, items, calc, bc)
+
+	// 5. Generate PDF bytes
+	pdfBytes, err := pdf.GenerateQuotePDF(pdfData)
+	if err != nil {
+		return "", nil, fmt.Errorf("generate PDF: %w", err)
+	}
+
+	// 6. Upload and persist
+	return p.uploadAndPersist(ctx, pdfBytes, quoteID, organizationID, quote.QuoteNumber)
+}
+
+// buildCalcRequest converts repository items + quote into a calculation request.
+func buildCalcRequest(items []repository.QuoteItem, quote *repository.Quote) transport.QuoteCalculationRequest {
 	itemReqs := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
 		itemReqs[i] = transport.QuoteItemRequest{
@@ -93,59 +124,51 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 			IsSelected:     it.IsSelected,
 		}
 	}
-	calc := service.CalculateQuote(transport.QuoteCalculationRequest{
+	return transport.QuoteCalculationRequest{
 		Items:         itemReqs,
 		PricingMode:   quote.PricingMode,
 		DiscountType:  quote.DiscountType,
 		DiscountValue: quote.DiscountValue,
-	})
+	}
+}
 
-	// 4. Build public-style item responses for the PDF
+// pdfBuildContext groups ancillary data needed to build the PDF model.
+type pdfBuildContext struct {
+	org            identityrepo.Organization
+	orgErr         error
+	organizationID uuid.UUID
+	orgName        string
+	customerName   string
+	signatureName  string
+}
+
+// buildPDFData assembles the full QuotePDFData struct from all gathered data.
+func (p *QuoteAcceptanceProcessor) buildPDFData(
+	ctx context.Context,
+	quote *repository.Quote,
+	items []repository.QuoteItem,
+	calc transport.QuoteCalculationResponse,
+	bc pdfBuildContext,
+) pdf.QuotePDFData {
 	pdfItems := buildPDFItems(items, quote.PricingMode)
 
-	// 5. Decode drawn signature image (base64 data URL → raw PNG bytes)
 	var signatureImageBytes []byte
 	if quote.SignatureData != nil && *quote.SignatureData != "" {
 		signatureImageBytes = decodeSignatureDataURL(*quote.SignatureData)
 	}
 
-	// 6. Download organization logo from MinIO (if available)
-	var logoBytes []byte
-	if orgErr != nil {
-		slog.Warn("could not fetch organization for logo", "error", orgErr)
-	} else if org.LogoFileKey == nil || *org.LogoFileKey == "" {
-		slog.Info("organization has no logo file key", "orgID", organizationID)
-	} else {
-		logoBucket := p.cfg.GetMinioBucketOrganizationLogos()
-		slog.Info("downloading org logo", "bucket", logoBucket, "key", *org.LogoFileKey)
-		logoReader, dlErr := p.storage.DownloadFile(ctx, logoBucket, *org.LogoFileKey)
-		if dlErr != nil {
-			slog.Warn("logo download failed", "bucket", logoBucket, "key", *org.LogoFileKey, "error", dlErr)
-		} else {
-			defer logoReader.Close()
-			data, readErr := io.ReadAll(logoReader)
-			if readErr != nil {
-				slog.Warn("failed to read logo bytes", "key", *org.LogoFileKey, "error", readErr)
-			} else if len(data) == 0 {
-				slog.Warn("logo file is empty", "key", *org.LogoFileKey)
-			} else {
-				slog.Info("logo loaded", "key", *org.LogoFileKey, "bytes", len(data))
-				logoBytes = data
-			}
-		}
-	}
+	logoBytes := p.downloadOrgLogo(ctx, bc.org, bc.orgErr, bc.organizationID)
 
-	// 7. Build QuotePDFData with full org profile
-	pdfData := pdf.QuotePDFData{
+	data := pdf.QuotePDFData{
 		QuoteNumber:      quote.QuoteNumber,
-		OrganizationName: orgName,
-		CustomerName:     customerName,
+		OrganizationName: bc.orgName,
+		CustomerName:     bc.customerName,
 		Status:           quote.Status,
 		PricingMode:      quote.PricingMode,
 		ValidUntil:       quote.ValidUntil,
 		CreatedAt:        quote.CreatedAt,
 		Notes:            quote.Notes,
-		SignatureName:    &signatureName,
+		SignatureName:    &bc.signatureName,
 		SignatureImage:   signatureImageBytes,
 		AcceptedAt:       quote.AcceptedAt,
 		Items:            pdfItems,
@@ -155,31 +178,146 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		TotalCents:       calc.TotalCents,
 		VatBreakdown:     calc.VatBreakdown,
 		OrgLogo:          logoBytes,
+		PaymentDays:      7,
+		QuoteValidDays:   14,
 	}
 
-	// Populate org details if available
-	if orgErr == nil {
-		pdfData.OrgEmail = derefStr(org.Email)
-		pdfData.OrgPhone = derefStr(org.Phone)
-		pdfData.OrgVatNumber = derefStr(org.VatNumber)
-		pdfData.OrgKvkNumber = derefStr(org.KvkNumber)
-		pdfData.OrgAddressLine1 = derefStr(org.AddressLine1)
-		pdfData.OrgAddressLine2 = derefStr(org.AddressLine2)
-		pdfData.OrgPostalCode = derefStr(org.PostalCode)
-		pdfData.OrgCity = derefStr(org.City)
-		pdfData.OrgCountry = derefStr(org.Country)
+	if p.settingsReader != nil {
+		settings, settingsErr := p.settingsReader.GetOrganizationSettings(ctx, bc.organizationID)
+		if settingsErr == nil {
+			data.PaymentDays = settings.QuotePaymentDays
+			data.QuoteValidDays = settings.QuoteValidDays
+		}
 	}
 
-	// 8. Generate PDF bytes
-	pdfBytes, err := pdf.GenerateQuotePDF(pdfData)
+	if bc.orgErr == nil {
+		data.OrgEmail = derefStr(bc.org.Email)
+		data.OrgPhone = derefStr(bc.org.Phone)
+		data.OrgVatNumber = derefStr(bc.org.VatNumber)
+		data.OrgKvkNumber = derefStr(bc.org.KvkNumber)
+		data.OrgAddressLine1 = derefStr(bc.org.AddressLine1)
+		data.OrgAddressLine2 = derefStr(bc.org.AddressLine2)
+		data.OrgPostalCode = derefStr(bc.org.PostalCode)
+		data.OrgCity = derefStr(bc.org.City)
+		data.OrgCountry = derefStr(bc.org.Country)
+	}
+
+	// Load document attachments and download enabled PDFs from MinIO
+	data.AttachmentPDFs = p.downloadEnabledAttachments(ctx, quote.ID, quote.OrganizationID)
+	data.URLs = p.loadURLEntries(ctx, quote.ID, quote.OrganizationID)
+
+	return data
+}
+
+// downloadOrgLogo fetches the organization logo from storage, returning nil on any failure.
+func (p *QuoteAcceptanceProcessor) downloadOrgLogo(
+	ctx context.Context,
+	org identityrepo.Organization,
+	orgErr error,
+	organizationID uuid.UUID,
+) []byte {
+	if orgErr != nil {
+		slog.Warn("could not fetch organization for logo", "error", orgErr)
+		return nil
+	}
+	if org.LogoFileKey == nil || *org.LogoFileKey == "" {
+		slog.Info("organization has no logo file key", "orgID", organizationID)
+		return nil
+	}
+
+	logoBucket := p.cfg.GetMinioBucketOrganizationLogos()
+	slog.Info("downloading org logo", "bucket", logoBucket, "key", *org.LogoFileKey)
+
+	logoReader, dlErr := p.storage.DownloadFile(ctx, logoBucket, *org.LogoFileKey)
+	if dlErr != nil {
+		slog.Warn("logo download failed", "bucket", logoBucket, "key", *org.LogoFileKey, "error", dlErr)
+		return nil
+	}
+	defer logoReader.Close()
+
+	data, readErr := io.ReadAll(logoReader)
+	if readErr != nil {
+		slog.Warn("failed to read logo bytes", "key", *org.LogoFileKey, "error", readErr)
+		return nil
+	}
+	if len(data) == 0 {
+		slog.Warn("logo file is empty", "key", *org.LogoFileKey)
+		return nil
+	}
+
+	slog.Info("logo loaded", "key", *org.LogoFileKey, "bytes", len(data))
+	return data
+}
+
+// downloadEnabledAttachments fetches all enabled attachment PDFs from MinIO.
+// Catalog-sourced attachments are read from the catalog-assets bucket;
+// manually uploaded attachments are read from the quote-attachments bucket.
+func (p *QuoteAcceptanceProcessor) downloadEnabledAttachments(ctx context.Context, quoteID, orgID uuid.UUID) []pdf.AttachmentPDFEntry {
+	attachments, err := p.repo.GetAttachmentsByQuoteID(ctx, quoteID, orgID)
 	if err != nil {
-		return "", nil, fmt.Errorf("generate PDF: %w", err)
+		slog.Warn("failed to load quote attachments", "quoteID", quoteID, "error", err)
+		return nil
 	}
 
-	// 9. Upload to MinIO
+	catalogBucket := p.cfg.GetMinioBucketCatalogAssets()
+	manualBucket := p.cfg.GetMinioBucketQuoteAttachments()
+
+	var result []pdf.AttachmentPDFEntry
+	for _, att := range attachments {
+		if !att.Enabled || att.FileKey == "" {
+			continue
+		}
+
+		bucket := catalogBucket
+		if att.Source == "manual" {
+			bucket = manualBucket
+		}
+
+		reader, dlErr := p.storage.DownloadFile(ctx, bucket, att.FileKey)
+		if dlErr != nil {
+			slog.Warn("failed to download attachment PDF", "fileKey", att.FileKey, "error", dlErr)
+			continue
+		}
+		data, readErr := io.ReadAll(reader)
+		reader.Close()
+		if readErr != nil || len(data) == 0 {
+			slog.Warn("empty or unreadable attachment PDF", "fileKey", att.FileKey)
+			continue
+		}
+
+		result = append(result, pdf.AttachmentPDFEntry{
+			Filename: att.Filename,
+			PDFBytes: data,
+		})
+	}
+	return result
+}
+
+// loadURLEntries converts stored quote URLs into PDF URL entries.
+func (p *QuoteAcceptanceProcessor) loadURLEntries(ctx context.Context, quoteID, orgID uuid.UUID) []pdf.QuoteURLEntry {
+	urls, err := p.repo.GetURLsByQuoteID(ctx, quoteID, orgID)
+	if err != nil {
+		slog.Warn("failed to load quote URLs", "quoteID", quoteID, "error", err)
+		return nil
+	}
+
+	result := make([]pdf.QuoteURLEntry, len(urls))
+	for i, u := range urls {
+		result[i] = pdf.QuoteURLEntry{Label: u.Label, Href: u.Href}
+	}
+	return result
+}
+
+// uploadAndPersist uploads the PDF to MinIO and persists the file key on the quote record.
+func (p *QuoteAcceptanceProcessor) uploadAndPersist(
+	ctx context.Context,
+	pdfBytes []byte,
+	quoteID, organizationID uuid.UUID,
+	quoteNumber string,
+) (string, []byte, error) {
 	bucket := p.cfg.GetMinioBucketQuotePDFs()
 	folder := organizationID.String()
-	fileName := fmt.Sprintf("%s.pdf", quote.QuoteNumber)
+	fileName := fmt.Sprintf("%s.pdf", quoteNumber)
 	reader := bytes.NewReader(pdfBytes)
 
 	fileKey, err := p.storage.UploadFile(ctx, bucket, folder, fileName, "application/pdf", reader, int64(len(pdfBytes)))
@@ -187,7 +325,6 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		return "", nil, fmt.Errorf("upload PDF to storage: %w", err)
 	}
 
-	// 10. Persist file key on the quote record
 	if err := p.repo.SetPDFFileKey(ctx, quoteID, fileKey); err != nil {
 		return "", nil, fmt.Errorf("persist PDF file key: %w", err)
 	}

@@ -62,12 +62,18 @@ type QuoteContactReader interface {
 	GetQuoteContactData(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (QuoteContactData, error)
 }
 
+// OrgSettingsReader provides organization-level quote defaults (payment days, validity days).
+type OrgSettingsReader interface {
+	GetQuoteDefaults(ctx context.Context, organizationID uuid.UUID) (paymentDays int, validDays int, err error)
+}
+
 // Service provides business logic for quotes
 type Service struct {
-	repo     *repository.Repository
-	timeline TimelineWriter     // optional — nil means no timeline integration
-	eventBus events.Bus         // optional — nil means no event publishing
-	contacts QuoteContactReader // optional — nil means no email enrichment
+	repo        *repository.Repository
+	timeline    TimelineWriter     // optional — nil means no timeline integration
+	eventBus    events.Bus         // optional — nil means no event publishing
+	contacts    QuoteContactReader // optional — nil means no email enrichment
+	orgSettings OrgSettingsReader  // optional — nil means use hardcoded defaults
 }
 
 // New creates a new quotes service
@@ -88,6 +94,11 @@ func (s *Service) SetEventBus(bus events.Bus) {
 // SetQuoteContactReader injects the contact reader (set after construction to break circular deps).
 func (s *Service) SetQuoteContactReader(cr QuoteContactReader) {
 	s.contacts = cr
+}
+
+// SetOrgSettingsReader injects the org settings reader (set after construction to break circular deps).
+func (s *Service) SetOrgSettingsReader(r OrgSettingsReader) {
+	s.orgSettings = r
 }
 
 // Create creates a new quote with line items, computing totals server-side
@@ -117,6 +128,17 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 	calc := CalculateQuote(calcReq)
 
 	now := time.Now()
+
+	// Apply org default for validity if not provided
+	validUntil := req.ValidUntil
+	if validUntil == nil && s.orgSettings != nil {
+		_, validDays, lookupErr := s.orgSettings.GetQuoteDefaults(ctx, tenantID)
+		if lookupErr == nil && validDays > 0 {
+			defaultExpiry := now.AddDate(0, 0, validDays)
+			validUntil = &defaultExpiry
+		}
+	}
+
 	quote := repository.Quote{
 		ID:                  uuid.New(),
 		OrganizationID:      tenantID,
@@ -132,7 +154,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		DiscountAmountCents: calc.DiscountAmountCents,
 		TaxTotalCents:       calc.VatTotalCents,
 		TotalCents:          calc.TotalCents,
-		ValidUntil:          req.ValidUntil,
+		ValidUntil:          validUntil,
 		Notes:               nilIfEmpty(req.Notes),
 		CreatedAt:           now,
 		UpdatedAt:           now,
@@ -163,6 +185,14 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 
 	if err := s.repo.CreateWithItems(ctx, &quote, items); err != nil {
 		return nil, err
+	}
+
+	// Save attachments and URLs
+	if err := s.saveAttachments(ctx, quote.ID, tenantID, req.Attachments); err != nil {
+		return nil, fmt.Errorf("save attachments: %w", err)
+	}
+	if err := s.saveURLs(ctx, quote.ID, tenantID, req.URLs); err != nil {
+		return nil, fmt.Errorf("save urls: %w", err)
 	}
 
 	// Timeline event: "Quote OFF-2026-0001 created"
@@ -287,6 +317,18 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 
 	if err := s.repo.UpdateWithItems(ctx, quote, items, req.Items != nil); err != nil {
 		return nil, err
+	}
+
+	// Replace attachments / URLs if provided
+	if req.Attachments != nil {
+		if err := s.saveAttachments(ctx, quote.ID, tenantID, *req.Attachments); err != nil {
+			return nil, fmt.Errorf("save attachments: %w", err)
+		}
+	}
+	if req.URLs != nil {
+		if err := s.saveURLs(ctx, quote.ID, tenantID, *req.URLs); err != nil {
+			return nil, fmt.Errorf("save urls: %w", err)
+		}
 	}
 
 	return s.buildResponse(quote, items), nil
@@ -1068,6 +1110,8 @@ func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.Qu
 		ValidUntil:          q.ValidUntil,
 		Notes:               q.Notes,
 		Items:               respItems,
+		Attachments:         s.loadAttachmentResponsesNoOrg(q.ID),
+		URLs:                s.loadURLResponsesNoOrg(q.ID),
 		AcceptedAt:          q.AcceptedAt,
 		RejectedAt:          q.RejectedAt,
 		IsReadOnly:          readOnly,
@@ -1197,12 +1241,135 @@ func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteIte
 		ValidUntil:                 q.ValidUntil,
 		Notes:                      q.Notes,
 		Items:                      respItems,
+		Attachments:                s.loadAttachmentResponses(q.ID, q.OrganizationID),
+		URLs:                       s.loadURLResponses(q.ID, q.OrganizationID),
 		ViewedAt:                   q.ViewedAt,
 		AcceptedAt:                 q.AcceptedAt,
 		RejectedAt:                 q.RejectedAt,
 		PDFFileKey:                 q.PDFFileKey,
 		CreatedAt:                  q.CreatedAt,
 		UpdatedAt:                  q.UpdatedAt,
+	}
+}
+
+// ── Attachment & URL Helpers ──────────────────────────────────────────────────
+
+// GetAttachmentByID returns a single attachment by ID, verifying quote ownership.
+func (s *Service) GetAttachmentByID(ctx context.Context, attachmentID, quoteID, tenantID uuid.UUID) (*repository.QuoteAttachment, error) {
+	// Verify the quote belongs to this tenant
+	if _, err := s.repo.GetByID(ctx, quoteID, tenantID); err != nil {
+		return nil, err
+	}
+	return s.repo.GetAttachmentByID(ctx, attachmentID, quoteID, tenantID)
+}
+
+// saveAttachments persists a slice of attachment requests for a quote.
+func (s *Service) saveAttachments(ctx context.Context, quoteID, orgID uuid.UUID, reqs []transport.QuoteAttachmentRequest) error {
+	if len(reqs) == 0 {
+		return nil
+	}
+	now := time.Now()
+	models := make([]repository.QuoteAttachment, len(reqs))
+	for i, r := range reqs {
+		models[i] = repository.QuoteAttachment{
+			ID:               uuid.New(),
+			QuoteID:          quoteID,
+			OrganizationID:   orgID,
+			Filename:         r.Filename,
+			FileKey:          r.FileKey,
+			Source:           r.Source,
+			CatalogProductID: r.CatalogProductID,
+			Enabled:          r.Enabled,
+			SortOrder:        r.SortOrder,
+			CreatedAt:        now,
+		}
+	}
+	return s.repo.ReplaceAttachments(ctx, quoteID, orgID, models)
+}
+
+// saveURLs persists a slice of URL requests for a quote.
+func (s *Service) saveURLs(ctx context.Context, quoteID, orgID uuid.UUID, reqs []transport.QuoteURLRequest) error {
+	if len(reqs) == 0 {
+		return nil
+	}
+	now := time.Now()
+	models := make([]repository.QuoteURL, len(reqs))
+	for i, r := range reqs {
+		models[i] = repository.QuoteURL{
+			ID:               uuid.New(),
+			QuoteID:          quoteID,
+			OrganizationID:   orgID,
+			Label:            r.Label,
+			Href:             r.Href,
+			Accepted:         false,
+			CatalogProductID: r.CatalogProductID,
+			CreatedAt:        now,
+		}
+	}
+	return s.repo.ReplaceURLs(ctx, quoteID, orgID, models)
+}
+
+// loadAttachmentResponses loads attachments for a quote (org-scoped).
+func (s *Service) loadAttachmentResponses(quoteID, orgID uuid.UUID) []transport.QuoteAttachmentResponse {
+	attachments, _ := s.repo.GetAttachmentsByQuoteID(context.Background(), quoteID, orgID)
+	resp := make([]transport.QuoteAttachmentResponse, len(attachments))
+	for i, a := range attachments {
+		resp[i] = toAttachmentResponse(a)
+	}
+	return resp
+}
+
+// loadURLResponses loads URLs for a quote (org-scoped).
+func (s *Service) loadURLResponses(quoteID, orgID uuid.UUID) []transport.QuoteURLResponse {
+	urls, _ := s.repo.GetURLsByQuoteID(context.Background(), quoteID, orgID)
+	resp := make([]transport.QuoteURLResponse, len(urls))
+	for i, u := range urls {
+		resp[i] = toURLResponse(u)
+	}
+	return resp
+}
+
+// loadAttachmentResponsesNoOrg loads attachments without org scoping (public access / PDF).
+func (s *Service) loadAttachmentResponsesNoOrg(quoteID uuid.UUID) []transport.QuoteAttachmentResponse {
+	attachments, _ := s.repo.GetAttachmentsByQuoteIDNoOrg(context.Background(), quoteID)
+	resp := make([]transport.QuoteAttachmentResponse, len(attachments))
+	for i, a := range attachments {
+		resp[i] = toAttachmentResponse(a)
+	}
+	return resp
+}
+
+// loadURLResponsesNoOrg loads URLs without org scoping (public access).
+func (s *Service) loadURLResponsesNoOrg(quoteID uuid.UUID) []transport.QuoteURLResponse {
+	urls, _ := s.repo.GetURLsByQuoteIDNoOrg(context.Background(), quoteID)
+	resp := make([]transport.QuoteURLResponse, len(urls))
+	for i, u := range urls {
+		resp[i] = toURLResponse(u)
+	}
+	return resp
+}
+
+func toAttachmentResponse(a repository.QuoteAttachment) transport.QuoteAttachmentResponse {
+	return transport.QuoteAttachmentResponse{
+		ID:               a.ID,
+		Filename:         a.Filename,
+		FileKey:          a.FileKey,
+		Source:           a.Source,
+		CatalogProductID: a.CatalogProductID,
+		Enabled:          a.Enabled,
+		SortOrder:        a.SortOrder,
+		CreatedAt:        a.CreatedAt,
+	}
+}
+
+func toURLResponse(u repository.QuoteURL) transport.QuoteURLResponse {
+	return transport.QuoteURLResponse{
+		ID:               u.ID,
+		Label:            u.Label,
+		Href:             u.Href,
+		Accepted:         u.Accepted,
+		CatalogProductID: u.CatalogProductID,
+		CreatedAt:        u.CreatedAt,
 	}
 }
 

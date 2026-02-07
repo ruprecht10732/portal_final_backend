@@ -572,6 +572,110 @@ func toVatRateListResponse(items []repository.VatRate, total int, page int, page
 	}
 }
 
+// SearchForAutocomplete returns a lightweight list of products with their document
+// and URL assets for use in quote-line ghost-text autocomplete.
+func (s *Service) SearchForAutocomplete(ctx context.Context, tenantID uuid.UUID, req transport.AutocompleteSearchRequest) ([]transport.AutocompleteItemResponse, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+
+	products, _, err := s.repo.ListProducts(ctx, repository.ListProductsParams{
+		OrganizationID: tenantID,
+		Search:         strings.TrimSpace(req.Query),
+		Limit:          limit,
+		Offset:         0,
+		SortBy:         "title",
+		SortOrder:      "asc",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search products: %w", err)
+	}
+
+	result := make([]transport.AutocompleteItemResponse, 0, len(products))
+	for _, p := range products {
+		item, err := s.buildAutocompleteItem(ctx, tenantID, p)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+
+	return result, nil
+}
+
+func (s *Service) buildAutocompleteItem(ctx context.Context, tenantID uuid.UUID, p repository.Product) (transport.AutocompleteItemResponse, error) {
+	docs, err := s.repo.ListProductAssets(ctx, repository.ListProductAssetsParams{
+		OrganizationID: tenantID,
+		ProductID:      p.ID,
+		AssetType:      strPtr("document"),
+	})
+	if err != nil {
+		return transport.AutocompleteItemResponse{}, fmt.Errorf("list product assets: %w", err)
+	}
+
+	urls, err := s.repo.ListProductAssets(ctx, repository.ListProductAssetsParams{
+		OrganizationID: tenantID,
+		ProductID:      p.ID,
+		AssetType:      strPtr("terms_url"),
+	})
+	if err != nil {
+		return transport.AutocompleteItemResponse{}, fmt.Errorf("list product url assets: %w", err)
+	}
+
+	var vatRateBps int
+	rate, err := s.repo.GetVatRateByID(ctx, tenantID, p.VatRateID)
+	if err == nil {
+		vatRateBps = rate.RateBps
+	}
+
+	return transport.AutocompleteItemResponse{
+		ID:             p.ID,
+		Title:          p.Title,
+		Description:    p.Description,
+		PriceCents:     p.PriceCents,
+		UnitPriceCents: p.UnitPriceCents,
+		UnitLabel:      p.UnitLabel,
+		VatRateID:      p.VatRateID,
+		VatRateBps:     vatRateBps,
+		Documents:      toAutocompleteDocuments(docs),
+		URLs:           toAutocompleteURLs(urls),
+	}, nil
+}
+
+func strPtr(s string) *string { return &s }
+
+func toAutocompleteDocuments(assets []repository.ProductAsset) []transport.AutocompleteDocumentResponse {
+	out := make([]transport.AutocompleteDocumentResponse, 0, len(assets))
+	for _, d := range assets {
+		if d.FileKey != nil && d.FileName != nil {
+			out = append(out, transport.AutocompleteDocumentResponse{
+				Filename: *d.FileName,
+				FileKey:  *d.FileKey,
+			})
+		}
+	}
+	return out
+}
+
+func toAutocompleteURLs(assets []repository.ProductAsset) []transport.AutocompleteURLResponse {
+	out := make([]transport.AutocompleteURLResponse, 0, len(assets))
+	for _, u := range assets {
+		if u.URL == nil {
+			continue
+		}
+		label := "Voorwaarden"
+		if u.FileName != nil {
+			label = *u.FileName
+		}
+		out = append(out, transport.AutocompleteURLResponse{
+			Label: label,
+			Href:  *u.URL,
+		})
+	}
+	return out
+}
+
 func toProductResponse(product repository.Product) transport.ProductResponse {
 	return transport.ProductResponse{
 		ID:             product.ID,
