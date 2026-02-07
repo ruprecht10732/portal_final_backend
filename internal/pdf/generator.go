@@ -411,7 +411,7 @@ func buildSignatureVM(data QuotePDFData, logoB64, logoMime string) signatureView
 
 	vm.URLs = make([]urlViewModel, len(data.URLs))
 	for i, u := range data.URLs {
-		vm.URLs[i] = urlViewModel{Label: u.Label, Href: u.Href}
+		vm.URLs[i] = urlViewModel(u)
 	}
 
 	return vm

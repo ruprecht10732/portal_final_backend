@@ -76,7 +76,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	notesSvc := notes.New(repo)
 
 	// Create orchestrator and event listeners
-	orchestrator := NewOrchestrator(gatekeeper, estimator, dispatcher, repo, log)
+	orchestrator := NewOrchestrator(gatekeeper, estimator, dispatcher, repo, eventBus, sseService, log)
 	subscribeOrchestrator(eventBus, orchestrator)
 
 	// Create handlers
@@ -349,14 +349,14 @@ func (m *Module) sseHandler() func(c *gin.Context) {
 	return m.sse.Handler(
 		func(c *gin.Context) (uuid.UUID, bool) {
 			id := httpkit.GetIdentity(c)
-			if id == nil || !id.IsAuthenticated() {
+			if !id.IsAuthenticated() {
 				return uuid.UUID{}, false
 			}
 			return id.UserID(), true
 		},
 		func(c *gin.Context) (uuid.UUID, bool) {
 			id := httpkit.GetIdentity(c)
-			if id == nil || !id.IsAuthenticated() {
+			if !id.IsAuthenticated() {
 				return uuid.UUID{}, false
 			}
 			tenantID := id.TenantID()

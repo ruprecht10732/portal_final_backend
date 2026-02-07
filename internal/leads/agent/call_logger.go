@@ -805,7 +805,7 @@ func executeScheduleVisit(deps *CallLoggerToolDeps, input ScheduleVisitInput) (S
 	}
 
 	if deps.Booker == nil {
-		return ScheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, fmt.Errorf(errBookerNotConfigured)
+		return ScheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, errors.New(errBookerNotConfigured)
 	}
 
 	startTime, err := time.Parse(time.RFC3339, input.StartTime)
@@ -918,7 +918,7 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 	}
 
 	if deps.Booker == nil {
-		return RescheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, fmt.Errorf(errBookerNotConfigured)
+		return RescheduleVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, errors.New(errBookerNotConfigured)
 	}
 
 	if _, err := deps.Booker.GetLeadVisitByService(context.Background(), tenantID, serviceID, userID); err != nil {
@@ -984,7 +984,7 @@ func executeCancelVisit(deps *CallLoggerToolDeps, input CancelVisitInput) (Cance
 	}
 
 	if deps.Booker == nil {
-		return CancelVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, fmt.Errorf(errBookerNotConfigured)
+		return CancelVisitOutput{Success: false, Message: errMsgBookingNotConfigured}, errors.New(errBookerNotConfigured)
 	}
 
 	err := deps.Booker.CancelLeadVisit(context.Background(), ports.CancelVisitParams{
