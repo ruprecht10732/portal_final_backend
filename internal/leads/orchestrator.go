@@ -133,7 +133,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 			ActorName:      "Orchestrator",
 			EventType:      "alert",
 			Title:          "Handmatige interventie vereist",
-			Summary:        stringPtr("Automated processing requires human review"),
+			Summary:        stringPtr("Geautomatiseerde verwerking vereist menselijke beoordeling"),
 			Metadata: map[string]any{
 				"previous_stage": evt.OldStage,
 				"trigger":        "pipeline_stage_change",
@@ -145,7 +145,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 			Type:      sse.EventManualIntervention,
 			LeadID:    evt.LeadID,
 			ServiceID: evt.LeadServiceID,
-			Message:   "Automated processing requires human review",
+			Message:   "Geautomatiseerde verwerking vereist menselijke beoordeling",
 			Data: map[string]any{
 				"previousStage": evt.OldStage,
 			},

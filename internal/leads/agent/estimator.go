@@ -78,8 +78,16 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 		return nil, fmt.Errorf("failed to build CalculateEstimate tool: %w", err)
 	}
 
-	// Build the tools list
-	tools := []tool.Tool{calculateEstimateTool, saveEstimationTool, updateStageTool}
+	// Build the tools list.
+	// DraftQuote is always registered because QuoteDrafter is injected after
+	// construction via SetQuoteDrafter (to break circular dependencies).
+	// handleDraftQuote gracefully returns an error when the drafter is still nil.
+	draftQuoteTool, err := createDraftQuoteTool(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build DraftQuote tool: %w", err)
+	}
+
+	tools := []tool.Tool{calculateEstimateTool, saveEstimationTool, updateStageTool, draftQuoteTool}
 
 	// Add product search tool if configured
 	if deps.IsProductSearchEnabled() {
@@ -91,18 +99,6 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 		log.Printf("Estimator: product search enabled")
 	} else {
 		log.Printf("Estimator: product search disabled (embedding or qdrant client not configured)")
-	}
-
-	// Add quote drafting tool if configured
-	if deps.QuoteDrafter != nil {
-		draftQuoteTool, err := createDraftQuoteTool(deps)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build DraftQuote tool: %w", err)
-		}
-		tools = append(tools, draftQuoteTool)
-		log.Printf("Estimator: quote drafting enabled")
-	} else {
-		log.Printf("Estimator: quote drafting disabled (QuoteDrafter not configured)")
 	}
 
 	adkAgent, err := llmagent.New(llmagent.Config{

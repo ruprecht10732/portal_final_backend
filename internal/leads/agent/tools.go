@@ -1286,5 +1286,3 @@ Ad-hoc items (not found in catalog) should omit catalogProductId.`,
 		return handleDraftQuote(ctx, deps, input)
 	})
 }
-
-
