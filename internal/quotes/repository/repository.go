@@ -274,7 +274,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 			q.quote_number, q.status,
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, created_at, updated_at,
+			valid_until, notes, q.created_at, q.updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
 			viewed_at, accepted_at, rejected_at,
 			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
