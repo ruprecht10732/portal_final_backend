@@ -288,12 +288,20 @@ func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*Dra
 	}
 
 	serviceID := &params.LeadServiceID
+
+	// Map uuid.Nil to nil so the DB gets NULL instead of a zero UUID
+	// that would violate the foreign key constraint on created_by_id.
+	var createdBy *uuid.UUID
+	if params.CreatedByID != uuid.Nil {
+		createdBy = &params.CreatedByID
+	}
+
 	quote := repository.Quote{
 		ID:                  uuid.New(),
 		OrganizationID:      params.OrganizationID,
 		LeadID:              params.LeadID,
 		LeadServiceID:       serviceID,
-		CreatedByID:         &params.CreatedByID,
+		CreatedByID:         createdBy,
 		QuoteNumber:         quoteNumber,
 		Status:              string(transport.QuoteStatusDraft),
 		PricingMode:         pricingMode,
