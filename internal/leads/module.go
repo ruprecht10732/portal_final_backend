@@ -66,8 +66,9 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// SSE service for real-time notifications
 	sseService := sse.New()
 
-	// Subscribe to LeadCreated events to kick off gatekeeper triage
+	// Subscribe to LeadCreated and LeadServiceAdded events to kick off gatekeeper triage
 	subscribeLeadCreated(eventBus, repo, gatekeeper, log)
+	subscribeLeadServiceAdded(eventBus, gatekeeper, log)
 
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
@@ -197,6 +198,24 @@ func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, 
 			}
 			if err := gatekeeper.Run(bg, e.LeadID, service.ID, e.TenantID); err != nil {
 				log.Error("gatekeeper run failed", "error", err, "leadId", e.LeadID)
+			}
+		}()
+
+		return nil
+	}))
+}
+
+func subscribeLeadServiceAdded(eventBus events.Bus, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
+	eventBus.Subscribe(events.LeadServiceAdded{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.LeadServiceAdded)
+		if !ok {
+			return nil
+		}
+
+		go func() {
+			bg := context.Background()
+			if err := gatekeeper.Run(bg, e.LeadID, e.LeadServiceID, e.TenantID); err != nil {
+				log.Error("gatekeeper run failed for new service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
 			}
 		}()
 

@@ -81,6 +81,17 @@ type LeadAssigned struct {
 
 func (e LeadAssigned) EventName() string { return "RAC_leads.lead.assigned" }
 
+// LeadServiceAdded is published when a new service is added to an existing lead.
+type LeadServiceAdded struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	ServiceType   string    `json:"serviceType"`
+}
+
+func (e LeadServiceAdded) EventName() string { return "leads.service.added" }
+
 // LeadDataChanged is published when a user updates lead data such as notes or call logs.
 type LeadDataChanged struct {
 	BaseEvent

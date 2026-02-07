@@ -705,7 +705,7 @@ func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transpor
 		}
 	}
 
-	_, err = s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
+	newService, err := s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
 		LeadID:         leadID,
 		OrganizationID: tenantID,
 		ServiceType:    string(req.ServiceType),
@@ -715,6 +715,15 @@ func (s *Service) AddService(ctx context.Context, leadID uuid.UUID, req transpor
 	if err != nil {
 		return transport.LeadResponse{}, err
 	}
+
+	// Publish event so the gatekeeper agent triages the new service
+	s.eventBus.Publish(ctx, events.LeadServiceAdded{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: newService.ID,
+		TenantID:      tenantID,
+		ServiceType:   string(req.ServiceType),
+	})
 
 	services, _ := s.repo.ListLeadServices(ctx, leadID, tenantID)
 	return ToLeadResponseWithServices(lead, services), nil
