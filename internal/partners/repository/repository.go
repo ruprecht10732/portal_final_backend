@@ -763,7 +763,7 @@ func (r *Repository) ReplaceServiceTypes(ctx context.Context, partnerID uuid.UUI
 	if err != nil {
 		return fmt.Errorf(replacePartnerServiceTypesErr, err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `DELETE FROM RAC_partner_service_types WHERE partner_id = $1`, partnerID); err != nil {
 		return fmt.Errorf(replacePartnerServiceTypesErr, err)

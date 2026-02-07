@@ -9,6 +9,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/logger"
 )
 
@@ -18,6 +19,8 @@ type Orchestrator struct {
 	estimator  *agent.Estimator
 	dispatcher *agent.Dispatcher
 	repo       repository.LeadsRepository
+	eventBus   events.Bus
+	sse        *sse.Service
 	log        *logger.Logger
 
 	// Idempotency protection: tracks active agent runs
@@ -25,12 +28,14 @@ type Orchestrator struct {
 	runsMu     sync.Mutex
 }
 
-func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, log *logger.Logger) *Orchestrator {
+func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, eventBus events.Bus, sse *sse.Service, log *logger.Logger) *Orchestrator {
 	return &Orchestrator{
 		gatekeeper: gatekeeper,
 		estimator:  estimator,
 		dispatcher: dispatcher,
 		repo:       repo,
+		eventBus:   eventBus,
+		sse:        sse,
 		log:        log,
 		activeRuns: make(map[string]bool),
 	}
@@ -119,8 +124,8 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 
 	case "Manual_Intervention":
 		o.log.Warn("orchestrator: manual intervention required", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
-		// Publish ManualInterventionRequired event for admin notifications
-		o.repo.CreateTimelineEvent(context.Background(), repository.CreateTimelineEventParams{
+		// Record timeline event for audit trail
+		_, _ = o.repo.CreateTimelineEvent(context.Background(), repository.CreateTimelineEventParams{
 			LeadID:         evt.LeadID,
 			ServiceID:      &evt.LeadServiceID,
 			OrganizationID: evt.TenantID,
@@ -134,7 +139,27 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 				"trigger":        "pipeline_stage_change",
 			},
 		})
-		// TODO: Publish ManualInterventionRequired event to SSE/notification system when ready
+
+		// Push real-time notification to all org members via SSE
+		o.sse.PublishToOrganization(evt.TenantID, sse.Event{
+			Type:      sse.EventManualIntervention,
+			LeadID:    evt.LeadID,
+			ServiceID: evt.LeadServiceID,
+			Message:   "Automated processing requires human review",
+			Data: map[string]any{
+				"previousStage": evt.OldStage,
+			},
+		})
+
+		// Publish domain event for downstream handlers (email notifications, etc.)
+		o.eventBus.Publish(context.Background(), events.ManualInterventionRequired{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        evt.LeadID,
+			LeadServiceID: evt.LeadServiceID,
+			TenantID:      evt.TenantID,
+			Reason:        "pipeline_stage_change",
+			Context:       "Transitioned from " + evt.OldStage,
+		})
 	}
 }
 

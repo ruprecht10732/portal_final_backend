@@ -179,7 +179,7 @@ func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	quoteQuery := `
 		INSERT INTO RAC_quotes (
@@ -213,7 +213,7 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	updateQuery := `
 		UPDATE RAC_quotes SET
@@ -911,7 +911,7 @@ func (r *Repository) ReplaceAttachments(ctx context.Context, quoteID, orgID uuid
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM RAC_quote_attachments WHERE quote_id = $1 AND organization_id = $2`,
@@ -942,7 +942,7 @@ func (r *Repository) ReplaceURLs(ctx context.Context, quoteID, orgID uuid.UUID, 
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM RAC_quote_urls WHERE quote_id = $1 AND organization_id = $2`,

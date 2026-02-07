@@ -143,7 +143,7 @@ func (g *GotenbergClient) doPost(ctx context.Context, path string, body *bytes.B
 	if err != nil {
 		return nil, fmt.Errorf("gotenberg %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)

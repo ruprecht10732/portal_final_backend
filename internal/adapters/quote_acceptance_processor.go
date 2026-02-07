@@ -233,7 +233,7 @@ func (p *QuoteAcceptanceProcessor) downloadOrgLogo(
 		slog.Warn("logo download failed", "bucket", logoBucket, "key", *org.LogoFileKey, "error", dlErr)
 		return nil
 	}
-	defer logoReader.Close()
+	defer func() { _ = logoReader.Close() }()
 
 	data, readErr := io.ReadAll(logoReader)
 	if readErr != nil {
@@ -279,7 +279,7 @@ func (p *QuoteAcceptanceProcessor) downloadEnabledAttachments(ctx context.Contex
 			continue
 		}
 		data, readErr := io.ReadAll(reader)
-		reader.Close()
+		_ = reader.Close()
 		if readErr != nil || len(data) == 0 {
 			slog.Warn("empty or unreadable attachment PDF", "fileKey", att.FileKey)
 			continue

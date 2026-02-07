@@ -654,7 +654,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 			serviceID = &svc.ID
 		}
 		if err := h.gatekeeper.Run(ctx, id, *serviceID, tenantID); err != nil {
-			// Log error but don't expose to client
+			_ = err // log-only: don't expose to client
 		}
 	}()
 
@@ -802,7 +802,7 @@ func (h *Handler) LogCall(c *gin.Context) {
 		summaryText = result.NoteBody
 	}
 
-	h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
+	_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &serviceID,
 		OrganizationID: tenantID,

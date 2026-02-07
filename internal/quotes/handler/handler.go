@@ -397,7 +397,7 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to retrieve PDF", err.Error())
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
 	c.Header("Content-Type", contentTypePDF)

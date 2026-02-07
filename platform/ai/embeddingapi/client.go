@@ -88,7 +88,7 @@ func (c *Client) AddDocuments(ctx context.Context, req AddDocumentsRequest) (Add
 	if err != nil {
 		return AddDocumentsResponse{}, fmt.Errorf("add documents request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(resp.Body)

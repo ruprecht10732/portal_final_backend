@@ -86,7 +86,7 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 
 	serviceID, ok := h.getCurrentServiceID(c, id, tenantID)
 	if ok {
-		h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
+		_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
 			LeadID:         id,
 			ServiceID:      &serviceID,
 			OrganizationID: tenantID,

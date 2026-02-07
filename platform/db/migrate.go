@@ -22,38 +22,18 @@ import (
 // It uses a _migrations tracking table, an advisory lock for concurrency safety,
 // and SHA-256 checksums to detect drift in already-applied files.
 func RunMigrations(ctx context.Context, cfg config.DatabaseConfig, migrationsDir string) error {
-	if strings.TrimSpace(migrationsDir) == "" {
-		return nil
-	}
-
-	cleaned := filepath.Clean(migrationsDir)
-	if !filepath.IsAbs(cleaned) {
-		abs, err := filepath.Abs(cleaned)
-		if err != nil {
-			return fmt.Errorf("resolve migrations dir: %w", err)
-		}
-		cleaned = abs
-	}
-
-	if stat, err := os.Stat(cleaned); err != nil || !stat.IsDir() {
-		if err == nil {
-			return fmt.Errorf("migrations dir is not a directory: %s", cleaned)
-		}
-		return fmt.Errorf("migrations dir not found: %s", cleaned)
-	}
-
-	// Collect .sql files sorted by name.
-	entries, err := os.ReadDir(cleaned)
+	dir, err := resolveMigrationsDir(migrationsDir)
 	if err != nil {
-		return fmt.Errorf("read migrations dir: %w", err)
+		return err
 	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
-			files = append(files, e.Name())
-		}
+	if dir == "" {
+		return nil // empty input — nothing to do
 	}
-	sort.Strings(files)
+
+	files, err := collectSQLFiles(dir)
+	if err != nil {
+		return err
+	}
 	if len(files) == 0 {
 		return nil
 	}
@@ -62,19 +42,89 @@ func RunMigrations(ctx context.Context, cfg config.DatabaseConfig, migrationsDir
 	if err != nil {
 		return fmt.Errorf("connect for migrations: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
-	// Acquire an advisory lock so only one process runs migrations at a time.
-	// The key 1234567890 is arbitrary but must be consistent across instances.
-	const advisoryLockKey = 1234567890
+	if err := acquireAdvisoryLock(ctx, conn); err != nil {
+		return err
+	}
+	defer releaseAdvisoryLock(ctx, conn)
+
+	if err := ensureTrackingTable(ctx, conn); err != nil {
+		return err
+	}
+
+	if err := bootstrapExistingDB(ctx, conn, dir, files); err != nil {
+		return fmt.Errorf("bootstrap existing db: %w", err)
+	}
+
+	applied, err := loadAppliedMigrations(ctx, conn)
+	if err != nil {
+		return err
+	}
+
+	return applyPendingMigrations(ctx, conn, dir, files, applied)
+}
+
+// resolveMigrationsDir validates and resolves the migrations directory path.
+func resolveMigrationsDir(dir string) (string, error) {
+	if strings.TrimSpace(dir) == "" {
+		return "", nil
+	}
+
+	cleaned := filepath.Clean(dir)
+	if !filepath.IsAbs(cleaned) {
+		abs, err := filepath.Abs(cleaned)
+		if err != nil {
+			return "", fmt.Errorf("resolve migrations dir: %w", err)
+		}
+		cleaned = abs
+	}
+
+	stat, err := os.Stat(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("migrations dir not found: %s", cleaned)
+	}
+	if !stat.IsDir() {
+		return "", fmt.Errorf("migrations dir is not a directory: %s", cleaned)
+	}
+
+	return cleaned, nil
+}
+
+// collectSQLFiles reads a directory and returns sorted .sql filenames.
+func collectSQLFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read migrations dir: %w", err)
+	}
+
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			files = append(files, e.Name())
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+const advisoryLockKey = 1234567890
+
+// acquireAdvisoryLock obtains a PostgreSQL advisory lock for migration safety.
+func acquireAdvisoryLock(ctx context.Context, conn *pgx.Conn) error {
 	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, advisoryLockKey); err != nil {
 		return fmt.Errorf("acquire advisory lock: %w", err)
 	}
-	defer func() {
-		_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, advisoryLockKey)
-	}()
+	return nil
+}
 
-	// Ensure tracking table exists.
+// releaseAdvisoryLock releases the PostgreSQL advisory lock.
+func releaseAdvisoryLock(ctx context.Context, conn *pgx.Conn) {
+	_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, advisoryLockKey)
+}
+
+// ensureTrackingTable creates or upgrades the _migrations tracking table.
+func ensureTrackingTable(ctx context.Context, conn *pgx.Conn) error {
 	if _, err := conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS _migrations (
 			filename   TEXT PRIMARY KEY,
@@ -88,32 +138,32 @@ func RunMigrations(ctx context.Context, cfg config.DatabaseConfig, migrationsDir
 	// Add checksum column if upgrading from earlier version of this table.
 	_, _ = conn.Exec(ctx, `ALTER TABLE _migrations ADD COLUMN IF NOT EXISTS checksum TEXT NOT NULL DEFAULT ''`)
 
-	// One-time bootstrap: if the DB was previously managed by another tool
-	// (e.g. golang-migrate) and already has application tables, seed all
-	// current files as applied to avoid re-running them.
-	if err := bootstrapExistingDB(ctx, conn, cleaned, files); err != nil {
-		return fmt.Errorf("bootstrap existing db: %w", err)
-	}
+	return nil
+}
 
-	// Fetch already-applied filenames + checksums.
+// loadAppliedMigrations returns a map of filename → checksum for all applied migrations.
+func loadAppliedMigrations(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
 	rows, err := conn.Query(ctx, `SELECT filename, checksum FROM _migrations`)
 	if err != nil {
-		return fmt.Errorf("query _migrations: %w", err)
+		return nil, fmt.Errorf("query _migrations: %w", err)
 	}
-	applied := make(map[string]string) // filename -> checksum
+	defer rows.Close()
+
+	applied := make(map[string]string)
 	for rows.Next() {
 		var name, cs string
 		if err := rows.Scan(&name, &cs); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan _migrations row: %w", err)
+			return nil, fmt.Errorf("scan _migrations row: %w", err)
 		}
 		applied[name] = cs
 	}
-	rows.Close()
+	return applied, nil
+}
 
-	// Apply pending migrations in order; warn on checksum drift.
+// applyPendingMigrations applies all migrations not yet tracked in _migrations.
+func applyPendingMigrations(ctx context.Context, conn *pgx.Conn, dir string, files []string, applied map[string]string) error {
 	for _, f := range files {
-		content, err := os.ReadFile(filepath.Join(cleaned, f))
+		content, err := os.ReadFile(filepath.Join(dir, f))
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", f, err)
 		}
@@ -127,25 +177,34 @@ func RunMigrations(ctx context.Context, cfg config.DatabaseConfig, migrationsDir
 			continue
 		}
 
-		slog.Info("applying migration", "file", f)
-
-		tx, err := conn.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin tx for %s: %w", f, err)
-		}
-		if _, err := tx.Exec(ctx, string(content)); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("execute migration %s: %w", f, err)
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO _migrations (filename, checksum) VALUES ($1, $2)`, f, cs); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("record migration %s: %w", f, err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit migration %s: %w", f, err)
+		if err := applyMigration(ctx, conn, f, string(content), cs); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
+// applyMigration runs a single migration file inside a transaction and records it.
+func applyMigration(ctx context.Context, conn *pgx.Conn, filename, sql, checksum string) error {
+	slog.Info("applying migration", "file", filename)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx for %s: %w", filename, err)
+	}
+
+	if _, err := tx.Exec(ctx, sql); err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("execute migration %s: %w", filename, err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO _migrations (filename, checksum) VALUES ($1, $2)`, filename, checksum); err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("record migration %s: %w", filename, err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit migration %s: %w", filename, err)
+	}
 	return nil
 }
 
