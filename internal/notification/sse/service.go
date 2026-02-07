@@ -3,6 +3,7 @@ package sse
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -26,6 +27,11 @@ const (
 	EventQuoteAnnotated   EventType = "quote_annotated"
 	EventQuoteAccepted    EventType = "quote_accepted"
 	EventQuoteRejected    EventType = "quote_rejected"
+
+	// Appointment events (pushed to org members)
+	EventAppointmentCreated       EventType = "appointment_created"
+	EventAppointmentUpdated       EventType = "appointment_updated"
+	EventAppointmentStatusChanged EventType = "appointment_status_changed"
 )
 
 // Event represents an SSE event payload
@@ -170,6 +176,53 @@ func (s *Service) PublishToQuote(quoteID uuid.UUID, event Event) {
 	}
 }
 
+// setSSEHeaders configures the standard SSE response headers.
+func setSSEHeaders(c *gin.Context) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+}
+
+// deregisterQuoteClient removes a public viewer for a quote.
+func (s *Service) deregisterQuoteClient(quoteID uuid.UUID, qc *quoteClient) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	viewers := s.quoteClients[quoteID]
+	for i, v := range viewers {
+		if v == qc {
+			s.quoteClients[quoteID] = append(viewers[:i], viewers[i+1:]...)
+			break
+		}
+	}
+	if len(s.quoteClients[quoteID]) == 0 {
+		delete(s.quoteClients, quoteID)
+	}
+	close(qc.events)
+}
+
+// streamEvents writes SSE events from the channel until the client disconnects or
+// the channel is closed. It is used by both the authenticated and public handlers.
+func streamEvents(c *gin.Context, events <-chan Event, disconnectLog string) {
+	clientGone := c.Request.Context().Done()
+	for {
+		select {
+		case <-clientGone:
+			log.Print(disconnectLog)
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			data, _ := json.Marshal(event)
+			c.SSEvent(string(event.Type), string(data))
+			c.Writer.Flush()
+		}
+	}
+}
+
 // PublicQuoteHandler returns a Gin handler for unauthenticated SSE connections
 // on a specific quote (used by the public proposal page).
 func (s *Service) PublicQuoteHandler(resolveQuoteID func(token string) (uuid.UUID, error)) gin.HandlerFunc {
@@ -186,12 +239,7 @@ func (s *Service) PublicQuoteHandler(resolveQuoteID func(token string) (uuid.UUI
 			return
 		}
 
-		// SSE headers
-		c.Writer.Header().Set("Content-Type", "text/event-stream")
-		c.Writer.Header().Set("Cache-Control", "no-cache")
-		c.Writer.Header().Set("Connection", "keep-alive")
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		setSSEHeaders(c)
 
 		qc := &quoteClient{
 			quoteID: quoteID,
@@ -204,21 +252,7 @@ func (s *Service) PublicQuoteHandler(resolveQuoteID func(token string) (uuid.UUI
 		s.mu.Unlock()
 
 		// Deregister on disconnect
-		defer func() {
-			s.mu.Lock()
-			viewers := s.quoteClients[quoteID]
-			for i, v := range viewers {
-				if v == qc {
-					s.quoteClients[quoteID] = append(viewers[:i], viewers[i+1:]...)
-					break
-				}
-			}
-			if len(s.quoteClients[quoteID]) == 0 {
-				delete(s.quoteClients, quoteID)
-			}
-			s.mu.Unlock()
-			close(qc.events)
-		}()
+		defer s.deregisterQuoteClient(quoteID, qc)
 
 		// Connected signal
 		c.SSEvent("connected", gin.H{"quoteId": quoteID})
@@ -226,21 +260,7 @@ func (s *Service) PublicQuoteHandler(resolveQuoteID func(token string) (uuid.UUI
 
 		log.Printf("SSE: Public viewer connected for quote %s", quoteID)
 
-		clientGone := c.Request.Context().Done()
-		for {
-			select {
-			case <-clientGone:
-				log.Printf("SSE: Public viewer disconnected for quote %s", quoteID)
-				return
-			case event, ok := <-qc.events:
-				if !ok {
-					return
-				}
-				data, _ := json.Marshal(event)
-				c.SSEvent(string(event.Type), string(data))
-				c.Writer.Flush()
-			}
-		}
+		streamEvents(c, qc.events, fmt.Sprintf("SSE: Public viewer disconnected for quote %s", quoteID))
 	}
 }
 
@@ -255,12 +275,7 @@ func (s *Service) Handler(getUserID func(*gin.Context) (uuid.UUID, bool), getOrg
 
 		orgID, _ := getOrgID(c)
 
-		// Set SSE headers
-		c.Writer.Header().Set("Content-Type", "text/event-stream")
-		c.Writer.Header().Set("Cache-Control", "no-cache")
-		c.Writer.Header().Set("Connection", "keep-alive")
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		setSSEHeaders(c)
 
 		// Create client
 		cl := &client{
@@ -277,22 +292,7 @@ func (s *Service) Handler(getUserID func(*gin.Context) (uuid.UUID, bool), getOrg
 
 		log.Printf("SSE: Client connected - user %s, org %s", userID, orgID)
 
-		// Listen for events
-		clientGone := c.Request.Context().Done()
-		for {
-			select {
-			case <-clientGone:
-				log.Printf("SSE: Client disconnected - user %s", userID)
-				return
-			case event, ok := <-cl.events:
-				if !ok {
-					return
-				}
-				data, _ := json.Marshal(event)
-				c.SSEvent(string(event.Type), string(data))
-				c.Writer.Flush()
-			}
-		}
+		streamEvents(c, cl.events, fmt.Sprintf("SSE: Client disconnected - user %s", userID))
 	}
 }
 

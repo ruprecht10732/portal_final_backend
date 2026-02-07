@@ -148,6 +148,7 @@ func main() {
 	notificationModule.SetSSE(leadsModule.SSE())
 	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
 	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender)
+	appointmentsModule.SetSSE(leadsModule.SSE())
 
 	// Set appointment booker on leads module (breaks circular dependency)
 	appointmentBooker := adapters.NewAppointmentsAdapter(appointmentsModule.Service)

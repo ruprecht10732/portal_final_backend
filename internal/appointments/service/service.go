@@ -9,6 +9,7 @@ import (
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/appointments/transport"
 	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/sanitize"
 
@@ -32,11 +33,24 @@ type Service struct {
 	repo         *repository.Repository
 	leadAssigner LeadAssigner
 	emailSender  email.Sender
+	sseService   *sse.Service
 }
 
 // New creates a new appointments service
 func New(repo *repository.Repository, leadAssigner LeadAssigner, emailSender email.Sender) *Service {
 	return &Service{repo: repo, leadAssigner: leadAssigner, emailSender: emailSender}
+}
+
+// SetSSE sets the SSE service for real-time event broadcasting.
+func (s *Service) SetSSE(sseService *sse.Service) {
+	s.sseService = sseService
+}
+
+// publishSSE publishes an SSE event to all org members if the SSE service is available.
+func (s *Service) publishSSE(orgID uuid.UUID, event sse.Event) {
+	if s.sseService != nil {
+		s.sseService.PublishToOrganization(orgID, event)
+	}
 }
 
 // Create creates a new appointment
@@ -62,6 +76,21 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 	s.sendConfirmationEmailIfNeeded(ctx, req.SendConfirmationEmail, appt, leadInfo, tenantID)
 
 	resp := appt.ToResponse(leadInfo)
+
+	// Broadcast appointment creation via SSE
+	s.publishSSE(tenantID, sse.Event{
+		Type:    sse.EventAppointmentCreated,
+		Message: fmt.Sprintf("Nieuwe afspraak: %s", appt.Title),
+		Data: map[string]interface{}{
+			"appointmentId": appt.ID,
+			"title":         appt.Title,
+			"type":          appt.Type,
+			"startTime":     appt.StartTime,
+			"endTime":       appt.EndTime,
+			"lead":          leadInfo,
+		},
+	})
+
 	return &resp, nil
 }
 
@@ -215,6 +244,21 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 
 	leadInfo := s.getLeadInfoIfPresent(ctx, appt.LeadID, tenantID)
 	resp := appt.ToResponse(leadInfo)
+
+	// Broadcast appointment update via SSE
+	s.publishSSE(tenantID, sse.Event{
+		Type:    sse.EventAppointmentUpdated,
+		Message: fmt.Sprintf("Afspraak bijgewerkt: %s", appt.Title),
+		Data: map[string]interface{}{
+			"appointmentId": appt.ID,
+			"title":         appt.Title,
+			"type":          appt.Type,
+			"startTime":     appt.StartTime,
+			"endTime":       appt.EndTime,
+			"lead":          leadInfo,
+		},
+	})
+
 	return &resp, nil
 }
 
@@ -271,6 +315,22 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 	}
 
 	resp := appt.ToResponse(leadInfo)
+
+	// Broadcast status change via SSE
+	s.publishSSE(tenantID, sse.Event{
+		Type:    sse.EventAppointmentStatusChanged,
+		Message: fmt.Sprintf("Afspraak status: %s → %s", appt.Title, req.Status),
+		Data: map[string]interface{}{
+			"appointmentId": appt.ID,
+			"title":         appt.Title,
+			"type":          appt.Type,
+			"status":        string(req.Status),
+			"startTime":     appt.StartTime,
+			"endTime":       appt.EndTime,
+			"lead":          leadInfo,
+		},
+	})
+
 	return &resp, nil
 }
 

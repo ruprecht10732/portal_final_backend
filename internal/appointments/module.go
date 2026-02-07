@@ -7,6 +7,7 @@ import (
 	"portal_final_backend/internal/appointments/service"
 	"portal_final_backend/internal/email"
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +17,7 @@ import (
 type Module struct {
 	handler *handler.Handler
 	Service *service.Service
+	sse     *sse.Service
 }
 
 // NewModule creates a new RAC_appointments module with all dependencies wired
@@ -28,6 +30,12 @@ func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner servic
 		handler: h,
 		Service: svc,
 	}
+}
+
+// SetSSE sets the SSE service for real-time appointment event broadcasting.
+func (m *Module) SetSSE(sseService *sse.Service) {
+	m.sse = sseService
+	m.Service.SetSSE(sseService)
 }
 
 // Name returns the module name for logging
