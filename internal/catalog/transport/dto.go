@@ -167,8 +167,9 @@ type AutocompleteSearchRequest struct {
 }
 
 type AutocompleteDocumentResponse struct {
-	Filename string `json:"filename"`
-	FileKey  string `json:"fileKey"`
+	ID       uuid.UUID `json:"id"`
+	Filename string    `json:"filename"`
+	FileKey  string    `json:"fileKey"`
 }
 
 type AutocompleteURLResponse struct {

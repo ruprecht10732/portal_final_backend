@@ -650,6 +650,7 @@ func toAutocompleteDocuments(assets []repository.ProductAsset) []transport.Autoc
 	for _, d := range assets {
 		if d.FileKey != nil && d.FileName != nil {
 			out = append(out, transport.AutocompleteDocumentResponse{
+				ID:       d.ID,
 				Filename: *d.FileName,
 				FileKey:  *d.FileKey,
 			})
