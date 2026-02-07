@@ -17,6 +17,11 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	msgInvalidItemID = "invalid item ID"
+	contentTypePDF   = "application/pdf"
+)
+
 // PDFOnDemandGenerator generates and stores a quote PDF on the fly.
 // Used for lazy PDF generation when the PDF wasn't created at acceptance time.
 type PDFOnDemandGenerator interface {
@@ -98,7 +103,7 @@ func (h *PublicHandler) ToggleItem(c *gin.Context) {
 	token := c.Param("token")
 	itemID, err := uuid.Parse(c.Param("itemId"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidItemID, nil)
 		return
 	}
 
@@ -121,7 +126,7 @@ func (h *PublicHandler) AnnotateItem(c *gin.Context) {
 	token := c.Param("token")
 	itemID, err := uuid.Parse(c.Param("itemId"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidItemID, nil)
 		return
 	}
 
@@ -150,7 +155,7 @@ func (h *PublicHandler) UpdateAnnotation(c *gin.Context) {
 	token := c.Param("token")
 	itemID, err := uuid.Parse(c.Param("itemId"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidItemID, nil)
 		return
 	}
 	annotationID, err := uuid.Parse(c.Param("annotationId"))
@@ -182,7 +187,7 @@ func (h *PublicHandler) DeleteAnnotation(c *gin.Context) {
 	token := c.Param("token")
 	itemID, err := uuid.Parse(c.Param("itemId"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidItemID, nil)
 		return
 	}
 	annotationID, err := uuid.Parse(c.Param("annotationId"))
@@ -256,25 +261,7 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 	pdfFileKey, err := h.svc.GetPDFFileKey(c.Request.Context(), quoteID)
 	if err != nil || pdfFileKey == "" {
 		// Lazy generation: if no PDF is stored yet but the quote is accepted, generate on the fly
-		if h.pdfGen != nil {
-			orgID, orgErr := h.svc.GetOrganizationID(c.Request.Context(), quoteID)
-			if orgErr != nil {
-				httpkit.Error(c, http.StatusInternalServerError, "failed to resolve organization", nil)
-				return
-			}
-
-			fileKey, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), quoteID, orgID)
-			if genErr != nil {
-				httpkit.Error(c, http.StatusInternalServerError, "PDF generatie mislukt", genErr.Error())
-				return
-			}
-
-			// Serve the freshly generated PDF directly
-			fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
-			c.Header("Content-Type", "application/pdf")
-			c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-			c.Data(http.StatusOK, "application/pdf", pdfBytes)
-			_ = fileKey // stored by the processor
+		if h.tryServeOnDemandPDF(c, quoteID, result.QuoteNumber) {
 			return
 		}
 		httpkit.Error(c, http.StatusNotFound, "no PDF available for this quote", nil)
@@ -289,13 +276,38 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 	defer reader.Close()
 
 	fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
-	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Type", contentTypePDF)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
 	c.Status(http.StatusOK)
 
 	if _, err := io.Copy(c.Writer, reader); err != nil {
 		_ = c.Error(err)
 	}
+}
+
+func (h *PublicHandler) tryServeOnDemandPDF(c *gin.Context, quoteID uuid.UUID, quoteNumber string) bool {
+	if h.pdfGen == nil {
+		return false
+	}
+
+	orgID, orgErr := h.svc.GetOrganizationID(c.Request.Context(), quoteID)
+	if orgErr != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to resolve organization", nil)
+		return true
+	}
+
+	fileKey, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), quoteID, orgID)
+	if genErr != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "PDF generatie mislukt", genErr.Error())
+		return true
+	}
+
+	fileName := fmt.Sprintf("Offerte-%s.pdf", quoteNumber)
+	c.Header("Content-Type", contentTypePDF)
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+	c.Data(http.StatusOK, contentTypePDF, pdfBytes)
+	_ = fileKey // stored by the processor
+	return true
 }
 
 // Reject handles POST /api/v1/public/quotes/:token/reject
