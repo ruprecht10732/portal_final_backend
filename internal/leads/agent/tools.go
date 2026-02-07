@@ -16,6 +16,7 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/platform/ai/embeddings"
@@ -132,6 +133,8 @@ type ToolDependencies struct {
 	EmbeddingClient      *embeddings.Client
 	QdrantClient         *qdrant.Client
 	CatalogQdrantClient  *qdrant.Client
+	CatalogReader        ports.CatalogReader // optional: hydrate search results from DB
+	QuoteDrafter         ports.QuoteDrafter  // optional: draft quotes from agent
 	mu                   sync.RWMutex
 	tenantID             *uuid.UUID
 	leadID               *uuid.UUID
@@ -1093,10 +1096,11 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		} else {
 			products := convertSearchResults(results)
 			if len(products) > 0 {
+				products = hydrateProductResults(ctx, deps, products)
 				log.Printf("SearchProductMaterials: catalog query=%q found %d products", query, len(products))
 				return SearchProductMaterialsOutput{
 					Products: products,
-					Message:  fmt.Sprintf("Found %d matching products", len(products)),
+					Message:  fmt.Sprintf("Found %d matching products from catalog", len(products)),
 				}, nil
 			}
 			log.Printf("SearchProductMaterials: catalog query=%q found 0 products, falling back", query)
@@ -1160,6 +1164,9 @@ func convertSearchResults(results []qdrant.SearchResult) []ProductResult {
 
 func extractProductFromPayload(payload map[string]any, score float64) ProductResult {
 	product := ProductResult{Score: score}
+	if id, ok := payload["id"].(string); ok {
+		product.ID = id
+	}
 	if name, ok := payload["name"].(string); ok {
 		product.Name = name
 	}
@@ -1185,12 +1192,166 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 	return product
 }
 
+// hydrateProductResults enriches vector-search ProductResults with DB-accurate
+// pricing, VAT rates, and materials via the CatalogReader port. Products whose
+// IDs cannot be resolved are returned unchanged.
+func hydrateProductResults(ctx context.Context, deps *ToolDependencies, products []ProductResult) []ProductResult {
+	if deps.CatalogReader == nil {
+		return products
+	}
+	tenantID, ok := deps.GetTenantID()
+	if !ok || tenantID == nil {
+		return products
+	}
+
+	ids := collectProductUUIDs(products)
+	if len(ids) == 0 {
+		return products
+	}
+
+	details, err := deps.CatalogReader.GetProductDetails(ctx, *tenantID, ids)
+	if err != nil {
+		log.Printf("hydrateProductResults: catalog reader failed: %v", err)
+		return products
+	}
+
+	return applyProductDetails(products, details)
+}
+
+// collectProductUUIDs extracts unique, parseable UUIDs from product results.
+func collectProductUUIDs(products []ProductResult) []uuid.UUID {
+	seen := make(map[string]struct{}, len(products))
+	ids := make([]uuid.UUID, 0, len(products))
+	for _, p := range products {
+		if p.ID == "" {
+			continue
+		}
+		if _, dup := seen[p.ID]; dup {
+			continue
+		}
+		uid, err := uuid.Parse(p.ID)
+		if err != nil {
+			continue
+		}
+		seen[p.ID] = struct{}{}
+		ids = append(ids, uid)
+	}
+	return ids
+}
+
+// applyProductDetails merges DB-accurate catalog details back into product results.
+func applyProductDetails(products []ProductResult, details []ports.CatalogProductDetails) []ProductResult {
+	detailMap := make(map[string]ports.CatalogProductDetails, len(details))
+	for _, d := range details {
+		detailMap[d.ID.String()] = d
+	}
+
+	for i, p := range products {
+		d, ok := detailMap[p.ID]
+		if !ok {
+			continue
+		}
+		products[i].Price = float64(d.UnitPriceCents) / 100
+		products[i].VatRateBps = d.VatRateBps
+		products[i].Materials = d.Materials
+		mergeOptionalString(&products[i].Unit, d.UnitLabel)
+		mergeOptionalString(&products[i].LaborTime, d.LaborTimeText)
+		mergeOptionalString(&products[i].Description, d.Description)
+	}
+	return products
+}
+
+// mergeOptionalString overwrites dst when src is non-empty.
+func mergeOptionalString(dst *string, src string) {
+	if src != "" {
+		*dst = src
+	}
+}
+
 func createSearchProductMaterialsTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SearchProductMaterials",
 		Description: "Searches the product catalog for materials and their prices. Use this to find relevant products for estimation. Returns product names, descriptions, prices, units, and labor time when available.",
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
+	})
+}
+
+// handleDraftQuote creates a draft quote via the QuoteDrafter port.
+func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuoteInput) (DraftQuoteOutput, error) {
+	if deps.QuoteDrafter == nil {
+		return DraftQuoteOutput{Success: false, Message: "Quote drafting is not configured"}, nil
+	}
+
+	tenantID, ok := deps.GetTenantID()
+	if !ok || tenantID == nil {
+		return DraftQuoteOutput{Success: false, Message: "Organization context not available"}, fmt.Errorf("missing tenant context")
+	}
+
+	leadID, serviceID, ok := deps.GetLeadContext()
+	if !ok {
+		return DraftQuoteOutput{Success: false, Message: "Lead context not available"}, fmt.Errorf("missing lead context")
+	}
+
+	if len(input.Items) == 0 {
+		return DraftQuoteOutput{Success: false, Message: "At least one item is required"}, fmt.Errorf("empty items")
+	}
+
+	// Convert tool items to port items.
+	portItems := make([]ports.DraftQuoteItem, len(input.Items))
+	for i, it := range input.Items {
+		portItems[i] = ports.DraftQuoteItem{
+			Description:    it.Description,
+			Quantity:       it.Quantity,
+			UnitPriceCents: it.UnitPriceCents,
+			TaxRateBps:     it.TaxRateBps,
+			IsOptional:     it.IsOptional,
+		}
+		if it.CatalogProductID != nil && *it.CatalogProductID != "" {
+			uid, err := uuid.Parse(*it.CatalogProductID)
+			if err == nil {
+				portItems[i].CatalogProductID = &uid
+			}
+		}
+	}
+
+	// Use a zero UUID as the "AI agent" actor ID.
+	actorID := uuid.Nil
+
+	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
+		LeadID:         leadID,
+		LeadServiceID:  serviceID,
+		OrganizationID: *tenantID,
+		CreatedByID:    actorID,
+		Notes:          input.Notes,
+		Items:          portItems,
+	})
+	if err != nil {
+		log.Printf("DraftQuote: failed: %v", err)
+		return DraftQuoteOutput{Success: false, Message: fmt.Sprintf("Failed to draft quote: %v", err)}, err
+	}
+
+	log.Printf("DraftQuote: created %s with %d items for lead %s", result.QuoteNumber, result.ItemCount, leadID)
+
+	return DraftQuoteOutput{
+		Success:     true,
+		Message:     fmt.Sprintf("Draft quote %s created with %d items", result.QuoteNumber, result.ItemCount),
+		QuoteID:     result.QuoteID.String(),
+		QuoteNumber: result.QuoteNumber,
+		ItemCount:   result.ItemCount,
+	}, nil
+}
+
+func createDraftQuoteTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name: "DraftQuote",
+		Description: `Creates a draft quote for the current lead based on estimation results.
+Use this AFTER searching the catalog and calculating estimates.
+For each item, provide description, quantity, unitPriceCents, taxRateBps.
+If the item came from SearchProductMaterials, include its catalogProductId.
+Ad-hoc items (not found in catalog) should omit catalogProductId.`,
+	}, func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
+		return handleDraftQuote(ctx, deps, input)
 	})
 }
 

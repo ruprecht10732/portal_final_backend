@@ -15,6 +15,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/ai/moonshot"
@@ -40,6 +41,8 @@ type EstimatorConfig struct {
 	EmbeddingClient     *embeddings.Client // Optional: enables product search
 	QdrantClient        *qdrant.Client     // Optional: fallback collection search
 	CatalogQdrantClient *qdrant.Client     // Optional: catalog collection search
+	CatalogReader       ports.CatalogReader // Optional: hydrate search results from DB
+	QuoteDrafter        ports.QuoteDrafter  // Optional: draft quotes from agent
 }
 
 // NewEstimator creates an Estimator agent.
@@ -56,6 +59,8 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 		EmbeddingClient:     cfg.EmbeddingClient,
 		QdrantClient:        cfg.QdrantClient,
 		CatalogQdrantClient: cfg.CatalogQdrantClient,
+		CatalogReader:       cfg.CatalogReader,
+		QuoteDrafter:        cfg.QuoteDrafter,
 	}
 
 	saveEstimationTool, err := createSaveEstimationTool(deps)
@@ -88,6 +93,18 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 		log.Printf("Estimator: product search disabled (embedding or qdrant client not configured)")
 	}
 
+	// Add quote drafting tool if configured
+	if deps.QuoteDrafter != nil {
+		draftQuoteTool, err := createDraftQuoteTool(deps)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build DraftQuote tool: %w", err)
+		}
+		tools = append(tools, draftQuoteTool)
+		log.Printf("Estimator: quote drafting enabled")
+	} else {
+		log.Printf("Estimator: quote drafting disabled (QuoteDrafter not configured)")
+	}
+
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Estimator",
 		Model:       kimi,
@@ -117,6 +134,16 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 		repo:           cfg.Repo,
 		toolDeps:       deps,
 	}, nil
+}
+
+// SetCatalogReader injects the catalog reader (set after construction to break circular deps).
+func (e *Estimator) SetCatalogReader(cr ports.CatalogReader) {
+	e.toolDeps.CatalogReader = cr
+}
+
+// SetQuoteDrafter injects the quote drafter (set after construction to break circular deps).
+func (e *Estimator) SetQuoteDrafter(qd ports.QuoteDrafter) {
+	e.toolDeps.QuoteDrafter = qd
 }
 
 // Run executes estimation for a lead service.

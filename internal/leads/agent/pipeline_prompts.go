@@ -104,8 +104,8 @@ func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, 
 
 Role: You are a Technical Estimator.
 Input: Photos, Description.
-Goal: Determine Scope (Small/Medium/Large). Estimate Price Range based on actual product prices.
-Action: Search for products, then call SaveEstimation (metadata update). Set stage Ready_For_Partner.
+Goal: Determine Scope (Small/Medium/Large). Estimate Price Range based on actual product prices. Draft a quote for the customer.
+Action: Search for products, draft a quote, call SaveEstimation (metadata update), set stage Ready_For_Partner.
 
 Lead:
 - Lead ID: %s
@@ -139,9 +139,18 @@ Instruction:
    You may call SearchProductMaterials multiple times for different material categories.
 	Use standard, mid-range materials unless the request explicitly calls for heavy-duty or premium.
 	If multiple products are returned, prefer the most typical/affordable option for the scenario.
+	Products from the catalog will include an "id" field - remember these IDs for step 3a.
 3) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
 	Provide structured inputs (material items, quantities, labor hours range, hourly rate range, optional extra costs).
 	If catalog search results include a labor time, use it as the baseline for labor hours (adjust if the scope indicates otherwise).
+3a) Call DraftQuote to create a draft quote for the customer. For each item:
+	- Set description to the product name/description.
+	- Set quantity (e.g., "1", "3", "10") based on the estimated quantity.
+	- Set unitPriceCents to the product price in cents (e.g., 1500 for EUR 15.00).
+	- Set taxRateBps from the product's vatRateBps (e.g., 2100 for 21%%). If unknown, use 2100.
+	- If the product came from SearchProductMaterials and has an "id", include it as catalogProductId.
+	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.
+	Include a notes field (in Dutch) summarizing why this quote was generated.
 4) Determine scope: Small, Medium, or Large based on work complexity.
 5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
 	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
@@ -165,7 +174,7 @@ Instruction:
 	- ...
 6) Call UpdatePipelineStage with stage="Ready_For_Partner" and a reason in Dutch.
 
-You MUST call SearchProductMaterials first (if available), then SaveEstimation, then UpdatePipelineStage. Respond ONLY with tool calls.
+You MUST call SearchProductMaterials first (if available), then DraftQuote (if available), then SaveEstimation, then UpdatePipelineStage. Respond ONLY with tool calls.
 `,
 		lead.ID,
 		service.ID,

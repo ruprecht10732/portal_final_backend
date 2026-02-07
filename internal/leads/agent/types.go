@@ -156,12 +156,15 @@ type SearchProductMaterialsInput struct {
 
 // ProductResult represents a product found in the catalog.
 type ProductResult struct {
+	ID          string  `json:"id,omitempty"`          // Catalog product UUID (present for catalog items)
 	Name        string  `json:"name"`
 	Description string  `json:"description,omitempty"`
 	Price       float64 `json:"price"`
-	Unit        string  `json:"unit,omitempty"` // e.g., "per m2", "per piece", "per meter"
+	Unit        string  `json:"unit,omitempty"`         // e.g., "per m2", "per piece", "per meter"
 	LaborTime   string  `json:"laborTime,omitempty"`
-	Score       float64 `json:"score"` // Similarity score
+	VatRateBps  int     `json:"vatRateBps,omitempty"`   // VAT rate in basis points (e.g. 2100 = 21%)
+	Materials   []string `json:"materials,omitempty"`   // Included materials (human-readable names)
+	Score       float64 `json:"score"`                  // Similarity score
 }
 
 // SearchProductMaterialsOutput contains the search results.
@@ -193,6 +196,31 @@ type CalculateEstimateOutput struct {
 	TotalLow          float64 `json:"totalLow"`
 	TotalHigh         float64 `json:"totalHigh"`
 	AppliedExtraCosts float64 `json:"appliedExtraCosts"`
+}
+
+// DraftQuoteItem represents a single line item for the DraftQuote tool.
+type DraftQuoteItem struct {
+	Description      string  `json:"description"`
+	Quantity         string  `json:"quantity"`         // e.g. "3", "1"
+	UnitPriceCents   int64   `json:"unitPriceCents"`
+	TaxRateBps       int     `json:"taxRateBps"`
+	IsOptional       bool    `json:"isOptional,omitempty"`
+	CatalogProductID *string `json:"catalogProductId,omitempty"` // UUID string from search results
+}
+
+// DraftQuoteInput is the structured input for the DraftQuote tool.
+type DraftQuoteInput struct {
+	Notes string           `json:"notes"`
+	Items []DraftQuoteItem `json:"items"`
+}
+
+// DraftQuoteOutput is the result of the DraftQuote tool.
+type DraftQuoteOutput struct {
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
+	QuoteID     string `json:"quoteId,omitempty"`
+	QuoteNumber string `json:"quoteNumber,omitempty"`
+	ItemCount   int    `json:"itemCount,omitempty"`
 }
 
 // AnalyzeResponse represents the result of an analysis request
