@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/events"
@@ -316,6 +318,26 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, req transport.Li
 		Page:           max(req.Page, 1),
 		PageSize:       clampPageSize(req.PageSize),
 	}
+
+	createdFrom, createdTo, err := parseDateRange(req.CreatedAtFrom, req.CreatedAtTo, "createdAtFrom", "createdAtTo")
+	if err != nil {
+		return nil, err
+	}
+	validFrom, validTo, err := parseDateRange(req.ValidUntilFrom, req.ValidUntilTo, "validUntilFrom", "validUntilTo")
+	if err != nil {
+		return nil, err
+	}
+	totalFrom, totalTo, err := parseInt64Range(req.TotalFrom, req.TotalTo, "totalFrom", "totalTo")
+	if err != nil {
+		return nil, err
+	}
+
+	params.CreatedAtFrom = createdFrom
+	params.CreatedAtTo = createdTo
+	params.ValidUntilFrom = validFrom
+	params.ValidUntilTo = validTo
+	params.TotalFrom = totalFrom
+	params.TotalTo = totalTo
 
 	if req.LeadID != "" {
 		parsed, err := uuid.Parse(req.LeadID)
@@ -1146,27 +1168,35 @@ func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteIte
 	}
 
 	return &transport.QuoteResponse{
-		ID:                  q.ID,
-		QuoteNumber:         q.QuoteNumber,
-		LeadID:              q.LeadID,
-		LeadServiceID:       q.LeadServiceID,
-		Status:              transport.QuoteStatus(q.Status),
-		PricingMode:         q.PricingMode,
-		DiscountType:        q.DiscountType,
-		DiscountValue:       q.DiscountValue,
-		SubtotalCents:       q.SubtotalCents,
-		DiscountAmountCents: q.DiscountAmountCents,
-		TaxTotalCents:       q.TaxTotalCents,
-		TotalCents:          q.TotalCents,
-		ValidUntil:          q.ValidUntil,
-		Notes:               q.Notes,
-		Items:               respItems,
-		ViewedAt:            q.ViewedAt,
-		AcceptedAt:          q.AcceptedAt,
-		RejectedAt:          q.RejectedAt,
-		PDFFileKey:          q.PDFFileKey,
-		CreatedAt:           q.CreatedAt,
-		UpdatedAt:           q.UpdatedAt,
+		ID:                         q.ID,
+		QuoteNumber:                q.QuoteNumber,
+		LeadID:                     q.LeadID,
+		LeadServiceID:              q.LeadServiceID,
+		CustomerFirstName:          q.CustomerFirstName,
+		CustomerLastName:           q.CustomerLastName,
+		CustomerPhone:              q.CustomerPhone,
+		CustomerEmail:              q.CustomerEmail,
+		CustomerAddressStreet:      q.CustomerAddressStreet,
+		CustomerAddressHouseNumber: q.CustomerAddressHouseNumber,
+		CustomerAddressZipCode:     q.CustomerAddressZipCode,
+		CustomerAddressCity:        q.CustomerAddressCity,
+		Status:                     transport.QuoteStatus(q.Status),
+		PricingMode:                q.PricingMode,
+		DiscountType:               q.DiscountType,
+		DiscountValue:              q.DiscountValue,
+		SubtotalCents:              q.SubtotalCents,
+		DiscountAmountCents:        q.DiscountAmountCents,
+		TaxTotalCents:              q.TaxTotalCents,
+		TotalCents:                 q.TotalCents,
+		ValidUntil:                 q.ValidUntil,
+		Notes:                      q.Notes,
+		Items:                      respItems,
+		ViewedAt:                   q.ViewedAt,
+		AcceptedAt:                 q.AcceptedAt,
+		RejectedAt:                 q.RejectedAt,
+		PDFFileKey:                 q.PDFFileKey,
+		CreatedAt:                  q.CreatedAt,
+		UpdatedAt:                  q.UpdatedAt,
 	}
 }
 
@@ -1207,6 +1237,69 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func parseDateRange(from string, to string, fromField string, toField string) (*time.Time, *time.Time, error) {
+	const dateLayout = "2006-01-02"
+
+	trimmedFrom := strings.TrimSpace(from)
+	trimmedTo := strings.TrimSpace(to)
+
+	var start *time.Time
+	var end *time.Time
+
+	if trimmedFrom != "" {
+		parsed, err := time.Parse(dateLayout, trimmedFrom)
+		if err != nil {
+			return nil, nil, apperr.Validation("invalid " + fromField)
+		}
+		start = &parsed
+	}
+
+	if trimmedTo != "" {
+		parsed, err := time.Parse(dateLayout, trimmedTo)
+		if err != nil {
+			return nil, nil, apperr.Validation("invalid " + toField)
+		}
+		endExclusive := parsed.AddDate(0, 0, 1)
+		end = &endExclusive
+	}
+
+	if start != nil && end != nil && start.After(*end) {
+		return nil, nil, apperr.Validation(fromField + " must be before " + toField)
+	}
+
+	return start, end, nil
+}
+
+func parseInt64Range(from string, to string, fromField string, toField string) (*int64, *int64, error) {
+	trimmedFrom := strings.TrimSpace(from)
+	trimmedTo := strings.TrimSpace(to)
+
+	var start *int64
+	var end *int64
+
+	if trimmedFrom != "" {
+		parsed, err := strconv.ParseInt(trimmedFrom, 10, 64)
+		if err != nil {
+			return nil, nil, apperr.Validation("invalid " + fromField)
+		}
+		start = &parsed
+	}
+
+	if trimmedTo != "" {
+		parsed, err := strconv.ParseInt(trimmedTo, 10, 64)
+		if err != nil {
+			return nil, nil, apperr.Validation("invalid " + toField)
+		}
+		end = &parsed
+	}
+
+	if start != nil && end != nil && *start > *end {
+		return nil, nil, apperr.Validation(fromField + " must be <= " + toField)
+	}
+
+	return start, end, nil
 }
 
 // ListActivities returns the persisted activity log for a quote.

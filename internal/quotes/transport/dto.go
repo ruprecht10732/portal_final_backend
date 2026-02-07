@@ -66,13 +66,19 @@ type QuoteCalculationRequest struct {
 
 // ListQuotesRequest defines the query parameters for listing quotes
 type ListQuotesRequest struct {
-	LeadID    string `form:"leadId"`
-	Status    string `form:"status" validate:"omitempty,oneof=Draft Sent Accepted Rejected Expired"`
-	Search    string `form:"search"`
-	SortBy    string `form:"sortBy" validate:"omitempty,oneof=quoteNumber status total createdAt updatedAt"`
-	SortOrder string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
-	Page      int    `form:"page" validate:"omitempty,min=1"`
-	PageSize  int    `form:"pageSize" validate:"omitempty,min=1,max=100"`
+	LeadID         string `form:"leadId"`
+	Status         string `form:"status" validate:"omitempty,oneof=Draft Sent Accepted Rejected Expired"`
+	Search         string `form:"search"`
+	CreatedAtFrom  string `form:"createdAtFrom" validate:"omitempty"`
+	CreatedAtTo    string `form:"createdAtTo" validate:"omitempty"`
+	ValidUntilFrom string `form:"validUntilFrom" validate:"omitempty"`
+	ValidUntilTo   string `form:"validUntilTo" validate:"omitempty"`
+	TotalFrom      string `form:"totalFrom" validate:"omitempty"`
+	TotalTo        string `form:"totalTo" validate:"omitempty"`
+	SortBy         string `form:"sortBy" validate:"omitempty,oneof=quoteNumber status total validUntil customerName customerPhone customerAddress createdAt updatedAt"`
+	SortOrder      string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
+	Page           int    `form:"page" validate:"omitempty,min=1"`
+	PageSize       int    `form:"pageSize" validate:"omitempty,min=1,max=100"`
 }
 
 // ── Responses ─────────────────────────────────────────────────────────────────
@@ -95,27 +101,35 @@ type QuoteItemResponse struct {
 
 // QuoteResponse is the response for a quote
 type QuoteResponse struct {
-	ID                  uuid.UUID           `json:"id"`
-	QuoteNumber         string              `json:"quoteNumber"`
-	LeadID              uuid.UUID           `json:"leadId"`
-	LeadServiceID       *uuid.UUID          `json:"leadServiceId,omitempty"`
-	Status              QuoteStatus         `json:"status"`
-	PricingMode         string              `json:"pricingMode"`
-	DiscountType        string              `json:"discountType"`
-	DiscountValue       int64               `json:"discountValue"`
-	SubtotalCents       int64               `json:"subtotalCents"`
-	DiscountAmountCents int64               `json:"discountAmountCents"`
-	TaxTotalCents       int64               `json:"taxTotalCents"`
-	TotalCents          int64               `json:"totalCents"`
-	ValidUntil          *time.Time          `json:"validUntil,omitempty"`
-	Notes               *string             `json:"notes,omitempty"`
-	Items               []QuoteItemResponse `json:"items"`
-	ViewedAt            *time.Time          `json:"viewedAt,omitempty"`
-	AcceptedAt          *time.Time          `json:"acceptedAt,omitempty"`
-	RejectedAt          *time.Time          `json:"rejectedAt,omitempty"`
-	PDFFileKey          *string             `json:"pdfFileKey,omitempty"`
-	CreatedAt           time.Time           `json:"createdAt"`
-	UpdatedAt           time.Time           `json:"updatedAt"`
+	ID                         uuid.UUID           `json:"id"`
+	QuoteNumber                string              `json:"quoteNumber"`
+	LeadID                     uuid.UUID           `json:"leadId"`
+	LeadServiceID              *uuid.UUID          `json:"leadServiceId,omitempty"`
+	CustomerFirstName          *string             `json:"customerFirstName,omitempty"`
+	CustomerLastName           *string             `json:"customerLastName,omitempty"`
+	CustomerPhone              *string             `json:"customerPhone,omitempty"`
+	CustomerEmail              *string             `json:"customerEmail,omitempty"`
+	CustomerAddressStreet      *string             `json:"customerAddressStreet,omitempty"`
+	CustomerAddressHouseNumber *string             `json:"customerAddressHouseNumber,omitempty"`
+	CustomerAddressZipCode     *string             `json:"customerAddressZipCode,omitempty"`
+	CustomerAddressCity        *string             `json:"customerAddressCity,omitempty"`
+	Status                     QuoteStatus         `json:"status"`
+	PricingMode                string              `json:"pricingMode"`
+	DiscountType               string              `json:"discountType"`
+	DiscountValue              int64               `json:"discountValue"`
+	SubtotalCents              int64               `json:"subtotalCents"`
+	DiscountAmountCents        int64               `json:"discountAmountCents"`
+	TaxTotalCents              int64               `json:"taxTotalCents"`
+	TotalCents                 int64               `json:"totalCents"`
+	ValidUntil                 *time.Time          `json:"validUntil,omitempty"`
+	Notes                      *string             `json:"notes,omitempty"`
+	Items                      []QuoteItemResponse `json:"items"`
+	ViewedAt                   *time.Time          `json:"viewedAt,omitempty"`
+	AcceptedAt                 *time.Time          `json:"acceptedAt,omitempty"`
+	RejectedAt                 *time.Time          `json:"rejectedAt,omitempty"`
+	PDFFileKey                 *string             `json:"pdfFileKey,omitempty"`
+	CreatedAt                  time.Time           `json:"createdAt"`
+	UpdatedAt                  time.Time           `json:"updatedAt"`
 }
 
 // QuoteListResponse is the paginated list response

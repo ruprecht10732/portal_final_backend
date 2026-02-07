@@ -17,35 +17,43 @@ import (
 
 // Quote is the database model for a quote header
 type Quote struct {
-	ID                  uuid.UUID  `db:"id"`
-	OrganizationID      uuid.UUID  `db:"organization_id"`
-	LeadID              uuid.UUID  `db:"lead_id"`
-	LeadServiceID       *uuid.UUID `db:"lead_service_id"`
-	QuoteNumber         string     `db:"quote_number"`
-	Status              string     `db:"status"`
-	PricingMode         string     `db:"pricing_mode"`
-	DiscountType        string     `db:"discount_type"`
-	DiscountValue       int64      `db:"discount_value"`
-	SubtotalCents       int64      `db:"subtotal_cents"`
-	DiscountAmountCents int64      `db:"discount_amount_cents"`
-	TaxTotalCents       int64      `db:"tax_total_cents"`
-	TotalCents          int64      `db:"total_cents"`
-	ValidUntil          *time.Time `db:"valid_until"`
-	Notes               *string    `db:"notes"`
-	PublicToken         *string    `db:"public_token"`
-	PublicTokenExpAt    *time.Time `db:"public_token_expires_at"`
-	PreviewToken        *string    `db:"preview_token"`
-	PreviewTokenExpAt   *time.Time `db:"preview_token_expires_at"`
-	ViewedAt            *time.Time `db:"viewed_at"`
-	AcceptedAt          *time.Time `db:"accepted_at"`
-	RejectedAt          *time.Time `db:"rejected_at"`
-	RejectionReason     *string    `db:"rejection_reason"`
-	SignatureName       *string    `db:"signature_name"`
-	SignatureData       *string    `db:"signature_data"`
-	SignatureIP         *string    `db:"signature_ip"`
-	PDFFileKey          *string    `db:"pdf_file_key"`
-	CreatedAt           time.Time  `db:"created_at"`
-	UpdatedAt           time.Time  `db:"updated_at"`
+	ID                         uuid.UUID  `db:"id"`
+	OrganizationID             uuid.UUID  `db:"organization_id"`
+	LeadID                     uuid.UUID  `db:"lead_id"`
+	LeadServiceID              *uuid.UUID `db:"lead_service_id"`
+	CustomerFirstName          *string    `db:"consumer_first_name"`
+	CustomerLastName           *string    `db:"consumer_last_name"`
+	CustomerPhone              *string    `db:"consumer_phone"`
+	CustomerEmail              *string    `db:"consumer_email"`
+	CustomerAddressStreet      *string    `db:"address_street"`
+	CustomerAddressHouseNumber *string    `db:"address_house_number"`
+	CustomerAddressZipCode     *string    `db:"address_zip_code"`
+	CustomerAddressCity        *string    `db:"address_city"`
+	QuoteNumber                string     `db:"quote_number"`
+	Status                     string     `db:"status"`
+	PricingMode                string     `db:"pricing_mode"`
+	DiscountType               string     `db:"discount_type"`
+	DiscountValue              int64      `db:"discount_value"`
+	SubtotalCents              int64      `db:"subtotal_cents"`
+	DiscountAmountCents        int64      `db:"discount_amount_cents"`
+	TaxTotalCents              int64      `db:"tax_total_cents"`
+	TotalCents                 int64      `db:"total_cents"`
+	ValidUntil                 *time.Time `db:"valid_until"`
+	Notes                      *string    `db:"notes"`
+	PublicToken                *string    `db:"public_token"`
+	PublicTokenExpAt           *time.Time `db:"public_token_expires_at"`
+	PreviewToken               *string    `db:"preview_token"`
+	PreviewTokenExpAt          *time.Time `db:"preview_token_expires_at"`
+	ViewedAt                   *time.Time `db:"viewed_at"`
+	AcceptedAt                 *time.Time `db:"accepted_at"`
+	RejectedAt                 *time.Time `db:"rejected_at"`
+	RejectionReason            *string    `db:"rejection_reason"`
+	SignatureName              *string    `db:"signature_name"`
+	SignatureData              *string    `db:"signature_data"`
+	SignatureIP                *string    `db:"signature_ip"`
+	PDFFileKey                 *string    `db:"pdf_file_key"`
+	CreatedAt                  time.Time  `db:"created_at"`
+	UpdatedAt                  time.Time  `db:"updated_at"`
 }
 
 // QuoteItem is the database model for a quote line item
@@ -82,6 +90,12 @@ type ListParams struct {
 	LeadID         *uuid.UUID
 	Status         *string
 	Search         string
+	CreatedAtFrom  *time.Time
+	CreatedAtTo    *time.Time
+	ValidUntilFrom *time.Time
+	ValidUntilTo   *time.Time
+	TotalFrom      *int64
+	TotalTo        *int64
 	SortBy         string
 	SortOrder      string
 	Page           int
@@ -95,6 +109,32 @@ type ListResult struct {
 	Page       int
 	PageSize   int
 	TotalPages int
+}
+
+type quoteListFilters struct {
+	leadID         interface{}
+	status         interface{}
+	search         interface{}
+	createdAtFrom  interface{}
+	createdAtTo    interface{}
+	validUntilFrom interface{}
+	validUntilTo   interface{}
+	totalFrom      interface{}
+	totalTo        interface{}
+}
+
+func buildQuoteListFilters(params ListParams) quoteListFilters {
+	return quoteListFilters{
+		leadID:         nullable(params.LeadID),
+		status:         nullable(params.Status),
+		search:         optionalSearchParam(params.Search),
+		createdAtFrom:  nullable(params.CreatedAtFrom),
+		createdAtTo:    nullable(params.CreatedAtTo),
+		validUntilFrom: nullable(params.ValidUntilFrom),
+		validUntilTo:   nullable(params.ValidUntilTo),
+		totalFrom:      nullable(params.TotalFrom),
+		totalTo:        nullable(params.TotalTo),
+	}
 }
 
 // ── Repository ────────────────────────────────────────────────────────────────
@@ -321,32 +361,49 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		return nil, err
 	}
 
-	var searchParam interface{}
-	if params.Search != "" {
-		searchParam = "%" + params.Search + "%"
-	}
-
-	var statusParam interface{}
-	if params.Status != nil {
-		statusParam = *params.Status
-	}
-
-	var leadParam interface{}
-	if params.LeadID != nil {
-		leadParam = *params.LeadID
-	}
+	filters := buildQuoteListFilters(params)
 
 	baseQuery := `
-		FROM RAC_quotes
-		WHERE organization_id = $1
-			AND ($2::uuid IS NULL OR lead_id = $2)
-			AND ($3::text IS NULL OR status::text = $3)
-			AND ($4::text IS NULL OR quote_number ILIKE $4 OR notes ILIKE $4)
+		FROM RAC_quotes q
+		LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
+		WHERE q.organization_id = $1
+			AND ($2::uuid IS NULL OR q.lead_id = $2)
+			AND ($3::text IS NULL OR q.status::text = $3)
+			AND ($4::text IS NULL OR (
+				q.quote_number ILIKE $4 OR q.notes ILIKE $4
+				OR l.consumer_first_name ILIKE $4 OR l.consumer_last_name ILIKE $4
+				OR l.consumer_phone ILIKE $4 OR l.consumer_email ILIKE $4
+				OR l.address_street ILIKE $4 OR l.address_house_number ILIKE $4
+				OR l.address_zip_code ILIKE $4 OR l.address_city ILIKE $4
+				OR EXISTS (
+					SELECT 1
+					FROM RAC_quote_items qi
+					WHERE qi.quote_id = q.id AND qi.organization_id = q.organization_id
+						AND qi.description ILIKE $4
+				)
+			))
+			AND ($5::timestamptz IS NULL OR q.created_at >= $5)
+			AND ($6::timestamptz IS NULL OR q.created_at < $6)
+			AND ($7::timestamptz IS NULL OR q.valid_until >= $7)
+			AND ($8::timestamptz IS NULL OR q.valid_until < $8)
+			AND ($9::bigint IS NULL OR q.total_cents >= $9)
+			AND ($10::bigint IS NULL OR q.total_cents <= $10)
 	`
-	args := []interface{}{params.OrganizationID, leadParam, statusParam, searchParam}
+	args := []interface{}{
+		params.OrganizationID,
+		filters.leadID,
+		filters.status,
+		filters.search,
+		filters.createdAtFrom,
+		filters.createdAtTo,
+		filters.validUntilFrom,
+		filters.validUntilTo,
+		filters.totalFrom,
+		filters.totalTo,
+	}
 
 	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*) "+baseQuery, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, "SELECT COUNT(DISTINCT q.id) "+baseQuery, args...).Scan(&total); err != nil {
 		return nil, fmt.Errorf("failed to count quotes: %w", err)
 	}
 
@@ -354,27 +411,37 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	offset := (params.Page - 1) * params.PageSize
 
 	selectQuery := `
-		SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
-			pricing_mode, discount_type, discount_value,
-			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, created_at, updated_at,
-			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
-			viewed_at, accepted_at, rejected_at,
-			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
+		SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id,
+			l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
+			l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
+			q.quote_number, q.status, q.pricing_mode, q.discount_type, q.discount_value,
+			q.subtotal_cents, q.discount_amount_cents, q.tax_total_cents, q.total_cents,
+			q.valid_until, q.notes, q.created_at, q.updated_at,
+			q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
+			q.viewed_at, q.accepted_at, q.rejected_at,
+			q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key
 		` + baseQuery + `
 		ORDER BY
-			CASE WHEN $5 = 'quoteNumber' AND $6 = 'asc' THEN quote_number END ASC,
-			CASE WHEN $5 = 'quoteNumber' AND $6 = 'desc' THEN quote_number END DESC,
-			CASE WHEN $5 = 'status' AND $6 = 'asc' THEN status::text END ASC,
-			CASE WHEN $5 = 'status' AND $6 = 'desc' THEN status::text END DESC,
-			CASE WHEN $5 = 'total' AND $6 = 'asc' THEN total_cents END ASC,
-			CASE WHEN $5 = 'total' AND $6 = 'desc' THEN total_cents END DESC,
-			CASE WHEN $5 = 'createdAt' AND $6 = 'asc' THEN created_at END ASC,
-			CASE WHEN $5 = 'createdAt' AND $6 = 'desc' THEN created_at END DESC,
-			CASE WHEN $5 = 'updatedAt' AND $6 = 'asc' THEN updated_at END ASC,
-			CASE WHEN $5 = 'updatedAt' AND $6 = 'desc' THEN updated_at END DESC,
-			created_at DESC
-		LIMIT $7 OFFSET $8`
+			CASE WHEN $11 = 'quoteNumber' AND $12 = 'asc' THEN q.quote_number END ASC,
+			CASE WHEN $11 = 'quoteNumber' AND $12 = 'desc' THEN q.quote_number END DESC,
+			CASE WHEN $11 = 'status' AND $12 = 'asc' THEN q.status::text END ASC,
+			CASE WHEN $11 = 'status' AND $12 = 'desc' THEN q.status::text END DESC,
+			CASE WHEN $11 = 'total' AND $12 = 'asc' THEN q.total_cents END ASC,
+			CASE WHEN $11 = 'total' AND $12 = 'desc' THEN q.total_cents END DESC,
+			CASE WHEN $11 = 'validUntil' AND $12 = 'asc' THEN q.valid_until END ASC,
+			CASE WHEN $11 = 'validUntil' AND $12 = 'desc' THEN q.valid_until END DESC,
+			CASE WHEN $11 = 'customerName' AND $12 = 'asc' THEN l.consumer_last_name END ASC,
+			CASE WHEN $11 = 'customerName' AND $12 = 'desc' THEN l.consumer_last_name END DESC,
+			CASE WHEN $11 = 'customerPhone' AND $12 = 'asc' THEN l.consumer_phone END ASC,
+			CASE WHEN $11 = 'customerPhone' AND $12 = 'desc' THEN l.consumer_phone END DESC,
+			CASE WHEN $11 = 'customerAddress' AND $12 = 'asc' THEN l.address_city END ASC,
+			CASE WHEN $11 = 'customerAddress' AND $12 = 'desc' THEN l.address_city END DESC,
+			CASE WHEN $11 = 'createdAt' AND $12 = 'asc' THEN q.created_at END ASC,
+			CASE WHEN $11 = 'createdAt' AND $12 = 'desc' THEN q.created_at END DESC,
+			CASE WHEN $11 = 'updatedAt' AND $12 = 'asc' THEN q.updated_at END ASC,
+			CASE WHEN $11 = 'updatedAt' AND $12 = 'desc' THEN q.updated_at END DESC,
+			q.created_at DESC
+		LIMIT $13 OFFSET $14`
 
 	args = append(args, sortBy, sortOrder, params.PageSize, offset)
 
@@ -388,8 +455,10 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	for rows.Next() {
 		var q Quote
 		if err := rows.Scan(
-			&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.QuoteNumber, &q.Status,
-			&q.PricingMode, &q.DiscountType, &q.DiscountValue,
+			&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID,
+			&q.CustomerFirstName, &q.CustomerLastName, &q.CustomerPhone, &q.CustomerEmail,
+			&q.CustomerAddressStreet, &q.CustomerAddressHouseNumber, &q.CustomerAddressZipCode, &q.CustomerAddressCity,
+			&q.QuoteNumber, &q.Status, &q.PricingMode, &q.DiscountType, &q.DiscountValue,
 			&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
 			&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
 			&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
@@ -798,7 +867,7 @@ func resolveSortBy(sortBy string) (string, error) {
 		return "createdAt", nil
 	}
 	switch sortBy {
-	case "quoteNumber", "status", "total", "createdAt", "updatedAt":
+	case "quoteNumber", "status", "total", "validUntil", "customerName", "customerPhone", "customerAddress", "createdAt", "updatedAt":
 		return sortBy, nil
 	default:
 		return "", apperr.BadRequest("invalid sort field")
@@ -815,4 +884,18 @@ func resolveSortOrder(sortOrder string) (string, error) {
 	default:
 		return "", apperr.BadRequest("invalid sort order")
 	}
+}
+
+func nullable[T any](value *T) interface{} {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func optionalSearchParam(value string) interface{} {
+	if value == "" {
+		return nil
+	}
+	return "%" + value + "%"
 }
