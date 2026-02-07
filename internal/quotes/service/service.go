@@ -24,6 +24,7 @@ const (
 	msgLinkExpired  = "this quote link has expired"
 	msgAlreadyFinal = "this quote has already been finalized"
 	msgReadOnly     = "this preview link is read-only"
+	msgInvalidField = "invalid "
 )
 
 // TimelineWriter is the narrow interface a quotes service needs to create lead timeline events.
@@ -121,6 +122,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		OrganizationID:      tenantID,
 		LeadID:              req.LeadID,
 		LeadServiceID:       req.LeadServiceID,
+		CreatedByID:         &actorID,
 		QuoteNumber:         quoteNumber,
 		Status:              string(transport.QuoteStatusDraft),
 		PricingMode:         pricingMode,
@@ -1172,6 +1174,10 @@ func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteIte
 		QuoteNumber:                q.QuoteNumber,
 		LeadID:                     q.LeadID,
 		LeadServiceID:              q.LeadServiceID,
+		CreatedByID:                q.CreatedByID,
+		CreatedByFirstName:         q.CreatedByFirstName,
+		CreatedByLastName:          q.CreatedByLastName,
+		CreatedByEmail:             q.CreatedByEmail,
 		CustomerFirstName:          q.CustomerFirstName,
 		CustomerLastName:           q.CustomerLastName,
 		CustomerPhone:              q.CustomerPhone,
@@ -1251,7 +1257,7 @@ func parseDateRange(from string, to string, fromField string, toField string) (*
 	if trimmedFrom != "" {
 		parsed, err := time.Parse(dateLayout, trimmedFrom)
 		if err != nil {
-			return nil, nil, apperr.Validation("invalid " + fromField)
+			return nil, nil, apperr.Validation(msgInvalidField + fromField)
 		}
 		start = &parsed
 	}
@@ -1259,7 +1265,7 @@ func parseDateRange(from string, to string, fromField string, toField string) (*
 	if trimmedTo != "" {
 		parsed, err := time.Parse(dateLayout, trimmedTo)
 		if err != nil {
-			return nil, nil, apperr.Validation("invalid " + toField)
+			return nil, nil, apperr.Validation(msgInvalidField + toField)
 		}
 		endExclusive := parsed.AddDate(0, 0, 1)
 		end = &endExclusive
@@ -1282,7 +1288,7 @@ func parseInt64Range(from string, to string, fromField string, toField string) (
 	if trimmedFrom != "" {
 		parsed, err := strconv.ParseInt(trimmedFrom, 10, 64)
 		if err != nil {
-			return nil, nil, apperr.Validation("invalid " + fromField)
+			return nil, nil, apperr.Validation(msgInvalidField + fromField)
 		}
 		start = &parsed
 	}
@@ -1290,7 +1296,7 @@ func parseInt64Range(from string, to string, fromField string, toField string) (
 	if trimmedTo != "" {
 		parsed, err := strconv.ParseInt(trimmedTo, 10, 64)
 		if err != nil {
-			return nil, nil, apperr.Validation("invalid " + toField)
+			return nil, nil, apperr.Validation(msgInvalidField + toField)
 		}
 		end = &parsed
 	}

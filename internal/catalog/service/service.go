@@ -84,7 +84,7 @@ func (s *Service) CreateVatRate(ctx context.Context, tenantID uuid.UUID, req tra
 	rate, err := s.repo.CreateVatRate(ctx, repository.CreateVatRateParams{
 		OrganizationID: tenantID,
 		Name:           strings.TrimSpace(req.Name),
-		RateBps:        req.RateBps,
+		RateBps:        *req.RateBps,
 	})
 	if err != nil {
 		return transport.VatRateResponse{}, err

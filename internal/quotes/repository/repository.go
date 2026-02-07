@@ -21,6 +21,10 @@ type Quote struct {
 	OrganizationID             uuid.UUID  `db:"organization_id"`
 	LeadID                     uuid.UUID  `db:"lead_id"`
 	LeadServiceID              *uuid.UUID `db:"lead_service_id"`
+	CreatedByID                *uuid.UUID `db:"created_by_id"`
+	CreatedByFirstName         *string    `db:"created_by_first_name"`
+	CreatedByLastName          *string    `db:"created_by_last_name"`
+	CreatedByEmail             *string    `db:"created_by_email"`
 	CustomerFirstName          *string    `db:"consumer_first_name"`
 	CustomerLastName           *string    `db:"consumer_last_name"`
 	CustomerPhone              *string    `db:"consumer_phone"`
@@ -178,15 +182,15 @@ func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []
 
 	quoteQuery := `
 		INSERT INTO RAC_quotes (
-			id, organization_id, lead_id, lead_service_id, quote_number, status,
+			id, organization_id, lead_id, lead_service_id, created_by_id, quote_number, status,
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, created_at, updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`
 
 	if _, err := tx.Exec(ctx, quoteQuery,
-		quote.ID, quote.OrganizationID, quote.LeadID, quote.LeadServiceID,
+		quote.ID, quote.OrganizationID, quote.LeadID, quote.LeadServiceID, quote.CreatedByID,
 		quote.QuoteNumber, quote.Status, quote.PricingMode, quote.DiscountType, quote.DiscountValue,
 		quote.SubtotalCents, quote.DiscountAmountCents, quote.TaxTotalCents, quote.TotalCents,
 		quote.ValidUntil, quote.Notes, quote.CreatedAt, quote.UpdatedAt,
@@ -265,17 +269,23 @@ func (r *Repository) insertItems(ctx context.Context, tx pgx.Tx, items []QuoteIt
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*Quote, error) {
 	var q Quote
 	query := `
-		SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
+		SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id, q.created_by_id,
+			u.first_name, u.last_name, u.email,
+			q.quote_number, q.status,
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, created_at, updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
 			viewed_at, accepted_at, rejected_at,
 			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
-		FROM RAC_quotes WHERE id = $1 AND organization_id = $2`
+		FROM RAC_quotes q
+		LEFT JOIN RAC_users u ON u.id = q.created_by_id
+		WHERE q.id = $1 AND q.organization_id = $2`
 
 	err := r.pool.QueryRow(ctx, query, id, orgID).Scan(
-		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.QuoteNumber, &q.Status,
+		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.CreatedByID,
+		&q.CreatedByFirstName, &q.CreatedByLastName, &q.CreatedByEmail,
+		&q.QuoteNumber, &q.Status,
 		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
 		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
 		&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
@@ -366,6 +376,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	baseQuery := `
 		FROM RAC_quotes q
 		LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
+		LEFT JOIN RAC_users u ON u.id = q.created_by_id
 		WHERE q.organization_id = $1
 			AND ($2::uuid IS NULL OR q.lead_id = $2)
 			AND ($3::text IS NULL OR q.status::text = $3)
@@ -375,6 +386,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 				OR l.consumer_phone ILIKE $4 OR l.consumer_email ILIKE $4
 				OR l.address_street ILIKE $4 OR l.address_house_number ILIKE $4
 				OR l.address_zip_code ILIKE $4 OR l.address_city ILIKE $4
+				OR u.first_name ILIKE $4 OR u.last_name ILIKE $4 OR u.email ILIKE $4
 				OR EXISTS (
 					SELECT 1
 					FROM RAC_quote_items qi
@@ -412,6 +424,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 
 	selectQuery := `
 		SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id,
+			q.created_by_id, u.first_name, u.last_name, u.email,
 			l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
 			l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
 			q.quote_number, q.status, q.pricing_mode, q.discount_type, q.discount_value,
@@ -436,6 +449,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 			CASE WHEN $11 = 'customerPhone' AND $12 = 'desc' THEN l.consumer_phone END DESC,
 			CASE WHEN $11 = 'customerAddress' AND $12 = 'asc' THEN l.address_city END ASC,
 			CASE WHEN $11 = 'customerAddress' AND $12 = 'desc' THEN l.address_city END DESC,
+			CASE WHEN $11 = 'createdBy' AND $12 = 'asc' THEN u.last_name END ASC,
+			CASE WHEN $11 = 'createdBy' AND $12 = 'desc' THEN u.last_name END DESC,
 			CASE WHEN $11 = 'createdAt' AND $12 = 'asc' THEN q.created_at END ASC,
 			CASE WHEN $11 = 'createdAt' AND $12 = 'desc' THEN q.created_at END DESC,
 			CASE WHEN $11 = 'updatedAt' AND $12 = 'asc' THEN q.updated_at END ASC,
@@ -456,6 +471,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		var q Quote
 		if err := rows.Scan(
 			&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID,
+			&q.CreatedByID, &q.CreatedByFirstName, &q.CreatedByLastName, &q.CreatedByEmail,
 			&q.CustomerFirstName, &q.CustomerLastName, &q.CustomerPhone, &q.CustomerEmail,
 			&q.CustomerAddressStreet, &q.CustomerAddressHouseNumber, &q.CustomerAddressZipCode, &q.CustomerAddressCity,
 			&q.QuoteNumber, &q.Status, &q.PricingMode, &q.DiscountType, &q.DiscountValue,
@@ -867,7 +883,7 @@ func resolveSortBy(sortBy string) (string, error) {
 		return "createdAt", nil
 	}
 	switch sortBy {
-	case "quoteNumber", "status", "total", "validUntil", "customerName", "customerPhone", "customerAddress", "createdAt", "updatedAt":
+	case "quoteNumber", "status", "total", "validUntil", "customerName", "customerPhone", "customerAddress", "createdBy", "createdAt", "updatedAt":
 		return sortBy, nil
 	default:
 		return "", apperr.BadRequest("invalid sort field")

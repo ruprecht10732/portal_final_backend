@@ -75,7 +75,7 @@ type ListQuotesRequest struct {
 	ValidUntilTo   string `form:"validUntilTo" validate:"omitempty"`
 	TotalFrom      string `form:"totalFrom" validate:"omitempty"`
 	TotalTo        string `form:"totalTo" validate:"omitempty"`
-	SortBy         string `form:"sortBy" validate:"omitempty,oneof=quoteNumber status total validUntil customerName customerPhone customerAddress createdAt updatedAt"`
+	SortBy         string `form:"sortBy" validate:"omitempty,oneof=quoteNumber status total validUntil customerName customerPhone customerAddress createdBy createdAt updatedAt"`
 	SortOrder      string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 	Page           int    `form:"page" validate:"omitempty,min=1"`
 	PageSize       int    `form:"pageSize" validate:"omitempty,min=1,max=100"`
@@ -105,6 +105,10 @@ type QuoteResponse struct {
 	QuoteNumber                string              `json:"quoteNumber"`
 	LeadID                     uuid.UUID           `json:"leadId"`
 	LeadServiceID              *uuid.UUID          `json:"leadServiceId,omitempty"`
+	CreatedByID                *uuid.UUID          `json:"createdById,omitempty"`
+	CreatedByFirstName         *string             `json:"createdByFirstName,omitempty"`
+	CreatedByLastName          *string             `json:"createdByLastName,omitempty"`
+	CreatedByEmail             *string             `json:"createdByEmail,omitempty"`
 	CustomerFirstName          *string             `json:"customerFirstName,omitempty"`
 	CustomerLastName           *string             `json:"customerLastName,omitempty"`
 	CustomerPhone              *string             `json:"customerPhone,omitempty"`

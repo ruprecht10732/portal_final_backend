@@ -6,7 +6,7 @@ import "github.com/google/uuid"
 
 type CreateVatRateRequest struct {
 	Name    string `json:"name" validate:"required,min=1,max=100"`
-	RateBps int    `json:"rateBps" validate:"required,min=0,max=10000"`
+	RateBps *int   `json:"rateBps" validate:"required,min=0,max=10000"`
 }
 
 type UpdateVatRateRequest struct {
