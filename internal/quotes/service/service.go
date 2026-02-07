@@ -168,18 +168,19 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 			selected = it.IsSelected
 		}
 		items[i] = repository.QuoteItem{
-			ID:              uuid.New(),
-			QuoteID:         quote.ID,
-			OrganizationID:  tenantID,
-			Description:     it.Description,
-			Quantity:        it.Quantity,
-			QuantityNumeric: parseQuantityNumber(it.Quantity),
-			UnitPriceCents:  it.UnitPriceCents,
-			TaxRateBps:      it.TaxRateBps,
-			IsOptional:      it.IsOptional,
-			IsSelected:      selected,
-			SortOrder:       i,
-			CreatedAt:       now,
+			ID:               uuid.New(),
+			QuoteID:          quote.ID,
+			OrganizationID:   tenantID,
+			Description:      it.Description,
+			Quantity:         it.Quantity,
+			QuantityNumeric:  parseQuantityNumber(it.Quantity),
+			UnitPriceCents:   it.UnitPriceCents,
+			TaxRateBps:       it.TaxRateBps,
+			IsOptional:       it.IsOptional,
+			IsSelected:       selected,
+			SortOrder:        i,
+			CatalogProductID: it.CatalogProductID,
+			CreatedAt:        now,
 		}
 	}
 
@@ -214,6 +215,157 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 	return s.buildResponse(&quote, items), nil
 }
 
+// DraftQuoteParams contains the data needed to create an AI-drafted quote.
+// This is a service-level DTO, separate from transport.CreateQuoteRequest,
+// because the AI agent does not go through the HTTP layer.
+type DraftQuoteParams struct {
+	LeadID         uuid.UUID
+	LeadServiceID  uuid.UUID
+	OrganizationID uuid.UUID
+	CreatedByID    uuid.UUID
+	Notes          string
+	Items          []DraftQuoteItemParams
+}
+
+// DraftQuoteItemParams represents a single line item in an AI-drafted quote.
+type DraftQuoteItemParams struct {
+	Description      string
+	Quantity         string
+	UnitPriceCents   int64
+	TaxRateBps       int
+	IsOptional       bool
+	CatalogProductID *uuid.UUID
+}
+
+// DraftQuoteResult is the minimal return value after successfully drafting a quote.
+type DraftQuoteResult struct {
+	QuoteID     uuid.UUID
+	QuoteNumber string
+	ItemCount   int
+}
+
+// DraftQuote creates a new draft quote on behalf of the AI agent.
+// It mirrors Create but uses the agent-level params, emits a "quote_drafted"
+// timeline event with metadata enabling the frontend to show a "View Draft Quote" card.
+func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*DraftQuoteResult, error) {
+	quoteNumber, err := s.repo.NextQuoteNumber(ctx, params.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("generate quote number: %w", err)
+	}
+
+	pricingMode := "exclusive"
+	discountType := "percentage"
+
+	// Build transport-level items for server-side calculation.
+	calcItems := make([]transport.QuoteItemRequest, len(params.Items))
+	for i, it := range params.Items {
+		calcItems[i] = transport.QuoteItemRequest{
+			Description:      it.Description,
+			Quantity:         it.Quantity,
+			UnitPriceCents:   it.UnitPriceCents,
+			TaxRateBps:       it.TaxRateBps,
+			IsOptional:       it.IsOptional,
+			IsSelected:       true,
+			CatalogProductID: it.CatalogProductID,
+		}
+	}
+
+	calc := CalculateQuote(transport.QuoteCalculationRequest{
+		Items:       calcItems,
+		PricingMode: pricingMode,
+	})
+
+	now := time.Now()
+
+	// Apply org default for validity if available.
+	var validUntil *time.Time
+	if s.orgSettings != nil {
+		_, validDays, lookupErr := s.orgSettings.GetQuoteDefaults(ctx, params.OrganizationID)
+		if lookupErr == nil && validDays > 0 {
+			defaultExpiry := now.AddDate(0, 0, validDays)
+			validUntil = &defaultExpiry
+		}
+	}
+
+	serviceID := &params.LeadServiceID
+	quote := repository.Quote{
+		ID:                  uuid.New(),
+		OrganizationID:      params.OrganizationID,
+		LeadID:              params.LeadID,
+		LeadServiceID:       serviceID,
+		CreatedByID:         &params.CreatedByID,
+		QuoteNumber:         quoteNumber,
+		Status:              string(transport.QuoteStatusDraft),
+		PricingMode:         pricingMode,
+		DiscountType:        discountType,
+		DiscountValue:       0,
+		SubtotalCents:       calc.SubtotalCents,
+		DiscountAmountCents: calc.DiscountAmountCents,
+		TaxTotalCents:       calc.VatTotalCents,
+		TotalCents:          calc.TotalCents,
+		ValidUntil:          validUntil,
+		Notes:               nilIfEmpty(params.Notes),
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+
+	items := make([]repository.QuoteItem, len(params.Items))
+	catalogCount := 0
+	for i, it := range params.Items {
+		selected := true
+		items[i] = repository.QuoteItem{
+			ID:               uuid.New(),
+			QuoteID:          quote.ID,
+			OrganizationID:   params.OrganizationID,
+			Description:      it.Description,
+			Quantity:         it.Quantity,
+			QuantityNumeric:  parseQuantityNumber(it.Quantity),
+			UnitPriceCents:   it.UnitPriceCents,
+			TaxRateBps:       it.TaxRateBps,
+			IsOptional:       it.IsOptional,
+			IsSelected:       selected,
+			SortOrder:        i,
+			CatalogProductID: it.CatalogProductID,
+			CreatedAt:        now,
+		}
+		if it.CatalogProductID != nil {
+			catalogCount++
+		}
+	}
+
+	if err := s.repo.CreateWithItems(ctx, &quote, items); err != nil {
+		return nil, fmt.Errorf("draft quote: %w", err)
+	}
+
+	adHocCount := len(items) - catalogCount
+
+	// Emit "quote_drafted" timeline event with metadata for the frontend action button.
+	s.emitTimelineEvent(ctx, TimelineEventParams{
+		LeadID:         quote.LeadID,
+		ServiceID:      quote.LeadServiceID,
+		OrganizationID: params.OrganizationID,
+		ActorType:      "AI",
+		ActorName:      "Estimation Agent",
+		EventType:      "quote_drafted",
+		Title:          fmt.Sprintf("Concept offerte %s opgesteld", quote.QuoteNumber),
+		Summary:        toPtr(fmt.Sprintf("Totaal: €%.2f (%d items, %d uit catalogus, %d geschat)", float64(quote.TotalCents)/100, len(items), catalogCount, adHocCount)),
+		Metadata: map[string]any{
+			"quoteId":      quote.ID,
+			"quoteNumber":  quote.QuoteNumber,
+			"itemCount":    len(items),
+			"catalogItems": catalogCount,
+			"adHocItems":   adHocCount,
+			"status":       quote.Status,
+		},
+	})
+
+	return &DraftQuoteResult{
+		QuoteID:     quote.ID,
+		QuoteNumber: quoteNumber,
+		ItemCount:   len(items),
+	}, nil
+}
+
 // applyQuoteUpdates applies optional field updates from the request to the quote.
 func applyQuoteUpdates(quote *repository.Quote, req transport.UpdateQuoteRequest) {
 	if req.PricingMode != nil {
@@ -243,18 +395,19 @@ func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteI
 			selected = it.IsSelected
 		}
 		result[i] = repository.QuoteItem{
-			ID:              uuid.New(),
-			QuoteID:         quoteID,
-			OrganizationID:  tenantID,
-			Description:     it.Description,
-			Quantity:        it.Quantity,
-			QuantityNumeric: parseQuantityNumber(it.Quantity),
-			UnitPriceCents:  it.UnitPriceCents,
-			TaxRateBps:      it.TaxRateBps,
-			IsOptional:      it.IsOptional,
-			IsSelected:      selected,
-			SortOrder:       i,
-			CreatedAt:       now,
+			ID:               uuid.New(),
+			QuoteID:          quoteID,
+			OrganizationID:   tenantID,
+			Description:      it.Description,
+			Quantity:         it.Quantity,
+			QuantityNumeric:  parseQuantityNumber(it.Quantity),
+			UnitPriceCents:   it.UnitPriceCents,
+			TaxRateBps:       it.TaxRateBps,
+			IsOptional:       it.IsOptional,
+			IsSelected:       selected,
+			SortOrder:        i,
+			CatalogProductID: it.CatalogProductID,
+			CreatedAt:        now,
 		}
 	}
 	return result
@@ -265,12 +418,13 @@ func toItemRequests(items []repository.QuoteItem) []transport.QuoteItemRequest {
 	reqs := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
 		reqs[i] = transport.QuoteItemRequest{
-			Description:    it.Description,
-			Quantity:       it.Quantity,
-			UnitPriceCents: it.UnitPriceCents,
-			TaxRateBps:     it.TaxRateBps,
-			IsOptional:     it.IsOptional,
-			IsSelected:     it.IsSelected,
+			Description:      it.Description,
+			Quantity:         it.Quantity,
+			UnitPriceCents:   it.UnitPriceCents,
+			TaxRateBps:       it.TaxRateBps,
+			IsOptional:       it.IsOptional,
+			IsSelected:       it.IsSelected,
+			CatalogProductID: it.CatalogProductID,
 		}
 	}
 	return reqs
@@ -1203,6 +1357,7 @@ func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteIte
 			IsOptional:          it.IsOptional,
 			IsSelected:          it.IsSelected,
 			SortOrder:           it.SortOrder,
+			CatalogProductID:    it.CatalogProductID,
 			TotalBeforeTaxCents: roundCents(lineSubtotal),
 			TotalTaxCents:       roundCents(lineVat),
 			LineTotalCents:      roundCents(lineSubtotal + lineVat),
