@@ -334,6 +334,10 @@
             border-top: 2px solid var(--accent);
         }
 
+        .page-break {
+            page-break-before: always;
+        }
+
         .signature-block .sig-title {
             font-size: 8pt;
             font-weight: 700;
@@ -519,8 +523,11 @@
             </ol>
         </div>
 
-        <!-- ── Signature Block ─────────────────────────────── -->
-        {{if .HasSignature}}
+    </div>
+
+    <!-- ── Signature Page ─────────────────────────────────── -->
+    {{if .HasSignature}}
+    <div class="page page-break">
         <div class="signature-block">
             <div class="sig-title">Akkoordverklaring</div>
             <div class="signature-info">
@@ -534,7 +541,7 @@
             </div>
             {{end}}
         </div>
-        {{end}}
     </div>
+    {{end}}
 </body>
 </html>
