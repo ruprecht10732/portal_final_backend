@@ -112,6 +112,7 @@ func main() {
 	ensureBucket(ctx, log, storageSvc, "partner-logos", cfg.GetMinioBucketPartnerLogos())
 	ensureBucket(ctx, log, storageSvc, "organization-logos", cfg.GetMinioBucketOrganizationLogos())
 	ensureBucket(ctx, log, storageSvc, "quote-pdfs", cfg.GetMinioBucketQuotePDFs())
+	ensureBucket(ctx, log, storageSvc, "quote-attachments", cfg.GetMinioBucketQuoteAttachments())
 	log.Info(
 		"storage service initialized",
 		"leadAttachmentsBucket", cfg.GetMinioBucketLeadServiceAttachments(),
@@ -119,6 +120,7 @@ func main() {
 		"partnerLogosBucket", cfg.GetMinioBucketPartnerLogos(),
 		"organizationLogosBucket", cfg.GetMinioBucketOrganizationLogos(),
 		"quotePDFsBucket", cfg.GetMinioBucketQuotePDFs(),
+		"quoteAttachmentsBucket", cfg.GetMinioBucketQuoteAttachments(),
 	)
 
 	// Gotenberg PDF generator
@@ -209,6 +211,14 @@ func main() {
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
 	_ = adapters.NewAuthAgentProvider(authModule.Service())
+
+	// Wire catalog reader: leads → catalog (for hydrating product search results)
+	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
+	leadsModule.SetCatalogReader(catalogReader)
+
+	// Wire quote drafter: leads → quotes (for AI-drafted quotes)
+	quotesDrafter := adapters.NewQuotesDraftWriter(quotesModule.Service())
+	leadsModule.SetQuoteDrafter(quotesDrafter)
 
 	// ========================================================================
 	// HTTP Layer

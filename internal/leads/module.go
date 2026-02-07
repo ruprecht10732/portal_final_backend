@@ -314,6 +314,18 @@ func (m *Module) SetLeadScorer(scorer *scoring.Service) {
 	m.scorer = scorer
 }
 
+// SetCatalogReader sets the catalog reader on the Estimator agent.
+// This is called after module initialization to break circular dependencies.
+func (m *Module) SetCatalogReader(cr ports.CatalogReader) {
+	m.estimator.SetCatalogReader(cr)
+}
+
+// SetQuoteDrafter sets the quote drafter on the Estimator agent.
+// This is called after module initialization to break circular dependencies.
+func (m *Module) SetQuoteDrafter(qd ports.QuoteDrafter) {
+	m.estimator.SetQuoteDrafter(qd)
+}
+
 // RegisterRoutes mounts RAC_leads routes on the provided router context.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	// All RAC_leads routes require authentication
