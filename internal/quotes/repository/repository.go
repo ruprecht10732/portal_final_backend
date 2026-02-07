@@ -34,6 +34,8 @@ type Quote struct {
 	Notes               *string    `db:"notes"`
 	PublicToken         *string    `db:"public_token"`
 	PublicTokenExpAt    *time.Time `db:"public_token_expires_at"`
+	PreviewToken        *string    `db:"preview_token"`
+	PreviewTokenExpAt   *time.Time `db:"preview_token_expires_at"`
 	ViewedAt            *time.Time `db:"viewed_at"`
 	AcceptedAt          *time.Time `db:"accepted_at"`
 	RejectedAt          *time.Time `db:"rejected_at"`
@@ -140,15 +142,15 @@ func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, created_at, updated_at,
-			public_token, public_token_expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
+			public_token, public_token_expires_at, preview_token, preview_token_expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`
 
 	if _, err := tx.Exec(ctx, quoteQuery,
 		quote.ID, quote.OrganizationID, quote.LeadID, quote.LeadServiceID,
 		quote.QuoteNumber, quote.Status, quote.PricingMode, quote.DiscountType, quote.DiscountValue,
 		quote.SubtotalCents, quote.DiscountAmountCents, quote.TaxTotalCents, quote.TotalCents,
 		quote.ValidUntil, quote.Notes, quote.CreatedAt, quote.UpdatedAt,
-		quote.PublicToken, quote.PublicTokenExpAt,
+		quote.PublicToken, quote.PublicTokenExpAt, quote.PreviewToken, quote.PreviewTokenExpAt,
 	); err != nil {
 		return fmt.Errorf("failed to insert quote: %w", err)
 	}
@@ -227,7 +229,8 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, created_at, updated_at,
-			public_token, public_token_expires_at, viewed_at, accepted_at, rejected_at,
+			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
+			viewed_at, accepted_at, rejected_at,
 			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
 		FROM RAC_quotes WHERE id = $1 AND organization_id = $2`
 
@@ -236,7 +239,8 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
 		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
 		&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
-		&q.PublicToken, &q.PublicTokenExpAt, &q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
+		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
+		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
 		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
 	)
 	if err != nil {
@@ -354,7 +358,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, created_at, updated_at,
-			public_token, public_token_expires_at, viewed_at, accepted_at, rejected_at,
+			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
+			viewed_at, accepted_at, rejected_at,
 			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
 		` + baseQuery + `
 		ORDER BY
@@ -387,7 +392,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 			&q.PricingMode, &q.DiscountType, &q.DiscountValue,
 			&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
 			&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
-			&q.PublicToken, &q.PublicTokenExpAt, &q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
+			&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
+			&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
 			&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan quote: %w", err)
@@ -417,7 +423,8 @@ func (r *Repository) GetByPublicToken(ctx context.Context, token string) (*Quote
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, created_at, updated_at,
-			public_token, public_token_expires_at, viewed_at, accepted_at, rejected_at,
+			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
+			viewed_at, accepted_at, rejected_at,
 			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
 		FROM RAC_quotes WHERE public_token = $1`
 
@@ -426,7 +433,8 @@ func (r *Repository) GetByPublicToken(ctx context.Context, token string) (*Quote
 		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
 		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
 		&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
-		&q.PublicToken, &q.PublicTokenExpAt, &q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
+		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
+		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
 		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
 	)
 	if err != nil {
@@ -438,6 +446,53 @@ func (r *Repository) GetByPublicToken(ctx context.Context, token string) (*Quote
 	return &q, nil
 }
 
+// TokenKind describes which token matched a quote lookup.
+type TokenKind string
+
+const (
+	TokenKindPublic  TokenKind = "public"
+	TokenKindPreview TokenKind = "preview"
+)
+
+// GetByToken retrieves a quote by either public or preview token.
+func (r *Repository) GetByToken(ctx context.Context, token string) (*Quote, TokenKind, error) {
+	var q Quote
+	var kind string
+	query := `
+		SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
+			pricing_mode, discount_type, discount_value,
+			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+			valid_until, notes, created_at, updated_at,
+			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
+			viewed_at, accepted_at, rejected_at,
+			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
+			CASE WHEN public_token = $1 THEN 'public' ELSE 'preview' END AS token_kind
+		FROM RAC_quotes
+		WHERE public_token = $1 OR preview_token = $1`
+
+	err := r.pool.QueryRow(ctx, query, token).Scan(
+		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.QuoteNumber, &q.Status,
+		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
+		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
+		&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
+		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
+		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
+		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
+		&kind,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", apperr.NotFound(quoteNotFoundMsg)
+		}
+		return nil, "", fmt.Errorf("failed to get quote by token: %w", err)
+	}
+
+	if kind == string(TokenKindPublic) {
+		return &q, TokenKindPublic, nil
+	}
+	return &q, TokenKindPreview, nil
+}
+
 // SetPublicToken sets the public access token and expiry on a quote.
 func (r *Repository) SetPublicToken(ctx context.Context, quoteID, orgID uuid.UUID, token string, expiresAt time.Time) error {
 	query := `UPDATE RAC_quotes SET public_token = $3, public_token_expires_at = $4, updated_at = $5
@@ -445,6 +500,20 @@ func (r *Repository) SetPublicToken(ctx context.Context, quoteID, orgID uuid.UUI
 	result, err := r.pool.Exec(ctx, query, quoteID, orgID, token, expiresAt, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to set public token: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound(quoteNotFoundMsg)
+	}
+	return nil
+}
+
+// SetPreviewToken sets the read-only preview token and expiry on a quote.
+func (r *Repository) SetPreviewToken(ctx context.Context, quoteID, orgID uuid.UUID, token string, expiresAt time.Time) error {
+	query := `UPDATE RAC_quotes SET preview_token = $3, preview_token_expires_at = $4, updated_at = $5
+		WHERE id = $1 AND organization_id = $2`
+	result, err := r.pool.Exec(ctx, query, quoteID, orgID, token, expiresAt, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to set preview token: %w", err)
 	}
 	if result.RowsAffected() == 0 {
 		return apperr.NotFound(quoteNotFoundMsg)

@@ -127,6 +127,12 @@ type QuoteListResponse struct {
 	TotalPages int             `json:"totalPages"`
 }
 
+// QuotePreviewLinkResponse is the response for a read-only preview link.
+type QuotePreviewLinkResponse struct {
+	Token     string     `json:"token"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
 // VatBreakdown represents a single VAT rate line
 type VatBreakdown struct {
 	RateBps     int   `json:"rateBps"`
@@ -205,6 +211,7 @@ type PublicQuoteResponse struct {
 	Items               []PublicQuoteItemResponse `json:"items"`
 	AcceptedAt          *time.Time                `json:"acceptedAt,omitempty"`
 	RejectedAt          *time.Time                `json:"rejectedAt,omitempty"`
+	IsReadOnly          bool                      `json:"isReadOnly,omitempty"`
 }
 
 // ToggleItemRequest is the request body for toggling an optional item.

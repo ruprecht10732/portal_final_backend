@@ -54,6 +54,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.POST("/:id/send", h.Send)
+	rg.GET("/:id/preview-link", h.GetPreviewLink)
 	rg.POST("/:id/items/:itemId/annotations", h.AgentAnnotate)
 	rg.GET("/:id/activities", h.ListActivities)
 	rg.GET("/:id/pdf", h.DownloadPDF)
@@ -244,6 +245,28 @@ func (h *Handler) Send(c *gin.Context) {
 
 	identity := httpkit.MustGetIdentity(c)
 	result, err := h.svc.Send(c.Request.Context(), id, tenantID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// GetPreviewLink handles GET /api/v1/quotes/:id/preview-link
+// Returns a read-only preview token for internal agent preview.
+func (h *Handler) GetPreviewLink(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetPreviewLink(c.Request.Context(), id, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

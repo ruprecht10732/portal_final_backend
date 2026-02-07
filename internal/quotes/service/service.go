@@ -21,6 +21,7 @@ const (
 	msgTotalFormat  = "Totaal: €%.2f"
 	msgLinkExpired  = "this quote link has expired"
 	msgAlreadyFinal = "this quote has already been finalized"
+	msgReadOnly     = "this preview link is read-only"
 )
 
 // TimelineWriter is the narrow interface a quotes service needs to create lead timeline events.
@@ -388,6 +389,21 @@ func generatePublicToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+func tokenExpiresAt(q *repository.Quote, kind repository.TokenKind) *time.Time {
+	if kind == repository.TokenKindPreview {
+		return q.PreviewTokenExpAt
+	}
+	return q.PublicTokenExpAt
+}
+
+func isReadOnlyToken(kind repository.TokenKind) bool {
+	return kind == repository.TokenKindPreview
+}
+
+func (s *Service) resolveToken(ctx context.Context, token string) (*repository.Quote, repository.TokenKind, error) {
+	return s.repo.GetByToken(ctx, token)
+}
+
 // Send generates a public token for the quote and transitions it to "Sent" status.
 func (s *Service) Send(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, agentID uuid.UUID) (*transport.QuoteResponse, error) {
 	quote, err := s.repo.GetByID(ctx, id, tenantID)
@@ -469,7 +485,7 @@ func (s *Service) Send(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, ag
 
 // GetPublicQuoteID resolves a public token to its quote UUID (for SSE subscription).
 func (s *Service) GetPublicQuoteID(ctx context.Context, token string) (uuid.UUID, error) {
-	quote, err := s.repo.GetByPublicToken(ctx, token)
+	quote, _, err := s.resolveToken(ctx, token)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -490,18 +506,19 @@ func (s *Service) GetOrganizationID(ctx context.Context, quoteID uuid.UUID) (uui
 
 // GetPublic retrieves a quote by its public token for unauthenticated lead access.
 func (s *Service) GetPublic(ctx context.Context, token string) (*transport.PublicQuoteResponse, error) {
-	quote, err := s.repo.GetByPublicToken(ctx, token)
+	quote, tokenKind, err := s.resolveToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
+	readOnly := isReadOnlyToken(tokenKind)
 
 	// Check expiry
-	if quote.PublicTokenExpAt != nil && quote.PublicTokenExpAt.Before(time.Now()) {
+	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
 		return nil, apperr.Gone(msgLinkExpired)
 	}
 
 	// Mark viewed if first time
-	if quote.ViewedAt == nil {
+	if !readOnly && quote.ViewedAt == nil {
 		if err := s.repo.SetViewedAt(ctx, quote.ID); err != nil {
 			return nil, err
 		}
@@ -524,17 +541,20 @@ func (s *Service) GetPublic(ctx context.Context, token string) (*transport.Publi
 	}
 
 	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
-	return s.buildPublicResponse(quote, items, orgName, customerName)
+	return s.buildPublicResponse(quote, items, orgName, customerName, readOnly)
 }
 
 // ToggleLineItem toggles the selection of an optional line item and recalculates totals.
 func (s *Service) ToggleLineItem(ctx context.Context, token string, itemID uuid.UUID, req transport.ToggleItemRequest) (*transport.ToggleItemResponse, error) {
-	quote, err := s.repo.GetByPublicToken(ctx, token)
+	quote, tokenKind, err := s.resolveToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
+	if isReadOnlyToken(tokenKind) {
+		return nil, apperr.Forbidden(msgReadOnly)
+	}
 
-	if quote.PublicTokenExpAt != nil && quote.PublicTokenExpAt.Before(time.Now()) {
+	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
 		return nil, apperr.Gone(msgLinkExpired)
 	}
 	if quote.Status == string(transport.QuoteStatusAccepted) || quote.Status == string(transport.QuoteStatusRejected) {
@@ -610,12 +630,15 @@ func (s *Service) ToggleLineItem(ctx context.Context, token string, itemID uuid.
 
 // AnnotateItem adds an annotation (question/comment) to a quote line item.
 func (s *Service) AnnotateItem(ctx context.Context, token string, itemID uuid.UUID, authorType, authorID, text string) (*transport.AnnotationResponse, error) {
-	quote, err := s.repo.GetByPublicToken(ctx, token)
+	quote, tokenKind, err := s.resolveToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
+	if isReadOnlyToken(tokenKind) {
+		return nil, apperr.Forbidden(msgReadOnly)
+	}
 
-	if quote.PublicTokenExpAt != nil && quote.PublicTokenExpAt.Before(time.Now()) {
+	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
 		return nil, apperr.Gone(msgLinkExpired)
 	}
 
@@ -720,12 +743,15 @@ func (s *Service) AgentAnnotateItem(ctx context.Context, quoteID, itemID, tenant
 
 // Accept processes a lead accepting the quote with their digital signature.
 func (s *Service) Accept(ctx context.Context, token string, req transport.AcceptQuoteRequest, clientIP string) (*transport.PublicQuoteResponse, error) {
-	quote, err := s.repo.GetByPublicToken(ctx, token)
+	quote, tokenKind, err := s.resolveToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
+	if isReadOnlyToken(tokenKind) {
+		return nil, apperr.Forbidden(msgReadOnly)
+	}
 
-	if quote.PublicTokenExpAt != nil && quote.PublicTokenExpAt.Before(time.Now()) {
+	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
 		return nil, apperr.Gone(msgLinkExpired)
 	}
 	if quote.Status == string(transport.QuoteStatusAccepted) {
@@ -740,7 +766,7 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 	}
 
 	// Refresh
-	quote, err = s.repo.GetByPublicToken(ctx, token)
+	quote, _, err = s.resolveToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
@@ -792,17 +818,20 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 	})
 
 	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
-	return s.buildPublicResponse(quote, items, orgName, customerName)
+	return s.buildPublicResponse(quote, items, orgName, customerName, false)
 }
 
 // Reject processes a lead rejecting the quote.
 func (s *Service) Reject(ctx context.Context, token string, req transport.RejectQuoteRequest) (*transport.PublicQuoteResponse, error) {
-	quote, err := s.repo.GetByPublicToken(ctx, token)
+	quote, tokenKind, err := s.resolveToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
+	if isReadOnlyToken(tokenKind) {
+		return nil, apperr.Forbidden(msgReadOnly)
+	}
 
-	if quote.PublicTokenExpAt != nil && quote.PublicTokenExpAt.Before(time.Now()) {
+	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
 		return nil, apperr.Gone(msgLinkExpired)
 	}
 	if quote.Status == string(transport.QuoteStatusAccepted) || quote.Status == string(transport.QuoteStatusRejected) {
@@ -817,7 +846,7 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 		return nil, err
 	}
 
-	quote, err = s.repo.GetByPublicToken(ctx, token)
+	quote, _, err = s.resolveToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
@@ -855,11 +884,11 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 	})
 
 	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
-	return s.buildPublicResponse(quote, items, orgName, customerName)
+	return s.buildPublicResponse(quote, items, orgName, customerName, false)
 }
 
 // buildPublicResponse converts a repository Quote + items into a public transport response.
-func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.QuoteItem, organizationName, customerName string) (*transport.PublicQuoteResponse, error) {
+func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.QuoteItem, organizationName, customerName string, readOnly bool) (*transport.PublicQuoteResponse, error) {
 	pricingMode := q.PricingMode
 	if pricingMode == "" {
 		pricingMode = "exclusive"
@@ -947,6 +976,46 @@ func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.Qu
 		Items:               respItems,
 		AcceptedAt:          q.AcceptedAt,
 		RejectedAt:          q.RejectedAt,
+		IsReadOnly:          readOnly,
+	}, nil
+}
+
+// GetPreviewLink returns (or creates) a read-only preview token for a quote.
+func (s *Service) GetPreviewLink(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (*transport.QuotePreviewLinkResponse, error) {
+	quote, err := s.repo.GetByID(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	if quote.Status == string(transport.QuoteStatusDraft) {
+		return nil, apperr.BadRequest("preview link is not available for draft quotes")
+	}
+
+	now := time.Now()
+	if quote.PreviewToken != nil && quote.PreviewTokenExpAt != nil && quote.PreviewTokenExpAt.After(now) {
+		return &transport.QuotePreviewLinkResponse{
+			Token:     *quote.PreviewToken,
+			ExpiresAt: quote.PreviewTokenExpAt,
+		}, nil
+	}
+
+	token, err := generatePublicToken()
+	if err != nil {
+		return nil, err
+	}
+
+	expiresAt := now.Add(30 * 24 * time.Hour)
+	if quote.ValidUntil != nil && quote.ValidUntil.After(now) {
+		expiresAt = *quote.ValidUntil
+	}
+
+	if err := s.repo.SetPreviewToken(ctx, id, tenantID, token, expiresAt); err != nil {
+		return nil, err
+	}
+
+	return &transport.QuotePreviewLinkResponse{
+		Token:     token,
+		ExpiresAt: &expiresAt,
 	}, nil
 }
 
