@@ -809,7 +809,7 @@ func (h *Handler) LogCall(c *gin.Context) {
 		ActorType:      "User",
 		ActorName:      actorName,
 		EventType:      "call_log",
-		Title:          "Call logged",
+		Title:          "Gesprek geregistreerd",
 		Summary:        summaryPointer(summaryText, 400),
 		Metadata: map[string]any{
 			"callOutcome":            result.CallOutcome,

@@ -723,7 +723,7 @@ func buildSetCallOutcomeTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 			ActorType:      "User",
 			ActorName:      actorName,
 			EventType:      "call_outcome",
-			Title:          "Call outcome",
+			Title:          "Belresultaat",
 			Summary:        &summary,
 			Metadata: map[string]any{
 				"outcome": outcome,
@@ -887,7 +887,7 @@ func buildCallLoggerUpdatePipelineStageTool(deps *CallLoggerToolDeps) (tool.Tool
 			ActorType:      "User",
 			ActorName:      actorName,
 			EventType:      "stage_change",
-			Title:          "Stage Updated",
+			Title:          "Fase bijgewerkt",
 			Summary:        summary,
 			Metadata: map[string]any{
 				"oldStage": oldStage,

@@ -93,7 +93,7 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 			ActorType:      "User",
 			ActorName:      created.AuthorEmail,
 			EventType:      "note",
-			Title:          "Note added",
+			Title:          "Notitie toegevoegd",
 			Summary:        toSummaryPointer(created.Body, 400),
 			Metadata: map[string]any{
 				"noteId":   created.ID,

@@ -132,7 +132,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 			ActorType:      "System",
 			ActorName:      "Orchestrator",
 			EventType:      "alert",
-			Title:          "Manual intervention required",
+			Title:          "Handmatige interventie vereist",
 			Summary:        stringPtr("Automated processing requires human review"),
 			Metadata: map[string]any{
 				"previous_stage": evt.OldStage,

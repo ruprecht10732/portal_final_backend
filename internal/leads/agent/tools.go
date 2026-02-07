@@ -824,7 +824,7 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 		ActorType:      actorType,
 		ActorName:      actorName,
 		EventType:      "stage_change",
-		Title:          "Stage Updated",
+		Title:          "Fase bijgewerkt",
 		Summary:        summary,
 		Metadata:       stageMetadata,
 	})
@@ -886,7 +886,7 @@ func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 			ActorType:      actorType,
 			ActorName:      actorName,
 			EventType:      "partner_search",
-			Title:          "Partner search",
+			Title:          "Partnerzoekactie",
 			Summary:        &summary,
 			Metadata: map[string]any{
 				"serviceType": input.ServiceType,
@@ -939,7 +939,7 @@ func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 			ActorType:      actorType,
 			ActorName:      actorName,
 			EventType:      "analysis",
-			Title:          "Estimation saved",
+			Title:          "Schatting opgeslagen",
 			Summary:        summaryPtr,
 			Metadata: map[string]any{
 				"scope":      input.Scope,
