@@ -1203,7 +1203,15 @@ func mergeOptionalString(dst *string, src string) {
 func createSearchProductMaterialsTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SearchProductMaterials",
-		Description: "Searches the product catalog for materials and their prices. Use this to find relevant products for estimation. Returns product names, descriptions, prices, units, and labor time when available.",
+		Description: `Searches the product catalog for materials and their prices via semantic (vector) search.
+The query is embedded into a vector, so use descriptive, varied language for best recall.
+Tips for effective queries:
+- Use generic product category names (e.g. "scharnier deur" instead of just "RVS scharnieren").
+- Include synonyms and alternative terms (e.g. "deurhanger deurbeslag scharnier").
+- Mix Dutch and English terms if the catalog may contain either.
+- Search for broader categories first, then refine with specific queries.
+- Call this tool multiple times with different queries to cover all needed materials.
+Returns product names, descriptions, prices, units, and labor time when available.`,
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
 	})

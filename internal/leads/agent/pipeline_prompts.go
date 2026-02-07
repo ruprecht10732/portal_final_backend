@@ -133,10 +133,14 @@ Photo Analysis:
 
 Instruction:
 1) Identify the materials/products needed based on the service description and photos.
-2) Call SearchProductMaterials with a query describing the materials needed (e.g., "isolation panels", "wood planks", "roofing materials").
+2) Call SearchProductMaterials to find products. The tool uses semantic (vector) search, so craft your queries carefully:
+   - Think about what the product might be CALLED in a catalog: use generic category names, brand-neutral terms, and common synonyms.
+   - For example, instead of only "RVS scharnieren", also try "deurbeslag scharnier", "deur ophangen", or "scharnier deur montage".
+   - Mix Dutch and English terms (e.g., "isolatiemateriaal" AND "insulation panel") since the catalog may contain either.
+   - Search broad first (e.g., "deurbeslag"), then narrow (e.g., "scharnier RVS 89mm") to maximize results.
+   - Call SearchProductMaterials multiple times with DIFFERENT queries for each material category or synonym.
    Always prefer the catalog collection by default.
    If the user explicitly says not to use the catalog (e.g., "ignore catalog", "no catalog", "zonder catalogus"), set useCatalog=false.
-   You may call SearchProductMaterials multiple times for different material categories.
 	Use standard, mid-range materials unless the request explicitly calls for heavy-duty or premium.
 	If multiple products are returned, prefer the most typical/affordable option for the scenario.
 	Products from the catalog will include an "id" field - remember these IDs for step 3a.
