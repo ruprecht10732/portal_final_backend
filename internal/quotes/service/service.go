@@ -684,12 +684,78 @@ func (s *Service) AnnotateItem(ctx context.Context, token string, itemID uuid.UU
 
 	return &transport.AnnotationResponse{
 		ID:         annotation.ID,
+		ItemID:     annotation.QuoteItemID,
 		AuthorType: annotation.AuthorType,
 		AuthorID:   annotation.AuthorID,
 		Text:       annotation.Text,
 		IsResolved: annotation.IsResolved,
 		CreatedAt:  annotation.CreatedAt,
 	}, nil
+}
+
+// UpdateAnnotation updates an existing annotation's text (public flow).
+func (s *Service) UpdateAnnotation(ctx context.Context, token string, itemID, annotationID uuid.UUID, authorType, text string) (*transport.AnnotationResponse, error) {
+	quote, tokenKind, err := s.resolveToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if isReadOnlyToken(tokenKind) {
+		return nil, apperr.Forbidden(msgReadOnly)
+	}
+
+	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
+		return nil, apperr.Gone(msgLinkExpired)
+	}
+
+	if _, err := s.repo.GetItemByID(ctx, itemID, quote.ID); err != nil {
+		return nil, err
+	}
+
+	annotation, err := s.repo.UpdateAnnotationText(ctx, annotationID, itemID, authorType, text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.AnnotationResponse{
+		ID:         annotation.ID,
+		ItemID:     annotation.QuoteItemID,
+		AuthorType: annotation.AuthorType,
+		AuthorID:   annotation.AuthorID,
+		Text:       annotation.Text,
+		IsResolved: annotation.IsResolved,
+		CreatedAt:  annotation.CreatedAt,
+	}, nil
+}
+
+// DeleteAnnotation removes an existing annotation if it has no agent response.
+func (s *Service) DeleteAnnotation(ctx context.Context, token string, itemID, annotationID uuid.UUID, authorType string) error {
+	quote, tokenKind, err := s.resolveToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if isReadOnlyToken(tokenKind) {
+		return apperr.Forbidden(msgReadOnly)
+	}
+
+	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
+		return apperr.Gone(msgLinkExpired)
+	}
+
+	if _, err := s.repo.GetItemByID(ctx, itemID, quote.ID); err != nil {
+		return err
+	}
+
+	annotations, err := s.repo.ListAnnotationsByQuoteID(ctx, quote.ID)
+	if err != nil {
+		return err
+	}
+	for _, ann := range annotations {
+		if ann.QuoteItemID == itemID && ann.AuthorType == "agent" {
+			return apperr.Forbidden("annotation cannot be deleted after agent response")
+		}
+	}
+
+	return s.repo.DeleteAnnotation(ctx, annotationID, itemID, authorType)
 }
 
 // AgentAnnotateItem lets an authenticated agent add an annotation to a quote item.
@@ -733,6 +799,7 @@ func (s *Service) AgentAnnotateItem(ctx context.Context, quoteID, itemID, tenant
 
 	return &transport.AnnotationResponse{
 		ID:         annotation.ID,
+		ItemID:     annotation.QuoteItemID,
 		AuthorType: annotation.AuthorType,
 		AuthorID:   annotation.AuthorID,
 		Text:       annotation.Text,
@@ -894,6 +961,20 @@ func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.Qu
 		pricingMode = "exclusive"
 	}
 
+	annotations, _ := s.repo.ListAnnotationsByQuoteID(context.Background(), q.ID)
+	annotationsByItem := make(map[uuid.UUID][]transport.AnnotationResponse)
+	for _, ann := range annotations {
+		annotationsByItem[ann.QuoteItemID] = append(annotationsByItem[ann.QuoteItemID], transport.AnnotationResponse{
+			ID:         ann.ID,
+			ItemID:     ann.QuoteItemID,
+			AuthorType: ann.AuthorType,
+			AuthorID:   ann.AuthorID,
+			Text:       ann.Text,
+			IsResolved: ann.IsResolved,
+			CreatedAt:  ann.CreatedAt,
+		})
+	}
+
 	respItems := make([]transport.PublicQuoteItemResponse, len(items))
 	for i, it := range items {
 		qty := parseQuantityNumber(it.Quantity)
@@ -908,20 +989,6 @@ func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.Qu
 		lineSubtotal := qty * netUnitPrice
 		lineVat := lineSubtotal * (float64(taxRateBps) / 10000.0)
 
-		// Fetch annotations for this item
-		annotations, _ := s.repo.ListAnnotationsByQuoteID(context.Background(), it.ID)
-		annResponses := make([]transport.AnnotationResponse, len(annotations))
-		for j, ann := range annotations {
-			annResponses[j] = transport.AnnotationResponse{
-				ID:         ann.ID,
-				AuthorType: ann.AuthorType,
-				AuthorID:   ann.AuthorID,
-				Text:       ann.Text,
-				IsResolved: ann.IsResolved,
-				CreatedAt:  ann.CreatedAt,
-			}
-		}
-
 		respItems[i] = transport.PublicQuoteItemResponse{
 			ID:                  it.ID,
 			Description:         it.Description,
@@ -934,7 +1001,10 @@ func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.Qu
 			TotalBeforeTaxCents: roundCents(lineSubtotal),
 			TotalTaxCents:       roundCents(lineVat),
 			LineTotalCents:      roundCents(lineSubtotal + lineVat),
-			Annotations:         annResponses,
+			Annotations:         annotationsByItem[it.ID],
+		}
+		if respItems[i].Annotations == nil {
+			respItems[i].Annotations = []transport.AnnotationResponse{}
 		}
 	}
 

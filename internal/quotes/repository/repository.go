@@ -711,17 +711,50 @@ func (r *Repository) ListAnnotationsByQuoteID(ctx context.Context, quoteID uuid.
 	return annotations, rows.Err()
 }
 
+// UpdateAnnotationText updates the text for a single annotation (scoped to item and author type).
+func (r *Repository) UpdateAnnotationText(ctx context.Context, annotationID, itemID uuid.UUID, authorType, text string) (*QuoteAnnotation, error) {
+	query := `
+		UPDATE RAC_quote_annotations
+		SET text = $1
+		WHERE id = $2 AND quote_item_id = $3 AND author_type = $4
+		RETURNING id, quote_item_id, organization_id, author_type, author_id, text, is_resolved, created_at`
+
+	var a QuoteAnnotation
+	if err := r.pool.QueryRow(ctx, query, text, annotationID, itemID, authorType).Scan(
+		&a.ID, &a.QuoteItemID, &a.OrganizationID, &a.AuthorType, &a.AuthorID, &a.Text, &a.IsResolved, &a.CreatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("annotation not found")
+		}
+		return nil, fmt.Errorf("failed to update annotation: %w", err)
+	}
+	return &a, nil
+}
+
+// DeleteAnnotation removes an annotation scoped to item and author type.
+func (r *Repository) DeleteAnnotation(ctx context.Context, annotationID, itemID uuid.UUID, authorType string) error {
+	query := `DELETE FROM RAC_quote_annotations WHERE id = $1 AND quote_item_id = $2 AND author_type = $3`
+	result, err := r.pool.Exec(ctx, query, annotationID, itemID, authorType)
+	if err != nil {
+		return fmt.Errorf("failed to delete annotation: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound("annotation not found")
+	}
+	return nil
+}
+
 // ── Activity Methods ──────────────────────────────────────────────────────────
 
 // QuoteActivity is the database model for a quote activity log entry
 type QuoteActivity struct {
-	ID             uuid.UUID  `db:"id"`
-	QuoteID        uuid.UUID  `db:"quote_id"`
-	OrganizationID uuid.UUID  `db:"organization_id"`
-	EventType      string     `db:"event_type"`
-	Message        string     `db:"message"`
-	Metadata       []byte     `db:"metadata"`
-	CreatedAt      time.Time  `db:"created_at"`
+	ID             uuid.UUID `db:"id"`
+	QuoteID        uuid.UUID `db:"quote_id"`
+	OrganizationID uuid.UUID `db:"organization_id"`
+	EventType      string    `db:"event_type"`
+	Message        string    `db:"message"`
+	Metadata       []byte    `db:"metadata"`
+	CreatedAt      time.Time `db:"created_at"`
 }
 
 // CreateActivity inserts a new activity log entry for a quote.

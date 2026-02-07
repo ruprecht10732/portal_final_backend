@@ -59,6 +59,8 @@ func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:token", h.GetPublicQuote)
 	rg.PATCH("/:token/items/:itemId/toggle", h.ToggleItem)
 	rg.POST("/:token/items/:itemId/annotations", h.AnnotateItem)
+	rg.PATCH(":token/items/:itemId/annotations/:annotationId", h.UpdateAnnotation)
+	rg.DELETE(":token/items/:itemId/annotations/:annotationId", h.DeleteAnnotation)
 	rg.POST("/:token/accept", h.Accept)
 	rg.POST("/:token/reject", h.Reject)
 	rg.GET("/:token/pdf", h.DownloadPDF)
@@ -141,6 +143,59 @@ func (h *PublicHandler) AnnotateItem(c *gin.Context) {
 	}
 
 	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// UpdateAnnotation handles PATCH /api/v1/public/quotes/:token/items/:itemId/annotations/:annotationId
+func (h *PublicHandler) UpdateAnnotation(c *gin.Context) {
+	token := c.Param("token")
+	itemID, err := uuid.Parse(c.Param("itemId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		return
+	}
+	annotationID, err := uuid.Parse(c.Param("annotationId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid annotation ID", nil)
+		return
+	}
+
+	var req transport.AnnotateItemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.svc.UpdateAnnotation(c.Request.Context(), token, itemID, annotationID, "customer", req.Text)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// DeleteAnnotation handles DELETE /api/v1/public/quotes/:token/items/:itemId/annotations/:annotationId
+func (h *PublicHandler) DeleteAnnotation(c *gin.Context) {
+	token := c.Param("token")
+	itemID, err := uuid.Parse(c.Param("itemId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		return
+	}
+	annotationID, err := uuid.Parse(c.Param("annotationId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid annotation ID", nil)
+		return
+	}
+
+	if err := h.svc.DeleteAnnotation(c.Request.Context(), token, itemID, annotationID, "customer"); httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }
 
 // Accept handles POST /api/v1/public/quotes/:token/accept
