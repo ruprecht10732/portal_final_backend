@@ -38,13 +38,13 @@ type PartnerOfferTimelineWriter interface {
 
 // Module handles all notification-related event subscriptions.
 type Module struct {
-	sender         email.Sender
-	cfg            config.NotificationConfig
-	log            *logger.Logger
-	sse            *sse.Service
-	pdfProc        QuoteAcceptanceProcessor
-	actWriter      QuoteActivityWriter
-	offerTimeline  PartnerOfferTimelineWriter
+	sender        email.Sender
+	cfg           config.NotificationConfig
+	log           *logger.Logger
+	sse           *sse.Service
+	pdfProc       QuoteAcceptanceProcessor
+	actWriter     QuoteActivityWriter
+	offerTimeline PartnerOfferTimelineWriter
 }
 
 // New creates a new notification module.
