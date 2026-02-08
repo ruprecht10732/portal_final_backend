@@ -97,6 +97,7 @@ type FindMatchingPartnersOutput struct {
 type CreatePartnerOfferInput struct {
 	PartnerID       string `json:"partnerId"`
 	ExpirationHours int    `json:"expirationHours"`
+	JobSummaryShort string `json:"jobSummaryShort,omitempty"`
 }
 
 type CreatePartnerOfferOutput struct {

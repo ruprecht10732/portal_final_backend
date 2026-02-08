@@ -12,6 +12,7 @@ type CreateOfferParams struct {
 	PricingSource      string // "quote" or "estimate"
 	CustomerPriceCents int64
 	ExpiresInHours     int
+	JobSummaryShort    string
 }
 
 type CreateOfferResult struct {

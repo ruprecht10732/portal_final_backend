@@ -26,6 +26,7 @@ func (a *PartnerOfferAdapter) CreateOffer(ctx context.Context, tenantID uuid.UUI
 		PricingSource:      req.PricingSource,
 		CustomerPriceCents: req.CustomerPriceCents,
 		ExpiresInHours:     req.ExpiresInHours,
+		JobSummaryShort:    req.JobSummaryShort,
 	}
 
 	resp, err := a.service.CreateOffer(ctx, tenantID, transportReq)

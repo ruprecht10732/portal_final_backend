@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/auth/token"
@@ -10,6 +11,7 @@ import (
 	"portal_final_backend/internal/partners/repository"
 	"portal_final_backend/internal/partners/transport"
 	"portal_final_backend/platform/apperr"
+	"portal_final_backend/platform/sanitize"
 
 	"github.com/google/uuid"
 )
@@ -61,6 +63,13 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 	expiry := time.Now().UTC().Add(time.Duration(req.ExpiresInHours) * time.Hour)
 
 	// Persist
+	jobSummary := strings.TrimSpace(req.JobSummaryShort)
+	jobSummary = sanitize.Text(jobSummary)
+	var jobSummaryPtr *string
+	if jobSummary != "" {
+		jobSummaryPtr = &jobSummary
+	}
+
 	offer, err := s.repo.CreateOffer(ctx, repository.PartnerOffer{
 		OrganizationID:     tenantID,
 		PartnerID:          req.PartnerID,
@@ -70,6 +79,7 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 		PricingSource:      req.PricingSource,
 		CustomerPriceCents: req.CustomerPriceCents,
 		VakmanPriceCents:   vakmanPrice,
+		JobSummaryShort:    jobSummaryPtr,
 	})
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
@@ -109,7 +119,10 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 		OfferID:          oc.ID,
 		OrganizationName: oc.OrganizationName,
 		JobSummary:       oc.ServiceType,
+		JobSummaryShort:  oc.JobSummaryShort,
 		City:             oc.LeadCity,
+		Postcode4:        oc.LeadPostcode4,
+		Buurtcode:        oc.LeadBuurtcode,
 		VakmanPriceCents: oc.VakmanPriceCents,
 		PricingSource:    oc.PricingSource,
 		Status:           oc.Status,
@@ -152,6 +165,15 @@ func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req trans
 		return err
 	}
 
+	// Resolve lead ID for timeline/notification handlers
+	leadID, _ := s.repo.GetLeadIDForService(ctx, oc.LeadServiceID, oc.OrganizationID)
+
+	// Resolve partner email for confirmation
+	var partnerEmail string
+	if partner, pErr := s.repo.GetByID(ctx, oc.PartnerID, oc.OrganizationID); pErr == nil {
+		partnerEmail = partner.ContactEmail
+	}
+
 	// Publish event
 	s.eventBus.Publish(ctx, events.PartnerOfferAccepted{
 		BaseEvent:      events.NewBaseEvent(),
@@ -159,6 +181,9 @@ func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req trans
 		OrganizationID: oc.OrganizationID,
 		PartnerID:      oc.PartnerID,
 		LeadServiceID:  oc.LeadServiceID,
+		LeadID:         leadID,
+		PartnerName:    oc.PartnerName,
+		PartnerEmail:   partnerEmail,
 	})
 
 	return nil
@@ -179,12 +204,17 @@ func (s *Service) RejectOffer(ctx context.Context, publicToken string, req trans
 		return err
 	}
 
+	// Resolve lead ID for timeline/notification handlers
+	leadID, _ := s.repo.GetLeadIDForService(ctx, oc.LeadServiceID, oc.OrganizationID)
+
 	s.eventBus.Publish(ctx, events.PartnerOfferRejected{
 		BaseEvent:      events.NewBaseEvent(),
 		OfferID:        oc.ID,
 		OrganizationID: oc.OrganizationID,
 		PartnerID:      oc.PartnerID,
 		LeadServiceID:  oc.LeadServiceID,
+		LeadID:         leadID,
+		PartnerName:    oc.PartnerName,
 		Reason:         req.Reason,
 	})
 
@@ -203,7 +233,10 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 		OfferID:          oc.ID,
 		OrganizationName: oc.OrganizationName,
 		JobSummary:       oc.ServiceType,
+		JobSummaryShort:  oc.JobSummaryShort,
 		City:             oc.LeadCity,
+		Postcode4:        oc.LeadPostcode4,
+		Buurtcode:        oc.LeadBuurtcode,
 		VakmanPriceCents: oc.VakmanPriceCents,
 		PricingSource:    oc.PricingSource,
 		Status:           oc.Status,
@@ -254,12 +287,21 @@ func (s *Service) ExpireOffers(ctx context.Context) (int, error) {
 	}
 
 	for _, o := range expired {
+		// Resolve lead ID and partner name for timeline handlers
+		leadID, _ := s.repo.GetLeadIDForService(ctx, o.LeadServiceID, o.OrganizationID)
+		var partnerName string
+		if p, err := s.repo.GetByID(ctx, o.PartnerID, o.OrganizationID); err == nil {
+			partnerName = p.BusinessName
+		}
+
 		s.eventBus.Publish(ctx, events.PartnerOfferExpired{
 			BaseEvent:      events.NewBaseEvent(),
 			OfferID:        o.ID,
 			OrganizationID: o.OrganizationID,
 			PartnerID:      o.PartnerID,
 			LeadServiceID:  o.LeadServiceID,
+			LeadID:         leadID,
+			PartnerName:    partnerName,
 		})
 	}
 

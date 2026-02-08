@@ -82,6 +82,9 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	// Partners domain events
 	bus.Subscribe(events.PartnerInviteCreated{}.EventName(), m)
 	bus.Subscribe(events.PartnerOfferCreated{}.EventName(), m)
+	bus.Subscribe(events.PartnerOfferAccepted{}.EventName(), m)
+	bus.Subscribe(events.PartnerOfferRejected{}.EventName(), m)
+	bus.Subscribe(events.PartnerOfferExpired{}.EventName(), m)
 
 	// Quote domain events
 	bus.Subscribe(events.QuoteSent{}.EventName(), m)
@@ -109,6 +112,12 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handlePartnerInviteCreated(ctx, e)
 	case events.PartnerOfferCreated:
 		return m.handlePartnerOfferCreated(ctx, e)
+	case events.PartnerOfferAccepted:
+		return m.handlePartnerOfferAccepted(ctx, e)
+	case events.PartnerOfferRejected:
+		return m.handlePartnerOfferRejected(ctx, e)
+	case events.PartnerOfferExpired:
+		return m.handlePartnerOfferExpired(ctx, e)
 	// Quote events
 	case events.QuoteSent:
 		return m.handleQuoteSent(ctx, e)
@@ -259,6 +268,157 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 func (m *Module) buildURL(path string, tokenValue string) string {
 	base := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
 	return base + path + "?token=" + tokenValue
+}
+
+// ── Partner offer event handlers ────────────────────────────────────────
+
+const partnerOfferNotificationEmail = "info@salestainable.nl"
+
+func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.PartnerOfferAccepted) error {
+	m.log.Info("partner offer accepted",
+		"offerId", e.OfferID,
+		"partnerId", e.PartnerID,
+		"partnerName", e.PartnerName,
+		"leadId", e.LeadID,
+	)
+
+	// 1. Write timeline event on the lead
+	if m.offerTimeline != nil {
+		serviceID := e.LeadServiceID
+		summary := fmt.Sprintf("%s heeft het werkaanbod geaccepteerd en beschikbaarheid doorgegeven", e.PartnerName)
+		if err := m.offerTimeline.WriteOfferEvent(ctx,
+			e.LeadID, &serviceID, e.OrganizationID,
+			"Partner", e.PartnerName,
+			"partner_offer_accepted",
+			"Werkaanbod geaccepteerd",
+			&summary,
+			map[string]any{
+				"offerId":     e.OfferID.String(),
+				"partnerId":   e.PartnerID.String(),
+				"partnerName": e.PartnerName,
+			},
+		); err != nil {
+			m.log.Error("failed to write partner offer accepted timeline event",
+				"offerId", e.OfferID,
+				"error", err,
+			)
+		}
+	}
+
+	// 2. Send notification email to info@salestainable.nl
+	if err := m.sender.SendPartnerOfferAcceptedEmail(ctx, partnerOfferNotificationEmail, e.PartnerName, e.OfferID.String()); err != nil {
+		m.log.Error("failed to send partner offer accepted email",
+			"offerId", e.OfferID,
+			"error", err,
+		)
+		// Non-fatal: continue to send confirmation to vakman
+	}
+	m.log.Info("partner offer accepted email sent",
+		"offerId", e.OfferID,
+		"toEmail", partnerOfferNotificationEmail,
+	)
+
+	// 3. Send confirmation email to the vakman
+	if e.PartnerEmail != "" {
+		if err := m.sender.SendPartnerOfferAcceptedConfirmationEmail(ctx, e.PartnerEmail, e.PartnerName); err != nil {
+			m.log.Error("failed to send partner offer accepted confirmation to vakman",
+				"offerId", e.OfferID,
+				"partnerEmail", e.PartnerEmail,
+				"error", err,
+			)
+		} else {
+			m.log.Info("partner offer accepted confirmation sent to vakman",
+				"offerId", e.OfferID,
+				"partnerEmail", e.PartnerEmail,
+			)
+		}
+	}
+
+	return nil
+}
+
+func (m *Module) handlePartnerOfferRejected(ctx context.Context, e events.PartnerOfferRejected) error {
+	m.log.Info("partner offer rejected",
+		"offerId", e.OfferID,
+		"partnerId", e.PartnerID,
+		"partnerName", e.PartnerName,
+		"reason", e.Reason,
+	)
+
+	// 1. Write timeline event on the lead
+	if m.offerTimeline != nil {
+		serviceID := e.LeadServiceID
+		summary := fmt.Sprintf("%s heeft het werkaanbod afgewezen", e.PartnerName)
+		if e.Reason != "" {
+			summary += fmt.Sprintf(" — reden: %s", e.Reason)
+		}
+		if err := m.offerTimeline.WriteOfferEvent(ctx,
+			e.LeadID, &serviceID, e.OrganizationID,
+			"Partner", e.PartnerName,
+			"partner_offer_rejected",
+			"Werkaanbod afgewezen",
+			&summary,
+			map[string]any{
+				"offerId":     e.OfferID.String(),
+				"partnerId":   e.PartnerID.String(),
+				"partnerName": e.PartnerName,
+				"reason":      e.Reason,
+			},
+		); err != nil {
+			m.log.Error("failed to write partner offer rejected timeline event",
+				"offerId", e.OfferID,
+				"error", err,
+			)
+		}
+	}
+
+	// 2. Send notification email to info@salestainable.nl
+	if err := m.sender.SendPartnerOfferRejectedEmail(ctx, partnerOfferNotificationEmail, e.PartnerName, e.OfferID.String(), e.Reason); err != nil {
+		m.log.Error("failed to send partner offer rejected email",
+			"offerId", e.OfferID,
+			"error", err,
+		)
+		return err
+	}
+	m.log.Info("partner offer rejected email sent",
+		"offerId", e.OfferID,
+		"toEmail", partnerOfferNotificationEmail,
+	)
+
+	return nil
+}
+
+func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.PartnerOfferExpired) error {
+	m.log.Info("partner offer expired",
+		"offerId", e.OfferID,
+		"partnerId", e.PartnerID,
+		"partnerName", e.PartnerName,
+	)
+
+	// Write timeline event on the lead
+	if m.offerTimeline != nil {
+		serviceID := e.LeadServiceID
+		summary := fmt.Sprintf("Werkaanbod naar %s is verlopen zonder reactie", e.PartnerName)
+		if err := m.offerTimeline.WriteOfferEvent(ctx,
+			e.LeadID, &serviceID, e.OrganizationID,
+			"System", "Offer Expiry",
+			"partner_offer_expired",
+			"Werkaanbod verlopen",
+			&summary,
+			map[string]any{
+				"offerId":     e.OfferID.String(),
+				"partnerId":   e.PartnerID.String(),
+				"partnerName": e.PartnerName,
+			},
+		); err != nil {
+			m.log.Error("failed to write partner offer expired timeline event",
+				"offerId", e.OfferID,
+				"error", err,
+			)
+		}
+	}
+
+	return nil
 }
 
 // ── Quote event handlers ────────────────────────────────────────────────

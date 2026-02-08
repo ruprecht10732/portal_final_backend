@@ -1005,12 +1005,14 @@ func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
 			return CreatePartnerOfferOutput{Success: false, Message: "Quote not found for service"}, err
 		}
 
+		summary := truncateRunes(strings.TrimSpace(input.JobSummaryShort), 200)
 		result, err := deps.OfferCreator.CreateOffer(ctx, tenantID, ports.CreateOfferParams{
 			PartnerID:          partnerID,
 			LeadServiceID:      serviceID,
 			PricingSource:      pricingSource,
 			CustomerPriceCents: totalCents,
 			ExpiresInHours:     hours,
+			JobSummaryShort:    summary,
 		})
 		if err != nil {
 			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err
@@ -1324,6 +1326,20 @@ func normalizeLimit(limit, defaultVal, maxVal int) int {
 		return maxVal
 	}
 	return limit
+}
+
+func truncateRunes(value string, max int) string {
+	if max <= 0 || value == "" {
+		return ""
+	}
+	if len(value) <= max {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max])
 }
 
 func convertSearchResults(results []qdrant.SearchResult) []ProductResult {

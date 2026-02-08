@@ -15,6 +15,7 @@ type CreateOfferRequest struct {
 	PricingSource      string    `json:"pricingSource" validate:"required,oneof=quote estimate"`
 	CustomerPriceCents int64     `json:"customerPriceCents" validate:"min=0"`
 	ExpiresInHours     int       `json:"expiresInHours" validate:"required,min=1,max=168"`
+	JobSummaryShort    string    `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
 }
 
 // CreateOfferResponse is returned after successfully creating an offer.
@@ -55,7 +56,10 @@ type PublicOfferResponse struct {
 	OfferID          uuid.UUID `json:"offerId"`
 	OrganizationName string    `json:"organizationName"`
 	JobSummary       string    `json:"jobSummary"`
+	JobSummaryShort  *string   `json:"jobSummaryShort,omitempty"`
 	City             string    `json:"city"`
+	Postcode4        *string   `json:"postcode4,omitempty"`
+	Buurtcode        *string   `json:"buurtcode,omitempty"`
 	VakmanPriceCents int64     `json:"vakmanPriceCents"`
 	PricingSource    string    `json:"pricingSource"`
 	Status           string    `json:"status"`

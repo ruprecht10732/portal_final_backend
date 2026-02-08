@@ -246,7 +246,7 @@ Action: Find matches, create an offer, update the pipeline stage.
 Logic:
 - If > 0 partners found:
   1) Select the best match (e.g., closest distance).
-  2) Call CreatePartnerOffer for that partner.
+	2) Call CreatePartnerOffer for that partner, including a short Dutch job summary.
   3) Call UpdatePipelineStage with stage="Partner_Matching" and a short Dutch summary like "Offer verzonden naar [Partnernaam]".
 - If 0 partners found:
   - Call UpdatePipelineStage with stage="Manual_Intervention" and summary "Geen partners gevonden binnen bereik." DO NOT REJECT.
@@ -261,7 +261,8 @@ Lead:
 Instruction:
 1) Call FindMatchingPartners with serviceType="%s", zipCode="%s", radiusKm=%d.
 2) If matches exist, you MUST call CreatePartnerOffer BEFORE UpdatePipelineStage.
-3) Use Dutch for the UpdatePipelineStage reason.
+3) When calling CreatePartnerOffer, set jobSummaryShort to a short Dutch summary (max 120 chars) of what the job entails, based on service type and notes. Do NOT include exact address or personal data.
+4) Use Dutch for the UpdatePipelineStage reason.
 
 You MUST call FindMatchingPartners first. If matches exist, you MUST call CreatePartnerOffer before UpdatePipelineStage. Respond ONLY with tool calls.
 `,

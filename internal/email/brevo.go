@@ -29,6 +29,9 @@ type Sender interface {
 	SendQuoteProposalEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber, proposalURL string) error
 	SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName, quoteNumber, consumerName string, totalCents int64) error
 	SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber string, attachments ...Attachment) error
+	SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail, partnerName, offerID string) error
+	SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error
+	SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error
 }
 
 type NoopSender struct{}
@@ -62,6 +65,18 @@ func (NoopSender) SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName
 }
 
 func (NoopSender) SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber string, attachments ...Attachment) error {
+	return nil
+}
+
+func (NoopSender) SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail, partnerName, offerID string) error {
+	return nil
+}
+
+func (NoopSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error {
+	return nil
+}
+
+func (NoopSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error {
 	return nil
 }
 
@@ -191,6 +206,43 @@ func (b *BrevoSender) SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmai
 		"",
 	)
 	return b.sendWithAttachments(ctx, toEmail, subject, content, attachments...)
+}
+
+func (b *BrevoSender) SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail, partnerName, offerID string) error {
+	subject := "Werkaanbod geaccepteerd door " + partnerName
+	content := buildEmailTemplate(
+		"Werkaanbod geaccepteerd",
+		fmt.Sprintf("%s heeft het werkaanbod (ID: %s) geaccepteerd en beschikbaarheid doorgegeven.<br/><br/>Bekijk de details en plan de inspectie in via het portaal.", partnerName, offerID),
+		"",
+		"",
+	)
+	return b.send(ctx, toEmail, subject, content)
+}
+
+func (b *BrevoSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error {
+	subject := "Bevestiging: uw acceptatie is ontvangen"
+	content := buildEmailTemplate(
+		"Acceptatie bevestigd",
+		fmt.Sprintf("Beste %s,<br/><br/>Bedankt voor het accepteren van het werkaanbod. Uw beschikbaarheid is ontvangen en wij nemen zo snel mogelijk contact met u op om de inspectie in te plannen.<br/><br/>Met vriendelijke groet", partnerName),
+		"",
+		"",
+	)
+	return b.send(ctx, toEmail, subject, content)
+}
+
+func (b *BrevoSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error {
+	subject := "Werkaanbod afgewezen door " + partnerName
+	reasonText := ""
+	if reason != "" {
+		reasonText = fmt.Sprintf("<br/><br/>Reden: %s", reason)
+	}
+	content := buildEmailTemplate(
+		"Werkaanbod afgewezen",
+		fmt.Sprintf("%s heeft het werkaanbod (ID: %s) afgewezen.%s<br/><br/>U kunt een nieuw aanbod versturen naar een andere vakman via het portaal.", partnerName, offerID, reasonText),
+		"",
+		"",
+	)
+	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) send(ctx context.Context, toEmail, subject, htmlContent string) error {

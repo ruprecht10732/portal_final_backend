@@ -24,6 +24,7 @@ type PartnerOffer struct {
 	PricingSource          string
 	CustomerPriceCents     int64
 	VakmanPriceCents       int64
+	JobSummaryShort        *string
 	Status                 string
 	AcceptedAt             *time.Time
 	RejectedAt             *time.Time
@@ -41,6 +42,8 @@ type PartnerOfferWithContext struct {
 	OrganizationName string
 	LeadCity         string
 	ServiceType      string
+	LeadPostcode4    *string
+	LeadBuurtcode    *string
 }
 
 const offerNotFoundMsg = "offer not found"
@@ -50,14 +53,14 @@ func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (Partn
 	query := `
 		INSERT INTO RAC_partner_offers (
 			organization_id, partner_id, lead_service_id, public_token, expires_at,
-			pricing_source, customer_price_cents, vakman_price_cents, status
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+			pricing_source, customer_price_cents, vakman_price_cents, job_summary_short, status
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
 		RETURNING id, status, created_at, updated_at`
 
 	err := r.pool.QueryRow(ctx, query,
 		offer.OrganizationID, offer.PartnerID, offer.LeadServiceID,
 		offer.PublicToken, offer.ExpiresAt,
-		offer.PricingSource, offer.CustomerPriceCents, offer.VakmanPriceCents,
+		offer.PricingSource, offer.CustomerPriceCents, offer.VakmanPriceCents, offer.JobSummaryShort,
 	).Scan(&offer.ID, &offer.Status, &offer.CreatedAt, &offer.UpdatedAt)
 	if err != nil {
 		return PartnerOffer{}, fmt.Errorf("create partner offer: %w", err)
@@ -72,13 +75,16 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
 		       o.public_token, o.expires_at,
 		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
+		       o.job_summary_short,
 		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
 		       o.inspection_availability, o.job_availability,
 		       o.created_at, o.updated_at,
 		       p.business_name,
 		       org.name,
 		       l.address_city,
-		       st.name AS service_type
+		       st.name AS service_type,
+		       l.lead_enrichment_postcode4,
+		       l.lead_enrichment_buurtcode
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
@@ -92,6 +98,7 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
 		&oc.PublicToken, &oc.ExpiresAt,
 		&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
+		&oc.JobSummaryShort,
 		&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
 		&oc.InspectionAvailability, &oc.JobAvailability,
 		&oc.CreatedAt, &oc.UpdatedAt,
@@ -99,6 +106,8 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		&oc.OrganizationName,
 		&oc.LeadCity,
 		&oc.ServiceType,
+		&oc.LeadPostcode4,
+		&oc.LeadBuurtcode,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
@@ -116,6 +125,7 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 		SELECT id, organization_id, partner_id, lead_service_id,
 		       public_token, expires_at,
 		       pricing_source, customer_price_cents, vakman_price_cents,
+		       job_summary_short,
 		       status, accepted_at, rejected_at, rejection_reason,
 		       created_at, updated_at
 		FROM RAC_partner_offers
@@ -126,6 +136,7 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 		&o.ID, &o.OrganizationID, &o.PartnerID, &o.LeadServiceID,
 		&o.PublicToken, &o.ExpiresAt,
 		&o.PricingSource, &o.CustomerPriceCents, &o.VakmanPriceCents,
+		&o.JobSummaryShort,
 		&o.Status, &o.AcceptedAt, &o.RejectedAt, &o.RejectionReason,
 		&o.CreatedAt, &o.UpdatedAt,
 	)
@@ -145,13 +156,16 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
 		       o.public_token, o.expires_at,
 		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
+		       o.job_summary_short,
 		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
 		       o.inspection_availability, o.job_availability,
 		       o.created_at, o.updated_at,
 		       p.business_name,
 		       org.name,
 		       l.address_city,
-		       st.name AS service_type
+		       st.name AS service_type,
+		       l.lead_enrichment_postcode4,
+		       l.lead_enrichment_buurtcode
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
@@ -165,6 +179,7 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
 		&oc.PublicToken, &oc.ExpiresAt,
 		&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
+		&oc.JobSummaryShort,
 		&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
 		&oc.InspectionAvailability, &oc.JobAvailability,
 		&oc.CreatedAt, &oc.UpdatedAt,
@@ -172,6 +187,8 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		&oc.OrganizationName,
 		&oc.LeadCity,
 		&oc.ServiceType,
+		&oc.LeadPostcode4,
+		&oc.LeadBuurtcode,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)

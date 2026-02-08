@@ -287,6 +287,9 @@ type PartnerOfferAccepted struct {
 	OrganizationID uuid.UUID `json:"organizationId"`
 	PartnerID      uuid.UUID `json:"partnerId"`
 	LeadServiceID  uuid.UUID `json:"leadServiceId"`
+	LeadID         uuid.UUID `json:"leadId"`
+	PartnerName    string    `json:"partnerName"`
+	PartnerEmail   string    `json:"partnerEmail"`
 }
 
 func (e PartnerOfferAccepted) EventName() string { return "partners.offer.accepted" }
@@ -298,6 +301,8 @@ type PartnerOfferRejected struct {
 	OrganizationID uuid.UUID `json:"organizationId"`
 	PartnerID      uuid.UUID `json:"partnerId"`
 	LeadServiceID  uuid.UUID `json:"leadServiceId"`
+	LeadID         uuid.UUID `json:"leadId"`
+	PartnerName    string    `json:"partnerName"`
 	Reason         string    `json:"reason,omitempty"`
 }
 
@@ -310,6 +315,8 @@ type PartnerOfferExpired struct {
 	OrganizationID uuid.UUID `json:"organizationId"`
 	PartnerID      uuid.UUID `json:"partnerId"`
 	LeadServiceID  uuid.UUID `json:"leadServiceId"`
+	LeadID         uuid.UUID `json:"leadId"`
+	PartnerName    string    `json:"partnerName"`
 }
 
 func (e PartnerOfferExpired) EventName() string { return "partners.offer.expired" }
