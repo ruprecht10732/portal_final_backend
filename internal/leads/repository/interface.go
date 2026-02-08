@@ -138,7 +138,7 @@ type PartnerMatcher interface {
 // ActivityFeedEntry represents a unified activity entry from multiple sources.
 type ActivityFeedEntry struct {
 	ID          uuid.UUID
-	Category    string   // leads, quotes, appointments, ai
+	Category    string // leads, quotes, appointments, ai
 	EventType   string
 	Title       string
 	Description string
