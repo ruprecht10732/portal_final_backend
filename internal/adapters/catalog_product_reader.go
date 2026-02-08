@@ -60,37 +60,96 @@ func (a *CatalogProductReader) GetProductDetails(ctx context.Context, orgID uuid
 }
 
 // productToDetail converts a single catalog product into a CatalogProductDetails,
-// enriching it with materials and the resolved VAT rate.
+// enriching it with materials, document/URL assets, and the resolved VAT rate.
 func (a *CatalogProductReader) productToDetail(ctx context.Context, orgID uuid.UUID, p catrepo.Product, vatRates map[uuid.UUID]int) ports.CatalogProductDetails {
-	materials, err := a.repo.ListProductMaterials(ctx, orgID, p.ID)
-	if err != nil {
-		materials = nil
-	}
-
-	matNames := make([]string, len(materials))
-	for i, m := range materials {
-		matNames[i] = m.Title
-	}
-
 	detail := ports.CatalogProductDetails{
 		ID:             p.ID,
 		Title:          p.Title,
 		UnitPriceCents: p.UnitPriceCents,
 		VatRateBps:     vatRates[p.VatRateID],
-		Materials:      matNames,
+		Materials:      a.fetchMaterialNames(ctx, orgID, p.ID),
 	}
 
-	if p.Description != nil {
-		detail.Description = *p.Description
-	}
-	if p.UnitLabel != nil {
-		detail.UnitLabel = *p.UnitLabel
-	}
-	if p.LaborTimeText != nil {
-		detail.LaborTimeText = *p.LaborTimeText
-	}
+	setOptional(&detail.Description, p.Description)
+	setOptional(&detail.UnitLabel, p.UnitLabel)
+	setOptional(&detail.LaborTimeText, p.LaborTimeText)
+
+	detail.Documents = a.fetchDocumentAssets(ctx, orgID, p.ID)
+	detail.URLs = a.fetchURLAssets(ctx, orgID, p.ID)
 
 	return detail
+}
+
+// setOptional assigns src to dst when src is non-nil.
+func setOptional(dst *string, src *string) {
+	if src != nil {
+		*dst = *src
+	}
+}
+
+// fetchMaterialNames returns the material titles for a product.
+func (a *CatalogProductReader) fetchMaterialNames(ctx context.Context, orgID, productID uuid.UUID) []string {
+	materials, err := a.repo.ListProductMaterials(ctx, orgID, productID)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, len(materials))
+	for i, m := range materials {
+		names[i] = m.Title
+	}
+	return names
+}
+
+// fetchDocumentAssets returns catalog document assets (PDFs, specs) for a product.
+func (a *CatalogProductReader) fetchDocumentAssets(ctx context.Context, orgID, productID uuid.UUID) []ports.CatalogDocument {
+	docType := "document"
+	assets, err := a.repo.ListProductAssets(ctx, catrepo.ListProductAssetsParams{
+		OrganizationID: orgID,
+		ProductID:      productID,
+		AssetType:      &docType,
+	})
+	if err != nil {
+		return nil
+	}
+	var docs []ports.CatalogDocument
+	for _, asset := range assets {
+		if asset.FileKey != nil && asset.FileName != nil {
+			docs = append(docs, ports.CatalogDocument{
+				ID:       asset.ID,
+				Filename: *asset.FileName,
+				FileKey:  *asset.FileKey,
+			})
+		}
+	}
+	return docs
+}
+
+// fetchURLAssets returns catalog URL assets (terms & conditions, links) for a product.
+func (a *CatalogProductReader) fetchURLAssets(ctx context.Context, orgID, productID uuid.UUID) []ports.CatalogURL {
+	urlType := "terms_url"
+	assets, err := a.repo.ListProductAssets(ctx, catrepo.ListProductAssetsParams{
+		OrganizationID: orgID,
+		ProductID:      productID,
+		AssetType:      &urlType,
+	})
+	if err != nil {
+		return nil
+	}
+	var urls []ports.CatalogURL
+	for _, asset := range assets {
+		if asset.URL == nil || *asset.URL == "" {
+			continue
+		}
+		label := "Link"
+		if asset.FileName != nil && *asset.FileName != "" {
+			label = *asset.FileName
+		}
+		urls = append(urls, ports.CatalogURL{
+			Label: label,
+			Href:  *asset.URL,
+		})
+	}
+	return urls
 }
 
 // Compile-time check that CatalogProductReader implements ports.CatalogReader.

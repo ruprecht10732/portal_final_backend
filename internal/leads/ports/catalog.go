@@ -10,6 +10,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// CatalogDocument represents a product document attachment the leads domain
+// needs when auto-attaching files to AI-drafted quotes.
+type CatalogDocument struct {
+	ID       uuid.UUID
+	Filename string
+	FileKey  string
+}
+
+// CatalogURL represents a product URL (e.g. terms & conditions link) the leads
+// domain needs when auto-attaching URLs to AI-drafted quotes.
+type CatalogURL struct {
+	Label string
+	Href  string
+}
+
 // CatalogProductDetails holds the product information the leads/agent needs for
 // quote drafting. Materials are pre-resolved to simple description strings so
 // the agent never touches the catalog domain directly.
@@ -21,7 +36,9 @@ type CatalogProductDetails struct {
 	UnitLabel      string
 	LaborTimeText  string
 	VatRateBps     int
-	Materials      []string // human-readable material names
+	Materials      []string          // human-readable material names
+	Documents      []CatalogDocument // product document assets (PDFs, specs)
+	URLs           []CatalogURL      // product URL assets (terms, links)
 }
 
 // CatalogReader is the ACL interface through which the leads domain can look up
