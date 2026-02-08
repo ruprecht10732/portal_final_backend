@@ -119,6 +119,7 @@ type ProductResult struct {
 	ID          string   `json:"id,omitempty"` // Catalog product UUID (present for catalog items)
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
+	Type        string   `json:"type"`         // "service", "digital_service", "product", or "material"
 	PriceEuros  float64  `json:"priceEuros"`     // Unit price in euros (e.g., 7.93 = EUR 7.93)
 	PriceCents  int64    `json:"priceCents"`     // Unit price in euro-cents, ready for unitPriceCents (e.g., 793)
 	Unit        string   `json:"unit,omitempty"` // e.g., "per m2", "per stuk", "per m1"

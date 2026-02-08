@@ -1274,6 +1274,7 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 	product.ID = payloadStr(payload, "id")
 	product.Name = payloadStr(payload, "name")
 	product.Description = payloadStr(payload, "description")
+	product.Type = resolveProductType(payload)
 	product.PriceEuros = payloadFloat(payload, "price")
 	product.Unit = resolveUnit(payload)
 	product.LaborTime = strings.TrimSpace(payloadStr(payload, "labor_time_text"))
@@ -1313,6 +1314,16 @@ func resolveUnit(payload map[string]any) string {
 		return u
 	}
 	return parseUnitFromPriceRaw(payload)
+}
+
+// resolveProductType returns the product type from the payload.
+// Catalog products have a "type" field (service, digital_service, product, material).
+// Fallback/scraped products default to "material".
+func resolveProductType(payload map[string]any) string {
+	if t := payloadStr(payload, "type"); t != "" {
+		return t
+	}
+	return "material"
 }
 
 // applyBrandPrefix prepends the brand to the product description if present.
@@ -1467,6 +1478,7 @@ Products with score > 0.6 are strong matches. Products with score 0.35-0.6 are p
 Result fields:
 - name: product name
 - description: product description (may include brand)
+- type: product type — "service" or "digital_service" means price INCLUDES labor; "product" or "material" means price is material only.
 - priceEuros: price in euros (e.g. 7.93 = EUR 7.93). Use for CalculateEstimate unitPrice.
 - priceCents: price in euro-cents (e.g. 793). Use this directly as unitPriceCents in DraftQuote.
 - unit: how the product is sold (e.g. "per m1", "per stuk", "per m2"). Use to compute correct quantities.

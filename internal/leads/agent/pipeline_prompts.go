@@ -165,6 +165,12 @@ Instruction:
 	For each material item's unitPrice, use the product's "priceEuros" value (in euros, e.g. 7.93).
 	If catalog search results include a labor time, use it as the baseline for labor hours (adjust if the scope indicates otherwise).
 	IMPORTANT: Before calling CalculateEstimate, use Calculator for each individual quantity or price calculation.
+
+	LABOR RULES — check each product's "type" field:
+	- type = "service" or "digital_service": the price already INCLUDES labor/installation. Do NOT add separate arbeid hours for this item.
+	- type = "product" or "material": the price is material-only. You MUST add separate arbeid line items for installing/mounting these.
+	Example: A "houten kozijn vervangen" at EUR 950/m2 with type "service" includes installation — no extra arbeid.
+	But "RVS scharnieren" with type "material" are material-only — add arbeid for mounting them.
 3a) Call DraftQuote to create a draft quote for the customer. For each item:
 	- Set description using the product name. If the product has materials (the "materials" array), format as:
 	  "Product name\nInclusief:\n- Material A\n- Material B"
@@ -182,8 +188,10 @@ Instruction:
 	- Set unitPriceCents to the product's "priceCents" value (already in euro-cents, e.g. 793 = EUR 7.93). Do NOT use priceEuros.
 	- Set taxRateBps from the product's vatRateBps (e.g., 2100 for 21%%). If unknown, use 2100.
 	- If the product came from SearchProductMaterials and has an "id", include it as catalogProductId.
-	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.
-	Include a notes field (in Dutch) summarizing why this quote was generated.
+	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.	LABOR RULES — check each product's "type" field:
+	- type = "service" or "digital_service": the price already INCLUDES labor. Do NOT add a separate arbeid line item for this product.
+	- type = "product" or "material": the price is material-only. Add a separate "Arbeid" line item for installing/mounting these items.
+	Only add arbeid for work on material/product items (e.g., mounting hinges, hanging a door).	Include a notes field (in Dutch) summarizing why this quote was generated.
 	Note: Catalog product documents (PDFs, specs) and terms URLs are automatically attached to the quote — you do not need to handle attachments yourself.
 4) Determine scope: Small, Medium, or Large based on work complexity.
 5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
@@ -480,6 +488,10 @@ Instruction:
    - Set taxRateBps from the product's vatRateBps. If unknown, use 2100.
    - If the product has an "id", include it as catalogProductId.
    - For labor or ad-hoc items, omit catalogProductId.
+   LABOR RULES — check each product's "type" field:
+   - type = "service" or "digital_service": the price already INCLUDES labor. Do NOT add a separate arbeid line item.
+   - type = "product" or "material": the price is material-only. Add a separate "Arbeid" line item for installing/mounting these.
+   Only add arbeid for work on material/product items (e.g., mounting hinges, hanging a door).
 4) Call DraftQuote with all items and a notes field (in Dutch) summarizing what was generated.
    Catalog product documents and URLs are automatically attached — you do not need to handle attachments.
 
