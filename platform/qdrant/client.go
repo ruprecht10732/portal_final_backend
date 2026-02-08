@@ -46,9 +46,10 @@ func NewClient(cfg Config) *Client {
 
 // SearchRequest is the request body for a vector search.
 type SearchRequest struct {
-	Vector      []float32 `json:"vector"`
-	Limit       int       `json:"limit"`
-	WithPayload bool      `json:"with_payload"`
+	Vector         []float32 `json:"vector"`
+	Limit          int       `json:"limit"`
+	WithPayload    bool      `json:"with_payload"`
+	ScoreThreshold *float64  `json:"score_threshold,omitempty"` // Minimum similarity score (Qdrant filters server-side)
 }
 
 // SearchResult is a single search result from Qdrant.
@@ -65,16 +66,26 @@ type SearchResponse struct {
 	Time   float64        `json:"time"`
 }
 
+// SearchWithThreshold performs a vector similarity search with a minimum score threshold.
+func (c *Client) SearchWithThreshold(ctx context.Context, vector []float32, limit int, scoreThreshold float64) ([]SearchResult, error) {
+	return c.searchInternal(ctx, vector, limit, &scoreThreshold)
+}
+
 // Search performs a vector similarity search in the configured collection.
 func (c *Client) Search(ctx context.Context, vector []float32, limit int) ([]SearchResult, error) {
+	return c.searchInternal(ctx, vector, limit, nil)
+}
+
+func (c *Client) searchInternal(ctx context.Context, vector []float32, limit int, scoreThreshold *float64) ([]SearchResult, error) {
 	if limit <= 0 {
 		limit = 5
 	}
 
 	reqBody := SearchRequest{
-		Vector:      vector,
-		Limit:       limit,
-		WithPayload: true,
+		Vector:         vector,
+		Limit:          limit,
+		WithPayload:    true,
+		ScoreThreshold: scoreThreshold,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
