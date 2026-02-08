@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -19,19 +20,34 @@ import (
 	"portal_final_backend/platform/ai/moonshot"
 )
 
+// Measurement represents a single measurement extracted from photo analysis
+type Measurement struct {
+	Description string  `json:"description"`
+	Value       float64 `json:"value"`
+	Unit        string  `json:"unit"`
+	Type        string  `json:"type"`       // dimension, area, count, volume
+	Confidence  string  `json:"confidence"` // High, Medium, Low
+	PhotoRef    string  `json:"photoRef,omitempty"`
+}
+
 // PhotoAnalysis represents the result of analyzing photos for a lead service
 type PhotoAnalysis struct {
-	ID              uuid.UUID `json:"id"`
-	LeadID          uuid.UUID `json:"leadId"`
-	ServiceID       uuid.UUID `json:"serviceId"`
-	Summary         string    `json:"summary"`
-	Observations    []string  `json:"observations"`
-	ScopeAssessment string    `json:"scopeAssessment"`
-	CostIndicators  string    `json:"costIndicators"`
-	SafetyConcerns  []string  `json:"safetyConcerns,omitempty"`
-	AdditionalInfo  []string  `json:"additionalInfo,omitempty"`
-	PhotoCount      int       `json:"photoCount"`
-	ConfidenceLevel string    `json:"confidenceLevel"` // High, Medium, Low
+	ID                     uuid.UUID     `json:"id"`
+	LeadID                 uuid.UUID     `json:"leadId"`
+	ServiceID              uuid.UUID     `json:"serviceId"`
+	Summary                string        `json:"summary"`
+	Observations           []string      `json:"observations"`
+	ScopeAssessment        string        `json:"scopeAssessment"`
+	CostIndicators         string        `json:"costIndicators"`
+	SafetyConcerns         []string      `json:"safetyConcerns,omitempty"`
+	AdditionalInfo         []string      `json:"additionalInfo,omitempty"`
+	Measurements           []Measurement `json:"measurements,omitempty"`
+	NeedsOnsiteMeasurement []string      `json:"needsOnsiteMeasurement,omitempty"`
+	Discrepancies          []string      `json:"discrepancies,omitempty"`
+	ExtractedText          []string      `json:"extractedText,omitempty"`
+	SuggestedSearchTerms   []string      `json:"suggestedSearchTerms,omitempty"`
+	PhotoCount             int           `json:"photoCount"`
+	ConfidenceLevel        string        `json:"confidenceLevel"` // High, Medium, Low
 }
 
 // PhotoAnalyzerDeps contains dependencies for the photo analyzer
@@ -40,7 +56,8 @@ type PhotoAnalyzerDeps struct {
 	mu       sync.RWMutex
 	tenantID *uuid.UUID
 	// Result storage - set after analysis
-	result *PhotoAnalysis
+	result                  *PhotoAnalysis
+	needsOnsiteMeasurements []string // Accumulated by FlagOnsiteMeasurement tool
 }
 
 func (d *PhotoAnalyzerDeps) SetTenantID(id uuid.UUID) {
@@ -68,6 +85,25 @@ func (d *PhotoAnalyzerDeps) GetResult() *PhotoAnalysis {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.result
+}
+
+func (d *PhotoAnalyzerDeps) AddOnsiteFlag(reason string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.needsOnsiteMeasurements = append(d.needsOnsiteMeasurements, reason)
+}
+
+func (d *PhotoAnalyzerDeps) GetOnsiteFlags() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.needsOnsiteMeasurements
+}
+
+func (d *PhotoAnalyzerDeps) ResetAccumulators() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.result = nil
+	d.needsOnsiteMeasurements = nil
 }
 
 // PhotoAnalyzer provides AI-powered photo analysis for lead services
@@ -134,8 +170,9 @@ func NewPhotoAnalyzer(apiKey string, repo repository.LeadsRepository) (*PhotoAna
 
 // AnalyzePhotos analyzes a set of photos for a lead service
 // images should be base64-encoded image data with MIME types
+// serviceType identifies the type of service (e.g., "Loodgieter", "Elektricien") for specialized analysis
 // intakeRequirements contains the hard requirements for this service type
-func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uuid.UUID, tenantID uuid.UUID, images []ImageData, contextInfo string, intakeRequirements string) (*PhotoAnalysis, error) {
+func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uuid.UUID, tenantID uuid.UUID, images []ImageData, contextInfo string, serviceType string, intakeRequirements string) (*PhotoAnalysis, error) {
 	pa.runMu.Lock()
 	defer pa.runMu.Unlock()
 
@@ -144,7 +181,7 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uu
 	}
 
 	pa.deps.SetTenantID(tenantID)
-	pa.deps.SetResult(nil) // Clear previous result
+	pa.deps.ResetAccumulators() // Clear previous result and onsite flags
 
 	// Build multimodal content with images and text
 	parts := make([]*genai.Part, 0, len(images)+1)
@@ -160,7 +197,7 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uu
 	}
 
 	// Add text prompt with intake requirements
-	prompt := buildPhotoAnalysisPrompt(leadID, serviceID, len(images), contextInfo, intakeRequirements)
+	prompt := buildPhotoAnalysisPrompt(leadID, serviceID, len(images), contextInfo, serviceType, intakeRequirements)
 	parts = append(parts, genai.NewPartFromText(prompt))
 
 	userContent := &genai.Content{
@@ -237,6 +274,11 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uu
 		}
 	}
 
+	// Merge accumulated on-site flags into result
+	if flags := pa.deps.GetOnsiteFlags(); len(flags) > 0 {
+		result.NeedsOnsiteMeasurement = append(result.NeedsOnsiteMeasurement, flags...)
+	}
+
 	return result, nil
 }
 
@@ -249,15 +291,34 @@ type ImageData struct {
 
 // SavePhotoAnalysisInput contains the input parameters for the SavePhotoAnalysis tool
 type SavePhotoAnalysisInput struct {
-	LeadID          string   `json:"leadId" description:"The UUID of the lead"`
-	ServiceID       string   `json:"serviceId" description:"The UUID of the lead service"`
-	Summary         string   `json:"summary" description:"A concise 2-3 sentence summary of what the photos show"`
-	Observations    []string `json:"observations" description:"List of specific observations from the photos"`
-	ScopeAssessment string   `json:"scopeAssessment" description:"Assessment of work scope: Small, Medium, Large, or Unclear"`
-	CostIndicators  string   `json:"costIndicators" description:"Factors visible that may affect pricing"`
-	SafetyConcerns  []string `json:"safetyConcerns" description:"Any safety issues visible in the photos"`
-	AdditionalInfo  []string `json:"additionalInfo" description:"Additional info or questions to ask the consumer"`
-	ConfidenceLevel string   `json:"confidenceLevel" description:"Analysis confidence: High, Medium, or Low"`
+	LeadID               string             `json:"leadId" description:"The UUID of the lead"`
+	ServiceID            string             `json:"serviceId" description:"The UUID of the lead service"`
+	Summary              string             `json:"summary" description:"A concise 2-3 sentence summary of what the photos show"`
+	Observations         []string           `json:"observations" description:"List of specific observations from the photos"`
+	ScopeAssessment      string             `json:"scopeAssessment" description:"Assessment of work scope: Small, Medium, Large, or Unclear"`
+	CostIndicators       string             `json:"costIndicators" description:"Factors visible that may affect pricing"`
+	SafetyConcerns       []string           `json:"safetyConcerns" description:"Any safety issues visible in the photos"`
+	AdditionalInfo       []string           `json:"additionalInfo" description:"Additional info or questions to ask the consumer"`
+	ConfidenceLevel      string             `json:"confidenceLevel" description:"Analysis confidence: High, Medium, or Low"`
+	Measurements         []MeasurementInput `json:"measurements,omitempty" description:"Measurements extracted or estimated from the photos"`
+	Discrepancies        []string           `json:"discrepancies,omitempty" description:"Discrepancies between consumer claims and visible evidence"`
+	ExtractedText        []string           `json:"extractedText,omitempty" description:"Text, labels, model numbers, or serial numbers read from photos"`
+	SuggestedSearchTerms []string           `json:"suggestedSearchTerms,omitempty" description:"Product/material search terms for the Estimator to look up"`
+}
+
+// MeasurementInput represents a single measurement from the AI tool
+type MeasurementInput struct {
+	Description string  `json:"description" description:"What was measured, e.g. 'window width'"`
+	Value       float64 `json:"value" description:"Numeric value of the measurement"`
+	Unit        string  `json:"unit" description:"Unit of measurement: m, m2, m3, cm, mm, stuks"`
+	Type        string  `json:"type" description:"Measurement type: dimension, area, count, or volume"`
+	Confidence  string  `json:"confidence" description:"Confidence in measurement: High, Medium, or Low"`
+	PhotoRef    string  `json:"photoRef,omitempty" description:"Which photo this was measured from, e.g. 'photo 1'"`
+}
+
+// FlagOnsiteMeasurementInput is the input for the FlagOnsiteMeasurement tool
+type FlagOnsiteMeasurementInput struct {
+	Reason string `json:"reason" description:"Why an on-site measurement is needed, e.g. 'ceiling height not visible from photo angle'"`
 }
 
 // SavePhotoAnalysisOutput is the result of saving the photo analysis
@@ -270,7 +331,7 @@ type SavePhotoAnalysisOutput struct {
 func buildPhotoAnalyzerTools(deps *PhotoAnalyzerDeps) ([]tool.Tool, error) {
 	savePhotoAnalysis, err := functiontool.New(functiontool.Config{
 		Name:        "SavePhotoAnalysis",
-		Description: "Save the analysis of photos for a lead service. Call this after analyzing all photos.",
+		Description: "Save the analysis of photos for a lead service. Call this after analyzing all photos. Include measurements, discrepancies, extracted text, and suggested search terms.",
 	}, func(ctx tool.Context, args SavePhotoAnalysisInput) (SavePhotoAnalysisOutput, error) {
 		leadID, err := uuid.Parse(args.LeadID)
 		if err != nil {
@@ -287,22 +348,40 @@ func buildPhotoAnalyzerTools(deps *PhotoAnalyzerDeps) ([]tool.Tool, error) {
 		// Normalize scope assessment
 		scope := normalizeScopeAssessment(args.ScopeAssessment)
 
+		// Convert measurement inputs to measurements
+		measurements := make([]Measurement, 0, len(args.Measurements))
+		for _, m := range args.Measurements {
+			measurements = append(measurements, Measurement{
+				Description: m.Description,
+				Value:       m.Value,
+				Unit:        m.Unit,
+				Type:        normalizeMeasurementType(m.Type),
+				Confidence:  normalizeConfidenceLevel(m.Confidence),
+				PhotoRef:    m.PhotoRef,
+			})
+		}
+
 		result := &PhotoAnalysis{
-			ID:              uuid.New(),
-			LeadID:          leadID,
-			ServiceID:       serviceID,
-			Summary:         args.Summary,
-			Observations:    args.Observations,
-			ScopeAssessment: scope,
-			CostIndicators:  args.CostIndicators,
-			SafetyConcerns:  args.SafetyConcerns,
-			AdditionalInfo:  args.AdditionalInfo,
-			ConfidenceLevel: confidence,
+			ID:                   uuid.New(),
+			LeadID:               leadID,
+			ServiceID:            serviceID,
+			Summary:              args.Summary,
+			Observations:         args.Observations,
+			ScopeAssessment:      scope,
+			CostIndicators:       args.CostIndicators,
+			SafetyConcerns:       args.SafetyConcerns,
+			AdditionalInfo:       args.AdditionalInfo,
+			ConfidenceLevel:      confidence,
+			Measurements:         measurements,
+			Discrepancies:        args.Discrepancies,
+			ExtractedText:        args.ExtractedText,
+			SuggestedSearchTerms: args.SuggestedSearchTerms,
 		}
 
 		deps.SetResult(result)
 
-		log.Printf("Photo analysis saved for lead %s service %s", leadID, serviceID)
+		log.Printf("Photo analysis saved for lead %s service %s (measurements=%d, discrepancies=%d, extractedText=%d, searchTerms=%d)",
+			leadID, serviceID, len(measurements), len(args.Discrepancies), len(args.ExtractedText), len(args.SuggestedSearchTerms))
 
 		return SavePhotoAnalysisOutput{
 			Success: true,
@@ -314,7 +393,29 @@ func buildPhotoAnalyzerTools(deps *PhotoAnalyzerDeps) ([]tool.Tool, error) {
 		return nil, err
 	}
 
-	return []tool.Tool{savePhotoAnalysis}, nil
+	// Calculator for exact arithmetic (reuse the shared handler from tools.go)
+	calculator, err := createCalculatorTool()
+	if err != nil {
+		return nil, err
+	}
+
+	// FlagOnsiteMeasurement accumulates reasons why on-site measurement is needed
+	flagOnsite, err := functiontool.New(functiontool.Config{
+		Name:        "FlagOnsiteMeasurement",
+		Description: "Flag that a specific measurement cannot be determined from photos alone and requires on-site measurement. Call this for EACH measurement that needs on-site verification.",
+	}, func(ctx tool.Context, args FlagOnsiteMeasurementInput) (map[string]any, error) {
+		if args.Reason == "" {
+			return map[string]any{"success": false, "message": "reason is required"}, nil
+		}
+		deps.AddOnsiteFlag(args.Reason)
+		log.Printf("Flagged on-site measurement needed: %s", args.Reason)
+		return map[string]any{"success": true, "message": "On-site flag recorded"}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return []tool.Tool{savePhotoAnalysis, calculator, flagOnsite}, nil
 }
 
 func normalizeConfidenceLevel(level string) string {
@@ -345,12 +446,38 @@ func normalizeScopeAssessment(scope string) string {
 	}
 }
 
-func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string, intakeRequirements string) string {
+func normalizeMeasurementType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "dimension", "length", "width", "height", "depth", "lengte", "breedte", "hoogte":
+		return "dimension"
+	case "area", "oppervlakte", "m2":
+		return "area"
+	case "count", "aantal", "stuks", "quantity":
+		return "count"
+	case "volume", "inhoud", "m3":
+		return "volume"
+	default:
+		return "dimension"
+	}
+}
+
+func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string, serviceType string, intakeRequirements string) string {
 	prompt := fmt.Sprintf(`Analyseer de %d foto('s) voor deze thuisdienst aanvraag.
 
 Lead ID: %s
 Service ID: %s
 `, photoCount, leadID.String(), serviceID.String())
+
+	if serviceType != "" {
+		prompt += fmt.Sprintf(`
+## DIENSTTYPE: %s
+Pas je analyse aan voor dit specifieke vakgebied. Gebruik je vakkennis over '%s' om:
+- Specifieke materialen, componenten en systemen te herkennen
+- Relevante Nederlandse bouwstandaarden en -normen toe te passen (NEN, KOMO, BRL, etc.)
+- Typische afmetingen in te schatten op basis van standaardmaten voor dit type werk
+- Productzoektermen te suggereren die de Schatter kan gebruiken om materialen te vinden
+`, serviceType, serviceType)
+	}
 
 	if intakeRequirements != "" {
 		prompt += fmt.Sprintf(`
@@ -359,82 +486,107 @@ Controleer voor elk van deze eisen of ze zichtbaar zijn op de foto's:
 %s
 
 Noteer in je observaties welke eisen je kunt bevestigen of weerleggen op basis van de foto's.
+Voeg tegenstrijdigheden toe aan discrepancies als claims niet overeenkomen met wat je ziet.
 `, intakeRequirements)
 	}
 
 	if contextInfo != "" {
 		prompt += fmt.Sprintf(`
-## Context van de aanvraag:
+## Context van de aanvraag (CLAIMS VAN CONSUMENT):
 %s
+
+BELANGRIJK: Vergelijk deze claims kritisch met wat je daadwerkelijk op de foto's ziet.
+Als een claim niet klopt met de visuele bewijzen, voeg het toe aan discrepancies.
 `, contextInfo)
 	}
 
 	prompt += `
-## Analyseer elke foto zorgvuldig en bepaal:
-1. Welk specifiek probleem of situatie wordt getoond
-2. De geschatte omvang en complexiteit van het benodigde werk
-3. Factoren die prijs of tijdlijn kunnen beïnvloeden
-4. Veiligheidszorgen die aangepakt moeten worden
-5. Vragen die kunnen helpen verduidelijken wat je ziet
+## Analyseer elke foto zorgvuldig en voer uit:
+
+### 1. VISUELE OBSERVATIES
+- Welk specifiek probleem of situatie wordt getoond
+- De geschatte omvang en complexiteit van het benodigde werk
+- Factoren die prijs of tijdlijn kunnen beïnvloeden
+- Veiligheidszorgen die aangepakt moeten worden
+
+### 2. METINGEN (CRUCIAAL)
+Schat afmetingen, oppervlaktes en aantallen uit elke foto:
+- Gebruik referentie-objecten (deuren ~2.1m, stopcontacten ~30cm, standaard tegels, etc.)
+- Gebruik de Calculator tool voor berekeningen (oppervlakte = lengte × breedte)
+- Noteer elke meting met type (dimension/area/count/volume), waarde, eenheid en confidence
+- Als een meting niet betrouwbaar uit de foto te halen is, roep FlagOnsiteMeasurement aan
+
+### 3. TEKST EXTRACTIE (OCR)
+Lees alle zichtbare tekst op foto's:
+- Merknamen, modelnummers, serienummers
+- Energielabels, typeplaten, CE-markeringen
+- Afmetingen op verpakkingen of producten
+- Waarschuwingsteksten
+
+### 4. FEITCONTROLE (DISCREPANCIES)
+Als er context/claims van de consument zijn meegegeven:
+- Vergelijk elke claim met visuele bewijzen
+- Noteer tegenstrijdigheden (bijv. "consument meldt lekkage maar geen vochtsporen zichtbaar")
+- Dit helpt de Gatekeeper claims te valideren
+
+### 5. PRODUCTZOEKTERMEN
+Stel zoektermen voor die de Schatter kan gebruiken om materialen te vinden:
+- Specifieke productnamen, materiaalsoorten
+- Nederlandse en Engelse termen
+- Merken en modellen als zichtbaar
 
 ## VERPLICHT
-Na je analyse MOET je de SavePhotoAnalysis tool aanroepen met je bevindingen.`
+Na je analyse MOET je de SavePhotoAnalysis tool aanroepen met je complete bevindingen.
+Gebruik de Calculator voor alle berekeningen. Gebruik FlagOnsiteMeasurement voor metingen die ter plaatse nodig zijn.`
 
 	return prompt
 }
 
 func getPhotoAnalyzerPrompt() string {
-	return `Je bent een expert foto-analist voor een Nederlandse thuisdiensten-marktplaats. Jouw taak is het analyseren van foto's die consumenten uploaden bij hun aanvragen voor huisreparaties en verbeteringen.
+	return `Je bent een forensisch foto-analist voor een Nederlandse thuisdiensten-marktplaats. Je combineert scherp visueel waarnemingsvermogen met diepgaande vakkennis om alles uit foto's te halen wat relevant is voor prijsschatting en kwaliteitsbeoordeling.
 
-## Jouw Expertise Gebieden
-- Loodgieter: lekkages, leidingen, kranen, afvoer, boilers, cv-ketels
-- CV-monteur: verwarmingssystemen, ketels, radiatoren, thermostaten, ventilatie
-- Elektricien: bedrading, stopcontacten, schakelaars, groepenkast, verlichting
-- Timmerman: deuren, ramen, kasten, vloeren, trappen, houtconstructies
-- Algemene reparaties en huisonderhoud
+## Kerncompetenties
+- **Meten**: Schat afmetingen, oppervlaktes en aantallen door referentie-objecten te gebruiken (deurhoogte ~2.1m, standaard stopcontact ~8cm breed, dakpannen ~33cm, etc.)
+- **OCR**: Lees alle zichtbare tekst - merknamen, modelnummers, typeplaten, energielabels, CE-markeringen
+- **Feitcontrole**: Vergelijk consumentclaims kritisch met visuele bewijzen en rapporteer tegenstrijdigheden
+- **Productherkenning**: Identificeer specifieke producten, materialen en systemen voor downstream prijsschatting
 
-## Analyse Richtlijnen
+## Meetrichtlijnen
+- Gebruik bekende referentie-objecten om schaal af te leiden
+- Gebruik de Calculator tool voor ALLE berekeningen (oppervlakte, volumes, aantallen)
+- Geef confidence levels: High (referentie-object duidelijk zichtbaar), Medium (geschat), Low (onzeker)
+- Als een meting echt niet uit de foto te halen is: roep FlagOnsiteMeasurement aan met uitleg
 
-### Foto Kwaliteit Beoordeling
-- Noteer of foto's scherp of wazig zijn
-- Identificeer of belichting voldoende is om details te zien
-- Markeer als belangrijke gebieden niet zichtbaar of geblokkeerd zijn
+## Analysediepte per Vakgebied
+Je past je analyse automatisch aan op basis van het meegegeven diensttype:
+- **Loodgieter**: Leidingdiameters, koppelstukken, waterschade-omvang, keteltype/leeftijd, cv-druk
+- **Elektricien**: Groepsoorten, kabeldiameters, schakelmateriaal, groepenkast-capaciteit, aardingsstatus
+- **Timmerman**: Houtsoort, profielafmetingen, kozijnmaten, glassoort, scharniertypes
+- **Dakdekker**: Dakpantype, hellingshoek, nok/goot-details, dakoppervlakte, isolatie
+- **Schilder**: Verfsoort, ondergrond, oppervlakte, hechtingsstatus, lagen-opbouw
+- Een diensttype dat niet in deze lijst staat? Gebruik je algemene bouwkundige kennis.
 
-### Technische Observaties
-- Identificeer het specifieke type probleem (bijv. "zichtbare watervlek suggereert lekkage achter muur")
-- Noteer de geschatte leeftijd/conditie van bestaande materialen of voorzieningen
-- Identificeer zichtbare modelnummers, merken of specificaties
-- Schat bereikbaarheid (makkelijk toegankelijk vs. moet meubels verplaatsen/muren openen)
+## Nederlandse Bouwstandaarden (Latente Kennis)
+Je kent de standaardmaten die in Nederland gangbaar zijn:
+- Binnendeur: 2015×830mm, buitendeur: 2315×930mm
+- Verdiepingshoogte: ~2.60m (woningbouw), ~3.50m (utiliteit)
+- Standaard tegelformaten: 20×20, 30×30, 60×60 cm
+- Standaard kozijnen: draai-kiep, vast glas, schuifpui
+- Dakpannen: ~14.5 stuks per m²
+- Leidingdiameters: 15mm (warm/koud), 22mm (cv), 32mm (afvoer)
+Deze kennis gebruik je automatisch bij het inschatten van maten.
 
-### Intake-Eisen Validatie (CRUCIAAL)
-Als intake-eisen zijn meegegeven:
-- Controleer systematisch welke eisen ZICHTBAAR zijn op de foto's
-- Noteer voor elke eis: ✓ bevestigd / ✗ niet zichtbaar / ⚠ tegenstrijdig
-- Dit helpt de hoofdagent bepalen of de lead aan de harde eisen voldoet
-- Wees specifiek: "buitenkraan zichtbaar links in beeld" of "geen watermeter zichtbaar"
-
-### Omvang Beoordeling Categorieën
-- Small (Klein): Eenvoudige reparatie, waarschijnlijk 1-2 uur werk
-- Medium (Gemiddeld): Standaard klus, halve tot hele dag
-- Large (Groot): Grote klus, meerdere dagen of vereist vergunningen
-- Unclear (Onduidelijk): Kan niet bepalen uit foto's
-
-### Veiligheidszorgen
+## Veiligheidszorgen
 Markeer altijd:
 - Blootliggende bedrading of elektrische gevaren
 - Waterschade nabij elektriciteit
 - Constructieve zorgen (scheuren, doorbuiging)
 - Schimmel of waterschade
 - Gas-gerelateerde problemen
-- Asbest-era materialen (gebouwen van voor 1990)
-
-### Kostenindicatoren
-Noteer factoren die prijs beïnvloeden:
-- Speciale materialen of onderdelen nodig
-- Hoogte/bereikbaarheidsproblemen
-- Sloop/herstelwerkzaamheden
-- Meerdere systemen betrokken
+- Asbest-era materialen (gebouwen van voor 1994)
 
 ## Verplichte Actie
-Na het analyseren van de foto's MOET je de SavePhotoAnalysis tool aanroepen met je complete bevindingen. Beschrijf niet alleen wat je ziet - sla de gestructureerde analyse op via de tool.`
+Na het analyseren MOET je de SavePhotoAnalysis tool aanroepen met alle bevindingen.
+Gebruik Calculator voor berekeningen. Gebruik FlagOnsiteMeasurement waar nodig.
+Beschrijf niet alleen wat je ziet - sla de gestructureerde analyse op via de tools.`
 }
