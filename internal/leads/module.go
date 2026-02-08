@@ -265,6 +265,15 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		return nil
 	}))
 
+	eventBus.Subscribe(events.PartnerOfferAccepted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PartnerOfferAccepted)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnPartnerOfferAccepted(ctx, e)
+		return nil
+	}))
+
 	eventBus.Subscribe(events.PartnerOfferExpired{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.PartnerOfferExpired)
 		if !ok {

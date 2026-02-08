@@ -155,6 +155,7 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 	e.toolDeps.SetTenantID(tenantID)
 	e.toolDeps.SetLeadContext(leadID, serviceID)
 	e.toolDeps.SetActor("AI", "Estimator")
+	e.toolDeps.ResetToolCallTracking()
 
 	lead, err := e.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
@@ -177,7 +178,30 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 	}
 
 	promptText := buildEstimatorPrompt(lead, service, notes, photo)
-	return e.runWithPrompt(ctx, promptText, leadID)
+	if err := e.runWithPrompt(ctx, promptText, leadID); err != nil {
+		return err
+	}
+
+	if !e.toolDeps.WasSaveEstimationCalled() {
+		warn := "Estimator heeft geen schatting opgeslagen. Handmatige controle vereist."
+		_, _ = e.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &serviceID,
+			OrganizationID: tenantID,
+			ActorType:      "System",
+			ActorName:      "Estimator",
+			EventType:      "alert",
+			Title:          "Schatting ontbreekt",
+			Summary:        &warn,
+		})
+		log.Printf("estimator: SaveEstimation was not called for lead=%s service=%s", leadID, serviceID)
+	}
+
+	if !e.toolDeps.WasDraftQuoteCalled() {
+		log.Printf("estimator: DraftQuote was not called for lead=%s service=%s", leadID, serviceID)
+	}
+
+	return nil
 }
 
 func (e *Estimator) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {

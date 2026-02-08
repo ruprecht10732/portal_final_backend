@@ -145,7 +145,11 @@ type ToolDependencies struct {
 	existingQuoteID      *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
 	lastAnalysisMetadata map[string]any          // Populated by SaveAnalysis for use in stage_change events
 	saveAnalysisCalled   bool                    // Track if SaveAnalysis was called
+	saveEstimationCalled bool                    // Track if SaveEstimation was called
 	stageUpdateCalled    bool                    // Track if UpdatePipelineStage was called
+	lastStageUpdated     string                  // Track last pipeline stage written
+	draftQuoteCalled     bool                    // Track if DraftQuote was called
+	offerCreated         bool                    // Track if CreatePartnerOffer was called
 	lastDraftResult      *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
 }
 
@@ -218,11 +222,33 @@ func (d *ToolDependencies) MarkSaveAnalysisCalled() {
 	log.Printf("ToolDependencies: MarkSaveAnalysisCalled() - set to true")
 }
 
+// MarkSaveEstimationCalled marks that SaveEstimation tool was called.
+func (d *ToolDependencies) MarkSaveEstimationCalled() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.saveEstimationCalled = true
+}
+
 // MarkStageUpdateCalled marks that UpdatePipelineStage tool was called
-func (d *ToolDependencies) MarkStageUpdateCalled() {
+func (d *ToolDependencies) MarkStageUpdateCalled(stage string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.stageUpdateCalled = true
+	d.lastStageUpdated = stage
+}
+
+// MarkDraftQuoteCalled marks that DraftQuote tool was called.
+func (d *ToolDependencies) MarkDraftQuoteCalled() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.draftQuoteCalled = true
+}
+
+// MarkOfferCreated marks that CreatePartnerOffer tool was called.
+func (d *ToolDependencies) MarkOfferCreated() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.offerCreated = true
 }
 
 // WasSaveAnalysisCalled returns whether SaveAnalysis was called
@@ -232,11 +258,39 @@ func (d *ToolDependencies) WasSaveAnalysisCalled() bool {
 	return d.saveAnalysisCalled
 }
 
+// WasSaveEstimationCalled returns whether SaveEstimation was called.
+func (d *ToolDependencies) WasSaveEstimationCalled() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.saveEstimationCalled
+}
+
 // WasStageUpdateCalled returns whether UpdatePipelineStage was called
 func (d *ToolDependencies) WasStageUpdateCalled() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.stageUpdateCalled
+}
+
+// LastStageUpdated returns the last stage recorded by UpdatePipelineStage.
+func (d *ToolDependencies) LastStageUpdated() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastStageUpdated
+}
+
+// WasDraftQuoteCalled returns whether DraftQuote was called.
+func (d *ToolDependencies) WasDraftQuoteCalled() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.draftQuoteCalled
+}
+
+// WasOfferCreated returns whether CreatePartnerOffer was called.
+func (d *ToolDependencies) WasOfferCreated() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.offerCreated
 }
 
 // SetExistingQuoteID sets the existing quote ID for update-instead-of-create behavior.
@@ -259,7 +313,11 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	defer d.mu.Unlock()
 	log.Printf("ToolDependencies: ResetToolCallTracking() - resetting flags (was saveAnalysisCalled=%v)", d.saveAnalysisCalled)
 	d.saveAnalysisCalled = false
+	d.saveEstimationCalled = false
 	d.stageUpdateCalled = false
+	d.lastStageUpdated = ""
+	d.draftQuoteCalled = false
+	d.offerCreated = false
 	d.lastAnalysisMetadata = nil
 	d.lastDraftResult = nil
 	d.existingQuoteID = nil
@@ -545,6 +603,27 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 		return UpdateLeadServiceTypeOutput{Success: false, Message: "Failed to update service type"}, err
 	}
 
+	actorType, actorName := deps.GetActor()
+	reasonText := strings.TrimSpace(input.Reason)
+	if reasonText == "" {
+		reasonText = "Diensttype aangepast"
+	}
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &leadServiceID,
+		OrganizationID: tenantID,
+		ActorType:      actorType,
+		ActorName:      actorName,
+		EventType:      "service_type_change",
+		Title:          "Diensttype bijgewerkt",
+		Summary:        &reasonText,
+		Metadata: map[string]any{
+			"oldServiceType": leadService.ServiceType,
+			"newServiceType": serviceType,
+			"reason":         input.Reason,
+		},
+	})
+
 	log.Printf(
 		"gatekeeper UpdateLeadServiceType: leadId=%s serviceId=%s from=%s to=%s",
 		leadID,
@@ -807,6 +886,11 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: missingLeadContextMessage}, err
 	}
 
+	_, actorName := deps.GetActor()
+	if actorName == "Dispatcher" && input.Stage == "Partner_Matching" && !deps.WasOfferCreated() {
+		return UpdatePipelineStageOutput{Success: false, Message: "CreatePartnerOffer must be called before Partner_Matching"}, fmt.Errorf("offer not created")
+	}
+
 	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
 		return UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, err
@@ -826,7 +910,7 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		newStage:  input.Stage,
 		reason:    input.Reason,
 	})
-	deps.MarkStageUpdateCalled()
+	deps.MarkStageUpdateCalled(input.Stage)
 	return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
 }
 
@@ -851,6 +935,9 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 	stageMetadata := map[string]any{
 		"oldStage": p.oldStage,
 		"newStage": p.newStage,
+	}
+	if analysisMeta := deps.GetLastAnalysisMetadata(); analysisMeta != nil {
+		stageMetadata["analysis"] = analysisMeta
 	}
 
 	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
@@ -1027,6 +1114,8 @@ func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
 			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err
 		}
 
+		deps.MarkOfferCreated()
+
 		return CreatePartnerOfferOutput{
 			Success:     true,
 			Message:     "Offer created",
@@ -1076,6 +1165,8 @@ func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 		if err != nil {
 			return SaveEstimationOutput{Success: false, Message: "Failed to save estimation"}, err
 		}
+
+		deps.MarkSaveEstimationCalled()
 
 		return SaveEstimationOutput{Success: true, Message: "Estimation saved"}, nil
 	})
@@ -1643,6 +1734,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 
 	log.Printf("DraftQuote: created %s with %d items for lead %s", result.QuoteNumber, result.ItemCount, leadID)
 	deps.SetLastDraftResult(result)
+	deps.MarkDraftQuoteCalled()
 
 	return DraftQuoteOutput{
 		Success:     true,

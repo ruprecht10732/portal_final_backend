@@ -104,6 +104,7 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	d.toolDeps.SetTenantID(tenantID)
 	d.toolDeps.SetLeadContext(leadID, serviceID)
 	d.toolDeps.SetActor("AI", "Dispatcher")
+	d.toolDeps.ResetToolCallTracking()
 
 	lead, err := d.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
@@ -121,7 +122,18 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	}
 
 	promptText := buildDispatcherPrompt(lead, service, 25, excludedIDs)
-	return d.runWithPrompt(ctx, promptText, leadID)
+	if err := d.runWithPrompt(ctx, promptText, leadID); err != nil {
+		return err
+	}
+
+	if !d.toolDeps.WasStageUpdateCalled() {
+		fmt.Printf("Dispatcher warning: no stage update recorded for lead=%s service=%s\n", leadID, serviceID)
+	}
+	if d.toolDeps.LastStageUpdated() == "Partner_Matching" && !d.toolDeps.WasOfferCreated() {
+		fmt.Printf("Dispatcher warning: Partner_Matching without offer for lead=%s service=%s\n", leadID, serviceID)
+	}
+
+	return nil
 }
 
 func (d *Dispatcher) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {

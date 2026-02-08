@@ -29,6 +29,11 @@ type Orchestrator struct {
 	runsMu     sync.Mutex
 }
 
+const (
+	dispatcherAlreadyRunningMsg = "orchestrator: dispatcher already running for service, skipping"
+	dispatcherFailedMsg         = "orchestrator: dispatcher failed"
+)
+
 func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, eventBus events.Bus, sse *sse.Service, log *logger.Logger) *Orchestrator {
 	return &Orchestrator{
 		gatekeeper: gatekeeper,
@@ -62,6 +67,23 @@ func (o *Orchestrator) markComplete(agentName string, serviceID uuid.UUID) {
 
 	key := agentName + ":" + serviceID.String()
 	delete(o.activeRuns, key)
+}
+
+func (o *Orchestrator) recordDispatcherFailure(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) {
+	summary := "Partner matching mislukt. Probeer opnieuw."
+	_, _ = o.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      "System",
+		ActorName:      "Dispatcher",
+		EventType:      "alert",
+		Title:          "Partner matching mislukt",
+		Summary:        &summary,
+		Metadata: map[string]any{
+			"trigger": "dispatcher_run",
+		},
+	})
 }
 
 // OnDataChange handles human data changes and re-triggers agents when needed.
@@ -111,7 +133,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 	case "Ready_For_Partner":
 		// Idempotency check
 		if !o.markRunning("dispatcher", evt.LeadServiceID) {
-			o.log.Info("orchestrator: dispatcher already running for service, skipping", "serviceId", evt.LeadServiceID)
+			o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
 			return
 		}
 
@@ -119,7 +141,8 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 		go func() {
 			defer o.markComplete("dispatcher", evt.LeadServiceID)
 			if err := o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
-				o.log.Error("orchestrator: dispatcher failed", "error", err)
+				o.log.Error(dispatcherFailedMsg, "error", err)
+				o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
 			}
 		}()
 
@@ -171,6 +194,11 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 	}
 	serviceID := *evt.LeadServiceID
 
+	oldStage := ""
+	if svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, evt.OrganizationID); err == nil {
+		oldStage = svc.PipelineStage
+	}
+
 	summary := fmt.Sprintf("Offerte %s geaccepteerd. Starten met zoeken naar partner.", evt.QuoteNumber)
 	_, _ = o.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         evt.LeadID,
@@ -194,7 +222,7 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 		LeadID:        evt.LeadID,
 		LeadServiceID: serviceID,
 		TenantID:      evt.OrganizationID,
-		OldStage:      "Quote_Sent",
+		OldStage:      oldStage,
 		NewStage:      "Ready_For_Partner",
 	})
 }
@@ -203,14 +231,56 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.PartnerOfferRejected) {
 	_ = ctx
 	o.log.Info("Orchestrator: Partner rejected offer, re-triggering dispatcher", "leadId", evt.LeadID)
-	go o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
+	if !o.markRunning("dispatcher", evt.LeadServiceID) {
+		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
+		return
+	}
+	go func() {
+		defer o.markComplete("dispatcher", evt.LeadServiceID)
+		if err := o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
+			o.log.Error(dispatcherFailedMsg, "error", err)
+			o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
+		}
+	}()
 }
 
 // OnPartnerOfferExpired re-triggers the dispatcher when an offer expires.
 func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.PartnerOfferExpired) {
 	_ = ctx
 	o.log.Info("Orchestrator: Partner offer expired, re-triggering dispatcher", "leadId", evt.LeadID)
-	go o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
+	if !o.markRunning("dispatcher", evt.LeadServiceID) {
+		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
+		return
+	}
+	go func() {
+		defer o.markComplete("dispatcher", evt.LeadServiceID)
+		if err := o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
+			o.log.Error(dispatcherFailedMsg, "error", err)
+			o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
+		}
+	}()
+}
+
+// OnPartnerOfferAccepted advances pipeline once a partner accepts the offer.
+func (o *Orchestrator) OnPartnerOfferAccepted(ctx context.Context, evt events.PartnerOfferAccepted) {
+	oldStage := ""
+	if svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.OrganizationID); err == nil {
+		oldStage = svc.PipelineStage
+	}
+
+	if _, err := o.repo.UpdatePipelineStage(ctx, evt.LeadServiceID, evt.OrganizationID, "Partner_Assigned"); err != nil {
+		o.log.Error("orchestrator: failed to advance stage after partner acceptance", "error", err)
+		return
+	}
+
+	o.eventBus.Publish(ctx, events.PipelineStageChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        evt.LeadID,
+		LeadServiceID: evt.LeadServiceID,
+		TenantID:      evt.OrganizationID,
+		OldStage:      oldStage,
+		NewStage:      "Partner_Assigned",
+	})
 }
 
 func stringPtr(s string) *string {
