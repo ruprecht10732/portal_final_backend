@@ -42,6 +42,7 @@ type Repository interface {
 	repository.LeadServiceWriter
 	repository.MetricsReader
 	repository.TimelineEventStore
+	repository.ActivityFeedReader
 	UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateEnergyLabelParams) error
 	UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateLeadEnrichmentParams) error
 }
@@ -1097,4 +1098,89 @@ func toPtr(value string) *string {
 
 func toPtrString(value string) *string {
 	return toPtr(value)
+}
+
+// GetActivityFeed returns the most recent org-wide activity for the dashboard feed card.
+func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID) (transport.ActivityFeedResponse, error) {
+	const feedLimit = 50
+
+	entries, err := s.repo.ListRecentActivity(ctx, tenantID, feedLimit)
+	if err != nil {
+		return transport.ActivityFeedResponse{}, err
+	}
+
+	items := make([]transport.ActivityFeedItem, 0, len(entries))
+	for _, e := range entries {
+		item := transport.ActivityFeedItem{
+			ID:          e.ID.String(),
+			Type:        e.EventType,
+			Category:    e.Category,
+			Title:       mapActivityTitle(e.Category, e.EventType, e.Title),
+			Description: e.Description,
+			Timestamp:   e.CreatedAt.Format(time.RFC3339),
+		}
+
+		// Build navigation link based on category + entity ID
+		switch e.Category {
+		case "leads":
+			item.Link = []string{"/app/leads", e.EntityID.String()}
+		case "quotes":
+			item.Link = []string{"/app/offertes", e.EntityID.String()}
+		case "appointments":
+			item.Link = []string{"/app/appointments"}
+		case "ai":
+			item.Link = []string{"/app/leads", e.EntityID.String()}
+		}
+
+		items = append(items, item)
+	}
+
+	return transport.ActivityFeedResponse{Items: items}, nil
+}
+
+// mapActivityTitle translates raw event types into human-readable Dutch titles.
+func mapActivityTitle(category, eventType, rawTitle string) string {
+	switch eventType {
+	// Lead events
+	case "lead_created":
+		return "Nieuwe lead aangemaakt"
+	case "lead_updated", "status_change":
+		return "Lead bijgewerkt"
+	case "lead_assigned":
+		return "Lead toegewezen"
+	case "lead_viewed":
+		return "Lead bekeken"
+	case "note_added":
+		return "Notitie toegevoegd"
+	case "call_logged":
+		return "Gesprek gelogd"
+	// AI events
+	case "analysis_complete":
+		return "Gatekeeper analyse voltooid"
+	case "photo_analysis_complete":
+		return "Foto-analyse voltooid"
+	// Quote events (rawTitle already contains the human-readable message)
+	case "quote_sent", "quote_viewed", "quote_accepted", "quote_rejected",
+		"quote_item_toggled", "quote_annotated":
+		if rawTitle != "" {
+			return rawTitle
+		}
+		return "Offerte activiteit"
+	// Appointment events
+	case "appointment_created":
+		if rawTitle != "" {
+			return "Nieuwe afspraak: " + rawTitle
+		}
+		return "Nieuwe afspraak"
+	case "appointment_updated":
+		if rawTitle != "" {
+			return "Afspraak bijgewerkt: " + rawTitle
+		}
+		return "Afspraak bijgewerkt"
+	default:
+		if rawTitle != "" {
+			return rawTitle
+		}
+		return eventType
+	}
 }

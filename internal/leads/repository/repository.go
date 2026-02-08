@@ -1033,6 +1033,88 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 	return nil
 }
 
+// ListRecentActivity returns the most recent org-wide activity by unioning
+// lead activity, quote activity, and recent appointments.
+func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid.UUID, limit int) ([]ActivityFeedEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `
+		WITH unified AS (
+			-- Lead activity
+			SELECT
+				la.id,
+				CASE
+					WHEN la.action LIKE 'analysis%%' OR la.action LIKE 'photo_analysis%%' THEN 'ai'
+					ELSE 'leads'
+				END AS category,
+				la.action AS event_type,
+				la.action AS title,
+				'' AS description,
+				la.lead_id AS entity_id,
+				la.created_at
+			FROM RAC_lead_activity la
+			WHERE la.organization_id = $1
+
+			UNION ALL
+
+			-- Quote activity
+			SELECT
+				qa.id,
+				'quotes' AS category,
+				qa.event_type,
+				qa.message AS title,
+				'' AS description,
+				qa.quote_id AS entity_id,
+				qa.created_at
+			FROM RAC_quote_activity qa
+			WHERE qa.organization_id = $1
+
+			UNION ALL
+
+			-- Appointment activity (recent creates/updates)
+			SELECT
+				a.id,
+				'appointments' AS category,
+				CASE
+					WHEN a.created_at = a.updated_at THEN 'appointment_created'
+					ELSE 'appointment_updated'
+				END AS event_type,
+				a.title,
+				COALESCE(a.description, '') AS description,
+				a.id AS entity_id,
+				a.updated_at AS created_at
+			FROM RAC_appointments a
+			WHERE a.organization_id = $1
+		)
+		SELECT id, category, event_type, title, description, entity_id, created_at
+		FROM unified
+		ORDER BY created_at DESC
+		LIMIT $2
+	`
+
+	rows, err := r.pool.Query(ctx, query, organizationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]ActivityFeedEntry, 0, limit)
+	for rows.Next() {
+		var e ActivityFeedEntry
+		if err := rows.Scan(&e.ID, &e.Category, &e.EventType, &e.Title, &e.Description, &e.EntityID, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return entries, nil
+}
+
 func (r *Repository) BulkDelete(ctx context.Context, ids []uuid.UUID, organizationID uuid.UUID) (int, error) {
 	result, err := r.pool.Exec(ctx, "UPDATE RAC_leads SET deleted_at = now(), updated_at = now() WHERE id = ANY($1) AND organization_id = $2 AND deleted_at IS NULL", ids, organizationID)
 	if err != nil {

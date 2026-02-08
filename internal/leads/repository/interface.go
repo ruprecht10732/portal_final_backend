@@ -135,6 +135,22 @@ type PartnerMatcher interface {
 	FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int) ([]PartnerMatch, error)
 }
 
+// ActivityFeedEntry represents a unified activity entry from multiple sources.
+type ActivityFeedEntry struct {
+	ID          uuid.UUID
+	Category    string   // leads, quotes, appointments, ai
+	EventType   string
+	Title       string
+	Description string
+	EntityID    uuid.UUID
+	CreatedAt   time.Time
+}
+
+// ActivityFeedReader provides recent org-wide activity for the dashboard feed.
+type ActivityFeedReader interface {
+	ListRecentActivity(ctx context.Context, organizationID uuid.UUID, limit int) ([]ActivityFeedEntry, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -158,6 +174,7 @@ type LeadsRepository interface {
 	ServiceTypeContextReader
 	AppointmentStatsReader
 	PartnerMatcher
+	ActivityFeedReader
 }
 
 // Ensure Repository implements LeadsRepository

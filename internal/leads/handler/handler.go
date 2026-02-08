@@ -83,6 +83,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/metrics", h.GetMetrics)
 	rg.GET("/heatmap", h.GetHeatmap)
 	rg.GET("/action-items", h.GetActionItems)
+	rg.GET("/activity-feed", h.GetActivityFeed)
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/check-returning-customer", h.CheckReturningCustomer)
 	rg.GET("/:id", h.GetByID)
@@ -181,6 +182,24 @@ func (h *Handler) GetActionItems(c *gin.Context) {
 	}
 
 	result, err := h.mgmt.GetActionItems(c.Request.Context(), req.Page, req.PageSize, 7, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) GetActivityFeed(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.mgmt.GetActivityFeed(c.Request.Context(), tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

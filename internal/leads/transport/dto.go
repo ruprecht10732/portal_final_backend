@@ -300,6 +300,22 @@ type LogCallRequest struct {
 	Summary string `json:"summary" validate:"required,min=1,max=5000"`
 }
 
+// ActivityFeedItem is a single entry in the dashboard activity feed (historical).
+type ActivityFeedItem struct {
+	ID          string   `json:"id"`
+	Type        string   `json:"type"`
+	Category    string   `json:"category"`
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Timestamp   string   `json:"timestamp"`
+	Link        []string `json:"link,omitempty"`
+}
+
+// ActivityFeedResponse wraps the list returned by GET /leads/activity-feed.
+type ActivityFeedResponse struct {
+	Items []ActivityFeedItem `json:"items"`
+}
+
 // LogCallResponse is the response for a processed call log
 type LogCallResponse struct {
 	NoteCreated            bool       `json:"noteCreated"`
