@@ -48,6 +48,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:id/invites", h.ListInvites)
 	rg.POST("/:id/invites", h.CreateInvite)
 	rg.DELETE("/:id/invites/:inviteId", h.RevokeInvite)
+
+	// Offer routes (authenticated / admin)
+	rg.POST("/offers", h.CreateOffer)
+	rg.GET("/services/:serviceId/offers", h.ListServiceOffers)
+	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -464,6 +469,82 @@ func (h *Handler) RevokeInvite(c *gin.Context) {
 	}
 
 	result, err := h.svc.RevokeInvite(c.Request.Context(), tenantID, inviteID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) CreateOffer(c *gin.Context) {
+	var req transport.CreateOfferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.CreateOffer(c.Request.Context(), tenantID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+func (h *Handler) PreviewOffer(c *gin.Context) {
+	offerID, err := uuid.Parse(c.Param("offerId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetOfferPreview(c.Request.Context(), tenantID, offerID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) ListServiceOffers(c *gin.Context) {
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.ListOffersForService(c.Request.Context(), tenantID, serviceID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

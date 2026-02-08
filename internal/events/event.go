@@ -259,3 +259,54 @@ type QuoteRejected struct {
 }
 
 func (e QuoteRejected) EventName() string { return "quotes.quote.rejected" }
+
+// =============================================================================
+// Partner Offer Domain Events
+// =============================================================================
+
+// PartnerOfferCreated is published when a dispatcher generates a job offer for a vakman.
+type PartnerOfferCreated struct {
+	BaseEvent
+	OfferID          uuid.UUID `json:"offerId"`
+	OrganizationID   uuid.UUID `json:"organizationId"`
+	PartnerID        uuid.UUID `json:"partnerId"`
+	LeadServiceID    uuid.UUID `json:"leadServiceId"`
+	VakmanPriceCents int64     `json:"vakmanPriceCents"`
+	PublicToken      string    `json:"publicToken"`
+}
+
+func (e PartnerOfferCreated) EventName() string { return "partners.offer.created" }
+
+// PartnerOfferAccepted is published when a vakman accepts the job offer.
+type PartnerOfferAccepted struct {
+	BaseEvent
+	OfferID        uuid.UUID `json:"offerId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	PartnerID      uuid.UUID `json:"partnerId"`
+	LeadServiceID  uuid.UUID `json:"leadServiceId"`
+}
+
+func (e PartnerOfferAccepted) EventName() string { return "partners.offer.accepted" }
+
+// PartnerOfferRejected is published when a vakman declines the job offer.
+type PartnerOfferRejected struct {
+	BaseEvent
+	OfferID        uuid.UUID `json:"offerId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	PartnerID      uuid.UUID `json:"partnerId"`
+	LeadServiceID  uuid.UUID `json:"leadServiceId"`
+	Reason         string    `json:"reason,omitempty"`
+}
+
+func (e PartnerOfferRejected) EventName() string { return "partners.offer.rejected" }
+
+// PartnerOfferExpired is published when an offer expires without a response.
+type PartnerOfferExpired struct {
+	BaseEvent
+	OfferID        uuid.UUID `json:"offerId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	PartnerID      uuid.UUID `json:"partnerId"`
+	LeadServiceID  uuid.UUID `json:"leadServiceId"`
+}
+
+func (e PartnerOfferExpired) EventName() string { return "partners.offer.expired" }

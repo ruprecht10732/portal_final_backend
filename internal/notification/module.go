@@ -69,6 +69,7 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	bus.Subscribe(events.OrganizationInviteCreated{}.EventName(), m)
 	// Partners domain events
 	bus.Subscribe(events.PartnerInviteCreated{}.EventName(), m)
+	bus.Subscribe(events.PartnerOfferCreated{}.EventName(), m)
 
 	// Quote domain events
 	bus.Subscribe(events.QuoteSent{}.EventName(), m)
@@ -94,6 +95,8 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handleOrganizationInviteCreated(ctx, e)
 	case events.PartnerInviteCreated:
 		return m.handlePartnerInviteCreated(ctx, e)
+	case events.PartnerOfferCreated:
+		return m.handlePartnerOfferCreated(ctx, e)
 	// Quote events
 	case events.QuoteSent:
 		return m.handleQuoteSent(ctx, e)
@@ -181,6 +184,21 @@ func (m *Module) handlePartnerInviteCreated(ctx context.Context, e events.Partne
 		return err
 	}
 	m.log.Info("partner invite email sent", "organizationId", e.OrganizationID, "partnerId", e.PartnerID, "email", e.Email)
+	return nil
+}
+
+func (m *Module) handlePartnerOfferCreated(_ context.Context, e events.PartnerOfferCreated) error {
+	// Build the public acceptance URL for the vakman.
+	// The frontend uses this URL in a WhatsApp draft message (wa.me link).
+	acceptURL := m.buildURL("/partner-offer", e.PublicToken)
+	m.log.Info("partner offer created — acceptance URL generated",
+		"offerId", e.OfferID,
+		"organizationId", e.OrganizationID,
+		"partnerId", e.PartnerID,
+		"leadServiceId", e.LeadServiceID,
+		"vakmanPriceCents", e.VakmanPriceCents,
+		"acceptanceUrl", acceptURL,
+	)
 	return nil
 }
 

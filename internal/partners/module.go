@@ -15,8 +15,9 @@ import (
 
 // Module is the partners bounded context module implementing http.Module.
 type Module struct {
-	handler *handler.Handler
-	service *service.Service
+	handler       *handler.Handler
+	publicHandler *handler.PublicHandler
+	service       *service.Service
 }
 
 // NewModule creates and initializes the partners module with all its dependencies.
@@ -30,8 +31,9 @@ func NewModule(
 	repo := repository.New(pool)
 	svc := service.New(repo, eventBus, storageSvc, logoBucket)
 	h := handler.New(svc, val)
+	ph := handler.NewPublicHandler(svc, val)
 
-	return &Module{handler: h, service: svc}
+	return &Module{handler: h, publicHandler: ph, service: svc}
 }
 
 // Name returns the module identifier.
@@ -48,6 +50,10 @@ func (m *Module) Service() *service.Service {
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	partnersGroup := ctx.Protected.Group("/partners")
 	m.handler.RegisterRoutes(partnersGroup)
+
+	// Public routes for vakman-facing offer pages (no auth middleware)
+	publicGroup := ctx.V1.Group("/public/partner-offers")
+	m.publicHandler.RegisterRoutes(publicGroup)
 }
 
 // Compile-time check that Module implements http.Module
