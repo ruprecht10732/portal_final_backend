@@ -1180,13 +1180,25 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
 	}
 
-	log.Printf("SearchProductMaterials: fallback query=%q found %d products (threshold=%.2f, scores: %s)",
+	// Fallback results are scraped reference data — strip IDs so the AI
+	// treats them as ad-hoc line items (no catalogProductId, no auto-attachments).
+	stripProductIDs(products)
+
+	log.Printf("SearchProductMaterials: fallback query=%q found %d reference products (threshold=%.2f, scores: %s)",
 		query, len(products), scoreThreshold, formatScores(products))
 
 	return SearchProductMaterialsOutput{
 		Products: products,
-		Message:  fmt.Sprintf("Found %d matching products (min relevance %.0f%%)", len(products), scoreThreshold*100),
+		Message:  fmt.Sprintf("Found %d reference products (not from your catalog — use as ad-hoc line items without catalogProductId, min relevance %.0f%%)", len(products), scoreThreshold*100),
 	}, nil
+}
+
+// stripProductIDs clears the ID field on all products so the AI treats
+// them as ad-hoc items (no catalogProductId on the draft quote).
+func stripProductIDs(products []ProductResult) {
+	for i := range products {
+		products[i].ID = ""
+	}
 }
 
 // formatScores returns a compact summary of product scores for logging.
