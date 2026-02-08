@@ -67,13 +67,27 @@ type OrgSettingsReader interface {
 	GetQuoteDefaults(ctx context.Context, organizationID uuid.UUID) (paymentDays int, validDays int, err error)
 }
 
+// QuotePromptGenerator is a narrow interface for generating quotes from a user prompt.
+// Implemented by an adapter wrapping the leads module's QuoteGenerator agent.
+type QuotePromptGenerator interface {
+	GenerateFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string) (*GenerateQuoteResult, error)
+}
+
+// GenerateQuoteResult is the result of a prompt-based quote generation.
+type GenerateQuoteResult struct {
+	QuoteID     uuid.UUID
+	QuoteNumber string
+	ItemCount   int
+}
+
 // Service provides business logic for quotes
 type Service struct {
 	repo        *repository.Repository
-	timeline    TimelineWriter     // optional — nil means no timeline integration
-	eventBus    events.Bus         // optional — nil means no event publishing
-	contacts    QuoteContactReader // optional — nil means no email enrichment
-	orgSettings OrgSettingsReader  // optional — nil means use hardcoded defaults
+	timeline    TimelineWriter       // optional — nil means no timeline integration
+	eventBus    events.Bus           // optional — nil means no event publishing
+	contacts    QuoteContactReader   // optional — nil means no email enrichment
+	orgSettings OrgSettingsReader    // optional — nil means use hardcoded defaults
+	promptGen   QuotePromptGenerator // optional — nil means prompt generation is disabled
 }
 
 // New creates a new quotes service
@@ -99,6 +113,20 @@ func (s *Service) SetQuoteContactReader(cr QuoteContactReader) {
 // SetOrgSettingsReader injects the org settings reader (set after construction to break circular deps).
 func (s *Service) SetOrgSettingsReader(r OrgSettingsReader) {
 	s.orgSettings = r
+}
+
+// SetQuotePromptGenerator injects the prompt-based quote generator.
+func (s *Service) SetQuotePromptGenerator(g QuotePromptGenerator) {
+	s.promptGen = g
+}
+
+// GenerateQuote generates a quote from a user prompt using the AI agent pipeline.
+func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, serviceID uuid.UUID, prompt string) (*GenerateQuoteResult, error) {
+	if s.promptGen == nil {
+		return nil, apperr.Internal("quote generation is not configured")
+	}
+
+	return s.promptGen.GenerateFromPrompt(ctx, leadID, serviceID, tenantID, prompt)
 }
 
 // Create creates a new quote with line items, computing totals server-side
@@ -156,6 +184,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		TotalCents:          calc.TotalCents,
 		ValidUntil:          validUntil,
 		Notes:               nilIfEmpty(req.Notes),
+		FinancingDisclaimer: req.FinancingDisclaimer,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -225,6 +254,8 @@ type DraftQuoteParams struct {
 	CreatedByID    uuid.UUID
 	Notes          string
 	Items          []DraftQuoteItemParams
+	Attachments    []DraftQuoteAttachmentParams
+	URLs           []DraftQuoteURLParams
 }
 
 // DraftQuoteItemParams represents a single line item in an AI-drafted quote.
@@ -235,6 +266,21 @@ type DraftQuoteItemParams struct {
 	TaxRateBps       int
 	IsOptional       bool
 	CatalogProductID *uuid.UUID
+}
+
+// DraftQuoteAttachmentParams represents a catalog document to auto-attach to the quote.
+type DraftQuoteAttachmentParams struct {
+	Filename         string
+	FileKey          string
+	Source           string     // "catalog"
+	CatalogProductID *uuid.UUID // originating product
+}
+
+// DraftQuoteURLParams represents a catalog URL to auto-attach to the quote.
+type DraftQuoteURLParams struct {
+	Label            string
+	Href             string
+	CatalogProductID *uuid.UUID // originating product
 }
 
 // DraftQuoteResult is the minimal return value after successfully drafting a quote.
@@ -255,20 +301,7 @@ func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*Dra
 
 	pricingMode := "exclusive"
 	discountType := "percentage"
-
-	// Build transport-level items for server-side calculation.
-	calcItems := make([]transport.QuoteItemRequest, len(params.Items))
-	for i, it := range params.Items {
-		calcItems[i] = transport.QuoteItemRequest{
-			Description:      it.Description,
-			Quantity:         it.Quantity,
-			UnitPriceCents:   it.UnitPriceCents,
-			TaxRateBps:       it.TaxRateBps,
-			IsOptional:       it.IsOptional,
-			IsSelected:       true,
-			CatalogProductID: it.CatalogProductID,
-		}
-	}
+	calcItems := buildDraftCalcItems(params.Items)
 
 	calc := CalculateQuote(transport.QuoteCalculationRequest{
 		Items:       calcItems,
@@ -276,25 +309,9 @@ func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*Dra
 	})
 
 	now := time.Now()
-
-	// Apply org default for validity if available.
-	var validUntil *time.Time
-	if s.orgSettings != nil {
-		_, validDays, lookupErr := s.orgSettings.GetQuoteDefaults(ctx, params.OrganizationID)
-		if lookupErr == nil && validDays > 0 {
-			defaultExpiry := now.AddDate(0, 0, validDays)
-			validUntil = &defaultExpiry
-		}
-	}
-
+	validUntil := s.resolveValidUntil(ctx, params.OrganizationID, now)
+	createdBy := nilIfZeroUUID(params.CreatedByID)
 	serviceID := &params.LeadServiceID
-
-	// Map uuid.Nil to nil so the DB gets NULL instead of a zero UUID
-	// that would violate the foreign key constraint on created_by_id.
-	var createdBy *uuid.UUID
-	if params.CreatedByID != uuid.Nil {
-		createdBy = &params.CreatedByID
-	}
 
 	quote := repository.Quote{
 		ID:                  uuid.New(),
@@ -317,21 +334,58 @@ func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*Dra
 		UpdatedAt:           now,
 	}
 
-	items := make([]repository.QuoteItem, len(params.Items))
+	items, catalogCount := buildDraftRepoItems(quote.ID, params.OrganizationID, params.Items, now)
+
+	if err := s.repo.CreateWithItems(ctx, &quote, items); err != nil {
+		return nil, fmt.Errorf("draft quote: %w", err)
+	}
+
+	if err := s.saveDraftAssets(ctx, quote.ID, params); err != nil {
+		return nil, err
+	}
+
+	s.emitDraftTimelineEvent(ctx, quote, params.OrganizationID, len(items), catalogCount)
+
+	return &DraftQuoteResult{
+		QuoteID:     quote.ID,
+		QuoteNumber: quoteNumber,
+		ItemCount:   len(items),
+	}, nil
+}
+
+// buildDraftCalcItems converts DraftQuoteItemParams to transport items for calculation.
+func buildDraftCalcItems(items []DraftQuoteItemParams) []transport.QuoteItemRequest {
+	calcItems := make([]transport.QuoteItemRequest, len(items))
+	for i, it := range items {
+		calcItems[i] = transport.QuoteItemRequest{
+			Description:      it.Description,
+			Quantity:         it.Quantity,
+			UnitPriceCents:   it.UnitPriceCents,
+			TaxRateBps:       it.TaxRateBps,
+			IsOptional:       it.IsOptional,
+			IsSelected:       true,
+			CatalogProductID: it.CatalogProductID,
+		}
+	}
+	return calcItems
+}
+
+// buildDraftRepoItems creates repository QuoteItems and counts how many reference catalog products.
+func buildDraftRepoItems(quoteID, orgID uuid.UUID, items []DraftQuoteItemParams, now time.Time) ([]repository.QuoteItem, int) {
+	repoItems := make([]repository.QuoteItem, len(items))
 	catalogCount := 0
-	for i, it := range params.Items {
-		selected := true
-		items[i] = repository.QuoteItem{
+	for i, it := range items {
+		repoItems[i] = repository.QuoteItem{
 			ID:               uuid.New(),
-			QuoteID:          quote.ID,
-			OrganizationID:   params.OrganizationID,
+			QuoteID:          quoteID,
+			OrganizationID:   orgID,
 			Description:      it.Description,
 			Quantity:         it.Quantity,
 			QuantityNumeric:  parseQuantityNumber(it.Quantity),
 			UnitPriceCents:   it.UnitPriceCents,
 			TaxRateBps:       it.TaxRateBps,
 			IsOptional:       it.IsOptional,
-			IsSelected:       selected,
+			IsSelected:       true,
 			SortOrder:        i,
 			CatalogProductID: it.CatalogProductID,
 			CreatedAt:        now,
@@ -340,38 +394,85 @@ func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*Dra
 			catalogCount++
 		}
 	}
+	return repoItems, catalogCount
+}
 
-	if err := s.repo.CreateWithItems(ctx, &quote, items); err != nil {
-		return nil, fmt.Errorf("draft quote: %w", err)
+// resolveValidUntil returns the default expiry date based on org settings, or nil.
+func (s *Service) resolveValidUntil(ctx context.Context, orgID uuid.UUID, now time.Time) *time.Time {
+	if s.orgSettings == nil {
+		return nil
 	}
+	_, validDays, err := s.orgSettings.GetQuoteDefaults(ctx, orgID)
+	if err != nil || validDays <= 0 {
+		return nil
+	}
+	expiry := now.AddDate(0, 0, validDays)
+	return &expiry
+}
 
-	adHocCount := len(items) - catalogCount
+// nilIfZeroUUID returns nil for uuid.Nil so the DB gets NULL instead of a zero UUID.
+func nilIfZeroUUID(id uuid.UUID) *uuid.UUID {
+	if id == uuid.Nil {
+		return nil
+	}
+	return &id
+}
 
-	// Emit "quote_drafted" timeline event with metadata for the frontend action button.
+// saveDraftAssets persists auto-collected catalog attachments and URLs for a draft quote.
+func (s *Service) saveDraftAssets(ctx context.Context, quoteID uuid.UUID, params DraftQuoteParams) error {
+	if len(params.Attachments) > 0 {
+		attReqs := make([]transport.QuoteAttachmentRequest, len(params.Attachments))
+		for i, att := range params.Attachments {
+			attReqs[i] = transport.QuoteAttachmentRequest{
+				Filename:         att.Filename,
+				FileKey:          att.FileKey,
+				Source:           att.Source,
+				CatalogProductID: att.CatalogProductID,
+				Enabled:          true,
+				SortOrder:        i,
+			}
+		}
+		if err := s.saveAttachments(ctx, quoteID, params.OrganizationID, attReqs); err != nil {
+			return fmt.Errorf("draft quote save attachments: %w", err)
+		}
+	}
+	if len(params.URLs) > 0 {
+		urlReqs := make([]transport.QuoteURLRequest, len(params.URLs))
+		for i, u := range params.URLs {
+			urlReqs[i] = transport.QuoteURLRequest{
+				Label:            u.Label,
+				Href:             u.Href,
+				CatalogProductID: u.CatalogProductID,
+			}
+		}
+		if err := s.saveURLs(ctx, quoteID, params.OrganizationID, urlReqs); err != nil {
+			return fmt.Errorf("draft quote save urls: %w", err)
+		}
+	}
+	return nil
+}
+
+// emitDraftTimelineEvent records a "quote_drafted" timeline event.
+func (s *Service) emitDraftTimelineEvent(ctx context.Context, quote repository.Quote, orgID uuid.UUID, itemCount, catalogCount int) {
+	adHocCount := itemCount - catalogCount
 	s.emitTimelineEvent(ctx, TimelineEventParams{
 		LeadID:         quote.LeadID,
 		ServiceID:      quote.LeadServiceID,
-		OrganizationID: params.OrganizationID,
+		OrganizationID: orgID,
 		ActorType:      "AI",
 		ActorName:      "Estimation Agent",
 		EventType:      "quote_drafted",
 		Title:          fmt.Sprintf("Concept offerte %s opgesteld", quote.QuoteNumber),
-		Summary:        toPtr(fmt.Sprintf("Totaal: €%.2f (%d items, %d uit catalogus, %d geschat)", float64(quote.TotalCents)/100, len(items), catalogCount, adHocCount)),
+		Summary:        toPtr(fmt.Sprintf("Totaal: €%.2f (%d items, %d uit catalogus, %d geschat)", float64(quote.TotalCents)/100, itemCount, catalogCount, adHocCount)),
 		Metadata: map[string]any{
 			"quoteId":      quote.ID,
 			"quoteNumber":  quote.QuoteNumber,
-			"itemCount":    len(items),
+			"itemCount":    itemCount,
 			"catalogItems": catalogCount,
 			"adHocItems":   adHocCount,
 			"status":       quote.Status,
 		},
 	})
-
-	return &DraftQuoteResult{
-		QuoteID:     quote.ID,
-		QuoteNumber: quoteNumber,
-		ItemCount:   len(items),
-	}, nil
 }
 
 // applyQuoteUpdates applies optional field updates from the request to the quote.
@@ -390,6 +491,9 @@ func applyQuoteUpdates(quote *repository.Quote, req transport.UpdateQuoteRequest
 	}
 	if req.Notes != nil {
 		quote.Notes = req.Notes
+	}
+	if req.FinancingDisclaimer != nil {
+		quote.FinancingDisclaimer = *req.FinancingDisclaimer
 	}
 }
 
@@ -1276,6 +1380,7 @@ func (s *Service) buildPublicResponse(q *repository.Quote, items []repository.Qu
 		URLs:                s.loadURLResponsesNoOrg(q.ID),
 		AcceptedAt:          q.AcceptedAt,
 		RejectedAt:          q.RejectedAt,
+		FinancingDisclaimer: q.FinancingDisclaimer,
 		IsReadOnly:          readOnly,
 	}, nil
 }
@@ -1410,6 +1515,7 @@ func (s *Service) buildResponse(q *repository.Quote, items []repository.QuoteIte
 		AcceptedAt:                 q.AcceptedAt,
 		RejectedAt:                 q.RejectedAt,
 		PDFFileKey:                 q.PDFFileKey,
+		FinancingDisclaimer:        q.FinancingDisclaimer,
 		CreatedAt:                  q.CreatedAt,
 		UpdatedAt:                  q.UpdatedAt,
 	}

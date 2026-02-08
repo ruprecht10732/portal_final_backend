@@ -62,6 +62,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
+	rg.POST("/generate", h.Generate)
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
@@ -120,6 +121,42 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 
 	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// Generate handles POST /api/v1/quotes/generate
+// Generates a draft quote from a user prompt using the AI agent pipeline.
+func (h *Handler) Generate(c *gin.Context) {
+	var req transport.GenerateQuoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	// LeadServiceID is required for generation
+	if req.LeadServiceID == nil {
+		httpkit.Error(c, http.StatusBadRequest, "leadServiceId is required for quote generation", nil)
+		return
+	}
+
+	result, err := h.svc.GenerateQuote(c.Request.Context(), tenantID, req.LeadID, *req.LeadServiceID, req.Prompt)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, transport.GenerateQuoteResponse{
+		QuoteID:     result.QuoteID,
+		QuoteNumber: result.QuoteNumber,
+		ItemCount:   result.ItemCount,
+	})
 }
 
 // GetByID handles GET /api/v1/quotes/:id

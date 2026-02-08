@@ -56,9 +56,10 @@ type CreateQuoteRequest struct {
 	DiscountValue int64                    `json:"discountValue" validate:"min=0"`
 	ValidUntil    *time.Time               `json:"validUntil"`
 	Notes         string                   `json:"notes"`
-	Items         []QuoteItemRequest       `json:"items" validate:"required,dive"`
-	Attachments   []QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
-	URLs          []QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	Items                []QuoteItemRequest       `json:"items" validate:"required,dive"`
+	Attachments          []QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
+	URLs                 []QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	FinancingDisclaimer  bool                     `json:"financingDisclaimer"`
 }
 
 // UpdateQuoteRequest is the request body for updating a quote
@@ -68,9 +69,10 @@ type UpdateQuoteRequest struct {
 	DiscountValue *int64                    `json:"discountValue" validate:"omitempty,min=0"`
 	ValidUntil    *time.Time                `json:"validUntil"`
 	Notes         *string                   `json:"notes"`
-	Items         *[]QuoteItemRequest       `json:"items" validate:"omitempty,dive"`
-	Attachments   *[]QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
-	URLs          *[]QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	Items                *[]QuoteItemRequest       `json:"items" validate:"omitempty,dive"`
+	Attachments          *[]QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
+	URLs                 *[]QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	FinancingDisclaimer  *bool                     `json:"financingDisclaimer"`
 }
 
 // UpdateQuoteStatusRequest is the request body for updating a quote's status
@@ -202,6 +204,7 @@ type QuoteResponse struct {
 	AcceptedAt                 *time.Time                `json:"acceptedAt,omitempty"`
 	RejectedAt                 *time.Time                `json:"rejectedAt,omitempty"`
 	PDFFileKey                 *string                   `json:"pdfFileKey,omitempty"`
+	FinancingDisclaimer        bool                      `json:"financingDisclaimer"`
 	CreatedAt                  time.Time                 `json:"createdAt"`
 	UpdatedAt                  time.Time                 `json:"updatedAt"`
 }
@@ -301,6 +304,7 @@ type PublicQuoteResponse struct {
 	URLs                []QuoteURLResponse        `json:"urls"`
 	AcceptedAt          *time.Time                `json:"acceptedAt,omitempty"`
 	RejectedAt          *time.Time                `json:"rejectedAt,omitempty"`
+	FinancingDisclaimer bool                      `json:"financingDisclaimer"`
 	IsReadOnly          bool                      `json:"isReadOnly,omitempty"`
 }
 
@@ -332,6 +336,20 @@ type AcceptQuoteRequest struct {
 // RejectQuoteRequest is the request body for rejecting a quote.
 type RejectQuoteRequest struct {
 	Reason string `json:"reason" validate:"max=2000"`
+}
+
+// GenerateQuoteRequest is the request body for AI-generated quote creation.
+type GenerateQuoteRequest struct {
+	LeadID        uuid.UUID  `json:"leadId" validate:"required"`
+	LeadServiceID *uuid.UUID `json:"leadServiceId"`
+	Prompt        string     `json:"prompt" validate:"required,min=5,max=2000"`
+}
+
+// GenerateQuoteResponse is the response for AI-generated quote creation.
+type GenerateQuoteResponse struct {
+	QuoteID     uuid.UUID `json:"quoteId"`
+	QuoteNumber string    `json:"quoteNumber"`
+	ItemCount   int       `json:"itemCount"`
 }
 
 // QuoteActivityResponse is the response for a single activity log entry.

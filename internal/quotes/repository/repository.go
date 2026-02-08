@@ -56,6 +56,7 @@ type Quote struct {
 	SignatureData              *string    `db:"signature_data"`
 	SignatureIP                *string    `db:"signature_ip"`
 	PDFFileKey                 *string    `db:"pdf_file_key"`
+	FinancingDisclaimer        bool       `db:"financing_disclaimer"`
 	CreatedAt                  time.Time  `db:"created_at"`
 	UpdatedAt                  time.Time  `db:"updated_at"`
 }
@@ -186,15 +187,15 @@ func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []
 			id, organization_id, lead_id, lead_service_id, created_by_id, quote_number, status,
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, created_at, updated_at,
+			valid_until, notes, financing_disclaimer, created_at, updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`
 
 	if _, err := tx.Exec(ctx, quoteQuery,
 		quote.ID, quote.OrganizationID, quote.LeadID, quote.LeadServiceID, quote.CreatedByID,
 		quote.QuoteNumber, quote.Status, quote.PricingMode, quote.DiscountType, quote.DiscountValue,
 		quote.SubtotalCents, quote.DiscountAmountCents, quote.TaxTotalCents, quote.TotalCents,
-		quote.ValidUntil, quote.Notes, quote.CreatedAt, quote.UpdatedAt,
+		quote.ValidUntil, quote.Notes, quote.FinancingDisclaimer, quote.CreatedAt, quote.UpdatedAt,
 		quote.PublicToken, quote.PublicTokenExpAt, quote.PreviewToken, quote.PreviewTokenExpAt,
 	); err != nil {
 		return fmt.Errorf("failed to insert quote: %w", err)
@@ -219,13 +220,13 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 		UPDATE RAC_quotes SET
 			pricing_mode = $2, discount_type = $3, discount_value = $4,
 			subtotal_cents = $5, discount_amount_cents = $6, tax_total_cents = $7, total_cents = $8,
-			valid_until = $9, notes = $10, updated_at = $11
-		WHERE id = $1 AND organization_id = $12`
+			valid_until = $9, notes = $10, financing_disclaimer = $11, updated_at = $12
+		WHERE id = $1 AND organization_id = $13`
 
 	result, err := tx.Exec(ctx, updateQuery,
 		quote.ID, quote.PricingMode, quote.DiscountType, quote.DiscountValue,
 		quote.SubtotalCents, quote.DiscountAmountCents, quote.TaxTotalCents, quote.TotalCents,
-		quote.ValidUntil, quote.Notes, quote.UpdatedAt, quote.OrganizationID,
+		quote.ValidUntil, quote.Notes, quote.FinancingDisclaimer, quote.UpdatedAt, quote.OrganizationID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update quote: %w", err)
@@ -278,7 +279,8 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 			valid_until, notes, q.created_at, q.updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
 			viewed_at, accepted_at, rejected_at,
-			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
+			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
+			q.financing_disclaimer
 		FROM RAC_quotes q
 		LEFT JOIN RAC_users u ON u.id = q.created_by_id
 		WHERE q.id = $1 AND q.organization_id = $2`
@@ -293,6 +295,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
 		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
 		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
+		&q.FinancingDisclaimer,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -433,7 +436,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 			q.valid_until, q.notes, q.created_at, q.updated_at,
 			q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
 			q.viewed_at, q.accepted_at, q.rejected_at,
-			q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key
+			q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
+			q.financing_disclaimer
 		` + baseQuery + `
 		ORDER BY
 			CASE WHEN $11 = 'quoteNumber' AND $12 = 'asc' THEN q.quote_number END ASC,
@@ -481,6 +485,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 			&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
 			&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
 			&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
+			&q.FinancingDisclaimer,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan quote: %w", err)
 		}
@@ -511,7 +516,8 @@ func (r *Repository) GetByPublicToken(ctx context.Context, token string) (*Quote
 			valid_until, notes, created_at, updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
 			viewed_at, accepted_at, rejected_at,
-			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key
+			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
+			financing_disclaimer
 		FROM RAC_quotes WHERE public_token = $1`
 
 	err := r.pool.QueryRow(ctx, query, token).Scan(
@@ -522,6 +528,7 @@ func (r *Repository) GetByPublicToken(ctx context.Context, token string) (*Quote
 		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
 		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
 		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
+		&q.FinancingDisclaimer,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -552,6 +559,7 @@ func (r *Repository) GetByToken(ctx context.Context, token string) (*Quote, Toke
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
 			viewed_at, accepted_at, rejected_at,
 			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
+			financing_disclaimer,
 			CASE WHEN public_token = $1 THEN 'public' ELSE 'preview' END AS token_kind
 		FROM RAC_quotes
 		WHERE public_token = $1 OR preview_token = $1`
@@ -564,6 +572,7 @@ func (r *Repository) GetByToken(ctx context.Context, token string) (*Quote, Toke
 		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
 		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
 		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
+		&q.FinancingDisclaimer,
 		&kind,
 	)
 	if err != nil {

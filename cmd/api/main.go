@@ -220,6 +220,10 @@ func main() {
 	quotesDrafter := adapters.NewQuotesDraftWriter(quotesModule.Service())
 	leadsModule.SetQuoteDrafter(quotesDrafter)
 
+	// Wire prompt-based quote generator: quotes → leads (for /quotes/generate endpoint)
+	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule)
+	quotesModule.Service().SetQuotePromptGenerator(quoteGenAdapter)
+
 	// ========================================================================
 	// HTTP Layer
 	// ========================================================================

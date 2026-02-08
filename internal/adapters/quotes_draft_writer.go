@@ -34,6 +34,25 @@ func (a *QuotesDraftWriter) DraftQuote(ctx context.Context, params ports.DraftQu
 		}
 	}
 
+	svcAttachments := make([]quotesvc.DraftQuoteAttachmentParams, len(params.Attachments))
+	for i, att := range params.Attachments {
+		svcAttachments[i] = quotesvc.DraftQuoteAttachmentParams{
+			Filename:         att.Filename,
+			FileKey:          att.FileKey,
+			Source:           att.Source,
+			CatalogProductID: att.CatalogProductID,
+		}
+	}
+
+	svcURLs := make([]quotesvc.DraftQuoteURLParams, len(params.URLs))
+	for i, u := range params.URLs {
+		svcURLs[i] = quotesvc.DraftQuoteURLParams{
+			Label:            u.Label,
+			Href:             u.Href,
+			CatalogProductID: u.CatalogProductID,
+		}
+	}
+
 	result, err := a.svc.DraftQuote(ctx, quotesvc.DraftQuoteParams{
 		LeadID:         params.LeadID,
 		LeadServiceID:  params.LeadServiceID,
@@ -41,6 +60,8 @@ func (a *QuotesDraftWriter) DraftQuote(ctx context.Context, params ports.DraftQu
 		CreatedByID:    params.CreatedByID,
 		Notes:          params.Notes,
 		Items:          svcItems,
+		Attachments:    svcAttachments,
+		URLs:           svcURLs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("quotes draft adapter: %w", err)

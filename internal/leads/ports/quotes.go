@@ -20,6 +20,21 @@ type DraftQuoteItem struct {
 	CatalogProductID *uuid.UUID // nil for ad-hoc items
 }
 
+// DraftQuoteAttachment represents a catalog document to auto-attach to the AI-drafted quote.
+type DraftQuoteAttachment struct {
+	Filename         string
+	FileKey          string
+	Source           string     // "catalog"
+	CatalogProductID *uuid.UUID // originating product
+}
+
+// DraftQuoteURL represents a catalog URL to auto-attach to the AI-drafted quote.
+type DraftQuoteURL struct {
+	Label            string
+	Href             string
+	CatalogProductID *uuid.UUID // originating product
+}
+
 // DraftQuoteParams contains everything the leads agent needs to create a draft quote.
 type DraftQuoteParams struct {
 	LeadID         uuid.UUID
@@ -28,6 +43,8 @@ type DraftQuoteParams struct {
 	CreatedByID    uuid.UUID // system/agent user ID
 	Notes          string
 	Items          []DraftQuoteItem
+	Attachments    []DraftQuoteAttachment
+	URLs           []DraftQuoteURL
 }
 
 // DraftQuoteResult is the minimal response the leads domain needs after a quote
