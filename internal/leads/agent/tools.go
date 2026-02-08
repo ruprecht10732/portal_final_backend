@@ -1267,11 +1267,17 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 	if price, ok := payload["price"].(float64); ok {
 		product.PriceEuros = price
 	}
+
+	// Unit: prefer catalog-style unit_label, then unit, then parse from price_raw.
 	if unitLabel, ok := payload["unit_label"].(string); ok {
 		product.Unit = unitLabel
 	} else if unit, ok := payload["unit"].(string); ok {
 		product.Unit = unit
 	}
+	if product.Unit == "" {
+		product.Unit = parseUnitFromPriceRaw(payload)
+	}
+
 	if laborTime, ok := payload["labor_time_text"].(string); ok {
 		product.LaborTime = strings.TrimSpace(laborTime)
 	}
@@ -1280,8 +1286,62 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 			product.PriceEuros = unitPrice
 		}
 	}
+
+	// Fallback-specific fields: category, source URL, brand, and specs.
+	if cat, ok := payload["category"].(string); ok {
+		product.Category = cat
+	}
+	if srcURL, ok := payload["source_url"].(string); ok {
+		product.SourceURL = srcURL
+	}
+	if brand, ok := payload["brand"].(string); ok && brand != "" {
+		if product.Description != "" {
+			product.Description = brand + " — " + product.Description
+		} else {
+			product.Description = brand
+		}
+	}
+	extractSpecsMaterial(&product, payload)
+
 	product.PriceCents = eurosToCents(product.PriceEuros)
 	return product
+}
+
+// parseUnitFromPriceRaw extracts a unit string from the scraped price_raw field.
+// e.g. "€1,21/m1" → "per m1", "€3,50/stuk" → "per stuk".
+func parseUnitFromPriceRaw(payload map[string]any) string {
+	raw, ok := payload["price_raw"].(string)
+	if !ok || raw == "" {
+		return ""
+	}
+	idx := strings.LastIndex(raw, "/")
+	if idx < 0 || idx >= len(raw)-1 {
+		return ""
+	}
+	unit := strings.TrimSpace(raw[idx+1:])
+	if unit == "" {
+		return ""
+	}
+	return "per " + unit
+}
+
+// extractSpecsMaterial reads specs.raw.Materiaal from the payload and populates
+// the product's Materials slice if it's empty.
+func extractSpecsMaterial(product *ProductResult, payload map[string]any) {
+	if len(product.Materials) > 0 {
+		return
+	}
+	specs, ok := payload["specs"].(map[string]any)
+	if !ok {
+		return
+	}
+	raw, ok := specs["raw"].(map[string]any)
+	if !ok {
+		return
+	}
+	if mat, ok := raw["Materiaal"].(string); ok && mat != "" {
+		product.Materials = []string{mat}
+	}
 }
 
 // eurosToCents converts a euro amount to integer cents, rounding to nearest.
@@ -1383,7 +1443,20 @@ Tips for effective queries:
 
 Each result includes a "score" field (0-1) indicating match quality.
 Products with score > 0.6 are strong matches. Products with score 0.35-0.6 are partial matches — verify relevance.
-Returns product names, descriptions, priceEuros (in euros, e.g. 7.93), priceCents (in euro-cents, e.g. 793 — use this directly as unitPriceCents in DraftQuote), units, vatRateBps, materials, and labor time when available.`,
+
+Result fields:
+- name: product name
+- description: product description (may include brand)
+- priceEuros: price in euros (e.g. 7.93 = EUR 7.93). Use for CalculateEstimate unitPrice.
+- priceCents: price in euro-cents (e.g. 793). Use this directly as unitPriceCents in DraftQuote.
+- unit: how the product is sold (e.g. "per m1", "per stuk", "per m2"). Use to compute correct quantities.
+- vatRateBps: VAT rate in basis points (2100 = 21%). Defaults to 2100 for reference products.
+- materials: included materials (e.g. ["Verzinkt staal"])
+- category: product category path (reference products only)
+- sourceUrl: reference URL (reference products only)
+- laborTime: estimated labor time text (if available)
+- score: similarity score (0-1)
+- id: catalog product UUID (only for catalog items — use as catalogProductId in DraftQuote)`,
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
 	})

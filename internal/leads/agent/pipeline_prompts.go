@@ -162,6 +162,7 @@ Instruction:
      - Always check the product score: items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
 3) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
 	Provide structured inputs (material items, quantities, labor hours range, hourly rate range, optional extra costs).
+	For each material item's unitPrice, use the product's "priceEuros" value (in euros, e.g. 7.93).
 	If catalog search results include a labor time, use it as the baseline for labor hours (adjust if the scope indicates otherwise).
 	IMPORTANT: Before calling CalculateEstimate, use Calculator for each individual quantity or price calculation.
 3a) Call DraftQuote to create a draft quote for the customer. For each item:
