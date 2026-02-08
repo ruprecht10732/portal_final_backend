@@ -148,43 +148,69 @@ func filterImageAttachments(attachments []repository.Attachment) []repository.At
 
 // runPhotoAnalysis performs the photo analysis in the background and sends SSE notification when done.
 func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID, userID uuid.UUID, attachments []repository.Attachment, contextInfo string) {
-	// Fetch service type for specialized analysis
+	serviceType, intakeRequirements := h.getServiceAnalysisContext(ctx, serviceID, tenantID)
+	images := h.loadImages(ctx, attachments)
+	if len(images) == 0 {
+		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, "Failed to load images for analysis", "no_valid_images")
+		return
+	}
+
+	result, err := h.analyzer.AnalyzePhotos(ctx, agent.PhotoAnalysisRequest{
+		LeadID:             leadID,
+		ServiceID:          serviceID,
+		TenantID:           tenantID,
+		Images:             images,
+		ContextInfo:        contextInfo,
+		ServiceType:        serviceType,
+		IntakeRequirements: intakeRequirements,
+	})
+	if err != nil {
+		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, "Photo analysis failed", err.Error())
+		return
+	}
+
+	result.PhotoCount = len(images)
+	h.persistPhotoAnalysis(ctx, leadID, serviceID, tenantID, result)
+	h.writePhotoAnalysisTimeline(ctx, leadID, serviceID, tenantID, result)
+	h.publishPhotoAnalysisSuccess(userID, leadID, serviceID, result)
+}
+
+func (h *PhotoAnalysisHandler) getServiceAnalysisContext(ctx context.Context, serviceID, tenantID uuid.UUID) (string, string) {
 	serviceType := ""
 	intakeRequirements := ""
 	svc, svcErr := h.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
-	if svcErr == nil {
-		serviceType = svc.ServiceType
+	if svcErr != nil {
+		return serviceType, intakeRequirements
+	}
+	serviceType = svc.ServiceType
 
-		// Fetch intake guidelines for this specific service type
-		serviceTypes, stErr := h.repo.ListActiveServiceTypes(ctx, tenantID)
-		if stErr == nil {
-			for _, st := range serviceTypes {
-				if st.Name == serviceType && st.IntakeGuidelines != nil {
-					intakeRequirements = *st.IntakeGuidelines
-					break
-				}
-			}
+	serviceTypes, stErr := h.repo.ListActiveServiceTypes(ctx, tenantID)
+	if stErr != nil {
+		return serviceType, intakeRequirements
+	}
+	for _, st := range serviceTypes {
+		if st.Name == serviceType && st.IntakeGuidelines != nil {
+			intakeRequirements = *st.IntakeGuidelines
+			break
 		}
 	}
 
-	// Load images from storage
+	return serviceType, intakeRequirements
+}
+
+func (h *PhotoAnalysisHandler) loadImages(ctx context.Context, attachments []repository.Attachment) []agent.ImageData {
 	images := make([]agent.ImageData, 0, len(attachments))
 	for _, att := range attachments {
 		data, err := h.storage.DownloadFile(ctx, h.bucket, att.FileKey)
 		if err != nil {
-			// Log error but continue with other images
 			continue
 		}
-		defer func() {
-			_ = data.Close()
-		}()
-
-		imgData, err := io.ReadAll(data)
-		if err != nil {
+		imgData, readErr := readAllAndClose(data)
+		if readErr != nil {
 			continue
 		}
 
-		mimeType := "image/jpeg" // default
+		mimeType := "image/jpeg"
 		if att.ContentType != nil {
 			mimeType = *att.ContentType
 		}
@@ -196,35 +222,27 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 		})
 	}
 
-	if len(images) == 0 {
-		// No valid images loaded
-		h.sse.Publish(userID, sse.Event{
-			Type:      sse.EventPhotoAnalysisComplete,
-			LeadID:    leadID,
-			ServiceID: serviceID,
-			Message:   "Failed to load images for analysis",
-			Data:      gin.H{"success": false, "error": "no_valid_images"},
-		})
-		return
-	}
+	return images
+}
 
-	// Run photo analysis
-	result, err := h.analyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, contextInfo, serviceType, intakeRequirements)
-	if err != nil {
-		h.sse.Publish(userID, sse.Event{
-			Type:      sse.EventPhotoAnalysisComplete,
-			LeadID:    leadID,
-			ServiceID: serviceID,
-			Message:   "Photo analysis failed",
-			Data:      gin.H{"success": false, "error": err.Error()},
-		})
-		return
-	}
+func readAllAndClose(data io.ReadCloser) ([]byte, error) {
+	defer func() {
+		_ = data.Close()
+	}()
+	return io.ReadAll(data)
+}
 
-	// Save to database
-	result.PhotoCount = len(images)
+func (h *PhotoAnalysisHandler) publishPhotoAnalysisFailure(userID, leadID, serviceID uuid.UUID, message, errCode string) {
+	h.sse.Publish(userID, sse.Event{
+		Type:      sse.EventPhotoAnalysisComplete,
+		LeadID:    leadID,
+		ServiceID: serviceID,
+		Message:   message,
+		Data:      gin.H{"success": false, "error": errCode},
+	})
+}
 
-	// Convert agent measurements to repository measurements
+func (h *PhotoAnalysisHandler) persistPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis) {
 	repoMeasurements := make([]repository.Measurement, 0, len(result.Measurements))
 	for _, m := range result.Measurements {
 		repoMeasurements = append(repoMeasurements, repository.Measurement{
@@ -258,12 +276,29 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 	if dbErr != nil {
 		log.Printf("warning: failed to persist photo analysis for lead %s service %s: %v", leadID, serviceID, dbErr)
 	}
+}
 
-	// Write timeline event
+func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis) {
 	summary := result.Summary
 	if len(result.Observations) > 0 && summary == "" {
 		summary = result.Observations[0]
 	}
+
+	metadata := buildPhotoAnalysisMetadata(result)
+	_, _ = h.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      "AI",
+		ActorName:      "Foto-analyse Agent",
+		EventType:      "photo_analysis_completed",
+		Title:          "Foto-analyse voltooid",
+		Summary:        &summary,
+		Metadata:       metadata,
+	})
+}
+
+func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis) map[string]any {
 	metadata := map[string]any{
 		"photoCount":      result.PhotoCount,
 		"scopeAssessment": result.ScopeAssessment,
@@ -292,19 +327,11 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 	if len(result.SuggestedSearchTerms) > 0 {
 		metadata["suggestedSearchTerms"] = result.SuggestedSearchTerms
 	}
-	_, _ = h.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-		LeadID:         leadID,
-		ServiceID:      &serviceID,
-		OrganizationID: tenantID,
-		ActorType:      "AI",
-		ActorName:      "Foto-analyse Agent",
-		EventType:      "photo_analysis_completed",
-		Title:          "Foto-analyse voltooid",
-		Summary:        &summary,
-		Metadata:       metadata,
-	})
 
-	// Send SSE notification
+	return metadata
+}
+
+func (h *PhotoAnalysisHandler) publishPhotoAnalysisSuccess(userID, leadID, serviceID uuid.UUID, result *agent.PhotoAnalysis) {
 	h.sse.Publish(userID, sse.Event{
 		Type:      sse.EventPhotoAnalysisComplete,
 		LeadID:    leadID,

@@ -168,26 +168,55 @@ func NewPhotoAnalyzer(apiKey string, repo repository.LeadsRepository) (*PhotoAna
 	return analyzer, nil
 }
 
-// AnalyzePhotos analyzes a set of photos for a lead service
-// images should be base64-encoded image data with MIME types
-// serviceType identifies the type of service (e.g., "Loodgieter", "Elektricien") for specialized analysis
-// intakeRequirements contains the hard requirements for this service type
-func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uuid.UUID, tenantID uuid.UUID, images []ImageData, contextInfo string, serviceType string, intakeRequirements string) (*PhotoAnalysis, error) {
+// AnalyzePhotos analyzes a set of photos for a lead service.
+func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, req PhotoAnalysisRequest) (*PhotoAnalysis, error) {
 	pa.runMu.Lock()
 	defer pa.runMu.Unlock()
 
-	if len(images) == 0 {
+	if len(req.Images) == 0 {
 		return nil, fmt.Errorf("no images provided")
 	}
 
-	pa.deps.SetTenantID(tenantID)
+	pa.deps.SetTenantID(req.TenantID)
 	pa.deps.ResetAccumulators() // Clear previous result and onsite flags
 
-	// Build multimodal content with images and text
-	parts := make([]*genai.Part, 0, len(images)+1)
+	userContent := buildUserContent(req)
+	userID, sessionID, err := pa.createSession(ctx, req.LeadID, req.ServiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer pa.cleanupSession(ctx, userID, sessionID)
 
-	// Add images first
-	for _, img := range images {
+	output, err := pa.runAnalysis(ctx, userID, sessionID, userContent)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("Photo analysis completed for lead %s service %s. Output: %s", req.LeadID, req.ServiceID, output)
+
+	result, err := pa.getOrRetryResult(ctx, userID, sessionID, output)
+	if err != nil {
+		return nil, err
+	}
+
+	pa.mergeOnsiteFlags(result)
+	return result, nil
+}
+
+// PhotoAnalysisRequest contains analysis parameters for photo analysis.
+// Images should be raw image data with MIME types.
+type PhotoAnalysisRequest struct {
+	LeadID             uuid.UUID
+	ServiceID          uuid.UUID
+	TenantID           uuid.UUID
+	Images             []ImageData
+	ContextInfo        string
+	ServiceType        string
+	IntakeRequirements string
+}
+
+func buildUserContent(req PhotoAnalysisRequest) *genai.Content {
+	parts := make([]*genai.Part, 0, len(req.Images)+1)
+	for _, img := range req.Images {
 		parts = append(parts, &genai.Part{
 			InlineData: &genai.Blob{
 				MIMEType: img.MIMEType,
@@ -196,16 +225,16 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uu
 		})
 	}
 
-	// Add text prompt with intake requirements
-	prompt := buildPhotoAnalysisPrompt(leadID, serviceID, len(images), contextInfo, serviceType, intakeRequirements)
+	prompt := buildPhotoAnalysisPrompt(req.LeadID, req.ServiceID, len(req.Images), req.ContextInfo, req.ServiceType, req.IntakeRequirements)
 	parts = append(parts, genai.NewPartFromText(prompt))
 
-	userContent := &genai.Content{
+	return &genai.Content{
 		Role:  "user",
 		Parts: parts,
 	}
+}
 
-	// Create session
+func (pa *PhotoAnalyzer) createSession(ctx context.Context, leadID, serviceID uuid.UUID) (string, string, error) {
 	userID := fmt.Sprintf("photo-analyzer-%s-%s", leadID, serviceID)
 	sessionID := uuid.New().String()
 
@@ -215,19 +244,23 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uu
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return "", "", fmt.Errorf("failed to create session: %w", err)
 	}
-	defer func() {
-		if deleteErr := pa.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   pa.appName,
-			UserID:    userID,
-			SessionID: sessionID,
-		}); deleteErr != nil {
-			log.Printf("warning: failed to delete session: %v", deleteErr)
-		}
-	}()
 
-	// Run analysis
+	return userID, sessionID, nil
+}
+
+func (pa *PhotoAnalyzer) cleanupSession(ctx context.Context, userID, sessionID string) {
+	if deleteErr := pa.sessionService.Delete(ctx, &session.DeleteRequest{
+		AppName:   pa.appName,
+		UserID:    userID,
+		SessionID: sessionID,
+	}); deleteErr != nil {
+		log.Printf("warning: failed to delete session: %v", deleteErr)
+	}
+}
+
+func (pa *PhotoAnalyzer) runAnalysis(ctx context.Context, userID, sessionID string, userContent *genai.Content) (string, error) {
 	var output string
 	runConfig := agent.RunConfig{
 		StreamingMode: agent.StreamingModeNone,
@@ -235,51 +268,73 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, leadID, serviceID uu
 
 	for event, err := range pa.runner.Run(ctx, userID, sessionID, userContent, runConfig) {
 		if err != nil {
-			return nil, fmt.Errorf("photo analysis failed: %w", err)
+			return "", fmt.Errorf("photo analysis failed: %w", err)
 		}
-		if event.Content != nil {
-			for _, part := range event.Content.Parts {
-				output += part.Text
-			}
-		}
+		output += collectContentText(event.Content)
 	}
 
-	log.Printf("Photo analysis completed for lead %s service %s. Output: %s", leadID, serviceID, output)
+	return output, nil
+}
 
-	// Get result from tool call
+func (pa *PhotoAnalyzer) getOrRetryResult(ctx context.Context, userID, sessionID string, output string) (*PhotoAnalysis, error) {
 	result := pa.deps.GetResult()
-	if result == nil {
-		// Try to force tool call
-		retryContent := &genai.Content{
-			Role: "user",
-			Parts: []*genai.Part{
-				genai.NewPartFromText("请选择一个工具（tool）来处理当前的问题。You MUST call the SavePhotoAnalysis tool now with your complete analysis."),
-			},
-		}
-
-		for event, err := range pa.runner.Run(ctx, userID, sessionID, retryContent, runConfig) {
-			if err != nil {
-				return nil, fmt.Errorf("photo analysis retry failed: %w", err)
-			}
-			if event.Content != nil {
-				for _, part := range event.Content.Parts {
-					output += part.Text
-				}
-			}
-		}
-
-		result = pa.deps.GetResult()
-		if result == nil {
-			return nil, fmt.Errorf("AI did not save photo analysis")
-		}
+	if result != nil {
+		return result, nil
 	}
 
-	// Merge accumulated on-site flags into result
-	if flags := pa.deps.GetOnsiteFlags(); len(flags) > 0 {
-		result.NeedsOnsiteMeasurement = append(result.NeedsOnsiteMeasurement, flags...)
+	retryOutput, err := pa.retryForResult(ctx, userID, sessionID, output)
+	if err != nil {
+		return nil, err
+	}
+	_ = retryOutput
+
+	result = pa.deps.GetResult()
+	if result == nil {
+		return nil, fmt.Errorf("AI did not save photo analysis")
 	}
 
 	return result, nil
+}
+
+func (pa *PhotoAnalyzer) retryForResult(ctx context.Context, userID, sessionID string, output string) (string, error) {
+	retryContent := &genai.Content{
+		Role: "user",
+		Parts: []*genai.Part{
+			genai.NewPartFromText("请选择一个工具（tool）来处理当前的问题。You MUST call the SavePhotoAnalysis tool now with your complete analysis."),
+		},
+	}
+
+	runConfig := agent.RunConfig{
+		StreamingMode: agent.StreamingModeNone,
+	}
+
+	for event, err := range pa.runner.Run(ctx, userID, sessionID, retryContent, runConfig) {
+		if err != nil {
+			return output, fmt.Errorf("photo analysis retry failed: %w", err)
+		}
+		output += collectContentText(event.Content)
+	}
+
+	return output, nil
+}
+
+func collectContentText(content *genai.Content) string {
+	if content == nil {
+		return ""
+	}
+
+	var output string
+	for _, part := range content.Parts {
+		output += part.Text
+	}
+
+	return output
+}
+
+func (pa *PhotoAnalyzer) mergeOnsiteFlags(result *PhotoAnalysis) {
+	if flags := pa.deps.GetOnsiteFlags(); len(flags) > 0 {
+		result.NeedsOnsiteMeasurement = append(result.NeedsOnsiteMeasurement, flags...)
+	}
 }
 
 // ImageData represents an image to analyze
