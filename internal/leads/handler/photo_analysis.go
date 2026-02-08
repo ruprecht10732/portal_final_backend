@@ -223,6 +223,36 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 		log.Printf("warning: failed to persist photo analysis for lead %s service %s: %v", leadID, serviceID, dbErr)
 	}
 
+	// Write timeline event
+	summary := result.Summary
+	if len(result.Observations) > 0 && summary == "" {
+		summary = result.Observations[0]
+	}
+	metadata := map[string]any{
+		"photoCount":      result.PhotoCount,
+		"scopeAssessment": result.ScopeAssessment,
+		"confidenceLevel": result.ConfidenceLevel,
+		"observations":    result.Observations,
+		"costIndicators":  result.CostIndicators,
+	}
+	if len(result.SafetyConcerns) > 0 {
+		metadata["safetyConcerns"] = result.SafetyConcerns
+	}
+	if len(result.AdditionalInfo) > 0 {
+		metadata["additionalInfo"] = result.AdditionalInfo
+	}
+	_, _ = h.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      "AI",
+		ActorName:      "Foto-analyse Agent",
+		EventType:      "photo_analysis_completed",
+		Title:          "Foto-analyse voltooid",
+		Summary:        &summary,
+		Metadata:       metadata,
+	})
+
 	// Send SSE notification
 	h.sse.Publish(userID, sse.Event{
 		Type:      sse.EventPhotoAnalysisComplete,
