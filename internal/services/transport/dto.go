@@ -6,7 +6,7 @@ import "github.com/google/uuid"
 type CreateServiceTypeRequest struct {
 	Name             string  `json:"name" validate:"required,min=1,max=100"`
 	Description      *string `json:"description,omitempty" validate:"omitempty,max=500"`
-	IntakeGuidelines *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=2000"`
+	IntakeGuidelines *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=10000"`
 	Icon             *string `json:"icon,omitempty" validate:"omitempty,max=50"`
 	Color            *string `json:"color,omitempty" validate:"omitempty,max=20"`
 	DisplayOrder     *int    `json:"displayOrder,omitempty" validate:"omitempty,min=0"`
@@ -16,7 +16,7 @@ type CreateServiceTypeRequest struct {
 type UpdateServiceTypeRequest struct {
 	Name             *string `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
 	Description      *string `json:"description,omitempty" validate:"omitempty,max=500"`
-	IntakeGuidelines *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=2000"`
+	IntakeGuidelines *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=10000"`
 	Icon             *string `json:"icon,omitempty" validate:"omitempty,max=50"`
 	Color            *string `json:"color,omitempty" validate:"omitempty,max=20"`
 	DisplayOrder     *int    `json:"displayOrder,omitempty" validate:"omitempty,min=0"`
