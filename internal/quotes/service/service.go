@@ -70,7 +70,7 @@ type OrgSettingsReader interface {
 // QuotePromptGenerator is a narrow interface for generating quotes from a user prompt.
 // Implemented by an adapter wrapping the leads module's QuoteGenerator agent.
 type QuotePromptGenerator interface {
-	GenerateFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string) (*GenerateQuoteResult, error)
+	GenerateFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*GenerateQuoteResult, error)
 }
 
 // GenerateQuoteResult is the result of a prompt-based quote generation.
@@ -121,12 +121,12 @@ func (s *Service) SetQuotePromptGenerator(g QuotePromptGenerator) {
 }
 
 // GenerateQuote generates a quote from a user prompt using the AI agent pipeline.
-func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, serviceID uuid.UUID, prompt string) (*GenerateQuoteResult, error) {
+func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*GenerateQuoteResult, error) {
 	if s.promptGen == nil {
 		return nil, apperr.Internal("quote generation is not configured")
 	}
 
-	return s.promptGen.GenerateFromPrompt(ctx, leadID, serviceID, tenantID, prompt)
+	return s.promptGen.GenerateFromPrompt(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID)
 }
 
 // Create creates a new quote with line items, computing totals server-side
@@ -248,6 +248,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 // This is a service-level DTO, separate from transport.CreateQuoteRequest,
 // because the AI agent does not go through the HTTP layer.
 type DraftQuoteParams struct {
+	QuoteID        *uuid.UUID // If set, update the existing quote instead of creating a new one
 	LeadID         uuid.UUID
 	LeadServiceID  uuid.UUID
 	OrganizationID uuid.UUID
@@ -291,9 +292,18 @@ type DraftQuoteResult struct {
 }
 
 // DraftQuote creates a new draft quote on behalf of the AI agent.
+// If params.QuoteID is set, it updates the existing quote instead of creating a new one.
 // It mirrors Create but uses the agent-level params, emits a "quote_drafted"
 // timeline event with metadata enabling the frontend to show a "View Draft Quote" card.
 func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*DraftQuoteResult, error) {
+	if params.QuoteID != nil {
+		return s.updateDraftQuote(ctx, params)
+	}
+	return s.createDraftQuote(ctx, params)
+}
+
+// createDraftQuote creates a brand-new draft quote.
+func (s *Service) createDraftQuote(ctx context.Context, params DraftQuoteParams) (*DraftQuoteResult, error) {
 	quoteNumber, err := s.repo.NextQuoteNumber(ctx, params.OrganizationID)
 	if err != nil {
 		return nil, fmt.Errorf("generate quote number: %w", err)
@@ -349,6 +359,47 @@ func (s *Service) DraftQuote(ctx context.Context, params DraftQuoteParams) (*Dra
 	return &DraftQuoteResult{
 		QuoteID:     quote.ID,
 		QuoteNumber: quoteNumber,
+		ItemCount:   len(items),
+	}, nil
+}
+
+// updateDraftQuote replaces items, notes, and assets on an existing draft quote.
+func (s *Service) updateDraftQuote(ctx context.Context, params DraftQuoteParams) (*DraftQuoteResult, error) {
+	quoteID := *params.QuoteID
+
+	quote, err := s.repo.GetByID(ctx, quoteID, params.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("update draft quote: load existing: %w", err)
+	}
+
+	// Recalculate totals from the new items.
+	calcItems := buildDraftCalcItems(params.Items)
+	calc := CalculateQuote(transport.QuoteCalculationRequest{
+		Items:       calcItems,
+		PricingMode: quote.PricingMode,
+	})
+
+	now := time.Now()
+	quote.SubtotalCents = calc.SubtotalCents
+	quote.DiscountAmountCents = calc.DiscountAmountCents
+	quote.TaxTotalCents = calc.VatTotalCents
+	quote.TotalCents = calc.TotalCents
+	quote.Notes = nilIfEmpty(params.Notes)
+	quote.UpdatedAt = now
+
+	items, _ := buildDraftRepoItems(quoteID, params.OrganizationID, params.Items, now)
+
+	if err := s.repo.UpdateWithItems(ctx, quote, items, true); err != nil {
+		return nil, fmt.Errorf("update draft quote: %w", err)
+	}
+
+	if err := s.saveDraftAssets(ctx, quoteID, params); err != nil {
+		return nil, err
+	}
+
+	return &DraftQuoteResult{
+		QuoteID:     quoteID,
+		QuoteNumber: quote.QuoteNumber,
 		ItemCount:   len(items),
 	}, nil
 }

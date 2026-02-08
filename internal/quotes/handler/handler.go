@@ -147,7 +147,7 @@ func (h *Handler) Generate(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.GenerateQuote(c.Request.Context(), tenantID, req.LeadID, *req.LeadServiceID, req.Prompt)
+	result, err := h.svc.GenerateQuote(c.Request.Context(), tenantID, req.LeadID, *req.LeadServiceID, req.Prompt, req.QuoteID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

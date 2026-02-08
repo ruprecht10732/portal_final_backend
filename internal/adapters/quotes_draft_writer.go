@@ -54,6 +54,7 @@ func (a *QuotesDraftWriter) DraftQuote(ctx context.Context, params ports.DraftQu
 	}
 
 	result, err := a.svc.DraftQuote(ctx, quotesvc.DraftQuoteParams{
+		QuoteID:        params.QuoteID,
 		LeadID:         params.LeadID,
 		LeadServiceID:  params.LeadServiceID,
 		OrganizationID: params.OrganizationID,

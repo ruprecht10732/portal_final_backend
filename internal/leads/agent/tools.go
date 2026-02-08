@@ -139,6 +139,7 @@ type ToolDependencies struct {
 	serviceID            *uuid.UUID
 	actorType            string
 	actorName            string
+	existingQuoteID      *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
 	lastAnalysisMetadata map[string]any          // Populated by SaveAnalysis for use in stage_change events
 	saveAnalysisCalled   bool                    // Track if SaveAnalysis was called
 	stageUpdateCalled    bool                    // Track if UpdatePipelineStage was called
@@ -235,6 +236,20 @@ func (d *ToolDependencies) WasStageUpdateCalled() bool {
 	return d.stageUpdateCalled
 }
 
+// SetExistingQuoteID sets the existing quote ID for update-instead-of-create behavior.
+func (d *ToolDependencies) SetExistingQuoteID(id *uuid.UUID) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.existingQuoteID = id
+}
+
+// GetExistingQuoteID returns the existing quote ID if set.
+func (d *ToolDependencies) GetExistingQuoteID() *uuid.UUID {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.existingQuoteID
+}
+
 // ResetToolCallTracking resets the tool call tracking flags
 func (d *ToolDependencies) ResetToolCallTracking() {
 	d.mu.Lock()
@@ -244,6 +259,7 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.stageUpdateCalled = false
 	d.lastAnalysisMetadata = nil
 	d.lastDraftResult = nil
+	d.existingQuoteID = nil
 }
 
 // SetLastDraftResult stores the last DraftQuoteResult for retrieval by callers.
@@ -1486,6 +1502,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 	portAttachments, portURLs := collectCatalogAssetsForDraft(ctx, deps, tenantID, portItems)
 
 	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
+		QuoteID:        deps.GetExistingQuoteID(),
 		LeadID:         leadID,
 		LeadServiceID:  serviceID,
 		OrganizationID: *tenantID,

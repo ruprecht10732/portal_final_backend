@@ -37,6 +37,7 @@ type DraftQuoteURL struct {
 
 // DraftQuoteParams contains everything the leads agent needs to create a draft quote.
 type DraftQuoteParams struct {
+	QuoteID        *uuid.UUID // If set, update the existing quote instead of creating a new one
 	LeadID         uuid.UUID
 	LeadServiceID  uuid.UUID
 	OrganizationID uuid.UUID

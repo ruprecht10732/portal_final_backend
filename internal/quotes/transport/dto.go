@@ -343,6 +343,7 @@ type GenerateQuoteRequest struct {
 	LeadID        uuid.UUID  `json:"leadId" validate:"required"`
 	LeadServiceID *uuid.UUID `json:"leadServiceId"`
 	Prompt        string     `json:"prompt" validate:"required,min=5,max=2000"`
+	QuoteID       *uuid.UUID `json:"quoteId"` // If set, update the existing quote instead of creating a new one
 }
 
 // GenerateQuoteResponse is the response for AI-generated quote creation.

@@ -362,8 +362,8 @@ func (m *Module) SetQuoteDrafter(qd ports.QuoteDrafter) {
 }
 
 // GenerateQuoteFromPrompt runs the QuoteGenerator agent with a user prompt.
-func (m *Module) GenerateQuoteFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string) (*agent.GenerateResult, error) {
-	return m.quoteGenerator.Generate(ctx, leadID, serviceID, tenantID, prompt)
+func (m *Module) GenerateQuoteFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*agent.GenerateResult, error) {
+	return m.quoteGenerator.Generate(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID)
 }
 
 // RegisterRoutes mounts RAC_leads routes on the provided router context.

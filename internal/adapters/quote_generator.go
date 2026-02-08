@@ -22,8 +22,8 @@ func NewQuoteGeneratorAdapter(m *leads.Module) *QuoteGeneratorAdapter {
 }
 
 // GenerateFromPrompt calls the leads module's QuoteGenerator agent and maps the result.
-func (a *QuoteGeneratorAdapter) GenerateFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string) (*quotesvc.GenerateQuoteResult, error) {
-	result, err := a.leadsModule.GenerateQuoteFromPrompt(ctx, leadID, serviceID, tenantID, prompt)
+func (a *QuoteGeneratorAdapter) GenerateFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*quotesvc.GenerateQuoteResult, error) {
+	result, err := a.leadsModule.GenerateQuoteFromPrompt(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID)
 	if err != nil {
 		return nil, fmt.Errorf("quote generation failed: %w", err)
 	}
