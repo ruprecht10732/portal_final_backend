@@ -78,6 +78,11 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 		return nil, fmt.Errorf("failed to build CalculateEstimate tool: %w", err)
 	}
 
+	calculatorTool, err := createCalculatorTool()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Calculator tool: %w", err)
+	}
+
 	// Build the tools list.
 	// DraftQuote is always registered because QuoteDrafter is injected after
 	// construction via SetQuoteDrafter (to break circular dependencies).
@@ -87,7 +92,7 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 		return nil, fmt.Errorf("failed to build DraftQuote tool: %w", err)
 	}
 
-	tools := []tool.Tool{calculateEstimateTool, saveEstimationTool, updateStageTool, draftQuoteTool}
+	tools := []tool.Tool{calculatorTool, calculateEstimateTool, saveEstimationTool, updateStageTool, draftQuoteTool}
 
 	// Add product search tool if configured
 	if deps.IsProductSearchEnabled() {

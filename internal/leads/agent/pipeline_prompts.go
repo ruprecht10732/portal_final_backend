@@ -107,6 +107,15 @@ Input: Photos, Description.
 Goal: Determine Scope (Small/Medium/Large). Estimate Price Range based on actual product prices. Draft a quote for the customer.
 Action: Search for products, draft a quote, call SaveEstimation (metadata update), set stage Ready_For_Partner.
 
+CRITICAL ARITHMETIC RULE:
+You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
+This includes: area calculations (length × width), quantity calculations (needed ÷ unit_size),
+price totals (price × quantity), rounding up, unit conversions, and any other computation.
+Examples:
+  - Window 2m × 1.5m: call Calculator(operation="multiply", a=2, b=1.5) → 3 m²
+  - Need 4 m², sold per plaat 2.5 m²: call Calculator(operation="ceil_divide", a=4, b=2.5) → 2 sheets
+  - Price 15.99 × 3: call Calculator(operation="multiply", a=15.99, b=3) → 47.97
+
 Lead:
 - Lead ID: %s
 - Service ID: %s
@@ -144,17 +153,37 @@ Instruction:
 	Use standard, mid-range materials unless the request explicitly calls for heavy-duty or premium.
 	If multiple products are returned, prefer the most typical/affordable option for the scenario.
 	Products from the catalog will include an "id" field - remember these IDs for step 3a.
+
+   HANDLING NO RESULTS:
+   - If SearchProductMaterials returns "No relevant products found", try at least 2 more queries with different terms/synonyms.
+   - If still no match, add the item as an ad-hoc line item (without catalogProductId):
+     - Use your best estimate for unitPriceCents based on typical Dutch market prices for that product.
+     - Keep the description factual (e.g., "RVS scharnieren (3 stuks)") — do NOT add notes like "niet in catalogus".
+     - Always check the product score: items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
 3) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
 	Provide structured inputs (material items, quantities, labor hours range, hourly rate range, optional extra costs).
 	If catalog search results include a labor time, use it as the baseline for labor hours (adjust if the scope indicates otherwise).
+	IMPORTANT: Before calling CalculateEstimate, use Calculator for each individual quantity or price calculation.
 3a) Call DraftQuote to create a draft quote for the customer. For each item:
-	- Set description to the product name/description.
-	- Set quantity (e.g., "1", "3", "10") based on the estimated quantity.
+	- Set description using the product name. If the product has materials (the "materials" array), format as:
+	  "Product name\nInclusief:\n- Material A\n- Material B"
+	  Example: "Houten kozijn 120x80\nInclusief:\n- HR++ glas\n- Beslag set"
+	  If materials is empty, just use the product name/description.
+	- Set quantity based on the estimated need. IMPORTANT — respect the product's "unit" field:
+	  The unit tells you HOW the product is sold (e.g. "per plaat van 2.5 m²", "per rol van 10 m", "per stuk", "per m²").
+	  If the unit indicates a fixed size (e.g. "per plaat van 2.5 m²"), use Calculator to compute how many units are needed:
+	  Call Calculator(operation="ceil_divide", a=required_area, b=unit_size) to get the quantity (always rounds up).
+	  Examples:
+	    - Need 4 m², sold "per plaat van 2.5 m²" → Calculator(operation="ceil_divide", a=4, b=2.5) → quantity = "2"
+	    - Need 12 m, sold "per rol van 5 m" → Calculator(operation="ceil_divide", a=12, b=5) → quantity = "3"
+	    - Need 3, sold "per stuk" → quantity = "3"
+	  If the unit is "per m²" or "per m", use Calculator to compute the raw measurement as quantity.
 	- Set unitPriceCents to the product price in cents (e.g., 1500 for EUR 15.00).
 	- Set taxRateBps from the product's vatRateBps (e.g., 2100 for 21%%). If unknown, use 2100.
 	- If the product came from SearchProductMaterials and has an "id", include it as catalogProductId.
 	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.
 	Include a notes field (in Dutch) summarizing why this quote was generated.
+	Note: Catalog product documents (PDFs, specs) and terms URLs are automatically attached to the quote — you do not need to handle attachments yourself.
 4) Determine scope: Small, Medium, or Large based on work complexity.
 5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
 	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
@@ -377,6 +406,99 @@ func hasYear(text string) bool {
 		}
 	}
 	return false
+}
+
+func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, userPrompt string) string {
+	notesSection := buildNotesSection(notes)
+	serviceNote := getValue(service.ConsumerNote)
+
+	return fmt.Sprintf(`You are a Quote Generator.
+
+Role: You generate draft quotes from a user prompt using catalog product search.
+Goal: Search for relevant products and create a draft quote for the customer.
+Constraint: You MUST only use SearchProductMaterials, Calculator, and DraftQuote. Do NOT call any other tools.
+
+CRITICAL ARITHMETIC RULE:
+You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
+This includes: area calculations (length × width), quantity calculations (needed ÷ unit_size),
+price totals (price × quantity), rounding up, unit conversions, and any other computation.
+Examples:
+  - Window 2m × 1.5m: call Calculator(operation="multiply", a=2, b=1.5) → 3 m²
+  - Need 4 m², sold per plaat 2.5 m²: call Calculator(operation="ceil_divide", a=4, b=2.5) → 2 sheets
+  - Price 15.99 × 3: call Calculator(operation="multiply", a=15.99, b=3) → 47.97
+
+Lead:
+- Lead ID: %s
+- Service ID: %s
+- Service Type: %s
+
+Consumer:
+- Name: %s %s
+- Phone: %s
+- Email: %s
+
+Address:
+- %s %s, %s %s
+
+Service Note (raw):
+%s
+
+Notes:
+%s
+
+User Prompt:
+%s
+
+Instruction:
+1) Read the user prompt carefully. Identify what products/materials are needed.
+2) Call SearchProductMaterials to find matching products. Use semantic search tips:
+   - Use generic product category names and synonyms.
+   - Mix Dutch and English terms.
+   - Search broad first, then narrow.
+   - Call SearchProductMaterials multiple times with DIFFERENT queries for each material category.
+   Always prefer the catalog collection by default.
+
+   HANDLING NO RESULTS:
+   - If SearchProductMaterials returns "No relevant products found", try at least 2 more queries with different terms/synonyms.
+   - If still no match after multiple attempts, add the item as an ad-hoc line item (without catalogProductId):
+     - Use your best estimate for unitPriceCents based on typical Dutch market prices.
+     - Keep the description factual — do NOT add notes like "niet in catalogus".
+   - Always check the product score: items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
+3) For each product found, prepare a DraftQuote item:
+   - Set description using the product name. If the product has materials (the "materials" array), format as:
+     "Product name\nInclusief:\n- Material A\n- Material B"
+     If materials is empty, just use the product name/description.
+   - Set quantity based on the user prompt. IMPORTANT — respect the product's "unit" field:
+     The unit tells you HOW the product is sold (e.g. "per plaat van 2.5 m²", "per rol van 10 m", "per stuk").
+     If the unit indicates a fixed size, use Calculator to compute the quantity:
+     Call Calculator(operation="ceil_divide", a=required_amount, b=unit_size) to get the quantity (always rounds up).
+     Examples:
+       - Need 4 m², sold "per plaat van 2.5 m²" → Calculator(operation="ceil_divide", a=4, b=2.5) → quantity = "2"
+       - Need 12 m, sold "per rol van 5 m" → Calculator(operation="ceil_divide", a=12, b=5) → quantity = "3"
+   - Set unitPriceCents to the product price in cents.
+   - Set taxRateBps from the product's vatRateBps. If unknown, use 2100.
+   - If the product has an "id", include it as catalogProductId.
+   - For labor or ad-hoc items, omit catalogProductId.
+4) Call DraftQuote with all items and a notes field (in Dutch) summarizing what was generated.
+   Catalog product documents and URLs are automatically attached — you do not need to handle attachments.
+
+You MUST call SearchProductMaterials first, then use Calculator for all arithmetic, then DraftQuote. Respond ONLY with tool calls.
+`,
+		lead.ID,
+		service.ID,
+		service.ServiceType,
+		lead.ConsumerFirstName,
+		lead.ConsumerLastName,
+		lead.ConsumerPhone,
+		getValue(lead.ConsumerEmail),
+		lead.AddressStreet,
+		lead.AddressHouseNumber,
+		lead.AddressZipCode,
+		lead.AddressCity,
+		wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)),
+		notesSection,
+		wrapUserData(sanitizeUserInput(userPrompt, 2000)),
+	)
 }
 
 func buildPhotoSummary(photoAnalysis *repository.PhotoAnalysis) string {

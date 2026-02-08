@@ -42,6 +42,7 @@ type Module struct {
 	orchestrator         *Orchestrator
 	photoAnalyzer        *agent.PhotoAnalyzer
 	callLogger           *agent.CallLogger
+	quoteGenerator       *agent.QuoteGenerator
 	sse                  *sse.Service
 	repo                 repository.LeadsRepository
 	storage              storage.StorageService
@@ -58,7 +59,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
-	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
+	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +108,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		orchestrator:         orchestrator,
 		photoAnalyzer:        photoAnalyzer,
 		callLogger:           callLogger,
+		quoteGenerator:       quoteGenerator,
 		sse:                  sseService,
 		repo:                 repo,
 		storage:              storageSvc,
@@ -116,22 +118,22 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	}, nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, *agent.QuoteGenerator, error) {
 	_ = storageSvc
 	_ = scorer
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	// Create embedding and qdrant clients if configured
@@ -171,15 +173,27 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogQdrantClient: catalogQdrantClient,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
-	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, nil
+	quoteGenerator, err := agent.NewQuoteGenerator(agent.QuoteGeneratorConfig{
+		APIKey:              cfg.MoonshotAPIKey,
+		Repo:                repo,
+		EventBus:            eventBus,
+		EmbeddingClient:     embeddingClient,
+		QdrantClient:        qdrantClient,
+		CatalogQdrantClient: catalogQdrantClient,
+	})
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+
+	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, nil
 }
 
 func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
@@ -337,12 +351,19 @@ func (m *Module) SetLeadScorer(scorer *scoring.Service) {
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetCatalogReader(cr ports.CatalogReader) {
 	m.estimator.SetCatalogReader(cr)
+	m.quoteGenerator.SetCatalogReader(cr)
 }
 
 // SetQuoteDrafter sets the quote drafter on the Estimator agent.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetQuoteDrafter(qd ports.QuoteDrafter) {
 	m.estimator.SetQuoteDrafter(qd)
+	m.quoteGenerator.SetQuoteDrafter(qd)
+}
+
+// GenerateQuoteFromPrompt runs the QuoteGenerator agent with a user prompt.
+func (m *Module) GenerateQuoteFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string) (*agent.GenerateResult, error) {
+	return m.quoteGenerator.Generate(ctx, leadID, serviceID, tenantID, prompt)
 }
 
 // RegisterRoutes mounts RAC_leads routes on the provided router context.

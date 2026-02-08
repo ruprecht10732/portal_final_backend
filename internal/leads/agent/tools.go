@@ -139,9 +139,10 @@ type ToolDependencies struct {
 	serviceID            *uuid.UUID
 	actorType            string
 	actorName            string
-	lastAnalysisMetadata map[string]any // Populated by SaveAnalysis for use in stage_change events
-	saveAnalysisCalled   bool           // Track if SaveAnalysis was called
-	stageUpdateCalled    bool           // Track if UpdatePipelineStage was called
+	lastAnalysisMetadata map[string]any          // Populated by SaveAnalysis for use in stage_change events
+	saveAnalysisCalled   bool                    // Track if SaveAnalysis was called
+	stageUpdateCalled    bool                    // Track if UpdatePipelineStage was called
+	lastDraftResult      *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
 }
 
 func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
@@ -242,6 +243,21 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.saveAnalysisCalled = false
 	d.stageUpdateCalled = false
 	d.lastAnalysisMetadata = nil
+	d.lastDraftResult = nil
+}
+
+// SetLastDraftResult stores the last DraftQuoteResult for retrieval by callers.
+func (d *ToolDependencies) SetLastDraftResult(result *ports.DraftQuoteResult) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastDraftResult = result
+}
+
+// GetLastDraftResult returns the last DraftQuoteResult (set by handleDraftQuote).
+func (d *ToolDependencies) GetLastDraftResult() *ports.DraftQuoteResult {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastDraftResult
 }
 
 // IsProductSearchEnabled returns true if both embedding and Qdrant clients are configured.
@@ -955,6 +971,82 @@ func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
+// handleCalculator evaluates a single arithmetic operation deterministically.
+// The LLM MUST call this for ANY math instead of doing it in its head.
+func handleCalculator(_ tool.Context, input CalculatorInput) (CalculatorOutput, error) {
+	var result float64
+	var expr string
+
+	switch strings.ToLower(strings.TrimSpace(input.Operation)) {
+	case "add":
+		result = input.A + input.B
+		expr = fmt.Sprintf("%g + %g = %g", input.A, input.B, result)
+	case "subtract":
+		result = input.A - input.B
+		expr = fmt.Sprintf("%g - %g = %g", input.A, input.B, result)
+	case "multiply":
+		result = input.A * input.B
+		expr = fmt.Sprintf("%g × %g = %g", input.A, input.B, result)
+	case "divide":
+		if input.B == 0 {
+			return CalculatorOutput{}, fmt.Errorf("division by zero")
+		}
+		result = input.A / input.B
+		expr = fmt.Sprintf("%g ÷ %g = %g", input.A, input.B, result)
+	case "ceil_divide":
+		if input.B == 0 {
+			return CalculatorOutput{}, fmt.Errorf("division by zero")
+		}
+		result = math.Ceil(input.A / input.B)
+		expr = fmt.Sprintf("⌈%g ÷ %g⌉ = %g", input.A, input.B, result)
+	case "ceil":
+		result = math.Ceil(input.A)
+		expr = fmt.Sprintf("⌈%g⌉ = %g", input.A, result)
+	case "floor":
+		result = math.Floor(input.A)
+		expr = fmt.Sprintf("⌊%g⌋ = %g", input.A, result)
+	case "round":
+		places := int(input.B)
+		if places < 0 {
+			places = 0
+		}
+		if places > 10 {
+			places = 10
+		}
+		factor := math.Pow(10, float64(places))
+		result = math.Round(input.A*factor) / factor
+		expr = fmt.Sprintf("round(%g, %d) = %g", input.A, places, result)
+	case "percentage":
+		result = input.A * input.B / 100
+		expr = fmt.Sprintf("%g × %g%% = %g", input.A, input.B, result)
+	default:
+		return CalculatorOutput{}, fmt.Errorf("unknown operation %q; use add, subtract, multiply, divide, ceil_divide, ceil, floor, round, percentage", input.Operation)
+	}
+
+	return CalculatorOutput{Result: result, Expression: expr}, nil
+}
+
+func createCalculatorTool() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name: "Calculator",
+		Description: `Performs exact arithmetic. You MUST use this for ANY calculation — never do math yourself.
+Supported operations:
+  "add"         → a + b
+  "subtract"    → a - b
+  "multiply"    → a × b
+  "divide"      → a ÷ b
+  "ceil_divide" → ⌈a ÷ b⌉  (divide then round UP — use for quantity-needed calculations)
+  "ceil"        → ⌈a⌉      (round a up to nearest integer)
+  "floor"       → ⌊a⌋      (round a down to nearest integer)
+  "round"       → round a to b decimal places
+  "percentage"  → a × b / 100  (e.g., tax amount)
+Examples:
+  Window area 2m × 1.5m: Calculator(operation="multiply", a=2, b=1.5) → 3
+  Sheets needed: 4 m² ÷ 2.5 m²/sheet, round up: Calculator(operation="ceil_divide", a=4, b=2.5) → 2
+  Price total: Calculator(operation="multiply", a=15.99, b=3) → 47.97`,
+	}, handleCalculator)
+}
+
 func createCalculateEstimateTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "CalculateEstimate",
@@ -999,20 +1091,60 @@ func clampNonNegative(value float64) float64 {
 	return value
 }
 
+// defaultSearchScoreThreshold is the minimum cosine similarity score for
+// BGE-M3 embeddings. Results below this are irrelevant noise.
+const defaultSearchScoreThreshold = 0.35
+
+// noMatchMessage builds the "no relevant products" message for a query.
+func noMatchMessage(query string) string {
+	return fmt.Sprintf("No relevant products found for query '%s'. Try different search terms (synonyms, broader/narrower terms, Dutch and English). If no match exists, you may add an ad-hoc item.", query)
+}
+
+// resolveSearchParams extracts and normalises the search parameters from input.
+func resolveSearchParams(input SearchProductMaterialsInput) (query string, limit int, useCatalog bool, scoreThreshold float64, err error) {
+	query = strings.TrimSpace(input.Query)
+	if query == "" {
+		return "", 0, false, 0, fmt.Errorf("empty query")
+	}
+	limit = normalizeLimit(input.Limit, 5, 20)
+	useCatalog = true
+	if input.UseCatalog != nil {
+		useCatalog = *input.UseCatalog
+	}
+	scoreThreshold = defaultSearchScoreThreshold
+	if input.MinScore != nil && *input.MinScore > 0 && *input.MinScore < 1 {
+		scoreThreshold = *input.MinScore
+	}
+	return query, limit, useCatalog, scoreThreshold, nil
+}
+
+// searchCatalogCollection searches the catalog Qdrant collection and hydrates results.
+// Returns nil products (not an error) when nothing relevant is found or the search fails.
+func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []float32, limit int, scoreThreshold float64, query string) []ProductResult {
+	results, err := deps.CatalogQdrantClient.SearchWithThreshold(ctx, vector, limit, scoreThreshold)
+	if err != nil {
+		log.Printf("SearchProductMaterials: catalog search failed: %v", err)
+		return nil
+	}
+	products := convertSearchResults(results)
+	if len(products) == 0 {
+		log.Printf("SearchProductMaterials: catalog query=%q found 0 products above threshold %.2f, falling back", query, scoreThreshold)
+		return nil
+	}
+	products = hydrateProductResults(ctx, deps, products)
+	log.Printf("SearchProductMaterials: catalog query=%q found %d products (threshold=%.2f, scores: %s)",
+		query, len(products), scoreThreshold, formatScores(products))
+	return products
+}
+
 func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 	if !deps.IsProductSearchEnabled() {
 		return SearchProductMaterialsOutput{Products: nil, Message: "Product search is not configured"}, nil
 	}
 
-	query := strings.TrimSpace(input.Query)
-	if query == "" {
-		return SearchProductMaterialsOutput{Products: nil, Message: "Query cannot be empty"}, fmt.Errorf("empty query")
-	}
-
-	limit := normalizeLimit(input.Limit, 5, 20)
-	useCatalog := true
-	if input.UseCatalog != nil {
-		useCatalog = *input.UseCatalog
+	query, limit, useCatalog, scoreThreshold, err := resolveSearchParams(input)
+	if err != nil {
+		return SearchProductMaterialsOutput{Products: nil, Message: "Query cannot be empty"}, err
 	}
 
 	vector, err := deps.EmbeddingClient.Embed(ctx, query)
@@ -1021,41 +1153,52 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to generate embedding for query"}, err
 	}
 
+	// Try catalog collection first.
 	if useCatalog && deps.CatalogQdrantClient != nil {
-		results, err := deps.CatalogQdrantClient.Search(ctx, vector, limit)
-		if err != nil {
-			log.Printf("SearchProductMaterials: catalog search failed: %v", err)
-		} else {
-			products := convertSearchResults(results)
-			if len(products) > 0 {
-				products = hydrateProductResults(ctx, deps, products)
-				log.Printf("SearchProductMaterials: catalog query=%q found %d products", query, len(products))
-				return SearchProductMaterialsOutput{
-					Products: products,
-					Message:  fmt.Sprintf("Found %d matching products from catalog", len(products)),
-				}, nil
-			}
-			log.Printf("SearchProductMaterials: catalog query=%q found 0 products, falling back", query)
+		if products := searchCatalogCollection(ctx, deps, vector, limit, scoreThreshold, query); len(products) > 0 {
+			return SearchProductMaterialsOutput{
+				Products: products,
+				Message:  fmt.Sprintf("Found %d matching products from catalog (min relevance %.0f%%)", len(products), scoreThreshold*100),
+			}, nil
 		}
 	}
 
+	// Fallback to general collection.
 	if deps.QdrantClient == nil {
-		return SearchProductMaterialsOutput{Products: nil, Message: "Fallback product search is not configured"}, nil
+		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
 	}
 
-	results, err := deps.QdrantClient.Search(ctx, vector, limit)
+	results, err := deps.QdrantClient.SearchWithThreshold(ctx, vector, limit, scoreThreshold)
 	if err != nil {
 		log.Printf("SearchProductMaterials: fallback search failed: %v", err)
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to search product catalog"}, err
 	}
 
 	products := convertSearchResults(results)
-	log.Printf("SearchProductMaterials: fallback query=%q found %d products", query, len(products))
+	if len(products) == 0 {
+		log.Printf("SearchProductMaterials: fallback query=%q found 0 products above threshold %.2f", query, scoreThreshold)
+		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
+	}
+
+	log.Printf("SearchProductMaterials: fallback query=%q found %d products (threshold=%.2f, scores: %s)",
+		query, len(products), scoreThreshold, formatScores(products))
 
 	return SearchProductMaterialsOutput{
 		Products: products,
-		Message:  fmt.Sprintf("Found %d matching products", len(products)),
+		Message:  fmt.Sprintf("Found %d matching products (min relevance %.0f%%)", len(products), scoreThreshold*100),
 	}, nil
+}
+
+// formatScores returns a compact summary of product scores for logging.
+func formatScores(products []ProductResult) string {
+	if len(products) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(products))
+	for _, p := range products {
+		parts = append(parts, fmt.Sprintf("%.3f", p.Score))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func normalizeLimit(limit, defaultVal, maxVal int) int {
@@ -1202,16 +1345,22 @@ func mergeOptionalString(dst *string, src string) {
 
 func createSearchProductMaterialsTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
-		Name:        "SearchProductMaterials",
+		Name: "SearchProductMaterials",
 		Description: `Searches the product catalog for materials and their prices via semantic (vector) search.
 The query is embedded into a vector, so use descriptive, varied language for best recall.
+Only products with a relevance score >= 35% are returned. If no results are returned, it means the
+catalog does not contain a matching product — try a different query or add an ad-hoc item.
+
 Tips for effective queries:
 - Use generic product category names (e.g. "scharnier deur" instead of just "RVS scharnieren").
 - Include synonyms and alternative terms (e.g. "deurhanger deurbeslag scharnier").
 - Mix Dutch and English terms if the catalog may contain either.
 - Search for broader categories first, then refine with specific queries.
 - Call this tool multiple times with different queries to cover all needed materials.
-Returns product names, descriptions, prices, units, and labor time when available.`,
+
+Each result includes a "score" field (0-1) indicating match quality.
+Products with score > 0.6 are strong matches. Products with score 0.35-0.6 are partial matches — verify relevance.
+Returns product names, descriptions, prices, units, VAT rate, materials, and labor time when available.`,
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
 	})
@@ -1237,9 +1386,40 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		return DraftQuoteOutput{Success: false, Message: "At least one item is required"}, fmt.Errorf("empty items")
 	}
 
-	// Convert tool items to port items.
-	portItems := make([]ports.DraftQuoteItem, len(input.Items))
-	for i, it := range input.Items {
+	portItems := convertDraftItems(input.Items)
+	portAttachments, portURLs := collectCatalogAssetsForDraft(ctx, deps, tenantID, portItems)
+
+	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
+		LeadID:         leadID,
+		LeadServiceID:  serviceID,
+		OrganizationID: *tenantID,
+		CreatedByID:    uuid.Nil,
+		Notes:          input.Notes,
+		Items:          portItems,
+		Attachments:    portAttachments,
+		URLs:           portURLs,
+	})
+	if err != nil {
+		log.Printf("DraftQuote: failed: %v", err)
+		return DraftQuoteOutput{Success: false, Message: fmt.Sprintf("Failed to draft quote: %v", err)}, err
+	}
+
+	log.Printf("DraftQuote: created %s with %d items for lead %s", result.QuoteNumber, result.ItemCount, leadID)
+	deps.SetLastDraftResult(result)
+
+	return DraftQuoteOutput{
+		Success:     true,
+		Message:     fmt.Sprintf("Draft quote %s created with %d items", result.QuoteNumber, result.ItemCount),
+		QuoteID:     result.QuoteID.String(),
+		QuoteNumber: result.QuoteNumber,
+		ItemCount:   result.ItemCount,
+	}, nil
+}
+
+// convertDraftItems converts tool-level DraftQuoteItems to port-level items.
+func convertDraftItems(items []DraftQuoteItem) []ports.DraftQuoteItem {
+	portItems := make([]ports.DraftQuoteItem, len(items))
+	for i, it := range items {
 		portItems[i] = ports.DraftQuoteItem{
 			Description:    it.Description,
 			Quantity:       it.Quantity,
@@ -1254,32 +1434,24 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 			}
 		}
 	}
+	return portItems
+}
 
-	// Use a zero UUID as the "AI agent" actor ID.
-	actorID := uuid.Nil
-
-	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
-		LeadID:         leadID,
-		LeadServiceID:  serviceID,
-		OrganizationID: *tenantID,
-		CreatedByID:    actorID,
-		Notes:          input.Notes,
-		Items:          portItems,
-	})
-	if err != nil {
-		log.Printf("DraftQuote: failed: %v", err)
-		return DraftQuoteOutput{Success: false, Message: fmt.Sprintf("Failed to draft quote: %v", err)}, err
+// collectCatalogAssetsForDraft auto-collects catalog product attachments and URLs.
+func collectCatalogAssetsForDraft(ctx context.Context, deps *ToolDependencies, tenantID *uuid.UUID, items []ports.DraftQuoteItem) ([]ports.DraftQuoteAttachment, []ports.DraftQuoteURL) {
+	if deps.CatalogReader == nil {
+		return nil, nil
 	}
-
-	log.Printf("DraftQuote: created %s with %d items for lead %s", result.QuoteNumber, result.ItemCount, leadID)
-
-	return DraftQuoteOutput{
-		Success:     true,
-		Message:     fmt.Sprintf("Draft quote %s created with %d items", result.QuoteNumber, result.ItemCount),
-		QuoteID:     result.QuoteID.String(),
-		QuoteNumber: result.QuoteNumber,
-		ItemCount:   result.ItemCount,
-	}, nil
+	catalogIDs := collectCatalogProductIDs(items)
+	if len(catalogIDs) == 0 {
+		return nil, nil
+	}
+	details, err := deps.CatalogReader.GetProductDetails(ctx, *tenantID, catalogIDs)
+	if err != nil {
+		log.Printf("DraftQuote: catalog details fetch failed (non-fatal): %v", err)
+		return nil, nil
+	}
+	return collectCatalogAssets(details)
 }
 
 func createDraftQuoteTool(deps *ToolDependencies) (tool.Tool, error) {
@@ -1293,4 +1465,60 @@ Ad-hoc items (not found in catalog) should omit catalogProductId.`,
 	}, func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
 		return handleDraftQuote(ctx, deps, input)
 	})
+}
+
+// collectCatalogProductIDs extracts unique, non-nil catalog product UUIDs from draft items.
+func collectCatalogProductIDs(items []ports.DraftQuoteItem) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(items))
+	ids := make([]uuid.UUID, 0, len(items))
+	for _, it := range items {
+		if it.CatalogProductID == nil {
+			continue
+		}
+		if _, dup := seen[*it.CatalogProductID]; dup {
+			continue
+		}
+		seen[*it.CatalogProductID] = struct{}{}
+		ids = append(ids, *it.CatalogProductID)
+	}
+	return ids
+}
+
+// collectCatalogAssets de-duplicates document attachments and URLs across all
+// catalog product details and returns them as port-level types.
+func collectCatalogAssets(details []ports.CatalogProductDetails) ([]ports.DraftQuoteAttachment, []ports.DraftQuoteURL) {
+	seenFileKeys := make(map[string]struct{})
+	seenHrefs := make(map[string]struct{})
+
+	var attachments []ports.DraftQuoteAttachment
+	var urls []ports.DraftQuoteURL
+
+	for _, d := range details {
+		pid := d.ID
+		for _, doc := range d.Documents {
+			if _, dup := seenFileKeys[doc.FileKey]; dup {
+				continue
+			}
+			seenFileKeys[doc.FileKey] = struct{}{}
+			attachments = append(attachments, ports.DraftQuoteAttachment{
+				Filename:         doc.Filename,
+				FileKey:          doc.FileKey,
+				Source:           "catalog",
+				CatalogProductID: &pid,
+			})
+		}
+		for _, u := range d.URLs {
+			if _, dup := seenHrefs[u.Href]; dup {
+				continue
+			}
+			seenHrefs[u.Href] = struct{}{}
+			urls = append(urls, ports.DraftQuoteURL{
+				Label:            u.Label,
+				Href:             u.Href,
+				CatalogProductID: &pid,
+			})
+		}
+	}
+
+	return attachments, urls
 }

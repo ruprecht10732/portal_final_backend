@@ -108,9 +108,10 @@ type SaveEstimationOutput struct {
 
 // SearchProductMaterialsInput searches the product catalog for matching materials.
 type SearchProductMaterialsInput struct {
-	Query      string `json:"query"`                // Natural language description of materials needed
-	Limit      int    `json:"limit"`                // Max number of results (default 5)
-	UseCatalog *bool  `json:"useCatalog,omitempty"` // Prefer catalog collection when true
+	Query      string   `json:"query"`                // Natural language description of materials needed
+	Limit      int      `json:"limit"`                // Max number of results (default 5)
+	UseCatalog *bool    `json:"useCatalog,omitempty"` // Prefer catalog collection when true
+	MinScore   *float64 `json:"minScore,omitempty"`   // Minimum similarity score (0-1, default 0.35)
 }
 
 // ProductResult represents a product found in the catalog.
@@ -130,6 +131,20 @@ type ProductResult struct {
 type SearchProductMaterialsOutput struct {
 	Products []ProductResult `json:"products"`
 	Message  string          `json:"message"`
+}
+
+// CalculatorInput is the input for the general-purpose Calculator tool.
+// The LLM MUST use this for ANY arithmetic to avoid mental-math errors.
+type CalculatorInput struct {
+	Operation string  `json:"operation"` // "add", "subtract", "multiply", "divide", "ceil_divide", "ceil", "floor", "round", "percentage"
+	A         float64 `json:"a"`         // First operand (always required)
+	B         float64 `json:"b"`         // Second operand (required for binary ops; for "round" = decimal places)
+}
+
+// CalculatorOutput returns the exact arithmetic result.
+type CalculatorOutput struct {
+	Result     float64 `json:"result"`     // The computed value
+	Expression string  `json:"expression"` // Human-readable expression, e.g. "2 × 1.5 = 3"
 }
 
 // CalculateEstimateInput performs deterministic totals for materials and labor.
