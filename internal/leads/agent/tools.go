@@ -1271,56 +1271,60 @@ func convertSearchResults(results []qdrant.SearchResult) []ProductResult {
 
 func extractProductFromPayload(payload map[string]any, score float64) ProductResult {
 	product := ProductResult{Score: score}
-	if id, ok := payload["id"].(string); ok {
-		product.ID = id
-	}
-	if name, ok := payload["name"].(string); ok {
-		product.Name = name
-	}
-	if desc, ok := payload["description"].(string); ok {
-		product.Description = desc
-	}
-	if price, ok := payload["price"].(float64); ok {
-		product.PriceEuros = price
-	}
+	product.ID = payloadStr(payload, "id")
+	product.Name = payloadStr(payload, "name")
+	product.Description = payloadStr(payload, "description")
+	product.PriceEuros = payloadFloat(payload, "price")
+	product.Unit = resolveUnit(payload)
+	product.LaborTime = strings.TrimSpace(payloadStr(payload, "labor_time_text"))
+	product.Category = payloadStr(payload, "category")
+	product.SourceURL = payloadStr(payload, "source_url")
 
-	// Unit: prefer catalog-style unit_label, then unit, then parse from price_raw.
-	if unitLabel, ok := payload["unit_label"].(string); ok {
-		product.Unit = unitLabel
-	} else if unit, ok := payload["unit"].(string); ok {
-		product.Unit = unit
-	}
-	if product.Unit == "" {
-		product.Unit = parseUnitFromPriceRaw(payload)
-	}
-
-	if laborTime, ok := payload["labor_time_text"].(string); ok {
-		product.LaborTime = strings.TrimSpace(laborTime)
-	}
 	if product.PriceEuros <= 0 {
-		if unitPrice, ok := payload["unit_price"].(float64); ok {
-			product.PriceEuros = unitPrice
-		}
+		product.PriceEuros = payloadFloat(payload, "unit_price")
 	}
 
-	// Fallback-specific fields: category, source URL, brand, and specs.
-	if cat, ok := payload["category"].(string); ok {
-		product.Category = cat
-	}
-	if srcURL, ok := payload["source_url"].(string); ok {
-		product.SourceURL = srcURL
-	}
-	if brand, ok := payload["brand"].(string); ok && brand != "" {
-		if product.Description != "" {
-			product.Description = brand + " — " + product.Description
-		} else {
-			product.Description = brand
-		}
-	}
+	applyBrandPrefix(&product, payloadStr(payload, "brand"))
 	extractSpecsMaterial(&product, payload)
 
 	product.PriceCents = eurosToCents(product.PriceEuros)
 	return product
+}
+
+// payloadStr safely extracts a string value from the payload map.
+func payloadStr(payload map[string]any, key string) string {
+	v, _ := payload[key].(string)
+	return v
+}
+
+// payloadFloat safely extracts a float64 value from the payload map.
+func payloadFloat(payload map[string]any, key string) float64 {
+	v, _ := payload[key].(float64)
+	return v
+}
+
+// resolveUnit determines the unit label from the payload, preferring
+// unit_label > unit > parsed from price_raw.
+func resolveUnit(payload map[string]any) string {
+	if u := payloadStr(payload, "unit_label"); u != "" {
+		return u
+	}
+	if u := payloadStr(payload, "unit"); u != "" {
+		return u
+	}
+	return parseUnitFromPriceRaw(payload)
+}
+
+// applyBrandPrefix prepends the brand to the product description if present.
+func applyBrandPrefix(product *ProductResult, brand string) {
+	if brand == "" {
+		return
+	}
+	if product.Description != "" {
+		product.Description = brand + " — " + product.Description
+	} else {
+		product.Description = brand
+	}
 }
 
 // parseUnitFromPriceRaw extracts a unit string from the scraped price_raw field.

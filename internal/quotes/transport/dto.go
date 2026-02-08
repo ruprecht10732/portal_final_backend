@@ -49,30 +49,30 @@ type QuoteURLRequest struct {
 
 // CreateQuoteRequest is the request body for creating a new quote
 type CreateQuoteRequest struct {
-	LeadID        uuid.UUID                `json:"leadId" validate:"required"`
-	LeadServiceID *uuid.UUID               `json:"leadServiceId"`
-	PricingMode   string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
-	DiscountType  string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
-	DiscountValue int64                    `json:"discountValue" validate:"min=0"`
-	ValidUntil    *time.Time               `json:"validUntil"`
-	Notes         string                   `json:"notes"`
-	Items                []QuoteItemRequest       `json:"items" validate:"required,dive"`
-	Attachments          []QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
-	URLs                 []QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
-	FinancingDisclaimer  bool                     `json:"financingDisclaimer"`
+	LeadID              uuid.UUID                `json:"leadId" validate:"required"`
+	LeadServiceID       *uuid.UUID               `json:"leadServiceId"`
+	PricingMode         string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
+	DiscountType        string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
+	DiscountValue       int64                    `json:"discountValue" validate:"min=0"`
+	ValidUntil          *time.Time               `json:"validUntil"`
+	Notes               string                   `json:"notes"`
+	Items               []QuoteItemRequest       `json:"items" validate:"required,dive"`
+	Attachments         []QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
+	URLs                []QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	FinancingDisclaimer bool                     `json:"financingDisclaimer"`
 }
 
 // UpdateQuoteRequest is the request body for updating a quote
 type UpdateQuoteRequest struct {
-	PricingMode   *string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
-	DiscountType  *string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
-	DiscountValue *int64                    `json:"discountValue" validate:"omitempty,min=0"`
-	ValidUntil    *time.Time                `json:"validUntil"`
-	Notes         *string                   `json:"notes"`
-	Items                *[]QuoteItemRequest       `json:"items" validate:"omitempty,dive"`
-	Attachments          *[]QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
-	URLs                 *[]QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
-	FinancingDisclaimer  *bool                     `json:"financingDisclaimer"`
+	PricingMode         *string                   `json:"pricingMode" validate:"omitempty,oneof=exclusive inclusive"`
+	DiscountType        *string                   `json:"discountType" validate:"omitempty,oneof=percentage fixed"`
+	DiscountValue       *int64                    `json:"discountValue" validate:"omitempty,min=0"`
+	ValidUntil          *time.Time                `json:"validUntil"`
+	Notes               *string                   `json:"notes"`
+	Items               *[]QuoteItemRequest       `json:"items" validate:"omitempty,dive"`
+	Attachments         *[]QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
+	URLs                *[]QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	FinancingDisclaimer *bool                     `json:"financingDisclaimer"`
 }
 
 // UpdateQuoteStatusRequest is the request body for updating a quote's status
