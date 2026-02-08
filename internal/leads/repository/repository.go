@@ -327,6 +327,25 @@ func (r *Repository) GetByPhoneOrEmail(ctx context.Context, phone string, email 
 	return &summary, services, nil
 }
 
+// GetLatestQuoteTotal returns the most recent quote total for a lead service.
+func (r *Repository) GetLatestQuoteTotal(ctx context.Context, serviceID, organizationID uuid.UUID) (int64, error) {
+	var total int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT total_cents
+		FROM RAC_quotes
+		WHERE lead_service_id = $1 AND organization_id = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, serviceID, organizationID).Scan(&total)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, apperr.NotFound("quote not found")
+	}
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 type UpdateLeadParams struct {
 	ConsumerFirstName  *string
 	ConsumerLastName   *string

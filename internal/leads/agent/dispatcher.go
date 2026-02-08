@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
 )
@@ -52,12 +53,17 @@ func NewDispatcher(apiKey string, repo repository.LeadsRepository, eventBus even
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
 
+	createOfferTool, err := createCreatePartnerOfferTool(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build CreatePartnerOffer tool: %w", err)
+	}
+
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Dispatcher",
 		Model:       kimi,
 		Description: "Fulfillment manager that finds partner matches and advances the pipeline.",
 		Instruction: "You are the Fulfillment Manager.",
-		Tools:       []tool.Tool{findPartnersTool, updateStageTool},
+		Tools:       []tool.Tool{findPartnersTool, createOfferTool, updateStageTool},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dispatcher agent: %w", err)
@@ -81,6 +87,13 @@ func NewDispatcher(apiKey string, repo repository.LeadsRepository, eventBus even
 		repo:           repo,
 		toolDeps:       deps,
 	}, nil
+}
+
+// SetOfferCreator injects the partner offer creator after module initialization.
+func (d *Dispatcher) SetOfferCreator(creator ports.PartnerOfferCreator) {
+	d.toolDeps.mu.Lock()
+	defer d.toolDeps.mu.Unlock()
+	d.toolDeps.OfferCreator = creator
 }
 
 // Run executes partner matching for a lead service.

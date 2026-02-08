@@ -27,6 +27,8 @@ const (
 	invalidLeadIDMessage        = "Invalid lead ID"
 	invalidLeadServiceIDMessage = "Invalid lead service ID"
 	missingTenantContextMessage = "Missing tenant context"
+	missingLeadContextMessage   = "Missing lead context"
+	missingLeadContextError     = "missing lead context"
 	leadNotFoundMessage         = "Lead not found"
 	leadServiceNotFoundMessage  = "Lead service not found"
 	invalidFieldFormat          = "invalid %s"
@@ -133,6 +135,7 @@ type ToolDependencies struct {
 	CatalogQdrantClient  *qdrant.Client
 	CatalogReader        ports.CatalogReader // optional: hydrate search results from DB
 	QuoteDrafter         ports.QuoteDrafter  // optional: draft quotes from agent
+	OfferCreator         ports.PartnerOfferCreator
 	mu                   sync.RWMutex
 	tenantID             *uuid.UUID
 	leadID               *uuid.UUID
@@ -300,7 +303,7 @@ func getTenantID(deps *ToolDependencies) (uuid.UUID, error) {
 func getLeadContext(deps *ToolDependencies) (uuid.UUID, uuid.UUID, error) {
 	leadID, serviceID, ok := deps.GetLeadContext()
 	if !ok {
-		return uuid.UUID{}, uuid.UUID{}, fmt.Errorf("missing lead context")
+		return uuid.UUID{}, uuid.UUID{}, fmt.Errorf(missingLeadContextError)
 	}
 	return leadID, serviceID, nil
 }
@@ -800,7 +803,7 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 
 	leadID, serviceID, err := getLeadContext(deps)
 	if err != nil {
-		return UpdatePipelineStageOutput{Success: false, Message: "Missing lead context"}, err
+		return UpdatePipelineStageOutput{Success: false, Message: missingLeadContextMessage}, err
 	}
 
 	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
@@ -942,6 +945,86 @@ func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
+func resolveOfferContext(deps *ToolDependencies, partnerIDRaw string, expirationHours int) (uuid.UUID, uuid.UUID, uuid.UUID, int, string, error) {
+	tenantID, err := getTenantID(deps)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, 0, missingTenantContextMessage, err
+	}
+
+	_, serviceID, err := getLeadContext(deps)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, 0, missingLeadContextMessage, err
+	}
+
+	partnerID, err := uuid.Parse(partnerIDRaw)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, 0, "Invalid partner ID", err
+	}
+
+	hours := expirationHours
+	if hours <= 0 {
+		hours = 48
+	}
+	if hours > 168 {
+		hours = 168
+	}
+
+	return tenantID, serviceID, partnerID, hours, "", nil
+}
+
+func resolveOfferPricing(ctx tool.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (string, int64, error) {
+	totalCents, err := deps.Repo.GetLatestQuoteTotal(ctx, serviceID, tenantID)
+	if err != nil {
+		return "", 0, err
+	}
+
+	pricingSource := "quote"
+	if totalCents <= 0 {
+		pricingSource = "estimate"
+	}
+
+	return pricingSource, totalCents, nil
+}
+
+func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "CreatePartnerOffer",
+		Description: "Creates a formal job offer for a specific partner. This generates the unique link they use to accept the job.",
+	}, func(ctx tool.Context, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
+		if deps.OfferCreator == nil {
+			return CreatePartnerOfferOutput{Success: false, Message: "Offer creation not configured"}, fmt.Errorf("offer creator not configured")
+		}
+
+		tenantID, serviceID, partnerID, hours, contextMessage, err := resolveOfferContext(deps, input.PartnerID, input.ExpirationHours)
+		if err != nil {
+			return CreatePartnerOfferOutput{Success: false, Message: contextMessage}, err
+		}
+
+		pricingSource, totalCents, err := resolveOfferPricing(ctx, deps, serviceID, tenantID)
+		if err != nil {
+			return CreatePartnerOfferOutput{Success: false, Message: "Quote not found for service"}, err
+		}
+
+		result, err := deps.OfferCreator.CreateOffer(ctx, tenantID, ports.CreateOfferParams{
+			PartnerID:          partnerID,
+			LeadServiceID:      serviceID,
+			PricingSource:      pricingSource,
+			CustomerPriceCents: totalCents,
+			ExpiresInHours:     hours,
+		})
+		if err != nil {
+			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err
+		}
+
+		return CreatePartnerOfferOutput{
+			Success:     true,
+			Message:     "Offer created",
+			OfferID:     result.OfferID.String(),
+			PublicToken: result.PublicToken,
+		}, nil
+	})
+}
+
 func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveEstimation",
@@ -954,7 +1037,7 @@ func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 
 		leadID, serviceID, err := getLeadContext(deps)
 		if err != nil {
-			return SaveEstimationOutput{Success: false, Message: "Missing lead context"}, err
+			return SaveEstimationOutput{Success: false, Message: missingLeadContextMessage}, err
 		}
 
 		actorType, actorName := deps.GetActor()
@@ -1507,7 +1590,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 
 	leadID, serviceID, ok := deps.GetLeadContext()
 	if !ok {
-		return DraftQuoteOutput{Success: false, Message: "Lead context not available"}, fmt.Errorf("missing lead context")
+		return DraftQuoteOutput{Success: false, Message: "Lead context not available"}, fmt.Errorf(missingLeadContextError)
 	}
 
 	if len(input.Items) == 0 {

@@ -361,6 +361,12 @@ func (m *Module) SetQuoteDrafter(qd ports.QuoteDrafter) {
 	m.quoteGenerator.SetQuoteDrafter(qd)
 }
 
+// SetPartnerOfferCreator sets the partner offer creator on the Dispatcher agent.
+// This is called after module initialization to break circular dependencies.
+func (m *Module) SetPartnerOfferCreator(poc ports.PartnerOfferCreator) {
+	m.dispatcher.SetOfferCreator(poc)
+}
+
 // GenerateQuoteFromPrompt runs the QuoteGenerator agent with a user prompt.
 func (m *Module) GenerateQuoteFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*agent.GenerateResult, error) {
 	return m.quoteGenerator.Generate(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID)

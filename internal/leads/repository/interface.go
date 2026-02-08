@@ -135,6 +135,11 @@ type PartnerMatcher interface {
 	FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int) ([]PartnerMatch, error)
 }
 
+// QuotePriceReader provides access to the latest quote total for a lead service.
+type QuotePriceReader interface {
+	GetLatestQuoteTotal(ctx context.Context, serviceID, organizationID uuid.UUID) (int64, error)
+}
+
 // ActivityFeedEntry represents a unified activity entry from multiple sources.
 type ActivityFeedEntry struct {
 	ID          uuid.UUID
@@ -174,6 +179,7 @@ type LeadsRepository interface {
 	ServiceTypeContextReader
 	AppointmentStatsReader
 	PartnerMatcher
+	QuotePriceReader
 	ActivityFeedReader
 }
 

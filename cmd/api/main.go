@@ -175,6 +175,9 @@ func main() {
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 
+	offerAdapter := adapters.NewPartnerOfferAdapter(partnersModule.Service())
+	leadsModule.SetPartnerOfferCreator(offerAdapter)
+
 	// Share SSE service with quotes module so public viewers get real-time updates
 	quotesModule.SetSSE(leadsModule.SSE())
 
