@@ -6,6 +6,7 @@ package notification
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"portal_final_backend/internal/email"
@@ -30,14 +31,20 @@ type QuoteActivityWriter interface {
 	CreateActivity(ctx context.Context, quoteID, orgID uuid.UUID, eventType, message string, metadata map[string]interface{}) error
 }
 
+// PartnerOfferTimelineWriter writes partner-offer events into the leads timeline.
+type PartnerOfferTimelineWriter interface {
+	WriteOfferEvent(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, orgID uuid.UUID, actorType, actorName, eventType, title string, summary *string, metadata map[string]any) error
+}
+
 // Module handles all notification-related event subscriptions.
 type Module struct {
-	sender    email.Sender
-	cfg       config.NotificationConfig
-	log       *logger.Logger
-	sse       *sse.Service
-	pdfProc   QuoteAcceptanceProcessor
-	actWriter QuoteActivityWriter
+	sender         email.Sender
+	cfg            config.NotificationConfig
+	log            *logger.Logger
+	sse            *sse.Service
+	pdfProc        QuoteAcceptanceProcessor
+	actWriter      QuoteActivityWriter
+	offerTimeline  PartnerOfferTimelineWriter
 }
 
 // New creates a new notification module.
@@ -57,6 +64,11 @@ func (m *Module) SetQuoteAcceptanceProcessor(p QuoteAcceptanceProcessor) { m.pdf
 
 // SetQuoteActivityWriter injects the writer for persisting quote activity log entries.
 func (m *Module) SetQuoteActivityWriter(w QuoteActivityWriter) { m.actWriter = w }
+
+// SetOfferTimelineWriter injects the writer for persisting partner-offer timeline events.
+func (m *Module) SetOfferTimelineWriter(w PartnerOfferTimelineWriter) {
+	m.offerTimeline = w
+}
 
 // RegisterHandlers subscribes to all relevant domain events on the event bus.
 func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
@@ -187,10 +199,24 @@ func (m *Module) handlePartnerInviteCreated(ctx context.Context, e events.Partne
 	return nil
 }
 
-func (m *Module) handlePartnerOfferCreated(_ context.Context, e events.PartnerOfferCreated) error {
+func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.PartnerOfferCreated) error {
 	// Build the public acceptance URL for the vakman.
-	// The frontend uses this URL in a WhatsApp draft message (wa.me link).
 	acceptURL := m.buildURL("/partner-offer", e.PublicToken)
+
+	// Build WhatsApp draft URL
+	priceFormatted := fmt.Sprintf("€%.2f", float64(e.VakmanPriceCents)/100)
+	whatsappMsg := fmt.Sprintf(
+		"Hallo %s,\n\nEr is een nieuw werkaanbod voor u beschikbaar ter waarde van %s.\n\nBekijk het aanbod en geef uw beschikbaarheid door via onderstaande link:\n%s\n\nMet vriendelijke groet",
+		e.PartnerName, priceFormatted, acceptURL,
+	)
+	cleanPhone := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, e.PartnerPhone)
+	whatsappURL := fmt.Sprintf("https://wa.me/%s?text=%s", cleanPhone, urlEncode(whatsappMsg))
+
 	m.log.Info("partner offer created — acceptance URL generated",
 		"offerId", e.OfferID,
 		"organizationId", e.OrganizationID,
@@ -199,6 +225,34 @@ func (m *Module) handlePartnerOfferCreated(_ context.Context, e events.PartnerOf
 		"vakmanPriceCents", e.VakmanPriceCents,
 		"acceptanceUrl", acceptURL,
 	)
+
+	// Write timeline event on the lead with WhatsApp draft
+	if m.offerTimeline != nil {
+		serviceID := e.LeadServiceID
+		summary := fmt.Sprintf("Aanbod van %s naar %s verstuurd", priceFormatted, e.PartnerName)
+		if err := m.offerTimeline.WriteOfferEvent(ctx,
+			e.LeadID, &serviceID, e.OrganizationID,
+			"System", "Offer Dispatch",
+			"partner_offer_created",
+			"Werkaanbod verstuurd naar vakman",
+			&summary,
+			map[string]any{
+				"offerId":          e.OfferID.String(),
+				"partnerId":        e.PartnerID.String(),
+				"partnerName":      e.PartnerName,
+				"vakmanPriceCents": e.VakmanPriceCents,
+				"publicToken":      e.PublicToken,
+				"acceptanceUrl":    acceptURL,
+				"whatsappUrl":      whatsappURL,
+			},
+		); err != nil {
+			m.log.Error("failed to write partner offer timeline event",
+				"offerId", e.OfferID,
+				"error", err,
+			)
+		}
+	}
+
 	return nil
 }
 
@@ -408,4 +462,17 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+// urlEncode percent-encodes a string for use in a URL query parameter.
+func urlEncode(s string) string {
+	var b strings.Builder
+	for _, c := range []byte(s) {
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
 }

@@ -22,13 +22,20 @@ const (
 
 // CreateOffer generates a new job offer for a vakman based on customer pricing.
 func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req transport.CreateOfferRequest) (transport.CreateOfferResponse, error) {
-	// Validate partner belongs to tenant
-	if err := s.ensurePartnerExists(ctx, tenantID, req.PartnerID); err != nil {
+	// Validate partner belongs to tenant and fetch details
+	partner, err := s.repo.GetByID(ctx, req.PartnerID, tenantID)
+	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
 
 	// Validate lead service belongs to tenant
 	if err := s.ensureLeadServiceExists(ctx, tenantID, req.LeadServiceID); err != nil {
+		return transport.CreateOfferResponse{}, err
+	}
+
+	// Resolve lead ID from lead service
+	leadID, err := s.repo.GetLeadIDForService(ctx, req.LeadServiceID, tenantID)
+	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
 
@@ -75,8 +82,11 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 		OrganizationID:   tenantID,
 		PartnerID:        req.PartnerID,
 		LeadServiceID:    req.LeadServiceID,
+		LeadID:           leadID,
 		VakmanPriceCents: vakmanPrice,
 		PublicToken:      rawToken,
+		PartnerName:      partner.BusinessName,
+		PartnerPhone:     partner.ContactPhone,
 	})
 
 	return transport.CreateOfferResponse{
@@ -200,6 +210,25 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 		ExpiresAt:        oc.ExpiresAt,
 		CreatedAt:        oc.CreatedAt,
 	}, nil
+}
+
+// ListOffersByPartner returns all offers for a given partner (admin view).
+func (s *Service) ListOffersByPartner(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID) (transport.ListOffersResponse, error) {
+	if err := s.ensurePartnerExists(ctx, tenantID, partnerID); err != nil {
+		return transport.ListOffersResponse{}, err
+	}
+
+	offers, err := s.repo.ListOffersByPartner(ctx, partnerID, tenantID)
+	if err != nil {
+		return transport.ListOffersResponse{}, err
+	}
+
+	items := make([]transport.OfferResponse, 0, len(offers))
+	for _, o := range offers {
+		items = append(items, mapOfferResponse(o))
+	}
+
+	return transport.ListOffersResponse{Items: items}, nil
 }
 
 // ListOffersForService returns all offers for a given lead service (admin view).

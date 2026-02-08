@@ -208,6 +208,10 @@ func main() {
 	quoteActivityWriter := adapters.NewQuoteActivityWriter(quotesModule.Repository())
 	notificationModule.SetQuoteActivityWriter(quoteActivityWriter)
 
+	// Wire partner-offer timeline writer so offer events create lead timeline entries
+	offerTimelineWriter := adapters.NewPartnerOffersTimelineWriter(leadsModule.Repository())
+	notificationModule.SetOfferTimelineWriter(offerTimelineWriter)
+
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface
 	_ = adapters.NewAuthAgentProvider(authModule.Service())

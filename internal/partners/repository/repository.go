@@ -435,6 +435,19 @@ func (r *Repository) LeadServiceExists(ctx context.Context, id uuid.UUID, organi
 	return exists, nil
 }
 
+// GetLeadIDForService resolves the parent lead_id for a lead-service row.
+func (r *Repository) GetLeadIDForService(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (uuid.UUID, error) {
+	var leadID uuid.UUID
+	query := `SELECT lead_id FROM RAC_lead_services WHERE id = $1 AND organization_id = $2`
+	if err := r.pool.QueryRow(ctx, query, serviceID, organizationID).Scan(&leadID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.UUID{}, apperr.NotFound("lead service not found")
+		}
+		return uuid.UUID{}, fmt.Errorf("get lead id for service: %w", err)
+	}
+	return leadID, nil
+}
+
 func (r *Repository) LinkLead(ctx context.Context, organizationID, partnerID, leadID uuid.UUID) error {
 	query := `
 		INSERT INTO RAC_partner_leads (organization_id, partner_id, lead_id)

@@ -225,6 +225,59 @@ func (r *Repository) ListOffersForService(ctx context.Context, leadServiceID uui
 	return offers, nil
 }
 
+// ListOffersByPartner returns all offers for a given partner within a tenant.
+func (r *Repository) ListOffersByPartner(ctx context.Context, partnerID uuid.UUID, organizationID uuid.UUID) ([]PartnerOfferWithContext, error) {
+	query := `
+		SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
+		       o.public_token, o.expires_at,
+		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
+		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
+		       o.inspection_availability, o.job_availability,
+		       o.created_at, o.updated_at,
+		       p.business_name,
+		       org.name,
+		       l.address_city,
+		       ls.service_type
+		FROM RAC_partner_offers o
+		JOIN RAC_partners p ON p.id = o.partner_id
+		JOIN RAC_organizations org ON org.id = o.organization_id
+		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
+		JOIN RAC_leads l ON l.id = ls.lead_id
+		WHERE o.partner_id = $1 AND o.organization_id = $2
+		ORDER BY o.created_at DESC`
+
+	rows, err := r.pool.Query(ctx, query, partnerID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list offers by partner: %w", err)
+	}
+	defer rows.Close()
+
+	var offers []PartnerOfferWithContext
+	for rows.Next() {
+		var oc PartnerOfferWithContext
+		if err := rows.Scan(
+			&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
+			&oc.PublicToken, &oc.ExpiresAt,
+			&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
+			&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
+			&oc.InspectionAvailability, &oc.JobAvailability,
+			&oc.CreatedAt, &oc.UpdatedAt,
+			&oc.PartnerName,
+			&oc.OrganizationName,
+			&oc.LeadCity,
+			&oc.ServiceType,
+		); err != nil {
+			return nil, fmt.Errorf("scan partner offer: %w", err)
+		}
+		offers = append(offers, oc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate partner offers: %w", err)
+	}
+
+	return offers, nil
+}
+
 // HasActiveOffer returns true if there is already a pending/sent offer for the lead service.
 func (r *Repository) HasActiveOffer(ctx context.Context, leadServiceID uuid.UUID) (bool, error) {
 	var exists bool

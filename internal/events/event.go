@@ -271,8 +271,11 @@ type PartnerOfferCreated struct {
 	OrganizationID   uuid.UUID `json:"organizationId"`
 	PartnerID        uuid.UUID `json:"partnerId"`
 	LeadServiceID    uuid.UUID `json:"leadServiceId"`
+	LeadID           uuid.UUID `json:"leadId"`
 	VakmanPriceCents int64     `json:"vakmanPriceCents"`
 	PublicToken      string    `json:"publicToken"`
+	PartnerName      string    `json:"partnerName"`
+	PartnerPhone     string    `json:"partnerPhone"`
 }
 
 func (e PartnerOfferCreated) EventName() string { return "partners.offer.created" }
