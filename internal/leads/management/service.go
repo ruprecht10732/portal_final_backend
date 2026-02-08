@@ -1144,8 +1144,17 @@ func mapActivityTitle(category, eventType, rawTitle string) string {
 	// Lead events
 	case "lead_created":
 		return "Nieuwe lead aangemaakt"
-	case "lead_updated", "status_change":
+	case "lead_updated":
 		return "Lead bijgewerkt"
+	case "status_change":
+		switch category {
+		case "quotes":
+			return "Offerte status gewijzigd"
+		case "appointments":
+			return "Afspraak status gewijzigd"
+		default:
+			return "Lead bijgewerkt"
+		}
 	case "lead_assigned":
 		return "Lead toegewezen"
 	case "lead_viewed":
@@ -1181,6 +1190,16 @@ func mapActivityTitle(category, eventType, rawTitle string) string {
 		if rawTitle != "" {
 			return rawTitle
 		}
-		return eventType
+		// Use category for a friendlier fallback than the raw eventType
+		switch category {
+		case "leads":
+			return "Lead activiteit"
+		case "quotes":
+			return "Offerte activiteit"
+		case "appointments":
+			return "Afspraak activiteit"
+		default:
+			return eventType
+		}
 	}
 }
