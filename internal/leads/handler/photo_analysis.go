@@ -148,6 +148,25 @@ func filterImageAttachments(attachments []repository.Attachment) []repository.At
 
 // runPhotoAnalysis performs the photo analysis in the background and sends SSE notification when done.
 func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID, userID uuid.UUID, attachments []repository.Attachment, contextInfo string) {
+	// Fetch service type for specialized analysis
+	serviceType := ""
+	intakeRequirements := ""
+	svc, svcErr := h.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if svcErr == nil {
+		serviceType = svc.ServiceType
+
+		// Fetch intake guidelines for this specific service type
+		serviceTypes, stErr := h.repo.ListActiveServiceTypes(ctx, tenantID)
+		if stErr == nil {
+			for _, st := range serviceTypes {
+				if st.Name == serviceType && st.IntakeGuidelines != nil {
+					intakeRequirements = *st.IntakeGuidelines
+					break
+				}
+			}
+		}
+	}
+
 	// Load images from storage
 	images := make([]agent.ImageData, 0, len(attachments))
 	for _, att := range attachments {
@@ -190,9 +209,7 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 	}
 
 	// Run photo analysis
-	// Note: intake requirements are not fetched here since this is a direct API call.
-	// The main LeadAdvisor flow handles intake requirements for the triage.
-	result, err := h.analyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, contextInfo, "")
+	result, err := h.analyzer.AnalyzePhotos(ctx, leadID, serviceID, tenantID, images, contextInfo, serviceType, intakeRequirements)
 	if err != nil {
 		h.sse.Publish(userID, sse.Event{
 			Type:      sse.EventPhotoAnalysisComplete,
@@ -206,18 +223,37 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 
 	// Save to database
 	result.PhotoCount = len(images)
+
+	// Convert agent measurements to repository measurements
+	repoMeasurements := make([]repository.Measurement, 0, len(result.Measurements))
+	for _, m := range result.Measurements {
+		repoMeasurements = append(repoMeasurements, repository.Measurement{
+			Description: m.Description,
+			Value:       m.Value,
+			Unit:        m.Unit,
+			Type:        m.Type,
+			Confidence:  m.Confidence,
+			PhotoRef:    m.PhotoRef,
+		})
+	}
+
 	_, dbErr := h.repo.CreatePhotoAnalysis(ctx, repository.CreatePhotoAnalysisParams{
-		LeadID:          leadID,
-		ServiceID:       serviceID,
-		OrganizationID:  tenantID,
-		Summary:         result.Summary,
-		Observations:    result.Observations,
-		ScopeAssessment: result.ScopeAssessment,
-		CostIndicators:  result.CostIndicators,
-		SafetyConcerns:  result.SafetyConcerns,
-		AdditionalInfo:  result.AdditionalInfo,
-		ConfidenceLevel: result.ConfidenceLevel,
-		PhotoCount:      result.PhotoCount,
+		LeadID:                 leadID,
+		ServiceID:              serviceID,
+		OrganizationID:         tenantID,
+		Summary:                result.Summary,
+		Observations:           result.Observations,
+		ScopeAssessment:        result.ScopeAssessment,
+		CostIndicators:         result.CostIndicators,
+		SafetyConcerns:         result.SafetyConcerns,
+		AdditionalInfo:         result.AdditionalInfo,
+		ConfidenceLevel:        result.ConfidenceLevel,
+		PhotoCount:             result.PhotoCount,
+		Measurements:           repoMeasurements,
+		NeedsOnsiteMeasurement: result.NeedsOnsiteMeasurement,
+		Discrepancies:          result.Discrepancies,
+		ExtractedText:          result.ExtractedText,
+		SuggestedSearchTerms:   result.SuggestedSearchTerms,
 	})
 	if dbErr != nil {
 		log.Printf("warning: failed to persist photo analysis for lead %s service %s: %v", leadID, serviceID, dbErr)
@@ -240,6 +276,21 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 	}
 	if len(result.AdditionalInfo) > 0 {
 		metadata["additionalInfo"] = result.AdditionalInfo
+	}
+	if len(result.Measurements) > 0 {
+		metadata["measurements"] = result.Measurements
+	}
+	if len(result.NeedsOnsiteMeasurement) > 0 {
+		metadata["needsOnsiteMeasurement"] = result.NeedsOnsiteMeasurement
+	}
+	if len(result.Discrepancies) > 0 {
+		metadata["discrepancies"] = result.Discrepancies
+	}
+	if len(result.ExtractedText) > 0 {
+		metadata["extractedText"] = result.ExtractedText
+	}
+	if len(result.SuggestedSearchTerms) > 0 {
+		metadata["suggestedSearchTerms"] = result.SuggestedSearchTerms
 	}
 	_, _ = h.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         leadID,

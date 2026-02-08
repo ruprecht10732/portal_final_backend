@@ -555,5 +555,25 @@ func buildPhotoSummary(photoAnalysis *repository.PhotoAnalysis) string {
 		sb.WriteString("Additional: " + strings.Join(photoAnalysis.AdditionalInfo, "; ") + "\n")
 	}
 
+	// New v2 fields
+	if len(photoAnalysis.Measurements) > 0 {
+		sb.WriteString("Measurements:\n")
+		for _, m := range photoAnalysis.Measurements {
+			sb.WriteString(fmt.Sprintf("  - %s: %.2f %s (%s, confidence: %s)\n", m.Description, m.Value, m.Unit, m.Type, m.Confidence))
+		}
+	}
+	if len(photoAnalysis.NeedsOnsiteMeasurement) > 0 {
+		sb.WriteString("Needs on-site measurement: " + strings.Join(photoAnalysis.NeedsOnsiteMeasurement, "; ") + "\n")
+	}
+	if len(photoAnalysis.Discrepancies) > 0 {
+		sb.WriteString("⚠ Discrepancies (consumer claims vs photos): " + strings.Join(photoAnalysis.Discrepancies, "; ") + "\n")
+	}
+	if len(photoAnalysis.ExtractedText) > 0 {
+		sb.WriteString("Extracted text (OCR): " + strings.Join(photoAnalysis.ExtractedText, "; ") + "\n")
+	}
+	if len(photoAnalysis.SuggestedSearchTerms) > 0 {
+		sb.WriteString("Suggested product search terms: " + strings.Join(photoAnalysis.SuggestedSearchTerms, ", ") + "\n")
+	}
+
 	return wrapUserData(sb.String())
 }
