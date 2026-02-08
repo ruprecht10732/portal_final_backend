@@ -78,11 +78,12 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		       p.business_name,
 		       org.name,
 		       l.address_city,
-		       ls.service_type
+		       st.name AS service_type
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
 		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		JOIN RAC_leads l ON l.id = ls.lead_id
 		WHERE o.public_token = $1`
 
@@ -150,11 +151,12 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		       p.business_name,
 		       org.name,
 		       l.address_city,
-		       ls.service_type
+		       st.name AS service_type
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
 		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		JOIN RAC_leads l ON l.id = ls.lead_id
 		WHERE o.id = $1 AND o.organization_id = $2`
 
@@ -237,11 +239,12 @@ func (r *Repository) ListOffersByPartner(ctx context.Context, partnerID uuid.UUI
 		       p.business_name,
 		       org.name,
 		       l.address_city,
-		       ls.service_type
+		       st.name AS service_type
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
 		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		JOIN RAC_leads l ON l.id = ls.lead_id
 		WHERE o.partner_id = $1 AND o.organization_id = $2
 		ORDER BY o.created_at DESC`
