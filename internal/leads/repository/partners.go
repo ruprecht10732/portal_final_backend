@@ -15,7 +15,7 @@ type PartnerMatch struct {
 	DistanceKm   float64
 }
 
-func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int) ([]PartnerMatch, error) {
+func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {
 	lat, lon, ok, err := r.lookupZipCoordinates(ctx, organizationID, zipCode)
 	if err != nil {
 		return nil, err
@@ -35,9 +35,10 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 			AND (st.name = $4 OR st.slug = $4)
 			AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
 			AND earth_distance(ll_to_earth($2, $1), ll_to_earth(p.latitude, p.longitude)) <= ($5 * 1000.0)
+			AND (CARDINALITY($6::uuid[]) = 0 OR p.id != ALL($6::uuid[]))
 		ORDER BY dist_km ASC
 		LIMIT 5
-	`, lon, lat, organizationID, serviceType, radiusKm)
+	`, lon, lat, organizationID, serviceType, radiusKm, excludePartnerIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +57,34 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 	}
 
 	return matches, nil
+}
+
+// GetInvitedPartnerIDs returns IDs of partners who have already received an offer for this service.
+func (r *Repository) GetInvitedPartnerIDs(ctx context.Context, serviceID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT partner_id
+		FROM RAC_partner_offers
+		WHERE lead_service_id = $1
+			AND status IN ('rejected', 'expired', 'sent', 'pending')
+	`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return ids, nil
 }
 
 func (r *Repository) lookupZipCoordinates(ctx context.Context, organizationID uuid.UUID, zipCode string) (float64, float64, bool, error) {

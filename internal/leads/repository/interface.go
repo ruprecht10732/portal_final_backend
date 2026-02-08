@@ -132,7 +132,8 @@ type AppointmentStatsReader interface {
 
 // PartnerMatcher provides partner search based on service type and location.
 type PartnerMatcher interface {
-	FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int) ([]PartnerMatch, error)
+	FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error)
+	GetInvitedPartnerIDs(ctx context.Context, serviceID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // QuotePriceReader provides access to the latest quote total for a lead service.

@@ -114,7 +114,13 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		return err
 	}
 
-	promptText := buildDispatcherPrompt(lead, service, 25)
+	excludedIDs, err := d.repo.GetInvitedPartnerIDs(ctx, serviceID)
+	if err != nil {
+		fmt.Printf("Dispatcher warning: failed to fetch exclusions: %v\n", err)
+		excludedIDs = []uuid.UUID{}
+	}
+
+	promptText := buildDispatcherPrompt(lead, service, 25, excludedIDs)
 	return d.runWithPrompt(ctx, promptText, leadID)
 }
 

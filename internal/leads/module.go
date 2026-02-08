@@ -247,6 +247,33 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		return nil
 	}))
 
+	eventBus.Subscribe(events.QuoteAccepted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.QuoteAccepted)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnQuoteAccepted(ctx, e)
+		return nil
+	}))
+
+	eventBus.Subscribe(events.PartnerOfferRejected{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PartnerOfferRejected)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnPartnerOfferRejected(ctx, e)
+		return nil
+	}))
+
+	eventBus.Subscribe(events.PartnerOfferExpired{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PartnerOfferExpired)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnPartnerOfferExpired(ctx, e)
+		return nil
+	}))
+
 	eventBus.Subscribe(events.PipelineStageChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.PipelineStageChanged)
 		if !ok {

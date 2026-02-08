@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -161,6 +162,55 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 			Context:       "Transitioned from " + evt.OldStage,
 		})
 	}
+}
+
+// OnQuoteAccepted advances pipeline after customer approval.
+func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAccepted) {
+	if evt.LeadServiceID == nil {
+		return
+	}
+	serviceID := *evt.LeadServiceID
+
+	summary := fmt.Sprintf("Offerte %s geaccepteerd. Starten met zoeken naar partner.", evt.QuoteNumber)
+	_, _ = o.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         evt.LeadID,
+		ServiceID:      evt.LeadServiceID,
+		OrganizationID: evt.OrganizationID,
+		ActorType:      "System",
+		ActorName:      "Orchestrator",
+		EventType:      "stage_change",
+		Title:          "Offerte Geaccepteerd",
+		Summary:        &summary,
+		Metadata:       map[string]any{"quoteId": evt.QuoteID},
+	})
+
+	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, "Ready_For_Partner"); err != nil {
+		o.log.Error("orchestrator: failed to advance stage after quote acceptance", "error", err)
+		return
+	}
+
+	o.eventBus.Publish(ctx, events.PipelineStageChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        evt.LeadID,
+		LeadServiceID: serviceID,
+		TenantID:      evt.OrganizationID,
+		OldStage:      "Quote_Sent",
+		NewStage:      "Ready_For_Partner",
+	})
+}
+
+// OnPartnerOfferRejected re-triggers the dispatcher to find a new partner.
+func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.PartnerOfferRejected) {
+	_ = ctx
+	o.log.Info("Orchestrator: Partner rejected offer, re-triggering dispatcher", "leadId", evt.LeadID)
+	go o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
+}
+
+// OnPartnerOfferExpired re-triggers the dispatcher when an offer expires.
+func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.PartnerOfferExpired) {
+	_ = ctx
+	o.log.Info("Orchestrator: Partner offer expired, re-triggering dispatcher", "leadId", evt.LeadID)
+	go o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
 }
 
 func stringPtr(s string) *string {

@@ -783,6 +783,7 @@ var validPipelineStages = map[string]bool{
 	"Triage":              true,
 	"Nurturing":           true,
 	"Ready_For_Estimator": true,
+	"Quote_Sent":          true,
 	"Ready_For_Partner":   true,
 	"Partner_Matching":    true,
 	"Partner_Assigned":    true,
@@ -895,11 +896,18 @@ func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
 func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "FindMatchingPartners",
-		Description: "Finds partner matches by service type and distance radius.",
+		Description: "Finds partner matches by service type and distance radius. Allows excluding specific partner IDs.",
 	}, func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
 		tenantID, err := getTenantID(deps)
 		if err != nil {
 			return FindMatchingPartnersOutput{Matches: nil}, err
+		}
+
+		excludeUUIDs := make([]uuid.UUID, 0, len(input.ExcludePartnerIDs))
+		for _, idStr := range input.ExcludePartnerIDs {
+			if uid, err := uuid.Parse(idStr); err == nil {
+				excludeUUIDs = append(excludeUUIDs, uid)
+			}
 		}
 
 		leadID, serviceID, err := getLeadContext(deps)
@@ -907,7 +915,7 @@ func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 			return FindMatchingPartnersOutput{Matches: nil}, err
 		}
 
-		matches, err := deps.Repo.FindMatchingPartners(ctx, tenantID, input.ServiceType, input.ZipCode, input.RadiusKm)
+		matches, err := deps.Repo.FindMatchingPartners(ctx, tenantID, input.ServiceType, input.ZipCode, input.RadiusKm, excludeUUIDs)
 		if err != nil {
 			return FindMatchingPartnersOutput{Matches: nil}, err
 		}
@@ -927,6 +935,7 @@ func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 				"serviceType": input.ServiceType,
 				"zipCode":     input.ZipCode,
 				"radiusKm":    input.RadiusKm,
+				"excludedIds": excludeUUIDs,
 				"matches":     matches,
 			},
 		})

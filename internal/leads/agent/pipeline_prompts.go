@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"portal_final_backend/internal/leads/repository"
 )
 
@@ -104,8 +106,8 @@ func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, 
 
 Role: You are a Technical Estimator.
 Input: Photos, Description.
-Goal: Determine Scope (Small/Medium/Large). Estimate Price Range based on actual product prices. Draft a quote for the customer.
-Action: Search for products, draft a quote, call SaveEstimation (metadata update), set stage Ready_For_Partner.
+Goal: Determine Scope, Estimate Price Range, Draft Quote, set stage to Quote_Sent.
+Action: Search for products, draft a quote, call SaveEstimation (metadata update), set stage Quote_Sent.
 
 CRITICAL ARITHMETIC RULE:
 You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
@@ -214,7 +216,8 @@ Instruction:
 
 	**Opmerkingen:**
 	- ...
-6) Call UpdatePipelineStage with stage="Ready_For_Partner" and a reason in Dutch.
+6) Call UpdatePipelineStage with stage="Quote_Sent" and a reason in Dutch.
+	IMPORTANT: DO NOT use "Ready_For_Partner". We must wait for the customer to accept the quote first.
 
 You MUST call SearchProductMaterials first (if available), then DraftQuote (if available), then SaveEstimation, then UpdatePipelineStage. Respond ONLY with tool calls.
 `,
@@ -237,11 +240,16 @@ You MUST call SearchProductMaterials first (if available), then DraftQuote (if a
 	)
 }
 
-func buildDispatcherPrompt(lead repository.Lead, service repository.LeadService, radiusKm int) string {
+func buildDispatcherPrompt(lead repository.Lead, service repository.LeadService, radiusKm int, excludeIDs []uuid.UUID) string {
+	exclusionTxt := ""
+	if len(excludeIDs) > 0 {
+		exclusionTxt = fmt.Sprintf("\nCONTEXT: The following Partner IDs have already been contacted or rejected: %v. You MUST include these in the 'excludePartnerIds' field when calling FindMatchingPartners.", excludeIDs)
+	}
+
 	return fmt.Sprintf(`You are the Fulfillment Manager.
 
 Role: You are the Fulfillment Manager.
-Action: Find matches, create an offer, update the pipeline stage.
+Action: Find matches, create an offer, update the pipeline stage.%s
 
 Logic:
 - If > 0 partners found:
@@ -259,13 +267,14 @@ Lead:
 - Zip Code: %s
 
 Instruction:
-1) Call FindMatchingPartners with serviceType="%s", zipCode="%s", radiusKm=%d.
+1) Call FindMatchingPartners with serviceType="%s", zipCode="%s", radiusKm=%d (and include exclusions).
 2) If matches exist, you MUST call CreatePartnerOffer BEFORE UpdatePipelineStage.
 3) When calling CreatePartnerOffer, set jobSummaryShort to a short Dutch summary (max 120 chars) of what the job entails, based on service type and notes. Do NOT include exact address or personal data.
 4) Use Dutch for the UpdatePipelineStage reason.
 
 You MUST call FindMatchingPartners first. If matches exist, you MUST call CreatePartnerOffer before UpdatePipelineStage. Respond ONLY with tool calls.
 `,
+		exclusionTxt,
 		lead.ID,
 		service.ID,
 		service.ServiceType,

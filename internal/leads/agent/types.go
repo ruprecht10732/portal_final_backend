@@ -77,9 +77,10 @@ type UpdatePipelineStageOutput struct {
 
 // FindMatchingPartnersInput searches for partner matches.
 type FindMatchingPartnersInput struct {
-	ServiceType string `json:"serviceType"`
-	ZipCode     string `json:"zipCode"`
-	RadiusKm    int    `json:"radiusKm"`
+	ServiceType       string   `json:"serviceType"`
+	ZipCode           string   `json:"zipCode"`
+	RadiusKm          int      `json:"radiusKm"`
+	ExcludePartnerIDs []string `json:"excludePartnerIds"`
 }
 
 type PartnerMatch struct {
