@@ -1195,9 +1195,13 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 
 // stripProductIDs clears the ID field on all products so the AI treats
 // them as ad-hoc items (no catalogProductId on the draft quote).
+// Also sets a default VAT rate of 21% for fallback products that lack one.
 func stripProductIDs(products []ProductResult) {
 	for i := range products {
 		products[i].ID = ""
+		if products[i].VatRateBps == 0 {
+			products[i].VatRateBps = 2100 // 21% BTW default
+		}
 	}
 }
 
@@ -1234,8 +1238,8 @@ func convertSearchResults(results []qdrant.SearchResult) []ProductResult {
 
 	// Prefer lower-priced items; treat missing/zero price as lowest priority.
 	sort.SliceStable(products, func(i, j int) bool {
-		pi := products[i].Price
-		pj := products[j].Price
+		pi := products[i].PriceEuros
+		pj := products[j].PriceEuros
 		iMissing := pi <= 0
 		jMissing := pj <= 0
 		if iMissing != jMissing {
@@ -1261,7 +1265,7 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 		product.Description = desc
 	}
 	if price, ok := payload["price"].(float64); ok {
-		product.Price = price
+		product.PriceEuros = price
 	}
 	if unitLabel, ok := payload["unit_label"].(string); ok {
 		product.Unit = unitLabel
@@ -1271,12 +1275,18 @@ func extractProductFromPayload(payload map[string]any, score float64) ProductRes
 	if laborTime, ok := payload["labor_time_text"].(string); ok {
 		product.LaborTime = strings.TrimSpace(laborTime)
 	}
-	if product.Price <= 0 {
+	if product.PriceEuros <= 0 {
 		if unitPrice, ok := payload["unit_price"].(float64); ok {
-			product.Price = unitPrice
+			product.PriceEuros = unitPrice
 		}
 	}
+	product.PriceCents = eurosToCents(product.PriceEuros)
 	return product
+}
+
+// eurosToCents converts a euro amount to integer cents, rounding to nearest.
+func eurosToCents(euros float64) int64 {
+	return int64(math.Round(euros * 100))
 }
 
 // hydrateProductResults enriches vector-search ProductResults with DB-accurate
@@ -1338,7 +1348,8 @@ func applyProductDetails(products []ProductResult, details []ports.CatalogProduc
 		if !ok {
 			continue
 		}
-		products[i].Price = float64(d.UnitPriceCents) / 100
+		products[i].PriceEuros = float64(d.UnitPriceCents) / 100
+		products[i].PriceCents = d.UnitPriceCents
 		products[i].VatRateBps = d.VatRateBps
 		products[i].Materials = d.Materials
 		mergeOptionalString(&products[i].Unit, d.UnitLabel)
@@ -1372,7 +1383,7 @@ Tips for effective queries:
 
 Each result includes a "score" field (0-1) indicating match quality.
 Products with score > 0.6 are strong matches. Products with score 0.35-0.6 are partial matches — verify relevance.
-Returns product names, descriptions, prices, units, VAT rate, materials, and labor time when available.`,
+Returns product names, descriptions, priceEuros (in euros, e.g. 7.93), priceCents (in euro-cents, e.g. 793 — use this directly as unitPriceCents in DraftQuote), units, vatRateBps, materials, and labor time when available.`,
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
 	})
@@ -1471,7 +1482,8 @@ func createDraftQuoteTool(deps *ToolDependencies) (tool.Tool, error) {
 		Name: "DraftQuote",
 		Description: `Creates a draft quote for the current lead based on estimation results.
 Use this AFTER searching the catalog and calculating estimates.
-For each item, provide description, quantity, unitPriceCents, taxRateBps.
+For each item, provide description, quantity, unitPriceCents (in euro-cents), taxRateBps.
+IMPORTANT: Set unitPriceCents to the product's "priceCents" value from SearchProductMaterials (already in cents).
 If the item came from SearchProductMaterials, include its catalogProductId.
 Ad-hoc items (not found in catalog) should omit catalogProductId.`,
 	}, func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {

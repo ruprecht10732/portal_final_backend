@@ -178,7 +178,7 @@ Instruction:
 	    - Need 12 m, sold "per rol van 5 m" → Calculator(operation="ceil_divide", a=12, b=5) → quantity = "3"
 	    - Need 3, sold "per stuk" → quantity = "3"
 	  If the unit is "per m²" or "per m", use Calculator to compute the raw measurement as quantity.
-	- Set unitPriceCents to the product price in cents (e.g., 1500 for EUR 15.00).
+	- Set unitPriceCents to the product's "priceCents" value (already in euro-cents, e.g. 793 = EUR 7.93). Do NOT use priceEuros.
 	- Set taxRateBps from the product's vatRateBps (e.g., 2100 for 21%%). If unknown, use 2100.
 	- If the product came from SearchProductMaterials and has an "id", include it as catalogProductId.
 	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.
@@ -475,7 +475,7 @@ Instruction:
      Examples:
        - Need 4 m², sold "per plaat van 2.5 m²" → Calculator(operation="ceil_divide", a=4, b=2.5) → quantity = "2"
        - Need 12 m, sold "per rol van 5 m" → Calculator(operation="ceil_divide", a=12, b=5) → quantity = "3"
-   - Set unitPriceCents to the product price in cents.
+   - Set unitPriceCents to the product's "priceCents" value (already in euro-cents). Do NOT use priceEuros.
    - Set taxRateBps from the product's vatRateBps. If unknown, use 2100.
    - If the product has an "id", include it as catalogProductId.
    - For labor or ad-hoc items, omit catalogProductId.
