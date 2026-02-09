@@ -1251,6 +1251,9 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 		s.eventBus.Publish(ctx, evt)
 	}
 
+	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
+	drafts := buildQuoteAcceptedDrafts(quote.QuoteNumber, orgName, customerName, req.SignatureName, quote.TotalCents)
+
 	s.emitTimelineEvent(ctx, TimelineEventParams{
 		LeadID:         quote.LeadID,
 		ServiceID:      quote.LeadServiceID,
@@ -1264,10 +1267,9 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 			"quoteId":       quote.ID,
 			"status":        "Accepted",
 			"signatureName": req.SignatureName,
+			"drafts":        drafts,
 		},
 	})
-
-	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
 	return s.buildPublicResponse(quote, items, orgName, customerName, false)
 }
 
@@ -1317,6 +1319,9 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 		})
 	}
 
+	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
+	drafts := buildQuoteRejectedDrafts(quote.QuoteNumber, orgName, customerName, req.Reason)
+
 	s.emitTimelineEvent(ctx, TimelineEventParams{
 		LeadID:         quote.LeadID,
 		ServiceID:      quote.LeadServiceID,
@@ -1330,10 +1335,9 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 			"quoteId": quote.ID,
 			"status":  "Rejected",
 			"reason":  req.Reason,
+			"drafts":  drafts,
 		},
 	})
-
-	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
 	return s.buildPublicResponse(quote, items, orgName, customerName, false)
 }
 
@@ -1730,6 +1734,52 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func buildQuoteAcceptedDrafts(quoteNumber, orgName, customerName, signatureName string, totalCents int64) map[string]any {
+	if strings.TrimSpace(customerName) == "" {
+		customerName = "klant"
+	}
+	if strings.TrimSpace(orgName) == "" {
+		orgName = "ons team"
+	}
+	subject := fmt.Sprintf("Bevestiging ontvangen - offerte %s", quoteNumber)
+	body := fmt.Sprintf("Hallo %s,\n\nBedankt voor het accepteren van offerte %s. Wij verwerken uw akkoord en nemen snel contact met u op voor de volgende stappen.\n\nOndertekend door: %s\nTotaal: EUR %.2f\n\nMet vriendelijke groet,\n%s", customerName, quoteNumber, signatureName, float64(totalCents)/100, orgName)
+	whatsApp := fmt.Sprintf("Hallo %s, bedankt voor het accepteren van offerte %s. Wij nemen snel contact met u op voor de volgende stappen.\n\nMet vriendelijke groet, %s", customerName, quoteNumber, orgName)
+
+	return map[string]any{
+		"emailSubject":    subject,
+		"emailBody":       body,
+		"whatsappMessage": whatsApp,
+		"messageLanguage": "nl",
+		"messageAudience": "customer",
+		"messageCategory": "quote_accepted",
+	}
+}
+
+func buildQuoteRejectedDrafts(quoteNumber, orgName, customerName, reason string) map[string]any {
+	if strings.TrimSpace(customerName) == "" {
+		customerName = "klant"
+	}
+	if strings.TrimSpace(orgName) == "" {
+		orgName = "ons team"
+	}
+	cleanReason := strings.TrimSpace(reason)
+	if cleanReason == "" {
+		cleanReason = "Geen reden opgegeven"
+	}
+	subject := fmt.Sprintf("We hebben uw beslissing ontvangen - offerte %s", quoteNumber)
+	body := fmt.Sprintf("Hallo %s,\n\nWij hebben uw beslissing over offerte %s ontvangen. Reden: %s.\n\nAls u vragen heeft of wilt overleggen, helpen wij graag.\n\nMet vriendelijke groet,\n%s", customerName, quoteNumber, cleanReason, orgName)
+	whatsApp := fmt.Sprintf("Hallo %s, wij hebben uw beslissing over offerte %s ontvangen. Reden: %s. Als u vragen heeft, helpen wij graag.\n\nMet vriendelijke groet, %s", customerName, quoteNumber, cleanReason, orgName)
+
+	return map[string]any{
+		"emailSubject":    subject,
+		"emailBody":       body,
+		"whatsappMessage": whatsApp,
+		"messageLanguage": "nl",
+		"messageAudience": "customer",
+		"messageCategory": "quote_rejected",
+	}
 }
 
 func parseDateRange(from string, to string, fromField string, toField string) (*time.Time, *time.Time, error) {

@@ -149,6 +149,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 	case "Manual_Intervention":
 		o.log.Warn("orchestrator: manual intervention required", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
 		// Record timeline event for audit trail
+		drafts := buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID)
 		_, _ = o.repo.CreateTimelineEvent(context.Background(), repository.CreateTimelineEventParams{
 			LeadID:         evt.LeadID,
 			ServiceID:      &evt.LeadServiceID,
@@ -161,6 +162,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 			Metadata: map[string]any{
 				"previous_stage": evt.OldStage,
 				"trigger":        "pipeline_stage_change",
+				"drafts":         drafts,
 			},
 		})
 
@@ -285,4 +287,19 @@ func (o *Orchestrator) OnPartnerOfferAccepted(ctx context.Context, evt events.Pa
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+func buildManualInterventionDrafts(leadID, serviceID uuid.UUID) map[string]any {
+	subject := "Handmatige interventie vereist"
+	body := fmt.Sprintf("Er is handmatige interventie vereist voor lead %s (service %s).\n\nControleer de intake, ontbrekende gegevens en eventuele AI-analyses en bepaal de volgende stap.", leadID.String(), serviceID.String())
+	whatsApp := fmt.Sprintf("Handmatige interventie vereist voor lead %s (service %s). Controleer de intake en bepaal de volgende stap.", leadID.String(), serviceID.String())
+
+	return map[string]any{
+		"emailSubject":     subject,
+		"emailBody":        body,
+		"whatsappMessage":  whatsApp,
+		"messageLanguage":  "nl",
+		"messageAudience":  "internal",
+		"messageCategory":  "manual_intervention",
+	}
 }

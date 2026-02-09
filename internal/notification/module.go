@@ -215,7 +215,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 	// Build WhatsApp draft URL
 	priceFormatted := fmt.Sprintf("€%.2f", float64(e.VakmanPriceCents)/100)
 	whatsappMsg := fmt.Sprintf(
-		"Hallo %s,\n\nEr is een nieuw werkaanbod voor u beschikbaar ter waarde van %s.\n\nBekijk het aanbod en geef uw beschikbaarheid door via onderstaande link:\n%s\n\nMet vriendelijke groet",
+		partnerOfferCreatedTemplate,
 		e.PartnerName, priceFormatted, acceptURL,
 	)
 	cleanPhone := strings.Map(func(r rune) rune {
@@ -239,6 +239,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 	if m.offerTimeline != nil {
 		serviceID := e.LeadServiceID
 		summary := fmt.Sprintf("Aanbod van %s naar %s verstuurd", priceFormatted, e.PartnerName)
+		drafts := buildPartnerOfferCreatedDrafts(e.PartnerName, priceFormatted, acceptURL)
 		if err := m.offerTimeline.WriteOfferEvent(ctx,
 			e.LeadID, &serviceID, e.OrganizationID,
 			"System", "Offer Dispatch",
@@ -253,6 +254,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 				"publicToken":      e.PublicToken,
 				"acceptanceUrl":    acceptURL,
 				"whatsappUrl":      whatsappURL,
+				"drafts":           drafts,
 			},
 		); err != nil {
 			m.log.Error("failed to write partner offer timeline event",
@@ -273,6 +275,7 @@ func (m *Module) buildURL(path string, tokenValue string) string {
 // ── Partner offer event handlers ────────────────────────────────────────
 
 const partnerOfferNotificationEmail = "info@salestainable.nl"
+const partnerOfferCreatedTemplate = "Hallo %s,\n\nEr is een nieuw werkaanbod voor u beschikbaar ter waarde van %s.\n\nBekijk het aanbod en geef uw beschikbaarheid door via onderstaande link:\n%s\n\nMet vriendelijke groet"
 
 func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.PartnerOfferAccepted) error {
 	m.log.Info("partner offer accepted",
@@ -352,6 +355,7 @@ func (m *Module) handlePartnerOfferRejected(ctx context.Context, e events.Partne
 		if e.Reason != "" {
 			summary += fmt.Sprintf(" — reden: %s", e.Reason)
 		}
+		drafts := buildPartnerOfferRejectedDrafts(e.PartnerName, e.Reason)
 		if err := m.offerTimeline.WriteOfferEvent(ctx,
 			e.LeadID, &serviceID, e.OrganizationID,
 			"Partner", e.PartnerName,
@@ -363,6 +367,7 @@ func (m *Module) handlePartnerOfferRejected(ctx context.Context, e events.Partne
 				"partnerId":   e.PartnerID.String(),
 				"partnerName": e.PartnerName,
 				"reason":      e.Reason,
+				"drafts":      drafts,
 			},
 		); err != nil {
 			m.log.Error("failed to write partner offer rejected timeline event",
@@ -399,6 +404,7 @@ func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.Partner
 	if m.offerTimeline != nil {
 		serviceID := e.LeadServiceID
 		summary := fmt.Sprintf("Werkaanbod naar %s is verlopen zonder reactie", e.PartnerName)
+		drafts := buildPartnerOfferExpiredDrafts(e.PartnerName)
 		if err := m.offerTimeline.WriteOfferEvent(ctx,
 			e.LeadID, &serviceID, e.OrganizationID,
 			"System", "Offer Expiry",
@@ -409,6 +415,7 @@ func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.Partner
 				"offerId":     e.OfferID.String(),
 				"partnerId":   e.PartnerID.String(),
 				"partnerName": e.PartnerName,
+				"drafts":      drafts,
 			},
 		); err != nil {
 			m.log.Error("failed to write partner offer expired timeline event",
@@ -621,7 +628,7 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	return s[:max] + "..."
 }
 
 // urlEncode percent-encodes a string for use in a URL query parameter.
@@ -635,4 +642,54 @@ func urlEncode(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func buildPartnerOfferCreatedDrafts(partnerName, priceFormatted, acceptURL string) map[string]any {
+	emailSubject := "Nieuw werkaanbod beschikbaar"
+	emailBody := fmt.Sprintf(partnerOfferCreatedTemplate, partnerName, priceFormatted, acceptURL)
+	whatsAppMessage := fmt.Sprintf(partnerOfferCreatedTemplate, partnerName, priceFormatted, acceptURL)
+
+	return map[string]any{
+		"emailSubject":    emailSubject,
+		"emailBody":       emailBody,
+		"whatsappMessage": whatsAppMessage,
+		"messageLanguage": "nl",
+		"messageAudience": "partner",
+		"messageCategory": "partner_offer_created",
+	}
+}
+
+func buildPartnerOfferRejectedDrafts(partnerName, reason string) map[string]any {
+	cleanReason := strings.TrimSpace(reason)
+	if cleanReason == "" {
+		cleanReason = "Geen reden opgegeven"
+	}
+
+	emailSubject := "Werkaanbod afgewezen"
+	emailBody := fmt.Sprintf("Hallo %s,\n\nWij hebben uw afwijzing ontvangen. Reden: %s.\n\nAls u toch beschikbaar bent of aanvullende vragen heeft, laat het ons weten.\n\nMet vriendelijke groet", partnerName, cleanReason)
+	whatsAppMessage := fmt.Sprintf("Hallo %s,\n\nWij hebben uw afwijzing ontvangen. Reden: %s.\n\nAls u toch beschikbaar bent of aanvullende vragen heeft, laat het ons weten.", partnerName, cleanReason)
+
+	return map[string]any{
+		"emailSubject":    emailSubject,
+		"emailBody":       emailBody,
+		"whatsappMessage": whatsAppMessage,
+		"messageLanguage": "nl",
+		"messageAudience": "partner",
+		"messageCategory": "partner_offer_rejected",
+	}
+}
+
+func buildPartnerOfferExpiredDrafts(partnerName string) map[string]any {
+	emailSubject := "Werkaanbod verlopen"
+	emailBody := fmt.Sprintf("Hallo %s,\n\nHet werkaanbod is verlopen zonder reactie. Als u alsnog beschikbaar bent, laat het ons weten.\n\nMet vriendelijke groet", partnerName)
+	whatsAppMessage := fmt.Sprintf("Hallo %s,\n\nHet werkaanbod is verlopen zonder reactie. Als u alsnog beschikbaar bent, laat het ons weten.", partnerName)
+
+	return map[string]any{
+		"emailSubject":    emailSubject,
+		"emailBody":       emailBody,
+		"whatsappMessage": whatsAppMessage,
+		"messageLanguage": "nl",
+		"messageAudience": "partner",
+		"messageCategory": "partner_offer_expired",
+	}
 }
