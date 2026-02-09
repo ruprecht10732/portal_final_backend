@@ -178,6 +178,11 @@ func main() {
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 
+	// Wire public viewers for lead portal (quotes + appointments)
+	quotePublicViewer := adapters.NewQuotePublicAdapter(quotesModule.Service())
+	appointmentPublicViewer := adapters.NewAppointmentPublicAdapter(appointmentsModule.Service)
+	leadsModule.SetPublicViewers(quotePublicViewer, appointmentPublicViewer)
+
 	offerAdapter := adapters.NewPartnerOfferAdapter(partnersModule.Service())
 	leadsModule.SetPartnerOfferCreator(offerAdapter)
 

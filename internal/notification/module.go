@@ -477,13 +477,31 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 		consumerName = "daar"
 	}
 
-	message := fmt.Sprintf(
-		"Beste %s,\n\n"+
-			"Bedankt voor je aanvraag! 👍\n\n"+
-			"We hebben alles ontvangen en gaan het nu rustig doornemen. "+
-			"Vandaag nemen we contact met je op om het verder te bespreken.",
-		consumerName,
-	)
+	trackLink := ""
+	if e.PublicToken != "" {
+		base := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
+		trackLink = fmt.Sprintf("%s/track/%s", base, e.PublicToken)
+	}
+
+	message := ""
+	if trackLink == "" {
+		message = fmt.Sprintf(
+			"Beste %s,\n\n"+
+				"Bedankt voor je aanvraag! 👍\n\n"+
+				"We hebben alles ontvangen en gaan het nu rustig doornemen. "+
+				"Vandaag nemen we contact met je op om het verder te bespreken.",
+			consumerName,
+		)
+	} else {
+		message = fmt.Sprintf(
+			"Beste %s,\n\n"+
+				"Bedankt voor je aanvraag! 👍\n\n"+
+				"Volg de status of voeg details toe via jouw persoonlijke pagina:\n%s\n\n"+
+				"We nemen vandaag contact met je op.",
+			consumerName,
+			trackLink,
+		)
+	}
 
 	go func() {
 		bg := context.Background()

@@ -68,6 +68,7 @@ type LeadCreated struct {
 	ServiceType     string     `json:"serviceType"`
 	ConsumerName    string     `json:"consumerName"`
 	ConsumerPhone   string     `json:"consumerPhone"`
+	PublicToken     string     `json:"publicToken"`
 }
 
 func (e LeadCreated) EventName() string { return "RAC_leads.lead.created" }

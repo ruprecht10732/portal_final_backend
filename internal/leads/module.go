@@ -34,6 +34,7 @@ type Module struct {
 	handler              *handler.Handler
 	attachmentsHandler   *handler.AttachmentsHandler
 	photoAnalysisHandler *handler.PhotoAnalysisHandler
+	publicHandler        *handler.PublicHandler
 	management           *management.Service
 	notes                *notes.Service
 	gatekeeper           *agent.Gatekeeper
@@ -95,11 +96,13 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		Validator:     val,
 		PhotoAnalyzer: photoAnalyzer,
 	})
+	publicHandler := handler.NewPublicHandler(repo, eventBus, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
 	return &Module{
 		handler:              h,
 		attachmentsHandler:   attachmentsHandler,
 		photoAnalysisHandler: photoAnalysisHandler,
+		publicHandler:        publicHandler,
 		management:           mgmtSvc,
 		notes:                notesSvc,
 		gatekeeper:           gatekeeper,
@@ -366,6 +369,14 @@ func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
 	m.callLogger.SetAppointmentBooker(booker)
 }
 
+// SetPublicViewers injects quote and appointment viewers for the public portal.
+func (m *Module) SetPublicViewers(quoteViewer ports.QuotePublicViewer, apptViewer ports.AppointmentPublicViewer) {
+	if m.publicHandler == nil {
+		return
+	}
+	m.publicHandler.SetPublicViewers(quoteViewer, apptViewer)
+}
+
 // SetEnergyLabelEnricher sets the energy label enricher on the management service.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetEnergyLabelEnricher(enricher ports.EnergyLabelEnricher) {
@@ -424,6 +435,10 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 
 	// SSE endpoint for real-time notifications (user-specific)
 	ctx.Protected.GET("/events", m.sseHandler())
+
+	// Public lead portal routes (no auth middleware)
+	publicGroup := ctx.V1.Group("/public/leads")
+	m.publicHandler.RegisterRoutes(publicGroup)
 }
 
 // sseHandler returns the SSE handler with user ID extraction

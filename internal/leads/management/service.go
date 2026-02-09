@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
@@ -121,6 +122,15 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		return transport.LeadResponse{}, err
 	}
 
+	publicToken, err := token.GenerateRandomToken(32)
+	if err != nil {
+		return transport.LeadResponse{}, err
+	}
+	publicTokenExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+	if err := s.repo.SetPublicToken(ctx, lead.ID, tenantID, publicToken, publicTokenExpiresAt); err != nil {
+		return transport.LeadResponse{}, err
+	}
+
 	s.eventBus.Publish(ctx, events.LeadCreated{
 		BaseEvent:       events.NewBaseEvent(),
 		LeadID:          lead.ID,
@@ -129,6 +139,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		ServiceType:     string(req.ServiceType),
 		ConsumerName:    strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
 		ConsumerPhone:   lead.ConsumerPhone,
+		PublicToken:     publicToken,
 	})
 
 	services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)
