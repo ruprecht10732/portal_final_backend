@@ -47,10 +47,7 @@ func normalizeWhatsAppNL(phone string) string {
 		return ""
 	}
 
-	normalized := string(digits)
-	if strings.HasPrefix(normalized, "00") {
-		normalized = normalized[2:]
-	}
+	normalized := strings.TrimPrefix(string(digits), "00")
 	if strings.HasPrefix(normalized, "0") {
 		normalized = "31" + normalized[1:]
 	}
