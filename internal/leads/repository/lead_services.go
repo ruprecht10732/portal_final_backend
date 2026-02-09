@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -13,16 +14,17 @@ var ErrServiceNotFound = errors.New("lead service not found")
 var ErrServiceTypeNotFound = errors.New("service type not found")
 
 type LeadService struct {
-	ID             uuid.UUID
-	LeadID         uuid.UUID
-	OrganizationID uuid.UUID
-	ServiceType    string
-	Status         string
-	PipelineStage  string
-	ConsumerNote   *string
-	Source         *string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                  uuid.UUID
+	LeadID              uuid.UUID
+	OrganizationID      uuid.UUID
+	ServiceType         string
+	Status              string
+	PipelineStage       string
+	ConsumerNote        *string
+	Source              *string
+	CustomerPreferences json.RawMessage
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type CreateLeadServiceParams struct {
@@ -49,12 +51,12 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 			RETURNING *
 		)
 		SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
-			i.created_at, i.updated_at
+			i.customer_preferences, i.created_at, i.updated_at
 		FROM inserted i
 		JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = i.organization_id
 	`, params.LeadID, params.OrganizationID, params.ServiceType, params.ConsumerNote, params.Source).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CreatedAt, &svc.UpdatedAt,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
 	return svc, err
 }
@@ -63,13 +65,13 @@ func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organ
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, `
 		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-			ls.created_at, ls.updated_at
+			ls.customer_preferences, ls.created_at, ls.updated_at
 		FROM RAC_lead_services ls
 		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		WHERE ls.id = $1 AND ls.organization_id = $2
 	`, id, organizationID).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CreatedAt, &svc.UpdatedAt,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
@@ -80,7 +82,7 @@ func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organ
 func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadService, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-			ls.created_at, ls.updated_at
+			ls.customer_preferences, ls.created_at, ls.updated_at
 		FROM RAC_lead_services ls
 		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		WHERE ls.lead_id = $1 AND ls.organization_id = $2
@@ -96,7 +98,7 @@ func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, org
 		var svc LeadService
 		if err := rows.Scan(
 			&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-			&svc.CreatedAt, &svc.UpdatedAt,
+			&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -112,7 +114,7 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 	// Try to find an active (non-terminal) service first
 	err := r.pool.QueryRow(ctx, `
 		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-			ls.created_at, ls.updated_at
+			ls.customer_preferences, ls.created_at, ls.updated_at
 		FROM RAC_lead_services ls
 		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
@@ -120,13 +122,13 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 		LIMIT 1
 	`, leadID, organizationID).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CreatedAt, &svc.UpdatedAt,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Fallback to most recent service of any status
 		err = r.pool.QueryRow(ctx, `
 			SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-				ls.created_at, ls.updated_at
+				ls.customer_preferences, ls.created_at, ls.updated_at
 			FROM RAC_lead_services ls
 			JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 			WHERE ls.lead_id = $1 AND ls.organization_id = $2
@@ -134,7 +136,7 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 			LIMIT 1
 		`, leadID, organizationID).Scan(
 			&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-			&svc.CreatedAt, &svc.UpdatedAt,
+			&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 		)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -159,7 +161,7 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organi
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.created_at, u.updated_at
+			u.customer_preferences, u.created_at, u.updated_at
 		FROM updated u
 		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`
@@ -167,7 +169,7 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organi
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, query, id, organizationID, *params.Status).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CreatedAt, &svc.UpdatedAt,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
@@ -192,12 +194,12 @@ func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, or
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.created_at, u.updated_at
+			u.customer_preferences, u.created_at, u.updated_at
 		FROM updated u
 		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, id, organizationID, serviceType).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CreatedAt, &svc.UpdatedAt,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceTypeNotFound
@@ -214,12 +216,12 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.created_at, u.updated_at
+			u.customer_preferences, u.created_at, u.updated_at
 		FROM updated u
 		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, id, organizationID, status).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CreatedAt, &svc.UpdatedAt,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
@@ -236,12 +238,12 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 			RETURNING *
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.created_at, u.updated_at
+			u.customer_preferences, u.created_at, u.updated_at
 		FROM updated u
 		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, id, organizationID, stage).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CreatedAt, &svc.UpdatedAt,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
@@ -256,5 +258,14 @@ func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUI
 		SET status = 'Closed', updated_at = now()
 		WHERE lead_id = $1 AND organization_id = $2 AND status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
 	`, leadID, organizationID)
+	return err
+}
+
+func (r *Repository) UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE RAC_lead_services
+		SET customer_preferences = $3, updated_at = now()
+		WHERE id = $1 AND organization_id = $2
+	`, serviceID, organizationID, prefs)
 	return err
 }

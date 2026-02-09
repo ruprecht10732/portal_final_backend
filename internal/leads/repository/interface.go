@@ -17,6 +17,7 @@ type LeadReader interface {
 	GetByIDWithServices(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Lead, []LeadService, error)
 	GetByPhone(ctx context.Context, phone string, organizationID uuid.UUID) (Lead, error)
 	GetByPhoneOrEmail(ctx context.Context, phone string, email string, organizationID uuid.UUID) (*LeadSummary, []LeadService, error)
+	GetByPublicToken(ctx context.Context, token string) (Lead, error)
 	List(ctx context.Context, params ListParams) ([]Lead, int, error)
 	ListHeatmapPoints(ctx context.Context, organizationID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error)
 	ListActionItems(ctx context.Context, organizationID uuid.UUID, newLeadDays int, limit int, offset int) (ActionItemListResult, error)
@@ -28,6 +29,7 @@ type LeadWriter interface {
 	Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadParams) (Lead, error)
 	Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
 	BulkDelete(ctx context.Context, ids []uuid.UUID, organizationID uuid.UUID) (int, error)
+	SetPublicToken(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, token string, expiresAt time.Time) error
 }
 
 // LeadEnrichmentWriter updates enrichment and scoring data for RAC_leads.
@@ -65,6 +67,7 @@ type LeadServiceWriter interface {
 	UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error)
 	UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error)
 	UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error)
+	UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error
 	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error
 }
 
