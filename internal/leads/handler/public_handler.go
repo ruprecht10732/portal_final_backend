@@ -77,7 +77,7 @@ type PublicAvailabilitySlotsQuery struct {
 }
 
 type PublicAppointmentRequest struct {
-	UserID   uuid.UUID `json:"userId" validate:"required"`
+	UserID    uuid.UUID `json:"userId" validate:"required"`
 	StartTime time.Time `json:"startTime" validate:"required"`
 	EndTime   time.Time `json:"endTime" validate:"required,gtfield=StartTime"`
 }
