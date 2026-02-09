@@ -306,6 +306,29 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 	return &q, nil
 }
 
+// GetLatestNonDraftByLead returns the most recent non-draft quote for a lead.
+func (r *Repository) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) (*Quote, error) {
+	var q Quote
+	query := `
+		SELECT id, organization_id, lead_id, lead_service_id, quote_number, status, total_cents, public_token, pdf_file_key
+		FROM RAC_quotes
+		WHERE lead_id = $1 AND organization_id = $2 AND status != 'Draft'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`
+
+	err := r.pool.QueryRow(ctx, query, leadID, orgID).Scan(
+		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.QuoteNumber, &q.Status, &q.TotalCents, &q.PublicToken, &q.PDFFileKey,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get latest non-draft quote: %w", err)
+	}
+	return &q, nil
+}
+
 // GetItemsByQuoteID retrieves all items for a quote
 func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]QuoteItem, error) {
 	query := `

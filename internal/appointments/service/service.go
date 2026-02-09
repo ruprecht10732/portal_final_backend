@@ -46,6 +46,11 @@ func (s *Service) SetSSE(sseService *sse.Service) {
 	s.sseService = sseService
 }
 
+// GetNextScheduledVisit returns the next upcoming scheduled lead visit for a lead.
+func (s *Service) GetNextScheduledVisit(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) (*repository.Appointment, error) {
+	return s.repo.GetNextScheduledVisit(ctx, leadID, tenantID)
+}
+
 // publishSSE publishes an SSE event to all org members if the SSE service is available.
 func (s *Service) publishSSE(orgID uuid.UUID, event sse.Event) {
 	if s.sseService != nil {

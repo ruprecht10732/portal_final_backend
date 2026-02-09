@@ -120,6 +120,11 @@ func (s *Service) SetQuotePromptGenerator(g QuotePromptGenerator) {
 	s.promptGen = g
 }
 
+// GetLatestNonDraftByLead returns the most recent non-draft quote for a lead.
+func (s *Service) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) (*repository.Quote, error) {
+	return s.repo.GetLatestNonDraftByLead(ctx, leadID, orgID)
+}
+
 // GenerateQuote generates a quote from a user prompt using the AI agent pipeline.
 func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*GenerateQuoteResult, error) {
 	if s.promptGen == nil {
