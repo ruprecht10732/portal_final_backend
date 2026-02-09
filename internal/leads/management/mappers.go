@@ -2,6 +2,7 @@ package management
 
 import (
 	"encoding/json"
+	"strings"
 
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
@@ -148,10 +149,48 @@ func ToLeadServiceResponse(svc repository.LeadService) transport.LeadServiceResp
 		ServiceType:   transport.ServiceType(svc.ServiceType),
 		Status:        transport.LeadStatus(svc.Status),
 		PipelineStage: transport.PipelineStage(svc.PipelineStage),
+		Preferences:   leadPreferencesFromService(svc),
 		ConsumerNote:  svc.ConsumerNote,
 		CreatedAt:     svc.CreatedAt,
 		UpdatedAt:     svc.UpdatedAt,
 	}
 
 	return resp
+}
+
+func leadPreferencesFromService(svc repository.LeadService) *transport.LeadPreferencesResponse {
+	if len(svc.CustomerPreferences) == 0 {
+		return nil
+	}
+
+	var raw struct {
+		Budget       string `json:"budget"`
+		Timeframe    string `json:"timeframe"`
+		Availability string `json:"availability"`
+		ExtraNotes   string `json:"extraNotes"`
+	}
+	if err := json.Unmarshal(svc.CustomerPreferences, &raw); err != nil {
+		return nil
+	}
+
+	prefs := transport.LeadPreferencesResponse{
+		Budget:       normalizePreference(raw.Budget),
+		Timeframe:    normalizePreference(raw.Timeframe),
+		Availability: normalizePreference(raw.Availability),
+		ExtraNotes:   normalizePreference(raw.ExtraNotes),
+	}
+
+	if prefs.Budget == nil && prefs.Timeframe == nil && prefs.Availability == nil && prefs.ExtraNotes == nil {
+		return nil
+	}
+
+	return &prefs
+}
+
+func normalizePreference(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }

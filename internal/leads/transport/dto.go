@@ -157,9 +157,17 @@ type LeadServiceResponse struct {
 	ServiceType   ServiceType   `json:"serviceType"`
 	Status        LeadStatus    `json:"status"`
 	PipelineStage PipelineStage `json:"pipelineStage"`
+	Preferences   *LeadPreferencesResponse `json:"preferences,omitempty"`
 	ConsumerNote  *string       `json:"consumerNote,omitempty"`
 	CreatedAt     time.Time     `json:"createdAt"`
 	UpdatedAt     time.Time     `json:"updatedAt"`
+}
+
+type LeadPreferencesResponse struct {
+	Budget       *string `json:"budget,omitempty"`
+	Timeframe    *string `json:"timeframe,omitempty"`
+	Availability *string `json:"availability,omitempty"`
+	ExtraNotes   *string `json:"extraNotes,omitempty"`
 }
 
 type EnergyLabelResponse struct {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, intakeContext string, attachments []repository.Attachment) string {
 	notesSection := buildNotesSection(notes)
 	serviceNote := getValue(service.ConsumerNote)
+	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences)
 	leadContext := buildLeadContextSection(lead, attachments)
 	ruleChecks := buildRuleChecksSection(service.ServiceType, serviceNote, notes)
 
@@ -42,6 +44,9 @@ Service Note (raw):
 %s
 
 Notes:
+%s
+
+Preferences (from customer portal):
 %s
 
 Additional Context:
@@ -91,6 +96,7 @@ FINAL REMINDER: You MUST output SaveAnalysis followed by UpdatePipelineStage. No
 		lead.AddressCity,
 		wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)),
 		notesSection,
+		preferencesSummary,
 		leadContext,
 		ruleChecks,
 		intakeContext,
@@ -100,6 +106,7 @@ FINAL REMINDER: You MUST output SaveAnalysis followed by UpdatePipelineStage. No
 func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis) string {
 	notesSection := buildNotesSection(notes)
 	serviceNote := getValue(service.ConsumerNote)
+	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences)
 	photoSummary := buildPhotoSummary(photoAnalysis)
 
 	return fmt.Sprintf(`You are a Technical Estimator.
@@ -137,6 +144,9 @@ Service Note (raw):
 %s
 
 Notes:
+%s
+
+Preferences (from customer portal):
 %s
 
 Photo Analysis:
@@ -236,6 +246,7 @@ You MUST call SearchProductMaterials first (if available), then DraftQuote (if a
 		lead.AddressCity,
 		wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)),
 		notesSection,
+		preferencesSummary,
 		photoSummary,
 	)
 }
@@ -436,6 +447,7 @@ func hasYear(text string) bool {
 func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, userPrompt string) string {
 	notesSection := buildNotesSection(notes)
 	serviceNote := getValue(service.ConsumerNote)
+	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences)
 
 	return fmt.Sprintf(`You are a Quote Generator.
 
@@ -469,6 +481,9 @@ Service Note (raw):
 %s
 
 Notes:
+%s
+
+Preferences (from customer portal):
 %s
 
 User Prompt:
@@ -526,8 +541,50 @@ You MUST call SearchProductMaterials first, then use Calculator for all arithmet
 		lead.AddressCity,
 		wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)),
 		notesSection,
+		preferencesSummary,
 		wrapUserData(sanitizeUserInput(userPrompt, 2000)),
 	)
+}
+
+func buildPreferencesSummary(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "No preferences provided"
+	}
+
+	var prefs struct {
+		Budget       string `json:"budget"`
+		Timeframe    string `json:"timeframe"`
+		Availability string `json:"availability"`
+		ExtraNotes   string `json:"extraNotes"`
+	}
+	if err := json.Unmarshal(raw, &prefs); err != nil {
+		return "No preferences provided"
+	}
+
+	budget := strings.TrimSpace(prefs.Budget)
+	timeframe := strings.TrimSpace(prefs.Timeframe)
+	availability := strings.TrimSpace(prefs.Availability)
+	extraNotes := strings.TrimSpace(prefs.ExtraNotes)
+
+	if budget == "" && timeframe == "" && availability == "" && extraNotes == "" {
+		return "No preferences provided"
+	}
+
+	lines := []string{
+		"- Budget: " + preferenceValue(budget),
+		"- Timeframe: " + preferenceValue(timeframe),
+		"- Availability: " + preferenceValue(availability),
+		"- Extra notes: " + preferenceValue(extraNotes),
+	}
+
+	return wrapUserData(strings.Join(lines, "\n"))
+}
+
+func preferenceValue(value string) string {
+	if value == "" {
+		return valueNotProvided
+	}
+	return sanitizeUserInput(value, maxNoteLength)
 }
 
 func buildPhotoSummary(photoAnalysis *repository.PhotoAnalysis) string {
