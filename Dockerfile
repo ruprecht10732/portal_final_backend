@@ -16,16 +16,22 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # Runtime stage
 FROM alpine:3.20
 
-RUN addgroup -S app && adduser -S app -G app && apk add --no-cache ca-certificates
+RUN addgroup -S app && adduser -S app -G app && apk add --no-cache ca-certificates curl
 
 WORKDIR /app
 COPY --from=builder /app/bin/server /app/server
 COPY --from=builder /app/bin/scheduler /app/scheduler
 COPY --from=builder /app/migrations /app/migrations
+COPY healthcheck.sh /app/healthcheck.sh
+
+RUN chmod +x /app/healthcheck.sh
 
 ENV HTTP_ADDR=:8080
+ENV SERVICE_ROLE=api
 EXPOSE 8080
 
 USER app
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["/app/healthcheck.sh"]
 
 ENTRYPOINT ["/app/server"]
