@@ -190,6 +190,9 @@ func main() {
 	offerAdapter := adapters.NewPartnerOfferAdapter(partnersModule.Service())
 	leadsModule.SetPartnerOfferCreator(offerAdapter)
 
+	offerSummaryAdapter := adapters.NewOfferSummaryGeneratorAdapter(leadsModule.OfferSummaryGenerator())
+	partnersModule.Service().SetOfferSummaryGenerator(offerSummaryAdapter)
+
 	// Share SSE service with quotes module so public viewers get real-time updates
 	quotesModule.SetSSE(leadsModule.SSE())
 

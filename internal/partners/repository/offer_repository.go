@@ -25,6 +25,7 @@ type PartnerOffer struct {
 	CustomerPriceCents     int64
 	VakmanPriceCents       int64
 	JobSummaryShort        *string
+	BuilderSummary         *string
 	Status                 string
 	AcceptedAt             *time.Time
 	RejectedAt             *time.Time
@@ -38,12 +39,27 @@ type PartnerOffer struct {
 // PartnerOfferWithContext enriches a PartnerOffer with display information.
 type PartnerOfferWithContext struct {
 	PartnerOffer
-	PartnerName      string
-	OrganizationName string
-	LeadCity         string
-	ServiceType      string
-	LeadPostcode4    *string
-	LeadBuurtcode    *string
+	PartnerName        string
+	OrganizationName   string
+	LeadCity           string
+	ServiceType        string
+	LeadPostcode4      *string
+	LeadBuurtcode      *string
+	LeadEnergyBouwjaar *int
+	UrgencyLevel       *string
+}
+
+// QuoteItemSummary is a minimal view of a quote line item for summary generation.
+type QuoteItemSummary struct {
+	Description string
+	Quantity    string
+}
+
+// LeadServiceSummaryContext captures non-PII fields for summary generation.
+type LeadServiceSummaryContext struct {
+	LeadID       uuid.UUID
+	ServiceType  string
+	UrgencyLevel *string
 }
 
 const offerNotFoundMsg = "offer not found"
@@ -53,14 +69,14 @@ func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (Partn
 	query := `
 		INSERT INTO RAC_partner_offers (
 			organization_id, partner_id, lead_service_id, public_token, expires_at,
-			pricing_source, customer_price_cents, vakman_price_cents, job_summary_short, status
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
+			pricing_source, customer_price_cents, vakman_price_cents, job_summary_short, builder_summary, status
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
 		RETURNING id, status, created_at, updated_at`
 
 	err := r.pool.QueryRow(ctx, query,
 		offer.OrganizationID, offer.PartnerID, offer.LeadServiceID,
 		offer.PublicToken, offer.ExpiresAt,
-		offer.PricingSource, offer.CustomerPriceCents, offer.VakmanPriceCents, offer.JobSummaryShort,
+		offer.PricingSource, offer.CustomerPriceCents, offer.VakmanPriceCents, offer.JobSummaryShort, offer.BuilderSummary,
 	).Scan(&offer.ID, &offer.Status, &offer.CreatedAt, &offer.UpdatedAt)
 	if err != nil {
 		return PartnerOffer{}, fmt.Errorf("create partner offer: %w", err)
@@ -76,6 +92,7 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		       o.public_token, o.expires_at,
 		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
 		       o.job_summary_short,
+		       o.builder_summary,
 		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
 		       o.inspection_availability, o.job_availability,
 		       o.created_at, o.updated_at,
@@ -84,13 +101,22 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		       l.address_city,
 		       st.name AS service_type,
 		       l.lead_enrichment_postcode4,
-		       l.lead_enrichment_buurtcode
+		       l.lead_enrichment_buurtcode,
+		       l.energy_bouwjaar,
+		       ai.urgency_level
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
 		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
 		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		JOIN RAC_leads l ON l.id = ls.lead_id
+		LEFT JOIN LATERAL (
+			SELECT urgency_level
+			FROM RAC_lead_ai_analysis
+			WHERE lead_service_id = ls.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) ai ON true
 		WHERE o.public_token = $1`
 
 	var oc PartnerOfferWithContext
@@ -99,6 +125,7 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		&oc.PublicToken, &oc.ExpiresAt,
 		&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
 		&oc.JobSummaryShort,
+		&oc.BuilderSummary,
 		&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
 		&oc.InspectionAvailability, &oc.JobAvailability,
 		&oc.CreatedAt, &oc.UpdatedAt,
@@ -108,6 +135,8 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		&oc.ServiceType,
 		&oc.LeadPostcode4,
 		&oc.LeadBuurtcode,
+		&oc.LeadEnergyBouwjaar,
+		&oc.UrgencyLevel,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
@@ -126,6 +155,7 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 		       public_token, expires_at,
 		       pricing_source, customer_price_cents, vakman_price_cents,
 		       job_summary_short,
+		       builder_summary,
 		       status, accepted_at, rejected_at, rejection_reason,
 		       created_at, updated_at
 		FROM RAC_partner_offers
@@ -137,6 +167,7 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 		&o.PublicToken, &o.ExpiresAt,
 		&o.PricingSource, &o.CustomerPriceCents, &o.VakmanPriceCents,
 		&o.JobSummaryShort,
+		&o.BuilderSummary,
 		&o.Status, &o.AcceptedAt, &o.RejectedAt, &o.RejectionReason,
 		&o.CreatedAt, &o.UpdatedAt,
 	)
@@ -150,6 +181,34 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 	return o, nil
 }
 
+// GetLeadServiceSummaryContext fetches non-PII data used to build offer summaries.
+func (r *Repository) GetLeadServiceSummaryContext(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (LeadServiceSummaryContext, error) {
+	query := `
+		SELECT ls.lead_id,
+		       st.name AS service_type,
+		       ai.urgency_level
+		FROM RAC_lead_services ls
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+		LEFT JOIN LATERAL (
+			SELECT urgency_level
+			FROM RAC_lead_ai_analysis
+			WHERE lead_service_id = ls.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) ai ON true
+		WHERE ls.id = $1 AND ls.organization_id = $2`
+
+	var ctxData LeadServiceSummaryContext
+	if err := r.pool.QueryRow(ctx, query, leadServiceID, organizationID).Scan(&ctxData.LeadID, &ctxData.ServiceType, &ctxData.UrgencyLevel); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return LeadServiceSummaryContext{}, apperr.NotFound("lead service not found")
+		}
+		return LeadServiceSummaryContext{}, fmt.Errorf("get lead service summary context: %w", err)
+	}
+
+	return ctxData, nil
+}
+
 // GetOfferByIDWithContext retrieves an offer by ID with display context (partner name, city, etc.).
 func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.UUID, organizationID uuid.UUID) (PartnerOfferWithContext, error) {
 	query := `
@@ -157,6 +216,7 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		       o.public_token, o.expires_at,
 		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
 		       o.job_summary_short,
+		       o.builder_summary,
 		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
 		       o.inspection_availability, o.job_availability,
 		       o.created_at, o.updated_at,
@@ -165,13 +225,22 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		       l.address_city,
 		       st.name AS service_type,
 		       l.lead_enrichment_postcode4,
-		       l.lead_enrichment_buurtcode
+		       l.lead_enrichment_buurtcode,
+		       l.energy_bouwjaar,
+		       ai.urgency_level
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
 		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
 		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 		JOIN RAC_leads l ON l.id = ls.lead_id
+		LEFT JOIN LATERAL (
+			SELECT urgency_level
+			FROM RAC_lead_ai_analysis
+			WHERE lead_service_id = ls.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) ai ON true
 		WHERE o.id = $1 AND o.organization_id = $2`
 
 	var oc PartnerOfferWithContext
@@ -180,6 +249,7 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		&oc.PublicToken, &oc.ExpiresAt,
 		&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
 		&oc.JobSummaryShort,
+		&oc.BuilderSummary,
 		&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
 		&oc.InspectionAvailability, &oc.JobAvailability,
 		&oc.CreatedAt, &oc.UpdatedAt,
@@ -189,6 +259,8 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		&oc.ServiceType,
 		&oc.LeadPostcode4,
 		&oc.LeadBuurtcode,
+		&oc.LeadEnergyBouwjaar,
+		&oc.UrgencyLevel,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
@@ -198,6 +270,43 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 	}
 
 	return oc, nil
+}
+
+// GetLatestQuoteItemsForService returns line items from the latest non-draft quote for a lead service.
+func (r *Repository) GetLatestQuoteItemsForService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]QuoteItemSummary, error) {
+	query := `
+		WITH latest_quote AS (
+			SELECT id
+			FROM RAC_quotes
+			WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'Draft'
+			ORDER BY created_at DESC
+			LIMIT 1
+		)
+		SELECT qi.description, qi.quantity
+		FROM RAC_quote_items qi
+		JOIN latest_quote lq ON lq.id = qi.quote_id
+		WHERE qi.is_optional = false OR qi.is_selected = true
+		ORDER BY qi.sort_order ASC`
+
+	rows, err := r.pool.Query(ctx, query, leadServiceID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("query quote items for service: %w", err)
+	}
+	defer rows.Close()
+
+	var items []QuoteItemSummary
+	for rows.Next() {
+		var it QuoteItemSummary
+		if err := rows.Scan(&it.Description, &it.Quantity); err != nil {
+			return nil, fmt.Errorf("scan quote item summary: %w", err)
+		}
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate quote item summaries: %w", err)
+	}
+
+	return items, nil
 }
 
 // ListOffersForService returns all offers for a given lead service.

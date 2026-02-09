@@ -32,25 +32,26 @@ import (
 
 // Module is the RAC_leads bounded context module implementing http.Module.
 type Module struct {
-	handler              *handler.Handler
-	attachmentsHandler   *handler.AttachmentsHandler
-	photoAnalysisHandler *handler.PhotoAnalysisHandler
-	publicHandler        *handler.PublicHandler
-	management           *management.Service
-	notes                *notes.Service
-	gatekeeper           *agent.Gatekeeper
-	estimator            *agent.Estimator
-	dispatcher           *agent.Dispatcher
-	orchestrator         *Orchestrator
-	photoAnalyzer        *agent.PhotoAnalyzer
-	callLogger           *agent.CallLogger
-	quoteGenerator       *agent.QuoteGenerator
-	sse                  *sse.Service
-	repo                 repository.LeadsRepository
-	storage              storage.StorageService
-	attachmentsBucket    string
-	log                  *logger.Logger
-	scorer               *scoring.Service
+	handler               *handler.Handler
+	attachmentsHandler    *handler.AttachmentsHandler
+	photoAnalysisHandler  *handler.PhotoAnalysisHandler
+	publicHandler         *handler.PublicHandler
+	management            *management.Service
+	notes                 *notes.Service
+	gatekeeper            *agent.Gatekeeper
+	estimator             *agent.Estimator
+	dispatcher            *agent.Dispatcher
+	orchestrator          *Orchestrator
+	photoAnalyzer         *agent.PhotoAnalyzer
+	callLogger            *agent.CallLogger
+	quoteGenerator        *agent.QuoteGenerator
+	offerSummaryGenerator *agent.OfferSummaryGenerator
+	sse                   *sse.Service
+	repo                  repository.LeadsRepository
+	storage               storage.StorageService
+	attachmentsBucket     string
+	log                   *logger.Logger
+	scorer                *scoring.Service
 }
 
 // NewModule creates and initializes the RAC_leads module with all its dependencies.
@@ -61,7 +62,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
-	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
+	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, offerSummaryGenerator, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
 	if err != nil {
 		return nil, err
 	}
@@ -103,44 +104,45 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
 	return &Module{
-		handler:              h,
-		attachmentsHandler:   attachmentsHandler,
-		photoAnalysisHandler: photoAnalysisHandler,
-		publicHandler:        publicHandler,
-		management:           mgmtSvc,
-		notes:                notesSvc,
-		gatekeeper:           gatekeeper,
-		estimator:            estimator,
-		dispatcher:           dispatcher,
-		orchestrator:         orchestrator,
-		photoAnalyzer:        photoAnalyzer,
-		callLogger:           callLogger,
-		quoteGenerator:       quoteGenerator,
-		sse:                  sseService,
-		repo:                 repo,
-		storage:              storageSvc,
-		attachmentsBucket:    cfg.GetMinioBucketLeadServiceAttachments(),
-		log:                  log,
-		scorer:               scorer,
+		handler:               h,
+		attachmentsHandler:    attachmentsHandler,
+		photoAnalysisHandler:  photoAnalysisHandler,
+		publicHandler:         publicHandler,
+		management:            mgmtSvc,
+		notes:                 notesSvc,
+		gatekeeper:            gatekeeper,
+		estimator:             estimator,
+		dispatcher:            dispatcher,
+		orchestrator:          orchestrator,
+		photoAnalyzer:         photoAnalyzer,
+		callLogger:            callLogger,
+		quoteGenerator:        quoteGenerator,
+		offerSummaryGenerator: offerSummaryGenerator,
+		sse:                   sseService,
+		repo:                  repo,
+		storage:               storageSvc,
+		attachmentsBucket:     cfg.GetMinioBucketLeadServiceAttachments(),
+		log:                   log,
+		scorer:                scorer,
 	}, nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, *agent.QuoteGenerator, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, *agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
 	_ = storageSvc
 	_ = scorer
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	// Create embedding and qdrant clients if configured
@@ -180,12 +182,12 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogQdrantClient: catalogQdrantClient,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	quoteGenerator, err := agent.NewQuoteGenerator(agent.QuoteGeneratorConfig{
@@ -197,10 +199,20 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogQdrantClient: catalogQdrantClient,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, nil
+	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(cfg.MoonshotAPIKey)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, err
+	}
+
+	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, offerSummaryGenerator, nil
+}
+
+// OfferSummaryGenerator exposes the AI summary generator for partner offers.
+func (m *Module) OfferSummaryGenerator() ports.OfferSummaryGenerator {
+	return m.offerSummaryGenerator
 }
 
 func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {

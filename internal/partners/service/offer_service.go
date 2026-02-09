@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -15,6 +16,26 @@ import (
 
 	"github.com/google/uuid"
 )
+
+type OfferSummaryItem struct {
+	Description string
+	Quantity    string
+}
+
+// OfferSummaryInput defines the fields sent to the summary generator (no PII).
+type OfferSummaryInput struct {
+	LeadID        uuid.UUID
+	LeadServiceID uuid.UUID
+	ServiceType   string
+	Scope         *string
+	UrgencyLevel  *string
+	Items         []OfferSummaryItem
+}
+
+// OfferSummaryGenerator generates a markdown summary for partner offers.
+type OfferSummaryGenerator interface {
+	GenerateSummary(ctx context.Context, tenantID uuid.UUID, input OfferSummaryInput) (string, error)
+}
 
 const (
 	offerTokenBytes = 32
@@ -35,11 +56,12 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 		return transport.CreateOfferResponse{}, err
 	}
 
-	// Resolve lead ID from lead service
-	leadID, err := s.repo.GetLeadIDForService(ctx, req.LeadServiceID, tenantID)
+	// Resolve lead + service context for summary generation
+	serviceCtx, err := s.repo.GetLeadServiceSummaryContext(ctx, req.LeadServiceID, tenantID)
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
+	leadID := serviceCtx.LeadID
 
 	// Sequential model: only one active offer at a time
 	hasActive, err := s.repo.HasActiveOffer(ctx, req.LeadServiceID)
@@ -62,6 +84,39 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 	// Calculate expiry
 	expiry := time.Now().UTC().Add(time.Duration(req.ExpiresInHours) * time.Hour)
 
+	items, itemsErr := s.repo.GetLatestQuoteItemsForService(ctx, req.LeadServiceID, tenantID)
+	if itemsErr != nil {
+		items = nil
+	}
+	scopeAssessment := buildScopeAssessment(items)
+	var builderSummaryPtr *string
+	if s.summaryGenerator != nil && len(items) > 0 {
+		inputItems := make([]OfferSummaryItem, 0, len(items))
+		for _, it := range items {
+			inputItems = append(inputItems, OfferSummaryItem{
+				Description: it.Description,
+				Quantity:    it.Quantity,
+			})
+		}
+		summary, sumErr := s.summaryGenerator.GenerateSummary(ctx, tenantID, OfferSummaryInput{
+			LeadID:        leadID,
+			LeadServiceID: req.LeadServiceID,
+			ServiceType:   serviceCtx.ServiceType,
+			Scope:         scopeAssessment,
+			UrgencyLevel:  serviceCtx.UrgencyLevel,
+			Items:         inputItems,
+		})
+		if sumErr == nil {
+			clean := strings.TrimSpace(sanitize.Text(summary))
+			if clean != "" {
+				builderSummaryPtr = &clean
+			}
+		}
+	}
+	if builderSummaryPtr == nil {
+		builderSummaryPtr = buildBuilderSummary(items, scopeAssessment, serviceCtx.UrgencyLevel)
+	}
+
 	// Persist
 	jobSummary := strings.TrimSpace(req.JobSummaryShort)
 	jobSummary = sanitize.Text(jobSummary)
@@ -80,6 +135,7 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 		CustomerPriceCents: req.CustomerPriceCents,
 		VakmanPriceCents:   vakmanPrice,
 		JobSummaryShort:    jobSummaryPtr,
+		BuilderSummary:     builderSummaryPtr,
 	})
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
@@ -115,14 +171,28 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 		return transport.PublicOfferResponse{}, err
 	}
 
+	items, itemsErr := s.repo.GetLatestQuoteItemsForService(ctx, oc.LeadServiceID, oc.OrganizationID)
+	if itemsErr != nil {
+		items = nil
+	}
+	scopeAssessment := buildScopeAssessment(items)
+	builderSummary := oc.BuilderSummary
+	if builderSummary == nil {
+		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel)
+	}
+
 	return transport.PublicOfferResponse{
 		OfferID:          oc.ID,
 		OrganizationName: oc.OrganizationName,
 		JobSummary:       oc.ServiceType,
 		JobSummaryShort:  oc.JobSummaryShort,
+		BuilderSummary:   builderSummary,
 		City:             oc.LeadCity,
 		Postcode4:        oc.LeadPostcode4,
 		Buurtcode:        oc.LeadBuurtcode,
+		ConstructionYear: oc.LeadEnergyBouwjaar,
+		ScopeAssessment:  scopeAssessment,
+		UrgencyLevel:     oc.UrgencyLevel,
 		VakmanPriceCents: oc.VakmanPriceCents,
 		PricingSource:    oc.PricingSource,
 		Status:           oc.Status,
@@ -229,20 +299,174 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 		return transport.PublicOfferResponse{}, err
 	}
 
+	items, itemsErr := s.repo.GetLatestQuoteItemsForService(ctx, oc.LeadServiceID, oc.OrganizationID)
+	if itemsErr != nil {
+		items = nil
+	}
+	scopeAssessment := buildScopeAssessment(items)
+	builderSummary := oc.BuilderSummary
+	if builderSummary == nil {
+		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel)
+	}
+
 	return transport.PublicOfferResponse{
 		OfferID:          oc.ID,
 		OrganizationName: oc.OrganizationName,
 		JobSummary:       oc.ServiceType,
 		JobSummaryShort:  oc.JobSummaryShort,
+		BuilderSummary:   builderSummary,
 		City:             oc.LeadCity,
 		Postcode4:        oc.LeadPostcode4,
 		Buurtcode:        oc.LeadBuurtcode,
+		ConstructionYear: oc.LeadEnergyBouwjaar,
+		ScopeAssessment:  scopeAssessment,
+		UrgencyLevel:     oc.UrgencyLevel,
 		VakmanPriceCents: oc.VakmanPriceCents,
 		PricingSource:    oc.PricingSource,
 		Status:           oc.Status,
 		ExpiresAt:        oc.ExpiresAt,
 		CreatedAt:        oc.CreatedAt,
 	}, nil
+}
+
+func buildBuilderSummary(items []repository.QuoteItemSummary, scopeAssessment *string, urgencyLevel *string) *string {
+	if len(items) == 0 {
+		return nil
+	}
+
+	scopeLabel := mapScopeLabel(scopeAssessment)
+	urgencyLabel := mapUrgencyLabel(urgencyLevel)
+
+	lines := []string{}
+	if scopeLabel != "" || urgencyLabel != "" {
+		if scopeLabel == "" {
+			scopeLabel = "Onbekend"
+		}
+		if urgencyLabel == "" {
+			urgencyLabel = "Onbekend"
+		}
+		lines = append(lines, fmt.Sprintf("**Omvang** %s  **Urgentie** %s", scopeLabel, urgencyLabel))
+		lines = append(lines, "")
+	}
+
+	const maxItems = 3
+	remaining := len(items) - maxItems
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	for i, it := range items {
+		if i >= maxItems {
+			break
+		}
+		quantity := strings.TrimSpace(it.Quantity)
+		main, inclusions := splitInclusions(it.Description)
+		main = strings.TrimSpace(main)
+		if main == "" {
+			continue
+		}
+		if quantity != "" {
+			main = strings.TrimSpace(quantity + " " + main)
+		}
+		if len(inclusions) > 0 {
+			main = main + " Inclusief:"
+		}
+		if remaining > 0 && i == maxItems-1 {
+			main = fmt.Sprintf("%s (+%d)", main, remaining)
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s", i+1, main))
+		for _, inc := range inclusions {
+			lines = append(lines, "   - "+inc)
+		}
+	}
+
+	if len(lines) == 0 {
+		return nil
+	}
+
+	result := strings.Join(lines, "\n")
+	return &result
+}
+
+func buildScopeAssessment(items []repository.QuoteItemSummary) *string {
+	count := len(items)
+	if count == 0 {
+		return nil
+	}
+	var scope string
+	switch {
+	case count <= 2:
+		scope = "Small"
+	case count <= 5:
+		scope = "Medium"
+	default:
+		scope = "Large"
+	}
+	return &scope
+}
+
+func mapScopeLabel(scope *string) string {
+	if scope == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(*scope)) {
+	case "small":
+		return "Klein"
+	case "medium":
+		return "Middel"
+	case "large":
+		return "Groot"
+	default:
+		return ""
+	}
+}
+
+func mapUrgencyLabel(level *string) string {
+	if level == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(*level)) {
+	case "low":
+		return "Laag"
+	case "medium":
+		return "Gemiddeld"
+	case "high":
+		return "Hoog"
+	default:
+		return ""
+	}
+}
+
+func splitInclusions(description string) (string, []string) {
+	parts := strings.SplitN(description, "Inclusief:", 2)
+	main := strings.TrimSpace(parts[0])
+	if len(parts) < 2 {
+		return main, nil
+	}
+
+	return main, parseInclusionList(parts[1])
+}
+
+func parseInclusionList(value string) []string {
+	cleaned := strings.ReplaceAll(value, "\n\n", "\n")
+	cleaned = strings.ReplaceAll(cleaned, " - ", "\n- ")
+	lines := strings.Split(cleaned, "\n")
+
+	items := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "-") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		}
+		if line != "" {
+			items = append(items, line)
+		}
+	}
+
+	return items
 }
 
 // ListOffersByPartner returns all offers for a given partner (admin view).

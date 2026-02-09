@@ -26,8 +26,9 @@ const (
 type Service struct {
 	repo       *repository.Repository
 	eventBus   events.Bus
-	storage    storage.StorageService
-	logoBucket string
+	storage          storage.StorageService
+	logoBucket       string
+	summaryGenerator OfferSummaryGenerator
 }
 
 // New creates a new partners service.
@@ -77,6 +78,10 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 	}
 
 	return mapPartnerResponse(created, req.ServiceTypeIDs), nil
+}
+
+func (s *Service) SetOfferSummaryGenerator(generator OfferSummaryGenerator) {
+	s.summaryGenerator = generator
 }
 
 func (s *Service) GetByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.PartnerResponse, error) {
