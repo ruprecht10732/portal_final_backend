@@ -1134,89 +1134,116 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID, page 
 	}
 
 	if page == 1 {
-		upcoming, upcomingErr := s.repo.ListUpcomingAppointments(ctx, tenantID, 5)
-		if upcomingErr != nil {
-			return transport.ActivityFeedResponse{}, upcomingErr
-		}
-		if len(upcoming) > 0 {
-			existing := make(map[uuid.UUID]struct{}, len(entries))
-			for _, entry := range entries {
-				existing[entry.EntityID] = struct{}{}
-			}
-			filtered := make([]repository.ActivityFeedEntry, 0, len(upcoming))
-			for _, entry := range upcoming {
-				if _, seen := existing[entry.EntityID]; seen {
-					continue
-				}
-				filtered = append(filtered, entry)
-			}
-			if len(filtered) > 0 {
-				entries = append(filtered, entries...)
-			}
+		entries, err = s.mergeUpcomingAppointments(ctx, tenantID, entries)
+		if err != nil {
+			return transport.ActivityFeedResponse{}, err
 		}
 	}
 
 	items := make([]transport.ActivityFeedItem, 0, len(entries))
 	for _, e := range entries {
-		item := transport.ActivityFeedItem{
-			ID:          e.ID.String(),
-			Type:        e.EventType,
-			Category:    e.Category,
-			Title:       mapActivityTitle(e.Category, e.EventType, e.Title, e.ScheduledAt),
-			Description: e.Description,
-			Timestamp:   e.CreatedAt.Format(time.RFC3339),
-		}
-
-		if e.LeadName != "" {
-			item.LeadName = e.LeadName
-		}
-		if e.Phone != "" {
-			item.Phone = e.Phone
-		}
-		if e.Email != "" {
-			item.Email = e.Email
-		}
-		if e.LeadStatus != "" {
-			item.LeadStatus = e.LeadStatus
-		}
-		if e.ServiceType != "" {
-			item.ServiceType = e.ServiceType
-		}
-		if e.LeadScore != nil {
-			item.LeadScore = e.LeadScore
-		}
-		if e.Address != "" {
-			item.Address = e.Address
-		}
-		if e.Latitude != nil {
-			item.Latitude = e.Latitude
-		}
-		if e.Longitude != nil {
-			item.Longitude = e.Longitude
-		}
-		if e.ScheduledAt != nil {
-			item.ScheduledAt = e.ScheduledAt.Format(time.RFC3339)
-		}
-		if e.Priority > 0 {
-			item.Priority = e.Priority
-		}
-
-		// Build navigation link based on category + entity ID
-		switch e.Category {
-		case "leads":
-			item.Link = []string{"/app/leads", e.EntityID.String()}
-		case "quotes":
-			item.Link = []string{"/app/offertes", e.EntityID.String()}
-		case "appointments":
-			item.Link = []string{"/app/appointments"}
-		case "ai":
-			item.Link = []string{"/app/leads", e.EntityID.String()}
-		}
-
-		items = append(items, item)
+		items = append(items, mapEntryToFeedItem(e))
 	}
 
 	return transport.ActivityFeedResponse{Items: items}, nil
+}
+
+// mergeUpcomingAppointments prepends upcoming appointments to the feed entries (page 1 only).
+func (s *Service) mergeUpcomingAppointments(ctx context.Context, tenantID uuid.UUID, entries []repository.ActivityFeedEntry) ([]repository.ActivityFeedEntry, error) {
+	upcoming, err := s.repo.ListUpcomingAppointments(ctx, tenantID, 5)
+	if err != nil {
+		return nil, err
+	}
+	if len(upcoming) == 0 {
+		return entries, nil
+	}
+
+	existing := make(map[uuid.UUID]struct{}, len(entries))
+	for _, entry := range entries {
+		existing[entry.EntityID] = struct{}{}
+	}
+
+	filtered := make([]repository.ActivityFeedEntry, 0, len(upcoming))
+	for _, entry := range upcoming {
+		if _, seen := existing[entry.EntityID]; seen {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+
+	if len(filtered) > 0 {
+		return append(filtered, entries...), nil
+	}
+	return entries, nil
+}
+
+// mapEntryToFeedItem converts a repository entry into a transport feed item.
+func mapEntryToFeedItem(e repository.ActivityFeedEntry) transport.ActivityFeedItem {
+	item := transport.ActivityFeedItem{
+		ID:          e.ID.String(),
+		Type:        e.EventType,
+		Category:    e.Category,
+		Title:       mapActivityTitle(e.Category, e.EventType, e.Title, e.ScheduledAt),
+		Description: e.Description,
+		Timestamp:   e.CreatedAt.Format(time.RFC3339),
+	}
+
+	populateFeedItemFields(&item, &e)
+	assignFeedItemLink(&item, &e)
+	enrichFeedItem(&item, &e)
+
+	return item
+}
+
+// populateFeedItemFields sets optional fields from the entry onto the feed item.
+func populateFeedItemFields(item *transport.ActivityFeedItem, e *repository.ActivityFeedEntry) {
+	if e.LeadName != "" {
+		item.LeadName = e.LeadName
+	}
+	if e.Phone != "" {
+		item.Phone = e.Phone
+	}
+	if e.Email != "" {
+		item.Email = e.Email
+	}
+	if e.LeadStatus != "" {
+		item.LeadStatus = e.LeadStatus
+	}
+	if e.ServiceType != "" {
+		item.ServiceType = e.ServiceType
+	}
+	if e.LeadScore != nil {
+		item.LeadScore = e.LeadScore
+	}
+	if e.Address != "" {
+		item.Address = e.Address
+	}
+	if e.Latitude != nil {
+		item.Latitude = e.Latitude
+	}
+	if e.Longitude != nil {
+		item.Longitude = e.Longitude
+	}
+	if e.ScheduledAt != nil {
+		item.ScheduledAt = e.ScheduledAt.Format(time.RFC3339)
+	}
+	if e.Priority > 0 {
+		item.Priority = e.Priority
+	}
+}
+
+// assignFeedItemLink builds the navigation link for the feed item based on category.
+func assignFeedItemLink(item *transport.ActivityFeedItem, e *repository.ActivityFeedEntry) {
+	switch e.Category {
+	case "leads":
+		item.Link = []string{"/app/leads", e.EntityID.String()}
+	case "quotes":
+		item.Link = []string{"/app/offertes", e.EntityID.String()}
+	case "appointments":
+		item.Link = []string{"/app/appointments"}
+	case "ai":
+		item.Link = []string{"/app/leads", e.EntityID.String()}
+	}
 }
 
 // mapActivityTitle translates raw event types into human-readable Dutch titles.
@@ -1247,8 +1274,20 @@ func mapActivityTitle(category, eventType, rawTitle string, scheduledAt *time.Ti
 	// AI events
 	case "analysis_complete":
 		return "Gatekeeper analyse voltooid"
-	case "photo_analysis_complete":
+	case "photo_analysis_complete", "photo_analysis_completed":
 		return "Foto-analyse voltooid"
+	// Partner events
+	case "partner_offer_accepted":
+		return "Partner offerte geaccepteerd"
+	case "partner_offer_rejected":
+		return "Partner offerte afgewezen"
+	// Pipeline / triage events
+	case "manual_intervention":
+		return "Handmatige interventie vereist"
+	case "gatekeeper_rejected":
+		return "Gatekeeper heeft lead afgewezen"
+	case "lead_lost":
+		return "Lead verloren"
 	// Quote events (rawTitle already contains the human-readable message)
 	case "quote_sent", "quote_viewed", "quote_accepted", "quote_rejected",
 		"quote_item_toggled", "quote_annotated":

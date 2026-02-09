@@ -164,6 +164,9 @@ type ActivityFeedEntry struct {
 	ScheduledAt *time.Time
 	CreatedAt   time.Time
 	Priority    int
+	GroupCount  int
+	ActorName   string
+	RawMetadata []byte // raw JSONB from the source table
 }
 
 // ActivityFeedReader provides recent org-wide activity for the dashboard feed.

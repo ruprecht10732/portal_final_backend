@@ -1054,6 +1054,8 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 
 // ListRecentActivity returns the most recent org-wide activity by unioning
 // lead activity, quote activity, and recent appointments.
+// Events are clustered: sequential events with the same lead, event type, and category
+// within a 15-minute window are grouped into a single row with a group_count.
 func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid.UUID, limit int, offset int) ([]ActivityFeedEntry, error) {
 	if limit <= 0 {
 		limit = 50
@@ -1085,9 +1087,12 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				NULL::double precision AS latitude,
 				NULL::double precision AS longitude,
 				NULL::timestamptz AS scheduled_at,
-				la.created_at
+				la.created_at,
+				COALESCE(NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''), 'Systeem') AS actor_name,
+				la.meta AS raw_metadata
 			FROM RAC_lead_activity la
 			LEFT JOIN RAC_leads l ON l.id = la.lead_id AND l.organization_id = la.organization_id
+			LEFT JOIN RAC_users u ON u.id = la.user_id
 			LEFT JOIN LATERAL (
 				SELECT ls.status, st.name
 				FROM RAC_lead_services ls
@@ -1119,7 +1124,9 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				NULL::double precision AS latitude,
 				NULL::double precision AS longitude,
 				NULL::timestamptz AS scheduled_at,
-				qa.created_at
+				qa.created_at,
+				'Systeem' AS actor_name,
+				qa.metadata AS raw_metadata
 			FROM RAC_quote_activity qa
 			LEFT JOIN RAC_quotes q ON q.id = qa.quote_id
 			LEFT JOIN RAC_lead_services ls ON ls.id = q.lead_service_id
@@ -1156,7 +1163,9 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				l.latitude,
 				l.longitude,
 				a.start_time AS scheduled_at,
-				a.updated_at AS created_at
+				a.updated_at AS created_at,
+				'Systeem' AS actor_name,
+				NULL::jsonb AS raw_metadata
 			FROM RAC_appointments a
 			LEFT JOIN RAC_leads l ON l.id = a.lead_id AND l.organization_id = a.organization_id
 			LEFT JOIN RAC_lead_services als ON als.id = a.lead_service_id
@@ -1191,7 +1200,9 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				NULL::double precision AS latitude,
 				NULL::double precision AS longitude,
 				NULL::timestamptz AS scheduled_at,
-				te.created_at
+				te.created_at,
+				COALESCE(te.actor_name, 'AI') AS actor_name,
+				te.metadata AS raw_metadata
 			FROM lead_timeline_events te
 			LEFT JOIN RAC_leads l ON l.id = te.lead_id AND l.organization_id = te.organization_id
 			LEFT JOIN LATERAL (
@@ -1204,9 +1215,47 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 			) svc ON true
 			WHERE te.organization_id = $1
 				AND te.event_type IN ('ai', 'photo_analysis_completed')
+		),
+		-- Step 1: compute the time gap from the previous event in the same partition.
+		with_gap AS (
+			SELECT *,
+				CASE
+					WHEN created_at - LAG(created_at) OVER (
+						PARTITION BY entity_id, event_type, category
+						ORDER BY created_at
+					) <= interval '15 minutes' THEN 0
+					ELSE 1
+				END AS is_new_cluster
+			FROM unified
+		),
+		-- Step 2: running SUM over the gap flag to assign a cluster_id.
+		clustered AS (
+			SELECT *,
+				SUM(is_new_cluster) OVER (
+					PARTITION BY entity_id, event_type, category
+					ORDER BY created_at
+				) AS cluster_id
+			FROM with_gap
+		),
+		-- Attach per-cluster count to every row, then pick the latest row per cluster.
+		with_count AS (
+			SELECT *,
+				COUNT(*) OVER (
+					PARTITION BY entity_id, event_type, category, cluster_id
+				)::int AS group_count
+			FROM clustered
+		),
+		deduped AS (
+			SELECT DISTINCT ON (entity_id, event_type, category, cluster_id)
+			       id, category, event_type, title, description, entity_id,
+			       lead_name, phone, email, lead_status, service_type, lead_score,
+			       COALESCE(address, '') AS address, latitude, longitude,
+			       scheduled_at, created_at, 0 AS priority,
+			       group_count, COALESCE(actor_name, '') AS actor_name, raw_metadata
+			FROM with_count
+			ORDER BY entity_id, event_type, category, cluster_id, created_at DESC
 		)
-		SELECT id, category, event_type, title, description, entity_id, lead_name, phone, email, lead_status, service_type, lead_score, COALESCE(address, '') AS address, latitude, longitude, scheduled_at, created_at, 0 AS priority
-		FROM unified
+		SELECT * FROM deduped
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -1239,6 +1288,9 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 			&e.ScheduledAt,
 			&e.CreatedAt,
 			&e.Priority,
+			&e.GroupCount,
+			&e.ActorName,
+			&e.RawMetadata,
 		); err != nil {
 			return nil, err
 		}

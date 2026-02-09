@@ -311,29 +311,42 @@ type LogCallRequest struct {
 
 // ActivityFeedItem is a single entry in the dashboard activity feed (historical).
 type ActivityFeedItem struct {
-	ID          string   `json:"id"`
-	Type        string   `json:"type"`
-	Category    string   `json:"category"`
-	Title       string   `json:"title"`
-	Description string   `json:"description,omitempty"`
-	LeadName    string   `json:"leadName,omitempty"`
-	Phone       string   `json:"phone,omitempty"`
-	Email       string   `json:"email,omitempty"`
-	LeadStatus  string   `json:"leadStatus,omitempty"`
-	ServiceType string   `json:"serviceType,omitempty"`
-	LeadScore   *int     `json:"leadScore,omitempty"`
-	Address     string   `json:"address,omitempty"`
-	Latitude    *float64 `json:"latitude,omitempty"`
-	Longitude   *float64 `json:"longitude,omitempty"`
-	ScheduledAt string   `json:"scheduledAt,omitempty"`
-	Timestamp   string   `json:"timestamp"`
-	Priority    int      `json:"priority,omitempty"`
-	Link        []string `json:"link,omitempty"`
+	ID              string         `json:"id"`
+	Type            string         `json:"type"`
+	Category        string         `json:"category"`
+	Title           string         `json:"title"`
+	Description     string         `json:"description,omitempty"`
+	LeadName        string         `json:"leadName,omitempty"`
+	Phone           string         `json:"phone,omitempty"`
+	Email           string         `json:"email,omitempty"`
+	LeadStatus      string         `json:"leadStatus,omitempty"`
+	ServiceType     string         `json:"serviceType,omitempty"`
+	LeadScore       *int           `json:"leadScore,omitempty"`
+	Address         string         `json:"address,omitempty"`
+	Latitude        *float64       `json:"latitude,omitempty"`
+	Longitude       *float64       `json:"longitude,omitempty"`
+	ScheduledAt     string         `json:"scheduledAt,omitempty"`
+	Timestamp       string         `json:"timestamp"`
+	Priority        int            `json:"priority,omitempty"`
+	Link            []string       `json:"link,omitempty"`
+	Sentiment       string         `json:"sentiment"`
+	GroupCount      int            `json:"groupCount,omitempty"`
+	ActorName       string         `json:"actorName,omitempty"`
+	SuggestedAction string         `json:"suggestedAction,omitempty"`
+	ActionLink      string         `json:"actionLink,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+}
+
+// FeedSeparator marks a position in the feed list for visual grouping (e.g. day headers).
+type FeedSeparator struct {
+	Index int    `json:"index"`
+	Label string `json:"label"`
 }
 
 // ActivityFeedResponse wraps the list returned by GET /leads/activity-feed.
 type ActivityFeedResponse struct {
-	Items []ActivityFeedItem `json:"items"`
+	Items      []ActivityFeedItem `json:"items"`
+	Separators []FeedSeparator    `json:"separators,omitempty"`
 }
 
 // LogCallResponse is the response for a processed call log
