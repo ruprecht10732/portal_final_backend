@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -14,6 +15,7 @@ import (
 	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // PublicHandler handles public (unauthenticated) lead portal endpoints.
@@ -52,6 +54,7 @@ func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:token/info", h.AddCustomerInfo)
 	rg.POST("/:token/attachments/presign", h.PresignUpload)
 	rg.POST("/:token/attachments", h.ConfirmUpload)
+	rg.DELETE("/:token/attachments/:attachmentId", h.DeleteAttachment)
 }
 
 type PublicPreferencesRequest struct {
@@ -354,6 +357,53 @@ func (h *PublicHandler) ConfirmUpload(c *gin.Context) {
 	})
 
 	httpkit.OK(c, gin.H{"status": "ok"})
+}
+
+// DeleteAttachment removes a public-uploaded attachment.
+func (h *PublicHandler) DeleteAttachment(c *gin.Context) {
+	token := c.Param("token")
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidRequest, nil)
+		return
+	}
+
+	lead, err := h.repo.GetByPublicToken(c.Request.Context(), token)
+	if err != nil {
+		httpkit.Error(c, http.StatusNotFound, publicMsgLeadNotFound, nil)
+		return
+	}
+
+	svc, err := h.repo.GetCurrentLeadService(c.Request.Context(), lead.ID, lead.OrganizationID)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, publicMsgServiceUnavailable, nil)
+		return
+	}
+
+	att, err := h.repo.GetAttachmentByID(c.Request.Context(), attachmentID, lead.OrganizationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrAttachmentNotFound) {
+			httpkit.Error(c, http.StatusNotFound, "Attachment not found", nil)
+			return
+		}
+		httpkit.Error(c, http.StatusInternalServerError, "Failed to load attachment", nil)
+		return
+	}
+	if att.LeadServiceID != svc.ID {
+		httpkit.Error(c, http.StatusNotFound, "Attachment not found", nil)
+		return
+	}
+
+	if err := h.storage.DeleteObject(c.Request.Context(), h.bucket, att.FileKey); err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "Failed to delete attachment", nil)
+		return
+	}
+	if err := h.repo.DeleteAttachment(c.Request.Context(), attachmentID, lead.OrganizationID); err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "Failed to delete attachment", nil)
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "deleted"})
 }
 
 func resolveCustomerStatus(stage string, quote *ports.PublicQuoteSummary, appt *ports.PublicAppointmentSummary) (string, string, int) {
