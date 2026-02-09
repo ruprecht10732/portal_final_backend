@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"portal_final_backend/internal/adapters/storage"
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/httpkit"
@@ -16,15 +17,16 @@ import (
 
 // AttachmentsHandler handles HTTP requests for lead service attachments.
 type AttachmentsHandler struct {
-	repo    repository.AttachmentStore
-	storage storage.StorageService
-	bucket  string
-	val     *validator.Validator
+	repo     repository.LeadsRepository
+	eventBus events.Bus
+	storage  storage.StorageService
+	bucket   string
+	val      *validator.Validator
 }
 
 // NewAttachmentsHandler creates a new attachments handler.
-func NewAttachmentsHandler(repo repository.AttachmentStore, storageSvc storage.StorageService, bucket string, val *validator.Validator) *AttachmentsHandler {
-	return &AttachmentsHandler{repo: repo, storage: storageSvc, bucket: bucket, val: val}
+func NewAttachmentsHandler(repo repository.LeadsRepository, eventBus events.Bus, storageSvc storage.StorageService, bucket string, val *validator.Validator) *AttachmentsHandler {
+	return &AttachmentsHandler{repo: repo, eventBus: eventBus, storage: storageSvc, bucket: bucket, val: val}
 }
 
 // RegisterRoutes adds attachment routes to a service-specific router group.
@@ -140,6 +142,20 @@ func (h *AttachmentsHandler) CreateAttachment(c *gin.Context) {
 	if err != nil {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to create attachment record", nil)
 		return
+	}
+
+	if h.eventBus != nil {
+		if svc, svcErr := h.repo.GetLeadServiceByID(c.Request.Context(), serviceID, tenantID); svcErr == nil {
+			h.eventBus.Publish(c.Request.Context(), events.AttachmentUploaded{
+				BaseEvent:     events.NewBaseEvent(),
+				LeadID:        svc.LeadID,
+				LeadServiceID: serviceID,
+				TenantID:      tenantID,
+				AttachmentID:  att.ID,
+				FileName:      req.FileName,
+				ContentType:   req.ContentType,
+			})
+		}
 	}
 
 	httpkit.JSON(c, http.StatusCreated, toAttachmentResponse(att, nil))

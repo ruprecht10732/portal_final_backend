@@ -4,6 +4,7 @@ package leads
 
 import (
 	"context"
+	"time"
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
@@ -96,6 +97,9 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		Validator:     val,
 		PhotoAnalyzer: photoAnalyzer,
 	})
+
+	photoBatcher := newPhotoAnalysisBatcher(photoAnalysisHandler, 60*time.Second, log)
+	subscribeAttachmentUploaded(eventBus, photoBatcher, log)
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
 	return &Module{
@@ -296,6 +300,24 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	}))
 }
 
+func subscribeAttachmentUploaded(eventBus events.Bus, batcher *photoAnalysisBatcher, log *logger.Logger) {
+	eventBus.Subscribe(events.AttachmentUploaded{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.AttachmentUploaded)
+		if !ok {
+			return nil
+		}
+		if !isImageContentType(e.ContentType) {
+			return nil
+		}
+		if batcher == nil {
+			log.Warn("photo analysis batcher not configured")
+			return nil
+		}
+		batcher.OnImageUploaded(e.LeadID, e.LeadServiceID, e.TenantID)
+		return nil
+	}))
+}
+
 type buildHandlersDeps struct {
 	MgmtSvc       *management.Service
 	NotesSvc      *notes.Service
@@ -312,7 +334,7 @@ type buildHandlersDeps struct {
 
 func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.AttachmentsHandler, *handler.PhotoAnalysisHandler) {
 	notesHandler := handler.NewNotesHandler(deps.NotesSvc, deps.Repo, deps.EventBus, deps.Validator)
-	attachmentsHandler := handler.NewAttachmentsHandler(deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.Validator)
+	attachmentsHandler := handler.NewAttachmentsHandler(deps.Repo, deps.EventBus, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.Validator)
 	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator)
 	h := handler.New(handler.HandlerDeps{
 		Mgmt:         deps.MgmtSvc,

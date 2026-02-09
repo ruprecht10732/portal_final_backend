@@ -465,7 +465,7 @@ func (h *PublicHandler) ConfirmUpload(c *gin.Context) {
 		return
 	}
 
-	_, err = h.repo.CreateAttachment(c.Request.Context(), repository.CreateAttachmentParams{
+	att, err := h.repo.CreateAttachment(c.Request.Context(), repository.CreateAttachmentParams{
 		LeadServiceID:  svc.ID,
 		OrganizationID: lead.OrganizationID,
 		FileKey:        req.FileKey,
@@ -485,6 +485,16 @@ func (h *PublicHandler) ConfirmUpload(c *gin.Context) {
 		LeadServiceID: svc.ID,
 		TenantID:      lead.OrganizationID,
 		Source:        "customer_portal_upload",
+	})
+
+	h.eventBus.Publish(c.Request.Context(), events.AttachmentUploaded{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        lead.ID,
+		LeadServiceID: svc.ID,
+		TenantID:      lead.OrganizationID,
+		AttachmentID:  att.ID,
+		FileName:      req.FileName,
+		ContentType:   req.ContentType,
 	})
 
 	httpkit.OK(c, gin.H{"status": "ok"})

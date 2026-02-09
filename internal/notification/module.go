@@ -545,7 +545,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 	return nil
 }
 
-func (m *Module) handleLeadDataChanged(ctx context.Context, e events.LeadDataChanged) error {
+func (m *Module) handleLeadDataChanged(_ context.Context, e events.LeadDataChanged) error {
 	if m.sse == nil {
 		return nil
 	}
@@ -586,7 +586,7 @@ func (m *Module) handleLeadDataChanged(ctx context.Context, e events.LeadDataCha
 	return nil
 }
 
-func (m *Module) handlePipelineStageChanged(ctx context.Context, e events.PipelineStageChanged) error {
+func (m *Module) handlePipelineStageChanged(_ context.Context, e events.PipelineStageChanged) error {
 	if m.sse == nil {
 		return nil
 	}
@@ -708,94 +708,112 @@ func (m *Module) handleQuoteAnnotated(ctx context.Context, e events.QuoteAnnotat
 }
 
 func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted) error {
-	// 1. Generate PDF, upload to MinIO, and persist file key
-	var pdfBytes []byte
-	if m.pdfProc != nil {
-		fileKey, generatedPDF, err := m.pdfProc.GenerateAndStorePDF(ctx, e.QuoteID, e.OrganizationID, e.OrganizationName, e.ConsumerName, e.SignatureName)
-		if err != nil {
-			m.log.Error("failed to generate/store acceptance PDF",
-				"quoteId", e.QuoteID,
-				"error", err,
-			)
-			// Non-fatal: continue with emails and SSE even if PDF fails
-		} else {
-			pdfBytes = generatedPDF
-			m.log.Info("acceptance PDF generated and stored",
-				"quoteId", e.QuoteID,
-				"fileKey", fileKey,
-			)
-		}
-	}
-
-	// 2. Send "thank you" email to customer — with PDF attached if available
-	if e.ConsumerEmail != "" {
-		var attachments []email.Attachment
-		if len(pdfBytes) > 0 {
-			attachments = append(attachments, email.Attachment{
-				Content:  pdfBytes,
-				FileName: "offerte-" + e.QuoteNumber + ".pdf",
-				MIMEType: "application/pdf",
-			})
-		}
-		if err := m.sender.SendQuoteAcceptedThankYouEmail(ctx, e.ConsumerEmail, e.ConsumerName, e.OrganizationName, e.QuoteNumber, attachments...); err != nil {
-			m.log.Error("failed to send acceptance thank-you email to customer",
-				"quoteId", e.QuoteID,
-				"email", e.ConsumerEmail,
-				"error", err,
-			)
-		} else {
-			m.log.Info("acceptance thank-you email sent to customer",
-				"quoteId", e.QuoteID,
-				"email", e.ConsumerEmail,
-			)
-		}
-	}
-
-	// 3. Send acceptance notification email to the agent
-	if e.AgentEmail != "" {
-		if err := m.sender.SendQuoteAcceptedEmail(ctx, e.AgentEmail, e.AgentName, e.QuoteNumber, e.ConsumerName, e.TotalCents); err != nil {
-			m.log.Error("failed to send acceptance notification email to agent",
-				"quoteId", e.QuoteID,
-				"email", e.AgentEmail,
-				"error", err,
-			)
-		} else {
-			m.log.Info("acceptance notification email sent to agent",
-				"quoteId", e.QuoteID,
-				"email", e.AgentEmail,
-			)
-		}
-	}
-
-	// 4. Push SSE event so the agent dashboard updates in real time
-	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteAccepted, e.QuoteID, map[string]interface{}{
-		"signatureName": e.SignatureName,
-		"totalCents":    e.TotalCents,
-	})
-
-	if m.sse != nil {
-		evt := sse.Event{
-			Type:   sse.EventQuoteAccepted,
-			LeadID: e.LeadID,
-			Data: map[string]interface{}{
-				"quoteId":   e.QuoteID,
-				"status":    "Accepted",
-				"signature": e.SignatureName,
-			},
-		}
-		if e.LeadServiceID != nil {
-			evt.ServiceID = *e.LeadServiceID
-		}
-		m.sse.PublishToLead(e.LeadID, evt)
-	}
-
-	// 5. Persist activity
+	pdfBytes := m.generateAcceptancePDF(ctx, e)
+	m.sendAcceptanceThankYouEmail(ctx, e, pdfBytes)
+	m.sendAcceptanceAgentEmail(ctx, e)
+	m.publishQuoteAcceptedSSE(e)
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_accepted",
 		"Offerte geaccepteerd door "+e.SignatureName,
 		map[string]interface{}{"signatureName": e.SignatureName, "totalCents": e.TotalCents, "consumerName": e.ConsumerName})
 
 	m.log.Info("quote accepted event processed", "quoteId", e.QuoteID)
 	return nil
+}
+
+func (m *Module) generateAcceptancePDF(ctx context.Context, e events.QuoteAccepted) []byte {
+	if m.pdfProc == nil {
+		return nil
+	}
+
+	fileKey, generatedPDF, err := m.pdfProc.GenerateAndStorePDF(ctx, e.QuoteID, e.OrganizationID, e.OrganizationName, e.ConsumerName, e.SignatureName)
+	if err != nil {
+		m.log.Error("failed to generate/store acceptance PDF",
+			"quoteId", e.QuoteID,
+			"error", err,
+		)
+		return nil
+	}
+
+	m.log.Info("acceptance PDF generated and stored",
+		"quoteId", e.QuoteID,
+		"fileKey", fileKey,
+	)
+
+	return generatedPDF
+}
+
+func (m *Module) sendAcceptanceThankYouEmail(ctx context.Context, e events.QuoteAccepted, pdfBytes []byte) {
+	if e.ConsumerEmail == "" {
+		return
+	}
+
+	var attachments []email.Attachment
+	if len(pdfBytes) > 0 {
+		attachments = append(attachments, email.Attachment{
+			Content:  pdfBytes,
+			FileName: "offerte-" + e.QuoteNumber + ".pdf",
+			MIMEType: "application/pdf",
+		})
+	}
+
+	if err := m.sender.SendQuoteAcceptedThankYouEmail(ctx, e.ConsumerEmail, e.ConsumerName, e.OrganizationName, e.QuoteNumber, attachments...); err != nil {
+		m.log.Error("failed to send acceptance thank-you email to customer",
+			"quoteId", e.QuoteID,
+			"email", e.ConsumerEmail,
+			"error", err,
+		)
+		return
+	}
+
+	m.log.Info("acceptance thank-you email sent to customer",
+		"quoteId", e.QuoteID,
+		"email", e.ConsumerEmail,
+	)
+}
+
+func (m *Module) sendAcceptanceAgentEmail(ctx context.Context, e events.QuoteAccepted) {
+	if e.AgentEmail == "" {
+		return
+	}
+
+	if err := m.sender.SendQuoteAcceptedEmail(ctx, e.AgentEmail, e.AgentName, e.QuoteNumber, e.ConsumerName, e.TotalCents); err != nil {
+		m.log.Error("failed to send acceptance notification email to agent",
+			"quoteId", e.QuoteID,
+			"email", e.AgentEmail,
+			"error", err,
+		)
+		return
+	}
+
+	m.log.Info("acceptance notification email sent to agent",
+		"quoteId", e.QuoteID,
+		"email", e.AgentEmail,
+	)
+}
+
+func (m *Module) publishQuoteAcceptedSSE(e events.QuoteAccepted) {
+	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteAccepted, e.QuoteID, map[string]interface{}{
+		"signatureName": e.SignatureName,
+		"totalCents":    e.TotalCents,
+	})
+
+	if m.sse == nil {
+		return
+	}
+
+	evt := sse.Event{
+		Type:   sse.EventQuoteAccepted,
+		LeadID: e.LeadID,
+		Data: map[string]interface{}{
+			"quoteId":   e.QuoteID,
+			"status":    "Accepted",
+			"signature": e.SignatureName,
+		},
+	}
+	if e.LeadServiceID != nil {
+		evt.ServiceID = *e.LeadServiceID
+	}
+	m.sse.PublishToLead(e.LeadID, evt)
 }
 
 func (m *Module) handleQuoteRejected(ctx context.Context, e events.QuoteRejected) error {

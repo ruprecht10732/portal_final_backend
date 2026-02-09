@@ -76,7 +76,8 @@ func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
 		return
 	}
 
-	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, *tenantID, identity.UserID(), imageAttachments, contextInfo)
+	userID := identity.UserID()
+	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, *tenantID, &userID, imageAttachments, contextInfo)
 
 	httpkit.OK(c, gin.H{
 		"status":     "processing",
@@ -147,7 +148,7 @@ func filterImageAttachments(attachments []repository.Attachment) []repository.At
 }
 
 // runPhotoAnalysis performs the photo analysis in the background and sends SSE notification when done.
-func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID, userID uuid.UUID, attachments []repository.Attachment, contextInfo string) {
+func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, attachments []repository.Attachment, contextInfo string) {
 	serviceType, intakeRequirements := h.getServiceAnalysisContext(ctx, serviceID, tenantID)
 	images := h.loadImages(ctx, attachments)
 	if len(images) == 0 {
@@ -173,6 +174,22 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 	h.persistPhotoAnalysis(ctx, leadID, serviceID, tenantID, result)
 	h.writePhotoAnalysisTimeline(ctx, leadID, serviceID, tenantID, result)
 	h.publishPhotoAnalysisSuccess(userID, leadID, serviceID, result)
+}
+
+// RunAutoAnalysis triggers photo analysis without user-specific SSE notifications.
+func (h *PhotoAnalysisHandler) RunAutoAnalysis(leadID, serviceID, tenantID uuid.UUID) {
+	attachments, err := h.repo.ListAttachmentsByService(context.Background(), serviceID, tenantID)
+	if err != nil {
+		log.Printf("photo analysis: failed to load attachments for service %s: %v", serviceID, err)
+		return
+	}
+
+	imageAttachments := filterImageAttachments(attachments)
+	if len(imageAttachments) == 0 {
+		return
+	}
+
+	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, tenantID, nil, imageAttachments, "")
 }
 
 func (h *PhotoAnalysisHandler) getServiceAnalysisContext(ctx context.Context, serviceID, tenantID uuid.UUID) (string, string) {
@@ -232,8 +249,11 @@ func readAllAndClose(data io.ReadCloser) ([]byte, error) {
 	return io.ReadAll(data)
 }
 
-func (h *PhotoAnalysisHandler) publishPhotoAnalysisFailure(userID, leadID, serviceID uuid.UUID, message, errCode string) {
-	h.sse.Publish(userID, sse.Event{
+func (h *PhotoAnalysisHandler) publishPhotoAnalysisFailure(userID *uuid.UUID, leadID, serviceID uuid.UUID, message, errCode string) {
+	if userID == nil {
+		return
+	}
+	h.sse.Publish(*userID, sse.Event{
 		Type:      sse.EventPhotoAnalysisComplete,
 		LeadID:    leadID,
 		ServiceID: serviceID,
@@ -331,8 +351,11 @@ func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis) map[string]any {
 	return metadata
 }
 
-func (h *PhotoAnalysisHandler) publishPhotoAnalysisSuccess(userID, leadID, serviceID uuid.UUID, result *agent.PhotoAnalysis) {
-	h.sse.Publish(userID, sse.Event{
+func (h *PhotoAnalysisHandler) publishPhotoAnalysisSuccess(userID *uuid.UUID, leadID, serviceID uuid.UUID, result *agent.PhotoAnalysis) {
+	if userID == nil {
+		return
+	}
+	h.sse.Publish(*userID, sse.Event{
 		Type:      sse.EventPhotoAnalysisComplete,
 		LeadID:    leadID,
 		ServiceID: serviceID,

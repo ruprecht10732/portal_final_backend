@@ -106,6 +106,19 @@ type LeadDataChanged struct {
 
 func (e LeadDataChanged) EventName() string { return "leads.data.changed" }
 
+// AttachmentUploaded is published when a lead service attachment is created.
+type AttachmentUploaded struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	AttachmentID  uuid.UUID `json:"attachmentId"`
+	FileName      string    `json:"fileName"`
+	ContentType   string    `json:"contentType"`
+}
+
+func (e AttachmentUploaded) EventName() string { return "leads.attachment.uploaded" }
+
 // PipelineStageChanged is published when the pipeline stage for a lead service changes.
 type PipelineStageChanged struct {
 	BaseEvent
