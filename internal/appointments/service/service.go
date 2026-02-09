@@ -56,6 +56,20 @@ func (s *Service) GetNextRequestedVisit(ctx context.Context, leadID uuid.UUID, t
 	return s.repo.GetNextRequestedVisit(ctx, leadID, tenantID)
 }
 
+// ListLeadVisitsByStatus returns lead visit appointments matching the provided statuses.
+func (s *Service) ListLeadVisitsByStatus(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID, statuses []transport.AppointmentStatus) ([]repository.Appointment, error) {
+	if len(statuses) == 0 {
+		return []repository.Appointment{}, nil
+	}
+
+	statusValues := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		statusValues = append(statusValues, string(status))
+	}
+
+	return s.repo.ListLeadVisitsByStatus(ctx, leadID, tenantID, statusValues)
+}
+
 // publishSSE publishes an SSE event to all org members if the SSE service is available.
 func (s *Service) publishSSE(orgID uuid.UUID, event sse.Event) {
 	if s.sseService != nil {

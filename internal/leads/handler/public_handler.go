@@ -103,6 +103,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 	}
 
 	appt, pendingAppt := h.resolvePublicAppointments(c.Request.Context(), lead.ID, lead.OrganizationID)
+	appointments := h.resolvePublicAppointmentsList(c.Request.Context(), lead.ID, lead.OrganizationID)
 	slotsAvailable := h.resolveSlotsAvailable(c.Request.Context(), &lead)
 
 	statusLabel, statusDescription, step := resolveCustomerStatus(svc.PipelineStage, quote, appt)
@@ -130,6 +131,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 		},
 		"appointment":        appt,
 		"appointmentRequest": pendingAppt,
+		"appointments":       appointments,
 		"slotsAvailable":     slotsAvailable,
 		"quote": gin.H{
 			"available":    quote != nil,
@@ -581,6 +583,17 @@ func (h *PublicHandler) resolvePublicAppointments(ctx context.Context, leadID uu
 	appt, _ := h.apptViewer.GetUpcomingVisit(ctx, leadID, organizationID)
 	pending, _ := h.apptViewer.GetPendingVisit(ctx, leadID, organizationID)
 	return appt, pending
+}
+
+func (h *PublicHandler) resolvePublicAppointmentsList(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) []ports.PublicAppointmentSummary {
+	if h.apptViewer == nil {
+		return []ports.PublicAppointmentSummary{}
+	}
+	items, err := h.apptViewer.ListVisits(ctx, leadID, organizationID)
+	if err != nil {
+		return []ports.PublicAppointmentSummary{}
+	}
+	return items
 }
 
 func (h *PublicHandler) resolveSlotsAvailable(ctx context.Context, lead *repository.Lead) bool {

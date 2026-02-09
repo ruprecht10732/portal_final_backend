@@ -125,6 +125,7 @@ func (a *AppointmentSlotAdapter) CreateRequestedAppointment(ctx context.Context,
 		StartTime: appt.StartTime,
 		EndTime:   appt.EndTime,
 		Title:     appt.Title,
+		Status:    string(appt.Status),
 	}, nil
 }
 

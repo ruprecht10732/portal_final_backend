@@ -19,10 +19,11 @@ type PublicQuoteSummary struct {
 
 // PublicAppointmentSummary represents what the lead portal needs to know about a visit.
 type PublicAppointmentSummary struct {
-	ID        uuid.UUID
-	StartTime time.Time
-	EndTime   time.Time
-	Title     string
+	ID        uuid.UUID `json:"id"`
+	StartTime time.Time `json:"startTime"`
+	EndTime   time.Time `json:"endTime"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
 }
 
 // PublicTimeSlot represents a single public-facing available time slot.
@@ -52,6 +53,7 @@ type QuotePublicViewer interface {
 type AppointmentPublicViewer interface {
 	GetUpcomingVisit(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*PublicAppointmentSummary, error)
 	GetPendingVisit(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*PublicAppointmentSummary, error)
+	ListVisits(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]PublicAppointmentSummary, error)
 }
 
 // AppointmentSlotProvider exposes availability and booking for the public portal.

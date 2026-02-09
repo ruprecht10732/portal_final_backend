@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"portal_final_backend/internal/appointments/service"
+	"portal_final_backend/internal/appointments/transport"
 	"portal_final_backend/internal/leads/ports"
 	quotesvc "portal_final_backend/internal/quotes/service"
 
@@ -60,6 +61,7 @@ func (a *AppointmentPublicAdapter) GetUpcomingVisit(ctx context.Context, leadID,
 		StartTime: appt.StartTime,
 		EndTime:   appt.EndTime,
 		Title:     appt.Title,
+		Status:    appt.Status,
 	}, nil
 }
 
@@ -74,7 +76,31 @@ func (a *AppointmentPublicAdapter) GetPendingVisit(ctx context.Context, leadID, 
 		StartTime: appt.StartTime,
 		EndTime:   appt.EndTime,
 		Title:     appt.Title,
+		Status:    appt.Status,
 	}, nil
+}
+
+func (a *AppointmentPublicAdapter) ListVisits(ctx context.Context, leadID, orgID uuid.UUID) ([]ports.PublicAppointmentSummary, error) {
+	visits, err := a.svc.ListLeadVisitsByStatus(ctx, leadID, orgID, []transport.AppointmentStatus{
+		transport.AppointmentStatusRequested,
+		transport.AppointmentStatusScheduled,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]ports.PublicAppointmentSummary, 0, len(visits))
+	for _, appt := range visits {
+		items = append(items, ports.PublicAppointmentSummary{
+			ID:        appt.ID,
+			StartTime: appt.StartTime,
+			EndTime:   appt.EndTime,
+			Title:     appt.Title,
+			Status:    appt.Status,
+		})
+	}
+
+	return items, nil
 }
 
 var _ ports.QuotePublicViewer = (*QuotePublicAdapter)(nil)

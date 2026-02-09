@@ -126,7 +126,7 @@ func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.
 // GetNextScheduledVisit returns the next upcoming scheduled lead visit for a lead.
 func (r *Repository) GetNextScheduledVisit(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
 	var appt Appointment
-	query := `
+	queryUpcoming := `
 		SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
 			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
 		FROM RAC_appointments
@@ -139,16 +139,38 @@ func (r *Repository) GetNextScheduledVisit(ctx context.Context, leadID uuid.UUID
 		LIMIT 1
 	`
 
-	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(
+	err := r.pool.QueryRow(ctx, queryUpcoming, leadID, organizationID).Scan(
 		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
 		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
 		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("failed to get next scheduled visit: %w", err)
 		}
-		return nil, fmt.Errorf("failed to get next scheduled visit: %w", err)
+		queryLatest := `
+			SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
+				location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
+			FROM RAC_appointments
+			WHERE lead_id = $1
+				AND organization_id = $2
+				AND type = 'lead_visit'
+				AND status = 'scheduled'
+			ORDER BY start_time DESC
+			LIMIT 1
+		`
+
+		err = r.pool.QueryRow(ctx, queryLatest, leadID, organizationID).Scan(
+			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
+			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+		)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("failed to get latest scheduled visit: %w", err)
+		}
 	}
 
 	return &appt, nil
@@ -165,7 +187,6 @@ func (r *Repository) GetNextRequestedVisit(ctx context.Context, leadID uuid.UUID
 			AND organization_id = $2
 			AND type = 'lead_visit'
 			AND status = 'requested'
-			AND start_time > now()
 		ORDER BY start_time ASC
 		LIMIT 1
 	`
@@ -183,6 +204,49 @@ func (r *Repository) GetNextRequestedVisit(ctx context.Context, leadID uuid.UUID
 	}
 
 	return &appt, nil
+}
+
+// ListLeadVisitsByStatus returns lead visit appointments matching the provided statuses.
+func (r *Repository) ListLeadVisitsByStatus(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID, statuses []string) ([]Appointment, error) {
+	if len(statuses) == 0 {
+		return []Appointment{}, nil
+	}
+
+	query := `
+		SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
+			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
+		FROM RAC_appointments
+		WHERE lead_id = $1
+			AND organization_id = $2
+			AND type = 'lead_visit'
+			AND status = ANY($3)
+		ORDER BY start_time ASC
+	`
+
+	rows, err := r.pool.Query(ctx, query, leadID, organizationID, statuses)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list lead visits: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]Appointment, 0)
+	for rows.Next() {
+		var appt Appointment
+		if err := rows.Scan(
+			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
+			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan lead visit: %w", err)
+		}
+		items = append(items, appt)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate lead visits: %w", err)
+	}
+
+	return items, nil
 }
 
 // Update updates an existing appointment
