@@ -22,6 +22,9 @@ WORKDIR /app
 COPY --from=builder /app/bin/server /app/server
 COPY --from=builder /app/bin/scheduler /app/scheduler
 COPY --from=builder /app/migrations /app/migrations
+COPY start.sh /app/start.sh
+
+RUN chmod +x /app/start.sh
 COPY healthcheck.sh /app/healthcheck.sh
 
 RUN chmod +x /app/healthcheck.sh
@@ -34,4 +37,4 @@ USER app
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["/app/healthcheck.sh"]
 
-ENTRYPOINT ["/app/server"]
+ENTRYPOINT ["/app/start.sh"]
