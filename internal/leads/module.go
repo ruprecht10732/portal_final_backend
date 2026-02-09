@@ -96,7 +96,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		Validator:     val,
 		PhotoAnalyzer: photoAnalyzer,
 	})
-	publicHandler := handler.NewPublicHandler(repo, eventBus, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
+	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
 	return &Module{
 		handler:              h,

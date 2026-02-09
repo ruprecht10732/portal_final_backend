@@ -119,6 +119,8 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 
 	// Lead events
 	bus.Subscribe(events.LeadCreated{}.EventName(), m)
+	bus.Subscribe(events.LeadDataChanged{}.EventName(), m)
+	bus.Subscribe(events.PipelineStageChanged{}.EventName(), m)
 
 	// Quote domain events
 	bus.Subscribe(events.QuoteSent{}.EventName(), m)
@@ -154,6 +156,10 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handlePartnerOfferExpired(ctx, e)
 	case events.LeadCreated:
 		return m.handleLeadCreated(ctx, e)
+	case events.LeadDataChanged:
+		return m.handleLeadDataChanged(ctx, e)
+	case events.PipelineStageChanged:
+		return m.handlePipelineStageChanged(ctx, e)
 	// Quote events
 	case events.QuoteSent:
 		return m.handleQuoteSent(ctx, e)
@@ -539,6 +545,65 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 	return nil
 }
 
+func (m *Module) handleLeadDataChanged(ctx context.Context, e events.LeadDataChanged) error {
+	if m.sse == nil {
+		return nil
+	}
+
+	var eventType sse.EventType
+	var message string
+
+	switch e.Source {
+	case "customer_preferences":
+		eventType = sse.EventLeadPreferencesUpdated
+		message = "Klant heeft voorkeuren bijgewerkt"
+	case "customer_portal_update":
+		eventType = sse.EventLeadInfoAdded
+		message = "Klant heeft extra info toegevoegd"
+	case "customer_portal_upload":
+		eventType = sse.EventLeadAttachmentUploaded
+		message = "Klant heeft bestanden geupload"
+	case "customer_portal_delete":
+		eventType = sse.EventLeadAttachmentDeleted
+		message = "Klant heeft een bestand verwijderd"
+	case "appointment_request":
+		eventType = sse.EventLeadAppointmentRequested
+		message = "Klant heeft een inspectie aangevraagd"
+	default:
+		return nil
+	}
+
+	m.sse.PublishToOrganization(e.TenantID, sse.Event{
+		Type:      eventType,
+		LeadID:    e.LeadID,
+		ServiceID: e.LeadServiceID,
+		Message:   message,
+		Data: map[string]interface{}{
+			"source": e.Source,
+		},
+	})
+
+	return nil
+}
+
+func (m *Module) handlePipelineStageChanged(ctx context.Context, e events.PipelineStageChanged) error {
+	if m.sse == nil {
+		return nil
+	}
+
+	m.sse.PublishToLead(e.LeadID, sse.Event{
+		Type:      sse.EventLeadStatusChanged,
+		LeadID:    e.LeadID,
+		ServiceID: e.LeadServiceID,
+		Data: map[string]interface{}{
+			"oldStage": e.OldStage,
+			"newStage": e.NewStage,
+		},
+	})
+
+	return nil
+}
+
 // ── Quote event handlers ────────────────────────────────────────────────
 
 func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error {
@@ -570,6 +635,22 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 		"quoteNumber": e.QuoteNumber,
 		"status":      "Sent",
 	})
+
+	if m.sse != nil {
+		evt := sse.Event{
+			Type:   sse.EventQuoteSent,
+			LeadID: e.LeadID,
+			Data: map[string]interface{}{
+				"quoteId":     e.QuoteID,
+				"quoteNumber": e.QuoteNumber,
+				"status":      "Sent",
+			},
+		}
+		if e.LeadServiceID != nil {
+			evt.ServiceID = *e.LeadServiceID
+		}
+		m.sse.PublishToLead(e.LeadID, evt)
+	}
 
 	// Persist activity
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_sent",
@@ -692,6 +773,22 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 		"totalCents":    e.TotalCents,
 	})
 
+	if m.sse != nil {
+		evt := sse.Event{
+			Type:   sse.EventQuoteAccepted,
+			LeadID: e.LeadID,
+			Data: map[string]interface{}{
+				"quoteId":   e.QuoteID,
+				"status":    "Accepted",
+				"signature": e.SignatureName,
+			},
+		}
+		if e.LeadServiceID != nil {
+			evt.ServiceID = *e.LeadServiceID
+		}
+		m.sse.PublishToLead(e.LeadID, evt)
+	}
+
 	// 5. Persist activity
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_accepted",
 		"Offerte geaccepteerd door "+e.SignatureName,
@@ -705,6 +802,22 @@ func (m *Module) handleQuoteRejected(ctx context.Context, e events.QuoteRejected
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteRejected, e.QuoteID, map[string]interface{}{
 		"reason": e.Reason,
 	})
+
+	if m.sse != nil {
+		evt := sse.Event{
+			Type:   sse.EventQuoteRejected,
+			LeadID: e.LeadID,
+			Data: map[string]interface{}{
+				"quoteId": e.QuoteID,
+				"status":  "Rejected",
+				"reason":  e.Reason,
+			},
+		}
+		if e.LeadServiceID != nil {
+			evt.ServiceID = *e.LeadServiceID
+		}
+		m.sse.PublishToLead(e.LeadID, evt)
+	}
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_rejected",
 		"Offerte afgewezen door klant",
 		map[string]interface{}{"reason": e.Reason})

@@ -77,6 +77,15 @@ func (s *Service) publishSSE(orgID uuid.UUID, event sse.Event) {
 	}
 }
 
+// publishLeadSSE publishes an SSE event to public lead viewers if available.
+func (s *Service) publishLeadSSE(leadID *uuid.UUID, event sse.Event) {
+	if s.sseService == nil || leadID == nil {
+		return
+	}
+	event.LeadID = *leadID
+	s.sseService.PublishToLead(*leadID, event)
+}
+
 // Create creates a new appointment
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAppointmentRequest) (*transport.AppointmentResponse, error) {
 	if err := s.validateLeadVisit(ctx, req, userID, isAdmin, tenantID); err != nil {
@@ -112,6 +121,17 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 			"startTime":     appt.StartTime,
 			"endTime":       appt.EndTime,
 			"lead":          leadInfo,
+		},
+	})
+
+	// Notify public lead tracking page (minimal payload)
+	s.publishLeadSSE(appt.LeadID, sse.Event{
+		Type: sse.EventAppointmentCreated,
+		Data: map[string]interface{}{
+			"appointmentId": appt.ID,
+			"status":        string(appt.Status),
+			"startTime":     appt.StartTime,
+			"endTime":       appt.EndTime,
 		},
 	})
 
@@ -283,6 +303,17 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 		},
 	})
 
+	// Notify public lead tracking page (minimal payload)
+	s.publishLeadSSE(appt.LeadID, sse.Event{
+		Type: sse.EventAppointmentUpdated,
+		Data: map[string]interface{}{
+			"appointmentId": appt.ID,
+			"status":        string(appt.Status),
+			"startTime":     appt.StartTime,
+			"endTime":       appt.EndTime,
+		},
+	})
+
 	return &resp, nil
 }
 
@@ -352,6 +383,17 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 			"startTime":     appt.StartTime,
 			"endTime":       appt.EndTime,
 			"lead":          leadInfo,
+		},
+	})
+
+	// Notify public lead tracking page (minimal payload)
+	s.publishLeadSSE(appt.LeadID, sse.Event{
+		Type: sse.EventAppointmentStatusChanged,
+		Data: map[string]interface{}{
+			"appointmentId": appt.ID,
+			"status":        string(req.Status),
+			"startTime":     appt.StartTime,
+			"endTime":       appt.EndTime,
 		},
 	})
 

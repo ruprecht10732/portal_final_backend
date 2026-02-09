@@ -14,6 +14,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -25,6 +26,7 @@ import (
 type PublicHandler struct {
 	repo        repository.LeadsRepository
 	eventBus    events.Bus
+	sse         *sse.Service
 	storage     storage.StorageService
 	bucket      string
 	val         *validator.Validator
@@ -42,8 +44,8 @@ const (
 )
 
 // NewPublicHandler creates a new public handler for lead portal access.
-func NewPublicHandler(repo repository.LeadsRepository, eventBus events.Bus, storageSvc storage.StorageService, bucket string, val *validator.Validator) *PublicHandler {
-	return &PublicHandler{repo: repo, eventBus: eventBus, storage: storageSvc, bucket: bucket, val: val}
+func NewPublicHandler(repo repository.LeadsRepository, eventBus events.Bus, sseService *sse.Service, storageSvc storage.StorageService, bucket string, val *validator.Validator) *PublicHandler {
+	return &PublicHandler{repo: repo, eventBus: eventBus, sse: sseService, storage: storageSvc, bucket: bucket, val: val}
 }
 
 // SetPublicViewers injects external data viewers (quotes and appointments).
@@ -61,6 +63,9 @@ func (h *PublicHandler) SetPublicOrgViewer(orgViewer ports.OrganizationPublicVie
 // RegisterRoutes registers public lead portal routes under /public/leads.
 func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:token", h.GetTrackAndTrace)
+	if h.sse != nil {
+		rg.GET(":token/events", h.sse.PublicLeadHandler(h.resolveLeadID))
+	}
 	rg.POST("/:token/preferences", h.UpdatePreferences)
 	rg.POST("/:token/info", h.AddCustomerInfo)
 	rg.GET("/:token/availability/slots", h.GetAvailabilitySlots)
@@ -68,6 +73,15 @@ func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:token/attachments/presign", h.PresignUpload)
 	rg.POST("/:token/attachments", h.ConfirmUpload)
 	rg.DELETE("/:token/attachments/:attachmentId", h.DeleteAttachment)
+}
+
+func (h *PublicHandler) resolveLeadID(token string) (uuid.UUID, error) {
+	ctx := context.Background()
+	lead, err := h.repo.GetByPublicToken(ctx, token)
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	return lead.ID, nil
 }
 
 type PublicPreferencesRequest struct {
@@ -519,6 +533,14 @@ func (h *PublicHandler) DeleteAttachment(c *gin.Context) {
 		httpkit.Error(c, http.StatusInternalServerError, "Failed to delete attachment", nil)
 		return
 	}
+
+	h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        lead.ID,
+		LeadServiceID: svc.ID,
+		TenantID:      lead.OrganizationID,
+		Source:        "customer_portal_delete",
+	})
 
 	httpkit.OK(c, gin.H{"status": "deleted"})
 }

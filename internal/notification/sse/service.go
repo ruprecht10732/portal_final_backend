@@ -20,6 +20,14 @@ const (
 	EventPhotoAnalysisComplete EventType = "photo_analysis_complete"
 	EventLeadUpdated           EventType = "lead_updated"
 
+	// Lead/customer activity events (pushed to org members)
+	EventLeadPreferencesUpdated   EventType = "lead_preferences_updated"
+	EventLeadAttachmentUploaded   EventType = "lead_attachment_uploaded"
+	EventLeadAttachmentDeleted    EventType = "lead_attachment_deleted"
+	EventLeadInfoAdded            EventType = "lead_info_added"
+	EventLeadAppointmentRequested EventType = "lead_appointment_requested"
+	EventLeadStatusChanged        EventType = "lead_status_changed"
+
 	// Quote events (pushed to agents watching a quote)
 	EventQuoteSent        EventType = "quote_sent"
 	EventQuoteViewed      EventType = "quote_viewed"
@@ -59,12 +67,19 @@ type quoteClient struct {
 	events  chan Event
 }
 
+// leadClient represents a public (unauthenticated) SSE viewer on a lead tracking page.
+type leadClient struct {
+	leadID uuid.UUID
+	events chan Event
+}
+
 // Service manages SSE connections and event broadcasting
 type Service struct {
 	mu           sync.RWMutex
 	clients      map[uuid.UUID][]*client      // userID -> clients
 	orgMap       map[uuid.UUID][]uuid.UUID    // orgID -> userIDs
 	quoteClients map[uuid.UUID][]*quoteClient // quoteID -> public viewers
+	leadClients  map[uuid.UUID][]*leadClient  // leadID -> public viewers
 }
 
 // New creates a new SSE service
@@ -73,6 +88,7 @@ func New() *Service {
 		clients:      make(map[uuid.UUID][]*client),
 		orgMap:       make(map[uuid.UUID][]uuid.UUID),
 		quoteClients: make(map[uuid.UUID][]*quoteClient),
+		leadClients:  make(map[uuid.UUID][]*leadClient),
 	}
 }
 
@@ -179,6 +195,26 @@ func (s *Service) PublishToQuote(quoteID uuid.UUID, event Event) {
 	}
 }
 
+// PublishToLead sends an event to all public viewers of a lead tracking page.
+func (s *Service) PublishToLead(leadID uuid.UUID, event Event) {
+	s.mu.RLock()
+	viewers := make([]*leadClient, len(s.leadClients[leadID]))
+	copy(viewers, s.leadClients[leadID])
+	s.mu.RUnlock()
+
+	for _, v := range viewers {
+		select {
+		case v.events <- event:
+		default:
+			log.Printf("SSE: Lead event buffer full for lead %s", leadID)
+		}
+	}
+
+	if len(viewers) > 0 {
+		log.Printf("SSE: Published event %s to lead %s (%d public viewers)", event.Type, leadID, len(viewers))
+	}
+}
+
 // setSSEHeaders configures the standard SSE response headers.
 func setSSEHeaders(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -204,6 +240,24 @@ func (s *Service) deregisterQuoteClient(quoteID uuid.UUID, qc *quoteClient) {
 		delete(s.quoteClients, quoteID)
 	}
 	close(qc.events)
+}
+
+// deregisterLeadClient removes a public viewer for a lead.
+func (s *Service) deregisterLeadClient(leadID uuid.UUID, lc *leadClient) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	viewers := s.leadClients[leadID]
+	for i, v := range viewers {
+		if v == lc {
+			s.leadClients[leadID] = append(viewers[:i], viewers[i+1:]...)
+			break
+		}
+	}
+	if len(s.leadClients[leadID]) == 0 {
+		delete(s.leadClients, leadID)
+	}
+	close(lc.events)
 }
 
 // streamEvents writes SSE events from the channel until the client disconnects or
@@ -267,6 +321,47 @@ func (s *Service) PublicQuoteHandler(resolveQuoteID func(token string) (uuid.UUI
 	}
 }
 
+// PublicLeadHandler returns a Gin handler for unauthenticated SSE connections
+// on a specific lead (used by the public lead tracking page).
+func (s *Service) PublicLeadHandler(resolveLeadID func(token string) (uuid.UUID, error)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.Param("token")
+		if token == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			return
+		}
+
+		leadID, err := resolveLeadID(token)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "lead not found"})
+			return
+		}
+
+		setSSEHeaders(c)
+
+		lc := &leadClient{
+			leadID: leadID,
+			events: make(chan Event, 32),
+		}
+
+		// Register
+		s.mu.Lock()
+		s.leadClients[leadID] = append(s.leadClients[leadID], lc)
+		s.mu.Unlock()
+
+		// Deregister on disconnect
+		defer s.deregisterLeadClient(leadID, lc)
+
+		// Connected signal
+		c.SSEvent("connected", gin.H{"leadId": leadID})
+		c.Writer.Flush()
+
+		log.Printf("SSE: Public viewer connected for lead %s", leadID)
+
+		streamEvents(c, lc.events, fmt.Sprintf("SSE: Public viewer disconnected for lead %s", leadID))
+	}
+}
+
 // Handler returns a Gin handler for SSE connections
 func (s *Service) Handler(getUserID func(*gin.Context) (uuid.UUID, bool), getOrgID func(*gin.Context) (uuid.UUID, bool)) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -314,7 +409,13 @@ func (s *Service) Close() {
 			close(v.events)
 		}
 	}
+	for _, viewers := range s.leadClients {
+		for _, v := range viewers {
+			close(v.events)
+		}
+	}
 	s.clients = make(map[uuid.UUID][]*client)
 	s.orgMap = make(map[uuid.UUID][]uuid.UUID)
 	s.quoteClients = make(map[uuid.UUID][]*quoteClient)
+	s.leadClients = make(map[uuid.UUID][]*leadClient)
 }
