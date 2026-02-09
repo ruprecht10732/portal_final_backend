@@ -14,7 +14,6 @@ import (
 	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 // PublicHandler handles public (unauthenticated) lead portal endpoints.
@@ -103,6 +102,21 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 		}
 	}
 
+	attachments, err := h.repo.ListAttachmentsByService(c.Request.Context(), svc.ID, lead.OrganizationID)
+	if err != nil {
+		attachments = nil
+	}
+
+	attachmentItems := make([]transport.AttachmentResponse, 0, len(attachments))
+	for _, att := range attachments {
+		var downloadURL *string
+		if presigned, err := h.storage.GenerateDownloadURL(c.Request.Context(), h.bucket, att.FileKey); err == nil {
+			url := presigned.URL
+			downloadURL = &url
+		}
+		attachmentItems = append(attachmentItems, toAttachmentResponse(att, downloadURL))
+	}
+
 	response := gin.H{
 		"consumerName": fmt.Sprintf("%s %s", lead.ConsumerFirstName, lead.ConsumerLastName),
 		"city":         lead.AddressCity,
@@ -121,6 +135,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 			"link":         quoteLink,
 			"downloadLink": downloadLink,
 		},
+		"attachments": attachmentItems,
 	}
 
 	httpkit.OK(c, response)
@@ -323,7 +338,7 @@ func (h *PublicHandler) ConfirmUpload(c *gin.Context) {
 		FileName:       req.FileName,
 		ContentType:    req.ContentType,
 		SizeBytes:      req.SizeBytes,
-		UploadedBy:     uuid.Nil,
+		UploadedBy:     nil,
 	})
 	if err != nil {
 		httpkit.Error(c, http.StatusInternalServerError, "Failed to save attachment", nil)

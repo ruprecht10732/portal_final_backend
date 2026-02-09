@@ -32,7 +32,7 @@ type CreateAttachmentParams struct {
 	FileName       string
 	ContentType    string
 	SizeBytes      int64
-	UploadedBy     uuid.UUID
+	UploadedBy     *uuid.UUID
 }
 
 // CreateAttachment inserts a new attachment record.

@@ -127,6 +127,7 @@ func (h *AttachmentsHandler) CreateAttachment(c *gin.Context) {
 		return
 	}
 
+	uploaderID := identity.UserID()
 	att, err := h.repo.CreateAttachment(c.Request.Context(), repository.CreateAttachmentParams{
 		LeadServiceID:  serviceID,
 		OrganizationID: tenantID,
@@ -134,7 +135,7 @@ func (h *AttachmentsHandler) CreateAttachment(c *gin.Context) {
 		FileName:       req.FileName,
 		ContentType:    req.ContentType,
 		SizeBytes:      req.SizeBytes,
-		UploadedBy:     identity.UserID(),
+		UploadedBy:     &uploaderID,
 	})
 	if err != nil {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to create attachment record", nil)
