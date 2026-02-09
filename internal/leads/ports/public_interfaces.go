@@ -26,6 +26,11 @@ type PublicAppointmentSummary struct {
 	Status    string    `json:"status"`
 }
 
+// OrganizationPublicViewer allows the lead portal to fetch organization contact info.
+type OrganizationPublicViewer interface {
+	GetPublicPhone(ctx context.Context, organizationID uuid.UUID) (string, error)
+}
+
 // PublicTimeSlot represents a single public-facing available time slot.
 type PublicTimeSlot struct {
 	UserID    uuid.UUID `json:"userId"`

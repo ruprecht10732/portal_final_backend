@@ -377,6 +377,14 @@ func (m *Module) SetPublicViewers(quoteViewer ports.QuotePublicViewer, apptViewe
 	m.publicHandler.SetPublicViewers(quoteViewer, apptViewer, slotViewer)
 }
 
+// SetPublicOrgViewer injects organization contact info for the public portal.
+func (m *Module) SetPublicOrgViewer(orgViewer ports.OrganizationPublicViewer) {
+	if m.publicHandler == nil {
+		return
+	}
+	m.publicHandler.SetPublicOrgViewer(orgViewer)
+}
+
 // SetEnergyLabelEnricher sets the energy label enricher on the management service.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetEnergyLabelEnricher(enricher ports.EnergyLabelEnricher) {

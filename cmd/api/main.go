@@ -184,6 +184,9 @@ func main() {
 	appointmentSlotViewer := adapters.NewAppointmentSlotAdapter(appointmentsModule.Service)
 	leadsModule.SetPublicViewers(quotePublicViewer, appointmentPublicViewer, appointmentSlotViewer)
 
+	orgPublicViewer := adapters.NewOrganizationPublicAdapter(identityModule.Service())
+	leadsModule.SetPublicOrgViewer(orgPublicViewer)
+
 	offerAdapter := adapters.NewPartnerOfferAdapter(partnersModule.Service())
 	leadsModule.SetPartnerOfferCreator(offerAdapter)
 

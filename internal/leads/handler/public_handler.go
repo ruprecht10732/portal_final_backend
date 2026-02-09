@@ -30,6 +30,7 @@ type PublicHandler struct {
 	quoteViewer ports.QuotePublicViewer
 	apptViewer  ports.AppointmentPublicViewer
 	slotViewer  ports.AppointmentSlotProvider
+	orgViewer   ports.OrganizationPublicViewer
 }
 
 const (
@@ -49,6 +50,11 @@ func (h *PublicHandler) SetPublicViewers(quoteViewer ports.QuotePublicViewer, ap
 	h.quoteViewer = quoteViewer
 	h.apptViewer = apptViewer
 	h.slotViewer = slotViewer
+}
+
+// SetPublicOrgViewer injects the organization viewer for the public portal.
+func (h *PublicHandler) SetPublicOrgViewer(orgViewer ports.OrganizationPublicViewer) {
+	h.orgViewer = orgViewer
 }
 
 // RegisterRoutes registers public lead portal routes under /public/leads.
@@ -118,6 +124,14 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 
 	attachmentItems := buildAttachmentItems(c.Request.Context(), h.storage, h.bucket, attachments)
 
+	orgPhone := ""
+	if h.orgViewer != nil {
+		phone, err := h.orgViewer.GetPublicPhone(c.Request.Context(), lead.OrganizationID)
+		if err == nil {
+			orgPhone = phone
+		}
+	}
+
 	response := gin.H{
 		"consumerName": fmt.Sprintf("%s %s", lead.ConsumerFirstName, lead.ConsumerLastName),
 		"city":         lead.AddressCity,
@@ -132,6 +146,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 		"appointment":        appt,
 		"appointmentRequest": pendingAppt,
 		"appointments":       appointments,
+		"organizationPhone":  orgPhone,
 		"slotsAvailable":     slotsAvailable,
 		"quote": gin.H{
 			"available":    quote != nil,
