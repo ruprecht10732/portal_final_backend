@@ -1186,20 +1186,6 @@ func buildWhatsAppSentMetadata(category, audience, phoneNumber, message string) 
 	}
 }
 
-type whatsAppSentEventParams struct {
-	Ctx         context.Context
-	LeadID      uuid.UUID
-	ServiceID   *uuid.UUID
-	OrgID       uuid.UUID
-	ActorType   string
-	ActorName   string
-	Summary     string
-	Category    string
-	Audience    string
-	PhoneNumber string
-	Message     string
-}
-
 type whatsAppSentEventWithMetadataParams struct {
 	Ctx       context.Context
 	LeadID    uuid.UUID
@@ -1209,20 +1195,6 @@ type whatsAppSentEventWithMetadataParams struct {
 	ActorName string
 	Summary   string
 	Metadata  map[string]any
-}
-
-func (m *Module) writeWhatsAppSentEvent(params whatsAppSentEventParams) {
-	metadata := buildWhatsAppSentMetadata(params.Category, params.Audience, params.PhoneNumber, params.Message)
-	m.writeWhatsAppSentEventWithMetadata(whatsAppSentEventWithMetadataParams{
-		Ctx:       params.Ctx,
-		LeadID:    params.LeadID,
-		ServiceID: params.ServiceID,
-		OrgID:     params.OrgID,
-		ActorType: params.ActorType,
-		ActorName: params.ActorName,
-		Summary:   params.Summary,
-		Metadata:  metadata,
-	})
 }
 
 func (m *Module) writeWhatsAppSentEventWithMetadata(params whatsAppSentEventWithMetadataParams) {
