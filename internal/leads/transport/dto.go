@@ -153,14 +153,14 @@ type AddressResponse struct {
 }
 
 type LeadServiceResponse struct {
-	ID            uuid.UUID     `json:"id"`
-	ServiceType   ServiceType   `json:"serviceType"`
-	Status        LeadStatus    `json:"status"`
-	PipelineStage PipelineStage `json:"pipelineStage"`
+	ID            uuid.UUID                `json:"id"`
+	ServiceType   ServiceType              `json:"serviceType"`
+	Status        LeadStatus               `json:"status"`
+	PipelineStage PipelineStage            `json:"pipelineStage"`
 	Preferences   *LeadPreferencesResponse `json:"preferences,omitempty"`
-	ConsumerNote  *string       `json:"consumerNote,omitempty"`
-	CreatedAt     time.Time     `json:"createdAt"`
-	UpdatedAt     time.Time     `json:"updatedAt"`
+	ConsumerNote  *string                  `json:"consumerNote,omitempty"`
+	CreatedAt     time.Time                `json:"createdAt"`
+	UpdatedAt     time.Time                `json:"updatedAt"`
 }
 
 type LeadPreferencesResponse struct {
