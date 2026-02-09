@@ -94,18 +94,9 @@ func main() {
 	// Event bus for decoupled communication between modules
 	eventBus := events.NewInMemoryBus(log)
 
-	var reminderScheduler scheduler.ReminderScheduler
-
-	if cfg.GetRedisURL() != "" {
-		reminderClient, err := scheduler.NewClient(cfg)
-		if err != nil {
-			log.Error("failed to initialize reminder scheduler client", "error", err)
-		} else {
-			reminderScheduler = reminderClient
-			defer reminderClient.Close()
-		}
-	} else {
-		log.Warn("REDIS_URL not configured; appointment reminders disabled")
+	reminderScheduler, closeScheduler := initReminderScheduler(cfg, log)
+	if closeScheduler != nil {
+		defer closeScheduler()
 	}
 
 	sender, err := email.NewSender(cfg)
@@ -306,6 +297,23 @@ func main() {
 			log.Error("server error", "error", err)
 			panic("server error: " + err.Error())
 		}
+	}
+}
+
+func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (scheduler.ReminderScheduler, func()) {
+	if cfg.GetRedisURL() == "" {
+		log.Warn("REDIS_URL not configured; appointment reminders disabled")
+		return nil, nil
+	}
+
+	reminderClient, err := scheduler.NewClient(cfg)
+	if err != nil {
+		log.Error("failed to initialize reminder scheduler client", "error", err)
+		return nil, nil
+	}
+
+	return reminderClient, func() {
+		_ = reminderClient.Close()
 	}
 }
 

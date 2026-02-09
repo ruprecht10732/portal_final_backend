@@ -45,85 +45,32 @@ const (
 
 // CreateOffer generates a new job offer for a vakman based on customer pricing.
 func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req transport.CreateOfferRequest) (transport.CreateOfferResponse, error) {
-	// Validate partner belongs to tenant and fetch details
 	partner, err := s.repo.GetByID(ctx, req.PartnerID, tenantID)
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
 
-	// Validate lead service belongs to tenant
-	if err := s.ensureLeadServiceExists(ctx, tenantID, req.LeadServiceID); err != nil {
-		return transport.CreateOfferResponse{}, err
-	}
-
-	// Resolve lead + service context for summary generation
-	serviceCtx, err := s.repo.GetLeadServiceSummaryContext(ctx, req.LeadServiceID, tenantID)
+	serviceCtx, err := s.resolveOfferContext(ctx, tenantID, req.LeadServiceID)
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
-	leadID := serviceCtx.LeadID
 
-	// Sequential model: only one active offer at a time
-	hasActive, err := s.repo.HasActiveOffer(ctx, req.LeadServiceID)
-	if err != nil {
+	if err := s.ensureOfferAvailable(ctx, req.LeadServiceID); err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
-	if hasActive {
-		return transport.CreateOfferResponse{}, apperr.Conflict("an active offer already exists for this service")
-	}
 
-	// Calculate vakman earnings (90% of customer price)
-	vakmanPrice := calculateVakmanPrice(req.CustomerPriceCents)
-
-	// Generate secure random token
 	rawToken, err := token.GenerateRandomToken(offerTokenBytes)
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
 
-	// Calculate expiry
+	vakmanPrice := calculateVakmanPrice(req.CustomerPriceCents)
 	expiry := time.Now().UTC().Add(time.Duration(req.ExpiresInHours) * time.Hour)
+	items := s.fetchOfferItems(ctx, req.LeadServiceID, tenantID)
 
-	items, itemsErr := s.repo.GetLatestQuoteItemsForService(ctx, req.LeadServiceID, tenantID)
-	if itemsErr != nil {
-		items = nil
-	}
 	scopeAssessment := buildScopeAssessment(items)
-	var builderSummaryPtr *string
-	if s.summaryGenerator != nil && len(items) > 0 {
-		inputItems := make([]OfferSummaryItem, 0, len(items))
-		for _, it := range items {
-			inputItems = append(inputItems, OfferSummaryItem{
-				Description: it.Description,
-				Quantity:    it.Quantity,
-			})
-		}
-		summary, sumErr := s.summaryGenerator.GenerateSummary(ctx, tenantID, OfferSummaryInput{
-			LeadID:        leadID,
-			LeadServiceID: req.LeadServiceID,
-			ServiceType:   serviceCtx.ServiceType,
-			Scope:         scopeAssessment,
-			UrgencyLevel:  serviceCtx.UrgencyLevel,
-			Items:         inputItems,
-		})
-		if sumErr == nil {
-			clean := strings.TrimSpace(sanitize.Text(summary))
-			if clean != "" {
-				builderSummaryPtr = &clean
-			}
-		}
-	}
-	if builderSummaryPtr == nil {
-		builderSummaryPtr = buildBuilderSummary(items, scopeAssessment, serviceCtx.UrgencyLevel)
-	}
-
-	// Persist
-	jobSummary := strings.TrimSpace(req.JobSummaryShort)
-	jobSummary = sanitize.Text(jobSummary)
-	var jobSummaryPtr *string
-	if jobSummary != "" {
-		jobSummaryPtr = &jobSummary
-	}
+	builderSummaryPtr := s.resolveBuilderSummary(ctx, tenantID, items, scopeAssessment, serviceCtx, req.LeadServiceID)
+	jobSummaryPtr := sanitizeJobSummary(req.JobSummaryShort)
 
 	offer, err := s.repo.CreateOffer(ctx, repository.PartnerOffer{
 		OrganizationID:     tenantID,
@@ -141,18 +88,15 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 		return transport.CreateOfferResponse{}, err
 	}
 
-	// Publish event for timeline & notification handlers
-	s.eventBus.Publish(ctx, events.PartnerOfferCreated{
-		BaseEvent:        events.NewBaseEvent(),
-		OfferID:          offer.ID,
-		OrganizationID:   tenantID,
-		PartnerID:        req.PartnerID,
-		LeadServiceID:    req.LeadServiceID,
-		LeadID:           leadID,
-		VakmanPriceCents: vakmanPrice,
-		PublicToken:      rawToken,
-		PartnerName:      partner.BusinessName,
-		PartnerPhone:     partner.ContactPhone,
+	s.publishOfferCreated(ctx, offerCreatedParams{
+		offerID:       offer.ID,
+		tenantID:      tenantID,
+		partnerID:     req.PartnerID,
+		leadServiceID: req.LeadServiceID,
+		leadID:        serviceCtx.LeadID,
+		vakmanPrice:   vakmanPrice,
+		rawToken:      rawToken,
+		partner:       partner,
 	})
 
 	return transport.CreateOfferResponse{
@@ -337,45 +281,142 @@ func buildBuilderSummary(items []repository.QuoteItemSummary, scopeAssessment *s
 		return nil
 	}
 
-	scopeLabel := mapScopeLabel(scopeAssessment)
-	urgencyLabel := mapUrgencyLabel(urgencyLevel)
-
-	lines := []string{}
-	if scopeLabel != "" || urgencyLabel != "" {
-		if scopeLabel == "" {
-			scopeLabel = "Onbekend"
-		}
-		if urgencyLabel == "" {
-			urgencyLabel = "Onbekend"
-		}
-		lines = append(lines, fmt.Sprintf("**Omvang** %s  **Urgentie** %s", scopeLabel, urgencyLabel))
-		lines = append(lines, "")
+	lines := buildSummaryHeader(scopeAssessment, urgencyLevel)
+	lines = append(lines, buildSummaryItems(items)...)
+	if len(lines) == 0 {
+		return nil
 	}
 
+	result := strings.Join(lines, "\n")
+	return &result
+}
+
+func (s *Service) resolveOfferContext(ctx context.Context, tenantID, leadServiceID uuid.UUID) (repository.LeadServiceSummaryContext, error) {
+	if err := s.ensureLeadServiceExists(ctx, tenantID, leadServiceID); err != nil {
+		return repository.LeadServiceSummaryContext{}, err
+	}
+	return s.repo.GetLeadServiceSummaryContext(ctx, leadServiceID, tenantID)
+}
+
+func (s *Service) ensureOfferAvailable(ctx context.Context, leadServiceID uuid.UUID) error {
+	hasActive, err := s.repo.HasActiveOffer(ctx, leadServiceID)
+	if err != nil {
+		return err
+	}
+	if hasActive {
+		return apperr.Conflict("an active offer already exists for this service")
+	}
+	return nil
+}
+
+func (s *Service) fetchOfferItems(ctx context.Context, leadServiceID, tenantID uuid.UUID) []repository.QuoteItemSummary {
+	items, err := s.repo.GetLatestQuoteItemsForService(ctx, leadServiceID, tenantID)
+	if err != nil {
+		return nil
+	}
+	return items
+}
+
+func (s *Service) resolveBuilderSummary(ctx context.Context, tenantID uuid.UUID, items []repository.QuoteItemSummary, scopeAssessment *string, serviceCtx repository.LeadServiceSummaryContext, leadServiceID uuid.UUID) *string {
+	if s.summaryGenerator != nil && len(items) > 0 {
+		inputItems := make([]OfferSummaryItem, 0, len(items))
+		for _, it := range items {
+			inputItems = append(inputItems, OfferSummaryItem{
+				Description: it.Description,
+				Quantity:    it.Quantity,
+			})
+		}
+		summary, err := s.summaryGenerator.GenerateSummary(ctx, tenantID, OfferSummaryInput{
+			LeadID:        serviceCtx.LeadID,
+			LeadServiceID: leadServiceID,
+			ServiceType:   serviceCtx.ServiceType,
+			Scope:         scopeAssessment,
+			UrgencyLevel:  serviceCtx.UrgencyLevel,
+			Items:         inputItems,
+		})
+		if err == nil {
+			clean := strings.TrimSpace(sanitize.Text(summary))
+			if clean != "" {
+				return &clean
+			}
+		}
+	}
+
+	return buildBuilderSummary(items, scopeAssessment, serviceCtx.UrgencyLevel)
+}
+
+func sanitizeJobSummary(value string) *string {
+	jobSummary := strings.TrimSpace(value)
+	jobSummary = sanitize.Text(jobSummary)
+	if jobSummary == "" {
+		return nil
+	}
+	return &jobSummary
+}
+
+type offerCreatedParams struct {
+	offerID       uuid.UUID
+	tenantID      uuid.UUID
+	partnerID     uuid.UUID
+	leadServiceID uuid.UUID
+	leadID        uuid.UUID
+	vakmanPrice   int64
+	rawToken      string
+	partner       repository.Partner
+}
+
+func (s *Service) publishOfferCreated(ctx context.Context, params offerCreatedParams) {
+	if s.eventBus == nil {
+		return
+	}
+	s.eventBus.Publish(ctx, events.PartnerOfferCreated{
+		BaseEvent:        events.NewBaseEvent(),
+		OfferID:          params.offerID,
+		OrganizationID:   params.tenantID,
+		PartnerID:        params.partnerID,
+		LeadServiceID:    params.leadServiceID,
+		LeadID:           params.leadID,
+		VakmanPriceCents: params.vakmanPrice,
+		PublicToken:      params.rawToken,
+		PartnerName:      params.partner.BusinessName,
+		PartnerPhone:     params.partner.ContactPhone,
+	})
+}
+
+func buildSummaryHeader(scopeAssessment *string, urgencyLevel *string) []string {
+	scopeLabel := mapScopeLabel(scopeAssessment)
+	urgencyLabel := mapUrgencyLabel(urgencyLevel)
+	if scopeLabel == "" && urgencyLabel == "" {
+		return nil
+	}
+	if scopeLabel == "" {
+		scopeLabel = "Onbekend"
+	}
+	if urgencyLabel == "" {
+		urgencyLabel = "Onbekend"
+	}
+
+	return []string{
+		fmt.Sprintf("**Omvang** %s  **Urgentie** %s", scopeLabel, urgencyLabel),
+		"",
+	}
+}
+
+func buildSummaryItems(items []repository.QuoteItemSummary) []string {
 	const maxItems = 3
 	remaining := len(items) - maxItems
 	if remaining < 0 {
 		remaining = 0
 	}
 
+	lines := make([]string, 0, len(items))
 	for i, it := range items {
 		if i >= maxItems {
 			break
 		}
-		quantity := strings.TrimSpace(it.Quantity)
-		main, inclusions := splitInclusions(it.Description)
-		main = strings.TrimSpace(main)
+		main, inclusions := buildSummaryItem(it, remaining > 0 && i == maxItems-1, remaining)
 		if main == "" {
 			continue
-		}
-		if quantity != "" {
-			main = strings.TrimSpace(quantity + " " + main)
-		}
-		if len(inclusions) > 0 {
-			main = main + " Inclusief:"
-		}
-		if remaining > 0 && i == maxItems-1 {
-			main = fmt.Sprintf("%s (+%d)", main, remaining)
 		}
 		lines = append(lines, fmt.Sprintf("%d. %s", i+1, main))
 		for _, inc := range inclusions {
@@ -383,12 +424,27 @@ func buildBuilderSummary(items []repository.QuoteItemSummary, scopeAssessment *s
 		}
 	}
 
-	if len(lines) == 0 {
-		return nil
+	return lines
+}
+
+func buildSummaryItem(item repository.QuoteItemSummary, isLast bool, remaining int) (string, []string) {
+	quantity := strings.TrimSpace(item.Quantity)
+	main, inclusions := splitInclusions(item.Description)
+	main = strings.TrimSpace(main)
+	if main == "" {
+		return "", nil
+	}
+	if quantity != "" {
+		main = strings.TrimSpace(quantity + " " + main)
+	}
+	if len(inclusions) > 0 {
+		main += " Inclusief:"
+	}
+	if isLast {
+		main = fmt.Sprintf("%s (+%d)", main, remaining)
 	}
 
-	result := strings.Join(lines, "\n")
-	return &result
+	return main, inclusions
 }
 
 func buildScopeAssessment(items []repository.QuoteItemSummary) *string {

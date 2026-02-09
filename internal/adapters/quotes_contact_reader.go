@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	authrepo "portal_final_backend/internal/auth/repository"
 	identityrepo "portal_final_backend/internal/identity/repository"
@@ -44,41 +45,14 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 		return quotesvc.QuoteContactData{}, fmt.Errorf("look up lead for quote email: %w", err)
 	}
 
-	consumerEmail := ""
-	if lead.ConsumerEmail != nil {
-		consumerEmail = *lead.ConsumerEmail
-	}
-	consumerPhone := lead.ConsumerPhone
-	consumerName := lead.ConsumerFirstName
-	if lead.ConsumerLastName != "" {
-		consumerName += " " + lead.ConsumerLastName
-	}
+	consumerEmail, consumerName, consumerPhone := extractConsumerContact(lead)
 
 	org, err := a.orgs.GetOrganization(ctx, organizationID)
 	if err != nil {
 		return quotesvc.QuoteContactData{}, fmt.Errorf("look up organization for quote email: %w", err)
 	}
 
-	// Look up the assigned agent's email and name
-	var agentEmail, agentName string
-	if lead.AssignedAgentID != nil && a.users != nil {
-		user, userErr := a.users.GetUserByID(ctx, *lead.AssignedAgentID)
-		if userErr == nil {
-			agentEmail = user.Email
-			if user.FirstName != nil {
-				agentName = *user.FirstName
-			}
-			if user.LastName != nil {
-				if agentName != "" {
-					agentName += " "
-				}
-				agentName += *user.LastName
-			}
-			if agentName == "" {
-				agentName = user.Email
-			}
-		}
-	}
+	agentEmail, agentName := a.lookupAgentContact(ctx, lead.AssignedAgentID)
 
 	return quotesvc.QuoteContactData{
 		ConsumerEmail:    consumerEmail,
@@ -88,6 +62,52 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 		AgentEmail:       agentEmail,
 		AgentName:        agentName,
 	}, nil
+}
+
+func extractConsumerContact(lead leadsrepo.Lead) (string, string, string) {
+	consumerEmail := ""
+	if lead.ConsumerEmail != nil {
+		consumerEmail = *lead.ConsumerEmail
+	}
+
+	consumerName := strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName)
+	if consumerName == "" {
+		consumerName = lead.ConsumerFirstName
+	}
+
+	return consumerEmail, consumerName, lead.ConsumerPhone
+}
+
+func (a *QuotesContactReader) lookupAgentContact(ctx context.Context, agentID *uuid.UUID) (string, string) {
+	if agentID == nil || a.users == nil {
+		return "", ""
+	}
+
+	user, err := a.users.GetUserByID(ctx, *agentID)
+	if err != nil {
+		return "", ""
+	}
+
+	name := buildUserName(user)
+	if name == "" {
+		name = user.Email
+	}
+
+	return user.Email, name
+}
+
+func buildUserName(user authrepo.User) string {
+	first := ""
+	if user.FirstName != nil {
+		first = *user.FirstName
+	}
+
+	last := ""
+	if user.LastName != nil {
+		last = *user.LastName
+	}
+
+	return strings.TrimSpace(first + " " + last)
 }
 
 // Compile-time check that QuotesContactReader implements quotes/service.QuoteContactReader.
