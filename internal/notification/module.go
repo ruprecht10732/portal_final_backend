@@ -36,6 +36,29 @@ type PartnerOfferTimelineWriter interface {
 	WriteOfferEvent(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, orgID uuid.UUID, actorType, actorName, eventType, title string, summary *string, metadata map[string]any) error
 }
 
+// WhatsAppSender sends WhatsApp messages.
+type WhatsAppSender interface {
+	SendMessage(ctx context.Context, phoneNumber string, message string) error
+}
+
+// LeadTimelineEventParams describes a lead timeline event payload.
+type LeadTimelineEventParams struct {
+	LeadID    uuid.UUID
+	ServiceID *uuid.UUID
+	OrgID     uuid.UUID
+	ActorType string
+	ActorName string
+	EventType string
+	Title     string
+	Summary   *string
+	Metadata  map[string]any
+}
+
+// LeadTimelineWriter persists lead timeline events.
+type LeadTimelineWriter interface {
+	CreateTimelineEvent(ctx context.Context, params LeadTimelineEventParams) error
+}
+
 // Module handles all notification-related event subscriptions.
 type Module struct {
 	sender        email.Sender
@@ -45,6 +68,8 @@ type Module struct {
 	pdfProc       QuoteAcceptanceProcessor
 	actWriter     QuoteActivityWriter
 	offerTimeline PartnerOfferTimelineWriter
+	whatsapp      WhatsAppSender
+	leadTimeline  LeadTimelineWriter
 }
 
 // New creates a new notification module.
@@ -70,6 +95,12 @@ func (m *Module) SetOfferTimelineWriter(w PartnerOfferTimelineWriter) {
 	m.offerTimeline = w
 }
 
+// SetWhatsAppSender injects the WhatsApp sender.
+func (m *Module) SetWhatsAppSender(sender WhatsAppSender) { m.whatsapp = sender }
+
+// SetLeadTimelineWriter injects the lead timeline writer.
+func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeline = writer }
+
 // RegisterHandlers subscribes to all relevant domain events on the event bus.
 func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	// Auth domain events
@@ -85,6 +116,9 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	bus.Subscribe(events.PartnerOfferAccepted{}.EventName(), m)
 	bus.Subscribe(events.PartnerOfferRejected{}.EventName(), m)
 	bus.Subscribe(events.PartnerOfferExpired{}.EventName(), m)
+
+	// Lead events
+	bus.Subscribe(events.LeadCreated{}.EventName(), m)
 
 	// Quote domain events
 	bus.Subscribe(events.QuoteSent{}.EventName(), m)
@@ -118,6 +152,8 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handlePartnerOfferRejected(ctx, e)
 	case events.PartnerOfferExpired:
 		return m.handlePartnerOfferExpired(ctx, e)
+	case events.LeadCreated:
+		return m.handleLeadCreated(ctx, e)
 	// Quote events
 	case events.QuoteSent:
 		return m.handleQuoteSent(ctx, e)
@@ -424,6 +460,63 @@ func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.Partner
 			)
 		}
 	}
+
+	return nil
+}
+
+func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) error {
+	_ = ctx
+	m.log.Info("processing lead created notification", "leadId", e.LeadID)
+
+	if m.whatsapp == nil || e.ConsumerPhone == "" {
+		return nil
+	}
+
+	consumerName := strings.TrimSpace(e.ConsumerName)
+	if consumerName == "" {
+		consumerName = "daar"
+	}
+
+	message := fmt.Sprintf(
+		"Beste %s,\n\n"+
+			"Bedankt voor je aanvraag! 👍\n\n"+
+			"We hebben alles ontvangen en gaan het nu rustig doornemen. "+
+			"Vandaag nemen we contact met je op om het verder te bespreken.",
+		consumerName,
+	)
+
+	go func() {
+		bg := context.Background()
+		if err := m.whatsapp.SendMessage(bg, e.ConsumerPhone, message); err != nil {
+			m.log.Error("failed to send welcome whatsapp", "error", err, "leadId", e.LeadID)
+			return
+		}
+
+		if m.leadTimeline == nil {
+			return
+		}
+
+		summary := fmt.Sprintf("WhatsApp welkomstbericht verstuurd naar %s", consumerName)
+		if err := m.leadTimeline.CreateTimelineEvent(bg, LeadTimelineEventParams{
+			LeadID:    e.LeadID,
+			ServiceID: nil,
+			OrgID:     e.TenantID,
+			ActorType: "System",
+			ActorName: "Portal",
+			EventType: "whatsapp_sent",
+			Title:     "WhatsApp verstuurd",
+			Summary:   &summary,
+			Metadata: map[string]any{
+				"preferredContactChannel": "WhatsApp",
+				"suggestedContactMessage": message,
+				"messageLanguage":         "nl",
+				"messageAudience":         "lead",
+				"messageCategory":         "lead_welcome",
+			},
+		}); err != nil {
+			m.log.Error("failed to write whatsapp timeline event", "error", err, "leadId", e.LeadID)
+		}
+	}()
 
 	return nil
 }

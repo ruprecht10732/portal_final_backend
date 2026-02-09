@@ -127,6 +127,8 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		TenantID:        tenantID,
 		AssignedAgentID: lead.AssignedAgentID,
 		ServiceType:     string(req.ServiceType),
+		ConsumerName:    strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
+		ConsumerPhone:   lead.ConsumerPhone,
 	})
 
 	services, _ := s.repo.ListLeadServices(ctx, lead.ID, tenantID)

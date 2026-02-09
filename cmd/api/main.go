@@ -28,6 +28,7 @@ import (
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/services"
+	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/logger"
@@ -136,6 +137,8 @@ func main() {
 	// Notification module subscribes to domain events (not HTTP-facing)
 	notificationModule := notification.New(sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
+	whatsappClient := whatsapp.NewClient(cfg, log)
+	notificationModule.SetWhatsAppSender(whatsappClient)
 
 	// Initialize domain modules
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val)
@@ -214,6 +217,10 @@ func main() {
 	// Wire partner-offer timeline writer so offer events create lead timeline entries
 	offerTimelineWriter := adapters.NewPartnerOffersTimelineWriter(leadsModule.Repository())
 	notificationModule.SetOfferTimelineWriter(offerTimelineWriter)
+
+	// Wire lead timeline writer for generic lead events (e.g., WhatsApp sent)
+	leadTimelineWriter := adapters.NewLeadTimelineWriter(leadsModule.Repository())
+	notificationModule.SetLeadTimelineWriter(leadTimelineWriter)
 
 	// Anti-Corruption Layer: Create adapter for cross-domain communication
 	// This ensures leads module only depends on its own AgentProvider interface

@@ -66,6 +66,8 @@ type LeadCreated struct {
 	TenantID        uuid.UUID  `json:"tenantId"`
 	AssignedAgentID *uuid.UUID `json:"assignedAgentId,omitempty"`
 	ServiceType     string     `json:"serviceType"`
+	ConsumerName    string     `json:"consumerName"`
+	ConsumerPhone   string     `json:"consumerPhone"`
 }
 
 func (e LeadCreated) EventName() string { return "RAC_leads.lead.created" }

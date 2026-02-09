@@ -59,6 +59,13 @@ type NotificationConfig interface {
 	GetAppBaseURL() string
 }
 
+// WhatsAppConfig provides settings for the WhatsApp HTTP client.
+type WhatsAppConfig interface {
+	GetWhatsAppURL() string
+	GetWhatsAppKey() string
+	GetWhatsAppDeviceID() string
+}
+
 // HTTPConfig provides settings for the HTTP server.
 type HTTPConfig interface {
 	GetHTTPAddr() string
@@ -172,6 +179,9 @@ type Config struct {
 	CatalogEmbeddingAPIURL            string
 	CatalogEmbeddingAPIKey            string
 	CatalogEmbeddingCollection        string
+	WhatsAppURL                       string
+	WhatsAppKey                       string
+	WhatsAppDeviceID                  string
 }
 
 // =============================================================================
@@ -205,6 +215,11 @@ func (c *Config) GetEmailFromAddress() string { return c.EmailFromAddress }
 
 // NotificationConfig implementation
 func (c *Config) GetAppBaseURL() string { return c.AppBaseURL }
+
+// WhatsAppConfig implementation
+func (c *Config) GetWhatsAppURL() string      { return c.WhatsAppURL }
+func (c *Config) GetWhatsAppKey() string      { return c.WhatsAppKey }
+func (c *Config) GetWhatsAppDeviceID() string { return c.WhatsAppDeviceID }
 
 // HTTPConfig implementation
 func (c *Config) GetHTTPAddr() string      { return c.HTTPAddr }
@@ -336,6 +351,9 @@ func Load() (*Config, error) {
 		CatalogEmbeddingAPIURL:            getEnv("CATALOG_EMBEDDING_API_URL", ""),
 		CatalogEmbeddingAPIKey:            getEnv("CATALOG_EMBEDDING_API_KEY", ""),
 		CatalogEmbeddingCollection:        getEnv("CATALOG_EMBEDDING_COLLECTION", "catalog"),
+		WhatsAppURL:                       getEnv("WHATSAPP_SERVICE_URL", ""),
+		WhatsAppKey:                       getEnv("WHATSAPP_API_KEY", ""),
+		WhatsAppDeviceID:                  getEnv("WHATSAPP_DEVICE_ID", ""),
 	}
 
 	if cfg.DatabaseURL == "" {
