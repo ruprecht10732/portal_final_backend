@@ -152,6 +152,12 @@ type ActivityFeedEntry struct {
 	Title       string
 	Description string
 	EntityID    uuid.UUID
+	LeadName    string
+	Phone       string
+	Address     string
+	Latitude    *float64
+	Longitude   *float64
+	ScheduledAt *time.Time
 	CreatedAt   time.Time
 }
 

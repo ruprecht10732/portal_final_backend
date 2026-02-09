@@ -316,6 +316,12 @@ type ActivityFeedItem struct {
 	Category    string   `json:"category"`
 	Title       string   `json:"title"`
 	Description string   `json:"description,omitempty"`
+	LeadName    string   `json:"leadName,omitempty"`
+	Phone       string   `json:"phone,omitempty"`
+	Address     string   `json:"address,omitempty"`
+	Latitude    *float64 `json:"latitude,omitempty"`
+	Longitude   *float64 `json:"longitude,omitempty"`
+	ScheduledAt string   `json:"scheduledAt,omitempty"`
 	Timestamp   string   `json:"timestamp"`
 	Link        []string `json:"link,omitempty"`
 }

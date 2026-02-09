@@ -1134,6 +1134,25 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID) (tran
 			Timestamp:   e.CreatedAt.Format(time.RFC3339),
 		}
 
+		if e.LeadName != "" {
+			item.LeadName = e.LeadName
+		}
+		if e.Phone != "" {
+			item.Phone = e.Phone
+		}
+		if e.Address != "" {
+			item.Address = e.Address
+		}
+		if e.Latitude != nil {
+			item.Latitude = e.Latitude
+		}
+		if e.Longitude != nil {
+			item.Longitude = e.Longitude
+		}
+		if e.ScheduledAt != nil {
+			item.ScheduledAt = e.ScheduledAt.Format(time.RFC3339)
+		}
+
 		// Build navigation link based on category + entity ID
 		switch e.Category {
 		case "leads":

@@ -1072,8 +1072,15 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				la.action AS title,
 				'' AS description,
 				la.lead_id AS entity_id,
+				COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+				COALESCE(l.consumer_phone, '') AS phone,
+				NULL::text AS address,
+				NULL::double precision AS latitude,
+				NULL::double precision AS longitude,
+				NULL::timestamptz AS scheduled_at,
 				la.created_at
 			FROM RAC_lead_activity la
+			LEFT JOIN RAC_leads l ON l.id = la.lead_id AND l.organization_id = la.organization_id
 			WHERE la.organization_id = $1
 
 			UNION ALL
@@ -1086,6 +1093,12 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				qa.message AS title,
 				'' AS description,
 				qa.quote_id AS entity_id,
+				'' AS lead_name,
+				'' AS phone,
+				NULL::text AS address,
+				NULL::double precision AS latitude,
+				NULL::double precision AS longitude,
+				NULL::timestamptz AS scheduled_at,
 				qa.created_at
 			FROM RAC_quote_activity qa
 			WHERE qa.organization_id = $1
@@ -1103,8 +1116,21 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				a.title,
 				COALESCE(a.description, '') AS description,
 				a.id AS entity_id,
+				COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+				COALESCE(l.consumer_phone, '') AS phone,
+				COALESCE(
+					NULLIF(a.location, ''),
+					concat_ws(', ',
+						concat_ws(' ', l.address_street, l.address_house_number),
+						concat_ws(' ', l.address_zip_code, l.address_city)
+					)
+				) AS address,
+				l.latitude,
+				l.longitude,
+				a.start_time AS scheduled_at,
 				a.updated_at AS created_at
 			FROM RAC_appointments a
+			LEFT JOIN RAC_leads l ON l.id = a.lead_id AND l.organization_id = a.organization_id
 			WHERE a.organization_id = $1
 
 			UNION ALL
@@ -1117,12 +1143,19 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				te.title,
 				COALESCE(te.summary, '') AS description,
 				te.lead_id AS entity_id,
+				COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+				COALESCE(l.consumer_phone, '') AS phone,
+				NULL::text AS address,
+				NULL::double precision AS latitude,
+				NULL::double precision AS longitude,
+				NULL::timestamptz AS scheduled_at,
 				te.created_at
 			FROM lead_timeline_events te
+			LEFT JOIN RAC_leads l ON l.id = te.lead_id AND l.organization_id = te.organization_id
 			WHERE te.organization_id = $1
 				AND te.event_type IN ('ai', 'photo_analysis_completed')
 		)
-		SELECT id, category, event_type, title, description, entity_id, created_at
+		SELECT id, category, event_type, title, description, entity_id, lead_name, phone, COALESCE(address, '') AS address, latitude, longitude, scheduled_at, created_at
 		FROM unified
 		ORDER BY created_at DESC
 		LIMIT $2
@@ -1137,7 +1170,21 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 	entries := make([]ActivityFeedEntry, 0, limit)
 	for rows.Next() {
 		var e ActivityFeedEntry
-		if err := rows.Scan(&e.ID, &e.Category, &e.EventType, &e.Title, &e.Description, &e.EntityID, &e.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&e.ID,
+			&e.Category,
+			&e.EventType,
+			&e.Title,
+			&e.Description,
+			&e.EntityID,
+			&e.LeadName,
+			&e.Phone,
+			&e.Address,
+			&e.Latitude,
+			&e.Longitude,
+			&e.ScheduledAt,
+			&e.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		entries = append(entries, e)
