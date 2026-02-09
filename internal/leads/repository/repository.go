@@ -1106,6 +1106,21 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				a.updated_at AS created_at
 			FROM RAC_appointments a
 			WHERE a.organization_id = $1
+
+			UNION ALL
+
+			-- AI timeline activity
+			SELECT
+				te.id,
+				'ai' AS category,
+				te.event_type,
+				te.title,
+				COALESCE(te.summary, '') AS description,
+				te.lead_id AS entity_id,
+				te.created_at
+			FROM lead_timeline_events te
+			WHERE te.organization_id = $1
+				AND te.event_type IN ('ai', 'photo_analysis_completed')
 		)
 		SELECT id, category, event_type, title, description, entity_id, created_at
 		FROM unified
