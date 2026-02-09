@@ -1115,12 +1115,45 @@ func toPtrString(value string) *string {
 }
 
 // GetActivityFeed returns the most recent org-wide activity for the dashboard feed card.
-func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID) (transport.ActivityFeedResponse, error) {
-	const feedLimit = 50
+func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID, page int, limit int) (transport.ActivityFeedResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
 
-	entries, err := s.repo.ListRecentActivity(ctx, tenantID, feedLimit)
+	offset := (page - 1) * limit
+
+	entries, err := s.repo.ListRecentActivity(ctx, tenantID, limit, offset)
 	if err != nil {
 		return transport.ActivityFeedResponse{}, err
+	}
+
+	if page == 1 {
+		upcoming, upcomingErr := s.repo.ListUpcomingAppointments(ctx, tenantID, 5)
+		if upcomingErr != nil {
+			return transport.ActivityFeedResponse{}, upcomingErr
+		}
+		if len(upcoming) > 0 {
+			existing := make(map[uuid.UUID]struct{}, len(entries))
+			for _, entry := range entries {
+				existing[entry.EntityID] = struct{}{}
+			}
+			filtered := make([]repository.ActivityFeedEntry, 0, len(upcoming))
+			for _, entry := range upcoming {
+				if _, seen := existing[entry.EntityID]; seen {
+					continue
+				}
+				filtered = append(filtered, entry)
+			}
+			if len(filtered) > 0 {
+				entries = append(filtered, entries...)
+			}
+		}
 	}
 
 	items := make([]transport.ActivityFeedItem, 0, len(entries))
@@ -1129,7 +1162,7 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID) (tran
 			ID:          e.ID.String(),
 			Type:        e.EventType,
 			Category:    e.Category,
-			Title:       mapActivityTitle(e.Category, e.EventType, e.Title),
+			Title:       mapActivityTitle(e.Category, e.EventType, e.Title, e.ScheduledAt),
 			Description: e.Description,
 			Timestamp:   e.CreatedAt.Format(time.RFC3339),
 		}
@@ -1139,6 +1172,18 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID) (tran
 		}
 		if e.Phone != "" {
 			item.Phone = e.Phone
+		}
+		if e.Email != "" {
+			item.Email = e.Email
+		}
+		if e.LeadStatus != "" {
+			item.LeadStatus = e.LeadStatus
+		}
+		if e.ServiceType != "" {
+			item.ServiceType = e.ServiceType
+		}
+		if e.LeadScore != nil {
+			item.LeadScore = e.LeadScore
 		}
 		if e.Address != "" {
 			item.Address = e.Address
@@ -1151,6 +1196,9 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID) (tran
 		}
 		if e.ScheduledAt != nil {
 			item.ScheduledAt = e.ScheduledAt.Format(time.RFC3339)
+		}
+		if e.Priority > 0 {
+			item.Priority = e.Priority
 		}
 
 		// Build navigation link based on category + entity ID
@@ -1172,7 +1220,7 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID) (tran
 }
 
 // mapActivityTitle translates raw event types into human-readable Dutch titles.
-func mapActivityTitle(category, eventType, rawTitle string) string {
+func mapActivityTitle(category, eventType, rawTitle string, scheduledAt *time.Time) string {
 	switch eventType {
 	// Lead events
 	case "lead_created":
@@ -1219,6 +1267,8 @@ func mapActivityTitle(category, eventType, rawTitle string) string {
 			return "Afspraak bijgewerkt: " + rawTitle
 		}
 		return "Afspraak bijgewerkt"
+	case "appointment_upcoming":
+		return formatUpcomingTitle(scheduledAt, rawTitle)
 	default:
 		if rawTitle != "" {
 			return rawTitle
@@ -1235,4 +1285,41 @@ func mapActivityTitle(category, eventType, rawTitle string) string {
 			return eventType
 		}
 	}
+}
+
+func formatUpcomingTitle(scheduledAt *time.Time, fallback string) string {
+	if scheduledAt == nil {
+		if fallback != "" {
+			return "Afspraak binnenkort: " + fallback
+		}
+		return "Afspraak binnenkort"
+	}
+
+	start := *scheduledAt
+	until := time.Until(start)
+	minutes := int(math.Round(until.Minutes()))
+	if minutes <= 60 {
+		return appendTitle("Afspraak begint zo", fallback)
+	}
+	if minutes <= 180 {
+		hours := int(math.Round(float64(minutes) / 60.0))
+		return appendTitle("Afspraak over "+strconv.Itoa(hours)+" uur", fallback)
+	}
+
+	datePart := start.Format("02 Jan")
+	timePart := start.Format("15:04")
+	if minutes <= 24*60 {
+		return appendTitle("Afspraak vandaag om "+timePart, fallback)
+	}
+	if minutes <= 48*60 {
+		return appendTitle("Afspraak morgen om "+timePart, fallback)
+	}
+	return appendTitle("Afspraak op "+datePart+" om "+timePart, fallback)
+}
+
+func appendTitle(label string, fallback string) string {
+	if fallback == "" {
+		return label
+	}
+	return label + ": " + fallback
 }

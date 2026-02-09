@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -199,12 +200,29 @@ func (h *Handler) GetActivityFeed(c *gin.Context) {
 		return
 	}
 
-	result, err := h.mgmt.GetActivityFeed(c.Request.Context(), tenantID)
+	page := parsePositiveInt(c.Query("page"), 1)
+	limit := parsePositiveInt(c.Query("limit"), 20)
+	if limit > 50 {
+		limit = 50
+	}
+
+	result, err := h.mgmt.GetActivityFeed(c.Request.Context(), tenantID, page, limit)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
 	httpkit.OK(c, result)
+}
+
+func parsePositiveInt(value string, fallback int) int {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		return fallback
+	}
+	return parsed
 }
 
 func (h *Handler) Create(c *gin.Context) {

@@ -154,16 +154,22 @@ type ActivityFeedEntry struct {
 	EntityID    uuid.UUID
 	LeadName    string
 	Phone       string
+	Email       string
+	LeadStatus  string
+	ServiceType string
+	LeadScore   *int
 	Address     string
 	Latitude    *float64
 	Longitude   *float64
 	ScheduledAt *time.Time
 	CreatedAt   time.Time
+	Priority    int
 }
 
 // ActivityFeedReader provides recent org-wide activity for the dashboard feed.
 type ActivityFeedReader interface {
-	ListRecentActivity(ctx context.Context, organizationID uuid.UUID, limit int) ([]ActivityFeedEntry, error)
+	ListRecentActivity(ctx context.Context, organizationID uuid.UUID, limit int, offset int) ([]ActivityFeedEntry, error)
+	ListUpcomingAppointments(ctx context.Context, organizationID uuid.UUID, limit int) ([]ActivityFeedEntry, error)
 }
 
 // =====================================

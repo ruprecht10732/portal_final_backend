@@ -1054,9 +1054,12 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 
 // ListRecentActivity returns the most recent org-wide activity by unioning
 // lead activity, quote activity, and recent appointments.
-func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid.UUID, limit int) ([]ActivityFeedEntry, error) {
+func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid.UUID, limit int, offset int) ([]ActivityFeedEntry, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	query := `
@@ -1074,6 +1077,10 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				la.lead_id AS entity_id,
 				COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
 				COALESCE(l.consumer_phone, '') AS phone,
+				COALESCE(l.consumer_email, '') AS email,
+				COALESCE(svc.status, '') AS lead_status,
+				COALESCE(svc.name, '') AS service_type,
+				l.lead_score,
 				NULL::text AS address,
 				NULL::double precision AS latitude,
 				NULL::double precision AS longitude,
@@ -1081,7 +1088,16 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				la.created_at
 			FROM RAC_lead_activity la
 			LEFT JOIN RAC_leads l ON l.id = la.lead_id AND l.organization_id = la.organization_id
+			LEFT JOIN LATERAL (
+				SELECT ls.status, st.name
+				FROM RAC_lead_services ls
+				LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+				WHERE ls.lead_id = l.id
+				ORDER BY ls.created_at DESC
+				LIMIT 1
+			) svc ON true
 			WHERE la.organization_id = $1
+			  AND la.action != 'lead_viewed'
 
 			UNION ALL
 
@@ -1093,14 +1109,22 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				qa.message AS title,
 				'' AS description,
 				qa.quote_id AS entity_id,
-				'' AS lead_name,
-				'' AS phone,
+				COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+				COALESCE(l.consumer_phone, '') AS phone,
+				COALESCE(l.consumer_email, '') AS email,
+				COALESCE(ls.status, '') AS lead_status,
+				COALESCE(st.name, '') AS service_type,
+				l.lead_score,
 				NULL::text AS address,
 				NULL::double precision AS latitude,
 				NULL::double precision AS longitude,
 				NULL::timestamptz AS scheduled_at,
 				qa.created_at
 			FROM RAC_quote_activity qa
+			LEFT JOIN RAC_quotes q ON q.id = qa.quote_id
+			LEFT JOIN RAC_lead_services ls ON ls.id = q.lead_service_id
+			LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = qa.organization_id
+			LEFT JOIN RAC_leads l ON l.id = ls.lead_id AND l.organization_id = qa.organization_id
 			WHERE qa.organization_id = $1
 
 			UNION ALL
@@ -1118,6 +1142,10 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				a.id AS entity_id,
 				COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
 				COALESCE(l.consumer_phone, '') AS phone,
+				COALESCE(l.consumer_email, '') AS email,
+				COALESCE(als.status, svc.status, '') AS lead_status,
+				COALESCE(ast.name, svc.name, '') AS service_type,
+				l.lead_score,
 				COALESCE(
 					NULLIF(a.location, ''),
 					concat_ws(', ',
@@ -1131,6 +1159,16 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				a.updated_at AS created_at
 			FROM RAC_appointments a
 			LEFT JOIN RAC_leads l ON l.id = a.lead_id AND l.organization_id = a.organization_id
+			LEFT JOIN RAC_lead_services als ON als.id = a.lead_service_id
+			LEFT JOIN RAC_service_types ast ON ast.id = als.service_type_id AND ast.organization_id = a.organization_id
+			LEFT JOIN LATERAL (
+				SELECT ls.status, st.name
+				FROM RAC_lead_services ls
+				LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+				WHERE ls.lead_id = l.id
+				ORDER BY ls.created_at DESC
+				LIMIT 1
+			) svc ON true
 			WHERE a.organization_id = $1
 
 			UNION ALL
@@ -1145,6 +1183,10 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				te.lead_id AS entity_id,
 				COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
 				COALESCE(l.consumer_phone, '') AS phone,
+				COALESCE(l.consumer_email, '') AS email,
+				COALESCE(svc.status, '') AS lead_status,
+				COALESCE(svc.name, '') AS service_type,
+				l.lead_score,
 				NULL::text AS address,
 				NULL::double precision AS latitude,
 				NULL::double precision AS longitude,
@@ -1152,12 +1194,112 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				te.created_at
 			FROM lead_timeline_events te
 			LEFT JOIN RAC_leads l ON l.id = te.lead_id AND l.organization_id = te.organization_id
+			LEFT JOIN LATERAL (
+				SELECT ls.status, st.name
+				FROM RAC_lead_services ls
+				LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+				WHERE ls.lead_id = l.id
+				ORDER BY ls.created_at DESC
+				LIMIT 1
+			) svc ON true
 			WHERE te.organization_id = $1
 				AND te.event_type IN ('ai', 'photo_analysis_completed')
 		)
-		SELECT id, category, event_type, title, description, entity_id, lead_name, phone, COALESCE(address, '') AS address, latitude, longitude, scheduled_at, created_at
+		SELECT id, category, event_type, title, description, entity_id, lead_name, phone, email, lead_status, service_type, lead_score, COALESCE(address, '') AS address, latitude, longitude, scheduled_at, created_at, 0 AS priority
 		FROM unified
 		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.pool.Query(ctx, query, organizationID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]ActivityFeedEntry, 0, limit)
+	for rows.Next() {
+		var e ActivityFeedEntry
+		if err := rows.Scan(
+			&e.ID,
+			&e.Category,
+			&e.EventType,
+			&e.Title,
+			&e.Description,
+			&e.EntityID,
+			&e.LeadName,
+			&e.Phone,
+			&e.Email,
+			&e.LeadStatus,
+			&e.ServiceType,
+			&e.LeadScore,
+			&e.Address,
+			&e.Latitude,
+			&e.Longitude,
+			&e.ScheduledAt,
+			&e.CreatedAt,
+			&e.Priority,
+		); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return entries, nil
+}
+
+// ListUpcomingAppointments returns soon upcoming scheduled appointments for the org.
+func (r *Repository) ListUpcomingAppointments(ctx context.Context, organizationID uuid.UUID, limit int) ([]ActivityFeedEntry, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+
+	query := `
+		SELECT
+			a.id,
+			'appointments' AS category,
+			'appointment_upcoming' AS event_type,
+			a.title,
+			COALESCE(a.description, '') AS description,
+			a.id AS entity_id,
+			COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+			COALESCE(l.consumer_phone, '') AS phone,
+			COALESCE(l.consumer_email, '') AS email,
+			COALESCE(als.status, svc.status, '') AS lead_status,
+			COALESCE(ast.name, svc.name, '') AS service_type,
+			l.lead_score,
+			COALESCE(
+				NULLIF(a.location, ''),
+				concat_ws(', ',
+					concat_ws(' ', l.address_street, l.address_house_number),
+					concat_ws(' ', l.address_zip_code, l.address_city)
+				)
+			) AS address,
+			l.latitude,
+			l.longitude,
+			a.start_time AS scheduled_at,
+			now() AS created_at,
+			2 AS priority
+		FROM RAC_appointments a
+		LEFT JOIN RAC_leads l ON l.id = a.lead_id AND l.organization_id = a.organization_id
+		LEFT JOIN RAC_lead_services als ON als.id = a.lead_service_id
+		LEFT JOIN RAC_service_types ast ON ast.id = als.service_type_id AND ast.organization_id = a.organization_id
+		LEFT JOIN LATERAL (
+			SELECT ls.status, st.name
+			FROM RAC_lead_services ls
+			LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+			WHERE ls.lead_id = l.id
+			ORDER BY ls.created_at DESC
+			LIMIT 1
+		) svc ON true
+		WHERE a.organization_id = $1
+			AND a.status = 'scheduled'
+			AND a.start_time > now()
+			AND a.start_time <= now() + interval '48 hours'
+		ORDER BY a.start_time ASC
 		LIMIT $2
 	`
 
@@ -1179,11 +1321,16 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 			&e.EntityID,
 			&e.LeadName,
 			&e.Phone,
+			&e.Email,
+			&e.LeadStatus,
+			&e.ServiceType,
+			&e.LeadScore,
 			&e.Address,
 			&e.Latitude,
 			&e.Longitude,
 			&e.ScheduledAt,
 			&e.CreatedAt,
+			&e.Priority,
 		); err != nil {
 			return nil, err
 		}
