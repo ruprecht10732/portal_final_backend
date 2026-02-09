@@ -370,11 +370,11 @@ func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
 }
 
 // SetPublicViewers injects quote and appointment viewers for the public portal.
-func (m *Module) SetPublicViewers(quoteViewer ports.QuotePublicViewer, apptViewer ports.AppointmentPublicViewer) {
+func (m *Module) SetPublicViewers(quoteViewer ports.QuotePublicViewer, apptViewer ports.AppointmentPublicViewer, slotViewer ports.AppointmentSlotProvider) {
 	if m.publicHandler == nil {
 		return
 	}
-	m.publicHandler.SetPublicViewers(quoteViewer, apptViewer)
+	m.publicHandler.SetPublicViewers(quoteViewer, apptViewer, slotViewer)
 }
 
 // SetEnergyLabelEnricher sets the energy label enricher on the management service.

@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
@@ -27,6 +29,7 @@ type PublicHandler struct {
 	val         *validator.Validator
 	quoteViewer ports.QuotePublicViewer
 	apptViewer  ports.AppointmentPublicViewer
+	slotViewer  ports.AppointmentSlotProvider
 }
 
 const (
@@ -42,9 +45,10 @@ func NewPublicHandler(repo repository.LeadsRepository, eventBus events.Bus, stor
 }
 
 // SetPublicViewers injects external data viewers (quotes and appointments).
-func (h *PublicHandler) SetPublicViewers(quoteViewer ports.QuotePublicViewer, apptViewer ports.AppointmentPublicViewer) {
+func (h *PublicHandler) SetPublicViewers(quoteViewer ports.QuotePublicViewer, apptViewer ports.AppointmentPublicViewer, slotViewer ports.AppointmentSlotProvider) {
 	h.quoteViewer = quoteViewer
 	h.apptViewer = apptViewer
+	h.slotViewer = slotViewer
 }
 
 // RegisterRoutes registers public lead portal routes under /public/leads.
@@ -52,6 +56,8 @@ func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:token", h.GetTrackAndTrace)
 	rg.POST("/:token/preferences", h.UpdatePreferences)
 	rg.POST("/:token/info", h.AddCustomerInfo)
+	rg.GET("/:token/availability/slots", h.GetAvailabilitySlots)
+	rg.POST("/:token/appointments/request", h.RequestAppointment)
 	rg.POST("/:token/attachments/presign", h.PresignUpload)
 	rg.POST("/:token/attachments", h.ConfirmUpload)
 	rg.DELETE("/:token/attachments/:attachmentId", h.DeleteAttachment)
@@ -62,6 +68,18 @@ type PublicPreferencesRequest struct {
 	Timeframe    string `json:"timeframe" validate:"omitempty,max=200"`
 	Availability string `json:"availability" validate:"omitempty,max=2000"`
 	ExtraNotes   string `json:"extraNotes" validate:"omitempty,max=2000"`
+}
+
+type PublicAvailabilitySlotsQuery struct {
+	StartDate    string `form:"startDate" validate:"required"`
+	EndDate      string `form:"endDate" validate:"required"`
+	SlotDuration int    `form:"slotDuration"`
+}
+
+type PublicAppointmentRequest struct {
+	UserID   uuid.UUID `json:"userId" validate:"required"`
+	StartTime time.Time `json:"startTime" validate:"required"`
+	EndTime   time.Time `json:"endTime" validate:"required,gtfield=StartTime"`
 }
 
 // GetTrackAndTrace returns the public portal data for a lead based on a token.
@@ -84,41 +102,20 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 		quote, _ = h.quoteViewer.GetActiveQuote(c.Request.Context(), lead.ID, lead.OrganizationID)
 	}
 
-	var appt *ports.PublicAppointmentSummary
-	if h.apptViewer != nil {
-		appt, _ = h.apptViewer.GetUpcomingVisit(c.Request.Context(), lead.ID, lead.OrganizationID)
-	}
+	appt, pendingAppt := h.resolvePublicAppointments(c.Request.Context(), lead.ID, lead.OrganizationID)
+	slotsAvailable := h.resolveSlotsAvailable(c.Request.Context(), &lead)
 
 	statusLabel, statusDescription, step := resolveCustomerStatus(svc.PipelineStage, quote, appt)
 
-	prefs := svc.CustomerPreferences
-	if len(prefs) == 0 {
-		prefs = json.RawMessage(`{}`)
-	}
-
-	var quoteLink string
-	var downloadLink string
-	if quote != nil {
-		quoteLink = fmt.Sprintf("/quote/%s", quote.PublicToken)
-		if quote.Status == "Accepted" && quote.PublicToken != "" {
-			downloadLink = fmt.Sprintf("/api/v1/public/quotes/%s/pdf", quote.PublicToken)
-		}
-	}
+	prefs := normalizePreferences(svc.CustomerPreferences)
+	quoteLink, downloadLink := buildQuoteLinks(quote)
 
 	attachments, err := h.repo.ListAttachmentsByService(c.Request.Context(), svc.ID, lead.OrganizationID)
 	if err != nil {
 		attachments = nil
 	}
 
-	attachmentItems := make([]transport.AttachmentResponse, 0, len(attachments))
-	for _, att := range attachments {
-		var downloadURL *string
-		if presigned, err := h.storage.GenerateDownloadURL(c.Request.Context(), h.bucket, att.FileKey); err == nil {
-			url := presigned.URL
-			downloadURL = &url
-		}
-		attachmentItems = append(attachmentItems, toAttachmentResponse(att, downloadURL))
-	}
+	attachmentItems := buildAttachmentItems(c.Request.Context(), h.storage, h.bucket, attachments)
 
 	response := gin.H{
 		"consumerName": fmt.Sprintf("%s %s", lead.ConsumerFirstName, lead.ConsumerLastName),
@@ -131,7 +128,9 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 			"description": statusDescription,
 			"step":        step,
 		},
-		"appointment": appt,
+		"appointment":        appt,
+		"appointmentRequest": pendingAppt,
+		"slotsAvailable":     slotsAvailable,
 		"quote": gin.H{
 			"available":    quote != nil,
 			"status":       statusStatus(quote),
@@ -259,6 +258,106 @@ func (h *PublicHandler) AddCustomerInfo(c *gin.Context) {
 	})
 
 	httpkit.OK(c, gin.H{"status": "received"})
+}
+
+// GetAvailabilitySlots returns available inspection slots for the organization.
+func (h *PublicHandler) GetAvailabilitySlots(c *gin.Context) {
+	token := c.Param("token")
+	var req PublicAvailabilitySlotsQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidRequest, err.Error())
+		return
+	}
+	if req.SlotDuration == 0 {
+		req.SlotDuration = 60
+	}
+
+	lead, err := h.repo.GetByPublicToken(c.Request.Context(), token)
+	if err != nil {
+		httpkit.Error(c, http.StatusNotFound, publicMsgLeadNotFound, nil)
+		return
+	}
+
+	if h.slotViewer == nil {
+		httpkit.OK(c, ports.PublicAvailableSlotsResponse{Days: []ports.PublicDaySlots{}})
+		return
+	}
+
+	resp, err := h.slotViewer.GetAvailableSlots(c.Request.Context(), lead.OrganizationID, req.StartDate, req.EndDate, req.SlotDuration)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, publicMsgServiceUnavailable, nil)
+		return
+	}
+
+	httpkit.OK(c, resp)
+}
+
+// RequestAppointment creates a requested inspection appointment for the lead.
+func (h *PublicHandler) RequestAppointment(c *gin.Context) {
+	token := c.Param("token")
+	var req PublicAppointmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidInput, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, publicMsgInvalidInput, err.Error())
+		return
+	}
+
+	lead, err := h.repo.GetByPublicToken(c.Request.Context(), token)
+	if err != nil {
+		httpkit.Error(c, http.StatusNotFound, publicMsgLeadNotFound, nil)
+		return
+	}
+
+	svc, err := h.repo.GetCurrentLeadService(c.Request.Context(), lead.ID, lead.OrganizationID)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, publicMsgServiceUnavailable, nil)
+		return
+	}
+
+	if h.slotViewer == nil {
+		httpkit.Error(c, http.StatusBadRequest, "Planning niet beschikbaar", nil)
+		return
+	}
+
+	appointment, err := h.slotViewer.CreateRequestedAppointment(c.Request.Context(), req.UserID, lead.OrganizationID, lead.ID, svc.ID, req.StartTime, req.EndTime)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "Afspraak aanvragen mislukt", nil)
+		return
+	}
+
+	startLabel := req.StartTime.Format("02-01-2006 om 15:04")
+	summary := fmt.Sprintf("Klant heeft een inspectie aangevraagd voor %s", startLabel)
+	_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
+		LeadID:         lead.ID,
+		ServiceID:      &svc.ID,
+		OrganizationID: lead.OrganizationID,
+		ActorType:      "Lead",
+		ActorName:      "Klant",
+		EventType:      "appointment_requested",
+		Title:          "Inspectie aangevraagd",
+		Summary:        &summary,
+		Metadata: map[string]any{
+			"startTime": req.StartTime,
+			"endTime":   req.EndTime,
+		},
+	})
+
+	h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        lead.ID,
+		LeadServiceID: svc.ID,
+		TenantID:      lead.OrganizationID,
+		Source:        "appointment_request",
+	})
+
+	httpkit.OK(c, gin.H{"status": "requested", "appointment": appointment})
 }
 
 // PresignUpload handles file upload initialization for the public portal.
@@ -442,4 +541,52 @@ func statusStatus(quote *ports.PublicQuoteSummary) string {
 		return ""
 	}
 	return quote.Status
+}
+
+func normalizePreferences(prefs json.RawMessage) json.RawMessage {
+	if len(prefs) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return prefs
+}
+
+func buildQuoteLinks(quote *ports.PublicQuoteSummary) (string, string) {
+	if quote == nil {
+		return "", ""
+	}
+	quoteLink := fmt.Sprintf("/quote/%s", quote.PublicToken)
+	if quote.Status == "Accepted" && quote.PublicToken != "" {
+		return quoteLink, fmt.Sprintf("/api/v1/public/quotes/%s/pdf", quote.PublicToken)
+	}
+	return quoteLink, ""
+}
+
+func buildAttachmentItems(ctx context.Context, storageSvc storage.StorageService, bucket string, attachments []repository.Attachment) []transport.AttachmentResponse {
+	items := make([]transport.AttachmentResponse, 0, len(attachments))
+	for _, att := range attachments {
+		var downloadURL *string
+		if presigned, err := storageSvc.GenerateDownloadURL(ctx, bucket, att.FileKey); err == nil {
+			url := presigned.URL
+			downloadURL = &url
+		}
+		items = append(items, toAttachmentResponse(att, downloadURL))
+	}
+	return items
+}
+
+func (h *PublicHandler) resolvePublicAppointments(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*ports.PublicAppointmentSummary, *ports.PublicAppointmentSummary) {
+	if h.apptViewer == nil {
+		return nil, nil
+	}
+	appt, _ := h.apptViewer.GetUpcomingVisit(ctx, leadID, organizationID)
+	pending, _ := h.apptViewer.GetPendingVisit(ctx, leadID, organizationID)
+	return appt, pending
+}
+
+func (h *PublicHandler) resolveSlotsAvailable(ctx context.Context, lead *repository.Lead) bool {
+	if h.slotViewer == nil {
+		return false
+	}
+	available, _ := h.slotViewer.HasAvailabilityRules(ctx, lead.OrganizationID)
+	return available
 }

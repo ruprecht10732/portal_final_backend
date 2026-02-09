@@ -107,6 +107,29 @@ func (r *Repository) ListAvailabilityRules(ctx context.Context, organizationID u
 	return items, nil
 }
 
+func (r *Repository) ListAvailabilityRuleUserIDs(ctx context.Context, organizationID uuid.UUID) ([]uuid.UUID, error) {
+	query := `SELECT DISTINCT user_id FROM RAC_appointment_availability_rules WHERE organization_id = $1`
+	rows, err := r.pool.Query(ctx, query, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list availability rule users: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan availability rule user: %w", err)
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate availability rule users: %w", err)
+	}
+
+	return items, nil
+}
+
 func (r *Repository) GetAvailabilityRuleByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*AvailabilityRule, error) {
 	query := `SELECT id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at
 		FROM RAC_appointment_availability_rules WHERE id = $1 AND organization_id = $2`

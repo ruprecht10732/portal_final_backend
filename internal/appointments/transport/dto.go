@@ -20,6 +20,7 @@ type AppointmentStatus string
 
 const (
 	AppointmentStatusScheduled AppointmentStatus = "scheduled"
+	AppointmentStatusRequested AppointmentStatus = "requested"
 	AppointmentStatusCompleted AppointmentStatus = "completed"
 	AppointmentStatusCancelled AppointmentStatus = "cancelled"
 	AppointmentStatusNoShow    AppointmentStatus = "no_show"
@@ -62,7 +63,7 @@ type UpdateAppointmentRequest struct {
 
 // UpdateAppointmentStatusRequest is the request body for updating appointment status
 type UpdateAppointmentStatusRequest struct {
-	Status AppointmentStatus `json:"status" validate:"required,oneof=scheduled completed cancelled no_show"`
+	Status AppointmentStatus `json:"status" validate:"required,oneof=scheduled requested completed cancelled no_show"`
 }
 
 // ListAppointmentsRequest is the query parameters for listing RAC_appointments
@@ -70,7 +71,7 @@ type ListAppointmentsRequest struct {
 	UserID    string             `form:"userId"`
 	LeadID    string             `form:"leadId"`
 	Type      *AppointmentType   `form:"type" validate:"omitempty,oneof=lead_visit standalone blocked"`
-	Status    *AppointmentStatus `form:"status" validate:"omitempty,oneof=scheduled completed cancelled no_show"`
+	Status    *AppointmentStatus `form:"status" validate:"omitempty,oneof=scheduled requested completed cancelled no_show"`
 	StartFrom string             `form:"startFrom"` // ISO date
 	StartTo   string             `form:"startTo"`   // ISO date
 	Search    string             `form:"search"`    // Search term for title/location/meeting link

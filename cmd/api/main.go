@@ -181,7 +181,8 @@ func main() {
 	// Wire public viewers for lead portal (quotes + appointments)
 	quotePublicViewer := adapters.NewQuotePublicAdapter(quotesModule.Service())
 	appointmentPublicViewer := adapters.NewAppointmentPublicAdapter(appointmentsModule.Service)
-	leadsModule.SetPublicViewers(quotePublicViewer, appointmentPublicViewer)
+	appointmentSlotViewer := adapters.NewAppointmentSlotAdapter(appointmentsModule.Service)
+	leadsModule.SetPublicViewers(quotePublicViewer, appointmentPublicViewer, appointmentSlotViewer)
 
 	offerAdapter := adapters.NewPartnerOfferAdapter(partnersModule.Service())
 	leadsModule.SetPartnerOfferCreator(offerAdapter)

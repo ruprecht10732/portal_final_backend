@@ -361,7 +361,7 @@ func getTenantID(deps *ToolDependencies) (uuid.UUID, error) {
 func getLeadContext(deps *ToolDependencies) (uuid.UUID, uuid.UUID, error) {
 	leadID, serviceID, ok := deps.GetLeadContext()
 	if !ok {
-		return uuid.UUID{}, uuid.UUID{}, fmt.Errorf(missingLeadContextError)
+		return uuid.UUID{}, uuid.UUID{}, errors.New(missingLeadContextError)
 	}
 	return leadID, serviceID, nil
 }
@@ -1706,7 +1706,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 
 	leadID, serviceID, ok := deps.GetLeadContext()
 	if !ok {
-		return DraftQuoteOutput{Success: false, Message: "Lead context not available"}, fmt.Errorf(missingLeadContextError)
+		return DraftQuoteOutput{Success: false, Message: "Lead context not available"}, errors.New(missingLeadContextError)
 	}
 
 	if len(input.Items) == 0 {

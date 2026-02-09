@@ -51,6 +51,11 @@ func (s *Service) GetNextScheduledVisit(ctx context.Context, leadID uuid.UUID, t
 	return s.repo.GetNextScheduledVisit(ctx, leadID, tenantID)
 }
 
+// GetNextRequestedVisit returns the next upcoming requested lead visit for a lead.
+func (s *Service) GetNextRequestedVisit(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) (*repository.Appointment, error) {
+	return s.repo.GetNextRequestedVisit(ctx, leadID, tenantID)
+}
+
 // publishSSE publishes an SSE event to all org members if the SSE service is available.
 func (s *Service) publishSSE(orgID uuid.UUID, event sse.Event) {
 	if s.sseService != nil {
@@ -831,6 +836,10 @@ func (s *Service) ListAvailabilityRules(ctx context.Context, userID uuid.UUID, i
 	}
 
 	return resp, nil
+}
+
+func (s *Service) ListAvailabilityRuleUserIDs(ctx context.Context, tenantID uuid.UUID) ([]uuid.UUID, error) {
+	return s.repo.ListAvailabilityRuleUserIDs(ctx, tenantID)
 }
 
 func (s *Service) DeleteAvailabilityRule(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, id uuid.UUID) error {

@@ -63,5 +63,19 @@ func (a *AppointmentPublicAdapter) GetUpcomingVisit(ctx context.Context, leadID,
 	}, nil
 }
 
+func (a *AppointmentPublicAdapter) GetPendingVisit(ctx context.Context, leadID, orgID uuid.UUID) (*ports.PublicAppointmentSummary, error) {
+	appt, err := a.svc.GetNextRequestedVisit(ctx, leadID, orgID)
+	if err != nil || appt == nil {
+		return nil, err
+	}
+
+	return &ports.PublicAppointmentSummary{
+		ID:        appt.ID,
+		StartTime: appt.StartTime,
+		EndTime:   appt.EndTime,
+		Title:     appt.Title,
+	}, nil
+}
+
 var _ ports.QuotePublicViewer = (*QuotePublicAdapter)(nil)
 var _ ports.AppointmentPublicViewer = (*AppointmentPublicAdapter)(nil)

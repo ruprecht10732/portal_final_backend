@@ -154,6 +154,37 @@ func (r *Repository) GetNextScheduledVisit(ctx context.Context, leadID uuid.UUID
 	return &appt, nil
 }
 
+// GetNextRequestedVisit returns the next upcoming requested lead visit for a lead.
+func (r *Repository) GetNextRequestedVisit(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
+	var appt Appointment
+	query := `
+		SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
+			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
+		FROM RAC_appointments
+		WHERE lead_id = $1
+			AND organization_id = $2
+			AND type = 'lead_visit'
+			AND status = 'requested'
+			AND start_time > now()
+		ORDER BY start_time ASC
+		LIMIT 1
+	`
+
+	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(
+		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
+		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
+		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get requested appointment: %w", err)
+	}
+
+	return &appt, nil
+}
+
 // Update updates an existing appointment
 func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 	query := `
