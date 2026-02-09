@@ -572,7 +572,8 @@ func parseDateRange(from string, to string) (*time.Time, *time.Time, error) {
 
 // CheckDuplicate checks if a lead with the given phone already exists.
 func (s *Service) CheckDuplicate(ctx context.Context, phoneNumber string, tenantID uuid.UUID) (transport.DuplicateCheckResponse, error) {
-	lead, err := s.repo.GetByPhone(ctx, phoneNumber, tenantID)
+	normalizedPhone := phone.NormalizeE164(phoneNumber)
+	lead, err := s.repo.GetByPhone(ctx, normalizedPhone, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return transport.DuplicateCheckResponse{IsDuplicate: false}, nil

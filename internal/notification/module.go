@@ -8,12 +8,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/phone"
 
 	"github.com/google/uuid"
 )
@@ -398,6 +400,11 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 			m.log.Error("failed to send partner offer accepted whatsapp", "error", err, "offerId", e.OfferID)
 		} else {
 			m.log.Info("partner offer accepted whatsapp sent", "partnerId", e.PartnerID)
+			m.writeWhatsAppSentEvent(ctx, e.LeadID, &e.LeadServiceID, e.OrganizationID,
+				"System", "Portal",
+				fmt.Sprintf("WhatsApp bevestiging verstuurd naar %s", e.PartnerName),
+				"partner_offer_accepted", "partner", e.PartnerPhone, msg,
+			)
 		}
 	}
 
@@ -538,30 +545,14 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			return
 		}
 
-		if m.leadTimeline == nil {
-			return
-		}
-
-		summary := fmt.Sprintf("WhatsApp welkomstbericht verstuurd naar %s", consumerName)
-		if err := m.leadTimeline.CreateTimelineEvent(bg, LeadTimelineEventParams{
-			LeadID:    e.LeadID,
-			ServiceID: nil,
-			OrgID:     e.TenantID,
-			ActorType: "System",
-			ActorName: "Portal",
-			EventType: "whatsapp_sent",
-			Title:     "WhatsApp verstuurd",
-			Summary:   &summary,
-			Metadata: map[string]any{
-				"preferredContactChannel": "WhatsApp",
-				"suggestedContactMessage": message,
-				"messageLanguage":         "nl",
-				"messageAudience":         "lead",
-				"messageCategory":         "lead_welcome",
-			},
-		}); err != nil {
-			m.log.Error("failed to write whatsapp timeline event", "error", err, "leadId", e.LeadID)
-		}
+		metadata := buildWhatsAppSentMetadata("lead_welcome", "lead", e.ConsumerPhone, message)
+		metadata["preferredContactChannel"] = "WhatsApp"
+		metadata["suggestedContactMessage"] = message
+		m.writeWhatsAppSentEventWithMetadata(bg, e.LeadID, nil, e.TenantID,
+			"System", "Portal",
+			fmt.Sprintf("WhatsApp welkomstbericht verstuurd naar %s", consumerName),
+			metadata,
+		)
 	}()
 
 	return nil
@@ -699,6 +690,11 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 			m.log.Error("failed to send quote sent whatsapp", "error", err, "quoteId", e.QuoteID)
 		} else {
 			m.log.Info("quote sent whatsapp dispatched", "quoteId", e.QuoteID)
+			m.writeWhatsAppSentEvent(ctx, e.LeadID, e.LeadServiceID, e.OrganizationID,
+				"System", "Portal",
+				fmt.Sprintf("WhatsApp offerte verstuurd naar %s", name),
+				"quote_sent", "lead", e.ConsumerPhone, msg,
+			)
 		}
 	}
 
@@ -732,6 +728,13 @@ func (m *Module) handleAppointmentCreated(ctx context.Context, e events.Appointm
 	}
 
 	m.log.Info("appointment confirmation whatsapp sent", "apptId", e.AppointmentID)
+	if e.LeadID != nil {
+		m.writeWhatsAppSentEvent(ctx, *e.LeadID, nil, e.OrganizationID,
+			"System", "Portal",
+			fmt.Sprintf("WhatsApp afspraakbevestiging verstuurd naar %s", name),
+			"appointment_created", "lead", e.ConsumerPhone, msg,
+		)
+	}
 	return nil
 }
 
@@ -761,6 +764,13 @@ func (m *Module) handleAppointmentReminderDue(ctx context.Context, e events.Appo
 	}
 
 	m.log.Info("appointment reminder whatsapp sent", "apptId", e.AppointmentID)
+	if e.LeadID != nil {
+		m.writeWhatsAppSentEvent(ctx, *e.LeadID, nil, e.OrganizationID,
+			"System", "Portal",
+			fmt.Sprintf("WhatsApp afspraakherinnering verstuurd naar %s", name),
+			"appointment_reminder", "lead", e.ConsumerPhone, msg,
+		)
+	}
 	return nil
 }
 
@@ -1001,6 +1011,7 @@ func buildPartnerOfferCreatedDrafts(partnerName, priceFormatted, acceptURL strin
 		"messageLanguage": "nl",
 		"messageAudience": "partner",
 		"messageCategory": "partner_offer_created",
+		"status":          "draft",
 	}
 }
 
@@ -1021,6 +1032,7 @@ func buildPartnerOfferRejectedDrafts(partnerName, reason string) map[string]any 
 		"messageLanguage": "nl",
 		"messageAudience": "partner",
 		"messageCategory": "partner_offer_rejected",
+		"status":          "draft",
 	}
 }
 
@@ -1036,5 +1048,43 @@ func buildPartnerOfferExpiredDrafts(partnerName string) map[string]any {
 		"messageLanguage": "nl",
 		"messageAudience": "partner",
 		"messageCategory": "partner_offer_expired",
+		"status":          "draft",
+	}
+}
+
+func buildWhatsAppSentMetadata(category, audience, phoneNumber, message string) map[string]any {
+	return map[string]any{
+		"status":          "sent",
+		"messageCategory": category,
+		"messageAudience": audience,
+		"messageLanguage": "nl",
+		"phoneNumber":     phone.NormalizeE164(phoneNumber),
+		"messageContent":  message,
+		"sentAt":          time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func (m *Module) writeWhatsAppSentEvent(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, orgID uuid.UUID, actorType, actorName, summary, category, audience, phoneNumber, message string) {
+	metadata := buildWhatsAppSentMetadata(category, audience, phoneNumber, message)
+	m.writeWhatsAppSentEventWithMetadata(ctx, leadID, serviceID, orgID, actorType, actorName, summary, metadata)
+}
+
+func (m *Module) writeWhatsAppSentEventWithMetadata(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, orgID uuid.UUID, actorType, actorName, summary string, metadata map[string]any) {
+	if m.leadTimeline == nil {
+		return
+	}
+
+	if err := m.leadTimeline.CreateTimelineEvent(ctx, LeadTimelineEventParams{
+		LeadID:    leadID,
+		ServiceID: serviceID,
+		OrgID:     orgID,
+		ActorType: actorType,
+		ActorName: actorName,
+		EventType: "whatsapp_sent",
+		Title:     "WhatsApp verstuurd",
+		Summary:   &summary,
+		Metadata:  metadata,
+	}); err != nil {
+		m.log.Error("failed to write whatsapp timeline event", "error", err, "leadId", leadID)
 	}
 }

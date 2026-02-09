@@ -12,6 +12,7 @@ import (
 	"portal_final_backend/internal/partners/repository"
 	"portal_final_backend/internal/partners/transport"
 	"portal_final_backend/platform/apperr"
+	"portal_final_backend/platform/phone"
 	"portal_final_backend/platform/sanitize"
 
 	"github.com/google/uuid"
@@ -24,8 +25,8 @@ const (
 
 // Service provides business logic for partners.
 type Service struct {
-	repo       *repository.Repository
-	eventBus   events.Bus
+	repo             *repository.Repository
+	eventBus         events.Bus
 	storage          storage.StorageService
 	logoBucket       string
 	summaryGenerator OfferSummaryGenerator
@@ -57,7 +58,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 		Longitude:      req.Longitude,
 		ContactName:    sanitize.Text(req.ContactName),
 		ContactEmail:   normalizeEmail(req.ContactEmail),
-		ContactPhone:   strings.TrimSpace(req.ContactPhone),
+		ContactPhone:   phone.NormalizeE164(req.ContactPhone),
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -119,7 +120,7 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 		Longitude:      req.Longitude,
 		ContactName:    normalizeOptionalString(req.ContactName, sanitize.Text),
 		ContactEmail:   normalizeOptionalString(req.ContactEmail, normalizeEmail),
-		ContactPhone:   normalizeOptionalString(req.ContactPhone, strings.TrimSpace),
+		ContactPhone:   normalizeOptionalString(req.ContactPhone, phone.NormalizeE164),
 	}
 
 	if err := validatePartnerNumbersUpdate(update); err != nil {
