@@ -94,12 +94,21 @@ type OrgLogoDownloadResponse struct {
 
 // OrganizationSettingsResponse returns the organization's quote defaults.
 type OrganizationSettingsResponse struct {
-	QuotePaymentDays int `json:"quotePaymentDays"`
-	QuoteValidDays   int `json:"quoteValidDays"`
+	QuotePaymentDays int     `json:"quotePaymentDays"`
+	QuoteValidDays   int     `json:"quoteValidDays"`
+	WhatsAppDeviceID *string `json:"whatsAppDeviceId,omitempty"`
 }
 
 // UpdateOrganizationSettingsRequest updates quote default settings.
 type UpdateOrganizationSettingsRequest struct {
 	QuotePaymentDays *int `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
 	QuoteValidDays   *int `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
+}
+
+// WhatsAppStatusResponse describes the current WhatsApp device state for an organization.
+type WhatsAppStatusResponse struct {
+	State       string `json:"state"`
+	Message     string `json:"message"`
+	CanSend     bool   `json:"canSend"`
+	NeedsReauth bool   `json:"needsReauth"`
 }

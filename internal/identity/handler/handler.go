@@ -33,6 +33,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/organizations/me", h.UpdateOrganization)
 	rg.GET("/organizations/me/settings", h.GetOrganizationSettings)
 	rg.PATCH("/organizations/me/settings", h.UpdateOrganizationSettings)
+	rg.POST("/organizations/me/whatsapp/register", h.RegisterWhatsApp)
+	rg.GET("/organizations/me/whatsapp/qr", h.GetWhatsAppQR)
+	rg.GET("/organizations/me/whatsapp/status", h.GetWhatsAppStatus)
+	rg.POST("/organizations/me/whatsapp/reconnect", h.ReconnectWhatsApp)
+	rg.DELETE("/organizations/me/whatsapp", h.DisconnectWhatsApp)
 	rg.POST("/organizations/me/logo/presign", h.PresignLogo)
 	rg.POST("/organizations/me/logo", h.SetLogo)
 	rg.GET("/organizations/me/logo/download", h.GetLogoDownload)
@@ -313,6 +318,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays: settings.QuotePaymentDays,
 		QuoteValidDays:   settings.QuoteValidDays,
+		WhatsAppDeviceID: settings.WhatsAppDeviceID,
 	})
 }
 
@@ -349,7 +355,111 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays: settings.QuotePaymentDays,
 		QuoteValidDays:   settings.QuoteValidDays,
+		WhatsAppDeviceID: settings.WhatsAppDeviceID,
 	})
+}
+
+func (h *Handler) RegisterWhatsApp(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	deviceID, err := h.svc.RegisterWhatsAppDevice(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"deviceId": deviceID, "status": "registered"})
+}
+
+func (h *Handler) GetWhatsAppQR(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	qrBytes, err := h.svc.GetWhatsAppQR(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.Data(http.StatusOK, "image/png", qrBytes)
+}
+
+func (h *Handler) GetWhatsAppStatus(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	status, err := h.svc.GetWhatsAppStatus(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.WhatsAppStatusResponse{
+		State:       status.State,
+		Message:     status.Message,
+		CanSend:     status.CanSend,
+		NeedsReauth: status.NeedsReauth,
+	})
+}
+
+func (h *Handler) ReconnectWhatsApp(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	if err := h.svc.AttemptReconnect(c.Request.Context(), *tenantID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "reconnection initiated"})
+}
+
+func (h *Handler) DisconnectWhatsApp(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	if err := h.svc.DisconnectWhatsAppDevice(c.Request.Context(), *tenantID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "disconnected"})
 }
 
 func (h *Handler) PresignLogo(c *gin.Context) {

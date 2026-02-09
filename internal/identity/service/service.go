@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/transport"
+	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
@@ -28,10 +30,11 @@ type Service struct {
 	eventBus   events.Bus
 	storage    storage.StorageService
 	logoBucket string
+	whatsapp   *whatsapp.Client
 }
 
-func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string) *Service {
-	return &Service{repo: repo, eventBus: eventBus, storage: storageSvc, logoBucket: logoBucket}
+func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, whatsappClient *whatsapp.Client) *Service {
+	return &Service{repo: repo, eventBus: eventBus, storage: storageSvc, logoBucket: logoBucket, whatsapp: whatsappClient}
 }
 
 func (s *Service) GetUserOrganizationID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
@@ -115,6 +118,122 @@ func (s *Service) UpdateOrganizationSettings(
 	update repository.OrganizationSettingsUpdate,
 ) (repository.OrganizationSettings, error) {
 	return s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
+}
+
+type WhatsAppStatus struct {
+	State       string `json:"state"`
+	Message     string `json:"message"`
+	CanSend     bool   `json:"canSend"`
+	NeedsReauth bool   `json:"needsReauth"`
+}
+
+func (s *Service) RegisterWhatsAppDevice(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	deviceID := fmt.Sprintf("org_%s", organizationID.String())
+	if s.whatsapp == nil {
+		return "", apperr.Internal("whatsapp service not configured")
+	}
+	if err := s.whatsapp.CreateDevice(ctx, deviceID); err != nil {
+		return "", apperr.Internal("failed to register device with provider: " + err.Error())
+	}
+
+	update := repository.OrganizationSettingsUpdate{
+		WhatsAppDeviceID: &deviceID,
+	}
+	if _, err := s.repo.UpsertOrganizationSettings(ctx, organizationID, update); err != nil {
+		return "", err
+	}
+
+	return deviceID, nil
+}
+
+func (s *Service) GetWhatsAppQR(ctx context.Context, organizationID uuid.UUID) ([]byte, error) {
+	settings, err := s.repo.GetOrganizationSettings(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	if settings.WhatsAppDeviceID == nil || *settings.WhatsAppDeviceID == "" {
+		return nil, apperr.Validation("no device registered for this organization")
+	}
+	if s.whatsapp == nil {
+		return nil, apperr.Internal("whatsapp service not configured")
+	}
+
+	return s.whatsapp.GetLoginQR(ctx, *settings.WhatsAppDeviceID)
+}
+
+func (s *Service) DisconnectWhatsAppDevice(ctx context.Context, organizationID uuid.UUID) error {
+	settings, err := s.repo.GetOrganizationSettings(ctx, organizationID)
+	if err != nil {
+		return err
+	}
+
+	if settings.WhatsAppDeviceID != nil && *settings.WhatsAppDeviceID != "" && s.whatsapp != nil {
+		_ = s.whatsapp.DeleteDevice(ctx, *settings.WhatsAppDeviceID)
+	}
+
+	clear := ""
+	update := repository.OrganizationSettingsUpdate{
+		WhatsAppDeviceID: &clear,
+	}
+	_, err = s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
+	return err
+}
+
+func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUID) (WhatsAppStatus, error) {
+	settings, err := s.repo.GetOrganizationSettings(ctx, organizationID)
+	if err != nil {
+		return WhatsAppStatus{}, err
+	}
+	if settings.WhatsAppDeviceID == nil || *settings.WhatsAppDeviceID == "" {
+		return WhatsAppStatus{State: "UNREGISTERED", Message: "No device linked", CanSend: false}, nil
+	}
+	if s.whatsapp == nil {
+		return WhatsAppStatus{}, apperr.Internal("whatsapp service not configured")
+	}
+
+	upstreamStatus, err := s.whatsapp.GetDeviceStatus(ctx, *settings.WhatsAppDeviceID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return WhatsAppStatus{
+				State:       "ERROR",
+				Message:     "Device configuration lost upstream. Please register again.",
+				CanSend:     false,
+				NeedsReauth: true,
+			}, nil
+		}
+		return WhatsAppStatus{}, err
+	}
+
+	if upstreamStatus.IsLoggedIn {
+		return WhatsAppStatus{State: "CONNECTED", Message: "Online", CanSend: true}, nil
+	}
+
+	msg := "Waiting for authentication"
+	if upstreamStatus.IsConnected {
+		msg = "Connected but not logged in"
+	}
+
+	return WhatsAppStatus{
+		State:       "DISCONNECTED",
+		Message:     msg,
+		CanSend:     false,
+		NeedsReauth: true,
+	}, nil
+}
+
+func (s *Service) AttemptReconnect(ctx context.Context, organizationID uuid.UUID) error {
+	settings, err := s.repo.GetOrganizationSettings(ctx, organizationID)
+	if err != nil {
+		return err
+	}
+	if settings.WhatsAppDeviceID == nil || *settings.WhatsAppDeviceID == "" {
+		return apperr.Validation("no device to reconnect")
+	}
+	if s.whatsapp == nil {
+		return apperr.Internal("whatsapp service not configured")
+	}
+
+	return s.whatsapp.ReconnectDevice(ctx, *settings.WhatsAppDeviceID)
 }
 
 type OrganizationProfileUpdate struct {

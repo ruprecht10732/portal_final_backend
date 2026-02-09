@@ -79,6 +79,7 @@ type OrganizationSettings struct {
 	OrganizationID   uuid.UUID
 	QuotePaymentDays int
 	QuoteValidDays   int
+	WhatsAppDeviceID *string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -86,6 +87,7 @@ type OrganizationSettings struct {
 type OrganizationSettingsUpdate struct {
 	QuotePaymentDays *int
 	QuoteValidDays   *int
+	WhatsAppDeviceID *string
 }
 
 type Invite struct {
@@ -284,13 +286,14 @@ func (r *Repository) ClearOrganizationLogo(
 func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-    SELECT organization_id, quote_payment_days, quote_valid_days, created_at, updated_at
+    SELECT organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, created_at, updated_at
     FROM RAC_organization_settings
     WHERE organization_id = $1
   `, organizationID).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.WhatsAppDeviceID,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)
@@ -300,6 +303,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			OrganizationID:   organizationID,
 			QuotePaymentDays: 7,
 			QuoteValidDays:   14,
+			WhatsAppDeviceID: nil,
 		}, nil
 	}
 	return s, err
@@ -312,17 +316,19 @@ func (r *Repository) UpsertOrganizationSettings(
 ) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-    INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days)
-    VALUES ($1, COALESCE($2, 7), COALESCE($3, 14))
-    ON CONFLICT (organization_id) DO UPDATE SET
-      quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
-      quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
-      updated_at         = now()
-    RETURNING organization_id, quote_payment_days, quote_valid_days, created_at, updated_at
-  `, organizationID, update.QuotePaymentDays, update.QuoteValidDays).Scan(
+		INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id)
+		VALUES ($1, COALESCE($2, 7), COALESCE($3, 14), NULLIF($4, ''))
+		ON CONFLICT (organization_id) DO UPDATE SET
+			quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
+			quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
+			whatsapp_device_id = CASE WHEN $4 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($4, '') END,
+			updated_at         = now()
+		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, created_at, updated_at
+	`, organizationID, update.QuotePaymentDays, update.QuoteValidDays, update.WhatsAppDeviceID).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.WhatsAppDeviceID,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)

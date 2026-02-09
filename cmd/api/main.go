@@ -147,7 +147,8 @@ func main() {
 	notificationModule.SetWhatsAppSender(whatsappClient)
 
 	// Initialize domain modules
-	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val)
+	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)
+	notificationModule.SetOrganizationSettingsReader(identityModule.Service())
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
 	leadsModule, err := leads.NewModule(pool, eventBus, storageSvc, val, cfg, log)
 	if err != nil {

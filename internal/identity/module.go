@@ -8,6 +8,7 @@ import (
 	"portal_final_backend/internal/identity/handler"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/service"
+	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,9 +19,9 @@ type Module struct {
 	service *service.Service
 }
 
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, val *validator.Validator) *Module {
+func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, val *validator.Validator, whatsappClient *whatsapp.Client) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, eventBus, storageSvc, logoBucket)
+	svc := service.New(repo, eventBus, storageSvc, logoBucket, whatsappClient)
 	h := handler.New(svc, val)
 
 	return &Module{handler: h, service: svc}
