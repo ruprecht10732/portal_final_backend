@@ -130,6 +130,10 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	bus.Subscribe(events.QuoteAccepted{}.EventName(), m)
 	bus.Subscribe(events.QuoteRejected{}.EventName(), m)
 
+	// Appointment domain events
+	bus.Subscribe(events.AppointmentCreated{}.EventName(), m)
+	bus.Subscribe(events.AppointmentReminderDue{}.EventName(), m)
+
 	m.log.Info("notification module registered event handlers")
 }
 
@@ -173,6 +177,10 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handleQuoteAccepted(ctx, e)
 	case events.QuoteRejected:
 		return m.handleQuoteRejected(ctx, e)
+	case events.AppointmentCreated:
+		return m.handleAppointmentCreated(ctx, e)
+	case events.AppointmentReminderDue:
+		return m.handleAppointmentReminderDue(ctx, e)
 	default:
 		m.log.Warn("unhandled event type", "event", event.EventName())
 		return nil
@@ -376,6 +384,20 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 				"offerId", e.OfferID,
 				"partnerEmail", e.PartnerEmail,
 			)
+		}
+	}
+
+	if m.whatsapp != nil && e.PartnerPhone != "" {
+		msg := fmt.Sprintf(
+			"Bedankt %s! 🔨\n\nU heeft de klus geaccepteerd (Offer ID: %s). We hebben de klant geïnformeerd.\n\nWe sturen u zo snel mogelijk de definitieve details voor de inspectie.",
+			e.PartnerName,
+			e.OfferID.String()[:8],
+		)
+
+		if err := m.whatsapp.SendMessage(ctx, e.PartnerPhone, msg); err != nil {
+			m.log.Error("failed to send partner offer accepted whatsapp", "error", err, "offerId", e.OfferID)
+		} else {
+			m.log.Info("partner offer accepted whatsapp sent", "partnerId", e.PartnerID)
 		}
 	}
 
@@ -657,7 +679,88 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 		"Offerte verstuurd naar "+e.ConsumerName,
 		map[string]interface{}{"quoteNumber": e.QuoteNumber, "consumerEmail": e.ConsumerEmail})
 
+	if m.whatsapp != nil && e.ConsumerPhone != "" {
+		proposalURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/") + "/quote/" + e.PublicToken
+		name := strings.TrimSpace(e.ConsumerName)
+		if name == "" {
+			name = "klant"
+		}
+
+		msg := fmt.Sprintf(
+			"Hi %s,\n\nUw offerte %s van %s is klaar! 📄\n\nBekijk en accordeer hem direct via deze link:\n%s\n\nMet vriendelijke groet,\n%s",
+			name,
+			e.QuoteNumber,
+			e.OrganizationName,
+			proposalURL,
+			e.OrganizationName,
+		)
+
+		if err := m.whatsapp.SendMessage(ctx, e.ConsumerPhone, msg); err != nil {
+			m.log.Error("failed to send quote sent whatsapp", "error", err, "quoteId", e.QuoteID)
+		} else {
+			m.log.Info("quote sent whatsapp dispatched", "quoteId", e.QuoteID)
+		}
+	}
+
 	m.log.Info("quote sent event processed", "quoteId", e.QuoteID)
+	return nil
+}
+
+func (m *Module) handleAppointmentCreated(ctx context.Context, e events.AppointmentCreated) error {
+	if e.Type != "lead_visit" || e.ConsumerPhone == "" || m.whatsapp == nil {
+		return nil
+	}
+
+	name := strings.TrimSpace(e.ConsumerName)
+	if name == "" {
+		name = "klant"
+	}
+
+	dateStr := e.StartTime.Format("02-01-2006")
+	timeStr := e.StartTime.Format("15:04")
+
+	msg := fmt.Sprintf(
+		"Hi %s,\n\nUw afspraak is bevestigd! ✅\n\nDatum: %s\nTijd: %s\n\nOnze adviseur komt bij u langs voor de opname. Tot dan!",
+		name,
+		dateStr,
+		timeStr,
+	)
+
+	if err := m.whatsapp.SendMessage(ctx, e.ConsumerPhone, msg); err != nil {
+		m.log.Error("failed to send appointment confirmation whatsapp", "error", err, "apptId", e.AppointmentID)
+		return err
+	}
+
+	m.log.Info("appointment confirmation whatsapp sent", "apptId", e.AppointmentID)
+	return nil
+}
+
+func (m *Module) handleAppointmentReminderDue(ctx context.Context, e events.AppointmentReminderDue) error {
+	if e.Type != "lead_visit" || e.ConsumerPhone == "" || m.whatsapp == nil {
+		return nil
+	}
+
+	name := strings.TrimSpace(e.ConsumerName)
+	if name == "" {
+		name = "klant"
+	}
+
+	dateStr := e.StartTime.Format("02-01-2006")
+	timeStr := e.StartTime.Format("15:04")
+
+	msg := fmt.Sprintf(
+		"Herinnering, %s! ⏰\n\nMorgen staat uw afspraak gepland.\n\nDatum: %s\nTijd: %s\n\nTot morgen!",
+		name,
+		dateStr,
+		timeStr,
+	)
+
+	if err := m.whatsapp.SendMessage(ctx, e.ConsumerPhone, msg); err != nil {
+		m.log.Error("failed to send appointment reminder whatsapp", "error", err, "apptId", e.AppointmentID)
+		return err
+	}
+
+	m.log.Info("appointment reminder whatsapp sent", "apptId", e.AppointmentID)
 	return nil
 }
 

@@ -50,6 +50,7 @@ type TimelineEventParams struct {
 type QuoteContactData struct {
 	ConsumerEmail    string
 	ConsumerName     string
+	ConsumerPhone    string
 	OrganizationName string
 	AgentEmail       string
 	AgentName        string
@@ -845,6 +846,7 @@ func (s *Service) Send(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, ag
 			if err == nil {
 				evt.ConsumerEmail = contactData.ConsumerEmail
 				evt.ConsumerName = contactData.ConsumerName
+				evt.ConsumerPhone = contactData.ConsumerPhone
 				evt.OrganizationName = contactData.OrganizationName
 			}
 			// If lookup fails, we still publish the event (SSE still works) but email won't send

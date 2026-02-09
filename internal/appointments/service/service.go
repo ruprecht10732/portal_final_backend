@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/appointments/transport"
 	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/sanitize"
 
@@ -30,15 +33,23 @@ type LeadAssigner interface {
 
 // Service provides business logic for appointments
 type Service struct {
-	repo         *repository.Repository
-	leadAssigner LeadAssigner
-	emailSender  email.Sender
-	sseService   *sse.Service
+	repo              *repository.Repository
+	leadAssigner      LeadAssigner
+	emailSender       email.Sender
+	sseService        *sse.Service
+	eventBus          events.Bus
+	reminderScheduler scheduler.ReminderScheduler
 }
 
 // New creates a new appointments service
-func New(repo *repository.Repository, leadAssigner LeadAssigner, emailSender email.Sender) *Service {
-	return &Service{repo: repo, leadAssigner: leadAssigner, emailSender: emailSender}
+func New(repo *repository.Repository, leadAssigner LeadAssigner, emailSender email.Sender, eventBus events.Bus, reminderScheduler scheduler.ReminderScheduler) *Service {
+	return &Service{
+		repo:              repo,
+		leadAssigner:      leadAssigner,
+		emailSender:       emailSender,
+		eventBus:          eventBus,
+		reminderScheduler: reminderScheduler,
+	}
 }
 
 // SetSSE sets the SSE service for real-time event broadcasting.
@@ -134,6 +145,36 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 			"endTime":       appt.EndTime,
 		},
 	})
+
+	if s.eventBus != nil {
+		evt := events.AppointmentCreated{
+			BaseEvent:      events.NewBaseEvent(),
+			AppointmentID:  appt.ID,
+			OrganizationID: appt.OrganizationID,
+			LeadID:         appt.LeadID,
+			UserID:         appt.UserID,
+			Type:           appt.Type,
+			Title:          appt.Title,
+			StartTime:      appt.StartTime,
+			EndTime:        appt.EndTime,
+			Location:       getOptionalString(appt.Location),
+		}
+		if leadInfo != nil {
+			evt.ConsumerName = formatConsumerName(leadInfo.FirstName, leadInfo.LastName)
+			evt.ConsumerPhone = leadInfo.Phone
+		}
+		s.eventBus.Publish(ctx, evt)
+	}
+
+	if s.reminderScheduler != nil && appt.Type == string(transport.AppointmentTypeLeadVisit) && leadInfo != nil && leadInfo.Phone != "" {
+		reminderAt := appt.StartTime.Add(-24 * time.Hour)
+		if reminderAt.After(time.Now()) {
+			_ = s.reminderScheduler.ScheduleAppointmentReminder(ctx, scheduler.AppointmentReminderPayload{
+				AppointmentID:  appt.ID.String(),
+				OrganizationID: appt.OrganizationID.String(),
+			}, reminderAt)
+		}
+	}
 
 	return &resp, nil
 }
@@ -1273,6 +1314,21 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func getOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func formatConsumerName(firstName, lastName string) string {
+	name := strings.TrimSpace(firstName + " " + lastName)
+	if name == "" {
+		return "klant"
+	}
+	return name
 }
 
 // parseUUIDFilter parses an optional UUID string filter.

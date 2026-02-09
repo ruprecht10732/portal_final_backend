@@ -6,8 +6,10 @@ import (
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/appointments/service"
 	"portal_final_backend/internal/email"
+	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,9 +23,9 @@ type Module struct {
 }
 
 // NewModule creates a new RAC_appointments module with all dependencies wired
-func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner service.LeadAssigner, emailSender email.Sender) *Module {
+func NewModule(pool *pgxpool.Pool, val *validator.Validator, leadAssigner service.LeadAssigner, emailSender email.Sender, eventBus events.Bus, reminderScheduler scheduler.ReminderScheduler) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, leadAssigner, emailSender)
+	svc := service.New(repo, leadAssigner, emailSender, eventBus, reminderScheduler)
 	h := handler.New(svc, val)
 
 	return &Module{

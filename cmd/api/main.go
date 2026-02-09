@@ -27,6 +27,7 @@ import (
 	"portal_final_backend/internal/partners"
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/services"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
@@ -90,14 +91,28 @@ func main() {
 	defer pool.Close()
 	log.Info("database connection established")
 
+	// Event bus for decoupled communication between modules
+	eventBus := events.NewInMemoryBus(log)
+
+	var reminderScheduler scheduler.ReminderScheduler
+
+	if cfg.GetRedisURL() != "" {
+		reminderClient, err := scheduler.NewClient(cfg)
+		if err != nil {
+			log.Error("failed to initialize reminder scheduler client", "error", err)
+		} else {
+			reminderScheduler = reminderClient
+			defer reminderClient.Close()
+		}
+	} else {
+		log.Warn("REDIS_URL not configured; appointment reminders disabled")
+	}
+
 	sender, err := email.NewSender(cfg)
 	if err != nil {
 		log.Error("failed to initialize email sender", "error", err)
 		panic("failed to initialize email sender: " + err.Error())
 	}
-
-	// Event bus for decoupled communication between modules
-	eventBus := events.NewInMemoryBus(log)
 
 	// Shared validator instance for dependency injection
 	val := validator.New()
@@ -152,7 +167,7 @@ func main() {
 	// Share SSE service with notification module so quote events reach agents
 	notificationModule.SetSSE(leadsModule.SSE())
 	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
-	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender)
+	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender, eventBus, reminderScheduler)
 	appointmentsModule.SetSSE(leadsModule.SSE())
 
 	// Set appointment booker on leads module (breaks circular dependency)

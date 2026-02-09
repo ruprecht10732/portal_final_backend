@@ -48,6 +48,7 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 	if lead.ConsumerEmail != nil {
 		consumerEmail = *lead.ConsumerEmail
 	}
+	consumerPhone := lead.ConsumerPhone
 	consumerName := lead.ConsumerFirstName
 	if lead.ConsumerLastName != "" {
 		consumerName += " " + lead.ConsumerLastName
@@ -82,6 +83,7 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 	return quotesvc.QuoteContactData{
 		ConsumerEmail:    consumerEmail,
 		ConsumerName:     consumerName,
+		ConsumerPhone:    consumerPhone,
 		OrganizationName: org.Name,
 		AgentEmail:       agentEmail,
 		AgentName:        agentName,

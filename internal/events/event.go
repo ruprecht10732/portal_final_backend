@@ -4,6 +4,8 @@
 package events
 
 import (
+	"time"
+
 	"portal_final_backend/platform/events"
 
 	"github.com/google/uuid"
@@ -203,6 +205,7 @@ type QuoteSent struct {
 	AgentID          uuid.UUID  `json:"agentId"`
 	ConsumerEmail    string     `json:"consumerEmail"`
 	ConsumerName     string     `json:"consumerName"`
+	ConsumerPhone    string     `json:"consumerPhone"`
 	OrganizationName string     `json:"organizationName"`
 }
 
@@ -306,6 +309,7 @@ type PartnerOfferAccepted struct {
 	LeadID         uuid.UUID `json:"leadId"`
 	PartnerName    string    `json:"partnerName"`
 	PartnerEmail   string    `json:"partnerEmail"`
+	PartnerPhone   string    `json:"partnerPhone"`
 }
 
 func (e PartnerOfferAccepted) EventName() string { return "partners.offer.accepted" }
@@ -336,3 +340,43 @@ type PartnerOfferExpired struct {
 }
 
 func (e PartnerOfferExpired) EventName() string { return "partners.offer.expired" }
+
+// =============================================================================
+// Appointments Domain Events
+// =============================================================================
+
+// AppointmentCreated is published when an appointment is scheduled.
+type AppointmentCreated struct {
+	BaseEvent
+	AppointmentID  uuid.UUID  `json:"appointmentId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         *uuid.UUID `json:"leadId,omitempty"`
+	UserID         uuid.UUID  `json:"userId"`
+	Type           string     `json:"type"`
+	Title          string     `json:"title"`
+	StartTime      time.Time  `json:"startTime"`
+	EndTime        time.Time  `json:"endTime"`
+	ConsumerName   string     `json:"consumerName,omitempty"`
+	ConsumerPhone  string     `json:"consumerPhone,omitempty"`
+	Location       string     `json:"location,omitempty"`
+}
+
+func (e AppointmentCreated) EventName() string { return "appointments.created" }
+
+// AppointmentReminderDue is published when a reminder should be sent.
+type AppointmentReminderDue struct {
+	BaseEvent
+	AppointmentID  uuid.UUID  `json:"appointmentId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         *uuid.UUID `json:"leadId,omitempty"`
+	UserID         uuid.UUID  `json:"userId"`
+	Type           string     `json:"type"`
+	Title          string     `json:"title"`
+	StartTime      time.Time  `json:"startTime"`
+	EndTime        time.Time  `json:"endTime"`
+	ConsumerName   string     `json:"consumerName,omitempty"`
+	ConsumerPhone  string     `json:"consumerPhone,omitempty"`
+	Location       string     `json:"location,omitempty"`
+}
+
+func (e AppointmentReminderDue) EventName() string { return "appointments.reminder.due" }

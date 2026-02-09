@@ -66,6 +66,14 @@ type WhatsAppConfig interface {
 	GetWhatsAppDeviceID() string
 }
 
+// SchedulerConfig provides settings for the background scheduler.
+type SchedulerConfig interface {
+	GetRedisURL() string
+	GetRedisTLSInsecure() bool
+	GetAsynqQueueName() string
+	GetAsynqConcurrency() int
+}
+
 // HTTPConfig provides settings for the HTTP server.
 type HTTPConfig interface {
 	GetHTTPAddr() string
@@ -182,6 +190,10 @@ type Config struct {
 	WhatsAppURL                       string
 	WhatsAppKey                       string
 	WhatsAppDeviceID                  string
+	RedisURL                          string
+	RedisTLSInsecure                  bool
+	AsynqQueueName                    string
+	AsynqConcurrency                  int
 }
 
 // =============================================================================
@@ -220,6 +232,12 @@ func (c *Config) GetAppBaseURL() string { return c.AppBaseURL }
 func (c *Config) GetWhatsAppURL() string      { return c.WhatsAppURL }
 func (c *Config) GetWhatsAppKey() string      { return c.WhatsAppKey }
 func (c *Config) GetWhatsAppDeviceID() string { return c.WhatsAppDeviceID }
+
+// SchedulerConfig implementation
+func (c *Config) GetRedisURL() string       { return c.RedisURL }
+func (c *Config) GetRedisTLSInsecure() bool { return c.RedisTLSInsecure }
+func (c *Config) GetAsynqQueueName() string { return c.AsynqQueueName }
+func (c *Config) GetAsynqConcurrency() int  { return c.AsynqConcurrency }
 
 // HTTPConfig implementation
 func (c *Config) GetHTTPAddr() string      { return c.HTTPAddr }
@@ -354,6 +372,10 @@ func Load() (*Config, error) {
 		WhatsAppURL:                       getEnv("WHATSAPP_SERVICE_URL", ""),
 		WhatsAppKey:                       getEnv("WHATSAPP_API_KEY", ""),
 		WhatsAppDeviceID:                  getEnv("WHATSAPP_DEVICE_ID", ""),
+		RedisURL:                          getEnv("REDIS_URL", ""),
+		RedisTLSInsecure:                  strings.EqualFold(getEnv("REDIS_TLS_INSECURE", "false"), "true"),
+		AsynqQueueName:                    getEnv("ASYNQ_QUEUE_NAME", "default"),
+		AsynqConcurrency:                  mustInt(getEnv("ASYNQ_CONCURRENCY", "10")),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -392,6 +414,14 @@ func mustDuration(value string) time.Duration {
 
 func mustInt64(value string) int64 {
 	result, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return result
+}
+
+func mustInt(value string) int {
+	result, err := strconv.Atoi(value)
 	if err != nil {
 		return 0
 	}

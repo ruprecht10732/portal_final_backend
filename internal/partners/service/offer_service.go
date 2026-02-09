@@ -238,10 +238,12 @@ func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req trans
 	// Resolve lead ID for timeline/notification handlers
 	leadID, _ := s.repo.GetLeadIDForService(ctx, oc.LeadServiceID, oc.OrganizationID)
 
-	// Resolve partner email for confirmation
+	// Resolve partner details for confirmation
 	var partnerEmail string
+	var partnerPhone string
 	if partner, pErr := s.repo.GetByID(ctx, oc.PartnerID, oc.OrganizationID); pErr == nil {
 		partnerEmail = partner.ContactEmail
+		partnerPhone = partner.ContactPhone
 	}
 
 	// Publish event
@@ -254,6 +256,7 @@ func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req trans
 		LeadID:         leadID,
 		PartnerName:    oc.PartnerName,
 		PartnerEmail:   partnerEmail,
+		PartnerPhone:   partnerPhone,
 	})
 
 	return nil
