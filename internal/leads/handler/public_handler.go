@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -133,7 +134,7 @@ func (h *PublicHandler) GetTrackAndTrace(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"consumerName": fmt.Sprintf("%s %s", lead.ConsumerFirstName, lead.ConsumerLastName),
+		"consumerName": strings.TrimSpace(lead.ConsumerFirstName),
 		"city":         lead.AddressCity,
 		"serviceType":  svc.ServiceType,
 		"createdAt":    lead.CreatedAt,
@@ -536,7 +537,7 @@ func resolveCustomerStatus(stage string, quote *ports.PublicQuoteSummary, appt *
 
 	if appt != nil {
 		apptDate := appt.StartTime.Format("02-01-2006 om 15:04")
-		return "Afspraak Gepland", fmt.Sprintf("We komen langs op %s.", apptDate), 2
+		return "In planning", fmt.Sprintf("We hebben een moment gereserveerd op %s.", apptDate), 2
 	}
 
 	switch stage {
@@ -545,7 +546,7 @@ func resolveCustomerStatus(stage string, quote *ports.PublicQuoteSummary, appt *
 	case "Ready_For_Estimator":
 		return "In Beoordeling", "Onze experts maken een inschatting van de situatie.", 2
 	case "Ready_For_Partner", "Partner_Matching", "Partner_Assigned":
-		return "In Voorbereiding", "We kijken naar de beschikbaarheid in de planning.", 2
+		return "In planning", "We plannen een moment voor de volgende stap.", 2
 	case "Lost":
 		return "Gesloten", "Deze aanvraag is gesloten.", 1
 	default:
