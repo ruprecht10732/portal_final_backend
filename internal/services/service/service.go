@@ -99,11 +99,6 @@ func (s *Service) ListActive(ctx context.Context, tenantID uuid.UUID) (transport
 
 // Create creates a new service type.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.CreateServiceTypeRequest) (transport.ServiceTypeResponse, error) {
-	displayOrder := 0
-	if req.DisplayOrder != nil {
-		displayOrder = *req.DisplayOrder
-	}
-
 	params := repository.CreateParams{
 		OrganizationID:   tenantID,
 		Name:             req.Name,
@@ -112,7 +107,6 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 		IntakeGuidelines: req.IntakeGuidelines,
 		Icon:             req.Icon,
 		Color:            req.Color,
-		DisplayOrder:     displayOrder,
 	}
 
 	st, err := s.repo.Create(ctx, params)
@@ -141,7 +135,6 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 		IntakeGuidelines: req.IntakeGuidelines,
 		Icon:             req.Icon,
 		Color:            req.Color,
-		DisplayOrder:     req.DisplayOrder,
 	}
 
 	st, err := s.repo.Update(ctx, params)
@@ -200,24 +193,6 @@ func (s *Service) ToggleActive(ctx context.Context, tenantID uuid.UUID, id uuid.
 	return toResponse(st), nil
 }
 
-// Reorder updates the display order of multiple service types.
-func (s *Service) Reorder(ctx context.Context, tenantID uuid.UUID, req transport.ReorderRequest) error {
-	items := make([]repository.ReorderItem, len(req.Items))
-	for i, item := range req.Items {
-		items[i] = repository.ReorderItem{
-			ID:           item.ID,
-			DisplayOrder: item.DisplayOrder,
-		}
-	}
-
-	if err := s.repo.Reorder(ctx, tenantID, items); err != nil {
-		return err
-	}
-
-	s.log.Info("service types reordered", "count", len(items))
-	return nil
-}
-
 // Exists checks if a service type exists by ID.
 func (s *Service) Exists(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (bool, error) {
 	return s.repo.Exists(ctx, tenantID, id)
@@ -241,7 +216,6 @@ func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
 			Description:    toPtr(def.Description),
 			Icon:           toPtr(def.Icon),
 			Color:          toPtr(def.Color),
-			DisplayOrder:   def.DisplayOrder,
 		})
 		if err != nil {
 			return err
@@ -262,7 +236,6 @@ func toResponse(st repository.ServiceType) transport.ServiceTypeResponse {
 		Icon:             st.Icon,
 		Color:            st.Color,
 		IsActive:         st.IsActive,
-		DisplayOrder:     st.DisplayOrder,
 		CreatedAt:        st.CreatedAt,
 		UpdatedAt:        st.UpdatedAt,
 	}
@@ -313,78 +286,69 @@ func generateSlug(name string) string {
 }
 
 type defaultServiceType struct {
-	Name         string
-	Slug         string
-	Description  string
-	Icon         string
-	Color        string
-	DisplayOrder int
+	Name        string
+	Slug        string
+	Description string
+	Icon        string
+	Color       string
 }
 
 var defaultServiceTypes = []defaultServiceType{
 	{
-		Name:         "Windows",
-		Slug:         "windows",
-		Description:  "Window and door installation, replacement, and repairs",
-		Icon:         "window",
-		Color:        "#3B82F6",
-		DisplayOrder: 1,
+		Name:        "Windows",
+		Slug:        "windows",
+		Description: "Window and door installation, replacement, and repairs",
+		Icon:        "window",
+		Color:       "#3B82F6",
 	},
 	{
-		Name:         "Insulation",
-		Slug:         "insulation",
-		Description:  "Home insulation services including roof, wall, and floor insulation",
-		Icon:         "home",
-		Color:        "#10B981",
-		DisplayOrder: 2,
+		Name:        "Insulation",
+		Slug:        "insulation",
+		Description: "Home insulation services including roof, wall, and floor insulation",
+		Icon:        "home",
+		Color:       "#10B981",
 	},
 	{
-		Name:         "Solar",
-		Slug:         "solar",
-		Description:  "Solar panel installation and maintenance",
-		Icon:         "sun",
-		Color:        "#F59E0B",
-		DisplayOrder: 3,
+		Name:        "Solar",
+		Slug:        "solar",
+		Description: "Solar panel installation and maintenance",
+		Icon:        "sun",
+		Color:       "#F59E0B",
 	},
 	{
-		Name:         "Plumbing",
-		Slug:         "plumbing",
-		Description:  "Plumbing repairs, installations, and drain services",
-		Icon:         "droplet",
-		Color:        "#0EA5E9",
-		DisplayOrder: 4,
+		Name:        "Plumbing",
+		Slug:        "plumbing",
+		Description: "Plumbing repairs, installations, and drain services",
+		Icon:        "droplet",
+		Color:       "#0EA5E9",
 	},
 	{
-		Name:         "HVAC",
-		Slug:         "hvac",
-		Description:  "Heating, ventilation, air conditioning, and heat pumps",
-		Icon:         "flame",
-		Color:        "#EF4444",
-		DisplayOrder: 5,
+		Name:        "HVAC",
+		Slug:        "hvac",
+		Description: "Heating, ventilation, air conditioning, and heat pumps",
+		Icon:        "flame",
+		Color:       "#EF4444",
 	},
 	{
-		Name:         "Electrical",
-		Slug:         "electrical",
-		Description:  "Electrical installations, repairs, and upgrades",
-		Icon:         "zap",
-		Color:        "#8B5CF6",
-		DisplayOrder: 6,
+		Name:        "Electrical",
+		Slug:        "electrical",
+		Description: "Electrical installations, repairs, and upgrades",
+		Icon:        "zap",
+		Color:       "#8B5CF6",
 	},
 	{
-		Name:         "Carpentry",
-		Slug:         "carpentry",
-		Description:  "Woodwork, doors, floors, and furniture repairs",
-		Icon:         "hammer",
-		Color:        "#D97706",
-		DisplayOrder: 7,
+		Name:        "Carpentry",
+		Slug:        "carpentry",
+		Description: "Woodwork, doors, floors, and furniture repairs",
+		Icon:        "hammer",
+		Color:       "#D97706",
 	},
 	{
-		Name:         "Handyman",
-		Slug:         "handyman",
-		Description:  "General repairs and small home improvement tasks",
-		Icon:         "tool",
-		Color:        "#6B7280",
-		DisplayOrder: 8,
+		Name:        "Handyman",
+		Slug:        "handyman",
+		Description: "General repairs and small home improvement tasks",
+		Icon:        "tool",
+		Color:       "#6B7280",
 	},
 }
 

@@ -66,7 +66,6 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.PUT("/:id", m.handler.Update)
 	adminGroup.DELETE("/:id", m.handler.Delete)
 	adminGroup.PATCH("/:id/toggle-active", m.handler.ToggleActive)
-	adminGroup.PUT("/reorder", m.handler.Reorder)
 }
 
 // RegisterHandlers subscribes to domain events for seeding tenant defaults.

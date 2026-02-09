@@ -230,33 +230,6 @@ func (h *Handler) ToggleActive(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-// Reorder updates the display order of multiple service types.
-// PUT /api/v1/admin/service-types/reorder
-func (h *Handler) Reorder(c *gin.Context) {
-	var req transport.ReorderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
-	if !ok {
-		return
-	}
-
-	if err := h.svc.Reorder(c.Request.Context(), tenantID, req); httpkit.HandleError(c, err) {
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
 func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
 	tenantID := identity.TenantID()
 	if tenantID == nil {

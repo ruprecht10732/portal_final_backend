@@ -17,7 +17,6 @@ type ServiceType struct {
 	Icon             *string   `db:"icon"`
 	Color            *string   `db:"color"`
 	IsActive         bool      `db:"is_active"`
-	DisplayOrder     int       `db:"display_order"`
 	CreatedAt        string    `db:"created_at"`
 	UpdatedAt        string    `db:"updated_at"`
 }
@@ -31,7 +30,6 @@ type CreateParams struct {
 	IntakeGuidelines *string
 	Icon             *string
 	Color            *string
-	DisplayOrder     int
 }
 
 // UpdateParams contains parameters for updating a service type.
@@ -44,13 +42,6 @@ type UpdateParams struct {
 	IntakeGuidelines *string
 	Icon             *string
 	Color            *string
-	DisplayOrder     *int
-}
-
-// ReorderItem represents a single item in a reorder request.
-type ReorderItem struct {
-	ID           uuid.UUID
-	DisplayOrder int
 }
 
 // ListParams defines filters for listing service types.
@@ -81,7 +72,6 @@ type ServiceTypeWriter interface {
 	Update(ctx context.Context, params UpdateParams) (ServiceType, error)
 	Delete(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error
 	SetActive(ctx context.Context, organizationID uuid.UUID, id uuid.UUID, isActive bool) error
-	Reorder(ctx context.Context, organizationID uuid.UUID, items []ReorderItem) error
 }
 
 // Repository combines all service type repository operations.

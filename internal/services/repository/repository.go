@@ -31,7 +31,7 @@ var _ Repository = (*Repo)(nil)
 // GetByID retrieves a service type by its ID.
 func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, created_at, updated_at
 		FROM RAC_service_types
 		WHERE id = $1 AND organization_id = $2`
 
@@ -40,7 +40,7 @@ func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UU
 
 	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
 		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
+		&st.IsActive, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -58,7 +58,7 @@ func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UU
 // GetBySlug retrieves a service type by its slug.
 func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug string) (ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, created_at, updated_at
 		FROM RAC_service_types
 		WHERE slug = $1 AND organization_id = $2`
 
@@ -67,7 +67,7 @@ func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug str
 
 	err := r.pool.QueryRow(ctx, query, slug, organizationID).Scan(
 		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
+		&st.IsActive, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -82,13 +82,13 @@ func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug str
 	return st, nil
 }
 
-// List retrieves all service types ordered by display_order.
+// List retrieves all service types ordered by name.
 func (r *Repo) List(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, created_at, updated_at
 		FROM RAC_service_types
 		WHERE organization_id = $1
-		ORDER BY display_order ASC, name ASC`
+		ORDER BY name ASC`
 
 	rows, err := r.pool.Query(ctx, query, organizationID)
 	if err != nil {
@@ -99,13 +99,13 @@ func (r *Repo) List(ctx context.Context, organizationID uuid.UUID) ([]ServiceTyp
 	return scanServiceTypes(rows)
 }
 
-// ListActive retrieves only active service types ordered by display_order.
+// ListActive retrieves only active service types ordered by name.
 func (r *Repo) ListActive(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
 	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, created_at, updated_at
 		FROM RAC_service_types
 		WHERE organization_id = $1 AND is_active = true
-		ORDER BY display_order ASC, name ASC`
+		ORDER BY name ASC`
 
 	rows, err := r.pool.Query(ctx, query, organizationID)
 	if err != nil {
@@ -127,10 +127,10 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 		isActiveParam = *params.IsActive
 	}
 
-	sortBy := "displayOrder"
+	sortBy := "name"
 	if params.SortBy != "" {
 		switch params.SortBy {
-		case "name", "slug", "displayOrder", "isActive", "createdAt", "updatedAt":
+		case "name", "slug", "isActive", "createdAt", "updatedAt":
 			sortBy = params.SortBy
 		default:
 			return nil, 0, apperr.BadRequest("invalid sort field")
@@ -163,7 +163,7 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 	}
 
 	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at
+		SELECT id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, created_at, updated_at
 		FROM RAC_service_types
 		WHERE organization_id = $1
 			AND ($2::text IS NULL OR name ILIKE $2 OR slug ILIKE $2)
@@ -173,15 +173,13 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 			CASE WHEN $4 = 'name' AND $5 = 'desc' THEN name END DESC,
 			CASE WHEN $4 = 'slug' AND $5 = 'asc' THEN slug END ASC,
 			CASE WHEN $4 = 'slug' AND $5 = 'desc' THEN slug END DESC,
-			CASE WHEN $4 = 'displayOrder' AND $5 = 'asc' THEN display_order END ASC,
-			CASE WHEN $4 = 'displayOrder' AND $5 = 'desc' THEN display_order END DESC,
 			CASE WHEN $4 = 'isActive' AND $5 = 'asc' THEN is_active END ASC,
 			CASE WHEN $4 = 'isActive' AND $5 = 'desc' THEN is_active END DESC,
 			CASE WHEN $4 = 'createdAt' AND $5 = 'asc' THEN created_at END ASC,
 			CASE WHEN $4 = 'createdAt' AND $5 = 'desc' THEN created_at END DESC,
 			CASE WHEN $4 = 'updatedAt' AND $5 = 'asc' THEN updated_at END ASC,
 			CASE WHEN $4 = 'updatedAt' AND $5 = 'desc' THEN updated_at END DESC,
-			display_order ASC, name ASC
+			name ASC
 		LIMIT $6 OFFSET $7
 	`
 
@@ -228,18 +226,18 @@ func (r *Repo) HasLeadServices(ctx context.Context, organizationID uuid.UUID, id
 // Create creates a new service type.
 func (r *Repo) Create(ctx context.Context, params CreateParams) (ServiceType, error) {
 	query := `
-		INSERT INTO RAC_service_types (organization_id, name, slug, description, intake_guidelines, icon, color, display_order)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at`
+		INSERT INTO RAC_service_types (organization_id, name, slug, description, intake_guidelines, icon, color)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, created_at, updated_at`
 
 	var st ServiceType
 	var createdAt, updatedAt time.Time
 
 	err := r.pool.QueryRow(ctx, query,
-		params.OrganizationID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.Icon, params.Color, params.DisplayOrder,
+		params.OrganizationID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.Icon, params.Color,
 	).Scan(
 		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
+		&st.IsActive, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return ServiceType{}, fmt.Errorf("create service type: %w", err)
@@ -262,19 +260,18 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 			intake_guidelines = COALESCE($5, intake_guidelines),
 			icon = COALESCE($6, icon),
 			color = COALESCE($7, color),
-			display_order = COALESCE($8, display_order),
 			updated_at = now()
-		WHERE id = $1 AND organization_id = $9
-		RETURNING id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, display_order, created_at, updated_at`
+		WHERE id = $1 AND organization_id = $8
+		RETURNING id, organization_id, name, slug, description, intake_guidelines, icon, color, is_active, created_at, updated_at`
 
 	var st ServiceType
 	var createdAt, updatedAt time.Time
 
 	err := r.pool.QueryRow(ctx, query,
-		params.ID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.Icon, params.Color, params.DisplayOrder, params.OrganizationID,
+		params.ID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.Icon, params.Color, params.OrganizationID,
 	).Scan(
 		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
+		&st.IsActive, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -322,32 +319,6 @@ func (r *Repo) SetActive(ctx context.Context, organizationID uuid.UUID, id uuid.
 	return nil
 }
 
-// Reorder updates the display_order of multiple service types in a single transaction.
-func (r *Repo) Reorder(ctx context.Context, organizationID uuid.UUID, items []ReorderItem) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
-
-	query := `UPDATE RAC_service_types SET display_order = $2, updated_at = now() WHERE id = $1 AND organization_id = $3`
-
-	for _, item := range items {
-		_, err := tx.Exec(ctx, query, item.ID, item.DisplayOrder, organizationID)
-		if err != nil {
-			return fmt.Errorf("update display order for %s: %w", item.ID, err)
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-
-	return nil
-}
-
 // scanServiceTypes is a helper to scan multiple rows into ServiceType slice.
 func scanServiceTypes(rows pgx.Rows) ([]ServiceType, error) {
 	var results []ServiceType
@@ -358,7 +329,7 @@ func scanServiceTypes(rows pgx.Rows) ([]ServiceType, error) {
 
 		err := rows.Scan(
 			&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.Icon, &st.Color,
-			&st.IsActive, &st.DisplayOrder, &createdAt, &updatedAt,
+			&st.IsActive, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan service type: %w", err)
