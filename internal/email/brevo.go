@@ -87,6 +87,8 @@ type BrevoSender struct {
 	client    *http.Client
 }
 
+const inviteTitle = "U bent uitgenodigd"
+
 type brevoAttachment struct {
 	Content string `json:"content"` // base64-encoded file content
 	Name    string `json:"name"`
@@ -120,128 +122,189 @@ func NewSender(cfg config.EmailConfig) (Sender, error) {
 }
 
 func (b *BrevoSender) SendVerificationEmail(ctx context.Context, toEmail, verifyURL string) error {
-	subject := "Verifieer uw e-mailadres"
-	content := buildEmailTemplate(
-		"Bevestig uw e-mailadres",
-		"Bedankt voor uw registratie. Verifieer uw e-mailadres om uw account te activeren.",
-		"E-mailadres verifiëren",
-		verifyURL,
-	)
+	subject := subjectVerification
+	content, err := renderEmailTemplate("verification.html", verificationEmailData{
+		baseEmailData: baseEmailData{
+			Title:    "Bevestig uw e-mailadres",
+			Heading:  "Bevestig uw e-mailadres",
+			CTALabel: "E-mailadres verifiëren",
+			CTAURL:   verifyURL,
+		},
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendPasswordResetEmail(ctx context.Context, toEmail, resetURL string) error {
-	subject := "Wachtwoord opnieuw instellen"
-	content := buildEmailTemplate(
-		"Wachtwoord opnieuw instellen",
-		"We hebben een verzoek ontvangen om uw wachtwoord opnieuw in te stellen. Gebruik de link hieronder om een nieuw wachtwoord in te stellen.",
-		"Wachtwoord resetten",
-		resetURL,
-	)
+	subject := subjectPasswordReset
+	content, err := renderEmailTemplate("password_reset.html", passwordResetEmailData{
+		baseEmailData: baseEmailData{
+			Title:    "Wachtwoord opnieuw instellen",
+			Heading:  "Wachtwoord opnieuw instellen",
+			CTALabel: "Wachtwoord resetten",
+			CTAURL:   resetURL,
+		},
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error {
-	subject := "Uw bezoek is ingepland"
-	content := buildVisitInviteTemplate(consumerName, scheduledDate, address)
+	subject := subjectVisitInvite
+	content, err := renderEmailTemplate("visit_invite.html", visitInviteEmailData{
+		baseEmailData: baseEmailData{
+			Title:   "Bezoek ingepland",
+			Heading: "Bezoek ingepland",
+		},
+		ConsumerName:  consumerName,
+		ScheduledDate: scheduledDate,
+		Address:       address,
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error {
-	subject := "U bent uitgenodigd voor " + organizationName
-	content := buildEmailTemplate(
-		"U bent uitgenodigd",
-		"U bent uitgenodigd om lid te worden van "+organizationName+". Klik op de knop hieronder om de uitnodiging te accepteren en uw account aan te maken.",
-		"Uitnodiging accepteren",
-		inviteURL,
-	)
+	subject := fmt.Sprintf(subjectOrganizationInviteFmt, organizationName)
+	content, err := renderEmailTemplate("organization_invite.html", organizationInviteEmailData{
+		baseEmailData: baseEmailData{
+			Title:    inviteTitle,
+			Heading:  inviteTitle,
+			CTALabel: "Uitnodiging accepteren",
+			CTAURL:   inviteURL,
+		},
+		OrganizationName: organizationName,
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error {
-	subject := "Nieuw werkaanbod van " + organizationName
-	content := buildEmailTemplate(
-		"U bent uitgenodigd",
-		organizationName+" heeft "+partnerName+" uitgenodigd voor een nieuw werkaanbod. Klik op de knop hieronder om de details te bekijken en te reageren.",
-		"Uitnodiging bekijken",
-		inviteURL,
-	)
+	subject := fmt.Sprintf(subjectPartnerInviteFmt, organizationName)
+	content, err := renderEmailTemplate("partner_invite.html", partnerInviteEmailData{
+		baseEmailData: baseEmailData{
+			Title:    inviteTitle,
+			Heading:  inviteTitle,
+			CTALabel: "Uitnodiging bekijken",
+			CTAURL:   inviteURL,
+		},
+		OrganizationName: organizationName,
+		PartnerName:      partnerName,
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendQuoteProposalEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber, proposalURL string) error {
-	subject := "Offerte " + quoteNumber + " van " + organizationName
-	content := buildEmailTemplate(
-		"Uw offerte is klaar",
-		fmt.Sprintf("Beste %s,<br/><br/>%s heeft offerte %s voor u klaargezet. Bekijk de offerte, selecteer eventuele opties en accepteer of wijs de offerte af.", consumerName, organizationName, quoteNumber),
-		"Bekijk offerte",
-		proposalURL,
-	)
+	subject := fmt.Sprintf(subjectQuoteProposalFmt, quoteNumber, organizationName)
+	content, err := renderEmailTemplate("quote_proposal.html", quoteProposalEmailData{
+		baseEmailData: baseEmailData{
+			Title:    "Uw offerte is klaar",
+			Heading:  "Uw offerte is klaar",
+			CTALabel: "Bekijk offerte",
+			CTAURL:   proposalURL,
+		},
+		ConsumerName:     consumerName,
+		OrganizationName: organizationName,
+		QuoteNumber:      quoteNumber,
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName, quoteNumber, consumerName string, totalCents int64) error {
-	subject := "Offerte " + quoteNumber + " geaccepteerd"
-	content := buildEmailTemplate(
-		"Offerte geaccepteerd",
-		fmt.Sprintf("Beste %s,<br/><br/>%s heeft offerte %s geaccepteerd (totaal: €%.2f). Bekijk de details in het portaal.", agentName, consumerName, quoteNumber, float64(totalCents)/100),
-		"Bekijk details",
-		"", // No CTA URL — internal notification
-	)
+	subject := fmt.Sprintf(subjectQuoteAcceptedFmt, quoteNumber)
+	content, err := renderEmailTemplate("quote_accepted.html", quoteAcceptedEmailData{
+		baseEmailData: baseEmailData{
+			Title:   "Offerte geaccepteerd",
+			Heading: "Offerte geaccepteerd",
+		},
+		AgentName:      agentName,
+		QuoteNumber:    quoteNumber,
+		ConsumerName:   consumerName,
+		TotalFormatted: formatCurrencyEUR(totalCents),
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber string, attachments ...Attachment) error {
-	subject := "Bedankt voor uw akkoord — offerte " + quoteNumber
-
-	attachmentNote := ""
-	if len(attachments) > 0 {
-		attachmentNote = "<br/><br/>In de bijlage vindt u een PDF-kopie van de getekende offerte voor uw administratie."
+	subject := fmt.Sprintf(subjectQuoteAcceptedThankYouFmt, quoteNumber)
+	content, err := renderEmailTemplate("quote_thank_you.html", quoteAcceptedThankYouEmailData{
+		baseEmailData: baseEmailData{
+			Title:   "Bedankt voor uw akkoord",
+			Heading: "Bedankt voor uw akkoord",
+		},
+		ConsumerName:     consumerName,
+		OrganizationName: organizationName,
+		QuoteNumber:      quoteNumber,
+		HasAttachments:   len(attachments) > 0,
+	})
+	if err != nil {
+		return err
 	}
-
-	content := buildEmailTemplate(
-		"Bedankt voor uw akkoord",
-		fmt.Sprintf("Beste %s,<br/><br/>Bedankt dat u offerte %s van %s heeft geaccepteerd. Wij nemen zo snel mogelijk contact met u op om de volgende stappen te bespreken.%s<br/><br/>Met vriendelijke groet,<br/>%s", consumerName, quoteNumber, organizationName, attachmentNote, organizationName),
-		"",
-		"",
-	)
 	return b.sendWithAttachments(ctx, toEmail, subject, content, attachments...)
 }
 
 func (b *BrevoSender) SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail, partnerName, offerID string) error {
-	subject := "Werkaanbod geaccepteerd door " + partnerName
-	content := buildEmailTemplate(
-		"Werkaanbod geaccepteerd",
-		fmt.Sprintf("%s heeft het werkaanbod (ID: %s) geaccepteerd en beschikbaarheid doorgegeven.<br/><br/>Bekijk de details en plan de inspectie in via het portaal.", partnerName, offerID),
-		"",
-		"",
-	)
+	subject := fmt.Sprintf(subjectPartnerOfferAcceptedFmt, partnerName)
+	content, err := renderEmailTemplate("partner_offer_accepted.html", partnerOfferAcceptedEmailData{
+		baseEmailData: baseEmailData{
+			Title:   "Werkaanbod geaccepteerd",
+			Heading: "Werkaanbod geaccepteerd",
+		},
+		PartnerName: partnerName,
+		OfferID:     offerID,
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error {
-	subject := "Bevestiging: uw acceptatie is ontvangen"
-	content := buildEmailTemplate(
-		"Acceptatie bevestigd",
-		fmt.Sprintf("Beste %s,<br/><br/>Bedankt voor het accepteren van het werkaanbod. Uw beschikbaarheid is ontvangen en wij nemen zo snel mogelijk contact met u op om de inspectie in te plannen.<br/><br/>Met vriendelijke groet", partnerName),
-		"",
-		"",
-	)
+	subject := subjectPartnerOfferAcceptedConfirmation
+	content, err := renderEmailTemplate("partner_offer_confirmation.html", partnerOfferAcceptedConfirmationEmailData{
+		baseEmailData: baseEmailData{
+			Title:   "Acceptatie bevestigd",
+			Heading: "Acceptatie bevestigd",
+		},
+		PartnerName: partnerName,
+	})
+	if err != nil {
+		return err
+	}
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error {
-	subject := "Werkaanbod afgewezen door " + partnerName
-	reasonText := ""
-	if reason != "" {
-		reasonText = fmt.Sprintf("<br/><br/>Reden: %s", reason)
+	subject := fmt.Sprintf(subjectPartnerOfferRejectedFmt, partnerName)
+	content, err := renderEmailTemplate("partner_offer_rejected.html", partnerOfferRejectedEmailData{
+		baseEmailData: baseEmailData{
+			Title:   "Werkaanbod afgewezen",
+			Heading: "Werkaanbod afgewezen",
+		},
+		PartnerName: partnerName,
+		OfferID:     offerID,
+		Reason:      reason,
+	})
+	if err != nil {
+		return err
 	}
-	content := buildEmailTemplate(
-		"Werkaanbod afgewezen",
-		fmt.Sprintf("%s heeft het werkaanbod (ID: %s) afgewezen.%s<br/><br/>U kunt een nieuw aanbod versturen naar een andere vakman via het portaal.", partnerName, offerID, reasonText),
-		"",
-		"",
-	)
 	return b.send(ctx, toEmail, subject, content)
 }
 
@@ -294,96 +357,4 @@ func (b *BrevoSender) sendWithAttachments(ctx context.Context, toEmail, subject,
 	}
 
 	return nil
-}
-
-func buildEmailTemplate(title, message, ctaLabel, ctaURL string) string {
-	return fmt.Sprintf(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>%s</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;color:#111827;">
-  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e4e7;padding:24px;">
-          <tr>
-            <td style="font-size:20px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">
-              %s
-            </td>
-          </tr>
-          <tr>
-            <td style="padding-top:12px;font-size:14px;line-height:1.5;color:#52525b;">
-              %s
-            </td>
-          </tr>
-          <tr>
-            <td style="padding-top:24px;">
-              <a href="%s" style="display:inline-block;padding:12px 18px;background:#111827;color:#ffffff;text-decoration:none;text-transform:uppercase;font-size:12px;letter-spacing:0.18em;font-weight:600;">
-                %s
-              </a>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding-top:20px;font-size:12px;color:#a1a1aa;">
-							Als de knop niet werkt, kopieer en plak dan deze link in uw browser:<br />
-              <a href="%s" style="color:#71717a;">%s</a>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`, title, title, message, ctaURL, ctaLabel, ctaURL, ctaURL)
-}
-
-func buildVisitInviteTemplate(consumerName, scheduledDate, address string) string {
-	return fmt.Sprintf(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Visit Scheduled</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif;color:#111827;">
-  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e4e7;padding:24px;">
-          <tr>
-            <td style="font-size:20px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">
-							Bezoek ingepland
-            </td>
-          </tr>
-          <tr>
-            <td style="padding-top:12px;font-size:14px;line-height:1.5;color:#52525b;">
-							Beste %s,<br /><br />
-							Uw bezoek is ingepland op:
-            </td>
-          </tr>
-          <tr>
-            <td style="padding-top:16px;font-size:16px;font-weight:600;color:#111827;">
-              %s
-            </td>
-          </tr>
-          <tr>
-            <td style="padding-top:8px;font-size:14px;line-height:1.5;color:#52525b;">
-							op<br />
-              %s
-            </td>
-          </tr>
-          <tr>
-            <td style="padding-top:20px;font-size:12px;color:#a1a1aa;">
-							Als u wilt verzetten of vragen heeft, neem dan contact met ons op.
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`, consumerName, scheduledDate, address)
 }
