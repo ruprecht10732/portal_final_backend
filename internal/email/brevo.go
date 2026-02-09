@@ -120,50 +120,50 @@ func NewSender(cfg config.EmailConfig) (Sender, error) {
 }
 
 func (b *BrevoSender) SendVerificationEmail(ctx context.Context, toEmail, verifyURL string) error {
-	subject := "Verify your email"
+	subject := "Verifieer uw e-mailadres"
 	content := buildEmailTemplate(
-		"Confirm your email",
-		"Thanks for signing up. Please verify your email to activate your account.",
-		"Verify email",
+		"Bevestig uw e-mailadres",
+		"Bedankt voor uw registratie. Verifieer uw e-mailadres om uw account te activeren.",
+		"E-mailadres verifiëren",
 		verifyURL,
 	)
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendPasswordResetEmail(ctx context.Context, toEmail, resetURL string) error {
-	subject := "Reset your password"
+	subject := "Wachtwoord opnieuw instellen"
 	content := buildEmailTemplate(
-		"Reset your password",
-		"We received a request to reset your password. Use the link below to set a new one.",
-		"Reset password",
+		"Wachtwoord opnieuw instellen",
+		"We hebben een verzoek ontvangen om uw wachtwoord opnieuw in te stellen. Gebruik de link hieronder om een nieuw wachtwoord in te stellen.",
+		"Wachtwoord resetten",
 		resetURL,
 	)
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendVisitInviteEmail(ctx context.Context, toEmail, consumerName, scheduledDate, address string) error {
-	subject := "Your visit has been scheduled"
+	subject := "Uw bezoek is ingepland"
 	content := buildVisitInviteTemplate(consumerName, scheduledDate, address)
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendOrganizationInviteEmail(ctx context.Context, toEmail, organizationName, inviteURL string) error {
-	subject := "You're invited to join " + organizationName
+	subject := "U bent uitgenodigd voor " + organizationName
 	content := buildEmailTemplate(
-		"You're invited",
-		"You have been invited to join "+organizationName+". Click the button below to accept the invitation and create your account.",
-		"Accept invitation",
+		"U bent uitgenodigd",
+		"U bent uitgenodigd om lid te worden van "+organizationName+". Klik op de knop hieronder om de uitnodiging te accepteren en uw account aan te maken.",
+		"Uitnodiging accepteren",
 		inviteURL,
 	)
 	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) SendPartnerInviteEmail(ctx context.Context, toEmail, organizationName, partnerName, inviteURL string) error {
-	subject := "New job invitation from " + organizationName
+	subject := "Nieuw werkaanbod van " + organizationName
 	content := buildEmailTemplate(
-		"You're invited",
-		""+organizationName+" invited "+partnerName+" to take on a new job. Click the button below to review the details and respond.",
-		"Review invitation",
+		"U bent uitgenodigd",
+		organizationName+" heeft "+partnerName+" uitgenodigd voor een nieuw werkaanbod. Klik op de knop hieronder om de details te bekijken en te reageren.",
+		"Uitnodiging bekijken",
 		inviteURL,
 	)
 	return b.send(ctx, toEmail, subject, content)
@@ -328,7 +328,7 @@ func buildEmailTemplate(title, message, ctaLabel, ctaURL string) string {
           </tr>
           <tr>
             <td style="padding-top:20px;font-size:12px;color:#a1a1aa;">
-              If the button does not work, copy and paste this link into your browser:<br />
+							Als de knop niet werkt, kopieer en plak dan deze link in uw browser:<br />
               <a href="%s" style="color:#71717a;">%s</a>
             </td>
           </tr>
@@ -355,13 +355,13 @@ func buildVisitInviteTemplate(consumerName, scheduledDate, address string) strin
         <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e4e7;padding:24px;">
           <tr>
             <td style="font-size:20px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">
-              Visit Scheduled
+							Bezoek ingepland
             </td>
           </tr>
           <tr>
             <td style="padding-top:12px;font-size:14px;line-height:1.5;color:#52525b;">
-              Dear %s,<br /><br />
-              Your visit has been scheduled for:
+							Beste %s,<br /><br />
+							Uw bezoek is ingepland op:
             </td>
           </tr>
           <tr>
@@ -371,13 +371,13 @@ func buildVisitInviteTemplate(consumerName, scheduledDate, address string) strin
           </tr>
           <tr>
             <td style="padding-top:8px;font-size:14px;line-height:1.5;color:#52525b;">
-              at<br />
+							op<br />
               %s
             </td>
           </tr>
           <tr>
             <td style="padding-top:20px;font-size:12px;color:#a1a1aa;">
-              If you need to reschedule or have any questions, please contact us.
+							Als u wilt verzetten of vragen heeft, neem dan contact met ons op.
             </td>
           </tr>
         </table>
