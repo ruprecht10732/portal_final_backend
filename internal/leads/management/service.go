@@ -1119,17 +1119,7 @@ func toPtrString(value string) *string {
 
 // GetActivityFeed returns the most recent org-wide activity for the dashboard feed card.
 func (s *Service) GetActivityFeed(ctx context.Context, tenantID, userID uuid.UUID, page int, limit int) (transport.ActivityFeedResponse, error) {
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 20
-	}
-	if limit > 50 {
-		limit = 50
-	}
-
-	offset := (page - 1) * limit
+	page, limit, offset := normalizePagination(page, limit)
 
 	entries, err := s.repo.ListRecentActivity(ctx, tenantID, limit, offset)
 	if err != nil {
@@ -1143,43 +1133,70 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID, userID uuid.UUI
 		}
 	}
 
+	items := buildFeedItems(entries)
+	if err := s.enrichFeedItems(ctx, tenantID, userID, items); err != nil {
+		return transport.ActivityFeedResponse{}, err
+	}
+
+	return transport.ActivityFeedResponse{Items: items}, nil
+}
+
+func normalizePagination(page, limit int) (int, int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	offset := (page - 1) * limit
+	return page, limit, offset
+}
+
+func buildFeedItems(entries []repository.ActivityFeedEntry) []transport.ActivityFeedItem {
 	items := make([]transport.ActivityFeedItem, 0, len(entries))
 	for _, e := range entries {
 		items = append(items, mapEntryToFeedItem(e))
 	}
+	return items
+}
 
-	// Batch-enrich with reactions and comment counts.
-	if len(items) > 0 {
-		eventIDs := make([]string, len(items))
-		for i, it := range items {
-			eventIDs[i] = it.ID
-		}
+func (s *Service) enrichFeedItems(ctx context.Context, tenantID, userID uuid.UUID, items []transport.ActivityFeedItem) error {
+	if len(items) == 0 {
+		return nil
+	}
 
-		reactions, err := s.repo.ListReactionsByEvents(ctx, eventIDs, tenantID)
-		if err != nil {
-			return transport.ActivityFeedResponse{}, err
-		}
+	eventIDs := make([]string, len(items))
+	for i, it := range items {
+		eventIDs[i] = it.ID
+	}
 
-		commentCounts, err := s.repo.ListCommentCountsByEvents(ctx, eventIDs, tenantID)
-		if err != nil {
-			return transport.ActivityFeedResponse{}, err
-		}
+	reactions, err := s.repo.ListReactionsByEvents(ctx, eventIDs, tenantID)
+	if err != nil {
+		return err
+	}
 
-		// Group reactions by event ID.
-		reactionsByEvent := map[string][]repository.FeedReaction{}
-		for _, r := range reactions {
-			reactionsByEvent[r.EventID] = append(reactionsByEvent[r.EventID], r)
-		}
+	commentCounts, err := s.repo.ListCommentCountsByEvents(ctx, eventIDs, tenantID)
+	if err != nil {
+		return err
+	}
 
-		for i := range items {
-			items[i].Reactions = buildReactionSummary(reactionsByEvent[items[i].ID], userID)
-			if cnt, ok := commentCounts[items[i].ID]; ok {
-				items[i].CommentCount = cnt
-			}
+	reactionsByEvent := map[string][]repository.FeedReaction{}
+	for _, r := range reactions {
+		reactionsByEvent[r.EventID] = append(reactionsByEvent[r.EventID], r)
+	}
+
+	for i := range items {
+		items[i].Reactions = buildReactionSummary(reactionsByEvent[items[i].ID], userID)
+		if cnt, ok := commentCounts[items[i].ID]; ok {
+			items[i].CommentCount = cnt
 		}
 	}
 
-	return transport.ActivityFeedResponse{Items: items}, nil
+	return nil
 }
 
 // mergeUpcomingAppointments prepends upcoming appointments to the feed entries (page 1 only).

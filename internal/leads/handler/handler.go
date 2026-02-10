@@ -956,6 +956,8 @@ func (h *Handler) validateServiceForAnalysis(ctx *gin.Context, svcIDStr string, 
 // Feed Social: Reactions, Comments, @-Mentions
 // ──────────────────────────────────────────────────
 
+const msgEventIDRequired = "eventId is required"
+
 // ToggleReaction toggles a reaction on a feed event for the current user.
 func (h *Handler) ToggleReaction(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
@@ -969,7 +971,7 @@ func (h *Handler) ToggleReaction(c *gin.Context) {
 
 	eventID := c.Param("eventId")
 	if eventID == "" {
-		httpkit.Error(c, http.StatusBadRequest, "eventId is required", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgEventIDRequired, nil)
 		return
 	}
 
@@ -1004,7 +1006,7 @@ func (h *Handler) ListComments(c *gin.Context) {
 
 	eventID := c.Param("eventId")
 	if eventID == "" {
-		httpkit.Error(c, http.StatusBadRequest, "eventId is required", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgEventIDRequired, nil)
 		return
 	}
 
@@ -1035,7 +1037,7 @@ func (h *Handler) CreateComment(c *gin.Context) {
 
 	eventID := c.Param("eventId")
 	if eventID == "" {
-		httpkit.Error(c, http.StatusBadRequest, "eventId is required", nil)
+		httpkit.Error(c, http.StatusBadRequest, msgEventIDRequired, nil)
 		return
 	}
 
