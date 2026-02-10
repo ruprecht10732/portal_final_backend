@@ -556,6 +556,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 
 	go func() {
 		bg := context.Background()
+		svcID := e.LeadServiceID
 		metadata := buildWhatsAppSentMetadata("lead_welcome", "lead", e.ConsumerPhone, message)
 		metadata["preferredContactChannel"] = "WhatsApp"
 		metadata["suggestedContactMessage"] = message
@@ -563,7 +564,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			Ctx:         bg,
 			OrgID:       e.TenantID,
 			LeadID:      &e.LeadID,
-			ServiceID:   nil,
+			ServiceID:   &svcID,
 			PhoneNumber: e.ConsumerPhone,
 			Message:     message,
 			Category:    "lead_welcome",
@@ -749,7 +750,7 @@ func (m *Module) handleAppointmentCreated(ctx context.Context, e events.Appointm
 		Ctx:         ctx,
 		OrgID:       e.OrganizationID,
 		LeadID:      e.LeadID,
-		ServiceID:   nil,
+		ServiceID:   e.LeadServiceID,
 		PhoneNumber: e.ConsumerPhone,
 		Message:     msg,
 		Category:    "appointment_created",
@@ -785,7 +786,7 @@ func (m *Module) handleAppointmentReminderDue(ctx context.Context, e events.Appo
 		Ctx:         ctx,
 		OrgID:       e.OrganizationID,
 		LeadID:      e.LeadID,
-		ServiceID:   nil,
+		ServiceID:   e.LeadServiceID,
 		PhoneNumber: e.ConsumerPhone,
 		Message:     msg,
 		Category:    "appointment_reminder",

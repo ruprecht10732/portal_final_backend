@@ -369,6 +369,7 @@ type AppointmentCreated struct {
 	AppointmentID  uuid.UUID  `json:"appointmentId"`
 	OrganizationID uuid.UUID  `json:"organizationId"`
 	LeadID         *uuid.UUID `json:"leadId,omitempty"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
 	UserID         uuid.UUID  `json:"userId"`
 	Type           string     `json:"type"`
 	Title          string     `json:"title"`
@@ -387,6 +388,7 @@ type AppointmentReminderDue struct {
 	AppointmentID  uuid.UUID  `json:"appointmentId"`
 	OrganizationID uuid.UUID  `json:"organizationId"`
 	LeadID         *uuid.UUID `json:"leadId,omitempty"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
 	UserID         uuid.UUID  `json:"userId"`
 	Type           string     `json:"type"`
 	Title          string     `json:"title"`

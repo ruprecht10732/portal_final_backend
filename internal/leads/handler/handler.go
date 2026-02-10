@@ -761,7 +761,7 @@ func (h *Handler) GetAnalysis(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{
-		"analysis":  analysis,
+		"analysis":  transport.ToAIAnalysisResponse(analysis),
 		"isDefault": false,
 	})
 }
@@ -801,7 +801,12 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 		return
 	}
 
-	httpkit.OK(c, gin.H{"items": analyses})
+	items := make([]transport.AIAnalysisResponse, 0, len(analyses))
+	for _, analysis := range analyses {
+		items = append(items, transport.ToAIAnalysisResponse(analysis))
+	}
+
+	httpkit.OK(c, gin.H{"items": items})
 }
 
 // LogCall processes a post-call summary and executes appropriate actions (notes, status updates, RAC_appointments)

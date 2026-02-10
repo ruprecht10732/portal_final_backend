@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"portal_final_backend/internal/leads/repository"
+
 	"github.com/google/uuid"
 )
 
@@ -208,6 +210,40 @@ type LeadScoreResponse struct {
 	Factors   json.RawMessage `json:"factors,omitempty"`
 	Version   *string         `json:"version,omitempty"`
 	UpdatedAt *time.Time      `json:"updatedAt,omitempty"`
+}
+
+type AIAnalysisResponse struct {
+	ID                      uuid.UUID `json:"id"`
+	LeadID                  uuid.UUID `json:"leadId"`
+	OrganizationID          uuid.UUID `json:"organizationId"`
+	LeadServiceID           uuid.UUID `json:"leadServiceId"`
+	UrgencyLevel            string    `json:"urgencyLevel"`
+	UrgencyReason           *string   `json:"urgencyReason,omitempty"`
+	LeadQuality             string    `json:"leadQuality"`
+	RecommendedAction       string    `json:"recommendedAction"`
+	MissingInformation      []string  `json:"missingInformation"`
+	PreferredContactChannel string    `json:"preferredContactChannel"`
+	SuggestedContactMessage string    `json:"suggestedContactMessage"`
+	Summary                 string    `json:"summary"`
+	CreatedAt               time.Time `json:"createdAt"`
+}
+
+func ToAIAnalysisResponse(analysis repository.AIAnalysis) AIAnalysisResponse {
+	return AIAnalysisResponse{
+		ID:                      analysis.ID,
+		LeadID:                  analysis.LeadID,
+		OrganizationID:          analysis.OrganizationID,
+		LeadServiceID:           analysis.LeadServiceID,
+		UrgencyLevel:            analysis.UrgencyLevel,
+		UrgencyReason:           analysis.UrgencyReason,
+		LeadQuality:             analysis.LeadQuality,
+		RecommendedAction:       analysis.RecommendedAction,
+		MissingInformation:      analysis.MissingInformation,
+		PreferredContactChannel: analysis.PreferredContactChannel,
+		SuggestedContactMessage: analysis.SuggestedContactMessage,
+		Summary:                 analysis.Summary,
+		CreatedAt:               analysis.CreatedAt,
+	}
 }
 
 type LeadResponse struct {

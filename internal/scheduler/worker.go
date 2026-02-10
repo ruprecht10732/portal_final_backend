@@ -131,6 +131,7 @@ func (w *Worker) handleAppointmentReminder(ctx context.Context, task *asynq.Task
 		AppointmentID:  appt.ID,
 		OrganizationID: appt.OrganizationID,
 		LeadID:         appt.LeadID,
+		LeadServiceID:  appt.LeadServiceID,
 		UserID:         appt.UserID,
 		Type:           appt.Type,
 		Title:          appt.Title,

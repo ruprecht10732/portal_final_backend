@@ -152,6 +152,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 			AppointmentID:  appt.ID,
 			OrganizationID: appt.OrganizationID,
 			LeadID:         appt.LeadID,
+			LeadServiceID:  appt.LeadServiceID,
 			UserID:         appt.UserID,
 			Type:           appt.Type,
 			Title:          appt.Title,
