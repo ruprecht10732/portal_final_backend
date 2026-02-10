@@ -274,15 +274,19 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 		return "", "", err
 	}
 
+	var tenantID *uuid.UUID
 	orgID, err := s.identity.GetUserOrganizationID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, identityrepo.ErrNotFound) {
-			return "", "", apperr.Forbidden("organization not found")
+			tenantID = nil
+		} else {
+			return "", "", err
 		}
-		return "", "", err
+	} else {
+		tenantID = &orgID
 	}
 
-	accessToken, err := s.signJWT(userID, &orgID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
+	accessToken, err := s.signJWT(userID, tenantID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
 	if err != nil {
 		return "", "", err
 	}
@@ -344,6 +348,9 @@ func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error
 func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) {
 	user, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return Profile{}, apperr.Unauthorized("invalid credentials")
+		}
 		return Profile{}, err
 	}
 
@@ -548,9 +555,9 @@ func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (transport
 	}, nil
 }
 
-func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, firstName, lastName string, organizationName *string) error {
+func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, req transport.CompleteOnboardingRequest) error {
 	// Update user profile
-	_, err := s.repo.UpdateUserNames(ctx, userID, &firstName, &lastName)
+	_, err := s.repo.UpdateUserNames(ctx, userID, &req.FirstName, &req.LastName)
 	if err != nil {
 		return err
 	}
@@ -561,11 +568,18 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, firs
 
 	// If user doesn't have an organization, create one
 	if !hasOrganization {
-		if organizationName == nil || strings.TrimSpace(*organizationName) == "" {
+		if req.OrganizationName == nil || strings.TrimSpace(*req.OrganizationName) == "" {
 			return apperr.Validation("organization name is required")
 		}
+		if req.OrganizationEmail == nil || strings.TrimSpace(*req.OrganizationEmail) == "" {
+			return apperr.Validation("organization email is required")
+		}
+		if req.OrganizationPhone == nil || strings.TrimSpace(*req.OrganizationPhone) == "" {
+			return apperr.Validation("organization phone is required")
+		}
 
-		orgID, err := s.identity.CreateOrganizationForUser(ctx, nil, strings.TrimSpace(*organizationName), userID)
+		orgName := strings.TrimSpace(*req.OrganizationName)
+		orgID, err := s.identity.CreateOrganizationForUser(ctx, nil, orgName, userID)
 		if err != nil {
 			return err
 		}
@@ -573,7 +587,43 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, firs
 		if err := s.identity.AddMember(ctx, nil, orgID, userID); err != nil {
 			return err
 		}
+
+		if hasOrganizationProfileUpdate(req) {
+			_, err = s.identity.UpdateOrganizationProfile(ctx, orgID, identityservice.OrganizationProfileUpdate{
+				Email:        req.OrganizationEmail,
+				Phone:        req.OrganizationPhone,
+				VATNumber:    req.VatNumber,
+				KVKNumber:    req.KvkNumber,
+				AddressLine1: req.AddressLine1,
+				AddressLine2: req.AddressLine2,
+				PostalCode:   req.PostalCode,
+				City:         req.City,
+				Country:      req.Country,
+			})
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
+}
+
+func hasOrganizationProfileUpdate(req transport.CompleteOnboardingRequest) bool {
+	return hasOptionalValue(req.OrganizationEmail) ||
+		hasOptionalValue(req.OrganizationPhone) ||
+		hasOptionalValue(req.VatNumber) ||
+		hasOptionalValue(req.KvkNumber) ||
+		hasOptionalValue(req.AddressLine1) ||
+		hasOptionalValue(req.AddressLine2) ||
+		hasOptionalValue(req.PostalCode) ||
+		hasOptionalValue(req.City) ||
+		hasOptionalValue(req.Country)
+}
+
+func hasOptionalValue(value *string) bool {
+	if value == nil {
+		return false
+	}
+	return strings.TrimSpace(*value) != ""
 }

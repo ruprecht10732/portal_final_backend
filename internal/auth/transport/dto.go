@@ -71,9 +71,18 @@ type ChangePasswordRequest struct {
 }
 
 type CompleteOnboardingRequest struct {
-	FirstName        string  `json:"firstName" validate:"required,max=100"`
-	LastName         string  `json:"lastName" validate:"required,max=100"`
-	OrganizationName *string `json:"organizationName" validate:"omitempty,max=120"`
+	FirstName          string  `json:"firstName" validate:"required,max=100"`
+	LastName           string  `json:"lastName" validate:"required,max=100"`
+	OrganizationName   *string `json:"organizationName" validate:"omitempty,max=120"`
+	OrganizationEmail  *string `json:"organizationEmail" validate:"omitempty,email"`
+	OrganizationPhone  *string `json:"organizationPhone" validate:"omitempty,max=50"`
+	VatNumber          *string `json:"vatNumber" validate:"omitempty,max=20"`
+	KvkNumber          *string `json:"kvkNumber" validate:"omitempty,max=20"`
+	AddressLine1       *string `json:"addressLine1" validate:"omitempty,max=200"`
+	AddressLine2       *string `json:"addressLine2" validate:"omitempty,max=200"`
+	PostalCode         *string `json:"postalCode" validate:"omitempty,max=20"`
+	City               *string `json:"city" validate:"omitempty,max=120"`
+	Country            *string `json:"country" validate:"omitempty,max=120"`
 }
 
 type UserSummary struct {

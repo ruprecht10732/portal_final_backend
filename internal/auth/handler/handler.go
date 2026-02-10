@@ -125,7 +125,7 @@ func (h *Handler) CompleteOnboarding(c *gin.Context) {
 		return
 	}
 
-	if httpkit.HandleError(c, h.svc.CompleteOnboarding(c.Request.Context(), id.UserID(), req.FirstName, req.LastName, req.OrganizationName)) {
+	if httpkit.HandleError(c, h.svc.CompleteOnboarding(c.Request.Context(), id.UserID(), req)) {
 		return
 	}
 

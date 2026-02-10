@@ -355,6 +355,8 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 		ORDER BY
 			CASE WHEN $3 = 'businessName' AND $4 = 'asc' THEN business_name END ASC,
 			CASE WHEN $3 = 'businessName' AND $4 = 'desc' THEN business_name END DESC,
+			CASE WHEN $3 = 'contactName' AND $4 = 'asc' THEN contact_name END ASC,
+			CASE WHEN $3 = 'contactName' AND $4 = 'desc' THEN contact_name END DESC,
 			CASE WHEN $3 = 'createdAt' AND $4 = 'asc' THEN created_at END ASC,
 			CASE WHEN $3 = 'createdAt' AND $4 = 'desc' THEN created_at END DESC,
 			CASE WHEN $3 = 'updatedAt' AND $4 = 'asc' THEN updated_at END ASC,
@@ -805,7 +807,7 @@ func (r *Repository) ListServiceTypeIDs(ctx context.Context, organizationID, par
 		FROM RAC_partner_service_types pst
 		JOIN RAC_service_types st ON st.id = pst.service_type_id
 		WHERE pst.partner_id = $1 AND st.organization_id = $2
-		ORDER BY st.display_order ASC, st.name ASC
+		ORDER BY st.name ASC
 	`
 	rows, err := r.pool.Query(ctx, query, partnerID, organizationID)
 	if err != nil {
@@ -845,7 +847,7 @@ func resolveSortBy(value string) (string, error) {
 		return "createdAt", nil
 	}
 	switch value {
-	case "businessName", "createdAt", "updatedAt":
+	case "businessName", "contactName", "createdAt", "updatedAt":
 		return value, nil
 	default:
 		return "", apperr.BadRequest("invalid sort field")

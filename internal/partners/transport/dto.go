@@ -69,7 +69,7 @@ type PartnerResponse struct {
 
 type ListPartnersRequest struct {
 	Search    string `form:"search" validate:"omitempty,max=100"`
-	SortBy    string `form:"sortBy" validate:"omitempty,oneof=businessName createdAt updatedAt"`
+	SortBy    string `form:"sortBy" validate:"omitempty,oneof=businessName contactName createdAt updatedAt"`
 	SortOrder string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
 	Page      int    `form:"page" validate:"omitempty,min=1"`
 	PageSize  int    `form:"pageSize" validate:"omitempty,min=1,max=100"`

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 
@@ -10,6 +11,8 @@ import (
 	"portal_final_backend/internal/services/repository"
 	"portal_final_backend/internal/services/transport"
 	"portal_final_backend/platform/logger"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Service provides business logic for service types.
@@ -218,6 +221,9 @@ func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
 			Color:          toPtr(def.Color),
 		})
 		if err != nil {
+			if isDuplicateServiceType(err) {
+				continue
+			}
 			return err
 		}
 	}
@@ -357,4 +363,15 @@ func toPtr(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func isDuplicateServiceType(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	if pgErr.Code != "23505" {
+		return false
+	}
+	return pgErr.ConstraintName == "rac_service_types_name_key" || pgErr.ConstraintName == "rac_service_types_slug_key"
 }
