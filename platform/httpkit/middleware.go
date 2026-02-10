@@ -93,8 +93,16 @@ func (i *IPRateLimiter) getLimiter(ip string) *rate.Limiter {
 }
 
 // RateLimit returns a middleware that rate limits by IP.
+// OPTIONS (CORS preflight) requests are exempt so they don't
+// consume rate-limit tokens.
 func (i *IPRateLimiter) RateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Skip rate limiting for CORS preflight requests
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+
 		ip := c.ClientIP()
 		limiter := i.getLimiter(ip)
 

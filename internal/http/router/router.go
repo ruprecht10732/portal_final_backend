@@ -23,19 +23,12 @@ func New(app *apphttp.App) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 
-	// Security headers
-	engine.Use(httpkit.SecurityHeaders())
-
-	// Request logging
-	engine.Use(httpkit.RequestLogger(log))
-
-	// Global rate limiter (100 requests per second, burst of 200)
-	globalLimiter := httpkit.NewIPRateLimiter(rate.Limit(100), 200, log)
-	engine.Use(globalLimiter.RateLimit())
-
+	// CORS must run before all other middleware so that CORS headers
+	// are present on every response, including error responses from
+	// rate limiters or auth middleware.
 	corsConfig := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: cfg.GetCORSAllowCreds(),
 		MaxAge:           12 * time.Hour,
@@ -46,6 +39,16 @@ func New(app *apphttp.App) *gin.Engine {
 		corsConfig.AllowOrigins = cfg.GetCORSOrigins()
 	}
 	engine.Use(cors.New(corsConfig))
+
+	// Security headers
+	engine.Use(httpkit.SecurityHeaders())
+
+	// Request logging
+	engine.Use(httpkit.RequestLogger(log))
+
+	// Global rate limiter (100 requests per second, burst of 200)
+	globalLimiter := httpkit.NewIPRateLimiter(rate.Limit(100), 200, log)
+	engine.Use(globalLimiter.RateLimit())
 
 	// Health check endpoint (outside versioned API)
 	engine.GET("/api/health", func(c *gin.Context) {
