@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	apphttp "portal_final_backend/internal/http"
@@ -23,13 +24,38 @@ func New(app *apphttp.App) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 
-	// CORS must run before all other middleware so that CORS headers
-	// are present on every response, including error responses from
-	// rate limiters or auth middleware.
+	// Webhook CORS bypass: webhook endpoints use API-key auth (not cookies),
+	// so all origins are safely allowed. This middleware runs BEFORE the global
+	// CORS handler to prevent gin-contrib/cors from rejecting unknown origins
+	// with a 403 on the OPTIONS preflight.
+	engine.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/webhook/") {
+			origin := c.GetHeader("Origin")
+			if origin != "" {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, X-Webhook-API-Key")
+				c.Header("Access-Control-Max-Age", "43200") // 12 hours
+
+				// Save origin for downstream domain validation, then strip
+				// it from the request so gin-contrib/cors (which runs next)
+				// treats this as a same-origin request and doesn't reject it.
+				c.Set("webhookOrigin", origin)
+				c.Request.Header.Del("Origin")
+			}
+			if c.Request.Method == "OPTIONS" {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+		}
+		c.Next()
+	})
+
+	// Global CORS for all other routes. The webhook bypass above already
+	// handles /api/v1/webhook/* so origins there don't need to be listed.
 	corsConfig := cors.Config{
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept"},
-		ExposeHeaders:    []string{"Content-Length"},
+		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Webhook-API-Key"}, ExposeHeaders: []string{"Content-Length"},
 		AllowCredentials: cfg.GetCORSAllowCreds(),
 		MaxAge:           12 * time.Hour,
 	}

@@ -148,6 +148,21 @@ type ManualInterventionRequired struct {
 func (e ManualInterventionRequired) EventName() string { return "leads.manual_intervention.required" }
 
 // =============================================================================
+// Webhook Domain Events
+// =============================================================================
+
+// WebhookLeadCreated is published when a lead is created via the webhook form capture.
+type WebhookLeadCreated struct {
+	BaseEvent
+	LeadID       uuid.UUID `json:"leadId"`
+	TenantID     uuid.UUID `json:"tenantId"`
+	SourceDomain string    `json:"sourceDomain"`
+	IsIncomplete bool      `json:"isIncomplete"`
+}
+
+func (e WebhookLeadCreated) EventName() string { return "webhook.lead.created" }
+
+// =============================================================================
 // Identity Domain Events
 // =============================================================================
 

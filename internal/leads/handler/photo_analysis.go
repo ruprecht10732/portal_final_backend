@@ -172,7 +172,7 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 
 	result.PhotoCount = len(images)
 	h.persistPhotoAnalysis(ctx, leadID, serviceID, tenantID, result)
-	h.writePhotoAnalysisTimeline(ctx, leadID, serviceID, tenantID, result)
+	h.writePhotoAnalysisTimeline(ctx, leadID, serviceID, tenantID, result, attachments)
 	h.publishPhotoAnalysisSuccess(userID, leadID, serviceID, result)
 }
 
@@ -298,13 +298,13 @@ func (h *PhotoAnalysisHandler) persistPhotoAnalysis(ctx context.Context, leadID,
 	}
 }
 
-func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis) {
+func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis, attachments []repository.Attachment) {
 	summary := result.Summary
 	if len(result.Observations) > 0 && summary == "" {
 		summary = result.Observations[0]
 	}
 
-	metadata := buildPhotoAnalysisMetadata(result)
+	metadata := buildPhotoAnalysisMetadata(result, attachments)
 	_, _ = h.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &serviceID,
@@ -318,7 +318,7 @@ func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, l
 	})
 }
 
-func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis) map[string]any {
+func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis, attachments []repository.Attachment) map[string]any {
 	metadata := map[string]any{
 		"photoCount":      result.PhotoCount,
 		"scopeAssessment": result.ScopeAssessment,
@@ -346,6 +346,26 @@ func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis) map[string]any {
 	}
 	if len(result.SuggestedSearchTerms) > 0 {
 		metadata["suggestedSearchTerms"] = result.SuggestedSearchTerms
+	}
+
+	// Include photo attachment information
+	if len(attachments) > 0 {
+		photoAttachments := make([]map[string]any, 0, len(attachments))
+		for _, att := range attachments {
+			if att.ContentType != nil && isImageContentType(*att.ContentType) {
+				photoInfo := map[string]any{
+					"id":       att.ID.String(),
+					"fileName": att.FileName,
+				}
+				if att.ContentType != nil {
+					photoInfo["contentType"] = *att.ContentType
+				}
+				photoAttachments = append(photoAttachments, photoInfo)
+			}
+		}
+		if len(photoAttachments) > 0 {
+			metadata["photos"] = photoAttachments
+		}
 	}
 
 	return metadata

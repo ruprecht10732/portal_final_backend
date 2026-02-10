@@ -29,6 +29,7 @@ import (
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/services"
+	"portal_final_backend/internal/webhook"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
@@ -257,6 +258,9 @@ func main() {
 	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule)
 	quotesModule.Service().SetQuotePromptGenerator(quoteGenAdapter)
 
+	// Webhook module for external form capture
+	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
+
 	// ========================================================================
 	// HTTP Layer
 	// ========================================================================
@@ -276,6 +280,7 @@ func main() {
 			appointmentsModule,
 			partnersModule,
 			quotesModule,
+			webhookModule,
 		},
 	}
 

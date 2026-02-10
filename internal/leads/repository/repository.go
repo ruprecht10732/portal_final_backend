@@ -29,7 +29,7 @@ func (r *Repository) ListActiveServiceTypes(ctx context.Context, organizationID 
 		SELECT name, description, intake_guidelines
 		FROM RAC_service_types
 		WHERE organization_id = $1 AND is_active = true
-		ORDER BY display_order ASC, name ASC
+		ORDER BY name ASC
 	`, organizationID)
 	if err != nil {
 		return nil, err
@@ -1069,10 +1069,7 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 			-- Lead activity
 			SELECT
 				la.id,
-				CASE
-					WHEN la.action LIKE 'analysis%%' OR la.action LIKE 'photo_analysis%%' THEN 'ai'
-					ELSE 'leads'
-				END AS category,
+				'leads' AS category,
 				la.action AS event_type,
 				la.action AS title,
 				'' AS description,
@@ -1089,7 +1086,8 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				NULL::timestamptz AS scheduled_at,
 				la.created_at,
 				COALESCE(NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''), 'Systeem') AS actor_name,
-				la.meta AS raw_metadata
+				la.meta AS raw_metadata,
+				NULL::uuid AS service_id
 			FROM RAC_lead_activity la
 			LEFT JOIN RAC_leads l ON l.id = la.lead_id AND l.organization_id = la.organization_id
 			LEFT JOIN RAC_users u ON u.id = la.user_id
@@ -1126,7 +1124,8 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				NULL::timestamptz AS scheduled_at,
 				qa.created_at,
 				'Systeem' AS actor_name,
-				qa.metadata AS raw_metadata
+				qa.metadata AS raw_metadata,
+				NULL::uuid AS service_id
 			FROM RAC_quote_activity qa
 			LEFT JOIN RAC_quotes q ON q.id = qa.quote_id
 			LEFT JOIN RAC_lead_services ls ON ls.id = q.lead_service_id
@@ -1165,7 +1164,8 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				a.start_time AS scheduled_at,
 				a.updated_at AS created_at,
 				'Systeem' AS actor_name,
-				NULL::jsonb AS raw_metadata
+				NULL::jsonb AS raw_metadata,
+				NULL::uuid AS service_id
 			FROM RAC_appointments a
 			LEFT JOIN RAC_leads l ON l.id = a.lead_id AND l.organization_id = a.organization_id
 			LEFT JOIN RAC_lead_services als ON als.id = a.lead_service_id
@@ -1202,7 +1202,8 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 				NULL::timestamptz AS scheduled_at,
 				te.created_at,
 				COALESCE(te.actor_name, 'AI') AS actor_name,
-				te.metadata AS raw_metadata
+				te.metadata AS raw_metadata,
+				te.service_id
 			FROM lead_timeline_events te
 			LEFT JOIN RAC_leads l ON l.id = te.lead_id AND l.organization_id = te.organization_id
 			LEFT JOIN LATERAL (
@@ -1248,6 +1249,7 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 		deduped AS (
 			SELECT DISTINCT ON (entity_id, event_type, category, cluster_id)
 			       id, category, event_type, title, description, entity_id,
+			       service_id,
 			       lead_name, phone, email, lead_status, service_type, lead_score,
 			       COALESCE(address, '') AS address, latitude, longitude,
 			       scheduled_at, created_at, 0 AS priority,
@@ -1276,6 +1278,7 @@ func (r *Repository) ListRecentActivity(ctx context.Context, organizationID uuid
 			&e.Title,
 			&e.Description,
 			&e.EntityID,
+			&e.ServiceID,
 			&e.LeadName,
 			&e.Phone,
 			&e.Email,

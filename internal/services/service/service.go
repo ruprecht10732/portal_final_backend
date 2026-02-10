@@ -207,8 +207,11 @@ func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+
+	// If the org has existing types, only ensure "Algemeen" exists (the catch-all).
+	// If the org has no types at all, seed everything.
 	if len(items) > 0 {
-		return nil
+		return s.ensureAlgemeen(ctx, tenantID, items)
 	}
 
 	for _, def := range defaultServiceTypes {
@@ -228,6 +231,34 @@ func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
 		}
 	}
 
+	return nil
+}
+
+// ensureAlgemeen makes sure the "Algemeen" service type exists for a tenant.
+func (s *Service) ensureAlgemeen(ctx context.Context, tenantID uuid.UUID, existing []repository.ServiceType) error {
+	for _, st := range existing {
+		if st.Slug == "algemeen" {
+			return nil // already exists
+		}
+	}
+
+	// Find the Algemeen definition
+	for _, def := range defaultServiceTypes {
+		if def.Slug == "algemeen" {
+			_, err := s.repo.Create(ctx, repository.CreateParams{
+				OrganizationID: tenantID,
+				Name:           def.Name,
+				Slug:           def.Slug,
+				Description:    toPtr(def.Description),
+				Icon:           toPtr(def.Icon),
+				Color:          toPtr(def.Color),
+			})
+			if err != nil && !isDuplicateServiceType(err) {
+				return err
+			}
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -356,6 +387,13 @@ var defaultServiceTypes = []defaultServiceType{
 		Icon:        "tool",
 		Color:       "#6B7280",
 	},
+	{
+		Name:        "Algemeen",
+		Slug:        "algemeen",
+		Description: "Algemene aanvragen en niet-gecategoriseerde verzoeken",
+		Icon:        "inbox",
+		Color:       "#9CA3AF",
+	},
 }
 
 func toPtr(value string) *string {
@@ -373,5 +411,5 @@ func isDuplicateServiceType(err error) bool {
 	if pgErr.Code != "23505" {
 		return false
 	}
-	return pgErr.ConstraintName == "rac_service_types_name_key" || pgErr.ConstraintName == "rac_service_types_slug_key"
+	return pgErr.ConstraintName == "idx_service_types_org_name" || pgErr.ConstraintName == "idx_service_types_org_slug"
 }

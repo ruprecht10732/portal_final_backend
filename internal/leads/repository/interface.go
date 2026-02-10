@@ -154,6 +154,7 @@ type ActivityFeedEntry struct {
 	Title       string
 	Description string
 	EntityID    uuid.UUID
+	ServiceID   *uuid.UUID
 	LeadName    string
 	Phone       string
 	Email       string

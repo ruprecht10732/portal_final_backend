@@ -38,6 +38,14 @@ func enrichFeedItem(item *transport.ActivityFeedItem, entry *repository.Activity
 			item.Metadata = meta
 		}
 	}
+
+	// --- Inject serviceId into metadata for AI events (needed for attachment URLs) ---
+	if entry.ServiceID != nil {
+		if item.Metadata == nil {
+			item.Metadata = make(map[string]any)
+		}
+		item.Metadata["serviceId"] = entry.ServiceID.String()
+	}
 }
 
 // mapSentiment returns the sentiment label for a given event type.
