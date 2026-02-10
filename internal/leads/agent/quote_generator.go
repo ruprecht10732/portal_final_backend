@@ -165,7 +165,7 @@ func (g *QuoteGenerator) Generate(ctx context.Context, leadID, serviceID, tenant
 		return nil, fmt.Errorf("quote generator: load service: %w", err)
 	}
 
-	notes, err := g.repo.ListLeadNotes(ctx, leadID, tenantID)
+	notes, err := g.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
 		log.Printf("QuoteGenerator: notes fetch failed: %v", err)
 		notes = nil

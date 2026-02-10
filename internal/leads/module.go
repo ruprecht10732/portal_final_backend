@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/leads/agent"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/handler"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/notes"
@@ -72,7 +73,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 
 	// Subscribe to LeadCreated and LeadServiceAdded events to kick off gatekeeper triage
 	subscribeLeadCreated(eventBus, repo, gatekeeper, log)
-	subscribeLeadServiceAdded(eventBus, gatekeeper, log)
+	subscribeLeadServiceAdded(eventBus, repo, gatekeeper, log)
 
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
@@ -100,7 +101,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	})
 
 	photoBatcher := newPhotoAnalysisBatcher(photoAnalysisHandler, 60*time.Second, log)
-	subscribeAttachmentUploaded(eventBus, photoBatcher, log)
+	subscribeAttachmentUploaded(eventBus, repo, photoBatcher, log)
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
 	return &Module{
@@ -224,12 +225,19 @@ func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, 
 
 		go func() {
 			bg := context.Background()
-			service, err := repo.GetCurrentLeadService(bg, e.LeadID, e.TenantID)
+
+			// Terminal check: verify the service is not already in a terminal state
+			service, err := repo.GetLeadServiceByID(bg, e.LeadServiceID, e.TenantID)
 			if err != nil {
-				log.Error("gatekeeper: failed to load current service", "error", err, "leadId", e.LeadID)
+				log.Error("gatekeeper: failed to load service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
 				return
 			}
-			if err := gatekeeper.Run(bg, e.LeadID, service.ID, e.TenantID); err != nil {
+			if domain.IsTerminal(service.Status, service.PipelineStage) {
+				log.Info("gatekeeper: skipping terminal service on lead created", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
+				return
+			}
+
+			if err := gatekeeper.Run(bg, e.LeadID, e.LeadServiceID, e.TenantID); err != nil {
 				log.Error("gatekeeper run failed", "error", err, "leadId", e.LeadID)
 			}
 		}()
@@ -238,7 +246,7 @@ func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, 
 	}))
 }
 
-func subscribeLeadServiceAdded(eventBus events.Bus, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
+func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
 	eventBus.Subscribe(events.LeadServiceAdded{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadServiceAdded)
 		if !ok {
@@ -247,6 +255,18 @@ func subscribeLeadServiceAdded(eventBus events.Bus, gatekeeper *agent.Gatekeeper
 
 		go func() {
 			bg := context.Background()
+
+			// Terminal check: verify the service is not already in a terminal state
+			service, err := repo.GetLeadServiceByID(bg, e.LeadServiceID, e.TenantID)
+			if err != nil {
+				log.Error("gatekeeper: failed to load service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
+				return
+			}
+			if domain.IsTerminal(service.Status, service.PipelineStage) {
+				log.Info("gatekeeper: skipping terminal service on service added", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
+				return
+			}
+
 			if err := gatekeeper.Run(bg, e.LeadID, e.LeadServiceID, e.TenantID); err != nil {
 				log.Error("gatekeeper run failed for new service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
 			}
@@ -312,7 +332,7 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	}))
 }
 
-func subscribeAttachmentUploaded(eventBus events.Bus, batcher *photoAnalysisBatcher, log *logger.Logger) {
+func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepository, batcher *photoAnalysisBatcher, log *logger.Logger) {
 	eventBus.Subscribe(events.AttachmentUploaded{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.AttachmentUploaded)
 		if !ok {
@@ -325,6 +345,18 @@ func subscribeAttachmentUploaded(eventBus events.Bus, batcher *photoAnalysisBatc
 			log.Warn("photo analysis batcher not configured")
 			return nil
 		}
+
+		// Terminal check: don't analyze photos for terminal services
+		service, err := repo.GetLeadServiceByID(ctx, e.LeadServiceID, e.TenantID)
+		if err != nil {
+			log.Error("photo batcher: failed to load service", "error", err, "serviceId", e.LeadServiceID)
+			return nil
+		}
+		if domain.IsTerminal(service.Status, service.PipelineStage) {
+			log.Info("photo batcher: skipping terminal service", "serviceId", e.LeadServiceID)
+			return nil
+		}
+
 		batcher.OnImageUploaded(e.LeadID, e.LeadServiceID, e.TenantID)
 		return nil
 	}))

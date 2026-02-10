@@ -115,7 +115,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 	}
 
 	// Create the initial service for the lead
-	_, err = s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
+	initialService, err := s.repo.CreateLeadService(ctx, repository.CreateLeadServiceParams{
 		LeadID:         lead.ID,
 		OrganizationID: tenantID,
 		ServiceType:    string(req.ServiceType),
@@ -137,6 +137,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 	s.eventBus.Publish(ctx, events.LeadCreated{
 		BaseEvent:       events.NewBaseEvent(),
 		LeadID:          lead.ID,
+		LeadServiceID:   initialService.ID,
 		TenantID:        tenantID,
 		AssignedAgentID: lead.AssignedAgentID,
 		ServiceType:     string(req.ServiceType),
@@ -874,7 +875,8 @@ func (s *Service) GetActionItems(ctx context.Context, page int, pageSize int, ne
 }
 
 // GetTimeline returns the lead timeline events in reverse chronological order.
-func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) ([]transport.TimelineItem, error) {
+// When serviceID is provided, only events for that service (plus unscoped events) are returned.
+func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID, serviceID *uuid.UUID) ([]transport.TimelineItem, error) {
 	if _, err := s.repo.GetByID(ctx, leadID, tenantID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, apperr.NotFound(leadNotFoundMsg)
@@ -882,7 +884,13 @@ func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uu
 		return nil, err
 	}
 
-	events, err := s.repo.ListTimelineEvents(ctx, leadID, tenantID)
+	var events []repository.TimelineEvent
+	var err error
+	if serviceID != nil {
+		events, err = s.repo.ListTimelineEventsByService(ctx, leadID, *serviceID, tenantID)
+	} else {
+		events, err = s.repo.ListTimelineEvents(ctx, leadID, tenantID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -898,6 +906,7 @@ func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uu
 
 		items[i] = transport.TimelineItem{
 			ID:        event.ID,
+			ServiceID: event.ServiceID,
 			Type:      timelineType,
 			Title:     event.Title,
 			Summary:   summaryValue(event.Summary),

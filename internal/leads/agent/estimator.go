@@ -166,7 +166,7 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 		return err
 	}
 
-	notes, err := e.repo.ListLeadNotes(ctx, leadID, tenantID)
+	notes, err := e.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
 		log.Printf("estimator notes fetch failed: %v", err)
 		notes = nil

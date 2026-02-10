@@ -84,8 +84,21 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 		return
 	}
 
-	serviceID, ok := h.getCurrentServiceID(c, id, tenantID)
-	if ok {
+	// Determine service ID for timeline event and data change notification.
+	// Prefer the service ID from the request; fall back to GetCurrentLeadService.
+	var serviceID uuid.UUID
+	var hasServiceID bool
+	if req.ServiceID != nil && *req.ServiceID != "" {
+		if parsed, parseErr := uuid.Parse(*req.ServiceID); parseErr == nil {
+			serviceID = parsed
+			hasServiceID = true
+		}
+	}
+	if !hasServiceID {
+		serviceID, hasServiceID = h.getCurrentServiceID(c, id, tenantID)
+	}
+
+	if hasServiceID {
 		_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
 			LeadID:         id,
 			ServiceID:      &serviceID,

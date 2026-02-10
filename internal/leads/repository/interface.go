@@ -87,12 +87,14 @@ type ServiceTypeContextReader interface {
 type NoteStore interface {
 	CreateLeadNote(ctx context.Context, params CreateLeadNoteParams) (LeadNote, error)
 	ListLeadNotes(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadNote, error)
+	ListNotesByService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, organizationID uuid.UUID) ([]LeadNote, error)
 }
 
 // TimelineEventStore manages immutable lead timeline events.
 type TimelineEventStore interface {
 	CreateTimelineEvent(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, error)
 	ListTimelineEvents(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]TimelineEvent, error)
+	ListTimelineEventsByService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, organizationID uuid.UUID) ([]TimelineEvent, error)
 }
 
 // AIAnalysisStore manages AI-generated analyses for RAC_leads.

@@ -296,6 +296,7 @@ type LeadMetricsResponse struct {
 // TimelineItem represents an entry in the lead timeline feed.
 type TimelineItem struct {
 	ID        uuid.UUID      `json:"id"`
+	ServiceID *uuid.UUID     `json:"serviceId,omitempty"`
 	Type      string         `json:"type"` // 'ai', 'user', 'stage'
 	Title     string         `json:"title"`
 	Summary   string         `json:"summary"`
@@ -311,32 +312,32 @@ type LogCallRequest struct {
 
 // ActivityFeedItem is a single entry in the dashboard activity feed (historical).
 type ActivityFeedItem struct {
-	ID              string         `json:"id"`
-	Type            string         `json:"type"`
-	Category        string         `json:"category"`
-	Title           string         `json:"title"`
-	Description     string         `json:"description,omitempty"`
-	LeadName        string         `json:"leadName,omitempty"`
-	Phone           string         `json:"phone,omitempty"`
-	Email           string         `json:"email,omitempty"`
-	LeadStatus      string         `json:"leadStatus,omitempty"`
-	ServiceType     string         `json:"serviceType,omitempty"`
-	LeadScore       *int           `json:"leadScore,omitempty"`
-	Address         string         `json:"address,omitempty"`
-	Latitude        *float64       `json:"latitude,omitempty"`
-	Longitude       *float64       `json:"longitude,omitempty"`
-	ScheduledAt     string         `json:"scheduledAt,omitempty"`
-	Timestamp       string         `json:"timestamp"`
-	Priority        int            `json:"priority,omitempty"`
-	Link            []string       `json:"link,omitempty"`
-	Sentiment       string         `json:"sentiment"`
-	GroupCount      int            `json:"groupCount,omitempty"`
-	ActorName       string         `json:"actorName,omitempty"`
-	SuggestedAction string              `json:"suggestedAction,omitempty"`
-	ActionLink      string              `json:"actionLink,omitempty"`
-	Metadata        map[string]any      `json:"metadata,omitempty"`
-	Reactions       []ReactionSummary   `json:"reactions"`
-	CommentCount    int                 `json:"commentCount"`
+	ID              string            `json:"id"`
+	Type            string            `json:"type"`
+	Category        string            `json:"category"`
+	Title           string            `json:"title"`
+	Description     string            `json:"description,omitempty"`
+	LeadName        string            `json:"leadName,omitempty"`
+	Phone           string            `json:"phone,omitempty"`
+	Email           string            `json:"email,omitempty"`
+	LeadStatus      string            `json:"leadStatus,omitempty"`
+	ServiceType     string            `json:"serviceType,omitempty"`
+	LeadScore       *int              `json:"leadScore,omitempty"`
+	Address         string            `json:"address,omitempty"`
+	Latitude        *float64          `json:"latitude,omitempty"`
+	Longitude       *float64          `json:"longitude,omitempty"`
+	ScheduledAt     string            `json:"scheduledAt,omitempty"`
+	Timestamp       string            `json:"timestamp"`
+	Priority        int               `json:"priority,omitempty"`
+	Link            []string          `json:"link,omitempty"`
+	Sentiment       string            `json:"sentiment"`
+	GroupCount      int               `json:"groupCount,omitempty"`
+	ActorName       string            `json:"actorName,omitempty"`
+	SuggestedAction string            `json:"suggestedAction,omitempty"`
+	ActionLink      string            `json:"actionLink,omitempty"`
+	Metadata        map[string]any    `json:"metadata,omitempty"`
+	Reactions       []ReactionSummary `json:"reactions"`
+	CommentCount    int               `json:"commentCount"`
 }
 
 // FeedSeparator marks a position in the feed list for visual grouping (e.g. day headers).
@@ -357,10 +358,10 @@ type ActivityFeedResponse struct {
 
 // ReactionSummary is a per-type aggregate shown on feed items.
 type ReactionSummary struct {
-	Type  string   `json:"type"`            // thumbs-up | heart | party-popper | flame
+	Type  string   `json:"type"` // thumbs-up | heart | party-popper | flame
 	Count int      `json:"count"`
-	Users []string `json:"users"`           // emails of users who reacted
-	Me    bool     `json:"me"`              // whether current user reacted
+	Users []string `json:"users"` // emails of users who reacted
+	Me    bool     `json:"me"`    // whether current user reacted
 }
 
 // ToggleReactionRequest is the body for POST /activity-feed/:eventId/reactions.
@@ -377,11 +378,11 @@ type ToggleReactionResponse struct {
 
 // CommentItem represents a single feed comment.
 type CommentItem struct {
-	ID        string           `json:"id"`
-	UserEmail string           `json:"userEmail"`
-	Body      string           `json:"body"`
-	Mentions  []MentionItem    `json:"mentions"`
-	CreatedAt string           `json:"createdAt"`
+	ID        string        `json:"id"`
+	UserEmail string        `json:"userEmail"`
+	Body      string        `json:"body"`
+	Mentions  []MentionItem `json:"mentions"`
+	CreatedAt string        `json:"createdAt"`
 }
 
 // MentionItem represents a @-mentioned user inside a comment.

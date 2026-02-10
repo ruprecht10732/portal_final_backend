@@ -15,6 +15,7 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
@@ -432,6 +433,16 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 			message = invalidLeadServiceIDMessage
 		}
 		return SaveAnalysisOutput{Success: false, Message: message}, err
+	}
+
+	// Terminal check: refuse to save analysis for terminal services
+	svc, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, tenantID)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: leadServiceNotFoundMessage}, err
+	}
+	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
+		log.Printf("handleSaveAnalysis: REJECTED - service %s is in terminal state (status=%s, stage=%s)", leadServiceID, svc.Status, svc.PipelineStage)
+		return SaveAnalysisOutput{Success: false, Message: "Cannot save analysis for a service in terminal state"}, fmt.Errorf("service %s is terminal", leadServiceID)
 	}
 
 	urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
@@ -896,6 +907,18 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, err
 	}
 	oldStage := svc.PipelineStage
+
+	// Terminal check: refuse to update pipeline stage for terminal services
+	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
+		log.Printf("handleUpdatePipelineStage: REJECTED - service %s is in terminal state (status=%s, stage=%s)", serviceID, svc.Status, svc.PipelineStage)
+		return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
+	}
+
+	// Validate state combination
+	if reason := domain.ValidateStateCombination(svc.Status, input.Stage); reason != "" {
+		log.Printf("handleUpdatePipelineStage: invalid state combination: status=%s, newStage=%s - %s", svc.Status, input.Stage, reason)
+		return UpdatePipelineStageOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
+	}
 
 	_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
 	if err != nil {

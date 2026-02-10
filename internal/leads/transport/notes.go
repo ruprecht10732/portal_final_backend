@@ -7,8 +7,9 @@ import (
 )
 
 type CreateLeadNoteRequest struct {
-	Body string `json:"body" validate:"required,min=1,max=2000"`
-	Type string `json:"type" validate:"omitempty,oneof=note call text email system"`
+	Body      string  `json:"body" validate:"required,min=1,max=2000"`
+	Type      string  `json:"type" validate:"omitempty,oneof=note call text email system"`
+	ServiceID *string `json:"serviceId" validate:"omitempty,uuid"`
 }
 
 type LeadNoteResponse struct {

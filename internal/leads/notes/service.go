@@ -59,6 +59,16 @@ func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID,
 		return transport.LeadNoteResponse{}, apperr.Validation("invalid note type")
 	}
 
+	// Parse optional service ID
+	var serviceID *uuid.UUID
+	if req.ServiceID != nil && *req.ServiceID != "" {
+		parsed, err := uuid.Parse(*req.ServiceID)
+		if err != nil {
+			return transport.LeadNoteResponse{}, apperr.Validation("invalid serviceId")
+		}
+		serviceID = &parsed
+	}
+
 	// Verify lead exists
 	if _, err := s.repo.GetByID(ctx, leadID, tenantID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -73,6 +83,7 @@ func (s *Service) Add(ctx context.Context, leadID uuid.UUID, authorID uuid.UUID,
 		AuthorID:       authorID,
 		Type:           noteType,
 		Body:           body,
+		ServiceID:      serviceID,
 	})
 	if err != nil {
 		return transport.LeadNoteResponse{}, err

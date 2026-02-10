@@ -65,6 +65,7 @@ func (e PasswordResetRequested) EventName() string { return "auth.password.reset
 type LeadCreated struct {
 	BaseEvent
 	LeadID          uuid.UUID  `json:"leadId"`
+	LeadServiceID   uuid.UUID  `json:"leadServiceId"`
 	TenantID        uuid.UUID  `json:"tenantId"`
 	AssignedAgentID *uuid.UUID `json:"assignedAgentId,omitempty"`
 	ServiceType     string     `json:"serviceType"`

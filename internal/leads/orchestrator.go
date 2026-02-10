@@ -9,6 +9,7 @@ import (
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/logger"
@@ -86,11 +87,29 @@ func (o *Orchestrator) recordDispatcherFailure(ctx context.Context, leadID, serv
 	})
 }
 
+// ShouldRunAgent checks if a service is eligible for agent processing.
+// Returns false if the service is in a terminal state (Closed, Bad_Lead, Surveyed,
+// Completed, or Lost).
+func (o *Orchestrator) ShouldRunAgent(service repository.LeadService) bool {
+	if domain.IsTerminal(service.Status, service.PipelineStage) {
+		o.log.Info("orchestrator: skipping agent run for terminal service",
+			"serviceId", service.ID,
+			"status", service.Status,
+			"pipelineStage", service.PipelineStage)
+		return false
+	}
+	return true
+}
+
 // OnDataChange handles human data changes and re-triggers agents when needed.
 func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChanged) {
 	svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.TenantID)
 	if err != nil {
 		o.log.Error("orchestrator: failed to load lead service", "error", err)
+		return
+	}
+
+	if !o.ShouldRunAgent(svc) {
 		return
 	}
 
@@ -114,6 +133,11 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 
 // OnStageChange triggers downstream agents based on pipeline transitions.
 func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineStageChanged) {
+	// Terminal stages never trigger agents
+	if domain.IsTerminalPipelineStage(evt.NewStage) {
+		return
+	}
+
 	switch evt.NewStage {
 	case "Ready_For_Estimator":
 		// Idempotency check
@@ -295,11 +319,11 @@ func buildManualInterventionDrafts(leadID, serviceID uuid.UUID) map[string]any {
 	whatsApp := fmt.Sprintf("Handmatige interventie vereist voor lead %s (service %s). Controleer de intake en bepaal de volgende stap.", leadID.String(), serviceID.String())
 
 	return map[string]any{
-		"emailSubject":     subject,
-		"emailBody":        body,
-		"whatsappMessage":  whatsApp,
-		"messageLanguage":  "nl",
-		"messageAudience":  "internal",
-		"messageCategory":  "manual_intervention",
+		"emailSubject":    subject,
+		"emailBody":       body,
+		"whatsappMessage": whatsApp,
+		"messageLanguage": "nl",
+		"messageAudience": "internal",
+		"messageCategory": "manual_intervention",
 	}
 }

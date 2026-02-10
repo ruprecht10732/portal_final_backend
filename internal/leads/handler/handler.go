@@ -9,6 +9,7 @@ import (
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
@@ -299,7 +300,17 @@ func (h *Handler) GetTimeline(c *gin.Context) {
 		return
 	}
 
-	items, err := h.mgmt.GetTimeline(c.Request.Context(), leadID, tenantID)
+	var serviceID *uuid.UUID
+	if raw := c.Query("serviceId"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+			return
+		}
+		serviceID = &parsed
+	}
+
+	items, err := h.mgmt.GetTimeline(c.Request.Context(), leadID, tenantID, serviceID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -676,8 +687,13 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 		return
 	}
 
-	// Validate optional serviceId with terminal status check
-	validation := h.validateServiceForAnalysis(c, c.Query("serviceId"), tenantID)
+	// Validate required serviceId with terminal status check
+	svcIDStr := c.Query("serviceId")
+	if svcIDStr == "" {
+		httpkit.Error(c, http.StatusBadRequest, "serviceId parameter is required", nil)
+		return
+	}
+	validation := h.validateServiceForAnalysis(c, svcIDStr, tenantID)
 	if validation.ErrMsg != "" {
 		httpkit.Error(c, validation.ErrStatus, validation.ErrMsg, nil)
 		return
@@ -687,14 +703,6 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	go func() {
 		ctx := context.Background()
 		serviceID := validation.ServiceID
-		if serviceID == nil {
-			// Get current service if not specified
-			svc, err := h.repo.GetCurrentLeadService(ctx, id, tenantID)
-			if err != nil {
-				return
-			}
-			serviceID = &svc.ID
-		}
 		if err := h.gatekeeper.Run(ctx, id, *serviceID, tenantID); err != nil {
 			_ = err // log-only: don't expose to client
 		}
@@ -886,14 +894,10 @@ func summaryPointer(text string, maxLen int) *string {
 	return &trimmed
 }
 
-// isTerminalStatus checks if a service status is terminal (no further actions allowed)
+// isTerminalStatus checks if a service status is terminal (no further actions allowed).
+// Delegates to the centralized domain.IsTerminalStatus for consistency.
 func isTerminalStatus(status string) bool {
-	switch status {
-	case "Closed", "Bad_Lead", "Surveyed":
-		return true
-	default:
-		return false
-	}
+	return domain.IsTerminalStatus(status)
 }
 
 // parseDateRange parses optional start and end date strings and validates the range.
@@ -945,8 +949,8 @@ func (h *Handler) validateServiceForAnalysis(ctx *gin.Context, svcIDStr string, 
 		return serviceValidationResult{ErrMsg: "service not found", ErrStatus: http.StatusNotFound}
 	}
 
-	if isTerminalStatus(service.Status) {
-		return serviceValidationResult{ErrMsg: "cannot analyze a service in terminal status (Closed, Bad_Lead, Surveyed)", ErrStatus: http.StatusBadRequest}
+	if domain.IsTerminal(service.Status, service.PipelineStage) {
+		return serviceValidationResult{ErrMsg: "cannot analyze a service in terminal state (Closed, Bad_Lead, Surveyed, Completed, or Lost)", ErrStatus: http.StatusBadRequest}
 	}
 
 	return serviceValidationResult{ServiceID: &parsed}

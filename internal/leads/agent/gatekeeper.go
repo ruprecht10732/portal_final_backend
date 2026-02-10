@@ -111,7 +111,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		return err
 	}
 
-	notes, err := g.repo.ListLeadNotes(ctx, leadID, tenantID)
+	notes, err := g.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
 		log.Printf("gatekeeper notes fetch failed: %v", err)
 		notes = nil

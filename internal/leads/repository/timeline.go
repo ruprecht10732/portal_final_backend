@@ -140,3 +140,55 @@ func (r *Repository) ListTimelineEvents(ctx context.Context, leadID uuid.UUID, o
 
 	return items, nil
 }
+
+func (r *Repository) ListTimelineEventsByService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, organizationID uuid.UUID) ([]TimelineEvent, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+		FROM lead_timeline_events
+		WHERE lead_id = $1 AND organization_id = $2 AND (service_id = $3 OR service_id IS NULL)
+		ORDER BY created_at DESC
+	`, leadID, organizationID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]TimelineEvent, 0)
+	for rows.Next() {
+		var event TimelineEvent
+		var rawServiceID *uuid.UUID
+		var summary *string
+		var rawMetadata []byte
+		if err := rows.Scan(
+			&event.ID,
+			&event.LeadID,
+			&rawServiceID,
+			&event.OrganizationID,
+			&event.ActorType,
+			&event.ActorName,
+			&event.EventType,
+			&event.Title,
+			&summary,
+			&rawMetadata,
+			&event.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if rawServiceID != nil {
+			event.ServiceID = rawServiceID
+		}
+		if summary != nil {
+			event.Summary = summary
+		}
+		if len(rawMetadata) > 0 {
+			_ = json.Unmarshal(rawMetadata, &event.Metadata)
+		}
+		items = append(items, event)
+	}
+
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return items, nil
+}
