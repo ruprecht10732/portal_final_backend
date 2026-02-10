@@ -1287,13 +1287,13 @@ func populateFeedItemFields(item *transport.ActivityFeedItem, e *repository.Acti
 func assignFeedItemLink(item *transport.ActivityFeedItem, e *repository.ActivityFeedEntry) {
 	switch e.Category {
 	case "leads":
-		item.Link = []string{"/app/leads", e.EntityID.String()}
+		item.Link = []string{"leads", e.EntityID.String()}
 	case "quotes":
-		item.Link = []string{"/app/offertes", e.EntityID.String()}
+		item.Link = []string{"offertes", e.EntityID.String()}
 	case "appointments":
-		item.Link = []string{"/app/appointments"}
+		item.Link = []string{"appointments"}
 	case "ai":
-		item.Link = []string{"/app/leads", e.EntityID.String()}
+		item.Link = []string{"leads", e.EntityID.String()}
 	}
 }
 

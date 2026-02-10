@@ -106,19 +106,19 @@ func pluralTitle(eventType string, count int) string {
 func suggestedAction(eventType string, entityID string) (label string, link string) {
 	switch eventType {
 	case "quote_viewed":
-		return "Bel klant", fmt.Sprintf("/leads/%s/call", entityID)
+		return "Bel klant", fmt.Sprintf("leads/%s/call", entityID)
 	case "manual_intervention":
-		return "Triage bekijken", fmt.Sprintf("/leads/%s/triage", entityID)
+		return "Triage bekijken", fmt.Sprintf("leads/%s/triage", entityID)
 	case "gatekeeper_rejected":
-		return "Triage bekijken", fmt.Sprintf("/leads/%s/triage", entityID)
+		return "Triage bekijken", fmt.Sprintf("leads/%s/triage", entityID)
 	case "partner_offer_rejected":
-		return "Nieuwe partner zoeken", fmt.Sprintf("/leads/%s/dispatch", entityID)
+		return "Nieuwe partner zoeken", fmt.Sprintf("leads/%s/dispatch", entityID)
 	case "appointment_created":
-		return "Bekijk agenda", fmt.Sprintf("/appointments/%s", entityID)
+		return "Bekijk agenda", fmt.Sprintf("appointments/%s", entityID)
 	case "quote_accepted":
-		return "Bekijk offerte", fmt.Sprintf("/offertes/%s", entityID)
+		return "Bekijk offerte", fmt.Sprintf("offertes/%s", entityID)
 	case "lead_created":
-		return "Bekijk lead", fmt.Sprintf("/leads/%s", entityID)
+		return "Bekijk lead", fmt.Sprintf("leads/%s", entityID)
 	default:
 		return "", ""
 	}
