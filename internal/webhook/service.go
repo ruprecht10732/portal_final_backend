@@ -214,7 +214,9 @@ func (s *Service) uploadFiles(ctx context.Context, leadID, serviceID, orgID uuid
 			TenantID:      orgID,
 			AttachmentID:  uuid.New(),
 			FileName:      f.FileName,
+			FileKey:       fileKey,
 			ContentType:   f.ContentType,
+			SizeBytes:     f.Size,
 		})
 
 		s.log.Info("webhook: uploaded file", "leadId", leadID, "fileKey", fileKey)

@@ -117,7 +117,9 @@ type AttachmentUploaded struct {
 	TenantID      uuid.UUID `json:"tenantId"`
 	AttachmentID  uuid.UUID `json:"attachmentId"`
 	FileName      string    `json:"fileName"`
+	FileKey       string    `json:"fileKey"`
 	ContentType   string    `json:"contentType"`
+	SizeBytes     int64     `json:"sizeBytes"`
 }
 
 func (e AttachmentUploaded) EventName() string { return "leads.attachment.uploaded" }

@@ -338,6 +338,23 @@ func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepos
 		if !ok {
 			return nil
 		}
+
+		// 1. Persist attachment record to database
+		_, err := repo.CreateAttachment(ctx, repository.CreateAttachmentParams{
+			LeadServiceID:  e.LeadServiceID,
+			OrganizationID: e.TenantID,
+			FileKey:        e.FileKey,
+			FileName:       e.FileName,
+			ContentType:    e.ContentType,
+			SizeBytes:      e.SizeBytes,
+			UploadedBy:     nil, // webhook uploads are system/anonymous
+		})
+		if err != nil {
+			log.Error("failed to persist attachment record", "error", err, "leadServiceId", e.LeadServiceID)
+			// Don't return error - continue with photo analysis
+		}
+
+		// 2. Trigger photo analysis for images
 		if !isImageContentType(e.ContentType) {
 			return nil
 		}
