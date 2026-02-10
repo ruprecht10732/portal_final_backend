@@ -319,13 +319,23 @@ func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, l
 }
 
 func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis, attachments []repository.Attachment) map[string]any {
-	metadata := map[string]any{
+	metadata := buildPhotoAnalysisBaseMetadata(result)
+	addPhotoAnalysisSlices(metadata, result)
+	addPhotoAttachmentMetadata(metadata, attachments)
+	return metadata
+}
+
+func buildPhotoAnalysisBaseMetadata(result *agent.PhotoAnalysis) map[string]any {
+	return map[string]any{
 		"photoCount":      result.PhotoCount,
 		"scopeAssessment": result.ScopeAssessment,
 		"confidenceLevel": result.ConfidenceLevel,
 		"observations":    result.Observations,
 		"costIndicators":  result.CostIndicators,
 	}
+}
+
+func addPhotoAnalysisSlices(metadata map[string]any, result *agent.PhotoAnalysis) {
 	if len(result.SafetyConcerns) > 0 {
 		metadata["safetyConcerns"] = result.SafetyConcerns
 	}
@@ -347,28 +357,33 @@ func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis, attachments []repos
 	if len(result.SuggestedSearchTerms) > 0 {
 		metadata["suggestedSearchTerms"] = result.SuggestedSearchTerms
 	}
+}
 
-	// Include photo attachment information
-	if len(attachments) > 0 {
-		photoAttachments := make([]map[string]any, 0, len(attachments))
-		for _, att := range attachments {
-			if att.ContentType != nil && isImageContentType(*att.ContentType) {
-				photoInfo := map[string]any{
-					"id":       att.ID.String(),
-					"fileName": att.FileName,
-				}
-				if att.ContentType != nil {
-					photoInfo["contentType"] = *att.ContentType
-				}
-				photoAttachments = append(photoAttachments, photoInfo)
+func addPhotoAttachmentMetadata(metadata map[string]any, attachments []repository.Attachment) {
+	if len(attachments) == 0 {
+		return
+	}
+	photoAttachments := buildPhotoAttachments(attachments)
+	if len(photoAttachments) > 0 {
+		metadata["photos"] = photoAttachments
+	}
+}
+
+func buildPhotoAttachments(attachments []repository.Attachment) []map[string]any {
+	photoAttachments := make([]map[string]any, 0, len(attachments))
+	for _, att := range attachments {
+		if att.ContentType != nil && isImageContentType(*att.ContentType) {
+			photoInfo := map[string]any{
+				"id":       att.ID.String(),
+				"fileName": att.FileName,
 			}
-		}
-		if len(photoAttachments) > 0 {
-			metadata["photos"] = photoAttachments
+			if att.ContentType != nil {
+				photoInfo["contentType"] = *att.ContentType
+			}
+			photoAttachments = append(photoAttachments, photoInfo)
 		}
 	}
-
-	return metadata
+	return photoAttachments
 }
 
 func (h *PhotoAnalysisHandler) publishPhotoAnalysisSuccess(userID *uuid.UUID, leadID, serviceID uuid.UUID, result *agent.PhotoAnalysis) {
