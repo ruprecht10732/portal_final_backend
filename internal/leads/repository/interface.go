@@ -175,6 +175,26 @@ type ActivityFeedReader interface {
 	ListUpcomingAppointments(ctx context.Context, organizationID uuid.UUID, limit int) ([]ActivityFeedEntry, error)
 }
 
+// FeedReactionStore provides CRUD for feed reactions.
+type FeedReactionStore interface {
+	ToggleReaction(ctx context.Context, eventID, eventSource, reactionType string, userID, orgID uuid.UUID) (exists bool, err error)
+	ListReactionsByEvent(ctx context.Context, eventID, eventSource string, orgID uuid.UUID) ([]FeedReaction, error)
+	ListReactionsByEvents(ctx context.Context, eventIDs []string, orgID uuid.UUID) ([]FeedReaction, error)
+}
+
+// FeedCommentStore provides CRUD for feed comments (with @-mentions).
+type FeedCommentStore interface {
+	CreateComment(ctx context.Context, eventID, eventSource string, userID, orgID uuid.UUID, body string, mentionIDs []uuid.UUID) (FeedComment, error)
+	ListCommentsByEvent(ctx context.Context, eventID, eventSource string, orgID uuid.UUID) ([]FeedCommentWithAuthor, error)
+	DeleteComment(ctx context.Context, commentID uuid.UUID, userID, orgID uuid.UUID) error
+	ListCommentCountsByEvents(ctx context.Context, eventIDs []string, orgID uuid.UUID) (map[string]int, error)
+}
+
+// OrgMemberReader provides org member listing for @-mention autocomplete.
+type OrgMemberReader interface {
+	ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]OrgMember, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -200,6 +220,9 @@ type LeadsRepository interface {
 	PartnerMatcher
 	QuotePriceReader
 	ActivityFeedReader
+	FeedReactionStore
+	FeedCommentStore
+	OrgMemberReader
 }
 
 // Ensure Repository implements LeadsRepository

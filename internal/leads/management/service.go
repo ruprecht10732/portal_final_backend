@@ -44,6 +44,9 @@ type Repository interface {
 	repository.MetricsReader
 	repository.TimelineEventStore
 	repository.ActivityFeedReader
+	repository.FeedReactionStore
+	repository.FeedCommentStore
+	repository.OrgMemberReader
 	UpdateEnergyLabel(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateEnergyLabelParams) error
 	UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params repository.UpdateLeadEnrichmentParams) error
 }
@@ -1115,7 +1118,7 @@ func toPtrString(value string) *string {
 }
 
 // GetActivityFeed returns the most recent org-wide activity for the dashboard feed card.
-func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID, page int, limit int) (transport.ActivityFeedResponse, error) {
+func (s *Service) GetActivityFeed(ctx context.Context, tenantID, userID uuid.UUID, page int, limit int) (transport.ActivityFeedResponse, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -1143,6 +1146,37 @@ func (s *Service) GetActivityFeed(ctx context.Context, tenantID uuid.UUID, page 
 	items := make([]transport.ActivityFeedItem, 0, len(entries))
 	for _, e := range entries {
 		items = append(items, mapEntryToFeedItem(e))
+	}
+
+	// Batch-enrich with reactions and comment counts.
+	if len(items) > 0 {
+		eventIDs := make([]string, len(items))
+		for i, it := range items {
+			eventIDs[i] = it.ID
+		}
+
+		reactions, err := s.repo.ListReactionsByEvents(ctx, eventIDs, tenantID)
+		if err != nil {
+			return transport.ActivityFeedResponse{}, err
+		}
+
+		commentCounts, err := s.repo.ListCommentCountsByEvents(ctx, eventIDs, tenantID)
+		if err != nil {
+			return transport.ActivityFeedResponse{}, err
+		}
+
+		// Group reactions by event ID.
+		reactionsByEvent := map[string][]repository.FeedReaction{}
+		for _, r := range reactions {
+			reactionsByEvent[r.EventID] = append(reactionsByEvent[r.EventID], r)
+		}
+
+		for i := range items {
+			items[i].Reactions = buildReactionSummary(reactionsByEvent[items[i].ID], userID)
+			if cnt, ok := commentCounts[items[i].ID]; ok {
+				items[i].CommentCount = cnt
+			}
+		}
 	}
 
 	return transport.ActivityFeedResponse{Items: items}, nil

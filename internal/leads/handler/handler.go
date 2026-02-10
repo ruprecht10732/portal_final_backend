@@ -85,6 +85,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/heatmap", h.GetHeatmap)
 	rg.GET("/action-items", h.GetActionItems)
 	rg.GET("/activity-feed", h.GetActivityFeed)
+	rg.GET("/activity-feed/members", h.ListOrgMembers)
+	rg.POST("/activity-feed/:eventId/reactions", h.ToggleReaction)
+	rg.GET("/activity-feed/:eventId/comments", h.ListComments)
+	rg.POST("/activity-feed/:eventId/comments", h.CreateComment)
+	rg.DELETE("/activity-feed/comments/:commentId", h.DeleteComment)
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/check-returning-customer", h.CheckReturningCustomer)
 	rg.GET("/:id", h.GetByID)
@@ -206,7 +211,7 @@ func (h *Handler) GetActivityFeed(c *gin.Context) {
 		limit = 50
 	}
 
-	result, err := h.mgmt.GetActivityFeed(c.Request.Context(), tenantID, page, limit)
+	result, err := h.mgmt.GetActivityFeed(c.Request.Context(), tenantID, identity.UserID(), page, limit)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -945,4 +950,162 @@ func (h *Handler) validateServiceForAnalysis(ctx *gin.Context, svcIDStr string, 
 	}
 
 	return serviceValidationResult{ServiceID: &parsed}
+}
+
+// ──────────────────────────────────────────────────
+// Feed Social: Reactions, Comments, @-Mentions
+// ──────────────────────────────────────────────────
+
+// ToggleReaction toggles a reaction on a feed event for the current user.
+func (h *Handler) ToggleReaction(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	eventID := c.Param("eventId")
+	if eventID == "" {
+		httpkit.Error(c, http.StatusBadRequest, "eventId is required", nil)
+		return
+	}
+
+	var req transport.ToggleReactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.mgmt.ToggleReaction(c.Request.Context(), eventID, req.EventSource, req.ReactionType, identity.UserID(), tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// ListComments returns the comment thread for a feed event.
+func (h *Handler) ListComments(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	eventID := c.Param("eventId")
+	if eventID == "" {
+		httpkit.Error(c, http.StatusBadRequest, "eventId is required", nil)
+		return
+	}
+
+	eventSource := c.Query("eventSource")
+	if eventSource == "" {
+		httpkit.Error(c, http.StatusBadRequest, "eventSource is required", nil)
+		return
+	}
+
+	result, err := h.mgmt.ListComments(c.Request.Context(), eventID, eventSource, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// CreateComment creates a comment on a feed event.
+func (h *Handler) CreateComment(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	eventID := c.Param("eventId")
+	if eventID == "" {
+		httpkit.Error(c, http.StatusBadRequest, "eventId is required", nil)
+		return
+	}
+
+	var req transport.CreateCommentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	mentionIDs := make([]uuid.UUID, 0, len(req.MentionIDs))
+	for _, raw := range req.MentionIDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, "invalid mentionId: "+raw, nil)
+			return
+		}
+		mentionIDs = append(mentionIDs, id)
+	}
+
+	result, err := h.mgmt.CreateComment(c.Request.Context(), eventID, req.EventSource, identity.UserID(), tenantID, req.Body, mentionIDs)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.JSON(http.StatusCreated, result)
+}
+
+// DeleteComment deletes a comment (author only).
+func (h *Handler) DeleteComment(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	commentID, err := uuid.Parse(c.Param("commentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid commentId", nil)
+		return
+	}
+
+	if err := h.mgmt.DeleteComment(c.Request.Context(), commentID, identity.UserID(), tenantID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// ListOrgMembers returns team members for @-mention autocomplete.
+func (h *Handler) ListOrgMembers(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.mgmt.ListOrgMembers(c.Request.Context(), tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }

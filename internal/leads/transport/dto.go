@@ -332,9 +332,11 @@ type ActivityFeedItem struct {
 	Sentiment       string         `json:"sentiment"`
 	GroupCount      int            `json:"groupCount,omitempty"`
 	ActorName       string         `json:"actorName,omitempty"`
-	SuggestedAction string         `json:"suggestedAction,omitempty"`
-	ActionLink      string         `json:"actionLink,omitempty"`
-	Metadata        map[string]any `json:"metadata,omitempty"`
+	SuggestedAction string              `json:"suggestedAction,omitempty"`
+	ActionLink      string              `json:"actionLink,omitempty"`
+	Metadata        map[string]any      `json:"metadata,omitempty"`
+	Reactions       []ReactionSummary   `json:"reactions"`
+	CommentCount    int                 `json:"commentCount"`
 }
 
 // FeedSeparator marks a position in the feed list for visual grouping (e.g. day headers).
@@ -347,6 +349,68 @@ type FeedSeparator struct {
 type ActivityFeedResponse struct {
 	Items      []ActivityFeedItem `json:"items"`
 	Separators []FeedSeparator    `json:"separators,omitempty"`
+}
+
+// =====================================
+// Feed Social DTOs
+// =====================================
+
+// ReactionSummary is a per-type aggregate shown on feed items.
+type ReactionSummary struct {
+	Type  string   `json:"type"`            // thumbs-up | heart | party-popper | flame
+	Count int      `json:"count"`
+	Users []string `json:"users"`           // emails of users who reacted
+	Me    bool     `json:"me"`              // whether current user reacted
+}
+
+// ToggleReactionRequest is the body for POST /activity-feed/:eventId/reactions.
+type ToggleReactionRequest struct {
+	ReactionType string `json:"reactionType" validate:"required,oneof=thumbs-up heart party-popper flame"`
+	EventSource  string `json:"eventSource" validate:"required"`
+}
+
+// ToggleReactionResponse is returned after toggling a reaction.
+type ToggleReactionResponse struct {
+	Active    bool              `json:"active"`
+	Reactions []ReactionSummary `json:"reactions"`
+}
+
+// CommentItem represents a single feed comment.
+type CommentItem struct {
+	ID        string           `json:"id"`
+	UserEmail string           `json:"userEmail"`
+	Body      string           `json:"body"`
+	Mentions  []MentionItem    `json:"mentions"`
+	CreatedAt string           `json:"createdAt"`
+}
+
+// MentionItem represents a @-mentioned user inside a comment.
+type MentionItem struct {
+	UserID string `json:"userId"`
+	Email  string `json:"email"`
+}
+
+// CreateCommentRequest is the body for POST /activity-feed/:eventId/comments.
+type CreateCommentRequest struct {
+	Body        string   `json:"body" validate:"required,min=1,max=2000"`
+	EventSource string   `json:"eventSource" validate:"required"`
+	MentionIDs  []string `json:"mentionIds"`
+}
+
+// CommentListResponse wraps the comment thread for an event.
+type CommentListResponse struct {
+	Comments []CommentItem `json:"comments"`
+}
+
+// OrgMemberItem is a mentionable team member.
+type OrgMemberItem struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+// OrgMembersResponse wraps the list of team members.
+type OrgMembersResponse struct {
+	Members []OrgMemberItem `json:"members"`
 }
 
 // LogCallResponse is the response for a processed call log
