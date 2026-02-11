@@ -104,6 +104,11 @@ func bootstrapGoose(ctx context.Context, db *sql.DB, dir string) error {
 		return fmt.Errorf("check goose table: %w", err)
 	}
 
+	// Only seed versions when bootstrapping an existing database that didn't have
+	// goose history yet. If the goose table already exists, new migration files
+	// must be applied normally via goose.Up.
+	createdGooseTable := false
+
 	var hasExisting bool
 	if err := db.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -123,6 +128,11 @@ func bootstrapGoose(ctx context.Context, db *sql.DB, dir string) error {
 		if _, err := goose.EnsureDBVersionContext(ctx, db); err != nil {
 			return fmt.Errorf("ensure goose table: %w", err)
 		}
+		createdGooseTable = true
+	}
+
+	if !createdGooseTable {
+		return nil
 	}
 
 	latest, err := latestMigrationVersion(dir)
