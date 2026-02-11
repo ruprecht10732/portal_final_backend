@@ -149,7 +149,8 @@ func (r *Repository) UpdateWebhookLeadData(ctx context.Context, leadID uuid.UUID
 
 // GenerateGoogleKey creates a new random Google webhook key and returns plaintext + hash.
 func GenerateGoogleKey() (plaintext string, hash string, prefix string, err error) {
-	bytes := make([]byte, 32)
+	// 22 bytes -> 44 hex chars; with "glk_" prefix totals 48 chars (<= 50).
+	bytes := make([]byte, 22)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", "", "", err
 	}
