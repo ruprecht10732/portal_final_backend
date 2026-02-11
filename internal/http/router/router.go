@@ -7,6 +7,7 @@ import (
 	"time"
 
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-contrib/cors"
@@ -24,47 +25,8 @@ func New(app *apphttp.App) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 
-	// Webhook CORS bypass: webhook endpoints use API-key auth (not cookies),
-	// so all origins are safely allowed. This middleware runs BEFORE the global
-	// CORS handler to prevent gin-contrib/cors from rejecting unknown origins
-	// with a 403 on the OPTIONS preflight.
-	engine.Use(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/webhook/") {
-			origin := c.GetHeader("Origin")
-			if origin != "" {
-				c.Header("Access-Control-Allow-Origin", origin)
-				c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, X-Webhook-API-Key")
-				c.Header("Access-Control-Max-Age", "43200") // 12 hours
-
-				// Save origin for downstream domain validation, then strip
-				// it from the request so gin-contrib/cors (which runs next)
-				// treats this as a same-origin request and doesn't reject it.
-				c.Set("webhookOrigin", origin)
-				c.Request.Header.Del("Origin")
-			}
-			if c.Request.Method == "OPTIONS" {
-				c.AbortWithStatus(http.StatusNoContent)
-				return
-			}
-		}
-		c.Next()
-	})
-
-	// Global CORS for all other routes. The webhook bypass above already
-	// handles /api/v1/webhook/* so origins there don't need to be listed.
-	corsConfig := cors.Config{
-		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders: []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Webhook-API-Key"}, ExposeHeaders: []string{"Content-Length"},
-		AllowCredentials: cfg.GetCORSAllowCreds(),
-		MaxAge:           12 * time.Hour,
-	}
-	if cfg.GetCORSAllowAll() {
-		corsConfig.AllowAllOrigins = true
-	} else {
-		corsConfig.AllowOrigins = cfg.GetCORSOrigins()
-	}
-	engine.Use(cors.New(corsConfig))
+	engine.Use(webhookCorsBypass())
+	engine.Use(cors.New(buildCorsConfig(cfg)))
 
 	// Security headers
 	engine.Use(httpkit.SecurityHeaders())
@@ -76,18 +38,7 @@ func New(app *apphttp.App) *gin.Engine {
 	globalLimiter := httpkit.NewIPRateLimiter(rate.Limit(100), 200, log)
 	engine.Use(globalLimiter.RateLimit())
 
-	// Health check endpoint (outside versioned API)
-	engine.GET("/api/health", func(c *gin.Context) {
-		if app.Health != nil {
-			timeoutCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-			defer cancel()
-			if err := app.Health.Ping(timeoutCtx); err != nil {
-				c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy"})
-				return
-			}
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
+	registerHealthRoute(engine, app)
 
 	// Set up route groups
 	v1 := engine.Group("/api/v1")
@@ -114,4 +65,55 @@ func New(app *apphttp.App) *gin.Engine {
 	}
 
 	return engine
+}
+
+func webhookCorsBypass() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/webhook/") {
+			origin := c.GetHeader("Origin")
+			if origin != "" {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, X-Webhook-API-Key")
+				c.Header("Access-Control-Max-Age", "43200")
+				c.Set("webhookOrigin", origin)
+				c.Request.Header.Del("Origin")
+			}
+			if c.Request.Method == "OPTIONS" {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+		}
+		c.Next()
+	}
+}
+
+func buildCorsConfig(cfg config.HTTPConfig) cors.Config {
+	corsConfig := cors.Config{
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Webhook-API-Key", "X-Export-API-Key"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: cfg.GetCORSAllowCreds(),
+		MaxAge:           12 * time.Hour,
+	}
+	if cfg.GetCORSAllowAll() {
+		corsConfig.AllowAllOrigins = true
+		return corsConfig
+	}
+	corsConfig.AllowOrigins = cfg.GetCORSOrigins()
+	return corsConfig
+}
+
+func registerHealthRoute(engine *gin.Engine, app *apphttp.App) {
+	engine.GET("/api/health", func(c *gin.Context) {
+		if app.Health != nil {
+			timeoutCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+			if err := app.Health.Ping(timeoutCtx); err != nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy"})
+				return
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 }

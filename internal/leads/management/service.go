@@ -99,6 +99,14 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		Latitude:           req.Latitude,
 		Longitude:          req.Longitude,
 		Source:             toPtr(req.Source),
+		GCLID:              toPtr(req.GCLID),
+		UTMSource:          toPtr(req.UTMSource),
+		UTMMedium:          toPtr(req.UTMMedium),
+		UTMCampaign:        toPtr(req.UTMCampaign),
+		UTMContent:         toPtr(req.UTMContent),
+		UTMTerm:            toPtr(req.UTMTerm),
+		AdLandingPage:      toPtr(req.AdLandingPage),
+		ReferrerURL:        toPtr(req.ReferrerURL),
 	}
 
 	if req.AssigneeID.Set {

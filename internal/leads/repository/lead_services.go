@@ -49,6 +49,10 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 				$5
 			)
 			RETURNING *
+		), event AS (
+			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+			SELECT organization_id, lead_id, id, 'service_created', status, pipeline_stage, created_at
+			FROM inserted
 		)
 		SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
 			i.customer_preferences, i.created_at, i.updated_at
@@ -159,6 +163,10 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organi
 			UPDATE RAC_lead_services SET status = $3, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
 			RETURNING *
+		), event AS (
+			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+			SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
+			FROM updated
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 			u.customer_preferences, u.created_at, u.updated_at
@@ -214,6 +222,10 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 			UPDATE RAC_lead_services SET status = $3, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
 			RETURNING *
+		), event AS (
+			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+			SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
+			FROM updated
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 			u.customer_preferences, u.created_at, u.updated_at
@@ -236,6 +248,10 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 			UPDATE RAC_lead_services SET pipeline_stage = $3, updated_at = now()
 			WHERE id = $1 AND organization_id = $2
 			RETURNING *
+		), event AS (
+			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+			SELECT organization_id, lead_id, id, 'pipeline_stage_changed', status, pipeline_stage, updated_at
+			FROM updated
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 			u.customer_preferences, u.created_at, u.updated_at
@@ -254,9 +270,15 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 // CloseAllActiveServices marks all non-terminal services for a lead as Closed
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_lead_services 
-		SET status = 'Closed', updated_at = now()
-		WHERE lead_id = $1 AND organization_id = $2 AND status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
+		WITH updated AS (
+			UPDATE RAC_lead_services 
+			SET status = 'Closed', updated_at = now()
+			WHERE lead_id = $1 AND organization_id = $2 AND status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
+			RETURNING id, lead_id, organization_id, status, pipeline_stage, updated_at
+		)
+		INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+		SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
+		FROM updated
 	`, leadID, organizationID)
 	return err
 }

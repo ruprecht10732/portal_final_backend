@@ -7,10 +7,11 @@
  *   <script src="https://your-api.com/api/v1/webhook/sdk.js" data-api-key="whk_..." async></script>
  * 
  * Options (data attributes on the script tag):
- *   data-api-key     (required) Your webhook API key
- *   data-endpoint    (optional) Custom API endpoint URL (defaults to script origin)
- *   data-selector    (optional) CSS selector for forms to capture (defaults to all forms)
- *   data-success-url (optional) Redirect URL after successful submission
+ *   data-api-key      (required) Your webhook API key
+ *   data-endpoint     (optional) Custom API endpoint URL (defaults to script origin)
+ *   data-selector     (optional) CSS selector for forms to capture (defaults to all forms)
+ *   data-success-url  (optional) Redirect URL after successful submission
+ *   data-tracking-ttl (optional) Tracking TTL in days (default: 90)
  * 
  * Manual capture (for JS-rendered forms):
  *   window.RACFormCapture.submit({ name: "John", email: "john@example.com" })
@@ -30,7 +31,8 @@
     apiKey: scriptTag.getAttribute('data-api-key'),
     endpoint: scriptTag.getAttribute('data-endpoint') || getScriptOrigin(scriptTag),
     selector: scriptTag.getAttribute('data-selector') || null,
-    successUrl: scriptTag.getAttribute('data-success-url') || null
+    successUrl: scriptTag.getAttribute('data-success-url') || null,
+    trackingTTL: parseInt(scriptTag.getAttribute('data-tracking-ttl') || '90', 10)
   };
 
   if (!config.apiKey) {
@@ -47,6 +49,95 @@
     }
   }
 
+  var STORAGE_KEY = 'rac_tracking_data';
+
+  function captureTrackingParams() {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var trackingData = loadTrackingData() || {};
+      var hasUpdates = false;
+
+      var gclid = params.get('gclid');
+      if (gclid) {
+        trackingData.gclid = gclid;
+        hasUpdates = true;
+      }
+
+      var utmParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+      utmParams.forEach(function (param) {
+        var value = params.get(param);
+        if (value) {
+          trackingData[param] = value;
+          hasUpdates = true;
+        }
+      });
+
+      if (gclid || !trackingData.ad_landing_page) {
+        trackingData.ad_landing_page = window.location.href;
+        hasUpdates = true;
+      }
+
+      if (!trackingData.referrer_url && document.referrer) {
+        trackingData.referrer_url = document.referrer;
+        hasUpdates = true;
+      }
+
+      if (hasUpdates) {
+        var expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + config.trackingTTL);
+        trackingData.expiry = expiryDate.toISOString();
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(trackingData));
+      }
+    } catch (e) {
+      console.warn('[RAC] Failed to capture tracking params:', e && e.message ? e.message : e);
+    }
+  }
+
+  function loadTrackingData() {
+    try {
+      var stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) return null;
+
+      var data = JSON.parse(stored);
+      if (data && data.expiry) {
+        var expiry = new Date(data.expiry);
+        if (expiry < new Date()) {
+          localStorage.removeItem(STORAGE_KEY);
+          return null;
+        }
+      }
+
+      if (data && data.expiry) {
+        delete data.expiry;
+      }
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function appendTrackingData(data) {
+    var trackingData = loadTrackingData();
+    if (!trackingData) return data;
+
+    if (data instanceof FormData) {
+      Object.keys(trackingData).forEach(function (key) {
+        if (!data.has(key)) {
+          data.append(key, trackingData[key]);
+        }
+      });
+    } else {
+      Object.keys(trackingData).forEach(function (key) {
+        if (!(key in data)) {
+          data[key] = trackingData[key];
+        }
+      });
+    }
+
+    return data;
+  }
+
   /**
    * Submit form data to the webhook endpoint.
    * @param {Object|FormData} data - Key-value pairs or FormData object
@@ -57,6 +148,8 @@
     options = options || {};
     var url = options.endpoint || config.endpoint;
     var apiKey = options.apiKey || config.apiKey;
+
+    data = appendTrackingData(data);
 
     var body;
     var headers = {
@@ -173,8 +266,14 @@
   // Expose public API
   window.RACFormCapture = {
     submit: submit,
-    refresh: attachFormListeners
+    refresh: attachFormListeners,
+    getTrackingData: loadTrackingData,
+    clearTrackingData: function () {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   };
+
+  captureTrackingParams();
 
   // Auto-attach when DOM is ready
   if (document.readyState === 'loading') {

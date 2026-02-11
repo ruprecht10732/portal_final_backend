@@ -49,21 +49,29 @@ const (
 
 // Request DTOs
 type CreateLeadRequest struct {
-	FirstName    string       `json:"firstName" validate:"required,min=1,max=100"`
-	LastName     string       `json:"lastName" validate:"required,min=1,max=100"`
-	Phone        string       `json:"phone" validate:"required,min=5,max=20"`
-	Email        string       `json:"email,omitempty" validate:"omitempty,email"`
-	ConsumerRole ConsumerRole `json:"consumerRole" validate:"required,oneof=Owner Tenant Landlord"`
-	Street       string       `json:"street" validate:"required,min=1,max=200"`
-	HouseNumber  string       `json:"houseNumber" validate:"required,min=1,max=20"`
-	ZipCode      string       `json:"zipCode" validate:"required,min=1,max=20"`
-	City         string       `json:"city" validate:"required,min=1,max=100"`
-	Latitude     *float64     `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
-	Longitude    *float64     `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
-	ServiceType  ServiceType  `json:"serviceType" validate:"required,min=1,max=100"`
-	AssigneeID   OptionalUUID `json:"assigneeId,omitempty" validate:"-"`
-	ConsumerNote string       `json:"consumerNote,omitempty" validate:"max=2000"`
-	Source       string       `json:"source,omitempty" validate:"max=50"`
+	FirstName     string       `json:"firstName" validate:"required,min=1,max=100"`
+	LastName      string       `json:"lastName" validate:"required,min=1,max=100"`
+	Phone         string       `json:"phone" validate:"required,min=5,max=20"`
+	Email         string       `json:"email,omitempty" validate:"omitempty,email"`
+	ConsumerRole  ConsumerRole `json:"consumerRole" validate:"required,oneof=Owner Tenant Landlord"`
+	Street        string       `json:"street" validate:"required,min=1,max=200"`
+	HouseNumber   string       `json:"houseNumber" validate:"required,min=1,max=20"`
+	ZipCode       string       `json:"zipCode" validate:"required,min=1,max=20"`
+	City          string       `json:"city" validate:"required,min=1,max=100"`
+	Latitude      *float64     `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
+	Longitude     *float64     `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
+	ServiceType   ServiceType  `json:"serviceType" validate:"required,min=1,max=100"`
+	AssigneeID    OptionalUUID `json:"assigneeId,omitempty" validate:"-"`
+	ConsumerNote  string       `json:"consumerNote,omitempty" validate:"max=2000"`
+	Source        string       `json:"source,omitempty" validate:"max=50"`
+	GCLID         string       `json:"gclid,omitempty" validate:"max=255"`
+	UTMSource     string       `json:"utmSource,omitempty" validate:"max=255"`
+	UTMMedium     string       `json:"utmMedium,omitempty" validate:"max=255"`
+	UTMCampaign   string       `json:"utmCampaign,omitempty" validate:"max=255"`
+	UTMContent    string       `json:"utmContent,omitempty" validate:"max=255"`
+	UTMTerm       string       `json:"utmTerm,omitempty" validate:"max=255"`
+	AdLandingPage string       `json:"adLandingPage,omitempty" validate:"max=2048"`
+	ReferrerURL   string       `json:"referrerUrl,omitempty" validate:"max=2048"`
 }
 
 type UpdateLeadRequest struct {

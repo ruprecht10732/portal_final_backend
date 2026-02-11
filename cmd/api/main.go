@@ -17,6 +17,7 @@ import (
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/energylabel"
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/exports"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/router"
 	"portal_final_backend/internal/identity"
@@ -261,6 +262,9 @@ func main() {
 	// Webhook module for external form capture
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
 
+	// Exports module for Google Ads conversions
+	exportsModule := exports.NewModule(pool, val)
+
 	// ========================================================================
 	// HTTP Layer
 	// ========================================================================
@@ -281,6 +285,7 @@ func main() {
 			partnersModule,
 			quotesModule,
 			webhookModule,
+			exportsModule,
 		},
 	}
 

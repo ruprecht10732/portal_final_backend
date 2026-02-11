@@ -7,16 +7,24 @@ import (
 
 // ExtractedFields holds the fields extracted from raw form data via best-effort pattern matching.
 type ExtractedFields struct {
-	FirstName   string
-	LastName    string
-	Email       string
-	Phone       string
-	Street      string
-	HouseNumber string
-	ZipCode     string
-	City        string
-	Message     string
-	ServiceType string // Matched against known service type slugs/keywords
+	FirstName     string
+	LastName      string
+	Email         string
+	Phone         string
+	Street        string
+	HouseNumber   string
+	ZipCode       string
+	City          string
+	Message       string
+	ServiceType   string // Matched against known service type slugs/keywords
+	GCLID         string
+	UTMSource     string
+	UTMMedium     string
+	UTMCampaign   string
+	UTMContent    string
+	UTMTerm       string
+	AdLandingPage string
+	ReferrerURL   string
 }
 
 // IsIncomplete returns true if minimum required fields (name + at least one contact method) are missing.
@@ -37,43 +45,7 @@ func ExtractFields(data map[string]string) ExtractedFields {
 			continue
 		}
 		k := strings.ToLower(strings.TrimSpace(key))
-
-		switch {
-		case matchesAny(k, firstNamePatterns):
-			result.FirstName = value
-		case matchesAny(k, lastNamePatterns):
-			result.LastName = value
-		case matchesAny(k, fullNamePatterns):
-			parts := strings.SplitN(value, " ", 2)
-			result.FirstName = parts[0]
-			if len(parts) > 1 {
-				result.LastName = parts[1]
-			}
-		case matchesAny(k, emailPatterns):
-			if emailRegex.MatchString(value) {
-				result.Email = value
-			}
-		case matchesAny(k, phonePatterns):
-			result.Phone = normalizePhone(value)
-		case matchesAny(k, streetPatterns):
-			result.Street = value
-		case matchesAny(k, houseNumberPatterns):
-			result.HouseNumber = value
-		case matchesAny(k, zipCodePatterns):
-			result.ZipCode = normalizeZipCode(value)
-		case matchesAny(k, cityPatterns):
-			result.City = value
-		case matchesAny(k, messagePatterns):
-			result.Message = value
-		case matchesAny(k, addressPatterns):
-			// Full address: try to parse Dutch-style "Street HouseNumber" or "Street HouseNumber, ZipCode City"
-			parseFullAddress(value, &result)
-		case matchesAny(k, serviceTypePatterns):
-			// Try to map the value to a known service type slug
-			if st := matchServiceType(value); st != "" {
-				result.ServiceType = st
-			}
-		}
+		applyExtractedField(&result, k, value)
 	}
 
 	// If we got a full name but no separate first/last, and first name looks like "first last"
@@ -84,6 +56,59 @@ func ExtractFields(data map[string]string) ExtractedFields {
 	}
 
 	return result
+}
+
+func applyExtractedField(result *ExtractedFields, key, value string) {
+	switch {
+	case matchesAny(key, firstNamePatterns):
+		result.FirstName = value
+	case matchesAny(key, lastNamePatterns):
+		result.LastName = value
+	case matchesAny(key, fullNamePatterns):
+		parts := strings.SplitN(value, " ", 2)
+		result.FirstName = parts[0]
+		if len(parts) > 1 {
+			result.LastName = parts[1]
+		}
+	case matchesAny(key, emailPatterns):
+		if emailRegex.MatchString(value) {
+			result.Email = value
+		}
+	case matchesAny(key, phonePatterns):
+		result.Phone = normalizePhone(value)
+	case matchesAny(key, streetPatterns):
+		result.Street = value
+	case matchesAny(key, houseNumberPatterns):
+		result.HouseNumber = value
+	case matchesAny(key, zipCodePatterns):
+		result.ZipCode = normalizeZipCode(value)
+	case matchesAny(key, cityPatterns):
+		result.City = value
+	case matchesAny(key, messagePatterns):
+		result.Message = value
+	case matchesAny(key, addressPatterns):
+		parseFullAddress(value, result)
+	case matchesAny(key, serviceTypePatterns):
+		if st := matchServiceType(value); st != "" {
+			result.ServiceType = st
+		}
+	case matchesAny(key, gclidPatterns):
+		result.GCLID = value
+	case matchesAny(key, utmSourcePatterns):
+		result.UTMSource = value
+	case matchesAny(key, utmMediumPatterns):
+		result.UTMMedium = value
+	case matchesAny(key, utmCampaignPatterns):
+		result.UTMCampaign = value
+	case matchesAny(key, utmContentPatterns):
+		result.UTMContent = value
+	case matchesAny(key, utmTermPatterns):
+		result.UTMTerm = value
+	case matchesAny(key, landingPagePatterns):
+		result.AdLandingPage = value
+	case matchesAny(key, referrerPatterns):
+		result.ReferrerURL = value
+	}
 }
 
 // Field label patterns (Dutch + English)
@@ -100,6 +125,14 @@ var (
 	messagePatterns     = []string{"message", "bericht", "opmerking", "opmerkingen", "comment", "comments", "notes", "description", "toelichting", "vraag", "question"}
 	addressPatterns     = []string{"address", "adres", "full_address", "fulladdress"}
 	serviceTypePatterns = []string{"service", "dienst", "project_type", "projecttype", "service_type", "servicetype", "type", "werkzaamheden", "soort", "category", "categorie", "product"}
+	gclidPatterns       = []string{"gclid", "google_click_id", "googleclickid"}
+	utmSourcePatterns   = []string{"utm_source", "utmsource"}
+	utmMediumPatterns   = []string{"utm_medium", "utmmedium"}
+	utmCampaignPatterns = []string{"utm_campaign", "utmcampaign"}
+	utmContentPatterns  = []string{"utm_content", "utmcontent"}
+	utmTermPatterns     = []string{"utm_term", "utmterm"}
+	landingPagePatterns = []string{"ad_landing_page", "landing_page", "landingpage"}
+	referrerPatterns    = []string{"referrer", "referrer_url", "referrerurl"}
 )
 
 var (
@@ -153,41 +186,55 @@ func normalizeZipCode(value string) string {
 }
 
 func parseFullAddress(value string, result *ExtractedFields) {
-	// Try "Street HouseNumber, ZipCode City" or "Street HouseNumber"
 	parts := strings.SplitN(value, ",", 2)
 	streetPart := strings.TrimSpace(parts[0])
 
-	// Extract house number from street part (last word if it starts with a digit)
+	parseStreetPart(streetPart, result)
+	if len(parts) == 2 {
+		parseZipCityPart(strings.TrimSpace(parts[1]), result)
+	}
+}
+
+func parseStreetPart(streetPart string, result *ExtractedFields) {
 	words := strings.Fields(streetPart)
-	if len(words) >= 2 {
-		last := words[len(words)-1]
-		if len(last) > 0 && last[0] >= '0' && last[0] <= '9' {
-			if result.Street == "" {
-				result.Street = strings.Join(words[:len(words)-1], " ")
-			}
-			if result.HouseNumber == "" {
-				result.HouseNumber = last
-			}
-		} else if result.Street == "" {
+	if len(words) < 2 {
+		if result.Street == "" {
 			result.Street = streetPart
 		}
+		return
 	}
 
-	if len(parts) == 2 {
-		rest := strings.TrimSpace(parts[1])
-		// Try to extract zip code and city
-		m := dutchZipRe.FindStringSubmatchIndex(rest)
-		if m != nil {
-			if result.ZipCode == "" {
-				result.ZipCode = normalizeZipCode(rest[m[0]:m[1]])
-			}
-			after := strings.TrimSpace(rest[m[1]:])
-			if result.City == "" && after != "" {
-				result.City = after
-			}
-		} else if result.City == "" {
-			result.City = rest
+	last := words[len(words)-1]
+	if len(last) > 0 && last[0] >= '0' && last[0] <= '9' {
+		if result.Street == "" {
+			result.Street = strings.Join(words[:len(words)-1], " ")
 		}
+		if result.HouseNumber == "" {
+			result.HouseNumber = last
+		}
+		return
+	}
+
+	if result.Street == "" {
+		result.Street = streetPart
+	}
+}
+
+func parseZipCityPart(value string, result *ExtractedFields) {
+	m := dutchZipRe.FindStringSubmatchIndex(value)
+	if m != nil {
+		if result.ZipCode == "" {
+			result.ZipCode = normalizeZipCode(value[m[0]:m[1]])
+		}
+		after := strings.TrimSpace(value[m[1]:])
+		if result.City == "" && after != "" {
+			result.City = after
+		}
+		return
+	}
+
+	if result.City == "" {
+		result.City = value
 	}
 }
 

@@ -136,6 +136,14 @@ type CreateLeadParams struct {
 	Longitude          *float64
 	AssignedAgentID    *uuid.UUID
 	Source             *string
+	GCLID              *string
+	UTMSource          *string
+	UTMMedium          *string
+	UTMCampaign        *string
+	UTMContent         *string
+	UTMTerm            *string
+	AdLandingPage      *string
+	ReferrerURL        *string
 }
 
 func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead, error) {
@@ -144,8 +152,9 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		INSERT INTO RAC_leads (
 			organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			assigned_agent_id, source,
+			gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
@@ -162,6 +171,7 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		params.OrganizationID, params.ConsumerFirstName, params.ConsumerLastName, params.ConsumerPhone, params.ConsumerEmail, params.ConsumerRole,
 		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity, params.Latitude, params.Longitude,
 		params.AssignedAgentID, params.Source,
+		params.GCLID, params.UTMSource, params.UTMMedium, params.UTMCampaign, params.UTMContent, params.UTMTerm, params.AdLandingPage, params.ReferrerURL,
 	).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,

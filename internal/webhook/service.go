@@ -68,60 +68,12 @@ func NewService(repo *Repository, leadCreator LeadCreator, storageSvc storage.St
 
 // ProcessFormSubmission handles an inbound form submission: extract fields, create lead, upload files, store raw data.
 func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission, orgID uuid.UUID) (FormSubmissionResponse, error) {
-	// 1. Extract recognized fields from the raw form data
 	extracted := ExtractFields(sub.Fields)
 	isIncomplete := extracted.IsIncomplete()
 
-	// 2. Build the lead creation request with best-effort values
-	firstName := extracted.FirstName
-	if firstName == "" {
-		firstName = "Onbekend"
-	}
-	lastName := extracted.LastName
-	if lastName == "" {
-		lastName = "Onbekend"
-	}
+	createReq := buildCreateLeadRequest(extracted, sub.SourceDomain)
+	applyLeadPlaceholders(&createReq)
 
-	// Determine service type: use extracted value or fall back to "Algemeen"
-	serviceType := extracted.ServiceType
-	if serviceType == "" {
-		serviceType = "Algemeen"
-	}
-
-	createReq := transport.CreateLeadRequest{
-		FirstName:    firstName,
-		LastName:     lastName,
-		Phone:        extracted.Phone,
-		Email:        extracted.Email,
-		ConsumerRole: transport.ConsumerRoleOwner, // default
-		Street:       extracted.Street,
-		HouseNumber:  extracted.HouseNumber,
-		ZipCode:      extracted.ZipCode,
-		City:         extracted.City,
-		ServiceType:  transport.ServiceType(serviceType),
-		ConsumerNote: extracted.Message,
-		Source:       "webhook:" + sub.SourceDomain,
-	}
-
-	// If phone is empty, set a placeholder so validation doesn't fail
-	if createReq.Phone == "" {
-		createReq.Phone = "+31000000000"
-	}
-	// If address fields are empty, set placeholders
-	if createReq.Street == "" {
-		createReq.Street = "Onbekend"
-	}
-	if createReq.HouseNumber == "" {
-		createReq.HouseNumber = "-"
-	}
-	if createReq.ZipCode == "" {
-		createReq.ZipCode = "0000AA"
-	}
-	if createReq.City == "" {
-		createReq.City = "Onbekend"
-	}
-
-	// 3. Create the lead via the existing lead management service
 	leadResp, err := s.leadCreator.Create(ctx, createReq, orgID)
 	if err != nil {
 		s.log.Error("webhook: failed to create lead from form submission", "error", err, "domain", sub.SourceDomain)
@@ -150,40 +102,8 @@ func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission,
 		IsIncomplete: isIncomplete,
 	})
 
-	// 7. Build extracted fields map for response
-	extractedMap := map[string]string{}
-	if extracted.FirstName != "" {
-		extractedMap["firstName"] = extracted.FirstName
-	}
-	if extracted.LastName != "" {
-		extractedMap["lastName"] = extracted.LastName
-	}
-	if extracted.Email != "" {
-		extractedMap["email"] = extracted.Email
-	}
-	if extracted.Phone != "" {
-		extractedMap["phone"] = extracted.Phone
-	}
-	if extracted.Street != "" {
-		extractedMap["street"] = extracted.Street
-	}
-	if extracted.HouseNumber != "" {
-		extractedMap["houseNumber"] = extracted.HouseNumber
-	}
-	if extracted.ZipCode != "" {
-		extractedMap["zipCode"] = extracted.ZipCode
-	}
-	if extracted.City != "" {
-		extractedMap["city"] = extracted.City
-	}
-	if extracted.ServiceType != "" {
-		extractedMap["serviceType"] = extracted.ServiceType
-	}
-
-	msg := "Lead created successfully"
-	if isIncomplete {
-		msg = "Lead created with incomplete data — manual review recommended"
-	}
+	extractedMap := buildExtractedMap(extracted)
+	msg := buildWebhookMessage(isIncomplete)
 
 	return FormSubmissionResponse{
 		LeadID:       leadResp.ID,
@@ -191,6 +111,102 @@ func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission,
 		Extracted:    extractedMap,
 		Message:      msg,
 	}, nil
+}
+
+func buildCreateLeadRequest(extracted ExtractedFields, sourceDomain string) transport.CreateLeadRequest {
+	return transport.CreateLeadRequest{
+		FirstName:     normalizeName(extracted.FirstName),
+		LastName:      normalizeName(extracted.LastName),
+		Phone:         extracted.Phone,
+		Email:         extracted.Email,
+		ConsumerRole:  transport.ConsumerRoleOwner,
+		Street:        extracted.Street,
+		HouseNumber:   extracted.HouseNumber,
+		ZipCode:       extracted.ZipCode,
+		City:          extracted.City,
+		ServiceType:   transport.ServiceType(resolveServiceType(extracted.ServiceType)),
+		ConsumerNote:  extracted.Message,
+		Source:        "webhook:" + sourceDomain,
+		GCLID:         extracted.GCLID,
+		UTMSource:     extracted.UTMSource,
+		UTMMedium:     extracted.UTMMedium,
+		UTMCampaign:   extracted.UTMCampaign,
+		UTMContent:    extracted.UTMContent,
+		UTMTerm:       extracted.UTMTerm,
+		AdLandingPage: extracted.AdLandingPage,
+		ReferrerURL:   extracted.ReferrerURL,
+	}
+}
+
+func normalizeName(value string) string {
+	if value != "" {
+		return value
+	}
+	return "Onbekend"
+}
+
+func resolveServiceType(value string) string {
+	if value != "" {
+		return value
+	}
+	return "Algemeen"
+}
+
+func applyLeadPlaceholders(createReq *transport.CreateLeadRequest) {
+	if createReq.Phone == "" {
+		createReq.Phone = "+31000000000"
+	}
+	if createReq.Street == "" {
+		createReq.Street = "Onbekend"
+	}
+	if createReq.HouseNumber == "" {
+		createReq.HouseNumber = "-"
+	}
+	if createReq.ZipCode == "" {
+		createReq.ZipCode = "0000AA"
+	}
+	if createReq.City == "" {
+		createReq.City = "Onbekend"
+	}
+}
+
+func buildExtractedMap(extracted ExtractedFields) map[string]string {
+	result := map[string]string{}
+	if extracted.FirstName != "" {
+		result["firstName"] = extracted.FirstName
+	}
+	if extracted.LastName != "" {
+		result["lastName"] = extracted.LastName
+	}
+	if extracted.Email != "" {
+		result["email"] = extracted.Email
+	}
+	if extracted.Phone != "" {
+		result["phone"] = extracted.Phone
+	}
+	if extracted.Street != "" {
+		result["street"] = extracted.Street
+	}
+	if extracted.HouseNumber != "" {
+		result["houseNumber"] = extracted.HouseNumber
+	}
+	if extracted.ZipCode != "" {
+		result["zipCode"] = extracted.ZipCode
+	}
+	if extracted.City != "" {
+		result["city"] = extracted.City
+	}
+	if extracted.ServiceType != "" {
+		result["serviceType"] = extracted.ServiceType
+	}
+	return result
+}
+
+func buildWebhookMessage(isIncomplete bool) string {
+	if isIncomplete {
+		return "Lead created with incomplete data — manual review recommended"
+	}
+	return "Lead created successfully"
 }
 
 func (s *Service) uploadFiles(ctx context.Context, leadID, serviceID, orgID uuid.UUID, files []FormFile) {
