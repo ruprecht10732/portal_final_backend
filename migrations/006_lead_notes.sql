@@ -1,3 +1,4 @@
+-- +goose Up
 -- Lead notes for internal comments
 
 CREATE TABLE IF NOT EXISTS RAC_lead_notes (

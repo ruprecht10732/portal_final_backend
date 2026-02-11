@@ -92,14 +92,29 @@ type CreateProductParams struct {
 	Title          string      `json:"title"`
 	Reference      string      `json:"reference"`
 	Description    pgtype.Text `json:"description"`
-	PriceCents     int32       `json:"price_cents"`
+	PriceCents     int64       `json:"price_cents"`
 	Type           string      `json:"type"`
 	PeriodCount    pgtype.Int4 `json:"period_count"`
 	PeriodUnit     pgtype.Text `json:"period_unit"`
 }
 
+type CreateProductRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	Title          string             `json:"title"`
+	Reference      string             `json:"reference"`
+	Description    pgtype.Text        `json:"description"`
+	PriceCents     int64              `json:"price_cents"`
+	Type           string             `json:"type"`
+	PeriodCount    pgtype.Int4        `json:"period_count"`
+	PeriodUnit     pgtype.Text        `json:"period_unit"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 // Products
-func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (RacCatalogProduct, error) {
+func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (CreateProductRow, error) {
 	row := q.db.QueryRow(ctx, createProduct,
 		arg.OrganizationID,
 		arg.VatRateID,
@@ -111,7 +126,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (R
 		arg.PeriodCount,
 		arg.PeriodUnit,
 	)
-	var i RacCatalogProduct
+	var i CreateProductRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrganizationID,
@@ -199,9 +214,24 @@ type GetProductByIDParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 }
 
-func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) (RacCatalogProduct, error) {
+type GetProductByIDRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	Title          string             `json:"title"`
+	Reference      string             `json:"reference"`
+	Description    pgtype.Text        `json:"description"`
+	PriceCents     int64              `json:"price_cents"`
+	Type           string             `json:"type"`
+	PeriodCount    pgtype.Int4        `json:"period_count"`
+	PeriodUnit     pgtype.Text        `json:"period_unit"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) (GetProductByIDRow, error) {
 	row := q.db.QueryRow(ctx, getProductByID, arg.ID, arg.OrganizationID)
-	var i RacCatalogProduct
+	var i GetProductByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrganizationID,
@@ -229,15 +259,30 @@ type GetProductsByIDsParams struct {
 	Column2        []pgtype.UUID `json:"column_2"`
 }
 
-func (q *Queries) GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]RacCatalogProduct, error) {
+type GetProductsByIDsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	Title          string             `json:"title"`
+	Reference      string             `json:"reference"`
+	Description    pgtype.Text        `json:"description"`
+	PriceCents     int64              `json:"price_cents"`
+	Type           string             `json:"type"`
+	PeriodCount    pgtype.Int4        `json:"period_count"`
+	PeriodUnit     pgtype.Text        `json:"period_unit"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]GetProductsByIDsRow, error) {
 	rows, err := q.db.Query(ctx, getProductsByIDs, arg.OrganizationID, arg.Column2)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RacCatalogProduct
+	var items []GetProductsByIDsRow
 	for rows.Next() {
-		var i RacCatalogProduct
+		var i GetProductsByIDsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrganizationID,
@@ -331,15 +376,30 @@ type ListProductMaterialsParams struct {
 	ProductID      pgtype.UUID `json:"product_id"`
 }
 
-func (q *Queries) ListProductMaterials(ctx context.Context, arg ListProductMaterialsParams) ([]RacCatalogProduct, error) {
+type ListProductMaterialsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	Title          string             `json:"title"`
+	Reference      string             `json:"reference"`
+	Description    pgtype.Text        `json:"description"`
+	PriceCents     int64              `json:"price_cents"`
+	Type           string             `json:"type"`
+	PeriodCount    pgtype.Int4        `json:"period_count"`
+	PeriodUnit     pgtype.Text        `json:"period_unit"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListProductMaterials(ctx context.Context, arg ListProductMaterialsParams) ([]ListProductMaterialsRow, error) {
 	rows, err := q.db.Query(ctx, listProductMaterials, arg.OrganizationID, arg.ProductID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RacCatalogProduct
+	var items []ListProductMaterialsRow
 	for rows.Next() {
-		var i RacCatalogProduct
+		var i ListProductMaterialsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrganizationID,
@@ -383,7 +443,22 @@ type ListProductsParams struct {
 	Offset         int32       `json:"offset"`
 }
 
-func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]RacCatalogProduct, error) {
+type ListProductsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	Title          string             `json:"title"`
+	Reference      string             `json:"reference"`
+	Description    pgtype.Text        `json:"description"`
+	PriceCents     int64              `json:"price_cents"`
+	Type           string             `json:"type"`
+	PeriodCount    pgtype.Int4        `json:"period_count"`
+	PeriodUnit     pgtype.Text        `json:"period_unit"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error) {
 	rows, err := q.db.Query(ctx, listProducts,
 		arg.OrganizationID,
 		arg.Column2,
@@ -396,9 +471,9 @@ func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]R
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RacCatalogProduct
+	var items []ListProductsRow
 	for rows.Next() {
-		var i RacCatalogProduct
+		var i ListProductsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrganizationID,
@@ -509,13 +584,28 @@ type UpdateProductParams struct {
 	Title          string      `json:"title"`
 	Reference      string      `json:"reference"`
 	Description    pgtype.Text `json:"description"`
-	PriceCents     int32       `json:"price_cents"`
+	PriceCents     int64       `json:"price_cents"`
 	Type           string      `json:"type"`
 	PeriodCount    pgtype.Int4 `json:"period_count"`
 	PeriodUnit     pgtype.Text `json:"period_unit"`
 }
 
-func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (RacCatalogProduct, error) {
+type UpdateProductRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	Title          string             `json:"title"`
+	Reference      string             `json:"reference"`
+	Description    pgtype.Text        `json:"description"`
+	PriceCents     int64              `json:"price_cents"`
+	Type           string             `json:"type"`
+	PeriodCount    pgtype.Int4        `json:"period_count"`
+	PeriodUnit     pgtype.Text        `json:"period_unit"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (UpdateProductRow, error) {
 	row := q.db.QueryRow(ctx, updateProduct,
 		arg.ID,
 		arg.OrganizationID,
@@ -528,7 +618,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (R
 		arg.PeriodCount,
 		arg.PeriodUnit,
 	)
-	var i RacCatalogProduct
+	var i UpdateProductRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrganizationID,

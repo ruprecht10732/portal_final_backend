@@ -1,3 +1,4 @@
+-- +goose Up
 -- Lead statuses: New, Attempted_Contact, Scheduled, Surveyed, Bad_Lead, Needs_Rescheduling
 -- Consumer RAC_roles: Owner, Tenant, Landlord
 -- Service types: Windows, Insulation, Solar

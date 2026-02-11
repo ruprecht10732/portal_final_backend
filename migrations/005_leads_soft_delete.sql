@@ -1,3 +1,4 @@
+-- +goose Up
 ALTER TABLE RAC_leads
 ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 

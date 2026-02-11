@@ -5,8 +5,326 @@
 package catalogdb
 
 import (
+	"database/sql/driver"
+	"fmt"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type OfferStatus string
+
+const (
+	OfferStatusPending  OfferStatus = "pending"
+	OfferStatusSent     OfferStatus = "sent"
+	OfferStatusAccepted OfferStatus = "accepted"
+	OfferStatusRejected OfferStatus = "rejected"
+	OfferStatusExpired  OfferStatus = "expired"
+)
+
+func (e *OfferStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = OfferStatus(s)
+	case string:
+		*e = OfferStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for OfferStatus: %T", src)
+	}
+	return nil
+}
+
+type NullOfferStatus struct {
+	OfferStatus OfferStatus `json:"offer_status"`
+	Valid       bool        `json:"valid"` // Valid is true if OfferStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullOfferStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.OfferStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.OfferStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullOfferStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.OfferStatus), nil
+}
+
+type PipelineStage string
+
+const (
+	PipelineStageTriage             PipelineStage = "Triage"
+	PipelineStageNurturing          PipelineStage = "Nurturing"
+	PipelineStageReadyForEstimator  PipelineStage = "Ready_For_Estimator"
+	PipelineStageQuoteSent          PipelineStage = "Quote_Sent"
+	PipelineStageReadyForPartner    PipelineStage = "Ready_For_Partner"
+	PipelineStagePartnerMatching    PipelineStage = "Partner_Matching"
+	PipelineStagePartnerAssigned    PipelineStage = "Partner_Assigned"
+	PipelineStageManualIntervention PipelineStage = "Manual_Intervention"
+	PipelineStageCompleted          PipelineStage = "Completed"
+	PipelineStageLost               PipelineStage = "Lost"
+)
+
+func (e *PipelineStage) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = PipelineStage(s)
+	case string:
+		*e = PipelineStage(s)
+	default:
+		return fmt.Errorf("unsupported scan type for PipelineStage: %T", src)
+	}
+	return nil
+}
+
+type NullPipelineStage struct {
+	PipelineStage PipelineStage `json:"pipeline_stage"`
+	Valid         bool          `json:"valid"` // Valid is true if PipelineStage is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullPipelineStage) Scan(value interface{}) error {
+	if value == nil {
+		ns.PipelineStage, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.PipelineStage.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullPipelineStage) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.PipelineStage), nil
+}
+
+type PricingSource string
+
+const (
+	PricingSourceQuote    PricingSource = "quote"
+	PricingSourceEstimate PricingSource = "estimate"
+)
+
+func (e *PricingSource) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = PricingSource(s)
+	case string:
+		*e = PricingSource(s)
+	default:
+		return fmt.Errorf("unsupported scan type for PricingSource: %T", src)
+	}
+	return nil
+}
+
+type NullPricingSource struct {
+	PricingSource PricingSource `json:"pricing_source"`
+	Valid         bool          `json:"valid"` // Valid is true if PricingSource is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullPricingSource) Scan(value interface{}) error {
+	if value == nil {
+		ns.PricingSource, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.PricingSource.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullPricingSource) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.PricingSource), nil
+}
+
+type QuoteStatus string
+
+const (
+	QuoteStatusDraft    QuoteStatus = "Draft"
+	QuoteStatusSent     QuoteStatus = "Sent"
+	QuoteStatusAccepted QuoteStatus = "Accepted"
+	QuoteStatusRejected QuoteStatus = "Rejected"
+	QuoteStatusExpired  QuoteStatus = "Expired"
+)
+
+func (e *QuoteStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = QuoteStatus(s)
+	case string:
+		*e = QuoteStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for QuoteStatus: %T", src)
+	}
+	return nil
+}
+
+type NullQuoteStatus struct {
+	QuoteStatus QuoteStatus `json:"quote_status"`
+	Valid       bool        `json:"valid"` // Valid is true if QuoteStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullQuoteStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.QuoteStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.QuoteStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullQuoteStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.QuoteStatus), nil
+}
+
+type RacQuoteAttachmentSource string
+
+const (
+	RacQuoteAttachmentSourceCatalog RacQuoteAttachmentSource = "catalog"
+	RacQuoteAttachmentSourceManual  RacQuoteAttachmentSource = "manual"
+)
+
+func (e *RacQuoteAttachmentSource) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RacQuoteAttachmentSource(s)
+	case string:
+		*e = RacQuoteAttachmentSource(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RacQuoteAttachmentSource: %T", src)
+	}
+	return nil
+}
+
+type NullRacQuoteAttachmentSource struct {
+	RacQuoteAttachmentSource RacQuoteAttachmentSource `json:"rac_quote_attachment_source"`
+	Valid                    bool                     `json:"valid"` // Valid is true if RacQuoteAttachmentSource is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRacQuoteAttachmentSource) Scan(value interface{}) error {
+	if value == nil {
+		ns.RacQuoteAttachmentSource, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RacQuoteAttachmentSource.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRacQuoteAttachmentSource) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RacQuoteAttachmentSource), nil
+}
+
+type LeadTimelineEvent struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorName      string             `json:"actor_name"`
+	EventType      string             `json:"event_type"`
+	Title          string             `json:"title"`
+	Summary        pgtype.Text        `json:"summary"`
+	Metadata       []byte             `json:"metadata"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type PartnerInvite struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+	PartnerID      pgtype.UUID        `json:"partner_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Status         string             `json:"status"`
+	InvitedAt      pgtype.Timestamptz `json:"invited_at"`
+	RespondedAt    pgtype.Timestamptz `json:"responded_at"`
+	DistanceKm     pgtype.Numeric     `json:"distance_km"`
+	InviteMetadata []byte             `json:"invite_metadata"`
+}
+
+type RacAppointment struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+	Type           string             `json:"type"`
+	Title          string             `json:"title"`
+	Description    pgtype.Text        `json:"description"`
+	Location       pgtype.Text        `json:"location"`
+	StartTime      pgtype.Timestamptz `json:"start_time"`
+	EndTime        pgtype.Timestamptz `json:"end_time"`
+	Status         string             `json:"status"`
+	AllDay         bool               `json:"all_day"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	MeetingLink    pgtype.Text        `json:"meeting_link"`
+}
+
+type RacAppointmentAttachment struct {
+	ID             pgtype.UUID        `json:"id"`
+	AppointmentID  pgtype.UUID        `json:"appointment_id"`
+	FileKey        string             `json:"file_key"`
+	FileName       string             `json:"file_name"`
+	ContentType    pgtype.Text        `json:"content_type"`
+	SizeBytes      pgtype.Int8        `json:"size_bytes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+}
+
+type RacAppointmentAvailabilityOverride struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Date           pgtype.Date        `json:"date"`
+	IsAvailable    bool               `json:"is_available"`
+	StartTime      pgtype.Time        `json:"start_time"`
+	EndTime        pgtype.Time        `json:"end_time"`
+	Timezone       string             `json:"timezone"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+}
+
+type RacAppointmentAvailabilityRule struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Weekday        int16              `json:"weekday"`
+	StartTime      pgtype.Time        `json:"start_time"`
+	EndTime        pgtype.Time        `json:"end_time"`
+	Timezone       string             `json:"timezone"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+}
+
+type RacAppointmentVisitReport struct {
+	AppointmentID    pgtype.UUID        `json:"appointment_id"`
+	Measurements     pgtype.Text        `json:"measurements"`
+	AccessDifficulty pgtype.Text        `json:"access_difficulty"`
+	Notes            pgtype.Text        `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+}
 
 type RacCatalogProduct struct {
 	ID             pgtype.UUID        `json:"id"`
@@ -15,19 +333,40 @@ type RacCatalogProduct struct {
 	Title          string             `json:"title"`
 	Reference      string             `json:"reference"`
 	Description    pgtype.Text        `json:"description"`
-	PriceCents     int32              `json:"price_cents"`
+	PriceCents     int64              `json:"price_cents"`
 	Type           string             `json:"type"`
 	PeriodCount    pgtype.Int4        `json:"period_count"`
 	PeriodUnit     pgtype.Text        `json:"period_unit"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text        `json:"unit_label"`
+	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
+}
+
+// Stores metadata for catalog product assets (images, documents, and terms URLs)
+type RacCatalogProductAsset struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ProductID      pgtype.UUID `json:"product_id"`
+	AssetType      string      `json:"asset_type"`
+	// The object key in MinIO bucket (path including org/product prefix)
+	FileKey pgtype.Text `json:"file_key"`
+	// Original filename or label
+	FileName pgtype.Text `json:"file_name"`
+	// MIME type of the file
+	ContentType pgtype.Text `json:"content_type"`
+	// File size in bytes
+	SizeBytes pgtype.Int8 `json:"size_bytes"`
+	// External URL for terms and conditions
+	Url       pgtype.Text        `json:"url"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type RacCatalogProductMaterial struct {
-	OrganizationID pgtype.UUID        `json:"organization_id"`
-	ProductID      pgtype.UUID        `json:"product_id"`
-	MaterialID     pgtype.UUID        `json:"material_id"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ProductID      pgtype.UUID `json:"product_id"`
+	MaterialID     pgtype.UUID `json:"material_id"`
 }
 
 type RacCatalogVatRate struct {
@@ -35,6 +374,628 @@ type RacCatalogVatRate struct {
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	Name           string             `json:"name"`
 	RateBps        int32              `json:"rate_bps"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacExportApiKey struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Name           string             `json:"name"`
+	KeyHash        string             `json:"key_hash"`
+	KeyPrefix      string             `json:"key_prefix"`
+	IsActive       bool               `json:"is_active"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+}
+
+type RacFeedComment struct {
+	ID          pgtype.UUID        `json:"id"`
+	EventID     string             `json:"event_id"`
+	EventSource string             `json:"event_source"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	OrgID       pgtype.UUID        `json:"org_id"`
+	Body        string             `json:"body"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacFeedCommentMention struct {
+	ID              pgtype.UUID        `json:"id"`
+	CommentID       pgtype.UUID        `json:"comment_id"`
+	MentionedUserID pgtype.UUID        `json:"mentioned_user_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacFeedPinnedAlert struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	AlertType      string             `json:"alert_type"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+	DismissedBy    pgtype.UUID        `json:"dismissed_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacFeedReaction struct {
+	ID           pgtype.UUID        `json:"id"`
+	EventID      string             `json:"event_id"`
+	EventSource  string             `json:"event_source"`
+	ReactionType string             `json:"reaction_type"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacFeedReadState struct {
+	UserID           pgtype.UUID        `json:"user_id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	LastFeedViewedAt pgtype.Timestamptz `json:"last_feed_viewed_at"`
+	FeedMode         string             `json:"feed_mode"`
+}
+
+type RacGoogleAdsExport struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	LeadID          pgtype.UUID        `json:"lead_id"`
+	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
+	ConversionName  string             `json:"conversion_name"`
+	ConversionTime  pgtype.Timestamptz `json:"conversion_time"`
+	ConversionValue pgtype.Numeric     `json:"conversion_value"`
+	Gclid           string             `json:"gclid"`
+	OrderID         string             `json:"order_id"`
+	ExportedAt      pgtype.Timestamptz `json:"exported_at"`
+}
+
+type RacGoogleLeadID struct {
+	LeadID         string             `json:"lead_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	LeadUuid       pgtype.UUID        `json:"lead_uuid"`
+	IsTest         bool               `json:"is_test"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacGoogleWebhookConfig struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	Name             string             `json:"name"`
+	GoogleKeyHash    string             `json:"google_key_hash"`
+	GoogleKeyPrefix  string             `json:"google_key_prefix"`
+	CampaignMappings []byte             `json:"campaign_mappings"`
+	IsActive         bool               `json:"is_active"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacLead struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ConsumerFirstName   string             `json:"consumer_first_name"`
+	ConsumerLastName    string             `json:"consumer_last_name"`
+	ConsumerPhone       string             `json:"consumer_phone"`
+	ConsumerEmail       pgtype.Text        `json:"consumer_email"`
+	ConsumerRole        string             `json:"consumer_role"`
+	AddressStreet       string             `json:"address_street"`
+	AddressHouseNumber  string             `json:"address_house_number"`
+	AddressZipCode      string             `json:"address_zip_code"`
+	AddressCity         string             `json:"address_city"`
+	AssignedAgentID     pgtype.UUID        `json:"assigned_agent_id"`
+	ViewedByID          pgtype.UUID        `json:"viewed_by_id"`
+	ViewedAt            pgtype.Timestamptz `json:"viewed_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt           pgtype.Timestamptz `json:"deleted_at"`
+	Source              pgtype.Text        `json:"source"`
+	ProjectedValueCents int64              `json:"projected_value_cents"`
+	Latitude            pgtype.Float8      `json:"latitude"`
+	Longitude           pgtype.Float8      `json:"longitude"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	// Energy label class from EP-Online (A+++, A++, A+, A, B, C, D, E, F, G)
+	EnergyClass pgtype.Text `json:"energy_class"`
+	// Energy index value from EP-Online
+	EnergyIndex pgtype.Float8 `json:"energy_index"`
+	// Construction year from EP-Online
+	EnergyBouwjaar pgtype.Int4 `json:"energy_bouwjaar"`
+	// Building type from EP-Online (e.g., Vrijstaande woning)
+	EnergyGebouwtype pgtype.Text `json:"energy_gebouwtype"`
+	// Energy label validity end date
+	EnergyLabelValidUntil pgtype.Timestamptz `json:"energy_label_valid_until"`
+	// When the energy label was registered at RVO
+	EnergyLabelRegisteredAt pgtype.Timestamptz `json:"energy_label_registered_at"`
+	// Primary fossil energy use in kWh/m2·jaar
+	EnergyPrimairFossiel pgtype.Float8 `json:"energy_primair_fossiel"`
+	// BAG adresseerbaar object ID for future lookups
+	EnergyBagVerblijfsobjectID pgtype.Text `json:"energy_bag_verblijfsobject_id"`
+	// When we last fetched this energy label data
+	EnergyLabelFetchedAt pgtype.Timestamptz `json:"energy_label_fetched_at"`
+	// Source for lead enrichment (pc6 or buurt)
+	LeadEnrichmentSource pgtype.Text `json:"lead_enrichment_source"`
+	// Normalized PC6 postcode used for enrichment
+	LeadEnrichmentPostcode6 pgtype.Text `json:"lead_enrichment_postcode6"`
+	// CBS buurtcode used for fallback enrichment
+	LeadEnrichmentBuurtcode pgtype.Text `json:"lead_enrichment_buurtcode"`
+	// CBS gemiddelde aardgasverbruik (PC6)
+	LeadEnrichmentGemAardgasverbruik pgtype.Float8 `json:"lead_enrichment_gem_aardgasverbruik"`
+	// CBS huishouden grootte (PC6)
+	LeadEnrichmentHuishoudenGrootte pgtype.Float8 `json:"lead_enrichment_huishouden_grootte"`
+	// CBS percentage koopwoningen (buurt fallback)
+	LeadEnrichmentKoopwoningenPct pgtype.Float8 `json:"lead_enrichment_koopwoningen_pct"`
+	// CBS percentage woningen bouwjaar vanaf 2000 (buurt fallback)
+	LeadEnrichmentBouwjaarVanaf2000Pct pgtype.Float8 `json:"lead_enrichment_bouwjaar_vanaf2000_pct"`
+	// Mediaan vermogen van particuliere huishoudens (× 1000 EUR) - from CBS OData API by buurtcode
+	LeadEnrichmentMediaanVermogenX1000 pgtype.Float8 `json:"lead_enrichment_mediaan_vermogen_x1000"`
+	// CBS percentage huishoudens met kinderen (buurt fallback)
+	LeadEnrichmentHuishoudensMetKinderenPct pgtype.Float8 `json:"lead_enrichment_huishoudens_met_kinderen_pct"`
+	// Confidence multiplier for enrichment quality (0-1)
+	LeadEnrichmentConfidence pgtype.Float8 `json:"lead_enrichment_confidence"`
+	// When we last fetched lead enrichment data
+	LeadEnrichmentFetchedAt pgtype.Timestamptz `json:"lead_enrichment_fetched_at"`
+	// Final lead score (0-100)
+	LeadScore pgtype.Int4 `json:"lead_score"`
+	// Deterministic pre-AI lead score (0-100)
+	LeadScorePreAi pgtype.Int4 `json:"lead_score_pre_ai"`
+	// JSON factors used to compute the lead score
+	LeadScoreFactors []byte `json:"lead_score_factors"`
+	// Scoring model version identifier
+	LeadScoreVersion pgtype.Text `json:"lead_score_version"`
+	// When we last calculated lead score
+	LeadScoreUpdatedAt pgtype.Timestamptz `json:"lead_score_updated_at"`
+	// Numeric postcode used for PC4 enrichment
+	LeadEnrichmentPostcode4 pgtype.Text `json:"lead_enrichment_postcode4"`
+	// Year of CBS statistics data (e.g. 2022, 2023, 2024)
+	LeadEnrichmentDataYear pgtype.Int4 `json:"lead_enrichment_data_year"`
+	// Average electricity usage in kWh per year (PC4)
+	LeadEnrichmentGemElektriciteitsverbruik pgtype.Float8 `json:"lead_enrichment_gem_elektriciteitsverbruik"`
+	// Average WOZ property value in thousands of euros (PC4)
+	LeadEnrichmentWozWaarde pgtype.Float8 `json:"lead_enrichment_woz_waarde"`
+	// Average household income in thousands of euros (PC4)
+	LeadEnrichmentGemInkomen pgtype.Float8 `json:"lead_enrichment_gem_inkomen"`
+	// Percentage of households with high income (PC4)
+	LeadEnrichmentPctHoogInkomen pgtype.Float8 `json:"lead_enrichment_pct_hoog_inkomen"`
+	// Percentage of households with low income (PC4)
+	LeadEnrichmentPctLaagInkomen pgtype.Float8 `json:"lead_enrichment_pct_laag_inkomen"`
+	// Urbanization level 1=very urban to 5=rural (PC4)
+	LeadEnrichmentStedelijkheid pgtype.Int4        `json:"lead_enrichment_stedelijkheid"`
+	PublicToken                 pgtype.Text        `json:"public_token"`
+	PublicTokenExpiresAt        pgtype.Timestamptz `json:"public_token_expires_at"`
+	RawFormData                 []byte             `json:"raw_form_data"`
+	WebhookSourceDomain         pgtype.Text        `json:"webhook_source_domain"`
+	IsIncomplete                bool               `json:"is_incomplete"`
+	Gclid                       pgtype.Text        `json:"gclid"`
+	UtmSource                   pgtype.Text        `json:"utm_source"`
+	UtmMedium                   pgtype.Text        `json:"utm_medium"`
+	UtmCampaign                 pgtype.Text        `json:"utm_campaign"`
+	UtmContent                  pgtype.Text        `json:"utm_content"`
+	UtmTerm                     pgtype.Text        `json:"utm_term"`
+	AdLandingPage               pgtype.Text        `json:"ad_landing_page"`
+	ReferrerUrl                 pgtype.Text        `json:"referrer_url"`
+	WhatsappOptedIn             bool               `json:"whatsapp_opted_in"`
+	GoogleCampaignID            pgtype.Int8        `json:"google_campaign_id"`
+	GoogleAdgroupID             pgtype.Int8        `json:"google_adgroup_id"`
+	GoogleCreativeID            pgtype.Int8        `json:"google_creative_id"`
+	GoogleFormID                pgtype.Int8        `json:"google_form_id"`
+}
+
+type RacLeadActivity struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Action         string             `json:"action"`
+	Meta           []byte             `json:"meta"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+}
+
+type RacLeadAiAnalysis struct {
+	ID                      pgtype.UUID        `json:"id"`
+	LeadID                  pgtype.UUID        `json:"lead_id"`
+	UrgencyLevel            string             `json:"urgency_level"`
+	UrgencyReason           pgtype.Text        `json:"urgency_reason"`
+	Summary                 string             `json:"summary"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	LeadServiceID           pgtype.UUID        `json:"lead_service_id"`
+	OrganizationID          pgtype.UUID        `json:"organization_id"`
+	LeadQuality             string             `json:"lead_quality"`
+	RecommendedAction       string             `json:"recommended_action"`
+	MissingInformation      []byte             `json:"missing_information"`
+	PreferredContactChannel string             `json:"preferred_contact_channel"`
+	SuggestedContactMessage string             `json:"suggested_contact_message"`
+}
+
+type RacLeadNote struct {
+	ID              pgtype.UUID        `json:"id"`
+	LeadID          pgtype.UUID        `json:"lead_id"`
+	AuthorID        pgtype.UUID        `json:"author_id"`
+	Body            string             `json:"body"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	Type            string             `json:"type"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	ParentEventID   pgtype.UUID        `json:"parent_event_id"`
+	ParentEventType pgtype.Text        `json:"parent_event_type"`
+	ServiceID       pgtype.UUID        `json:"service_id"`
+}
+
+// AI analysis of photos attached to lead services
+type RacLeadPhotoAnalysis struct {
+	ID        pgtype.UUID `json:"id"`
+	LeadID    pgtype.UUID `json:"lead_id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+	OrgID     pgtype.UUID `json:"org_id"`
+	// Concise summary of what photos show
+	Summary string `json:"summary"`
+	// Array of specific observations from photos
+	Observations []byte `json:"observations"`
+	// Assessment of work scope: Small, Medium, Large, or Unclear
+	ScopeAssessment string `json:"scope_assessment"`
+	// Factors that may affect pricing
+	CostIndicators pgtype.Text `json:"cost_indicators"`
+	// Array of safety issues found in photos
+	SafetyConcerns []byte `json:"safety_concerns"`
+	// Additional info or questions for the consumer
+	AdditionalInfo []byte `json:"additional_info"`
+	// Confidence in analysis: High, Medium, Low
+	ConfidenceLevel string             `json:"confidence_level"`
+	PhotoCount      int32              `json:"photo_count"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	// Array of {description, value, unit, type, confidence, photoRef} measurement objects
+	Measurements []byte `json:"measurements"`
+	// Array of strings: items that need physical on-site measurement
+	NeedsOnsiteMeasurement []byte `json:"needs_onsite_measurement"`
+	// Array of strings: contradictions between user claims and photo evidence
+	Discrepancies []byte `json:"discrepancies"`
+	// Array of strings: OCR text from labels, stickers, screens, type plates
+	ExtractedText []byte `json:"extracted_text"`
+	// Array of strings: specific product/material names for catalog search
+	SuggestedSearchTerms []byte `json:"suggested_search_terms"`
+}
+
+type RacLeadService struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ServiceTypeID       pgtype.UUID        `json:"service_type_id"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+}
+
+// Stores metadata for files uploaded to MinIO for lead services
+type RacLeadServiceAttachment struct {
+	ID             pgtype.UUID `json:"id"`
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	// The object key in MinIO bucket (path including org/lead/service prefix)
+	FileKey string `json:"file_key"`
+	// Original filename as uploaded by user
+	FileName string `json:"file_name"`
+	// MIME type of the file
+	ContentType pgtype.Text `json:"content_type"`
+	// File size in bytes
+	SizeBytes pgtype.Int8 `json:"size_bytes"`
+	// User who uploaded the file
+	UploadedBy pgtype.UUID        `json:"uploaded_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacLeadServiceEvent struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+	EventType      string             `json:"event_type"`
+	Status         pgtype.Text        `json:"status"`
+	PipelineStage  pgtype.Text        `json:"pipeline_stage"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+}
+
+type RacOrganization struct {
+	ID              pgtype.UUID        `json:"id"`
+	Name            string             `json:"name"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	Email           pgtype.Text        `json:"email"`
+	Phone           pgtype.Text        `json:"phone"`
+	VatNumber       pgtype.Text        `json:"vat_number"`
+	KvkNumber       pgtype.Text        `json:"kvk_number"`
+	AddressLine1    pgtype.Text        `json:"address_line1"`
+	AddressLine2    pgtype.Text        `json:"address_line2"`
+	PostalCode      pgtype.Text        `json:"postal_code"`
+	City            pgtype.Text        `json:"city"`
+	Country         pgtype.Text        `json:"country"`
+	LogoFileKey     pgtype.Text        `json:"logo_file_key"`
+	LogoFileName    pgtype.Text        `json:"logo_file_name"`
+	LogoContentType pgtype.Text        `json:"logo_content_type"`
+	LogoSizeBytes   pgtype.Int8        `json:"logo_size_bytes"`
+}
+
+type RacOrganizationInvite struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Email          string             `json:"email"`
+	TokenHash      string             `json:"token_hash"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UsedAt         pgtype.Timestamptz `json:"used_at"`
+	UsedBy         pgtype.UUID        `json:"used_by"`
+}
+
+type RacOrganizationMember struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacOrganizationSetting struct {
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	QuotePaymentDays int32              `json:"quote_payment_days"`
+	QuoteValidDays   int32              `json:"quote_valid_days"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	WhatsappDeviceID pgtype.Text        `json:"whatsapp_device_id"`
+	SmtpHost         pgtype.Text        `json:"smtp_host"`
+	SmtpPort         pgtype.Int4        `json:"smtp_port"`
+	SmtpUsername     pgtype.Text        `json:"smtp_username"`
+	SmtpPassword     pgtype.Text        `json:"smtp_password"`
+	SmtpFromEmail    pgtype.Text        `json:"smtp_from_email"`
+	SmtpFromName     pgtype.Text        `json:"smtp_from_name"`
+}
+
+type RacPartner struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	BusinessName    string             `json:"business_name"`
+	KvkNumber       string             `json:"kvk_number"`
+	VatNumber       string             `json:"vat_number"`
+	AddressLine1    string             `json:"address_line1"`
+	AddressLine2    pgtype.Text        `json:"address_line2"`
+	PostalCode      string             `json:"postal_code"`
+	City            string             `json:"city"`
+	Country         string             `json:"country"`
+	ContactName     string             `json:"contact_name"`
+	ContactEmail    string             `json:"contact_email"`
+	ContactPhone    string             `json:"contact_phone"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	LogoFileKey     pgtype.Text        `json:"logo_file_key"`
+	LogoFileName    pgtype.Text        `json:"logo_file_name"`
+	LogoContentType pgtype.Text        `json:"logo_content_type"`
+	LogoSizeBytes   pgtype.Int8        `json:"logo_size_bytes"`
+	Latitude        pgtype.Float8      `json:"latitude"`
+	Longitude       pgtype.Float8      `json:"longitude"`
+	HouseNumber     pgtype.Text        `json:"house_number"`
+	WhatsappOptedIn bool               `json:"whatsapp_opted_in"`
+}
+
+type RacPartnerInvite struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	PartnerID      pgtype.UUID        `json:"partner_id"`
+	Email          string             `json:"email"`
+	TokenHash      string             `json:"token_hash"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UsedAt         pgtype.Timestamptz `json:"used_at"`
+	UsedBy         pgtype.UUID        `json:"used_by"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+}
+
+type RacPartnerLead struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	PartnerID      pgtype.UUID        `json:"partner_id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacPartnerOffer struct {
+	ID                     pgtype.UUID        `json:"id"`
+	OrganizationID         pgtype.UUID        `json:"organization_id"`
+	PartnerID              pgtype.UUID        `json:"partner_id"`
+	LeadServiceID          pgtype.UUID        `json:"lead_service_id"`
+	PublicToken            string             `json:"public_token"`
+	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
+	PricingSource          PricingSource      `json:"pricing_source"`
+	CustomerPriceCents     int64              `json:"customer_price_cents"`
+	VakmanPriceCents       int64              `json:"vakman_price_cents"`
+	Status                 OfferStatus        `json:"status"`
+	AcceptedAt             pgtype.Timestamptz `json:"accepted_at"`
+	RejectedAt             pgtype.Timestamptz `json:"rejected_at"`
+	RejectionReason        pgtype.Text        `json:"rejection_reason"`
+	InspectionAvailability []byte             `json:"inspection_availability"`
+	JobAvailability        []byte             `json:"job_availability"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	JobSummaryShort        pgtype.Text        `json:"job_summary_short"`
+	BuilderSummary         pgtype.Text        `json:"builder_summary"`
+}
+
+type RacPartnerServiceType struct {
+	PartnerID     pgtype.UUID        `json:"partner_id"`
+	ServiceTypeID pgtype.UUID        `json:"service_type_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacQuote struct {
+	ID                    pgtype.UUID        `json:"id"`
+	OrganizationID        pgtype.UUID        `json:"organization_id"`
+	LeadID                pgtype.UUID        `json:"lead_id"`
+	LeadServiceID         pgtype.UUID        `json:"lead_service_id"`
+	QuoteNumber           string             `json:"quote_number"`
+	Status                QuoteStatus        `json:"status"`
+	ValidUntil            pgtype.Timestamptz `json:"valid_until"`
+	Notes                 pgtype.Text        `json:"notes"`
+	PricingMode           string             `json:"pricing_mode"`
+	DiscountType          string             `json:"discount_type"`
+	DiscountValue         int64              `json:"discount_value"`
+	SubtotalCents         int64              `json:"subtotal_cents"`
+	DiscountAmountCents   int64              `json:"discount_amount_cents"`
+	TaxTotalCents         int64              `json:"tax_total_cents"`
+	TotalCents            int64              `json:"total_cents"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	PublicToken           pgtype.Text        `json:"public_token"`
+	PublicTokenExpiresAt  pgtype.Timestamptz `json:"public_token_expires_at"`
+	ViewedAt              pgtype.Timestamptz `json:"viewed_at"`
+	AcceptedAt            pgtype.Timestamptz `json:"accepted_at"`
+	RejectedAt            pgtype.Timestamptz `json:"rejected_at"`
+	RejectionReason       pgtype.Text        `json:"rejection_reason"`
+	SignatureName         pgtype.Text        `json:"signature_name"`
+	SignatureData         pgtype.Text        `json:"signature_data"`
+	SignatureIp           pgtype.Text        `json:"signature_ip"`
+	PdfFileKey            pgtype.Text        `json:"pdf_file_key"`
+	PreviewToken          pgtype.Text        `json:"preview_token"`
+	PreviewTokenExpiresAt pgtype.Timestamptz `json:"preview_token_expires_at"`
+	CreatedByID           pgtype.UUID        `json:"created_by_id"`
+	FinancingDisclaimer   bool               `json:"financing_disclaimer"`
+}
+
+type RacQuoteActivity struct {
+	ID             pgtype.UUID        `json:"id"`
+	QuoteID        pgtype.UUID        `json:"quote_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	EventType      string             `json:"event_type"`
+	Message        string             `json:"message"`
+	Metadata       []byte             `json:"metadata"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacQuoteAnnotation struct {
+	ID             pgtype.UUID        `json:"id"`
+	QuoteItemID    pgtype.UUID        `json:"quote_item_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	AuthorType     string             `json:"author_type"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	Text           string             `json:"text"`
+	IsResolved     bool               `json:"is_resolved"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacQuoteAttachment struct {
+	ID               pgtype.UUID              `json:"id"`
+	QuoteID          pgtype.UUID              `json:"quote_id"`
+	OrganizationID   pgtype.UUID              `json:"organization_id"`
+	Filename         string                   `json:"filename"`
+	FileKey          string                   `json:"file_key"`
+	Source           RacQuoteAttachmentSource `json:"source"`
+	CatalogProductID pgtype.UUID              `json:"catalog_product_id"`
+	Enabled          bool                     `json:"enabled"`
+	SortOrder        int32                    `json:"sort_order"`
+	CreatedAt        pgtype.Timestamptz       `json:"created_at"`
+}
+
+type RacQuoteCounter struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	LastNumber     int32       `json:"last_number"`
+}
+
+type RacQuoteItem struct {
+	ID               pgtype.UUID        `json:"id"`
+	QuoteID          pgtype.UUID        `json:"quote_id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	Description      string             `json:"description"`
+	Quantity         string             `json:"quantity"`
+	QuantityNumeric  pgtype.Numeric     `json:"quantity_numeric"`
+	UnitPriceCents   int64              `json:"unit_price_cents"`
+	TaxRate          int32              `json:"tax_rate"`
+	IsOptional       bool               `json:"is_optional"`
+	SortOrder        int32              `json:"sort_order"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	IsSelected       bool               `json:"is_selected"`
+	CatalogProductID pgtype.UUID        `json:"catalog_product_id"`
+}
+
+type RacQuoteUrl struct {
+	ID               pgtype.UUID        `json:"id"`
+	QuoteID          pgtype.UUID        `json:"quote_id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	Label            string             `json:"label"`
+	Href             string             `json:"href"`
+	Accepted         bool               `json:"accepted"`
+	CatalogProductID pgtype.UUID        `json:"catalog_product_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacRefreshToken struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacRole struct {
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
+}
+
+type RacServiceType struct {
+	ID               pgtype.UUID        `json:"id"`
+	Name             string             `json:"name"`
+	Slug             string             `json:"slug"`
+	Description      pgtype.Text        `json:"description"`
+	Icon             pgtype.Text        `json:"icon"`
+	Color            pgtype.Text        `json:"color"`
+	IsActive         bool               `json:"is_active"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	IntakeGuidelines pgtype.Text        `json:"intake_guidelines"`
+}
+
+type RacUser struct {
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+}
+
+type RacUserRole struct {
+	UserID    pgtype.UUID        `json:"user_id"`
+	RoleID    pgtype.UUID        `json:"role_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacUserSetting struct {
+	UserID            pgtype.UUID        `json:"user_id"`
+	PreferredLanguage string             `json:"preferred_language"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacUserToken struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
+	Type      string             `json:"type"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacWebhookApiKey struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Name           string             `json:"name"`
+	KeyHash        string             `json:"key_hash"`
+	KeyPrefix      string             `json:"key_prefix"`
+	AllowedDomains []string           `json:"allowed_domains"`
+	IsActive       bool               `json:"is_active"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }

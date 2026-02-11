@@ -1,0 +1,2 @@
+-- +goose Up
+ALTER TABLE RAC_users ADD COLUMN IF NOT EXISTS onboarding_completed_at TIMESTAMPTZ;

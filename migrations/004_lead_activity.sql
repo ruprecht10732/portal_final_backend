@@ -1,3 +1,4 @@
+-- +goose Up
 -- Track actions performed on RAC_leads for auditing purposes
 
 CREATE TABLE IF NOT EXISTS RAC_lead_activity (

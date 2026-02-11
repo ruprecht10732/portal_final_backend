@@ -1,7 +1,7 @@
 version: "2"
 sql:
-  # Auth Domain - isolated user/authentication queries
-  - schema: "internal/auth/migrations"
+  # Auth Domain – users, tokens, roles
+  - schema: "migrations"
     queries: "internal/auth/sql"
     engine: "postgresql"
     gen:
@@ -14,8 +14,8 @@ sql:
         emit_interface: true
         emit_exact_table_names: false
 
-  # Leads Domain - isolated leads/activity queries
-  - schema: "internal/leads/migrations"
+  # Leads Domain – leads, services, activity, notes, AI analysis
+  - schema: "migrations"
     queries: "internal/leads/sql"
     engine: "postgresql"
     gen:
@@ -28,8 +28,8 @@ sql:
         emit_interface: true
         emit_exact_table_names: false
 
-  # Catalog Domain - products and VAT rates
-  - schema: "internal/catalog/migrations"
+  # Catalog Domain – products, VAT rates, materials, assets
+  - schema: "migrations"
     queries: "internal/catalog/sql"
     engine: "postgresql"
     gen:

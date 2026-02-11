@@ -1,3 +1,4 @@
+-- +goose Up
 -- Lead services table: allows multiple services per lead with per-service status and visit info
 
 CREATE TABLE IF NOT EXISTS RAC_lead_services (

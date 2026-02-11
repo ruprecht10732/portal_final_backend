@@ -14,22 +14,22 @@ type Querier interface {
 	CountProducts(ctx context.Context, arg CountProductsParams) (int64, error)
 	CountVatRates(ctx context.Context, arg CountVatRatesParams) (int64, error)
 	// Products
-	CreateProduct(ctx context.Context, arg CreateProductParams) (RacCatalogProduct, error)
+	CreateProduct(ctx context.Context, arg CreateProductParams) (CreateProductRow, error)
 	// Catalog Domain SQL Queries
 	// VAT Rates
 	CreateVatRate(ctx context.Context, arg CreateVatRateParams) (RacCatalogVatRate, error)
 	DeleteProduct(ctx context.Context, arg DeleteProductParams) error
 	DeleteVatRate(ctx context.Context, arg DeleteVatRateParams) error
-	GetProductByID(ctx context.Context, arg GetProductByIDParams) (RacCatalogProduct, error)
-	GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]RacCatalogProduct, error)
+	GetProductByID(ctx context.Context, arg GetProductByIDParams) (GetProductByIDRow, error)
+	GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]GetProductsByIDsRow, error)
 	GetVatRateByID(ctx context.Context, arg GetVatRateByIDParams) (RacCatalogVatRate, error)
 	HasProductMaterials(ctx context.Context, arg HasProductMaterialsParams) (bool, error)
 	HasProductsWithVatRate(ctx context.Context, arg HasProductsWithVatRateParams) (bool, error)
-	ListProductMaterials(ctx context.Context, arg ListProductMaterialsParams) ([]RacCatalogProduct, error)
-	ListProducts(ctx context.Context, arg ListProductsParams) ([]RacCatalogProduct, error)
+	ListProductMaterials(ctx context.Context, arg ListProductMaterialsParams) ([]ListProductMaterialsRow, error)
+	ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error)
 	ListVatRates(ctx context.Context, arg ListVatRatesParams) ([]RacCatalogVatRate, error)
 	RemoveProductMaterials(ctx context.Context, arg RemoveProductMaterialsParams) error
-	UpdateProduct(ctx context.Context, arg UpdateProductParams) (RacCatalogProduct, error)
+	UpdateProduct(ctx context.Context, arg UpdateProductParams) (UpdateProductRow, error)
 	UpdateVatRate(ctx context.Context, arg UpdateVatRateParams) (RacCatalogVatRate, error)
 }
 
