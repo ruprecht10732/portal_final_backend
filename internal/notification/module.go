@@ -638,34 +638,16 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 		consumerName = "daar"
 	}
 
-	trackLink := ""
-	if e.PublicToken != "" {
-		base := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
-		trackLink = fmt.Sprintf("%s/track/%s", base, e.PublicToken)
-	}
-
-	message := ""
-	if trackLink == "" {
-		message = fmt.Sprintf(
-			"Beste %s,\n\n"+
-				"Bedankt voor je aanvraag! 👍\n\n"+
-				"We hebben alles ontvangen en gaan het nu rustig doornemen. "+
-				"Vandaag nemen we contact met je op om het verder te bespreken.",
-			consumerName,
-		)
-	} else {
-		message = fmt.Sprintf(
-			"Beste %s,\n\n"+
-				"Bedankt voor je aanvraag! 👍\n\n"+
-				"Volg de status of voeg details toe via jouw persoonlijke pagina:\n%s\n\n"+
-				"We nemen vandaag contact met je op.",
-			consumerName,
-			trackLink,
-		)
-	}
+	trackLink := m.buildLeadTrackLink(e.PublicToken)
+	message := buildLeadWelcomeMessage(consumerName, trackLink)
 
 	go func() {
 		bg := context.Background()
+		d := m.resolveLeadWelcomeWhatsAppDelay(bg, e.TenantID)
+		if d > 0 {
+			time.Sleep(d)
+		}
+
 		svcID := e.LeadServiceID
 		metadata := buildWhatsAppSentMetadata("lead_welcome", "lead", e.ConsumerPhone, message)
 		metadata["preferredContactChannel"] = "WhatsApp"
@@ -687,6 +669,58 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 	}()
 
 	return nil
+}
+
+func (m *Module) buildLeadTrackLink(publicToken string) string {
+	if strings.TrimSpace(publicToken) == "" {
+		return ""
+	}
+	base := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/track/%s", base, publicToken)
+}
+
+func buildLeadWelcomeMessage(consumerName string, trackLink string) string {
+	if strings.TrimSpace(trackLink) == "" {
+		return fmt.Sprintf(
+			"Beste %s,\n\n"+
+				"Bedankt voor je aanvraag! 👍\n\n"+
+				"We hebben alles ontvangen en gaan het nu rustig doornemen. "+
+				"Vandaag nemen we contact met je op om het verder te bespreken.",
+			consumerName,
+		)
+	}
+
+	return fmt.Sprintf(
+		"Beste %s,\n\n"+
+			"Bedankt voor je aanvraag! 👍\n\n"+
+			"Volg de status of voeg details toe via jouw persoonlijke pagina:\n%s\n\n"+
+			"We nemen vandaag contact met je op.",
+		consumerName,
+		trackLink,
+	)
+}
+
+func (m *Module) resolveLeadWelcomeWhatsAppDelay(ctx context.Context, orgID uuid.UUID) time.Duration {
+	// Default: 2 minutes.
+	d := 2 * time.Minute
+	if m.settingsReader == nil {
+		return d
+	}
+
+	settings, err := m.settingsReader.GetOrganizationSettings(ctx, orgID)
+	if err != nil {
+		m.log.Warn("failed to fetch org settings for whatsapp welcome delay, using default", "error", err, "orgId", orgID)
+		return d
+	}
+
+	mins := settings.WhatsAppWelcomeDelayMinutes
+	if mins < 0 {
+		mins = 0
+	}
+	return time.Duration(mins) * time.Minute
 }
 
 func (m *Module) handleLeadDataChanged(_ context.Context, e events.LeadDataChanged) error {

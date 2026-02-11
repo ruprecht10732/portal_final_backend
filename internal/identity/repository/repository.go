@@ -76,24 +76,26 @@ type OrganizationProfileUpdate struct {
 }
 
 type OrganizationSettings struct {
-	OrganizationID   uuid.UUID
-	QuotePaymentDays int
-	QuoteValidDays   int
-	WhatsAppDeviceID *string
-	SMTPHost         *string
-	SMTPPort         *int
-	SMTPUsername     *string
-	SMTPPassword     *string // AES-256-GCM encrypted
-	SMTPFromEmail    *string
-	SMTPFromName     *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	OrganizationID              uuid.UUID
+	QuotePaymentDays            int
+	QuoteValidDays              int
+	WhatsAppDeviceID            *string
+	WhatsAppWelcomeDelayMinutes int
+	SMTPHost                    *string
+	SMTPPort                    *int
+	SMTPUsername                *string
+	SMTPPassword                *string // AES-256-GCM encrypted
+	SMTPFromEmail               *string
+	SMTPFromName                *string
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type OrganizationSettingsUpdate struct {
-	QuotePaymentDays *int
-	QuoteValidDays   *int
-	WhatsAppDeviceID *string
+	QuotePaymentDays            *int
+	QuoteValidDays              *int
+	WhatsAppDeviceID            *string
+	WhatsAppWelcomeDelayMinutes *int
 }
 
 // OrganizationSMTPUpdate holds encrypted SMTP configuration fields.
@@ -302,7 +304,7 @@ func (r *Repository) ClearOrganizationLogo(
 func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-    SELECT organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id,
+	SELECT organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes,
            smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
            created_at, updated_at
     FROM RAC_organization_settings
@@ -312,6 +314,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
 		&s.WhatsAppDeviceID,
+		&s.WhatsAppWelcomeDelayMinutes,
 		&s.SMTPHost,
 		&s.SMTPPort,
 		&s.SMTPUsername,
@@ -324,10 +327,11 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Return defaults if no row exists yet
 		return OrganizationSettings{
-			OrganizationID:   organizationID,
-			QuotePaymentDays: 7,
-			QuoteValidDays:   14,
-			WhatsAppDeviceID: nil,
+			OrganizationID:              organizationID,
+			QuotePaymentDays:            7,
+			QuoteValidDays:              14,
+			WhatsAppDeviceID:            nil,
+			WhatsAppWelcomeDelayMinutes: 2,
 		}, nil
 	}
 	return s, err
@@ -340,21 +344,23 @@ func (r *Repository) UpsertOrganizationSettings(
 ) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id)
-		VALUES ($1, COALESCE($2, 7), COALESCE($3, 14), NULLIF($4, ''))
+		INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes)
+		VALUES ($1, COALESCE($2, 7), COALESCE($3, 14), NULLIF($4, ''), COALESCE($5, 2))
 		ON CONFLICT (organization_id) DO UPDATE SET
 			quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
 			quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
 			whatsapp_device_id = CASE WHEN $4 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($4, '') END,
+			whatsapp_welcome_delay_minutes = COALESCE($5, RAC_organization_settings.whatsapp_welcome_delay_minutes),
 			updated_at         = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id,
+		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		          created_at, updated_at
-	`, organizationID, update.QuotePaymentDays, update.QuoteValidDays, update.WhatsAppDeviceID).Scan(
+	`, organizationID, update.QuotePaymentDays, update.QuoteValidDays, update.WhatsAppDeviceID, update.WhatsAppWelcomeDelayMinutes).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
 		&s.WhatsAppDeviceID,
+		&s.WhatsAppWelcomeDelayMinutes,
 		&s.SMTPHost,
 		&s.SMTPPort,
 		&s.SMTPUsername,
@@ -388,7 +394,7 @@ func (r *Repository) UpsertOrganizationSMTP(
 			smtp_from_email = $6,
 			smtp_from_name  = $7,
 			updated_at      = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id,
+		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		          created_at, updated_at
 	`, organizationID, update.SMTPHost, update.SMTPPort, update.SMTPUsername, update.SMTPPassword, update.SMTPFromEmail, update.SMTPFromName).Scan(
@@ -396,6 +402,7 @@ func (r *Repository) UpsertOrganizationSMTP(
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
 		&s.WhatsAppDeviceID,
+		&s.WhatsAppWelcomeDelayMinutes,
 		&s.SMTPHost,
 		&s.SMTPPort,
 		&s.SMTPUsername,

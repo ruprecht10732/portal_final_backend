@@ -321,10 +321,11 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
-		QuotePaymentDays: settings.QuotePaymentDays,
-		QuoteValidDays:   settings.QuoteValidDays,
-		WhatsAppDeviceID: settings.WhatsAppDeviceID,
-		SMTPConfigured:   settings.SMTPHost != nil && *settings.SMTPHost != "",
+		QuotePaymentDays:            settings.QuotePaymentDays,
+		QuoteValidDays:              settings.QuoteValidDays,
+		WhatsAppDeviceID:            settings.WhatsAppDeviceID,
+		WhatsAppWelcomeDelayMinutes: settings.WhatsAppWelcomeDelayMinutes,
+		SMTPConfigured:              settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
 }
 
@@ -350,19 +351,34 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		return
 	}
 
+	// Tenant-scoped admin setting: only the org creator (default admin) or global admins
+	// can change the WhatsApp welcome delay.
+	if req.WhatsAppWelcomeDelayMinutes != nil {
+		org, err := h.svc.GetOrganization(c.Request.Context(), *tenantID)
+		if httpkit.HandleError(c, err) {
+			return
+		}
+		if org.CreatedBy != identity.UserID() && !identity.HasRole("admin") {
+			httpkit.Error(c, http.StatusForbidden, "forbidden", nil)
+			return
+		}
+	}
+
 	settings, err := h.svc.UpdateOrganizationSettings(c.Request.Context(), *tenantID, repository.OrganizationSettingsUpdate{
-		QuotePaymentDays: req.QuotePaymentDays,
-		QuoteValidDays:   req.QuoteValidDays,
+		QuotePaymentDays:            req.QuotePaymentDays,
+		QuoteValidDays:              req.QuoteValidDays,
+		WhatsAppWelcomeDelayMinutes: req.WhatsAppWelcomeDelayMinutes,
 	})
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
-		QuotePaymentDays: settings.QuotePaymentDays,
-		QuoteValidDays:   settings.QuoteValidDays,
-		WhatsAppDeviceID: settings.WhatsAppDeviceID,
-		SMTPConfigured:   settings.SMTPHost != nil && *settings.SMTPHost != "",
+		QuotePaymentDays:            settings.QuotePaymentDays,
+		QuoteValidDays:              settings.QuoteValidDays,
+		WhatsAppDeviceID:            settings.WhatsAppDeviceID,
+		WhatsAppWelcomeDelayMinutes: settings.WhatsAppWelcomeDelayMinutes,
+		SMTPConfigured:              settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
 }
 

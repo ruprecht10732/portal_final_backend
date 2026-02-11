@@ -94,16 +94,19 @@ type OrgLogoDownloadResponse struct {
 
 // OrganizationSettingsResponse returns the organization's quote defaults.
 type OrganizationSettingsResponse struct {
-	QuotePaymentDays int     `json:"quotePaymentDays"`
-	QuoteValidDays   int     `json:"quoteValidDays"`
-	WhatsAppDeviceID *string `json:"whatsAppDeviceId,omitempty"`
-	SMTPConfigured   bool    `json:"smtpConfigured"`
+	QuotePaymentDays            int     `json:"quotePaymentDays"`
+	QuoteValidDays              int     `json:"quoteValidDays"`
+	WhatsAppDeviceID            *string `json:"whatsAppDeviceId,omitempty"`
+	WhatsAppWelcomeDelayMinutes int     `json:"whatsAppWelcomeDelayMinutes"`
+	SMTPConfigured              bool    `json:"smtpConfigured"`
 }
 
 // UpdateOrganizationSettingsRequest updates quote default settings.
 type UpdateOrganizationSettingsRequest struct {
 	QuotePaymentDays *int `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
 	QuoteValidDays   *int `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
+	// 0 = send immediately, otherwise delay before sending the automated WhatsApp welcome.
+	WhatsAppWelcomeDelayMinutes *int `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
 }
 
 // WhatsAppStatusResponse describes the current WhatsApp device state for an organization.

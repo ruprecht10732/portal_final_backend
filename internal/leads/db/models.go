@@ -735,18 +735,19 @@ type RacOrganizationMember struct {
 }
 
 type RacOrganizationSetting struct {
-	OrganizationID   pgtype.UUID        `json:"organization_id"`
-	QuotePaymentDays int32              `json:"quote_payment_days"`
-	QuoteValidDays   int32              `json:"quote_valid_days"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	WhatsappDeviceID pgtype.Text        `json:"whatsapp_device_id"`
-	SmtpHost         pgtype.Text        `json:"smtp_host"`
-	SmtpPort         pgtype.Int4        `json:"smtp_port"`
-	SmtpUsername     pgtype.Text        `json:"smtp_username"`
-	SmtpPassword     pgtype.Text        `json:"smtp_password"`
-	SmtpFromEmail    pgtype.Text        `json:"smtp_from_email"`
-	SmtpFromName     pgtype.Text        `json:"smtp_from_name"`
+	OrganizationID              pgtype.UUID        `json:"organization_id"`
+	QuotePaymentDays            int32              `json:"quote_payment_days"`
+	QuoteValidDays              int32              `json:"quote_valid_days"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	WhatsappDeviceID            pgtype.Text        `json:"whatsapp_device_id"`
+	SmtpHost                    pgtype.Text        `json:"smtp_host"`
+	SmtpPort                    pgtype.Int4        `json:"smtp_port"`
+	SmtpUsername                pgtype.Text        `json:"smtp_username"`
+	SmtpPassword                pgtype.Text        `json:"smtp_password"`
+	SmtpFromEmail               pgtype.Text        `json:"smtp_from_email"`
+	SmtpFromName                pgtype.Text        `json:"smtp_from_name"`
+	WhatsappWelcomeDelayMinutes int32              `json:"whatsapp_welcome_delay_minutes"`
 }
 
 type RacPartner struct {
