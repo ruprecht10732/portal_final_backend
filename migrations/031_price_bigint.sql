@@ -3,3 +3,6 @@
 -- This is a non-breaking change; existing data remains valid.
 ALTER TABLE RAC_catalog_products ALTER COLUMN price_cents TYPE BIGINT;
 
+-- +goose Down
+ALTER TABLE RAC_catalog_products ALTER COLUMN price_cents TYPE INTEGER USING price_cents::integer;
+

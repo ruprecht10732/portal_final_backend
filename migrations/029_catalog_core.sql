@@ -50,3 +50,8 @@ CREATE INDEX IF NOT EXISTS idx_catalog_product_materials_product
 
 CREATE INDEX IF NOT EXISTS idx_catalog_product_materials_material
     ON RAC_catalog_product_materials(material_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_catalog_product_materials;
+DROP TABLE IF EXISTS RAC_catalog_products;
+DROP TABLE IF EXISTS RAC_catalog_vat_rates;

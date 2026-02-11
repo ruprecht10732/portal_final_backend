@@ -48,3 +48,26 @@ COMMENT ON COLUMN RAC_leads.lead_score_pre_ai IS 'Deterministic pre-AI lead scor
 COMMENT ON COLUMN RAC_leads.lead_score_factors IS 'JSON factors used to compute the lead score';
 COMMENT ON COLUMN RAC_leads.lead_score_version IS 'Scoring model version identifier';
 COMMENT ON COLUMN RAC_leads.lead_score_updated_at IS 'When we last calculated lead score';
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_leads_lead_score;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_score_updated_at;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_score_version;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_score_factors;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_score_pre_ai;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_score;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_fetched_at;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_confidence;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_huishoudens_met_kinderen_pct;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_mediaan_vermogen_x1000;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_bouwjaar_vanaf2000_pct;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_koopwoningen_pct;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_huishouden_grootte;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_gem_aardgasverbruik;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_inkomen_code;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_woningeigendom_code;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_bouwjaarklasse_code;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_woningtype_code;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_buurtcode;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_postcode6;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_source;

@@ -13,3 +13,6 @@ CREATE TABLE IF NOT EXISTS RAC_quote_activity (
 
 CREATE INDEX IF NOT EXISTS idx_quote_activity_quote_id ON RAC_quote_activity(quote_id);
 CREATE INDEX IF NOT EXISTS idx_quote_activity_org_id ON RAC_quote_activity(organization_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_quote_activity;

@@ -1,3 +1,4 @@
+-- +goose Up
 -- +goose StatementBegin
 
 CREATE TABLE IF NOT EXISTS appointment_visit_reports (
@@ -21,5 +22,11 @@ CREATE TABLE IF NOT EXISTS appointment_attachments (
 
 CREATE INDEX IF NOT EXISTS idx_appointment_attachments_appointment_id ON appointment_attachments(appointment_id);
 
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP TABLE IF EXISTS appointment_attachments;
+DROP TABLE IF EXISTS appointment_visit_reports;
 -- +goose StatementEnd
 

@@ -14,3 +14,11 @@ CREATE TABLE RAC_partner_service_types (
 
 CREATE INDEX idx_partner_service_types_service_type_id
   ON RAC_partner_service_types(service_type_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_partner_service_types;
+ALTER TABLE RAC_partners
+  DROP COLUMN IF EXISTS logo_size_bytes,
+  DROP COLUMN IF EXISTS logo_content_type,
+  DROP COLUMN IF EXISTS logo_file_name,
+  DROP COLUMN IF EXISTS logo_file_key;

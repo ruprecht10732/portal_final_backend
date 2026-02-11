@@ -53,3 +53,23 @@ ALTER TABLE RAC_lead_services ALTER COLUMN service_type_id SET NOT NULL;
 -- Drop the old CHECK constraint and TEXT column
 ALTER TABLE RAC_lead_services DROP CONSTRAINT IF EXISTS lead_services_service_type_check;
 ALTER TABLE RAC_lead_services DROP COLUMN IF EXISTS service_type;
+
+-- +goose Down
+ALTER TABLE RAC_lead_services ADD COLUMN IF NOT EXISTS service_type TEXT;
+UPDATE RAC_lead_services ls
+SET service_type = st.name
+FROM RAC_service_types st
+WHERE ls.service_type_id = st.id
+  AND ls.service_type IS NULL;
+UPDATE RAC_lead_services SET service_type = 'Windows' WHERE service_type IS NULL;
+UPDATE RAC_lead_services
+SET service_type = 'Windows'
+WHERE service_type NOT IN ('Windows', 'Insulation', 'Solar');
+ALTER TABLE RAC_lead_services ALTER COLUMN service_type SET NOT NULL;
+ALTER TABLE RAC_lead_services DROP CONSTRAINT IF EXISTS lead_services_service_type_check;
+ALTER TABLE RAC_lead_services ADD CONSTRAINT lead_services_service_type_check CHECK (service_type IN ('Windows', 'Insulation', 'Solar'));
+ALTER TABLE RAC_lead_services DROP COLUMN IF EXISTS service_type_id;
+DROP INDEX IF EXISTS idx_service_types_display_order;
+DROP INDEX IF EXISTS idx_service_types_active;
+DROP INDEX IF EXISTS idx_service_types_slug;
+DROP TABLE IF EXISTS RAC_service_types;

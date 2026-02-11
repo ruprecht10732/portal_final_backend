@@ -1,3 +1,4 @@
+-- +goose Up
 -- +goose StatementBegin
 
 ALTER TABLE RAC_appointments
@@ -10,4 +11,14 @@ ALTER TABLE RAC_appointments
   ADD CONSTRAINT rac_appointments_status_check
   CHECK (status IN ('scheduled', 'requested', 'completed', 'cancelled', 'no_show'));
 
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+ALTER TABLE RAC_appointments
+  DROP CONSTRAINT IF EXISTS rac_appointments_status_check;
+
+ALTER TABLE RAC_appointments
+  ADD CONSTRAINT rac_appointments_status_check
+  CHECK (status IN ('scheduled', 'completed', 'cancelled', 'no_show'));
 -- +goose StatementEnd

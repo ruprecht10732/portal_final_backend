@@ -20,3 +20,18 @@ ALTER TABLE lead_service_attachments RENAME TO RAC_lead_service_attachments;
 
 -- Update foreign keys if necessary? 
 -- Postgres handles renaming tables by updating references automatically in existing constraints.
+
+-- +goose Down
+ALTER TABLE RAC_lead_service_attachments RENAME TO lead_service_attachments;
+ALTER TABLE RAC_lead_photo_analyses RENAME TO lead_photo_analyses;
+ALTER TABLE RAC_catalog_product_assets RENAME TO catalog_product_assets;
+
+ALTER TABLE RAC_appointment_visit_reports RENAME TO appointment_visit_reports;
+ALTER TABLE RAC_appointment_availability_rules RENAME TO appointment_availability_rules;
+ALTER TABLE RAC_appointment_availability_overrides RENAME TO appointment_availability_overrides;
+ALTER TABLE RAC_appointment_attachments RENAME TO appointment_attachments;
+ALTER TABLE RAC_appointments RENAME TO appointments;
+
+ALTER TABLE RAC_organization_invites RENAME TO organization_invites;
+ALTER TABLE RAC_organization_members RENAME TO organization_members;
+ALTER TABLE RAC_organizations RENAME TO organizations;

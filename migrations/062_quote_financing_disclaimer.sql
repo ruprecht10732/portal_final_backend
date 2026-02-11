@@ -4,3 +4,6 @@
 
 ALTER TABLE RAC_quotes
     ADD COLUMN financing_disclaimer BOOLEAN NOT NULL DEFAULT false;
+
+-- +goose Down
+ALTER TABLE RAC_quotes DROP COLUMN IF EXISTS financing_disclaimer;

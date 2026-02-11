@@ -24,3 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_lead_ai_analysis_service_id ON RAC_lead_ai_analys
 
 -- 5. Keep lead_id for reference but primary lookup will be by service_id
 -- Note: We don't make lead_service_id NOT NULL to handle edge cases
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_lead_ai_analysis_service_id;
+ALTER TABLE RAC_lead_ai_analysis DROP COLUMN IF EXISTS lead_service_id;

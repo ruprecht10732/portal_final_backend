@@ -40,3 +40,8 @@ CREATE TABLE IF NOT EXISTS RAC_quote_urls (
 
 CREATE INDEX idx_quote_urls_quote_id
     ON RAC_quote_urls (quote_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_quote_urls;
+DROP TABLE IF EXISTS RAC_quote_attachments;
+DROP TYPE IF EXISTS rac_quote_attachment_source;

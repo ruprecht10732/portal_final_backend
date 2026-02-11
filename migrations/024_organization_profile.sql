@@ -9,3 +9,15 @@ ALTER TABLE organizations
   ADD COLUMN IF NOT EXISTS postal_code TEXT,
   ADD COLUMN IF NOT EXISTS city TEXT,
   ADD COLUMN IF NOT EXISTS country TEXT;
+
+-- +goose Down
+ALTER TABLE organizations
+  DROP COLUMN IF EXISTS country,
+  DROP COLUMN IF EXISTS city,
+  DROP COLUMN IF EXISTS postal_code,
+  DROP COLUMN IF EXISTS address_line2,
+  DROP COLUMN IF EXISTS address_line1,
+  DROP COLUMN IF EXISTS kvk_number,
+  DROP COLUMN IF EXISTS vat_number,
+  DROP COLUMN IF EXISTS phone,
+  DROP COLUMN IF EXISTS email;

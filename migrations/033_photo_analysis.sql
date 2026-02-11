@@ -39,3 +39,6 @@ COMMENT ON COLUMN lead_photo_analyses.cost_indicators IS 'Factors that may affec
 COMMENT ON COLUMN lead_photo_analyses.safety_concerns IS 'Array of safety issues found in photos';
 COMMENT ON COLUMN lead_photo_analyses.additional_info IS 'Additional info or questions for the consumer';
 COMMENT ON COLUMN lead_photo_analyses.confidence_level IS 'Confidence in analysis: High, Medium, Low';
+
+-- +goose Down
+DROP TABLE IF EXISTS lead_photo_analyses;

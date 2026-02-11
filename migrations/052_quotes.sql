@@ -57,3 +57,9 @@ CREATE INDEX idx_quotes_lead ON RAC_quotes(lead_id);
 CREATE INDEX idx_quotes_org ON RAC_quotes(organization_id);
 CREATE INDEX idx_quote_items_quote ON RAC_quote_items(quote_id);
 CREATE UNIQUE INDEX idx_quotes_number_org ON RAC_quotes(organization_id, quote_number);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_quote_counters;
+DROP TABLE IF EXISTS RAC_quote_items;
+DROP TABLE IF EXISTS RAC_quotes;
+DROP TYPE IF EXISTS quote_status;

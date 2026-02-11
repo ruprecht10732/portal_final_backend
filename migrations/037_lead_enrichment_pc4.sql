@@ -20,3 +20,13 @@ COMMENT ON COLUMN RAC_leads.lead_enrichment_gem_inkomen IS 'Average household in
 COMMENT ON COLUMN RAC_leads.lead_enrichment_pct_hoog_inkomen IS 'Percentage of households with high income (PC4)';
 COMMENT ON COLUMN RAC_leads.lead_enrichment_pct_laag_inkomen IS 'Percentage of households with low income (PC4)';
 COMMENT ON COLUMN RAC_leads.lead_enrichment_stedelijkheid IS 'Urbanization level 1=very urban to 5=rural (PC4)';
+
+-- +goose Down
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_stedelijkheid;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_pct_laag_inkomen;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_pct_hoog_inkomen;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_gem_inkomen;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_woz_waarde;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_gem_elektriciteitsverbruik;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_data_year;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS lead_enrichment_postcode4;

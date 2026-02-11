@@ -48,3 +48,11 @@ CREATE TABLE lead_timeline_events (
 
 CREATE INDEX idx_timeline_lookup ON lead_timeline_events(lead_id, created_at DESC);
 
+-- +goose Down
+DROP TABLE IF EXISTS lead_timeline_events;
+DROP INDEX IF EXISTS idx_lead_services_pipeline;
+ALTER TABLE RAC_lead_services DROP COLUMN IF EXISTS pipeline_stage;
+DROP TYPE IF EXISTS pipeline_stage;
+DROP EXTENSION IF EXISTS earthdistance;
+DROP EXTENSION IF EXISTS cube;
+

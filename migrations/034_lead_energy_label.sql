@@ -24,3 +24,15 @@ COMMENT ON COLUMN RAC_leads.energy_label_registered_at IS 'When the energy label
 COMMENT ON COLUMN RAC_leads.energy_primair_fossiel IS 'Primary fossil energy use in kWh/m2·jaar';
 COMMENT ON COLUMN RAC_leads.energy_bag_verblijfsobject_id IS 'BAG adresseerbaar object ID for future lookups';
 COMMENT ON COLUMN RAC_leads.energy_label_fetched_at IS 'When we last fetched this energy label data';
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_leads_energy_class;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_label_fetched_at;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_bag_verblijfsobject_id;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_primair_fossiel;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_label_registered_at;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_label_valid_until;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_gebouwtype;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_bouwjaar;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_index;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS energy_class;

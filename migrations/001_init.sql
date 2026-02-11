@@ -35,3 +35,9 @@ CREATE TABLE IF NOT EXISTS RAC_user_tokens (
 CREATE INDEX IF NOT EXISTS idx_user_tokens_user_id ON RAC_user_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_tokens_type ON RAC_user_tokens(type);
 CREATE INDEX IF NOT EXISTS idx_user_tokens_expires ON RAC_user_tokens(expires_at);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_user_tokens;
+DROP TABLE IF EXISTS RAC_refresh_tokens;
+DROP TABLE IF EXISTS RAC_users;
+DROP EXTENSION IF EXISTS "pgcrypto";

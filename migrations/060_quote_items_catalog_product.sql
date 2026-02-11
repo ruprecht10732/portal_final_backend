@@ -10,3 +10,7 @@ ALTER TABLE RAC_quote_items
 CREATE INDEX idx_quote_items_catalog_product
     ON RAC_quote_items(catalog_product_id)
     WHERE catalog_product_id IS NOT NULL;
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_quote_items_catalog_product;
+ALTER TABLE RAC_quote_items DROP COLUMN IF EXISTS catalog_product_id;

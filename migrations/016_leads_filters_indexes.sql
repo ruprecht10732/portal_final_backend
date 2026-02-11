@@ -10,3 +10,16 @@ CREATE INDEX IF NOT EXISTS idx_leads_address_city ON RAC_leads(address_city);
 CREATE INDEX IF NOT EXISTS idx_leads_service_type ON RAC_leads(service_type);
 CREATE INDEX IF NOT EXISTS idx_leads_assigned_agent_id ON RAC_leads(assigned_agent_id);
 CREATE INDEX IF NOT EXISTS idx_leads_created_at ON RAC_leads(created_at);
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_leads_created_at;
+DROP INDEX IF EXISTS idx_leads_assigned_agent_id;
+DROP INDEX IF EXISTS idx_leads_service_type;
+DROP INDEX IF EXISTS idx_leads_address_city;
+DROP INDEX IF EXISTS idx_leads_address_zip_code;
+DROP INDEX IF EXISTS idx_leads_address_house_number;
+DROP INDEX IF EXISTS idx_leads_address_street;
+DROP INDEX IF EXISTS idx_leads_consumer_role;
+DROP INDEX IF EXISTS idx_leads_consumer_email;
+DROP INDEX IF EXISTS idx_leads_consumer_last_name;
+DROP INDEX IF EXISTS idx_leads_consumer_first_name;

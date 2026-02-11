@@ -33,3 +33,15 @@ ALTER TABLE RAC_leads ADD COLUMN IF NOT EXISTS google_campaign_id BIGINT;
 ALTER TABLE RAC_leads ADD COLUMN IF NOT EXISTS google_adgroup_id BIGINT;
 ALTER TABLE RAC_leads ADD COLUMN IF NOT EXISTS google_creative_id BIGINT;
 ALTER TABLE RAC_leads ADD COLUMN IF NOT EXISTS google_form_id BIGINT;
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_google_lead_ids_created;
+DROP INDEX IF EXISTS idx_google_lead_ids_org;
+DROP TABLE IF EXISTS RAC_google_lead_ids;
+DROP INDEX IF EXISTS idx_google_webhook_configs_key_hash;
+DROP INDEX IF EXISTS idx_google_webhook_configs_org;
+DROP TABLE IF EXISTS RAC_google_webhook_configs;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS google_form_id;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS google_creative_id;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS google_adgroup_id;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS google_campaign_id;

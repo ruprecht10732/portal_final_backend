@@ -19,3 +19,9 @@ CREATE INDEX idx_webhook_api_keys_prefix ON RAC_webhook_api_keys(key_prefix);
 ALTER TABLE RAC_leads ADD COLUMN IF NOT EXISTS raw_form_data JSONB;
 ALTER TABLE RAC_leads ADD COLUMN IF NOT EXISTS webhook_source_domain TEXT;
 ALTER TABLE RAC_leads ADD COLUMN IF NOT EXISTS is_incomplete BOOLEAN NOT NULL DEFAULT false;
+
+-- +goose Down
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS is_incomplete;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS webhook_source_domain;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS raw_form_data;
+DROP TABLE IF EXISTS RAC_webhook_api_keys;

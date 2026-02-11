@@ -62,3 +62,18 @@ CREATE TABLE IF NOT EXISTS RAC_google_ads_exports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_gads_exports_org_time ON RAC_google_ads_exports(organization_id, exported_at DESC);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_google_ads_exports;
+DROP TABLE IF EXISTS RAC_lead_service_events;
+DROP TABLE IF EXISTS RAC_export_api_keys;
+DROP INDEX IF EXISTS idx_leads_org_created_at;
+DROP INDEX IF EXISTS idx_leads_gclid;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS referrer_url;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS ad_landing_page;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS utm_term;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS utm_content;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS utm_campaign;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS utm_medium;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS utm_source;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS gclid;

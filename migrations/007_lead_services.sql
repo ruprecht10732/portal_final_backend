@@ -50,3 +50,9 @@ WHERE deleted_at IS NULL;
 -- Add 'Closed' to RAC_leads status constraint (for backward compatibility during transition)
 ALTER TABLE RAC_leads DROP CONSTRAINT IF EXISTS leads_status_check;
 ALTER TABLE RAC_leads ADD CONSTRAINT leads_status_check CHECK (status IN ('New', 'Attempted_Contact', 'Scheduled', 'Surveyed', 'Bad_Lead', 'Needs_Rescheduling', 'Closed'));
+
+-- +goose Down
+UPDATE RAC_leads SET status = 'New' WHERE status = 'Closed';
+ALTER TABLE RAC_leads DROP CONSTRAINT IF EXISTS leads_status_check;
+ALTER TABLE RAC_leads ADD CONSTRAINT leads_status_check CHECK (status IN ('New', 'Attempted_Contact', 'Scheduled', 'Surveyed', 'Bad_Lead', 'Needs_Rescheduling'));
+DROP TABLE IF EXISTS RAC_lead_services;

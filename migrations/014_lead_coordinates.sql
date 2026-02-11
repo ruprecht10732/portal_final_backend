@@ -6,3 +6,8 @@ ALTER TABLE RAC_leads
 CREATE INDEX IF NOT EXISTS idx_leads_coordinates
   ON RAC_leads (latitude, longitude)
   WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_leads_coordinates;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS latitude;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS longitude;

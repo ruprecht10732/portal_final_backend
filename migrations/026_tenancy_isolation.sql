@@ -78,3 +78,30 @@ CREATE INDEX idx_appointment_availability_overrides_org ON appointment_availabil
 -- Composite indexes for common query patterns
 CREATE INDEX idx_leads_org_assigned ON RAC_leads(organization_id, assigned_agent_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_appointments_org_time ON appointments(organization_id, start_time, end_time);
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_appointments_org_time;
+DROP INDEX IF EXISTS idx_leads_org_assigned;
+DROP INDEX IF EXISTS idx_appointment_availability_overrides_org;
+DROP INDEX IF EXISTS idx_appointment_availability_rules_org;
+DROP INDEX IF EXISTS idx_appointment_attachments_org;
+DROP INDEX IF EXISTS idx_appointment_visit_reports_org;
+DROP INDEX IF EXISTS idx_appointments_org_user;
+DROP INDEX IF EXISTS idx_appointments_org;
+DROP INDEX IF EXISTS idx_lead_ai_analysis_org;
+DROP INDEX IF EXISTS idx_lead_notes_org;
+DROP INDEX IF EXISTS idx_lead_activity_org;
+DROP INDEX IF EXISTS idx_lead_services_org;
+DROP INDEX IF EXISTS idx_leads_org_deleted;
+DROP INDEX IF EXISTS idx_leads_org;
+
+ALTER TABLE appointment_availability_overrides DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE appointment_availability_rules DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE appointment_attachments DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE appointment_visit_reports DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE appointments DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE RAC_lead_ai_analysis DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE RAC_lead_notes DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE RAC_lead_activity DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE RAC_lead_services DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE RAC_leads DROP COLUMN IF EXISTS organization_id;

@@ -55,3 +55,49 @@ DELETE FROM rac_service_types WHERE organization_id IS NULL;
 ALTER TABLE rac_service_types ALTER COLUMN organization_id SET NOT NULL;
 
 COMMIT;
+
+-- +goose Down
+BEGIN;
+
+ALTER TABLE rac_service_types ALTER COLUMN organization_id DROP NOT NULL;
+
+-- Collapse tenant-scoped rows back into a single global row per slug.
+WITH ranked AS (
+    SELECT
+        id,
+        slug,
+        row_number() OVER (PARTITION BY slug ORDER BY created_at ASC NULLS LAST, id) AS rn
+    FROM rac_service_types
+)
+UPDATE rac_service_types st
+SET organization_id = NULL
+FROM ranked r
+WHERE st.id = r.id AND r.rn = 1;
+
+DELETE FROM rac_service_types st
+USING (
+    SELECT id
+    FROM (
+        SELECT
+            id,
+            row_number() OVER (PARTITION BY slug ORDER BY created_at ASC NULLS LAST, id) AS rn
+        FROM rac_service_types
+    ) t
+    WHERE t.rn > 1
+) d
+WHERE st.id = d.id;
+
+-- Remove per-org seeding from the up migration.
+UPDATE rac_lead_services ls
+SET service_type_id = COALESCE(
+    (SELECT id FROM rac_service_types WHERE slug = 'windows' AND organization_id IS NULL LIMIT 1),
+    (SELECT id FROM rac_service_types WHERE organization_id IS NULL ORDER BY created_at ASC NULLS LAST, id LIMIT 1)
+)
+WHERE ls.service_type_id IN (SELECT id FROM rac_service_types WHERE slug = 'algemeen');
+
+DELETE FROM rac_service_types WHERE slug = 'algemeen';
+ALTER TABLE rac_service_types DROP CONSTRAINT IF EXISTS rac_service_types_name_key;
+ALTER TABLE rac_service_types DROP CONSTRAINT IF EXISTS rac_service_types_slug_key;
+ALTER TABLE rac_service_types ADD CONSTRAINT rac_service_types_name_key UNIQUE (name);
+ALTER TABLE rac_service_types ADD CONSTRAINT rac_service_types_slug_key UNIQUE (slug);
+COMMIT;

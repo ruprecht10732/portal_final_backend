@@ -11,3 +11,8 @@ ALTER TABLE RAC_catalog_products
     unit_price_cents = 0
     OR (unit_label IS NOT NULL AND btrim(unit_label) <> '')
   );
+
+-- +goose Down
+ALTER TABLE RAC_catalog_products DROP CONSTRAINT IF EXISTS catalog_products_unit_label_check;
+ALTER TABLE RAC_catalog_products DROP COLUMN IF EXISTS unit_label;
+ALTER TABLE RAC_catalog_products DROP COLUMN IF EXISTS unit_price_cents;

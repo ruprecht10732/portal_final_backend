@@ -7,3 +7,6 @@ ALTER TABLE RAC_catalog_products
     (price_cents > 0 AND unit_price_cents = 0)
     OR (price_cents = 0 AND unit_price_cents > 0)
   );
+
+-- +goose Down
+ALTER TABLE RAC_catalog_products DROP CONSTRAINT IF EXISTS catalog_products_pricing_mode_check;

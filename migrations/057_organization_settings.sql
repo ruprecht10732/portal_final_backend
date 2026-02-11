@@ -12,3 +12,6 @@ CREATE TABLE IF NOT EXISTS RAC_organization_settings (
 INSERT INTO RAC_organization_settings (organization_id)
 SELECT id FROM RAC_organizations
 ON CONFLICT DO NOTHING;
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_organization_settings;

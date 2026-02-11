@@ -61,3 +61,8 @@ CREATE INDEX IF NOT EXISTS idx_feed_comment_mentions_comment
 
 CREATE INDEX IF NOT EXISTS idx_feed_comment_mentions_user
   ON RAC_feed_comment_mentions (mentioned_user_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_feed_comment_mentions;
+DROP TABLE IF EXISTS RAC_feed_comments;
+DROP TABLE IF EXISTS RAC_feed_reactions;

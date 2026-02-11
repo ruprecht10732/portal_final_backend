@@ -9,3 +9,6 @@ SET source = COALESCE(
     'manual'
 )
 WHERE ls.source IS NULL OR ls.source = 'manual';
+
+-- +goose Down
+ALTER TABLE RAC_lead_services DROP COLUMN IF EXISTS source;

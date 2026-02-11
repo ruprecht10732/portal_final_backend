@@ -1,4 +1,5 @@
 -- +goose Up
+-- Fix drift: ensure user profile columns and settings table exist.
 ALTER TABLE RAC_users
   ADD COLUMN IF NOT EXISTS first_name TEXT,
   ADD COLUMN IF NOT EXISTS last_name TEXT;

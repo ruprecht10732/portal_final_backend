@@ -1,3 +1,4 @@
+-- +goose Up
 -- +goose StatementBegin
 
 -- Appointments table for calendar management
@@ -38,5 +39,10 @@ CREATE INDEX idx_appointments_user_time_range ON appointments(user_id, start_tim
 -- Index for finding appointments by lead service (for sync with lead visits)
 CREATE INDEX idx_appointments_lead_service_id ON appointments(lead_service_id) WHERE lead_service_id IS NOT NULL;
 
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP TABLE IF EXISTS appointments;
 -- +goose StatementEnd
 

@@ -12,3 +12,6 @@ CREATE TABLE IF NOT EXISTS RAC_lead_notes (
 
 CREATE INDEX IF NOT EXISTS idx_lead_notes_lead_id ON RAC_lead_notes(lead_id);
 CREATE INDEX IF NOT EXISTS idx_lead_notes_created_at ON RAC_lead_notes(created_at DESC);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_lead_notes;

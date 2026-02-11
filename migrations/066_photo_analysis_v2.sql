@@ -19,3 +19,10 @@ COMMENT ON COLUMN RAC_lead_photo_analyses.extracted_text IS
     'Array of strings: OCR text from labels, stickers, screens, type plates';
 COMMENT ON COLUMN RAC_lead_photo_analyses.suggested_search_terms IS
     'Array of strings: specific product/material names for catalog search';
+
+-- +goose Down
+ALTER TABLE RAC_lead_photo_analyses DROP COLUMN IF EXISTS suggested_search_terms;
+ALTER TABLE RAC_lead_photo_analyses DROP COLUMN IF EXISTS extracted_text;
+ALTER TABLE RAC_lead_photo_analyses DROP COLUMN IF EXISTS discrepancies;
+ALTER TABLE RAC_lead_photo_analyses DROP COLUMN IF EXISTS needs_onsite_measurement;
+ALTER TABLE RAC_lead_photo_analyses DROP COLUMN IF EXISTS measurements;

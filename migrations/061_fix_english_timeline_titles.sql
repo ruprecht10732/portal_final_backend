@@ -15,3 +15,19 @@ UPDATE lead_timeline_events
    SET summary = 'Geautomatiseerde verwerking vereist menselijke beoordeling'
  WHERE event_type = 'alert'
    AND summary ILIKE 'Automated processing requires human review';
+
+-- +goose Down
+UPDATE lead_timeline_events SET title = 'Stage Updated' WHERE title = 'Fase bijgewerkt';
+UPDATE lead_timeline_events SET title = 'Gatekeeper Analysis Complete' WHERE title = 'Gatekeeper analyse voltooid';
+UPDATE lead_timeline_events SET title = 'Lead Score Updated' WHERE title = 'Leadscore bijgewerkt';
+UPDATE lead_timeline_events SET title = 'Lead Data Updated' WHERE title = 'Leadgegevens bijgewerkt';
+UPDATE lead_timeline_events SET title = 'Partner search' WHERE title = 'Partnerzoekactie';
+UPDATE lead_timeline_events SET title = 'Estimation saved' WHERE title = 'Schatting opgeslagen';
+UPDATE lead_timeline_events SET title = 'Call Logged' WHERE title = 'Gesprek geregistreerd';
+UPDATE lead_timeline_events SET title = 'Note Added' WHERE title = 'Notitie toegevoegd';
+UPDATE lead_timeline_events SET title = 'Manual intervention required' WHERE title = 'Handmatige interventie vereist';
+
+UPDATE lead_timeline_events
+   SET summary = 'Automated processing requires human review'
+ WHERE event_type = 'alert'
+   AND summary = 'Geautomatiseerde verwerking vereist menselijke beoordeling';

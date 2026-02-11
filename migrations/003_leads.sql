@@ -54,3 +54,13 @@ CREATE INDEX IF NOT EXISTS idx_leads_scheduled_date ON RAC_leads(visit_scheduled
 INSERT INTO RAC_roles (name)
 VALUES ('agent'), ('scout')
 ON CONFLICT (name) DO NOTHING;
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_leads_scheduled_date;
+DROP INDEX IF EXISTS idx_leads_created_at;
+DROP INDEX IF EXISTS idx_leads_phone;
+DROP INDEX IF EXISTS idx_leads_scout;
+DROP INDEX IF EXISTS idx_leads_assigned_agent;
+DROP INDEX IF EXISTS idx_leads_status;
+DROP TABLE IF EXISTS RAC_leads;
+DELETE FROM RAC_roles WHERE name IN ('agent', 'scout');

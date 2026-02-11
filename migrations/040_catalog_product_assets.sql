@@ -37,3 +37,6 @@ COMMENT ON COLUMN catalog_product_assets.file_name IS 'Original filename or labe
 COMMENT ON COLUMN catalog_product_assets.content_type IS 'MIME type of the file';
 COMMENT ON COLUMN catalog_product_assets.size_bytes IS 'File size in bytes';
 COMMENT ON COLUMN catalog_product_assets.url IS 'External URL for terms and conditions';
+
+-- +goose Down
+DROP TABLE IF EXISTS catalog_product_assets;

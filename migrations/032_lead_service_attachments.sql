@@ -29,3 +29,6 @@ COMMENT ON COLUMN lead_service_attachments.file_name IS 'Original filename as up
 COMMENT ON COLUMN lead_service_attachments.content_type IS 'MIME type of the file';
 COMMENT ON COLUMN lead_service_attachments.size_bytes IS 'File size in bytes';
 COMMENT ON COLUMN lead_service_attachments.uploaded_by IS 'User who uploaded the file';
+
+-- +goose Down
+DROP TABLE IF EXISTS lead_service_attachments;

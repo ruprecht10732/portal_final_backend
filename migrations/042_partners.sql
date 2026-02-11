@@ -79,3 +79,8 @@ CREATE INDEX IF NOT EXISTS idx_partner_invites_partner
 
 CREATE INDEX IF NOT EXISTS idx_partner_invites_lead
   ON RAC_partner_invites(lead_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_partner_invites;
+DROP TABLE IF EXISTS RAC_partner_leads;
+DROP TABLE IF EXISTS RAC_partners;

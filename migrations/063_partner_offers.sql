@@ -52,3 +52,8 @@ CREATE INDEX idx_partner_offers_expiry ON RAC_partner_offers(status, expires_at)
 CREATE UNIQUE INDEX idx_partner_offers_exclusive_acceptance
     ON RAC_partner_offers(lead_service_id)
     WHERE status = 'accepted';
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_partner_offers;
+DROP TYPE IF EXISTS pricing_source;
+DROP TYPE IF EXISTS offer_status;

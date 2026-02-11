@@ -32,3 +32,10 @@ CREATE TABLE IF NOT EXISTS organization_invites (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_invites_active_email
   ON organization_invites(organization_id, lower(email))
   WHERE used_at IS NULL;
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_organization_invites_active_email;
+DROP INDEX IF EXISTS idx_organization_members_user_id;
+DROP TABLE IF EXISTS organization_invites;
+DROP TABLE IF EXISTS organization_members;
+DROP TABLE IF EXISTS organizations;

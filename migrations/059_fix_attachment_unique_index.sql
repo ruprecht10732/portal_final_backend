@@ -7,3 +7,8 @@ DROP INDEX IF EXISTS idx_quote_attachments_unique_filename;
 
 CREATE UNIQUE INDEX idx_quote_attachments_unique_file_key
     ON RAC_quote_attachments (quote_id, file_key);
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_quote_attachments_unique_file_key;
+CREATE UNIQUE INDEX idx_quote_attachments_unique_filename
+    ON RAC_quote_attachments (quote_id, filename);

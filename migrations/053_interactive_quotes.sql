@@ -35,3 +35,19 @@ CREATE TABLE RAC_quote_annotations (
 );
 
 CREATE INDEX idx_quote_annotations_item ON RAC_quote_annotations(quote_item_id);
+
+-- +goose Down
+DROP TABLE IF EXISTS RAC_quote_annotations;
+ALTER TABLE RAC_quote_items DROP COLUMN IF EXISTS is_selected;
+DROP INDEX IF EXISTS idx_quotes_public_token;
+ALTER TABLE RAC_quotes
+    DROP COLUMN IF EXISTS pdf_file_key,
+    DROP COLUMN IF EXISTS signature_ip,
+    DROP COLUMN IF EXISTS signature_data,
+    DROP COLUMN IF EXISTS signature_name,
+    DROP COLUMN IF EXISTS rejection_reason,
+    DROP COLUMN IF EXISTS rejected_at,
+    DROP COLUMN IF EXISTS accepted_at,
+    DROP COLUMN IF EXISTS viewed_at,
+    DROP COLUMN IF EXISTS public_token_expires_at,
+    DROP COLUMN IF EXISTS public_token;

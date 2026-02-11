@@ -74,3 +74,15 @@ CREATE TABLE IF NOT EXISTS RAC_feed_pinned_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_feed_pinned_alerts_org
   ON RAC_feed_pinned_alerts(organization_id) WHERE resolved_at IS NULL;
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_lead_activity_org_created;
+DROP INDEX IF EXISTS idx_timeline_events_cluster;
+DROP INDEX IF EXISTS idx_quote_activity_cluster;
+DROP INDEX IF EXISTS idx_lead_activity_cluster;
+DROP INDEX IF EXISTS idx_lead_notes_parent_event;
+DROP INDEX IF EXISTS idx_feed_pinned_alerts_org;
+DROP TABLE IF EXISTS RAC_feed_pinned_alerts;
+ALTER TABLE RAC_lead_notes DROP COLUMN IF EXISTS parent_event_type;
+ALTER TABLE RAC_lead_notes DROP COLUMN IF EXISTS parent_event_id;
+DROP TABLE IF EXISTS RAC_feed_read_state;

@@ -17,3 +17,6 @@ CREATE TABLE IF NOT EXISTS visit_history (
 
 CREATE INDEX IF NOT EXISTS idx_visit_history_lead_id ON visit_history(lead_id);
 CREATE INDEX IF NOT EXISTS idx_visit_history_scheduled_date ON visit_history(scheduled_date);
+
+-- +goose Down
+DROP TABLE IF EXISTS visit_history;

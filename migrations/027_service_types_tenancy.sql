@@ -13,3 +13,11 @@ ALTER TABLE RAC_service_types DROP CONSTRAINT IF EXISTS service_types_slug_key;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_service_types_org_name ON RAC_service_types(organization_id, name);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_service_types_org_slug ON RAC_service_types(organization_id, slug);
 CREATE INDEX IF NOT EXISTS idx_service_types_org ON RAC_service_types(organization_id);
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_service_types_org;
+DROP INDEX IF EXISTS idx_service_types_org_slug;
+DROP INDEX IF EXISTS idx_service_types_org_name;
+ALTER TABLE RAC_service_types DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE RAC_service_types ADD CONSTRAINT service_types_name_key UNIQUE (name);
+ALTER TABLE RAC_service_types ADD CONSTRAINT service_types_slug_key UNIQUE (slug);
