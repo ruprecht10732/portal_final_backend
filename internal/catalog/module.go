@@ -2,10 +2,12 @@
 package catalog
 
 import (
+	"context"
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/catalog/handler"
 	"portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/catalog/service"
+	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/platform/ai/embeddingapi"
 	"portal_final_backend/platform/config"
@@ -87,6 +89,21 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.POST("/products/:id/assets", m.handler.CreateCatalogAsset)
 	adminGroup.POST("/products/:id/assets/url", m.handler.CreateCatalogURLAsset)
 	adminGroup.DELETE("/products/:id/assets/:assetId", m.handler.DeleteCatalogAsset)
+}
+
+// RegisterHandlers subscribes to domain events for seeding tenant defaults.
+func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
+	bus.Subscribe(events.OrganizationCreated{}.EventName(), m)
+}
+
+// Handle routes events to the appropriate handler method.
+func (m *Module) Handle(ctx context.Context, event events.Event) error {
+	switch e := event.(type) {
+	case events.OrganizationCreated:
+		return m.service.SeedDefaultVatRates(ctx, e.OrganizationID)
+	default:
+		return nil
+	}
 }
 
 // Compile-time check that Module implements http.Module

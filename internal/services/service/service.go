@@ -216,12 +216,13 @@ func (s *Service) SeedDefaults(ctx context.Context, tenantID uuid.UUID) error {
 
 	for _, def := range defaultServiceTypes {
 		_, err := s.repo.Create(ctx, repository.CreateParams{
-			OrganizationID: tenantID,
-			Name:           def.Name,
-			Slug:           def.Slug,
-			Description:    toPtr(def.Description),
-			Icon:           toPtr(def.Icon),
-			Color:          toPtr(def.Color),
+			OrganizationID:   tenantID,
+			Name:             def.Name,
+			Slug:             def.Slug,
+			Description:      toPtr(def.Description),
+			IntakeGuidelines: toPtr(def.IntakeGuidelines),
+			Icon:             toPtr(def.Icon),
+			Color:            toPtr(def.Color),
 		})
 		if err != nil {
 			if isDuplicateServiceType(err) {
@@ -246,12 +247,13 @@ func (s *Service) ensureAlgemeen(ctx context.Context, tenantID uuid.UUID, existi
 	for _, def := range defaultServiceTypes {
 		if def.Slug == "algemeen" {
 			_, err := s.repo.Create(ctx, repository.CreateParams{
-				OrganizationID: tenantID,
-				Name:           def.Name,
-				Slug:           def.Slug,
-				Description:    toPtr(def.Description),
-				Icon:           toPtr(def.Icon),
-				Color:          toPtr(def.Color),
+				OrganizationID:   tenantID,
+				Name:             def.Name,
+				Slug:             def.Slug,
+				Description:      toPtr(def.Description),
+				IntakeGuidelines: toPtr(def.IntakeGuidelines),
+				Icon:             toPtr(def.Icon),
+				Color:            toPtr(def.Color),
 			})
 			if err != nil && !isDuplicateServiceType(err) {
 				return err
@@ -323,69 +325,209 @@ func generateSlug(name string) string {
 }
 
 type defaultServiceType struct {
-	Name        string
-	Slug        string
-	Description string
-	Icon        string
-	Color       string
+	Name             string
+	Slug             string
+	Description      string
+	Icon             string
+	Color            string
+	IntakeGuidelines string
 }
 
 var defaultServiceTypes = []defaultServiceType{
 	{
-		Name:        "Windows",
-		Slug:        "windows",
-		Description: "Window and door installation, replacement, and repairs",
+		Name:        "Ramen en deuren",
+		Slug:        "ramen-deuren",
+		Description: "Plaatsing, vervanging en reparatie van ramen en deuren",
 		Icon:        "window",
 		Color:       "#3B82F6",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Metingen
+- Aantal ramen en/of deuren
+- Afmetingen per kozijn (hoogte x breedte)
+- Verdieping en bereikbaarheid
+
+### Huidige situatie
+- Type glas (enkel, dubbel, HR++)
+- Materiaal kozijn (hout, kunststof, aluminium)
+- Staat van bestaande kozijnen
+
+### Wensen en planning
+- Gewenst glastype (HR++, triple)
+- Kleur en afwerking
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
-		Name:        "Insulation",
-		Slug:        "insulation",
-		Description: "Home insulation services including roof, wall, and floor insulation",
+		Name:        "Isolatie",
+		Slug:        "isolatie",
+		Description: "Dak-, vloer- en spouwmuurisolatie voor woningen",
 		Icon:        "home",
 		Color:       "#10B981",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Type isolatie
+- Dak, vloer, spouwmuur of gevel
+- Beschikbaar oppervlak (m2)
+- Huidige isolatielaag (ja/nee, dikte)
+
+### Huidige situatie
+- Bouwjaar woning
+- Toegang tot dak/vloer/spouw
+- Eventuele vochtproblemen
+
+### Wensen en planning
+- Voorkeur materiaal (glaswol, PIR, EPS)
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
-		Name:        "Solar",
-		Slug:        "solar",
-		Description: "Solar panel installation and maintenance",
+		Name:        "Zonnepanelen",
+		Slug:        "zonnepanelen",
+		Description: "Installatie en onderhoud van zonnepanelen",
 		Icon:        "sun",
 		Color:       "#F59E0B",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Dak en ligging
+- Type dak (plat, schuin)
+- Orientatie (noord, oost, zuid, west)
+- Dakhelling en schaduw (bomen/gebouw)
+
+### Techniek
+- Huidige meterkast (aantal groepen)
+- Beschikbare ruimte voor omvormer
+- Gewenst aantal panelen
+
+### Wensen en planning
+- Doel (besparing, teruglevering)
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
-		Name:        "Plumbing",
-		Slug:        "plumbing",
-		Description: "Plumbing repairs, installations, and drain services",
+		Name:        "Loodgieterswerk",
+		Slug:        "loodgieterswerk",
+		Description: "Reparaties en installatie van leidingen, kranen en afvoer",
 		Icon:        "droplet",
 		Color:       "#0EA5E9",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Probleemomschrijving
+- Type klus (lekkage, verstopping, installatie)
+- Locatie in de woning
+- Ernst en urgentie
+
+### Huidige situatie
+- Materiaal leidingen (koper, pvc, staal)
+- Bereikbaarheid (vloer, kruipruimte)
+- Vorige reparaties
+
+### Wensen en planning
+- Gewenste oplossing
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
-		Name:        "HVAC",
-		Slug:        "hvac",
-		Description: "Heating, ventilation, air conditioning, and heat pumps",
+		Name:        "Verwarming en klimaat",
+		Slug:        "verwarming-klimaat",
+		Description: "CV, warmtepompen, ventilatie en airco systemen",
 		Icon:        "flame",
 		Color:       "#EF4444",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Type systeem
+- CV ketel, warmtepomp, ventilatie of airco
+- Gewenst vermogen of capaciteit
+
+### Huidige situatie
+- Bestaand systeem en leeftijd
+- Woningtype en oppervlakte
+- Beschikbare ruimte voor installatie
+
+### Wensen en planning
+- Doel (comfort, besparen, vervangen)
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
-		Name:        "Electrical",
-		Slug:        "electrical",
-		Description: "Electrical installations, repairs, and upgrades",
+		Name:        "Elektra",
+		Slug:        "elektra",
+		Description: "Elektrische installaties, uitbreidingen en reparaties",
 		Icon:        "zap",
 		Color:       "#8B5CF6",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Werkzaamheden
+- Type klus (groepenkast, stopcontacten, verlichting)
+- Aantal punten of groepen
+
+### Huidige situatie
+- Huidige groepenkast (aantal groepen)
+- Bekabeling en bereikbaarheid
+- Eventuele storingen
+
+### Wensen en planning
+- Gewenste functionaliteit
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
-		Name:        "Carpentry",
-		Slug:        "carpentry",
-		Description: "Woodwork, doors, floors, and furniture repairs",
+		Name:        "Timmerwerk",
+		Slug:        "timmerwerk",
+		Description: "Houtwerk, deuren, vloeren en maatwerk",
 		Icon:        "hammer",
 		Color:       "#D97706",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Werkomschrijving
+- Type project (kast, vloer, trap, kozijn)
+- Afmetingen of tekeningen
+
+### Huidige situatie
+- Materiaal en staat
+- Montageplek en bereikbaarheid
+
+### Wensen en planning
+- Gewenste afwerking en kleur
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
-		Name:        "Handyman",
-		Slug:        "handyman",
-		Description: "General repairs and small home improvement tasks",
+		Name:        "Klusbedrijf",
+		Slug:        "klusbedrijf",
+		Description: "Algemene klussen en kleine verbouwingen",
 		Icon:        "tool",
 		Color:       "#6B7280",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Kluslijst
+- Overzicht van alle taken
+- Aantal en afmetingen per taak
+
+### Huidige situatie
+- Locatie per klus
+- Toegang en bereikbaarheid
+
+### Wensen en planning
+- Gewenste materialen of afwerking
+- Gewenste uitvoerdatum
+
+### Budget indicatie
+- Richtbudget of bandbreedte`,
 	},
 	{
 		Name:        "Algemeen",
@@ -393,6 +535,20 @@ var defaultServiceTypes = []defaultServiceType{
 		Description: "Algemene aanvragen en niet-gecategoriseerde verzoeken",
 		Icon:        "inbox",
 		Color:       "#9CA3AF",
+		IntakeGuidelines: `## Benodigde informatie
+
+### Probleemomschrijving
+- Korte omschrijving van de aanvraag
+- Locatie in de woning
+- Urgentie
+
+### Basisgegevens
+- Afmetingen of aantallen indien relevant
+- Fotos indien mogelijk
+
+### Wensen en planning
+- Gewenste uitvoerdatum
+- Indicatief budget`,
 	},
 }
 

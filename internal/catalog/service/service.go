@@ -133,6 +133,34 @@ func (s *Service) DeleteVatRate(ctx context.Context, tenantID uuid.UUID, id uuid
 	return nil
 }
 
+// SeedDefaultVatRates ensures a tenant has the standard VAT rates.
+func (s *Service) SeedDefaultVatRates(ctx context.Context, tenantID uuid.UUID) error {
+	items, total, err := s.repo.ListVatRates(ctx, repository.ListVatRatesParams{
+		OrganizationID: tenantID,
+		Offset:         0,
+		Limit:          1,
+	})
+	if err != nil {
+		return err
+	}
+	if total > 0 || len(items) > 0 {
+		return nil
+	}
+
+	for _, def := range defaultVatRates {
+		_, err := s.repo.CreateVatRate(ctx, repository.CreateVatRateParams{
+			OrganizationID: tenantID,
+			Name:           def.Name,
+			RateBps:        def.RateBps,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // GetProductByID retrieves a product by ID.
 func (s *Service) GetProductByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.ProductResponse, error) {
 	product, err := s.repo.GetProductByID(ctx, tenantID, id)
@@ -958,4 +986,15 @@ func toCatalogAssetResponse(asset repository.ProductAsset) transport.CatalogAsse
 		URL:         asset.URL,
 		CreatedAt:   asset.CreatedAt,
 	}
+}
+
+type defaultVatRate struct {
+	Name    string
+	RateBps int
+}
+
+var defaultVatRates = []defaultVatRate{
+	{Name: "BTW 21%", RateBps: 2100},
+	{Name: "BTW 9%", RateBps: 900},
+	{Name: "BTW 0%", RateBps: 0},
 }

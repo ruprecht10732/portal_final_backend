@@ -184,6 +184,7 @@ func main() {
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
+	catalogModule.RegisterHandlers(eventBus)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 
