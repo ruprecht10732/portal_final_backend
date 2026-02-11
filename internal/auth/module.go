@@ -76,6 +76,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	ctx.Protected.PATCH("/users/me", m.handler.UpdateMe)
 	ctx.Protected.POST("/users/me/password", m.handler.ChangePassword)
 	ctx.Protected.POST("/users/me/onboarding", m.handler.CompleteOnboarding)
+	ctx.Protected.POST("/users/me/onboarding/complete", m.handler.MarkOnboardingComplete)
 
 	// Admin routes
 	ctx.Admin.PUT("/users/:id/roles", m.handler.SetUserRoles)

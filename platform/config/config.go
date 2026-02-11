@@ -194,6 +194,7 @@ type Config struct {
 	RedisTLSInsecure                  bool
 	AsynqQueueName                    string
 	AsynqConcurrency                  int
+	SMTPEncryptionKey                 string
 }
 
 // =============================================================================
@@ -232,6 +233,9 @@ func (c *Config) GetAppBaseURL() string { return c.AppBaseURL }
 func (c *Config) GetWhatsAppURL() string      { return c.WhatsAppURL }
 func (c *Config) GetWhatsAppKey() string      { return c.WhatsAppKey }
 func (c *Config) GetWhatsAppDeviceID() string { return c.WhatsAppDeviceID }
+
+// SMTPConfig getter
+func (c *Config) GetSMTPEncryptionKey() string { return c.SMTPEncryptionKey }
 
 // SchedulerConfig implementation
 func (c *Config) GetRedisURL() string       { return c.RedisURL }
@@ -376,6 +380,7 @@ func Load() (*Config, error) {
 		RedisTLSInsecure:                  strings.EqualFold(getEnv("REDIS_TLS_INSECURE", "false"), "true"),
 		AsynqQueueName:                    getEnv("ASYNQ_QUEUE_NAME", "default"),
 		AsynqConcurrency:                  mustInt(getEnv("ASYNQ_CONCURRENCY", "10")),
+		SMTPEncryptionKey:                 getEnv("SMTP_ENCRYPTION_KEY", ""),
 	}
 
 	if cfg.DatabaseURL == "" {

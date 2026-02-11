@@ -184,16 +184,36 @@ func applyPendingMigrations(ctx context.Context, conn *pgx.Conn, dir string, fil
 	return nil
 }
 
+// extractUpSQL returns only the "up" portion of a migration file.
+// If the file contains a "-- +migrate Down" marker the down section is stripped.
+// The checksum is always computed on the original, unmodified content so that
+// idempotent re-runs don't trigger a checksum-mismatch warning.
+func extractUpSQL(raw string) string {
+	const downMarker = "-- +migrate Down"
+	if idx := strings.Index(raw, downMarker); idx != -1 {
+		raw = raw[:idx]
+	}
+	// Also strip the optional "-- +migrate Up" marker itself.
+	const upMarker = "-- +migrate Up"
+	raw = strings.Replace(raw, upMarker, "", 1)
+	return strings.TrimSpace(raw)
+}
+
 // applyMigration runs a single migration file inside a transaction and records it.
 func applyMigration(ctx context.Context, conn *pgx.Conn, filename, sql, checksum string) error {
 	slog.Info("applying migration", "file", filename)
+
+	execSQL := extractUpSQL(sql)
+	if execSQL == "" {
+		slog.Warn("migration file is empty after extracting up section — skipping execution", "file", filename)
+	}
 
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx for %s: %w", filename, err)
 	}
 
-	if _, err := tx.Exec(ctx, sql); err != nil {
+	if _, err := tx.Exec(ctx, execSQL); err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("execute migration %s: %w", filename, err)
 	}
@@ -217,8 +237,8 @@ func bootstrapExistingDB(ctx context.Context, conn *pgx.Conn, dir string, files 
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM _migrations`).Scan(&count); err != nil {
 		return err
 	}
-	if count >= len(files) {
-		return nil // fully seeded already
+	if count > 0 {
+		return nil // runner is already in use — no bootstrap needed
 	}
 
 	// Only auto-seed if the DB already has application tables.

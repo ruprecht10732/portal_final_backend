@@ -80,6 +80,12 @@ type OrganizationSettings struct {
 	QuotePaymentDays int
 	QuoteValidDays   int
 	WhatsAppDeviceID *string
+	SMTPHost         *string
+	SMTPPort         *int
+	SMTPUsername     *string
+	SMTPPassword     *string // AES-256-GCM encrypted
+	SMTPFromEmail    *string
+	SMTPFromName     *string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -88,6 +94,16 @@ type OrganizationSettingsUpdate struct {
 	QuotePaymentDays *int
 	QuoteValidDays   *int
 	WhatsAppDeviceID *string
+}
+
+// OrganizationSMTPUpdate holds encrypted SMTP configuration fields.
+type OrganizationSMTPUpdate struct {
+	SMTPHost      string
+	SMTPPort      int
+	SMTPUsername  string
+	SMTPPassword  string // already encrypted
+	SMTPFromEmail string
+	SMTPFromName  string
 }
 
 type Invite struct {
@@ -286,7 +302,9 @@ func (r *Repository) ClearOrganizationLogo(
 func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-    SELECT organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, created_at, updated_at
+    SELECT organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id,
+           smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
+           created_at, updated_at
     FROM RAC_organization_settings
     WHERE organization_id = $1
   `, organizationID).Scan(
@@ -294,6 +312,12 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
 		&s.WhatsAppDeviceID,
+		&s.SMTPHost,
+		&s.SMTPPort,
+		&s.SMTPUsername,
+		&s.SMTPPassword,
+		&s.SMTPFromEmail,
+		&s.SMTPFromName,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)
@@ -323,12 +347,20 @@ func (r *Repository) UpsertOrganizationSettings(
 			quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
 			whatsapp_device_id = CASE WHEN $4 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($4, '') END,
 			updated_at         = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, created_at, updated_at
+		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id,
+		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
+		          created_at, updated_at
 	`, organizationID, update.QuotePaymentDays, update.QuoteValidDays, update.WhatsAppDeviceID).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
 		&s.WhatsAppDeviceID,
+		&s.SMTPHost,
+		&s.SMTPPort,
+		&s.SMTPUsername,
+		&s.SMTPPassword,
+		&s.SMTPFromEmail,
+		&s.SMTPFromName,
 		&s.CreatedAt,
 		&s.UpdatedAt,
 	)
@@ -336,6 +368,58 @@ func (r *Repository) UpsertOrganizationSettings(
 		return OrganizationSettings{}, ErrNotFound
 	}
 	return s, err
+}
+
+// UpsertOrganizationSMTP stores encrypted SMTP settings for an organization.
+func (r *Repository) UpsertOrganizationSMTP(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	update OrganizationSMTPUpdate,
+) (OrganizationSettings, error) {
+	var s OrganizationSettings
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO RAC_organization_settings (organization_id, smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (organization_id) DO UPDATE SET
+			smtp_host       = $2,
+			smtp_port       = $3,
+			smtp_username   = $4,
+			smtp_password   = $5,
+			smtp_from_email = $6,
+			smtp_from_name  = $7,
+			updated_at      = now()
+		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id,
+		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
+		          created_at, updated_at
+	`, organizationID, update.SMTPHost, update.SMTPPort, update.SMTPUsername, update.SMTPPassword, update.SMTPFromEmail, update.SMTPFromName).Scan(
+		&s.OrganizationID,
+		&s.QuotePaymentDays,
+		&s.QuoteValidDays,
+		&s.WhatsAppDeviceID,
+		&s.SMTPHost,
+		&s.SMTPPort,
+		&s.SMTPUsername,
+		&s.SMTPPassword,
+		&s.SMTPFromEmail,
+		&s.SMTPFromName,
+		&s.CreatedAt,
+		&s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationSettings{}, ErrNotFound
+	}
+	return s, err
+}
+
+// ClearOrganizationSMTP removes SMTP configuration for an organization.
+func (r *Repository) ClearOrganizationSMTP(ctx context.Context, organizationID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE RAC_organization_settings
+		SET smtp_host = NULL, smtp_port = NULL, smtp_username = NULL, smtp_password = NULL,
+		    smtp_from_email = NULL, smtp_from_name = NULL, updated_at = now()
+		WHERE organization_id = $1
+	`, organizationID)
+	return err
 }
 
 func (r *Repository) AddMember(ctx context.Context, q DBTX, organizationID, userID uuid.UUID) error {

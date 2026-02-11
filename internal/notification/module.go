@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
+	"portal_final_backend/internal/identity/smtpcrypto"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
@@ -69,18 +71,26 @@ type LeadTimelineWriter interface {
 	CreateTimelineEvent(ctx context.Context, params LeadTimelineEventParams) error
 }
 
+// cachedSender holds a resolved email.Sender with a TTL for cache expiry.
+type cachedSender struct {
+	sender    email.Sender
+	expiresAt time.Time
+}
+
 // Module handles all notification-related event subscriptions.
 type Module struct {
-	sender         email.Sender
-	cfg            config.NotificationConfig
-	log            *logger.Logger
-	sse            *sse.Service
-	pdfProc        QuoteAcceptanceProcessor
-	actWriter      QuoteActivityWriter
-	offerTimeline  PartnerOfferTimelineWriter
-	whatsapp       WhatsAppSender
-	leadTimeline   LeadTimelineWriter
-	settingsReader OrganizationSettingsReader
+	sender            email.Sender
+	cfg               config.NotificationConfig
+	log               *logger.Logger
+	sse               *sse.Service
+	pdfProc           QuoteAcceptanceProcessor
+	actWriter         QuoteActivityWriter
+	offerTimeline     PartnerOfferTimelineWriter
+	whatsapp          WhatsAppSender
+	leadTimeline      LeadTimelineWriter
+	settingsReader    OrganizationSettingsReader
+	smtpEncryptionKey []byte
+	senderCache       sync.Map // map[uuid.UUID]cachedSender
 }
 
 // New creates a new notification module.
@@ -116,6 +126,90 @@ func (m *Module) SetOrganizationSettingsReader(reader OrganizationSettingsReader
 
 // SetLeadTimelineWriter injects the lead timeline writer.
 func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeline = writer }
+
+// SetSMTPEncryptionKey sets the AES key used to decrypt SMTP passwords from org settings.
+func (m *Module) SetSMTPEncryptionKey(key []byte) { m.smtpEncryptionKey = key }
+
+// resolveSender returns a tenant-specific SMTPSender if the organization has SMTP
+// configured, falling back to the default (Brevo) sender. Results are cached with a
+// 5-minute TTL to avoid repeated DB lookups and decryption.
+func (m *Module) resolveSender(ctx context.Context, orgID uuid.UUID) email.Sender {
+	// Check cache first.
+	if cached, ok := m.senderCache.Load(orgID); ok {
+		entry := cached.(cachedSender)
+		if time.Now().Before(entry.expiresAt) {
+			return entry.sender
+		}
+		m.senderCache.Delete(orgID)
+	}
+
+	// No cache hit — resolve from DB.
+	if m.settingsReader == nil || len(m.smtpEncryptionKey) == 0 {
+		return m.sender
+	}
+
+	settings, err := m.settingsReader.GetOrganizationSettings(ctx, orgID)
+	if err != nil {
+		m.log.Warn("failed to fetch org settings for smtp", "error", err, "orgId", orgID)
+		return m.sender
+	}
+
+	if settings.SMTPHost == nil || *settings.SMTPHost == "" {
+		// No SMTP configured — cache the default sender so we don't query again soon.
+		m.senderCache.Store(orgID, cachedSender{sender: m.sender, expiresAt: time.Now().Add(5 * time.Minute)})
+		return m.sender
+	}
+
+	smtpSender, err := m.buildSMTPSender(settings)
+	if err != nil {
+		m.log.Error("failed to build smtp sender", "error", err, "orgId", orgID)
+		return m.sender
+	}
+
+	m.senderCache.Store(orgID, cachedSender{sender: smtpSender, expiresAt: time.Now().Add(5 * time.Minute)})
+	m.log.Info("resolved tenant smtp sender", "orgId", orgID, "host", *settings.SMTPHost)
+	return smtpSender
+}
+
+// buildSMTPSender creates an SMTPSender from organization settings, decrypting the password.
+func (m *Module) buildSMTPSender(settings repository.OrganizationSettings) (email.Sender, error) {
+	password := ""
+	if settings.SMTPPassword != nil && *settings.SMTPPassword != "" {
+		decrypted, err := smtpcrypto.Decrypt(*settings.SMTPPassword, m.smtpEncryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt smtp password: %w", err)
+		}
+		password = decrypted
+	}
+
+	port := 587
+	if settings.SMTPPort != nil {
+		port = *settings.SMTPPort
+	}
+
+	return email.NewSMTPSender(
+		*settings.SMTPHost,
+		port,
+		derefStr(settings.SMTPUsername),
+		password,
+		derefStr(settings.SMTPFromEmail),
+		derefStr(settings.SMTPFromName),
+	), nil
+}
+
+// derefStr safely dereferences a *string, returning "" for nil.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// InvalidateSMTPCache removes the cached sender for an organization, forcing
+// re-resolution on the next email send. Called when SMTP settings are updated.
+func (m *Module) InvalidateSMTPCache(orgID uuid.UUID) {
+	m.senderCache.Delete(orgID)
+}
 
 // RegisterHandlers subscribes to all relevant domain events on the event bus.
 func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
@@ -261,7 +355,8 @@ func (m *Module) handleOrganizationInviteCreated(ctx context.Context, e events.O
 
 func (m *Module) handlePartnerInviteCreated(ctx context.Context, e events.PartnerInviteCreated) error {
 	inviteURL := m.buildURL("/partner-invite", e.InviteToken)
-	if err := m.sender.SendPartnerInviteEmail(ctx, e.Email, e.OrganizationName, e.PartnerName, inviteURL); err != nil {
+	sender := m.resolveSender(ctx, e.OrganizationID)
+	if err := sender.SendPartnerInviteEmail(ctx, e.Email, e.OrganizationName, e.PartnerName, inviteURL); err != nil {
 		m.log.Error("failed to send partner invite email",
 			"organizationId", e.OrganizationID,
 			"partnerId", e.PartnerID,
@@ -389,7 +484,8 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 
 	// 3. Send confirmation email to the vakman
 	if e.PartnerEmail != "" {
-		if err := m.sender.SendPartnerOfferAcceptedConfirmationEmail(ctx, e.PartnerEmail, e.PartnerName); err != nil {
+		sender := m.resolveSender(ctx, e.OrganizationID)
+		if err := sender.SendPartnerOfferAcceptedConfirmationEmail(ctx, e.PartnerEmail, e.PartnerName); err != nil {
 			m.log.Error("failed to send partner offer accepted confirmation to vakman",
 				"offerId", e.OfferID,
 				"partnerEmail", e.PartnerEmail,
@@ -644,7 +740,8 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 	// Send the quote proposal email to the consumer
 	if e.ConsumerEmail != "" {
 		proposalURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/") + "/quote/" + e.PublicToken
-		if err := m.sender.SendQuoteProposalEmail(ctx, e.ConsumerEmail, e.ConsumerName, e.OrganizationName, e.QuoteNumber, proposalURL); err != nil {
+		sender := m.resolveSender(ctx, e.OrganizationID)
+		if err := sender.SendQuoteProposalEmail(ctx, e.ConsumerEmail, e.ConsumerName, e.OrganizationName, e.QuoteNumber, proposalURL); err != nil {
 			m.log.Error("failed to send quote proposal email",
 				"quoteId", e.QuoteID,
 				"email", e.ConsumerEmail,
@@ -893,7 +990,8 @@ func (m *Module) sendAcceptanceThankYouEmail(ctx context.Context, e events.Quote
 		})
 	}
 
-	if err := m.sender.SendQuoteAcceptedThankYouEmail(ctx, e.ConsumerEmail, e.ConsumerName, e.OrganizationName, e.QuoteNumber, attachments...); err != nil {
+	sender := m.resolveSender(ctx, e.OrganizationID)
+	if err := sender.SendQuoteAcceptedThankYouEmail(ctx, e.ConsumerEmail, e.ConsumerName, e.OrganizationName, e.QuoteNumber, attachments...); err != nil {
 		m.log.Error("failed to send acceptance thank-you email to customer",
 			"quoteId", e.QuoteID,
 			"email", e.ConsumerEmail,
@@ -913,7 +1011,8 @@ func (m *Module) sendAcceptanceAgentEmail(ctx context.Context, e events.QuoteAcc
 		return
 	}
 
-	if err := m.sender.SendQuoteAcceptedEmail(ctx, e.AgentEmail, e.AgentName, e.QuoteNumber, e.ConsumerName, e.TotalCents); err != nil {
+	sender := m.resolveSender(ctx, e.OrganizationID)
+	if err := sender.SendQuoteAcceptedEmail(ctx, e.AgentEmail, e.AgentName, e.QuoteNumber, e.ConsumerName, e.TotalCents); err != nil {
 		m.log.Error("failed to send acceptance notification email to agent",
 			"quoteId", e.QuoteID,
 			"email", e.AgentEmail,

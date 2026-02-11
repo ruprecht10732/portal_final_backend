@@ -38,6 +38,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/organizations/me/whatsapp/status", h.GetWhatsAppStatus)
 	rg.POST("/organizations/me/whatsapp/reconnect", h.ReconnectWhatsApp)
 	rg.DELETE("/organizations/me/whatsapp", h.DisconnectWhatsApp)
+	rg.PUT("/organizations/me/smtp", h.SetSMTP)
+	rg.GET("/organizations/me/smtp/status", h.GetSMTPStatus)
+	rg.DELETE("/organizations/me/smtp", h.ClearSMTP)
+	rg.POST("/organizations/me/smtp/test", h.TestSMTP)
+	rg.POST("/organizations/me/smtp/detect", h.DetectSMTP)
 	rg.POST("/organizations/me/logo/presign", h.PresignLogo)
 	rg.POST("/organizations/me/logo", h.SetLogo)
 	rg.GET("/organizations/me/logo/download", h.GetLogoDownload)
@@ -319,6 +324,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 		QuotePaymentDays: settings.QuotePaymentDays,
 		QuoteValidDays:   settings.QuoteValidDays,
 		WhatsAppDeviceID: settings.WhatsAppDeviceID,
+		SMTPConfigured:   settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
 }
 
@@ -356,6 +362,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		QuotePaymentDays: settings.QuotePaymentDays,
 		QuoteValidDays:   settings.QuoteValidDays,
 		WhatsAppDeviceID: settings.WhatsAppDeviceID,
+		SMTPConfigured:   settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
 }
 
@@ -560,4 +567,116 @@ func (h *Handler) DeleteLogo(c *gin.Context) {
 	}
 
 	httpkit.OK(c, mapOrgResponse(org))
+}
+
+func (h *Handler) SetSMTP(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	var req transport.SetSMTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if err := h.svc.SetOrganizationSMTP(c.Request.Context(), *tenantID, req); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "configured"})
+}
+
+func (h *Handler) GetSMTPStatus(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	status, err := h.svc.GetOrganizationSMTPStatus(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, status)
+}
+
+func (h *Handler) ClearSMTP(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	if err := h.svc.ClearOrganizationSMTP(c.Request.Context(), *tenantID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "cleared"})
+}
+
+func (h *Handler) TestSMTP(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	var req transport.TestSMTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	if err := h.svc.TestOrganizationSMTP(c.Request.Context(), *tenantID, req.ToEmail); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "sent"})
+}
+
+func (h *Handler) DetectSMTP(c *gin.Context) {
+	var req transport.DetectSMTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result := h.svc.DetectSMTPSettings(c.Request.Context(), req.Email)
+	httpkit.OK(c, result)
 }

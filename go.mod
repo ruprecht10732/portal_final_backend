@@ -14,6 +14,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.98
 	github.com/nyaruka/phonenumbers v1.6.8
 	github.com/redis/go-redis/v9 v9.7.0
+	github.com/wneessen/go-mail v0.7.2
 	golang.org/x/crypto v0.47.0
 	golang.org/x/text v0.33.0
 	golang.org/x/time v0.14.0

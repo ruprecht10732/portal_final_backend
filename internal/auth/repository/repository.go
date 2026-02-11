@@ -31,14 +31,15 @@ func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
 }
 
 type User struct {
-	ID            uuid.UUID
-	Email         string
-	PasswordHash  string
-	EmailVerified bool
-	FirstName     *string
-	LastName      *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                    uuid.UUID
+	Email                 string
+	PasswordHash          string
+	EmailVerified         bool
+	FirstName             *string
+	LastName              *string
+	OnboardingCompletedAt *time.Time
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type UserWithRoles struct {
@@ -64,7 +65,7 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 	err = tx.QueryRow(ctx, `
 		INSERT INTO RAC_users (email, password_hash, is_email_verified)
 		VALUES ($1, $2, false)
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 	`, email, passwordHash).Scan(
 		&user.ID,
 		&user.Email,
@@ -72,6 +73,7 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 		&user.EmailVerified,
 		&user.FirstName,
 		&user.LastName,
+		&user.OnboardingCompletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -99,7 +101,7 @@ func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwor
 	err := tx.QueryRow(ctx, `
 		INSERT INTO RAC_users (email, password_hash, is_email_verified)
 		VALUES ($1, $2, false)
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 	`, email, passwordHash).Scan(
 		&user.ID,
 		&user.Email,
@@ -107,6 +109,7 @@ func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwor
 		&user.EmailVerified,
 		&user.FirstName,
 		&user.LastName,
+		&user.OnboardingCompletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -128,7 +131,7 @@ func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwor
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	var user User
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+		SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 		FROM RAC_users WHERE email = $1
 	`, email).Scan(
 		&user.ID,
@@ -137,6 +140,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 		&user.EmailVerified,
 		&user.FirstName,
 		&user.LastName,
+		&user.OnboardingCompletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -149,7 +153,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, error) {
 	var user User
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+		SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 		FROM RAC_users WHERE id = $1
 	`, userID).Scan(
 		&user.ID,
@@ -158,6 +162,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, e
 		&user.EmailVerified,
 		&user.FirstName,
 		&user.LastName,
+		&user.OnboardingCompletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -189,7 +194,7 @@ func (r *Repository) UpdateUserEmail(ctx context.Context, userID uuid.UUID, emai
 		UPDATE RAC_users
 		SET email = $2, is_email_verified = false, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 	`, userID, email).Scan(
 		&user.ID,
 		&user.Email,
@@ -197,6 +202,7 @@ func (r *Repository) UpdateUserEmail(ctx context.Context, userID uuid.UUID, emai
 		&user.EmailVerified,
 		&user.FirstName,
 		&user.LastName,
+		&user.OnboardingCompletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -209,7 +215,7 @@ func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firs
 		UPDATE RAC_users
 		SET first_name = $2, last_name = $3, updated_at = now()
 		WHERE id = $1
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 	`, userID, firstName, lastName).Scan(
 		&user.ID,
 		&user.Email,
@@ -217,6 +223,7 @@ func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firs
 		&user.EmailVerified,
 		&user.FirstName,
 		&user.LastName,
+		&user.OnboardingCompletedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -490,6 +497,14 @@ func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 	}
 
 	return users, nil
+}
+
+func (r *Repository) MarkOnboardingComplete(ctx context.Context, userID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE RAC_users SET onboarding_completed_at = now(), updated_at = now()
+		WHERE id = $1 AND onboarding_completed_at IS NULL
+	`, userID)
+	return err
 }
 
 func uniqueStrings(values []string) []string {

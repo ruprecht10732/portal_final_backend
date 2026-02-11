@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -151,6 +152,9 @@ func main() {
 	// Initialize domain modules
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)
 	notificationModule.SetOrganizationSettingsReader(identityModule.Service())
+
+	wireSMTPEncryptionKey(cfg, log, identityModule.Service(), notificationModule)
+
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
 	leadsModule, err := leads.NewModule(pool, eventBus, storageSvc, val, cfg, log)
 	if err != nil {
@@ -310,6 +314,28 @@ func main() {
 			panic("server error: " + err.Error())
 		}
 	}
+}
+
+// wireSMTPEncryptionKey parses and injects the SMTP encryption key into identity and notification modules.
+func wireSMTPEncryptionKey(cfg *config.Config, log *logger.Logger, identitySvc interface{ SetSMTPEncryptionKey([]byte) }, notificationMod interface{ SetSMTPEncryptionKey([]byte) }) {
+	smtpKeyHex := cfg.GetSMTPEncryptionKey()
+	if smtpKeyHex == "" {
+		return
+	}
+
+	smtpKey, err := hex.DecodeString(smtpKeyHex)
+	if err != nil {
+		log.Error("invalid SMTP_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+		panic("invalid SMTP_ENCRYPTION_KEY: " + err.Error())
+	}
+	if len(smtpKey) != 32 {
+		log.Error("SMTP_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(smtpKey))
+		panic("SMTP_ENCRYPTION_KEY must be 32 bytes")
+	}
+
+	identitySvc.SetSMTPEncryptionKey(smtpKey)
+	notificationMod.SetSMTPEncryptionKey(smtpKey)
+	log.Info("smtp encryption key configured")
 }
 
 func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (scheduler.ReminderScheduler, func()) {

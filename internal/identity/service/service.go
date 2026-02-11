@@ -19,18 +19,20 @@ import (
 )
 
 const (
-	inviteTokenBytes     = 32
-	inviteTTL            = 72 * time.Hour
-	inviteNotFound       = "invite not found"
-	organizationNotFound = "organization not found"
+	inviteTokenBytes         = 32
+	inviteTTL                = 72 * time.Hour
+	inviteNotFound           = "invite not found"
+	organizationNotFound     = "organization not found"
+	whatsappNotConfiguredMsg = "whatsapp service not configured"
 )
 
 type Service struct {
-	repo       *repository.Repository
-	eventBus   events.Bus
-	storage    storage.StorageService
-	logoBucket string
-	whatsapp   *whatsapp.Client
+	repo              *repository.Repository
+	eventBus          events.Bus
+	storage           storage.StorageService
+	logoBucket        string
+	whatsapp          *whatsapp.Client
+	smtpEncryptionKey []byte
 }
 
 func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, whatsappClient *whatsapp.Client) *Service {
@@ -130,7 +132,7 @@ type WhatsAppStatus struct {
 func (s *Service) RegisterWhatsAppDevice(ctx context.Context, organizationID uuid.UUID) (string, error) {
 	deviceID := fmt.Sprintf("org_%s", organizationID.String())
 	if s.whatsapp == nil {
-		return "", apperr.Internal("whatsapp service not configured")
+		return "", apperr.Internal(whatsappNotConfiguredMsg)
 	}
 	if err := s.whatsapp.CreateDevice(ctx, deviceID); err != nil {
 		return "", apperr.Internal("failed to register device with provider: " + err.Error())
@@ -155,7 +157,7 @@ func (s *Service) GetWhatsAppQR(ctx context.Context, organizationID uuid.UUID) (
 		return nil, apperr.Validation("no device registered for this organization")
 	}
 	if s.whatsapp == nil {
-		return nil, apperr.Internal("whatsapp service not configured")
+		return nil, apperr.Internal(whatsappNotConfiguredMsg)
 	}
 
 	return s.whatsapp.GetLoginQR(ctx, *settings.WhatsAppDeviceID)
@@ -188,7 +190,7 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 		return WhatsAppStatus{State: "UNREGISTERED", Message: "No device linked", CanSend: false}, nil
 	}
 	if s.whatsapp == nil {
-		return WhatsAppStatus{}, apperr.Internal("whatsapp service not configured")
+		return WhatsAppStatus{}, apperr.Internal(whatsappNotConfiguredMsg)
 	}
 
 	upstreamStatus, err := s.whatsapp.GetDeviceStatus(ctx, *settings.WhatsAppDeviceID)
@@ -230,7 +232,7 @@ func (s *Service) AttemptReconnect(ctx context.Context, organizationID uuid.UUID
 		return apperr.Validation("no device to reconnect")
 	}
 	if s.whatsapp == nil {
-		return apperr.Internal("whatsapp service not configured")
+		return apperr.Internal(whatsappNotConfiguredMsg)
 	}
 
 	return s.whatsapp.ReconnectDevice(ctx, *settings.WhatsAppDeviceID)

@@ -23,12 +23,13 @@ import (
 )
 
 const (
-	accessTokenType     = "access"
-	refreshTokenType    = "refresh"
-	defaultUserRole     = "user" // Default role for new RAC_users (not admin)
-	defaultAdminRole    = "admin"
-	tokenInvalidMessage = "token invalid"
-	tokenExpiredMessage = "token expired"
+	accessTokenType           = "access"
+	refreshTokenType          = "refresh"
+	defaultUserRole           = "user" // Default role for new RAC_users (not admin)
+	defaultAdminRole          = "admin"
+	tokenInvalidMessage       = "token invalid"
+	tokenExpiredMessage       = "token expired"
+	invalidCredentialsMessage = "invalid credentials"
 )
 
 type Service struct {
@@ -40,16 +41,17 @@ type Service struct {
 }
 
 type Profile struct {
-	ID              uuid.UUID
-	Email           string
-	EmailVerified   bool
-	FirstName       *string
-	LastName        *string
-	PreferredLang   string
-	Roles           []string
-	HasOrganization bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  uuid.UUID
+	Email               string
+	EmailVerified       bool
+	FirstName           *string
+	LastName            *string
+	PreferredLang       string
+	Roles               []string
+	HasOrganization     bool
+	OnboardingCompleted bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func New(repo *repository.Repository, identity *identityservice.Service, cfg config.AuthServiceConfig, eventBus events.Bus, log *logger.Logger) *Service {
@@ -160,11 +162,11 @@ func (s *Service) applyInvite(ctx context.Context, tx pgx.Tx, tokenValue, email 
 func (s *Service) SignIn(ctx context.Context, email, plainPassword string) (string, string, error) {
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return "", "", apperr.Unauthorized("invalid credentials")
+		return "", "", apperr.Unauthorized(invalidCredentialsMessage)
 	}
 
 	if err := password.Compare(user.PasswordHash, plainPassword); err != nil {
-		return "", "", apperr.Unauthorized("invalid credentials")
+		return "", "", apperr.Unauthorized(invalidCredentialsMessage)
 	}
 
 	if !user.EmailVerified {
@@ -349,7 +351,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 	user, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return Profile{}, apperr.Unauthorized("invalid credentials")
+			return Profile{}, apperr.Unauthorized(invalidCredentialsMessage)
 		}
 		return Profile{}, err
 	}
@@ -373,16 +375,17 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 	hasOrganization := orgErr == nil
 
 	return Profile{
-		ID:              user.ID,
-		Email:           user.Email,
-		EmailVerified:   user.EmailVerified,
-		FirstName:       user.FirstName,
-		LastName:        user.LastName,
-		PreferredLang:   preferredLang,
-		Roles:           roles,
-		HasOrganization: hasOrganization,
-		CreatedAt:       user.CreatedAt,
-		UpdatedAt:       user.UpdatedAt,
+		ID:                  user.ID,
+		Email:               user.Email,
+		EmailVerified:       user.EmailVerified,
+		FirstName:           user.FirstName,
+		LastName:            user.LastName,
+		PreferredLang:       preferredLang,
+		Roles:               roles,
+		HasOrganization:     hasOrganization,
+		OnboardingCompleted: user.OnboardingCompletedAt != nil,
+		CreatedAt:           user.CreatedAt,
+		UpdatedAt:           user.UpdatedAt,
 	}, nil
 }
 
@@ -503,15 +506,16 @@ func (s *Service) enqueueEmailVerification(ctx context.Context, userID uuid.UUID
 
 func (s *Service) buildProfile(user repository.User, roles []string, preferredLang string) Profile {
 	return Profile{
-		ID:            user.ID,
-		Email:         user.Email,
-		EmailVerified: user.EmailVerified,
-		FirstName:     user.FirstName,
-		LastName:      user.LastName,
-		PreferredLang: preferredLang,
-		Roles:         roles,
-		CreatedAt:     user.CreatedAt,
-		UpdatedAt:     user.UpdatedAt,
+		ID:                  user.ID,
+		Email:               user.Email,
+		EmailVerified:       user.EmailVerified,
+		FirstName:           user.FirstName,
+		LastName:            user.LastName,
+		PreferredLang:       preferredLang,
+		Roles:               roles,
+		OnboardingCompleted: user.OnboardingCompletedAt != nil,
+		CreatedAt:           user.CreatedAt,
+		UpdatedAt:           user.UpdatedAt,
 	}
 }
 
@@ -562,51 +566,62 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, req 
 		return err
 	}
 
-	// Check if user already has an organization
-	_, orgErr := s.identity.GetUserOrganizationID(ctx, userID)
-	hasOrganization := orgErr == nil
-
-	// If user doesn't have an organization, create one
-	if !hasOrganization {
-		if req.OrganizationName == nil || strings.TrimSpace(*req.OrganizationName) == "" {
-			return apperr.Validation("organization name is required")
-		}
-		if req.OrganizationEmail == nil || strings.TrimSpace(*req.OrganizationEmail) == "" {
-			return apperr.Validation("organization email is required")
-		}
-		if req.OrganizationPhone == nil || strings.TrimSpace(*req.OrganizationPhone) == "" {
-			return apperr.Validation("organization phone is required")
-		}
-
-		orgName := strings.TrimSpace(*req.OrganizationName)
-		orgID, err := s.identity.CreateOrganizationForUser(ctx, nil, orgName, userID)
-		if err != nil {
-			return err
-		}
-
-		if err := s.identity.AddMember(ctx, nil, orgID, userID); err != nil {
-			return err
-		}
-
-		if hasOrganizationProfileUpdate(req) {
-			_, err = s.identity.UpdateOrganizationProfile(ctx, orgID, identityservice.OrganizationProfileUpdate{
-				Email:        req.OrganizationEmail,
-				Phone:        req.OrganizationPhone,
-				VATNumber:    req.VatNumber,
-				KVKNumber:    req.KvkNumber,
-				AddressLine1: req.AddressLine1,
-				AddressLine2: req.AddressLine2,
-				PostalCode:   req.PostalCode,
-				City:         req.City,
-				Country:      req.Country,
-			})
-			if err != nil {
-				return err
-			}
-		}
+	if s.hasOrganization(ctx, userID) {
+		return nil
 	}
 
-	return nil
+	return s.createOrganizationFromOnboarding(ctx, userID, req)
+}
+
+func (s *Service) hasOrganization(ctx context.Context, userID uuid.UUID) bool {
+	_, err := s.identity.GetUserOrganizationID(ctx, userID)
+	return err == nil
+}
+
+func (s *Service) createOrganizationFromOnboarding(ctx context.Context, userID uuid.UUID, req transport.CompleteOnboardingRequest) error {
+	orgName, err := requireOrganizationField(req.OrganizationName, "organization name")
+	if err != nil {
+		return err
+	}
+	if _, err := requireOrganizationField(req.OrganizationEmail, "organization email"); err != nil {
+		return err
+	}
+	if _, err := requireOrganizationField(req.OrganizationPhone, "organization phone"); err != nil {
+		return err
+	}
+
+	orgID, err := s.identity.CreateOrganizationForUser(ctx, nil, orgName, userID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.identity.AddMember(ctx, nil, orgID, userID); err != nil {
+		return err
+	}
+
+	if !hasOrganizationProfileUpdate(req) {
+		return nil
+	}
+
+	_, err = s.identity.UpdateOrganizationProfile(ctx, orgID, identityservice.OrganizationProfileUpdate{
+		Email:        req.OrganizationEmail,
+		Phone:        req.OrganizationPhone,
+		VATNumber:    req.VatNumber,
+		KVKNumber:    req.KvkNumber,
+		AddressLine1: req.AddressLine1,
+		AddressLine2: req.AddressLine2,
+		PostalCode:   req.PostalCode,
+		City:         req.City,
+		Country:      req.Country,
+	})
+	return err
+}
+
+func requireOrganizationField(value *string, fieldName string) (string, error) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return "", apperr.Validation(fieldName + " is required")
+	}
+	return strings.TrimSpace(*value), nil
 }
 
 func hasOrganizationProfileUpdate(req transport.CompleteOnboardingRequest) bool {
@@ -619,6 +634,10 @@ func hasOrganizationProfileUpdate(req transport.CompleteOnboardingRequest) bool 
 		hasOptionalValue(req.PostalCode) ||
 		hasOptionalValue(req.City) ||
 		hasOptionalValue(req.Country)
+}
+
+func (s *Service) MarkOnboardingComplete(ctx context.Context, userID uuid.UUID) error {
+	return s.repo.MarkOnboardingComplete(ctx, userID)
 }
 
 func hasOptionalValue(value *string) bool {

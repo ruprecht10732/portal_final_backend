@@ -97,6 +97,7 @@ type OrganizationSettingsResponse struct {
 	QuotePaymentDays int     `json:"quotePaymentDays"`
 	QuoteValidDays   int     `json:"quoteValidDays"`
 	WhatsAppDeviceID *string `json:"whatsAppDeviceId,omitempty"`
+	SMTPConfigured   bool    `json:"smtpConfigured"`
 }
 
 // UpdateOrganizationSettingsRequest updates quote default settings.
@@ -111,4 +112,44 @@ type WhatsAppStatusResponse struct {
 	Message     string `json:"message"`
 	CanSend     bool   `json:"canSend"`
 	NeedsReauth bool   `json:"needsReauth"`
+}
+
+// SetSMTPRequest is the request to configure tenant SMTP settings.
+type SetSMTPRequest struct {
+	Host      string `json:"host" validate:"required,hostname|ip,max=255"`
+	Port      int    `json:"port" validate:"required,min=1,max=65535"`
+	Username  string `json:"username" validate:"required,max=255"`
+	Password  string `json:"password" validate:"omitempty,max=500"`
+	FromEmail string `json:"fromEmail" validate:"required,email,max=255"`
+	FromName  string `json:"fromName" validate:"required,max=120"`
+}
+
+// SMTPStatusResponse returns the current SMTP configuration status (password is never exposed).
+type SMTPStatusResponse struct {
+	Configured bool    `json:"configured"`
+	Host       *string `json:"host,omitempty"`
+	Port       *int    `json:"port,omitempty"`
+	Username   *string `json:"username,omitempty"`
+	FromEmail  *string `json:"fromEmail,omitempty"`
+	FromName   *string `json:"fromName,omitempty"`
+}
+
+// TestSMTPRequest is the request to send a test email via the configured SMTP.
+type TestSMTPRequest struct {
+	ToEmail string `json:"toEmail" validate:"required,email"`
+}
+
+// DetectSMTPRequest is the request to auto-detect SMTP settings from an email address.
+type DetectSMTPRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// DetectSMTPResponse returns the auto-detected SMTP settings.
+type DetectSMTPResponse struct {
+	Detected bool    `json:"detected"`
+	Provider *string `json:"provider,omitempty"`
+	Host     *string `json:"host,omitempty"`
+	Port     *int    `json:"port,omitempty"`
+	Username *string `json:"username,omitempty"`
+	Security *string `json:"security,omitempty"` // "STARTTLS" or "SSL/TLS"
 }
