@@ -161,6 +161,7 @@ func main() {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
 	}
+	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())
 
 	// Share SSE service with notification module so quote events reach agents
 	notificationModule.SetSSE(leadsModule.SSE())

@@ -42,11 +42,22 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	webhookGroup.Use(APIKeyAuthMiddleware(m.repo))
 	webhookGroup.POST("/forms", m.handler.HandleFormSubmission)
 
+	// Public Google Lead Form webhook (payload auth)
+	ctx.V1.POST("/webhook/google-leads", m.handler.HandleGoogleLeadWebhook)
+
 	// Admin API key management (JWT auth + admin role)
 	adminGroup := ctx.Admin.Group("/webhook/keys")
 	adminGroup.POST("", m.handler.HandleCreateAPIKey)
 	adminGroup.GET("", m.handler.HandleListAPIKeys)
 	adminGroup.DELETE("/:keyId", m.handler.HandleRevokeAPIKey)
+
+	// Admin Google webhook config management
+	googleAdmin := ctx.Admin.Group("/webhook/google-lead-config")
+	googleAdmin.POST("", m.handler.HandleCreateGoogleWebhookConfig)
+	googleAdmin.GET("", m.handler.HandleListGoogleWebhookConfigs)
+	googleAdmin.PUT("/:configId/campaigns", m.handler.HandleUpdateGoogleCampaignMapping)
+	googleAdmin.DELETE("/:configId/campaigns/:campaignId", m.handler.HandleDeleteGoogleCampaignMapping)
+	googleAdmin.DELETE("/:configId", m.handler.HandleDeleteGoogleWebhookConfig)
 
 	// SDK serving (public, no auth)
 	ctx.V1.GET("/webhook/sdk.js", m.handler.HandleServeSDK)

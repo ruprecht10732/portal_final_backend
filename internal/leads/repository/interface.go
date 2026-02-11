@@ -21,6 +21,7 @@ type LeadReader interface {
 	List(ctx context.Context, params ListParams) ([]Lead, int, error)
 	ListHeatmapPoints(ctx context.Context, organizationID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]HeatmapPoint, error)
 	ListActionItems(ctx context.Context, organizationID uuid.UUID, newLeadDays int, limit int, offset int) (ActionItemListResult, error)
+	IsWhatsAppOptedIn(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (bool, error)
 }
 
 // LeadWriter provides write operations for lead management.

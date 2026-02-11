@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -13,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const googleLeadSource = "google-leads"
 
 // LeadCreator is the interface for creating leads. Satisfied by management.Service.
 type LeadCreator interface {
@@ -111,6 +114,73 @@ func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission,
 		Extracted:    extractedMap,
 		Message:      msg,
 	}, nil
+}
+
+// GoogleLeadResult describes the result of processing a Google Lead Form webhook.
+type GoogleLeadResult struct {
+	LeadID      *uuid.UUID
+	IsTest      bool
+	IsDuplicate bool
+}
+
+// ProcessGoogleLeadWebhook validates and processes a Google Lead Form webhook payload.
+func (s *Service) ProcessGoogleLeadWebhook(ctx context.Context, payload GoogleLeadPayload, config GoogleWebhookConfig) (GoogleLeadResult, error) {
+	orgID := config.OrganizationID
+	if payload.LeadID == "" {
+		return GoogleLeadResult{}, errors.New("missing lead_id")
+	}
+
+	if payload.IsTest {
+		_ = s.repo.StoreGoogleLeadID(ctx, payload.LeadID, orgID, nil, true)
+		return GoogleLeadResult{IsTest: true}, nil
+	}
+
+	exists, err := s.repo.CheckGoogleLeadIDExists(ctx, payload.LeadID)
+	if err != nil {
+		return GoogleLeadResult{}, err
+	}
+	if exists {
+		return GoogleLeadResult{IsDuplicate: true}, nil
+	}
+
+	fields := ExtractGoogleLeadFields(payload)
+	serviceType := FindServiceTypeForCampaign(config, payload.CampaignID)
+	if serviceType != "" {
+		fields["serviceType"] = serviceType
+	}
+
+	extracted := ExtractFields(fields)
+	if serviceType != "" {
+		extracted.ServiceType = serviceType
+	}
+
+	createReq := buildCreateLeadRequest(extracted, googleLeadSource)
+	applyLeadPlaceholders(&createReq)
+
+	leadResp, err := s.leadCreator.Create(ctx, createReq, orgID)
+	if err != nil {
+		s.log.Error("webhook: failed to create lead from Google webhook", "error", err, "leadId", payload.LeadID)
+		return GoogleLeadResult{}, err
+	}
+
+	// Store raw payload on lead for auditing
+	if rawData, err := json.Marshal(payload); err == nil {
+		_ = s.repo.UpdateWebhookLeadData(ctx, leadResp.ID, orgID, rawData, googleLeadSource, extracted.IsIncomplete())
+	}
+
+	// Store Google metadata and dedupe marker
+	_ = s.repo.UpdateGoogleLeadMetadata(ctx, leadResp.ID, payload.CampaignID, payload.CreativeID, payload.AdGroupID, payload.FormID)
+	_ = s.repo.StoreGoogleLeadID(ctx, payload.LeadID, orgID, &leadResp.ID, false)
+
+	s.eventBus.Publish(ctx, events.WebhookLeadCreated{
+		BaseEvent:    events.NewBaseEvent(),
+		LeadID:       leadResp.ID,
+		TenantID:     orgID,
+		SourceDomain: googleLeadSource,
+		IsIncomplete: extracted.IsIncomplete(),
+	})
+
+	return GoogleLeadResult{LeadID: &leadResp.ID}, nil
 }
 
 func buildCreateLeadRequest(extracted ExtractedFields, sourceDomain string) transport.CreateLeadRequest {

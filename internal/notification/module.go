@@ -53,6 +53,11 @@ type OrganizationSettingsReader interface {
 	GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (repository.OrganizationSettings, error)
 }
 
+// LeadWhatsAppReader checks if a lead is opted in for WhatsApp messages.
+type LeadWhatsAppReader interface {
+	IsWhatsAppOptedIn(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (bool, error)
+}
+
 // LeadTimelineEventParams describes a lead timeline event payload.
 type LeadTimelineEventParams struct {
 	LeadID    uuid.UUID
@@ -79,18 +84,19 @@ type cachedSender struct {
 
 // Module handles all notification-related event subscriptions.
 type Module struct {
-	sender            email.Sender
-	cfg               config.NotificationConfig
-	log               *logger.Logger
-	sse               *sse.Service
-	pdfProc           QuoteAcceptanceProcessor
-	actWriter         QuoteActivityWriter
-	offerTimeline     PartnerOfferTimelineWriter
-	whatsapp          WhatsAppSender
-	leadTimeline      LeadTimelineWriter
-	settingsReader    OrganizationSettingsReader
-	smtpEncryptionKey []byte
-	senderCache       sync.Map // map[uuid.UUID]cachedSender
+	sender             email.Sender
+	cfg                config.NotificationConfig
+	log                *logger.Logger
+	sse                *sse.Service
+	pdfProc            QuoteAcceptanceProcessor
+	actWriter          QuoteActivityWriter
+	offerTimeline      PartnerOfferTimelineWriter
+	whatsapp           WhatsAppSender
+	leadTimeline       LeadTimelineWriter
+	settingsReader     OrganizationSettingsReader
+	leadWhatsAppReader LeadWhatsAppReader
+	smtpEncryptionKey  []byte
+	senderCache        sync.Map // map[uuid.UUID]cachedSender
 }
 
 // New creates a new notification module.
@@ -123,6 +129,9 @@ func (m *Module) SetWhatsAppSender(sender WhatsAppSender) { m.whatsapp = sender 
 func (m *Module) SetOrganizationSettingsReader(reader OrganizationSettingsReader) {
 	m.settingsReader = reader
 }
+
+// SetLeadWhatsAppReader injects a reader for lead WhatsApp opt-in state.
+func (m *Module) SetLeadWhatsAppReader(reader LeadWhatsAppReader) { m.leadWhatsAppReader = reader }
 
 // SetLeadTimelineWriter injects the lead timeline writer.
 func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeline = writer }
@@ -499,7 +508,7 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 		}
 	}
 
-	if e.PartnerPhone != "" {
+	if e.PartnerPhone != "" && e.PartnerWhatsAppOptedIn {
 		msg := fmt.Sprintf(
 			"Bedankt %s! 🔨\n\nU heeft de klus geaccepteerd (Offer ID: %s). We hebben de klant geïnformeerd.\n\nWe sturen u zo snel mogelijk de definitieve details voor de inspectie.",
 			e.PartnerName,
@@ -614,6 +623,11 @@ func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.Partner
 func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) error {
 	_ = ctx
 	m.log.Info("processing lead created notification", "leadId", e.LeadID)
+
+	if !e.WhatsAppOptedIn {
+		m.log.Info("whatsapp disabled for lead, skipping welcome message", "leadId", e.LeadID)
+		return nil
+	}
 
 	if e.ConsumerPhone == "" {
 		return nil
@@ -789,6 +803,9 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 		map[string]interface{}{"quoteNumber": e.QuoteNumber, "consumerEmail": e.ConsumerEmail})
 
 	if e.ConsumerPhone != "" {
+		if !m.isLeadWhatsAppOptedIn(ctx, e.LeadID, e.OrganizationID) {
+			return nil
+		}
 		proposalURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/") + "/quote/" + e.PublicToken
 		name := strings.TrimSpace(e.ConsumerName)
 		if name == "" {
@@ -824,7 +841,10 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 }
 
 func (m *Module) handleAppointmentCreated(ctx context.Context, e events.AppointmentCreated) error {
-	if e.Type != "lead_visit" || e.ConsumerPhone == "" {
+	if e.Type != "lead_visit" || e.ConsumerPhone == "" || e.LeadID == nil {
+		return nil
+	}
+	if !m.isLeadWhatsAppOptedIn(ctx, *e.LeadID, e.OrganizationID) {
 		return nil
 	}
 
@@ -860,7 +880,10 @@ func (m *Module) handleAppointmentCreated(ctx context.Context, e events.Appointm
 }
 
 func (m *Module) handleAppointmentReminderDue(ctx context.Context, e events.AppointmentReminderDue) error {
-	if e.Type != "lead_visit" || e.ConsumerPhone == "" {
+	if e.Type != "lead_visit" || e.ConsumerPhone == "" || e.LeadID == nil {
+		return nil
+	}
+	if !m.isLeadWhatsAppOptedIn(ctx, *e.LeadID, e.OrganizationID) {
 		return nil
 	}
 
@@ -1229,6 +1252,21 @@ func (m *Module) sendWhatsAppBestEffort(params whatsAppBestEffortParams) {
 		Summary:   params.Summary,
 		Metadata:  metadata,
 	})
+}
+
+func (m *Module) isLeadWhatsAppOptedIn(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) bool {
+	if m.leadWhatsAppReader == nil {
+		return true
+	}
+	optedIn, err := m.leadWhatsAppReader.IsWhatsAppOptedIn(ctx, leadID, organizationID)
+	if err != nil {
+		m.log.Warn("failed to resolve lead whatsapp opt-in", "leadId", leadID, "orgId", organizationID, "error", err)
+		return false
+	}
+	if !optedIn {
+		m.log.Info("whatsapp disabled for lead, skipping message", "leadId", leadID, "orgId", organizationID)
+	}
+	return optedIn
 }
 
 func (m *Module) resolveWhatsAppDeviceID(ctx context.Context, orgID uuid.UUID) string {

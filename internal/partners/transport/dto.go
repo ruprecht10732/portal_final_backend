@@ -7,39 +7,41 @@ import (
 )
 
 type CreatePartnerRequest struct {
-	BusinessName   string      `json:"businessName" validate:"required,min=1,max=200"`
-	KVKNumber      string      `json:"kvkNumber" validate:"required,max=20"`
-	VATNumber      string      `json:"vatNumber" validate:"required,max=20"`
-	AddressLine1   string      `json:"addressLine1" validate:"required,max=200"`
-	AddressLine2   string      `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
-	HouseNumber    string      `json:"houseNumber" validate:"required,max=20"`
-	PostalCode     string      `json:"postalCode" validate:"required,max=20"`
-	City           string      `json:"city" validate:"required,max=120"`
-	Country        string      `json:"country" validate:"required,max=120"`
-	Latitude       *float64    `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
-	Longitude      *float64    `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
-	ContactName    string      `json:"contactName" validate:"required,max=120"`
-	ContactEmail   string      `json:"contactEmail" validate:"required,email"`
-	ContactPhone   string      `json:"contactPhone" validate:"required,max=50"`
-	ServiceTypeIDs []uuid.UUID `json:"serviceTypeIds,omitempty" validate:"omitempty,dive,required"`
+	BusinessName    string      `json:"businessName" validate:"required,min=1,max=200"`
+	KVKNumber       string      `json:"kvkNumber" validate:"required,max=20"`
+	VATNumber       string      `json:"vatNumber" validate:"required,max=20"`
+	AddressLine1    string      `json:"addressLine1" validate:"required,max=200"`
+	AddressLine2    string      `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
+	HouseNumber     string      `json:"houseNumber" validate:"required,max=20"`
+	PostalCode      string      `json:"postalCode" validate:"required,max=20"`
+	City            string      `json:"city" validate:"required,max=120"`
+	Country         string      `json:"country" validate:"required,max=120"`
+	Latitude        *float64    `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
+	Longitude       *float64    `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
+	ContactName     string      `json:"contactName" validate:"required,max=120"`
+	ContactEmail    string      `json:"contactEmail" validate:"required,email"`
+	ContactPhone    string      `json:"contactPhone" validate:"required,max=50"`
+	WhatsAppOptedIn *bool       `json:"whatsappOptedIn,omitempty"`
+	ServiceTypeIDs  []uuid.UUID `json:"serviceTypeIds,omitempty" validate:"omitempty,dive,required"`
 }
 
 type UpdatePartnerRequest struct {
-	BusinessName   *string      `json:"businessName,omitempty" validate:"omitempty,min=1,max=200"`
-	KVKNumber      *string      `json:"kvkNumber,omitempty" validate:"omitempty,max=20"`
-	VATNumber      *string      `json:"vatNumber,omitempty" validate:"omitempty,max=20"`
-	AddressLine1   *string      `json:"addressLine1,omitempty" validate:"omitempty,max=200"`
-	AddressLine2   *string      `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
-	HouseNumber    *string      `json:"houseNumber,omitempty" validate:"omitempty,max=20"`
-	PostalCode     *string      `json:"postalCode,omitempty" validate:"omitempty,max=20"`
-	City           *string      `json:"city,omitempty" validate:"omitempty,max=120"`
-	Country        *string      `json:"country,omitempty" validate:"omitempty,max=120"`
-	Latitude       *float64     `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
-	Longitude      *float64     `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
-	ContactName    *string      `json:"contactName,omitempty" validate:"omitempty,max=120"`
-	ContactEmail   *string      `json:"contactEmail,omitempty" validate:"omitempty,email"`
-	ContactPhone   *string      `json:"contactPhone,omitempty" validate:"omitempty,max=50"`
-	ServiceTypeIDs *[]uuid.UUID `json:"serviceTypeIds,omitempty" validate:"omitempty,dive,required"`
+	BusinessName    *string      `json:"businessName,omitempty" validate:"omitempty,min=1,max=200"`
+	KVKNumber       *string      `json:"kvkNumber,omitempty" validate:"omitempty,max=20"`
+	VATNumber       *string      `json:"vatNumber,omitempty" validate:"omitempty,max=20"`
+	AddressLine1    *string      `json:"addressLine1,omitempty" validate:"omitempty,max=200"`
+	AddressLine2    *string      `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
+	HouseNumber     *string      `json:"houseNumber,omitempty" validate:"omitempty,max=20"`
+	PostalCode      *string      `json:"postalCode,omitempty" validate:"omitempty,max=20"`
+	City            *string      `json:"city,omitempty" validate:"omitempty,max=120"`
+	Country         *string      `json:"country,omitempty" validate:"omitempty,max=120"`
+	Latitude        *float64     `json:"latitude,omitempty" validate:"omitempty,gte=-90,lte=90"`
+	Longitude       *float64     `json:"longitude,omitempty" validate:"omitempty,gte=-180,lte=180"`
+	ContactName     *string      `json:"contactName,omitempty" validate:"omitempty,max=120"`
+	ContactEmail    *string      `json:"contactEmail,omitempty" validate:"omitempty,email"`
+	ContactPhone    *string      `json:"contactPhone,omitempty" validate:"omitempty,max=50"`
+	WhatsAppOptedIn *bool        `json:"whatsappOptedIn,omitempty"`
+	ServiceTypeIDs  *[]uuid.UUID `json:"serviceTypeIds,omitempty" validate:"omitempty,dive,required"`
 }
 
 type PartnerResponse struct {
@@ -58,6 +60,7 @@ type PartnerResponse struct {
 	ContactName     string      `json:"contactName"`
 	ContactEmail    string      `json:"contactEmail"`
 	ContactPhone    string      `json:"contactPhone"`
+	WhatsAppOptedIn bool        `json:"whatsappOptedIn"`
 	LogoFileKey     *string     `json:"logoFileKey,omitempty"`
 	LogoFileName    *string     `json:"logoFileName,omitempty"`
 	LogoContentType *string     `json:"logoContentType,omitempty"`

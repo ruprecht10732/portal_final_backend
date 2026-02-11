@@ -10,6 +10,7 @@ import (
 
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
+	leadrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
@@ -57,6 +58,7 @@ func main() {
 	notificationModule := notification.New(sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
 	notificationModule.SetWhatsAppSender(whatsapp.NewClient(cfg, log))
+	notificationModule.SetLeadWhatsAppReader(leadrepo.New(pool))
 
 	worker, err := scheduler.NewWorker(cfg, pool, eventBus, log)
 	if err != nil {

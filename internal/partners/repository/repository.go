@@ -44,6 +44,7 @@ type Partner struct {
 	ContactName     string
 	ContactEmail    string
 	ContactPhone    string
+	WhatsAppOptedIn bool
 	LogoFileKey     *string
 	LogoFileName    *string
 	LogoContentType *string
@@ -53,22 +54,23 @@ type Partner struct {
 }
 
 type PartnerUpdate struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	BusinessName   *string
-	KVKNumber      *string
-	VATNumber      *string
-	AddressLine1   *string
-	AddressLine2   *string
-	HouseNumber    *string
-	PostalCode     *string
-	City           *string
-	Country        *string
-	Latitude       *float64
-	Longitude      *float64
-	ContactName    *string
-	ContactEmail   *string
-	ContactPhone   *string
+	ID              uuid.UUID
+	OrganizationID  uuid.UUID
+	BusinessName    *string
+	KVKNumber       *string
+	VATNumber       *string
+	AddressLine1    *string
+	AddressLine2    *string
+	HouseNumber     *string
+	PostalCode      *string
+	City            *string
+	Country         *string
+	Latitude        *float64
+	Longitude       *float64
+	ContactName     *string
+	ContactEmail    *string
+	ContactPhone    *string
+	WhatsAppOptedIn *bool
 }
 
 type PartnerLogo struct {
@@ -126,12 +128,12 @@ func (r *Repository) Create(ctx context.Context, partner Partner) (Partner, erro
 			id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, house_number, postal_code, city, country,
 			latitude, longitude,
-			contact_name, contact_email, contact_phone, created_at, updated_at
+			contact_name, contact_email, contact_phone, whatsapp_opted_in, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9, $10, $11,
 			$12, $13,
-			$14, $15, $16, $17, $18
+			$14, $15, $16, $17, $18, $19
 		)
 	`
 
@@ -152,6 +154,7 @@ func (r *Repository) Create(ctx context.Context, partner Partner) (Partner, erro
 		partner.ContactName,
 		partner.ContactEmail,
 		partner.ContactPhone,
+		partner.WhatsAppOptedIn,
 		partner.CreatedAt,
 		partner.UpdatedAt,
 	)
@@ -167,7 +170,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 		SELECT id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, house_number, postal_code, city, country,
 			latitude, longitude,
-			contact_name, contact_email, contact_phone,
+			contact_name, contact_email, contact_phone, whatsapp_opted_in,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
 		FROM RAC_partners
@@ -192,6 +195,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
+		&partner.WhatsAppOptedIn,
 		&partner.LogoFileKey,
 		&partner.LogoFileName,
 		&partner.LogoContentType,
@@ -227,12 +231,13 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 			contact_name = COALESCE($14, contact_name),
 			contact_email = COALESCE($15, contact_email),
 			contact_phone = COALESCE($16, contact_phone),
+			whatsapp_opted_in = COALESCE($17, whatsapp_opted_in),
 			updated_at = now()
 		WHERE id = $1 AND organization_id = $2
 		RETURNING id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, house_number, postal_code, city, country,
 			latitude, longitude,
-			contact_name, contact_email, contact_phone,
+			contact_name, contact_email, contact_phone, whatsapp_opted_in,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
 	`
@@ -255,6 +260,7 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		update.ContactName,
 		update.ContactEmail,
 		update.ContactPhone,
+		update.WhatsAppOptedIn,
 	).Scan(
 		&partner.ID,
 		&partner.OrganizationID,
@@ -272,6 +278,7 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
+		&partner.WhatsAppOptedIn,
 		&partner.LogoFileKey,
 		&partner.LogoFileName,
 		&partner.LogoContentType,
@@ -348,7 +355,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 		SELECT id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, house_number, postal_code, city, country,
 			latitude, longitude,
-			contact_name, contact_email, contact_phone,
+			contact_name, contact_email, contact_phone, whatsapp_opted_in,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
 		` + baseQuery + `
@@ -392,6 +399,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 			&partner.ContactName,
 			&partner.ContactEmail,
 			&partner.ContactPhone,
+			&partner.WhatsAppOptedIn,
 			&partner.LogoFileKey,
 			&partner.LogoFileName,
 			&partner.LogoContentType,
@@ -638,7 +646,7 @@ func (r *Repository) UpdateLogo(ctx context.Context, organizationID, partnerID u
 		RETURNING id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, house_number, postal_code, city, country,
 			latitude, longitude,
-			contact_name, contact_email, contact_phone,
+			contact_name, contact_email, contact_phone, whatsapp_opted_in,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
 	`
@@ -668,6 +676,7 @@ func (r *Repository) UpdateLogo(ctx context.Context, organizationID, partnerID u
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
+		&partner.WhatsAppOptedIn,
 		&partner.LogoFileKey,
 		&partner.LogoFileName,
 		&partner.LogoContentType,
@@ -697,7 +706,7 @@ func (r *Repository) ClearLogo(ctx context.Context, organizationID, partnerID uu
 		RETURNING id, organization_id, business_name, kvk_number, vat_number,
 			address_line1, address_line2, house_number, postal_code, city, country,
 			latitude, longitude,
-			contact_name, contact_email, contact_phone,
+			contact_name, contact_email, contact_phone, whatsapp_opted_in,
 			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
 			created_at, updated_at
 	`
@@ -720,6 +729,7 @@ func (r *Repository) ClearLogo(ctx context.Context, organizationID, partnerID uu
 		&partner.ContactName,
 		&partner.ContactEmail,
 		&partner.ContactPhone,
+		&partner.WhatsAppOptedIn,
 		&partner.LogoFileKey,
 		&partner.LogoFileName,
 		&partner.LogoContentType,

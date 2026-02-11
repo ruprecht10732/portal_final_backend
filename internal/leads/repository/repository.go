@@ -68,6 +68,7 @@ type Lead struct {
 	Longitude                               *float64
 	AssignedAgentID                         *uuid.UUID
 	Source                                  *string
+	WhatsAppOptedIn                         bool
 	EnergyClass                             *string
 	EnergyIndex                             *float64
 	EnergyBouwjaar                          *int
@@ -144,6 +145,7 @@ type CreateLeadParams struct {
 	UTMTerm            *string
 	AdLandingPage      *string
 	ReferrerURL        *string
+	WhatsAppOptedIn    bool
 }
 
 func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead, error) {
@@ -153,11 +155,12 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 			organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
 			assigned_agent_id, source,
-			gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+			gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url,
+			whatsapp_opted_in
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 		RETURNING id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			assigned_agent_id, source, whatsapp_opted_in, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
 			energy_label_fetched_at,
 			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
@@ -172,10 +175,11 @@ func (r *Repository) Create(ctx context.Context, params CreateLeadParams) (Lead,
 		params.AddressStreet, params.AddressHouseNumber, params.AddressZipCode, params.AddressCity, params.Latitude, params.Longitude,
 		params.AssignedAgentID, params.Source,
 		params.GCLID, params.UTMSource, params.UTMMedium, params.UTMCampaign, params.UTMContent, params.UTMTerm, params.AdLandingPage, params.ReferrerURL,
+		params.WhatsAppOptedIn,
 	).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.AssignedAgentID, &lead.Source, &lead.WhatsAppOptedIn, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
 		&lead.EnergyLabelFetchedAt,
 		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
@@ -199,7 +203,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			assigned_agent_id, source, whatsapp_opted_in, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
 			energy_label_fetched_at,
 			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
@@ -213,7 +217,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 	`, id, organizationID).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.AssignedAgentID, &lead.Source, &lead.WhatsAppOptedIn, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
 		&lead.EnergyLabelFetchedAt,
 		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
@@ -251,7 +255,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string, organizationI
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			assigned_agent_id, source, whatsapp_opted_in, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
 			energy_label_fetched_at,
 			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
@@ -267,7 +271,7 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string, organizationI
 	`, phone, organizationID).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.AssignedAgentID, &lead.Source, &lead.WhatsAppOptedIn, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
 		&lead.EnergyLabelFetchedAt,
 		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
@@ -283,6 +287,19 @@ func (r *Repository) GetByPhone(ctx context.Context, phone string, organizationI
 		return Lead{}, ErrNotFound
 	}
 	return lead, err
+}
+
+func (r *Repository) IsWhatsAppOptedIn(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (bool, error) {
+	var optedIn bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT whatsapp_opted_in
+		FROM RAC_leads
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+	`, id, organizationID).Scan(&optedIn)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return optedIn, err
 }
 
 // GetByPhoneOrEmail finds a lead matching the given phone or email for returning customer detection.
@@ -370,6 +387,8 @@ type UpdateLeadParams struct {
 	Longitude          *float64
 	AssignedAgentID    *uuid.UUID
 	AssignedAgentIDSet bool
+	WhatsAppOptedIn    *bool
+	WhatsAppOptedInSet bool
 }
 
 type UpdateEnergyLabelParams struct {
@@ -438,7 +457,8 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 		params.AddressCity != nil ||
 		params.Latitude != nil ||
 		params.Longitude != nil ||
-		params.AssignedAgentIDSet
+		params.AssignedAgentIDSet ||
+		params.WhatsAppOptedInSet
 
 	if !hasUpdates {
 		return r.GetByID(ctx, id, organizationID)
@@ -459,11 +479,12 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 			latitude = COALESCE($12, latitude),
 			longitude = COALESCE($13, longitude),
 			assigned_agent_id = CASE WHEN $15 THEN $14 ELSE assigned_agent_id END,
+			whatsapp_opted_in = CASE WHEN $17 THEN $16 ELSE whatsapp_opted_in END,
 			updated_at = now()
 		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 		RETURNING id, organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
 			address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
-			assigned_agent_id, source, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
+			assigned_agent_id, source, whatsapp_opted_in, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype,
 			energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id,
 			energy_label_fetched_at,
 			lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_postcode4, lead_enrichment_buurtcode, lead_enrichment_data_year,
@@ -499,10 +520,12 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, organizationID uu
 		nullable(params.Longitude),
 		assignedAgentParam,
 		params.AssignedAgentIDSet,
+		nullable(params.WhatsAppOptedIn),
+		params.WhatsAppOptedInSet,
 	).Scan(
 		&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 		&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-		&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+		&lead.AssignedAgentID, &lead.Source, &lead.WhatsAppOptedIn, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 		&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
 		&lead.EnergyLabelFetchedAt,
 		&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,
@@ -773,7 +796,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 	innerQuery := `
 		SELECT DISTINCT l.id, l.organization_id, l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email, l.consumer_role,
 			l.address_street, l.address_house_number, l.address_zip_code, l.address_city, l.latitude, l.longitude,
-			l.assigned_agent_id, l.source, l.energy_class, l.energy_index, l.energy_bouwjaar, l.energy_gebouwtype,
+			l.assigned_agent_id, l.source, l.whatsapp_opted_in, l.energy_class, l.energy_index, l.energy_bouwjaar, l.energy_gebouwtype,
 			l.energy_label_valid_until, l.energy_label_registered_at, l.energy_primair_fossiel, l.energy_bag_verblijfsobject_id,
 			l.energy_label_fetched_at,
 			l.lead_enrichment_source, l.lead_enrichment_postcode6, l.lead_enrichment_postcode4, l.lead_enrichment_buurtcode, l.lead_enrichment_data_year,
@@ -831,7 +854,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		if err := rows.Scan(
 			&lead.ID, &lead.OrganizationID, &lead.ConsumerFirstName, &lead.ConsumerLastName, &lead.ConsumerPhone, &lead.ConsumerEmail, &lead.ConsumerRole,
 			&lead.AddressStreet, &lead.AddressHouseNumber, &lead.AddressZipCode, &lead.AddressCity, &lead.Latitude, &lead.Longitude,
-			&lead.AssignedAgentID, &lead.Source, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
+			&lead.AssignedAgentID, &lead.Source, &lead.WhatsAppOptedIn, &lead.EnergyClass, &lead.EnergyIndex, &lead.EnergyBouwjaar, &lead.EnergyGebouwtype,
 			&lead.EnergyLabelValidUntil, &lead.EnergyLabelRegisteredAt, &lead.EnergyPrimairFossiel, &lead.EnergyBAGVerblijfsobjectID,
 			&lead.EnergyLabelFetchedAt,
 			&lead.LeadEnrichmentSource, &lead.LeadEnrichmentPostcode6, &lead.LeadEnrichmentPostcode4, &lead.LeadEnrichmentBuurtcode, &lead.LeadEnrichmentDataYear,

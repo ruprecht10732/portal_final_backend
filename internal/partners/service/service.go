@@ -42,25 +42,31 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 		return transport.PartnerResponse{}, err
 	}
 
+	whatsAppOptedIn := true
+	if req.WhatsAppOptedIn != nil {
+		whatsAppOptedIn = *req.WhatsAppOptedIn
+	}
+
 	partner := repository.Partner{
-		ID:             uuid.New(),
-		OrganizationID: tenantID,
-		BusinessName:   sanitize.Text(req.BusinessName),
-		KVKNumber:      strings.TrimSpace(req.KVKNumber),
-		VATNumber:      strings.TrimSpace(req.VATNumber),
-		AddressLine1:   sanitize.Text(req.AddressLine1),
-		AddressLine2:   normalizeOptional(req.AddressLine2),
-		HouseNumber:    normalizeOptional(req.HouseNumber),
-		PostalCode:     strings.TrimSpace(req.PostalCode),
-		City:           sanitize.Text(req.City),
-		Country:        sanitize.Text(req.Country),
-		Latitude:       req.Latitude,
-		Longitude:      req.Longitude,
-		ContactName:    sanitize.Text(req.ContactName),
-		ContactEmail:   normalizeEmail(req.ContactEmail),
-		ContactPhone:   phone.NormalizeE164(req.ContactPhone),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ID:              uuid.New(),
+		OrganizationID:  tenantID,
+		BusinessName:    sanitize.Text(req.BusinessName),
+		KVKNumber:       strings.TrimSpace(req.KVKNumber),
+		VATNumber:       strings.TrimSpace(req.VATNumber),
+		AddressLine1:    sanitize.Text(req.AddressLine1),
+		AddressLine2:    normalizeOptional(req.AddressLine2),
+		HouseNumber:     normalizeOptional(req.HouseNumber),
+		PostalCode:      strings.TrimSpace(req.PostalCode),
+		City:            sanitize.Text(req.City),
+		Country:         sanitize.Text(req.Country),
+		Latitude:        req.Latitude,
+		Longitude:       req.Longitude,
+		ContactName:     sanitize.Text(req.ContactName),
+		ContactEmail:    normalizeEmail(req.ContactEmail),
+		ContactPhone:    phone.NormalizeE164(req.ContactPhone),
+		WhatsAppOptedIn: whatsAppOptedIn,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 
 	if err := validatePartnerNumbers(partner.KVKNumber, partner.VATNumber); err != nil {
@@ -105,22 +111,23 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 	}
 
 	update := repository.PartnerUpdate{
-		ID:             id,
-		OrganizationID: tenantID,
-		BusinessName:   normalizeOptionalString(req.BusinessName, sanitize.Text),
-		KVKNumber:      normalizeOptionalString(req.KVKNumber, strings.TrimSpace),
-		VATNumber:      normalizeOptionalString(req.VATNumber, strings.TrimSpace),
-		AddressLine1:   normalizeOptionalString(req.AddressLine1, sanitize.Text),
-		AddressLine2:   normalizeOptionalString(req.AddressLine2, sanitize.Text),
-		HouseNumber:    normalizeOptionalString(req.HouseNumber, strings.TrimSpace),
-		PostalCode:     normalizeOptionalString(req.PostalCode, strings.TrimSpace),
-		City:           normalizeOptionalString(req.City, sanitize.Text),
-		Country:        normalizeOptionalString(req.Country, sanitize.Text),
-		Latitude:       req.Latitude,
-		Longitude:      req.Longitude,
-		ContactName:    normalizeOptionalString(req.ContactName, sanitize.Text),
-		ContactEmail:   normalizeOptionalString(req.ContactEmail, normalizeEmail),
-		ContactPhone:   normalizeOptionalString(req.ContactPhone, phone.NormalizeE164),
+		ID:              id,
+		OrganizationID:  tenantID,
+		BusinessName:    normalizeOptionalString(req.BusinessName, sanitize.Text),
+		KVKNumber:       normalizeOptionalString(req.KVKNumber, strings.TrimSpace),
+		VATNumber:       normalizeOptionalString(req.VATNumber, strings.TrimSpace),
+		AddressLine1:    normalizeOptionalString(req.AddressLine1, sanitize.Text),
+		AddressLine2:    normalizeOptionalString(req.AddressLine2, sanitize.Text),
+		HouseNumber:     normalizeOptionalString(req.HouseNumber, strings.TrimSpace),
+		PostalCode:      normalizeOptionalString(req.PostalCode, strings.TrimSpace),
+		City:            normalizeOptionalString(req.City, sanitize.Text),
+		Country:         normalizeOptionalString(req.Country, sanitize.Text),
+		Latitude:        req.Latitude,
+		Longitude:       req.Longitude,
+		ContactName:     normalizeOptionalString(req.ContactName, sanitize.Text),
+		ContactEmail:    normalizeOptionalString(req.ContactEmail, normalizeEmail),
+		ContactPhone:    normalizeOptionalString(req.ContactPhone, phone.NormalizeE164),
+		WhatsAppOptedIn: req.WhatsAppOptedIn,
 	}
 
 	if err := validatePartnerNumbersUpdate(update); err != nil {
@@ -489,6 +496,7 @@ func mapPartnerResponse(partner repository.Partner, serviceTypeIDs []uuid.UUID) 
 		ContactName:     partner.ContactName,
 		ContactEmail:    partner.ContactEmail,
 		ContactPhone:    partner.ContactPhone,
+		WhatsAppOptedIn: partner.WhatsAppOptedIn,
 		LogoFileKey:     partner.LogoFileKey,
 		LogoFileName:    partner.LogoFileName,
 		LogoContentType: partner.LogoContentType,

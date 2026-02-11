@@ -86,6 +86,11 @@ func (s *Service) SetLeadScorer(scorer *scoring.Service) {
 func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
 	req.Phone = phone.NormalizeE164(req.Phone)
 
+	whatsAppOptedIn := true
+	if req.WhatsAppOptedIn != nil {
+		whatsAppOptedIn = *req.WhatsAppOptedIn
+	}
+
 	params := repository.CreateLeadParams{
 		OrganizationID:     tenantID,
 		ConsumerFirstName:  req.FirstName,
@@ -107,6 +112,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		UTMTerm:            toPtr(req.UTMTerm),
 		AdLandingPage:      toPtr(req.AdLandingPage),
 		ReferrerURL:        toPtr(req.ReferrerURL),
+		WhatsAppOptedIn:    whatsAppOptedIn,
 	}
 
 	if req.AssigneeID.Set {
@@ -151,6 +157,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		ServiceType:     string(req.ServiceType),
 		ConsumerName:    strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
 		ConsumerPhone:   lead.ConsumerPhone,
+		WhatsAppOptedIn: lead.WhatsAppOptedIn,
 		PublicToken:     publicToken,
 	})
 
@@ -1000,6 +1007,10 @@ func applyUpdateFields(params *repository.UpdateLeadParams, req transport.Update
 	}
 	if req.City != nil {
 		params.AddressCity = req.City
+	}
+	if req.WhatsAppOptedIn != nil {
+		params.WhatsAppOptedIn = req.WhatsAppOptedIn
+		params.WhatsAppOptedInSet = true
 	}
 }
 

@@ -185,22 +185,25 @@ func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req trans
 	// Resolve partner details for confirmation
 	var partnerEmail string
 	var partnerPhone string
+	var partnerWhatsAppOptedIn bool
 	if partner, pErr := s.repo.GetByID(ctx, oc.PartnerID, oc.OrganizationID); pErr == nil {
 		partnerEmail = partner.ContactEmail
 		partnerPhone = partner.ContactPhone
+		partnerWhatsAppOptedIn = partner.WhatsAppOptedIn
 	}
 
 	// Publish event
 	s.eventBus.Publish(ctx, events.PartnerOfferAccepted{
-		BaseEvent:      events.NewBaseEvent(),
-		OfferID:        oc.ID,
-		OrganizationID: oc.OrganizationID,
-		PartnerID:      oc.PartnerID,
-		LeadServiceID:  oc.LeadServiceID,
-		LeadID:         leadID,
-		PartnerName:    oc.PartnerName,
-		PartnerEmail:   partnerEmail,
-		PartnerPhone:   partnerPhone,
+		BaseEvent:              events.NewBaseEvent(),
+		OfferID:                oc.ID,
+		OrganizationID:         oc.OrganizationID,
+		PartnerID:              oc.PartnerID,
+		LeadServiceID:          oc.LeadServiceID,
+		LeadID:                 leadID,
+		PartnerName:            oc.PartnerName,
+		PartnerEmail:           partnerEmail,
+		PartnerPhone:           partnerPhone,
+		PartnerWhatsAppOptedIn: partnerWhatsAppOptedIn,
 	})
 
 	return nil

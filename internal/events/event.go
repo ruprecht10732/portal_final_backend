@@ -71,6 +71,7 @@ type LeadCreated struct {
 	ServiceType     string     `json:"serviceType"`
 	ConsumerName    string     `json:"consumerName"`
 	ConsumerPhone   string     `json:"consumerPhone"`
+	WhatsAppOptedIn bool       `json:"whatsappOptedIn"`
 	PublicToken     string     `json:"publicToken"`
 }
 
@@ -320,14 +321,15 @@ func (e PartnerOfferCreated) EventName() string { return "partners.offer.created
 // PartnerOfferAccepted is published when a vakman accepts the job offer.
 type PartnerOfferAccepted struct {
 	BaseEvent
-	OfferID        uuid.UUID `json:"offerId"`
-	OrganizationID uuid.UUID `json:"organizationId"`
-	PartnerID      uuid.UUID `json:"partnerId"`
-	LeadServiceID  uuid.UUID `json:"leadServiceId"`
-	LeadID         uuid.UUID `json:"leadId"`
-	PartnerName    string    `json:"partnerName"`
-	PartnerEmail   string    `json:"partnerEmail"`
-	PartnerPhone   string    `json:"partnerPhone"`
+	OfferID                uuid.UUID `json:"offerId"`
+	OrganizationID         uuid.UUID `json:"organizationId"`
+	PartnerID              uuid.UUID `json:"partnerId"`
+	LeadServiceID          uuid.UUID `json:"leadServiceId"`
+	LeadID                 uuid.UUID `json:"leadId"`
+	PartnerName            string    `json:"partnerName"`
+	PartnerEmail           string    `json:"partnerEmail"`
+	PartnerPhone           string    `json:"partnerPhone"`
+	PartnerWhatsAppOptedIn bool      `json:"partnerWhatsappOptedIn"`
 }
 
 func (e PartnerOfferAccepted) EventName() string { return "partners.offer.accepted" }
