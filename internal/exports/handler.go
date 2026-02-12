@@ -168,18 +168,12 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 		return
 	}
 
-	orderIDs := collectOrderIDs(rows)
-	exportedKeys, err := h.repo.ListExportedKeys(c.Request.Context(), orgID, orderIDs)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
 	writer, ok := startCsvResponse(c, tzName, useEnhanced)
 	if !ok {
 		return
 	}
 
-	records, ok := writeConversionRows(writer, rows, exportedKeys, useEnhanced)
+	_, ok = writeConversionRows(writer, rows, useEnhanced)
 	if !ok {
 		return
 	}
@@ -188,8 +182,6 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 	if err := writer.Error(); err != nil {
 		return
 	}
-
-	_ = h.repo.RecordExports(c.Request.Context(), orgID, records)
 }
 
 // ---- Helpers ----
@@ -296,12 +288,9 @@ func startCsvResponse(c *gin.Context, _ string, useEnhanced bool) (*csv.Writer, 
 	return writer, true
 }
 
-func writeConversionRows(writer *csv.Writer, rows []conversionRow, exportedKeys map[string]struct{}, useEnhanced bool) ([]ExportRecord, bool) {
+func writeConversionRows(writer *csv.Writer, rows []conversionRow, useEnhanced bool) ([]ExportRecord, bool) {
 	records := make([]ExportRecord, 0, len(rows))
 	for _, row := range rows {
-		if _, exists := exportedKeys[row.OrderID+"::"+row.ConversionName]; exists {
-			continue
-		}
 		if err := writer.Write(row.CSV(useEnhanced)); err != nil {
 			return nil, false
 		}
