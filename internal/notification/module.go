@@ -624,6 +624,11 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 	_ = ctx
 	m.log.Info("processing lead created notification", "leadId", e.LeadID)
 
+	if strings.EqualFold(strings.TrimSpace(e.Source), "quote_flow") {
+		m.log.Info("lead created from quote flow, skipping welcome message", "leadId", e.LeadID)
+		return nil
+	}
+
 	if !e.WhatsAppOptedIn {
 		m.log.Info("whatsapp disabled for lead, skipping welcome message", "leadId", e.LeadID)
 		return nil

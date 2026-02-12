@@ -155,6 +155,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		TenantID:        tenantID,
 		AssignedAgentID: lead.AssignedAgentID,
 		ServiceType:     string(req.ServiceType),
+		Source:          strings.TrimSpace(req.Source),
 		ConsumerName:    strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
 		ConsumerPhone:   lead.ConsumerPhone,
 		WhatsAppOptedIn: lead.WhatsAppOptedIn,
