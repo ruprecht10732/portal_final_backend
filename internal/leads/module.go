@@ -100,7 +100,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		PhotoAnalyzer: photoAnalyzer,
 	})
 
-	photoBatcher := newPhotoAnalysisBatcher(photoAnalysisHandler, 60*time.Second, log)
+	photoBatcher := newPhotoAnalysisBatcher(photoAnalysisHandler, 5*time.Second, log)
 	subscribeAttachmentUploaded(eventBus, repo, photoBatcher, log)
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 

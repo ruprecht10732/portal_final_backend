@@ -254,3 +254,7 @@ func (s *SMTPSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail,
 	}
 	return s.send(ctx, toEmail, subject, content)
 }
+
+func (s *SMTPSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string) error {
+	return s.send(ctx, toEmail, subject, htmlContent)
+}

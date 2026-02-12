@@ -280,6 +280,7 @@ type QuoteAccepted struct {
 	QuoteNumber      string     `json:"quoteNumber"`
 	ConsumerEmail    string     `json:"consumerEmail"`
 	ConsumerName     string     `json:"consumerName"`
+	ConsumerPhone    string     `json:"consumerPhone"`
 	OrganizationName string     `json:"organizationName"`
 	AgentEmail       string     `json:"agentEmail"`
 	AgentName        string     `json:"agentName"`
@@ -290,11 +291,15 @@ func (e QuoteAccepted) EventName() string { return "quotes.quote.accepted" }
 // QuoteRejected is published when a lead rejects the quote.
 type QuoteRejected struct {
 	BaseEvent
-	QuoteID        uuid.UUID  `json:"quoteId"`
-	OrganizationID uuid.UUID  `json:"organizationId"`
-	LeadID         uuid.UUID  `json:"leadId"`
-	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
-	Reason         string     `json:"reason"`
+	QuoteID          uuid.UUID  `json:"quoteId"`
+	OrganizationID   uuid.UUID  `json:"organizationId"`
+	LeadID           uuid.UUID  `json:"leadId"`
+	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
+	Reason           string     `json:"reason"`
+	ConsumerEmail    string     `json:"consumerEmail"`
+	ConsumerName     string     `json:"consumerName"`
+	ConsumerPhone    string     `json:"consumerPhone"`
+	OrganizationName string     `json:"organizationName"`
 }
 
 func (e QuoteRejected) EventName() string { return "quotes.quote.rejected" }

@@ -15,6 +15,8 @@ type photoAnalysisBatch struct {
 	leadID   uuid.UUID
 	tenantID uuid.UUID
 	timer    *time.Timer
+	running  bool
+	lastSeen time.Time
 }
 
 type photoAnalysisBatcher struct {
@@ -39,17 +41,15 @@ func (b *photoAnalysisBatcher) OnImageUploaded(leadID, serviceID, tenantID uuid.
 		return
 	}
 
-	triggerImmediate := false
-
 	b.mu.Lock()
 	batch, exists := b.batches[serviceID]
 	if !exists {
 		batch = &photoAnalysisBatch{}
 		b.batches[serviceID] = batch
-		triggerImmediate = true
 	}
 	batch.leadID = leadID
 	batch.tenantID = tenantID
+	batch.lastSeen = time.Now().UTC()
 
 	if batch.timer != nil {
 		batch.timer.Stop()
@@ -58,11 +58,17 @@ func (b *photoAnalysisBatcher) OnImageUploaded(leadID, serviceID, tenantID uuid.
 	batch.timer = time.AfterFunc(b.window, func() {
 		b.triggerBatch(serviceID)
 	})
-	b.mu.Unlock()
 
-	if triggerImmediate {
-		b.handler.RunAutoAnalysis(leadID, serviceID, tenantID)
+	if b.log != nil {
+		b.log.Debug("photo batcher: queued image upload",
+			"serviceId", serviceID,
+			"leadId", leadID,
+			"tenantId", tenantID,
+			"running", batch.running,
+			"window", b.window.String(),
+		)
 	}
+	b.mu.Unlock()
 }
 
 func (b *photoAnalysisBatcher) triggerBatch(serviceID uuid.UUID) {
@@ -72,12 +78,73 @@ func (b *photoAnalysisBatcher) triggerBatch(serviceID uuid.UUID) {
 		b.mu.Unlock()
 		return
 	}
+
+	if batch.running {
+		b.mu.Unlock()
+		return
+	}
+
+	now := time.Now().UTC()
+	quietFor := now.Sub(batch.lastSeen)
+	if quietFor < b.window {
+		waitFor := b.window - quietFor
+		if batch.timer != nil {
+			batch.timer.Stop()
+		}
+		batch.timer = time.AfterFunc(waitFor, func() {
+			b.triggerBatch(serviceID)
+		})
+		b.mu.Unlock()
+		return
+	}
+
+	batch.running = true
+	runStartedAt := now
 	leadID := batch.leadID
 	tenantID := batch.tenantID
-	delete(b.batches, serviceID)
+	batch.timer = nil
 	b.mu.Unlock()
 
 	b.handler.RunAutoAnalysis(leadID, serviceID, tenantID)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	current, stillPresent := b.batches[serviceID]
+	if !stillPresent {
+		return
+	}
+
+	current.running = false
+	hasNewUploads := current.lastSeen.After(runStartedAt)
+	if !hasNewUploads {
+		delete(b.batches, serviceID)
+		if b.log != nil {
+			b.log.Debug("photo batcher: analysis cycle complete", "serviceId", serviceID, "leadId", leadID, "tenantId", tenantID)
+		}
+		return
+	}
+
+	now = time.Now().UTC()
+	quietFor = now.Sub(current.lastSeen)
+	waitFor := b.window - quietFor
+	if waitFor < 0 {
+		waitFor = 0
+	}
+	if current.timer != nil {
+		current.timer.Stop()
+	}
+	current.timer = time.AfterFunc(waitFor, func() {
+		b.triggerBatch(serviceID)
+	})
+
+	if b.log != nil {
+		b.log.Debug("photo batcher: scheduled follow-up analysis cycle",
+			"serviceId", serviceID,
+			"leadId", current.leadID,
+			"tenantId", current.tenantID,
+			"waitFor", waitFor.String(),
+		)
+	}
 }
 
 func isImageContentType(contentType string) bool {

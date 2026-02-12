@@ -72,6 +72,7 @@ type CreateLeadRequest struct {
 	UTMTerm         string       `json:"utmTerm,omitempty" validate:"max=255"`
 	AdLandingPage   string       `json:"adLandingPage,omitempty" validate:"max=2048"`
 	ReferrerURL     string       `json:"referrerUrl,omitempty" validate:"max=2048"`
+	WorkflowID      *string      `json:"workflowId,omitempty" validate:"omitempty,uuid4"`
 	WhatsAppOptedIn *bool        `json:"whatsappOptedIn,omitempty"`
 }
 

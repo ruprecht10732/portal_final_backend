@@ -14,7 +14,7 @@ type OrgSettingsReaderRepo interface {
 	GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (identityrepo.OrganizationSettings, error)
 }
 
-// OrgSettingsAdapter implements quotes/service.OrgSettingsReader using the
+// OrgSettingsAdapter implements quotes/service.QuoteTermsResolver using only
 // identity service's organization settings.
 type OrgSettingsAdapter struct {
 	svc OrgSettingsReaderRepo
@@ -25,8 +25,8 @@ func NewOrgSettingsAdapter(svc OrgSettingsReaderRepo) *OrgSettingsAdapter {
 	return &OrgSettingsAdapter{svc: svc}
 }
 
-// GetQuoteDefaults returns the organization's configurable quote defaults.
-func (a *OrgSettingsAdapter) GetQuoteDefaults(ctx context.Context, organizationID uuid.UUID) (paymentDays int, validDays int, err error) {
+// ResolveQuoteTerms returns organization defaults without workflow-specific overrides.
+func (a *OrgSettingsAdapter) ResolveQuoteTerms(ctx context.Context, organizationID uuid.UUID, _ uuid.UUID, _ *uuid.UUID) (paymentDays int, validDays int, err error) {
 	s, err := a.svc.GetOrganizationSettings(ctx, organizationID)
 	if err != nil {
 		return 7, 14, err
@@ -35,4 +35,4 @@ func (a *OrgSettingsAdapter) GetQuoteDefaults(ctx context.Context, organizationI
 }
 
 // Compile-time check.
-var _ quotesvc.OrgSettingsReader = (*OrgSettingsAdapter)(nil)
+var _ quotesvc.QuoteTermsResolver = (*OrgSettingsAdapter)(nil)

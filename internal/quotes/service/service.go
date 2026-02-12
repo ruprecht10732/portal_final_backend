@@ -63,9 +63,10 @@ type QuoteContactReader interface {
 	GetQuoteContactData(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (QuoteContactData, error)
 }
 
-// OrgSettingsReader provides organization-level quote defaults (payment days, validity days).
-type OrgSettingsReader interface {
-	GetQuoteDefaults(ctx context.Context, organizationID uuid.UUID) (paymentDays int, validDays int, err error)
+// QuoteTermsResolver resolves effective quote terms (payment + validity days)
+// using workflow overrides with fallback to organization defaults.
+type QuoteTermsResolver interface {
+	ResolveQuoteTerms(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID, leadServiceID *uuid.UUID) (paymentDays int, validDays int, err error)
 }
 
 // QuotePromptGenerator is a narrow interface for generating quotes from a user prompt.
@@ -83,12 +84,12 @@ type GenerateQuoteResult struct {
 
 // Service provides business logic for quotes
 type Service struct {
-	repo        *repository.Repository
-	timeline    TimelineWriter       // optional — nil means no timeline integration
-	eventBus    events.Bus           // optional — nil means no event publishing
-	contacts    QuoteContactReader   // optional — nil means no email enrichment
-	orgSettings OrgSettingsReader    // optional — nil means use hardcoded defaults
-	promptGen   QuotePromptGenerator // optional — nil means prompt generation is disabled
+	repo       *repository.Repository
+	timeline   TimelineWriter       // optional — nil means no timeline integration
+	eventBus   events.Bus           // optional — nil means no event publishing
+	contacts   QuoteContactReader   // optional — nil means no email enrichment
+	quoteTerms QuoteTermsResolver   // optional — nil means use hardcoded defaults
+	promptGen  QuotePromptGenerator // optional — nil means prompt generation is disabled
 }
 
 // New creates a new quotes service
@@ -111,9 +112,9 @@ func (s *Service) SetQuoteContactReader(cr QuoteContactReader) {
 	s.contacts = cr
 }
 
-// SetOrgSettingsReader injects the org settings reader (set after construction to break circular deps).
-func (s *Service) SetOrgSettingsReader(r OrgSettingsReader) {
-	s.orgSettings = r
+// SetQuoteTermsResolver injects the workflow-aware quote terms resolver.
+func (s *Service) SetQuoteTermsResolver(r QuoteTermsResolver) {
+	s.quoteTerms = r
 }
 
 // SetQuotePromptGenerator injects the prompt-based quote generator.
@@ -165,9 +166,9 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 
 	// Apply org default for validity if not provided
 	validUntil := req.ValidUntil
-	if validUntil == nil && s.orgSettings != nil {
-		_, validDays, lookupErr := s.orgSettings.GetQuoteDefaults(ctx, tenantID)
-		if lookupErr == nil && validDays > 0 {
+	if validUntil == nil {
+		_, validDays := s.resolveEffectiveQuoteTerms(ctx, tenantID, req.LeadID, req.LeadServiceID)
+		if validDays > 0 {
 			defaultExpiry := now.AddDate(0, 0, validDays)
 			validUntil = &defaultExpiry
 		}
@@ -325,7 +326,7 @@ func (s *Service) createDraftQuote(ctx context.Context, params DraftQuoteParams)
 	})
 
 	now := time.Now()
-	validUntil := s.resolveValidUntil(ctx, params.OrganizationID, now)
+	validUntil := s.resolveValidUntil(ctx, params.OrganizationID, params.LeadID, &params.LeadServiceID, now)
 	createdBy := nilIfZeroUUID(params.CreatedByID)
 	serviceID := &params.LeadServiceID
 
@@ -455,16 +456,38 @@ func buildDraftRepoItems(quoteID, orgID uuid.UUID, items []DraftQuoteItemParams,
 }
 
 // resolveValidUntil returns the default expiry date based on org settings, or nil.
-func (s *Service) resolveValidUntil(ctx context.Context, orgID uuid.UUID, now time.Time) *time.Time {
-	if s.orgSettings == nil {
-		return nil
-	}
-	_, validDays, err := s.orgSettings.GetQuoteDefaults(ctx, orgID)
-	if err != nil || validDays <= 0 {
+func (s *Service) resolveValidUntil(ctx context.Context, orgID uuid.UUID, leadID uuid.UUID, leadServiceID *uuid.UUID, now time.Time) *time.Time {
+	_, validDays := s.resolveEffectiveQuoteTerms(ctx, orgID, leadID, leadServiceID)
+	if validDays <= 0 {
 		return nil
 	}
 	expiry := now.AddDate(0, 0, validDays)
 	return &expiry
+}
+
+func (s *Service) resolveEffectiveQuoteTerms(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	leadID uuid.UUID,
+	leadServiceID *uuid.UUID,
+) (paymentDays int, validDays int) {
+	if s.quoteTerms == nil {
+		return 7, 14
+	}
+
+	paymentDays, validDays, err := s.quoteTerms.ResolveQuoteTerms(ctx, organizationID, leadID, leadServiceID)
+	if err != nil {
+		return 7, 14
+	}
+
+	if paymentDays <= 0 {
+		paymentDays = 7
+	}
+	if validDays <= 0 {
+		validDays = 14
+	}
+
+	return paymentDays, validDays
 }
 
 // nilIfZeroUUID returns nil for uuid.Nil so the DB gets NULL instead of a zero UUID.
@@ -1250,6 +1273,7 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 			if lookupErr == nil {
 				evt.ConsumerEmail = contactData.ConsumerEmail
 				evt.ConsumerName = contactData.ConsumerName
+				evt.ConsumerPhone = contactData.ConsumerPhone
 				evt.OrganizationName = contactData.OrganizationName
 				evt.AgentEmail = contactData.AgentEmail
 				evt.AgentName = contactData.AgentName
@@ -1315,16 +1339,7 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 		return nil, err
 	}
 
-	if s.eventBus != nil {
-		s.eventBus.Publish(ctx, events.QuoteRejected{
-			BaseEvent:      events.NewBaseEvent(),
-			QuoteID:        quote.ID,
-			OrganizationID: quote.OrganizationID,
-			LeadID:         quote.LeadID,
-			LeadServiceID:  quote.LeadServiceID,
-			Reason:         req.Reason,
-		})
-	}
+	s.publishQuoteRejectedEvent(ctx, quote, req.Reason)
 
 	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
 	drafts := buildQuoteRejectedDrafts(quote.QuoteNumber, orgName, customerName, req.Reason)
@@ -1346,6 +1361,32 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 		},
 	})
 	return s.buildPublicResponse(quote, items, orgName, customerName, false)
+}
+
+func (s *Service) publishQuoteRejectedEvent(ctx context.Context, quote *repository.Quote, reason string) {
+	if s.eventBus == nil {
+		return
+	}
+
+	evt := events.QuoteRejected{
+		BaseEvent:      events.NewBaseEvent(),
+		QuoteID:        quote.ID,
+		OrganizationID: quote.OrganizationID,
+		LeadID:         quote.LeadID,
+		LeadServiceID:  quote.LeadServiceID,
+		Reason:         reason,
+	}
+	if s.contacts != nil {
+		contactData, lookupErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, quote.OrganizationID)
+		if lookupErr == nil {
+			evt.ConsumerEmail = contactData.ConsumerEmail
+			evt.ConsumerName = contactData.ConsumerName
+			evt.ConsumerPhone = contactData.ConsumerPhone
+			evt.OrganizationName = contactData.OrganizationName
+		}
+	}
+
+	s.eventBus.Publish(ctx, evt)
 }
 
 // buildPublicResponse converts a repository Quote + items into a public transport response.
