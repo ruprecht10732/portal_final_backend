@@ -122,6 +122,18 @@ func (s *Service) UpdateOrganizationSettings(
 	return s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
 }
 
+func (s *Service) ListNotificationWorkflows(ctx context.Context, organizationID uuid.UUID) ([]repository.NotificationWorkflow, error) {
+	return s.repo.ListNotificationWorkflows(ctx, organizationID)
+}
+
+func (s *Service) ReplaceNotificationWorkflows(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	workflows []repository.NotificationWorkflowUpsert,
+) ([]repository.NotificationWorkflow, error) {
+	return s.repo.ReplaceNotificationWorkflows(ctx, organizationID, workflows)
+}
+
 type WhatsAppStatus struct {
 	State       string `json:"state"`
 	Message     string `json:"message"`

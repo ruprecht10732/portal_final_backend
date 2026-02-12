@@ -10,6 +10,7 @@ import (
 
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
+	identityrepo "portal_final_backend/internal/identity/repository"
 	leadrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
@@ -61,6 +62,9 @@ func main() {
 	notificationModule.SetWhatsAppSender(whatsapp.NewClient(cfg, log))
 	notificationModule.SetLeadWhatsAppReader(leadrepo.New(pool))
 	notificationModule.SetNotificationOutbox(outbox.New(pool))
+	identityReader := identityrepo.New(pool)
+	notificationModule.SetOrganizationSettingsReader(identityReader)
+	notificationModule.SetWorkflowReader(identityReader)
 
 	dispatcher, err := scheduler.NewNotificationOutboxDispatcher(cfg, pool, log)
 	if err != nil {

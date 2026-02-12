@@ -709,6 +709,20 @@ type RacNotificationOutbox struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RacNotificationWorkflow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Trigger        string             `json:"trigger"`
+	Channel        string             `json:"channel"`
+	Audience       string             `json:"audience"`
+	Enabled        bool               `json:"enabled"`
+	DelayMinutes   int32              `json:"delay_minutes"`
+	LeadSource     pgtype.Text        `json:"lead_source"`
+	TemplateText   pgtype.Text        `json:"template_text"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacOrganization struct {
 	ID              pgtype.UUID        `json:"id"`
 	Name            string             `json:"name"`
