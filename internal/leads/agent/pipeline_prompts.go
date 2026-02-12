@@ -20,7 +20,6 @@ func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService,
 
 	return fmt.Sprintf(`You validate intake requirements.
 
-Role: You validate intake requirements.
 Goal: If valid -> set stage Ready_For_Estimator. If invalid -> set stage Nurturing.
 Constraint: Do NOT calculate price. Do NOT look for partners.
 
@@ -61,7 +60,7 @@ Intake Requirements:
 CRITICAL REQUIRED TOOL CALLS:
 You MUST call BOTH SaveAnalysis AND UpdatePipelineStage in EVERY response.
 SaveAnalysis MUST be called BEFORE UpdatePipelineStage.
-If you skip SaveAnalysis, the lead timeline will be broken - this is NOT optional.
+This is mandatory.
 
 Instruction:
 If you find high-confidence (>=90%%) errors in lead contact or address details, call UpdateLeadDetails.
@@ -78,7 +77,7 @@ If the intent is ambiguous, keep the current service type and move to Nurturing 
 4) THEN call UpdatePipelineStage with stage="Ready_For_Estimator" (if all required info is present) or stage="Nurturing" (if critical info is missing).
 5) Include a short reason in UpdatePipelineStage, written in Dutch.
 
-FINAL REMINDER: You MUST output SaveAnalysis followed by UpdatePipelineStage. No exceptions.
+Respond ONLY with tool calls.
 `,
 		lead.ID,
 		service.ID,
@@ -118,12 +117,7 @@ Action: Search for products, draft a quote, call SaveEstimation (metadata update
 
 CRITICAL ARITHMETIC RULE:
 You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
-This includes: area calculations (length × width), quantity calculations (needed ÷ unit_size),
-price totals (price × quantity), rounding up, unit conversions, and any other computation.
-Examples:
-  - Window 2m × 1.5m: call Calculator(operation="multiply", a=2, b=1.5) → 3 m²
-  - Need 4 m², sold per plaat 2.5 m²: call Calculator(operation="ceil_divide", a=4, b=2.5) → 2 sheets
-  - Price 15.99 × 3: call Calculator(operation="multiply", a=15.99, b=3) → 47.97
+This includes area, quantity, subtotal, rounding, and unit-conversion calculations.
 
 Lead:
 - Lead ID: %s
@@ -155,11 +149,12 @@ Photo Analysis:
 Instruction:
 1) Identify the materials/products needed based on the service description and photos.
 2) Call SearchProductMaterials to find products. The tool uses semantic (vector) search, so craft your queries carefully:
-   - Think about what the product might be CALLED in a catalog: use generic category names, brand-neutral terms, and common synonyms.
-   - For example, instead of only "RVS scharnieren", also try "deurbeslag scharnier", "deur ophangen", or "scharnier deur montage".
-   - Mix Dutch and English terms (e.g., "isolatiemateriaal" AND "insulation panel") since the catalog may contain either.
-   - Search broad first (e.g., "deurbeslag"), then narrow (e.g., "scharnier RVS 89mm") to maximize results.
-   - Call SearchProductMaterials multiple times with DIFFERENT queries for each material category or synonym.
+	- Use generic category names, synonyms, and Dutch/English variants.
+	- Translate consumer wording into trade + DIY/shop synonyms before searching.
+	- For each material, try at least 3 variants: (a) consumer wording, (b) professional term, (c) colloquial/store term.
+	- Example for "kantstukken": "dagkantafwerking", "deurlijst/chambranle", "aftimmerlat/afdeklat", "kozijnplint", "sponninglat".
+	- Search broad first, then narrow.
+	- Call SearchProductMaterials multiple times with DIFFERENT queries per material category.
    Always prefer the catalog collection by default.
    If the user explicitly says not to use the catalog (e.g., "ignore catalog", "no catalog", "zonder catalogus"), set useCatalog=false.
 	Use standard, mid-range materials unless the request explicitly calls for heavy-duty or premium.
@@ -171,7 +166,9 @@ Instruction:
    - If still no match, add the item as an ad-hoc line item (without catalogProductId):
      - Use your best estimate for unitPriceCents based on typical Dutch market prices for that product.
      - Keep the description factual (e.g., "RVS scharnieren (3 stuks)") — do NOT add notes like "niet in catalogus".
-     - Always check the product score: items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
+	  - Always check the product score/highConfidence: if highConfidence=true (score >= 0.45), use the found price without markup.
+	  - Scores in 0.35-0.45 are candidate matches; verify variant/unit before using.
+	  - Items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
 3) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
 	Provide structured inputs (material items, quantities, labor hours range, hourly rate range, optional extra costs).
 	For each material item's unitPrice, use the product's "priceEuros" value (in euros, e.g. 7.93).
@@ -192,40 +189,20 @@ Instruction:
 	  The unit tells you HOW the product is sold (e.g. "per plaat van 2.5 m²", "per rol van 10 m", "per stuk", "per m²").
 	  If the unit indicates a fixed size (e.g. "per plaat van 2.5 m²"), use Calculator to compute how many units are needed:
 	  Call Calculator(operation="ceil_divide", a=required_area, b=unit_size) to get the quantity (always rounds up).
-	  Examples:
-	    - Need 4 m², sold "per plaat van 2.5 m²" → Calculator(operation="ceil_divide", a=4, b=2.5) → quantity = "2"
-	    - Need 12 m, sold "per rol van 5 m" → Calculator(operation="ceil_divide", a=12, b=5) → quantity = "3"
-	    - Need 3, sold "per stuk" → quantity = "3"
 	  If the unit is "per m²" or "per m", use Calculator to compute the raw measurement as quantity.
 	- Set unitPriceCents to the product's "priceCents" value (already in euro-cents, e.g. 793 = EUR 7.93). Do NOT use priceEuros.
+	- For highConfidence=true products, use priceCents exactly (no markup).
+	- Only estimate unitPriceCents when no suitable high-confidence product was found.
 	- Set taxRateBps from the product's vatRateBps (e.g., 2100 for 21%%). If unknown, use 2100.
 	- If the product came from SearchProductMaterials and has an "id", include it as catalogProductId.
-	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.	LABOR RULES — check each product's "type" field:
-	- type = "service" or "digital_service": the price already INCLUDES labor. Do NOT add a separate arbeid line item for this product.
-	- type = "product" or "material": the price is material-only. Add a separate "Arbeid" line item for installing/mounting these items.
-	Only add arbeid for work on material/product items (e.g., mounting hinges, hanging a door).	Include a notes field (in Dutch) summarizing why this quote was generated.
+	- catalogProductId is authoritative metadata: backend will enforce catalog unit price (and VAT) for those lines.
+	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.
+	- Include a notes field (in Dutch) summarizing why this quote was generated.
 	Note: Catalog product documents (PDFs, specs) and terms URLs are automatically attached to the quote — you do not need to handle attachments yourself.
 4) Determine scope: Small, Medium, or Large based on work complexity.
 5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
 	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
-	Format notes as multiline Markdown with blank lines between sections.
-	Use headings (bold labels) and bullet/numbered lists so each item is on its own line.
-	Example structure:
-	**Materiaalbenodigdheden:**
-	1. ...
-	2. ...
-
-	**Subtotaal materiaal:** EUR ...
-
-	**Arbeid:**
-	- ...
-
-	**Subtotaal arbeid:** EUR ...
-
-	**Totaal geschatte kosten:** EUR ...
-
-	**Opmerkingen:**
-	- ...
+	Format notes as multiline Markdown with headings and bullet/numbered lists.
 6) Call UpdatePipelineStage with stage="Quote_Sent" and a reason in Dutch.
 	IMPORTANT: DO NOT use "Ready_For_Partner". We must wait for the customer to accept the quote first.
 
@@ -259,16 +236,15 @@ func buildDispatcherPrompt(lead repository.Lead, service repository.LeadService,
 
 	return fmt.Sprintf(`You are the Fulfillment Manager.
 
-Role: You are the Fulfillment Manager.
 Action: Find matches, create an offer, update the pipeline stage.%s
 
 Logic:
 - If > 0 partners found:
   1) Select the best match (e.g., closest distance).
 	2) Call CreatePartnerOffer for that partner, including a short Dutch job summary.
-  3) Call UpdatePipelineStage with stage="Partner_Matching" and a short Dutch summary like "Offer verzonden naar [Partnernaam]".
+	3) Call UpdatePipelineStage with stage="Partner_Matching" and reason "Offer verzonden naar [Partnernaam]".
 - If 0 partners found:
-  - Call UpdatePipelineStage with stage="Manual_Intervention" and summary "Geen partners gevonden binnen bereik." DO NOT REJECT.
+	- Call UpdatePipelineStage with stage="Manual_Intervention" and reason "Geen partners gevonden binnen bereik." DO NOT REJECT.
 
 Lead:
 - Lead ID: %s
@@ -457,12 +433,7 @@ Constraint: You MUST only use SearchProductMaterials, Calculator, and DraftQuote
 
 CRITICAL ARITHMETIC RULE:
 You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
-This includes: area calculations (length × width), quantity calculations (needed ÷ unit_size),
-price totals (price × quantity), rounding up, unit conversions, and any other computation.
-Examples:
-  - Window 2m × 1.5m: call Calculator(operation="multiply", a=2, b=1.5) → 3 m²
-  - Need 4 m², sold per plaat 2.5 m²: call Calculator(operation="ceil_divide", a=4, b=2.5) → 2 sheets
-  - Price 15.99 × 3: call Calculator(operation="multiply", a=15.99, b=3) → 47.97
+This includes area, quantity, subtotal, rounding, and unit-conversion calculations.
 
 Lead:
 - Lead ID: %s
@@ -491,19 +462,26 @@ User Prompt:
 
 Instruction:
 1) Read the user prompt carefully. Identify what products/materials are needed.
-2) Call SearchProductMaterials to find matching products. Use semantic search tips:
+2) If SearchProductMaterials is available, call it to find matching products. Use semantic search tips:
    - Use generic product category names and synonyms.
+	- Translate consumer wording into trade + DIY/shop synonyms before searching.
+	- For each material, try at least 3 variants: (a) consumer wording, (b) professional term, (c) colloquial/store term.
+	- Example for "kantstukken": "dagkantafwerking", "deurlijst/chambranle", "aftimmerlat/afdeklat", "kozijnplint", "sponninglat".
    - Mix Dutch and English terms.
    - Search broad first, then narrow.
-   - Call SearchProductMaterials multiple times with DIFFERENT queries for each material category.
+	- Call SearchProductMaterials multiple times with DIFFERENT queries per material category.
    Always prefer the catalog collection by default.
+
+	If SearchProductMaterials is NOT available, skip search and continue with ad-hoc DraftQuote items using best-estimate unitPriceCents.
 
    HANDLING NO RESULTS:
    - If SearchProductMaterials returns "No relevant products found", try at least 2 more queries with different terms/synonyms.
    - If still no match after multiple attempts, add the item as an ad-hoc line item (without catalogProductId):
      - Use your best estimate for unitPriceCents based on typical Dutch market prices.
      - Keep the description factual — do NOT add notes like "niet in catalogus".
-   - Always check the product score: items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
+	 - Always check the product score/highConfidence: if highConfidence=true (score >= 0.45), use the found price without markup.
+	 - Scores in 0.35-0.45 are candidate matches; verify variant/unit before using.
+	 - Items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
 3) For each product found, prepare a DraftQuote item:
    - Set description using the product name. If the product has materials (the "materials" array), format as:
      "Product name\nInclusief:\n- Material A\n- Material B"
@@ -512,12 +490,12 @@ Instruction:
      The unit tells you HOW the product is sold (e.g. "per plaat van 2.5 m²", "per rol van 10 m", "per stuk").
      If the unit indicates a fixed size, use Calculator to compute the quantity:
      Call Calculator(operation="ceil_divide", a=required_amount, b=unit_size) to get the quantity (always rounds up).
-     Examples:
-       - Need 4 m², sold "per plaat van 2.5 m²" → Calculator(operation="ceil_divide", a=4, b=2.5) → quantity = "2"
-       - Need 12 m, sold "per rol van 5 m" → Calculator(operation="ceil_divide", a=12, b=5) → quantity = "3"
    - Set unitPriceCents to the product's "priceCents" value (already in euro-cents). Do NOT use priceEuros.
+	- For highConfidence=true products, use priceCents exactly (no markup).
+	- Only estimate unitPriceCents when no suitable high-confidence product was found.
    - Set taxRateBps from the product's vatRateBps. If unknown, use 2100.
    - If the product has an "id", include it as catalogProductId.
+	- catalogProductId is authoritative metadata: backend will enforce catalog unit price (and VAT) for those lines.
    - For labor or ad-hoc items, omit catalogProductId.
    LABOR RULES — check each product's "type" field:
    - type = "service" or "digital_service": the price already INCLUDES labor. Do NOT add a separate arbeid line item.
@@ -526,7 +504,7 @@ Instruction:
 4) Call DraftQuote with all items and a notes field (in Dutch) summarizing what was generated.
    Catalog product documents and URLs are automatically attached — you do not need to handle attachments.
 
-You MUST call SearchProductMaterials first, then use Calculator for all arithmetic, then DraftQuote. Respond ONLY with tool calls.
+If SearchProductMaterials is available, call it first. Always use Calculator for all arithmetic, then DraftQuote. Respond ONLY with tool calls.
 `,
 		lead.ID,
 		service.ID,

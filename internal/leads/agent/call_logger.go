@@ -331,19 +331,11 @@ The agent provided this post-call summary:
 "%s"
 
 Task:
-1. Analyze the summary to determine the call outcome and any appointment changes.
-2. ALWAYS save a clean, professional Dutch call note.
-	- Draft the note, then run it through 'NormalizeCallNote'.
-	- Save the normalized version using 'SaveNote'.
-	- Write a short, readable note (no raw input block).
-	- If the input is sparse, infer structure (do NOT invent facts).
-	- Use 24-hour time format (e.g., 09:00).
-	- Preferred structure:
-	  "Afspraak: ..."
-	  "Werkzaamheden: ..."
-	  "Materiaal: ..."
-	  "Locatie: ..." (if provided)
-	  "Vragen: ..." (if any)
+1. Analyze the summary to determine outcome and appointment changes.
+2. ALWAYS save a clean, professional Dutch call note:
+	- Draft note → NormalizeCallNote → SaveNote (required).
+	- No raw input block, no invented facts, use 24-hour time (09:00).
+	- Prefer structure: Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen.
 3. If an appointment was scheduled (e.g., "booked next tuesday at 9", "scheduled for friday 2pm"):
    - Calculate the exact date based on Current Time
    - Use 'ScheduleVisit' to book the appointment
@@ -461,11 +453,9 @@ func getCallLoggerSystemPrompt() string {
 Your job is to read a rough summary of a sales/qualification call and execute the necessary database updates using the available tools.
 
 IMPORTANT RULES:
-1. Draft a clean, professional Dutch note and pass it through NormalizeCallNote.
-	- Do NOT include the raw input text.
+1. Draft a clean professional Dutch note, pass it through NormalizeCallNote, then ALWAYS call SaveNote.
+	- No raw input text and no invented details.
 	- Structure when possible (Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen).
-	- Do NOT invent details that were not stated.
-2. ALWAYS call SaveNote with the normalized note.
 3. Parse dates relative to the Current Time provided in the context:
    - "next Tuesday" = the coming Tuesday from Current Time
    - "tomorrow" = Current Time + 1 day
@@ -482,7 +472,7 @@ IMPORTANT RULES:
    - Needs to reschedule/postponed → "Needs_Rescheduling"
 8. When booking RAC_appointments, also update status to "Scheduled".
 9. Use 24-hour time format (e.g., 09:00, 14:30).
-10. Do NOT make up information. Only act on what is explicitly stated in the summary.
+10. Only act on explicitly stated information.
 11. Email confirmation behavior for RAC_appointments:
    - By default, sendConfirmationEmail should be TRUE (send email)
    - Only set sendConfirmationEmail to FALSE if the call notes explicitly mention:

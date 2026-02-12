@@ -35,6 +35,8 @@ const (
 	invalidFieldFormat          = "invalid %s"
 )
 
+const highConfidenceScoreThreshold = 0.45
+
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
 func normalizeUrgencyLevel(level string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(level))
@@ -1316,8 +1318,9 @@ func clampNonNegative(value float64) float64 {
 }
 
 // defaultSearchScoreThreshold is the minimum cosine similarity score for
-// BGE-M3 embeddings. Results below this are irrelevant noise.
+// BGE-M3 embeddings. It controls recall (what enters candidate set).
 const defaultSearchScoreThreshold = 0.35
+const maxCatalogRewordRetries = 2
 
 // noMatchMessage builds the "no relevant products" message for a query.
 func noMatchMessage(query string) string {
@@ -1356,6 +1359,9 @@ func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []
 		return nil
 	}
 	products = hydrateProductResults(ctx, deps, products)
+	products = rerankCatalogProducts(query, products)
+	markHighConfidence(products)
+	logCatalogSelectionAudit(query, products)
 	log.Printf("SearchProductMaterials: catalog query=%q found %d products (threshold=%.2f, scores: %s)",
 		query, len(products), scoreThreshold, formatScores(products))
 	return products
@@ -1380,9 +1386,85 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	// Try catalog collection first.
 	if useCatalog && deps.CatalogQdrantClient != nil {
 		if products := searchCatalogCollection(ctx, deps, vector, limit, scoreThreshold, query); len(products) > 0 {
+			if hasHighConfidenceMatch(products) {
+				return SearchProductMaterialsOutput{
+					Products: products,
+					Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog (min relevance %.0f%%)", len(products), scoreThreshold*100),
+				}, nil
+			}
+
+			bestProducts := products
+			rewordedQueries := buildCatalogRewordedQueries(query)
+			if len(rewordedQueries) > maxCatalogRewordRetries {
+				rewordedQueries = rewordedQueries[:maxCatalogRewordRetries]
+			}
+
+			for _, retryQuery := range rewordedQueries {
+				retryVector, retryErr := deps.EmbeddingClient.Embed(ctx, retryQuery)
+				if retryErr != nil {
+					log.Printf("SearchProductMaterials: catalog retry embedding failed query=%q: %v", retryQuery, retryErr)
+					continue
+				}
+
+				retryProducts := searchCatalogCollection(ctx, deps, retryVector, limit, scoreThreshold, retryQuery)
+				if len(retryProducts) == 0 {
+					continue
+				}
+
+				if shouldPreferCandidateSet(retryProducts, bestProducts) {
+					bestProducts = retryProducts
+				}
+
+				if hasHighConfidenceMatch(retryProducts) {
+					log.Printf("SearchProductMaterials: catalog retry improved confidence query=%q -> retry_query=%q", query, retryQuery)
+					return SearchProductMaterialsOutput{
+						Products: retryProducts,
+						Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog after query rewording (min relevance %.0f%%)", len(retryProducts), scoreThreshold*100),
+					}, nil
+				}
+			}
+
 			return SearchProductMaterialsOutput{
-				Products: products,
-				Message:  fmt.Sprintf("Found %d matching products from catalog (min relevance %.0f%%)", len(products), scoreThreshold*100),
+				Products: bestProducts,
+				Message:  fmt.Sprintf("Found %d matching products from catalog (lower confidence; verify variant/unit, min relevance %.0f%%)", len(bestProducts), scoreThreshold*100),
+			}, nil
+		}
+	}
+
+	// If primary catalog search had no candidates, try catalog rewording retries before falling back.
+	if useCatalog && deps.CatalogQdrantClient != nil {
+		rewordedQueries := buildCatalogRewordedQueries(query)
+		if len(rewordedQueries) > maxCatalogRewordRetries {
+			rewordedQueries = rewordedQueries[:maxCatalogRewordRetries]
+		}
+
+		var bestRetryProducts []ProductResult
+		for _, retryQuery := range rewordedQueries {
+			retryVector, retryErr := deps.EmbeddingClient.Embed(ctx, retryQuery)
+			if retryErr != nil {
+				log.Printf("SearchProductMaterials: catalog retry embedding failed query=%q: %v", retryQuery, retryErr)
+				continue
+			}
+			retryProducts := searchCatalogCollection(ctx, deps, retryVector, limit, scoreThreshold, retryQuery)
+			if len(retryProducts) == 0 {
+				continue
+			}
+			if shouldPreferCandidateSet(retryProducts, bestRetryProducts) {
+				bestRetryProducts = retryProducts
+			}
+			if hasHighConfidenceMatch(retryProducts) {
+				log.Printf("SearchProductMaterials: catalog retry recovered results query=%q -> retry_query=%q", query, retryQuery)
+				return SearchProductMaterialsOutput{
+					Products: retryProducts,
+					Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog after query rewording (min relevance %.0f%%)", len(retryProducts), scoreThreshold*100),
+				}, nil
+			}
+		}
+
+		if len(bestRetryProducts) > 0 {
+			return SearchProductMaterialsOutput{
+				Products: bestRetryProducts,
+				Message:  fmt.Sprintf("Found %d matching products from catalog after query rewording (lower confidence; verify variant/unit, min relevance %.0f%%)", len(bestRetryProducts), scoreThreshold*100),
 			}, nil
 		}
 	}
@@ -1399,6 +1481,7 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	}
 
 	products := convertSearchResults(results)
+	markHighConfidence(products)
 	if len(products) == 0 {
 		log.Printf("SearchProductMaterials: fallback query=%q found 0 products above threshold %.2f", query, scoreThreshold)
 		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
@@ -1415,6 +1498,73 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		Products: products,
 		Message:  fmt.Sprintf("Found %d reference products (not from your catalog — use as ad-hoc line items without catalogProductId, min relevance %.0f%%)", len(products), scoreThreshold*100),
 	}, nil
+}
+
+func hasHighConfidenceMatch(products []ProductResult) bool {
+	for _, product := range products {
+		if product.HighConfidence {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldPreferCandidateSet(candidate []ProductResult, current []ProductResult) bool {
+	if len(candidate) == 0 {
+		return false
+	}
+	if len(current) == 0 {
+		return true
+	}
+	candidateHigh := hasHighConfidenceMatch(candidate)
+	currentHigh := hasHighConfidenceMatch(current)
+	if candidateHigh != currentHigh {
+		return candidateHigh
+	}
+	return candidate[0].Score > current[0].Score
+}
+
+func buildCatalogRewordedQueries(query string) []string {
+	base := strings.TrimSpace(strings.ToLower(query))
+	if base == "" {
+		return nil
+	}
+
+	queries := make([]string, 0, 4)
+	appendUniqueQuery := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range queries {
+			if existing == value {
+				return
+			}
+		}
+		queries = append(queries, value)
+	}
+
+	synonymExpansions := map[string]string{
+		"kantstuk":      "dagkantafwerking deurlijst chambranle aftimmerlat afdeklat kozijnplint sponninglat",
+		"kantstukken":   "dagkantafwerking deurlijst chambranle aftimmerlat afdeklat kozijnplint sponninglat",
+		"zweeds rabat":  "potdekselplank gevelbekleding rabatdeel",
+		"grondverf":     "primer hout grondlaag",
+		"randsealer":    "kanten sealer randafdichting",
+		"paal":          "staander tuinpaal",
+		"angelim":       "hardhout paal tropisch",
+		"geimpregneerd": "druk geimpregneerd buitenhout",
+	}
+
+	for key, expansion := range synonymExpansions {
+		if strings.Contains(base, key) {
+			appendUniqueQuery(base + " " + expansion)
+		}
+	}
+
+	appendUniqueQuery(strings.ReplaceAll(base, " inclusief ", " "))
+	appendUniqueQuery(base + " catalog product variant maat unit")
+
+	return queries
 }
 
 // stripProductIDs clears the ID field on all products so the AI treats
@@ -1451,6 +1601,12 @@ func normalizeLimit(limit, defaultVal, maxVal int) int {
 	return limit
 }
 
+func markHighConfidence(products []ProductResult) {
+	for i := range products {
+		products[i].HighConfidence = products[i].Score >= highConfidenceScoreThreshold
+	}
+}
+
 func truncateRunes(value string, max int) string {
 	if max <= 0 || value == "" {
 		return ""
@@ -1474,21 +1630,187 @@ func convertSearchResults(results []qdrant.SearchResult) []ProductResult {
 		}
 	}
 
-	// Prefer lower-priced items; treat missing/zero price as lowest priority.
+	// Default ordering: strongest semantic matches first.
 	sort.SliceStable(products, func(i, j int) bool {
-		pi := products[i].PriceEuros
-		pj := products[j].PriceEuros
-		iMissing := pi <= 0
-		jMissing := pj <= 0
-		if iMissing != jMissing {
-			return !iMissing
+		if products[i].Score == products[j].Score {
+			return products[i].PriceEuros < products[j].PriceEuros
 		}
-		if pi == pj {
-			return products[i].Score > products[j].Score
-		}
-		return pi < pj
+		return products[i].Score > products[j].Score
 	})
 	return products
+}
+
+func rerankCatalogProducts(query string, products []ProductResult) []ProductResult {
+	if len(products) <= 1 {
+		return products
+	}
+
+	queryTokens := tokenizeForMatch(query)
+	queryDims := extractDimensionTokens(query)
+	queryUnits := extractUnitTokens(query)
+
+	type rankedProduct struct {
+		product    ProductResult
+		rankScore  float64
+		overlap    float64
+		dimMatches int
+		unitMatch  bool
+	}
+
+	ranked := make([]rankedProduct, 0, len(products))
+	for _, product := range products {
+		text := strings.ToLower(strings.Join([]string{product.Name, product.Description, product.Unit, product.Category}, " "))
+		textTokens := tokenizeForMatch(text)
+		overlap := tokenOverlapRatio(queryTokens, textTokens)
+		dimMatches := countSetIntersection(queryDims, extractDimensionTokens(text))
+		unitMatch := hasAnyUnitToken(text, queryUnits)
+
+		rank := product.Score*1000 + overlap*120 + float64(dimMatches)*30
+		if unitMatch {
+			rank += 20
+		}
+
+		ranked = append(ranked, rankedProduct{
+			product:    product,
+			rankScore:  rank,
+			overlap:    overlap,
+			dimMatches: dimMatches,
+			unitMatch:  unitMatch,
+		})
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].rankScore == ranked[j].rankScore {
+			return ranked[i].product.Score > ranked[j].product.Score
+		}
+		return ranked[i].rankScore > ranked[j].rankScore
+	})
+
+	for i := range products {
+		products[i] = ranked[i].product
+	}
+
+	return products
+}
+
+func logCatalogSelectionAudit(query string, products []ProductResult) {
+	if len(products) == 0 {
+		return
+	}
+
+	highConfidenceCount := 0
+	for _, product := range products {
+		if product.HighConfidence {
+			highConfidenceCount++
+		}
+	}
+
+	top := products[0]
+	log.Printf(
+		"SearchProductMaterials: catalog selection audit query=%q top_id=%q top_name=%q top_score=%.3f top_price_cents=%d top_unit=%q high_confidence_count=%d total_candidates=%d",
+		query,
+		top.ID,
+		top.Name,
+		top.Score,
+		top.PriceCents,
+		top.Unit,
+		highConfidenceCount,
+		len(products),
+	)
+
+	if highConfidenceCount == 0 {
+		log.Printf("SearchProductMaterials: catalog query=%q has no high-confidence candidates; verify selected variants before drafting", query)
+	}
+}
+
+func tokenizeForMatch(value string) map[string]struct{} {
+	set := make(map[string]struct{})
+	for _, token := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !(r == '-' || r == '+' || r == '.' || r == '/' || r == 'x' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z'))
+	}) {
+		token = strings.TrimSpace(token)
+		if len(token) < 2 {
+			continue
+		}
+		set[token] = struct{}{}
+	}
+	return set
+}
+
+func extractDimensionTokens(value string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, token := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !(r == '-' || r == 'x' || r == '/' || r == '.' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z'))
+	}) {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		hasDigit := false
+		hasSeparator := false
+		for _, r := range token {
+			if r >= '0' && r <= '9' {
+				hasDigit = true
+			}
+			if r == 'x' || r == '-' {
+				hasSeparator = true
+			}
+		}
+		if hasDigit && hasSeparator {
+			tokens[token] = struct{}{}
+		}
+	}
+	return tokens
+}
+
+func extractUnitTokens(value string) map[string]struct{} {
+	units := map[string]struct{}{}
+	lookup := []string{"m1", "m2", "m3", "stuk", "stuks", "liter", "l", "cm", "mm", "meter", "per"}
+	lower := strings.ToLower(value)
+	for _, unit := range lookup {
+		if strings.Contains(lower, unit) {
+			units[unit] = struct{}{}
+		}
+	}
+	return units
+}
+
+func tokenOverlapRatio(queryTokens map[string]struct{}, textTokens map[string]struct{}) float64 {
+	if len(queryTokens) == 0 {
+		return 0
+	}
+	intersection := 0
+	for token := range queryTokens {
+		if _, ok := textTokens[token]; ok {
+			intersection++
+		}
+	}
+	return float64(intersection) / float64(len(queryTokens))
+}
+
+func countSetIntersection(a map[string]struct{}, b map[string]struct{}) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	count := 0
+	for key := range a {
+		if _, ok := b[key]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+func hasAnyUnitToken(text string, units map[string]struct{}) bool {
+	if len(units) == 0 {
+		return false
+	}
+	for unit := range units {
+		if strings.Contains(text, unit) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractProductFromPayload(payload map[string]any, score float64) ProductResult {
@@ -1691,11 +2013,15 @@ Tips for effective queries:
 - Use generic product category names (e.g. "scharnier deur" instead of just "RVS scharnieren").
 - Include synonyms and alternative terms (e.g. "deurhanger deurbeslag scharnier").
 - Mix Dutch and English terms if the catalog may contain either.
+- Translate consumer wording into trade and DIY/store terms.
+- Example query expansion for "kantstukken": "dagkantafwerking", "deurlijst/chambranle", "aftimmerlat/afdeklat", "kozijnplint", "sponninglat".
 - Search for broader categories first, then refine with specific queries.
 - Call this tool multiple times with different queries to cover all needed materials.
 
 Each result includes a "score" field (0-1) indicating match quality.
-Products with score > 0.6 are strong matches. Products with score 0.35-0.6 are partial matches — verify relevance.
+Products with score >= 0.45 are high-confidence matches and include highConfidence=true.
+For high-confidence matches, use the product price directly (no markup).
+Products with score 0.35-0.45 are lower-confidence candidates — verify variant/unit before using.
 
 Result fields:
 - name: product name
@@ -1710,6 +2036,7 @@ Result fields:
 - sourceUrl: reference URL (reference products only)
 - laborTime: estimated labor time text (if available)
 - score: similarity score (0-1)
+- highConfidence: true when score >= 0.45 (use found price without markup)
 - id: catalog product UUID (only for catalog items — use as catalogProductId in DraftQuote)`,
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
@@ -1737,6 +2064,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 	}
 
 	portItems := convertDraftItems(input.Items)
+	portItems = enforceCatalogUnitPrices(ctx, deps, *tenantID, portItems)
 	portAttachments, portURLs := collectCatalogAssetsForDraft(ctx, deps, tenantID, portItems)
 
 	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
@@ -1766,6 +2094,62 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		QuoteNumber: result.QuoteNumber,
 		ItemCount:   result.ItemCount,
 	}, nil
+}
+
+// enforceCatalogUnitPrices ensures catalog-linked quote items use authoritative
+// catalog pricing metadata (unit price + VAT). Ad-hoc items (without
+// catalogProductId) are left unchanged so they can be estimated.
+func enforceCatalogUnitPrices(ctx context.Context, deps *ToolDependencies, tenantID uuid.UUID, items []ports.DraftQuoteItem) []ports.DraftQuoteItem {
+	if deps.CatalogReader == nil || len(items) == 0 {
+		return items
+	}
+
+	catalogIDs := collectCatalogProductIDs(items)
+	if len(catalogIDs) == 0 {
+		return items
+	}
+
+	details, err := deps.CatalogReader.GetProductDetails(ctx, tenantID, catalogIDs)
+	if err != nil {
+		log.Printf("DraftQuote: catalog price normalization skipped, details fetch failed: %v", err)
+		return items
+	}
+
+	detailByID := make(map[uuid.UUID]ports.CatalogProductDetails, len(details))
+	for _, d := range details {
+		detailByID[d.ID] = d
+	}
+
+	priceAdjusted := 0
+	vatAdjusted := 0
+	unresolvedCatalogIDs := 0
+	for i := range items {
+		if items[i].CatalogProductID == nil {
+			continue
+		}
+		d, ok := detailByID[*items[i].CatalogProductID]
+		if !ok {
+			unresolvedCatalogIDs++
+			continue
+		}
+		if items[i].UnitPriceCents != d.UnitPriceCents {
+			items[i].UnitPriceCents = d.UnitPriceCents
+			priceAdjusted++
+		}
+		if d.VatRateBps > 0 && items[i].TaxRateBps != d.VatRateBps {
+			items[i].TaxRateBps = d.VatRateBps
+			vatAdjusted++
+		}
+	}
+
+	if priceAdjusted > 0 || vatAdjusted > 0 {
+		log.Printf("DraftQuote: normalized catalog-linked metadata (prices=%d vat=%d)", priceAdjusted, vatAdjusted)
+	}
+	if unresolvedCatalogIDs > 0 {
+		log.Printf("DraftQuote: %d catalog-linked item(s) could not be resolved; kept input values to avoid breaking flow", unresolvedCatalogIDs)
+	}
+
+	return items
 }
 
 // convertDraftItems converts tool-level DraftQuoteItems to port-level items.
@@ -1812,8 +2196,10 @@ func createDraftQuoteTool(deps *ToolDependencies) (tool.Tool, error) {
 		Description: `Creates a draft quote for the current lead based on estimation results.
 Use this AFTER searching the catalog and calculating estimates.
 For each item, provide description, quantity, unitPriceCents (in euro-cents), taxRateBps.
-IMPORTANT: Set unitPriceCents to the product's "priceCents" value from SearchProductMaterials (already in cents).
+IMPORTANT: If a high-confidence product is found, set unitPriceCents exactly to the product's "priceCents" value from SearchProductMaterials (already in cents), without markup.
+Only estimate unitPriceCents when no suitable high-confidence product was found.
 If the item came from SearchProductMaterials, include its catalogProductId.
+When catalogProductId is present, backend catalog metadata is authoritative: unitPriceCents and taxRateBps are normalized to catalog values.
 Ad-hoc items (not found in catalog) should omit catalogProductId.`,
 	}, func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
 		return handleDraftQuote(ctx, deps, input)
