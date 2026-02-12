@@ -403,3 +403,17 @@ type AppointmentReminderDue struct {
 }
 
 func (e AppointmentReminderDue) EventName() string { return "appointments.reminder.due" }
+
+// =============================================================================
+// Notification Domain Events
+// =============================================================================
+
+// NotificationOutboxDue is published by the scheduler when a notification outbox
+// record should be processed.
+type NotificationOutboxDue struct {
+	BaseEvent
+	OutboxID uuid.UUID `json:"outboxId"`
+	TenantID uuid.UUID `json:"tenantId"`
+}
+
+func (e NotificationOutboxDue) EventName() string { return "notification.outbox.due" }

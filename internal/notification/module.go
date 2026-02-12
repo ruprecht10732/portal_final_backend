@@ -6,6 +6,7 @@ package notification
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/smtpcrypto"
+	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
@@ -95,6 +97,7 @@ type Module struct {
 	leadTimeline       LeadTimelineWriter
 	settingsReader     OrganizationSettingsReader
 	leadWhatsAppReader LeadWhatsAppReader
+	notificationOutbox *notificationoutbox.Repository
 	smtpEncryptionKey  []byte
 	senderCache        sync.Map // map[uuid.UUID]cachedSender
 }
@@ -138,6 +141,11 @@ func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeli
 
 // SetSMTPEncryptionKey sets the AES key used to decrypt SMTP passwords from org settings.
 func (m *Module) SetSMTPEncryptionKey(key []byte) { m.smtpEncryptionKey = key }
+
+// SetNotificationOutbox injects the notification outbox repository.
+func (m *Module) SetNotificationOutbox(repo *notificationoutbox.Repository) {
+	m.notificationOutbox = repo
+}
 
 // resolveSender returns a tenant-specific SMTPSender if the organization has SMTP
 // configured, falling back to the default (Brevo) sender. Results are cached with a
@@ -252,6 +260,7 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	// Appointment domain events
 	bus.Subscribe(events.AppointmentCreated{}.EventName(), m)
 	bus.Subscribe(events.AppointmentReminderDue{}.EventName(), m)
+	bus.Subscribe(events.NotificationOutboxDue{}.EventName(), m)
 
 	m.log.Info("notification module registered event handlers")
 }
@@ -300,10 +309,20 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handleAppointmentCreated(ctx, e)
 	case events.AppointmentReminderDue:
 		return m.handleAppointmentReminderDue(ctx, e)
+	case events.NotificationOutboxDue:
+		return m.handleNotificationOutboxDue(ctx, e)
 	default:
 		m.log.Warn("unhandled event type", "event", event.EventName())
 		return nil
 	}
+}
+
+type leadWelcomeOutboxPayload struct {
+	LeadID        string `json:"leadId"`
+	LeadServiceID string `json:"leadServiceId"`
+	ConsumerName  string `json:"consumerName"`
+	ConsumerPhone string `json:"consumerPhone"`
+	PublicToken   string `json:"publicToken"`
 }
 
 func (m *Module) handleUserSignedUp(ctx context.Context, e events.UserSignedUp) error {
@@ -514,7 +533,7 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 			e.PartnerName,
 			e.OfferID.String()[:8],
 		)
-		m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
+		_ = m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
 			Ctx:         ctx,
 			OrgID:       e.OrganizationID,
 			LeadID:      &e.LeadID,
@@ -621,7 +640,6 @@ func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.Partner
 }
 
 func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) error {
-	_ = ctx
 	m.log.Info("processing lead created notification", "leadId", e.LeadID)
 
 	if strings.EqualFold(strings.TrimSpace(e.Source), "quote_flow") {
@@ -643,9 +661,32 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 		consumerName = "daar"
 	}
 
+	// Preferred: durable scheduling via outbox.
+	if m.notificationOutbox != nil {
+		d := m.resolveLeadWelcomeWhatsAppDelay(ctx, e.TenantID)
+		runAt := time.Now().UTC().Add(d)
+		_, err := m.notificationOutbox.Insert(ctx, notificationoutbox.InsertParams{
+			TenantID: e.TenantID,
+			Kind:     "whatsapp",
+			Template: "lead_welcome",
+			Payload: leadWelcomeOutboxPayload{
+				LeadID:        e.LeadID.String(),
+				LeadServiceID: e.LeadServiceID.String(),
+				ConsumerName:  consumerName,
+				ConsumerPhone: e.ConsumerPhone,
+				PublicToken:   e.PublicToken,
+			},
+			RunAt: runAt,
+		})
+		if err == nil {
+			return nil
+		}
+		m.log.Warn("failed to enqueue whatsapp lead welcome outbox; falling back to legacy send", "error", err, "leadId", e.LeadID)
+	}
+
+	// Fallback: legacy in-process delay.
 	trackLink := m.buildLeadTrackLink(e.PublicToken)
 	message := buildLeadWelcomeMessage(consumerName, trackLink)
-
 	go func() {
 		bg := context.Background()
 		d := m.resolveLeadWelcomeWhatsAppDelay(bg, e.TenantID)
@@ -656,8 +697,9 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 		svcID := e.LeadServiceID
 		metadata := buildWhatsAppSentMetadata("lead_welcome", "lead", e.ConsumerPhone, message)
 		metadata["preferredContactChannel"] = "WhatsApp"
+		metadata["suggestedContactChannel"] = "WhatsApp"
 		metadata["suggestedContactMessage"] = message
-		m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
+		_ = m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
 			Ctx:         bg,
 			OrgID:       e.TenantID,
 			LeadID:      &e.LeadID,
@@ -673,6 +715,90 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 		})
 	}()
 
+	return nil
+}
+
+func (m *Module) handleNotificationOutboxDue(ctx context.Context, e events.NotificationOutboxDue) error {
+	if m.notificationOutbox == nil {
+		return nil
+	}
+
+	rec, err := m.notificationOutbox.GetByID(ctx, e.OutboxID)
+	if err != nil {
+		return err
+	}
+	if rec.Status == notificationoutbox.StatusSucceeded {
+		return nil
+	}
+
+	if err := m.notificationOutbox.MarkProcessing(ctx, rec.ID); err != nil {
+		return err
+	}
+
+	if rec.Kind != "whatsapp" || rec.Template != "lead_welcome" {
+		msg := fmt.Sprintf("unsupported outbox kind/template: %s/%s", rec.Kind, rec.Template)
+		_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, msg)
+		return nil
+	}
+
+	var payload leadWelcomeOutboxPayload
+	if err := json.Unmarshal(rec.Payload, &payload); err != nil {
+		_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, "invalid payload: "+err.Error())
+		return nil
+	}
+	if strings.TrimSpace(payload.ConsumerPhone) == "" {
+		_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
+		return nil
+	}
+
+	leadID, err := uuid.Parse(payload.LeadID)
+	if err != nil {
+		_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, "invalid leadId: "+err.Error())
+		return nil
+	}
+	svcID, err := uuid.Parse(payload.LeadServiceID)
+	if err != nil {
+		_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, "invalid leadServiceId: "+err.Error())
+		return nil
+	}
+
+	if !m.isLeadWhatsAppOptedIn(ctx, leadID, e.TenantID) {
+		_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
+		return nil
+	}
+
+	consumerName := strings.TrimSpace(payload.ConsumerName)
+	if consumerName == "" {
+		consumerName = "daar"
+	}
+
+	trackLink := m.buildLeadTrackLink(payload.PublicToken)
+	message := buildLeadWelcomeMessage(consumerName, trackLink)
+
+	metadata := buildWhatsAppSentMetadata("lead_welcome", "lead", payload.ConsumerPhone, message)
+	metadata["preferredContactChannel"] = "WhatsApp"
+	metadata["suggestedContactMessage"] = message
+
+	err = m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
+		Ctx:         ctx,
+		OrgID:       e.TenantID,
+		LeadID:      &leadID,
+		ServiceID:   &svcID,
+		PhoneNumber: payload.ConsumerPhone,
+		Message:     message,
+		Category:    "lead_welcome",
+		Audience:    "lead",
+		Summary:     fmt.Sprintf("WhatsApp welkomstbericht verstuurd naar %s", consumerName),
+		ActorType:   "System",
+		ActorName:   "Portal",
+		Metadata:    metadata,
+	})
+	if err != nil {
+		_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, err.Error())
+		return err
+	}
+
+	_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
 	return nil
 }
 
@@ -860,7 +986,7 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 			e.OrganizationName,
 		)
 
-		m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
+		_ = m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
 			Ctx:         ctx,
 			OrgID:       e.OrganizationID,
 			LeadID:      &e.LeadID,
@@ -902,7 +1028,7 @@ func (m *Module) handleAppointmentCreated(ctx context.Context, e events.Appointm
 		timeStr,
 	)
 
-	m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
+	_ = m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
 		Ctx:         ctx,
 		OrgID:       e.OrganizationID,
 		LeadID:      e.LeadID,
@@ -941,7 +1067,7 @@ func (m *Module) handleAppointmentReminderDue(ctx context.Context, e events.Appo
 		timeStr,
 	)
 
-	m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
+	_ = m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
 		Ctx:         ctx,
 		OrgID:       e.OrganizationID,
 		LeadID:      e.LeadID,
@@ -1252,9 +1378,9 @@ type whatsAppBestEffortParams struct {
 	Metadata    map[string]any
 }
 
-func (m *Module) sendWhatsAppBestEffort(params whatsAppBestEffortParams) {
+func (m *Module) sendWhatsAppBestEffort(params whatsAppBestEffortParams) error {
 	if m.whatsapp == nil || params.PhoneNumber == "" {
-		return
+		return nil
 	}
 
 	deviceID := m.resolveWhatsAppDeviceID(params.Ctx, params.OrgID)
@@ -1262,18 +1388,18 @@ func (m *Module) sendWhatsAppBestEffort(params whatsAppBestEffortParams) {
 	if err != nil {
 		if errors.Is(err, whatsapp.ErrNoDevice) {
 			m.log.Debug("whatsapp skipped: no device configured", "orgId", params.OrgID)
-			return
+			return nil
 		}
 
 		m.log.Warn("failed to send whatsapp", "error", err, "orgId", params.OrgID)
 		if params.LeadID != nil {
 			m.writeWhatsAppFailureEvent(params.Ctx, *params.LeadID, params.ServiceID, params.OrgID, err.Error())
 		}
-		return
+		return err
 	}
 
 	if params.LeadID == nil {
-		return
+		return nil
 	}
 
 	metadata := params.Metadata
@@ -1291,6 +1417,8 @@ func (m *Module) sendWhatsAppBestEffort(params whatsAppBestEffortParams) {
 		Summary:   params.Summary,
 		Metadata:  metadata,
 	})
+
+	return nil
 }
 
 func (m *Module) isLeadWhatsAppOptedIn(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) bool {

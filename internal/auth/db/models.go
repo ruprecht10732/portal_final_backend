@@ -695,6 +695,20 @@ type RacLeadServiceEvent struct {
 	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type RacNotificationOutbox struct {
+	ID        pgtype.UUID        `json:"id"`
+	TenantID  pgtype.UUID        `json:"tenant_id"`
+	Kind      string             `json:"kind"`
+	Template  string             `json:"template"`
+	Payload   []byte             `json:"payload"`
+	RunAt     pgtype.Timestamptz `json:"run_at"`
+	Status    string             `json:"status"`
+	Attempts  int32              `json:"attempts"`
+	LastError pgtype.Text        `json:"last_error"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacOrganization struct {
 	ID              pgtype.UUID        `json:"id"`
 	Name            string             `json:"name"`
