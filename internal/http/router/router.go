@@ -91,7 +91,7 @@ func webhookCorsBypass() gin.HandlerFunc {
 func buildCorsConfig(cfg config.HTTPConfig) cors.Config {
 	corsConfig := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Webhook-API-Key", "X-Export-API-Key"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Webhook-API-Key"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: cfg.GetCORSAllowCreds(),
 		MaxAge:           12 * time.Hour,

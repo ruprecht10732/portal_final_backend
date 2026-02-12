@@ -378,19 +378,6 @@ type RacCatalogVatRate struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
-type RacExportApiKey struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrganizationID pgtype.UUID        `json:"organization_id"`
-	Name           string             `json:"name"`
-	KeyHash        string             `json:"key_hash"`
-	KeyPrefix      string             `json:"key_prefix"`
-	IsActive       bool               `json:"is_active"`
-	CreatedBy      pgtype.UUID        `json:"created_by"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
-}
-
 type RacFeedComment struct {
 	ID          pgtype.UUID        `json:"id"`
 	EventID     string             `json:"event_id"`
@@ -447,6 +434,17 @@ type RacGoogleAdsExport struct {
 	Gclid           string             `json:"gclid"`
 	OrderID         string             `json:"order_id"`
 	ExportedAt      pgtype.Timestamptz `json:"exported_at"`
+}
+
+type RacGoogleAdsExportCredential struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Username       string             `json:"username"`
+	PasswordHash   string             `json:"password_hash"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
 }
 
 type RacGoogleLeadID struct {

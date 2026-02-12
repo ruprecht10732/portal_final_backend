@@ -2,30 +2,36 @@ package exports
 
 import (
 	"net/http"
+	"strings"
 
+	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-gonic/gin"
 )
 
-// APIKeyAuthMiddleware validates export API keys for public export endpoints.
-func APIKeyAuthMiddleware(repo *Repository) gin.HandlerFunc {
+// BasicAuthMiddleware validates HTTP Basic Auth credentials for public export endpoints.
+func BasicAuthMiddleware(repo *Repository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		plaintext := c.GetHeader("X-Export-API-Key")
-		if plaintext == "" {
-			httpkit.Error(c, http.StatusUnauthorized, "missing export API key", nil)
+		username, plaintextPassword, ok := c.Request.BasicAuth()
+		if !ok || strings.TrimSpace(username) == "" || strings.TrimSpace(plaintextPassword) == "" {
+			httpkit.Error(c, http.StatusUnauthorized, "missing export basic auth credentials", nil)
 			return
 		}
 
-		hash := HashKey(plaintext)
-		key, err := repo.GetAPIKeyByHash(c.Request.Context(), hash)
+		credential, err := repo.GetCredentialByUsername(c.Request.Context(), strings.TrimSpace(username))
 		if err != nil {
-			httpkit.Error(c, http.StatusUnauthorized, "invalid export API key", nil)
+			httpkit.Error(c, http.StatusUnauthorized, "invalid export credentials", nil)
 			return
 		}
 
-		c.Set("exportOrgID", key.OrganizationID)
-		c.Set("exportKeyID", key.ID)
+		if err := password.Compare(credential.PasswordHash, plaintextPassword); err != nil {
+			httpkit.Error(c, http.StatusUnauthorized, "invalid export credentials", nil)
+			return
+		}
+
+		c.Set("exportOrgID", credential.OrganizationID)
+		c.Set("exportCredentialID", credential.ID)
 		c.Next()
 	}
 }

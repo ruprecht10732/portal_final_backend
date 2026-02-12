@@ -32,13 +32,13 @@ func (m *Module) Name() string {
 // RegisterRoutes mounts export routes on the provided router context.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	publicGroup := ctx.V1.Group("/exports")
-	publicGroup.Use(APIKeyAuthMiddleware(m.repo))
+	publicGroup.Use(BasicAuthMiddleware(m.repo))
 	publicGroup.GET("/google-ads/conversions.csv", m.handler.ExportGoogleAdsCSV)
 
-	adminGroup := ctx.Admin.Group("/exports/keys")
-	adminGroup.POST("", m.handler.HandleCreateAPIKey)
-	adminGroup.GET("", m.handler.HandleListAPIKeys)
-	adminGroup.DELETE("/:keyId", m.handler.HandleRevokeAPIKey)
+	adminGroup := ctx.Admin.Group("/exports/credentials")
+	adminGroup.POST("", m.handler.HandleUpsertCredential)
+	adminGroup.GET("", m.handler.HandleGetCredential)
+	adminGroup.DELETE("", m.handler.HandleDeleteCredential)
 }
 
 var _ apphttp.Module = (*Module)(nil)
