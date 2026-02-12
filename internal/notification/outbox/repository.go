@@ -176,6 +176,22 @@ func (r *Repository) MarkPending(ctx context.Context, id uuid.UUID, lastError *s
 	return err
 }
 
+func (r *Repository) ScheduleRetry(ctx context.Context, id uuid.UUID, runAt time.Time, lastError string) error {
+	if r == nil || r.pool == nil {
+		return errors.New(errRepoNotConfigured)
+	}
+	if runAt.IsZero() {
+		runAt = time.Now().UTC()
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE RAC_notification_outbox
+		 SET status = 'pending', run_at = $2, last_error = $3, updated_at = now()
+		 WHERE id = $1`,
+		id, runAt, lastError,
+	)
+	return err
+}
+
 func (r *Repository) MarkProcessing(ctx context.Context, id uuid.UUID) error {
 	if r == nil || r.pool == nil {
 		return errors.New(errRepoNotConfigured)

@@ -11,6 +11,7 @@ import (
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
 	identityrepo "portal_final_backend/internal/identity/repository"
+	identityservice "portal_final_backend/internal/identity/service"
 	leadrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
@@ -63,8 +64,9 @@ func main() {
 	notificationModule.SetLeadWhatsAppReader(leadrepo.New(pool))
 	notificationModule.SetNotificationOutbox(outbox.New(pool))
 	identityReader := identityrepo.New(pool)
+	identitySvc := identityservice.New(identityReader, nil, nil, "", nil)
 	notificationModule.SetOrganizationSettingsReader(identityReader)
-	notificationModule.SetWorkflowReader(identityReader)
+	notificationModule.SetWorkflowResolver(identitySvc)
 
 	dispatcher, err := scheduler.NewNotificationOutboxDispatcher(cfg, pool, log)
 	if err != nil {

@@ -154,7 +154,7 @@ func main() {
 	// Initialize domain modules
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)
 	notificationModule.SetOrganizationSettingsReader(identityModule.Service())
-	notificationModule.SetWorkflowReader(identityModule.Service())
+	notificationModule.SetWorkflowResolver(identityModule.Service())
 
 	wireSMTPEncryptionKey(cfg, log, identityModule.Service(), notificationModule)
 
@@ -164,6 +164,7 @@ func main() {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
 	}
+	leadsModule.ManagementService().SetWorkflowOverrideWriter(identityModule.Service())
 	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())
 
 	// Share SSE service with notification module so quote events reach agents
@@ -231,13 +232,12 @@ func main() {
 	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service(), authModule.Repository())
 	quotesModule.Service().SetQuoteContactReader(quotesContacts)
 
-	// Wire org settings reader: quotes → identity settings (for quote defaults)
-	orgSettingsAdapter := adapters.NewOrgSettingsAdapter(identityModule.Service())
-	quotesModule.Service().SetOrgSettingsReader(orgSettingsAdapter)
+	// Wire quote terms resolver: quotes → workflow overrides + org defaults
+	quoteTermsResolver := adapters.NewQuoteTermsResolverAdapter(identityModule.Service(), identityModule.Service(), leadsModule.Repository())
+	quotesModule.Service().SetQuoteTermsResolver(quoteTermsResolver)
 
 	// Wire quote acceptance processor: PDF generation + upload + emails
-	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), quotesContacts, storageSvc, cfg, identityModule.Service())
-	notificationModule.SetQuoteAcceptanceProcessor(quotePDFProcessor)
+	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), quotesContacts, storageSvc, cfg, quoteTermsResolver)
 	quotesModule.SetPDFGenerator(quotePDFProcessor)
 
 	// Wire quote activity writer so notification handlers persist activity history
