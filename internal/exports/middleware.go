@@ -10,23 +10,30 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const exportAuthChallenge = `Basic realm="google-ads-export", charset="UTF-8"`
+
+func respondUnauthorized(c *gin.Context, message string) {
+	c.Header("WWW-Authenticate", exportAuthChallenge)
+	httpkit.Error(c, http.StatusUnauthorized, message, nil)
+}
+
 // BasicAuthMiddleware validates HTTP Basic Auth credentials for public export endpoints.
 func BasicAuthMiddleware(repo *Repository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		username, plaintextPassword, ok := c.Request.BasicAuth()
 		if !ok || strings.TrimSpace(username) == "" || strings.TrimSpace(plaintextPassword) == "" {
-			httpkit.Error(c, http.StatusUnauthorized, "missing export basic auth credentials", nil)
+			respondUnauthorized(c, "missing export basic auth credentials")
 			return
 		}
 
 		credential, err := repo.GetCredentialByUsername(c.Request.Context(), strings.TrimSpace(username))
 		if err != nil {
-			httpkit.Error(c, http.StatusUnauthorized, "invalid export credentials", nil)
+			respondUnauthorized(c, "invalid export credentials")
 			return
 		}
 
 		if err := password.Compare(credential.PasswordHash, plaintextPassword); err != nil {
-			httpkit.Error(c, http.StatusUnauthorized, "invalid export credentials", nil)
+			respondUnauthorized(c, "invalid export credentials")
 			return
 		}
 
