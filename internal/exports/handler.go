@@ -150,7 +150,7 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 
 	limit := parseLimit(c, 5000, 50000)
 	currency := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("currency", defaultCurrency)))
-	useEnhanced := parseBool(c.Query("enhanced"))
+	useEnhanced := parseEnhancedMode(c.Query("enhanced"))
 
 	location, tzName, ok := parseTimezone(c)
 	if !ok {
@@ -377,6 +377,17 @@ func parseBool(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func parseEnhancedMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "1", "true", "yes", "y":
+		return true
+	case "0", "false", "no", "n":
+		return false
+	default:
+		return true
 	}
 }
 
