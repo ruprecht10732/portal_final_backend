@@ -26,6 +26,7 @@ import (
 	"portal_final_backend/internal/leads"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
+	"portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/partners"
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
@@ -148,6 +149,7 @@ func main() {
 	notificationModule.RegisterHandlers(eventBus)
 	whatsappClient := whatsapp.NewClient(cfg, log)
 	notificationModule.SetWhatsAppSender(whatsappClient)
+	notificationModule.SetNotificationOutbox(outbox.New(pool))
 
 	// Initialize domain modules
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)

@@ -61,8 +61,36 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	}
 
 	mux.HandleFunc(TaskAppointmentReminder, w.handleAppointmentReminder)
+	mux.HandleFunc(TaskNotificationOutboxDue, w.handleNotificationOutboxDue)
 
 	return w, nil
+}
+
+func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
+	if w.bus == nil {
+		return nil
+	}
+
+	payload, err := ParseNotificationOutboxDuePayload(task)
+	if err != nil {
+		return err
+	}
+
+	outboxID, err := uuid.Parse(payload.OutboxID)
+	if err != nil {
+		return err
+	}
+
+	tenantID, err := uuid.Parse(payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	return w.bus.PublishSync(ctx, events.NotificationOutboxDue{
+		BaseEvent: events.NewBaseEvent(),
+		OutboxID:  outboxID,
+		TenantID:  tenantID,
+	})
 }
 
 func (w *Worker) Run(ctx context.Context) {

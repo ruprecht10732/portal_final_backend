@@ -12,6 +12,7 @@ import (
 	"portal_final_backend/internal/events"
 	leadrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
+	"portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
@@ -59,6 +60,15 @@ func main() {
 	notificationModule.RegisterHandlers(eventBus)
 	notificationModule.SetWhatsAppSender(whatsapp.NewClient(cfg, log))
 	notificationModule.SetLeadWhatsAppReader(leadrepo.New(pool))
+	notificationModule.SetNotificationOutbox(outbox.New(pool))
+
+	dispatcher, err := scheduler.NewNotificationOutboxDispatcher(cfg, pool, log)
+	if err != nil {
+		log.Error("failed to initialize outbox dispatcher", "error", err)
+		panic("failed to initialize outbox dispatcher: " + err.Error())
+	}
+	defer func() { _ = dispatcher.Close() }()
+	go dispatcher.Run(ctx)
 
 	worker, err := scheduler.NewWorker(cfg, pool, eventBus, log)
 	if err != nil {
