@@ -1383,90 +1383,8 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to generate embedding for query"}, err
 	}
 
-	// Try catalog collection first.
-	if useCatalog && deps.CatalogQdrantClient != nil {
-		if products := searchCatalogCollection(ctx, deps, vector, limit, scoreThreshold, query); len(products) > 0 {
-			if hasHighConfidenceMatch(products) {
-				return SearchProductMaterialsOutput{
-					Products: products,
-					Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog (min relevance %.0f%%)", len(products), scoreThreshold*100),
-				}, nil
-			}
-
-			bestProducts := products
-			rewordedQueries := buildCatalogRewordedQueries(query)
-			if len(rewordedQueries) > maxCatalogRewordRetries {
-				rewordedQueries = rewordedQueries[:maxCatalogRewordRetries]
-			}
-
-			for _, retryQuery := range rewordedQueries {
-				retryVector, retryErr := deps.EmbeddingClient.Embed(ctx, retryQuery)
-				if retryErr != nil {
-					log.Printf("SearchProductMaterials: catalog retry embedding failed query=%q: %v", retryQuery, retryErr)
-					continue
-				}
-
-				retryProducts := searchCatalogCollection(ctx, deps, retryVector, limit, scoreThreshold, retryQuery)
-				if len(retryProducts) == 0 {
-					continue
-				}
-
-				if shouldPreferCandidateSet(retryProducts, bestProducts) {
-					bestProducts = retryProducts
-				}
-
-				if hasHighConfidenceMatch(retryProducts) {
-					log.Printf("SearchProductMaterials: catalog retry improved confidence query=%q -> retry_query=%q", query, retryQuery)
-					return SearchProductMaterialsOutput{
-						Products: retryProducts,
-						Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog after query rewording (min relevance %.0f%%)", len(retryProducts), scoreThreshold*100),
-					}, nil
-				}
-			}
-
-			return SearchProductMaterialsOutput{
-				Products: bestProducts,
-				Message:  fmt.Sprintf("Found %d matching products from catalog (lower confidence; verify variant/unit, min relevance %.0f%%)", len(bestProducts), scoreThreshold*100),
-			}, nil
-		}
-	}
-
-	// If primary catalog search had no candidates, try catalog rewording retries before falling back.
-	if useCatalog && deps.CatalogQdrantClient != nil {
-		rewordedQueries := buildCatalogRewordedQueries(query)
-		if len(rewordedQueries) > maxCatalogRewordRetries {
-			rewordedQueries = rewordedQueries[:maxCatalogRewordRetries]
-		}
-
-		var bestRetryProducts []ProductResult
-		for _, retryQuery := range rewordedQueries {
-			retryVector, retryErr := deps.EmbeddingClient.Embed(ctx, retryQuery)
-			if retryErr != nil {
-				log.Printf("SearchProductMaterials: catalog retry embedding failed query=%q: %v", retryQuery, retryErr)
-				continue
-			}
-			retryProducts := searchCatalogCollection(ctx, deps, retryVector, limit, scoreThreshold, retryQuery)
-			if len(retryProducts) == 0 {
-				continue
-			}
-			if shouldPreferCandidateSet(retryProducts, bestRetryProducts) {
-				bestRetryProducts = retryProducts
-			}
-			if hasHighConfidenceMatch(retryProducts) {
-				log.Printf("SearchProductMaterials: catalog retry recovered results query=%q -> retry_query=%q", query, retryQuery)
-				return SearchProductMaterialsOutput{
-					Products: retryProducts,
-					Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog after query rewording (min relevance %.0f%%)", len(retryProducts), scoreThreshold*100),
-				}, nil
-			}
-		}
-
-		if len(bestRetryProducts) > 0 {
-			return SearchProductMaterialsOutput{
-				Products: bestRetryProducts,
-				Message:  fmt.Sprintf("Found %d matching products from catalog after query rewording (lower confidence; verify variant/unit, min relevance %.0f%%)", len(bestRetryProducts), scoreThreshold*100),
-			}, nil
-		}
+	if output, ok := tryCatalogSearchFlow(ctx, deps, query, limit, scoreThreshold, useCatalog, vector); ok {
+		return output, nil
 	}
 
 	// Fallback to general collection.
@@ -1498,6 +1416,101 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		Products: products,
 		Message:  fmt.Sprintf("Found %d reference products (not from your catalog — use as ad-hoc line items without catalogProductId, min relevance %.0f%%)", len(products), scoreThreshold*100),
 	}, nil
+}
+
+func tryCatalogSearchFlow(ctx tool.Context, deps *ToolDependencies, query string, limit int, scoreThreshold float64, useCatalog bool, initialVector []float32) (SearchProductMaterialsOutput, bool) {
+	if !useCatalog || deps.CatalogQdrantClient == nil {
+		return SearchProductMaterialsOutput{}, false
+	}
+
+	initialProducts := searchCatalogCollection(ctx, deps, initialVector, limit, scoreThreshold, query)
+	if len(initialProducts) > 0 {
+		if hasHighConfidenceMatch(initialProducts) {
+			return catalogSearchOutput(initialProducts, scoreThreshold, false, true), true
+		}
+
+		bestProducts, highConfidenceProducts, _ := runCatalogRetries(ctx, deps, query, limit, scoreThreshold, initialProducts)
+		if len(highConfidenceProducts) > 0 {
+			return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, true), true
+		}
+		return catalogSearchOutput(bestProducts, scoreThreshold, false, true), true
+	}
+
+	bestRetryProducts, highConfidenceProducts, _ := runCatalogRetries(ctx, deps, query, limit, scoreThreshold, nil)
+	if len(highConfidenceProducts) > 0 {
+		return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, true), true
+	}
+	if len(bestRetryProducts) > 0 {
+		return catalogSearchOutput(bestRetryProducts, scoreThreshold, true, false), true
+	}
+
+	return SearchProductMaterialsOutput{}, false
+}
+
+func catalogSearchOutput(products []ProductResult, scoreThreshold float64, reworded bool, highConfidence bool) SearchProductMaterialsOutput {
+	if highConfidence {
+		if reworded {
+			return SearchProductMaterialsOutput{
+				Products: products,
+				Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog after query rewording (min relevance %.0f%%)", len(products), scoreThreshold*100),
+			}
+		}
+		return SearchProductMaterialsOutput{
+			Products: products,
+			Message:  fmt.Sprintf("Found %d high-confidence matching products from catalog (min relevance %.0f%%)", len(products), scoreThreshold*100),
+		}
+	}
+
+	if reworded {
+		return SearchProductMaterialsOutput{
+			Products: products,
+			Message:  fmt.Sprintf("Found %d matching products from catalog after query rewording (lower confidence; verify variant/unit, min relevance %.0f%%)", len(products), scoreThreshold*100),
+		}
+	}
+
+	return SearchProductMaterialsOutput{
+		Products: products,
+		Message:  fmt.Sprintf("Found %d matching products from catalog (lower confidence; verify variant/unit, min relevance %.0f%%)", len(products), scoreThreshold*100),
+	}
+}
+
+func limitedCatalogRewordedQueries(query string) []string {
+	rewordedQueries := buildCatalogRewordedQueries(query)
+	if len(rewordedQueries) > maxCatalogRewordRetries {
+		return rewordedQueries[:maxCatalogRewordRetries]
+	}
+	return rewordedQueries
+}
+
+func runCatalogRetries(ctx tool.Context, deps *ToolDependencies, query string, limit int, scoreThreshold float64, currentBest []ProductResult) (bestProducts []ProductResult, highConfidenceProducts []ProductResult, usedRewording bool) {
+	bestProducts = currentBest
+	for _, retryQuery := range limitedCatalogRewordedQueries(query) {
+		retryProducts := searchCatalogRetryQuery(ctx, deps, retryQuery, limit, scoreThreshold)
+		if len(retryProducts) == 0 {
+			continue
+		}
+
+		usedRewording = true
+		if shouldPreferCandidateSet(retryProducts, bestProducts) {
+			bestProducts = retryProducts
+		}
+
+		if hasHighConfidenceMatch(retryProducts) {
+			log.Printf("SearchProductMaterials: catalog retry improved confidence query=%q -> retry_query=%q", query, retryQuery)
+			return bestProducts, retryProducts, true
+		}
+	}
+
+	return bestProducts, nil, usedRewording
+}
+
+func searchCatalogRetryQuery(ctx tool.Context, deps *ToolDependencies, retryQuery string, limit int, scoreThreshold float64) []ProductResult {
+	retryVector, retryErr := deps.EmbeddingClient.Embed(ctx, retryQuery)
+	if retryErr != nil {
+		log.Printf("SearchProductMaterials: catalog retry embedding failed query=%q: %v", retryQuery, retryErr)
+		return nil
+	}
+	return searchCatalogCollection(ctx, deps, retryVector, limit, scoreThreshold, retryQuery)
 }
 
 func hasHighConfidenceMatch(products []ProductResult) bool {
@@ -1743,24 +1756,30 @@ func extractDimensionTokens(value string) map[string]struct{} {
 		return !(r == '-' || r == 'x' || r == '/' || r == '.' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z'))
 	}) {
 		token = strings.TrimSpace(token)
-		if token == "" {
-			continue
-		}
-		hasDigit := false
-		hasSeparator := false
-		for _, r := range token {
-			if r >= '0' && r <= '9' {
-				hasDigit = true
-			}
-			if r == 'x' || r == '-' {
-				hasSeparator = true
-			}
-		}
-		if hasDigit && hasSeparator {
+		if isDimensionToken(token) {
 			tokens[token] = struct{}{}
 		}
 	}
 	return tokens
+}
+
+func isDimensionToken(token string) bool {
+	if token == "" {
+		return false
+	}
+
+	hasDigit := false
+	hasSeparator := false
+	for _, r := range token {
+		if r >= '0' && r <= '9' {
+			hasDigit = true
+		}
+		if r == 'x' || r == '-' {
+			hasSeparator = true
+		}
+	}
+
+	return hasDigit && hasSeparator
 }
 
 func extractUnitTokens(value string) map[string]struct{} {
@@ -2115,41 +2134,68 @@ func enforceCatalogUnitPrices(ctx context.Context, deps *ToolDependencies, tenan
 		return items
 	}
 
+	detailByID := mapCatalogDetailsByID(details)
+
+	priceAdjusted, vatAdjusted, unresolvedCatalogIDs := normalizeCatalogLinkedItems(items, detailByID)
+
+	logCatalogNormalizationSummary(priceAdjusted, vatAdjusted, unresolvedCatalogIDs)
+	return items
+}
+
+func mapCatalogDetailsByID(details []ports.CatalogProductDetails) map[uuid.UUID]ports.CatalogProductDetails {
 	detailByID := make(map[uuid.UUID]ports.CatalogProductDetails, len(details))
 	for _, d := range details {
 		detailByID[d.ID] = d
 	}
+	return detailByID
+}
 
-	priceAdjusted := 0
-	vatAdjusted := 0
-	unresolvedCatalogIDs := 0
+func normalizeCatalogLinkedItems(items []ports.DraftQuoteItem, detailByID map[uuid.UUID]ports.CatalogProductDetails) (priceAdjusted int, vatAdjusted int, unresolvedCatalogIDs int) {
 	for i := range items {
 		if items[i].CatalogProductID == nil {
 			continue
 		}
-		d, ok := detailByID[*items[i].CatalogProductID]
-		if !ok {
+
+		priceChanged, vatChanged, resolved := applyCatalogDetailToDraftItem(&items[i], detailByID)
+		if !resolved {
 			unresolvedCatalogIDs++
 			continue
 		}
-		if items[i].UnitPriceCents != d.UnitPriceCents {
-			items[i].UnitPriceCents = d.UnitPriceCents
+		if priceChanged {
 			priceAdjusted++
 		}
-		if d.VatRateBps > 0 && items[i].TaxRateBps != d.VatRateBps {
-			items[i].TaxRateBps = d.VatRateBps
+		if vatChanged {
 			vatAdjusted++
 		}
 	}
+	return priceAdjusted, vatAdjusted, unresolvedCatalogIDs
+}
 
+func applyCatalogDetailToDraftItem(item *ports.DraftQuoteItem, detailByID map[uuid.UUID]ports.CatalogProductDetails) (priceChanged bool, vatChanged bool, resolved bool) {
+	d, ok := detailByID[*item.CatalogProductID]
+	if !ok {
+		return false, false, false
+	}
+
+	if item.UnitPriceCents != d.UnitPriceCents {
+		item.UnitPriceCents = d.UnitPriceCents
+		priceChanged = true
+	}
+	if d.VatRateBps > 0 && item.TaxRateBps != d.VatRateBps {
+		item.TaxRateBps = d.VatRateBps
+		vatChanged = true
+	}
+
+	return priceChanged, vatChanged, true
+}
+
+func logCatalogNormalizationSummary(priceAdjusted int, vatAdjusted int, unresolvedCatalogIDs int) {
 	if priceAdjusted > 0 || vatAdjusted > 0 {
 		log.Printf("DraftQuote: normalized catalog-linked metadata (prices=%d vat=%d)", priceAdjusted, vatAdjusted)
 	}
 	if unresolvedCatalogIDs > 0 {
 		log.Printf("DraftQuote: %d catalog-linked item(s) could not be resolved; kept input values to avoid breaking flow", unresolvedCatalogIDs)
 	}
-
-	return items
 }
 
 // convertDraftItems converts tool-level DraftQuoteItems to port-level items.

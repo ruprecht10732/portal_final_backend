@@ -11,6 +11,8 @@ import (
 	"portal_final_backend/internal/leads/repository"
 )
 
+const noPreferencesProvided = "No preferences provided"
+
 func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, intakeContext string, attachments []repository.Attachment) string {
 	notesSection := buildNotesSection(notes)
 	serviceNote := getValue(service.ConsumerNote)
@@ -526,7 +528,7 @@ If SearchProductMaterials is available, call it first. Always use Calculator for
 
 func buildPreferencesSummary(raw json.RawMessage) string {
 	if len(raw) == 0 {
-		return "No preferences provided"
+		return noPreferencesProvided
 	}
 
 	var prefs struct {
@@ -536,7 +538,7 @@ func buildPreferencesSummary(raw json.RawMessage) string {
 		ExtraNotes   string `json:"extraNotes"`
 	}
 	if err := json.Unmarshal(raw, &prefs); err != nil {
-		return "No preferences provided"
+		return noPreferencesProvided
 	}
 
 	budget := strings.TrimSpace(prefs.Budget)
@@ -545,7 +547,7 @@ func buildPreferencesSummary(raw json.RawMessage) string {
 	extraNotes := strings.TrimSpace(prefs.ExtraNotes)
 
 	if budget == "" && timeframe == "" && availability == "" && extraNotes == "" {
-		return "No preferences provided"
+		return noPreferencesProvided
 	}
 
 	lines := []string{
