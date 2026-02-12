@@ -3,7 +3,6 @@ package exports
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"time"
@@ -13,18 +12,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrAPIKeyNotFound = errors.New("export API key not found")
+var ErrCredentialNotFound = errors.New("google ads export credential not found")
 
-const apiKeyPrefix = "gads_"
+const (
+	credentialUsernamePrefix = "gadsu_"
+	credentialPasswordPrefix = "gadsp_"
+)
 
-// APIKey represents an export API key stored in the database.
-type APIKey struct {
+// ExportCredential represents Google Ads export credentials stored in the database.
+type ExportCredential struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
-	Name           string
-	KeyHash        string
-	KeyPrefix      string
-	IsActive       bool
+	Username       string
+	PasswordHash   string
 	CreatedBy      *uuid.UUID
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -56,113 +56,122 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// GenerateAPIKey creates a new random API key and returns the plaintext key and its hash.
-func GenerateAPIKey() (plaintext string, hash string, prefix string, err error) {
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", "", "", err
+// GenerateCredential generates random username/password for Google Ads HTTPS Basic Auth.
+func GenerateCredential() (username string, password string, err error) {
+	usernameBytes := make([]byte, 12)
+	if _, err := rand.Read(usernameBytes); err != nil {
+		return "", "", err
 	}
-	plaintext = apiKeyPrefix + hex.EncodeToString(bytes)
-	h := sha256.Sum256([]byte(plaintext))
-	hash = hex.EncodeToString(h[:])
-	prefix = plaintext[:12]
-	return plaintext, hash, prefix, nil
+	passwordBytes := make([]byte, 24)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		return "", "", err
+	}
+
+	username = credentialUsernamePrefix + hex.EncodeToString(usernameBytes)
+	password = credentialPasswordPrefix + hex.EncodeToString(passwordBytes)
+	return username, password, nil
 }
 
-// HashKey hashes a plaintext API key for lookup.
-func HashKey(plaintext string) string {
-	h := sha256.Sum256([]byte(plaintext))
-	return hex.EncodeToString(h[:])
-}
-
-// CreateAPIKey creates a new export API key record.
-func (r *Repository) CreateAPIKey(ctx context.Context, orgID uuid.UUID, name string, keyHash string, keyPrefix string, createdBy *uuid.UUID) (APIKey, error) {
-	var key APIKey
+// UpsertCredential creates or rotates an organization credential.
+func (r *Repository) UpsertCredential(ctx context.Context, orgID uuid.UUID, username string, passwordHash string, createdBy *uuid.UUID) (ExportCredential, error) {
+	var credential ExportCredential
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_export_api_keys (organization_id, name, key_hash, key_prefix, created_by)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, organization_id, name, key_hash, key_prefix, is_active, created_by, created_at, updated_at, last_used_at
-	`, orgID, name, keyHash, keyPrefix, createdBy).Scan(
-		&key.ID, &key.OrganizationID, &key.Name, &key.KeyHash, &key.KeyPrefix, &key.IsActive, &key.CreatedBy, &key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
+		INSERT INTO RAC_google_ads_export_credentials (organization_id, username, password_hash, created_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (organization_id)
+		DO UPDATE SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash, created_by = EXCLUDED.created_by, updated_at = now(), last_used_at = NULL
+		RETURNING id, organization_id, username, password_hash, created_by, created_at, updated_at, last_used_at
+	`, orgID, username, passwordHash, createdBy).Scan(
+		&credential.ID,
+		&credential.OrganizationID,
+		&credential.Username,
+		&credential.PasswordHash,
+		&credential.CreatedBy,
+		&credential.CreatedAt,
+		&credential.UpdatedAt,
+		&credential.LastUsedAt,
 	)
-	return key, err
+	return credential, err
 }
 
-// GetAPIKeyByHash retrieves an active API key by its hash.
-func (r *Repository) GetAPIKeyByHash(ctx context.Context, keyHash string) (APIKey, error) {
-	var key APIKey
+// GetCredentialByUsername retrieves Google Ads export credential by username.
+func (r *Repository) GetCredentialByUsername(ctx context.Context, username string) (ExportCredential, error) {
+	var credential ExportCredential
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, name, key_hash, key_prefix, is_active, created_by, created_at, updated_at, last_used_at
-		FROM RAC_export_api_keys
-		WHERE key_hash = $1 AND is_active = true
-	`, keyHash).Scan(
-		&key.ID, &key.OrganizationID, &key.Name, &key.KeyHash, &key.KeyPrefix, &key.IsActive, &key.CreatedBy, &key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
+		SELECT id, organization_id, username, password_hash, created_by, created_at, updated_at, last_used_at
+		FROM RAC_google_ads_export_credentials
+		WHERE username = $1
+	`, username).Scan(
+		&credential.ID,
+		&credential.OrganizationID,
+		&credential.Username,
+		&credential.PasswordHash,
+		&credential.CreatedBy,
+		&credential.CreatedAt,
+		&credential.UpdatedAt,
+		&credential.LastUsedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return APIKey{}, ErrAPIKeyNotFound
+		return ExportCredential{}, ErrCredentialNotFound
 	}
-	return key, err
+	return credential, err
 }
 
-// ListAPIKeys returns all export API keys for an organization.
-func (r *Repository) ListAPIKeys(ctx context.Context, orgID uuid.UUID) ([]APIKey, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, organization_id, name, key_hash, key_prefix, is_active, created_by, created_at, updated_at, last_used_at
-		FROM RAC_export_api_keys
+// GetCredentialByOrganization retrieves credential metadata for an organization.
+func (r *Repository) GetCredentialByOrganization(ctx context.Context, orgID uuid.UUID) (ExportCredential, error) {
+	var credential ExportCredential
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, organization_id, username, password_hash, created_by, created_at, updated_at, last_used_at
+		FROM RAC_google_ads_export_credentials
 		WHERE organization_id = $1
-		ORDER BY created_at DESC
-	`, orgID)
-	if err != nil {
-		return nil, err
+	`, orgID).Scan(
+		&credential.ID,
+		&credential.OrganizationID,
+		&credential.Username,
+		&credential.PasswordHash,
+		&credential.CreatedBy,
+		&credential.CreatedAt,
+		&credential.UpdatedAt,
+		&credential.LastUsedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ExportCredential{}, ErrCredentialNotFound
 	}
-	defer rows.Close()
-
-	keys := make([]APIKey, 0)
-	for rows.Next() {
-		var key APIKey
-		if err := rows.Scan(
-			&key.ID, &key.OrganizationID, &key.Name, &key.KeyHash, &key.KeyPrefix, &key.IsActive, &key.CreatedBy, &key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
-		); err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
-	}
-	return keys, rows.Err()
+	return credential, err
 }
 
-// RevokeAPIKey deactivates an export API key.
-func (r *Repository) RevokeAPIKey(ctx context.Context, keyID uuid.UUID, orgID uuid.UUID) error {
+// DeleteCredential removes an organization's credential.
+func (r *Repository) DeleteCredential(ctx context.Context, orgID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE RAC_export_api_keys SET is_active = false, updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, keyID, orgID)
+		DELETE FROM RAC_google_ads_export_credentials
+		WHERE organization_id = $1
+	`, orgID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrAPIKeyNotFound
+		return ErrCredentialNotFound
 	}
 	return nil
 }
 
-// TouchAPIKey updates the last_used_at timestamp for the key.
-func (r *Repository) TouchAPIKey(ctx context.Context, keyID uuid.UUID) {
+// TouchCredential updates the last_used_at timestamp for the credential.
+func (r *Repository) TouchCredential(ctx context.Context, credentialID uuid.UUID) {
 	_, _ = r.pool.Exec(ctx, `
-		UPDATE RAC_export_api_keys SET last_used_at = now(), updated_at = now()
+		UPDATE RAC_google_ads_export_credentials SET last_used_at = now(), updated_at = now()
 		WHERE id = $1
-	`, keyID)
+	`, credentialID)
 }
 
 // ListConversionEvents returns conversion-relevant lead service events.
 func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, from time.Time, to time.Time, limit int) ([]ConversionEvent, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT e.id, e.organization_id, e.lead_id, e.lead_service_id, e.event_type, e.status, e.pipeline_stage, e.occurred_at,
-			l.gclid, l.consumer_email, l.consumer_phone, l.projected_value_cents
+			COALESCE(l.gclid, ''), l.consumer_email, COALESCE(l.consumer_phone, ''), l.projected_value_cents
 		FROM RAC_lead_service_events e
 		JOIN RAC_leads l ON l.id = e.lead_id AND l.organization_id = e.organization_id
 		WHERE e.organization_id = $1
 			AND l.deleted_at IS NULL
-			AND l.gclid IS NOT NULL
 			AND e.occurred_at >= $2 AND e.occurred_at <= $3
 		ORDER BY e.occurred_at ASC
 		LIMIT $4
