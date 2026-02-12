@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"portal_final_backend/internal/adapters/storage"
 	identityrepo "portal_final_backend/internal/identity/repository"
-	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes/repository"
 	"portal_final_backend/internal/quotes/service"
@@ -46,23 +46,23 @@ type QuoteOrgReader interface {
 // QuoteAcceptanceProcessor implements notification.QuoteAcceptanceProcessor.
 // It generates the quote PDF, uploads it to MinIO, and persists the file key.
 type QuoteAcceptanceProcessor struct {
-	repo           QuoteDataReader
-	orgReader      QuoteOrgReader
-	contactReader  service.QuoteContactReader
-	storage        storage.StorageService
-	cfg            QuotePDFBucketConfig
-	settingsReader OrgSettingsReaderRepo
+	repo          QuoteDataReader
+	orgReader     QuoteOrgReader
+	contactReader service.QuoteContactReader
+	storage       storage.StorageService
+	cfg           QuotePDFBucketConfig
+	termsResolver service.QuoteTermsResolver
 }
 
 // NewQuoteAcceptanceProcessor creates a new processor adapter.
-func NewQuoteAcceptanceProcessor(repo QuoteDataReader, orgReader QuoteOrgReader, contactReader service.QuoteContactReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig, settingsReader OrgSettingsReaderRepo) *QuoteAcceptanceProcessor {
+func NewQuoteAcceptanceProcessor(repo QuoteDataReader, orgReader QuoteOrgReader, contactReader service.QuoteContactReader, storageSvc storage.StorageService, cfg QuotePDFBucketConfig, termsResolver service.QuoteTermsResolver) *QuoteAcceptanceProcessor {
 	return &QuoteAcceptanceProcessor{
-		repo:           repo,
-		orgReader:      orgReader,
-		contactReader:  contactReader,
-		storage:        storageSvc,
-		cfg:            cfg,
-		settingsReader: settingsReader,
+		repo:          repo,
+		orgReader:     orgReader,
+		contactReader: contactReader,
+		storage:       storageSvc,
+		cfg:           cfg,
+		termsResolver: termsResolver,
 	}
 }
 
@@ -180,13 +180,18 @@ func (p *QuoteAcceptanceProcessor) buildPDFData(
 		OrgLogo:          logoBytes,
 		PaymentDays:      7,
 		QuoteValidDays:   14,
+		FinancingDisclaimer: quote.FinancingDisclaimer,
 	}
 
-	if p.settingsReader != nil {
-		settings, settingsErr := p.settingsReader.GetOrganizationSettings(ctx, bc.organizationID)
-		if settingsErr == nil {
-			data.PaymentDays = settings.QuotePaymentDays
-			data.QuoteValidDays = settings.QuoteValidDays
+	if p.termsResolver != nil {
+		paymentDays, validDays, termsErr := p.termsResolver.ResolveQuoteTerms(ctx, bc.organizationID, quote.LeadID, quote.LeadServiceID)
+		if termsErr == nil {
+			if paymentDays > 0 {
+				data.PaymentDays = paymentDays
+			}
+			if validDays > 0 {
+				data.QuoteValidDays = validDays
+			}
 		}
 	}
 
@@ -268,20 +273,14 @@ func (p *QuoteAcceptanceProcessor) downloadEnabledAttachments(ctx context.Contex
 			continue
 		}
 
-		bucket := catalogBucket
-		if att.Source == "manual" {
-			bucket = manualBucket
-		}
-
-		reader, dlErr := p.storage.DownloadFile(ctx, bucket, att.FileKey)
-		if dlErr != nil {
-			slog.Warn("failed to download attachment PDF", "fileKey", att.FileKey, "error", dlErr)
+		buckets := resolveAttachmentBuckets(att.Source, manualBucket, catalogBucket)
+		data, ok := p.downloadAttachmentFromBuckets(ctx, att.FileKey, buckets)
+		if !ok {
+			slog.Warn("failed to download attachment PDF from known buckets", "fileKey", att.FileKey, "source", att.Source)
 			continue
 		}
-		data, readErr := io.ReadAll(reader)
-		_ = reader.Close()
-		if readErr != nil || len(data) == 0 {
-			slog.Warn("empty or unreadable attachment PDF", "fileKey", att.FileKey)
+		if !isPDFAttachment(att.Filename, data) {
+			slog.Info("skipping non-PDF attachment for quote PDF merge", "fileKey", att.FileKey, "filename", att.Filename)
 			continue
 		}
 
@@ -291,6 +290,22 @@ func (p *QuoteAcceptanceProcessor) downloadEnabledAttachments(ctx context.Contex
 		})
 	}
 	return result
+}
+
+func (p *QuoteAcceptanceProcessor) downloadAttachmentFromBuckets(ctx context.Context, fileKey string, buckets []string) ([]byte, bool) {
+	for _, bucket := range buckets {
+		reader, err := p.storage.DownloadFile(ctx, bucket, fileKey)
+		if err != nil {
+			continue
+		}
+		data, readErr := io.ReadAll(reader)
+		_ = reader.Close()
+		if readErr != nil || len(data) == 0 {
+			continue
+		}
+		return data, true
+	}
+	return nil, false
 }
 
 // loadURLEntries converts stored quote URLs into PDF URL entries.
@@ -395,8 +410,46 @@ func roundC(f float64) int64 {
 	return int64(f + 0.5)
 }
 
-// Compile-time check.
-var _ notification.QuoteAcceptanceProcessor = (*QuoteAcceptanceProcessor)(nil)
+func isPDFAttachment(filename string, data []byte) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(filename))
+	if strings.HasSuffix(trimmed, ".pdf") {
+		return true
+	}
+	if len(data) < 5 {
+		return false
+	}
+	if strings.HasPrefix(string(data[:5]), "%PDF-") {
+		return true
+	}
+	return strings.EqualFold(http.DetectContentType(data), "application/pdf")
+}
+
+func resolveAttachmentBuckets(source, manualBucket, catalogBucket string) []string {
+	if strings.EqualFold(strings.TrimSpace(source), "manual") {
+		return uniqueNonEmptyStrings([]string{manualBucket, catalogBucket})
+	}
+	if strings.EqualFold(strings.TrimSpace(source), "catalog") {
+		return uniqueNonEmptyStrings([]string{catalogBucket, manualBucket})
+	}
+	return uniqueNonEmptyStrings([]string{manualBucket, catalogBucket})
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
 
 // RegeneratePDF generates and stores the quote PDF on demand, looking up all
 // required metadata (org name, customer name, signature name) from the database.

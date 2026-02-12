@@ -3,9 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>Offerte</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
 
     <style>
         /* ─── RESET & BASE ─────────────────────────────────── */
@@ -26,6 +23,8 @@
             font-family: 'Montserrat', sans-serif;
             font-size: 9pt;
             line-height: 1.6;
+            max-width: 100%;
+            overflow-wrap: anywhere;
         }
 
         /* ─── TYPOGRAPHY ───────────────────────────────────── */
@@ -161,6 +160,12 @@
         table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        th, td {
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         th {
@@ -191,6 +196,8 @@
             font-family: 'Cormorant Garamond', serif;
             font-size: 12pt;
             font-weight: 600;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .item-meta {
@@ -265,6 +272,8 @@
             font-size: 8pt;
             color: #57534E;
             line-height: 1.8;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .footer-text ol {
@@ -316,7 +325,9 @@
                 </div>
                 
                 <div class="status-text status-{{.Status}}">
-                    {{if eq .Status "Accepted"}}Geaccepteerd{{else if eq .Status "Rejected"}}Afgewezen{{else}}{{.StatusLabel}}{{end}}
+                    {{if eq .Status "Accepted"}}
+                        {{if .FinancingDisclaimer}}Geaccepteerd onder voorbehoud van financiering{{else}}Geaccepteerd{{end}}
+                    {{else if eq .Status "Rejected"}}Afgewezen{{else}}{{.StatusLabel}}{{end}}
                 </div>
             </div>
         </div>

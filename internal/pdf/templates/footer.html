@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+    <title>Offerte Footer</title>
     <style>
         /* ─── RESET ────────────────────────────────────────── */
         html, body {
@@ -30,11 +30,6 @@
             /* The Luxury Gold Line */
             border-top: 1px solid #C5A065; 
             padding-top: 8px;
-            
-            /* Flexbox to push Text Left and Page Number Right */
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
         }
 
         /* ─── TYPOGRAPHY ───────────────────────────────────── */
@@ -46,29 +41,12 @@
             font-weight: 500;
         }
 
-        .page-counter {
-            font-size: 7pt;
-            color: #1C1917; /* Charcoal */
-            font-weight: 600;
-            font-feature-settings: "tnum";
-            font-variant-numeric: tabular-nums;
-            letter-spacing: 0.05em;
-        }
-
-        /* Styling the Chrome/Puppeteer injected spans */
-        .pageNumber, .totalPages {
-            color: #1C1917;
-        }
     </style>
 </head>
 <body>
     <div class="footer-container">
         <div class="footer-border">
             <div class="footer-text">{{.FooterText}}</div>
-            
-            <div class="page-counter">
-                Pagina <span class="pageNumber"></span> / <span class="totalPages"></span>
-            </div>
         </div>
     </div>
 </body>
