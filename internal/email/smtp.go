@@ -45,7 +45,9 @@ func (s *SMTPSender) send(ctx context.Context, toEmail, subject, htmlContent str
 	msg.SetBodyString(gomail.TypeTextHTML, htmlContent)
 
 	for _, att := range attachments {
-		msg.AttachReader(att.FileName, bytes.NewReader(att.Content))
+		if err := msg.AttachReader(att.FileName, bytes.NewReader(att.Content)); err != nil {
+			return fmt.Errorf("smtp attach %s: %w", att.FileName, err)
+		}
 	}
 
 	client, err := gomail.NewClient(s.host,
@@ -251,4 +253,8 @@ func (s *SMTPSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail,
 		return err
 	}
 	return s.send(ctx, toEmail, subject, content)
+}
+
+func (s *SMTPSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string) error {
+	return s.send(ctx, toEmail, subject, htmlContent)
 }

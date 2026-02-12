@@ -1,41 +1,53 @@
 <!DOCTYPE html>
-<html>
+<html lang="nl">
 <head>
+    <meta charset="UTF-8">
+    <title>Offerte Footer</title>
     <style>
-        body {
-            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
-            font-size: 7pt;
-            color: #6b7280;
+        /* ─── RESET ────────────────────────────────────────── */
+        html, body {
             margin: 0;
             padding: 0;
+            width: 100%;
+        }
+
+        body {
+            font-family: 'Montserrat', sans-serif;
+            background-color: transparent; /* Footers float over page */
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
         }
-        .footer {
+
+        /* ─── LAYOUT ───────────────────────────────────────── */
+        .footer-container {
+            /* Matches the 40px padding of the main document */
+            padding: 0 40px; 
             width: 100%;
-            text-align: center;
-            border-top: 2px solid #F59E0B;
-            padding-top: 6px;
-            padding-bottom: 0;
+            box-sizing: border-box;
         }
+
+        .footer-border {
+            /* The Luxury Gold Line */
+            border-top: 1px solid #C5A065; 
+            padding-top: 8px;
+        }
+
+        /* ─── TYPOGRAPHY ───────────────────────────────────── */
         .footer-text {
-            font-size: 6.5pt;
-            color: #9ca3af;
-            letter-spacing: 0.3px;
+            font-size: 7pt;
+            color: #78716C; /* Warm Stone */
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
             font-weight: 500;
         }
-        .page-number {
-            font-size: 6.5pt;
-            color: #9ca3af;
-            margin-top: 2px;
-            font-weight: 600;
-        }
+
     </style>
 </head>
 <body>
-    <div class="footer">
-        <div class="footer-text">{{.FooterText}}</div>
-        <div class="page-number">Pagina <span class="pageNumber"></span> van <span class="totalPages"></span></div>
+    <div class="footer-container">
+        <div class="footer-border">
+            <div class="footer-text">{{.FooterText}}</div>
+        </div>
     </div>
 </body>
 </html>

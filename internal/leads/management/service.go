@@ -14,6 +14,7 @@ import (
 
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/events"
+	identityrepo "portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
@@ -53,12 +54,17 @@ type Repository interface {
 
 // Service handles lead management operations (CRUD).
 type Service struct {
-	repo           Repository
-	eventBus       events.Bus
-	maps           *maps.Service
-	energyEnricher ports.EnergyLabelEnricher
-	leadEnricher   ports.LeadEnricher
-	scorer         *scoring.Service
+	repo                   Repository
+	eventBus               events.Bus
+	maps                   *maps.Service
+	energyEnricher         ports.EnergyLabelEnricher
+	leadEnricher           ports.LeadEnricher
+	scorer                 *scoring.Service
+	workflowOverrideWriter LeadWorkflowOverrideWriter
+}
+
+type LeadWorkflowOverrideWriter interface {
+	UpsertLeadWorkflowOverride(ctx context.Context, upsert identityrepo.LeadWorkflowOverrideUpsert) (identityrepo.LeadWorkflowOverride, error)
 }
 
 // New creates a new lead management service.
@@ -80,6 +86,10 @@ func (s *Service) SetLeadEnricher(enricher ports.LeadEnricher) {
 // SetLeadScorer sets the lead scoring service.
 func (s *Service) SetLeadScorer(scorer *scoring.Service) {
 	s.scorer = scorer
+}
+
+func (s *Service) SetWorkflowOverrideWriter(writer LeadWorkflowOverrideWriter) {
+	s.workflowOverrideWriter = writer
 }
 
 // Create creates a new lead.
@@ -148,6 +158,21 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		return transport.LeadResponse{}, err
 	}
 
+	if req.WorkflowID != nil && strings.TrimSpace(*req.WorkflowID) != "" && s.workflowOverrideWriter != nil {
+		workflowID, err := uuid.Parse(*req.WorkflowID)
+		if err != nil {
+			return transport.LeadResponse{}, apperr.Validation("invalid workflowId")
+		}
+		if _, err := s.workflowOverrideWriter.UpsertLeadWorkflowOverride(ctx, identityrepo.LeadWorkflowOverrideUpsert{
+			LeadID:         lead.ID,
+			OrganizationID: tenantID,
+			WorkflowID:     &workflowID,
+			OverrideMode:   "manual",
+		}); err != nil {
+			return transport.LeadResponse{}, err
+		}
+	}
+
 	s.eventBus.Publish(ctx, events.LeadCreated{
 		BaseEvent:       events.NewBaseEvent(),
 		LeadID:          lead.ID,
@@ -155,6 +180,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		TenantID:        tenantID,
 		AssignedAgentID: lead.AssignedAgentID,
 		ServiceType:     string(req.ServiceType),
+		Source:          strings.TrimSpace(req.Source),
 		ConsumerName:    strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
 		ConsumerPhone:   lead.ConsumerPhone,
 		WhatsAppOptedIn: lead.WhatsAppOptedIn,

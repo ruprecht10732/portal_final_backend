@@ -69,6 +69,7 @@ type LeadCreated struct {
 	TenantID        uuid.UUID  `json:"tenantId"`
 	AssignedAgentID *uuid.UUID `json:"assignedAgentId,omitempty"`
 	ServiceType     string     `json:"serviceType"`
+	Source          string     `json:"source,omitempty"`
 	ConsumerName    string     `json:"consumerName"`
 	ConsumerPhone   string     `json:"consumerPhone"`
 	WhatsAppOptedIn bool       `json:"whatsappOptedIn"`
@@ -279,6 +280,7 @@ type QuoteAccepted struct {
 	QuoteNumber      string     `json:"quoteNumber"`
 	ConsumerEmail    string     `json:"consumerEmail"`
 	ConsumerName     string     `json:"consumerName"`
+	ConsumerPhone    string     `json:"consumerPhone"`
 	OrganizationName string     `json:"organizationName"`
 	AgentEmail       string     `json:"agentEmail"`
 	AgentName        string     `json:"agentName"`
@@ -289,11 +291,15 @@ func (e QuoteAccepted) EventName() string { return "quotes.quote.accepted" }
 // QuoteRejected is published when a lead rejects the quote.
 type QuoteRejected struct {
 	BaseEvent
-	QuoteID        uuid.UUID  `json:"quoteId"`
-	OrganizationID uuid.UUID  `json:"organizationId"`
-	LeadID         uuid.UUID  `json:"leadId"`
-	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
-	Reason         string     `json:"reason"`
+	QuoteID          uuid.UUID  `json:"quoteId"`
+	OrganizationID   uuid.UUID  `json:"organizationId"`
+	LeadID           uuid.UUID  `json:"leadId"`
+	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
+	Reason           string     `json:"reason"`
+	ConsumerEmail    string     `json:"consumerEmail"`
+	ConsumerName     string     `json:"consumerName"`
+	ConsumerPhone    string     `json:"consumerPhone"`
+	OrganizationName string     `json:"organizationName"`
 }
 
 func (e QuoteRejected) EventName() string { return "quotes.quote.rejected" }
@@ -402,3 +408,17 @@ type AppointmentReminderDue struct {
 }
 
 func (e AppointmentReminderDue) EventName() string { return "appointments.reminder.due" }
+
+// =============================================================================
+// Notification Domain Events
+// =============================================================================
+
+// NotificationOutboxDue is published by the scheduler when a notification outbox
+// record should be processed.
+type NotificationOutboxDue struct {
+	BaseEvent
+	OutboxID uuid.UUID `json:"outboxId"`
+	TenantID uuid.UUID `json:"tenantId"`
+}
+
+func (e NotificationOutboxDue) EventName() string { return "notification.outbox.due" }

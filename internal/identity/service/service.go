@@ -122,6 +122,190 @@ func (s *Service) UpdateOrganizationSettings(
 	return s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
 }
 
+type ResolveLeadWorkflowInput struct {
+	OrganizationID  uuid.UUID
+	LeadID          uuid.UUID
+	LeadSource      *string
+	LeadServiceType *string
+	PipelineStage   *string
+}
+
+type ResolveLeadWorkflowResult struct {
+	Workflow         *repository.Workflow
+	ResolutionSource string
+	OverrideMode     *string
+	MatchedRuleID    *uuid.UUID
+}
+
+func (s *Service) ListWorkflows(ctx context.Context, organizationID uuid.UUID) ([]repository.Workflow, error) {
+	return s.repo.ListWorkflows(ctx, organizationID)
+}
+
+func (s *Service) ReplaceWorkflows(ctx context.Context, organizationID uuid.UUID, workflows []repository.WorkflowUpsert) ([]repository.Workflow, error) {
+	normalized := normalizeWorkflowUpserts(workflows)
+	return s.repo.ReplaceWorkflows(ctx, organizationID, normalized)
+}
+
+func normalizeWorkflowUpserts(workflows []repository.WorkflowUpsert) []repository.WorkflowUpsert {
+	normalized := make([]repository.WorkflowUpsert, 0, len(workflows))
+	for _, workflow := range workflows {
+		workflowCopy := workflow
+		workflowCopy.Steps = make([]repository.WorkflowStepUpsert, 0, len(workflow.Steps))
+		for _, step := range workflow.Steps {
+			stepCopy := step
+			if strings.EqualFold(strings.TrimSpace(stepCopy.Action), "send_message") {
+				body := strings.TrimSpace(derefString(stepCopy.TemplateBody))
+				if body == "" {
+					defaultBody := defaultStepTemplateBody(stepCopy)
+					stepCopy.TemplateBody = &defaultBody
+				}
+			}
+			workflowCopy.Steps = append(workflowCopy.Steps, stepCopy)
+		}
+		normalized = append(normalized, workflowCopy)
+	}
+	return normalized
+}
+
+func defaultStepTemplateBody(step repository.WorkflowStepUpsert) string {
+	trigger := strings.ToLower(strings.TrimSpace(step.Trigger))
+	channel := strings.ToLower(strings.TrimSpace(step.Channel))
+	audience := strings.ToLower(strings.TrimSpace(step.Audience))
+
+	switch {
+	case trigger == "lead_welcome" && channel == "whatsapp" && audience == "lead":
+		return "Bedankt voor je aanvraag. Volg de status via {{links.track}}"
+	case trigger == "quote_sent" && channel == "whatsapp" && audience == "lead":
+		return "Uw offerte {{quote.number}} staat klaar: {{quote.previewUrl}}"
+	case trigger == "quote_accepted" && channel == "whatsapp" && audience == "lead":
+		return "Uw offerte {{quote.number}} is geaccepteerd. Bedankt!"
+	case trigger == "quote_rejected" && channel == "whatsapp" && audience == "lead":
+		return "Wij hebben uw afwijzing ontvangen. Heeft u vragen?"
+	case trigger == "appointment_created" && channel == "whatsapp" && audience == "lead":
+		return "Uw afspraak is bevestigd op {{appointment.date}} om {{appointment.time}}."
+	case trigger == "appointment_reminder" && channel == "whatsapp" && audience == "lead":
+		return "Herinnering: uw afspraak is op {{appointment.date}} om {{appointment.time}}."
+	case trigger == "partner_offer_created" && channel == "whatsapp" && audience == "partner":
+		return "Nieuw werkaanbod beschikbaar: {{offer.id}}"
+	case channel == "email" && audience == "lead":
+		return "Beste {{lead.name}}, dit is een update over uw aanvraag."
+	case channel == "email" && (audience == "partner" || audience == "agent"):
+		return "Beste {{partner.name}}, er is een nieuwe update beschikbaar."
+	default:
+		return "Workflow bericht"
+	}
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (s *Service) ListWorkflowAssignmentRules(ctx context.Context, organizationID uuid.UUID) ([]repository.WorkflowAssignmentRule, error) {
+	return s.repo.ListWorkflowAssignmentRules(ctx, organizationID)
+}
+
+func (s *Service) ReplaceWorkflowAssignmentRules(ctx context.Context, organizationID uuid.UUID, rules []repository.WorkflowAssignmentRuleUpsert) ([]repository.WorkflowAssignmentRule, error) {
+	return s.repo.ReplaceWorkflowAssignmentRules(ctx, organizationID, rules)
+}
+
+func (s *Service) GetLeadWorkflowOverride(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (repository.LeadWorkflowOverride, error) {
+	override, err := s.repo.GetLeadWorkflowOverride(ctx, leadID, organizationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.LeadWorkflowOverride{}, apperr.NotFound("lead workflow override not found")
+		}
+		return repository.LeadWorkflowOverride{}, err
+	}
+	return override, nil
+}
+
+func (s *Service) UpsertLeadWorkflowOverride(ctx context.Context, upsert repository.LeadWorkflowOverrideUpsert) (repository.LeadWorkflowOverride, error) {
+	leadExists, err := s.repo.LeadExistsInOrganization(ctx, upsert.LeadID, upsert.OrganizationID)
+	if err != nil {
+		return repository.LeadWorkflowOverride{}, err
+	}
+	if !leadExists {
+		return repository.LeadWorkflowOverride{}, apperr.NotFound("lead not found")
+	}
+
+	if upsert.WorkflowID != nil {
+		workflowExists, err := s.repo.WorkflowExistsInOrganization(ctx, *upsert.WorkflowID, upsert.OrganizationID)
+		if err != nil {
+			return repository.LeadWorkflowOverride{}, err
+		}
+		if !workflowExists {
+			return repository.LeadWorkflowOverride{}, apperr.NotFound("workflow not found")
+		}
+	}
+
+	return s.repo.UpsertLeadWorkflowOverride(ctx, upsert)
+}
+
+func (s *Service) DeleteLeadWorkflowOverride(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
+	_, err := s.repo.GetLeadWorkflowOverride(ctx, leadID, organizationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return apperr.NotFound("lead workflow override not found")
+		}
+		return err
+	}
+
+	return s.repo.DeleteLeadWorkflowOverride(ctx, leadID, organizationID)
+}
+
+func (s *Service) ResolveLeadWorkflow(ctx context.Context, input ResolveLeadWorkflowInput) (ResolveLeadWorkflowResult, error) {
+	workflows, err := s.repo.ListWorkflows(ctx, input.OrganizationID)
+	if err != nil {
+		return ResolveLeadWorkflowResult{}, err
+	}
+
+	workflowMap := buildEnabledWorkflowMap(workflows)
+
+	override, err := s.repo.GetLeadWorkflowOverride(ctx, input.LeadID, input.OrganizationID)
+	if err != nil && err != repository.ErrNotFound {
+		return ResolveLeadWorkflowResult{}, err
+	}
+
+	if err == nil {
+		result, matched := resolveWorkflowFromOverride(override, workflowMap)
+		if matched {
+			return result, nil
+		}
+		return ResolveLeadWorkflowResult{
+			ResolutionSource: "manual_override",
+			OverrideMode:     &override.OverrideMode,
+		}, nil
+	}
+
+	rules, err := s.repo.ListWorkflowAssignmentRules(ctx, input.OrganizationID)
+	if err != nil {
+		return ResolveLeadWorkflowResult{}, err
+	}
+
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		if !matchesAssignmentRule(rule, input) {
+			continue
+		}
+
+		if workflow, ok := workflowMap[rule.WorkflowID]; ok {
+			ruleID := rule.ID
+			return ResolveLeadWorkflowResult{
+				Workflow:         workflow,
+				ResolutionSource: "auto_rule",
+				MatchedRuleID:    &ruleID,
+			}, nil
+		}
+	}
+
+	return ResolveLeadWorkflowResult{ResolutionSource: "organization_default"}, nil
+}
+
 type WhatsAppStatus struct {
 	State       string `json:"state"`
 	Message     string `json:"message"`
@@ -238,6 +422,42 @@ func (s *Service) AttemptReconnect(ctx context.Context, organizationID uuid.UUID
 	return s.whatsapp.ReconnectDevice(ctx, *settings.WhatsAppDeviceID)
 }
 
+func (s *Service) SendWhatsAppTestMessage(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	if s.whatsapp == nil {
+		return "", apperr.Internal(whatsappNotConfiguredMsg)
+	}
+
+	org, err := s.repo.GetOrganization(ctx, organizationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return "", apperr.NotFound(organizationNotFound)
+		}
+		return "", err
+	}
+	phoneNumber := ""
+	if org.Phone != nil {
+		phoneNumber = strings.TrimSpace(*org.Phone)
+	}
+	if phoneNumber == "" {
+		return "", apperr.Validation("organization phone number is required for WhatsApp test")
+	}
+
+	settings, err := s.repo.GetOrganizationSettings(ctx, organizationID)
+	if err != nil {
+		return "", err
+	}
+	if settings.WhatsAppDeviceID == nil || strings.TrimSpace(*settings.WhatsAppDeviceID) == "" {
+		return "", apperr.Validation("no WhatsApp device linked for this organization")
+	}
+
+	message := fmt.Sprintf("Testbericht vanaf Portal op %s", time.Now().Format(time.RFC3339))
+	if err := s.whatsapp.SendMessage(ctx, *settings.WhatsAppDeviceID, phoneNumber, message); err != nil {
+		return "", apperr.Internal("failed to send WhatsApp test message: " + err.Error())
+	}
+
+	return phoneNumber, nil
+}
+
 type OrganizationProfileUpdate struct {
 	Name         *string
 	Email        *string
@@ -328,6 +548,77 @@ func isValidNLVAT(value string) bool {
 
 func isValidKVK(value string) bool {
 	return kvkPattern.MatchString(strings.TrimSpace(value))
+}
+
+func buildEnabledWorkflowMap(workflows []repository.Workflow) map[uuid.UUID]*repository.Workflow {
+	result := make(map[uuid.UUID]*repository.Workflow, len(workflows))
+	for i := range workflows {
+		workflow := &workflows[i]
+		if !workflow.Enabled {
+			continue
+		}
+		result[workflow.ID] = workflow
+	}
+	return result
+}
+
+func resolveWorkflowFromOverride(
+	override repository.LeadWorkflowOverride,
+	workflowMap map[uuid.UUID]*repository.Workflow,
+) (ResolveLeadWorkflowResult, bool) {
+	mode := strings.TrimSpace(strings.ToLower(override.OverrideMode))
+	if mode == "clear" {
+		return ResolveLeadWorkflowResult{
+			ResolutionSource: "manual_clear",
+			OverrideMode:     &override.OverrideMode,
+		}, true
+	}
+
+	if override.WorkflowID == nil {
+		return ResolveLeadWorkflowResult{}, false
+	}
+
+	workflow, ok := workflowMap[*override.WorkflowID]
+	if !ok {
+		return ResolveLeadWorkflowResult{}, false
+	}
+
+	return ResolveLeadWorkflowResult{
+		Workflow:         workflow,
+		ResolutionSource: "manual_override",
+		OverrideMode:     &override.OverrideMode,
+	}, true
+}
+
+func matchesAssignmentRule(rule repository.WorkflowAssignmentRule, input ResolveLeadWorkflowInput) bool {
+	if !matchesOptionalField(rule.LeadSource, input.LeadSource) {
+		return false
+	}
+	if !matchesOptionalField(rule.LeadServiceType, input.LeadServiceType) {
+		return false
+	}
+	if !matchesOptionalField(rule.PipelineStage, input.PipelineStage) {
+		return false
+	}
+	return true
+}
+
+func matchesOptionalField(ruleValue *string, actualValue *string) bool {
+	if ruleValue == nil {
+		return true
+	}
+	ruleText := strings.TrimSpace(*ruleValue)
+	if ruleText == "" {
+		return true
+	}
+	if actualValue == nil {
+		return false
+	}
+	actualText := strings.TrimSpace(*actualValue)
+	if actualText == "" {
+		return false
+	}
+	return strings.EqualFold(ruleText, actualText)
 }
 
 func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (repository.Invite, error) {

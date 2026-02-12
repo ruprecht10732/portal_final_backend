@@ -899,12 +899,6 @@ func summaryPointer(text string, maxLen int) *string {
 	return &trimmed
 }
 
-// isTerminalStatus checks if a service status is terminal (no further actions allowed).
-// Delegates to the centralized domain.IsTerminalStatus for consistency.
-func isTerminalStatus(status string) bool {
-	return domain.IsTerminalStatus(status)
-}
-
 // parseDateRange parses optional start and end date strings and validates the range.
 // Returns nil dates for empty strings. Returns an error message if parsing fails or dates are invalid.
 func parseDateRange(startDateStr, endDateStr string) (startDate, endDate *time.Time, errMsg string) {

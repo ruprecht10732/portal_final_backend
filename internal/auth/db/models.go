@@ -695,6 +695,31 @@ type RacLeadServiceEvent struct {
 	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type RacLeadWorkflowOverride struct {
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	WorkflowID     pgtype.UUID        `json:"workflow_id"`
+	OverrideMode   string             `json:"override_mode"`
+	Reason         pgtype.Text        `json:"reason"`
+	AssignedBy     pgtype.UUID        `json:"assigned_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacNotificationOutbox struct {
+	ID        pgtype.UUID        `json:"id"`
+	TenantID  pgtype.UUID        `json:"tenant_id"`
+	Kind      string             `json:"kind"`
+	Template  string             `json:"template"`
+	Payload   []byte             `json:"payload"`
+	RunAt     pgtype.Timestamptz `json:"run_at"`
+	Status    string             `json:"status"`
+	Attempts  int32              `json:"attempts"`
+	LastError pgtype.Text        `json:"last_error"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacOrganization struct {
 	ID              pgtype.UUID        `json:"id"`
 	Name            string             `json:"name"`
@@ -999,4 +1024,50 @@ type RacWebhookApiKey struct {
 	IsActive       bool               `json:"is_active"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacWorkflow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	OrganizationID           pgtype.UUID        `json:"organization_id"`
+	WorkflowKey              string             `json:"workflow_key"`
+	Name                     string             `json:"name"`
+	Description              pgtype.Text        `json:"description"`
+	Enabled                  bool               `json:"enabled"`
+	QuoteValidDaysOverride   pgtype.Int4        `json:"quote_valid_days_override"`
+	QuotePaymentDaysOverride pgtype.Int4        `json:"quote_payment_days_override"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacWorkflowAssignmentRule struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	WorkflowID      pgtype.UUID        `json:"workflow_id"`
+	Name            string             `json:"name"`
+	Enabled         bool               `json:"enabled"`
+	Priority        int32              `json:"priority"`
+	LeadSource      pgtype.Text        `json:"lead_source"`
+	LeadServiceType pgtype.Text        `json:"lead_service_type"`
+	PipelineStage   pgtype.Text        `json:"pipeline_stage"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacWorkflowStep struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	WorkflowID      pgtype.UUID        `json:"workflow_id"`
+	Trigger         string             `json:"trigger"`
+	Channel         string             `json:"channel"`
+	Audience        string             `json:"audience"`
+	Action          string             `json:"action"`
+	StepOrder       int32              `json:"step_order"`
+	DelayMinutes    int32              `json:"delay_minutes"`
+	Enabled         bool               `json:"enabled"`
+	RecipientConfig []byte             `json:"recipient_config"`
+	TemplateSubject pgtype.Text        `json:"template_subject"`
+	TemplateBody    pgtype.Text        `json:"template_body"`
+	StopOnReply     bool               `json:"stop_on_reply"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }

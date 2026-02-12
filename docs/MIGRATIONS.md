@@ -156,6 +156,51 @@ pg_dump --schema-only --no-owner --no-privileges \
 
 ---
 
+## Latest Migration Notes
+
+### 090_workflow_engine_foundation.sql
+
+This migration introduces the additive foundation for the new workflow engine.
+
+**New tables**
+- `RAC_workflows`
+   - Per-organization workflow container.
+   - Includes optional quote overrides:
+      - `quote_valid_days_override`
+      - `quote_payment_days_override`
+- `RAC_workflow_steps`
+   - Unlimited ordered steps per workflow.
+   - Per-step channel (`whatsapp` / `email`), delay, template payload, recipient config.
+- `RAC_workflow_assignment_rules`
+   - Priority-based automatic assignment rules per organization.
+   - Supports matching on lead source / service type / pipeline stage.
+- `RAC_lead_workflow_overrides`
+   - Manual lead-level override binding (or explicit clear mode).
+
+**Compatibility object**
+- `RAC_workflow_legacy_notification_rules` (view)
+   - Temporary compatibility projection used during migration period.
+
+**Backward compatibility**
+- Existing runtime behavior was switched to workflow-engine consumers.
+- Migration is additive: no destructive changes to legacy workflow storage.
+
+### 091_remove_legacy_notification_workflows.sql
+
+This migration finalizes strict cutover by removing:
+- `RAC_notification_workflows`
+- `RAC_workflow_legacy_notification_rules`
+
+**Rollback behavior**
+- `Down` removes the compatibility view and all newly added workflow-engine tables.
+- Legacy workflow table remains intact.
+
+**Operational notes**
+- Apply migration before enabling any service logic that depends on new workflow-engine tables.
+- Keep legacy and new model reads side-by-side during rollout validation.
+
+---
+
 ## Directory Layout
 
 ```

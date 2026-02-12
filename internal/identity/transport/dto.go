@@ -117,6 +117,11 @@ type WhatsAppStatusResponse struct {
 	NeedsReauth bool   `json:"needsReauth"`
 }
 
+type WhatsAppTestResponse struct {
+	Status      string `json:"status"`
+	PhoneNumber string `json:"phoneNumber"`
+}
+
 // SetSMTPRequest is the request to configure tenant SMTP settings.
 type SetSMTPRequest struct {
 	Host      string `json:"host" validate:"required,hostname|ip,max=255"`
@@ -155,4 +160,133 @@ type DetectSMTPResponse struct {
 	Port     *int    `json:"port,omitempty"`
 	Username *string `json:"username,omitempty"`
 	Security *string `json:"security,omitempty"` // "STARTTLS" or "SSL/TLS"
+}
+
+// Workflow engine foundation DTOs
+type WorkflowStepRecipientConfig struct {
+	Audience             string   `json:"audience" validate:"omitempty,oneof=lead partner agent internal custom"`
+	IncludeAssignedAgent bool     `json:"includeAssignedAgent"`
+	IncludeLeadContact   bool     `json:"includeLeadContact"`
+	IncludePartner       bool     `json:"includePartner"`
+	IncludeInternal      bool     `json:"includeInternal"`
+	CustomEmails         []string `json:"customEmails,omitempty" validate:"omitempty,dive,email"`
+	CustomPhones         []string `json:"customPhones,omitempty" validate:"omitempty,dive,min=6,max=50"`
+}
+
+type WorkflowStepResponse struct {
+	ID              string                      `json:"id"`
+	Trigger         string                      `json:"trigger"`
+	Channel         string                      `json:"channel"`
+	Audience        string                      `json:"audience"`
+	Action          string                      `json:"action"`
+	StepOrder       int                         `json:"stepOrder"`
+	DelayMinutes    int                         `json:"delayMinutes"`
+	Enabled         bool                        `json:"enabled"`
+	RecipientConfig WorkflowStepRecipientConfig `json:"recipientConfig"`
+	TemplateSubject *string                     `json:"templateSubject,omitempty"`
+	TemplateBody    *string                     `json:"templateBody,omitempty"`
+	StopOnReply     bool                        `json:"stopOnReply"`
+}
+
+type WorkflowResponse struct {
+	ID                       string                 `json:"id"`
+	WorkflowKey              string                 `json:"workflowKey"`
+	Name                     string                 `json:"name"`
+	Description              *string                `json:"description,omitempty"`
+	Enabled                  bool                   `json:"enabled"`
+	QuoteValidDaysOverride   *int                   `json:"quoteValidDaysOverride,omitempty"`
+	QuotePaymentDaysOverride *int                   `json:"quotePaymentDaysOverride,omitempty"`
+	Steps                    []WorkflowStepResponse `json:"steps"`
+	CreatedAt                time.Time              `json:"createdAt"`
+	UpdatedAt                time.Time              `json:"updatedAt"`
+}
+
+type ListWorkflowsResponse struct {
+	Workflows []WorkflowResponse `json:"workflows"`
+}
+
+type UpsertWorkflowStepRequest struct {
+	ID              *string                     `json:"id,omitempty" validate:"omitempty,uuid4"`
+	Trigger         string                      `json:"trigger" validate:"required,max=100"`
+	Channel         string                      `json:"channel" validate:"required,oneof=whatsapp email"`
+	Audience        string                      `json:"audience" validate:"omitempty,oneof=lead partner agent internal custom"`
+	Action          string                      `json:"action" validate:"omitempty,oneof=send_message send_template"`
+	StepOrder       int                         `json:"stepOrder" validate:"min=1,max=1000000"`
+	DelayMinutes    int                         `json:"delayMinutes" validate:"min=0,max=525600"`
+	Enabled         bool                        `json:"enabled"`
+	RecipientConfig WorkflowStepRecipientConfig `json:"recipientConfig"`
+	TemplateSubject *string                     `json:"templateSubject,omitempty" validate:"omitempty,max=500"`
+	TemplateBody    *string                     `json:"templateBody,omitempty" validate:"omitempty,max=12000"`
+	StopOnReply     bool                        `json:"stopOnReply"`
+}
+
+type UpsertWorkflowRequest struct {
+	ID                       *string                     `json:"id,omitempty" validate:"omitempty,uuid4"`
+	WorkflowKey              string                      `json:"workflowKey" validate:"required,max=120"`
+	Name                     string                      `json:"name" validate:"required,max=160"`
+	Description              *string                     `json:"description,omitempty" validate:"omitempty,max=500"`
+	Enabled                  bool                        `json:"enabled"`
+	QuoteValidDaysOverride   *int                        `json:"quoteValidDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
+	QuotePaymentDaysOverride *int                        `json:"quotePaymentDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
+	Steps                    []UpsertWorkflowStepRequest `json:"steps" validate:"required,min=1,dive"`
+}
+
+type ReplaceWorkflowsRequest struct {
+	Workflows []UpsertWorkflowRequest `json:"workflows" validate:"required,min=1,dive"`
+}
+
+type WorkflowAssignmentRuleResponse struct {
+	ID              string    `json:"id"`
+	WorkflowID      string    `json:"workflowId"`
+	Name            string    `json:"name"`
+	Enabled         bool      `json:"enabled"`
+	Priority        int       `json:"priority"`
+	LeadSource      *string   `json:"leadSource,omitempty"`
+	LeadServiceType *string   `json:"leadServiceType,omitempty"`
+	PipelineStage   *string   `json:"pipelineStage,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+type UpsertWorkflowAssignmentRuleRequest struct {
+	ID              *string `json:"id,omitempty" validate:"omitempty,uuid4"`
+	WorkflowID      string  `json:"workflowId" validate:"required,uuid4"`
+	Name            string  `json:"name" validate:"required,max=160"`
+	Enabled         bool    `json:"enabled"`
+	Priority        int     `json:"priority" validate:"min=0,max=1000000"`
+	LeadSource      *string `json:"leadSource,omitempty" validate:"omitempty,max=120"`
+	LeadServiceType *string `json:"leadServiceType,omitempty" validate:"omitempty,max=120"`
+	PipelineStage   *string `json:"pipelineStage,omitempty" validate:"omitempty,max=120"`
+}
+
+type ReplaceWorkflowAssignmentRulesRequest struct {
+	Rules []UpsertWorkflowAssignmentRuleRequest `json:"rules" validate:"required,min=1,dive"`
+}
+
+type ListWorkflowAssignmentRulesResponse struct {
+	Rules []WorkflowAssignmentRuleResponse `json:"rules"`
+}
+
+type LeadWorkflowOverrideResponse struct {
+	LeadID       string    `json:"leadId"`
+	WorkflowID   *string   `json:"workflowId,omitempty"`
+	OverrideMode string    `json:"overrideMode"`
+	Reason       *string   `json:"reason,omitempty"`
+	AssignedBy   *string   `json:"assignedBy,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+type UpsertLeadWorkflowOverrideRequest struct {
+	LeadID       string  `json:"leadId" validate:"required,uuid4"`
+	WorkflowID   *string `json:"workflowId,omitempty" validate:"omitempty,uuid4"`
+	OverrideMode string  `json:"overrideMode" validate:"required,oneof=manual manual_lock clear"`
+	Reason       *string `json:"reason,omitempty" validate:"omitempty,max=500"`
+}
+
+type ResolveLeadWorkflowResponse struct {
+	Workflow         *WorkflowResponse `json:"workflow,omitempty"`
+	ResolutionSource string            `json:"resolutionSource"`
+	OverrideMode     *string           `json:"overrideMode,omitempty"`
+	MatchedRuleID    *string           `json:"matchedRuleId,omitempty"`
 }

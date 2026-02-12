@@ -23,6 +23,9 @@ import (
 const (
 	dateFormatDMY     = "02-01-2006"
 	dateTimeFormatDMY = "02-01-2006 15:04"
+	maxPDFShortText   = 256
+	maxPDFMediumText  = 1024
+	maxPDFLongText    = 4000
 )
 
 //go:embed templates/*.html
@@ -83,6 +86,7 @@ type QuotePDFData struct {
 	// Organization settings for PDF terms
 	PaymentDays    int
 	QuoteValidDays int
+	FinancingDisclaimer bool
 
 	// Document attachments: pre-downloaded PDF bytes to merge after the content page.
 	AttachmentPDFs []AttachmentPDFEntry
@@ -132,6 +136,7 @@ type quoteViewModel struct {
 	Status              string
 	StatusLabel         string
 	StatusClass         string
+	FinancingDisclaimer bool
 	OrgAddressLine1     string
 	OrgAddressLine2     string
 	OrgPostalCode       string
@@ -194,8 +199,8 @@ type urlViewModel struct {
 // GenerateQuotePDF creates a professional multi-page PDF document.
 // Page 1 = cover page (industrial Barlow design).
 // Page 2+ = quote details with line items, totals, legal terms.
+// Signature page = acceptance page with URL checkboxes and signature block.
 // Attachments = any enabled PDF documents from the catalog or uploaded manually.
-// Final page = signature/acceptance page with URL checkboxes and signature block.
 func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 	if gotenbergClient == nil {
 		return nil, fmt.Errorf("gotenberg client not initialized — call pdf.Init first")
@@ -241,19 +246,19 @@ func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 		return nil, fmt.Errorf("convert content to PDF: %w", err)
 	}
 
-	// ── Build merge map: cover → content → attachments → signature ──────
+	// ── Build merge map: cover → content → signature → attachments ──────
 	mergeMap := map[string][]byte{
 		"01_cover.pdf":   coverPDF,
 		"02_content.pdf": contentPDF,
 	}
 
-	// Add enabled attachment PDFs with zero-padded sort keys
-	addAttachmentPDFs(mergeMap, data.AttachmentPDFs)
-
 	// Generate signature/acceptance page if needed (signature OR URLs)
 	if err := addSignaturePageIfNeeded(mergeMap, data, logoB64, logoMime, contentOpts); err != nil {
 		return nil, err
 	}
+
+	// Add enabled attachment PDFs with zero-padded sort keys
+	addAttachmentPDFs(mergeMap, data.AttachmentPDFs)
 
 	// ── Merge all PDFs into one document ────────────────────────────────
 	merged, err := gotenbergClient.MergePDFs(ctx, mergeMap)
@@ -267,7 +272,7 @@ func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 func addAttachmentPDFs(mergeMap map[string][]byte, attachments []AttachmentPDFEntry) {
 	for i, att := range attachments {
 		if len(att.PDFBytes) > 0 {
-			key := fmt.Sprintf("03_attachment_%03d.pdf", i)
+			key := fmt.Sprintf("04_attachment_%03d.pdf", i)
 			mergeMap[key] = att.PDFBytes
 		}
 	}
@@ -291,7 +296,7 @@ func addSignaturePageIfNeeded(mergeMap map[string][]byte, data QuotePDFData, log
 	if err != nil {
 		return fmt.Errorf("convert signature to PDF: %w", err)
 	}
-	mergeMap["04_signature.pdf"] = sigPDF
+	mergeMap["03_signature.pdf"] = sigPDF
 	return nil
 }
 
@@ -301,15 +306,15 @@ func buildCoverVM(data QuotePDFData, logoB64, logoMime string) coverViewModel {
 	vm := coverViewModel{
 		LogoBase64:         logoB64,
 		LogoMimeType:       logoMime,
-		OrganizationName:   data.OrganizationName,
-		CustomerName:       data.CustomerName,
-		QuoteNumber:        data.QuoteNumber,
+		OrganizationName:   clampPDFText(data.OrganizationName, maxPDFShortText),
+		CustomerName:       clampPDFText(data.CustomerName, maxPDFShortText),
+		QuoteNumber:        clampPDFText(data.QuoteNumber, maxPDFShortText),
 		CreatedAtFormatted: data.CreatedAt.Format(dateFormatDMY),
-		OrgAddressLine1:    data.OrgAddressLine1,
-		OrgPostalCode:      data.OrgPostalCode,
-		OrgCity:            data.OrgCity,
-		OrgPhone:           data.OrgPhone,
-		OrgEmail:           data.OrgEmail,
+		OrgAddressLine1:    clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
+		OrgPostalCode:      clampPDFText(data.OrgPostalCode, maxPDFShortText),
+		OrgCity:            clampPDFText(data.OrgCity, maxPDFShortText),
+		OrgPhone:           clampPDFText(data.OrgPhone, maxPDFShortText),
+		OrgEmail:           clampPDFText(data.OrgEmail, maxPDFShortText),
 	}
 	if data.ValidUntil != nil {
 		vm.ValidUntilFormatted = data.ValidUntil.Format(dateFormatDMY)
@@ -322,21 +327,22 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 	vm := quoteViewModel{
 		LogoBase64:         logoB64,
 		LogoMimeType:       logoMime,
-		OrganizationName:   data.OrganizationName,
-		CustomerName:       data.CustomerName,
-		QuoteNumber:        data.QuoteNumber,
+		OrganizationName:   clampPDFText(data.OrganizationName, maxPDFShortText),
+		CustomerName:       clampPDFText(data.CustomerName, maxPDFShortText),
+		QuoteNumber:        clampPDFText(data.QuoteNumber, maxPDFShortText),
 		CreatedAtFormatted: data.CreatedAt.Format(dateFormatDMY),
 		Status:             data.Status,
 		StatusLabel:        translateStatus(data.Status),
 		StatusClass:        statusCSSClass(data.Status),
-		OrgAddressLine1:    data.OrgAddressLine1,
-		OrgAddressLine2:    data.OrgAddressLine2,
-		OrgPostalCode:      data.OrgPostalCode,
-		OrgCity:            data.OrgCity,
-		OrgEmail:           data.OrgEmail,
-		OrgPhone:           data.OrgPhone,
-		OrgKvkNumber:       data.OrgKvkNumber,
-		OrgVatNumber:       data.OrgVatNumber,
+		FinancingDisclaimer: data.FinancingDisclaimer,
+		OrgAddressLine1:    clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
+		OrgAddressLine2:    clampPDFText(data.OrgAddressLine2, maxPDFMediumText),
+		OrgPostalCode:      clampPDFText(data.OrgPostalCode, maxPDFShortText),
+		OrgCity:            clampPDFText(data.OrgCity, maxPDFShortText),
+		OrgEmail:           clampPDFText(data.OrgEmail, maxPDFShortText),
+		OrgPhone:           clampPDFText(data.OrgPhone, maxPDFShortText),
+		OrgKvkNumber:       clampPDFText(data.OrgKvkNumber, maxPDFShortText),
+		OrgVatNumber:       clampPDFText(data.OrgVatNumber, maxPDFShortText),
 		SubtotalFormatted:  formatCurrency(data.SubtotalCents),
 		HasDiscount:        data.DiscountAmount > 0,
 		DiscountFormatted:  formatCurrency(data.DiscountAmount),
@@ -349,15 +355,15 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 		vm.AcceptedAtFormatted = data.AcceptedAt.Format(dateTimeFormatDMY)
 	}
 	if data.Notes != nil && *data.Notes != "" {
-		vm.Notes = *data.Notes
+		vm.Notes = clampPDFText(*data.Notes, maxPDFLongText)
 	}
 
 	// Items
 	vm.Items = make([]itemViewModel, len(data.Items))
 	for i, it := range data.Items {
 		vm.Items[i] = itemViewModel{
-			Description:        it.Description,
-			Quantity:           it.Quantity,
+			Description:        clampPDFText(it.Description, maxPDFMediumText),
+			Quantity:           clampPDFText(it.Quantity, maxPDFShortText),
 			UnitPriceFormatted: formatCurrency(it.UnitPriceCents),
 			VatPctFormatted:    fmt.Sprintf("%.0f%%", float64(it.TaxRateBps)/100.0),
 			LineTotalFormatted: formatCurrency(it.LineTotalCents),
@@ -392,8 +398,8 @@ func buildSignatureVM(data QuotePDFData, logoB64, logoMime string) signatureView
 	vm := signatureViewModel{
 		LogoBase64:       logoB64,
 		LogoMimeType:     logoMime,
-		OrganizationName: data.OrganizationName,
-		QuoteNumber:      data.QuoteNumber,
+		OrganizationName: clampPDFText(data.OrganizationName, maxPDFShortText),
+		QuoteNumber:      clampPDFText(data.QuoteNumber, maxPDFShortText),
 		HasURLs:          len(data.URLs) > 0,
 	}
 
@@ -403,7 +409,7 @@ func buildSignatureVM(data QuotePDFData, logoB64, logoMime string) signatureView
 
 	if data.SignatureName != nil && data.AcceptedAt != nil {
 		vm.HasSignature = true
-		vm.SignatureName = *data.SignatureName
+		vm.SignatureName = clampPDFText(*data.SignatureName, maxPDFShortText)
 		if len(data.SignatureImage) > 0 {
 			vm.SignatureBase64 = base64.StdEncoding.EncodeToString(data.SignatureImage)
 		}
@@ -411,7 +417,10 @@ func buildSignatureVM(data QuotePDFData, logoB64, logoMime string) signatureView
 
 	vm.URLs = make([]urlViewModel, len(data.URLs))
 	for i, u := range data.URLs {
-		vm.URLs[i] = urlViewModel(u)
+		vm.URLs[i] = urlViewModel{
+			Label: clampPDFText(u.Label, maxPDFShortText),
+			Href:  clampPDFText(u.Href, maxPDFMediumText),
+		}
 	}
 
 	return vm
@@ -528,4 +537,16 @@ func translateStatus(status string) string {
 
 func formatCurrency(cents int64) string {
 	return fmt.Sprintf("€ %.2f", float64(cents)/100.0)
+}
+
+func clampPDFText(value string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	trimmed := strings.TrimSpace(value)
+	runes := []rune(trimmed)
+	if len(runes) <= maxLen {
+		return trimmed
+	}
+	return string(runes[:maxLen]) + "…"
 }
