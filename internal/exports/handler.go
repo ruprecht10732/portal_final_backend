@@ -435,30 +435,34 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 
 func mapConversionName(event ConversionEvent) string {
 	if event.EventType == "status_changed" && event.Status != nil {
-		switch *event.Status {
-		case "Scheduled":
+		switch normalizeEventValue(*event.Status) {
+		case "scheduled":
 			return "Appointment_Scheduled"
-		case "Surveyed":
+		case "surveyed":
 			return "Visit_Completed"
-		case "Closed":
+		case "closed":
 			return "Deal_Won"
 		}
 	}
 
 	if event.EventType == "pipeline_stage_changed" && event.PipelineStage != nil {
-		switch *event.PipelineStage {
-		case "Nurturing":
+		switch normalizeEventValue(*event.PipelineStage) {
+		case "nurturing":
 			return "Lead_Qualified"
-		case "Quote_Sent":
+		case "quote_sent":
 			return "Quote_Sent"
-		case "Partner_Assigned":
+		case "partner_assigned":
 			return "Partner_Assigned"
-		case "Completed":
+		case "completed":
 			return "Job_Completed"
 		}
 	}
 
 	return ""
+}
+
+func normalizeEventValue(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func mapConversionValue(conversionName string, projectedValueCents int64) float64 {
