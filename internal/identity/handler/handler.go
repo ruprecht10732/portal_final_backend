@@ -33,6 +33,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/organizations/me", h.UpdateOrganization)
 	rg.GET("/organizations/me/settings", h.GetOrganizationSettings)
 	rg.PATCH("/organizations/me/settings", h.UpdateOrganizationSettings)
+	rg.GET("/organizations/me/workflows", h.ListNotificationWorkflows)
+	rg.PUT("/organizations/me/workflows", h.ReplaceNotificationWorkflows)
 	rg.POST("/organizations/me/whatsapp/register", h.RegisterWhatsApp)
 	rg.GET("/organizations/me/whatsapp/qr", h.GetWhatsAppQR)
 	rg.GET("/organizations/me/whatsapp/status", h.GetWhatsAppStatus)
@@ -51,6 +53,105 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/organizations/invites", h.ListInvites)
 	rg.PATCH("/organizations/invites/:inviteID", h.UpdateInvite)
 	rg.DELETE("/organizations/invites/:inviteID", h.RevokeInvite)
+}
+
+func (h *Handler) ListNotificationWorkflows(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	workflows, err := h.svc.ListNotificationWorkflows(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	resp := make([]transport.NotificationWorkflowRuleResponse, 0, len(workflows))
+	for _, w := range workflows {
+		resp = append(resp, transport.NotificationWorkflowRuleResponse{
+			Trigger:      w.Trigger,
+			Channel:      w.Channel,
+			Audience:     w.Audience,
+			Enabled:      w.Enabled,
+			DelayMinutes: w.DelayMinutes,
+			LeadSource:   w.LeadSource,
+			TemplateText: w.TemplateText,
+		})
+	}
+
+	httpkit.OK(c, transport.ListNotificationWorkflowsResponse{Workflows: resp})
+}
+
+func (h *Handler) ReplaceNotificationWorkflows(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	var req transport.ReplaceNotificationWorkflowsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	// Only the org creator (default admin) or global admins may change workflows.
+	org, err := h.svc.GetOrganization(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	if org.CreatedBy != identity.UserID() && !identity.HasRole("admin") {
+		httpkit.Error(c, http.StatusForbidden, "forbidden", nil)
+		return
+	}
+
+	upserts := make([]repository.NotificationWorkflowUpsert, 0, len(req.Workflows))
+	for _, w := range req.Workflows {
+		upserts = append(upserts, repository.NotificationWorkflowUpsert{
+			Trigger:      w.Trigger,
+			Channel:      w.Channel,
+			Audience:     w.Audience,
+			Enabled:      w.Enabled,
+			DelayMinutes: w.DelayMinutes,
+			LeadSource:   w.LeadSource,
+			TemplateText: w.TemplateText,
+		})
+	}
+
+	workflows, err := h.svc.ReplaceNotificationWorkflows(c.Request.Context(), *tenantID, upserts)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	resp := make([]transport.NotificationWorkflowRuleResponse, 0, len(workflows))
+	for _, w := range workflows {
+		resp = append(resp, transport.NotificationWorkflowRuleResponse{
+			Trigger:      w.Trigger,
+			Channel:      w.Channel,
+			Audience:     w.Audience,
+			Enabled:      w.Enabled,
+			DelayMinutes: w.DelayMinutes,
+			LeadSource:   w.LeadSource,
+			TemplateText: w.TemplateText,
+		})
+	}
+
+	httpkit.OK(c, transport.ListNotificationWorkflowsResponse{Workflows: resp})
 }
 
 func (h *Handler) CreateInvite(c *gin.Context) {

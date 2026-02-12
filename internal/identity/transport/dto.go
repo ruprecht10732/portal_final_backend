@@ -156,3 +156,32 @@ type DetectSMTPResponse struct {
 	Username *string `json:"username,omitempty"`
 	Security *string `json:"security,omitempty"` // "STARTTLS" or "SSL/TLS"
 }
+
+// Notification workflow rules
+type NotificationWorkflowRuleResponse struct {
+	Trigger      string  `json:"trigger"`
+	Channel      string  `json:"channel"`
+	Audience     string  `json:"audience"`
+	Enabled      bool    `json:"enabled"`
+	DelayMinutes int     `json:"delayMinutes"`
+	LeadSource   *string `json:"leadSource,omitempty"`
+	TemplateText *string `json:"templateText,omitempty"`
+}
+
+type ListNotificationWorkflowsResponse struct {
+	Workflows []NotificationWorkflowRuleResponse `json:"workflows"`
+}
+
+type UpsertNotificationWorkflowRuleRequest struct {
+	Trigger      string  `json:"trigger" validate:"required,max=100"`
+	Channel      string  `json:"channel" validate:"omitempty,max=20"`
+	Audience     string  `json:"audience" validate:"omitempty,max=20"`
+	Enabled      bool    `json:"enabled"`
+	DelayMinutes int     `json:"delayMinutes" validate:"min=0,max=1440"`
+	LeadSource   *string `json:"leadSource,omitempty" validate:"omitempty,max=50"`
+	TemplateText *string `json:"templateText,omitempty" validate:"omitempty,max=4000"`
+}
+
+type ReplaceNotificationWorkflowsRequest struct {
+	Workflows []UpsertNotificationWorkflowRuleRequest `json:"workflows" validate:"required,dive"`
+}
