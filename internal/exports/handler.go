@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -23,7 +24,7 @@ const (
 	noOrgContextMsg = "no organization context"
 )
 
-// Handler handles export requests and API key management.
+// Handler handles export requests and Google Ads HTTPS credential management.
 type Handler struct {
 	repo *Repository
 	val  *validator.Validator
@@ -34,27 +35,20 @@ func NewHandler(repo *Repository, val *validator.Validator) *Handler {
 	return &Handler{repo: repo, val: val}
 }
 
-// ---- Admin API Key Management (JWT authenticated) ----
+// ---- Admin Google Ads HTTPS Credentials (JWT authenticated) ----
 
-type CreateAPIKeyRequest struct {
-	Name string `json:"name" validate:"required,min=1,max=100"`
-}
-
-type APIKeyResponse struct {
-	ID         uuid.UUID  `json:"id"`
-	Name       string     `json:"name"`
-	KeyPrefix  string     `json:"keyPrefix"`
-	IsActive   bool       `json:"isActive"`
+type ExportCredentialResponse struct {
+	Username   string     `json:"username"`
 	CreatedAt  string     `json:"createdAt"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 }
 
-type CreateAPIKeyResponse struct {
-	APIKeyResponse
-	Key string `json:"key"`
+type UpsertExportCredentialResponse struct {
+	ExportCredentialResponse
+	Password string `json:"password"`
 }
 
-func (h *Handler) HandleCreateAPIKey(c *gin.Context) {
+func (h *Handler) HandleUpsertCredential(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {
 		return
@@ -65,35 +59,31 @@ func (h *Handler) HandleCreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	var req CreateAPIKeyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid request body", err.Error())
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "validation error", err.Error())
+	username, plaintextPassword, err := GenerateCredential()
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to generate export credentials", nil)
 		return
 	}
 
-	plaintext, hash, prefix, err := GenerateAPIKey()
+	passwordHash, err := password.Hash(plaintextPassword)
 	if err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to generate API key", nil)
+		httpkit.Error(c, http.StatusInternalServerError, "failed to secure export credentials", nil)
 		return
 	}
 
 	createdBy := identity.UserID()
-	key, err := h.repo.CreateAPIKey(c.Request.Context(), *tenantID, req.Name, hash, prefix, &createdBy)
+	credential, err := h.repo.UpsertCredential(c.Request.Context(), *tenantID, username, passwordHash, &createdBy)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, CreateAPIKeyResponse{
-		APIKeyResponse: toAPIKeyResponse(key),
-		Key:            plaintext,
+	c.JSON(http.StatusOK, UpsertExportCredentialResponse{
+		ExportCredentialResponse: toExportCredentialResponse(credential),
+		Password:                 plaintextPassword,
 	})
 }
 
-func (h *Handler) HandleListAPIKeys(c *gin.Context) {
+func (h *Handler) HandleGetCredential(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {
 		return
@@ -104,20 +94,19 @@ func (h *Handler) HandleListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	keys, err := h.repo.ListAPIKeys(c.Request.Context(), *tenantID)
+	credential, err := h.repo.GetCredentialByOrganization(c.Request.Context(), *tenantID)
+	if err == ErrCredentialNotFound {
+		httpkit.Error(c, http.StatusNotFound, "google ads export credentials not configured", nil)
+		return
+	}
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	result := make([]APIKeyResponse, len(keys))
-	for i, k := range keys {
-		result[i] = toAPIKeyResponse(k)
-	}
-
-	httpkit.OK(c, result)
+	httpkit.OK(c, toExportCredentialResponse(credential))
 }
 
-func (h *Handler) HandleRevokeAPIKey(c *gin.Context) {
+func (h *Handler) HandleDeleteCredential(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {
 		return
@@ -128,20 +117,19 @@ func (h *Handler) HandleRevokeAPIKey(c *gin.Context) {
 		return
 	}
 
-	keyID, err := uuid.Parse(c.Param("keyId"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid key id", nil)
+	err := h.repo.DeleteCredential(c.Request.Context(), *tenantID)
+	if err == ErrCredentialNotFound {
+		httpkit.Error(c, http.StatusNotFound, "google ads export credentials not configured", nil)
+		return
+	}
+	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	if err := h.repo.RevokeAPIKey(c.Request.Context(), keyID, *tenantID); httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"message": "api key revoked"})
+	httpkit.OK(c, gin.H{"message": "google ads export credentials removed"})
 }
 
-// ---- Google Ads CSV Export (API key authenticated) ----
+// ---- Google Ads CSV Export (HTTP Basic authenticated) ----
 
 func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 	orgID, ok := getExportOrgID(c)
@@ -149,9 +137,9 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 		return
 	}
 
-	keyID, ok := getExportKeyID(c)
+	credentialID, ok := getExportCredentialID(c)
 	if ok {
-		h.repo.TouchAPIKey(c.Request.Context(), keyID)
+		h.repo.TouchCredential(c.Request.Context(), credentialID)
 	}
 
 	fromDate, toDate, err := parseDateRange(c)
@@ -263,10 +251,10 @@ func getExportOrgID(c *gin.Context) (uuid.UUID, bool) {
 	return orgID, true
 }
 
-func getExportKeyID(c *gin.Context) (uuid.UUID, bool) {
-	keyIDVal, _ := c.Get("exportKeyID")
-	keyID, ok := keyIDVal.(uuid.UUID)
-	return keyID, ok
+func getExportCredentialID(c *gin.Context) (uuid.UUID, bool) {
+	credentialIDVal, _ := c.Get("exportCredentialID")
+	credentialID, ok := credentialIDVal.(uuid.UUID)
+	return credentialID, ok
 }
 
 func parseTimezone(c *gin.Context) (*time.Location, string, bool) {
@@ -327,14 +315,11 @@ func writeConversionRows(writer *csv.Writer, rows []conversionRow, exportedKeys 
 	return records, true
 }
 
-func toAPIKeyResponse(key APIKey) APIKeyResponse {
-	return APIKeyResponse{
-		ID:         key.ID,
-		Name:       key.Name,
-		KeyPrefix:  key.KeyPrefix,
-		IsActive:   key.IsActive,
-		CreatedAt:  key.CreatedAt.Format(time.RFC3339),
-		LastUsedAt: key.LastUsedAt,
+func toExportCredentialResponse(credential ExportCredential) ExportCredentialResponse {
+	return ExportCredentialResponse{
+		Username:   credential.Username,
+		CreatedAt:  credential.CreatedAt.Format(time.RFC3339),
+		LastUsedAt: credential.LastUsedAt,
 	}
 }
 
@@ -399,9 +384,6 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 		if conversionName == "" {
 			continue
 		}
-		if event.GCLID == "" {
-			continue
-		}
 		conversionTime := event.OccurredAt.In(location)
 		conversionValue := mapConversionValue(conversionName, event.ProjectedValueCents)
 
@@ -412,6 +394,13 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 				hashedEmail = hashEmail(*event.ConsumerEmail)
 			}
 			hashedPhone = hashPhone(event.ConsumerPhone)
+		}
+
+		hasEnhancedIdentifier := hashedEmail != "" || hashedPhone != ""
+		if event.GCLID == "" {
+			if !includeEnhanced || !hasEnhancedIdentifier {
+				continue
+			}
 		}
 
 		rows = append(rows, conversionRow{
