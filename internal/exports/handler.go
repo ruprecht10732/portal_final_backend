@@ -425,7 +425,7 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 func mapConversionName(event ConversionEvent) string {
 	if event.EventType == "status_changed" && event.Status != nil {
 		switch normalizeEventValue(*event.Status) {
-		case "scheduled":
+		case "scheduled", "ingepland":
 			return "Appointment_Scheduled"
 		case "surveyed":
 			return "Visit_Completed"
