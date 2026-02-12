@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,11 +15,12 @@ import (
 type Status string
 
 const (
-	StatusPending    Status = "pending"
-	StatusEnqueued   Status = "enqueued"
-	StatusProcessing Status = "processing"
-	StatusSucceeded  Status = "succeeded"
-	StatusFailed     Status = "failed"
+	StatusPending        Status = "pending"
+	StatusEnqueued       Status = "enqueued"
+	StatusProcessing     Status = "processing"
+	StatusSucceeded      Status = "succeeded"
+	StatusFailed         Status = "failed"
+	errRepoNotConfigured        = "outbox repository not configured"
 )
 
 type Record struct {
@@ -52,7 +54,7 @@ func New(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) Insert(ctx context.Context, p InsertParams) (uuid.UUID, error) {
 	if r == nil || r.pool == nil {
-		return uuid.Nil, fmt.Errorf("outbox repository not configured")
+		return uuid.Nil, errors.New(errRepoNotConfigured)
 	}
 	if p.TenantID == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("tenantId is required")
@@ -91,7 +93,7 @@ func (r *Repository) Insert(ctx context.Context, p InsertParams) (uuid.UUID, err
 
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Record, error) {
 	if r == nil || r.pool == nil {
-		return Record{}, fmt.Errorf("outbox repository not configured")
+		return Record{}, errors.New(errRepoNotConfigured)
 	}
 
 	var rec Record
@@ -111,7 +113,7 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Record, error) 
 
 func (r *Repository) ClaimPending(ctx context.Context, limit int) ([]Record, error) {
 	if r == nil || r.pool == nil {
-		return nil, fmt.Errorf("outbox repository not configured")
+		return nil, errors.New(errRepoNotConfigured)
 	}
 	if limit < 1 {
 		limit = 50
@@ -163,7 +165,7 @@ func (r *Repository) ClaimPending(ctx context.Context, limit int) ([]Record, err
 
 func (r *Repository) MarkPending(ctx context.Context, id uuid.UUID, lastError *string) error {
 	if r == nil || r.pool == nil {
-		return fmt.Errorf("outbox repository not configured")
+		return errors.New(errRepoNotConfigured)
 	}
 	_, err := r.pool.Exec(ctx,
 		`UPDATE RAC_notification_outbox
@@ -176,7 +178,7 @@ func (r *Repository) MarkPending(ctx context.Context, id uuid.UUID, lastError *s
 
 func (r *Repository) MarkProcessing(ctx context.Context, id uuid.UUID) error {
 	if r == nil || r.pool == nil {
-		return fmt.Errorf("outbox repository not configured")
+		return errors.New(errRepoNotConfigured)
 	}
 	_, err := r.pool.Exec(ctx,
 		`UPDATE RAC_notification_outbox
@@ -189,7 +191,7 @@ func (r *Repository) MarkProcessing(ctx context.Context, id uuid.UUID) error {
 
 func (r *Repository) MarkSucceeded(ctx context.Context, id uuid.UUID) error {
 	if r == nil || r.pool == nil {
-		return fmt.Errorf("outbox repository not configured")
+		return errors.New(errRepoNotConfigured)
 	}
 	_, err := r.pool.Exec(ctx,
 		`UPDATE RAC_notification_outbox
@@ -202,7 +204,7 @@ func (r *Repository) MarkSucceeded(ctx context.Context, id uuid.UUID) error {
 
 func (r *Repository) MarkFailed(ctx context.Context, id uuid.UUID, lastError string) error {
 	if r == nil || r.pool == nil {
-		return fmt.Errorf("outbox repository not configured")
+		return errors.New(errRepoNotConfigured)
 	}
 	_, err := r.pool.Exec(ctx,
 		`UPDATE RAC_notification_outbox

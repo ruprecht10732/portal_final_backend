@@ -16,8 +16,8 @@ import (
 )
 
 var ErrAPIKeyNotFound = errors.New("webhook API key not found")
-var ErrGoogleConfigNotFound = errors.New("Google webhook config not found")
-var ErrDuplicateGoogleLeadID = errors.New("Google lead ID already processed")
+var ErrGoogleConfigNotFound = errors.New("google webhook config not found")
+var ErrDuplicateGoogleLeadID = errors.New("google lead ID already processed")
 
 // APIKey represents a webhook API key stored in the database.
 type APIKey struct {

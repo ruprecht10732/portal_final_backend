@@ -239,7 +239,7 @@ func (r *Repository) RecordExports(ctx context.Context, orgID uuid.UUID, rows []
 		`, orgID, row.LeadID, row.LeadServiceID, row.ConversionName, row.ConversionTime, row.ConversionValue, row.GCLID, row.OrderID)
 	}
 	results := r.pool.SendBatch(ctx, batch)
-	defer results.Close()
+	defer func() { _ = results.Close() }()
 	for i := 0; i < len(rows); i++ {
 		if _, err := results.Exec(); err != nil {
 			return err

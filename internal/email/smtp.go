@@ -45,7 +45,9 @@ func (s *SMTPSender) send(ctx context.Context, toEmail, subject, htmlContent str
 	msg.SetBodyString(gomail.TypeTextHTML, htmlContent)
 
 	for _, att := range attachments {
-		msg.AttachReader(att.FileName, bytes.NewReader(att.Content))
+		if err := msg.AttachReader(att.FileName, bytes.NewReader(att.Content)); err != nil {
+			return fmt.Errorf("smtp attach %s: %w", att.FileName, err)
+		}
 	}
 
 	client, err := gomail.NewClient(s.host,

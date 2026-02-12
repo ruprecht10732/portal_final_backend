@@ -136,9 +136,8 @@ var (
 )
 
 var (
-	emailRegex   = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
-	dutchZipRe   = regexp.MustCompile(`(\d{4})\s*([A-Za-z]{2})`)
-	dutchPhoneRe = regexp.MustCompile(`^(?:\+31|0031|0)\s*[-.\s]?(\d[\d\s\-\.]{7,})$`)
+	emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	dutchZipRe = regexp.MustCompile(`(\d{4})\s*([A-Za-z]{2})`)
 )
 
 func matchesAny(label string, patterns []string) bool {
