@@ -69,6 +69,7 @@ type LeadCreated struct {
 	TenantID        uuid.UUID  `json:"tenantId"`
 	AssignedAgentID *uuid.UUID `json:"assignedAgentId,omitempty"`
 	ServiceType     string     `json:"serviceType"`
+	Source          string     `json:"source,omitempty"`
 	ConsumerName    string     `json:"consumerName"`
 	ConsumerPhone   string     `json:"consumerPhone"`
 	WhatsAppOptedIn bool       `json:"whatsappOptedIn"`
