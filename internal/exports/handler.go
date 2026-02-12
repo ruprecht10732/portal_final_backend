@@ -285,14 +285,11 @@ func collectOrderIDs(rows []conversionRow) []string {
 	return orderIDs
 }
 
-func startCsvResponse(c *gin.Context, tzName string, useEnhanced bool) (*csv.Writer, bool) {
+func startCsvResponse(c *gin.Context, _ string, useEnhanced bool) (*csv.Writer, bool) {
 	c.Header("Content-Type", "text/csv")
 	c.Header("Content-Disposition", "attachment; filename=google-ads-conversions.csv")
 
 	writer := csv.NewWriter(c.Writer)
-	if err := writer.Write([]string{fmt.Sprintf("Parameters:TimeZone=%s", tzName)}); err != nil {
-		return nil, false
-	}
 	if err := writer.Write(csvHeaders(useEnhanced)); err != nil {
 		return nil, false
 	}
