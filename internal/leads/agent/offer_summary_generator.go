@@ -152,10 +152,11 @@ Rules:
 - Do NOT include any personal data: no names, addresses, phone numbers, emails.
 - Only use the provided service type, scope, urgency, and line items.
 - If scope or urgency is missing, omit that label.
+- Keep it concise (max 5 lines).
 - Preferred structure:
-  1) Optional first line with **Omvang** and **Urgentie**.
-  2) One short sentence describing the job.
-  3) Numbered list of up to 3 main items.
+	1) Optional line with **Omvang** and **Urgentie**.
+	2) One short sentence describing the job.
+	3) Numbered list of up to 3 main items.
 `, strings.TrimSpace(input.ServiceType), scope, urgency, strings.Join(lines, "\n"))
 }
 
