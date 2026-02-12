@@ -268,7 +268,13 @@ func parseTimezone(c *gin.Context) (*time.Location, string, bool) {
 }
 
 func writeEmptyCsv(c *gin.Context, tzName string, useEnhanced bool) {
-	_, _ = startCsvResponse(c, tzName, useEnhanced)
+	writer, ok := startCsvResponse(c, tzName, useEnhanced)
+	if !ok {
+		return
+	}
+
+	writer.Flush()
+	_ = writer.Error()
 }
 
 func collectOrderIDs(rows []conversionRow) []string {
