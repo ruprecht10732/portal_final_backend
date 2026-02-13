@@ -41,7 +41,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func (h *Handler) ListUsers(c *gin.Context) {
-	users, err := h.svc.ListUsers(c.Request.Context())
+	id := httpkit.MustGetIdentity(c)
+	if id == nil {
+		return
+	}
+
+	users, err := h.svc.ListUsersForRequester(c.Request.Context(), id.UserID())
 	if httpkit.HandleError(c, err) {
 		return
 	}

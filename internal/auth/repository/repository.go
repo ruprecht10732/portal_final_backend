@@ -16,6 +16,26 @@ var ErrInvalidRole = errors.New("invalid role")
 const (
 	TokenTypeEmailVerify   = "EMAIL_VERIFY"
 	TokenTypePasswordReset = "PASSWORD_RESET"
+	listUsersQuery         = `
+		SELECT u.id, u.email, u.first_name, u.last_name,
+			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
+		FROM RAC_users u
+		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
+		LEFT JOIN RAC_roles r ON r.id = ur.role_id
+		GROUP BY u.id
+		ORDER BY u.email
+	`
+	listUsersByOrganizationQuery = `
+		SELECT u.id, u.email, u.first_name, u.last_name,
+			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
+		FROM RAC_organization_members om
+		JOIN RAC_users u ON u.id = om.user_id
+		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
+		LEFT JOIN RAC_roles r ON r.id = ur.role_id
+		WHERE om.organization_id = $1
+		GROUP BY u.id
+		ORDER BY u.email
+	`
 )
 
 type Repository struct {
@@ -470,15 +490,29 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 }
 
 func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT u.id, u.email, u.first_name, u.last_name,
-			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
-		FROM RAC_users u
-		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
-		LEFT JOIN RAC_roles r ON r.id = ur.role_id
-		GROUP BY u.id
-		ORDER BY u.email
-	`)
+	rows, err := r.pool.Query(ctx, listUsersQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]UserWithRoles, 0)
+	for rows.Next() {
+		var user UserWithRoles
+		if err := rows.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Roles); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return users, nil
+}
+
+func (r *Repository) ListUsersByOrganization(ctx context.Context, organizationID uuid.UUID) ([]UserWithRoles, error) {
+	rows, err := r.pool.Query(ctx, listUsersByOrganizationQuery, organizationID)
 	if err != nil {
 		return nil, err
 	}

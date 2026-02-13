@@ -347,6 +347,49 @@ func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error
 	return result, nil
 }
 
+func (s *Service) ListUsersForRequester(ctx context.Context, requesterID uuid.UUID) ([]transport.UserSummary, error) {
+	organizationID, err := s.identity.GetUserOrganizationID(ctx, requesterID)
+	if err != nil {
+		if errors.Is(err, identityrepo.ErrNotFound) {
+			user, getErr := s.repo.GetUserByID(ctx, requesterID)
+			if getErr != nil {
+				return nil, getErr
+			}
+			roles, rolesErr := s.repo.GetUserRoles(ctx, requesterID)
+			if rolesErr != nil {
+				return nil, rolesErr
+			}
+
+			return []transport.UserSummary{{
+				ID:        user.ID.String(),
+				Email:     user.Email,
+				FirstName: user.FirstName,
+				LastName:  user.LastName,
+				Roles:     roles,
+			}}, nil
+		}
+		return nil, err
+	}
+
+	users, err := s.repo.ListUsersByOrganization(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]transport.UserSummary, 0, len(users))
+	for _, user := range users {
+		result = append(result, transport.UserSummary{
+			ID:        user.ID.String(),
+			Email:     user.Email,
+			FirstName: user.FirstName,
+			LastName:  user.LastName,
+			Roles:     user.Roles,
+		})
+	}
+
+	return result, nil
+}
+
 func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) {
 	user, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
