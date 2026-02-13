@@ -72,21 +72,6 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 	return newLogger
 }
 
-// ContextWithRequestID adds a request ID to the context
-func ContextWithRequestID(ctx context.Context, requestID string) context.Context {
-	return context.WithValue(ctx, RequestIDKey, requestID)
-}
-
-// ContextWithUserID adds a user ID to the context
-func ContextWithUserID(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, UserIDKey, userID)
-}
-
-// ContextWithTraceID adds a trace ID to the context
-func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
-	return context.WithValue(ctx, TraceIDKey, traceID)
-}
-
 // WithRequestID returns a logger with request ID
 func (l *Logger) WithRequestID(requestID string) *Logger {
 	return &Logger{

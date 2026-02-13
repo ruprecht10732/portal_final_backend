@@ -252,10 +252,6 @@ func main() {
 	leadTimelineWriter := adapters.NewLeadTimelineWriter(leadsModule.Repository())
 	notificationModule.SetLeadTimelineWriter(leadTimelineWriter)
 
-	// Anti-Corruption Layer: Create adapter for cross-domain communication
-	// This ensures leads module only depends on its own AgentProvider interface
-	_ = adapters.NewAuthAgentProvider(authModule.Service())
-
 	// Wire catalog reader: leads → catalog (for hydrating product search results)
 	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
 	leadsModule.SetCatalogReader(catalogReader)

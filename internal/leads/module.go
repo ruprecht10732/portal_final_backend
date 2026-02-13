@@ -277,6 +277,17 @@ func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsReposit
 }
 
 func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
+	subscribeOrchestratorLeadDataChanged(eventBus, orchestrator)
+	subscribeOrchestratorQuoteAccepted(eventBus, orchestrator)
+	subscribeOrchestratorQuoteRejected(eventBus, orchestrator)
+	subscribeOrchestratorQuoteSent(eventBus, orchestrator)
+	subscribeOrchestratorPartnerOfferRejected(eventBus, orchestrator)
+	subscribeOrchestratorPartnerOfferAccepted(eventBus, orchestrator)
+	subscribeOrchestratorPartnerOfferExpired(eventBus, orchestrator)
+	subscribeOrchestratorPipelineStageChanged(eventBus, orchestrator)
+}
+
+func subscribeOrchestratorLeadDataChanged(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.LeadDataChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadDataChanged)
 		if !ok {
@@ -285,7 +296,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		orchestrator.OnDataChange(ctx, e)
 		return nil
 	}))
+}
 
+func subscribeOrchestratorQuoteAccepted(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.QuoteAccepted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.QuoteAccepted)
 		if !ok {
@@ -294,7 +307,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		orchestrator.OnQuoteAccepted(ctx, e)
 		return nil
 	}))
+}
 
+func subscribeOrchestratorQuoteRejected(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.QuoteRejected{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.QuoteRejected)
 		if !ok {
@@ -303,7 +318,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		orchestrator.OnQuoteRejected(ctx, e)
 		return nil
 	}))
+}
 
+func subscribeOrchestratorQuoteSent(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.QuoteSent{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.QuoteSent)
 		if !ok {
@@ -312,7 +329,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		orchestrator.OnQuoteSent(ctx, e)
 		return nil
 	}))
+}
 
+func subscribeOrchestratorPartnerOfferRejected(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.PartnerOfferRejected{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.PartnerOfferRejected)
 		if !ok {
@@ -321,7 +340,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		orchestrator.OnPartnerOfferRejected(ctx, e)
 		return nil
 	}))
+}
 
+func subscribeOrchestratorPartnerOfferAccepted(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.PartnerOfferAccepted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.PartnerOfferAccepted)
 		if !ok {
@@ -330,7 +351,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		orchestrator.OnPartnerOfferAccepted(ctx, e)
 		return nil
 	}))
+}
 
+func subscribeOrchestratorPartnerOfferExpired(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.PartnerOfferExpired{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.PartnerOfferExpired)
 		if !ok {
@@ -339,7 +362,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		orchestrator.OnPartnerOfferExpired(ctx, e)
 		return nil
 	}))
+}
 
+func subscribeOrchestratorPipelineStageChanged(eventBus events.Bus, orchestrator *Orchestrator) {
 	eventBus.Subscribe(events.PipelineStageChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.PipelineStageChanged)
 		if !ok {

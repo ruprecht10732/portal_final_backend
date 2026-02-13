@@ -15,15 +15,15 @@ var AllowedContentTypes = map[string]bool{
 	"image/svg+xml": true,
 
 	// Documents
-	"application/pdf":                                                               true,
-	"application/msword":                                                            true,
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":       true,
-	"application/vnd.ms-excel":                                                      true,
-	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":             true,
-	"application/vnd.ms-powerpoint":                                                 true,
-	"application/vnd.openxmlformats-officedocument.presentationml.presentation":     true,
-	"text/plain":                                                                    true,
-	"text/csv":                                                                      true,
+	"application/pdf":    true,
+	"application/msword": true,
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+	"application/vnd.ms-excel": true,
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         true,
+	"application/vnd.ms-powerpoint":                                             true,
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": true,
+	"text/plain": true,
+	"text/csv":   true,
 
 	// Video
 	"video/mp4":       true,
@@ -63,24 +63,9 @@ func (s *MinIOService) ValidateFileSize(sizeBytes int64) error {
 	return nil
 }
 
-// GetAllowedContentTypes returns a list of allowed content types.
-// Useful for frontend validation.
-func GetAllowedContentTypes() []string {
-	types := make([]string, 0, len(AllowedContentTypes))
-	for ct := range AllowedContentTypes {
-		types = append(types, ct)
-	}
-	return types
-}
-
 // IsImageContentType checks if the content type is an image.
 func IsImageContentType(contentType string) bool {
 	return strings.HasPrefix(strings.ToLower(contentType), "image/")
-}
-
-// IsVideoContentType checks if the content type is a video.
-func IsVideoContentType(contentType string) bool {
-	return strings.HasPrefix(strings.ToLower(contentType), "video/")
 }
 
 // IsDocumentContentType checks if the content type is a document.

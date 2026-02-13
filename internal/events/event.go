@@ -87,8 +87,6 @@ type LeadAssigned struct {
 	AssignedByID  uuid.UUID  `json:"assignedById"`
 }
 
-func (e LeadAssigned) EventName() string { return "RAC_leads.lead.assigned" }
-
 // LeadServiceAdded is published when a new service is added to an existing lead.
 type LeadServiceAdded struct {
 	BaseEvent
