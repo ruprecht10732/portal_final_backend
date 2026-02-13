@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 )
@@ -124,7 +125,7 @@ func ToLeadResponseWithServices(lead repository.Lead, services []repository.Lead
 	// Set current service (first non-terminal or first if all terminal)
 	if len(services) > 0 {
 		for _, svc := range services {
-			if svc.Status != "Closed" && svc.Status != "Bad_Lead" && svc.Status != "Surveyed" {
+			if !domain.IsTerminalStatus(svc.Status) {
 				svcResp := ToLeadServiceResponse(svc)
 				resp.CurrentService = &svcResp
 				status := transport.LeadStatus(svc.Status)

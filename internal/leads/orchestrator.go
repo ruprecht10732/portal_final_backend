@@ -89,8 +89,7 @@ func (o *Orchestrator) recordDispatcherFailure(ctx context.Context, leadID, serv
 }
 
 // ShouldRunAgent checks if a service is eligible for agent processing.
-// Returns false if the service is in a terminal state (Closed, Bad_Lead, Surveyed,
-// Completed, or Lost).
+// Returns false if the service is in a terminal state.
 func (o *Orchestrator) ShouldRunAgent(service repository.LeadService) bool {
 	if domain.IsTerminal(service.Status, service.PipelineStage) {
 		o.log.Info("orchestrator: skipping agent run for terminal service",
@@ -244,7 +243,7 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 		return
 	}
 
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, "Closed"); err != nil {
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusQuoteAccepted); err != nil {
 		o.log.Error("orchestrator: failed to set service status after quote acceptance", "error", err)
 	}
 
@@ -292,6 +291,10 @@ func (o *Orchestrator) OnQuoteRejected(ctx context.Context, evt events.QuoteReje
 		return
 	}
 
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusLost); err != nil {
+		o.log.Error("orchestrator: failed to set service status after quote rejection", "error", err)
+	}
+
 	o.eventBus.Publish(ctx, events.PipelineStageChanged{
 		BaseEvent:     events.NewBaseEvent(),
 		LeadID:        evt.LeadID,
@@ -326,6 +329,10 @@ func (o *Orchestrator) OnQuoteSent(ctx context.Context, evt events.QuoteSent) {
 	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageQuoteSent); err != nil {
 		o.log.Error("orchestrator: failed to advance stage after quote sent", "error", err)
 		return
+	}
+
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusQuoteSent); err != nil {
+		o.log.Error("orchestrator: failed to set service status after quote sent", "error", err)
 	}
 
 	o.eventBus.Publish(ctx, events.PipelineStageChanged{
@@ -382,6 +389,10 @@ func (o *Orchestrator) OnPartnerOfferAccepted(ctx context.Context, evt events.Pa
 	if _, err := o.repo.UpdatePipelineStage(ctx, evt.LeadServiceID, evt.OrganizationID, domain.PipelineStagePartnerAssigned); err != nil {
 		o.log.Error("orchestrator: failed to advance stage after partner acceptance", "error", err)
 		return
+	}
+
+	if _, err := o.repo.UpdateServiceStatus(ctx, evt.LeadServiceID, evt.OrganizationID, domain.LeadStatusPartnerAssigned); err != nil {
+		o.log.Error("orchestrator: failed to set service status after partner acceptance", "error", err)
 	}
 
 	o.eventBus.Publish(ctx, events.PipelineStageChanged{

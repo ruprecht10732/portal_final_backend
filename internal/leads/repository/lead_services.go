@@ -111,7 +111,7 @@ func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, org
 	return services, rows.Err()
 }
 
-// GetCurrentLeadService returns the most recent non-terminal (not Closed, not Bad_Lead, not Surveyed) service,
+// GetCurrentLeadService returns the most recent non-terminal service,
 // or falls back to the most recent service if all are terminal.
 func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadService, error) {
 	var svc LeadService
@@ -121,7 +121,7 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 			ls.customer_preferences, ls.created_at, ls.updated_at
 		FROM RAC_lead_services ls
 		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
+		WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.status NOT IN ('Completed', 'Lost', 'Disqualified')
 		ORDER BY ls.created_at DESC
 		LIMIT 1
 	`, leadID, organizationID).Scan(
@@ -267,13 +267,13 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 	return svc, err
 }
 
-// CloseAllActiveServices marks all non-terminal services for a lead as Closed
+// CloseAllActiveServices marks all non-terminal services for a lead as Completed
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		WITH updated AS (
 			UPDATE RAC_lead_services 
-			SET status = 'Closed', updated_at = now()
-			WHERE lead_id = $1 AND organization_id = $2 AND status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
+			SET status = 'Completed', updated_at = now()
+			WHERE lead_id = $1 AND organization_id = $2 AND status NOT IN ('Completed', 'Lost', 'Disqualified')
 			RETURNING id, lead_id, organization_id, status, pipeline_stage, updated_at
 		)
 		INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)

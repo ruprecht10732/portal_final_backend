@@ -44,39 +44,39 @@ type serviceWeights struct {
 	wozValue    float64 // Property value indicator
 
 	// Behavioral factors
-	leadAge      float64 // Recency importance
-	activity     float64 // Notes and engagement
-	photo        float64 // Photo analysis available
-	status       float64 // Service status indicator
-	consumerNote float64 // Customer provided description
-	source       float64 // Lead source quality
-	assigned     float64 // Has assigned agent
+	leadAge          float64 // Recency importance
+	activity         float64 // Notes and engagement
+	photo            float64 // Photo analysis available
+	status           float64 // Service status indicator
+	consumerNote     float64 // Customer provided description
+	source           float64 // Lead source quality
+	assigned         float64 // Has assigned agent
 	RAC_appointments float64 // Appointment activity
 }
 
 // defaultServiceWeights returns weights for services with unknown/generic type.
 var defaultServiceWeights = serviceWeights{
-	ownership:     1.0,
-	wealth:        1.0,
-	income:        1.0,
-	incomeHigh:    0.8,
-	incomeLow:     0.8,
-	household:     1.0,
-	children:      1.0,
-	stedelijkheid: 0.5,
-	energyLabel:   0.5,
-	gasUsage:      0.5,
-	electricity:   0.5,
-	buildingAge:   0.8,
-	wozValue:      0.8,
-	leadAge:       1.0,
-	activity:      1.0,
-	photo:         1.0,
-	status:        1.0,
-	consumerNote:  1.0,
-	source:        1.0,
-	assigned:      1.0,
-	RAC_appointments:  1.0,
+	ownership:        1.0,
+	wealth:           1.0,
+	income:           1.0,
+	incomeHigh:       0.8,
+	incomeLow:        0.8,
+	household:        1.0,
+	children:         1.0,
+	stedelijkheid:    0.5,
+	energyLabel:      0.5,
+	gasUsage:         0.5,
+	electricity:      0.5,
+	buildingAge:      0.8,
+	wozValue:         0.8,
+	leadAge:          1.0,
+	activity:         1.0,
+	photo:            1.0,
+	status:           1.0,
+	consumerNote:     1.0,
+	source:           1.0,
+	assigned:         1.0,
+	RAC_appointments: 1.0,
 }
 
 // Service-type-specific weights based on industry research:
@@ -86,202 +86,202 @@ var defaultServiceWeights = serviceWeights{
 var serviceWeightsMap = map[string]serviceWeights{
 	// Solar: High electricity usage, ownership critical, wealth important for financing
 	"solar": {
-		ownership:     1.3,
-		wealth:        1.2,
-		income:        1.0,
-		incomeHigh:    1.2, // High earners invest in solar
-		incomeLow:     0.8,
-		household:     0.8,
-		children:      0.6,
-		stedelijkheid: 0.6, // Rural better (more roof space, less shade)
-		energyLabel:   0.8, // Less relevant - solar works regardless of label
-		gasUsage:      0.2, // Solar doesn't replace gas
-		electricity:   1.5, // Critical - high usage = high savings potential
-		buildingAge:   0.6, // Less relevant - newer roofs work fine
-		wozValue:      1.0,
-		leadAge:       1.0,
-		activity:      0.9,
-		photo:         1.2, // Roof condition matters
-		status:        1.0,
-		consumerNote:  1.1, // Detailed requests show intent
-		source:        1.0,
-		assigned:      0.8, // Less important - solar is consultative
-		RAC_appointments:  1.1, // Site survey critical
+		ownership:        1.3,
+		wealth:           1.2,
+		income:           1.0,
+		incomeHigh:       1.2, // High earners invest in solar
+		incomeLow:        0.8,
+		household:        0.8,
+		children:         0.6,
+		stedelijkheid:    0.6, // Rural better (more roof space, less shade)
+		energyLabel:      0.8, // Less relevant - solar works regardless of label
+		gasUsage:         0.2, // Solar doesn't replace gas
+		electricity:      1.5, // Critical - high usage = high savings potential
+		buildingAge:      0.6, // Less relevant - newer roofs work fine
+		wozValue:         1.0,
+		leadAge:          1.0,
+		activity:         0.9,
+		photo:            1.2, // Roof condition matters
+		status:           1.0,
+		consumerNote:     1.1, // Detailed requests show intent
+		source:           1.0,
+		assigned:         0.8, // Less important - solar is consultative
+		RAC_appointments: 1.1, // Site survey critical
 	},
 
 	// Insulation: Poor energy labels are gold, high gas usage, older buildings
 	"insulation": {
-		ownership:     1.3,
-		wealth:        1.0,
-		income:        1.0,
-		incomeHigh:    1.0,
-		incomeLow:     0.9,
-		household:     0.9,
-		children:      0.8,
-		stedelijkheid: 0.8, // Suburban houses often need more insulation
-		energyLabel:   1.5, // Critical - E/F/G labels are prime targets
-		gasUsage:      1.4, // High gas = poor insulation
-		electricity:   0.5,
-		buildingAge:   1.3, // Older = worse insulation typically
-		wozValue:      0.9,
-		leadAge:       1.0,
-		activity:      1.0,
-		photo:         1.1,
-		status:        1.0,
-		consumerNote:  1.2, // Problem description helps scope
-		source:        1.0,
-		assigned:      0.9,
-		RAC_appointments:  1.0,
+		ownership:        1.3,
+		wealth:           1.0,
+		income:           1.0,
+		incomeHigh:       1.0,
+		incomeLow:        0.9,
+		household:        0.9,
+		children:         0.8,
+		stedelijkheid:    0.8, // Suburban houses often need more insulation
+		energyLabel:      1.5, // Critical - E/F/G labels are prime targets
+		gasUsage:         1.4, // High gas = poor insulation
+		electricity:      0.5,
+		buildingAge:      1.3, // Older = worse insulation typically
+		wozValue:         0.9,
+		leadAge:          1.0,
+		activity:         1.0,
+		photo:            1.1,
+		status:           1.0,
+		consumerNote:     1.2, // Problem description helps scope
+		source:           1.0,
+		assigned:         0.9,
+		RAC_appointments: 1.0,
 	},
 
 	// HVAC/Heat pumps: High gas usage (replacing boilers), good insulation preferred
 	"hvac": {
-		ownership:     1.3,
-		wealth:        1.3, // Heat pumps are expensive
-		income:        1.1,
-		incomeHigh:    1.3, // Premium investment
-		incomeLow:     0.6, // Cost barrier
-		household:     1.0,
-		children:      0.8,
-		stedelijkheid: 0.7, // Suburban/rural - more space for outdoor unit
-		energyLabel:   1.2, // Better labels = ready for heat pump
-		gasUsage:      1.4, // High gas = heating replacement opportunity
-		electricity:   1.0,
-		buildingAge:   0.8,
-		wozValue:      1.1,
-		leadAge:       1.0,
-		activity:      1.0,
-		photo:         1.0,
-		status:        1.0,
-		consumerNote:  1.1,
-		source:        1.0,
-		assigned:      0.9,
-		RAC_appointments:  1.1, // Technical assessment needed
+		ownership:        1.3,
+		wealth:           1.3, // Heat pumps are expensive
+		income:           1.1,
+		incomeHigh:       1.3, // Premium investment
+		incomeLow:        0.6, // Cost barrier
+		household:        1.0,
+		children:         0.8,
+		stedelijkheid:    0.7, // Suburban/rural - more space for outdoor unit
+		energyLabel:      1.2, // Better labels = ready for heat pump
+		gasUsage:         1.4, // High gas = heating replacement opportunity
+		electricity:      1.0,
+		buildingAge:      0.8,
+		wozValue:         1.1,
+		leadAge:          1.0,
+		activity:         1.0,
+		photo:            1.0,
+		status:           1.0,
+		consumerNote:     1.1,
+		source:           1.0,
+		assigned:         0.9,
+		RAC_appointments: 1.1, // Technical assessment needed
 	},
 
 	// Windows: Building age matters, energy performance relevant
 	"windows": {
-		ownership:     1.2,
-		wealth:        1.0,
-		income:        1.0,
-		incomeHigh:    1.0,
-		incomeLow:     0.8,
-		household:     0.8,
-		children:      0.7,
-		stedelijkheid: 0.9, // Slightly less urban (apartments often shared)
-		energyLabel:   1.0,
-		gasUsage:      0.8, // Drafty windows = gas waste
-		electricity:   0.4,
-		buildingAge:   1.3, // Older buildings = older windows
-		wozValue:      1.0,
-		leadAge:       1.0,
-		activity:      1.0,
-		photo:         1.2, // Window condition visible in photos
-		status:        1.0,
-		consumerNote:  1.1,
-		source:        1.0,
-		assigned:      0.9,
-		RAC_appointments:  1.0,
+		ownership:        1.2,
+		wealth:           1.0,
+		income:           1.0,
+		incomeHigh:       1.0,
+		incomeLow:        0.8,
+		household:        0.8,
+		children:         0.7,
+		stedelijkheid:    0.9, // Slightly less urban (apartments often shared)
+		energyLabel:      1.0,
+		gasUsage:         0.8, // Drafty windows = gas waste
+		electricity:      0.4,
+		buildingAge:      1.3, // Older buildings = older windows
+		wozValue:         1.0,
+		leadAge:          1.0,
+		activity:         1.0,
+		photo:            1.2, // Window condition visible in photos
+		status:           1.0,
+		consumerNote:     1.1,
+		source:           1.0,
+		assigned:         0.9,
+		RAC_appointments: 1.0,
 	},
 
 	// Plumbing: Less demographic, more activity-focused
 	"plumbing": {
-		ownership:     0.8,
-		wealth:        0.7,
-		income:        0.8,
-		incomeHigh:    0.6,
-		incomeLow:     0.9, // Even low income needs plumbing fixes
-		household:     1.1, // Larger households = more plumbing needs
-		children:      1.0,
-		stedelijkheid: 1.0, // Universal need
-		energyLabel:   0.1,
-		gasUsage:      0.3, // Gas for water heating
-		electricity:   0.1,
-		buildingAge:   1.0,
-		wozValue:      0.7,
-		leadAge:       1.2, // Urgency matters
-		activity:      1.3, // Engagement indicates urgency
-		photo:         1.3, // Photos show problem severity
-		status:        1.1,
-		consumerNote:  1.4, // Problem description crucial for plumbing
-		source:        1.0,
-		assigned:      1.2, // Quick response important
-		RAC_appointments:  1.3, // Urgency - need quick appointment
+		ownership:        0.8,
+		wealth:           0.7,
+		income:           0.8,
+		incomeHigh:       0.6,
+		incomeLow:        0.9, // Even low income needs plumbing fixes
+		household:        1.1, // Larger households = more plumbing needs
+		children:         1.0,
+		stedelijkheid:    1.0, // Universal need
+		energyLabel:      0.1,
+		gasUsage:         0.3, // Gas for water heating
+		electricity:      0.1,
+		buildingAge:      1.0,
+		wozValue:         0.7,
+		leadAge:          1.2, // Urgency matters
+		activity:         1.3, // Engagement indicates urgency
+		photo:            1.3, // Photos show problem severity
+		status:           1.1,
+		consumerNote:     1.4, // Problem description crucial for plumbing
+		source:           1.0,
+		assigned:         1.2, // Quick response important
+		RAC_appointments: 1.3, // Urgency - need quick appointment
 	},
 
 	// Electrical: Similar to plumbing, activity important
 	"electrical": {
-		ownership:     0.8,
-		wealth:        0.8,
-		income:        0.8,
-		incomeHigh:    0.7,
-		incomeLow:     0.9, // Safety-critical, even low income
-		household:     0.9,
-		children:      0.8,
-		stedelijkheid: 1.0, // Universal need
-		energyLabel:   0.2,
-		gasUsage:      0.1,
-		electricity:   0.8, // High usage might indicate electrical issues
-		buildingAge:   1.1, // Older wiring needs updates
-		wozValue:      0.8,
-		leadAge:       1.2,
-		activity:      1.3,
-		photo:         1.2,
-		status:        1.1,
-		consumerNote:  1.3, // Safety context important
-		source:        1.0,
-		assigned:      1.2, // Quick response for safety
-		RAC_appointments:  1.2,
+		ownership:        0.8,
+		wealth:           0.8,
+		income:           0.8,
+		incomeHigh:       0.7,
+		incomeLow:        0.9, // Safety-critical, even low income
+		household:        0.9,
+		children:         0.8,
+		stedelijkheid:    1.0, // Universal need
+		energyLabel:      0.2,
+		gasUsage:         0.1,
+		electricity:      0.8, // High usage might indicate electrical issues
+		buildingAge:      1.1, // Older wiring needs updates
+		wozValue:         0.8,
+		leadAge:          1.2,
+		activity:         1.3,
+		photo:            1.2,
+		status:           1.1,
+		consumerNote:     1.3, // Safety context important
+		source:           1.0,
+		assigned:         1.2, // Quick response for safety
+		RAC_appointments: 1.2,
 	},
 
 	// Carpentry: Building age and property value
 	"carpentry": {
-		ownership:     0.9,
-		wealth:        0.9,
-		income:        0.9,
-		incomeHigh:    0.9,
-		incomeLow:     0.7,
-		household:     0.8,
-		children:      0.8,
-		stedelijkheid: 0.8, // Slightly suburban (more wood structures)
-		energyLabel:   0.1,
-		gasUsage:      0.1,
-		electricity:   0.1,
-		buildingAge:   1.0,
-		wozValue:      1.0,
-		leadAge:       1.1,
-		activity:      1.2,
-		photo:         1.2,
-		status:        1.0,
-		consumerNote:  1.2, // Project scope from description
-		source:        1.0,
-		assigned:      1.0,
-		RAC_appointments:  1.0,
+		ownership:        0.9,
+		wealth:           0.9,
+		income:           0.9,
+		incomeHigh:       0.9,
+		incomeLow:        0.7,
+		household:        0.8,
+		children:         0.8,
+		stedelijkheid:    0.8, // Slightly suburban (more wood structures)
+		energyLabel:      0.1,
+		gasUsage:         0.1,
+		electricity:      0.1,
+		buildingAge:      1.0,
+		wozValue:         1.0,
+		leadAge:          1.1,
+		activity:         1.2,
+		photo:            1.2,
+		status:           1.0,
+		consumerNote:     1.2, // Project scope from description
+		source:           1.0,
+		assigned:         1.0,
+		RAC_appointments: 1.0,
 	},
 
 	// Handyman: Most activity-focused, least demographic
 	"handyman": {
-		ownership:     0.6,
-		wealth:        0.5,
-		income:        0.6,
-		incomeHigh:    0.4,
-		incomeLow:     1.0, // Budget-conscious choose handyman
-		household:     0.8,
-		children:      0.9, // Families need more repairs
-		stedelijkheid: 1.1, // Urban areas use handyman services more
-		energyLabel:   0.0,
-		gasUsage:      0.0,
-		electricity:   0.0,
-		buildingAge:   0.7,
-		wozValue:      0.5,
-		leadAge:       1.3, // Fresh RAC_leads convert best
-		activity:      1.4, // Engagement is key
-		photo:         1.3,
-		status:        1.2,
-		consumerNote:  1.3, // Task description important
-		source:        1.1,
-		assigned:      1.1,
-		RAC_appointments:  1.2,
+		ownership:        0.6,
+		wealth:           0.5,
+		income:           0.6,
+		incomeHigh:       0.4,
+		incomeLow:        1.0, // Budget-conscious choose handyman
+		household:        0.8,
+		children:         0.9, // Families need more repairs
+		stedelijkheid:    1.1, // Urban areas use handyman services more
+		energyLabel:      0.0,
+		gasUsage:         0.0,
+		electricity:      0.0,
+		buildingAge:      0.7,
+		wozValue:         0.5,
+		leadAge:          1.3, // Fresh RAC_leads convert best
+		activity:         1.4, // Engagement is key
+		photo:            1.3,
+		status:           1.2,
+		consumerNote:     1.3, // Task description important
+		source:           1.1,
+		assigned:         1.1,
+		RAC_appointments: 1.2,
 	},
 }
 
@@ -947,11 +947,15 @@ func (s *Service) scoreServiceStatus(svc *repository.LeadService) float64 {
 		return 5 // Fresh opportunity
 	case "Attempted_Contact":
 		return 2 // In progress
-	case "Contacted":
-		return 1 // Engaged
-	case "Scheduled":
+	case "Appointment_Scheduled":
 		return -2 // Already scheduled, lower priority for scoring
-	case "Completed", "Closed":
+	case "Survey_Completed":
+		return -3 // Inspected, lower immediate priority
+	case "Quote_Sent":
+		return 1 // Quote pending decision
+	case "Quote_Accepted", "Partner_Assigned":
+		return -3 // In handoff flow
+	case "Completed", "Lost", "Disqualified":
 		return -5 // Done, shouldn't be prioritized
 	default:
 		return 0

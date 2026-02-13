@@ -401,15 +401,6 @@ func parseLimit(c *gin.Context, fallback int, max int) int {
 	return limit
 }
 
-func parseBool(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "y":
-		return true
-	default:
-		return false
-	}
-}
-
 func parseEnhancedMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "1", "true", "yes", "y":
@@ -470,11 +461,13 @@ func mapConversionName(event ConversionEvent) string {
 
 	if event.EventType == "status_changed" && event.Status != nil {
 		switch normalizeEventValue(*event.Status) {
-		case "scheduled", "ingepland":
+		case "appointment_scheduled", "scheduled", "ingepland":
 			return "Appointment_Scheduled"
-		case "surveyed":
+		case "survey_completed", "surveyed":
 			return "Visit_Completed"
-		case "closed":
+		case "quote_accepted":
+			return "Deal_Won"
+		case "completed":
 			return "Deal_Won"
 		}
 	}

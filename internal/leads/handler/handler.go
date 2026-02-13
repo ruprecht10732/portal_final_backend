@@ -949,7 +949,7 @@ func (h *Handler) validateServiceForAnalysis(ctx *gin.Context, svcIDStr string, 
 	}
 
 	if domain.IsTerminal(service.Status, service.PipelineStage) {
-		return serviceValidationResult{ErrMsg: "cannot analyze a service in terminal state (Closed, Bad_Lead, Surveyed, Completed, or Lost)", ErrStatus: http.StatusBadRequest}
+		return serviceValidationResult{ErrMsg: "cannot analyze a service in terminal state (Completed, Lost, or Disqualified)", ErrStatus: http.StatusBadRequest}
 	}
 
 	return serviceValidationResult{ServiceID: &parsed}
