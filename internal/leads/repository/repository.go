@@ -373,6 +373,23 @@ func (r *Repository) GetLatestQuoteTotal(ctx context.Context, serviceID, organiz
 	return total, nil
 }
 
+func (r *Repository) HasNonDraftQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM RAC_quotes
+			WHERE lead_service_id = $1
+			  AND organization_id = $2
+			  AND status <> 'Draft'
+		)
+	`, serviceID, organizationID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 type UpdateLeadParams struct {
 	ConsumerFirstName  *string
 	ConsumerLastName   *string

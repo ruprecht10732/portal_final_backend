@@ -145,6 +145,7 @@ type PartnerMatcher interface {
 // QuotePriceReader provides access to the latest quote total for a lead service.
 type QuotePriceReader interface {
 	GetLatestQuoteTotal(ctx context.Context, serviceID, organizationID uuid.UUID) (int64, error)
+	HasNonDraftQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (bool, error)
 }
 
 // ActivityFeedEntry represents a unified activity entry from multiple sources.

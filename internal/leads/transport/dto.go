@@ -38,6 +38,7 @@ const (
 	PipelineStageTriage             PipelineStage = "Triage"
 	PipelineStageNurturing          PipelineStage = "Nurturing"
 	PipelineStageReadyForEstimator  PipelineStage = "Ready_For_Estimator"
+	PipelineStageQuoteDraft         PipelineStage = "Quote_Draft"
 	PipelineStageQuoteSent          PipelineStage = "Quote_Sent"
 	PipelineStageReadyForPartner    PipelineStage = "Ready_For_Partner"
 	PipelineStagePartnerMatching    PipelineStage = "Partner_Matching"

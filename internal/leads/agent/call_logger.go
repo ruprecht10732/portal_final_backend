@@ -19,6 +19,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
@@ -838,63 +839,112 @@ func executeScheduleVisit(deps *CallLoggerToolDeps, input ScheduleVisitInput) (S
 	return ScheduleVisitOutput{Success: true, Message: "Appointment booked"}, nil
 }
 
+func validateCallLoggerPipelineStage(stage string) error {
+	if !domain.IsKnownPipelineStage(stage) {
+		return fmt.Errorf("invalid pipeline stage: %s", stage)
+	}
+	return nil
+}
+
+func resolveCallLoggerStageContext(deps *CallLoggerToolDeps, ctx tool.Context) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, error) {
+	tenantID, userID, leadID, serviceID, ok := deps.GetContext()
+	if !ok {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", errMissingContext
+	}
+
+	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", err
+	}
+
+	return tenantID, userID, leadID, serviceID, svc.PipelineStage, nil
+}
+
+func guardCallLoggerQuoteSentTransition(deps *CallLoggerToolDeps, ctx tool.Context, tenantID, serviceID uuid.UUID, newStage string) error {
+	if newStage != domain.PipelineStageQuoteSent {
+		return nil
+	}
+
+	hasNonDraftQuote, err := deps.Repo.HasNonDraftQuote(ctx, serviceID, tenantID)
+	if err != nil {
+		return err
+	}
+	if !hasNonDraftQuote {
+		return fmt.Errorf("quote state guard blocked Quote_Sent for service %s", serviceID)
+	}
+	return nil
+}
+
+func createCallLoggerStageTimelineEvent(deps *CallLoggerToolDeps, ctx tool.Context, tenantID, userID, leadID, serviceID uuid.UUID, oldStage, newStage, reason string) {
+	trimmedReason := strings.TrimSpace(reason)
+	var summary *string
+	if trimmedReason != "" {
+		summary = &trimmedReason
+	}
+
+	actorName := userID.String()
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      "User",
+		ActorName:      actorName,
+		EventType:      "stage_change",
+		Title:          "Fase bijgewerkt",
+		Summary:        summary,
+		Metadata: map[string]any{
+			"oldStage": oldStage,
+			"newStage": newStage,
+		},
+	})
+}
+
+func publishCallLoggerStageChanged(deps *CallLoggerToolDeps, ctx tool.Context, tenantID, leadID, serviceID uuid.UUID, oldStage, newStage string) {
+	if deps.EventBus == nil {
+		return
+	}
+
+	deps.EventBus.Publish(ctx, events.PipelineStageChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		TenantID:      tenantID,
+		OldStage:      oldStage,
+		NewStage:      newStage,
+	})
+}
+
 func buildCallLoggerUpdatePipelineStageTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdatePipelineStage",
 		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
 	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		if !validPipelineStages[input.Stage] {
-			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
+		if err := validateCallLoggerPipelineStage(input.Stage); err != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, err
 		}
 
-		tenantID, userID, leadID, serviceID, ok := deps.GetContext()
-		if !ok {
-			return UpdatePipelineStageOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
-		}
-
-		svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+		tenantID, userID, leadID, serviceID, oldStage, err := resolveCallLoggerStageContext(deps, ctx)
 		if err != nil {
+			if errors.Is(err, errMissingContext) {
+				return UpdatePipelineStageOutput{Success: false, Message: errMsgMissingContext}, err
+			}
 			return UpdatePipelineStageOutput{Success: false, Message: "Lead service not found"}, err
 		}
-		oldStage := svc.PipelineStage
+
+		if err := guardCallLoggerQuoteSentTransition(deps, ctx, tenantID, serviceID, input.Stage); err != nil {
+			if strings.Contains(err.Error(), "quote state guard blocked") {
+				return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Quote_Sent while quote is still draft"}, err
+			}
+			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, err
+		}
 
 		_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
 		if err != nil {
 			return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
 		}
 
-		reason := strings.TrimSpace(input.Reason)
-		var summary *string
-		if reason != "" {
-			summary = &reason
-		}
-
-		actorName := userID.String()
-		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-			LeadID:         leadID,
-			ServiceID:      &serviceID,
-			OrganizationID: tenantID,
-			ActorType:      "User",
-			ActorName:      actorName,
-			EventType:      "stage_change",
-			Title:          "Fase bijgewerkt",
-			Summary:        summary,
-			Metadata: map[string]any{
-				"oldStage": oldStage,
-				"newStage": input.Stage,
-			},
-		})
-
-		if deps.EventBus != nil {
-			deps.EventBus.Publish(ctx, events.PipelineStageChanged{
-				BaseEvent:     events.NewBaseEvent(),
-				LeadID:        leadID,
-				LeadServiceID: serviceID,
-				TenantID:      tenantID,
-				OldStage:      oldStage,
-				NewStage:      input.Stage,
-			})
-		}
+		createCallLoggerStageTimelineEvent(deps, ctx, tenantID, userID, leadID, serviceID, oldStage, input.Stage, input.Reason)
+		publishCallLoggerStageChanged(deps, ctx, tenantID, leadID, serviceID, oldStage, input.Stage)
 
 		deps.MarkPipelineStageUpdated(input.Stage)
 		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil

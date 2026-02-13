@@ -871,21 +871,8 @@ func createUpdateLeadDetailsTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
-var validPipelineStages = map[string]bool{
-	"Triage":              true,
-	"Nurturing":           true,
-	"Ready_For_Estimator": true,
-	"Quote_Sent":          true,
-	"Ready_For_Partner":   true,
-	"Partner_Matching":    true,
-	"Partner_Assigned":    true,
-	"Manual_Intervention": true,
-	"Completed":           true,
-	"Lost":                true,
-}
-
 func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-	if !validPipelineStages[input.Stage] {
+	if !domain.IsKnownPipelineStage(input.Stage) {
 		return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
 	}
 
@@ -914,6 +901,16 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
 		log.Printf("handleUpdatePipelineStage: REJECTED - service %s is in terminal state (status=%s, stage=%s)", serviceID, svc.Status, svc.PipelineStage)
 		return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
+	}
+
+	if input.Stage == domain.PipelineStageQuoteSent {
+		hasNonDraftQuote, checkErr := deps.Repo.HasNonDraftQuote(ctx, serviceID, tenantID)
+		if checkErr != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, checkErr
+		}
+		if !hasNonDraftQuote {
+			return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Quote_Sent while quote is still draft"}, fmt.Errorf("quote state guard blocked Quote_Sent for service %s", serviceID)
+		}
 	}
 
 	// Validate state combination

@@ -10,8 +10,8 @@ var terminalStatuses = map[string]bool{
 
 // terminalPipelineStages are pipeline stages where the workflow is complete.
 var terminalPipelineStages = map[string]bool{
-	"Completed": true,
-	"Lost":      true,
+	PipelineStageCompleted: true,
+	PipelineStageLost:      true,
 }
 
 // IsTerminal returns true if the service is in a terminal state based on
@@ -36,7 +36,7 @@ func IsTerminalPipelineStage(stage string) bool {
 // is invalid.
 func ValidateStateCombination(status, pipelineStage string) string {
 	// Bad_Lead status must have Lost pipeline stage (or Triage/Manual_Intervention during transition)
-	if status == "Bad_Lead" && pipelineStage != "Lost" && pipelineStage != "Triage" && pipelineStage != "Manual_Intervention" {
+	if status == "Bad_Lead" && pipelineStage != PipelineStageLost && pipelineStage != PipelineStageTriage && pipelineStage != PipelineStageManualIntervention {
 		return "Bad_Lead status requires Lost pipeline stage"
 	}
 	return ""

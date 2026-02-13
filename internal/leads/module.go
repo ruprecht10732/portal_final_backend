@@ -295,6 +295,24 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 		return nil
 	}))
 
+	eventBus.Subscribe(events.QuoteRejected{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.QuoteRejected)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnQuoteRejected(ctx, e)
+		return nil
+	}))
+
+	eventBus.Subscribe(events.QuoteSent{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.QuoteSent)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnQuoteSent(ctx, e)
+		return nil
+	}))
+
 	eventBus.Subscribe(events.PartnerOfferRejected{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.PartnerOfferRejected)
 		if !ok {

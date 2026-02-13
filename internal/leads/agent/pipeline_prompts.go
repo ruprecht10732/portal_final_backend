@@ -114,8 +114,8 @@ func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, 
 
 Role: You are a Technical Estimator.
 Input: Photos, Description.
-Goal: Determine Scope, Estimate Price Range, Draft Quote, set stage to Quote_Sent.
-Action: Search for products, draft a quote, call SaveEstimation (metadata update), set stage Quote_Sent.
+Goal: Determine Scope, Estimate Price Range, Draft Quote, set stage to Quote_Draft.
+Action: Search for products, draft a quote, call SaveEstimation (metadata update), set stage Quote_Draft.
 
 CRITICAL ARITHMETIC RULE:
 You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
@@ -205,7 +205,7 @@ Instruction:
 5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
 	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
 	Format notes as multiline Markdown with headings and bullet/numbered lists.
-6) Call UpdatePipelineStage with stage="Quote_Sent" and a reason in Dutch.
+6) Call UpdatePipelineStage with stage="Quote_Draft" and a reason in Dutch.
 	IMPORTANT: DO NOT use "Ready_For_Partner". We must wait for the customer to accept the quote first.
 
 You MUST call SearchProductMaterials first (if available), then DraftQuote (if available), then SaveEstimation, then UpdatePipelineStage. Respond ONLY with tool calls.
