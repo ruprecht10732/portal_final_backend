@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -79,12 +80,12 @@ func acquireAdvisoryLock(ctx context.Context, db *sql.DB) error {
 		}
 		if locked {
 			if loggedWaiting {
-				fmt.Printf("migrations: acquired advisory lock after waiting\n")
+				log.Printf("migrations: acquired advisory lock after waiting")
 			}
 			return nil
 		}
 		if !loggedWaiting {
-			fmt.Printf("migrations: advisory lock busy, waiting up to %s\n", advisoryLockWait)
+			log.Printf("migrations: advisory lock busy, waiting up to %s", advisoryLockWait)
 			loggedWaiting = true
 		}
 
