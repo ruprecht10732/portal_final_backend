@@ -18,9 +18,13 @@ import (
 
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
+	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/identity/repository"
 	identityservice "portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/identity/smtpcrypto"
+	leadrepo "portal_final_backend/internal/leads/repository"
+	notifhandler "portal_final_backend/internal/notification/handler"
+	"portal_final_backend/internal/notification/inapp"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/whatsapp"
@@ -29,6 +33,7 @@ import (
 	"portal_final_backend/platform/phone"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // QuoteActivityWriter persists activity log entries for quotes.
@@ -58,6 +63,11 @@ type WorkflowResolver interface {
 // LeadWhatsAppReader checks if a lead is opted in for WhatsApp messages.
 type LeadWhatsAppReader interface {
 	IsWhatsAppOptedIn(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (bool, error)
+}
+
+// OrganizationMemberReader lists organization users for fan-out notifications.
+type OrganizationMemberReader interface {
+	ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]leadrepo.OrgMember, error)
 }
 
 // LeadTimelineEventParams describes a lead timeline event payload.
@@ -97,22 +107,51 @@ type Module struct {
 	settingsReader     OrganizationSettingsReader
 	workflowResolver   WorkflowResolver
 	leadWhatsAppReader LeadWhatsAppReader
+	orgMemberReader    OrganizationMemberReader
 	notificationOutbox *notificationoutbox.Repository
+	inAppService       *inapp.Service
+	inAppHandler       *notifhandler.HTTPHandler
 	smtpEncryptionKey  []byte
 	senderCache        sync.Map // map[uuid.UUID]cachedSender
 }
 
 // New creates a new notification module.
-func New(sender email.Sender, cfg config.NotificationConfig, log *logger.Logger) *Module {
+func New(pool *pgxpool.Pool, sender email.Sender, cfg config.NotificationConfig, log *logger.Logger) *Module {
+	inAppRepo := inapp.NewRepository(pool)
+	inAppSvc := inapp.NewService(inAppRepo, log)
+
 	return &Module{
-		sender: sender,
-		cfg:    cfg,
-		log:    log,
+		sender:       sender,
+		cfg:          cfg,
+		log:          log,
+		inAppService: inAppSvc,
+		inAppHandler: notifhandler.NewHTTPHandler(inAppSvc),
 	}
 }
 
+// Name returns the module identifier.
+func (m *Module) Name() string { return "notification" }
+
+// RegisterRoutes registers notification API routes.
+func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
+	if m.inAppHandler == nil {
+		return
+	}
+
+	notifications := ctx.Protected.Group("/notifications")
+	m.inAppHandler.RegisterRoutes(notifications)
+}
+
 // SetSSE injects the SSE service so quote events can be pushed to agents.
-func (m *Module) SetSSE(s *sse.Service) { m.sse = s }
+func (m *Module) SetSSE(s *sse.Service) {
+	m.sse = s
+	if m.inAppService != nil {
+		m.inAppService.SetSSE(s)
+	}
+}
+
+// InAppService exposes the in-app notification service for integration points.
+func (m *Module) InAppService() *inapp.Service { return m.inAppService }
 
 // SetQuoteActivityWriter injects the writer for persisting quote activity log entries.
 func (m *Module) SetQuoteActivityWriter(w QuoteActivityWriter) { m.actWriter = w }
@@ -136,6 +175,11 @@ func (m *Module) SetWorkflowResolver(resolver WorkflowResolver) {
 
 // SetLeadWhatsAppReader injects a reader for lead WhatsApp opt-in state.
 func (m *Module) SetLeadWhatsAppReader(reader LeadWhatsAppReader) { m.leadWhatsAppReader = reader }
+
+// SetOrganizationMemberReader injects a reader for org members.
+func (m *Module) SetOrganizationMemberReader(reader OrganizationMemberReader) {
+	m.orgMemberReader = reader
+}
 
 // SetLeadTimelineWriter injects the lead timeline writer.
 func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeline = writer }
@@ -247,8 +291,10 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 
 	// Lead events
 	bus.Subscribe(events.LeadCreated{}.EventName(), m)
+	bus.Subscribe(events.LeadAssigned{}.EventName(), m)
 	bus.Subscribe(events.LeadDataChanged{}.EventName(), m)
 	bus.Subscribe(events.PipelineStageChanged{}.EventName(), m)
+	bus.Subscribe(events.ManualInterventionRequired{}.EventName(), m)
 
 	// Quote domain events
 	bus.Subscribe(events.QuoteSent{}.EventName(), m)
@@ -289,10 +335,14 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handlePartnerOfferExpired(ctx, e)
 	case events.LeadCreated:
 		return m.handleLeadCreated(ctx, e)
+	case events.LeadAssigned:
+		return m.handleLeadAssigned(ctx, e)
 	case events.LeadDataChanged:
 		return m.handleLeadDataChanged(ctx, e)
 	case events.PipelineStageChanged:
 		return m.handlePipelineStageChanged(ctx, e)
+	case events.ManualInterventionRequired:
+		return m.handleManualInterventionRequired(ctx, e)
 	// Quote events
 	case events.QuoteSent:
 		return m.handleQuoteSent(ctx, e)
@@ -980,6 +1030,12 @@ const noReasonProvided = "Geen reden opgegeven"
 const outboxRetryBaseDelay = time.Minute
 const outboxRetryMaxDelay = 60 * time.Minute
 
+var operationsNotificationRoles = map[string]struct{}{
+	"admin": {},
+	"agent": {},
+	"scout": {},
+}
+
 func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.PartnerOfferAccepted) error {
 	m.log.Info("partner offer accepted",
 		"offerId", e.OfferID,
@@ -1497,6 +1553,35 @@ func (m *Module) handleLeadDataChanged(_ context.Context, e events.LeadDataChang
 	return nil
 }
 
+func (m *Module) handleLeadAssigned(ctx context.Context, e events.LeadAssigned) error {
+	if m.inAppService == nil || e.NewAgent == nil {
+		return nil
+	}
+
+	_ = m.inAppService.Send(ctx, inapp.SendParams{
+		OrgID:        e.TenantID,
+		UserID:       *e.NewAgent,
+		Title:        "Nieuwe lead toegewezen",
+		Content:      "Je bent toegewezen aan een lead.",
+		ResourceID:   &e.LeadID,
+		ResourceType: "lead",
+		Category:     "info",
+	})
+
+	return nil
+}
+
+func (m *Module) handleManualInterventionRequired(ctx context.Context, e events.ManualInterventionRequired) error {
+	m.notifyOrgMembersInAppByRoles(ctx, e.TenantID, operationsNotificationRoles, inapp.SendParams{
+		Title:        "Handmatige interventie vereist",
+		Content:      "Geautomatiseerde verwerking vereist menselijke beoordeling.",
+		ResourceID:   &e.LeadID,
+		ResourceType: "lead",
+		Category:     "warning",
+	})
+	return nil
+}
+
 func (m *Module) handlePipelineStageChanged(_ context.Context, e events.PipelineStageChanged) error {
 	if m.sse == nil {
 		return nil
@@ -1951,6 +2036,13 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 	_ = m.dispatchQuoteAcceptedLeadEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteAcceptedAgentEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx, e)
+	m.notifyOrgMembersInAppByRoles(ctx, e.OrganizationID, operationsNotificationRoles, inapp.SendParams{
+		Title:        "Offerte geaccepteerd",
+		Content:      fmt.Sprintf("%s heeft offerte %s geaccepteerd.", defaultName(strings.TrimSpace(e.ConsumerName), "Klant"), e.QuoteNumber),
+		ResourceID:   &e.QuoteID,
+		ResourceType: "quote",
+		Category:     "success",
+	})
 	m.publishQuoteAcceptedSSE(e)
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_accepted",
 		"Offerte geaccepteerd door "+e.SignatureName,
@@ -2052,6 +2144,13 @@ func (m *Module) publishQuoteAcceptedSSE(e events.QuoteAccepted) {
 func (m *Module) handleQuoteRejected(ctx context.Context, e events.QuoteRejected) error {
 	_ = m.dispatchQuoteRejectedLeadEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteRejectedLeadWhatsAppWorkflow(ctx, e)
+	m.notifyOrgMembersInAppByRoles(ctx, e.OrganizationID, operationsNotificationRoles, inapp.SendParams{
+		Title:        "Offerte afgewezen",
+		Content:      fmt.Sprintf("%s heeft offerte afgewezen.", defaultName(strings.TrimSpace(e.ConsumerName), "Klant")),
+		ResourceID:   &e.QuoteID,
+		ResourceType: "quote",
+		Category:     "warning",
+	})
 
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteRejected, e.QuoteID, map[string]interface{}{
 		"reason": e.Reason,
@@ -2379,3 +2478,48 @@ func (m *Module) writeWhatsAppSentEventWithMetadata(params whatsAppSentEventWith
 		m.log.Error("failed to write whatsapp timeline event", "error", err, "leadId", params.LeadID)
 	}
 }
+
+func (m *Module) notifyOrgMembersInApp(ctx context.Context, orgID uuid.UUID, p inapp.SendParams) {
+	m.notifyOrgMembersInAppByRoles(ctx, orgID, nil, p)
+}
+
+func (m *Module) notifyOrgMembersInAppByRoles(ctx context.Context, orgID uuid.UUID, allowedRoles map[string]struct{}, p inapp.SendParams) {
+	if m.inAppService == nil || m.orgMemberReader == nil {
+		return
+	}
+
+	members, err := m.orgMemberReader.ListOrgMembers(ctx, orgID)
+	if err != nil {
+		m.log.Warn("failed to list org members for in-app notification", "error", err, "orgId", orgID)
+		return
+	}
+
+	for _, member := range members {
+		if !memberMatchesRoles(member, allowedRoles) {
+			continue
+		}
+		params := p
+		params.OrgID = orgID
+		params.UserID = member.ID
+		_ = m.inAppService.Send(ctx, params)
+	}
+}
+
+func memberMatchesRoles(member leadrepo.OrgMember, allowedRoles map[string]struct{}) bool {
+	if len(allowedRoles) == 0 {
+		return true
+	}
+	if len(member.Roles) == 0 {
+		return false
+	}
+	for _, role := range member.Roles {
+		normalized := strings.ToLower(strings.TrimSpace(role))
+		if _, ok := allowedRoles[normalized]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Compile-time check that Module implements http.Module.
+var _ apphttp.Module = (*Module)(nil)

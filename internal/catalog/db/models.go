@@ -473,6 +473,20 @@ type RacGoogleWebhookConfig struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RacInAppNotification struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Title          string             `json:"title"`
+	Content        string             `json:"content"`
+	ResourceID     pgtype.UUID        `json:"resource_id"`
+	ResourceType   pgtype.Text        `json:"resource_type"`
+	Category       string             `json:"category"`
+	IsRead         bool               `json:"is_read"`
+	ReadAt         pgtype.Timestamptz `json:"read_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacLead struct {
 	ID                  pgtype.UUID        `json:"id"`
 	ConsumerFirstName   string             `json:"consumer_first_name"`

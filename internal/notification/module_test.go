@@ -75,7 +75,7 @@ func TestHandleQuoteSentDoesNotUseLegacySenderWithoutOutbox(t *testing.T) {
 	workflowID := uuid.New()
 	stepID := uuid.New()
 
-	m := New(sender, testNotificationConfig{}, logger.New("development"))
+	m := New(nil, sender, testNotificationConfig{}, logger.New("development"))
 	m.SetWorkflowResolver(testWorkflowResolver{result: identityservice.ResolveLeadWorkflowResult{
 		Workflow: &identityrepo.Workflow{
 			ID: workflowID,
@@ -116,7 +116,7 @@ func TestHandleQuoteAcceptedDoesNotUseLegacySendersWithoutOutbox(t *testing.T) {
 	workflowID := uuid.New()
 	stepID := uuid.New()
 
-	m := New(sender, testNotificationConfig{}, logger.New("development"))
+	m := New(nil, sender, testNotificationConfig{}, logger.New("development"))
 	m.SetWorkflowResolver(testWorkflowResolver{result: identityservice.ResolveLeadWorkflowResult{
 		Workflow: &identityrepo.Workflow{
 			ID: workflowID,
@@ -191,7 +191,7 @@ func TestBuildWorkflowStepVariablesContainsSafeNestedMaps(t *testing.T) {
 }
 
 func TestDispatchQuoteEmailWorkflowSkipsWhenNoRecipients(t *testing.T) {
-	m := New(&testSender{}, testNotificationConfig{}, logger.New("development"))
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
 
 	ok := m.dispatchQuoteEmailWorkflow(context.Background(), dispatchQuoteEmailWorkflowParams{
 		Rule: &workflowRule{

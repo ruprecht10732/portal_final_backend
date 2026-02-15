@@ -20,6 +20,7 @@ import (
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/maps"
+	"portal_final_backend/internal/notification/inapp"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
 
@@ -57,6 +58,7 @@ type Service struct {
 	repo                   Repository
 	eventBus               events.Bus
 	maps                   *maps.Service
+	inAppService           *inapp.Service
 	energyEnricher         ports.EnergyLabelEnricher
 	leadEnricher           ports.LeadEnricher
 	scorer                 *scoring.Service
@@ -90,6 +92,11 @@ func (s *Service) SetLeadScorer(scorer *scoring.Service) {
 
 func (s *Service) SetWorkflowOverrideWriter(writer LeadWorkflowOverrideWriter) {
 	s.workflowOverrideWriter = writer
+}
+
+// SetInAppNotificationService injects the in-app notification service.
+func (s *Service) SetInAppNotificationService(svc *inapp.Service) {
+	s.inAppService = svc
 }
 
 // Create creates a new lead.
@@ -704,6 +711,17 @@ func (s *Service) Assign(ctx context.Context, id uuid.UUID, assigneeID *uuid.UUI
 		"to":   assigneeID,
 	})
 
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.LeadAssigned{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        id,
+			TenantID:      tenantID,
+			PreviousAgent: current.AssignedAgentID,
+			NewAgent:      assigneeID,
+			AssignedByID:  actorID,
+		})
+	}
+
 	return ToLeadResponse(updated), nil
 }
 
@@ -734,6 +752,17 @@ func (s *Service) AssignIfUnassigned(ctx context.Context, id uuid.UUID, agentID 
 		"from": nil,
 		"to":   agentID,
 	})
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.LeadAssigned{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        id,
+			TenantID:      tenantID,
+			PreviousAgent: nil,
+			NewAgent:      &agentID,
+			AssignedByID:  agentID,
+		})
+	}
 
 	return nil
 }

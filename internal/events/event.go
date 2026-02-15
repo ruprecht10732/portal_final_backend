@@ -83,10 +83,13 @@ func (e LeadCreated) EventName() string { return "RAC_leads.lead.created" }
 type LeadAssigned struct {
 	BaseEvent
 	LeadID        uuid.UUID  `json:"leadId"`
+	TenantID      uuid.UUID  `json:"tenantId"`
 	PreviousAgent *uuid.UUID `json:"previousAgent,omitempty"`
 	NewAgent      *uuid.UUID `json:"newAgent,omitempty"`
 	AssignedByID  uuid.UUID  `json:"assignedById"`
 }
+
+func (e LeadAssigned) EventName() string { return "leads.assigned" }
 
 // LeadServiceAdded is published when a new service is added to an existing lead.
 type LeadServiceAdded struct {
