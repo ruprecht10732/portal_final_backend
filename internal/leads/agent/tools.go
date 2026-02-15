@@ -36,6 +36,10 @@ const (
 )
 
 const highConfidenceScoreThreshold = 0.45
+const (
+	defaultHouthandelCollection = "houthandel_products"
+	defaultBouwmaatCollection   = "bouwmaat_products"
+)
 
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
 func normalizeUrgencyLevel(level string) (string, error) {
@@ -135,6 +139,7 @@ type ToolDependencies struct {
 	EventBus             events.Bus
 	EmbeddingClient      *embeddings.Client
 	QdrantClient         *qdrant.Client
+	BouwmaatQdrantClient *qdrant.Client
 	CatalogQdrantClient  *qdrant.Client
 	CatalogReader        ports.CatalogReader // optional: hydrate search results from DB
 	QuoteDrafter         ports.QuoteDrafter  // optional: draft quotes from agent
@@ -342,7 +347,7 @@ func (d *ToolDependencies) GetLastDraftResult() *ports.DraftQuoteResult {
 
 // IsProductSearchEnabled returns true if both embedding and Qdrant clients are configured.
 func (d *ToolDependencies) IsProductSearchEnabled() bool {
-	return d.EmbeddingClient != nil && (d.CatalogQdrantClient != nil || d.QdrantClient != nil)
+	return d.EmbeddingClient != nil && (d.CatalogQdrantClient != nil || d.QdrantClient != nil || d.BouwmaatQdrantClient != nil)
 }
 
 func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
@@ -1393,21 +1398,79 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return output, nil
 	}
 
-	// Fallback to general collection.
-	if deps.QdrantClient == nil {
+	// Fallback to reference collections.
+	if deps.QdrantClient == nil && deps.BouwmaatQdrantClient == nil {
 		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
 	}
 
-	results, err := deps.QdrantClient.SearchWithThreshold(ctx, vector, limit, scoreThreshold)
+	batchClient := deps.QdrantClient
+	if batchClient == nil {
+		batchClient = deps.BouwmaatQdrantClient
+	}
+
+	batchRequests := make([]qdrant.SearchRequest, 0, 2)
+	requestCollections := make([]string, 0, 2)
+
+	if deps.QdrantClient != nil {
+		houthandelCollection := deps.QdrantClient.CollectionName()
+		if houthandelCollection == "" {
+			houthandelCollection = defaultHouthandelCollection
+		}
+		batchRequests = append(batchRequests, qdrant.SearchRequest{
+			CollectionName: houthandelCollection,
+			Vector:         vector,
+			Limit:          limit,
+			WithPayload:    true,
+			ScoreThreshold: &scoreThreshold,
+		})
+		requestCollections = append(requestCollections, houthandelCollection)
+	}
+
+	if deps.BouwmaatQdrantClient != nil {
+		bouwmaatCollection := deps.BouwmaatQdrantClient.CollectionName()
+		if bouwmaatCollection == "" {
+			bouwmaatCollection = defaultBouwmaatCollection
+		}
+		batchRequests = append(batchRequests, qdrant.SearchRequest{
+			CollectionName: bouwmaatCollection,
+			Vector:         vector,
+			Limit:          limit,
+			WithPayload:    true,
+			ScoreThreshold: &scoreThreshold,
+		})
+		requestCollections = append(requestCollections, bouwmaatCollection)
+	}
+
+	batchResults, err := batchClient.BatchSearch(ctx, batchRequests)
 	if err != nil {
-		log.Printf("SearchProductMaterials: fallback search failed: %v", err)
+		log.Printf("SearchProductMaterials: fallback batch search failed: %v", err)
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to search product catalog"}, err
 	}
 
-	products := convertSearchResults(results)
+	products := make([]ProductResult, 0, limit*len(batchResults))
+	for idx, results := range batchResults {
+		collectionName := "unknown"
+		if idx < len(requestCollections) {
+			collectionName = requestCollections[idx]
+		}
+		collectionProducts := convertSearchResults(results)
+		for i := range collectionProducts {
+			collectionProducts[i].SourceCollection = collectionName
+		}
+		products = append(products, collectionProducts...)
+		log.Printf("SearchProductMaterials: fallback batch query=%q collection=%s results=%d", query, collectionName, len(collectionProducts))
+	}
+
+	sort.SliceStable(products, func(i, j int) bool {
+		if products[i].Score == products[j].Score {
+			return products[i].PriceEuros < products[j].PriceEuros
+		}
+		return products[i].Score > products[j].Score
+	})
+
 	markHighConfidence(products)
 	if len(products) == 0 {
-		log.Printf("SearchProductMaterials: fallback query=%q found 0 products above threshold %.2f", query, scoreThreshold)
+		log.Printf("SearchProductMaterials: fallback batch query=%q found 0 products above threshold %.2f", query, scoreThreshold)
 		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
 	}
 
@@ -1415,8 +1478,10 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	// treats them as ad-hoc line items (no catalogProductId, no auto-attachments).
 	stripProductIDs(products)
 
-	log.Printf("SearchProductMaterials: fallback query=%q found %d reference products (threshold=%.2f, scores: %s)",
-		query, len(products), scoreThreshold, formatScores(products))
+	log.Printf("SearchProductMaterials: fallback batch query=%q found %d reference products across %d collections (threshold=%.2f, scores: %s)",
+		query, len(products), len(requestCollections), scoreThreshold, formatScores(products))
+
+	log.Printf("SearchProductMaterials: fallback collections=%s", strings.Join(requestCollections, ","))
 
 	return SearchProductMaterialsOutput{
 		Products: products,

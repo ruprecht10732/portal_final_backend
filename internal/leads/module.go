@@ -150,6 +150,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 	var embeddingClient *embeddings.Client
 	var qdrantClient *qdrant.Client
 	var catalogQdrantClient *qdrant.Client
+	var bouwmaatQdrantClient *qdrant.Client
 
 	if cfg.IsEmbeddingEnabled() {
 		embeddingClient = embeddings.NewClient(embeddings.Config{
@@ -174,13 +175,22 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		})
 	}
 
+	if cfg.GetQdrantURL() != "" && cfg.GetBouwmaatEmbeddingCollection() != "" {
+		bouwmaatQdrantClient = qdrant.NewClient(qdrant.Config{
+			BaseURL:    cfg.GetQdrantURL(),
+			APIKey:     cfg.GetQdrantAPIKey(),
+			Collection: cfg.GetBouwmaatEmbeddingCollection(),
+		})
+	}
+
 	estimator, err := agent.NewEstimator(agent.EstimatorConfig{
-		APIKey:              cfg.MoonshotAPIKey,
-		Repo:                repo,
-		EventBus:            eventBus,
-		EmbeddingClient:     embeddingClient,
-		QdrantClient:        qdrantClient,
-		CatalogQdrantClient: catalogQdrantClient,
+		APIKey:               cfg.MoonshotAPIKey,
+		Repo:                 repo,
+		EventBus:             eventBus,
+		EmbeddingClient:      embeddingClient,
+		QdrantClient:         qdrantClient,
+		BouwmaatQdrantClient: bouwmaatQdrantClient,
+		CatalogQdrantClient:  catalogQdrantClient,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
@@ -192,12 +202,13 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 	}
 
 	quoteGenerator, err := agent.NewQuoteGenerator(agent.QuoteGeneratorConfig{
-		APIKey:              cfg.MoonshotAPIKey,
-		Repo:                repo,
-		EventBus:            eventBus,
-		EmbeddingClient:     embeddingClient,
-		QdrantClient:        qdrantClient,
-		CatalogQdrantClient: catalogQdrantClient,
+		APIKey:               cfg.MoonshotAPIKey,
+		Repo:                 repo,
+		EventBus:             eventBus,
+		EmbeddingClient:      embeddingClient,
+		QdrantClient:         qdrantClient,
+		BouwmaatQdrantClient: bouwmaatQdrantClient,
+		CatalogQdrantClient:  catalogQdrantClient,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err

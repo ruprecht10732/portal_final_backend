@@ -187,6 +187,7 @@ type Config struct {
 	CatalogEmbeddingAPIURL            string
 	CatalogEmbeddingAPIKey            string
 	CatalogEmbeddingCollection        string
+	BouwmaatEmbeddingCollection       string
 	WhatsAppURL                       string
 	WhatsAppKey                       string
 	WhatsAppDeviceID                  string
@@ -304,6 +305,9 @@ func (c *Config) GetCatalogEmbeddingAPIKey() string { return c.CatalogEmbeddingA
 func (c *Config) GetCatalogEmbeddingCollection() string {
 	return c.CatalogEmbeddingCollection
 }
+func (c *Config) GetBouwmaatEmbeddingCollection() string {
+	return c.BouwmaatEmbeddingCollection
+}
 func (c *Config) IsCatalogEmbeddingEnabled() bool {
 	return c.CatalogEmbeddingAPIURL != ""
 }
@@ -373,6 +377,7 @@ func Load() (*Config, error) {
 		CatalogEmbeddingAPIURL:            getEnv("CATALOG_EMBEDDING_API_URL", ""),
 		CatalogEmbeddingAPIKey:            getEnv("CATALOG_EMBEDDING_API_KEY", ""),
 		CatalogEmbeddingCollection:        getEnv("CATALOG_EMBEDDING_COLLECTION", "catalog"),
+		BouwmaatEmbeddingCollection:       getEnv("BOUWMAAT_EMBEDDING_COLLECTION", "bouwmaat_products"),
 		WhatsAppURL:                       getEnv("WHATSAPP_SERVICE_URL", ""),
 		WhatsAppKey:                       getEnv("WHATSAPP_API_KEY", ""),
 		WhatsAppDeviceID:                  getEnv("WHATSAPP_DEVICE_ID", ""),

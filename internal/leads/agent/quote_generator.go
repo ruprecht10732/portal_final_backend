@@ -45,14 +45,15 @@ type QuoteGenerator struct {
 
 // QuoteGeneratorConfig holds configuration for creating a QuoteGenerator.
 type QuoteGeneratorConfig struct {
-	APIKey              string
-	Repo                repository.LeadsRepository
-	EventBus            events.Bus
-	EmbeddingClient     *embeddings.Client
-	QdrantClient        *qdrant.Client
-	CatalogQdrantClient *qdrant.Client
-	CatalogReader       ports.CatalogReader
-	QuoteDrafter        ports.QuoteDrafter
+	APIKey               string
+	Repo                 repository.LeadsRepository
+	EventBus             events.Bus
+	EmbeddingClient      *embeddings.Client
+	QdrantClient         *qdrant.Client
+	BouwmaatQdrantClient *qdrant.Client
+	CatalogQdrantClient  *qdrant.Client
+	CatalogReader        ports.CatalogReader
+	QuoteDrafter         ports.QuoteDrafter
 }
 
 // NewQuoteGenerator creates a QuoteGenerator agent with only product search and
@@ -65,13 +66,14 @@ func NewQuoteGenerator(cfg QuoteGeneratorConfig) (*QuoteGenerator, error) {
 	})
 
 	deps := &ToolDependencies{
-		Repo:                cfg.Repo,
-		EventBus:            cfg.EventBus,
-		EmbeddingClient:     cfg.EmbeddingClient,
-		QdrantClient:        cfg.QdrantClient,
-		CatalogQdrantClient: cfg.CatalogQdrantClient,
-		CatalogReader:       cfg.CatalogReader,
-		QuoteDrafter:        cfg.QuoteDrafter,
+		Repo:                 cfg.Repo,
+		EventBus:             cfg.EventBus,
+		EmbeddingClient:      cfg.EmbeddingClient,
+		QdrantClient:         cfg.QdrantClient,
+		BouwmaatQdrantClient: cfg.BouwmaatQdrantClient,
+		CatalogQdrantClient:  cfg.CatalogQdrantClient,
+		CatalogReader:        cfg.CatalogReader,
+		QuoteDrafter:         cfg.QuoteDrafter,
 	}
 
 	var tools []tool.Tool

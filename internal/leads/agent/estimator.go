@@ -35,14 +35,15 @@ type Estimator struct {
 
 // EstimatorConfig holds configuration for creating an Estimator agent.
 type EstimatorConfig struct {
-	APIKey              string
-	Repo                repository.LeadsRepository
-	EventBus            events.Bus
-	EmbeddingClient     *embeddings.Client  // Optional: enables product search
-	QdrantClient        *qdrant.Client      // Optional: fallback collection search
-	CatalogQdrantClient *qdrant.Client      // Optional: catalog collection search
-	CatalogReader       ports.CatalogReader // Optional: hydrate search results from DB
-	QuoteDrafter        ports.QuoteDrafter  // Optional: draft quotes from agent
+	APIKey               string
+	Repo                 repository.LeadsRepository
+	EventBus             events.Bus
+	EmbeddingClient      *embeddings.Client  // Optional: enables product search
+	QdrantClient         *qdrant.Client      // Optional: fallback collection search
+	BouwmaatQdrantClient *qdrant.Client      // Optional: secondary fallback collection search
+	CatalogQdrantClient  *qdrant.Client      // Optional: catalog collection search
+	CatalogReader        ports.CatalogReader // Optional: hydrate search results from DB
+	QuoteDrafter         ports.QuoteDrafter  // Optional: draft quotes from agent
 }
 
 // NewEstimator creates an Estimator agent.
@@ -54,13 +55,14 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 	})
 
 	deps := &ToolDependencies{
-		Repo:                cfg.Repo,
-		EventBus:            cfg.EventBus,
-		EmbeddingClient:     cfg.EmbeddingClient,
-		QdrantClient:        cfg.QdrantClient,
-		CatalogQdrantClient: cfg.CatalogQdrantClient,
-		CatalogReader:       cfg.CatalogReader,
-		QuoteDrafter:        cfg.QuoteDrafter,
+		Repo:                 cfg.Repo,
+		EventBus:             cfg.EventBus,
+		EmbeddingClient:      cfg.EmbeddingClient,
+		QdrantClient:         cfg.QdrantClient,
+		BouwmaatQdrantClient: cfg.BouwmaatQdrantClient,
+		CatalogQdrantClient:  cfg.CatalogQdrantClient,
+		CatalogReader:        cfg.CatalogReader,
+		QuoteDrafter:         cfg.QuoteDrafter,
 	}
 
 	saveEstimationTool, err := createSaveEstimationTool(deps)

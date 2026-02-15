@@ -44,13 +44,24 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// CollectionName returns the configured default collection for this client.
+func (c *Client) CollectionName() string {
+	return c.collection
+}
+
 // SearchRequest is the request body for a vector search.
 type SearchRequest struct {
+	CollectionName string    `json:"collection_name,omitempty"`
 	Vector         []float32 `json:"vector"`
 	Limit          int       `json:"limit"`
 	WithPayload    bool      `json:"with_payload"`
 	ScoreThreshold *float64  `json:"score_threshold,omitempty"` // Minimum similarity score (Qdrant filters server-side)
 	Filter         *Filter   `json:"filter,omitempty"`
+}
+
+// BatchSearchRequest is the request body for multi-collection batch search.
+type BatchSearchRequest struct {
+	Searches []SearchRequest `json:"searches"`
 }
 
 // MatchValue represents a Qdrant match condition value.
@@ -83,6 +94,13 @@ type SearchResponse struct {
 	Time   float64        `json:"time"`
 }
 
+// BatchSearchResponse is the response from a batch search query.
+type BatchSearchResponse struct {
+	Result [][]SearchResult `json:"result"`
+	Status interface{}      `json:"status"`
+	Time   float64          `json:"time"`
+}
+
 // SearchWithThreshold performs a vector similarity search with a minimum score threshold.
 func (c *Client) SearchWithThreshold(ctx context.Context, vector []float32, limit int, scoreThreshold float64) ([]SearchResult, error) {
 	return c.searchInternal(ctx, vector, limit, &scoreThreshold, nil)
@@ -96,6 +114,60 @@ func (c *Client) SearchWithFilter(ctx context.Context, vector []float32, limit i
 // Search performs a vector similarity search in the configured collection.
 func (c *Client) Search(ctx context.Context, vector []float32, limit int) ([]SearchResult, error) {
 	return c.searchInternal(ctx, vector, limit, nil, nil)
+}
+
+// BatchSearch performs multiple vector searches in one request.
+// If a request omits CollectionName, the client's configured collection is used.
+func (c *Client) BatchSearch(ctx context.Context, requests []SearchRequest) ([][]SearchResult, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+
+	normalized := make([]SearchRequest, 0, len(requests))
+	for _, req := range requests {
+		if req.CollectionName == "" {
+			req.CollectionName = c.collection
+		}
+		if req.Limit <= 0 {
+			req.Limit = 5
+		}
+		req.WithPayload = true
+		normalized = append(normalized, req)
+	}
+
+	bodyBytes, err := json.Marshal(BatchSearchRequest{Searches: normalized})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal batch search request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/points/search/batch", c.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create batch search request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("api-key", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("batch search request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("qdrant batch search returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var searchResp BatchSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode batch search response: %w", err)
+	}
+
+	return searchResp.Result, nil
 }
 
 // NewOrganizationFilter builds a payload filter for tenant-scoped catalog search.
