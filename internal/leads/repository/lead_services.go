@@ -38,16 +38,23 @@ type CreateLeadServiceParams struct {
 func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadServiceParams) (LeadService, error) {
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, `
-		WITH inserted AS (
+		WITH resolved_service_type AS (
+			SELECT COALESCE(
+				(SELECT id FROM RAC_service_types WHERE (name = $3 OR slug = $3) AND organization_id = $2 LIMIT 1),
+				(SELECT id FROM RAC_service_types WHERE organization_id = $2 AND is_active = true ORDER BY name ASC LIMIT 1),
+				(SELECT id FROM RAC_service_types WHERE organization_id = $2 ORDER BY name ASC LIMIT 1)
+			) AS id
+		), inserted AS (
 			INSERT INTO RAC_lead_services (lead_id, organization_id, service_type_id, status, consumer_note, source)
 			VALUES (
 				$1,
 				$2,
-				(SELECT id FROM RAC_service_types WHERE (name = $3 OR slug = $3) AND organization_id = $2 LIMIT 1),
+				(SELECT id FROM resolved_service_type),
 				'New',
 				$4,
 				$5
 			)
+			WHERE (SELECT id FROM resolved_service_type) IS NOT NULL
 			RETURNING *
 		), event AS (
 			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
@@ -62,6 +69,9 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
 		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LeadService{}, ErrServiceTypeNotFound
+	}
 	return svc, err
 }
 
