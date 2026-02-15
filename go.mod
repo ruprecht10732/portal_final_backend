@@ -17,7 +17,7 @@ require (
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/wneessen/go-mail v0.7.2
 	golang.org/x/crypto v0.47.0
-	golang.org/x/text v0.33.0
+	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.14.0
 	google.golang.org/adk v0.4.0
 	google.golang.org/genai v1.43.0

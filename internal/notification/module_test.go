@@ -204,13 +204,38 @@ func TestDispatchQuoteEmailWorkflowSkipsWhenNoRecipients(t *testing.T) {
 		LeadEmail:    "",
 		PartnerEmail: "",
 		Trigger:      "quote_accepted",
-		Subject:      "subject",
-		BodyText:     "body",
+		TemplateVars: map[string]any{},
 		Summary:      "summary",
 		FallbackNote: "fallback",
 	})
 
 	if !ok {
 		t.Fatal("expected dispatch to skip cleanly when no recipients are available")
+	}
+}
+
+func TestRenderWorkflowTemplateSubjectAndBodyFromRule(t *testing.T) {
+	subjectTpl := "Offerte {{quote.number}} voor {{lead.name}}"
+	bodyTpl := "Hoi {{lead.name}}, bekijk {{links.track}}"
+	rule := &workflowRule{
+		Enabled:         true,
+		DelayMinutes:    0,
+		TemplateSubject: &subjectTpl,
+		TemplateText:    &bodyTpl,
+	}
+	vars := map[string]any{
+		"lead":  map[string]any{"name": "Robin"},
+		"quote": map[string]any{"number": "OFF-2026-0042"},
+		"links": map[string]any{"track": "https://app.example.com/track/abc"},
+	}
+
+	subject := renderWorkflowTemplateSubject(rule, vars)
+	body := renderWorkflowTemplateText(rule, vars)
+
+	if subject != "Offerte OFF-2026-0042 voor Robin" {
+		t.Fatalf("unexpected rendered subject: %q", subject)
+	}
+	if body != "Hoi Robin, bekijk https://app.example.com/track/abc" {
+		t.Fatalf("unexpected rendered body: %q", body)
 	}
 }

@@ -163,6 +163,13 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 	}
 
 	rows := buildConversionRows(events, location, currency, useEnhanced)
+	orderIDs := collectOrderIDs(rows)
+	exportedKeys, err := h.repo.ListExportedKeys(c.Request.Context(), orgID, orderIDs)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	rows = filterUnexportedRows(rows, exportedKeys)
+
 	if len(rows) == 0 {
 		writeEmptyCsv(c, tzName, useEnhanced)
 		return
@@ -180,6 +187,12 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 
 	writer.Flush()
 	if err := writer.Error(); err != nil {
+		return
+	}
+
+	records := toExportRecords(rows)
+	if err := h.repo.RecordExports(c.Request.Context(), orgID, records); err != nil {
+		httpkit.HandleError(c, err)
 		return
 	}
 }
@@ -307,6 +320,34 @@ func writeConversionRows(writer *csv.Writer, rows []conversionRow, useEnhanced b
 	return records, true
 }
 
+func toExportRecords(rows []conversionRow) []ExportRecord {
+	records := make([]ExportRecord, 0, len(rows))
+	for _, row := range rows {
+		records = append(records, ExportRecord{
+			LeadID:          row.LeadID,
+			LeadServiceID:   row.LeadServiceID,
+			ConversionName:  row.ConversionName,
+			ConversionTime:  row.ConversionTime,
+			ConversionValue: row.ConversionValue,
+			GCLID:           row.GCLID,
+			OrderID:         row.OrderID,
+		})
+	}
+	return records
+}
+
+func filterUnexportedRows(rows []conversionRow, exportedKeys map[string]struct{}) []conversionRow {
+	filtered := make([]conversionRow, 0, len(rows))
+	for _, row := range rows {
+		key := row.OrderID + "::" + row.ConversionName
+		if _, exists := exportedKeys[key]; exists {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
 func toExportCredentialResponse(credential ExportCredential) ExportCredentialResponse {
 	return ExportCredentialResponse{
 		Username:   credential.Username,
@@ -360,15 +401,6 @@ func parseLimit(c *gin.Context, fallback int, max int) int {
 	return limit
 }
 
-func parseBool(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "y":
-		return true
-	default:
-		return false
-	}
-}
-
 func parseEnhancedMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "1", "true", "yes", "y":
@@ -414,7 +446,7 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 			ConversionValue:    conversionValue,
 			ConversionCurrency: currency,
 			GCLID:              event.GCLID,
-			OrderID:            event.EventID.String(),
+			OrderID:            buildOrderID(event, conversionName),
 			HashedEmail:        hashedEmail,
 			HashedPhone:        hashedPhone,
 		})
@@ -423,13 +455,19 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 }
 
 func mapConversionName(event ConversionEvent) string {
+	if event.EventType == "quote_sent" {
+		return "Quote_Sent"
+	}
+
 	if event.EventType == "status_changed" && event.Status != nil {
 		switch normalizeEventValue(*event.Status) {
-		case "scheduled", "ingepland":
+		case "appointment_scheduled", "scheduled", "ingepland":
 			return "Appointment_Scheduled"
-		case "surveyed":
+		case "survey_completed", "surveyed":
 			return "Visit_Completed"
-		case "closed":
+		case "quote_accepted":
+			return "Deal_Won"
+		case "completed":
 			return "Deal_Won"
 		}
 	}
@@ -448,6 +486,13 @@ func mapConversionName(event ConversionEvent) string {
 	}
 
 	return ""
+}
+
+func buildOrderID(event ConversionEvent, conversionName string) string {
+	if conversionName == "Quote_Sent" {
+		return "service:" + event.LeadServiceID.String()
+	}
+	return event.EventID.String()
 }
 
 func normalizeEventValue(value string) string {

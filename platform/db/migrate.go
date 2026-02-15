@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,8 @@ import (
 )
 
 const advisoryLockKey = int64(1234567890)
+const advisoryLockWait = 30 * time.Second
+const advisoryLockPollInterval = 250 * time.Millisecond
 
 // RunMigrations applies all pending migrations using goose.
 func RunMigrations(ctx context.Context, cfg config.DatabaseConfig, migrationsDir string) (retErr error) {
@@ -63,12 +66,44 @@ func RunMigrations(ctx context.Context, cfg config.DatabaseConfig, migrationsDir
 }
 
 func acquireAdvisoryLock(ctx context.Context, db *sql.DB) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, advisoryLockWait)
 	defer cancel()
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_lock($1)", advisoryLockKey); err != nil {
-		return fmt.Errorf("acquire advisory lock: %w", err)
+
+	ticker := time.NewTicker(advisoryLockPollInterval)
+	defer ticker.Stop()
+	loggedWaiting := false
+
+	for {
+		locked, err := tryAdvisoryLock(ctx, db)
+		if err != nil {
+			return fmt.Errorf("acquire advisory lock: %w", err)
+		}
+		if locked {
+			if loggedWaiting {
+				log.Printf("migrations: acquired advisory lock after waiting")
+			}
+			return nil
+		}
+		if !loggedWaiting {
+			log.Printf("migrations: advisory lock busy, waiting up to %s", advisoryLockWait)
+			loggedWaiting = true
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("acquire advisory lock timed out after %s: %w", advisoryLockWait, ctx.Err())
+		case <-ticker.C:
+		}
 	}
-	return nil
+}
+
+func tryAdvisoryLock(ctx context.Context, db *sql.DB) (bool, error) {
+	var locked bool
+	err := db.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockKey).Scan(&locked)
+	if err != nil {
+		return false, err
+	}
+	return locked, nil
 }
 
 func releaseAdvisoryLock(ctx context.Context, db *sql.DB) {

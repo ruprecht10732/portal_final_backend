@@ -81,11 +81,6 @@ func New(kind Kind, message string) *Error {
 	return &Error{Kind: kind, Message: message}
 }
 
-// Wrap creates a new domain error wrapping an existing error.
-func Wrap(kind Kind, message string, err error) *Error {
-	return &Error{Kind: kind, Message: message, Err: err}
-}
-
 // WithOp returns a copy of the error with the operation set.
 func (e *Error) WithOp(op string) *Error {
 	e.Op = op

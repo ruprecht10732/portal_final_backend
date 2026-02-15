@@ -1,7 +1,6 @@
 package validator
 
 import (
-	"regexp"
 	"unicode"
 
 	"portal_final_backend/platform/validator"
@@ -62,9 +61,3 @@ func validateStrongPassword(fl gpvalidator.FieldLevel) bool {
 
 // PasswordPolicy describes the password requirements for API error messages
 const PasswordPolicy = "Password must be at least 8 characters and include: uppercase letter, lowercase letter, number, and special character"
-
-// IsValidEmail validates email format
-func IsValidEmail(email string) bool {
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	return emailRegex.MatchString(email)
-}

@@ -131,20 +131,21 @@ type SearchProductMaterialsInput struct {
 
 // ProductResult represents a product found in the catalog.
 type ProductResult struct {
-	ID             string   `json:"id,omitempty"` // Catalog product UUID (present for catalog items)
-	Name           string   `json:"name"`
-	Description    string   `json:"description,omitempty"`
-	Type           string   `json:"type"`           // "service", "digital_service", "product", or "material"
-	PriceEuros     float64  `json:"priceEuros"`     // Unit price in euros (e.g., 7.93 = EUR 7.93)
-	PriceCents     int64    `json:"priceCents"`     // Unit price in euro-cents, ready for unitPriceCents (e.g., 793)
-	Unit           string   `json:"unit,omitempty"` // e.g., "per m2", "per stuk", "per m1"
-	LaborTime      string   `json:"laborTime,omitempty"`
-	VatRateBps     int      `json:"vatRateBps,omitempty"` // VAT rate in basis points (e.g. 2100 = 21%)
-	Materials      []string `json:"materials,omitempty"`  // Included materials (human-readable names)
-	Category       string   `json:"category,omitempty"`   // Product category path (e.g., "Douglas hout > balken")
-	SourceURL      string   `json:"sourceUrl,omitempty"`  // Reference URL (fallback/scraped products only)
-	Score          float64  `json:"score"`                // Similarity score
-	HighConfidence bool     `json:"highConfidence"`       // True when score is strong enough to use found price directly
+	ID               string   `json:"id,omitempty"` // Catalog product UUID (present for catalog items)
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	Type             string   `json:"type"`           // "service", "digital_service", "product", or "material"
+	PriceEuros       float64  `json:"priceEuros"`     // Unit price in euros (e.g., 7.93 = EUR 7.93)
+	PriceCents       int64    `json:"priceCents"`     // Unit price in euro-cents, ready for unitPriceCents (e.g., 793)
+	Unit             string   `json:"unit,omitempty"` // e.g., "per m2", "per stuk", "per m1"
+	LaborTime        string   `json:"laborTime,omitempty"`
+	VatRateBps       int      `json:"vatRateBps,omitempty"`       // VAT rate in basis points (e.g. 2100 = 21%)
+	Materials        []string `json:"materials,omitempty"`        // Included materials (human-readable names)
+	Category         string   `json:"category,omitempty"`         // Product category path (e.g., "Douglas hout > balken")
+	SourceURL        string   `json:"sourceUrl,omitempty"`        // Reference URL (fallback/scraped products only)
+	SourceCollection string   `json:"sourceCollection,omitempty"` // Qdrant collection name (fallback diagnostics)
+	Score            float64  `json:"score"`                      // Similarity score
+	HighConfidence   bool     `json:"highConfidence"`             // True when score is strong enough to use found price directly
 }
 
 // SearchProductMaterialsOutput contains the search results.

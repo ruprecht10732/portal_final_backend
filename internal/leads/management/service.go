@@ -173,6 +173,11 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		}
 	}
 
+	consumerEmail := ""
+	if lead.ConsumerEmail != nil {
+		consumerEmail = *lead.ConsumerEmail
+	}
+
 	s.eventBus.Publish(ctx, events.LeadCreated{
 		BaseEvent:       events.NewBaseEvent(),
 		LeadID:          lead.ID,
@@ -183,6 +188,7 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 		Source:          strings.TrimSpace(req.Source),
 		ConsumerName:    strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
 		ConsumerPhone:   lead.ConsumerPhone,
+		ConsumerEmail:   consumerEmail,
 		WhatsAppOptedIn: lead.WhatsAppOptedIn,
 		PublicToken:     publicToken,
 	})

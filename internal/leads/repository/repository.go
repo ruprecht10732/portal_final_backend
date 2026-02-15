@@ -373,6 +373,23 @@ func (r *Repository) GetLatestQuoteTotal(ctx context.Context, serviceID, organiz
 	return total, nil
 }
 
+func (r *Repository) HasNonDraftQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM RAC_quotes
+			WHERE lead_service_id = $1
+			  AND organization_id = $2
+			  AND status <> 'Draft'
+		)
+	`, serviceID, organizationID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 type UpdateLeadParams struct {
 	ConsumerFirstName  *string
 	ConsumerLastName   *string
@@ -742,7 +759,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		LEFT JOIN LATERAL (
 			SELECT ls.id, ls.status, ls.service_type_id
 			FROM RAC_lead_services ls
-			WHERE ls.lead_id = l.id AND ls.status NOT IN ('Closed', 'Bad_Lead', 'Surveyed')
+			WHERE ls.lead_id = l.id AND ls.status NOT IN ('Completed', 'Lost', 'Disqualified')
 			ORDER BY ls.created_at DESC
 			LIMIT 1
 		) cs ON true

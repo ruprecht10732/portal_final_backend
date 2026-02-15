@@ -383,6 +383,7 @@ func (s *Service) publishOfferCreated(ctx context.Context, params offerCreatedPa
 		PublicToken:      params.rawToken,
 		PartnerName:      params.partner.BusinessName,
 		PartnerPhone:     params.partner.ContactPhone,
+		PartnerEmail:     params.partner.ContactEmail,
 	})
 }
 

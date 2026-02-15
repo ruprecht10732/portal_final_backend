@@ -164,6 +164,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 			evt.ConsumerName = formatConsumerName(leadInfo.FirstName, leadInfo.LastName)
 			evt.ConsumerPhone = leadInfo.Phone
 		}
+		if appt.LeadID != nil {
+			evt.ConsumerEmail = s.getLeadEmail(ctx, *appt.LeadID, tenantID)
+		}
 		s.eventBus.Publish(ctx, evt)
 	}
 

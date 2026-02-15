@@ -29,7 +29,7 @@ func (r *Repository) GetMetrics(ctx context.Context, organizationID uuid.UUID) (
 				FROM RAC_leads l
 				LEFT JOIN RAC_lead_services ls ON ls.lead_id = l.id
 				WHERE l.organization_id = $1 AND l.deleted_at IS NULL
-					AND ls.status = 'Bad_Lead'
+					AND ls.status = 'Disqualified'
 			) AS disqualified_leads,
 			(
 				SELECT COALESCE(SUM(projected_value_cents), 0)

@@ -9,8 +9,6 @@ import (
 var (
 	// htmlTagRegex matches HTML tags
 	htmlTagRegex = regexp.MustCompile(`<[^>]*>`)
-	// scriptRegex matches script-like patterns that might bypass simple tag stripping
-	scriptRegex = regexp.MustCompile(`(?i)(javascript|on\w+\s*=|<script|<\/script)`)
 )
 
 // StripHTML removes all HTML tags from a string, making it safe for text-only display.
@@ -29,15 +27,6 @@ func StripHTML(s string) string {
 	return strings.TrimSpace(result)
 }
 
-// StripHTMLPtr is a helper for optional string pointers
-func StripHTMLPtr(s *string) *string {
-	if s == nil {
-		return nil
-	}
-	result := StripHTML(*s)
-	return &result
-}
-
 // Text sanitizes a string for safe text storage by stripping HTML
 // and normalizing whitespace. Use for user-provided text fields like
 // descriptions, notes, and comments.
@@ -52,10 +41,4 @@ func TextPtr(s *string) *string {
 	}
 	result := Text(*s)
 	return &result
-}
-
-// ContainsDangerousPatterns checks if a string contains potentially dangerous patterns.
-// Returns true if the string might contain XSS attempts.
-func ContainsDangerousPatterns(s string) bool {
-	return scriptRegex.MatchString(s)
 }

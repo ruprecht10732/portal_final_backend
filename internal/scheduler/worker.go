@@ -145,6 +145,11 @@ func (w *Worker) handleAppointmentReminder(ctx context.Context, task *asynq.Task
 		return nil
 	}
 
+	consumerEmail, err := w.repo.GetLeadEmail(ctx, *appt.LeadID, orgID)
+	if err != nil {
+		consumerEmail = ""
+	}
+
 	consumerName := strings.TrimSpace(fmt.Sprintf("%s %s", leadInfo.FirstName, leadInfo.LastName))
 	if consumerName == "" {
 		consumerName = "klant"
@@ -167,6 +172,7 @@ func (w *Worker) handleAppointmentReminder(ctx context.Context, task *asynq.Task
 		EndTime:        appt.EndTime,
 		ConsumerName:   consumerName,
 		ConsumerPhone:  leadInfo.Phone,
+		ConsumerEmail:  consumerEmail,
 		Location:       getOptionalString(appt.Location),
 	})
 

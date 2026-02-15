@@ -36,6 +36,10 @@ const (
 )
 
 const highConfidenceScoreThreshold = 0.45
+const (
+	defaultHouthandelCollection = "houthandel_products"
+	defaultBouwmaatCollection   = "bouwmaat_products"
+)
 
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
 func normalizeUrgencyLevel(level string) (string, error) {
@@ -135,6 +139,7 @@ type ToolDependencies struct {
 	EventBus             events.Bus
 	EmbeddingClient      *embeddings.Client
 	QdrantClient         *qdrant.Client
+	BouwmaatQdrantClient *qdrant.Client
 	CatalogQdrantClient  *qdrant.Client
 	CatalogReader        ports.CatalogReader // optional: hydrate search results from DB
 	QuoteDrafter         ports.QuoteDrafter  // optional: draft quotes from agent
@@ -342,7 +347,7 @@ func (d *ToolDependencies) GetLastDraftResult() *ports.DraftQuoteResult {
 
 // IsProductSearchEnabled returns true if both embedding and Qdrant clients are configured.
 func (d *ToolDependencies) IsProductSearchEnabled() bool {
-	return d.EmbeddingClient != nil && (d.CatalogQdrantClient != nil || d.QdrantClient != nil)
+	return d.EmbeddingClient != nil && (d.CatalogQdrantClient != nil || d.QdrantClient != nil || d.BouwmaatQdrantClient != nil)
 }
 
 func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
@@ -871,21 +876,8 @@ func createUpdateLeadDetailsTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
-var validPipelineStages = map[string]bool{
-	"Triage":              true,
-	"Nurturing":           true,
-	"Ready_For_Estimator": true,
-	"Quote_Sent":          true,
-	"Ready_For_Partner":   true,
-	"Partner_Matching":    true,
-	"Partner_Assigned":    true,
-	"Manual_Intervention": true,
-	"Completed":           true,
-	"Lost":                true,
-}
-
 func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-	if !validPipelineStages[input.Stage] {
+	if !domain.IsKnownPipelineStage(input.Stage) {
 		return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
 	}
 
@@ -914,6 +906,16 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
 		log.Printf("handleUpdatePipelineStage: REJECTED - service %s is in terminal state (status=%s, stage=%s)", serviceID, svc.Status, svc.PipelineStage)
 		return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
+	}
+
+	if input.Stage == domain.PipelineStageQuoteSent {
+		hasNonDraftQuote, checkErr := deps.Repo.HasNonDraftQuote(ctx, serviceID, tenantID)
+		if checkErr != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, checkErr
+		}
+		if !hasNonDraftQuote {
+			return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Quote_Sent while quote is still draft"}, fmt.Errorf("quote state guard blocked Quote_Sent for service %s", serviceID)
+		}
 	}
 
 	// Validate state combination
@@ -1348,7 +1350,16 @@ func resolveSearchParams(input SearchProductMaterialsInput) (query string, limit
 // searchCatalogCollection searches the catalog Qdrant collection and hydrates results.
 // Returns nil products (not an error) when nothing relevant is found or the search fails.
 func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []float32, limit int, scoreThreshold float64, query string) []ProductResult {
-	results, err := deps.CatalogQdrantClient.SearchWithThreshold(ctx, vector, limit, scoreThreshold)
+	tenantID, tenantOk := deps.GetTenantID()
+	var filter *qdrant.Filter
+	if tenantOk && tenantID != nil {
+		filter = qdrant.NewOrganizationFilter(tenantID.String())
+		log.Printf("SearchProductMaterials: catalog search with tenant filter organization_id=%s", tenantID.String())
+	} else {
+		log.Printf("SearchProductMaterials: catalog search without tenant filter (missing tenant context)")
+	}
+
+	results, err := deps.CatalogQdrantClient.SearchWithFilter(ctx, vector, limit, scoreThreshold, filter)
 	if err != nil {
 		log.Printf("SearchProductMaterials: catalog search failed: %v", err)
 		return nil
@@ -1387,35 +1398,116 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return output, nil
 	}
 
-	// Fallback to general collection.
-	if deps.QdrantClient == nil {
+	return searchFallbackReferenceCollections(ctx, deps, query, vector, limit, scoreThreshold)
+}
+
+func searchFallbackReferenceCollections(ctx tool.Context, deps *ToolDependencies, query string, vector []float32, limit int, scoreThreshold float64) (SearchProductMaterialsOutput, error) {
+
+	// Fallback to reference collections.
+	if deps.QdrantClient == nil && deps.BouwmaatQdrantClient == nil {
 		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
 	}
 
-	results, err := deps.QdrantClient.SearchWithThreshold(ctx, vector, limit, scoreThreshold)
+	batchClient := resolveFallbackBatchClient(deps)
+	batchRequests, requestCollections := buildFallbackBatchRequests(deps, vector, limit, scoreThreshold)
+
+	batchResults, err := batchClient.BatchSearch(ctx, batchRequests)
 	if err != nil {
-		log.Printf("SearchProductMaterials: fallback search failed: %v", err)
+		log.Printf("SearchProductMaterials: fallback batch search failed: %v", err)
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to search product catalog"}, err
 	}
 
-	products := convertSearchResults(results)
+	products := flattenFallbackBatchResults(query, batchResults, requestCollections, limit)
+	return buildFallbackSearchOutput(query, products, requestCollections, scoreThreshold), nil
+}
+
+func resolveFallbackBatchClient(deps *ToolDependencies) *qdrant.Client {
+	if deps.QdrantClient != nil {
+		return deps.QdrantClient
+	}
+	return deps.BouwmaatQdrantClient
+}
+
+func buildFallbackBatchRequests(deps *ToolDependencies, vector []float32, limit int, scoreThreshold float64) ([]qdrant.SearchRequest, []string) {
+	batchRequests := make([]qdrant.SearchRequest, 0, 2)
+	requestCollections := make([]string, 0, 2)
+
+	if deps.QdrantClient != nil {
+		houthandelCollection := deps.QdrantClient.CollectionName()
+		if houthandelCollection == "" {
+			houthandelCollection = defaultHouthandelCollection
+		}
+		batchRequests = append(batchRequests, newFallbackBatchRequest(houthandelCollection, vector, limit, scoreThreshold))
+		requestCollections = append(requestCollections, houthandelCollection)
+	}
+
+	if deps.BouwmaatQdrantClient != nil {
+		bouwmaatCollection := deps.BouwmaatQdrantClient.CollectionName()
+		if bouwmaatCollection == "" {
+			bouwmaatCollection = defaultBouwmaatCollection
+		}
+		batchRequests = append(batchRequests, newFallbackBatchRequest(bouwmaatCollection, vector, limit, scoreThreshold))
+		requestCollections = append(requestCollections, bouwmaatCollection)
+	}
+
+	return batchRequests, requestCollections
+}
+
+func newFallbackBatchRequest(collectionName string, vector []float32, limit int, scoreThreshold float64) qdrant.SearchRequest {
+	return qdrant.SearchRequest{
+		CollectionName: collectionName,
+		Vector:         vector,
+		Limit:          limit,
+		WithPayload:    true,
+		ScoreThreshold: &scoreThreshold,
+	}
+}
+
+func flattenFallbackBatchResults(query string, batchResults [][]qdrant.SearchResult, requestCollections []string, limit int) []ProductResult {
+	products := make([]ProductResult, 0, limit*len(batchResults))
+	for idx, results := range batchResults {
+		collectionName := "unknown"
+		if idx < len(requestCollections) {
+			collectionName = requestCollections[idx]
+		}
+		collectionProducts := convertSearchResults(results)
+		for i := range collectionProducts {
+			collectionProducts[i].SourceCollection = collectionName
+		}
+		products = append(products, collectionProducts...)
+		log.Printf("SearchProductMaterials: fallback batch query=%q collection=%s results=%d", query, collectionName, len(collectionProducts))
+	}
+
+	sort.SliceStable(products, func(i, j int) bool {
+		if products[i].Score == products[j].Score {
+			return products[i].PriceEuros < products[j].PriceEuros
+		}
+		return products[i].Score > products[j].Score
+	})
+
+	return products
+}
+
+func buildFallbackSearchOutput(query string, products []ProductResult, requestCollections []string, scoreThreshold float64) SearchProductMaterialsOutput {
 	markHighConfidence(products)
 	if len(products) == 0 {
-		log.Printf("SearchProductMaterials: fallback query=%q found 0 products above threshold %.2f", query, scoreThreshold)
-		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}, nil
+		log.Printf("SearchProductMaterials: fallback batch query=%q found 0 products above threshold %.2f", query, scoreThreshold)
+		return SearchProductMaterialsOutput{Products: nil, Message: noMatchMessage(query)}
 	}
 
 	// Fallback results are scraped reference data — strip IDs so the AI
 	// treats them as ad-hoc line items (no catalogProductId, no auto-attachments).
 	stripProductIDs(products)
 
-	log.Printf("SearchProductMaterials: fallback query=%q found %d reference products (threshold=%.2f, scores: %s)",
-		query, len(products), scoreThreshold, formatScores(products))
+	log.Printf("SearchProductMaterials: fallback batch query=%q found %d reference products across %d collections (threshold=%.2f, scores: %s)",
+		query, len(products), len(requestCollections), scoreThreshold, formatScores(products))
+
+	log.Printf("SearchProductMaterials: fallback collections=%s", strings.Join(requestCollections, ","))
 
 	return SearchProductMaterialsOutput{
 		Products: products,
 		Message:  fmt.Sprintf("Found %d reference products (not from your catalog — use as ad-hoc line items without catalogProductId, min relevance %.0f%%)", len(products), scoreThreshold*100),
-	}, nil
+	}
 }
 
 func tryCatalogSearchFlow(ctx tool.Context, deps *ToolDependencies, query string, limit int, scoreThreshold float64, useCatalog bool, initialVector []float32) (SearchProductMaterialsOutput, bool) {

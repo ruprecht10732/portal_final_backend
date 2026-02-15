@@ -19,6 +19,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
@@ -345,12 +346,12 @@ Task:
 	- Only reschedule if Existing Appointment is not "None"; otherwise schedule a new appointment and write "Nieuwe afspraak ingepland"
 5. If the appointment is cancelled:
    - Use 'CancelVisit'
-6. Set a call outcome using 'SetCallOutcome' (short label, e.g., Scheduled, Attempted_Contact, Bad_Lead, Needs_Rescheduling).
+6. Set a call outcome using 'SetCallOutcome' (short label, e.g., Appointment_Scheduled, Attempted_Contact, Disqualified, Needs_Rescheduling).
 7. Update the status using 'UpdateStatus' if the outcome implies a status change:
-   - "booked", "scheduled", "appointment set" → Scheduled
-   - "not interested", "no need", "declined" → Bad_Lead
+	- "booked", "scheduled", "appointment set" → Appointment_Scheduled
+	- "not interested", "no need", "declined" → Disqualified
    - "voicemail", "no answer", "callback" → Attempted_Contact
-   - "completed survey", "finished inspection" → Surveyed
+	- "completed survey", "finished inspection" → Survey_Completed
    - "needs to reschedule", "postponed" → Needs_Rescheduling
 8. Update the pipeline stage with 'UpdatePipelineStage' if the summary explicitly indicates a stage change.
 
@@ -462,15 +463,15 @@ IMPORTANT RULES:
    - "this Friday" = the Friday of the current week
    - "on the 15th" = the 15th of the current or next month
 4. Default appointment duration is 1 hour unless explicitly stated.
-5. Set a call outcome using SetCallOutcome (short label like Scheduled, Attempted_Contact, Bad_Lead, Needs_Rescheduling).
+5. Set a call outcome using SetCallOutcome (short label like Appointment_Scheduled, Attempted_Contact, Disqualified, Needs_Rescheduling).
 6. If the context says Existing Appointment is None, do NOT say "verplaatst". Schedule a new appointment and write "Nieuwe afspraak ingepland" in the note.
 7. Status mapping:
-   - Appointment scheduled/booked → "Scheduled"
+	- Appointment scheduled/booked → "Appointment_Scheduled"
    - No answer/voicemail/try again → "Attempted_Contact"  
-   - Not interested/declined/bad fit → "Bad_Lead"
-   - Survey/inspection completed → "Surveyed"
+	- Not interested/declined/bad fit → "Disqualified"
+	- Survey/inspection completed → "Survey_Completed"
    - Needs to reschedule/postponed → "Needs_Rescheduling"
-8. When booking RAC_appointments, also update status to "Scheduled".
+8. When booking RAC_appointments, also update status to "Appointment_Scheduled".
 9. Use 24-hour time format (e.g., 09:00, 14:30).
 10. Only act on explicitly stated information.
 11. Email confirmation behavior for RAC_appointments:
@@ -522,7 +523,7 @@ type SetCallOutcomeOutput struct {
 }
 
 type UpdateStatusInput struct {
-	Status string `json:"status"` // New status: New, Attempted_Contact, Scheduled, Surveyed, Bad_Lead, Needs_Rescheduling, Closed
+	Status string `json:"status"` // New status: New, Attempted_Contact, Appointment_Scheduled, Survey_Completed, Quote_Draft, Quote_Sent, Quote_Accepted, Partner_Assigned, Needs_Rescheduling, Completed, Lost, Disqualified
 }
 
 type UpdateStatusOutput struct {
@@ -728,19 +729,24 @@ func buildSetCallOutcomeTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 
 // validLeadStatuses defines the allowed status values for RAC_leads
 var validLeadStatuses = map[string]bool{
-	"New":                true,
-	"Attempted_Contact":  true,
-	"Scheduled":          true,
-	"Surveyed":           true,
-	"Bad_Lead":           true,
-	"Needs_Rescheduling": true,
-	"Closed":             true,
+	"New":                   true,
+	"Attempted_Contact":     true,
+	"Appointment_Scheduled": true,
+	"Survey_Completed":      true,
+	"Quote_Draft":           true,
+	"Quote_Sent":            true,
+	"Quote_Accepted":        true,
+	"Partner_Assigned":      true,
+	"Needs_Rescheduling":    true,
+	"Completed":             true,
+	"Lost":                  true,
+	"Disqualified":          true,
 }
 
 func buildUpdateStatusTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdateStatus",
-		Description: "Updates the status of the lead service. Valid statuses: New, Attempted_Contact, Scheduled, Surveyed, Bad_Lead, Needs_Rescheduling, Closed",
+		Description: "Updates the status of the lead service. Valid statuses: New, Attempted_Contact, Appointment_Scheduled, Survey_Completed, Quote_Draft, Quote_Sent, Quote_Accepted, Partner_Assigned, Needs_Rescheduling, Completed, Lost, Disqualified",
 	}, func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
 		tenantID, _, _, serviceID, ok := deps.GetContext()
 		if !ok {
@@ -838,63 +844,130 @@ func executeScheduleVisit(deps *CallLoggerToolDeps, input ScheduleVisitInput) (S
 	return ScheduleVisitOutput{Success: true, Message: "Appointment booked"}, nil
 }
 
+func validateCallLoggerPipelineStage(stage string) error {
+	if !domain.IsKnownPipelineStage(stage) {
+		return fmt.Errorf("invalid pipeline stage: %s", stage)
+	}
+	return nil
+}
+
+func resolveCallLoggerStageContext(deps *CallLoggerToolDeps, ctx tool.Context) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, error) {
+	tenantID, userID, leadID, serviceID, ok := deps.GetContext()
+	if !ok {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", errMissingContext
+	}
+
+	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", err
+	}
+
+	return tenantID, userID, leadID, serviceID, svc.PipelineStage, nil
+}
+
+func guardCallLoggerQuoteSentTransition(deps *CallLoggerToolDeps, ctx tool.Context, tenantID, serviceID uuid.UUID, newStage string) error {
+	if newStage != domain.PipelineStageQuoteSent {
+		return nil
+	}
+
+	hasNonDraftQuote, err := deps.Repo.HasNonDraftQuote(ctx, serviceID, tenantID)
+	if err != nil {
+		return err
+	}
+	if !hasNonDraftQuote {
+		return fmt.Errorf("quote state guard blocked Quote_Sent for service %s", serviceID)
+	}
+	return nil
+}
+
+type callLoggerStageTimelineEventInput struct {
+	TenantID  uuid.UUID
+	UserID    uuid.UUID
+	LeadID    uuid.UUID
+	ServiceID uuid.UUID
+	OldStage  string
+	NewStage  string
+	Reason    string
+}
+
+func createCallLoggerStageTimelineEvent(deps *CallLoggerToolDeps, ctx tool.Context, input callLoggerStageTimelineEventInput) {
+	trimmedReason := strings.TrimSpace(input.Reason)
+	var summary *string
+	if trimmedReason != "" {
+		summary = &trimmedReason
+	}
+
+	actorName := input.UserID.String()
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         input.LeadID,
+		ServiceID:      &input.ServiceID,
+		OrganizationID: input.TenantID,
+		ActorType:      "User",
+		ActorName:      actorName,
+		EventType:      "stage_change",
+		Title:          "Fase bijgewerkt",
+		Summary:        summary,
+		Metadata: map[string]any{
+			"oldStage": input.OldStage,
+			"newStage": input.NewStage,
+		},
+	})
+}
+
+func publishCallLoggerStageChanged(deps *CallLoggerToolDeps, ctx tool.Context, tenantID, leadID, serviceID uuid.UUID, oldStage, newStage string) {
+	if deps.EventBus == nil {
+		return
+	}
+
+	deps.EventBus.Publish(ctx, events.PipelineStageChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		TenantID:      tenantID,
+		OldStage:      oldStage,
+		NewStage:      newStage,
+	})
+}
+
 func buildCallLoggerUpdatePipelineStageTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdatePipelineStage",
 		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
 	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		if !validPipelineStages[input.Stage] {
-			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
+		if err := validateCallLoggerPipelineStage(input.Stage); err != nil {
+			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, err
 		}
 
-		tenantID, userID, leadID, serviceID, ok := deps.GetContext()
-		if !ok {
-			return UpdatePipelineStageOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
-		}
-
-		svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+		tenantID, userID, leadID, serviceID, oldStage, err := resolveCallLoggerStageContext(deps, ctx)
 		if err != nil {
+			if errors.Is(err, errMissingContext) {
+				return UpdatePipelineStageOutput{Success: false, Message: errMsgMissingContext}, err
+			}
 			return UpdatePipelineStageOutput{Success: false, Message: "Lead service not found"}, err
 		}
-		oldStage := svc.PipelineStage
+
+		if err := guardCallLoggerQuoteSentTransition(deps, ctx, tenantID, serviceID, input.Stage); err != nil {
+			if strings.Contains(err.Error(), "quote state guard blocked") {
+				return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Quote_Sent while quote is still draft"}, err
+			}
+			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, err
+		}
 
 		_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
 		if err != nil {
 			return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
 		}
 
-		reason := strings.TrimSpace(input.Reason)
-		var summary *string
-		if reason != "" {
-			summary = &reason
-		}
-
-		actorName := userID.String()
-		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-			LeadID:         leadID,
-			ServiceID:      &serviceID,
-			OrganizationID: tenantID,
-			ActorType:      "User",
-			ActorName:      actorName,
-			EventType:      "stage_change",
-			Title:          "Fase bijgewerkt",
-			Summary:        summary,
-			Metadata: map[string]any{
-				"oldStage": oldStage,
-				"newStage": input.Stage,
-			},
+		createCallLoggerStageTimelineEvent(deps, ctx, callLoggerStageTimelineEventInput{
+			TenantID:  tenantID,
+			UserID:    userID,
+			LeadID:    leadID,
+			ServiceID: serviceID,
+			OldStage:  oldStage,
+			NewStage:  input.Stage,
+			Reason:    input.Reason,
 		})
-
-		if deps.EventBus != nil {
-			deps.EventBus.Publish(ctx, events.PipelineStageChanged{
-				BaseEvent:     events.NewBaseEvent(),
-				LeadID:        leadID,
-				LeadServiceID: serviceID,
-				TenantID:      tenantID,
-				OldStage:      oldStage,
-				NewStage:      input.Stage,
-			})
-		}
+		publishCallLoggerStageChanged(deps, ctx, tenantID, leadID, serviceID, oldStage, input.Stage)
 
 		deps.MarkPipelineStageUpdated(input.Stage)
 		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
