@@ -73,6 +73,7 @@ func NewService(repo *Repository, leadCreator LeadCreator, storageSvc storage.St
 func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission, orgID uuid.UUID) (FormSubmissionResponse, error) {
 	extracted := ExtractFields(sub.Fields)
 	isIncomplete := extracted.IsIncomplete()
+	requestedServiceType := strings.TrimSpace(extracted.ServiceType)
 
 	createReq := buildCreateLeadRequest(extracted, sub.SourceDomain)
 	applyLeadPlaceholders(&createReq)
@@ -96,6 +97,8 @@ func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission,
 		s.uploadFiles(ctx, leadResp.ID, serviceID, orgID, sub.Files)
 	}
 
+	s.recordServiceTypeFallbackEvent(ctx, leadResp, orgID, requestedServiceType, string(createReq.ServiceType), sub.SourceDomain)
+
 	// 6. Publish event
 	s.eventBus.Publish(ctx, events.WebhookLeadCreated{
 		BaseEvent:    events.NewBaseEvent(),
@@ -114,6 +117,47 @@ func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission,
 		Extracted:    extractedMap,
 		Message:      msg,
 	}, nil
+}
+
+func (s *Service) recordServiceTypeFallbackEvent(ctx context.Context, leadResp transport.LeadResponse, orgID uuid.UUID, requestedServiceType string, normalizedRequestedType string, sourceDomain string) {
+	appliedServiceType, serviceID := resolveAppliedServiceType(leadResp)
+	if requestedServiceType != "" && strings.EqualFold(appliedServiceType, normalizedRequestedType) {
+		return
+	}
+
+	summary := "Intake had geen of onbekend diensttype; standaard diensttype toegepast"
+	err := s.repo.CreateTimelineEvent(ctx, createTimelineEventParams{
+		LeadID:         leadResp.ID,
+		ServiceID:      serviceID,
+		OrganizationID: orgID,
+		ActorType:      "AI",
+		ActorName:      "Webhook",
+		EventType:      "service_type_change",
+		Title:          "Diensttype automatisch gekozen",
+		Summary:        &summary,
+		Metadata: map[string]any{
+			"requestedServiceType":  requestedServiceType,
+			"normalizedServiceType": normalizedRequestedType,
+			"appliedServiceType":    appliedServiceType,
+			"source":                sourceDomain,
+			"autoFallback":          true,
+		},
+	})
+	if err != nil {
+		s.log.Error("webhook: failed to record service type fallback timeline event", "error", err, "leadId", leadResp.ID)
+	}
+}
+
+func resolveAppliedServiceType(leadResp transport.LeadResponse) (string, *uuid.UUID) {
+	if leadResp.CurrentService != nil {
+		id := leadResp.CurrentService.ID
+		return string(leadResp.CurrentService.ServiceType), &id
+	}
+	if len(leadResp.Services) > 0 {
+		id := leadResp.Services[0].ID
+		return string(leadResp.Services[0].ServiceType), &id
+	}
+	return "", nil
 }
 
 // GoogleLeadResult describes the result of processing a Google Lead Form webhook.

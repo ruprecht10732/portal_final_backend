@@ -37,9 +37,44 @@ type Repository struct {
 	pool *pgxpool.Pool
 }
 
+type createTimelineEventParams struct {
+	LeadID         uuid.UUID
+	ServiceID      *uuid.UUID
+	OrganizationID uuid.UUID
+	ActorType      string
+	ActorName      string
+	EventType      string
+	Title          string
+	Summary        *string
+	Metadata       map[string]any
+}
+
 // NewRepository creates a new webhook repository.
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
+}
+
+func (r *Repository) CreateTimelineEvent(ctx context.Context, params createTimelineEventParams) error {
+	metadataJSON, err := json.Marshal(params.Metadata)
+	if err != nil {
+		return err
+	}
+
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO lead_timeline_events (
+			lead_id,
+			service_id,
+			organization_id,
+			actor_type,
+			actor_name,
+			event_type,
+			title,
+			summary,
+			metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, params.LeadID, params.ServiceID, params.OrganizationID, params.ActorType, params.ActorName, params.EventType, params.Title, params.Summary, metadataJSON)
+	return err
 }
 
 // GenerateAPIKey creates a new random API key and returns the plaintext key and its hash.
