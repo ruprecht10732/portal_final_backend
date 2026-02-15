@@ -6,7 +6,7 @@ import (
 	"portal_final_backend/internal/identity/repository"
 )
 
-func TestNormalizeWorkflowUpsertsAddsTemplateBodyForSendMessage(t *testing.T) {
+func TestNormalizeWorkflowUpsertsDoesNotInjectTemplateBodyForSendMessage(t *testing.T) {
 	workflows := []repository.WorkflowUpsert{
 		{
 			WorkflowKey: "default",
@@ -30,8 +30,8 @@ func TestNormalizeWorkflowUpsertsAddsTemplateBodyForSendMessage(t *testing.T) {
 	if len(normalized) != 1 || len(normalized[0].Steps) != 1 {
 		t.Fatalf("expected normalized workflow/step to exist")
 	}
-	if normalized[0].Steps[0].TemplateBody == nil || *normalized[0].Steps[0].TemplateBody == "" {
-		t.Fatal("expected template body to be set for send_message step")
+	if normalized[0].Steps[0].TemplateBody != nil {
+		t.Fatal("expected template body to remain unset when not provided")
 	}
 }
 

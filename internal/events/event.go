@@ -72,6 +72,7 @@ type LeadCreated struct {
 	Source          string     `json:"source,omitempty"`
 	ConsumerName    string     `json:"consumerName"`
 	ConsumerPhone   string     `json:"consumerPhone"`
+	ConsumerEmail   string     `json:"consumerEmail"`
 	WhatsAppOptedIn bool       `json:"whatsappOptedIn"`
 	PublicToken     string     `json:"publicToken"`
 }
@@ -318,6 +319,7 @@ type PartnerOfferCreated struct {
 	PublicToken      string    `json:"publicToken"`
 	PartnerName      string    `json:"partnerName"`
 	PartnerPhone     string    `json:"partnerPhone"`
+	PartnerEmail     string    `json:"partnerEmail"`
 }
 
 func (e PartnerOfferCreated) EventName() string { return "partners.offer.created" }
@@ -383,6 +385,7 @@ type AppointmentCreated struct {
 	EndTime        time.Time  `json:"endTime"`
 	ConsumerName   string     `json:"consumerName,omitempty"`
 	ConsumerPhone  string     `json:"consumerPhone,omitempty"`
+	ConsumerEmail  string     `json:"consumerEmail,omitempty"`
 	Location       string     `json:"location,omitempty"`
 }
 
@@ -402,6 +405,7 @@ type AppointmentReminderDue struct {
 	EndTime        time.Time  `json:"endTime"`
 	ConsumerName   string     `json:"consumerName,omitempty"`
 	ConsumerPhone  string     `json:"consumerPhone,omitempty"`
+	ConsumerEmail  string     `json:"consumerEmail,omitempty"`
 	Location       string     `json:"location,omitempty"`
 }
 

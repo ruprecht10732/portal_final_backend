@@ -149,58 +149,9 @@ func (s *Service) ReplaceWorkflows(ctx context.Context, organizationID uuid.UUID
 func normalizeWorkflowUpserts(workflows []repository.WorkflowUpsert) []repository.WorkflowUpsert {
 	normalized := make([]repository.WorkflowUpsert, 0, len(workflows))
 	for _, workflow := range workflows {
-		workflowCopy := workflow
-		workflowCopy.Steps = make([]repository.WorkflowStepUpsert, 0, len(workflow.Steps))
-		for _, step := range workflow.Steps {
-			stepCopy := step
-			if strings.EqualFold(strings.TrimSpace(stepCopy.Action), "send_message") {
-				body := strings.TrimSpace(derefString(stepCopy.TemplateBody))
-				if body == "" {
-					defaultBody := defaultStepTemplateBody(stepCopy)
-					stepCopy.TemplateBody = &defaultBody
-				}
-			}
-			workflowCopy.Steps = append(workflowCopy.Steps, stepCopy)
-		}
-		normalized = append(normalized, workflowCopy)
+		normalized = append(normalized, workflow)
 	}
 	return normalized
-}
-
-func defaultStepTemplateBody(step repository.WorkflowStepUpsert) string {
-	trigger := strings.ToLower(strings.TrimSpace(step.Trigger))
-	channel := strings.ToLower(strings.TrimSpace(step.Channel))
-	audience := strings.ToLower(strings.TrimSpace(step.Audience))
-
-	switch {
-	case trigger == "lead_welcome" && channel == "whatsapp" && audience == "lead":
-		return "Bedankt voor je aanvraag. Volg de status via {{links.track}}"
-	case trigger == "quote_sent" && channel == "whatsapp" && audience == "lead":
-		return "Uw offerte {{quote.number}} staat klaar: {{quote.previewUrl}}"
-	case trigger == "quote_accepted" && channel == "whatsapp" && audience == "lead":
-		return "Uw offerte {{quote.number}} is geaccepteerd. Bedankt!"
-	case trigger == "quote_rejected" && channel == "whatsapp" && audience == "lead":
-		return "Wij hebben uw afwijzing ontvangen. Heeft u vragen?"
-	case trigger == "appointment_created" && channel == "whatsapp" && audience == "lead":
-		return "Uw afspraak is bevestigd op {{appointment.date}} om {{appointment.time}}."
-	case trigger == "appointment_reminder" && channel == "whatsapp" && audience == "lead":
-		return "Herinnering: uw afspraak is op {{appointment.date}} om {{appointment.time}}."
-	case trigger == "partner_offer_created" && channel == "whatsapp" && audience == "partner":
-		return "Nieuw werkaanbod beschikbaar: {{offer.id}}"
-	case channel == "email" && audience == "lead":
-		return "Beste {{lead.name}}, dit is een update over uw aanvraag."
-	case channel == "email" && (audience == "partner" || audience == "agent"):
-		return "Beste {{partner.name}}, er is een nieuwe update beschikbaar."
-	default:
-		return "Workflow bericht"
-	}
-}
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
 
 func (s *Service) ListWorkflowAssignmentRules(ctx context.Context, organizationID uuid.UUID) ([]repository.WorkflowAssignmentRule, error) {

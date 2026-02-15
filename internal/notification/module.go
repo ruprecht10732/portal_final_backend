@@ -342,9 +342,10 @@ type emailSendOutboxPayload struct {
 }
 
 type workflowRule struct {
-	Enabled      bool
-	DelayMinutes int
-	TemplateText *string
+	Enabled         bool
+	DelayMinutes    int
+	TemplateSubject *string
+	TemplateText    *string
 }
 
 type workflowStepExecutionContext struct {
@@ -423,9 +424,10 @@ func (m *Module) resolveWorkflowRule(
 			"delayMinutes", step.DelayMinutes,
 		)
 		return &workflowRule{
-			Enabled:      step.Enabled,
-			DelayMinutes: step.DelayMinutes,
-			TemplateText: step.TemplateBody,
+			Enabled:         step.Enabled,
+			DelayMinutes:    step.DelayMinutes,
+			TemplateSubject: step.TemplateSubject,
+			TemplateText:    step.TemplateBody,
 		}
 	}
 
@@ -666,6 +668,32 @@ func renderStepTemplate(raw *string, vars map[string]any) (string, error) {
 	return strings.TrimSpace(rendered), nil
 }
 
+func renderWorkflowTemplateText(rule *workflowRule, vars map[string]any) string {
+	if rule == nil || rule.TemplateText == nil {
+		return ""
+	}
+
+	rendered, err := renderStepTemplate(rule.TemplateText, vars)
+	if err != nil {
+		return ""
+	}
+
+	return rendered
+}
+
+func renderWorkflowTemplateSubject(rule *workflowRule, vars map[string]any) string {
+	if rule == nil || rule.TemplateSubject == nil {
+		return ""
+	}
+
+	rendered, err := renderStepTemplate(rule.TemplateSubject, vars)
+	if err != nil {
+		return ""
+	}
+
+	return rendered
+}
+
 func resolveWorkflowStepPhoneRecipients(config map[string]any, execCtx workflowStepExecutionContext) []string {
 	recipients := make([]string, 0)
 	if getBoolFromConfig(config, "includeLeadContact") && strings.TrimSpace(execCtx.LeadPhone) != "" {
@@ -875,6 +903,62 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 		}
 	}
 
+	templateVars := map[string]any{
+		"partner": map[string]any{
+			"name":  e.PartnerName,
+			"phone": e.PartnerPhone,
+			"email": e.PartnerEmail,
+		},
+		"offer": map[string]any{
+			"id": e.OfferID.String(),
+		},
+		"links": map[string]any{
+			"accept": acceptURL,
+		},
+	}
+
+	emailRule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "partner_offer_created", "email", "partner", nil)
+	_ = m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+		Rule:         emailRule,
+		OrgID:        e.OrganizationID,
+		LeadID:       &e.LeadID,
+		ServiceID:    &e.LeadServiceID,
+		PartnerEmail: e.PartnerEmail,
+		Trigger:      "partner_offer_created",
+		TemplateVars: templateVars,
+		Summary:      fmt.Sprintf("Email werkaanbod verstuurd naar %s", e.PartnerName),
+		FallbackNote: "failed to enqueue partner_offer_created partner email workflow",
+	})
+
+	whatsAppRule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "partner_offer_created", "whatsapp", "partner", nil)
+	if whatsAppRule != nil && whatsAppRule.Enabled && strings.TrimSpace(e.PartnerPhone) != "" {
+		messageText := renderWorkflowTemplateText(whatsAppRule, templateVars)
+		if strings.TrimSpace(messageText) == "" {
+			return nil
+		}
+		steps := []repository.WorkflowStep{{
+			Enabled:      true,
+			Channel:      "whatsapp",
+			Audience:     "partner",
+			DelayMinutes: whatsAppRule.DelayMinutes,
+			TemplateBody: &messageText,
+			RecipientConfig: map[string]any{
+				"includePartner": true,
+			},
+		}}
+		_ = m.enqueueWorkflowSteps(ctx, steps, workflowStepExecutionContext{
+			OrgID:          e.OrganizationID,
+			LeadID:         &e.LeadID,
+			ServiceID:      &e.LeadServiceID,
+			PartnerPhone:   e.PartnerPhone,
+			PartnerEmail:   e.PartnerEmail,
+			Trigger:        "partner_offer_created",
+			DefaultSummary: fmt.Sprintf("WhatsApp werkaanbod verstuurd naar %s", e.PartnerName),
+			DefaultActor:   "System",
+			DefaultOrigin:  workflowEngineActorName,
+		})
+	}
+
 	return nil
 }
 
@@ -1071,110 +1155,60 @@ func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.Partner
 
 func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) error {
 	m.log.Info("processing lead created notification", "leadId", e.LeadID, "orgId", e.TenantID, "source", strings.TrimSpace(e.Source), "leadServiceId", e.LeadServiceID)
-	rule, shouldSend := m.resolveLeadWelcomeRule(ctx, e)
-	if !shouldSend {
-		return nil
-	}
-	if !e.WhatsAppOptedIn {
-		m.log.Info("whatsapp disabled for lead, skipping welcome message", "leadId", e.LeadID)
-		return nil
-	}
-	if strings.TrimSpace(e.ConsumerPhone) == "" {
-		m.log.Info("missing consumer phone; skipping lead welcome", "leadId", e.LeadID, "orgId", e.TenantID)
+	if strings.EqualFold(strings.TrimSpace(e.Source), "quote_flow") {
+		m.log.Info("lead created from quote flow, skipping welcome message", "leadId", e.LeadID)
 		return nil
 	}
 
 	consumerName := defaultName(strings.TrimSpace(e.ConsumerName), "daar")
-	message := m.buildLeadWelcomeText(ctx, e, rule, consumerName)
-
-	_ = m.enqueueLeadWelcomeOutbox(ctx, e, rule, message, consumerName)
-	return nil
-}
-
-func (m *Module) resolveLeadWelcomeRule(ctx context.Context, e events.LeadCreated) (*workflowRule, bool) {
-	if strings.EqualFold(strings.TrimSpace(e.Source), "quote_flow") {
-		m.log.Info("lead created from quote flow, skipping welcome message", "leadId", e.LeadID)
-		return nil, false
-	}
-
 	source := strings.TrimSpace(e.Source)
 	var leadSource *string
 	if source != "" {
 		leadSource = &source
 	}
-	rule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "lead_welcome", "whatsapp", "lead", leadSource)
-	if rule == nil {
-		m.log.Info("no workflow rule for lead welcome; skipping", "leadId", e.LeadID, "orgId", e.TenantID)
-		return nil, false
-	}
-	if !rule.Enabled {
-		m.log.Info("workflow disabled: skipping lead welcome", "leadId", e.LeadID)
-		return rule, false
-	}
-
-	return rule, true
-}
-
-func (m *Module) buildLeadWelcomeText(ctx context.Context, e events.LeadCreated, rule *workflowRule, consumerName string) string {
-	trackLink := m.buildLeadTrackLink(e.PublicToken)
-	if rule != nil && rule.TemplateText != nil && strings.TrimSpace(*rule.TemplateText) != "" {
-		rendered, err := renderTemplateText(*rule.TemplateText, map[string]any{
-			"lead": map[string]any{
-				"name":   consumerName,
-				"phone":  e.ConsumerPhone,
-				"source": strings.TrimSpace(e.Source),
-			},
-			"links": map[string]any{
-				"track": trackLink,
-			},
-		})
-		if err == nil && strings.TrimSpace(rendered) != "" {
-			return rendered
-		}
-		if err != nil {
-			m.log.Warn("failed to render workflow template; using default", "error", err, "trigger", "lead_welcome")
-		}
-	}
-
-	_ = ctx
-	return buildLeadWelcomeMessage(consumerName, trackLink)
-}
-
-func (m *Module) enqueueLeadWelcomeOutbox(ctx context.Context, e events.LeadCreated, rule *workflowRule, message, consumerName string) bool {
-	if m.notificationOutbox == nil {
-		m.log.Warn("notification outbox not configured; lead welcome not enqueued", "leadId", e.LeadID, "orgId", e.TenantID)
-		return false
-	}
-
-	delayMinutes := rule.DelayMinutes
-	messageText := message
-	steps := []repository.WorkflowStep{{
-		Enabled:      true,
-		Channel:      "whatsapp",
-		Audience:     "lead",
-		DelayMinutes: delayMinutes,
-		TemplateBody: &messageText,
-		RecipientConfig: map[string]any{
-			"includeLeadContact": true,
+	templateVars := map[string]any{
+		"lead": map[string]any{
+			"name":   consumerName,
+			"phone":  e.ConsumerPhone,
+			"email":  e.ConsumerEmail,
+			"source": source,
 		},
-	}}
-
-	err := m.enqueueWorkflowSteps(ctx, steps, workflowStepExecutionContext{
-		OrgID:          e.TenantID,
-		LeadID:         &e.LeadID,
-		ServiceID:      &e.LeadServiceID,
-		LeadPhone:      e.ConsumerPhone,
-		Trigger:        "lead_welcome",
-		DefaultSummary: fmt.Sprintf(leadWelcomeSummaryFmt, consumerName),
-		DefaultActor:   "System",
-		DefaultOrigin:  "Portal",
-	})
-	if err != nil {
-		m.log.Warn("failed to enqueue whatsapp lead welcome outbox", "error", err, "leadId", e.LeadID)
-		return false
+		"links": map[string]any{
+			"track": m.buildLeadTrackLink(e.PublicToken),
+		},
 	}
-	m.log.Info("lead welcome queued via outbox", "leadId", e.LeadID, "orgId", e.TenantID, "delayMinutes", delayMinutes)
-	return true
+
+	whatsAppRule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "lead_welcome", "whatsapp", "lead", leadSource)
+	if whatsAppRule != nil && whatsAppRule.Enabled && e.WhatsAppOptedIn && strings.TrimSpace(e.ConsumerPhone) != "" {
+		_ = m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
+			Rule:         whatsAppRule,
+			OrgID:        e.TenantID,
+			LeadID:       &e.LeadID,
+			ServiceID:    &e.LeadServiceID,
+			LeadPhone:    e.ConsumerPhone,
+			Trigger:      "lead_welcome",
+			TemplateVars: templateVars,
+			Summary:      fmt.Sprintf(leadWelcomeSummaryFmt, consumerName),
+			FallbackNote: "failed to enqueue lead_welcome lead whatsapp workflow",
+		})
+	}
+
+	emailRule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "lead_welcome", "email", "lead", leadSource)
+	if emailRule != nil && emailRule.Enabled && strings.TrimSpace(e.ConsumerEmail) != "" {
+		_ = m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+			Rule:         emailRule,
+			OrgID:        e.TenantID,
+			LeadID:       &e.LeadID,
+			ServiceID:    &e.LeadServiceID,
+			LeadEmail:    e.ConsumerEmail,
+			Trigger:      "lead_welcome",
+			TemplateVars: templateVars,
+			Summary:      fmt.Sprintf("Email welkomstbericht verstuurd naar %s", consumerName),
+			FallbackNote: "failed to enqueue lead_welcome lead email workflow",
+		})
+	}
+
+	return nil
 }
 
 func ptrUUIDString(v *uuid.UUID) *string {
@@ -1488,7 +1522,8 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_sent",
 		"Offerte verstuurd naar "+e.ConsumerName,
 		map[string]interface{}{"quoteNumber": e.QuoteNumber, "consumerEmail": e.ConsumerEmail})
-	m.sendQuoteSentWhatsApp(ctx, e)
+	_ = m.dispatchQuoteSentLeadEmailWorkflow(ctx, e)
+	_ = m.dispatchQuoteSentLeadWhatsAppWorkflow(ctx, e)
 
 	m.log.Info("quote sent event processed", "quoteId", e.QuoteID)
 	return nil
@@ -1502,8 +1537,7 @@ type dispatchQuoteEmailWorkflowParams struct {
 	LeadEmail    string
 	PartnerEmail string
 	Trigger      string
-	Subject      string
-	BodyText     string
+	TemplateVars map[string]any
 	Summary      string
 	FallbackNote string
 }
@@ -1522,11 +1556,8 @@ func (m *Module) dispatchQuoteEmailWorkflow(ctx context.Context, p dispatchQuote
 		return false
 	}
 
-	bodyText := p.BodyText
-	if p.Rule.TemplateText != nil && strings.TrimSpace(*p.Rule.TemplateText) != "" {
-		bodyText = *p.Rule.TemplateText
-	}
-	subject := strings.TrimSpace(p.Subject)
+	bodyText := renderWorkflowTemplateText(p.Rule, p.TemplateVars)
+	subject := strings.TrimSpace(renderWorkflowTemplateSubject(p.Rule, p.TemplateVars))
 	if subject == "" || strings.TrimSpace(bodyText) == "" {
 		return true
 	}
@@ -1571,7 +1602,7 @@ type dispatchQuoteWhatsAppWorkflowParams struct {
 	ServiceID    *uuid.UUID
 	LeadPhone    string
 	Trigger      string
-	BodyText     string
+	TemplateVars map[string]any
 	Summary      string
 	FallbackNote string
 }
@@ -1593,10 +1624,7 @@ func (m *Module) dispatchQuoteWhatsAppWorkflow(ctx context.Context, p dispatchQu
 		return false
 	}
 
-	messageText := p.BodyText
-	if p.Rule.TemplateText != nil && strings.TrimSpace(*p.Rule.TemplateText) != "" {
-		messageText = *p.Rule.TemplateText
-	}
+	messageText := renderWorkflowTemplateText(p.Rule, p.TemplateVars)
 	if strings.TrimSpace(messageText) == "" {
 		return true
 	}
@@ -1653,142 +1681,122 @@ func (m *Module) publishQuoteSentEvents(e events.QuoteSent) {
 	m.sse.PublishToLead(e.LeadID, evt)
 }
 
-func (m *Module) sendQuoteSentWhatsApp(ctx context.Context, e events.QuoteSent) {
+func (m *Module) dispatchQuoteSentLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteSent) bool {
 	if strings.TrimSpace(e.ConsumerPhone) == "" {
-		return
+		return true
 	}
 	if !m.isLeadWhatsAppOptedIn(ctx, e.LeadID, e.OrganizationID) {
-		return
+		return true
 	}
 
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_sent", "whatsapp", "lead", nil)
-	if rule != nil && !rule.Enabled {
-		return
+	proposalURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
+	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	templateVars := map[string]any{
+		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
+		"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL},
+		"org":   map[string]any{"name": e.OrganizationName},
+	}
+
+	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
+		Rule:         rule,
+		OrgID:        e.OrganizationID,
+		LeadID:       &e.LeadID,
+		ServiceID:    e.LeadServiceID,
+		LeadPhone:    e.ConsumerPhone,
+		Trigger:      "quote_sent",
+		TemplateVars: templateVars,
+		Summary:      fmt.Sprintf("WhatsApp offerte verstuurd naar %s", name),
+		FallbackNote: "failed to enqueue quote_sent lead whatsapp workflow",
+	})
+}
+
+func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e events.QuoteSent) bool {
+	if strings.TrimSpace(e.ConsumerEmail) == "" {
+		return true
 	}
 
 	proposalURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	message := m.buildQuoteSentMessage(rule, e, proposalURL, name)
-	_ = m.enqueueQuoteSentOutbox(ctx, e, rule, message, name)
-}
-
-func (m *Module) buildQuoteSentMessage(rule *workflowRule, e events.QuoteSent, proposalURL, name string) string {
-	if rule != nil && rule.TemplateText != nil && strings.TrimSpace(*rule.TemplateText) != "" {
-		rendered, err := renderTemplateText(*rule.TemplateText, map[string]any{
-			"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone},
-			"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL},
-			"org":   map[string]any{"name": e.OrganizationName},
-		})
-		if err == nil && strings.TrimSpace(rendered) != "" {
-			return rendered
-		}
+	templateVars := map[string]any{
+		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
+		"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL},
+		"org":   map[string]any{"name": e.OrganizationName},
 	}
+	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_sent", "email", "lead", nil)
 
-	return fmt.Sprintf(
-		"Hi %s,\n\nUw offerte %s van %s is klaar! 📄\n\nBekijk en accordeer hem direct via deze link:\n%s\n\nMet vriendelijke groet,\n%s",
-		name,
-		e.QuoteNumber,
-		e.OrganizationName,
-		proposalURL,
-		e.OrganizationName,
-	)
-}
-
-func (m *Module) enqueueQuoteSentOutbox(ctx context.Context, e events.QuoteSent, rule *workflowRule, message, name string) bool {
-	if m.notificationOutbox == nil {
-		return false
-	}
-
-	delayMinutes := 0
-	if rule != nil {
-		delayMinutes = rule.DelayMinutes
-	}
-	messageText := message
-	steps := []repository.WorkflowStep{{
-		Enabled:      true,
-		Channel:      "whatsapp",
-		Audience:     "lead",
-		DelayMinutes: delayMinutes,
-		TemplateBody: &messageText,
-		RecipientConfig: map[string]any{
-			"includeLeadContact": true,
-		},
-	}}
-
-	err := m.enqueueWorkflowSteps(ctx, steps, workflowStepExecutionContext{
-		OrgID:          e.OrganizationID,
-		LeadID:         &e.LeadID,
-		ServiceID:      e.LeadServiceID,
-		LeadPhone:      e.ConsumerPhone,
-		Trigger:        "quote_sent",
-		DefaultSummary: fmt.Sprintf("WhatsApp offerte verstuurd naar %s", name),
-		DefaultActor:   "System",
-		DefaultOrigin:  "Portal",
+	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+		Rule:         rule,
+		OrgID:        e.OrganizationID,
+		LeadID:       &e.LeadID,
+		ServiceID:    e.LeadServiceID,
+		LeadEmail:    e.ConsumerEmail,
+		Trigger:      "quote_sent",
+		TemplateVars: templateVars,
+		Summary:      fmt.Sprintf("Email offerte verstuurd naar %s", name),
+		FallbackNote: "failed to enqueue quote_sent lead email workflow",
 	})
-	return err == nil
 }
 
 func (m *Module) handleAppointmentCreated(ctx context.Context, e events.AppointmentCreated) error {
-	return m.handleAppointmentWhatsApp(ctx, appointmentWhatsAppParams{
+	params := appointmentWhatsAppParams{
 		OrgID:         e.OrganizationID,
 		LeadID:        e.LeadID,
 		ServiceID:     e.LeadServiceID,
 		Type:          e.Type,
 		ConsumerPhone: e.ConsumerPhone,
+		ConsumerEmail: e.ConsumerEmail,
 		ConsumerName:  e.ConsumerName,
 		StartTime:     e.StartTime,
 		Location:      e.Location,
 		Trigger:       "appointment_created",
 		Category:      "appointment_created",
 		SummaryFmt:    "WhatsApp afspraakbevestiging verstuurd naar %s",
-		DefaultMessage: func(name, dateStr, timeStr string) string {
-			return fmt.Sprintf(
-				"Hi %s,\n\nUw afspraak is bevestigd! ✅\n\nDatum: %s\nTijd: %s\n\nOnze adviseur komt bij u langs voor de opname. Tot dan!",
-				name,
-				dateStr,
-				timeStr,
-			)
-		},
-	})
+	}
+
+	if err := m.handleAppointmentWhatsApp(ctx, params); err != nil {
+		return err
+	}
+
+	return m.handleAppointmentEmail(ctx, params)
 }
 
 func (m *Module) handleAppointmentReminderDue(ctx context.Context, e events.AppointmentReminderDue) error {
-	return m.handleAppointmentWhatsApp(ctx, appointmentWhatsAppParams{
+	params := appointmentWhatsAppParams{
 		OrgID:         e.OrganizationID,
 		LeadID:        e.LeadID,
 		ServiceID:     e.LeadServiceID,
 		Type:          e.Type,
 		ConsumerPhone: e.ConsumerPhone,
+		ConsumerEmail: e.ConsumerEmail,
 		ConsumerName:  e.ConsumerName,
 		StartTime:     e.StartTime,
 		Location:      e.Location,
 		Trigger:       "appointment_reminder",
 		Category:      "appointment_reminder",
 		SummaryFmt:    "WhatsApp afspraakherinnering verstuurd naar %s",
-		DefaultMessage: func(name, dateStr, timeStr string) string {
-			return fmt.Sprintf(
-				"Herinnering, %s! ⏰\n\nMorgen staat uw afspraak gepland.\n\nDatum: %s\nTijd: %s\n\nTot morgen!",
-				name,
-				dateStr,
-				timeStr,
-			)
-		},
-	})
+	}
+
+	if err := m.handleAppointmentWhatsApp(ctx, params); err != nil {
+		return err
+	}
+
+	return m.handleAppointmentEmail(ctx, params)
 }
 
 type appointmentWhatsAppParams struct {
-	OrgID          uuid.UUID
-	LeadID         *uuid.UUID
-	ServiceID      *uuid.UUID
-	Type           string
-	ConsumerPhone  string
-	ConsumerName   string
-	StartTime      time.Time
-	Location       string
-	Trigger        string
-	Category       string
-	SummaryFmt     string
-	DefaultMessage func(name, dateStr, timeStr string) string
+	OrgID         uuid.UUID
+	LeadID        *uuid.UUID
+	ServiceID     *uuid.UUID
+	Type          string
+	ConsumerPhone string
+	ConsumerEmail string
+	ConsumerName  string
+	StartTime     time.Time
+	Location      string
+	Trigger       string
+	Category      string
+	SummaryFmt    string
 }
 
 func (m *Module) handleAppointmentWhatsApp(ctx context.Context, p appointmentWhatsAppParams) error {
@@ -1807,23 +1815,49 @@ func (m *Module) handleAppointmentWhatsApp(ctx context.Context, p appointmentWha
 	name := defaultName(strings.TrimSpace(p.ConsumerName), "klant")
 	dateStr := p.StartTime.Format("02-01-2006")
 	timeStr := p.StartTime.Format("15:04")
-	message := buildAppointmentMessage(rule, name, p.ConsumerPhone, dateStr, timeStr, p.Location, p.DefaultMessage)
-	_ = m.enqueueAppointmentOutbox(ctx, p, rule, message, name)
+	templateVars := map[string]any{
+		"lead":        map[string]any{"name": name, "phone": p.ConsumerPhone, "email": p.ConsumerEmail},
+		"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(p.Location)},
+	}
+	bodyText := renderWorkflowTemplateText(rule, templateVars)
+	if strings.TrimSpace(bodyText) == "" {
+		return nil
+	}
+	_ = m.enqueueAppointmentOutbox(ctx, p, rule, bodyText, name)
 	return nil
 }
 
-func buildAppointmentMessage(rule *workflowRule, name, phone, dateStr, timeStr, location string, fallback func(name, dateStr, timeStr string) string) string {
-	if rule != nil && rule.TemplateText != nil && strings.TrimSpace(*rule.TemplateText) != "" {
-		rendered, err := renderTemplateText(*rule.TemplateText, map[string]any{
-			"lead":        map[string]any{"name": name, "phone": phone},
-			"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(location)},
-		})
-		if err == nil && strings.TrimSpace(rendered) != "" {
-			return rendered
-		}
+func (m *Module) handleAppointmentEmail(ctx context.Context, p appointmentWhatsAppParams) error {
+	if p.Type != "lead_visit" || strings.TrimSpace(p.ConsumerEmail) == "" || p.LeadID == nil {
+		return nil
 	}
 
-	return fallback(name, dateStr, timeStr)
+	rule := m.resolveWorkflowRule(ctx, p.OrgID, *p.LeadID, p.Trigger, "email", "lead", nil)
+	if rule != nil && !rule.Enabled {
+		return nil
+	}
+
+	name := defaultName(strings.TrimSpace(p.ConsumerName), "klant")
+	dateStr := p.StartTime.Format("02-01-2006")
+	timeStr := p.StartTime.Format("15:04")
+	templateVars := map[string]any{
+		"lead":        map[string]any{"name": name, "phone": p.ConsumerPhone, "email": p.ConsumerEmail},
+		"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(p.Location)},
+	}
+
+	_ = m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+		Rule:         rule,
+		OrgID:        p.OrgID,
+		LeadID:       p.LeadID,
+		ServiceID:    p.ServiceID,
+		LeadEmail:    p.ConsumerEmail,
+		Trigger:      p.Trigger,
+		TemplateVars: templateVars,
+		Summary:      fmt.Sprintf("Email afspraakbericht verstuurd naar %s", name),
+		FallbackNote: fmt.Sprintf("failed to enqueue %s lead email workflow", p.Trigger),
+	})
+
+	return nil
 }
 
 func (m *Module) enqueueAppointmentOutbox(ctx context.Context, p appointmentWhatsAppParams, rule *workflowRule, message, name string) bool {
@@ -1928,8 +1962,11 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 
 func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	subject := fmt.Sprintf("Bevestiging: offerte %s geaccepteerd", e.QuoteNumber)
-	bodyText := fmt.Sprintf("Hallo %s,\n\nBedankt voor het accepteren van offerte %s. Wij verwerken uw akkoord en nemen snel contact met u op.\n\nMet vriendelijke groet,\n%s", name, e.QuoteNumber, e.OrganizationName)
+	templateVars := map[string]any{
+		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
+		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents},
+		"org":   map[string]any{"name": e.OrganizationName},
+	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "email", "lead", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 		Rule:         rule,
@@ -1938,8 +1975,7 @@ func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e e
 		ServiceID:    e.LeadServiceID,
 		LeadEmail:    e.ConsumerEmail,
 		Trigger:      "quote_accepted",
-		Subject:      subject,
-		BodyText:     bodyText,
+		TemplateVars: templateVars,
 		Summary:      fmt.Sprintf("Email bevestiging offerteacceptatie verstuurd naar %s", name),
 		FallbackNote: "failed to enqueue quote_accepted lead email workflow",
 	})
@@ -1947,8 +1983,12 @@ func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e e
 
 func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.AgentName), "adviseur")
-	subject := fmt.Sprintf("Offerte %s is geaccepteerd", e.QuoteNumber)
-	bodyText := fmt.Sprintf("Hallo %s,\n\nOfferte %s is geaccepteerd door %s.\nTotaal: €%.2f\n\nGroet,\nWorkflow Engine", name, e.QuoteNumber, defaultName(strings.TrimSpace(e.ConsumerName), "de klant"), float64(e.TotalCents)/100)
+	templateVars := map[string]any{
+		"partner": map[string]any{"name": name, "email": e.AgentEmail},
+		"lead":    map[string]any{"name": defaultName(strings.TrimSpace(e.ConsumerName), "de klant")},
+		"quote":   map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents},
+		"org":     map[string]any{"name": e.OrganizationName},
+	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "email", "partner", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 		Rule:         rule,
@@ -1957,8 +1997,7 @@ func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e 
 		ServiceID:    e.LeadServiceID,
 		PartnerEmail: e.AgentEmail,
 		Trigger:      "quote_accepted",
-		Subject:      subject,
-		BodyText:     bodyText,
+		TemplateVars: templateVars,
 		Summary:      fmt.Sprintf("Email offerteacceptatie verstuurd naar %s", name),
 		FallbackNote: "failed to enqueue quote_accepted partner email workflow",
 	})
@@ -1966,7 +2005,11 @@ func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e 
 
 func (m *Module) dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	bodyText := fmt.Sprintf("Hallo %s, bedankt voor het accepteren van offerte %s. Wij nemen snel contact met u op voor de volgende stappen.\n\nMet vriendelijke groet, %s", name, e.QuoteNumber, e.OrganizationName)
+	templateVars := map[string]any{
+		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
+		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents},
+		"org":   map[string]any{"name": e.OrganizationName},
+	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "whatsapp", "lead", nil)
 	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
 		Rule:         rule,
@@ -1975,7 +2018,7 @@ func (m *Module) dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx context.Context, 
 		ServiceID:    e.LeadServiceID,
 		LeadPhone:    e.ConsumerPhone,
 		Trigger:      "quote_accepted",
-		BodyText:     bodyText,
+		TemplateVars: templateVars,
 		Summary:      fmt.Sprintf("WhatsApp offerteacceptatie verstuurd naar %s", name),
 		FallbackNote: "failed to enqueue quote_accepted lead whatsapp workflow",
 	})
@@ -2038,9 +2081,13 @@ func (m *Module) handleQuoteRejected(ctx context.Context, e events.QuoteRejected
 
 func (m *Module) dispatchQuoteRejectedLeadEmailWorkflow(ctx context.Context, e events.QuoteRejected) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	reason := defaultName(strings.TrimSpace(e.Reason), noReasonProvided)
-	subject := "We hebben uw beslissing ontvangen - offerte"
-	bodyText := fmt.Sprintf("Hallo %s,\n\nWij hebben uw beslissing over de offerte ontvangen. Reden: %s.\n\nAls u vragen heeft of wilt overleggen, helpen wij graag.\n\nMet vriendelijke groet,\n%s", name, reason, defaultName(strings.TrimSpace(e.OrganizationName), "ons team"))
+	templateVars := map[string]any{
+		"lead": map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
+		"quote": map[string]any{
+			"reason": e.Reason,
+		},
+		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), "ons team")},
+	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_rejected", "email", "lead", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 		Rule:         rule,
@@ -2049,8 +2096,7 @@ func (m *Module) dispatchQuoteRejectedLeadEmailWorkflow(ctx context.Context, e e
 		ServiceID:    e.LeadServiceID,
 		LeadEmail:    e.ConsumerEmail,
 		Trigger:      "quote_rejected",
-		Subject:      subject,
-		BodyText:     bodyText,
+		TemplateVars: templateVars,
 		Summary:      fmt.Sprintf("Email offerteafwijzing bevestigd naar %s", name),
 		FallbackNote: "failed to enqueue quote_rejected lead email workflow",
 	})
@@ -2058,8 +2104,13 @@ func (m *Module) dispatchQuoteRejectedLeadEmailWorkflow(ctx context.Context, e e
 
 func (m *Module) dispatchQuoteRejectedLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteRejected) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	reason := defaultName(strings.TrimSpace(e.Reason), noReasonProvided)
-	bodyText := fmt.Sprintf("Hallo %s, wij hebben uw beslissing over de offerte ontvangen. Reden: %s. Als u vragen heeft, helpen wij graag.\n\nMet vriendelijke groet, %s", name, reason, defaultName(strings.TrimSpace(e.OrganizationName), "ons team"))
+	templateVars := map[string]any{
+		"lead": map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
+		"quote": map[string]any{
+			"reason": e.Reason,
+		},
+		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), "ons team")},
+	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_rejected", "whatsapp", "lead", nil)
 	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
 		Rule:         rule,
@@ -2068,7 +2119,7 @@ func (m *Module) dispatchQuoteRejectedLeadWhatsAppWorkflow(ctx context.Context, 
 		ServiceID:    e.LeadServiceID,
 		LeadPhone:    e.ConsumerPhone,
 		Trigger:      "quote_rejected",
-		BodyText:     bodyText,
+		TemplateVars: templateVars,
 		Summary:      fmt.Sprintf("WhatsApp offerteafwijzing bevestigd naar %s", name),
 		FallbackNote: "failed to enqueue quote_rejected lead whatsapp workflow",
 	})
