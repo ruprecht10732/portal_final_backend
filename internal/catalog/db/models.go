@@ -364,6 +364,11 @@ type RacCatalogProductAsset struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type RacCatalogProductCounter struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	LastNumber     int32       `json:"last_number"`
+}
+
 type RacCatalogProductMaterial struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 	ProductID      pgtype.UUID `json:"product_id"`

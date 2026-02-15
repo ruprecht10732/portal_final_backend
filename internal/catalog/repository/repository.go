@@ -265,6 +265,23 @@ func (r *Repo) CreateProduct(ctx context.Context, params CreateProductParams) (P
 	return product, nil
 }
 
+// NextProductReference atomically generates the next product reference for an organization.
+func (r *Repo) NextProductReference(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	var nextNum int
+	query := `
+		INSERT INTO RAC_catalog_product_counters (organization_id, last_number)
+		VALUES ($1, 1)
+		ON CONFLICT (organization_id) DO UPDATE SET last_number = RAC_catalog_product_counters.last_number + 1
+		RETURNING last_number`
+
+	if err := r.pool.QueryRow(ctx, query, organizationID).Scan(&nextNum); err != nil {
+		return "", fmt.Errorf("generate next product reference: %w", err)
+	}
+
+	year := time.Now().Year()
+	return fmt.Sprintf("SKU-%d-%04d", year, nextNum), nil
+}
+
 // UpdateProduct updates a product.
 func (r *Repo) UpdateProduct(ctx context.Context, params UpdateProductParams) (Product, error) {
 	query := `

@@ -253,11 +253,19 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 		return transport.ProductResponse{}, err
 	}
 
+	reference := strings.TrimSpace(req.Reference)
+	if reference == "" {
+		reference, err = s.repo.NextProductReference(ctx, tenantID)
+		if err != nil {
+			return transport.ProductResponse{}, err
+		}
+	}
+
 	product, err := s.repo.CreateProduct(ctx, repository.CreateProductParams{
 		OrganizationID: tenantID,
 		VatRateID:      req.VatRateID,
 		Title:          strings.TrimSpace(req.Title),
-		Reference:      strings.TrimSpace(req.Reference),
+		Reference:      reference,
 		Description:    sanitize.TextPtr(req.Description),
 		PriceCents:     req.PriceCents,
 		UnitPriceCents: req.UnitPriceCents,
@@ -274,6 +282,16 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 	s.log.Info("product created", "id", product.ID, "reference", product.Reference)
 	s.indexProductAsync(ctx, tenantID, product, "create")
 	return toProductResponse(product), nil
+}
+
+// GetNextProductReference retrieves the next auto-generated product reference for pre-filling create forms.
+func (s *Service) GetNextProductReference(ctx context.Context, tenantID uuid.UUID) (transport.NextProductReferenceResponse, error) {
+	reference, err := s.repo.NextProductReference(ctx, tenantID)
+	if err != nil {
+		return transport.NextProductReferenceResponse{}, err
+	}
+
+	return transport.NextProductReferenceResponse{Reference: reference}, nil
 }
 
 // UpdateProduct updates an existing product.

@@ -155,6 +155,7 @@ type Repository interface {
 	HasProductsWithVatRate(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error)
 
 	CreateProduct(ctx context.Context, params CreateProductParams) (Product, error)
+	NextProductReference(ctx context.Context, organizationID uuid.UUID) (string, error)
 	UpdateProduct(ctx context.Context, params UpdateProductParams) (Product, error)
 	DeleteProduct(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error
 	GetProductByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (Product, error)

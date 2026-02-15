@@ -258,6 +258,26 @@ func (h *Handler) CreateProduct(c *gin.Context) {
 	httpkit.JSON(c, http.StatusCreated, result)
 }
 
+// GetNextProductReference returns the next auto-generated product reference.
+// GET /api/v1/admin/catalog/products/next-reference
+func (h *Handler) GetNextProductReference(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetNextProductReference(c.Request.Context(), tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
 // UpdateProduct updates a product.
 // PUT /api/v1/admin/catalog/products/:id
 func (h *Handler) UpdateProduct(c *gin.Context) {

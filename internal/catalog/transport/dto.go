@@ -42,7 +42,7 @@ type VatRateListResponse struct {
 
 type CreateProductRequest struct {
 	Title          string    `json:"title" validate:"required,min=1,max=200"`
-	Reference      string    `json:"reference" validate:"required,min=1,max=100"`
+	Reference      string    `json:"reference,omitempty" validate:"omitempty,min=1,max=100"`
 	Description    *string   `json:"description,omitempty" validate:"omitempty,max=1000"`
 	PriceCents     int64     `json:"priceCents" validate:"min=0"`
 	UnitPriceCents int64     `json:"unitPriceCents,omitempty" validate:"min=0"`
@@ -107,6 +107,10 @@ type ProductListResponse struct {
 	Page       int               `json:"page"`
 	PageSize   int               `json:"pageSize"`
 	TotalPages int               `json:"totalPages"`
+}
+
+type NextProductReferenceResponse struct {
+	Reference string `json:"reference"`
 }
 
 // Assets

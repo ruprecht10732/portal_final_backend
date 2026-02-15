@@ -80,6 +80,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.PUT("/vat-rates/:id", m.handler.UpdateVatRate)
 	adminGroup.DELETE("/vat-rates/:id", m.handler.DeleteVatRate)
 
+	adminGroup.GET("/products/next-reference", m.handler.GetNextProductReference)
 	adminGroup.POST("/products", m.handler.CreateProduct)
 	adminGroup.PUT("/products/:id", m.handler.UpdateProduct)
 	adminGroup.DELETE("/products/:id", m.handler.DeleteProduct)
