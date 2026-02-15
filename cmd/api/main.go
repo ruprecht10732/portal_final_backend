@@ -145,7 +145,7 @@ func main() {
 	// ========================================================================
 
 	// Notification module subscribes to domain events (not HTTP-facing)
-	notificationModule := notification.New(sender, cfg, log)
+	notificationModule := notification.New(pool, sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
 	whatsappClient := whatsapp.NewClient(cfg, log)
 	notificationModule.SetWhatsAppSender(whatsappClient)
@@ -165,7 +165,9 @@ func main() {
 		panic("failed to initialize leads module: " + err.Error())
 	}
 	leadsModule.ManagementService().SetWorkflowOverrideWriter(identityModule.Service())
+	leadsModule.ManagementService().SetInAppNotificationService(notificationModule.InAppService())
 	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())
+	notificationModule.SetOrganizationMemberReader(leadsModule.Repository())
 
 	// Share SSE service with notification module so quote events reach agents
 	notificationModule.SetSSE(leadsModule.SSE())
@@ -280,6 +282,7 @@ func main() {
 		Health:   db.NewPoolAdapter(pool),
 		EventBus: eventBus,
 		Modules: []apphttp.Module{
+			notificationModule,
 			authModule,
 			identityModule,
 			leadsModule,

@@ -243,10 +243,16 @@ func (r *Repository) listMentionsByComments(ctx context.Context, commentIDs []uu
 
 func (r *Repository) ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]OrgMember, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT u.id, u.email
+		SELECT
+			u.id,
+			u.email,
+			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
 		FROM RAC_organization_members om
 		JOIN RAC_users u ON u.id = om.user_id
+		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
+		LEFT JOIN RAC_roles r ON r.id = ur.role_id
 		WHERE om.organization_id = $1
+		GROUP BY u.id, u.email
 		ORDER BY u.email
 	`, orgID)
 	if err != nil {
@@ -257,7 +263,7 @@ func (r *Repository) ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]Org
 	var out []OrgMember
 	for rows.Next() {
 		var m OrgMember
-		if err := rows.Scan(&m.ID, &m.Email); err != nil {
+		if err := rows.Scan(&m.ID, &m.Email, &m.Roles); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -310,4 +316,5 @@ type CommentMention struct {
 type OrgMember struct {
 	ID    uuid.UUID
 	Email string
+	Roles []string
 }

@@ -58,10 +58,11 @@ func main() {
 		panic("failed to initialize email sender: " + err.Error())
 	}
 
-	notificationModule := notification.New(sender, cfg, log)
+	notificationModule := notification.New(pool, sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
 	notificationModule.SetWhatsAppSender(whatsapp.NewClient(cfg, log))
 	notificationModule.SetLeadWhatsAppReader(leadrepo.New(pool))
+	notificationModule.SetOrganizationMemberReader(leadrepo.New(pool))
 	notificationModule.SetNotificationOutbox(outbox.New(pool))
 	identityReader := identityrepo.New(pool)
 	identitySvc := identityservice.New(identityReader, nil, nil, "", nil)
