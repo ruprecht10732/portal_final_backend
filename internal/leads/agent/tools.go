@@ -1345,7 +1345,16 @@ func resolveSearchParams(input SearchProductMaterialsInput) (query string, limit
 // searchCatalogCollection searches the catalog Qdrant collection and hydrates results.
 // Returns nil products (not an error) when nothing relevant is found or the search fails.
 func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []float32, limit int, scoreThreshold float64, query string) []ProductResult {
-	results, err := deps.CatalogQdrantClient.SearchWithThreshold(ctx, vector, limit, scoreThreshold)
+	tenantID, tenantOk := deps.GetTenantID()
+	var filter *qdrant.Filter
+	if tenantOk && tenantID != nil {
+		filter = qdrant.NewOrganizationFilter(tenantID.String())
+		log.Printf("SearchProductMaterials: catalog search with tenant filter organization_id=%s", tenantID.String())
+	} else {
+		log.Printf("SearchProductMaterials: catalog search without tenant filter (missing tenant context)")
+	}
+
+	results, err := deps.CatalogQdrantClient.SearchWithFilter(ctx, vector, limit, scoreThreshold, filter)
 	if err != nil {
 		log.Printf("SearchProductMaterials: catalog search failed: %v", err)
 		return nil

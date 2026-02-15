@@ -50,6 +50,23 @@ type SearchRequest struct {
 	Limit          int       `json:"limit"`
 	WithPayload    bool      `json:"with_payload"`
 	ScoreThreshold *float64  `json:"score_threshold,omitempty"` // Minimum similarity score (Qdrant filters server-side)
+	Filter         *Filter   `json:"filter,omitempty"`
+}
+
+// MatchValue represents a Qdrant match condition value.
+type MatchValue struct {
+	Value string `json:"value"`
+}
+
+// FieldCondition represents a Qdrant payload field match condition.
+type FieldCondition struct {
+	Key   string     `json:"key"`
+	Match MatchValue `json:"match"`
+}
+
+// Filter represents Qdrant payload filtering clauses.
+type Filter struct {
+	Must []FieldCondition `json:"must,omitempty"`
 }
 
 // SearchResult is a single search result from Qdrant.
@@ -68,15 +85,36 @@ type SearchResponse struct {
 
 // SearchWithThreshold performs a vector similarity search with a minimum score threshold.
 func (c *Client) SearchWithThreshold(ctx context.Context, vector []float32, limit int, scoreThreshold float64) ([]SearchResult, error) {
-	return c.searchInternal(ctx, vector, limit, &scoreThreshold)
+	return c.searchInternal(ctx, vector, limit, &scoreThreshold, nil)
+}
+
+// SearchWithFilter performs a vector similarity search with threshold and payload filter.
+func (c *Client) SearchWithFilter(ctx context.Context, vector []float32, limit int, scoreThreshold float64, filter *Filter) ([]SearchResult, error) {
+	return c.searchInternal(ctx, vector, limit, &scoreThreshold, filter)
 }
 
 // Search performs a vector similarity search in the configured collection.
 func (c *Client) Search(ctx context.Context, vector []float32, limit int) ([]SearchResult, error) {
-	return c.searchInternal(ctx, vector, limit, nil)
+	return c.searchInternal(ctx, vector, limit, nil, nil)
 }
 
-func (c *Client) searchInternal(ctx context.Context, vector []float32, limit int, scoreThreshold *float64) ([]SearchResult, error) {
+// NewOrganizationFilter builds a payload filter for tenant-scoped catalog search.
+func NewOrganizationFilter(organizationID string) *Filter {
+	if organizationID == "" {
+		return nil
+	}
+
+	return &Filter{
+		Must: []FieldCondition{
+			{
+				Key:   "organization_id",
+				Match: MatchValue{Value: organizationID},
+			},
+		},
+	}
+}
+
+func (c *Client) searchInternal(ctx context.Context, vector []float32, limit int, scoreThreshold *float64, filter *Filter) ([]SearchResult, error) {
 	if limit <= 0 {
 		limit = 5
 	}
@@ -86,6 +124,7 @@ func (c *Client) searchInternal(ctx context.Context, vector []float32, limit int
 		Limit:          limit,
 		WithPayload:    true,
 		ScoreThreshold: scoreThreshold,
+		Filter:         filter,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
