@@ -391,6 +391,7 @@ type RacCatalogProductMaterial struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 	ProductID      pgtype.UUID `json:"product_id"`
 	MaterialID     pgtype.UUID `json:"material_id"`
+	PricingMode    string      `json:"pricing_mode"`
 }
 
 type RacCatalogVatRate struct {

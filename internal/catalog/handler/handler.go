@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/catalog/service"
 	"portal_final_backend/internal/catalog/transport"
 	"portal_final_backend/platform/httpkit"
@@ -378,6 +379,28 @@ func (h *Handler) AddProductMaterials(c *gin.Context) {
 		return
 	}
 
+	links := make([]repository.ProductMaterialLink, 0)
+	if len(req.Materials) > 0 {
+		for _, item := range req.Materials {
+			links = append(links, repository.ProductMaterialLink{
+				MaterialID:  item.MaterialID,
+				PricingMode: item.PricingMode,
+			})
+		}
+	} else {
+		for _, materialID := range req.MaterialIDs {
+			links = append(links, repository.ProductMaterialLink{
+				MaterialID:  materialID,
+				PricingMode: "additional",
+			})
+		}
+	}
+
+	if len(links) == 0 {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, "materialIds or materials is required")
+		return
+	}
+
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {
 		return
@@ -387,7 +410,7 @@ func (h *Handler) AddProductMaterials(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.AddProductMaterials(c.Request.Context(), tenantID, id, req.MaterialIDs); httpkit.HandleError(c, err) {
+	if err := h.svc.AddProductMaterials(c.Request.Context(), tenantID, id, links); httpkit.HandleError(c, err) {
 		return
 	}
 	c.Status(http.StatusNoContent)
