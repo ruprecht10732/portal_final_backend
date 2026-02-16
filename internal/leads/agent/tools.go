@@ -1394,11 +1394,30 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to generate embedding for query"}, err
 	}
 
-	if output, ok := tryCatalogSearchFlow(ctx, deps, query, limit, scoreThreshold, useCatalog, vector); ok {
-		return output, nil
+	catalogOutput, foundInCatalog := tryCatalogSearchFlow(ctx, deps, query, limit, scoreThreshold, useCatalog, vector)
+	if foundInCatalog && hasHighConfidenceMatch(catalogOutput.Products) {
+		return catalogOutput, nil
 	}
 
-	return searchFallbackReferenceCollections(ctx, deps, query, vector, limit, scoreThreshold)
+	fallbackOutput, fallbackErr := searchFallbackReferenceCollections(ctx, deps, query, vector, limit, scoreThreshold)
+	if fallbackErr != nil {
+		if foundInCatalog && len(catalogOutput.Products) > 0 {
+			log.Printf("SearchProductMaterials: fallback search failed, returning catalog-only low-confidence results: %v", fallbackErr)
+			return catalogOutput, nil
+		}
+		return fallbackOutput, fallbackErr
+	}
+
+	if foundInCatalog && len(catalogOutput.Products) > 0 {
+		if len(fallbackOutput.Products) == 0 {
+			return catalogOutput, nil
+		}
+
+		log.Printf("SearchProductMaterials: catalog had no high-confidence matches, adding fallback collections")
+		return combineCatalogAndFallbackResults(catalogOutput, fallbackOutput, query, scoreThreshold, limit), nil
+	}
+
+	return fallbackOutput, nil
 }
 
 func searchFallbackReferenceCollections(ctx tool.Context, deps *ToolDependencies, query string, vector []float32, limit int, scoreThreshold float64) (SearchProductMaterialsOutput, error) {
@@ -1507,6 +1526,40 @@ func buildFallbackSearchOutput(query string, products []ProductResult, requestCo
 	return SearchProductMaterialsOutput{
 		Products: products,
 		Message:  fmt.Sprintf("Found %d reference products (not from your catalog — use as ad-hoc line items without catalogProductId, min relevance %.0f%%)", len(products), scoreThreshold*100),
+	}
+}
+
+func combineCatalogAndFallbackResults(catalogOutput SearchProductMaterialsOutput, fallbackOutput SearchProductMaterialsOutput, query string, scoreThreshold float64, limit int) SearchProductMaterialsOutput {
+	products := make([]ProductResult, 0, len(catalogOutput.Products)+len(fallbackOutput.Products))
+	products = append(products, catalogOutput.Products...)
+	products = append(products, fallbackOutput.Products...)
+
+	sort.SliceStable(products, func(i, j int) bool {
+		if products[i].Score == products[j].Score {
+			return products[i].PriceEuros < products[j].PriceEuros
+		}
+		return products[i].Score > products[j].Score
+	})
+
+	if len(products) > limit {
+		products = products[:limit]
+	}
+
+	catalogCount := len(catalogOutput.Products)
+	fallbackCount := len(fallbackOutput.Products)
+
+	log.Printf("SearchProductMaterials: combined query=%q catalog=%d fallback=%d total=%d (threshold=%.2f)",
+		query, catalogCount, fallbackCount, len(products), scoreThreshold)
+
+	return SearchProductMaterialsOutput{
+		Products: products,
+		Message: fmt.Sprintf(
+			"Found %d products: %d catalog + %d fallback references (catalog is lower confidence; verify variant/unit before drafting, min relevance %.0f%%)",
+			len(products),
+			catalogCount,
+			fallbackCount,
+			scoreThreshold*100,
+		),
 	}
 }
 
