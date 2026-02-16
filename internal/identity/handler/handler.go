@@ -334,6 +334,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays:            settings.QuotePaymentDays,
 		QuoteValidDays:              settings.QuoteValidDays,
+		NotificationEmail:           settings.NotificationEmail,
 		WhatsAppDeviceID:            settings.WhatsAppDeviceID,
 		WhatsAppWelcomeDelayMinutes: settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:              settings.SMTPHost != nil && *settings.SMTPHost != "",
@@ -378,6 +379,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 	settings, err := h.svc.UpdateOrganizationSettings(c.Request.Context(), *tenantID, repository.OrganizationSettingsUpdate{
 		QuotePaymentDays:            req.QuotePaymentDays,
 		QuoteValidDays:              req.QuoteValidDays,
+		NotificationEmail:           req.NotificationEmail,
 		WhatsAppWelcomeDelayMinutes: req.WhatsAppWelcomeDelayMinutes,
 	})
 	if httpkit.HandleError(c, err) {
@@ -387,6 +389,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays:            settings.QuotePaymentDays,
 		QuoteValidDays:              settings.QuoteValidDays,
+		NotificationEmail:           settings.NotificationEmail,
 		WhatsAppDeviceID:            settings.WhatsAppDeviceID,
 		WhatsAppWelcomeDelayMinutes: settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:              settings.SMTPHost != nil && *settings.SMTPHost != "",

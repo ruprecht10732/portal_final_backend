@@ -324,22 +324,28 @@ func (s *Service) Send(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, ag
 	if err != nil {
 		return nil, err
 	}
-	if quote.Status != string(transport.QuoteStatusDraft) {
-		return nil, apperr.BadRequest("only draft quotes can be sent")
+	if quote.Status != string(transport.QuoteStatusDraft) && quote.Status != string(transport.QuoteStatusSent) {
+		return nil, apperr.BadRequest("only draft or sent quotes can be sent")
 	}
-	token, err := generatePublicToken()
-	if err != nil {
-		return nil, err
+
+	token := strings.TrimSpace(ptrToString(quote.PublicToken))
+	if token == "" {
+		token, err = generatePublicToken()
+		if err != nil {
+			return nil, err
+		}
+		expiresAt := time.Now().Add(defaultPublicTokenTTL)
+		if quote.ValidUntil != nil && quote.ValidUntil.After(time.Now()) {
+			expiresAt = *quote.ValidUntil
+		}
+		if err := s.repo.SetPublicToken(ctx, id, tenantID, token, expiresAt); err != nil {
+			return nil, err
+		}
 	}
-	expiresAt := time.Now().Add(defaultPublicTokenTTL)
-	if quote.ValidUntil != nil && quote.ValidUntil.After(time.Now()) {
-		expiresAt = *quote.ValidUntil
-	}
-	if err := s.repo.SetPublicToken(ctx, id, tenantID, token, expiresAt); err != nil {
-		return nil, err
-	}
-	if err := s.repo.UpdateStatus(ctx, id, tenantID, string(transport.QuoteStatusSent)); err != nil {
-		return nil, err
+	if quote.Status != string(transport.QuoteStatusSent) {
+		if err := s.repo.UpdateStatus(ctx, id, tenantID, string(transport.QuoteStatusSent)); err != nil {
+			return nil, err
+		}
 	}
 	resp, err := s.GetByID(ctx, id, tenantID)
 	if err != nil {

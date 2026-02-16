@@ -809,6 +809,7 @@ type RacOrganizationSetting struct {
 	SmtpFromEmail               pgtype.Text        `json:"smtp_from_email"`
 	SmtpFromName                pgtype.Text        `json:"smtp_from_name"`
 	WhatsappWelcomeDelayMinutes int32              `json:"whatsapp_welcome_delay_minutes"`
+	NotificationEmail           pgtype.Text        `json:"notification_email"`
 }
 
 type RacPartner struct {

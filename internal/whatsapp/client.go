@@ -3,7 +3,9 @@ package whatsapp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,11 +33,12 @@ type gowaLoginResponse struct {
 }
 
 type Client struct {
-	baseURL         string
-	apiKey          string
-	defaultDeviceID string
-	http            *http.Client
-	log             *logger.Logger
+	baseURL           string
+	baseHost          string
+	apiKey            string
+	apiKeyFingerprint string
+	http              *http.Client
+	log               *logger.Logger
 }
 
 type gowaRequest struct {
@@ -74,11 +77,12 @@ func NewClient(cfg config.WhatsAppConfig, log *logger.Logger) *Client {
 	}
 
 	return &Client{
-		baseURL:         strings.TrimRight(cfg.GetWhatsAppURL(), "/"),
-		apiKey:          cfg.GetWhatsAppKey(),
-		defaultDeviceID: cfg.GetWhatsAppDeviceID(),
-		http:            &http.Client{Timeout: 10 * time.Second},
-		log:             log,
+		baseURL:           strings.TrimRight(cfg.GetWhatsAppURL(), "/"),
+		baseHost:          hostFromURL(cfg.GetWhatsAppURL()),
+		apiKey:            cfg.GetWhatsAppKey(),
+		apiKeyFingerprint: fingerprintKey(cfg.GetWhatsAppKey()),
+		http:              &http.Client{Timeout: 10 * time.Second},
+		log:               log,
 	}
 }
 
@@ -87,10 +91,7 @@ func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber s
 		return nil
 	}
 
-	targetDevice := deviceID
-	if targetDevice == "" {
-		targetDevice = c.defaultDeviceID
-	}
+	targetDevice := strings.TrimSpace(deviceID)
 	if targetDevice == "" {
 		return ErrNoDevice
 	}
@@ -101,6 +102,8 @@ func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber s
 		Message: message,
 	}
 
+	c.log.Info("whatsapp send attempt", "deviceId", targetDevice, "providerHost", c.baseHost, "apiKeyFp", c.apiKeyFingerprint, "phone", normalized)
+
 	err := c.doSendMessage(ctx, targetDevice, payload)
 	if err != nil && isConnectionError(err) {
 		c.log.Warn("whatsapp connection lost, attempting reconnect", "deviceId", targetDevice)
@@ -110,10 +113,35 @@ func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber s
 		}
 	}
 
+	if err != nil {
+		c.log.Warn("whatsapp send failed", "deviceId", targetDevice, "providerHost", c.baseHost, "apiKeyFp", c.apiKeyFingerprint, "error", err)
+	}
+
 	if err == nil {
 		c.log.Info("whatsapp sent via gowa", "phone", normalized, "deviceId", targetDevice)
 	}
 	return err
+}
+
+func hostFromURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
+}
+
+func fingerprintKey(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(trimmed))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 func (c *Client) doSendMessage(ctx context.Context, deviceID string, payload gowaRequest) error {

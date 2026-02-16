@@ -153,6 +153,7 @@ func main() {
 
 	// Initialize domain modules
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)
+	identityModule.RegisterHandlers(eventBus)
 	notificationModule.SetOrganizationSettingsReader(identityModule.Service())
 	notificationModule.SetWorkflowResolver(identityModule.Service())
 

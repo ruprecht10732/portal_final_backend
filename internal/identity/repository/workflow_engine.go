@@ -148,6 +148,68 @@ func (r *Repository) ReplaceWorkflows(ctx context.Context, organizationID uuid.U
 	return r.ListWorkflows(ctx, organizationID)
 }
 
+func (r *Repository) EnsureDefaultWorkflowSeed(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	workflow WorkflowUpsert,
+	defaultRuleName string,
+	defaultPriority int,
+) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	workflowID, err := upsertWorkflowTx(ctx, tx, organizationID, workflow)
+	if err != nil {
+		return err
+	}
+
+	if err := upsertWorkflowStepsTx(ctx, tx, organizationID, workflowID, workflow.Steps); err != nil {
+		return err
+	}
+
+	var defaultRuleExists bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM RAC_workflow_assignment_rules
+			WHERE organization_id = $1
+			  AND lead_source IS NULL
+			  AND lead_service_type IS NULL
+			  AND pipeline_stage IS NULL
+		)
+	`, organizationID).Scan(&defaultRuleExists)
+	if err != nil {
+		return err
+	}
+
+	if !defaultRuleExists {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO RAC_workflow_assignment_rules (
+				organization_id,
+				workflow_id,
+				name,
+				enabled,
+				priority,
+				lead_source,
+				lead_service_type,
+				pipeline_stage
+			)
+			VALUES ($1, $2, $3, TRUE, $4, NULL, NULL, NULL)
+		`, organizationID, workflowID, defaultRuleName, defaultPriority); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *Repository) fetchWorkflows(ctx context.Context, organizationID uuid.UUID) ([]Workflow, map[uuid.UUID]int, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, organization_id, workflow_key, name, description, enabled,
