@@ -33,6 +33,7 @@ type testSender struct {
 
 const testLeadEmail = "lead@example.com"
 const testOrgName = "Vakman Portal"
+const errUnexpectedRenderedText = "unexpected rendered text: %q"
 
 func (s *testSender) SendVerificationEmail(context.Context, string, string) error  { return nil }
 func (s *testSender) SendPasswordResetEmail(context.Context, string, string) error { return nil }
@@ -165,7 +166,32 @@ func TestRenderTemplateTextAcceptsFrontendSyntax(t *testing.T) {
 		t.Fatalf("expected frontend syntax to render, got error: %v", err)
 	}
 	if rendered != "Test bericht Robin http://localhost/track/abc" {
-		t.Fatalf("unexpected rendered text: %q", rendered)
+		t.Fatalf(errUnexpectedRenderedText, rendered)
+	}
+}
+
+func TestRenderTemplateTextAcceptsUppercasePlaceholders(t *testing.T) {
+	rendered, err := renderTemplateText("Beste {{LEAD.NAME}}, bekijk {{QUOTE.NUMBER}}", map[string]any{
+		"lead":  map[string]any{"name": "Robin"},
+		"quote": map[string]any{"number": "OFF-2026-0042"},
+	})
+	if err != nil {
+		t.Fatalf("expected uppercase placeholders to render, got error: %v", err)
+	}
+	if rendered != "Beste Robin, bekijk OFF-2026-0042" {
+		t.Fatalf(errUnexpectedRenderedText, rendered)
+	}
+}
+
+func TestRenderTemplateTextAcceptsMixedCaseNestedKeys(t *testing.T) {
+	rendered, err := renderTemplateText("Link: {{quote.previewurl}}", map[string]any{
+		"quote": map[string]any{"previewUrl": "https://example.test/quote/abc"},
+	})
+	if err != nil {
+		t.Fatalf("expected mixed-case placeholders to render, got error: %v", err)
+	}
+	if rendered != "Link: https://example.test/quote/abc" {
+		t.Fatalf(errUnexpectedRenderedText, rendered)
 	}
 }
 

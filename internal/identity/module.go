@@ -2,6 +2,8 @@
 package identity
 
 import (
+	"context"
+
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
@@ -37,6 +39,19 @@ func (m *Module) Service() *service.Service {
 
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	m.handler.RegisterRoutes(ctx.Admin)
+}
+
+func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
+	bus.Subscribe(events.OrganizationCreated{}.EventName(), m)
+}
+
+func (m *Module) Handle(ctx context.Context, event events.Event) error {
+	switch e := event.(type) {
+	case events.OrganizationCreated:
+		return m.service.SeedDefaultWorkflow(ctx, e.OrganizationID)
+	default:
+		return nil
+	}
 }
 
 var _ apphttp.Module = (*Module)(nil)

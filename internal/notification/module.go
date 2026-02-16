@@ -490,7 +490,7 @@ func renderTemplateText(tpl string, data map[string]any) (string, error) {
 		return "", errors.New("legacy template syntax is not supported; use frontend syntax like {{lead.name}}")
 	}
 
-	normalizedTpl := normalizeFrontendTemplateSyntax(tpl)
+	normalizedTpl := normalizeFrontendTemplateSyntax(tpl, data)
 	parsed, err := template.New("msg").Option("missingkey=zero").Parse(normalizedTpl)
 	if err != nil {
 		return "", err
@@ -504,8 +504,64 @@ func renderTemplateText(tpl string, data map[string]any) (string, error) {
 
 var frontendPlaceholderPattern = regexp.MustCompile(`{{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*}}`)
 
-func normalizeFrontendTemplateSyntax(tpl string) string {
-	return frontendPlaceholderPattern.ReplaceAllString(tpl, "{{.$1}}")
+func normalizeFrontendTemplateSyntax(tpl string, data map[string]any) string {
+	return frontendPlaceholderPattern.ReplaceAllStringFunc(tpl, func(match string) string {
+		submatches := frontendPlaceholderPattern.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		path := strings.TrimSpace(submatches[1])
+		canonical := canonicalizeTemplatePath(path, data)
+		return "{{." + canonical + "}}"
+	})
+}
+
+func canonicalizeTemplatePath(path string, data map[string]any) string {
+	segments := strings.Split(path, ".")
+	if len(segments) == 0 {
+		return path
+	}
+
+	resolved := make([]string, 0, len(segments))
+	var current any = data
+
+	for _, segment := range segments {
+		resolvedSegment := segment
+		next, ok := findCaseInsensitiveMapValue(current, segment)
+		if ok {
+			resolvedSegment = next.key
+			current = next.value
+		} else {
+			current = nil
+		}
+		resolved = append(resolved, resolvedSegment)
+	}
+
+	return strings.Join(resolved, ".")
+}
+
+type mapValueMatch struct {
+	key   string
+	value any
+}
+
+func findCaseInsensitiveMapValue(current any, key string) (mapValueMatch, bool) {
+	currentMap, ok := current.(map[string]any)
+	if !ok {
+		return mapValueMatch{}, false
+	}
+
+	if value, ok := currentMap[key]; ok {
+		return mapValueMatch{key: key, value: value}, true
+	}
+
+	for candidateKey, candidateValue := range currentMap {
+		if strings.EqualFold(candidateKey, key) {
+			return mapValueMatch{key: candidateKey, value: candidateValue}, true
+		}
+	}
+
+	return mapValueMatch{}, false
 }
 
 func (m *Module) enqueueWorkflowSteps(ctx context.Context, steps []repository.WorkflowStep, execCtx workflowStepExecutionContext) error {
