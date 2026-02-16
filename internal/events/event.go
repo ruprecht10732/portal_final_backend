@@ -286,6 +286,7 @@ type QuoteAccepted struct {
 	OrganizationName string     `json:"organizationName"`
 	AgentEmail       string     `json:"agentEmail"`
 	AgentName        string     `json:"agentName"`
+	PublicToken      string     `json:"publicToken"`
 }
 
 func (e QuoteAccepted) EventName() string { return "quotes.quote.accepted" }

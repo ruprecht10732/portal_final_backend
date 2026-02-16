@@ -902,7 +902,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 	acceptURL := m.buildURL("/partner-offer", e.PublicToken)
 
 	// Build WhatsApp draft URL
-	priceFormatted := fmt.Sprintf("€%.2f", float64(e.VakmanPriceCents)/100)
+	priceFormatted := formatCurrencyEURCents(e.VakmanPriceCents)
 	whatsappMsg := fmt.Sprintf(
 		partnerOfferCreatedTemplate,
 		e.PartnerName, priceFormatted, acceptURL,
@@ -960,7 +960,10 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 			"email": e.PartnerEmail,
 		},
 		"offer": map[string]any{
-			"id": e.OfferID.String(),
+			"id":             e.OfferID.String(),
+			"price":          priceFormatted,
+			"priceFormatted": priceFormatted,
+			"priceCents":     e.VakmanPriceCents,
 		},
 		"links": map[string]any{
 			"accept": acceptURL,
@@ -1067,17 +1070,19 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 		}
 	}
 
-	// 2. Send notification email to info@salestainable.nl
-	if err := m.sender.SendPartnerOfferAcceptedEmail(ctx, partnerOfferNotificationEmail, e.PartnerName, e.OfferID.String()); err != nil {
+	// 2. Send notification email to configured address (fallback to default)
+	notificationEmail := m.resolvePartnerOfferNotificationEmail(ctx, e.OrganizationID)
+	if err := m.sender.SendPartnerOfferAcceptedEmail(ctx, notificationEmail, e.PartnerName, e.OfferID.String()); err != nil {
 		m.log.Error("failed to send partner offer accepted email",
 			"offerId", e.OfferID,
+			"toEmail", notificationEmail,
 			"error", err,
 		)
 		// Non-fatal: continue to send confirmation to vakman
 	}
 	m.log.Info("partner offer accepted email sent",
 		"offerId", e.OfferID,
-		"toEmail", partnerOfferNotificationEmail,
+		"toEmail", notificationEmail,
 	)
 
 	// 3. Send confirmation email to the vakman
@@ -1158,17 +1163,19 @@ func (m *Module) handlePartnerOfferRejected(ctx context.Context, e events.Partne
 		}
 	}
 
-	// 2. Send notification email to info@salestainable.nl
-	if err := m.sender.SendPartnerOfferRejectedEmail(ctx, partnerOfferNotificationEmail, e.PartnerName, e.OfferID.String(), e.Reason); err != nil {
+	// 2. Send notification email to configured address (fallback to default)
+	notificationEmail := m.resolvePartnerOfferNotificationEmail(ctx, e.OrganizationID)
+	if err := m.sender.SendPartnerOfferRejectedEmail(ctx, notificationEmail, e.PartnerName, e.OfferID.String(), e.Reason); err != nil {
 		m.log.Error("failed to send partner offer rejected email",
 			"offerId", e.OfferID,
+			"toEmail", notificationEmail,
 			"error", err,
 		)
 		return err
 	}
 	m.log.Info("partner offer rejected email sent",
 		"offerId", e.OfferID,
-		"toEmail", partnerOfferNotificationEmail,
+		"toEmail", notificationEmail,
 	)
 
 	return nil
@@ -1986,6 +1993,37 @@ func defaultName(value, fallback string) string {
 	return value
 }
 
+func formatCurrencyEURCents(cents int64) string {
+	sign := ""
+	abs := cents
+	if cents < 0 {
+		sign = "-"
+		abs = -cents
+	}
+	return fmt.Sprintf("%s€%d,%02d", sign, abs/100, abs%100)
+}
+
+func (m *Module) resolvePartnerOfferNotificationEmail(ctx context.Context, orgID uuid.UUID) string {
+	if m.settingsReader == nil {
+		return partnerOfferNotificationEmail
+	}
+
+	settings, err := m.settingsReader.GetOrganizationSettings(ctx, orgID)
+	if err != nil {
+		m.log.Warn("failed to resolve partner offer notification email", "orgId", orgID, "error", err)
+		return partnerOfferNotificationEmail
+	}
+
+	if settings.NotificationEmail != nil {
+		email := strings.TrimSpace(*settings.NotificationEmail)
+		if email != "" {
+			return email
+		}
+	}
+
+	return partnerOfferNotificationEmail
+}
+
 func (m *Module) handleQuoteViewed(ctx context.Context, e events.QuoteViewed) error {
 	m.pushQuoteSSE(e.OrganizationID, sse.EventQuoteViewed, e.QuoteID, map[string]interface{}{
 		"viewerIp": e.ViewerIP,
@@ -2054,9 +2092,14 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 
 func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	baseURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
+	downloadURL := fmt.Sprintf("%s/api/v1/public/quotes/%s/pdf", baseURL, e.PublicToken)
+	viewURL := baseURL + quotePublicPathPrefix + e.PublicToken
+	formattedPrice := formatCurrencyEURCents(e.TotalCents)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
-		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents},
+		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL},
+		"links": map[string]any{"view": viewURL, "download": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "email", "lead", nil)
@@ -2075,10 +2118,11 @@ func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e e
 
 func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.AgentName), "adviseur")
+	formattedPrice := formatCurrencyEURCents(e.TotalCents)
 	templateVars := map[string]any{
 		"partner": map[string]any{"name": name, "email": e.AgentEmail},
 		"lead":    map[string]any{"name": defaultName(strings.TrimSpace(e.ConsumerName), "de klant")},
-		"quote":   map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents},
+		"quote":   map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice},
 		"org":     map[string]any{"name": e.OrganizationName},
 	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "email", "partner", nil)
@@ -2097,9 +2141,13 @@ func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e 
 
 func (m *Module) dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	baseURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
+	downloadURL := fmt.Sprintf("%s/api/v1/public/quotes/%s/pdf", baseURL, e.PublicToken)
+	formattedPrice := formatCurrencyEURCents(e.TotalCents)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
-		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents},
+		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL},
+		"links": map[string]any{"download": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "whatsapp", "lead", nil)

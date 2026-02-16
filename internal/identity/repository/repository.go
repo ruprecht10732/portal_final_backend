@@ -79,6 +79,7 @@ type OrganizationSettings struct {
 	OrganizationID              uuid.UUID
 	QuotePaymentDays            int
 	QuoteValidDays              int
+	NotificationEmail           *string
 	WhatsAppDeviceID            *string
 	WhatsAppWelcomeDelayMinutes int
 	SMTPHost                    *string
@@ -94,6 +95,7 @@ type OrganizationSettings struct {
 type OrganizationSettingsUpdate struct {
 	QuotePaymentDays            *int
 	QuoteValidDays              *int
+	NotificationEmail           *string
 	WhatsAppDeviceID            *string
 	WhatsAppWelcomeDelayMinutes *int
 }
@@ -304,7 +306,7 @@ func (r *Repository) ClearOrganizationLogo(
 func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-	SELECT organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+	SELECT organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
            smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
            created_at, updated_at
     FROM RAC_organization_settings
@@ -313,6 +315,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.NotificationEmail,
 		&s.WhatsAppDeviceID,
 		&s.WhatsAppWelcomeDelayMinutes,
 		&s.SMTPHost,
@@ -344,21 +347,23 @@ func (r *Repository) UpsertOrganizationSettings(
 ) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes)
-		VALUES ($1, COALESCE($2, 7), COALESCE($3, 14), NULLIF($4, ''), COALESCE($5, 2))
+		INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes)
+		VALUES ($1, COALESCE($2, 7), COALESCE($3, 14), NULLIF($4, ''), NULLIF($5, ''), COALESCE($6, 2))
 		ON CONFLICT (organization_id) DO UPDATE SET
 			quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
 			quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
-			whatsapp_device_id = CASE WHEN $4 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($4, '') END,
-			whatsapp_welcome_delay_minutes = COALESCE($5, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+			notification_email = CASE WHEN $4 IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($4, '') END,
+			whatsapp_device_id = CASE WHEN $5 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($5, '') END,
+			whatsapp_welcome_delay_minutes = COALESCE($6, RAC_organization_settings.whatsapp_welcome_delay_minutes),
 			updated_at         = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+		RETURNING organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		          created_at, updated_at
-	`, organizationID, update.QuotePaymentDays, update.QuoteValidDays, update.WhatsAppDeviceID, update.WhatsAppWelcomeDelayMinutes).Scan(
+	`, organizationID, update.QuotePaymentDays, update.QuoteValidDays, update.NotificationEmail, update.WhatsAppDeviceID, update.WhatsAppWelcomeDelayMinutes).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.NotificationEmail,
 		&s.WhatsAppDeviceID,
 		&s.WhatsAppWelcomeDelayMinutes,
 		&s.SMTPHost,
@@ -394,13 +399,14 @@ func (r *Repository) UpsertOrganizationSMTP(
 			smtp_from_email = $6,
 			smtp_from_name  = $7,
 			updated_at      = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+		RETURNING organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		          created_at, updated_at
 	`, organizationID, update.SMTPHost, update.SMTPPort, update.SMTPUsername, update.SMTPPassword, update.SMTPFromEmail, update.SMTPFromName).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.NotificationEmail,
 		&s.WhatsAppDeviceID,
 		&s.WhatsAppWelcomeDelayMinutes,
 		&s.SMTPHost,

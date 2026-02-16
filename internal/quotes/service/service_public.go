@@ -234,7 +234,7 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 		return nil, err
 	}
 	if s.eventBus != nil {
-		evt := events.QuoteAccepted{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID, LeadServiceID: quote.LeadServiceID, SignatureName: req.SignatureName, TotalCents: quote.TotalCents, QuoteNumber: quote.QuoteNumber}
+		evt := events.QuoteAccepted{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID, LeadServiceID: quote.LeadServiceID, SignatureName: req.SignatureName, TotalCents: quote.TotalCents, QuoteNumber: quote.QuoteNumber, PublicToken: token}
 		if s.contacts != nil {
 			if contactData, lookupErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, quote.OrganizationID); lookupErr == nil {
 				evt.ConsumerEmail = contactData.ConsumerEmail
