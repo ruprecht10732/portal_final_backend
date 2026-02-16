@@ -14,7 +14,6 @@ import (
 	"portal_final_backend/platform/ai/embeddingapi"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/logger"
-	"portal_final_backend/platform/sanitize"
 )
 
 // Service provides business logic for catalog.
@@ -266,7 +265,7 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 		VatRateID:      req.VatRateID,
 		Title:          strings.TrimSpace(req.Title),
 		Reference:      reference,
-		Description:    sanitize.TextPtr(req.Description),
+		Description:    trimPtr(req.Description),
 		PriceCents:     req.PriceCents,
 		UnitPriceCents: req.UnitPriceCents,
 		UnitLabel:      unitLabel,
@@ -316,7 +315,7 @@ func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 		VatRateID:      req.VatRateID,
 		Title:          trimPtr(req.Title),
 		Reference:      trimPtr(req.Reference),
-		Description:    sanitize.TextPtr(req.Description),
+		Description:    trimPtr(req.Description),
 		PriceCents:     req.PriceCents,
 		UnitPriceCents: req.UnitPriceCents,
 		UnitLabel:      unitLabel,
