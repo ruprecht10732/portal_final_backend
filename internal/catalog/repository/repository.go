@@ -543,15 +543,35 @@ func (r *Repo) GetProductsByIDs(ctx context.Context, organizationID uuid.UUID, i
 }
 
 // AddProductMaterials adds materials to a product.
-func (r *Repo) AddProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error {
-	query := `
-		INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id)
-		SELECT $1, $2, unnest($3::uuid[])
-		ON CONFLICT DO NOTHING`
-
-	if _, err := r.pool.Exec(ctx, query, organizationID, productID, materialIDs); err != nil {
-		return fmt.Errorf("add product materials: %w", err)
+func (r *Repo) AddProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, links []ProductMaterialLink) error {
+	if len(links) == 0 {
+		return nil
 	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin add product materials tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	query := `
+		INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id, pricing_mode)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (organization_id, product_id, material_id)
+		DO UPDATE SET pricing_mode = EXCLUDED.pricing_mode`
+
+	for _, link := range links {
+		if _, err := tx.Exec(ctx, query, organizationID, productID, link.MaterialID, link.PricingMode); err != nil {
+			return fmt.Errorf("add product material: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit add product materials tx: %w", err)
+	}
+
 	return nil
 }
 
@@ -570,7 +590,7 @@ func (r *Repo) RemoveProductMaterials(ctx context.Context, organizationID uuid.U
 // ListProductMaterials lists materials for a product.
 func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) ([]Product, error) {
 	query := `
-		SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at
+		SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text, p.type, pm.pricing_mode, p.period_count, p.period_unit, p.created_at, p.updated_at
 		FROM RAC_catalog_products p
 		JOIN RAC_catalog_product_materials pm
 		  ON pm.material_id = p.id AND pm.organization_id = p.organization_id
@@ -589,7 +609,7 @@ func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUI
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(
 			&product.ID, &product.OrganizationID, &product.VatRateID, &product.Title, &product.Reference,
-			&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PeriodCount, &product.PeriodUnit,
+			&product.Description, &product.PriceCents, &product.UnitPriceCents, &product.UnitLabel, &product.LaborTimeText, &product.Type, &product.PricingMode, &product.PeriodCount, &product.PeriodUnit,
 			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan product material: %w", err)

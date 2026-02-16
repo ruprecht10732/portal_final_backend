@@ -30,10 +30,16 @@ type Product struct {
 	UnitLabel      *string   `db:"unit_label"`
 	LaborTimeText  *string   `db:"labor_time_text"`
 	Type           string    `db:"type"`
+	PricingMode    *string   `db:"pricing_mode"`
 	PeriodCount    *int      `db:"period_count"`
 	PeriodUnit     *string   `db:"period_unit"`
 	CreatedAt      string    `db:"created_at"`
 	UpdatedAt      string    `db:"updated_at"`
+}
+
+type ProductMaterialLink struct {
+	MaterialID  uuid.UUID
+	PricingMode string
 }
 
 // ProductAsset represents an asset linked to a catalog product.
@@ -167,7 +173,7 @@ type Repository interface {
 	ListProductAssets(ctx context.Context, params ListProductAssetsParams) ([]ProductAsset, error)
 	DeleteProductAsset(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error
 
-	AddProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error
+	AddProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, links []ProductMaterialLink) error
 	RemoveProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error
 	ListProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) ([]Product, error)
 	HasProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) (bool, error)
