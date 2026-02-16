@@ -872,18 +872,47 @@ func (s *Service) GetMetrics(ctx context.Context, tenantID uuid.UUID) (transport
 		return transport.LeadMetricsResponse{}, err
 	}
 
-	var disqualifiedRate float64
-	var touchpointsPerLead float64
-	if metrics.TotalLeads > 0 {
-		disqualifiedRate = float64(metrics.DisqualifiedLeads) / float64(metrics.TotalLeads)
-		touchpointsPerLead = float64(metrics.Touchpoints) / float64(metrics.TotalLeads)
+	var conversionRate float64
+	totalQuoted := metrics.AcceptedQuotes + metrics.SentQuotes
+	if totalQuoted > 0 {
+		conversionRate = float64(metrics.AcceptedQuotes) / float64(totalQuoted)
+	}
+
+	trendLength := len(metrics.AcceptedQuotesTrend)
+	if len(metrics.SentQuotesTrend) > trendLength {
+		trendLength = len(metrics.SentQuotesTrend)
+	}
+	conversionTrend := make([]float64, 0, trendLength)
+	for index := 0; index < trendLength; index++ {
+		acceptedQuotes := 0
+		if index < len(metrics.AcceptedQuotesTrend) {
+			acceptedQuotes = metrics.AcceptedQuotesTrend[index]
+		}
+
+		sentQuotes := 0
+		if index < len(metrics.SentQuotesTrend) {
+			sentQuotes = metrics.SentQuotesTrend[index]
+		}
+
+		totalQuotes := acceptedQuotes + sentQuotes
+		if totalQuotes <= 0 {
+			conversionTrend = append(conversionTrend, 0)
+			continue
+		}
+
+		rate := float64(acceptedQuotes) / float64(totalQuotes)
+		conversionTrend = append(conversionTrend, roundToOneDecimal(rate*100))
 	}
 
 	return transport.LeadMetricsResponse{
-		TotalLeads:          metrics.TotalLeads,
-		ProjectedValueCents: metrics.ProjectedValueCents,
-		DisqualifiedRate:    roundToOneDecimal(disqualifiedRate * 100),
-		TouchpointsPerLead:  roundToOneDecimal(touchpointsPerLead),
+		ActiveLeads:        metrics.ActiveLeads,
+		QuotePipelineCents: metrics.QuotePipelineCents,
+		ConversionRate:     roundToOneDecimal(conversionRate * 100),
+		AvgQuoteValueCents: metrics.AvgQuoteValueCents,
+		ActiveLeadsTrend:   metrics.ActiveLeadsTrend,
+		QuotePipelineTrend: metrics.QuotePipelineTrend,
+		ConversionTrend:    conversionTrend,
+		AvgQuoteValueTrend: metrics.AvgQuoteValueTrend,
 	}, nil
 }
 

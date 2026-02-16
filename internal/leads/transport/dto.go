@@ -341,10 +341,14 @@ type BulkDeleteLeadsResponse struct {
 
 // LeadMetricsResponse provides aggregated KPIs for the dashboard.
 type LeadMetricsResponse struct {
-	TotalLeads          int     `json:"totalLeads"`
-	ProjectedValueCents int64   `json:"projectedValueCents"`
-	DisqualifiedRate    float64 `json:"disqualifiedRate"`
-	TouchpointsPerLead  float64 `json:"touchpointsPerLead"`
+	ActiveLeads        int       `json:"activeLeads"`
+	QuotePipelineCents int64     `json:"quotePipelineCents"`
+	ConversionRate     float64   `json:"conversionRate"`
+	AvgQuoteValueCents int64     `json:"avgQuoteValueCents"`
+	ActiveLeadsTrend   []int     `json:"activeLeadsTrend,omitempty"`
+	QuotePipelineTrend []int64   `json:"quotePipelineTrendCents,omitempty"`
+	ConversionTrend    []float64 `json:"conversionRateTrend,omitempty"`
+	AvgQuoteValueTrend []int64   `json:"avgQuoteValueTrendCents,omitempty"`
 }
 
 // TimelineItem represents an entry in the lead timeline feed.
