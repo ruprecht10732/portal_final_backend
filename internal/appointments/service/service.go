@@ -629,7 +629,8 @@ func (s *Service) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, u
 }
 
 func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.UpsertVisitReportRequest) (*transport.AppointmentVisitReportResponse, error) {
-	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID); err != nil {
+	appt, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -647,6 +648,18 @@ func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	leadID := appt.LeadID
+	leadServiceID := appt.LeadServiceID
+	if s.eventBus != nil && leadID != nil && leadServiceID != nil {
+		s.eventBus.Publish(ctx, events.LeadDataChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        *leadID,
+			LeadServiceID: *leadServiceID,
+			TenantID:      tenantID,
+			Source:        "visit_report",
+		})
 	}
 
 	return &transport.AppointmentVisitReportResponse{
