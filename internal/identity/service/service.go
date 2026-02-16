@@ -148,9 +148,7 @@ func (s *Service) ReplaceWorkflows(ctx context.Context, organizationID uuid.UUID
 
 func normalizeWorkflowUpserts(workflows []repository.WorkflowUpsert) []repository.WorkflowUpsert {
 	normalized := make([]repository.WorkflowUpsert, 0, len(workflows))
-	for _, workflow := range workflows {
-		normalized = append(normalized, workflow)
-	}
+	normalized = append(normalized, workflows...)
 	return normalized
 }
 

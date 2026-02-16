@@ -1094,7 +1094,6 @@ const invalidOutboxPayloadPrefix = "invalid payload: "
 const maxOutboxRetryAttempts = 5
 const workflowEngineActorName = "Workflow Engine"
 const quotePublicPathPrefix = "/quote/"
-const noReasonProvided = "Geen reden opgegeven"
 const outboxRetryBaseDelay = time.Minute
 const outboxRetryMaxDelay = 60 * time.Minute
 
@@ -1561,27 +1560,6 @@ func (m *Module) buildLeadTrackLink(publicToken string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s/track/%s", base, publicToken)
-}
-
-func buildLeadWelcomeMessage(consumerName string, trackLink string) string {
-	if strings.TrimSpace(trackLink) == "" {
-		return fmt.Sprintf(
-			"Beste %s,\n\n"+
-				"Bedankt voor je aanvraag! 👍\n\n"+
-				"We hebben alles ontvangen en gaan het nu rustig doornemen. "+
-				"Vandaag nemen we contact met je op om het verder te bespreken.",
-			consumerName,
-		)
-	}
-
-	return fmt.Sprintf(
-		"Beste %s,\n\n"+
-			"Bedankt voor je aanvraag! 👍\n\n"+
-			"Volg de status of voeg details toe via jouw persoonlijke pagina:\n%s\n\n"+
-			"We nemen vandaag contact met je op.",
-		consumerName,
-		trackLink,
-	)
 }
 
 func (m *Module) handleLeadDataChanged(_ context.Context, e events.LeadDataChanged) error {
@@ -2590,10 +2568,6 @@ func (m *Module) writeWhatsAppSentEventWithMetadata(params whatsAppSentEventWith
 	}); err != nil {
 		m.log.Error("failed to write whatsapp timeline event", "error", err, "leadId", params.LeadID)
 	}
-}
-
-func (m *Module) notifyOrgMembersInApp(ctx context.Context, orgID uuid.UUID, p inapp.SendParams) {
-	m.notifyOrgMembersInAppByRoles(ctx, orgID, nil, p)
 }
 
 func (m *Module) notifyOrgMembersInAppByRoles(ctx context.Context, orgID uuid.UUID, allowedRoles map[string]struct{}, p inapp.SendParams) {
