@@ -346,7 +346,7 @@ func Load() (*Config, error) {
 		AppBaseURL:                        getEnv("APP_BASE_URL", "http://localhost:4200"),
 		EmailEnabled:                      emailEnabled && brevoAPIKey != "",
 		BrevoAPIKey:                       brevoAPIKey,
-		EmailFromName:                     getEnv("EMAIL_FROM_NAME", "Portal"),
+		EmailFromName:                     getEnv("EMAIL_FROM_NAME", "Salestainable"),
 		EmailFromAddress:                  getEnv("EMAIL_FROM_ADDRESS", ""),
 		RefreshCookieName:                 getEnv("REFRESH_COOKIE_NAME", "portal_refresh"),
 		RefreshCookieDomain:               getEnv("REFRESH_COOKIE_DOMAIN", ""),
