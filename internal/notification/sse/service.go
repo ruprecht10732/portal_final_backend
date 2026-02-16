@@ -43,6 +43,9 @@ const (
 
 	// Pipeline events (pushed to org members for dashboard alerts)
 	EventManualIntervention EventType = "manual_intervention"
+
+	// AI job progress events
+	EventAIJobProgress EventType = "ai_job_progress"
 )
 
 // Event represents an SSE event payload
@@ -120,8 +123,6 @@ func (s *Service) removeClient(c *client) {
 	if len(s.clients[c.userID]) == 0 {
 		delete(s.clients, c.userID)
 	}
-
-	close(c.events)
 }
 
 // Publish sends an event to a specific user
@@ -239,7 +240,6 @@ func (s *Service) deregisterQuoteClient(quoteID uuid.UUID, qc *quoteClient) {
 	if len(s.quoteClients[quoteID]) == 0 {
 		delete(s.quoteClients, quoteID)
 	}
-	close(qc.events)
 }
 
 // deregisterLeadClient removes a public viewer for a lead.
@@ -257,7 +257,6 @@ func (s *Service) deregisterLeadClient(leadID uuid.UUID, lc *leadClient) {
 	if len(s.leadClients[leadID]) == 0 {
 		delete(s.leadClients, leadID)
 	}
-	close(lc.events)
 }
 
 // streamEvents writes SSE events from the channel until the client disconnects or
@@ -399,21 +398,6 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, clients := range s.clients {
-		for _, c := range clients {
-			close(c.events)
-		}
-	}
-	for _, viewers := range s.quoteClients {
-		for _, v := range viewers {
-			close(v.events)
-		}
-	}
-	for _, viewers := range s.leadClients {
-		for _, v := range viewers {
-			close(v.events)
-		}
-	}
 	s.clients = make(map[uuid.UUID][]*client)
 	s.orgMap = make(map[uuid.UUID][]uuid.UUID)
 	s.quoteClients = make(map[uuid.UUID][]*quoteClient)

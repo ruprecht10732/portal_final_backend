@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/quotes/repository"
 	"portal_final_backend/internal/quotes/transport"
 	"portal_final_backend/platform/apperr"
@@ -90,6 +91,42 @@ type Service struct {
 	contacts   QuoteContactReader   // optional — nil means no email enrichment
 	quoteTerms QuoteTermsResolver   // optional — nil means use hardcoded defaults
 	promptGen  QuotePromptGenerator // optional — nil means prompt generation is disabled
+	sse        *sse.Service
+	jobQueue   GenerateQuoteJobQueue
+}
+
+// GenerateQuoteJobQueue enqueues async quote generation tasks to a background worker.
+type GenerateQuoteJobQueue interface {
+	EnqueueGenerateQuoteJobRequest(ctx context.Context, jobID, tenantID, userID, leadID, leadServiceID uuid.UUID, prompt string, quoteID *uuid.UUID) error
+}
+
+// GenerateQuoteJobStatus is the status for an async quote generation job.
+type GenerateQuoteJobStatus string
+
+const (
+	GenerateQuoteJobStatusPending   GenerateQuoteJobStatus = "pending"
+	GenerateQuoteJobStatusRunning   GenerateQuoteJobStatus = "running"
+	GenerateQuoteJobStatusCompleted GenerateQuoteJobStatus = "completed"
+	GenerateQuoteJobStatusFailed    GenerateQuoteJobStatus = "failed"
+)
+
+// GenerateQuoteJob stores progress and result data for an async generation run.
+type GenerateQuoteJob struct {
+	JobID           uuid.UUID
+	TenantID        uuid.UUID
+	UserID          uuid.UUID
+	LeadID          uuid.UUID
+	LeadServiceID   uuid.UUID
+	Status          GenerateQuoteJobStatus
+	Step            string
+	ProgressPercent int
+	Error           *string
+	QuoteID         *uuid.UUID
+	QuoteNumber     *string
+	ItemCount       *int
+	StartedAt       time.Time
+	UpdatedAt       time.Time
+	FinishedAt      *time.Time
 }
 
 // New creates a new quotes service
@@ -122,6 +159,16 @@ func (s *Service) SetQuotePromptGenerator(g QuotePromptGenerator) {
 	s.promptGen = g
 }
 
+// SetSSEService injects SSE broadcasting for async job progress events.
+func (s *Service) SetSSEService(sseSvc *sse.Service) {
+	s.sse = sseSvc
+}
+
+// SetGenerateQuoteJobQueue injects async queueing for quote generation jobs.
+func (s *Service) SetGenerateQuoteJobQueue(queue GenerateQuoteJobQueue) {
+	s.jobQueue = queue
+}
+
 // GetLatestNonDraftByLead returns the most recent non-draft quote for a lead.
 func (s *Service) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) (*repository.Quote, error) {
 	return s.repo.GetLatestNonDraftByLead(ctx, leadID, orgID)
@@ -134,6 +181,272 @@ func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID 
 	}
 
 	return s.promptGen.GenerateFromPrompt(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID)
+}
+
+// StartGenerateQuoteJob starts an async quote generation process and returns its job id.
+func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, leadID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (uuid.UUID, error) {
+	if s.promptGen == nil {
+		return uuid.Nil, apperr.Internal("quote generation is not configured")
+	}
+	if s.jobQueue == nil {
+		return uuid.Nil, apperr.Internal("quote generation job queue is not configured")
+	}
+
+	now := time.Now()
+	job := &GenerateQuoteJob{
+		JobID:           uuid.New(),
+		TenantID:        tenantID,
+		UserID:          userID,
+		LeadID:          leadID,
+		LeadServiceID:   serviceID,
+		Status:          GenerateQuoteJobStatusPending,
+		Step:            "In wachtrij",
+		ProgressPercent: 0,
+		StartedAt:       now,
+		UpdatedAt:       now,
+	}
+
+	if err := s.repo.CreateGenerateQuoteJob(ctx, &repository.GenerateQuoteJob{
+		ID:              job.JobID,
+		OrganizationID:  job.TenantID,
+		UserID:          job.UserID,
+		LeadID:          job.LeadID,
+		LeadServiceID:   job.LeadServiceID,
+		Status:          string(job.Status),
+		Step:            job.Step,
+		ProgressPercent: job.ProgressPercent,
+		StartedAt:       job.StartedAt,
+		UpdatedAt:       job.UpdatedAt,
+	}); err != nil {
+		return uuid.Nil, err
+	}
+
+	s.publishJobProgress(job)
+
+	if err := s.jobQueue.EnqueueGenerateQuoteJobRequest(ctx, job.JobID, tenantID, userID, leadID, serviceID, prompt, existingQuoteID); err != nil {
+		errText := err.Error()
+		_ = s.updateJobProgress(ctx, job.JobID, GenerateQuoteJobStatusFailed, "In wachtrij mislukt", 100, &errText)
+		return uuid.Nil, err
+	}
+
+	return job.JobID, nil
+}
+
+// GetGenerateQuoteJob returns current state for an async quote generation job.
+func (s *Service) GetGenerateQuoteJob(ctx context.Context, tenantID, userID, jobID uuid.UUID) (*GenerateQuoteJob, error) {
+	job, err := s.repo.GetGenerateQuoteJob(ctx, tenantID, userID, jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &GenerateQuoteJob{
+		JobID:           job.ID,
+		TenantID:        job.OrganizationID,
+		UserID:          job.UserID,
+		LeadID:          job.LeadID,
+		LeadServiceID:   job.LeadServiceID,
+		Status:          GenerateQuoteJobStatus(job.Status),
+		Step:            job.Step,
+		ProgressPercent: job.ProgressPercent,
+		Error:           job.Error,
+		QuoteID:         job.QuoteID,
+		QuoteNumber:     job.QuoteNumber,
+		ItemCount:       job.ItemCount,
+		StartedAt:       job.StartedAt,
+		UpdatedAt:       job.UpdatedAt,
+		FinishedAt:      job.FinishedAt,
+	}, nil
+}
+
+// ProcessGenerateQuoteJob runs in worker context and executes one queued job.
+func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) error {
+	claimed, err := s.repo.ClaimGenerateQuoteJob(ctx, jobID, "Voorbereiden offertecontext", 10, time.Now())
+	if err != nil {
+		return err
+	}
+
+	if claimed == nil {
+		current, currentErr := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
+		if currentErr != nil {
+			return currentErr
+		}
+
+		switch current.Status {
+		case string(GenerateQuoteJobStatusRunning), string(GenerateQuoteJobStatusCompleted), string(GenerateQuoteJobStatusFailed):
+			return nil
+		default:
+			return fmt.Errorf("generate quote job %s cannot be claimed from status %s", jobID, current.Status)
+		}
+	}
+
+	s.publishJobProgress(repositoryJobToServiceJob(claimed))
+
+	if err := s.updateJobProgress(ctx, jobID, GenerateQuoteJobStatusRunning, "AI offerte wordt gegenereerd", 55, nil); err != nil {
+		return err
+	}
+
+	result, err := s.GenerateQuote(ctx, claimed.OrganizationID, claimed.LeadID, claimed.LeadServiceID, prompt, existingQuoteID)
+	if err != nil {
+		errText := err.Error()
+		_ = s.updateJobProgress(ctx, jobID, GenerateQuoteJobStatusFailed, "Genereren mislukt", 100, &errText)
+		return err
+	}
+
+	if err := s.updateJobProgress(ctx, jobID, GenerateQuoteJobStatusRunning, "Afronden en opslaan", 90, nil); err != nil {
+		return err
+	}
+
+	now := time.Now()
+	entry := &repository.GenerateQuoteJob{
+		ID:              jobID,
+		Status:          string(GenerateQuoteJobStatusCompleted),
+		Step:            "Voltooid",
+		ProgressPercent: 100,
+		Error:           nil,
+		QuoteID:         &result.QuoteID,
+		QuoteNumber:     &result.QuoteNumber,
+		ItemCount:       &result.ItemCount,
+		UpdatedAt:       now,
+		FinishedAt:      &now,
+	}
+	if err := s.repo.UpdateGenerateQuoteJob(ctx, entry); err != nil {
+		return err
+	}
+
+	stored, err := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+
+	s.publishJobProgress(&GenerateQuoteJob{
+		JobID:           stored.ID,
+		TenantID:        stored.OrganizationID,
+		UserID:          stored.UserID,
+		LeadID:          stored.LeadID,
+		LeadServiceID:   stored.LeadServiceID,
+		Status:          GenerateQuoteJobStatus(stored.Status),
+		Step:            stored.Step,
+		ProgressPercent: stored.ProgressPercent,
+		Error:           stored.Error,
+		QuoteID:         stored.QuoteID,
+		QuoteNumber:     stored.QuoteNumber,
+		ItemCount:       stored.ItemCount,
+		StartedAt:       stored.StartedAt,
+		UpdatedAt:       stored.UpdatedAt,
+		FinishedAt:      stored.FinishedAt,
+	})
+
+	return nil
+}
+
+func repositoryJobToServiceJob(job *repository.GenerateQuoteJob) *GenerateQuoteJob {
+	if job == nil {
+		return nil
+	}
+
+	return &GenerateQuoteJob{
+		JobID:           job.ID,
+		TenantID:        job.OrganizationID,
+		UserID:          job.UserID,
+		LeadID:          job.LeadID,
+		LeadServiceID:   job.LeadServiceID,
+		Status:          GenerateQuoteJobStatus(job.Status),
+		Step:            job.Step,
+		ProgressPercent: job.ProgressPercent,
+		Error:           job.Error,
+		QuoteID:         job.QuoteID,
+		QuoteNumber:     job.QuoteNumber,
+		ItemCount:       job.ItemCount,
+		StartedAt:       job.StartedAt,
+		UpdatedAt:       job.UpdatedAt,
+		FinishedAt:      job.FinishedAt,
+	}
+}
+
+func (s *Service) updateJobProgress(ctx context.Context, jobID uuid.UUID, status GenerateQuoteJobStatus, step string, progress int, errText *string) error {
+	stored, err := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	update := &repository.GenerateQuoteJob{
+		ID:              jobID,
+		Status:          string(status),
+		Step:            step,
+		ProgressPercent: progress,
+		Error:           errText,
+		QuoteID:         stored.QuoteID,
+		QuoteNumber:     stored.QuoteNumber,
+		ItemCount:       stored.ItemCount,
+		UpdatedAt:       now,
+		FinishedAt:      stored.FinishedAt,
+	}
+
+	if status == GenerateQuoteJobStatusFailed {
+		update.FinishedAt = &now
+	}
+
+	if err := s.repo.UpdateGenerateQuoteJob(ctx, update); err != nil {
+		return err
+	}
+
+	stored.Status = update.Status
+	stored.Step = update.Step
+	stored.ProgressPercent = update.ProgressPercent
+	stored.Error = update.Error
+	stored.UpdatedAt = update.UpdatedAt
+	stored.FinishedAt = update.FinishedAt
+
+	s.publishJobProgress(&GenerateQuoteJob{
+		JobID:           stored.ID,
+		TenantID:        stored.OrganizationID,
+		UserID:          stored.UserID,
+		LeadID:          stored.LeadID,
+		LeadServiceID:   stored.LeadServiceID,
+		Status:          GenerateQuoteJobStatus(stored.Status),
+		Step:            stored.Step,
+		ProgressPercent: stored.ProgressPercent,
+		Error:           stored.Error,
+		QuoteID:         stored.QuoteID,
+		QuoteNumber:     stored.QuoteNumber,
+		ItemCount:       stored.ItemCount,
+		StartedAt:       stored.StartedAt,
+		UpdatedAt:       stored.UpdatedAt,
+		FinishedAt:      stored.FinishedAt,
+	})
+
+	return nil
+}
+
+func (s *Service) publishJobProgress(job *GenerateQuoteJob) {
+	if s.sse == nil || job == nil {
+		return
+	}
+
+	data := map[string]interface{}{
+		"job": map[string]interface{}{
+			"jobId":           job.JobID,
+			"status":          string(job.Status),
+			"step":            job.Step,
+			"progressPercent": job.ProgressPercent,
+			"leadId":          job.LeadID,
+			"leadServiceId":   job.LeadServiceID,
+			"startedAt":       job.StartedAt,
+			"updatedAt":       job.UpdatedAt,
+			"finishedAt":      job.FinishedAt,
+			"error":           job.Error,
+			"quoteId":         job.QuoteID,
+			"quoteNumber":     job.QuoteNumber,
+			"itemCount":       job.ItemCount,
+		},
+	}
+
+	s.sse.Publish(job.UserID, sse.Event{
+		Type:    sse.EventAIJobProgress,
+		Message: "AI quote generation progress",
+		Data:    data,
+	})
 }
 
 // Create creates a new quote with line items, computing totals server-side

@@ -21,6 +21,11 @@ type Worker struct {
 	repo   *repository.Repository
 	bus    events.Bus
 	log    *logger.Logger
+	quotes QuoteJobProcessor
+}
+
+type QuoteJobProcessor interface {
+	ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) error
 }
 
 func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, log *logger.Logger) (*Worker, error) {
@@ -62,8 +67,13 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 
 	mux.HandleFunc(TaskAppointmentReminder, w.handleAppointmentReminder)
 	mux.HandleFunc(TaskNotificationOutboxDue, w.handleNotificationOutboxDue)
+	mux.HandleFunc(TaskGenerateQuoteJob, w.handleGenerateQuoteJob)
 
 	return w, nil
+}
+
+func (w *Worker) SetQuoteJobProcessor(processor QuoteJobProcessor) {
+	w.quotes = processor
 }
 
 func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
@@ -177,6 +187,33 @@ func (w *Worker) handleAppointmentReminder(ctx context.Context, task *asynq.Task
 	})
 
 	return nil
+}
+
+func (w *Worker) handleGenerateQuoteJob(ctx context.Context, task *asynq.Task) error {
+	if w.quotes == nil {
+		return fmt.Errorf("quote job processor is not configured")
+	}
+
+	payload, err := ParseGenerateQuoteJobPayload(task)
+	if err != nil {
+		return err
+	}
+
+	jobID, err := uuid.Parse(payload.JobID)
+	if err != nil {
+		return err
+	}
+
+	var existingQuoteID *uuid.UUID
+	if payload.QuoteID != nil && *payload.QuoteID != "" {
+		parsed, parseErr := uuid.Parse(*payload.QuoteID)
+		if parseErr != nil {
+			return parseErr
+		}
+		existingQuoteID = &parsed
+	}
+
+	return w.quotes.ProcessGenerateQuoteJob(ctx, jobID, payload.Prompt, existingQuoteID)
 }
 
 func getOptionalString(value *string) string {

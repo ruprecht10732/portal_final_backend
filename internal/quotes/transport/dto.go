@@ -346,11 +346,27 @@ type GenerateQuoteRequest struct {
 	QuoteID       *uuid.UUID `json:"quoteId"` // If set, update the existing quote instead of creating a new one
 }
 
-// GenerateQuoteResponse is the response for AI-generated quote creation.
-type GenerateQuoteResponse struct {
-	QuoteID     uuid.UUID `json:"quoteId"`
-	QuoteNumber string    `json:"quoteNumber"`
-	ItemCount   int       `json:"itemCount"`
+// GenerateQuoteAcceptedResponse is returned when async generation is started.
+type GenerateQuoteAcceptedResponse struct {
+	JobID  uuid.UUID `json:"jobId"`
+	Status string    `json:"status"`
+}
+
+// GenerateQuoteJobResponse returns current job state for async generation.
+type GenerateQuoteJobResponse struct {
+	JobID           uuid.UUID  `json:"jobId"`
+	Status          string     `json:"status"`
+	Step            string     `json:"step"`
+	ProgressPercent int        `json:"progressPercent"`
+	Error           *string    `json:"error,omitempty"`
+	QuoteID         *uuid.UUID `json:"quoteId,omitempty"`
+	QuoteNumber     *string    `json:"quoteNumber,omitempty"`
+	ItemCount       *int       `json:"itemCount,omitempty"`
+	LeadID          uuid.UUID  `json:"leadId"`
+	LeadServiceID   uuid.UUID  `json:"leadServiceId"`
+	StartedAt       time.Time  `json:"startedAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
 }
 
 // QuoteActivityResponse is the response for a single activity log entry.

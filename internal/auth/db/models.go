@@ -262,6 +262,24 @@ type PartnerInvite struct {
 	InviteMetadata []byte             `json:"invite_metadata"`
 }
 
+type RacAiQuoteJob struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	LeadID          pgtype.UUID        `json:"lead_id"`
+	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
+	Status          string             `json:"status"`
+	Step            string             `json:"step"`
+	ProgressPercent int32              `json:"progress_percent"`
+	Error           pgtype.Text        `json:"error"`
+	QuoteID         pgtype.UUID        `json:"quote_id"`
+	QuoteNumber     pgtype.Text        `json:"quote_number"`
+	ItemCount       pgtype.Int4        `json:"item_count"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+}
+
 type RacAppointment struct {
 	ID             pgtype.UUID        `json:"id"`
 	UserID         pgtype.UUID        `json:"user_id"`

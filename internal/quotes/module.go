@@ -56,6 +56,12 @@ func (m *Module) Repository() *repository.Repository {
 // SetSSE injects the SSE service so public viewers get real-time quote updates.
 func (m *Module) SetSSE(s *sse.Service) {
 	m.publicHandler.SetSSE(s)
+	m.service.SetSSEService(s)
+}
+
+// SetGenerateQuoteJobQueue injects background queueing for async quote generation.
+func (m *Module) SetGenerateQuoteJobQueue(queue service.GenerateQuoteJobQueue) {
+	m.service.SetGenerateQuoteJobQueue(queue)
 }
 
 // SetStorageForPDF injects storage service for PDF download endpoints.
