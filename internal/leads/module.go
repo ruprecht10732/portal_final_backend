@@ -296,6 +296,30 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorPartnerOfferAccepted(eventBus, orchestrator)
 	subscribeOrchestratorPartnerOfferExpired(eventBus, orchestrator)
 	subscribeOrchestratorPipelineStageChanged(eventBus, orchestrator)
+	subscribeOrchestratorPhotoAnalysisCompleted(eventBus, orchestrator)
+	subscribeOrchestratorPhotoAnalysisFailed(eventBus, orchestrator)
+}
+
+func subscribeOrchestratorPhotoAnalysisCompleted(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.PhotoAnalysisCompleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PhotoAnalysisCompleted)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnPhotoAnalysisCompleted(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorPhotoAnalysisFailed(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.PhotoAnalysisFailed{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PhotoAnalysisFailed)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnPhotoAnalysisFailed(ctx, e)
+		return nil
+	}))
 }
 
 func subscribeOrchestratorLeadDataChanged(eventBus events.Bus, orchestrator *Orchestrator) {
@@ -450,7 +474,7 @@ type buildHandlersDeps struct {
 func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.AttachmentsHandler, *handler.PhotoAnalysisHandler) {
 	notesHandler := handler.NewNotesHandler(deps.NotesSvc, deps.Repo, deps.EventBus, deps.Validator)
 	attachmentsHandler := handler.NewAttachmentsHandler(deps.Repo, deps.EventBus, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.Validator)
-	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator)
+	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator, deps.EventBus)
 	h := handler.New(handler.HandlerDeps{
 		Mgmt:         deps.MgmtSvc,
 		NotesHandler: notesHandler,
