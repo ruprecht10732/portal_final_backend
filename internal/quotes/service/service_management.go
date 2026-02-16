@@ -319,50 +319,92 @@ func (s *Service) resolveToken(ctx context.Context, token string) (*repository.Q
 	return s.repo.GetByToken(ctx, token)
 }
 
+func validateSendableQuoteStatus(status string) error {
+	if status != string(transport.QuoteStatusDraft) && status != string(transport.QuoteStatusSent) {
+		return apperr.BadRequest("only draft or sent quotes can be sent")
+	}
+	return nil
+}
+
+func (s *Service) ensureQuotePublicToken(ctx context.Context, quote *repository.Quote, tenantID uuid.UUID) (string, error) {
+	token := strings.TrimSpace(ptrToString(quote.PublicToken))
+	if token != "" {
+		return token, nil
+	}
+
+	generatedToken, err := generatePublicToken()
+	if err != nil {
+		return "", err
+	}
+
+	expiresAt := time.Now().Add(defaultPublicTokenTTL)
+	if quote.ValidUntil != nil && quote.ValidUntil.After(time.Now()) {
+		expiresAt = *quote.ValidUntil
+	}
+	if err := s.repo.SetPublicToken(ctx, quote.ID, tenantID, generatedToken, expiresAt); err != nil {
+		return "", err
+	}
+
+	return generatedToken, nil
+}
+
+func (s *Service) ensureQuoteStatusSent(ctx context.Context, quoteID, tenantID uuid.UUID, currentStatus string) error {
+	if currentStatus == string(transport.QuoteStatusSent) {
+		return nil
+	}
+	return s.repo.UpdateStatus(ctx, quoteID, tenantID, string(transport.QuoteStatusSent))
+}
+
+func (s *Service) publishQuoteSentEvent(ctx context.Context, quote *repository.Quote, tenantID, agentID uuid.UUID, token string) {
+	if s.eventBus == nil {
+		return
+	}
+
+	evt := events.QuoteSent{
+		BaseEvent:      events.NewBaseEvent(),
+		QuoteID:        quote.ID,
+		OrganizationID: tenantID,
+		LeadID:         quote.LeadID,
+		LeadServiceID:  quote.LeadServiceID,
+		PublicToken:    token,
+		QuoteNumber:    quote.QuoteNumber,
+		AgentID:        agentID,
+	}
+
+	if s.contacts != nil {
+		if contactData, contactErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, tenantID); contactErr == nil {
+			evt.ConsumerEmail = contactData.ConsumerEmail
+			evt.ConsumerName = contactData.ConsumerName
+			evt.ConsumerPhone = contactData.ConsumerPhone
+			evt.OrganizationName = contactData.OrganizationName
+		}
+	}
+
+	s.eventBus.Publish(ctx, evt)
+}
+
 func (s *Service) Send(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, agentID uuid.UUID) (*transport.QuoteResponse, error) {
 	quote, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	if quote.Status != string(transport.QuoteStatusDraft) && quote.Status != string(transport.QuoteStatusSent) {
-		return nil, apperr.BadRequest("only draft or sent quotes can be sent")
+	if err := validateSendableQuoteStatus(quote.Status); err != nil {
+		return nil, err
 	}
 
-	token := strings.TrimSpace(ptrToString(quote.PublicToken))
-	if token == "" {
-		token, err = generatePublicToken()
-		if err != nil {
-			return nil, err
-		}
-		expiresAt := time.Now().Add(defaultPublicTokenTTL)
-		if quote.ValidUntil != nil && quote.ValidUntil.After(time.Now()) {
-			expiresAt = *quote.ValidUntil
-		}
-		if err := s.repo.SetPublicToken(ctx, id, tenantID, token, expiresAt); err != nil {
-			return nil, err
-		}
+	token, err := s.ensureQuotePublicToken(ctx, quote, tenantID)
+	if err != nil {
+		return nil, err
 	}
-	if quote.Status != string(transport.QuoteStatusSent) {
-		if err := s.repo.UpdateStatus(ctx, id, tenantID, string(transport.QuoteStatusSent)); err != nil {
-			return nil, err
-		}
+	if err := s.ensureQuoteStatusSent(ctx, id, tenantID, quote.Status); err != nil {
+		return nil, err
 	}
 	resp, err := s.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	if s.eventBus != nil {
-		evt := events.QuoteSent{BaseEvent: events.NewBaseEvent(), QuoteID: id, OrganizationID: tenantID, LeadID: quote.LeadID, LeadServiceID: quote.LeadServiceID, PublicToken: token, QuoteNumber: quote.QuoteNumber, AgentID: agentID}
-		if s.contacts != nil {
-			if contactData, contactErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, tenantID); contactErr == nil {
-				evt.ConsumerEmail = contactData.ConsumerEmail
-				evt.ConsumerName = contactData.ConsumerName
-				evt.ConsumerPhone = contactData.ConsumerPhone
-				evt.OrganizationName = contactData.OrganizationName
-			}
-		}
-		s.eventBus.Publish(ctx, evt)
-	}
+
+	s.publishQuoteSentEvent(ctx, quote, tenantID, agentID, token)
 	s.emitTimelineEvent(ctx, TimelineEventParams{LeadID: quote.LeadID, ServiceID: quote.LeadServiceID, OrganizationID: tenantID, ActorType: "User", ActorName: agentID.String(), EventType: "quote_sent", Title: fmt.Sprintf("Quote %s sent", quote.QuoteNumber), Summary: toPtr(fmt.Sprintf(msgTotalFormat, float64(quote.TotalCents)/100)), Metadata: map[string]any{"quoteId": id, "status": "Sent"}})
 	return resp, nil
 }
