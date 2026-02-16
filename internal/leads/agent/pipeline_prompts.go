@@ -13,12 +13,35 @@ import (
 
 const noPreferencesProvided = "No preferences provided"
 
-func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, intakeContext string, attachments []repository.Attachment) string {
-	notesSection := buildNotesSection(notes)
+const (
+	maxGatekeeperServiceNoteChars = 2000
+	maxGatekeeperNotesChars       = 3000
+	maxGatekeeperPreferencesChars = 1200
+	maxGatekeeperPhotoChars       = 2500
+	maxGatekeeperLeadCtxChars     = 1200
+	maxGatekeeperRuleChecksChars  = 1000
+	maxGatekeeperIntakeChars      = 3000
+
+	maxEstimatorServiceNoteChars = 2000
+	maxEstimatorNotesChars       = 3000
+	maxEstimatorPreferencesChars = 1200
+	maxEstimatorPhotoChars       = 3500
+
+	maxQuoteServiceNoteChars = 2000
+	maxQuoteNotesChars       = 2500
+	maxQuotePreferencesChars = 1200
+	maxQuoteUserPromptChars  = 1500
+)
+
+func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, intakeContext string, attachments []repository.Attachment, photoAnalysis *repository.PhotoAnalysis) string {
+	notesSection := truncatePromptSection(buildNotesSection(notes), maxGatekeeperNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
-	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences)
-	leadContext := buildLeadContextSection(lead, attachments)
-	ruleChecks := buildRuleChecksSection(service.ServiceType, serviceNote, notes)
+	preferencesSummary := truncatePromptSection(buildPreferencesSummary(service.CustomerPreferences), maxGatekeeperPreferencesChars)
+	leadContext := truncatePromptSection(buildLeadContextSection(lead, attachments), maxGatekeeperLeadCtxChars)
+	ruleChecks := truncatePromptSection(buildRuleChecksSection(service.ServiceType, serviceNote, notes), maxGatekeeperRuleChecksChars)
+	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxGatekeeperPhotoChars)
+	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxGatekeeperServiceNoteChars)
+	intakeContextSummary := truncatePromptSection(intakeContext, maxGatekeeperIntakeChars)
 
 	return fmt.Sprintf(`You validate intake requirements.
 
@@ -50,6 +73,9 @@ Notes:
 Preferences (from customer portal):
 %s
 
+Photo Analysis (AI visual inspection):
+%s
+
 Additional Context:
 %s
 
@@ -73,7 +99,7 @@ Only change the service type when there is a clear positive match to another ser
 Missing intake information alone is NOT a reason to switch service type.
 If the intent is ambiguous, keep the current service type and move to Nurturing with a short Dutch reason.
 1) Validate intake requirements for the selected service type.
-2) Treat rule-based missing items as critical unless the info is clearly present elsewhere.
+2) Treat rule-based missing items as critical unless the info is clearly present elsewhere (e.g. in Photo Analysis).
 3) FIRST call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,
    a short Dutch summary, and a Dutch list of missingInformation (empty list if nothing missing).
 4) THEN call UpdatePipelineStage with stage="Ready_For_Estimator" (if all required info is present) or stage="Nurturing" (if critical info is missing).
@@ -95,20 +121,22 @@ Respond ONLY with tool calls.
 		lead.AddressHouseNumber,
 		lead.AddressZipCode,
 		lead.AddressCity,
-		wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)),
+		serviceNoteSummary,
 		notesSection,
 		preferencesSummary,
+		photoSummary,
 		leadContext,
 		ruleChecks,
-		intakeContext,
+		intakeContextSummary,
 	)
 }
 
 func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis) string {
-	notesSection := buildNotesSection(notes)
+	notesSection := truncatePromptSection(buildNotesSection(notes), maxEstimatorNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
-	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences)
-	photoSummary := buildPhotoSummary(photoAnalysis)
+	preferencesSummary := truncatePromptSection(buildPreferencesSummary(service.CustomerPreferences), maxEstimatorPreferencesChars)
+	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
+	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
 
 	return fmt.Sprintf(`You are a Technical Estimator.
 
@@ -223,7 +251,7 @@ You MUST call SearchProductMaterials first (if available), then DraftQuote (if a
 		lead.AddressHouseNumber,
 		lead.AddressZipCode,
 		lead.AddressCity,
-		wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)),
+		serviceNoteSummary,
 		notesSection,
 		preferencesSummary,
 		photoSummary,
@@ -423,9 +451,11 @@ func hasYear(text string) bool {
 }
 
 func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, userPrompt string) string {
-	notesSection := buildNotesSection(notes)
+	notesSection := truncatePromptSection(buildNotesSection(notes), maxQuoteNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
-	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences)
+	preferencesSummary := truncatePromptSection(buildPreferencesSummary(service.CustomerPreferences), maxQuotePreferencesChars)
+	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
+	userPromptSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(userPrompt, 2000)), maxQuoteUserPromptChars)
 
 	return fmt.Sprintf(`You are a Quote Generator.
 
@@ -519,11 +549,28 @@ If SearchProductMaterials is available, call it first. Always use Calculator for
 		lead.AddressHouseNumber,
 		lead.AddressZipCode,
 		lead.AddressCity,
-		wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)),
+		serviceNoteSummary,
 		notesSection,
 		preferencesSummary,
-		wrapUserData(sanitizeUserInput(userPrompt, 2000)),
+		userPromptSummary,
 	)
+}
+
+func truncatePromptSection(section string, maxChars int) string {
+	if maxChars <= 0 {
+		return section
+	}
+	runes := []rune(section)
+	if len(runes) <= maxChars {
+		return section
+	}
+	suffix := "\n...[truncated for token budget]"
+	suffixRunes := []rune(suffix)
+	keep := maxChars - len(suffixRunes)
+	if keep <= 0 {
+		return string(runes[:maxChars])
+	}
+	return string(runes[:keep]) + suffix
 }
 
 func buildPreferencesSummary(raw json.RawMessage) string {

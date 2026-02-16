@@ -2,11 +2,14 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sync"
 
 	"portal_final_backend/internal/adapters/storage"
+	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification/sse"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 // PhotoAnalysisHandler handles HTTP requests for photo analysis.
@@ -25,10 +29,11 @@ type PhotoAnalysisHandler struct {
 	bucket   string
 	sse      *sse.Service
 	val      *validator.Validator
+	eventBus events.Bus
 }
 
 // NewPhotoAnalysisHandler creates a new photo analysis handler.
-func NewPhotoAnalysisHandler(analyzer *agent.PhotoAnalyzer, repo repository.LeadsRepository, storageSvc storage.StorageService, bucket string, sseSvc *sse.Service, val *validator.Validator) *PhotoAnalysisHandler {
+func NewPhotoAnalysisHandler(analyzer *agent.PhotoAnalyzer, repo repository.LeadsRepository, storageSvc storage.StorageService, bucket string, sseSvc *sse.Service, val *validator.Validator, eventBus events.Bus) *PhotoAnalysisHandler {
 	return &PhotoAnalysisHandler{
 		analyzer: analyzer,
 		repo:     repo,
@@ -36,6 +41,7 @@ func NewPhotoAnalysisHandler(analyzer *agent.PhotoAnalyzer, repo repository.Lead
 		bucket:   bucket,
 		sse:      sseSvc,
 		val:      val,
+		eventBus: eventBus,
 	}
 }
 
@@ -54,6 +60,8 @@ type PhotoAnalysisRequest struct {
 const (
 	errTenantContextRequired = "tenant context required"
 	errInvalidServiceID      = "invalid service id"
+	maxPhotosPerAnalysis     = 20
+	maxPhotoFailureMsgChars  = 500
 )
 
 // AnalyzePhotos triggers AI analysis of photos for a lead service.
@@ -73,6 +81,10 @@ func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
 
 	imageAttachments, ok := h.loadImageAttachments(c, serviceID, *tenantID)
 	if !ok {
+		return
+	}
+	if len(imageAttachments) > maxPhotosPerAnalysis {
+		httpkit.Error(c, http.StatusBadRequest, fmt.Sprintf("too many photos for analysis (max %d)", maxPhotosPerAnalysis), nil)
 		return
 	}
 
@@ -152,6 +164,7 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 	serviceType, intakeRequirements := h.getServiceAnalysisContext(ctx, serviceID, tenantID)
 	images := h.loadImages(ctx, attachments)
 	if len(images) == 0 {
+		h.publishPhotoAnalysisFailedEvent(ctx, leadID, serviceID, tenantID, "no_valid_images", "Failed to load images for analysis")
 		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, "Failed to load images for analysis", "no_valid_images")
 		return
 	}
@@ -166,13 +179,31 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 		IntakeRequirements: intakeRequirements,
 	})
 	if err != nil {
+		h.publishPhotoAnalysisFailedEvent(ctx, leadID, serviceID, tenantID, "analysis_failed", err.Error())
 		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, "Photo analysis failed", err.Error())
 		return
 	}
 
 	result.PhotoCount = len(images)
-	h.persistPhotoAnalysis(ctx, leadID, serviceID, tenantID, result)
+	if err := h.persistPhotoAnalysis(ctx, leadID, serviceID, tenantID, result); err != nil {
+		log.Printf("warning: failed to persist photo analysis for lead %s service %s: %v", leadID, serviceID, err)
+		h.publishPhotoAnalysisFailedEvent(ctx, leadID, serviceID, tenantID, "persistence_failed", err.Error())
+		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, "Photo analysis failed to persist", "persistence_failed")
+		return
+	}
 	h.writePhotoAnalysisTimeline(ctx, leadID, serviceID, tenantID, result, attachments)
+
+	if h.eventBus != nil {
+		h.eventBus.Publish(ctx, events.PhotoAnalysisCompleted{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        leadID,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			PhotoCount:    result.PhotoCount,
+			Summary:       result.Summary,
+		})
+	}
+
 	h.publishPhotoAnalysisSuccess(userID, leadID, serviceID, result)
 }
 
@@ -187,6 +218,10 @@ func (h *PhotoAnalysisHandler) RunAutoAnalysis(leadID, serviceID, tenantID uuid.
 	imageAttachments := filterImageAttachments(attachments)
 	if len(imageAttachments) == 0 {
 		return
+	}
+	if len(imageAttachments) > maxPhotosPerAnalysis {
+		log.Printf("photo analysis: capping image batch from %d to %d for service %s", len(imageAttachments), maxPhotosPerAnalysis, serviceID)
+		imageAttachments = imageAttachments[:maxPhotosPerAnalysis]
 	}
 
 	h.runPhotoAnalysis(context.Background(), leadID, serviceID, tenantID, nil, imageAttachments, "")
@@ -217,27 +252,41 @@ func (h *PhotoAnalysisHandler) getServiceAnalysisContext(ctx context.Context, se
 
 func (h *PhotoAnalysisHandler) loadImages(ctx context.Context, attachments []repository.Attachment) []agent.ImageData {
 	images := make([]agent.ImageData, 0, len(attachments))
+	var imagesMu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(5)
+
 	for _, att := range attachments {
-		data, err := h.storage.DownloadFile(ctx, h.bucket, att.FileKey)
-		if err != nil {
-			continue
-		}
-		imgData, readErr := readAllAndClose(data)
-		if readErr != nil {
-			continue
-		}
+		att := att
+		g.Go(func() error {
+			data, err := h.storage.DownloadFile(gctx, h.bucket, att.FileKey)
+			if err != nil {
+				log.Printf("photo analysis: download failed for file=%s key=%s: %v", att.FileName, att.FileKey, err)
+				return nil
+			}
+			imgData, readErr := readAllAndClose(data)
+			if readErr != nil {
+				log.Printf("photo analysis: read failed for file=%s key=%s: %v", att.FileName, att.FileKey, readErr)
+				return nil
+			}
 
-		mimeType := "image/jpeg"
-		if att.ContentType != nil {
-			mimeType = *att.ContentType
-		}
+			mimeType := "image/jpeg"
+			if att.ContentType != nil {
+				mimeType = *att.ContentType
+			}
 
-		images = append(images, agent.ImageData{
-			MIMEType: mimeType,
-			Data:     imgData,
-			Filename: att.FileName,
+			imagesMu.Lock()
+			images = append(images, agent.ImageData{
+				MIMEType: mimeType,
+				Data:     imgData,
+				Filename: att.FileName,
+			})
+			imagesMu.Unlock()
+			return nil
 		})
 	}
+
+	_ = g.Wait()
 
 	return images
 }
@@ -262,7 +311,29 @@ func (h *PhotoAnalysisHandler) publishPhotoAnalysisFailure(userID *uuid.UUID, le
 	})
 }
 
-func (h *PhotoAnalysisHandler) persistPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis) {
+func (h *PhotoAnalysisHandler) publishPhotoAnalysisFailedEvent(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, errCode, errMessage string) {
+	if h.eventBus == nil {
+		return
+	}
+
+	log.Printf("photo analysis failed for lead=%s service=%s code=%s: %s", leadID, serviceID, errCode, errMessage)
+
+	message := errMessage
+	if len(message) > maxPhotoFailureMsgChars {
+		message = message[:maxPhotoFailureMsgChars]
+	}
+
+	h.eventBus.Publish(ctx, events.PhotoAnalysisFailed{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		TenantID:      tenantID,
+		ErrorCode:     errCode,
+		ErrorMessage:  message,
+	})
+}
+
+func (h *PhotoAnalysisHandler) persistPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis) error {
 	repoMeasurements := make([]repository.Measurement, 0, len(result.Measurements))
 	for _, m := range result.Measurements {
 		repoMeasurements = append(repoMeasurements, repository.Measurement{
@@ -294,8 +365,10 @@ func (h *PhotoAnalysisHandler) persistPhotoAnalysis(ctx context.Context, leadID,
 		SuggestedSearchTerms:   result.SuggestedSearchTerms,
 	})
 	if dbErr != nil {
-		log.Printf("warning: failed to persist photo analysis for lead %s service %s: %v", leadID, serviceID, dbErr)
+		return dbErr
 	}
+
+	return nil
 }
 
 func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis, attachments []repository.Attachment) {

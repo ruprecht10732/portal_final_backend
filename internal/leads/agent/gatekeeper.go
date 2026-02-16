@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -123,8 +124,15 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		attachments = nil
 	}
 
+	var photoAnalysis *repository.PhotoAnalysis
+	if pa, err := g.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID); err == nil {
+		photoAnalysis = &pa
+	} else if !errors.Is(err, repository.ErrPhotoAnalysisNotFound) {
+		log.Printf("gatekeeper photo analysis fetch failed: %v", err)
+	}
+
 	intakeContext := g.buildServiceContext(ctx, tenantID)
-	promptText := buildGatekeeperPrompt(lead, service, notes, intakeContext, attachments)
+	promptText := buildGatekeeperPrompt(lead, service, notes, intakeContext, attachments, photoAnalysis)
 
 	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", leadID, serviceID)
 	if err := g.runWithPrompt(ctx, promptText, leadID); err != nil {
@@ -138,7 +146,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	log.Printf("gatekeeper: WasSaveAnalysisCalled()=%v for lead=%s service=%s", wasCalled, leadID, serviceID)
 	if !wasCalled {
 		log.Printf("gatekeeper: SaveAnalysis was NOT called by agent for lead=%s service=%s, creating fallback", leadID, serviceID)
-		g.createFallbackAnalysis(ctx, lead, service, leadID, serviceID, tenantID)
+		g.createFallbackAnalysis(ctx, lead, leadID, serviceID, tenantID)
 	} else {
 		log.Printf("gatekeeper: SaveAnalysis was called successfully for lead=%s service=%s", leadID, serviceID)
 	}
@@ -147,8 +155,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 }
 
 // createFallbackAnalysis creates a minimal analysis when the agent fails to call SaveAnalysis
-func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository.Lead, service repository.LeadService, leadID, serviceID, tenantID uuid.UUID) {
-	_ = service
+func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository.Lead, leadID, serviceID, tenantID uuid.UUID) {
 	// Determine preferred channel based on available contact info
 	channel := "Email"
 	if strings.TrimSpace(lead.ConsumerPhone) != "" {
