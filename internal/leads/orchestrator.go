@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,25 +29,95 @@ type Orchestrator struct {
 
 	// Idempotency protection: tracks active agent runs
 	activeRuns map[string]bool
-	runsMu     sync.Mutex
+	// Latest queued photo-analysis event per service, replayed after current gatekeeper run finishes.
+	pendingGatekeeperPhoto map[uuid.UUID]events.PhotoAnalysisCompleted
+	runsMu                 sync.Mutex
 }
 
 const (
 	dispatcherAlreadyRunningMsg = "orchestrator: dispatcher already running for service, skipping"
 	dispatcherFailedMsg         = "orchestrator: dispatcher failed"
+	agentRunTimeout             = 5 * time.Minute
 )
 
 func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, eventBus events.Bus, sse *sse.Service, log *logger.Logger) *Orchestrator {
 	return &Orchestrator{
-		gatekeeper: gatekeeper,
-		estimator:  estimator,
-		dispatcher: dispatcher,
-		repo:       repo,
-		eventBus:   eventBus,
-		sse:        sse,
-		log:        log,
-		activeRuns: make(map[string]bool),
+		gatekeeper:             gatekeeper,
+		estimator:              estimator,
+		dispatcher:             dispatcher,
+		repo:                   repo,
+		eventBus:               eventBus,
+		sse:                    sse,
+		log:                    log,
+		activeRuns:             make(map[string]bool),
+		pendingGatekeeperPhoto: make(map[uuid.UUID]events.PhotoAnalysisCompleted),
 	}
+}
+
+func (o *Orchestrator) queueGatekeeperPhotoRerun(evt events.PhotoAnalysisCompleted) {
+	o.runsMu.Lock()
+	defer o.runsMu.Unlock()
+	if _, exists := o.pendingGatekeeperPhoto[evt.LeadServiceID]; exists {
+		o.log.Warn("orchestrator: overwriting queued photo-analysis rerun", "serviceId", evt.LeadServiceID)
+	}
+	o.pendingGatekeeperPhoto[evt.LeadServiceID] = evt
+}
+
+func (o *Orchestrator) popQueuedGatekeeperPhotoRerun(serviceID uuid.UUID) (events.PhotoAnalysisCompleted, bool) {
+	o.runsMu.Lock()
+	defer o.runsMu.Unlock()
+	evt, ok := o.pendingGatekeeperPhoto[serviceID]
+	if !ok {
+		return events.PhotoAnalysisCompleted{}, false
+	}
+	delete(o.pendingGatekeeperPhoto, serviceID)
+	return evt, true
+}
+
+func (o *Orchestrator) canRunGatekeeperForPhotoEvent(ctx context.Context, evt events.PhotoAnalysisCompleted) bool {
+	svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.TenantID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to load lead service for photo analysis event", "error", err)
+		return false
+	}
+
+	if !o.ShouldRunAgent(svc) {
+		return false
+	}
+
+	if svc.PipelineStage != domain.PipelineStageTriage && svc.PipelineStage != domain.PipelineStageNurturing {
+		return false
+	}
+
+	return true
+}
+
+func (o *Orchestrator) runGatekeeperForPhotoEvent(evt events.PhotoAnalysisCompleted) {
+	o.log.Info("orchestrator: photo analysis complete, waking gatekeeper", "leadId", evt.LeadID, "summary", evt.Summary)
+	go func(current events.PhotoAnalysisCompleted) {
+		defer o.markComplete("gatekeeper", current.LeadServiceID)
+
+		for {
+			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+			err := o.gatekeeper.Run(runCtx, current.LeadID, current.LeadServiceID, current.TenantID)
+			cancel()
+			if err != nil {
+				o.log.Error("orchestrator: gatekeeper failed", "error", err)
+			}
+
+			next, ok := o.popQueuedGatekeeperPhotoRerun(current.LeadServiceID)
+			if !ok {
+				return
+			}
+
+			if !o.canRunGatekeeperForPhotoEvent(context.Background(), next) {
+				return
+			}
+
+			o.log.Info("orchestrator: replaying queued gatekeeper rerun after photo analysis", "leadId", next.LeadID, "serviceId", next.LeadServiceID)
+			current = next
+		}
+	}(evt)
 }
 
 // markRunning attempts to mark an agent run as active. Returns true if successfully marked, false if already running.
@@ -123,12 +194,82 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 		o.log.Info("orchestrator: data changed, waking gatekeeper", "leadId", evt.LeadID, "stage", svc.PipelineStage)
 		go func() {
 			defer o.markComplete("gatekeeper", evt.LeadServiceID)
-			if err := o.gatekeeper.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+			defer cancel()
+			if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
 				o.log.Error("orchestrator: gatekeeper failed", "error", err)
 			}
 		}()
 		return
 	}
+}
+
+// OnPhotoAnalysisCompleted triggers gatekeeper re-evaluation once visual data is available.
+func (o *Orchestrator) OnPhotoAnalysisCompleted(ctx context.Context, evt events.PhotoAnalysisCompleted) {
+	if !o.canRunGatekeeperForPhotoEvent(ctx, evt) {
+		return
+	}
+
+	if !o.markRunning("gatekeeper", evt.LeadServiceID) {
+		o.queueGatekeeperPhotoRerun(evt)
+		o.log.Info("orchestrator: gatekeeper already running, queued photo-analysis rerun", "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	o.runGatekeeperForPhotoEvent(evt)
+}
+
+// OnPhotoAnalysisFailed records failure context and wakes gatekeeper explicitly when useful.
+func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.PhotoAnalysisFailed) {
+	svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.TenantID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to load lead service for photo analysis failure", "error", err)
+		return
+	}
+
+	if !o.ShouldRunAgent(svc) {
+		return
+	}
+
+	summary := "Foto-analyse mislukt. Intake loopt door zonder visuele context."
+	if evt.ErrorCode == "persistence_failed" {
+		summary = "Foto-analyse opgeslagen mislukt. Handmatige controle aanbevolen."
+	}
+
+	_, _ = o.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         evt.LeadID,
+		ServiceID:      &evt.LeadServiceID,
+		OrganizationID: evt.TenantID,
+		ActorType:      "System",
+		ActorName:      "Orchestrator",
+		EventType:      "alert",
+		Title:          "Foto-analyse mislukt",
+		Summary:        &summary,
+		Metadata: map[string]any{
+			"trigger":      "photo_analysis_failed",
+			"errorCode":    evt.ErrorCode,
+			"errorMessage": evt.ErrorMessage,
+		},
+	})
+
+	if svc.PipelineStage != domain.PipelineStageTriage && svc.PipelineStage != domain.PipelineStageNurturing {
+		return
+	}
+
+	if !o.markRunning("gatekeeper", evt.LeadServiceID) {
+		o.log.Info("orchestrator: gatekeeper already running for failed photo analysis", "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	o.log.Info("orchestrator: photo analysis failed, waking gatekeeper", "leadId", evt.LeadID, "errorCode", evt.ErrorCode)
+	go func() {
+		defer o.markComplete("gatekeeper", evt.LeadServiceID)
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			o.log.Error("orchestrator: gatekeeper failed after photo analysis failure", "error", err)
+		}
+	}()
 }
 
 // OnStageChange triggers downstream agents based on pipeline transitions.
@@ -149,7 +290,9 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 		o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
 		go func() {
 			defer o.markComplete("estimator", evt.LeadServiceID)
-			if err := o.estimator.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+			defer cancel()
+			if err := o.estimator.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
 				o.log.Error("orchestrator: estimator failed", "error", err)
 			}
 		}()
@@ -164,7 +307,9 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 		o.log.Info("orchestrator: lead ready for dispatch", "leadId", evt.LeadID)
 		go func() {
 			defer o.markComplete("dispatcher", evt.LeadServiceID)
-			if err := o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+			defer cancel()
+			if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
 				o.log.Error(dispatcherFailedMsg, "error", err)
 				o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
 			}
@@ -355,7 +500,9 @@ func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.Pa
 	}
 	go func() {
 		defer o.markComplete("dispatcher", evt.LeadServiceID)
-		if err := o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
 			o.log.Error(dispatcherFailedMsg, "error", err)
 			o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
 		}
@@ -372,7 +519,9 @@ func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.Par
 	}
 	go func() {
 		defer o.markComplete("dispatcher", evt.LeadServiceID)
-		if err := o.dispatcher.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
 			o.log.Error(dispatcherFailedMsg, "error", err)
 			o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.OrganizationID)
 		}

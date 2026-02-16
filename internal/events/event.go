@@ -427,3 +427,31 @@ type NotificationOutboxDue struct {
 }
 
 func (e NotificationOutboxDue) EventName() string { return "notification.outbox.due" }
+
+// =============================================================================
+// AI Analysis Domain Events
+// =============================================================================
+
+// PhotoAnalysisCompleted is published when the AI finishes analyzing lead photos.
+type PhotoAnalysisCompleted struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	PhotoCount    int       `json:"photoCount"`
+	Summary       string    `json:"summary"`
+}
+
+func (e PhotoAnalysisCompleted) EventName() string { return "ai.photo_analysis.completed" }
+
+// PhotoAnalysisFailed is published when photo analysis cannot be completed.
+type PhotoAnalysisFailed struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	ErrorCode     string    `json:"errorCode"`
+	ErrorMessage  string    `json:"errorMessage"`
+}
+
+func (e PhotoAnalysisFailed) EventName() string { return "ai.photo_analysis.failed" }
