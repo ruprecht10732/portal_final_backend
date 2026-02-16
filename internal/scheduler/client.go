@@ -8,6 +8,7 @@ import (
 
 	"portal_final_backend/platform/config"
 
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
@@ -19,6 +20,14 @@ type Client struct {
 
 type ReminderScheduler interface {
 	ScheduleAppointmentReminder(ctx context.Context, payload AppointmentReminderPayload, runAt time.Time) error
+}
+
+type QuoteJobScheduler interface {
+	EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQuoteJobPayload) error
+}
+
+type QuoteJobRunner interface {
+	EnqueueGenerateQuoteJobRequest(ctx context.Context, jobID, tenantID, userID, leadID, leadServiceID uuid.UUID, prompt string, quoteID *uuid.UUID) error
 }
 
 func NewClient(cfg config.SchedulerConfig) (*Client, error) {
@@ -62,6 +71,38 @@ func (c *Client) ScheduleAppointmentReminder(ctx context.Context, payload Appoin
 
 	_, err = c.client.EnqueueContext(ctx, task, asynq.ProcessAt(runAt), asynq.Queue(c.queue))
 	return err
+}
+
+func (c *Client) EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQuoteJobPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewGenerateQuoteJobTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	return err
+}
+
+func (c *Client) EnqueueGenerateQuoteJobRequest(ctx context.Context, jobID, tenantID, userID, leadID, leadServiceID uuid.UUID, prompt string, quoteID *uuid.UUID) error {
+	var quoteIDStr *string
+	if quoteID != nil {
+		value := quoteID.String()
+		quoteIDStr = &value
+	}
+
+	return c.EnqueueGenerateQuoteJob(ctx, GenerateQuoteJobPayload{
+		JobID:         jobID.String(),
+		TenantID:      tenantID.String(),
+		UserID:        userID.String(),
+		LeadID:        leadID.String(),
+		LeadServiceID: leadServiceID.String(),
+		Prompt:        prompt,
+		QuoteID:       quoteIDStr,
+	})
 }
 
 func redisClientOpt(redisURL string, tlsInsecure bool) (asynq.RedisClientOpt, error) {

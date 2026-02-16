@@ -46,15 +46,15 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 			) AS id
 		), inserted AS (
 			INSERT INTO RAC_lead_services (lead_id, organization_id, service_type_id, status, consumer_note, source)
-			VALUES (
-				$1,
-				$2,
-				(SELECT id FROM resolved_service_type),
-				'New',
-				$4,
-				$5
-			)
-			WHERE (SELECT id FROM resolved_service_type) IS NOT NULL
+				SELECT
+					$1,
+					$2,
+					id,
+					'New',
+					$4,
+					$5
+				FROM resolved_service_type
+				WHERE id IS NOT NULL
 			RETURNING *
 		), event AS (
 			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
