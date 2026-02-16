@@ -763,7 +763,7 @@ func renderStepTemplate(raw *string, vars map[string]any) (string, error) {
 	if raw == nil {
 		return "", nil
 	}
-	text := strings.TrimSpace(*raw)
+	text := normalizeEscapedLineBreaks(strings.TrimSpace(*raw))
 	if text == "" {
 		return "", nil
 	}
@@ -772,6 +772,15 @@ func renderStepTemplate(raw *string, vars map[string]any) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(rendered), nil
+}
+
+func normalizeEscapedLineBreaks(value string) string {
+	replacer := strings.NewReplacer(
+		`\r\n`, "\n",
+		`\n`, "\n",
+		`\r`, "\n",
+	)
+	return replacer.Replace(value)
 }
 
 func renderWorkflowTemplateText(rule *workflowRule, vars map[string]any) string {

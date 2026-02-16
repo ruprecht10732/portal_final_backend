@@ -2,6 +2,7 @@ package notification
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"portal_final_backend/internal/email"
@@ -263,5 +264,27 @@ func TestRenderWorkflowTemplateSubjectAndBodyFromRule(t *testing.T) {
 	}
 	if body != "Hoi Robin, bekijk https://app.example.com/track/abc" {
 		t.Fatalf("unexpected rendered body: %q", body)
+	}
+}
+
+func TestRenderWorkflowTemplateTextConvertsEscapedLineBreaks(t *testing.T) {
+	bodyTpl := "Hallo {{lead.name}},\\n\\nJe offerte {{quote.number}} staat klaar."
+	rule := &workflowRule{
+		Enabled:      true,
+		DelayMinutes: 0,
+		TemplateText: &bodyTpl,
+	}
+	vars := map[string]any{
+		"lead":  map[string]any{"name": "Robin Oost"},
+		"quote": map[string]any{"number": "OFF-2026-0010"},
+	}
+
+	body := renderWorkflowTemplateText(rule, vars)
+
+	if strings.Contains(body, "\\n") {
+		t.Fatalf("expected escaped line breaks to be normalized, got: %q", body)
+	}
+	if !strings.Contains(body, "\n\n") {
+		t.Fatalf("expected rendered body to contain real line breaks, got: %q", body)
 	}
 }
