@@ -937,6 +937,237 @@ type QuoteURL struct {
 	CreatedAt        time.Time  `db:"created_at"`
 }
 
+// GenerateQuoteJob is the database model for async quote generation jobs.
+type GenerateQuoteJob struct {
+	ID              uuid.UUID  `db:"id"`
+	OrganizationID  uuid.UUID  `db:"organization_id"`
+	UserID          uuid.UUID  `db:"user_id"`
+	LeadID          uuid.UUID  `db:"lead_id"`
+	LeadServiceID   uuid.UUID  `db:"lead_service_id"`
+	Status          string     `db:"status"`
+	Step            string     `db:"step"`
+	ProgressPercent int        `db:"progress_percent"`
+	Error           *string    `db:"error"`
+	QuoteID         *uuid.UUID `db:"quote_id"`
+	QuoteNumber     *string    `db:"quote_number"`
+	ItemCount       *int       `db:"item_count"`
+	StartedAt       time.Time  `db:"started_at"`
+	UpdatedAt       time.Time  `db:"updated_at"`
+	FinishedAt      *time.Time `db:"finished_at"`
+}
+
+// CreateGenerateQuoteJob inserts a new async quote generation job row.
+func (r *Repository) CreateGenerateQuoteJob(ctx context.Context, job *GenerateQuoteJob) error {
+	query := `
+		INSERT INTO RAC_ai_quote_jobs (
+			id, organization_id, user_id, lead_id, lead_service_id,
+			status, step, progress_percent, error,
+			quote_id, quote_number, item_count,
+			started_at, updated_at, finished_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+
+	_, err := r.pool.Exec(
+		ctx,
+		query,
+		job.ID,
+		job.OrganizationID,
+		job.UserID,
+		job.LeadID,
+		job.LeadServiceID,
+		job.Status,
+		job.Step,
+		job.ProgressPercent,
+		job.Error,
+		job.QuoteID,
+		job.QuoteNumber,
+		job.ItemCount,
+		job.StartedAt,
+		job.UpdatedAt,
+		job.FinishedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create generate quote job: %w", err)
+	}
+
+	return nil
+}
+
+// GetGenerateQuoteJob retrieves a job for a specific tenant + user.
+func (r *Repository) GetGenerateQuoteJob(ctx context.Context, orgID, userID, jobID uuid.UUID) (*GenerateQuoteJob, error) {
+	query := `
+		SELECT id, organization_id, user_id, lead_id, lead_service_id,
+			status, step, progress_percent, error,
+			quote_id, quote_number, item_count,
+			started_at, updated_at, finished_at
+		FROM RAC_ai_quote_jobs
+		WHERE id = $1 AND organization_id = $2 AND user_id = $3`
+
+	var job GenerateQuoteJob
+	err := r.pool.QueryRow(ctx, query, jobID, orgID, userID).Scan(
+		&job.ID,
+		&job.OrganizationID,
+		&job.UserID,
+		&job.LeadID,
+		&job.LeadServiceID,
+		&job.Status,
+		&job.Step,
+		&job.ProgressPercent,
+		&job.Error,
+		&job.QuoteID,
+		&job.QuoteNumber,
+		&job.ItemCount,
+		&job.StartedAt,
+		&job.UpdatedAt,
+		&job.FinishedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("quote generate job not found")
+		}
+		return nil, fmt.Errorf("get generate quote job: %w", err)
+	}
+
+	return &job, nil
+}
+
+// GetGenerateQuoteJobByID retrieves a job by id without user scoping (worker use).
+func (r *Repository) GetGenerateQuoteJobByID(ctx context.Context, jobID uuid.UUID) (*GenerateQuoteJob, error) {
+	query := `
+		SELECT id, organization_id, user_id, lead_id, lead_service_id,
+			status, step, progress_percent, error,
+			quote_id, quote_number, item_count,
+			started_at, updated_at, finished_at
+		FROM RAC_ai_quote_jobs
+		WHERE id = $1`
+
+	var job GenerateQuoteJob
+	err := r.pool.QueryRow(ctx, query, jobID).Scan(
+		&job.ID,
+		&job.OrganizationID,
+		&job.UserID,
+		&job.LeadID,
+		&job.LeadServiceID,
+		&job.Status,
+		&job.Step,
+		&job.ProgressPercent,
+		&job.Error,
+		&job.QuoteID,
+		&job.QuoteNumber,
+		&job.ItemCount,
+		&job.StartedAt,
+		&job.UpdatedAt,
+		&job.FinishedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("quote generate job not found")
+		}
+		return nil, fmt.Errorf("get generate quote job by id: %w", err)
+	}
+
+	return &job, nil
+}
+
+// ClaimGenerateQuoteJob atomically transitions a pending job to running.
+// Returns nil,nil when the job cannot be claimed (already claimed/finished).
+func (r *Repository) ClaimGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, step string, progressPercent int, updatedAt time.Time) (*GenerateQuoteJob, error) {
+	query := `
+		UPDATE RAC_ai_quote_jobs
+		SET status = 'running',
+			step = $2,
+			progress_percent = $3,
+			updated_at = $4
+		WHERE id = $1 AND status = 'pending'
+		RETURNING id, organization_id, user_id, lead_id, lead_service_id,
+			status, step, progress_percent, error,
+			quote_id, quote_number, item_count,
+			started_at, updated_at, finished_at`
+
+	var job GenerateQuoteJob
+	err := r.pool.QueryRow(ctx, query, jobID, step, progressPercent, updatedAt).Scan(
+		&job.ID,
+		&job.OrganizationID,
+		&job.UserID,
+		&job.LeadID,
+		&job.LeadServiceID,
+		&job.Status,
+		&job.Step,
+		&job.ProgressPercent,
+		&job.Error,
+		&job.QuoteID,
+		&job.QuoteNumber,
+		&job.ItemCount,
+		&job.StartedAt,
+		&job.UpdatedAt,
+		&job.FinishedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("claim generate quote job: %w", err)
+	}
+
+	return &job, nil
+}
+
+// UpdateGenerateQuoteJob updates mutable job fields.
+func (r *Repository) UpdateGenerateQuoteJob(ctx context.Context, job *GenerateQuoteJob) error {
+	query := `
+		UPDATE RAC_ai_quote_jobs
+		SET status = $2,
+			step = $3,
+			progress_percent = $4,
+			error = $5,
+			quote_id = $6,
+			quote_number = $7,
+			item_count = $8,
+			updated_at = $9,
+			finished_at = $10
+		WHERE id = $1`
+
+	result, err := r.pool.Exec(
+		ctx,
+		query,
+		job.ID,
+		job.Status,
+		job.Step,
+		job.ProgressPercent,
+		job.Error,
+		job.QuoteID,
+		job.QuoteNumber,
+		job.ItemCount,
+		job.UpdatedAt,
+		job.FinishedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("update generate quote job: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound("quote generate job not found")
+	}
+
+	return nil
+}
+
+// DeleteFinishedGenerateQuoteJobsBefore deletes completed/failed jobs older than retention cutoffs.
+func (r *Repository) DeleteFinishedGenerateQuoteJobsBefore(ctx context.Context, completedBefore, failedBefore time.Time) (int64, error) {
+	query := `
+		DELETE FROM RAC_ai_quote_jobs
+		WHERE
+			(status = 'completed' AND finished_at IS NOT NULL AND finished_at < $1)
+			OR
+			(status = 'failed' AND finished_at IS NOT NULL AND finished_at < $2)`
+
+	result, err := r.pool.Exec(ctx, query, completedBefore, failedBefore)
+	if err != nil {
+		return 0, fmt.Errorf("delete finished generate quote jobs: %w", err)
+	}
+
+	return result.RowsAffected(), nil
+}
+
 // ReplaceAttachments atomically replaces all attachments for a quote (delete + insert).
 func (r *Repository) ReplaceAttachments(ctx context.Context, quoteID, orgID uuid.UUID, attachments []QuoteAttachment) error {
 	tx, err := r.pool.Begin(ctx)

@@ -198,6 +198,7 @@ func main() {
 	catalogModule.RegisterHandlers(eventBus)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
+	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
 
 	// Wire public viewers for lead portal (quotes + appointments)
 	quotePublicViewer := adapters.NewQuotePublicAdapter(quotesModule.Service())
@@ -341,9 +342,9 @@ func wireSMTPEncryptionKey(cfg *config.Config, log *logger.Logger, identitySvc i
 	log.Info("smtp encryption key configured")
 }
 
-func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (scheduler.ReminderScheduler, func()) {
+func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (*scheduler.Client, func()) {
 	if cfg.GetRedisURL() == "" {
-		log.Warn("REDIS_URL not configured; appointment reminders disabled")
+		log.Warn("REDIS_URL not configured; appointment reminders and async quote generation are disabled")
 		return nil, nil
 	}
 

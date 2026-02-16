@@ -63,6 +63,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
 	rg.POST("/generate", h.Generate)
+	rg.GET("/generate-jobs/:id", h.GetGenerateJob)
 	rg.GET("/:id", h.GetByID)
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
@@ -147,15 +148,52 @@ func (h *Handler) Generate(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.GenerateQuote(c.Request.Context(), tenantID, req.LeadID, *req.LeadServiceID, req.Prompt, req.QuoteID)
+	identity := httpkit.MustGetIdentity(c)
+	jobID, err := h.svc.StartGenerateQuoteJob(c.Request.Context(), tenantID, identity.UserID(), req.LeadID, *req.LeadServiceID, req.Prompt, req.QuoteID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	httpkit.JSON(c, http.StatusCreated, transport.GenerateQuoteResponse{
-		QuoteID:     result.QuoteID,
-		QuoteNumber: result.QuoteNumber,
-		ItemCount:   result.ItemCount,
+	httpkit.JSON(c, http.StatusAccepted, transport.GenerateQuoteAcceptedResponse{
+		JobID:  jobID,
+		Status: "pending",
+	})
+}
+
+// GetGenerateJob handles GET /api/v1/quotes/generate-jobs/:id
+// Returns current progress/status for an async quote generation job.
+func (h *Handler) GetGenerateJob(c *gin.Context) {
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	job, err := h.svc.GetGenerateQuoteJob(c.Request.Context(), tenantID, identity.UserID(), jobID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.GenerateQuoteJobResponse{
+		JobID:           job.JobID,
+		Status:          string(job.Status),
+		Step:            job.Step,
+		ProgressPercent: job.ProgressPercent,
+		Error:           job.Error,
+		QuoteID:         job.QuoteID,
+		QuoteNumber:     job.QuoteNumber,
+		ItemCount:       job.ItemCount,
+		LeadID:          job.LeadID,
+		LeadServiceID:   job.LeadServiceID,
+		StartedAt:       job.StartedAt,
+		UpdatedAt:       job.UpdatedAt,
+		FinishedAt:      job.FinishedAt,
 	})
 }
 
