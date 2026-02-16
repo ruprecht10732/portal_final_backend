@@ -105,6 +105,12 @@ type ListQuotesRequest struct {
 	PageSize       int    `form:"pageSize" validate:"omitempty,min=1,max=100"`
 }
 
+// ListPendingApprovalsRequest defines query parameters for draft-approval queue.
+type ListPendingApprovalsRequest struct {
+	Page     int `form:"page" validate:"omitempty,min=1"`
+	PageSize int `form:"pageSize" validate:"omitempty,min=1,max=100"`
+}
+
 // ── Responses ─────────────────────────────────────────────────────────────────
 
 // QuoteItemResponse is the response for a single line item
@@ -216,6 +222,26 @@ type QuoteListResponse struct {
 	Page       int             `json:"page"`
 	PageSize   int             `json:"pageSize"`
 	TotalPages int             `json:"totalPages"`
+}
+
+// PendingApprovalItem represents one draft quote ready for agent review.
+type PendingApprovalItem struct {
+	QuoteID         uuid.UUID `json:"quoteId"`
+	LeadID          uuid.UUID `json:"leadId"`
+	QuoteNumber     string    `json:"quoteNumber"`
+	ConsumerName    string    `json:"consumerName"`
+	TotalCents      int64     `json:"totalCents"`
+	ConfidenceScore *int      `json:"confidenceScore,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+// PendingApprovalsResponse is the paginated draft approval queue response.
+type PendingApprovalsResponse struct {
+	Items      []PendingApprovalItem `json:"items"`
+	Total      int                   `json:"total"`
+	Page       int                   `json:"page"`
+	PageSize   int                   `json:"pageSize"`
+	TotalPages int                   `json:"totalPages"`
 }
 
 // QuotePreviewLinkResponse is the response for a read-only preview link.

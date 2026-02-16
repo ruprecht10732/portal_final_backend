@@ -117,6 +117,27 @@ type ListResult struct {
 	TotalPages int
 }
 
+// PendingApprovalItem is a lightweight row for dashboard draft approvals.
+type PendingApprovalItem struct {
+	QuoteID           uuid.UUID
+	LeadID            uuid.UUID
+	QuoteNumber       string
+	ConsumerFirstName *string
+	ConsumerLastName  *string
+	TotalCents        int64
+	LeadScore         *int
+	CreatedAt         time.Time
+}
+
+// PendingApprovalsResult contains paginated draft approvals.
+type PendingApprovalsResult struct {
+	Items      []PendingApprovalItem
+	Total      int
+	Page       int
+	PageSize   int
+	TotalPages int
+}
+
 type quoteListFilters struct {
 	leadID         interface{}
 	status         interface{}
@@ -145,7 +166,10 @@ func buildQuoteListFilters(params ListParams) quoteListFilters {
 
 // ── Repository ────────────────────────────────────────────────────────────────
 
-const quoteNotFoundMsg = "quote not found"
+const (
+	quoteNotFoundMsg            = "quote not found"
+	quoteGenerateJobNotFoundMsg = "quote generate job not found"
+)
 
 // Repository provides database operations for quotes
 type Repository struct {
@@ -527,6 +551,79 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	}, nil
 }
 
+// ListPendingApprovals lists draft quotes for dashboard review queue.
+func (r *Repository) ListPendingApprovals(ctx context.Context, orgID uuid.UUID, page int, pageSize int) (*PendingApprovalsResult, error) {
+	var total int
+	countQuery := `
+		SELECT COUNT(q.id)
+		FROM RAC_quotes q
+		WHERE q.organization_id = $1
+			AND q.status = 'Draft'`
+
+	if err := r.pool.QueryRow(ctx, countQuery, orgID).Scan(&total); err != nil {
+		return nil, fmt.Errorf("failed to count pending approvals: %w", err)
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	offset := (page - 1) * pageSize
+
+	query := `
+		SELECT
+			q.id,
+			q.lead_id,
+			q.quote_number,
+			l.consumer_first_name,
+			l.consumer_last_name,
+			q.total_cents,
+			l.lead_score,
+			q.created_at
+		FROM RAC_quotes q
+		LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
+		WHERE q.organization_id = $1
+			AND q.status = 'Draft'
+		ORDER BY q.updated_at DESC, q.created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := r.pool.Query(ctx, query, orgID, pageSize, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pending approvals: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]PendingApprovalItem, 0, pageSize)
+	for rows.Next() {
+		var item PendingApprovalItem
+		if err := rows.Scan(
+			&item.QuoteID,
+			&item.LeadID,
+			&item.QuoteNumber,
+			&item.ConsumerFirstName,
+			&item.ConsumerLastName,
+			&item.TotalCents,
+			&item.LeadScore,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan pending approval: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate pending approvals: %w", err)
+	}
+
+	return &PendingApprovalsResult{
+		Items:      items,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
 // ── Public Access Methods ─────────────────────────────────────────────────────
 
 // GetByPublicToken retrieves a quote by its public token (no org scoping needed).
@@ -711,37 +808,6 @@ func (r *Repository) SetPDFFileKey(ctx context.Context, quoteID uuid.UUID, fileK
 		return fmt.Errorf("failed to set PDF file key: %w", err)
 	}
 	return nil
-}
-
-// GetPDFFileKeyByQuoteID returns the PDF file key for a quote (no org scoping).
-func (r *Repository) GetPDFFileKeyByQuoteID(ctx context.Context, quoteID uuid.UUID) (string, error) {
-	var fileKey *string
-	query := `SELECT pdf_file_key FROM RAC_quotes WHERE id = $1`
-	err := r.pool.QueryRow(ctx, query, quoteID).Scan(&fileKey)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", apperr.NotFound(quoteNotFoundMsg)
-		}
-		return "", fmt.Errorf("failed to get PDF file key: %w", err)
-	}
-	if fileKey == nil {
-		return "", nil
-	}
-	return *fileKey, nil
-}
-
-// GetOrganizationIDByQuoteID returns the organization ID for a quote (no org scoping).
-func (r *Repository) GetOrganizationIDByQuoteID(ctx context.Context, quoteID uuid.UUID) (uuid.UUID, error) {
-	var orgID uuid.UUID
-	query := `SELECT organization_id FROM RAC_quotes WHERE id = $1`
-	err := r.pool.QueryRow(ctx, query, quoteID).Scan(&orgID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return uuid.Nil, apperr.NotFound(quoteNotFoundMsg)
-		}
-		return uuid.Nil, fmt.Errorf("failed to get organization ID: %w", err)
-	}
-	return orgID, nil
 }
 
 // GetItemByID retrieves a single quote item by its ID and quote ID.
@@ -1023,7 +1089,7 @@ func (r *Repository) GetGenerateQuoteJob(ctx context.Context, orgID, userID, job
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.NotFound("quote generate job not found")
+			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
 		}
 		return nil, fmt.Errorf("get generate quote job: %w", err)
 	}
@@ -1061,7 +1127,7 @@ func (r *Repository) GetGenerateQuoteJobByID(ctx context.Context, jobID uuid.UUI
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.NotFound("quote generate job not found")
+			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
 		}
 		return nil, fmt.Errorf("get generate quote job by id: %w", err)
 	}
@@ -1145,7 +1211,7 @@ func (r *Repository) UpdateGenerateQuoteJob(ctx context.Context, job *GenerateQu
 		return fmt.Errorf("update generate quote job: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return apperr.NotFound("quote generate job not found")
+		return apperr.NotFound(quoteGenerateJobNotFoundMsg)
 	}
 
 	return nil

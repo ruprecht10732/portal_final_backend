@@ -2,8 +2,6 @@ package handler
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"net/http"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -18,8 +16,9 @@ import (
 )
 
 const (
-	msgInvalidItemID = "invalid item ID"
-	contentTypePDF   = "application/pdf"
+	msgInvalidItemID   = "invalid item ID"
+	msgPDFOnlyAccepted = "PDF is only available for accepted quotes"
+	contentTypePDF     = "application/pdf"
 )
 
 // PDFOnDemandGenerator generates and stores a quote PDF on the fly.
@@ -247,21 +246,20 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 
 	// Only accepted quotes have a PDF
 	if result.Status != transport.QuoteStatusAccepted {
-		httpkit.Error(c, http.StatusNotFound, "PDF is alleen beschikbaar voor geaccepteerde offertes", nil)
+		httpkit.Error(c, http.StatusNotFound, msgPDFOnlyAccepted, nil)
 		return
 	}
 
-	// We need to get the internal quote to access the PDF file key (not exposed in public response)
-	quoteID, err := h.svc.GetPublicQuoteID(c.Request.Context(), token)
+	storageMeta, err := h.svc.GetPublicQuoteStorageMeta(c.Request.Context(), token)
 	if err != nil {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to resolve quote", nil)
 		return
 	}
 
-	pdfFileKey, err := h.svc.GetPDFFileKey(c.Request.Context(), quoteID)
-	if err != nil || pdfFileKey == "" {
+	pdfFileKey := storageMeta.PDFFileKey
+	if pdfFileKey == "" {
 		// Lazy generation: if no PDF is stored yet but the quote is accepted, generate on the fly
-		if h.tryServeOnDemandPDF(c, quoteID, result.QuoteNumber) {
+		if h.tryServeOnDemandPDF(c, storageMeta.QuoteID, storageMeta.OrgID, result.QuoteNumber) {
 			return
 		}
 		httpkit.Error(c, http.StatusNotFound, "no PDF available for this quote", nil)
@@ -273,40 +271,20 @@ func (h *PublicHandler) DownloadPDF(c *gin.Context) {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to retrieve PDF", err.Error())
 		return
 	}
-	defer func() { _ = reader.Close() }()
-
-	fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
-	c.Header("Content-Type", contentTypePDF)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Status(http.StatusOK)
-
-	if _, err := io.Copy(c.Writer, reader); err != nil {
-		_ = c.Error(err)
-	}
+	streamPDFFromReader(c, result.QuoteNumber, reader)
 }
 
-func (h *PublicHandler) tryServeOnDemandPDF(c *gin.Context, quoteID uuid.UUID, quoteNumber string) bool {
+func (h *PublicHandler) tryServeOnDemandPDF(c *gin.Context, quoteID uuid.UUID, organizationID uuid.UUID, quoteNumber string) bool {
 	if h.pdfGen == nil {
 		return false
 	}
 
-	orgID, orgErr := h.svc.GetOrganizationID(c.Request.Context(), quoteID)
-	if orgErr != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to resolve organization", nil)
-		return true
-	}
-
-	fileKey, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), quoteID, orgID)
+	_, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), quoteID, organizationID)
 	if genErr != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "PDF generatie mislukt", genErr.Error())
+		httpkit.Error(c, http.StatusInternalServerError, msgPDFGenerationFailed, genErr.Error())
 		return true
 	}
-
-	fileName := fmt.Sprintf("Offerte-%s.pdf", quoteNumber)
-	c.Header("Content-Type", contentTypePDF)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Data(http.StatusOK, contentTypePDF, pdfBytes)
-	_ = fileKey // stored by the processor
+	servePDFBytes(c, quoteNumber, pdfBytes)
 	return true
 }
 

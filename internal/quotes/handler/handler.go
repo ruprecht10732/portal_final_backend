@@ -2,7 +2,6 @@ package handler
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -16,8 +15,9 @@ import (
 )
 
 const (
-	msgInvalidRequest   = "invalid request"
-	msgValidationFailed = "validation failed"
+	msgInvalidRequest      = "invalid request"
+	msgValidationFailed    = "validation failed"
+	msgPDFGenerationFailed = "PDF generation failed"
 )
 
 // Handler handles HTTP requests for quotes
@@ -60,6 +60,7 @@ func (h *Handler) SetPDFGenerator(gen PDFOnDemandGenerator) {
 // RegisterRoutes registers the quote routes
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
+	rg.GET("/pending-approval", h.ListPendingApprovals)
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
 	rg.POST("/generate", h.Generate)
@@ -75,6 +76,27 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
 	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 	rg.DELETE("/:id", h.Delete)
+}
+
+// ListPendingApprovals handles GET /api/v1/quotes/pending-approval
+func (h *Handler) ListPendingApprovals(c *gin.Context) {
+	var req transport.ListPendingApprovalsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.ListPendingApprovals(c.Request.Context(), tenantID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // List handles GET /api/v1/quotes
@@ -450,17 +472,12 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 	if result.PDFFileKey == nil || *result.PDFFileKey == "" {
 		// Lazy generation: if no PDF is stored yet, generate on the fly
 		if h.pdfGen != nil {
-			fileKey, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), id, tenantID)
+			_, pdfBytes, genErr := h.pdfGen.RegeneratePDF(c.Request.Context(), id, tenantID)
 			if genErr != nil {
-				httpkit.Error(c, http.StatusInternalServerError, "PDF generatie mislukt", genErr.Error())
+				httpkit.Error(c, http.StatusInternalServerError, msgPDFGenerationFailed, genErr.Error())
 				return
 			}
-
-			fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
-			c.Header("Content-Type", contentTypePDF)
-			c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-			c.Data(http.StatusOK, contentTypePDF, pdfBytes)
-			_ = fileKey
+			servePDFBytes(c, result.QuoteNumber, pdfBytes)
 			return
 		}
 		httpkit.Error(c, http.StatusNotFound, "no PDF available for this quote", nil)
@@ -472,17 +489,7 @@ func (h *Handler) DownloadPDF(c *gin.Context) {
 		httpkit.Error(c, http.StatusInternalServerError, "failed to retrieve PDF", err.Error())
 		return
 	}
-	defer func() { _ = reader.Close() }()
-
-	fileName := fmt.Sprintf("Offerte-%s.pdf", result.QuoteNumber)
-	c.Header("Content-Type", contentTypePDF)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	c.Status(http.StatusOK)
-
-	if _, err := io.Copy(c.Writer, reader); err != nil {
-		// Headers already sent — can't return a JSON error at this point
-		_ = c.Error(err)
-	}
+	streamPDFFromReader(c, result.QuoteNumber, reader)
 }
 
 // PresignAttachmentUpload handles POST /api/v1/quotes/:id/attachments/presign
