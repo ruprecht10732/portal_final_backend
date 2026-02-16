@@ -16,6 +16,8 @@ import (
 	"portal_final_backend/platform/logger"
 )
 
+const errPriceAndUnitPriceNonNegative = "priceCents and unitPriceCents must be 0 or greater"
+
 // Service provides business logic for catalog.
 type Service struct {
 	repo                repository.Repository
@@ -773,11 +775,11 @@ func toProductResponse(product repository.Product) transport.ProductResponse {
 
 func (s *Service) validatePricingCreate(priceCents int64, unitPriceCents int64, unitLabel *string) (*string, error) {
 	trimmed := trimPtr(unitLabel)
+	if priceCents < 0 || unitPriceCents < 0 {
+		return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+	}
 	if priceCents > 0 && unitPriceCents > 0 {
 		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
-	}
-	if priceCents <= 0 && unitPriceCents <= 0 {
-		return nil, apperr.Validation("priceCents or unitPriceCents is required")
 	}
 	if unitPriceCents > 0 && (trimmed == nil || *trimmed == "") {
 		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")
@@ -794,15 +796,18 @@ func (s *Service) validatePricingUpdate(priceCents *int64, unitPriceCents *int64
 	unitPrice := int64(0)
 	if priceCents != nil {
 		price = *priceCents
+		if price < 0 {
+			return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+		}
 	}
 	if unitPriceCents != nil {
 		unitPrice = *unitPriceCents
+		if unitPrice < 0 {
+			return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+		}
 	}
 	if price > 0 && unitPrice > 0 {
 		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
-	}
-	if price <= 0 && unitPrice <= 0 {
-		return nil, apperr.Validation("priceCents or unitPriceCents is required")
 	}
 	if unitPrice > 0 && (trimmed == nil || *trimmed == "") {
 		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")
