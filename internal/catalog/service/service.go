@@ -14,8 +14,9 @@ import (
 	"portal_final_backend/platform/ai/embeddingapi"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/logger"
-	"portal_final_backend/platform/sanitize"
 )
+
+const errPriceAndUnitPriceNonNegative = "priceCents and unitPriceCents must be 0 or greater"
 
 // Service provides business logic for catalog.
 type Service struct {
@@ -266,7 +267,7 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 		VatRateID:      req.VatRateID,
 		Title:          strings.TrimSpace(req.Title),
 		Reference:      reference,
-		Description:    sanitize.TextPtr(req.Description),
+		Description:    trimPtr(req.Description),
 		PriceCents:     req.PriceCents,
 		UnitPriceCents: req.UnitPriceCents,
 		UnitLabel:      unitLabel,
@@ -316,7 +317,7 @@ func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 		VatRateID:      req.VatRateID,
 		Title:          trimPtr(req.Title),
 		Reference:      trimPtr(req.Reference),
-		Description:    sanitize.TextPtr(req.Description),
+		Description:    trimPtr(req.Description),
 		PriceCents:     req.PriceCents,
 		UnitPriceCents: req.UnitPriceCents,
 		UnitLabel:      unitLabel,
@@ -408,11 +409,11 @@ func (s *Service) DeleteProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 }
 
 // AddProductMaterials adds material products to a service product.
-func (s *Service) AddProductMaterials(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error {
+func (s *Service) AddProductMaterials(ctx context.Context, tenantID uuid.UUID, productID uuid.UUID, links []repository.ProductMaterialLink) error {
 	if err := s.ensureServiceProduct(ctx, tenantID, productID); err != nil {
 		return err
 	}
-	uniqueIDs, err := s.ensureValidMaterialIDs(productID, materialIDs)
+	uniqueIDs, normalizedLinks, err := s.ensureValidMaterialLinks(productID, links)
 	if err != nil {
 		return err
 	}
@@ -424,7 +425,7 @@ func (s *Service) AddProductMaterials(ctx context.Context, tenantID uuid.UUID, p
 		return err
 	}
 
-	if err := s.repo.AddProductMaterials(ctx, tenantID, productID, uniqueIDs); err != nil {
+	if err := s.repo.AddProductMaterials(ctx, tenantID, productID, normalizedLinks); err != nil {
 		return err
 	}
 
@@ -483,14 +484,34 @@ func (s *Service) ensureServiceProduct(ctx context.Context, tenantID uuid.UUID, 
 	return nil
 }
 
-func (s *Service) ensureValidMaterialIDs(productID uuid.UUID, materialIDs []uuid.UUID) ([]uuid.UUID, error) {
-	uniqueIDs := uniqueUUIDs(materialIDs)
-	for _, id := range uniqueIDs {
-		if id == productID {
-			return nil, apperr.Validation("product cannot reference itself as a material")
-		}
+func (s *Service) ensureValidMaterialLinks(productID uuid.UUID, links []repository.ProductMaterialLink) ([]uuid.UUID, []repository.ProductMaterialLink, error) {
+	if len(links) == 0 {
+		return nil, nil, apperr.Validation("at least one material is required")
 	}
-	return uniqueIDs, nil
+
+	seen := make(map[uuid.UUID]struct{}, len(links))
+	materialIDs := make([]uuid.UUID, 0, len(links))
+	normalizedLinks := make([]repository.ProductMaterialLink, 0, len(links))
+
+	for _, link := range links {
+		if link.MaterialID == productID {
+			return nil, nil, apperr.Validation("product cannot reference itself as a material")
+		}
+		if !isAllowedPricingMode(link.PricingMode) {
+			return nil, nil, apperr.Validation("invalid pricingMode")
+		}
+		if _, exists := seen[link.MaterialID]; exists {
+			continue
+		}
+		seen[link.MaterialID] = struct{}{}
+		materialIDs = append(materialIDs, link.MaterialID)
+		normalizedLinks = append(normalizedLinks, repository.ProductMaterialLink{
+			MaterialID:  link.MaterialID,
+			PricingMode: link.PricingMode,
+		})
+	}
+
+	return materialIDs, normalizedLinks, nil
 }
 
 func (s *Service) loadAndValidateMaterials(ctx context.Context, tenantID uuid.UUID, materialIDs []uuid.UUID) ([]repository.Product, error) {
@@ -560,6 +581,15 @@ func (s *Service) validatePeriod(count *int, unit *string) error {
 func isAllowedPeriodUnit(unit string) bool {
 	switch unit {
 	case "day", "week", "month", "quarter", "year":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedPricingMode(mode string) bool {
+	switch mode {
+	case "included", "additional", "optional":
 		return true
 	default:
 		return false
@@ -735,6 +765,7 @@ func toProductResponse(product repository.Product) transport.ProductResponse {
 		UnitLabel:      product.UnitLabel,
 		LaborTimeText:  product.LaborTimeText,
 		Type:           product.Type,
+		PricingMode:    product.PricingMode,
 		PeriodCount:    product.PeriodCount,
 		PeriodUnit:     product.PeriodUnit,
 		CreatedAt:      product.CreatedAt,
@@ -744,11 +775,11 @@ func toProductResponse(product repository.Product) transport.ProductResponse {
 
 func (s *Service) validatePricingCreate(priceCents int64, unitPriceCents int64, unitLabel *string) (*string, error) {
 	trimmed := trimPtr(unitLabel)
+	if priceCents < 0 || unitPriceCents < 0 {
+		return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+	}
 	if priceCents > 0 && unitPriceCents > 0 {
 		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
-	}
-	if priceCents <= 0 && unitPriceCents <= 0 {
-		return nil, apperr.Validation("priceCents or unitPriceCents is required")
 	}
 	if unitPriceCents > 0 && (trimmed == nil || *trimmed == "") {
 		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")
@@ -765,15 +796,18 @@ func (s *Service) validatePricingUpdate(priceCents *int64, unitPriceCents *int64
 	unitPrice := int64(0)
 	if priceCents != nil {
 		price = *priceCents
+		if price < 0 {
+			return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+		}
 	}
 	if unitPriceCents != nil {
 		unitPrice = *unitPriceCents
+		if unitPrice < 0 {
+			return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+		}
 	}
 	if price > 0 && unitPrice > 0 {
 		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
-	}
-	if price <= 0 && unitPrice <= 0 {
-		return nil, apperr.Validation("priceCents or unitPriceCents is required")
 	}
 	if unitPrice > 0 && (trimmed == nil || *trimmed == "") {
 		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")

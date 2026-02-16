@@ -95,6 +95,7 @@ type ProductResponse struct {
 	UnitLabel      *string   `json:"unitLabel,omitempty"`
 	LaborTimeText  *string   `json:"laborTimeText,omitempty"`
 	Type           string    `json:"type"`
+	PricingMode    *string   `json:"pricingMode,omitempty"`
 	PeriodCount    *int      `json:"periodCount,omitempty"`
 	PeriodUnit     *string   `json:"periodUnit,omitempty"`
 	CreatedAt      string    `json:"createdAt"`
@@ -197,5 +198,11 @@ type AutocompleteItemResponse struct {
 // Materials
 
 type ProductMaterialsRequest struct {
-	MaterialIDs []uuid.UUID `json:"materialIds" validate:"required,min=1,dive,required"`
+	MaterialIDs []uuid.UUID                `json:"materialIds,omitempty" validate:"omitempty,min=1,dive,required"`
+	Materials   []ProductMaterialLinkInput `json:"materials,omitempty" validate:"omitempty,min=1,dive"`
+}
+
+type ProductMaterialLinkInput struct {
+	MaterialID  uuid.UUID `json:"materialId" validate:"required"`
+	PricingMode string    `json:"pricingMode" validate:"required,oneof=included additional optional"`
 }
