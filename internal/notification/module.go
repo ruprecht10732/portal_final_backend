@@ -461,6 +461,19 @@ func (m *Module) resolveWorkflowRule(
 		if !strings.EqualFold(step.Channel, channel) || !strings.EqualFold(step.Audience, audience) {
 			continue
 		}
+
+		subjectLen := 0
+		subjectTrimLen := 0
+		if step.TemplateSubject != nil {
+			subjectLen = len(*step.TemplateSubject)
+			subjectTrimLen = len(strings.TrimSpace(*step.TemplateSubject))
+		}
+		bodyLen := 0
+		bodyTrimLen := 0
+		if step.TemplateBody != nil {
+			bodyLen = len(*step.TemplateBody)
+			bodyTrimLen = len(strings.TrimSpace(*step.TemplateBody))
+		}
 		m.log.Info("workflow step matched",
 			"orgId", orgID,
 			"leadId", leadID,
@@ -472,6 +485,12 @@ func (m *Module) resolveWorkflowRule(
 			"audience", audience,
 			"enabled", step.Enabled,
 			"delayMinutes", step.DelayMinutes,
+			"templateSubjectNil", step.TemplateSubject == nil,
+			"templateSubjectLen", subjectLen,
+			"templateSubjectTrimLen", subjectTrimLen,
+			"templateBodyNil", step.TemplateBody == nil,
+			"templateBodyLen", bodyLen,
+			"templateBodyTrimLen", bodyTrimLen,
 		)
 		return &workflowRule{
 			Enabled:         step.Enabled,
@@ -795,6 +814,13 @@ func renderWorkflowTemplateText(rule *workflowRule, vars map[string]any) string 
 	return rendered
 }
 
+func renderWorkflowTemplateTextWithError(rule *workflowRule, vars map[string]any) (string, error) {
+	if rule == nil || rule.TemplateText == nil {
+		return "", nil
+	}
+	return renderStepTemplate(rule.TemplateText, vars)
+}
+
 func renderWorkflowTemplateSubject(rule *workflowRule, vars map[string]any) string {
 	if rule == nil || rule.TemplateSubject == nil {
 		return ""
@@ -806,6 +832,13 @@ func renderWorkflowTemplateSubject(rule *workflowRule, vars map[string]any) stri
 	}
 
 	return rendered
+}
+
+func renderWorkflowTemplateSubjectWithError(rule *workflowRule, vars map[string]any) (string, error) {
+	if rule == nil || rule.TemplateSubject == nil {
+		return "", nil
+	}
+	return renderStepTemplate(rule.TemplateSubject, vars)
 }
 
 func resolveWorkflowStepPhoneRecipients(config map[string]any, execCtx workflowStepExecutionContext) []string {
@@ -1049,7 +1082,11 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 
 	whatsAppRule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "partner_offer_created", "whatsapp", "partner", nil)
 	if whatsAppRule != nil && whatsAppRule.Enabled && strings.TrimSpace(e.PartnerPhone) != "" {
-		messageText := renderWorkflowTemplateText(whatsAppRule, templateVars)
+		messageText, err := renderWorkflowTemplateTextWithError(whatsAppRule, templateVars)
+		if err != nil {
+			m.log.Warn("workflow whatsapp template render failed", "orgId", e.OrganizationID, "trigger", "partner_offer_created", "audience", "partner", "error", err)
+			return nil
+		}
 		if strings.TrimSpace(messageText) == "" {
 			return nil
 		}
@@ -1310,6 +1347,9 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			"phone":  e.ConsumerPhone,
 			"email":  e.ConsumerEmail,
 			"source": source,
+		},
+		"org": map[string]any{
+			"name": "ons team",
 		},
 		"links": map[string]any{
 			"track": m.buildLeadTrackLink(e.PublicToken),
@@ -1739,8 +1779,18 @@ func (m *Module) dispatchQuoteEmailWorkflow(ctx context.Context, p dispatchQuote
 		return false
 	}
 
-	bodyText := renderWorkflowTemplateText(p.Rule, p.TemplateVars)
-	subject := strings.TrimSpace(renderWorkflowTemplateSubject(p.Rule, p.TemplateVars))
+	bodyText, bodyErr := renderWorkflowTemplateTextWithError(p.Rule, p.TemplateVars)
+	subjectText, subjectErr := renderWorkflowTemplateSubjectWithError(p.Rule, p.TemplateVars)
+	if bodyErr != nil || subjectErr != nil {
+		m.log.Warn("workflow email template render failed",
+			"orgId", p.OrgID,
+			"trigger", p.Trigger,
+			"bodyError", bodyErr,
+			"subjectError", subjectErr,
+		)
+		return true
+	}
+	subject := strings.TrimSpace(subjectText)
 	if subject == "" || strings.TrimSpace(bodyText) == "" {
 		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_subject_or_body", "hasSubject", subject != "", "hasBody", strings.TrimSpace(bodyText) != "")
 		return true
@@ -1813,7 +1863,11 @@ func (m *Module) dispatchQuoteWhatsAppWorkflow(ctx context.Context, p dispatchQu
 		return false
 	}
 
-	messageText := renderWorkflowTemplateText(p.Rule, p.TemplateVars)
+	messageText, err := renderWorkflowTemplateTextWithError(p.Rule, p.TemplateVars)
+	if err != nil {
+		m.log.Warn("workflow whatsapp template render failed", "orgId", p.OrgID, "trigger", p.Trigger, "error", err)
+		return true
+	}
 	if strings.TrimSpace(messageText) == "" {
 		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_message_body")
 		return true
@@ -1829,7 +1883,7 @@ func (m *Module) dispatchQuoteWhatsAppWorkflow(ctx context.Context, p dispatchQu
 			"includeLeadContact": true,
 		},
 	}}
-	err := m.enqueueWorkflowSteps(ctx, steps, workflowStepExecutionContext{
+	enqueueErr := m.enqueueWorkflowSteps(ctx, steps, workflowStepExecutionContext{
 		OrgID:          p.OrgID,
 		LeadID:         p.LeadID,
 		ServiceID:      p.ServiceID,
@@ -1839,8 +1893,8 @@ func (m *Module) dispatchQuoteWhatsAppWorkflow(ctx context.Context, p dispatchQu
 		DefaultActor:   "System",
 		DefaultOrigin:  workflowEngineActorName,
 	})
-	if err != nil {
-		m.log.Warn(p.FallbackNote, "error", err, "orgId", p.OrgID)
+	if enqueueErr != nil {
+		m.log.Warn(p.FallbackNote, "error", enqueueErr, "orgId", p.OrgID)
 		return false
 	}
 
@@ -2009,7 +2063,11 @@ func (m *Module) handleAppointmentWhatsApp(ctx context.Context, p appointmentWha
 		"lead":        map[string]any{"name": name, "phone": p.ConsumerPhone, "email": p.ConsumerEmail},
 		"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(p.Location)},
 	}
-	bodyText := renderWorkflowTemplateText(rule, templateVars)
+	bodyText, err := renderWorkflowTemplateTextWithError(rule, templateVars)
+	if err != nil {
+		m.log.Warn("workflow whatsapp template render failed", "orgId", p.OrgID, "trigger", p.Trigger, "error", err)
+		return nil
+	}
 	if strings.TrimSpace(bodyText) == "" {
 		return nil
 	}
