@@ -197,12 +197,15 @@ func TestRenderTemplateTextAcceptsMixedCaseNestedKeys(t *testing.T) {
 	}
 }
 
-func TestRenderTemplateTextRejectsLegacyDotSyntax(t *testing.T) {
-	_, err := renderTemplateText("Test bericht {{.lead.name}}", map[string]any{
+func TestRenderTemplateTextAcceptsLegacyDotSyntax(t *testing.T) {
+	rendered, err := renderTemplateText("Test bericht {{.lead.name}}", map[string]any{
 		"lead": map[string]any{"name": "Robin"},
 	})
-	if err == nil {
-		t.Fatal("expected legacy dot syntax to be rejected")
+	if err != nil {
+		t.Fatalf("expected legacy dot syntax to render, got error: %v", err)
+	}
+	if rendered != "Test bericht Robin" {
+		t.Fatalf(errUnexpectedRenderedText, rendered)
 	}
 }
 

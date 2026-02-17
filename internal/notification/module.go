@@ -486,11 +486,10 @@ func (m *Module) resolveWorkflowRule(
 }
 
 func renderTemplateText(tpl string, data map[string]any) (string, error) {
-	if strings.Contains(tpl, "{{.") {
-		return "", errors.New("legacy template syntax is not supported; use frontend syntax like {{lead.name}}")
+	normalizedTpl := tpl
+	if !strings.Contains(tpl, "{{.") {
+		normalizedTpl = normalizeFrontendTemplateSyntax(tpl, data)
 	}
-
-	normalizedTpl := normalizeFrontendTemplateSyntax(tpl, data)
 	parsed, err := template.New("msg").Option("missingkey=zero").Parse(normalizedTpl)
 	if err != nil {
 		return "", err
@@ -1291,6 +1290,13 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 		m.log.Info("lead created from quote flow, skipping welcome message", "leadId", e.LeadID)
 		return nil
 	}
+	m.log.Info("lead welcome eligibility",
+		"leadId", e.LeadID,
+		"orgId", e.TenantID,
+		"whatsAppOptedIn", e.WhatsAppOptedIn,
+		"hasPhone", strings.TrimSpace(e.ConsumerPhone) != "",
+		"hasEmail", strings.TrimSpace(e.ConsumerEmail) != "",
+	)
 
 	consumerName := defaultName(strings.TrimSpace(e.ConsumerName), "daar")
 	source := strings.TrimSpace(e.Source)
@@ -1311,8 +1317,19 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 	}
 
 	whatsAppRule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "lead_welcome", "whatsapp", "lead", leadSource)
+	whatsAppEligible := whatsAppRule != nil && whatsAppRule.Enabled && e.WhatsAppOptedIn && strings.TrimSpace(e.ConsumerPhone) != ""
+	m.log.Info("lead welcome whatsapp rule evaluation",
+		"leadId", e.LeadID,
+		"orgId", e.TenantID,
+		"ruleFound", whatsAppRule != nil,
+		"ruleEnabled", whatsAppRule != nil && whatsAppRule.Enabled,
+		"eventOptedIn", e.WhatsAppOptedIn,
+		"hasPhone", strings.TrimSpace(e.ConsumerPhone) != "",
+		"eligible", whatsAppEligible,
+	)
+	whatsAppDispatched := false
 	if whatsAppRule != nil && whatsAppRule.Enabled && e.WhatsAppOptedIn && strings.TrimSpace(e.ConsumerPhone) != "" {
-		_ = m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
+		whatsAppDispatched = m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
 			Rule:         whatsAppRule,
 			OrgID:        e.TenantID,
 			LeadID:       &e.LeadID,
@@ -1324,10 +1341,26 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			FallbackNote: "failed to enqueue lead_welcome lead whatsapp workflow",
 		})
 	}
+	m.log.Info("lead welcome whatsapp dispatch outcome",
+		"leadId", e.LeadID,
+		"orgId", e.TenantID,
+		"attempted", whatsAppEligible,
+		"dispatched", whatsAppDispatched,
+	)
 
 	emailRule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "lead_welcome", "email", "lead", leadSource)
+	emailEligible := emailRule != nil && emailRule.Enabled && strings.TrimSpace(e.ConsumerEmail) != ""
+	m.log.Info("lead welcome email rule evaluation",
+		"leadId", e.LeadID,
+		"orgId", e.TenantID,
+		"ruleFound", emailRule != nil,
+		"ruleEnabled", emailRule != nil && emailRule.Enabled,
+		"hasEmail", strings.TrimSpace(e.ConsumerEmail) != "",
+		"eligible", emailEligible,
+	)
+	emailDispatched := false
 	if emailRule != nil && emailRule.Enabled && strings.TrimSpace(e.ConsumerEmail) != "" {
-		_ = m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+		emailDispatched = m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 			Rule:         emailRule,
 			OrgID:        e.TenantID,
 			LeadID:       &e.LeadID,
@@ -1339,6 +1372,12 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			FallbackNote: "failed to enqueue lead_welcome lead email workflow",
 		})
 	}
+	m.log.Info("lead welcome email dispatch outcome",
+		"leadId", e.LeadID,
+		"orgId", e.TenantID,
+		"attempted", emailEligible,
+		"dispatched", emailDispatched,
+	)
 
 	return nil
 }
