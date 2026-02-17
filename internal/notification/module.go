@@ -686,7 +686,7 @@ func (m *Module) enqueueWhatsAppWorkflowStep(ctx context.Context, dispatchCtx wo
 		if err != nil {
 			return err
 		}
-		m.log.Info("outbox message enqueued", "outboxId", rec.ID, "kind", "whatsapp", "template", "whatsapp_send", "orgId", dispatchCtx.Exec.OrgID, "trigger", dispatchCtx.Exec.Trigger, "runAt", dispatchCtx.RunAt)
+		m.log.Info("outbox message enqueued", "outboxId", rec.String(), "kind", "whatsapp", "template", "whatsapp_send", "orgId", dispatchCtx.Exec.OrgID, "trigger", dispatchCtx.Exec.Trigger, "runAt", dispatchCtx.RunAt)
 	}
 
 	return nil
@@ -730,7 +730,7 @@ func (m *Module) enqueueEmailWorkflowStep(
 		if err != nil {
 			return err
 		}
-		m.log.Info("outbox message enqueued", "outboxId", rec.ID, "kind", "email", "template", "email_send", "orgId", dispatchCtx.Exec.OrgID, "trigger", dispatchCtx.Exec.Trigger, "runAt", dispatchCtx.RunAt)
+		m.log.Info("outbox message enqueued", "outboxId", rec.String(), "kind", "email", "template", "email_send", "orgId", dispatchCtx.Exec.OrgID, "trigger", dispatchCtx.Exec.Trigger, "runAt", dispatchCtx.RunAt)
 	}
 
 	return nil
@@ -1464,7 +1464,7 @@ func (m *Module) handleNotificationOutboxDue(ctx context.Context, e events.Notif
 		m.handleOutboxDeliveryError(ctx, rec, processErr)
 		return processErr
 	}
-	m.log.Info("outbox record processed successfully", "outboxId", rec.ID, "kind", rec.Kind, "template", rec.Template)
+	m.log.Info("outbox record processed successfully", "outboxId", rec.ID.String(), "kind", rec.Kind, "template", rec.Template)
 
 	return nil
 }
@@ -1474,7 +1474,7 @@ func (m *Module) handleOutboxDeliveryError(ctx context.Context, rec notification
 	if attempt >= maxOutboxRetryAttempts {
 		_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, deliveryErr.Error())
 		m.log.Warn("notification outbox exhausted retries",
-			"outboxId", rec.ID,
+			"outboxId", rec.ID.String(),
 			"kind", rec.Kind,
 			"template", rec.Template,
 			"attempt", attempt,
@@ -1488,7 +1488,7 @@ func (m *Module) handleOutboxDeliveryError(ctx context.Context, rec notification
 	if err := m.notificationOutbox.ScheduleRetry(ctx, rec.ID, retryAt, deliveryErr.Error()); err != nil {
 		_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, deliveryErr.Error())
 		m.log.Error("notification outbox retry scheduling failed; marked failed",
-			"outboxId", rec.ID,
+			"outboxId", rec.ID.String(),
 			"attempt", attempt,
 			"error", err,
 		)
@@ -1496,7 +1496,7 @@ func (m *Module) handleOutboxDeliveryError(ctx context.Context, rec notification
 	}
 
 	m.log.Warn("notification outbox scheduled retry",
-		"outboxId", rec.ID,
+		"outboxId", rec.ID.String(),
 		"kind", rec.Kind,
 		"template", rec.Template,
 		"attempt", attempt,
@@ -1523,13 +1523,13 @@ func (m *Module) prepareOutboxRecord(ctx context.Context, outboxID uuid.UUID) (n
 		return notificationoutbox.Record{}, false, err
 	}
 	if rec.Status == notificationoutbox.StatusSucceeded {
-		m.log.Debug("outbox record already succeeded; skipping", "outboxId", rec.ID)
+		m.log.Debug("outbox record already succeeded; skipping", "outboxId", rec.ID.String())
 		return rec, false, nil
 	}
 	if err := m.notificationOutbox.MarkProcessing(ctx, rec.ID); err != nil {
 		return notificationoutbox.Record{}, false, err
 	}
-	m.log.Debug("outbox record marked processing", "outboxId", rec.ID, "kind", rec.Kind, "template", rec.Template)
+	m.log.Debug("outbox record marked processing", "outboxId", rec.ID.String(), "kind", rec.Kind, "template", rec.Template)
 	return rec, true, nil
 }
 
@@ -1540,7 +1540,7 @@ func (m *Module) processGenericWhatsAppOutbox(ctx context.Context, e events.Noti
 		return nil
 	}
 	if strings.TrimSpace(payload.PhoneNumber) == "" {
-		m.log.Debug("outbox whatsapp payload has no phone number; marking succeeded", "outboxId", rec.ID)
+		m.log.Debug("outbox whatsapp payload has no phone number; marking succeeded", "outboxId", rec.ID.String())
 		_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
 		return nil
 	}
@@ -1555,7 +1555,7 @@ func (m *Module) processGenericWhatsAppOutbox(ctx context.Context, e events.Noti
 	leadID := parseOptionalUUID(payload.LeadID)
 	svcID := parseOptionalUUID(payload.ServiceID)
 	if leadID != nil && !m.isLeadWhatsAppOptedIn(ctx, *leadID, orgID) {
-		m.log.Info("lead opted out; skipping whatsapp outbox send", "outboxId", rec.ID, "leadId", *leadID, "orgId", orgID)
+		m.log.Info("lead opted out; skipping whatsapp outbox send", "outboxId", rec.ID.String(), "leadId", *leadID, "orgId", orgID)
 		_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
 		return nil
 	}
@@ -1579,7 +1579,7 @@ func (m *Module) processGenericWhatsAppOutbox(ctx context.Context, e events.Noti
 	}
 
 	_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
-	m.log.Info("whatsapp outbox delivered", "outboxId", rec.ID, "orgId", orgID, "phone", payload.PhoneNumber, "category", payload.Category)
+	m.log.Info("whatsapp outbox delivered", "outboxId", rec.ID.String(), "orgId", orgID, "phone", payload.PhoneNumber, "category", payload.Category)
 	return nil
 }
 
@@ -1591,7 +1591,7 @@ func (m *Module) processGenericEmailOutbox(ctx context.Context, e events.Notific
 	}
 
 	if strings.TrimSpace(payload.ToEmail) == "" {
-		m.log.Debug("outbox email payload has no recipient; marking succeeded", "outboxId", rec.ID)
+		m.log.Debug("outbox email payload has no recipient; marking succeeded", "outboxId", rec.ID.String())
 		_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
 		return nil
 	}
@@ -1614,14 +1614,14 @@ func (m *Module) processGenericEmailOutbox(ctx context.Context, e events.Notific
 	}
 
 	_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
-	m.log.Info("email outbox delivered", "outboxId", rec.ID, "orgId", orgID, "toEmail", payload.ToEmail)
+	m.log.Info("email outbox delivered", "outboxId", rec.ID.String(), "orgId", orgID, "toEmail", payload.ToEmail)
 	return nil
 }
 
 func (m *Module) markOutboxUnsupported(ctx context.Context, rec notificationoutbox.Record) {
 	msg := fmt.Sprintf("unsupported outbox kind/template: %s/%s", rec.Kind, rec.Template)
 	_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, msg)
-	m.log.Warn("unsupported outbox record", "outboxId", rec.ID, "kind", rec.Kind, "template", rec.Template)
+	m.log.Warn("unsupported outbox record", "outboxId", rec.ID.String(), "kind", rec.Kind, "template", rec.Template)
 }
 
 func parseOptionalUUID(value *string) *uuid.UUID {
