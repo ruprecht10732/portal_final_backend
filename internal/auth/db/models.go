@@ -889,6 +889,21 @@ type RacPartnerServiceType struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type RacProviderIntegration struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	Provider         string             `json:"provider"`
+	IsConnected      bool               `json:"is_connected"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	AccessToken      pgtype.Text        `json:"access_token"`
+	RefreshToken     pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt   pgtype.Timestamptz `json:"token_expires_at"`
+	AdministrationID pgtype.Text        `json:"administration_id"`
+	ConnectedBy      pgtype.UUID        `json:"connected_by"`
+	DisconnectedAt   pgtype.Timestamptz `json:"disconnected_at"`
+}
+
 type RacQuote struct {
 	ID                    pgtype.UUID        `json:"id"`
 	OrganizationID        pgtype.UUID        `json:"organization_id"`
@@ -960,6 +975,18 @@ type RacQuoteAttachment struct {
 type RacQuoteCounter struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 	LastNumber     int32       `json:"last_number"`
+}
+
+type RacQuoteExport struct {
+	ID             pgtype.UUID        `json:"id"`
+	QuoteID        pgtype.UUID        `json:"quote_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Provider       string             `json:"provider"`
+	ExternalID     string             `json:"external_id"`
+	ExternalUrl    pgtype.Text        `json:"external_url"`
+	State          string             `json:"state"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RacQuoteItem struct {

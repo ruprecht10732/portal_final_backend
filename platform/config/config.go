@@ -13,6 +13,8 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const defaultFrontendBaseURL = "http://localhost:4200"
+
 // =============================================================================
 // Module-Specific Config Interfaces (Principle of Least Privilege)
 // =============================================================================
@@ -196,6 +198,11 @@ type Config struct {
 	AsynqQueueName                    string
 	AsynqConcurrency                  int
 	SMTPEncryptionKey                 string
+	MoneybirdClientID                 string
+	MoneybirdClientSecret             string
+	MoneybirdRedirectURI              string
+	MoneybirdFrontendURL              string
+	MoneybirdEncryptionKey            string
 }
 
 // =============================================================================
@@ -237,6 +244,13 @@ func (c *Config) GetWhatsAppDeviceID() string { return c.WhatsAppDeviceID }
 
 // SMTPConfig getter
 func (c *Config) GetSMTPEncryptionKey() string { return c.SMTPEncryptionKey }
+
+// Moneybird config getters
+func (c *Config) GetMoneybirdClientID() string      { return c.MoneybirdClientID }
+func (c *Config) GetMoneybirdClientSecret() string  { return c.MoneybirdClientSecret }
+func (c *Config) GetMoneybirdRedirectURI() string   { return c.MoneybirdRedirectURI }
+func (c *Config) GetMoneybirdFrontendURL() string   { return c.MoneybirdFrontendURL }
+func (c *Config) GetMoneybirdEncryptionKey() string { return c.MoneybirdEncryptionKey }
 
 // SchedulerConfig implementation
 func (c *Config) GetRedisURL() string       { return c.RedisURL }
@@ -316,7 +330,7 @@ func (c *Config) IsCatalogEmbeddingEnabled() bool {
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
-	corsOrigins := splitCSV(getEnv("CORS_ORIGINS", "http://localhost:4200"))
+	corsOrigins := splitCSV(getEnv("CORS_ORIGINS", defaultFrontendBaseURL))
 	corsAllowAll := strings.EqualFold(getEnv("CORS_ALLOW_ALL", "false"), "true")
 	if containsWildcard(corsOrigins) {
 		corsAllowAll = true
@@ -343,7 +357,7 @@ func Load() (*Config, error) {
 		CORSAllowAll:                      corsAllowAll,
 		CORSOrigins:                       corsOrigins,
 		CORSAllowCreds:                    strings.EqualFold(getEnv("CORS_ALLOW_CREDENTIALS", "true"), "true"),
-		AppBaseURL:                        getEnv("APP_BASE_URL", "http://localhost:4200"),
+		AppBaseURL:                        getEnv("APP_BASE_URL", defaultFrontendBaseURL),
 		EmailEnabled:                      emailEnabled && brevoAPIKey != "",
 		BrevoAPIKey:                       brevoAPIKey,
 		EmailFromName:                     getEnv("EMAIL_FROM_NAME", "Salestainable"),
@@ -386,6 +400,11 @@ func Load() (*Config, error) {
 		AsynqQueueName:                    getEnv("ASYNQ_QUEUE_NAME", "default"),
 		AsynqConcurrency:                  mustInt(getEnv("ASYNQ_CONCURRENCY", "10")),
 		SMTPEncryptionKey:                 getEnv("SMTP_ENCRYPTION_KEY", ""),
+		MoneybirdClientID:                 getEnv("MONEYBIRD_CLIENT_ID", ""),
+		MoneybirdClientSecret:             getEnv("MONEYBIRD_CLIENT_SECRET", ""),
+		MoneybirdRedirectURI:              getEnv("MONEYBIRD_REDIRECT_URI", ""),
+		MoneybirdFrontendURL:              getEnv("MONEYBIRD_FRONTEND_URL", getEnv("APP_BASE_URL", defaultFrontendBaseURL)),
+		MoneybirdEncryptionKey:            getEnv("MONEYBIRD_ENCRYPTION_KEY", ""),
 	}
 
 	if cfg.DatabaseURL == "" {

@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/quotes/service"
@@ -60,12 +61,18 @@ func (h *Handler) SetPDFGenerator(gen PDFOnDemandGenerator) {
 // RegisterRoutes registers the quote routes
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
+	rg.GET("/integrations/moneybird/authorize-url", h.GetMoneybirdAuthorizeURL)
+	rg.GET("/integrations/:provider/status", h.GetProviderIntegrationStatus)
 	rg.GET("/pending-approval", h.ListPendingApprovals)
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
 	rg.POST("/generate", h.Generate)
 	rg.GET("/generate-jobs/:id", h.GetGenerateJob)
+	rg.POST("/export/:provider/bulk", h.BulkExportToProvider)
+	rg.DELETE("/integrations/:provider", h.DisconnectProvider)
 	rg.GET("/:id", h.GetByID)
+	rg.GET("/:id/export/:provider/status", h.GetQuoteExportStatus)
+	rg.POST("/:id/export/:provider", h.ExportToProvider)
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.POST("/:id/send", h.Send)
@@ -76,6 +83,139 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
 	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 	rg.DELETE("/:id", h.Delete)
+}
+
+func (h *Handler) RegisterPublicRoutes(rg *gin.RouterGroup) {
+	rg.GET("/integrations/moneybird/callback", h.HandleMoneybirdOAuthCallback)
+}
+
+func (h *Handler) GetMoneybirdAuthorizeURL(c *gin.Context) {
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetMoneybirdAuthorizeURL(c.Request.Context(), tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) HandleMoneybirdOAuthCallback(c *gin.Context) {
+	code := strings.TrimSpace(c.Query("code"))
+	state := strings.TrimSpace(c.Query("state"))
+	if code == "" || state == "" {
+		c.Redirect(http.StatusFound, h.svc.MoneybirdIntegrationRedirectURL("error"))
+		return
+	}
+
+	if _, _, err := h.svc.HandleMoneybirdOAuthCallback(c.Request.Context(), code, state); err != nil {
+		c.Redirect(http.StatusFound, h.svc.MoneybirdIntegrationRedirectURL("error"))
+		return
+	}
+
+	c.Redirect(http.StatusFound, h.svc.MoneybirdIntegrationRedirectURL("connected"))
+}
+
+func (h *Handler) DisconnectProvider(c *gin.Context) {
+	provider := c.Param("provider")
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	if err := h.svc.DisconnectProvider(c.Request.Context(), tenantID, provider); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "disconnected"})
+}
+
+func (h *Handler) GetProviderIntegrationStatus(c *gin.Context) {
+	provider := c.Param("provider")
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetProviderIntegrationStatus(c.Request.Context(), tenantID, provider)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) GetQuoteExportStatus(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	provider := c.Param("provider")
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetQuoteExportStatus(c.Request.Context(), id, tenantID, provider)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) ExportToProvider(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	provider := c.Param("provider")
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.ExportQuoteToProvider(c.Request.Context(), id, tenantID, provider)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) BulkExportToProvider(c *gin.Context) {
+	provider := c.Param("provider")
+
+	var req transport.BulkQuoteExportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.BulkExportQuotesToProvider(c.Request.Context(), req.QuoteIDs, tenantID, provider)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // ListPendingApprovals handles GET /api/v1/quotes/pending-approval

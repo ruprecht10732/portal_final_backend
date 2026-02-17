@@ -91,6 +91,7 @@ type Service struct {
 	promptGen  QuotePromptGenerator
 	sse        *sse.Service
 	jobQueue   GenerateQuoteJobQueue
+	moneybird  *moneybirdConfig
 }
 
 // GenerateQuoteJobQueue enqueues async quote generation tasks.
