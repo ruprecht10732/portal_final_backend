@@ -399,6 +399,13 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 		return nil, apperr.Forbidden("not authorized to update this appointment")
 	}
 
+	oldStatus := string(appt.Status)
+	if string(req.Status) == oldStatus {
+		leadInfo := s.getLeadInfoIfPresent(ctx, appt.LeadID, tenantID)
+		resp := appt.ToResponse(leadInfo)
+		return &resp, nil
+	}
+
 	if err := s.repo.UpdateStatus(ctx, id, tenantID, string(req.Status)); err != nil {
 		return nil, err
 	}
@@ -441,6 +448,19 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 			"endTime":       appt.EndTime,
 		},
 	})
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.AppointmentStatusChanged{
+			BaseEvent:      events.NewBaseEvent(),
+			AppointmentID:  appt.ID,
+			OrganizationID: appt.OrganizationID,
+			LeadID:         appt.LeadID,
+			LeadServiceID:  appt.LeadServiceID,
+			UserID:         appt.UserID,
+			OldStatus:      oldStatus,
+			NewStatus:      string(req.Status),
+		})
+	}
 
 	return &resp, nil
 }

@@ -112,6 +112,18 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		Metadata:       map[string]any{"quoteId": quote.ID, "status": quote.Status},
 	})
 
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.QuoteCreated{
+			BaseEvent:      events.NewBaseEvent(),
+			QuoteID:        quote.ID,
+			OrganizationID: tenantID,
+			LeadID:         quote.LeadID,
+			LeadServiceID:  quote.LeadServiceID,
+			QuoteNumber:    quote.QuoteNumber,
+			ActorID:        &actorID,
+		})
+	}
+
 	return s.buildResponse(ctx, &quote, items)
 }
 
@@ -284,6 +296,14 @@ func (s *Service) ListPendingApprovals(ctx context.Context, tenantID uuid.UUID, 
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID, status transport.QuoteStatus) (*transport.QuoteResponse, error) {
+	current, err := s.repo.GetByID(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if current.Status == string(status) {
+		return s.GetByID(ctx, id, tenantID)
+	}
+
 	if err := s.repo.UpdateStatus(ctx, id, tenantID, string(status)); err != nil {
 		return nil, err
 	}
@@ -295,8 +315,29 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, tenantID uuid.
 	return resp, nil
 }
 
-func (s *Service) Delete(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) error {
-	return s.repo.Delete(ctx, id, tenantID)
+func (s *Service) Delete(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID) error {
+	quote, err := s.repo.GetByID(ctx, id, tenantID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.Delete(ctx, id, tenantID); err != nil {
+		return err
+	}
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.QuoteDeleted{
+			BaseEvent:      events.NewBaseEvent(),
+			QuoteID:        id,
+			OrganizationID: tenantID,
+			LeadID:         quote.LeadID,
+			LeadServiceID:  quote.LeadServiceID,
+			QuoteNumber:    quote.QuoteNumber,
+			ActorID:        &actorID,
+		})
+	}
+
+	return nil
 }
 
 func generatePublicToken() (string, error) {

@@ -205,6 +205,7 @@ type Config struct {
 	MoneybirdRedirectURI              string
 	MoneybirdFrontendURL              string
 	MoneybirdEncryptionKey            string
+	LeadsReconciliationEnabled        bool
 }
 
 // =============================================================================
@@ -256,6 +257,9 @@ func (c *Config) GetMoneybirdClientSecret() string  { return c.MoneybirdClientSe
 func (c *Config) GetMoneybirdRedirectURI() string   { return c.MoneybirdRedirectURI }
 func (c *Config) GetMoneybirdFrontendURL() string   { return c.MoneybirdFrontendURL }
 func (c *Config) GetMoneybirdEncryptionKey() string { return c.MoneybirdEncryptionKey }
+
+// IsLeadsReconciliationEnabled controls the LeadService state reconciliation engine.
+func (c *Config) IsLeadsReconciliationEnabled() bool { return c.LeadsReconciliationEnabled }
 
 // SchedulerConfig implementation
 func (c *Config) GetRedisURL() string       { return c.RedisURL }
@@ -415,6 +419,7 @@ func Load() (*Config, error) {
 		MoneybirdRedirectURI:              getEnv("MONEYBIRD_REDIRECT_URI", ""),
 		MoneybirdFrontendURL:              getEnv("MONEYBIRD_FRONTEND_URL", appBaseURL),
 		MoneybirdEncryptionKey:            getEnv("MONEYBIRD_ENCRYPTION_KEY", ""),
+		LeadsReconciliationEnabled:        strings.EqualFold(getEnv("LEADS_RECONCILIATION_ENABLED", "true"), "true"),
 	}
 
 	if cfg.DatabaseURL == "" {

@@ -83,6 +83,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 
 	// Create orchestrator and event listeners
 	orchestrator := NewOrchestrator(gatekeeper, estimator, dispatcher, repo, eventBus, sseService, log)
+	orchestrator.SetReconciliationEnabled(cfg.IsLeadsReconciliationEnabled())
 	subscribeOrchestrator(eventBus, orchestrator)
 
 	// Create handlers
@@ -292,12 +293,61 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorQuoteAccepted(eventBus, orchestrator)
 	subscribeOrchestratorQuoteRejected(eventBus, orchestrator)
 	subscribeOrchestratorQuoteSent(eventBus, orchestrator)
+	subscribeOrchestratorPartnerOfferCreated(eventBus, orchestrator)
 	subscribeOrchestratorPartnerOfferRejected(eventBus, orchestrator)
 	subscribeOrchestratorPartnerOfferAccepted(eventBus, orchestrator)
 	subscribeOrchestratorPartnerOfferExpired(eventBus, orchestrator)
 	subscribeOrchestratorPipelineStageChanged(eventBus, orchestrator)
 	subscribeOrchestratorPhotoAnalysisCompleted(eventBus, orchestrator)
 	subscribeOrchestratorPhotoAnalysisFailed(eventBus, orchestrator)
+	subscribeOrchestratorQuoteCreated(eventBus, orchestrator)
+	subscribeOrchestratorQuoteDeleted(eventBus, orchestrator)
+	subscribeOrchestratorAppointmentCreated(eventBus, orchestrator)
+	subscribeOrchestratorAppointmentStatusChanged(eventBus, orchestrator)
+}
+
+func subscribeOrchestratorQuoteCreated(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.QuoteCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.QuoteCreated)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnQuoteCreated(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorQuoteDeleted(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.QuoteDeleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.QuoteDeleted)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnQuoteDeleted(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorAppointmentCreated(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.AppointmentCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.AppointmentCreated)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnAppointmentCreated(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorAppointmentStatusChanged(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.AppointmentStatusChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.AppointmentStatusChanged)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnAppointmentStatusChanged(ctx, e)
+		return nil
+	}))
 }
 
 func subscribeOrchestratorPhotoAnalysisCompleted(eventBus events.Bus, orchestrator *Orchestrator) {
@@ -362,6 +412,17 @@ func subscribeOrchestratorQuoteSent(eventBus events.Bus, orchestrator *Orchestra
 			return nil
 		}
 		orchestrator.OnQuoteSent(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorPartnerOfferCreated(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.PartnerOfferCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PartnerOfferCreated)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnPartnerOfferCreated(ctx, e)
 		return nil
 	}))
 }
