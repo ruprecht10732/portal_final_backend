@@ -403,3 +403,58 @@ type QuoteActivityResponse struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt time.Time              `json:"createdAt"`
 }
+
+type ProviderIntegrationStatusResponse struct {
+	Provider    string     `json:"provider"`
+	IsConnected bool       `json:"isConnected"`
+	ConnectedAt *time.Time `json:"connectedAt,omitempty"`
+}
+
+type QuoteExportResponse struct {
+	QuoteID     uuid.UUID `json:"quoteId"`
+	Provider    string    `json:"provider"`
+	ExternalID  string    `json:"externalId"`
+	ExternalURL string    `json:"externalUrl,omitempty"`
+	State       string    `json:"state"`
+	ExportedAt  time.Time `json:"exportedAt"`
+}
+
+type QuoteExportStatusResponse struct {
+	QuoteID     uuid.UUID  `json:"quoteId"`
+	Provider    string     `json:"provider"`
+	IsExported  bool       `json:"isExported"`
+	ExternalID  *string    `json:"externalId,omitempty"`
+	ExternalURL *string    `json:"externalUrl,omitempty"`
+	State       *string    `json:"state,omitempty"`
+	ExportedAt  *time.Time `json:"exportedAt,omitempty"`
+}
+
+type BulkQuoteExportRequest struct {
+	QuoteIDs []uuid.UUID `json:"quoteIds" validate:"required,min=1,max=100,dive,required"`
+}
+
+type BulkQuoteExportItem struct {
+	QuoteID     uuid.UUID  `json:"quoteId"`
+	Provider    string     `json:"provider"`
+	Status      string     `json:"status"`
+	ExternalID  *string    `json:"externalId,omitempty"`
+	ExternalURL *string    `json:"externalUrl,omitempty"`
+	State       *string    `json:"state,omitempty"`
+	ExportedAt  *time.Time `json:"exportedAt,omitempty"`
+	Error       *string    `json:"error,omitempty"`
+}
+
+type BulkQuoteExportResponse struct {
+	Items []BulkQuoteExportItem `json:"items"`
+}
+
+type MoneybirdAuthorizeURLResponse struct {
+	Provider     string `json:"provider"`
+	AuthorizeURL string `json:"authorizeUrl"`
+}
+
+type MoneybirdCallbackResponse struct {
+	Provider         string `json:"provider"`
+	IsConnected      bool   `json:"isConnected"`
+	AdministrationID string `json:"administrationId,omitempty"`
+}

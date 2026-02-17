@@ -297,21 +297,26 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 	query := `
 		SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id, q.created_by_id,
 			u.first_name, u.last_name, u.email,
+			l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
+			l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
 			q.quote_number, q.status,
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, q.created_at, q.updated_at,
-			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
-			viewed_at, accepted_at, rejected_at,
-			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
+			q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
+			q.viewed_at, q.accepted_at, q.rejected_at,
+			q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
 			q.financing_disclaimer
 		FROM RAC_quotes q
 		LEFT JOIN RAC_users u ON u.id = q.created_by_id
+		LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
 		WHERE q.id = $1 AND q.organization_id = $2`
 
 	err := r.pool.QueryRow(ctx, query, id, orgID).Scan(
 		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.CreatedByID,
 		&q.CreatedByFirstName, &q.CreatedByLastName, &q.CreatedByEmail,
+		&q.CustomerFirstName, &q.CustomerLastName, &q.CustomerPhone, &q.CustomerEmail,
+		&q.CustomerAddressStreet, &q.CustomerAddressHouseNumber, &q.CustomerAddressZipCode, &q.CustomerAddressCity,
 		&q.QuoteNumber, &q.Status,
 		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
 		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,

@@ -91,6 +91,10 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	quotes := ctx.Protected.Group("/quotes")
 	m.handler.RegisterRoutes(quotes)
 
+	// OAuth callback route for external providers (no auth middleware)
+	publicIntegrations := ctx.V1.Group("/quotes")
+	m.handler.RegisterPublicRoutes(publicIntegrations)
+
 	// Public routes — no auth middleware
 	publicQuotes := ctx.V1.Group("/public/quotes")
 	m.publicHandler.RegisterRoutes(publicQuotes)

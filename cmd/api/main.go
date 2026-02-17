@@ -200,6 +200,7 @@ func main() {
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
+	wireMoneybirdConfig(cfg, log, quotesModule.Service())
 
 	// Wire public viewers for lead portal (quotes + appointments)
 	quotePublicViewer := adapters.NewQuotePublicAdapter(quotesModule.Service())
@@ -341,6 +342,41 @@ func wireSMTPEncryptionKey(cfg *config.Config, log *logger.Logger, identitySvc i
 	identitySvc.SetSMTPEncryptionKey(smtpKey)
 	notificationMod.SetSMTPEncryptionKey(smtpKey)
 	log.Info("smtp encryption key configured")
+}
+
+func wireMoneybirdConfig(cfg *config.Config, log *logger.Logger, quotesSvc interface {
+	SetMoneybirdConfig(string, string, string, string)
+	SetMoneybirdEncryptionKey([]byte)
+}) {
+	clientID := cfg.GetMoneybirdClientID()
+	clientSecret := cfg.GetMoneybirdClientSecret()
+	redirectURI := cfg.GetMoneybirdRedirectURI()
+	frontendURL := cfg.GetMoneybirdFrontendURL()
+	encryptionKeyHex := cfg.GetMoneybirdEncryptionKey()
+
+	if clientID == "" && clientSecret == "" && redirectURI == "" && encryptionKeyHex == "" {
+		return
+	}
+
+	if clientID == "" || clientSecret == "" || redirectURI == "" || encryptionKeyHex == "" {
+		log.Warn("moneybird config is partially configured; oauth flow will be disabled")
+		return
+	}
+
+	quotesSvc.SetMoneybirdConfig(clientID, clientSecret, redirectURI, frontendURL)
+
+	encryptionKey, err := hex.DecodeString(encryptionKeyHex)
+	if err != nil {
+		log.Error("invalid MONEYBIRD_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+		panic("invalid MONEYBIRD_ENCRYPTION_KEY: " + err.Error())
+	}
+	if len(encryptionKey) != 32 {
+		log.Error("MONEYBIRD_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(encryptionKey))
+		panic("MONEYBIRD_ENCRYPTION_KEY must be 32 bytes")
+	}
+
+	quotesSvc.SetMoneybirdEncryptionKey(encryptionKey)
+	log.Info("moneybird oauth configuration enabled")
 }
 
 func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (*scheduler.Client, func()) {
