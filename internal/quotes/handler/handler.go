@@ -456,7 +456,9 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.Delete(c.Request.Context(), id, tenantID); httpkit.HandleError(c, err) {
+	identity := httpkit.MustGetIdentity(c)
+
+	if err := h.svc.Delete(c.Request.Context(), id, tenantID, identity.UserID()); httpkit.HandleError(c, err) {
 		return
 	}
 

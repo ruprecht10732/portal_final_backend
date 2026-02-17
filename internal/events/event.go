@@ -270,6 +270,34 @@ type QuoteAnnotated struct {
 
 func (e QuoteAnnotated) EventName() string { return "quotes.quote.annotated" }
 
+// QuoteCreated is published when a quote is created.
+// This event exists to trigger state reconciliation (e.g. resurrecting a Lost service).
+type QuoteCreated struct {
+	BaseEvent
+	QuoteID        uuid.UUID  `json:"quoteId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         uuid.UUID  `json:"leadId"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
+	QuoteNumber    string     `json:"quoteNumber"`
+	ActorID        *uuid.UUID `json:"actorId,omitempty"`
+}
+
+func (e QuoteCreated) EventName() string { return "quotes.quote.created" }
+
+// QuoteDeleted is published when a quote is deleted.
+// This event exists to trigger state reconciliation (e.g. reverting Quote_Draft when last draft is removed).
+type QuoteDeleted struct {
+	BaseEvent
+	QuoteID        uuid.UUID  `json:"quoteId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         uuid.UUID  `json:"leadId"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
+	QuoteNumber    string     `json:"quoteNumber"`
+	ActorID        *uuid.UUID `json:"actorId,omitempty"`
+}
+
+func (e QuoteDeleted) EventName() string { return "quotes.quote.deleted" }
+
 // QuoteAccepted is published when a lead accepts and signs the quote.
 type QuoteAccepted struct {
 	BaseEvent
@@ -394,6 +422,21 @@ type AppointmentCreated struct {
 }
 
 func (e AppointmentCreated) EventName() string { return "appointments.created" }
+
+// AppointmentStatusChanged is published when an appointment's status changes (e.g. cancelled, completed).
+// This event exists to trigger service state reconciliation.
+type AppointmentStatusChanged struct {
+	BaseEvent
+	AppointmentID  uuid.UUID  `json:"appointmentId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         *uuid.UUID `json:"leadId,omitempty"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
+	UserID         uuid.UUID  `json:"userId"`
+	OldStatus      string     `json:"oldStatus"`
+	NewStatus      string     `json:"newStatus"`
+}
+
+func (e AppointmentStatusChanged) EventName() string { return "appointments.status.changed" }
 
 // AppointmentReminderDue is published when a reminder should be sent.
 type AppointmentReminderDue struct {
