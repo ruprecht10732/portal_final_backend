@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"regexp"
 	"sort"
 	"strings"
@@ -687,7 +688,8 @@ func (m *Module) enqueueSingleWorkflowStep(ctx context.Context, step repository.
 }
 
 func (m *Module) enqueueWhatsAppWorkflowStep(ctx context.Context, dispatchCtx workflowStepDispatchContext) error {
-	if strings.TrimSpace(dispatchCtx.Body) == "" {
+	message := normalizeWhatsAppMessage(dispatchCtx.Body)
+	if strings.TrimSpace(message) == "" {
 		m.log.Debug("workflow whatsapp step body empty; skipping", "orgId", dispatchCtx.Exec.OrgID, "trigger", dispatchCtx.Exec.Trigger, "stepId", dispatchCtx.Step.ID)
 		return nil
 	}
@@ -703,7 +705,7 @@ func (m *Module) enqueueWhatsAppWorkflowStep(ctx context.Context, dispatchCtx wo
 			LeadID:      ptrUUIDString(dispatchCtx.Exec.LeadID),
 			ServiceID:   ptrUUIDString(dispatchCtx.Exec.ServiceID),
 			PhoneNumber: phoneNumber,
-			Message:     dispatchCtx.Body,
+			Message:     message,
 			Category:    dispatchCtx.Category,
 			Audience:    dispatchCtx.Audience,
 			Summary:     dispatchCtx.Summary,
@@ -1118,7 +1120,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 	if whatsAppRule != nil && whatsAppRule.Enabled && strings.TrimSpace(e.PartnerPhone) != "" {
 		messageText, err := renderWorkflowTemplateTextWithError(whatsAppRule, templateVars)
 		if err != nil {
-			m.log.Warn("workflow whatsapp template render failed", "orgId", e.OrganizationID, "trigger", "partner_offer_created", "audience", "partner", "error", err)
+			m.log.Warn(msgWorkflowWhatsAppTemplateRenderFailed, "orgId", e.OrganizationID, "trigger", "partner_offer_created", "audience", "partner", "error", err)
 			return nil
 		}
 		if strings.TrimSpace(messageText) == "" {
@@ -1162,20 +1164,76 @@ func (m *Module) buildPublicURL(path string, tokenValue string) string {
 
 // ── Partner offer event handlers ────────────────────────────────────────
 
-const partnerOfferNotificationEmail = "info@salestainable.nl"
-const partnerOfferCreatedTemplate = "Hallo %s,\n\nEr is een nieuw werkaanbod voor u beschikbaar ter waarde van %s.\n\nBekijk het aanbod en geef uw beschikbaarheid door via onderstaande link:\n%s\n\nMet vriendelijke groet"
-const leadWelcomeSummaryFmt = "WhatsApp welkomstbericht verstuurd naar %s"
-const invalidOutboxPayloadPrefix = "invalid payload: "
-const maxOutboxRetryAttempts = 5
-const workflowEngineActorName = "Workflow Engine"
-const quotePublicPathPrefix = "/quote/"
-const outboxRetryBaseDelay = time.Minute
-const outboxRetryMaxDelay = 60 * time.Minute
+const (
+	partnerOfferNotificationEmail = "info@salestainable.nl"
+	partnerOfferCreatedTemplate   = "Hallo %s,\n\nEr is een nieuw werkaanbod voor u beschikbaar ter waarde van %s.\n\nBekijk het aanbod en geef uw beschikbaarheid door via onderstaande link:\n%s\n\nMet vriendelijke groet"
+	leadWelcomeSummaryFmt         = "WhatsApp welkomstbericht verstuurd naar %s"
+	defaultOrgNameFallback        = "ons team"
+
+	msgWorkflowWhatsAppTemplateRenderFailed = "workflow whatsapp template render failed"
+	msgWorkflowEmailDispatchSkipped         = "workflow email dispatch skipped"
+	msgWorkflowWhatsAppDispatchSkipped      = "workflow whatsapp dispatch skipped"
+
+	invalidOutboxPayloadPrefix = "invalid payload: "
+	maxOutboxRetryAttempts     = 5
+	workflowEngineActorName    = "Workflow Engine"
+	quotePublicPathPrefix      = "/quote/"
+	outboxRetryBaseDelay       = time.Minute
+	outboxRetryMaxDelay        = 60 * time.Minute
+)
 
 var operationsNotificationRoles = map[string]struct{}{
 	"admin": {},
 	"agent": {},
 	"scout": {},
+}
+
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+
+func normalizeWhatsAppMessage(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+
+	// Common rich-text editor HTML (Quill) -> line breaks.
+	replacer := strings.NewReplacer(
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+		"</p>", "\n",
+		"<p>", "",
+		"</div>", "\n",
+		"<div>", "",
+	)
+	text = replacer.Replace(text)
+
+	// Remove any remaining tags.
+	text = htmlTagPattern.ReplaceAllString(text, "")
+
+	// Decode entities (&nbsp; etc.).
+	text = html.UnescapeString(text)
+	text = strings.ReplaceAll(text, "\u00a0", " ")
+
+	// Normalize whitespace while preserving newlines.
+	lines := strings.Split(text, "\n")
+	cleaned := make([]string, 0, len(lines))
+	blankCount := 0
+	for _, line := range lines {
+		trimmed := strings.Join(strings.Fields(line), " ")
+		if trimmed == "" {
+			blankCount++
+			if blankCount > 1 {
+				continue
+			}
+			cleaned = append(cleaned, "")
+			continue
+		}
+		blankCount = 0
+		cleaned = append(cleaned, trimmed)
+	}
+
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
 }
 
 func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.PartnerOfferAccepted) error {
@@ -1384,7 +1442,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			"source": source,
 		},
 		"org": map[string]any{
-			"name": defaultName(orgName, "ons team"),
+			"name": defaultName(orgName, defaultOrgNameFallback),
 		},
 		"links": map[string]any{
 			"track": m.buildLeadTrackLink(e.PublicToken),
@@ -1816,15 +1874,15 @@ type dispatchQuoteEmailWorkflowParams struct {
 
 func (m *Module) dispatchQuoteEmailWorkflow(ctx context.Context, p dispatchQuoteEmailWorkflowParams) bool {
 	if p.Rule == nil {
-		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_not_found")
+		m.log.Info(msgWorkflowEmailDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_not_found")
 		return false
 	}
 	if !p.Rule.Enabled {
-		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_disabled")
+		m.log.Info(msgWorkflowEmailDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_disabled")
 		return true
 	}
 	if strings.TrimSpace(p.LeadEmail) == "" && strings.TrimSpace(p.PartnerEmail) == "" {
-		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "no_recipients")
+		m.log.Info(msgWorkflowEmailDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "no_recipients")
 		return true
 	}
 	if m.notificationOutbox == nil {
@@ -1845,7 +1903,7 @@ func (m *Module) dispatchQuoteEmailWorkflow(ctx context.Context, p dispatchQuote
 	}
 	subject := strings.TrimSpace(subjectText)
 	if subject == "" || strings.TrimSpace(bodyText) == "" {
-		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_subject_or_body", "hasSubject", subject != "", "hasBody", strings.TrimSpace(bodyText) != "")
+		m.log.Info(msgWorkflowEmailDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_subject_or_body", "hasSubject", subject != "", "hasBody", strings.TrimSpace(bodyText) != "")
 		return true
 	}
 	bodyHTML := strings.ReplaceAll(bodyText, "\n", "<br/>")
@@ -1896,19 +1954,19 @@ type dispatchQuoteWhatsAppWorkflowParams struct {
 
 func (m *Module) dispatchQuoteWhatsAppWorkflow(ctx context.Context, p dispatchQuoteWhatsAppWorkflowParams) bool {
 	if p.Rule == nil {
-		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_not_found")
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_not_found")
 		return false
 	}
 	if !p.Rule.Enabled {
-		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_disabled")
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_disabled")
 		return true
 	}
 	if strings.TrimSpace(p.LeadPhone) == "" {
-		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "missing_phone")
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "missing_phone")
 		return true
 	}
 	if p.LeadID != nil && !m.isLeadWhatsAppOptedIn(ctx, *p.LeadID, p.OrgID) {
-		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "leadId", *p.LeadID, "reason", "lead_opted_out_in_db")
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "leadId", *p.LeadID, "reason", "lead_opted_out_in_db")
 		return true
 	}
 	if m.notificationOutbox == nil {
@@ -1918,11 +1976,12 @@ func (m *Module) dispatchQuoteWhatsAppWorkflow(ctx context.Context, p dispatchQu
 
 	messageText, err := renderWorkflowTemplateTextWithError(p.Rule, p.TemplateVars)
 	if err != nil {
-		m.log.Warn("workflow whatsapp template render failed", "orgId", p.OrgID, "trigger", p.Trigger, "error", err)
+		m.log.Warn(msgWorkflowWhatsAppTemplateRenderFailed, "orgId", p.OrgID, "trigger", p.Trigger, "error", err)
 		return true
 	}
+	messageText = normalizeWhatsAppMessage(messageText)
 	if strings.TrimSpace(messageText) == "" {
-		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_message_body")
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_message_body")
 		return true
 	}
 
@@ -2442,7 +2501,7 @@ func (m *Module) dispatchQuoteRejectedLeadEmailWorkflow(ctx context.Context, e e
 		"quote": map[string]any{
 			"reason": e.Reason,
 		},
-		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), "ons team")},
+		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), defaultOrgNameFallback)},
 	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_rejected", "email", "lead", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
@@ -2465,7 +2524,7 @@ func (m *Module) dispatchQuoteRejectedLeadWhatsAppWorkflow(ctx context.Context, 
 		"quote": map[string]any{
 			"reason": e.Reason,
 		},
-		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), "ons team")},
+		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), defaultOrgNameFallback)},
 	}
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_rejected", "whatsapp", "lead", nil)
 	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{

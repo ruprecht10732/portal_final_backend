@@ -71,6 +71,16 @@ func (s *testSender) SendPartnerOfferRejectedEmail(context.Context, string, stri
 }
 func (s *testSender) SendCustomEmail(context.Context, string, string, string) error { return nil }
 
+func TestNormalizeWhatsAppMessage_StripsHTMLAndEntities(t *testing.T) {
+	input := "<p>Hallo&nbsp;Robin Oost,&nbsp;welkom&nbsp;bij&nbsp;ons team.&nbsp;We&nbsp;hebben&nbsp;je&nbsp;aanvraag&nbsp;ontvangen.</p><p></p><p>https://example.com/track/abc</p>"
+	expected := "Hallo Robin Oost, welkom bij ons team. We hebben je aanvraag ontvangen.\n\nhttps://example.com/track/abc"
+
+	got := normalizeWhatsAppMessage(input)
+	if got != expected {
+		t.Fatalf(errUnexpectedRenderedText, got)
+	}
+}
+
 func TestHandleQuoteSentDoesNotUseLegacySenderWithoutOutbox(t *testing.T) {
 	sender := &testSender{}
 	orgID := uuid.New()
