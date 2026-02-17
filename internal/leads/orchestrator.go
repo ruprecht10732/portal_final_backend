@@ -27,6 +27,8 @@ type Orchestrator struct {
 	sse        *sse.Service
 	log        *logger.Logger
 
+	reconciliationEnabled bool
+
 	// Idempotency protection: tracks active agent runs
 	activeRuns map[string]bool
 	// Latest queued photo-analysis event per service, replayed after current gatekeeper run finishes.
@@ -38,6 +40,7 @@ const (
 	dispatcherAlreadyRunningMsg = "orchestrator: dispatcher already running for service, skipping"
 	dispatcherFailedMsg         = "orchestrator: dispatcher failed"
 	agentRunTimeout             = 5 * time.Minute
+	staleDraftDuration          = 30 * 24 * time.Hour
 )
 
 func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, eventBus events.Bus, sse *sse.Service, log *logger.Logger) *Orchestrator {
@@ -49,9 +52,14 @@ func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, d
 		eventBus:               eventBus,
 		sse:                    sse,
 		log:                    log,
+		reconciliationEnabled:  true,
 		activeRuns:             make(map[string]bool),
 		pendingGatekeeperPhoto: make(map[uuid.UUID]events.PhotoAnalysisCompleted),
 	}
+}
+
+func (o *Orchestrator) SetReconciliationEnabled(enabled bool) {
+	o.reconciliationEnabled = enabled
 }
 
 func (o *Orchestrator) queueGatekeeperPhotoRerun(evt events.PhotoAnalysisCompleted) {
@@ -174,6 +182,8 @@ func (o *Orchestrator) ShouldRunAgent(service repository.LeadService) bool {
 
 // OnDataChange handles human data changes and re-triggers agents when needed.
 func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChanged) {
+	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.TenantID, evt.EventName(), evt.OccurredAt(), false)
+
 	svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.TenantID)
 	if err != nil {
 		o.log.Error("orchestrator: failed to load lead service", "error", err)
@@ -494,7 +504,7 @@ func (o *Orchestrator) OnQuoteSent(ctx context.Context, evt events.QuoteSent) {
 
 // OnPartnerOfferRejected re-triggers the dispatcher to find a new partner.
 func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.PartnerOfferRejected) {
-	_ = ctx
+	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
 	o.log.Info("Orchestrator: Partner rejected offer, re-triggering dispatcher", "leadId", evt.LeadID)
 	if !o.markRunning("dispatcher", evt.LeadServiceID) {
 		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
@@ -513,7 +523,7 @@ func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.Pa
 
 // OnPartnerOfferExpired re-triggers the dispatcher when an offer expires.
 func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.PartnerOfferExpired) {
-	_ = ctx
+	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
 	o.log.Info("Orchestrator: Partner offer expired, re-triggering dispatcher", "leadId", evt.LeadID)
 	if !o.markRunning("dispatcher", evt.LeadServiceID) {
 		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
@@ -532,28 +542,11 @@ func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.Par
 
 // OnPartnerOfferAccepted advances pipeline once a partner accepts the offer.
 func (o *Orchestrator) OnPartnerOfferAccepted(ctx context.Context, evt events.PartnerOfferAccepted) {
-	oldStage := ""
-	if svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.OrganizationID); err == nil {
-		oldStage = svc.PipelineStage
-	}
+	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), true)
+}
 
-	if _, err := o.repo.UpdatePipelineStage(ctx, evt.LeadServiceID, evt.OrganizationID, domain.PipelineStagePartnerAssigned); err != nil {
-		o.log.Error("orchestrator: failed to advance stage after partner acceptance", "error", err)
-		return
-	}
-
-	if _, err := o.repo.UpdateServiceStatus(ctx, evt.LeadServiceID, evt.OrganizationID, domain.LeadStatusPartnerAssigned); err != nil {
-		o.log.Error("orchestrator: failed to set service status after partner acceptance", "error", err)
-	}
-
-	o.eventBus.Publish(ctx, events.PipelineStageChanged{
-		BaseEvent:     events.NewBaseEvent(),
-		LeadID:        evt.LeadID,
-		LeadServiceID: evt.LeadServiceID,
-		TenantID:      evt.OrganizationID,
-		OldStage:      oldStage,
-		NewStage:      domain.PipelineStagePartnerAssigned,
-	})
+func (o *Orchestrator) OnPartnerOfferCreated(ctx context.Context, evt events.PartnerOfferCreated) {
+	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), true)
 }
 
 func stringPtr(s string) *string {
@@ -573,4 +566,395 @@ func buildManualInterventionDrafts(leadID, serviceID uuid.UUID) map[string]any {
 		"messageAudience": "internal",
 		"messageCategory": "manual_intervention",
 	}
+}
+
+// -------------------------------------------------------------------------
+// Context-aware Service State Reconciliation
+// -------------------------------------------------------------------------
+
+func (o *Orchestrator) OnQuoteCreated(ctx context.Context, evt events.QuoteCreated) {
+	if evt.LeadServiceID == nil {
+		return
+	}
+	o.reconcileServiceState(ctx, evt.LeadID, *evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), true)
+}
+
+func (o *Orchestrator) OnQuoteDeleted(ctx context.Context, evt events.QuoteDeleted) {
+	if evt.LeadServiceID == nil {
+		return
+	}
+	o.reconcileServiceState(ctx, evt.LeadID, *evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
+}
+
+func (o *Orchestrator) OnAppointmentCreated(ctx context.Context, evt events.AppointmentCreated) {
+	if evt.LeadID == nil || evt.LeadServiceID == nil {
+		return
+	}
+	o.reconcileServiceState(ctx, *evt.LeadID, *evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), true)
+}
+
+func (o *Orchestrator) OnAppointmentStatusChanged(ctx context.Context, evt events.AppointmentStatusChanged) {
+	if evt.LeadID == nil || evt.LeadServiceID == nil {
+		return
+	}
+
+	allowResurrection := evt.NewStatus == "scheduled" || evt.NewStatus == "requested"
+	o.reconcileServiceState(ctx, *evt.LeadID, *evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), allowResurrection)
+}
+
+// reconcileServiceState is the single source of truth for LeadService state.
+// It derives pipeline stage + service status from child entities and enforces consistency.
+func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, triggerEvent string, triggerAt time.Time, allowResurrection bool) {
+	if !o.reconciliationEnabled {
+		return
+	}
+
+	svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to load service for reconciliation", "error", err)
+		return
+	}
+
+	aggs, err := o.repo.GetServiceStateAggregates(ctx, serviceID, tenantID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to load aggregates", "error", err)
+		return
+	}
+
+	desired, ok := deriveDesiredServiceState(svc, aggs, allowResurrection, triggerAt)
+	if !ok {
+		return
+	}
+
+	o.applyReconciledState(ctx, applyReconciledStateParams{
+		LeadID:       leadID,
+		ServiceID:    serviceID,
+		TenantID:     tenantID,
+		TriggerEvent: triggerEvent,
+		Current:      svc,
+		Desired:      desired,
+		Aggregates:   aggs,
+	})
+}
+
+type applyReconciledStateParams struct {
+	LeadID       uuid.UUID
+	ServiceID    uuid.UUID
+	TenantID     uuid.UUID
+	TriggerEvent string
+	Current      repository.LeadService
+	Desired      desiredServiceState
+	Aggregates   repository.ServiceStateAggregates
+}
+
+func (o *Orchestrator) applyReconciledState(ctx context.Context, p applyReconciledStateParams) {
+	oldStage := p.Current.PipelineStage
+	oldStatus := p.Current.Status
+
+	stageChanged := o.applyReconciledStage(ctx, p.LeadID, p.ServiceID, p.TenantID, oldStage, p.Desired.Stage)
+	statusChanged := o.applyReconciledStatus(ctx, p.ServiceID, p.TenantID, oldStatus, p.Desired.Status)
+	if !stageChanged && !statusChanged {
+		return
+	}
+
+	reason := p.Desired.Reason
+	if reason == "" {
+		reason = defaultReconcileReason(p.TriggerEvent, oldStage, p.Desired.Stage)
+	}
+
+	o.maybeWriteReconcileTimeline(ctx, maybeWriteTimelineParams{
+		LeadID:       p.LeadID,
+		ServiceID:    p.ServiceID,
+		TenantID:     p.TenantID,
+		TriggerEvent: p.TriggerEvent,
+		OldStage:     oldStage,
+		NewStage:     p.Desired.Stage,
+		OldStatus:    oldStatus,
+		NewStatus:    p.Desired.Status,
+		ReasonCode:   p.Desired.ReasonCode,
+		Reason:       reason,
+		Resurrecting: p.Desired.Resurrecting,
+		Aggregates:   p.Aggregates,
+	})
+
+	o.log.Info("orchestrator: reconciled service state",
+		"leadId", p.LeadID,
+		"serviceId", p.ServiceID,
+		"trigger", p.TriggerEvent,
+		"reason", reason,
+		"oldStage", oldStage,
+		"newStage", p.Desired.Stage,
+		"oldStatus", oldStatus,
+		"newStatus", p.Desired.Status,
+	)
+}
+
+func (o *Orchestrator) applyReconciledStage(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, oldStage, newStage string) bool {
+	if newStage == "" || newStage == oldStage {
+		return false
+	}
+	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, tenantID, newStage); err != nil {
+		o.log.Error("orchestrator: failed to reconcile stage", "error", err)
+		return false
+	}
+	o.eventBus.Publish(ctx, events.PipelineStageChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		TenantID:      tenantID,
+		OldStage:      oldStage,
+		NewStage:      newStage,
+	})
+	return true
+}
+
+func (o *Orchestrator) applyReconciledStatus(ctx context.Context, serviceID, tenantID uuid.UUID, oldStatus, newStatus string) bool {
+	if newStatus == "" || newStatus == oldStatus {
+		return false
+	}
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, tenantID, newStatus); err != nil {
+		o.log.Error("orchestrator: failed to reconcile status", "error", err)
+		return false
+	}
+	return true
+}
+
+type maybeWriteTimelineParams struct {
+	LeadID       uuid.UUID
+	ServiceID    uuid.UUID
+	TenantID     uuid.UUID
+	TriggerEvent string
+	OldStage     string
+	NewStage     string
+	OldStatus    string
+	NewStatus    string
+	ReasonCode   string
+	Reason       string
+	Resurrecting bool
+	Aggregates   repository.ServiceStateAggregates
+}
+
+func (o *Orchestrator) maybeWriteReconcileTimeline(ctx context.Context, p maybeWriteTimelineParams) {
+	isRegression := isPipelineRegression(p.OldStage, p.NewStage)
+	if !isRegression && !p.Resurrecting && p.ReasonCode != "stale_draft_decay" {
+		return
+	}
+	summary := p.Reason
+	_, _ = o.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         p.LeadID,
+		ServiceID:      &p.ServiceID,
+		OrganizationID: p.TenantID,
+		ActorType:      "System",
+		ActorName:      "StateReconciler",
+		EventType:      "service_state_reconciled",
+		Title:          "Status automatisch gecorrigeerd",
+		Summary:        &summary,
+		Metadata: map[string]any{
+			"reasonCode": p.ReasonCode,
+			"trigger":    p.TriggerEvent,
+			"oldStage":   p.OldStage,
+			"newStage":   p.NewStage,
+			"oldStatus":  p.OldStatus,
+			"newStatus":  p.NewStatus,
+			"evidence":   buildReconcileEvidence(p.Aggregates),
+		},
+	})
+}
+
+type desiredServiceState struct {
+	Stage        string
+	Status       string
+	ReasonCode   string
+	Reason       string
+	Resurrecting bool
+}
+
+func deriveDesiredServiceState(current repository.LeadService, aggs repository.ServiceStateAggregates, allowResurrection bool, triggerAt time.Time) (desiredServiceState, bool) {
+	resurrecting := shouldResurrect(current, aggs, allowResurrection, triggerAt)
+	if domain.IsTerminal(current.Status, current.PipelineStage) && !resurrecting {
+		return desiredServiceState{}, false
+	}
+
+	desired := desiredServiceState{Resurrecting: resurrecting}
+	if resurrecting {
+		desired.ReasonCode = "terminal_resurrection"
+		desired.Reason = "Lead automatisch heropend door nieuwe activiteit"
+	}
+
+	if stage, status, code, ok := deriveFromOffers(aggs); ok {
+		desired.Stage, desired.Status, desired.ReasonCode = stage, status, coalesceReasonCode(desired.ReasonCode, code)
+		return desired, true
+	}
+	if stage, status, code, reason, ok := deriveFromQuotes(aggs); ok {
+		desired.Stage, desired.Status = stage, status
+		desired.ReasonCode = coalesceReasonCode(desired.ReasonCode, code)
+		if desired.Reason == "" {
+			desired.Reason = reason
+		}
+		return desired, true
+	}
+	if stage, status, code, ok := deriveFromVisitReports(aggs); ok {
+		desired.Stage, desired.Status, desired.ReasonCode = stage, status, coalesceReasonCode(desired.ReasonCode, code)
+		return desired, true
+	}
+	if stage, status, code, ok := deriveFromAppointments(aggs); ok {
+		desired.Stage, desired.Status, desired.ReasonCode = stage, status, coalesceReasonCode(desired.ReasonCode, code)
+		return desired, true
+	}
+	if stage, status, code, ok := deriveFromAI(aggs); ok {
+		desired.Stage, desired.Status, desired.ReasonCode = stage, status, coalesceReasonCode(desired.ReasonCode, code)
+		return desired, true
+	}
+
+	desired.Stage = domain.PipelineStageTriage
+	desired.Status = domain.LeadStatusNew
+	desired.ReasonCode = coalesceReasonCode(desired.ReasonCode, "default")
+	return desired, true
+}
+
+func shouldResurrect(current repository.LeadService, aggs repository.ServiceStateAggregates, allowResurrection bool, triggerAt time.Time) bool {
+	if !domain.IsTerminal(current.Status, current.PipelineStage) {
+		return false
+	}
+	if !allowResurrection {
+		return false
+	}
+
+	// Time-safety: only resurrect if this triggering event happened AFTER the service became terminal.
+	// This prevents replays/duplicates of old events from reopening long-closed services.
+	terminalAt := aggs.TerminalAt
+	if terminalAt == nil {
+		// Fallback: the service row's updated_at is updated on pipeline/status changes.
+		// Not perfect, but safer than allowing resurrection without a time barrier.
+		fallback := current.UpdatedAt
+		terminalAt = &fallback
+	}
+	if terminalAt != nil && !triggerAt.After(*terminalAt) {
+		return false
+	}
+
+	return aggs.ScheduledAppointments > 0 || aggs.AcceptedOffers > 0 || aggs.PendingOffers > 0 || aggs.AcceptedQuotes > 0 || aggs.SentQuotes > 0 || aggs.DraftQuotes > 0
+}
+
+func deriveFromOffers(aggs repository.ServiceStateAggregates) (stage, status, reasonCode string, ok bool) {
+	if aggs.AcceptedOffers > 0 {
+		return domain.PipelineStagePartnerAssigned, domain.LeadStatusPartnerAssigned, "offer_accepted", true
+	}
+	if aggs.PendingOffers > 0 {
+		return domain.PipelineStagePartnerMatching, domain.LeadStatusQuoteAccepted, "offer_pending", true
+	}
+	return "", "", "", false
+}
+
+func deriveFromQuotes(aggs repository.ServiceStateAggregates) (stage, status, reasonCode, reason string, ok bool) {
+	if aggs.AcceptedQuotes > 0 {
+		return domain.PipelineStageReadyForPartner, domain.LeadStatusQuoteAccepted, "quote_accepted", "", true
+	}
+	if aggs.SentQuotes > 0 {
+		return domain.PipelineStageQuoteSent, domain.LeadStatusQuoteSent, "quote_sent", "", true
+	}
+	if aggs.DraftQuotes > 0 {
+		if aggs.LatestQuoteAt != nil && time.Since(*aggs.LatestQuoteAt) > staleDraftDuration {
+			return domain.PipelineStageNurturing, domain.LeadStatusAttemptedContact, "stale_draft_decay", "Conceptofferte is verlopen (>30 dagen geen activiteit)", true
+		}
+		return domain.PipelineStageQuoteDraft, domain.LeadStatusQuoteDraft, "quote_draft", "", true
+	}
+	if aggs.RejectedQuotes > 0 {
+		return domain.PipelineStageLost, domain.LeadStatusLost, "quotes_rejected_only", "", true
+	}
+	return "", "", "", "", false
+}
+
+func deriveFromVisitReports(aggs repository.ServiceStateAggregates) (stage, status, reasonCode string, ok bool) {
+	if !aggs.HasVisitReport {
+		return "", "", "", false
+	}
+	return domain.PipelineStageReadyForEstimator, domain.LeadStatusSurveyCompleted, "visit_report_present", true
+}
+
+func deriveFromAppointments(aggs repository.ServiceStateAggregates) (stage, status, reasonCode string, ok bool) {
+	if aggs.ScheduledAppointments > 0 {
+		return domain.PipelineStageNurturing, domain.LeadStatusAppointmentScheduled, "appointment_scheduled", true
+	}
+	if aggs.CancelledAppointments > 0 {
+		return domain.PipelineStageNurturing, domain.LeadStatusNeedsRescheduling, "appointment_cancelled", true
+	}
+	return "", "", "", false
+}
+
+func deriveFromAI(aggs repository.ServiceStateAggregates) (stage, status, reasonCode string, ok bool) {
+	if aggs.AiAction == nil {
+		return "", "", "", false
+	}
+	switch *aggs.AiAction {
+	case "ScheduleSurvey", "CallImmediately", "Review":
+		return domain.PipelineStageReadyForEstimator, domain.LeadStatusNew, "ai_valid_intake", true
+	case "RequestInfo":
+		return domain.PipelineStageNurturing, domain.LeadStatusAttemptedContact, "ai_request_info", true
+	case "Reject":
+		return domain.PipelineStageLost, domain.LeadStatusDisqualified, "ai_reject", true
+	default:
+		return domain.PipelineStageTriage, domain.LeadStatusNew, "ai_default", true
+	}
+}
+
+func defaultReconcileReason(triggerEvent, oldStage, newStage string) string {
+	switch triggerEvent {
+	case events.QuoteDeleted{}.EventName():
+		return "Offerte verwijderd; status opnieuw bepaald"
+	case events.AppointmentStatusChanged{}.EventName():
+		return "Afspraakstatus gewijzigd; status opnieuw bepaald"
+	case events.AppointmentCreated{}.EventName():
+		return "Nieuwe afspraak; status opnieuw bepaald"
+	default:
+		return fmt.Sprintf("Auto-correctie: %s → %s", oldStage, newStage)
+	}
+}
+
+func buildReconcileEvidence(aggs repository.ServiceStateAggregates) map[string]any {
+	return map[string]any{
+		"acceptedQuotes":        aggs.AcceptedQuotes,
+		"sentQuotes":            aggs.SentQuotes,
+		"draftQuotes":           aggs.DraftQuotes,
+		"rejectedQuotes":        aggs.RejectedQuotes,
+		"latestQuoteAt":         aggs.LatestQuoteAt,
+		"acceptedOffers":        aggs.AcceptedOffers,
+		"pendingOffers":         aggs.PendingOffers,
+		"scheduledAppointments": aggs.ScheduledAppointments,
+		"completedAppointments": aggs.CompletedAppointments,
+		"cancelledAppointments": aggs.CancelledAppointments,
+		"latestAppointmentAt":   aggs.LatestAppointmentAt,
+		"hasVisitReport":        aggs.HasVisitReport,
+		"aiAction":              aggs.AiAction,
+	}
+}
+
+func coalesceReasonCode(existing, next string) string {
+	if existing != "" {
+		return existing
+	}
+	return next
+}
+
+func isPipelineRegression(oldStage, newStage string) bool {
+	rank := map[string]int{
+		domain.PipelineStageTriage:             10,
+		domain.PipelineStageNurturing:          20,
+		domain.PipelineStageManualIntervention: 25,
+		domain.PipelineStageReadyForEstimator:  30,
+		domain.PipelineStageQuoteDraft:         40,
+		domain.PipelineStageQuoteSent:          50,
+		domain.PipelineStageReadyForPartner:    60,
+		domain.PipelineStagePartnerMatching:    70,
+		domain.PipelineStagePartnerAssigned:    80,
+		domain.PipelineStageCompleted:          90,
+		domain.PipelineStageLost:               90,
+	}
+
+	oldRank, okOld := rank[oldStage]
+	newRank, okNew := rank[newStage]
+	if !okOld || !okNew {
+		return false
+	}
+	return newRank < oldRank
 }
