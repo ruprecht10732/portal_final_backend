@@ -94,8 +94,14 @@ type cachedSender struct {
 	expiresAt time.Time
 }
 
+type cachedOrgName struct {
+	name      string
+	expiresAt time.Time
+}
+
 // Module handles all notification-related event subscriptions.
 type Module struct {
+	pool               *pgxpool.Pool
 	sender             email.Sender
 	cfg                config.NotificationConfig
 	log                *logger.Logger
@@ -113,6 +119,7 @@ type Module struct {
 	inAppHandler       *notifhandler.HTTPHandler
 	smtpEncryptionKey  []byte
 	senderCache        sync.Map // map[uuid.UUID]cachedSender
+	orgNameCache       sync.Map // map[uuid.UUID]cachedOrgName
 }
 
 // New creates a new notification module.
@@ -121,12 +128,39 @@ func New(pool *pgxpool.Pool, sender email.Sender, cfg config.NotificationConfig,
 	inAppSvc := inapp.NewService(inAppRepo, log)
 
 	return &Module{
+		pool:         pool,
 		sender:       sender,
 		cfg:          cfg,
 		log:          log,
 		inAppService: inAppSvc,
 		inAppHandler: notifhandler.NewHTTPHandler(inAppSvc),
 	}
+}
+
+func (m *Module) resolveOrganizationName(ctx context.Context, orgID uuid.UUID) string {
+	if orgID == uuid.Nil {
+		return ""
+	}
+	if cached, ok := m.orgNameCache.Load(orgID); ok {
+		entry := cached.(cachedOrgName)
+		if time.Now().Before(entry.expiresAt) {
+			return entry.name
+		}
+		m.orgNameCache.Delete(orgID)
+	}
+	if m.pool == nil {
+		return ""
+	}
+	var name string
+	if err := m.pool.QueryRow(ctx, `SELECT name FROM rac_organizations WHERE id = $1`, orgID).Scan(&name); err != nil {
+		return ""
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	m.orgNameCache.Store(orgID, cachedOrgName{name: name, expiresAt: time.Now().Add(10 * time.Minute)})
+	return name
 }
 
 // Name returns the module identifier.
@@ -1341,6 +1375,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 	if source != "" {
 		leadSource = &source
 	}
+	orgName := strings.TrimSpace(m.resolveOrganizationName(ctx, e.TenantID))
 	templateVars := map[string]any{
 		"lead": map[string]any{
 			"name":   consumerName,
@@ -1349,7 +1384,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			"source": source,
 		},
 		"org": map[string]any{
-			"name": "ons team",
+			"name": defaultName(orgName, "ons team"),
 		},
 		"links": map[string]any{
 			"track": m.buildLeadTrackLink(e.PublicToken),
