@@ -60,8 +60,8 @@ type moneybirdTaxRate struct {
 type moneybirdExportLine struct {
 	Description string  `json:"description"`
 	Price       float64 `json:"price"`
-	Amount      float64 `json:"amount"`
-	TaxRateID   string  `json:"tax_rate_id"`
+	Amount      string  `json:"amount"`
+	TaxRateID   int64   `json:"tax_rate_id"`
 }
 
 type moneybirdCreateInvoiceBody struct {
@@ -688,7 +688,7 @@ func (s *Service) loadMoneybirdQuoteData(ctx context.Context, quoteID, tenantID 
 	return quote, items, nil
 }
 
-func (s *Service) buildMoneybirdExportLines(items []repository.QuoteItem, taxRateIDByBPS map[int]string) ([]moneybirdExportLine, error) {
+func (s *Service) buildMoneybirdExportLines(items []repository.QuoteItem, taxRateIDByBPS map[int]int64) ([]moneybirdExportLine, error) {
 	lines := make([]moneybirdExportLine, 0, len(items))
 	for _, item := range items {
 		taxID, ok := taxRateIDByBPS[item.TaxRateBps]
@@ -699,12 +699,17 @@ func (s *Service) buildMoneybirdExportLines(items []repository.QuoteItem, taxRat
 		lines = append(lines, moneybirdExportLine{
 			Description: item.Description,
 			Price:       float64(item.UnitPriceCents) / 100,
-			Amount:      parseQuantityNumber(item.Quantity),
+			Amount:      moneybirdExportAmount(item.Quantity),
 			TaxRateID:   taxID,
 		})
 	}
 
 	return lines, nil
+}
+
+func moneybirdExportAmount(quantity string) string {
+	parsed := parseQuantityNumber(quantity)
+	return strconv.FormatFloat(parsed, 'f', -1, 64)
 }
 
 func (s *Service) createMoneybirdInvoice(
@@ -884,7 +889,7 @@ func moneybirdContactCompanyNameFallback(firstName string, lastName string, emai
 	return "Unknown contact"
 }
 
-func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administrationID string, accessToken string) (map[int]string, error) {
+func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administrationID string, accessToken string) (map[int]int64, error) {
 	endpoint := fmt.Sprintf("%s/%s/tax_rates", moneybirdAPIBaseURL, administrationID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -909,9 +914,10 @@ func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administra
 		return nil, fmt.Errorf("decode moneybird tax rates response: %w", err)
 	}
 
-	result := map[int]string{}
+	result := map[int]int64{}
 	for _, rate := range taxRates {
-		if rate.ID == "" {
+		rateID, err := strconv.ParseInt(strings.TrimSpace(rate.ID), 10, 64)
+		if err != nil {
 			continue
 		}
 		value := strings.TrimSpace(strings.ReplaceAll(rate.Percentage, ",", "."))
@@ -919,7 +925,7 @@ func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administra
 		if err != nil {
 			continue
 		}
-		result[int(parsed*100)] = rate.ID
+		result[int(parsed*100)] = rateID
 	}
 
 	return result, nil
