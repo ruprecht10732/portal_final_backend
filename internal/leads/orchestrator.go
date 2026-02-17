@@ -833,7 +833,31 @@ func shouldResurrect(current repository.LeadService, aggs repository.ServiceStat
 		return false
 	}
 
+	// Additional safety: only resurrect if there is evidence of fresh child activity AFTER terminalAt.
+	// This prevents reopening terminal services when a late/duplicated event arrives but the DB state
+	// does not actually contain any post-terminal work.
+	if terminalAt != nil {
+		if latestChild := latestChildActivityAt(aggs); latestChild != nil {
+			if !latestChild.After(*terminalAt) {
+				return false
+			}
+		}
+	}
+
 	return aggs.ScheduledAppointments > 0 || aggs.AcceptedOffers > 0 || aggs.PendingOffers > 0 || aggs.AcceptedQuotes > 0 || aggs.SentQuotes > 0 || aggs.DraftQuotes > 0
+}
+
+func latestChildActivityAt(aggs repository.ServiceStateAggregates) *time.Time {
+	var latest *time.Time
+	for _, candidate := range []*time.Time{aggs.LatestQuoteAt, aggs.LatestAppointmentAt, aggs.LatestOfferAt} {
+		if candidate == nil {
+			continue
+		}
+		if latest == nil || candidate.After(*latest) {
+			latest = candidate
+		}
+	}
+	return latest
 }
 
 func deriveFromOffers(aggs repository.ServiceStateAggregates) (stage, status, reasonCode string, ok bool) {
@@ -920,12 +944,14 @@ func buildReconcileEvidence(aggs repository.ServiceStateAggregates) map[string]a
 		"latestQuoteAt":         aggs.LatestQuoteAt,
 		"acceptedOffers":        aggs.AcceptedOffers,
 		"pendingOffers":         aggs.PendingOffers,
+		"latestOfferAt":         aggs.LatestOfferAt,
 		"scheduledAppointments": aggs.ScheduledAppointments,
 		"completedAppointments": aggs.CompletedAppointments,
 		"cancelledAppointments": aggs.CancelledAppointments,
 		"latestAppointmentAt":   aggs.LatestAppointmentAt,
 		"hasVisitReport":        aggs.HasVisitReport,
 		"aiAction":              aggs.AiAction,
+		"terminalAt":            aggs.TerminalAt,
 	}
 }
 

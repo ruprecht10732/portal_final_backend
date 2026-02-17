@@ -27,6 +27,7 @@ type ServiceStateAggregates struct {
 	// Offers
 	AcceptedOffers int
 	PendingOffers  int
+	LatestOfferAt  *time.Time
 
 	// Appointments
 	ScheduledAppointments int
@@ -64,7 +65,15 @@ func (r *Repository) GetServiceStateAggregates(ctx context.Context, serviceID uu
 		offer_counts AS (
 			SELECT
 				COUNT(*) FILTER (WHERE status = 'accepted') AS accepted,
-				COUNT(*) FILTER (WHERE status IN ('pending', 'sent')) AS pending
+				COUNT(*) FILTER (WHERE status IN ('pending', 'sent')) AS pending,
+				MAX(
+					GREATEST(
+						created_at,
+						updated_at,
+						COALESCE(accepted_at, created_at),
+						COALESCE(rejected_at, created_at)
+					)
+				) AS latest_at
 			FROM rac_partner_offers
 			WHERE lead_service_id = $1 AND organization_id = $2
 		),
@@ -109,6 +118,7 @@ func (r *Repository) GetServiceStateAggregates(ctx context.Context, serviceID uu
 			q.latest_at,
 			COALESCE(o.accepted, 0),
 			COALESCE(o.pending, 0),
+			o.latest_at,
 			COALESCE(ap.scheduled, 0),
 			COALESCE(ap.completed, 0),
 			COALESCE(ap.cancelled, 0),
@@ -132,6 +142,7 @@ func (r *Repository) GetServiceStateAggregates(ctx context.Context, serviceID uu
 		&aggs.LatestQuoteAt,
 		&aggs.AcceptedOffers,
 		&aggs.PendingOffers,
+		&aggs.LatestOfferAt,
 		&aggs.ScheduledAppointments,
 		&aggs.CompletedAppointments,
 		&aggs.CancelledAppointments,

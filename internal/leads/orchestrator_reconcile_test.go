@@ -37,6 +37,7 @@ func TestDeriveDesiredServiceStateTerminalNoResurrectionWhenTriggerBeforeTermina
 func TestDeriveDesiredServiceStateTerminalResurrectsWhenTriggerAfterTerminalAt(t *testing.T) {
 	now := time.Now()
 	terminalAt := now.Add(-1 * time.Hour)
+	latestQuoteAt := now.Add(-30 * time.Minute)
 
 	current := repository.LeadService{
 		Status:        domain.LeadStatusLost,
@@ -45,6 +46,7 @@ func TestDeriveDesiredServiceStateTerminalResurrectsWhenTriggerAfterTerminalAt(t
 	}
 	aggs := repository.ServiceStateAggregates{
 		SentQuotes:     1,
+		LatestQuoteAt:  &latestQuoteAt,
 		TerminalAt:     &terminalAt,
 		AiAction:       nil,
 		HasVisitReport: false,
@@ -65,6 +67,28 @@ func TestDeriveDesiredServiceStateTerminalResurrectsWhenTriggerAfterTerminalAt(t
 	}
 	if desired.ReasonCode != "terminal_resurrection" {
 		t.Fatalf("expected reasonCode=%q, got %q", "terminal_resurrection", desired.ReasonCode)
+	}
+}
+
+func TestDeriveDesiredServiceStateTerminalDoesNotResurrectWithoutFreshChildActivity(t *testing.T) {
+	now := time.Now()
+	terminalAt := now.Add(-1 * time.Hour)
+	staleQuoteAt := terminalAt.Add(-1 * time.Minute)
+
+	current := repository.LeadService{
+		Status:        domain.LeadStatusLost,
+		PipelineStage: domain.PipelineStageLost,
+		UpdatedAt:     terminalAt,
+	}
+	aggs := repository.ServiceStateAggregates{
+		SentQuotes:    1,
+		LatestQuoteAt: &staleQuoteAt,
+		TerminalAt:    &terminalAt,
+	}
+
+	_, ok := deriveDesiredServiceState(current, aggs, true, terminalAt.Add(10*time.Minute))
+	if ok {
+		t.Fatalf("expected reconciliation to be skipped (no resurrection), got ok=true")
 	}
 }
 
