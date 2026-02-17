@@ -390,6 +390,26 @@ func (r *Repository) HasNonDraftQuote(ctx context.Context, serviceID, organizati
 	return exists, nil
 }
 
+func (r *Repository) GetLatestDraftQuoteID(ctx context.Context, serviceID, organizationID uuid.UUID) (*uuid.UUID, error) {
+	var id uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT id
+		FROM RAC_quotes
+		WHERE lead_service_id = $1
+		  AND organization_id = $2
+		  AND status = 'Draft'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, serviceID, organizationID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 type UpdateLeadParams struct {
 	ConsumerFirstName  *string
 	ConsumerLastName   *string

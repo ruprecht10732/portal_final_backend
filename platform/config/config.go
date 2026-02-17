@@ -59,6 +59,7 @@ type EmailConfig interface {
 // NotificationConfig provides settings for the notification module.
 type NotificationConfig interface {
 	GetAppBaseURL() string
+	GetPublicBaseURL() string
 }
 
 // WhatsAppConfig provides settings for the WhatsApp HTTP client.
@@ -156,6 +157,7 @@ type Config struct {
 	CORSOrigins                       []string
 	CORSAllowCreds                    bool
 	AppBaseURL                        string
+	PublicBaseURL                     string
 	EmailEnabled                      bool
 	BrevoAPIKey                       string
 	EmailFromName                     string
@@ -236,6 +238,9 @@ func (c *Config) GetEmailFromAddress() string { return c.EmailFromAddress }
 
 // NotificationConfig implementation
 func (c *Config) GetAppBaseURL() string { return c.AppBaseURL }
+func (c *Config) GetPublicBaseURL() string {
+	return c.PublicBaseURL
+}
 
 // WhatsAppConfig implementation
 func (c *Config) GetWhatsAppURL() string      { return c.WhatsAppURL }
@@ -344,6 +349,10 @@ func Load() (*Config, error) {
 		refreshCookieSecure = strings.EqualFold(getEnv("APP_ENV", "development"), "production")
 	}
 
+	appBaseURL := getEnv("APP_BASE_URL", defaultFrontendBaseURL)
+	// NOTE(compat): remove APP_BASE_URL fallback once PUBLIC_BASE_URL is configured in all environments.
+	publicBaseURL := getEnv("PUBLIC_BASE_URL", appBaseURL)
+
 	cfg := &Config{
 		Env:                               getEnv("APP_ENV", "development"),
 		HTTPAddr:                          getEnv("HTTP_ADDR", ":8080"),
@@ -357,7 +366,8 @@ func Load() (*Config, error) {
 		CORSAllowAll:                      corsAllowAll,
 		CORSOrigins:                       corsOrigins,
 		CORSAllowCreds:                    strings.EqualFold(getEnv("CORS_ALLOW_CREDENTIALS", "true"), "true"),
-		AppBaseURL:                        getEnv("APP_BASE_URL", defaultFrontendBaseURL),
+		AppBaseURL:                        appBaseURL,
+		PublicBaseURL:                     publicBaseURL,
 		EmailEnabled:                      emailEnabled && brevoAPIKey != "",
 		BrevoAPIKey:                       brevoAPIKey,
 		EmailFromName:                     getEnv("EMAIL_FROM_NAME", "Salestainable"),
@@ -403,7 +413,7 @@ func Load() (*Config, error) {
 		MoneybirdClientID:                 getEnv("MONEYBIRD_CLIENT_ID", ""),
 		MoneybirdClientSecret:             getEnv("MONEYBIRD_CLIENT_SECRET", ""),
 		MoneybirdRedirectURI:              getEnv("MONEYBIRD_REDIRECT_URI", ""),
-		MoneybirdFrontendURL:              getEnv("MONEYBIRD_FRONTEND_URL", getEnv("APP_BASE_URL", defaultFrontendBaseURL)),
+		MoneybirdFrontendURL:              getEnv("MONEYBIRD_FRONTEND_URL", appBaseURL),
 		MoneybirdEncryptionKey:            getEnv("MONEYBIRD_ENCRYPTION_KEY", ""),
 	}
 

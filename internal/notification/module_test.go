@@ -16,7 +16,8 @@ import (
 
 type testNotificationConfig struct{}
 
-func (testNotificationConfig) GetAppBaseURL() string { return "https://app.example.com" }
+func (testNotificationConfig) GetAppBaseURL() string    { return "https://app.example.com" }
+func (testNotificationConfig) GetPublicBaseURL() string { return "https://public.example.com" }
 
 type testWorkflowResolver struct {
 	result identityservice.ResolveLeadWorkflowResult

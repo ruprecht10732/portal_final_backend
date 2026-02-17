@@ -278,6 +278,8 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 	if domain.IsTerminalPipelineStage(evt.NewStage) {
 		return
 	}
+	// Intentionally no generic stage-change timeline write here.
+	// Agent tools already persist detailed stage-change reasons.
 
 	switch evt.NewStage {
 	case domain.PipelineStageReadyForEstimator:
