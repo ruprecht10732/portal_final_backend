@@ -48,8 +48,9 @@ type moneybirdAdministration struct {
 }
 
 type moneybirdContact struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
+	ID         string `json:"id"`
+	Email      string `json:"email"`
+	CustomerID string `json:"customer_id"`
 }
 
 type moneybirdTaxRate struct {
@@ -567,7 +568,7 @@ func (s *Service) exportQuoteToMoneybird(ctx context.Context, quoteID, tenantID 
 	}
 
 	administrationID := *integration.AdministrationID
-	contactID, err := s.moneybirdResolveContactID(ctx, administrationID, accessToken, quote.CustomerEmail, quote.CustomerFirstName, quote.CustomerLastName)
+	contactID, err := s.moneybirdResolveContactID(ctx, administrationID, accessToken, quoteID.String(), quote)
 	if err != nil {
 		return "", "", err
 	}
@@ -577,7 +578,7 @@ func (s *Service) exportQuoteToMoneybird(ctx context.Context, quoteID, tenantID 
 		return "", "", err
 	}
 
-	lines, err := s.buildMoneybirdExportLines(items, taxRateIDByBPS)
+	lines, err := s.buildMoneybirdExportLines(quote, items, taxRateIDByBPS)
 	if err != nil {
 		return "", "", err
 	}
@@ -585,7 +586,24 @@ func (s *Service) exportQuoteToMoneybird(ctx context.Context, quoteID, tenantID 
 	return s.createMoneybirdInvoice(ctx, administrationID, accessToken, quote.QuoteNumber, contactID, lines)
 }
 
-func (s *Service) moneybirdResolveContactID(ctx context.Context, administrationID string, accessToken string, email *string, firstName *string, lastName *string) (string, error) {
+func (s *Service) moneybirdResolveContactID(
+	ctx context.Context,
+	administrationID string,
+	accessToken string,
+	externalCustomerID string,
+	quote *repository.Quote,
+) (string, error) {
+	if externalCustomerID != "" {
+		foundContactID, err := s.moneybirdFindContactIDByCustomerID(ctx, administrationID, accessToken, externalCustomerID)
+		if err != nil {
+			return "", err
+		}
+		if foundContactID != "" {
+			return foundContactID, nil
+		}
+	}
+
+	email := quote.CustomerEmail
 	foundContactID, err := s.moneybirdFindContactIDByEmail(ctx, administrationID, accessToken, email)
 	if err != nil {
 		return "", err
@@ -594,7 +612,7 @@ func (s *Service) moneybirdResolveContactID(ctx context.Context, administrationI
 		return foundContactID, nil
 	}
 
-	return s.moneybirdCreateContact(ctx, administrationID, accessToken, email, firstName, lastName)
+	return s.moneybirdCreateContact(ctx, administrationID, accessToken, externalCustomerID, quote)
 }
 
 func (s *Service) validateMoneybirdExportIntegration(integration *repository.ProviderIntegration) error {
@@ -688,8 +706,8 @@ func (s *Service) loadMoneybirdQuoteData(ctx context.Context, quoteID, tenantID 
 	return quote, items, nil
 }
 
-func (s *Service) buildMoneybirdExportLines(items []repository.QuoteItem, taxRateIDByBPS map[int]int64) ([]moneybirdExportLine, error) {
-	lines := make([]moneybirdExportLine, 0, len(items))
+func (s *Service) buildMoneybirdExportLines(quote *repository.Quote, items []repository.QuoteItem, taxRateIDByBPS map[int]int64) ([]moneybirdExportLine, error) {
+	lines := make([]moneybirdExportLine, 0, len(items)+1)
 	for _, item := range items {
 		taxID, ok := taxRateIDByBPS[item.TaxRateBps]
 		if !ok {
@@ -704,7 +722,57 @@ func (s *Service) buildMoneybirdExportLines(items []repository.QuoteItem, taxRat
 		})
 	}
 
+	if quote != nil && quote.DiscountAmountCents > 0 {
+		taxID, ok := taxRateIDByBPS[0]
+		if !ok {
+			return nil, apperr.BadRequest("moneybird export failed: 0% tax rate not found for discount line")
+		}
+
+		lines = append(lines, moneybirdExportLine{
+			Description: "Discount",
+			Price:       -float64(quote.DiscountAmountCents) / 100,
+			Amount:      "1",
+			TaxRateID:   taxID,
+		})
+	}
+
 	return lines, nil
+}
+
+func (s *Service) moneybirdFindContactIDByCustomerID(ctx context.Context, administrationID string, accessToken string, externalCustomerID string) (string, error) {
+	externalCustomerID = strings.TrimSpace(externalCustomerID)
+	if externalCustomerID == "" {
+		return "", nil
+	}
+
+	queryURL := fmt.Sprintf("%s/%s/contacts/customer_id/%s", moneybirdAPIBaseURL, administrationID, url.PathEscape(externalCustomerID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build moneybird contact by customer_id request: %w", err)
+	}
+	req.Header.Set(httpHeaderAuthorization, authorizationBearerPrefix+accessToken)
+	req.Header.Set(httpHeaderAccept, mimeApplicationJSON)
+
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return "", nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", nil
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	var contact moneybirdContact
+	if err := json.Unmarshal(body, &contact); err != nil {
+		return "", nil
+	}
+
+	return strings.TrimSpace(contact.ID), nil
 }
 
 func moneybirdExportAmount(quantity string) string {
@@ -812,24 +880,41 @@ func (s *Service) moneybirdCreateContact(
 	ctx context.Context,
 	administrationID string,
 	accessToken string,
-	email *string,
-	firstName *string,
-	lastName *string,
+	externalCustomerID string,
+	quote *repository.Quote,
 ) (string, error) {
 	createEndpoint := fmt.Sprintf("%s/%s/contacts", moneybirdAPIBaseURL, administrationID)
-	firstNameValue := strings.TrimSpace(ptrToString(firstName))
-	lastNameValue := strings.TrimSpace(ptrToString(lastName))
-	emailValue := strings.TrimSpace(ptrToString(email))
+	firstNameValue := strings.TrimSpace(ptrToString(quote.CustomerFirstName))
+	lastNameValue := strings.TrimSpace(ptrToString(quote.CustomerLastName))
+	emailValue := strings.TrimSpace(ptrToString(quote.CustomerEmail))
+	addressStreetValue := strings.TrimSpace(ptrToString(quote.CustomerAddressStreet))
+	houseNumberValue := strings.TrimSpace(ptrToString(quote.CustomerAddressHouseNumber))
+	zipCodeValue := strings.TrimSpace(ptrToString(quote.CustomerAddressZipCode))
+	cityValue := strings.TrimSpace(ptrToString(quote.CustomerAddressCity))
+	externalCustomerID = strings.TrimSpace(externalCustomerID)
 
 	contactPayload := map[string]any{
 		"firstname": firstNameValue,
 		"lastname":  lastNameValue,
 	}
+	if externalCustomerID != "" {
+		contactPayload["customer_id"] = externalCustomerID
+	}
 	if emailValue != "" {
 		contactPayload["email"] = emailValue
 	}
+	if zipCodeValue != "" {
+		contactPayload["zipcode"] = zipCodeValue
+	}
+	if cityValue != "" {
+		contactPayload["city"] = cityValue
+	}
+	addressLine := strings.TrimSpace(strings.TrimSpace(addressStreetValue) + " " + strings.TrimSpace(houseNumberValue))
+	if addressLine != "" {
+		contactPayload["address1"] = addressLine
+	}
 	if firstNameValue == "" || lastNameValue == "" {
-		contactPayload["company_name"] = moneybirdContactCompanyNameFallback(firstNameValue, lastNameValue, emailValue)
+		contactPayload["company_name"] = moneybirdContactCompanyNameFallback(firstNameValue, lastNameValue, emailValue, externalCustomerID)
 	}
 
 	payload := map[string]any{"contact": contactPayload}
@@ -869,7 +954,7 @@ func (s *Service) moneybirdCreateContact(
 	return contact.ID, nil
 }
 
-func moneybirdContactCompanyNameFallback(firstName string, lastName string, email string) string {
+func moneybirdContactCompanyNameFallback(firstName string, lastName string, email string, externalCustomerID string) string {
 	fullName := strings.TrimSpace(strings.TrimSpace(firstName) + " " + strings.TrimSpace(lastName))
 	if fullName != "" {
 		return fullName
@@ -884,6 +969,10 @@ func moneybirdContactCompanyNameFallback(firstName string, lastName string, emai
 			}
 		}
 		return trimmedEmail
+	}
+
+	if externalCustomerID != "" {
+		return "Contact " + externalCustomerID
 	}
 
 	return "Unknown contact"
