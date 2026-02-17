@@ -303,9 +303,9 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 			pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
 			valid_until, notes, q.created_at, q.updated_at,
-			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
-			viewed_at, accepted_at, rejected_at,
-			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
+			q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
+			q.viewed_at, q.accepted_at, q.rejected_at,
+			q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
 			q.financing_disclaimer
 		FROM RAC_quotes q
 		LEFT JOIN RAC_users u ON u.id = q.created_by_id
