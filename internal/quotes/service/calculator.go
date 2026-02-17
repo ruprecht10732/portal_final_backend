@@ -57,13 +57,13 @@ func computeDiscount(subtotalFloat float64, discountType string, discountValue i
 	return amount
 }
 
-// computeVatBreakdown applies the proportional discount multiplier to each VAT rate
-// and returns the total VAT in cents plus a sorted breakdown slice.
-func computeVatBreakdown(vatMap map[int]float64, multiplier float64) (int64, []transport.VatBreakdown) {
+// computeVatBreakdown rounds VAT amounts per rate and returns
+// the total VAT in cents plus a sorted breakdown slice.
+func computeVatBreakdown(vatMap map[int]float64) (int64, []transport.VatBreakdown) {
 	var vatTotal int64
 	breakdown := make([]transport.VatBreakdown, 0, len(vatMap))
 	for rate, amount := range vatMap {
-		adjusted := roundCents(amount * multiplier)
+		adjusted := roundCents(amount)
 		vatTotal += adjusted
 		breakdown = append(breakdown, transport.VatBreakdown{RateBps: rate, AmountCents: adjusted})
 	}
@@ -72,9 +72,9 @@ func computeVatBreakdown(vatMap map[int]float64, multiplier float64) (int64, []t
 }
 
 // CalculateQuote computes financial totals for a set of line items.
-// Per Dutch/EU accounting rules: VAT is calculated per line, summed, then discount
-// is applied proportionally. Optional items get full calculation for transparency
-// but are excluded from the grand total.
+// VAT is calculated per line and summed. Discounts are applied to subtotal only and
+// do not reduce VAT, matching Moneybird invoice discount behavior. Optional items get
+// full calculation for transparency but are excluded from the grand total.
 func CalculateQuote(req transport.QuoteCalculationRequest) transport.QuoteCalculationResponse {
 	pricingMode := req.PricingMode
 	if pricingMode == "" {
@@ -118,13 +118,7 @@ func CalculateQuote(req transport.QuoteCalculationRequest) transport.QuoteCalcul
 	discountAmountFloat := computeDiscount(subtotalFloat, discountType, req.DiscountValue)
 	discountAmountCents := roundCents(discountAmountFloat)
 
-	// Proportional VAT reduction: if you give 10% off, you owe 10% less VAT
-	multiplier := 1.0
-	if subtotalFloat > 0 && discountAmountFloat > 0 {
-		multiplier = (subtotalFloat - discountAmountFloat) / subtotalFloat
-	}
-
-	vatTotal, breakdown := computeVatBreakdown(vatMap, multiplier)
+	vatTotal, breakdown := computeVatBreakdown(vatMap)
 	totalCents := subtotalCents - discountAmountCents + vatTotal
 
 	return transport.QuoteCalculationResponse{
