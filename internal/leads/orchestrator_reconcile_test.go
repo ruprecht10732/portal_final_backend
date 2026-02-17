@@ -8,7 +8,13 @@ import (
 	"portal_final_backend/internal/leads/repository"
 )
 
-func TestDeriveDesiredServiceState_TerminalNoResurrectionWhenTriggerBeforeTerminalAt(t *testing.T) {
+const (
+	msgExpectedProceed = "expected reconciliation to proceed, got ok=false"
+	fmtExpectedStage   = "expected stage=%q, got %q"
+	fmtExpectedStatus  = "expected status=%q, got %q"
+)
+
+func TestDeriveDesiredServiceStateTerminalNoResurrectionWhenTriggerBeforeTerminalAt(t *testing.T) {
 	now := time.Now()
 	terminalAt := now
 
@@ -28,7 +34,7 @@ func TestDeriveDesiredServiceState_TerminalNoResurrectionWhenTriggerBeforeTermin
 	}
 }
 
-func TestDeriveDesiredServiceState_TerminalResurrectsWhenTriggerAfterTerminalAt(t *testing.T) {
+func TestDeriveDesiredServiceStateTerminalResurrectsWhenTriggerAfterTerminalAt(t *testing.T) {
 	now := time.Now()
 	terminalAt := now.Add(-1 * time.Hour)
 
@@ -46,23 +52,23 @@ func TestDeriveDesiredServiceState_TerminalResurrectsWhenTriggerAfterTerminalAt(
 
 	desired, ok := deriveDesiredServiceState(current, aggs, true, now)
 	if !ok {
-		t.Fatalf("expected reconciliation to proceed, got ok=false")
+		t.Fatalf(msgExpectedProceed)
 	}
 	if !desired.Resurrecting {
 		t.Fatalf("expected Resurrecting=true")
 	}
 	if desired.Stage != domain.PipelineStageQuoteSent {
-		t.Fatalf("expected stage=%q, got %q", domain.PipelineStageQuoteSent, desired.Stage)
+		t.Fatalf(fmtExpectedStage, domain.PipelineStageQuoteSent, desired.Stage)
 	}
 	if desired.Status != domain.LeadStatusQuoteSent {
-		t.Fatalf("expected status=%q, got %q", domain.LeadStatusQuoteSent, desired.Status)
+		t.Fatalf(fmtExpectedStatus, domain.LeadStatusQuoteSent, desired.Status)
 	}
 	if desired.ReasonCode != "terminal_resurrection" {
 		t.Fatalf("expected reasonCode=%q, got %q", "terminal_resurrection", desired.ReasonCode)
 	}
 }
 
-func TestDeriveDesiredServiceState_StaleDraftDecaysToNurturing(t *testing.T) {
+func TestDeriveDesiredServiceStateStaleDraftDecaysToNurturing(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-(staleDraftDuration + 2*time.Hour))
 
@@ -78,20 +84,20 @@ func TestDeriveDesiredServiceState_StaleDraftDecaysToNurturing(t *testing.T) {
 
 	desired, ok := deriveDesiredServiceState(current, aggs, false, now)
 	if !ok {
-		t.Fatalf("expected reconciliation to proceed, got ok=false")
+		t.Fatalf(msgExpectedProceed)
 	}
 	if desired.Stage != domain.PipelineStageNurturing {
-		t.Fatalf("expected stage=%q, got %q", domain.PipelineStageNurturing, desired.Stage)
+		t.Fatalf(fmtExpectedStage, domain.PipelineStageNurturing, desired.Stage)
 	}
 	if desired.Status != domain.LeadStatusAttemptedContact {
-		t.Fatalf("expected status=%q, got %q", domain.LeadStatusAttemptedContact, desired.Status)
+		t.Fatalf(fmtExpectedStatus, domain.LeadStatusAttemptedContact, desired.Status)
 	}
 	if desired.ReasonCode != "stale_draft_decay" {
 		t.Fatalf("expected reasonCode=%q, got %q", "stale_draft_decay", desired.ReasonCode)
 	}
 }
 
-func TestDeriveDesiredServiceState_ScheduledAppointmentSetsNurturingStage(t *testing.T) {
+func TestDeriveDesiredServiceStateScheduledAppointmentSetsNurturingStage(t *testing.T) {
 	now := time.Now()
 
 	current := repository.LeadService{
@@ -105,17 +111,17 @@ func TestDeriveDesiredServiceState_ScheduledAppointmentSetsNurturingStage(t *tes
 
 	desired, ok := deriveDesiredServiceState(current, aggs, false, now)
 	if !ok {
-		t.Fatalf("expected reconciliation to proceed, got ok=false")
+		t.Fatalf(msgExpectedProceed)
 	}
 	if desired.Stage != domain.PipelineStageNurturing {
-		t.Fatalf("expected stage=%q, got %q", domain.PipelineStageNurturing, desired.Stage)
+		t.Fatalf(fmtExpectedStage, domain.PipelineStageNurturing, desired.Stage)
 	}
 	if desired.Status != domain.LeadStatusAppointmentScheduled {
-		t.Fatalf("expected status=%q, got %q", domain.LeadStatusAppointmentScheduled, desired.Status)
+		t.Fatalf(fmtExpectedStatus, domain.LeadStatusAppointmentScheduled, desired.Status)
 	}
 }
 
-func TestShouldResurrect_FallsBackToServiceUpdatedAtWhenTerminalAtMissing(t *testing.T) {
+func TestShouldResurrectFallsBackToServiceUpdatedAtWhenTerminalAtMissing(t *testing.T) {
 	now := time.Now()
 	terminalUpdatedAt := now.Add(-30 * time.Minute)
 
