@@ -808,13 +808,22 @@ func (s *Service) moneybirdCreateContact(
 	lastName *string,
 ) (string, error) {
 	createEndpoint := fmt.Sprintf("%s/%s/contacts", moneybirdAPIBaseURL, administrationID)
-	payload := map[string]any{
-		"contact": map[string]any{
-			"firstname": strings.TrimSpace(ptrToString(firstName)),
-			"lastname":  strings.TrimSpace(ptrToString(lastName)),
-			"email":     strings.TrimSpace(ptrToString(email)),
-		},
+	firstNameValue := strings.TrimSpace(ptrToString(firstName))
+	lastNameValue := strings.TrimSpace(ptrToString(lastName))
+	emailValue := strings.TrimSpace(ptrToString(email))
+
+	contactPayload := map[string]any{
+		"firstname": firstNameValue,
+		"lastname":  lastNameValue,
 	}
+	if emailValue != "" {
+		contactPayload["email"] = emailValue
+	}
+	if firstNameValue == "" || lastNameValue == "" {
+		contactPayload["company_name"] = moneybirdContactCompanyNameFallback(firstNameValue, lastNameValue, emailValue)
+	}
+
+	payload := map[string]any{"contact": contactPayload}
 
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, createEndpoint, bytes.NewReader(body))
@@ -833,7 +842,11 @@ func (s *Service) moneybirdCreateContact(
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", apperr.BadRequest("moneybird contact create failed")
+		details := strings.TrimSpace(string(respBody))
+		if details == "" {
+			return "", apperr.BadRequest("moneybird contact create failed")
+		}
+		return "", apperr.BadRequest(fmt.Sprintf("moneybird contact create failed: %s", details))
 	}
 
 	var contact moneybirdContact
@@ -845,6 +858,26 @@ func (s *Service) moneybirdCreateContact(
 	}
 
 	return contact.ID, nil
+}
+
+func moneybirdContactCompanyNameFallback(firstName string, lastName string, email string) string {
+	fullName := strings.TrimSpace(strings.TrimSpace(firstName) + " " + strings.TrimSpace(lastName))
+	if fullName != "" {
+		return fullName
+	}
+
+	trimmedEmail := strings.TrimSpace(email)
+	if trimmedEmail != "" {
+		if idx := strings.Index(trimmedEmail, "@"); idx > 0 {
+			localPart := strings.TrimSpace(trimmedEmail[:idx])
+			if localPart != "" {
+				return localPart
+			}
+		}
+		return trimmedEmail
+	}
+
+	return "Unknown contact"
 }
 
 func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administrationID string, accessToken string) (map[int]string, error) {
