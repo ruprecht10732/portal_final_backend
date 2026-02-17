@@ -1723,21 +1723,26 @@ type dispatchQuoteEmailWorkflowParams struct {
 
 func (m *Module) dispatchQuoteEmailWorkflow(ctx context.Context, p dispatchQuoteEmailWorkflowParams) bool {
 	if p.Rule == nil {
+		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_not_found")
 		return false
 	}
 	if !p.Rule.Enabled {
+		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_disabled")
 		return true
 	}
 	if strings.TrimSpace(p.LeadEmail) == "" && strings.TrimSpace(p.PartnerEmail) == "" {
+		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "no_recipients")
 		return true
 	}
 	if m.notificationOutbox == nil {
+		m.log.Warn("workflow email dispatch blocked", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "outbox_repo_missing")
 		return false
 	}
 
 	bodyText := renderWorkflowTemplateText(p.Rule, p.TemplateVars)
 	subject := strings.TrimSpace(renderWorkflowTemplateSubject(p.Rule, p.TemplateVars))
 	if subject == "" || strings.TrimSpace(bodyText) == "" {
+		m.log.Info("workflow email dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_subject_or_body", "hasSubject", subject != "", "hasBody", strings.TrimSpace(bodyText) != "")
 		return true
 	}
 	bodyHTML := strings.ReplaceAll(bodyText, "\n", "<br/>")
@@ -1788,23 +1793,29 @@ type dispatchQuoteWhatsAppWorkflowParams struct {
 
 func (m *Module) dispatchQuoteWhatsAppWorkflow(ctx context.Context, p dispatchQuoteWhatsAppWorkflowParams) bool {
 	if p.Rule == nil {
+		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_not_found")
 		return false
 	}
 	if !p.Rule.Enabled {
+		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "rule_disabled")
 		return true
 	}
 	if strings.TrimSpace(p.LeadPhone) == "" {
+		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "missing_phone")
 		return true
 	}
 	if p.LeadID != nil && !m.isLeadWhatsAppOptedIn(ctx, *p.LeadID, p.OrgID) {
+		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "leadId", *p.LeadID, "reason", "lead_opted_out_in_db")
 		return true
 	}
 	if m.notificationOutbox == nil {
+		m.log.Warn("workflow whatsapp dispatch blocked", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "outbox_repo_missing")
 		return false
 	}
 
 	messageText := renderWorkflowTemplateText(p.Rule, p.TemplateVars)
 	if strings.TrimSpace(messageText) == "" {
+		m.log.Info("workflow whatsapp dispatch skipped", "orgId", p.OrgID, "trigger", p.Trigger, "reason", "empty_message_body")
 		return true
 	}
 
