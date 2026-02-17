@@ -890,7 +890,7 @@ func moneybirdContactCompanyNameFallback(firstName string, lastName string, emai
 }
 
 func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administrationID string, accessToken string) (map[int]int64, error) {
-	endpoint := fmt.Sprintf("%s/%s/tax_rates/filter?filter=%s", moneybirdAPIBaseURL, administrationID, url.QueryEscape("tax_rate_type:sales_invoice"))
+	endpoint := fmt.Sprintf("%s/%s/tax_rates?filter=%s", moneybirdAPIBaseURL, administrationID, url.QueryEscape("tax_rate_type:sales_invoice"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build moneybird tax rates request: %w", err)
@@ -906,7 +906,11 @@ func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administra
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, apperr.BadRequest("moneybird tax rates lookup failed")
+		details := strings.TrimSpace(string(body))
+		if details == "" {
+			return nil, apperr.BadRequest("moneybird tax rates lookup failed")
+		}
+		return nil, apperr.BadRequest(fmt.Sprintf("moneybird tax rates lookup failed: %s", details))
 	}
 
 	var taxRates []moneybirdTaxRate
