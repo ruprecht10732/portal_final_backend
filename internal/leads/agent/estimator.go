@@ -159,6 +159,14 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 	e.toolDeps.SetActor("AI", "Estimator")
 	e.toolDeps.ResetToolCallTracking()
 
+	existingQuoteID, quoteLookupErr := e.repo.GetLatestDraftQuoteID(ctx, serviceID, tenantID)
+	if quoteLookupErr != nil {
+		log.Printf("estimator: failed to lookup existing draft quote for service=%s: %v", serviceID, quoteLookupErr)
+		e.toolDeps.SetExistingQuoteID(nil)
+	} else {
+		e.toolDeps.SetExistingQuoteID(existingQuoteID)
+	}
+
 	lead, err := e.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
 		return err

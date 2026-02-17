@@ -964,7 +964,7 @@ func (m *Module) handlePartnerInviteCreated(ctx context.Context, e events.Partne
 
 func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.PartnerOfferCreated) error {
 	// Build the public acceptance URL for the vakman.
-	acceptURL := m.buildURL("/partner-offer", e.PublicToken)
+	acceptURL := m.buildPublicURL("/partner-offer", e.PublicToken)
 
 	// Build WhatsApp draft URL
 	priceFormatted := formatCurrencyEURCents(e.VakmanPriceCents)
@@ -1083,6 +1083,11 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 func (m *Module) buildURL(path string, tokenValue string) string {
 	base := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
 	return base + path + "?token=" + tokenValue
+}
+
+func (m *Module) buildPublicURL(path string, tokenValue string) string {
+	base := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
+	return base + path + "/" + tokenValue
 }
 
 // ── Partner offer event handlers ────────────────────────────────────────
@@ -1555,7 +1560,7 @@ func (m *Module) buildLeadTrackLink(publicToken string) string {
 	if strings.TrimSpace(publicToken) == "" {
 		return ""
 	}
-	base := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
+	base := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
 	if base == "" {
 		return ""
 	}
@@ -1825,7 +1830,7 @@ func (m *Module) dispatchQuoteSentLeadWhatsAppWorkflow(ctx context.Context, e ev
 	}
 
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_sent", "whatsapp", "lead", nil)
-	proposalURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
+	proposalURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
@@ -1851,7 +1856,7 @@ func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e event
 		return true
 	}
 
-	proposalURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
+	proposalURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
@@ -2135,7 +2140,7 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 
 func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	baseURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
+	baseURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
 	downloadURL := fmt.Sprintf("%s/api/v1/public/quotes/%s/pdf", baseURL, e.PublicToken)
 	viewURL := baseURL + quotePublicPathPrefix + e.PublicToken
 	formattedPrice := formatCurrencyEURCents(e.TotalCents)
@@ -2184,7 +2189,7 @@ func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e 
 
 func (m *Module) dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	baseURL := strings.TrimRight(m.cfg.GetAppBaseURL(), "/")
+	baseURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
 	downloadURL := fmt.Sprintf("%s/api/v1/public/quotes/%s/pdf", baseURL, e.PublicToken)
 	formattedPrice := formatCurrencyEURCents(e.TotalCents)
 	templateVars := map[string]any{

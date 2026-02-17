@@ -146,6 +146,7 @@ type PartnerMatcher interface {
 type QuotePriceReader interface {
 	GetLatestQuoteTotal(ctx context.Context, serviceID, organizationID uuid.UUID) (int64, error)
 	HasNonDraftQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (bool, error)
+	GetLatestDraftQuoteID(ctx context.Context, serviceID, organizationID uuid.UUID) (*uuid.UUID, error)
 }
 
 // ActivityFeedEntry represents a unified activity entry from multiple sources.
