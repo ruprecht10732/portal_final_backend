@@ -742,7 +742,11 @@ func (s *Service) createMoneybirdInvoice(
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "", apperr.BadRequest("moneybird invoice creation failed")
+		details := strings.TrimSpace(string(respBody))
+		if details == "" {
+			return "", "", apperr.BadRequest("moneybird invoice creation failed")
+		}
+		return "", "", apperr.BadRequest(fmt.Sprintf("moneybird invoice creation failed: %s", details))
 	}
 
 	var invoice moneybirdInvoiceResponse
