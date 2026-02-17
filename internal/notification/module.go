@@ -1589,10 +1589,28 @@ func (m *Module) processGenericWhatsAppOutbox(ctx context.Context, e events.Noti
 
 	leadID := parseOptionalUUID(payload.LeadID)
 	svcID := parseOptionalUUID(payload.ServiceID)
-	if leadID != nil && !m.isLeadWhatsAppOptedIn(ctx, *leadID, orgID) {
-		m.log.Info("lead opted out; skipping whatsapp outbox send", "outboxId", rec.ID.String(), "leadId", *leadID, "orgId", orgID)
-		_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
-		return nil
+	if leadID != nil {
+		if m.leadWhatsAppReader == nil {
+			// If we cannot verify opt-in, treat as a transient failure so the outbox can retry
+			// rather than silently dropping the notification.
+			return fmt.Errorf("leadWhatsAppReader not configured")
+		}
+		optedIn, err := m.leadWhatsAppReader.IsWhatsAppOptedIn(ctx, *leadID, orgID)
+		if err != nil {
+			m.log.Warn(
+				"failed to resolve lead whatsapp opt-in for outbox; will retry",
+				"outboxId", rec.ID.String(),
+				"leadId", *leadID,
+				"orgId", orgID,
+				"error", err,
+			)
+			return err
+		}
+		if !optedIn {
+			m.log.Info("lead opted out; skipping whatsapp outbox send", "outboxId", rec.ID.String(), "leadId", *leadID, "orgId", orgID)
+			_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
+			return nil
+		}
 	}
 
 	err := m.sendWhatsAppBestEffort(whatsAppBestEffortParams{
