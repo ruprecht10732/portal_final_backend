@@ -264,6 +264,13 @@ func (r *Repository) ListExportedServiceConversions(ctx context.Context, orgID u
 	return result, rows.Err()
 }
 
+// ClearExportHistory removes all export tracking records for an organization,
+// so the next CSV fetch returns a fresh window of historical data.
+func (r *Repository) ClearExportHistory(ctx context.Context, orgID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM RAC_google_ads_exports WHERE organization_id = $1`, orgID)
+	return err
+}
+
 // RecordExports stores export rows to prevent duplicates.
 func (r *Repository) RecordExports(ctx context.Context, orgID uuid.UUID, rows []ExportRecord) error {
 	if len(rows) == 0 {

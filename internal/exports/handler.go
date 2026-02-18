@@ -1,20 +1,16 @@
 package exports
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/csv"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/internal/identity/smtpcrypto"
-	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -35,7 +31,6 @@ type Handler struct {
 	repo          *Repository
 	val           *validator.Validator
 	encryptionKey []byte
-	wg            sync.WaitGroup
 }
 
 // NewHandler creates a new export handler.
@@ -43,14 +38,16 @@ func NewHandler(repo *Repository, val *validator.Validator) *Handler {
 	return &Handler{repo: repo, val: val}
 }
 
-// Wait blocks until all background tasks (e.g. backfills) have finished.
-// Call this during graceful shutdown to avoid goroutine leaks.
-func (h *Handler) Wait() { h.wg.Wait() }
-
 // SetEncryptionKey sets the AES-256-GCM key used to encrypt/decrypt stored export passwords.
 // When not set, passwords can only be shown once at creation time.
 func (h *Handler) SetEncryptionKey(key []byte) {
 	h.encryptionKey = key
+}
+
+// Wait blocks until all background tasks have completed (currently a no-op).
+func (h *Handler) Wait() {
+	// Intentionally empty: this module currently does not spawn background tasks,
+	// but the module lifecycle expects a Wait() hook.
 }
 
 // ---- Admin Google Ads HTTPS Credentials (JWT authenticated) ----
@@ -105,20 +102,11 @@ func (h *Handler) HandleUpsertCredential(c *gin.Context) {
 		return
 	}
 
-	// Trigger 90-day backfill in background after credential upsert.
-	orgID := *tenantID
-	h.wg.Add(1)
-	go func() {
-		defer h.wg.Done()
-		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		backfillFrom := time.Now().UTC().AddDate(0, 0, -90)
-		if n, err := h.repo.BackfillHistoricalData(bgCtx, orgID, backfillFrom); err != nil {
-			slog.Error("google ads backfill failed", "org", orgID, "error", err)
-		} else if n > 0 {
-			slog.Info("google ads backfill completed", "org", orgID, "rows", n)
-		}
-	}()
+	// Clear export history so the first CSV fetch includes all enhanced data (up to 90 days).
+	if err := h.repo.ClearExportHistory(c.Request.Context(), *tenantID); err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to reset export history", nil)
+		return
+	}
 
 	c.JSON(http.StatusOK, UpsertExportCredentialResponse{
 		ExportCredentialResponse: toExportCredentialResponse(credential),
@@ -237,6 +225,7 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 	limit := parseLimit(c, 5000, 50000)
 	currency := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("currency", defaultCurrency)))
 	useEnhanced := parseEnhancedMode(c.Query("enhanced"))
+	includeSchemaRow := parseSchemaRowMode(c.Query("schemaRow"))
 
 	location, tzName, ok := parseTimezone(c)
 	if !ok {
@@ -254,15 +243,10 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-	serviceIDs := collectServiceIDs(rows)
-	exportedServiceConversions, err := h.repo.ListExportedServiceConversions(c.Request.Context(), orgID, serviceIDs)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-	rows = filterUnexportedRows(rows, exportedKeys, exportedServiceConversions)
+	rows = filterUnexportedRows(rows, exportedKeys)
 
 	if len(rows) == 0 {
-		writeEmptyCsv(c, tzName, useEnhanced)
+		writeEmptyOrSchemaCsv(c, tzName, useEnhanced, includeSchemaRow, location, currency)
 		return
 	}
 
@@ -373,6 +357,22 @@ func writeEmptyCsv(c *gin.Context, tzName string, useEnhanced bool) {
 	_ = writer.Error()
 }
 
+func writeEmptyOrSchemaCsv(c *gin.Context, tzName string, useEnhanced bool, includeSchemaRow bool, location *time.Location, currency string) {
+	if !includeSchemaRow {
+		writeEmptyCsv(c, tzName, useEnhanced)
+		return
+	}
+
+	writer, ok := startCsvResponse(c, tzName, useEnhanced)
+	if !ok {
+		return
+	}
+
+	_ = writer.Write(sampleSchemaRow(location, currency, useEnhanced))
+	writer.Flush()
+	_ = writer.Error()
+}
+
 func collectOrderIDs(rows []conversionRow) []string {
 	orderIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -427,33 +427,16 @@ func toExportRecords(rows []conversionRow) []ExportRecord {
 	return records
 }
 
-func filterUnexportedRows(rows []conversionRow, exportedKeys map[string]struct{}, exportedServiceConversions map[string]struct{}) []conversionRow {
+func filterUnexportedRows(rows []conversionRow, exportedKeys map[string]struct{}) []conversionRow {
 	filtered := make([]conversionRow, 0, len(rows))
 	for _, row := range rows {
 		key := row.OrderID + "::" + row.ConversionName
 		if _, exists := exportedKeys[key]; exists {
 			continue
 		}
-		serviceKey := row.LeadServiceID.String() + "::" + row.ConversionName
-		if _, exists := exportedServiceConversions[serviceKey]; exists {
-			continue
-		}
 		filtered = append(filtered, row)
 	}
 	return filtered
-}
-
-func collectServiceIDs(rows []conversionRow) []uuid.UUID {
-	seen := make(map[uuid.UUID]struct{}, len(rows))
-	result := make([]uuid.UUID, 0, len(rows))
-	for _, row := range rows {
-		if _, ok := seen[row.LeadServiceID]; ok {
-			continue
-		}
-		seen[row.LeadServiceID] = struct{}{}
-		result = append(result, row.LeadServiceID)
-	}
-	return result
 }
 
 func toExportCredentialResponse(credential ExportCredential) ExportCredentialResponse {
@@ -520,6 +503,31 @@ func parseEnhancedMode(value string) bool {
 	}
 }
 
+func parseSchemaRowMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func sampleSchemaRow(location *time.Location, currency string, useEnhanced bool) []string {
+	row := conversionRow{
+		GCLID:              "TEST_GCLID",
+		ConversionName:     "Quote_Sent",
+		ConversionTime:     time.Now().In(location),
+		ConversionValue:    0,
+		ConversionCurrency: currency,
+		OrderID:            "schema:sample",
+	}
+	if useEnhanced {
+		row.HashedEmail = hashEmail("example@example.com")
+		row.HashedPhone = hashPhone("+31612345678")
+	}
+	return row.CSV(useEnhanced)
+}
+
 func buildConversionRows(events []ConversionEvent, location *time.Location, currency string, includeEnhanced bool) []conversionRow {
 	rows := make([]conversionRow, 0, len(events))
 	for _, event := range events {
@@ -563,12 +571,48 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 }
 
 func mapConversionName(event ConversionEvent) string {
-	return domain.GetGoogleConversionName(event.EventType, event.Status, event.PipelineStage)
+	if event.EventType == "quote_sent" {
+		return "Quote_Sent"
+	}
+
+	if event.EventType == "status_changed" && event.Status != nil {
+		switch normalizeEventValue(*event.Status) {
+		case "appointment_scheduled", "scheduled", "ingepland":
+			return "Appointment_Scheduled"
+		case "survey_completed", "surveyed":
+			return "Visit_Completed"
+		case "quote_accepted":
+			return "Deal_Won"
+		case "completed":
+			return "Deal_Won"
+		}
+	}
+
+	if event.EventType == "pipeline_stage_changed" && event.PipelineStage != nil {
+		switch normalizeEventValue(*event.PipelineStage) {
+		case "nurturing":
+			return "Lead_Qualified"
+		case "quote_sent":
+			return "Quote_Sent"
+		case "partner_assigned":
+			return "Partner_Assigned"
+		case "completed":
+			return "Job_Completed"
+		}
+	}
+
+	return ""
 }
 
 func buildOrderID(event ConversionEvent, conversionName string) string {
-	// v2: stable idempotency per service+conversion
-	return "v2:service:" + event.LeadServiceID.String() + ":" + conversionName
+	if conversionName == "Quote_Sent" {
+		return "service:" + event.LeadServiceID.String()
+	}
+	return event.EventID.String()
+}
+
+func normalizeEventValue(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func mapConversionValue(conversionName string, projectedValueCents int64) float64 {
@@ -577,7 +621,7 @@ func mapConversionValue(conversionName string, projectedValueCents int64) float6
 	}
 
 	switch conversionName {
-	case "Deal_Won":
+	case "Deal_Won", "Job_Completed":
 		return float64(projectedValueCents) / 100
 	default:
 		return 0
