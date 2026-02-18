@@ -47,7 +47,6 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.GET(credentialsPath, m.handler.HandleGetCredential)
 	adminGroup.GET(credentialsPath+"/password", m.handler.HandleRevealPassword)
 	adminGroup.DELETE(credentialsPath, m.handler.HandleDeleteCredential)
-	adminGroup.POST("/backfill", m.handler.HandleBackfillExports)
 }
 
 // Wait blocks until all background tasks in the exports module have completed.

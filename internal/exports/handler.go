@@ -102,12 +102,6 @@ func (h *Handler) HandleUpsertCredential(c *gin.Context) {
 		return
 	}
 
-	// Clear export history so the first CSV fetch includes all enhanced data (up to 90 days).
-	if err := h.repo.ClearExportHistory(c.Request.Context(), *tenantID); err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to reset export history", nil)
-		return
-	}
-
 	c.JSON(http.StatusOK, UpsertExportCredentialResponse{
 		ExportCredentialResponse: toExportCredentialResponse(credential),
 		Password:                 plaintextPassword,
@@ -201,37 +195,6 @@ func (h *Handler) HandleRevealPassword(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, RevealExportPasswordResponse{Password: plaintext})
-}
-
-// ---- Backfill historical data (JWT-authenticated admin) ----
-
-func (h *Handler) HandleBackfillExports(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID := identity.TenantID()
-	if tenantID == nil {
-		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
-		return
-	}
-
-	from := time.Now().AddDate(-1, 0, 0)
-	if fromStr := strings.TrimSpace(c.Query("fromDate")); fromStr != "" {
-		parsed, err := time.Parse(dateLayout, fromStr)
-		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, "invalid fromDate, expected YYYY-MM-DD", nil)
-			return
-		}
-		from = parsed
-	}
-
-	count, err := h.repo.BackfillHistoricalData(c.Request.Context(), *tenantID, from)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-
-	httpkit.OK(c, gin.H{"backfilledRows": count})
 }
 
 // ---- Google Ads CSV Export (HTTP Basic authenticated) ----
