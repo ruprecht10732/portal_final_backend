@@ -40,11 +40,12 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	publicGroup.Use(BasicAuthMiddleware(m.repo))
 	publicGroup.GET("/google-ads/conversions.csv", m.handler.ExportGoogleAdsCSV)
 
-	adminGroup := ctx.Admin.Group("/exports/credentials")
-	adminGroup.POST("", m.handler.HandleUpsertCredential)
-	adminGroup.GET("", m.handler.HandleGetCredential)
-	adminGroup.GET("/password", m.handler.HandleRevealPassword)
-	adminGroup.DELETE("", m.handler.HandleDeleteCredential)
+	adminGroup := ctx.Admin.Group("/exports")
+	adminGroup.POST("/credentials", m.handler.HandleUpsertCredential)
+	adminGroup.GET("/credentials", m.handler.HandleGetCredential)
+	adminGroup.GET("/credentials/password", m.handler.HandleRevealPassword)
+	adminGroup.DELETE("/credentials", m.handler.HandleDeleteCredential)
+	adminGroup.POST("/backfill", m.handler.HandleBackfillExports)
 }
 
 // Wait blocks until all background tasks in the exports module have completed.

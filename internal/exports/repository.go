@@ -321,15 +321,13 @@ func (r *Repository) BackfillHistoricalData(ctx context.Context, orgID uuid.UUID
 				COALESCE(l.gclid, '') AS gclid,
 				l.projected_value_cents,
 				CASE
-					WHEN e.event_type = 'status_changed'
-						AND LOWER(COALESCE(e.status, '')) IN ('appointment_scheduled', 'scheduled')
-						THEN 'Appointment_Scheduled'
 					WHEN e.event_type = 'visit_completed'
 						THEN 'Visit_Completed'
-					WHEN LOWER(COALESCE(e.status, '')) = 'survey_completed'
-						THEN 'Visit_Completed'
+					WHEN e.event_type = 'status_changed'
+						AND LOWER(COALESCE(e.status, '')) = 'appointment_scheduled'
+						THEN 'Appointment_Scheduled'
 					WHEN e.event_type = 'pipeline_stage_changed'
-						AND LOWER(COALESCE(e.pipeline_stage, '')) = 'estimation'
+						AND LOWER(COALESCE(e.pipeline_stage, '')) IN ('nurturing', 'estimation')
 						THEN 'Lead_Qualified'
 					WHEN e.event_type = 'pipeline_stage_changed'
 						AND LOWER(COALESCE(e.pipeline_stage, '')) = 'proposal'
@@ -337,14 +335,9 @@ func (r *Repository) BackfillHistoricalData(ctx context.Context, orgID uuid.UUID
 					WHEN e.event_type = 'pipeline_stage_changed'
 						AND LOWER(COALESCE(e.pipeline_stage, '')) = 'fulfillment'
 						THEN 'Deal_Won'
-					WHEN LOWER(COALESCE(e.pipeline_stage, '')) = 'ready_for_estimator'
-						THEN 'Lead_Qualified'
-					WHEN LOWER(COALESCE(e.pipeline_stage, '')) = 'quote_sent'
-						THEN 'Quote_Sent'
-					WHEN LOWER(COALESCE(e.pipeline_stage, '')) IN ('partner_assigned', 'partner_matching', 'ready_for_partner')
-						THEN 'Deal_Won'
-					WHEN LOWER(COALESCE(e.status, '')) = 'quote_accepted'
-						THEN 'Deal_Won'
+					WHEN e.event_type = 'pipeline_stage_changed'
+						AND LOWER(COALESCE(e.pipeline_stage, '')) = 'completed'
+						THEN 'Job_Completed'
 					ELSE NULL
 				END AS conversion_name
 			FROM RAC_lead_service_events e

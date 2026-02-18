@@ -203,6 +203,37 @@ func (h *Handler) HandleRevealPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, RevealExportPasswordResponse{Password: plaintext})
 }
 
+// ---- Backfill historical data (JWT-authenticated admin) ----
+
+func (h *Handler) HandleBackfillExports(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
+		return
+	}
+
+	from := time.Now().AddDate(-1, 0, 0)
+	if fromStr := strings.TrimSpace(c.Query("fromDate")); fromStr != "" {
+		parsed, err := time.Parse(dateLayout, fromStr)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, "invalid fromDate, expected YYYY-MM-DD", nil)
+			return
+		}
+		from = parsed
+	}
+
+	count, err := h.repo.BackfillHistoricalData(c.Request.Context(), *tenantID, from)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"backfilledRows": count})
+}
+
 // ---- Google Ads CSV Export (HTTP Basic authenticated) ----
 
 func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
@@ -571,31 +602,25 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 }
 
 func mapConversionName(event ConversionEvent) string {
-	if event.EventType == "quote_sent" {
-		return "Quote_Sent"
+	if event.EventType == "visit_completed" {
+		return "Visit_Completed"
 	}
 
 	if event.EventType == "status_changed" && event.Status != nil {
 		switch normalizeEventValue(*event.Status) {
-		case "appointment_scheduled", "scheduled", "ingepland":
+		case "appointment_scheduled":
 			return "Appointment_Scheduled"
-		case "survey_completed", "surveyed":
-			return "Visit_Completed"
-		case "quote_accepted":
-			return "Deal_Won"
-		case "completed":
-			return "Deal_Won"
 		}
 	}
 
 	if event.EventType == "pipeline_stage_changed" && event.PipelineStage != nil {
 		switch normalizeEventValue(*event.PipelineStage) {
-		case "nurturing":
+		case "nurturing", "estimation":
 			return "Lead_Qualified"
-		case "quote_sent":
+		case "proposal":
 			return "Quote_Sent"
-		case "partner_assigned":
-			return "Partner_Assigned"
+		case "fulfillment":
+			return "Deal_Won"
 		case "completed":
 			return "Job_Completed"
 		}
