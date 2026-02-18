@@ -314,6 +314,7 @@ func (r *Repository) BackfillHistoricalData(ctx context.Context, orgID uuid.UUID
 	tag, err := r.pool.Exec(ctx, `
 		WITH events AS (
 			SELECT
+				e.id AS event_id,
 				e.organization_id,
 				e.lead_id,
 				e.lead_service_id,
@@ -344,7 +345,6 @@ func (r *Repository) BackfillHistoricalData(ctx context.Context, orgID uuid.UUID
 			JOIN RAC_leads l ON l.id = e.lead_id AND l.organization_id = e.organization_id
 			WHERE e.organization_id = $1
 				AND l.deleted_at IS NULL
-				AND l.gclid IS NOT NULL AND l.gclid != ''
 				AND e.occurred_at >= $2
 		)
 		INSERT INTO RAC_google_ads_exports (
@@ -360,7 +360,10 @@ func (r *Repository) BackfillHistoricalData(ctx context.Context, orgID uuid.UUID
 			CASE WHEN conversion_name = 'Deal_Won' AND projected_value_cents > 0
 				THEN projected_value_cents / 100.0 ELSE 0 END,
 			gclid,
-			'v2:service:' || lead_service_id::text || ':' || conversion_name
+			CASE WHEN conversion_name = 'Quote_Sent'
+				THEN 'service:' || lead_service_id::text
+				ELSE event_id::text
+			END
 		FROM events
 		WHERE conversion_name IS NOT NULL
 		ON CONFLICT (organization_id, order_id, conversion_name) DO NOTHING
