@@ -40,11 +40,13 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	publicGroup.Use(BasicAuthMiddleware(m.repo))
 	publicGroup.GET("/google-ads/conversions.csv", m.handler.ExportGoogleAdsCSV)
 
+	const credentialsPath = "/credentials"
+
 	adminGroup := ctx.Admin.Group("/exports")
-	adminGroup.POST("/credentials", m.handler.HandleUpsertCredential)
-	adminGroup.GET("/credentials", m.handler.HandleGetCredential)
-	adminGroup.GET("/credentials/password", m.handler.HandleRevealPassword)
-	adminGroup.DELETE("/credentials", m.handler.HandleDeleteCredential)
+	adminGroup.POST(credentialsPath, m.handler.HandleUpsertCredential)
+	adminGroup.GET(credentialsPath, m.handler.HandleGetCredential)
+	adminGroup.GET(credentialsPath+"/password", m.handler.HandleRevealPassword)
+	adminGroup.DELETE(credentialsPath, m.handler.HandleDeleteCredential)
 	adminGroup.POST("/backfill", m.handler.HandleBackfillExports)
 }
 
