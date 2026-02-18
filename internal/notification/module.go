@@ -241,7 +241,7 @@ func (m *Module) resolveSender(ctx context.Context, orgID uuid.UUID) email.Sende
 	}
 
 	// No cache hit — resolve from DB.
-	if m.settingsReader == nil || len(m.smtpEncryptionKey) == 0 {
+	if m.settingsReader == nil {
 		return m.sender
 	}
 
@@ -272,6 +272,9 @@ func (m *Module) resolveSender(ctx context.Context, orgID uuid.UUID) email.Sende
 func (m *Module) buildSMTPSender(settings repository.OrganizationSettings) (email.Sender, error) {
 	password := ""
 	if settings.SMTPPassword != nil && *settings.SMTPPassword != "" {
+		if len(m.smtpEncryptionKey) == 0 {
+			return nil, fmt.Errorf("smtp password is configured but SMTP_ENCRYPTION_KEY is not set")
+		}
 		decrypted, err := smtpcrypto.Decrypt(*settings.SMTPPassword, m.smtpEncryptionKey)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt smtp password: %w", err)
