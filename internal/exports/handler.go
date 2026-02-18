@@ -269,12 +269,6 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 	}
 
 	rows := buildConversionRows(events, location, currency, useEnhanced)
-	orderIDs := collectOrderIDs(rows)
-	exportedKeys, err := h.repo.ListExportedKeys(c.Request.Context(), orgID, orderIDs)
-	if httpkit.HandleError(c, err) {
-		return
-	}
-	rows = filterUnexportedRows(rows, exportedKeys)
 
 	if len(rows) == 0 {
 		writeEmptyOrSchemaCsv(c, tzName, useEnhanced, includeSchemaRow, location, currency)
@@ -286,21 +280,11 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 		return
 	}
 
-	_, ok = writeConversionRows(writer, rows, useEnhanced)
-	if !ok {
+	if !writeConversionRows(writer, rows, useEnhanced) {
 		return
 	}
 
 	writer.Flush()
-	if err := writer.Error(); err != nil {
-		return
-	}
-
-	records := toExportRecords(rows)
-	if err := h.repo.RecordExports(c.Request.Context(), orgID, records); err != nil {
-		httpkit.HandleError(c, err)
-		return
-	}
 }
 
 // ---- Helpers ----
@@ -404,13 +388,7 @@ func writeEmptyOrSchemaCsv(c *gin.Context, tzName string, useEnhanced bool, incl
 	_ = writer.Error()
 }
 
-func collectOrderIDs(rows []conversionRow) []string {
-	orderIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		orderIDs = append(orderIDs, row.OrderID)
-	}
-	return orderIDs
-}
+
 
 func startCsvResponse(c *gin.Context, _ string, useEnhanced bool) (*csv.Writer, bool) {
 	c.Header("Content-Type", "text/csv")
@@ -423,52 +401,16 @@ func startCsvResponse(c *gin.Context, _ string, useEnhanced bool) (*csv.Writer, 
 	return writer, true
 }
 
-func writeConversionRows(writer *csv.Writer, rows []conversionRow, useEnhanced bool) ([]ExportRecord, bool) {
-	records := make([]ExportRecord, 0, len(rows))
+func writeConversionRows(writer *csv.Writer, rows []conversionRow, useEnhanced bool) bool {
 	for _, row := range rows {
 		if err := writer.Write(row.CSV(useEnhanced)); err != nil {
-			return nil, false
+			return false
 		}
-		records = append(records, ExportRecord{
-			LeadID:          row.LeadID,
-			LeadServiceID:   row.LeadServiceID,
-			ConversionName:  row.ConversionName,
-			ConversionTime:  row.ConversionTime,
-			ConversionValue: row.ConversionValue,
-			GCLID:           row.GCLID,
-			OrderID:         row.OrderID,
-		})
 	}
-	return records, true
+	return true
 }
 
-func toExportRecords(rows []conversionRow) []ExportRecord {
-	records := make([]ExportRecord, 0, len(rows))
-	for _, row := range rows {
-		records = append(records, ExportRecord{
-			LeadID:          row.LeadID,
-			LeadServiceID:   row.LeadServiceID,
-			ConversionName:  row.ConversionName,
-			ConversionTime:  row.ConversionTime,
-			ConversionValue: row.ConversionValue,
-			GCLID:           row.GCLID,
-			OrderID:         row.OrderID,
-		})
-	}
-	return records
-}
 
-func filterUnexportedRows(rows []conversionRow, exportedKeys map[string]struct{}) []conversionRow {
-	filtered := make([]conversionRow, 0, len(rows))
-	for _, row := range rows {
-		key := row.OrderID + "::" + row.ConversionName
-		if _, exists := exportedKeys[key]; exists {
-			continue
-		}
-		filtered = append(filtered, row)
-	}
-	return filtered
-}
 
 func toExportCredentialResponse(credential ExportCredential) ExportCredentialResponse {
 	return ExportCredentialResponse{
