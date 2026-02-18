@@ -21,15 +21,15 @@ const (
 
 // ExportCredential represents Google Ads export credentials stored in the database.
 type ExportCredential struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	Username       string
-	PasswordHash   string
+	ID                uuid.UUID
+	OrganizationID    uuid.UUID
+	Username          string
+	PasswordHash      string
 	PasswordEncrypted *string
-	CreatedBy      *uuid.UUID
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastUsedAt     *time.Time
+	CreatedBy         *uuid.UUID
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	LastUsedAt        *time.Time
 }
 
 // ConversionEvent represents a lead service event used for conversion exports.
@@ -236,6 +236,34 @@ func (r *Repository) ListExportedKeys(ctx context.Context, orgID uuid.UUID, orde
 	return result, rows.Err()
 }
 
+// ListExportedServiceConversions returns a set of lead_service_id + conversion_name that have been exported.
+// This is used to prevent double-exporting when the order_id strategy changes across versions.
+func (r *Repository) ListExportedServiceConversions(ctx context.Context, orgID uuid.UUID, serviceIDs []uuid.UUID) (map[string]struct{}, error) {
+	if len(serviceIDs) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT lead_service_id, conversion_name
+		FROM RAC_google_ads_exports
+		WHERE organization_id = $1 AND lead_service_id = ANY($2)
+	`, orgID, serviceIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]struct{})
+	for rows.Next() {
+		var serviceID uuid.UUID
+		var conversionName string
+		if err := rows.Scan(&serviceID, &conversionName); err != nil {
+			return nil, err
+		}
+		result[serviceID.String()+"::"+conversionName] = struct{}{}
+	}
+	return result, rows.Err()
+}
+
 // RecordExports stores export rows to prevent duplicates.
 func (r *Repository) RecordExports(ctx context.Context, orgID uuid.UUID, rows []ExportRecord) error {
 	if len(rows) == 0 {
@@ -270,4 +298,75 @@ type ExportRecord struct {
 	ConversionValue float64
 	GCLID           string
 	OrderID         string
+}
+
+// BackfillHistoricalData inserts historical conversion events into the exports
+// table for all events since `from`. It mirrors the Go conversion-name logic in
+// SQL so that the backfill is atomic and deduped via ON CONFLICT DO NOTHING.
+func (r *Repository) BackfillHistoricalData(ctx context.Context, orgID uuid.UUID, from time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		WITH events AS (
+			SELECT
+				e.organization_id,
+				e.lead_id,
+				e.lead_service_id,
+				e.occurred_at,
+				COALESCE(l.gclid, '') AS gclid,
+				l.projected_value_cents,
+				CASE
+					WHEN e.event_type = 'status_changed'
+						AND LOWER(COALESCE(e.status, '')) IN ('appointment_scheduled', 'scheduled')
+						THEN 'Appointment_Scheduled'
+					WHEN e.event_type = 'visit_completed'
+						THEN 'Visit_Completed'
+					WHEN LOWER(COALESCE(e.status, '')) = 'survey_completed'
+						THEN 'Visit_Completed'
+					WHEN e.event_type = 'pipeline_stage_changed'
+						AND LOWER(COALESCE(e.pipeline_stage, '')) = 'estimation'
+						THEN 'Lead_Qualified'
+					WHEN e.event_type = 'pipeline_stage_changed'
+						AND LOWER(COALESCE(e.pipeline_stage, '')) = 'proposal'
+						THEN 'Quote_Sent'
+					WHEN e.event_type = 'pipeline_stage_changed'
+						AND LOWER(COALESCE(e.pipeline_stage, '')) = 'fulfillment'
+						THEN 'Deal_Won'
+					WHEN LOWER(COALESCE(e.pipeline_stage, '')) = 'ready_for_estimator'
+						THEN 'Lead_Qualified'
+					WHEN LOWER(COALESCE(e.pipeline_stage, '')) = 'quote_sent'
+						THEN 'Quote_Sent'
+					WHEN LOWER(COALESCE(e.pipeline_stage, '')) IN ('partner_assigned', 'partner_matching', 'ready_for_partner')
+						THEN 'Deal_Won'
+					WHEN LOWER(COALESCE(e.status, '')) = 'quote_accepted'
+						THEN 'Deal_Won'
+					ELSE NULL
+				END AS conversion_name
+			FROM RAC_lead_service_events e
+			JOIN RAC_leads l ON l.id = e.lead_id AND l.organization_id = e.organization_id
+			WHERE e.organization_id = $1
+				AND l.deleted_at IS NULL
+				AND l.gclid IS NOT NULL AND l.gclid != ''
+				AND e.occurred_at >= $2
+		)
+		INSERT INTO RAC_google_ads_exports (
+			organization_id, lead_id, lead_service_id, conversion_name, conversion_time,
+			conversion_value, gclid, order_id
+		)
+		SELECT
+			organization_id,
+			lead_id,
+			lead_service_id,
+			conversion_name,
+			occurred_at,
+			CASE WHEN conversion_name = 'Deal_Won' AND projected_value_cents > 0
+				THEN projected_value_cents / 100.0 ELSE 0 END,
+			gclid,
+			'v2:service:' || lead_service_id::text || ':' || conversion_name
+		FROM events
+		WHERE conversion_name IS NOT NULL
+		ON CONFLICT (organization_id, order_id, conversion_name) DO NOTHING
+	`, orgID, from)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

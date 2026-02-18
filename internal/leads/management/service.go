@@ -15,6 +15,7 @@ import (
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/events"
 	identityrepo "portal_final_backend/internal/identity/repository"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
@@ -837,6 +838,13 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 		return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
 	}
 
+	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
+		return transport.LeadResponse{}, apperr.Validation("cannot update status for a service in terminal state")
+	}
+	if reason := domain.ValidateStateCombination(string(req.Status), svc.PipelineStage); reason != "" {
+		return transport.LeadResponse{}, apperr.Validation(reason)
+	}
+
 	_, err = s.repo.UpdateServiceStatus(ctx, serviceID, tenantID, string(req.Status))
 	if err != nil {
 		return transport.LeadResponse{}, err
@@ -853,6 +861,13 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
+	}
+
+	if domain.IsTerminal(service.Status, service.PipelineStage) {
+		return transport.LeadResponse{}, apperr.Validation("cannot update status for a service in terminal state")
+	}
+	if reason := domain.ValidateStateCombination(string(req.Status), service.PipelineStage); reason != "" {
+		return transport.LeadResponse{}, apperr.Validation(reason)
 	}
 
 	if _, err := s.repo.UpdateServiceStatus(ctx, service.ID, tenantID, string(req.Status)); err != nil {

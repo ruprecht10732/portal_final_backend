@@ -106,8 +106,7 @@ func (r *Repository) GetServiceStateAggregates(ctx context.Context, serviceID uu
 			FROM rac_lead_service_events
 			WHERE lead_service_id = $1 AND organization_id = $2
 				AND (
-					status IN ('Completed', 'Lost', 'Disqualified')
-					OR pipeline_stage IN ('Completed', 'Lost')
+					pipeline_stage IN ('Completed', 'Lost')
 				)
 		)
 		SELECT

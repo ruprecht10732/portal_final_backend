@@ -891,11 +891,6 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: missingLeadContextMessage}, err
 	}
 
-	_, actorName := deps.GetActor()
-	if actorName == "Dispatcher" && input.Stage == "Partner_Matching" && !deps.WasOfferCreated() {
-		return UpdatePipelineStageOutput{Success: false, Message: "CreatePartnerOffer must be called before Partner_Matching"}, fmt.Errorf("offer not created")
-	}
-
 	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
 		return UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, err
@@ -908,13 +903,13 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
 	}
 
-	if input.Stage == domain.PipelineStageQuoteSent {
+	if input.Stage == domain.PipelineStageProposal {
 		hasNonDraftQuote, checkErr := deps.Repo.HasNonDraftQuote(ctx, serviceID, tenantID)
 		if checkErr != nil {
 			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, checkErr
 		}
 		if !hasNonDraftQuote {
-			return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Quote_Sent while quote is still draft"}, fmt.Errorf("quote state guard blocked Quote_Sent for service %s", serviceID)
+			return UpdatePipelineStageOutput{Success: false, Message: "Cannot move to Proposal while quote is still draft"}, fmt.Errorf("quote state guard blocked Proposal for service %s", serviceID)
 		}
 	}
 

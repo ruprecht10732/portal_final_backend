@@ -19,7 +19,7 @@ func TestDeriveDesiredServiceStateTerminalNoResurrectionWhenTriggerBeforeTermina
 	terminalAt := now
 
 	current := repository.LeadService{
-		Status:        domain.LeadStatusLost,
+		Status:        domain.LeadStatusDisqualified,
 		PipelineStage: domain.PipelineStageLost,
 		UpdatedAt:     now,
 	}
@@ -40,7 +40,7 @@ func TestDeriveDesiredServiceStateTerminalResurrectsWhenTriggerAfterTerminalAt(t
 	latestQuoteAt := now.Add(-30 * time.Minute)
 
 	current := repository.LeadService{
-		Status:        domain.LeadStatusLost,
+		Status:        domain.LeadStatusDisqualified,
 		PipelineStage: domain.PipelineStageLost,
 		UpdatedAt:     terminalAt,
 	}
@@ -59,11 +59,11 @@ func TestDeriveDesiredServiceStateTerminalResurrectsWhenTriggerAfterTerminalAt(t
 	if !desired.Resurrecting {
 		t.Fatalf("expected Resurrecting=true")
 	}
-	if desired.Stage != domain.PipelineStageQuoteSent {
-		t.Fatalf(fmtExpectedStage, domain.PipelineStageQuoteSent, desired.Stage)
+	if desired.Stage != domain.PipelineStageProposal {
+		t.Fatalf(fmtExpectedStage, domain.PipelineStageProposal, desired.Stage)
 	}
-	if desired.Status != domain.LeadStatusQuoteSent {
-		t.Fatalf(fmtExpectedStatus, domain.LeadStatusQuoteSent, desired.Status)
+	if desired.Status != domain.LeadStatusPending {
+		t.Fatalf(fmtExpectedStatus, domain.LeadStatusPending, desired.Status)
 	}
 	if desired.ReasonCode != "terminal_resurrection" {
 		t.Fatalf("expected reasonCode=%q, got %q", "terminal_resurrection", desired.ReasonCode)
@@ -76,7 +76,7 @@ func TestDeriveDesiredServiceStateTerminalDoesNotResurrectWithoutFreshChildActiv
 	staleQuoteAt := terminalAt.Add(-1 * time.Minute)
 
 	current := repository.LeadService{
-		Status:        domain.LeadStatusLost,
+		Status:        domain.LeadStatusDisqualified,
 		PipelineStage: domain.PipelineStageLost,
 		UpdatedAt:     terminalAt,
 	}
@@ -97,8 +97,8 @@ func TestDeriveDesiredServiceStateStaleDraftDecaysToNurturing(t *testing.T) {
 	old := now.Add(-(staleDraftDuration + 2*time.Hour))
 
 	current := repository.LeadService{
-		Status:        domain.LeadStatusQuoteDraft,
-		PipelineStage: domain.PipelineStageQuoteDraft,
+		Status:        domain.LeadStatusInProgress,
+		PipelineStage: domain.PipelineStageEstimation,
 		UpdatedAt:     now,
 	}
 	aggs := repository.ServiceStateAggregates{
@@ -137,8 +137,8 @@ func TestDeriveDesiredServiceStateScheduledAppointmentSetsNurturingStage(t *test
 	if !ok {
 		t.Fatalf(msgExpectedProceed)
 	}
-	if desired.Stage != domain.PipelineStageNurturing {
-		t.Fatalf(fmtExpectedStage, domain.PipelineStageNurturing, desired.Stage)
+	if desired.Stage != domain.PipelineStageTriage {
+		t.Fatalf(fmtExpectedStage, domain.PipelineStageTriage, desired.Stage)
 	}
 	if desired.Status != domain.LeadStatusAppointmentScheduled {
 		t.Fatalf(fmtExpectedStatus, domain.LeadStatusAppointmentScheduled, desired.Status)
@@ -150,7 +150,7 @@ func TestShouldResurrectFallsBackToServiceUpdatedAtWhenTerminalAtMissing(t *test
 	terminalUpdatedAt := now.Add(-30 * time.Minute)
 
 	current := repository.LeadService{
-		Status:        domain.LeadStatusLost,
+		Status:        domain.LeadStatusDisqualified,
 		PipelineStage: domain.PipelineStageLost,
 		UpdatedAt:     terminalUpdatedAt,
 	}

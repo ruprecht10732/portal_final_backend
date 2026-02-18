@@ -125,7 +125,7 @@ func ToLeadResponseWithServices(lead repository.Lead, services []repository.Lead
 	// Set current service (first non-terminal or first if all terminal)
 	if len(services) > 0 {
 		for _, svc := range services {
-			if !domain.IsTerminalStatus(svc.Status) {
+			if !domain.IsTerminalPipelineStage(svc.PipelineStage) {
 				svcResp := ToLeadServiceResponse(svc)
 				resp.CurrentService = &svcResp
 				status := transport.LeadStatus(svc.Status)

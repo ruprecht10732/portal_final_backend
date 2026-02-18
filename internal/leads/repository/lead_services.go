@@ -131,7 +131,7 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 			ls.customer_preferences, ls.created_at, ls.updated_at
 		FROM RAC_lead_services ls
 		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.status NOT IN ('Completed', 'Lost', 'Disqualified')
+		WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage NOT IN ('Completed', 'Lost')
 		ORDER BY ls.created_at DESC
 		LIMIT 1
 	`, leadID, organizationID).Scan(
@@ -230,8 +230,14 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 	err := r.pool.QueryRow(ctx, `
 		WITH updated AS (
 			UPDATE RAC_lead_services SET status = $3, updated_at = now()
-			WHERE id = $1 AND organization_id = $2
+			WHERE id = $1 AND organization_id = $2 AND status IS DISTINCT FROM $3
 			RETURNING *
+		), selected AS (
+			SELECT * FROM updated
+			UNION ALL
+			SELECT *
+			FROM RAC_lead_services
+			WHERE id = $1 AND organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 		), event AS (
 			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
 			SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
@@ -239,7 +245,7 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 			u.customer_preferences, u.created_at, u.updated_at
-		FROM updated u
+		FROM selected u
 		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, id, organizationID, status).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
@@ -256,8 +262,14 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 	err := r.pool.QueryRow(ctx, `
 		WITH updated AS (
 			UPDATE RAC_lead_services SET pipeline_stage = $3, updated_at = now()
-			WHERE id = $1 AND organization_id = $2
+			WHERE id = $1 AND organization_id = $2 AND pipeline_stage IS DISTINCT FROM $3
 			RETURNING *
+		), selected AS (
+			SELECT * FROM updated
+			UNION ALL
+			SELECT *
+			FROM RAC_lead_services
+			WHERE id = $1 AND organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 		), event AS (
 			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
 			SELECT organization_id, lead_id, id, 'pipeline_stage_changed', status, pipeline_stage, updated_at
@@ -265,7 +277,7 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 		)
 		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 			u.customer_preferences, u.created_at, u.updated_at
-		FROM updated u
+		FROM selected u
 		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 	`, id, organizationID, stage).Scan(
 		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
@@ -277,17 +289,17 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 	return svc, err
 }
 
-// CloseAllActiveServices marks all non-terminal services for a lead as Completed
+// CloseAllActiveServices marks all non-terminal services for a lead as Completed (pipeline stage).
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		WITH updated AS (
 			UPDATE RAC_lead_services 
-			SET status = 'Completed', updated_at = now()
-			WHERE lead_id = $1 AND organization_id = $2 AND status NOT IN ('Completed', 'Lost', 'Disqualified')
+			SET pipeline_stage = 'Completed', updated_at = now()
+			WHERE lead_id = $1 AND organization_id = $2 AND pipeline_stage NOT IN ('Completed', 'Lost')
 			RETURNING id, lead_id, organization_id, status, pipeline_stage, updated_at
 		)
 		INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-		SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
+		SELECT organization_id, lead_id, id, 'pipeline_stage_changed', status, pipeline_stage, updated_at
 		FROM updated
 	`, leadID, organizationID)
 	return err
@@ -299,5 +311,35 @@ func (r *Repository) UpdateServicePreferences(ctx context.Context, serviceID uui
 		SET customer_preferences = $3, updated_at = now()
 		WHERE id = $1 AND organization_id = $2
 	`, serviceID, organizationID, prefs)
+	return err
+}
+
+// InsertServiceEventParams groups the fields for inserting a service event.
+type InsertServiceEventParams struct {
+	OrganizationID uuid.UUID
+	LeadID         uuid.UUID
+	LeadServiceID  uuid.UUID
+	EventType      string
+	Status         string
+	PipelineStage  string
+	OccurredAt     time.Time
+}
+
+// InsertLeadServiceEvent inserts an exportable service event without mutating the service state.
+// This is used for milestone events that are not represented as a generic status.
+// The insert is guarded by a NOT EXISTS check to prevent duplicates for the same
+// (lead_service_id, event_type) combination.
+func (r *Repository) InsertLeadServiceEvent(ctx context.Context, params InsertServiceEventParams) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO RAC_lead_service_events (
+			organization_id, lead_id, lead_service_id,
+			event_type, status, pipeline_stage, occurred_at
+		)
+		SELECT $1, $2, $3, $4, $5, $6, $7
+		WHERE NOT EXISTS (
+			SELECT 1 FROM RAC_lead_service_events
+			WHERE lead_service_id = $3 AND event_type = $4
+		)
+	`, params.OrganizationID, params.LeadID, params.LeadServiceID, params.EventType, params.Status, params.PipelineStage, params.OccurredAt)
 	return err
 }

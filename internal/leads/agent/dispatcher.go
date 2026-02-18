@@ -14,6 +14,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
@@ -129,8 +130,8 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	if !d.toolDeps.WasStageUpdateCalled() {
 		fmt.Printf("Dispatcher warning: no stage update recorded for lead=%s service=%s\n", leadID, serviceID)
 	}
-	if d.toolDeps.LastStageUpdated() == "Partner_Matching" && !d.toolDeps.WasOfferCreated() {
-		fmt.Printf("Dispatcher warning: Partner_Matching without offer for lead=%s service=%s\n", leadID, serviceID)
+	if d.toolDeps.LastStageUpdated() == domain.PipelineStageFulfillment && !d.toolDeps.WasOfferCreated() {
+		fmt.Printf("Dispatcher warning: Fulfillment without offer for lead=%s service=%s\n", leadID, serviceID)
 	}
 
 	return nil
