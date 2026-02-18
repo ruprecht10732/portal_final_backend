@@ -31,6 +31,7 @@ import (
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
+	"portal_final_backend/internal/search"
 	"portal_final_backend/internal/services"
 	"portal_final_backend/internal/webhook"
 	"portal_final_backend/internal/whatsapp"
@@ -199,6 +200,7 @@ func main() {
 	catalogModule.RegisterHandlers(eventBus)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
+	searchModule := search.NewModule(pool, val)
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
 	wireMoneybirdConfig(cfg, log, quotesModule.Service())
 
@@ -295,6 +297,7 @@ func main() {
 			appointmentsModule,
 			partnersModule,
 			quotesModule,
+			searchModule,
 			webhookModule,
 			exportsModule,
 		},

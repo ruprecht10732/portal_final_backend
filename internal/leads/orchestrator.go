@@ -115,17 +115,91 @@ func (o *Orchestrator) runGatekeeperForPhotoEvent(evt events.PhotoAnalysisComple
 
 			next, ok := o.popQueuedGatekeeperPhotoRerun(current.LeadServiceID)
 			if !ok {
-				return
+				break
 			}
 
 			if !o.canRunGatekeeperForPhotoEvent(context.Background(), next) {
-				return
+				break
 			}
 
 			o.log.Info("orchestrator: replaying queued gatekeeper rerun after photo analysis", "leadId", next.LeadID, "serviceId", next.LeadServiceID)
 			current = next
 		}
+
+		o.maybeAutoDisqualifyJunk(context.Background(), current.LeadID, current.LeadServiceID, current.TenantID)
 	}(evt)
+}
+
+func (o *Orchestrator) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) {
+	svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to load lead service for junk auto-disqualify", "error", err)
+		return
+	}
+	if svc.Status == domain.LeadStatusDisqualified {
+		return
+	}
+
+	analysis, err := o.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return
+		}
+		o.log.Error("orchestrator: failed to fetch latest AI analysis for junk check", "error", err)
+		return
+	}
+	if analysis.LeadQuality != "Junk" {
+		return
+	}
+
+	o.log.Info("orchestrator: auto-disqualifying Junk lead", "leadId", leadID, "serviceId", serviceID)
+
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, tenantID, domain.LeadStatusDisqualified); err != nil {
+		o.log.Error("orchestrator: failed to set service status to Disqualified", "error", err)
+		return
+	}
+	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageLost); err != nil {
+		o.log.Error("orchestrator: failed to set pipeline stage to Lost", "error", err)
+		return
+	}
+
+	summary := "AI detected Junk quality. Lead automatically moved to Disqualified."
+	_, _ = o.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      "AI",
+		ActorName:      "Gatekeeper",
+		EventType:      "stage_change",
+		Title:          "Auto-Disqualified",
+		Summary:        &summary,
+		Metadata: map[string]any{
+			"leadQuality":       analysis.LeadQuality,
+			"recommendedAction": analysis.RecommendedAction,
+			"analysisId":        analysis.ID,
+			"reason":            "junk_quality",
+		},
+	})
+
+	o.eventBus.Publish(ctx, events.LeadAutoDisqualified{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		TenantID:      tenantID,
+		Reason:        "junk_quality",
+	})
+}
+
+func (o *Orchestrator) OnLeadAutoDisqualified(ctx context.Context, evt events.LeadAutoDisqualified) {
+	o.sse.PublishToOrganization(evt.TenantID, sse.Event{
+		Type:      sse.EventLeadStatusChanged,
+		LeadID:    evt.LeadID,
+		ServiceID: evt.LeadServiceID,
+		Message:   "Lead automatisch gedisqualificeerd",
+		Data: map[string]any{
+			"reason": evt.Reason,
+		},
+	})
 }
 
 // markRunning attempts to mark an agent run as active. Returns true if successfully marked, false if already running.
@@ -209,6 +283,7 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 			if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
 				o.log.Error("orchestrator: gatekeeper failed", "error", err)
 			}
+			o.maybeAutoDisqualifyJunk(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
 		}()
 		return
 	}
@@ -279,6 +354,7 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 		if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
 			o.log.Error("orchestrator: gatekeeper failed after photo analysis failure", "error", err)
 		}
+		o.maybeAutoDisqualifyJunk(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
 	}()
 }
 
