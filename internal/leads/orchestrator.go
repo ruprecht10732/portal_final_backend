@@ -480,6 +480,12 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 		o.log.Error("orchestrator: failed to set service status after quote acceptance", "error", err)
 	}
 
+	if evt.TotalCents > 0 {
+		if err := o.repo.UpdateProjectedValueCents(ctx, evt.LeadID, evt.OrganizationID, evt.TotalCents); err != nil {
+			o.log.Error("orchestrator: failed to update lead projected value after quote acceptance", "error", err)
+		}
+	}
+
 	o.eventBus.Publish(ctx, events.PipelineStageChanged{
 		BaseEvent:     events.NewBaseEvent(),
 		LeadID:        evt.LeadID,

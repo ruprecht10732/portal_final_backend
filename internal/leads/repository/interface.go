@@ -33,6 +33,12 @@ type LeadWriter interface {
 	SetPublicToken(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, token string, expiresAt time.Time) error
 }
 
+// LeadValueWriter updates business value fields for RAC_leads.
+// Used to ensure downstream exports (e.g. Google Ads) can send actual revenue values.
+type LeadValueWriter interface {
+	UpdateProjectedValueCents(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, projectedValueCents int64) error
+}
+
 // LeadEnrichmentWriter updates enrichment and scoring data for RAC_leads.
 type LeadEnrichmentWriter interface {
 	UpdateLeadEnrichment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadEnrichmentParams) error
@@ -211,6 +217,7 @@ type OrgMemberReader interface {
 type LeadsRepository interface {
 	LeadReader
 	LeadWriter
+	LeadValueWriter
 	LeadEnrichmentWriter
 	LeadViewTracker
 	ActivityLogger

@@ -713,6 +713,21 @@ func (r *Repository) UpdateLeadScore(ctx context.Context, id uuid.UUID, organiza
 	return nil
 }
 
+func (r *Repository) UpdateProjectedValueCents(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, projectedValueCents int64) error {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE RAC_leads
+		SET projected_value_cents = $3, updated_at = now()
+		WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+	`, id, organizationID, projectedValueCents)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *Repository) SetViewedBy(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE RAC_leads SET viewed_by_id = $3, viewed_at = now(), updated_at = now()
