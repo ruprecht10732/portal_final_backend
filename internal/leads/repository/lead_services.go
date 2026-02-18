@@ -195,6 +195,50 @@ func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organi
 	return svc, err
 }
 
+func (r *Repository) UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error) {
+	var svc LeadService
+	err := r.pool.QueryRow(ctx, `
+		WITH current AS (
+			SELECT status AS old_status, pipeline_stage AS old_stage
+			FROM RAC_lead_services
+			WHERE id = $1 AND organization_id = $2
+		), updated AS (
+			UPDATE RAC_lead_services
+			SET status = $3, pipeline_stage = $4, updated_at = now()
+			WHERE id = $1 AND organization_id = $2
+				AND (status IS DISTINCT FROM $3 OR pipeline_stage IS DISTINCT FROM $4)
+			RETURNING *
+		), selected AS (
+			SELECT * FROM updated
+			UNION ALL
+			SELECT *
+			FROM RAC_lead_services
+			WHERE id = $1 AND organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
+		), status_event AS (
+			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+			SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
+			FROM updated
+			WHERE (SELECT old_status FROM current) IS DISTINCT FROM $3
+		), stage_event AS (
+			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+			SELECT organization_id, lead_id, id, 'pipeline_stage_changed', status, pipeline_stage, updated_at
+			FROM updated
+			WHERE (SELECT old_stage FROM current) IS DISTINCT FROM $4
+		)
+		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
+			u.customer_preferences, u.created_at, u.updated_at
+		FROM selected u
+		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+	`, id, organizationID, status, stage).Scan(
+		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
+		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LeadService{}, ErrServiceNotFound
+	}
+	return svc, err
+}
+
 // UpdateLeadServiceType updates the service type for a lead service using an active service type name/slug.
 func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error) {
 	var svc LeadService

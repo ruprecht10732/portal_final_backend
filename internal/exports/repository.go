@@ -208,5 +208,3 @@ func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, 
 	}
 	return items, rows.Err()
 }
-
-

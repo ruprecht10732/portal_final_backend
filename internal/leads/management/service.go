@@ -841,6 +841,13 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
 		return transport.LeadResponse{}, apperr.Validation("cannot update status for a service in terminal state")
 	}
+
+	// Disqualified <-> Lost is an invariant. When a user sets Disqualified we auto-move the stage to Lost.
+	// Do it atomically to avoid invalid intermediate combinations that would otherwise fail validation.
+	if string(req.Status) == domain.LeadStatusDisqualified && svc.PipelineStage != domain.PipelineStageLost {
+		return s.disqualifyServiceAndMarkLost(ctx, leadID, serviceID, tenantID, leadServiceNotFoundMsg)
+	}
+
 	if reason := domain.ValidateStateCombination(string(req.Status), svc.PipelineStage); reason != "" {
 		return transport.LeadResponse{}, apperr.Validation(reason)
 	}
@@ -850,6 +857,16 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 		return transport.LeadResponse{}, err
 	}
 
+	return s.GetByID(ctx, leadID, tenantID)
+}
+
+func (s *Service) disqualifyServiceAndMarkLost(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, tenantID uuid.UUID, notFoundMsg string) (transport.LeadResponse, error) {
+	if _, err := s.repo.UpdateServiceStatusAndPipelineStage(ctx, serviceID, tenantID, domain.LeadStatusDisqualified, domain.PipelineStageLost); err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, apperr.NotFound(notFoundMsg)
+		}
+		return transport.LeadResponse{}, err
+	}
 	return s.GetByID(ctx, leadID, tenantID)
 }
 
@@ -866,6 +883,13 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 	if domain.IsTerminal(service.Status, service.PipelineStage) {
 		return transport.LeadResponse{}, apperr.Validation("cannot update status for a service in terminal state")
 	}
+
+	// Disqualified <-> Lost is an invariant. When a user sets Disqualified we auto-move the stage to Lost.
+	// Do it atomically to avoid invalid intermediate combinations that would otherwise fail validation.
+	if string(req.Status) == domain.LeadStatusDisqualified && service.PipelineStage != domain.PipelineStageLost {
+		return s.disqualifyServiceAndMarkLost(ctx, id, service.ID, tenantID, leadNotFoundMsg)
+	}
+
 	if reason := domain.ValidateStateCombination(string(req.Status), service.PipelineStage); reason != "" {
 		return transport.LeadResponse{}, apperr.Validation(reason)
 	}

@@ -74,6 +74,7 @@ type LeadServiceWriter interface {
 	UpdateLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadServiceParams) (LeadService, error)
 	UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error)
 	UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error)
+	UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error)
 	UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error)
 	InsertLeadServiceEvent(ctx context.Context, params InsertServiceEventParams) error
 	UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error

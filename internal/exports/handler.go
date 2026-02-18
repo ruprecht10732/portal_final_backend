@@ -351,8 +351,6 @@ func writeEmptyOrSchemaCsv(c *gin.Context, tzName string, useEnhanced bool, incl
 	_ = writer.Error()
 }
 
-
-
 func startCsvResponse(c *gin.Context, _ string, useEnhanced bool) (*csv.Writer, bool) {
 	c.Header("Content-Type", "text/csv")
 	c.Header("Content-Disposition", "attachment; filename=google-ads-conversions.csv")
@@ -372,8 +370,6 @@ func writeConversionRows(writer *csv.Writer, rows []conversionRow, useEnhanced b
 	}
 	return true
 }
-
-
 
 func toExportCredentialResponse(credential ExportCredential) ExportCredentialResponse {
 	return ExportCredentialResponse{
