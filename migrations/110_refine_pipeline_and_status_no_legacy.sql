@@ -56,7 +56,11 @@ ALTER TABLE RAC_lead_services ALTER COLUMN pipeline_stage SET DEFAULT 'Triage'::
 DROP TYPE pipeline_stage;
 ALTER TYPE pipeline_stage_v2 RENAME TO pipeline_stage;
 
--- 3) Backfill statuses on services (legacy -> generic activity indicators)
+-- 3) Drop old status CHECK constraints BEFORE data backfill so new values are allowed.
+ALTER TABLE RAC_lead_services DROP CONSTRAINT IF EXISTS rac_lead_services_status_check;
+ALTER TABLE RAC_lead_services DROP CONSTRAINT IF EXISTS lead_services_status_check;
+
+-- 4) Backfill statuses on services (legacy -> generic activity indicators)
 UPDATE RAC_lead_services SET status = 'New'
 WHERE status IN ('Survey_Completed', 'Quote_Draft', 'Quote_Accepted');
 
@@ -72,7 +76,7 @@ WHERE status = 'Completed';
 UPDATE RAC_lead_services SET status = 'New'
 WHERE status = 'Lost';
 
--- 4) Backfill statuses on service events
+-- 5) Backfill statuses on service events
 UPDATE RAC_lead_service_events SET status = 'New'
 WHERE status IN ('Survey_Completed', 'Quote_Draft', 'Quote_Accepted');
 
@@ -88,9 +92,7 @@ WHERE status = 'Completed';
 UPDATE RAC_lead_service_events SET status = 'New'
 WHERE status = 'Lost';
 
--- 5) Tighten status CHECK constraints
-ALTER TABLE RAC_lead_services DROP CONSTRAINT IF EXISTS rac_lead_services_status_check;
-ALTER TABLE RAC_lead_services DROP CONSTRAINT IF EXISTS lead_services_status_check;
+-- 6) Add tightened status CHECK constraint after backfill is complete.
 ALTER TABLE RAC_lead_services
   ADD CONSTRAINT rac_lead_services_status_check CHECK (
     status IN (
@@ -124,13 +126,13 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
--- 6) Allow visit_completed event type
+-- 7) Allow visit_completed event type
 ALTER TABLE RAC_lead_service_events DROP CONSTRAINT IF EXISTS rac_lead_service_events_event_type_check;
 ALTER TABLE RAC_lead_service_events
   ADD CONSTRAINT rac_lead_service_events_event_type_check
   CHECK (event_type IN ('status_changed', 'pipeline_stage_changed', 'service_created', 'visit_completed'));
 
--- 7) Assert no legacy values remain (fail hard if backfill missed any rows)
+-- 8) Assert no legacy values remain (fail hard if backfill missed any rows)
 -- +goose StatementBegin
 DO $$
 DECLARE
