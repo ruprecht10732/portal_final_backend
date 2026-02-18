@@ -27,13 +27,14 @@ func (r *Repository) GetMetrics(ctx context.Context, organizationID uuid.UUID) (
 	var metrics LeadMetrics
 	err := r.pool.QueryRow(ctx, `
 		SELECT
-			-- Active leads (not completed, lost, or disqualified)
+			-- Active leads (not in terminal pipeline stage, and not disqualified)
 			(
 				SELECT COUNT(DISTINCT l.id)
 				FROM RAC_leads l
 				JOIN RAC_lead_services ls ON ls.lead_id = l.id
 				WHERE l.organization_id = $1 AND l.deleted_at IS NULL
-					AND ls.status NOT IN ('Completed', 'Lost', 'Disqualified')
+					AND ls.pipeline_stage NOT IN ('Completed', 'Lost')
+					AND ls.status != 'Disqualified'
 			) AS active_leads,
 			-- Accepted quotes count
 			(
@@ -114,7 +115,7 @@ func (r *Repository) listActiveLeadsTrend(ctx context.Context, organizationID uu
 		)
 		SELECT
 			w.week_start,
-			COALESCE(COUNT(DISTINCT CASE WHEN ls.status NOT IN ('Completed', 'Lost', 'Disqualified') THEN l.id END), 0) AS active_leads
+			COALESCE(COUNT(DISTINCT CASE WHEN ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified' THEN l.id END), 0) AS active_leads
 		FROM weeks w
 		LEFT JOIN RAC_leads l
 			ON l.organization_id = $1

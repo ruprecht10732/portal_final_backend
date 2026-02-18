@@ -575,9 +575,11 @@ func resolveCustomerStatus(stage string, quote *ports.PublicQuoteSummary, appt *
 	switch stage {
 	case "Triage", "Nurturing", "Manual_Intervention":
 		return "Aanvraag Ontvangen", "We hebben uw aanvraag ontvangen en controleren de details.", 1
-	case "Ready_For_Estimator", "Quote_Draft":
+	case "Estimation":
 		return "In Beoordeling", "Onze experts maken een inschatting van de situatie.", 2
-	case "Ready_For_Partner", "Partner_Matching", "Partner_Assigned":
+	case "Proposal":
+		return "Offerte Verstuurd", "We wachten op uw reactie op de offerte.", 2
+	case "Fulfillment":
 		return "In planning", "We plannen een moment voor de volgende stap.", 2
 	case "Lost":
 		return "Gesloten", "Deze aanvraag is gesloten.", 1

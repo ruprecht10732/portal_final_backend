@@ -351,8 +351,7 @@ Task:
 	- "booked", "scheduled", "appointment set" → Appointment_Scheduled
 	- "not interested", "no need", "declined" → Disqualified
    - "voicemail", "no answer", "callback" → Attempted_Contact
-	- "completed survey", "finished inspection" → Survey_Completed
-   - "needs to reschedule", "postponed" → Needs_Rescheduling
+	- "needs to reschedule", "postponed" → Needs_Rescheduling
 8. Update the pipeline stage with 'UpdatePipelineStage' if the summary explicitly indicates a stage change.
 
 Execute the appropriate tools now.`,
@@ -469,7 +468,6 @@ IMPORTANT RULES:
 	- Appointment scheduled/booked → "Appointment_Scheduled"
    - No answer/voicemail/try again → "Attempted_Contact"  
 	- Not interested/declined/bad fit → "Disqualified"
-	- Survey/inspection completed → "Survey_Completed"
    - Needs to reschedule/postponed → "Needs_Rescheduling"
 8. When booking RAC_appointments, also update status to "Appointment_Scheduled".
 9. Use 24-hour time format (e.g., 09:00, 14:30).
@@ -523,7 +521,7 @@ type SetCallOutcomeOutput struct {
 }
 
 type UpdateStatusInput struct {
-	Status string `json:"status"` // New status: New, Attempted_Contact, Appointment_Scheduled, Survey_Completed, Quote_Draft, Quote_Sent, Quote_Accepted, Partner_Assigned, Needs_Rescheduling, Completed, Lost, Disqualified
+	Status string `json:"status"` // New status: New, Pending, In_Progress, Attempted_Contact, Appointment_Scheduled, Needs_Rescheduling, Disqualified
 }
 
 type UpdateStatusOutput struct {
@@ -730,23 +728,18 @@ func buildSetCallOutcomeTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 // validLeadStatuses defines the allowed status values for RAC_leads
 var validLeadStatuses = map[string]bool{
 	"New":                   true,
+	"Pending":               true,
+	"In_Progress":           true,
 	"Attempted_Contact":     true,
 	"Appointment_Scheduled": true,
-	"Survey_Completed":      true,
-	"Quote_Draft":           true,
-	"Quote_Sent":            true,
-	"Quote_Accepted":        true,
-	"Partner_Assigned":      true,
 	"Needs_Rescheduling":    true,
-	"Completed":             true,
-	"Lost":                  true,
 	"Disqualified":          true,
 }
 
 func buildUpdateStatusTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdateStatus",
-		Description: "Updates the status of the lead service. Valid statuses: New, Attempted_Contact, Appointment_Scheduled, Survey_Completed, Quote_Draft, Quote_Sent, Quote_Accepted, Partner_Assigned, Needs_Rescheduling, Completed, Lost, Disqualified",
+		Description: "Updates the status of the lead service. Valid statuses: New, Pending, In_Progress, Attempted_Contact, Appointment_Scheduled, Needs_Rescheduling, Disqualified",
 	}, func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
 		tenantID, _, _, serviceID, ok := deps.GetContext()
 		if !ok {
@@ -757,7 +750,20 @@ func buildUpdateStatusTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 			return UpdateStatusOutput{Success: false, Message: "Invalid status"}, fmt.Errorf("invalid status: %s", input.Status)
 		}
 
-		_, err := deps.Repo.UpdateServiceStatus(context.Background(), serviceID, tenantID, input.Status)
+		svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+		if err != nil {
+			return UpdateStatusOutput{Success: false, Message: "Lead service not found"}, err
+		}
+
+		if domain.IsTerminal(svc.Status, svc.PipelineStage) {
+			return UpdateStatusOutput{Success: false, Message: "Cannot update status for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
+		}
+
+		if reason := domain.ValidateStateCombination(input.Status, svc.PipelineStage); reason != "" {
+			return UpdateStatusOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
+		}
+
+		_, err = deps.Repo.UpdateServiceStatus(context.Background(), serviceID, tenantID, input.Status)
 		if err != nil {
 			return UpdateStatusOutput{Success: false, Message: err.Error()}, err
 		}
@@ -851,22 +857,22 @@ func validateCallLoggerPipelineStage(stage string) error {
 	return nil
 }
 
-func resolveCallLoggerStageContext(deps *CallLoggerToolDeps, ctx tool.Context) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, error) {
+func resolveCallLoggerStageContext(deps *CallLoggerToolDeps, ctx tool.Context) (uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, string, error) {
 	tenantID, userID, leadID, serviceID, ok := deps.GetContext()
 	if !ok {
-		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", errMissingContext
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", "", errMissingContext
 	}
 
 	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
-		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", err
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, "", "", err
 	}
 
-	return tenantID, userID, leadID, serviceID, svc.PipelineStage, nil
+	return tenantID, userID, leadID, serviceID, svc.PipelineStage, svc.Status, nil
 }
 
 func guardCallLoggerQuoteSentTransition(deps *CallLoggerToolDeps, ctx tool.Context, tenantID, serviceID uuid.UUID, newStage string) error {
-	if newStage != domain.PipelineStageQuoteSent {
+	if newStage != domain.PipelineStageProposal {
 		return nil
 	}
 
@@ -875,7 +881,7 @@ func guardCallLoggerQuoteSentTransition(deps *CallLoggerToolDeps, ctx tool.Conte
 		return err
 	}
 	if !hasNonDraftQuote {
-		return fmt.Errorf("quote state guard blocked Quote_Sent for service %s", serviceID)
+		return fmt.Errorf("quote state guard blocked Proposal for service %s", serviceID)
 	}
 	return nil
 }
@@ -938,7 +944,7 @@ func buildCallLoggerUpdatePipelineStageTool(deps *CallLoggerToolDeps) (tool.Tool
 			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, err
 		}
 
-		tenantID, userID, leadID, serviceID, oldStage, err := resolveCallLoggerStageContext(deps, ctx)
+		tenantID, userID, leadID, serviceID, oldStage, currentStatus, err := resolveCallLoggerStageContext(deps, ctx)
 		if err != nil {
 			if errors.Is(err, errMissingContext) {
 				return UpdatePipelineStageOutput{Success: false, Message: errMsgMissingContext}, err
@@ -946,9 +952,17 @@ func buildCallLoggerUpdatePipelineStageTool(deps *CallLoggerToolDeps) (tool.Tool
 			return UpdatePipelineStageOutput{Success: false, Message: "Lead service not found"}, err
 		}
 
+		if domain.IsTerminal(currentStatus, oldStage) {
+			return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
+		}
+
+		if reason := domain.ValidateStateCombination(currentStatus, input.Stage); reason != "" {
+			return UpdatePipelineStageOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
+		}
+
 		if err := guardCallLoggerQuoteSentTransition(deps, ctx, tenantID, serviceID, input.Stage); err != nil {
 			if strings.Contains(err.Error(), "quote state guard blocked") {
-				return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Quote_Sent while quote is still draft"}, err
+				return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Proposal while quote is still draft"}, err
 			}
 			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, err
 		}

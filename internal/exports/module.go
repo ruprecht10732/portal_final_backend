@@ -47,4 +47,8 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.DELETE("", m.handler.HandleDeleteCredential)
 }
 
+// Wait blocks until all background tasks in the exports module have completed.
+// Call this during graceful server shutdown.
+func (m *Module) Wait() { m.handler.Wait() }
+
 var _ apphttp.Module = (*Module)(nil)

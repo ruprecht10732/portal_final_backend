@@ -24,16 +24,11 @@ type LeadStatus string
 
 const (
 	LeadStatusNew                  LeadStatus = "New"
+	LeadStatusPending              LeadStatus = "Pending"
+	LeadStatusInProgress           LeadStatus = "In_Progress"
 	LeadStatusAttemptedContact     LeadStatus = "Attempted_Contact"
 	LeadStatusAppointmentScheduled LeadStatus = "Appointment_Scheduled"
-	LeadStatusSurveyCompleted      LeadStatus = "Survey_Completed"
-	LeadStatusQuoteDraft           LeadStatus = "Quote_Draft"
-	LeadStatusQuoteSent            LeadStatus = "Quote_Sent"
-	LeadStatusQuoteAccepted        LeadStatus = "Quote_Accepted"
-	LeadStatusPartnerAssigned      LeadStatus = "Partner_Assigned"
 	LeadStatusNeedsRescheduling    LeadStatus = "Needs_Rescheduling"
-	LeadStatusCompleted            LeadStatus = "Completed"
-	LeadStatusLost                 LeadStatus = "Lost"
 	LeadStatusDisqualified         LeadStatus = "Disqualified"
 )
 
@@ -42,12 +37,9 @@ type PipelineStage string
 const (
 	PipelineStageTriage             PipelineStage = "Triage"
 	PipelineStageNurturing          PipelineStage = "Nurturing"
-	PipelineStageReadyForEstimator  PipelineStage = "Ready_For_Estimator"
-	PipelineStageQuoteDraft         PipelineStage = "Quote_Draft"
-	PipelineStageQuoteSent          PipelineStage = "Quote_Sent"
-	PipelineStageReadyForPartner    PipelineStage = "Ready_For_Partner"
-	PipelineStagePartnerMatching    PipelineStage = "Partner_Matching"
-	PipelineStagePartnerAssigned    PipelineStage = "Partner_Assigned"
+	PipelineStageEstimation         PipelineStage = "Estimation"
+	PipelineStageProposal           PipelineStage = "Proposal"
+	PipelineStageFulfillment        PipelineStage = "Fulfillment"
 	PipelineStageManualIntervention PipelineStage = "Manual_Intervention"
 	PipelineStageCompleted          PipelineStage = "Completed"
 	PipelineStageLost               PipelineStage = "Lost"
@@ -99,7 +91,7 @@ type UpdateLeadRequest struct {
 }
 
 type UpdateServiceStatusRequest struct {
-	Status LeadStatus `json:"status" validate:"required,oneof=New Attempted_Contact Appointment_Scheduled Survey_Completed Quote_Draft Quote_Sent Quote_Accepted Partner_Assigned Needs_Rescheduling Completed Lost Disqualified"`
+	Status LeadStatus `json:"status" validate:"required,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Disqualified"`
 }
 
 type AddServiceRequest struct {
@@ -110,7 +102,7 @@ type AddServiceRequest struct {
 }
 
 type UpdateLeadStatusRequest struct {
-	Status LeadStatus `json:"status" validate:"required,oneof=New Attempted_Contact Appointment_Scheduled Survey_Completed Quote_Draft Quote_Sent Quote_Accepted Partner_Assigned Needs_Rescheduling Completed Lost Disqualified"`
+	Status LeadStatus `json:"status" validate:"required,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Disqualified"`
 }
 
 type AssignLeadRequest struct {
@@ -122,7 +114,7 @@ type BulkDeleteLeadsRequest struct {
 }
 
 type ListLeadsRequest struct {
-	Status          *LeadStatus   `form:"status" validate:"omitempty,oneof=New Attempted_Contact Appointment_Scheduled Survey_Completed Quote_Draft Quote_Sent Quote_Accepted Partner_Assigned Needs_Rescheduling Completed Lost Disqualified"`
+	Status          *LeadStatus   `form:"status" validate:"omitempty,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Disqualified"`
 	ServiceType     *ServiceType  `form:"serviceType" validate:"omitempty,min=1,max=100"`
 	Search          string        `form:"search" validate:"max=100"`
 	FirstName       string        `form:"firstName" validate:"omitempty,max=100"`

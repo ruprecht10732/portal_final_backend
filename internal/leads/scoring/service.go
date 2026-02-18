@@ -945,17 +945,17 @@ func (s *Service) scoreServiceStatus(svc *repository.LeadService) float64 {
 	switch svc.Status {
 	case "New":
 		return 5 // Fresh opportunity
+	case "Pending":
+		return 1 // Waiting on customer/partner
+	case "In_Progress":
+		return 2 // Work ongoing
 	case "Attempted_Contact":
 		return 2 // In progress
 	case "Appointment_Scheduled":
 		return -2 // Already scheduled, lower priority for scoring
-	case "Survey_Completed":
-		return -3 // Inspected, lower immediate priority
-	case "Quote_Sent":
-		return 1 // Quote pending decision
-	case "Quote_Accepted", "Partner_Assigned":
-		return -3 // In handoff flow
-	case "Completed", "Lost", "Disqualified":
+	case "Needs_Rescheduling":
+		return -1 // Action needed, but not a new opportunity
+	case "Disqualified":
 		return -5 // Done, shouldn't be prioritized
 	default:
 		return 0

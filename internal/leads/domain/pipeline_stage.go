@@ -1,14 +1,16 @@
 package domain
 
 const (
+	// StageUnchanged is a sentinel indicating that a derivation function
+	// intentionally does not prescribe a pipeline stage. The caller must
+	// substitute the current stage of the service.
+	StageUnchanged = ""
+
 	PipelineStageTriage             = "Triage"
 	PipelineStageNurturing          = "Nurturing"
-	PipelineStageReadyForEstimator  = "Ready_For_Estimator"
-	PipelineStageQuoteDraft         = "Quote_Draft"
-	PipelineStageQuoteSent          = "Quote_Sent"
-	PipelineStageReadyForPartner    = "Ready_For_Partner"
-	PipelineStagePartnerMatching    = "Partner_Matching"
-	PipelineStagePartnerAssigned    = "Partner_Assigned"
+	PipelineStageEstimation         = "Estimation"
+	PipelineStageProposal           = "Proposal"
+	PipelineStageFulfillment        = "Fulfillment"
 	PipelineStageManualIntervention = "Manual_Intervention"
 	PipelineStageCompleted          = "Completed"
 	PipelineStageLost               = "Lost"
@@ -17,12 +19,9 @@ const (
 var knownPipelineStages = map[string]struct{}{
 	PipelineStageTriage:             {},
 	PipelineStageNurturing:          {},
-	PipelineStageReadyForEstimator:  {},
-	PipelineStageQuoteDraft:         {},
-	PipelineStageQuoteSent:          {},
-	PipelineStageReadyForPartner:    {},
-	PipelineStagePartnerMatching:    {},
-	PipelineStagePartnerAssigned:    {},
+	PipelineStageEstimation:         {},
+	PipelineStageProposal:           {},
+	PipelineStageFulfillment:        {},
 	PipelineStageManualIntervention: {},
 	PipelineStageCompleted:          {},
 	PipelineStageLost:               {},

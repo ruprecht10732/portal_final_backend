@@ -45,7 +45,7 @@ func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService,
 
 	return fmt.Sprintf(`You validate intake requirements.
 
-Goal: If valid -> set stage Ready_For_Estimator. If invalid -> set stage Nurturing.
+Goal: If valid -> set stage Estimation. If invalid -> set stage Nurturing.
 Constraint: Do NOT calculate price. Do NOT look for partners.
 
 Lead:
@@ -102,7 +102,7 @@ If the intent is ambiguous, keep the current service type and move to Nurturing 
 2) Treat rule-based missing items as critical unless the info is clearly present elsewhere (e.g. in Photo Analysis).
 3) FIRST call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,
    a short Dutch summary, and a Dutch list of missingInformation (empty list if nothing missing).
-4) THEN call UpdatePipelineStage with stage="Ready_For_Estimator" (if all required info is present) or stage="Nurturing" (if critical info is missing).
+4) THEN call UpdatePipelineStage with stage="Estimation" (if all required info is present) or stage="Nurturing" (if critical info is missing).
 5) Include a short reason in UpdatePipelineStage, written in Dutch.
 
 Respond ONLY with tool calls.
@@ -142,8 +142,8 @@ func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, 
 
 Role: You are a Technical Estimator.
 Input: Photos, Description.
-Goal: Determine Scope, Estimate Price Range, Draft Quote, set stage to Quote_Draft.
-Action: Search for products, draft a quote, call SaveEstimation (metadata update), set stage Quote_Draft.
+Goal: Determine Scope, Estimate Price Range, Draft Quote. Keep stage as Estimation.
+Action: Search for products, draft a quote, call SaveEstimation (metadata update).
 
 CRITICAL ARITHMETIC RULE:
 You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
@@ -233,8 +233,8 @@ Instruction:
 5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
 	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
 	Format notes as multiline Markdown with headings and bullet/numbered lists.
-6) Call UpdatePipelineStage with stage="Quote_Draft" and a reason in Dutch.
-	IMPORTANT: DO NOT use "Ready_For_Partner". We must wait for the customer to accept the quote first.
+6) Call UpdatePipelineStage with stage="Estimation" and a reason in Dutch.
+	IMPORTANT: DO NOT move to "Fulfillment". We must wait for the customer to accept the quote first.
 
 You MUST call SearchProductMaterials first (if available), then DraftQuote (if available), then SaveEstimation, then UpdatePipelineStage. Respond ONLY with tool calls.
 `,
@@ -272,7 +272,7 @@ Logic:
 - If > 0 partners found:
   1) Select the best match (e.g., closest distance).
 	2) Call CreatePartnerOffer for that partner, including a short Dutch job summary.
-	3) Call UpdatePipelineStage with stage="Partner_Matching" and reason "Offer verzonden naar [Partnernaam]".
+	3) Call UpdatePipelineStage with stage="Fulfillment" and reason "Offer verzonden naar [Partnernaam]".
 - If 0 partners found:
 	- Call UpdatePipelineStage with stage="Manual_Intervention" and reason "Geen partners gevonden binnen bereik." DO NOT REJECT.
 

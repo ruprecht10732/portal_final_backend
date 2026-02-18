@@ -1,27 +1,17 @@
 // Package domain provides core business rules for the leads bounded context.
 package domain
 
+import "strings"
+
 const (
 	LeadStatusNew                  = "New"
+	LeadStatusPending              = "Pending"
+	LeadStatusInProgress           = "In_Progress"
 	LeadStatusAttemptedContact     = "Attempted_Contact"
 	LeadStatusAppointmentScheduled = "Appointment_Scheduled"
-	LeadStatusSurveyCompleted      = "Survey_Completed"
-	LeadStatusQuoteDraft           = "Quote_Draft"
-	LeadStatusQuoteSent            = "Quote_Sent"
-	LeadStatusQuoteAccepted        = "Quote_Accepted"
-	LeadStatusPartnerAssigned      = "Partner_Assigned"
 	LeadStatusNeedsRescheduling    = "Needs_Rescheduling"
-	LeadStatusCompleted            = "Completed"
-	LeadStatusLost                 = "Lost"
 	LeadStatusDisqualified         = "Disqualified"
 )
-
-// terminalStatuses are service statuses where no further agent actions should occur.
-var terminalStatuses = map[string]bool{
-	LeadStatusCompleted:    true,
-	LeadStatusLost:         true,
-	LeadStatusDisqualified: true,
-}
 
 // terminalPipelineStages are pipeline stages where the workflow is complete.
 var terminalPipelineStages = map[string]bool{
@@ -30,15 +20,11 @@ var terminalPipelineStages = map[string]bool{
 }
 
 // IsTerminal returns true if the service is in a terminal state based on
-// EITHER status or pipeline stage. A terminal service must not be processed
-// by any AI agent (Gatekeeper, Estimator, Dispatcher, Photo Analyzer).
+// pipeline stage. A terminal service must not be processed by any AI agent
+// (Gatekeeper, Estimator, Dispatcher, Photo Analyzer).
 func IsTerminal(status, pipelineStage string) bool {
-	return terminalStatuses[status] || terminalPipelineStages[pipelineStage]
-}
-
-// IsTerminalStatus returns true if the status alone is terminal.
-func IsTerminalStatus(status string) bool {
-	return terminalStatuses[status]
+	_ = status
+	return terminalPipelineStages[pipelineStage]
 }
 
 // IsTerminalPipelineStage returns true if the pipeline stage alone is terminal.
@@ -50,12 +36,76 @@ func IsTerminalPipelineStage(stage string) bool {
 // not contradictory. Returns a non-empty reason string when the combination
 // is invalid.
 func ValidateStateCombination(status, pipelineStage string) string {
-	if status == LeadStatusDisqualified && pipelineStage != PipelineStageLost && pipelineStage != PipelineStageTriage && pipelineStage != PipelineStageManualIntervention {
+	if status == LeadStatusDisqualified && pipelineStage != PipelineStageLost {
 		return "Disqualified status requires Lost pipeline stage"
 	}
-
-	if status == LeadStatusLost && pipelineStage != PipelineStageLost {
-		return "Lost status requires Lost pipeline stage"
+	if pipelineStage == PipelineStageLost && status != LeadStatusDisqualified {
+		return "Lost pipeline stage requires Disqualified status"
 	}
+	return ""
+}
+
+// GetGoogleConversionName maps lead-service events to Google Ads conversion names.
+// This is the canonical mapping for the new (no-legacy) stage/status model.
+//
+// Expected inputs come from RAC_lead_service_events where:
+// - event_type is one of: status_changed, pipeline_stage_changed, service_created, visit_completed
+// - status/pipeline_stage are snapshots of the service at event time.
+func GetGoogleConversionName(eventType string, status *string, pipelineStage *string) string {
+	// Normalize inputs
+	et := strings.ToLower(strings.TrimSpace(eventType))
+	s := ""
+	if status != nil {
+		s = strings.ToLower(strings.TrimSpace(*status))
+	}
+	p := ""
+	if pipelineStage != nil {
+		p = strings.ToLower(strings.TrimSpace(*pipelineStage))
+	}
+
+	// 1) Appointment booked (status-driven)
+	if et == "status_changed" {
+		if s == "appointment_scheduled" || s == "scheduled" {
+			return "Appointment_Scheduled"
+		}
+	}
+
+	// 2) Visit completed (explicit event-driven)
+	if et == "visit_completed" {
+		return "Visit_Completed"
+	}
+
+	// 3) Legacy: survey_completed status → Visit_Completed
+	if s == "survey_completed" {
+		return "Visit_Completed"
+	}
+
+	// 4) Stage-driven conversions (event-type gated)
+	if et == "pipeline_stage_changed" {
+		switch p {
+		case "estimation":
+			return "Lead_Qualified"
+		case "proposal":
+			return "Quote_Sent"
+		case "fulfillment":
+			return "Deal_Won"
+		}
+	}
+
+	// 5) Legacy stage fallbacks (no event_type gate for pre-migration events)
+	switch p {
+	case "ready_for_estimator":
+		return "Lead_Qualified"
+	case "quote_sent":
+		return "Quote_Sent"
+	case "partner_assigned", "partner_matching", "ready_for_partner":
+		return "Deal_Won"
+	}
+
+	// 6) Legacy: quote_accepted status → Deal_Won
+	if s == "quote_accepted" {
+		return "Deal_Won"
+	}
+
 	return ""
 }

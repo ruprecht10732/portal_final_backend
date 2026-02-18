@@ -297,7 +297,7 @@ type QuoteCreated struct {
 func (e QuoteCreated) EventName() string { return "quotes.quote.created" }
 
 // QuoteDeleted is published when a quote is deleted.
-// This event exists to trigger state reconciliation (e.g. reverting Quote_Draft when last draft is removed).
+// This event exists to trigger state reconciliation (e.g. reverting Estimation stage when last draft is removed).
 type QuoteDeleted struct {
 	BaseEvent
 	QuoteID        uuid.UUID  `json:"quoteId"`

@@ -1,16 +1,20 @@
 package exports
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/csv"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/internal/identity/smtpcrypto"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -31,12 +35,17 @@ type Handler struct {
 	repo          *Repository
 	val           *validator.Validator
 	encryptionKey []byte
+	wg            sync.WaitGroup
 }
 
 // NewHandler creates a new export handler.
 func NewHandler(repo *Repository, val *validator.Validator) *Handler {
 	return &Handler{repo: repo, val: val}
 }
+
+// Wait blocks until all background tasks (e.g. backfills) have finished.
+// Call this during graceful shutdown to avoid goroutine leaks.
+func (h *Handler) Wait() { h.wg.Wait() }
 
 // SetEncryptionKey sets the AES-256-GCM key used to encrypt/decrypt stored export passwords.
 // When not set, passwords can only be shown once at creation time.
@@ -95,6 +104,21 @@ func (h *Handler) HandleUpsertCredential(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
+
+	// Trigger 90-day backfill in background after credential upsert.
+	orgID := *tenantID
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		backfillFrom := time.Now().UTC().AddDate(0, 0, -90)
+		if n, err := h.repo.BackfillHistoricalData(bgCtx, orgID, backfillFrom); err != nil {
+			slog.Error("google ads backfill failed", "org", orgID, "error", err)
+		} else if n > 0 {
+			slog.Info("google ads backfill completed", "org", orgID, "rows", n)
+		}
+	}()
 
 	c.JSON(http.StatusOK, UpsertExportCredentialResponse{
 		ExportCredentialResponse: toExportCredentialResponse(credential),
@@ -230,7 +254,12 @@ func (h *Handler) ExportGoogleAdsCSV(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-	rows = filterUnexportedRows(rows, exportedKeys)
+	serviceIDs := collectServiceIDs(rows)
+	exportedServiceConversions, err := h.repo.ListExportedServiceConversions(c.Request.Context(), orgID, serviceIDs)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	rows = filterUnexportedRows(rows, exportedKeys, exportedServiceConversions)
 
 	if len(rows) == 0 {
 		writeEmptyCsv(c, tzName, useEnhanced)
@@ -398,16 +427,33 @@ func toExportRecords(rows []conversionRow) []ExportRecord {
 	return records
 }
 
-func filterUnexportedRows(rows []conversionRow, exportedKeys map[string]struct{}) []conversionRow {
+func filterUnexportedRows(rows []conversionRow, exportedKeys map[string]struct{}, exportedServiceConversions map[string]struct{}) []conversionRow {
 	filtered := make([]conversionRow, 0, len(rows))
 	for _, row := range rows {
 		key := row.OrderID + "::" + row.ConversionName
 		if _, exists := exportedKeys[key]; exists {
 			continue
 		}
+		serviceKey := row.LeadServiceID.String() + "::" + row.ConversionName
+		if _, exists := exportedServiceConversions[serviceKey]; exists {
+			continue
+		}
 		filtered = append(filtered, row)
 	}
 	return filtered
+}
+
+func collectServiceIDs(rows []conversionRow) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(rows))
+	result := make([]uuid.UUID, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.LeadServiceID]; ok {
+			continue
+		}
+		seen[row.LeadServiceID] = struct{}{}
+		result = append(result, row.LeadServiceID)
+	}
+	return result
 }
 
 func toExportCredentialResponse(credential ExportCredential) ExportCredentialResponse {
@@ -517,48 +563,12 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 }
 
 func mapConversionName(event ConversionEvent) string {
-	if event.EventType == "quote_sent" {
-		return "Quote_Sent"
-	}
-
-	if event.EventType == "status_changed" && event.Status != nil {
-		switch normalizeEventValue(*event.Status) {
-		case "appointment_scheduled", "scheduled", "ingepland":
-			return "Appointment_Scheduled"
-		case "survey_completed", "surveyed":
-			return "Visit_Completed"
-		case "quote_accepted":
-			return "Deal_Won"
-		case "completed":
-			return "Deal_Won"
-		}
-	}
-
-	if event.EventType == "pipeline_stage_changed" && event.PipelineStage != nil {
-		switch normalizeEventValue(*event.PipelineStage) {
-		case "nurturing":
-			return "Lead_Qualified"
-		case "quote_sent":
-			return "Quote_Sent"
-		case "partner_assigned":
-			return "Partner_Assigned"
-		case "completed":
-			return "Job_Completed"
-		}
-	}
-
-	return ""
+	return domain.GetGoogleConversionName(event.EventType, event.Status, event.PipelineStage)
 }
 
 func buildOrderID(event ConversionEvent, conversionName string) string {
-	if conversionName == "Quote_Sent" {
-		return "service:" + event.LeadServiceID.String()
-	}
-	return event.EventID.String()
-}
-
-func normalizeEventValue(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+	// v2: stable idempotency per service+conversion
+	return "v2:service:" + event.LeadServiceID.String() + ":" + conversionName
 }
 
 func mapConversionValue(conversionName string, projectedValueCents int64) float64 {
@@ -567,7 +577,7 @@ func mapConversionValue(conversionName string, projectedValueCents int64) float6
 	}
 
 	switch conversionName {
-	case "Deal_Won", "Job_Completed":
+	case "Deal_Won":
 		return float64(projectedValueCents) / 100
 	default:
 		return 0

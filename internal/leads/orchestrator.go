@@ -368,7 +368,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 	// Agent tools already persist detailed stage-change reasons.
 
 	switch evt.NewStage {
-	case domain.PipelineStageReadyForEstimator:
+	case domain.PipelineStageEstimation:
 		// Idempotency check
 		if !o.markRunning("estimator", evt.LeadServiceID) {
 			o.log.Info("orchestrator: estimator already running for service, skipping", "serviceId", evt.LeadServiceID)
@@ -385,7 +385,7 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 			}
 		}()
 
-	case domain.PipelineStageReadyForPartner:
+	case domain.PipelineStageFulfillment:
 		// Idempotency check
 		if !o.markRunning("dispatcher", evt.LeadServiceID) {
 			o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
@@ -471,12 +471,12 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 		Metadata:       map[string]any{"quoteId": evt.QuoteID},
 	})
 
-	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageReadyForPartner); err != nil {
+	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageFulfillment); err != nil {
 		o.log.Error("orchestrator: failed to advance stage after quote acceptance", "error", err)
 		return
 	}
 
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusQuoteAccepted); err != nil {
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusInProgress); err != nil {
 		o.log.Error("orchestrator: failed to set service status after quote acceptance", "error", err)
 	}
 
@@ -492,7 +492,7 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 		LeadServiceID: serviceID,
 		TenantID:      evt.OrganizationID,
 		OldStage:      oldStage,
-		NewStage:      domain.PipelineStageReadyForPartner,
+		NewStage:      domain.PipelineStageFulfillment,
 	})
 }
 
@@ -530,10 +530,6 @@ func (o *Orchestrator) OnQuoteRejected(ctx context.Context, evt events.QuoteReje
 		return
 	}
 
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusLost); err != nil {
-		o.log.Error("orchestrator: failed to set service status after quote rejection", "error", err)
-	}
-
 	o.eventBus.Publish(ctx, events.PipelineStageChanged{
 		BaseEvent:     events.NewBaseEvent(),
 		LeadID:        evt.LeadID,
@@ -556,7 +552,7 @@ func (o *Orchestrator) OnQuoteSent(ctx context.Context, evt events.QuoteSent) {
 		return
 	}
 
-	if svc.PipelineStage == domain.PipelineStageQuoteSent {
+	if svc.PipelineStage == domain.PipelineStageProposal {
 		return
 	}
 
@@ -565,12 +561,12 @@ func (o *Orchestrator) OnQuoteSent(ctx context.Context, evt events.QuoteSent) {
 	}
 
 	oldStage := svc.PipelineStage
-	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageQuoteSent); err != nil {
+	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageProposal); err != nil {
 		o.log.Error("orchestrator: failed to advance stage after quote sent", "error", err)
 		return
 	}
 
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusQuoteSent); err != nil {
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusPending); err != nil {
 		o.log.Error("orchestrator: failed to set service status after quote sent", "error", err)
 	}
 
@@ -580,7 +576,7 @@ func (o *Orchestrator) OnQuoteSent(ctx context.Context, evt events.QuoteSent) {
 		LeadServiceID: serviceID,
 		TenantID:      evt.OrganizationID,
 		OldStage:      oldStage,
-		NewStage:      domain.PipelineStageQuoteSent,
+		NewStage:      domain.PipelineStageProposal,
 	})
 }
 
@@ -713,6 +709,7 @@ func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, servic
 		ServiceID:    serviceID,
 		TenantID:     tenantID,
 		TriggerEvent: triggerEvent,
+		TriggerAt:    triggerAt,
 		Current:      svc,
 		Desired:      desired,
 		Aggregates:   aggs,
@@ -724,6 +721,7 @@ type applyReconciledStateParams struct {
 	ServiceID    uuid.UUID
 	TenantID     uuid.UUID
 	TriggerEvent string
+	TriggerAt    time.Time
 	Current      repository.LeadService
 	Desired      desiredServiceState
 	Aggregates   repository.ServiceStateAggregates
@@ -735,6 +733,21 @@ func (o *Orchestrator) applyReconciledState(ctx context.Context, p applyReconcil
 
 	stageChanged := o.applyReconciledStage(ctx, p.LeadID, p.ServiceID, p.TenantID, oldStage, p.Desired.Stage)
 	statusChanged := o.applyReconciledStatus(ctx, p.ServiceID, p.TenantID, oldStatus, p.Desired.Status)
+
+	// Visit reports represent a milestone that must be exportable (Visit_Completed)
+	// without introducing a legacy or terminal status value.
+	if p.Desired.ReasonCode == "visit_report_present" {
+		_ = o.repo.InsertLeadServiceEvent(ctx, repository.InsertServiceEventParams{
+			OrganizationID: p.TenantID,
+			LeadID:         p.LeadID,
+			LeadServiceID:  p.ServiceID,
+			EventType:      "visit_completed",
+			Status:         p.Desired.Status,
+			PipelineStage:  p.Desired.Stage,
+			OccurredAt:     p.TriggerAt,
+		})
+	}
+
 	if !stageChanged && !statusChanged {
 		return
 	}
@@ -880,6 +893,11 @@ func deriveDesiredServiceState(current repository.LeadService, aggs repository.S
 		return desired, true
 	}
 	if stage, status, code, ok := deriveFromAppointments(aggs); ok {
+		// Appointments are status-driven and should not force a pipeline stage.
+		// Keep the current stage unless a specific stage is explicitly derived.
+		if stage == domain.StageUnchanged {
+			stage = current.PipelineStage
+		}
 		desired.Stage, desired.Status, desired.ReasonCode = stage, status, coalesceReasonCode(desired.ReasonCode, code)
 		return desired, true
 	}
@@ -944,29 +962,29 @@ func latestChildActivityAt(aggs repository.ServiceStateAggregates) *time.Time {
 
 func deriveFromOffers(aggs repository.ServiceStateAggregates) (stage, status, reasonCode string, ok bool) {
 	if aggs.AcceptedOffers > 0 {
-		return domain.PipelineStagePartnerAssigned, domain.LeadStatusPartnerAssigned, "offer_accepted", true
+		return domain.PipelineStageFulfillment, domain.LeadStatusInProgress, "offer_accepted", true
 	}
 	if aggs.PendingOffers > 0 {
-		return domain.PipelineStagePartnerMatching, domain.LeadStatusQuoteAccepted, "offer_pending", true
+		return domain.PipelineStageFulfillment, domain.LeadStatusPending, "offer_pending", true
 	}
 	return "", "", "", false
 }
 
 func deriveFromQuotes(aggs repository.ServiceStateAggregates) (stage, status, reasonCode, reason string, ok bool) {
 	if aggs.AcceptedQuotes > 0 {
-		return domain.PipelineStageReadyForPartner, domain.LeadStatusQuoteAccepted, "quote_accepted", "", true
+		return domain.PipelineStageFulfillment, domain.LeadStatusInProgress, "quote_accepted", "", true
 	}
 	if aggs.SentQuotes > 0 {
-		return domain.PipelineStageQuoteSent, domain.LeadStatusQuoteSent, "quote_sent", "", true
+		return domain.PipelineStageProposal, domain.LeadStatusPending, "quote_sent", "", true
 	}
 	if aggs.DraftQuotes > 0 {
 		if aggs.LatestQuoteAt != nil && time.Since(*aggs.LatestQuoteAt) > staleDraftDuration {
 			return domain.PipelineStageNurturing, domain.LeadStatusAttemptedContact, "stale_draft_decay", "Conceptofferte is verlopen (>30 dagen geen activiteit)", true
 		}
-		return domain.PipelineStageQuoteDraft, domain.LeadStatusQuoteDraft, "quote_draft", "", true
+		return domain.PipelineStageEstimation, domain.LeadStatusInProgress, "quote_draft", "", true
 	}
 	if aggs.RejectedQuotes > 0 {
-		return domain.PipelineStageLost, domain.LeadStatusLost, "quotes_rejected_only", "", true
+		return domain.PipelineStageLost, domain.LeadStatusDisqualified, "quotes_rejected_only", "", true
 	}
 	return "", "", "", "", false
 }
@@ -975,15 +993,15 @@ func deriveFromVisitReports(aggs repository.ServiceStateAggregates) (stage, stat
 	if !aggs.HasVisitReport {
 		return "", "", "", false
 	}
-	return domain.PipelineStageReadyForEstimator, domain.LeadStatusSurveyCompleted, "visit_report_present", true
+	return domain.PipelineStageEstimation, domain.LeadStatusNew, "visit_report_present", true
 }
 
 func deriveFromAppointments(aggs repository.ServiceStateAggregates) (stage, status, reasonCode string, ok bool) {
 	if aggs.ScheduledAppointments > 0 {
-		return domain.PipelineStageNurturing, domain.LeadStatusAppointmentScheduled, "appointment_scheduled", true
+		return domain.StageUnchanged, domain.LeadStatusAppointmentScheduled, "appointment_scheduled", true
 	}
 	if aggs.CancelledAppointments > 0 {
-		return domain.PipelineStageNurturing, domain.LeadStatusNeedsRescheduling, "appointment_cancelled", true
+		return domain.StageUnchanged, domain.LeadStatusNeedsRescheduling, "appointment_cancelled", true
 	}
 	return "", "", "", false
 }
@@ -994,7 +1012,7 @@ func deriveFromAI(aggs repository.ServiceStateAggregates) (stage, status, reason
 	}
 	switch *aggs.AiAction {
 	case "ScheduleSurvey", "CallImmediately", "Review":
-		return domain.PipelineStageReadyForEstimator, domain.LeadStatusNew, "ai_valid_intake", true
+		return domain.PipelineStageEstimation, domain.LeadStatusNew, "ai_valid_intake", true
 	case "RequestInfo":
 		return domain.PipelineStageNurturing, domain.LeadStatusAttemptedContact, "ai_request_info", true
 	case "Reject":
@@ -1049,12 +1067,9 @@ func isPipelineRegression(oldStage, newStage string) bool {
 		domain.PipelineStageTriage:             10,
 		domain.PipelineStageNurturing:          20,
 		domain.PipelineStageManualIntervention: 25,
-		domain.PipelineStageReadyForEstimator:  30,
-		domain.PipelineStageQuoteDraft:         40,
-		domain.PipelineStageQuoteSent:          50,
-		domain.PipelineStageReadyForPartner:    60,
-		domain.PipelineStagePartnerMatching:    70,
-		domain.PipelineStagePartnerAssigned:    80,
+		domain.PipelineStageEstimation:         30,
+		domain.PipelineStageProposal:           40,
+		domain.PipelineStageFulfillment:        50,
 		domain.PipelineStageCompleted:          90,
 		domain.PipelineStageLost:               90,
 	}

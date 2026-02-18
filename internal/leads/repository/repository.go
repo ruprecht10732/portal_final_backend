@@ -794,7 +794,7 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		LEFT JOIN LATERAL (
 			SELECT ls.id, ls.status, ls.service_type_id
 			FROM RAC_lead_services ls
-			WHERE ls.lead_id = l.id AND ls.status NOT IN ('Completed', 'Lost', 'Disqualified')
+			WHERE ls.lead_id = l.id AND ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified'
 			ORDER BY ls.created_at DESC
 			LIMIT 1
 		) cs ON true
