@@ -276,6 +276,7 @@ func main() {
 
 	// Exports module for Google Ads conversions
 	exportsModule := exports.NewModule(pool, val)
+	wireExportsEncryptionKey(cfg, log, exportsModule)
 
 	// ========================================================================
 	// HTTP Layer
@@ -380,6 +381,26 @@ func wireMoneybirdConfig(cfg *config.Config, log *logger.Logger, quotesSvc inter
 
 	quotesSvc.SetMoneybirdEncryptionKey(encryptionKey)
 	log.Info("moneybird oauth configuration enabled")
+}
+
+func wireExportsEncryptionKey(cfg *config.Config, log *logger.Logger, exportsMod interface{ SetEncryptionKey([]byte) }) {
+	keyHex := cfg.GetExportsEncryptionKey()
+	if keyHex == "" {
+		return
+	}
+
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		log.Error("invalid EXPORTS_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+		panic("invalid EXPORTS_ENCRYPTION_KEY: " + err.Error())
+	}
+	if len(key) != 32 {
+		log.Error("EXPORTS_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(key))
+		panic("EXPORTS_ENCRYPTION_KEY must be 32 bytes")
+	}
+
+	exportsMod.SetEncryptionKey(key)
+	log.Info("exports encryption key configured")
 }
 
 func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (*scheduler.Client, func()) {

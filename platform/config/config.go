@@ -200,6 +200,7 @@ type Config struct {
 	AsynqQueueName                    string
 	AsynqConcurrency                  int
 	SMTPEncryptionKey                 string
+	ExportsEncryptionKey              string
 	MoneybirdClientID                 string
 	MoneybirdClientSecret             string
 	MoneybirdRedirectURI              string
@@ -250,6 +251,9 @@ func (c *Config) GetWhatsAppDeviceID() string { return c.WhatsAppDeviceID }
 
 // SMTPConfig getter
 func (c *Config) GetSMTPEncryptionKey() string { return c.SMTPEncryptionKey }
+
+// ExportsConfig getter
+func (c *Config) GetExportsEncryptionKey() string { return c.ExportsEncryptionKey }
 
 // Moneybird config getters
 func (c *Config) GetMoneybirdClientID() string      { return c.MoneybirdClientID }
@@ -414,6 +418,7 @@ func Load() (*Config, error) {
 		AsynqQueueName:                    getEnv("ASYNQ_QUEUE_NAME", "default"),
 		AsynqConcurrency:                  mustInt(getEnv("ASYNQ_CONCURRENCY", "10")),
 		SMTPEncryptionKey:                 getEnv("SMTP_ENCRYPTION_KEY", ""),
+		ExportsEncryptionKey:              getEnv("EXPORTS_ENCRYPTION_KEY", ""),
 		MoneybirdClientID:                 getEnv("MONEYBIRD_CLIENT_ID", ""),
 		MoneybirdClientSecret:             getEnv("MONEYBIRD_CLIENT_SECRET", ""),
 		MoneybirdRedirectURI:              getEnv("MONEYBIRD_REDIRECT_URI", ""),

@@ -25,6 +25,7 @@ type ExportCredential struct {
 	OrganizationID uuid.UUID
 	Username       string
 	PasswordHash   string
+	PasswordEncrypted *string
 	CreatedBy      *uuid.UUID
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -73,19 +74,20 @@ func GenerateCredential() (username string, password string, err error) {
 }
 
 // UpsertCredential creates or rotates an organization credential.
-func (r *Repository) UpsertCredential(ctx context.Context, orgID uuid.UUID, username string, passwordHash string, createdBy *uuid.UUID) (ExportCredential, error) {
+func (r *Repository) UpsertCredential(ctx context.Context, orgID uuid.UUID, username string, passwordHash string, passwordEncrypted *string, createdBy *uuid.UUID) (ExportCredential, error) {
 	var credential ExportCredential
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_google_ads_export_credentials (organization_id, username, password_hash, created_by)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO RAC_google_ads_export_credentials (organization_id, username, password_hash, password_encrypted, created_by)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (organization_id)
-		DO UPDATE SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash, created_by = EXCLUDED.created_by, updated_at = now(), last_used_at = NULL
-		RETURNING id, organization_id, username, password_hash, created_by, created_at, updated_at, last_used_at
-	`, orgID, username, passwordHash, createdBy).Scan(
+		DO UPDATE SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash, password_encrypted = EXCLUDED.password_encrypted, created_by = EXCLUDED.created_by, updated_at = now(), last_used_at = NULL
+		RETURNING id, organization_id, username, password_hash, password_encrypted, created_by, created_at, updated_at, last_used_at
+	`, orgID, username, passwordHash, passwordEncrypted, createdBy).Scan(
 		&credential.ID,
 		&credential.OrganizationID,
 		&credential.Username,
 		&credential.PasswordHash,
+		&credential.PasswordEncrypted,
 		&credential.CreatedBy,
 		&credential.CreatedAt,
 		&credential.UpdatedAt,
@@ -98,7 +100,7 @@ func (r *Repository) UpsertCredential(ctx context.Context, orgID uuid.UUID, user
 func (r *Repository) GetCredentialByUsername(ctx context.Context, username string) (ExportCredential, error) {
 	var credential ExportCredential
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, username, password_hash, created_by, created_at, updated_at, last_used_at
+		SELECT id, organization_id, username, password_hash, password_encrypted, created_by, created_at, updated_at, last_used_at
 		FROM RAC_google_ads_export_credentials
 		WHERE username = $1
 	`, username).Scan(
@@ -106,6 +108,7 @@ func (r *Repository) GetCredentialByUsername(ctx context.Context, username strin
 		&credential.OrganizationID,
 		&credential.Username,
 		&credential.PasswordHash,
+		&credential.PasswordEncrypted,
 		&credential.CreatedBy,
 		&credential.CreatedAt,
 		&credential.UpdatedAt,
@@ -121,7 +124,7 @@ func (r *Repository) GetCredentialByUsername(ctx context.Context, username strin
 func (r *Repository) GetCredentialByOrganization(ctx context.Context, orgID uuid.UUID) (ExportCredential, error) {
 	var credential ExportCredential
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, username, password_hash, created_by, created_at, updated_at, last_used_at
+		SELECT id, organization_id, username, password_hash, password_encrypted, created_by, created_at, updated_at, last_used_at
 		FROM RAC_google_ads_export_credentials
 		WHERE organization_id = $1
 	`, orgID).Scan(
@@ -129,6 +132,7 @@ func (r *Repository) GetCredentialByOrganization(ctx context.Context, orgID uuid
 		&credential.OrganizationID,
 		&credential.Username,
 		&credential.PasswordHash,
+		&credential.PasswordEncrypted,
 		&credential.CreatedBy,
 		&credential.CreatedAt,
 		&credential.UpdatedAt,

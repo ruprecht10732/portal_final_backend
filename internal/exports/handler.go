@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/auth/password"
+	"portal_final_backend/internal/identity/smtpcrypto"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -18,21 +19,29 @@ import (
 )
 
 const (
-	defaultCurrency = "EUR"
-	defaultTimezone = "UTC"
-	dateLayout      = "2006-01-02"
-	noOrgContextMsg = "no organization context"
+	defaultCurrency            = "EUR"
+	defaultTimezone            = "UTC"
+	dateLayout                 = "2006-01-02"
+	noOrgContextMsg            = "no organization context"
+	credentialNotConfiguredMsg = "google ads export credentials not configured"
 )
 
 // Handler handles export requests and Google Ads HTTPS credential management.
 type Handler struct {
-	repo *Repository
-	val  *validator.Validator
+	repo          *Repository
+	val           *validator.Validator
+	encryptionKey []byte
 }
 
 // NewHandler creates a new export handler.
 func NewHandler(repo *Repository, val *validator.Validator) *Handler {
 	return &Handler{repo: repo, val: val}
+}
+
+// SetEncryptionKey sets the AES-256-GCM key used to encrypt/decrypt stored export passwords.
+// When not set, passwords can only be shown once at creation time.
+func (h *Handler) SetEncryptionKey(key []byte) {
+	h.encryptionKey = key
 }
 
 // ---- Admin Google Ads HTTPS Credentials (JWT authenticated) ----
@@ -71,8 +80,18 @@ func (h *Handler) HandleUpsertCredential(c *gin.Context) {
 		return
 	}
 
+	var encryptedPassword *string
+	if len(h.encryptionKey) == 32 {
+		ciphertext, err := smtpcrypto.Encrypt(plaintextPassword, h.encryptionKey)
+		if err != nil {
+			httpkit.Error(c, http.StatusInternalServerError, "failed to encrypt export credentials", nil)
+			return
+		}
+		encryptedPassword = &ciphertext
+	}
+
 	createdBy := identity.UserID()
-	credential, err := h.repo.UpsertCredential(c.Request.Context(), *tenantID, username, passwordHash, &createdBy)
+	credential, err := h.repo.UpsertCredential(c.Request.Context(), *tenantID, username, passwordHash, encryptedPassword, &createdBy)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -96,7 +115,7 @@ func (h *Handler) HandleGetCredential(c *gin.Context) {
 
 	credential, err := h.repo.GetCredentialByOrganization(c.Request.Context(), *tenantID)
 	if err == ErrCredentialNotFound {
-		httpkit.Error(c, http.StatusNotFound, "google ads export credentials not configured", nil)
+		httpkit.Error(c, http.StatusNotFound, credentialNotConfiguredMsg, nil)
 		return
 	}
 	if httpkit.HandleError(c, err) {
@@ -119,7 +138,7 @@ func (h *Handler) HandleDeleteCredential(c *gin.Context) {
 
 	err := h.repo.DeleteCredential(c.Request.Context(), *tenantID)
 	if err == ErrCredentialNotFound {
-		httpkit.Error(c, http.StatusNotFound, "google ads export credentials not configured", nil)
+		httpkit.Error(c, http.StatusNotFound, credentialNotConfiguredMsg, nil)
 		return
 	}
 	if httpkit.HandleError(c, err) {
@@ -127,6 +146,49 @@ func (h *Handler) HandleDeleteCredential(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"message": "google ads export credentials removed"})
+}
+
+type RevealExportPasswordResponse struct {
+	Password string `json:"password"`
+}
+
+func (h *Handler) HandleRevealPassword(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusForbidden, noOrgContextMsg, nil)
+		return
+	}
+
+	if len(h.encryptionKey) != 32 {
+		httpkit.Error(c, http.StatusConflict, "password reveal is not configured", nil)
+		return
+	}
+
+	credential, err := h.repo.GetCredentialByOrganization(c.Request.Context(), *tenantID)
+	if err == ErrCredentialNotFound {
+		httpkit.Error(c, http.StatusNotFound, credentialNotConfiguredMsg, nil)
+		return
+	}
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	if credential.PasswordEncrypted == nil || strings.TrimSpace(*credential.PasswordEncrypted) == "" {
+		httpkit.Error(c, http.StatusConflict, "password is not available; rotate credentials to generate a new password", nil)
+		return
+	}
+
+	plaintext, err := smtpcrypto.Decrypt(*credential.PasswordEncrypted, h.encryptionKey)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to decrypt export password", nil)
+		return
+	}
+
+	c.JSON(http.StatusOK, RevealExportPasswordResponse{Password: plaintext})
 }
 
 // ---- Google Ads CSV Export (HTTP Basic authenticated) ----

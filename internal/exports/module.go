@@ -24,6 +24,11 @@ func NewModule(pool *pgxpool.Pool, val *validator.Validator) *Module {
 	}
 }
 
+// SetEncryptionKey sets the AES key used for encrypting/decrypting export passwords.
+func (m *Module) SetEncryptionKey(key []byte) {
+	m.handler.SetEncryptionKey(key)
+}
+
 // Name returns the module identifier.
 func (m *Module) Name() string {
 	return "exports"
@@ -38,6 +43,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup := ctx.Admin.Group("/exports/credentials")
 	adminGroup.POST("", m.handler.HandleUpsertCredential)
 	adminGroup.GET("", m.handler.HandleGetCredential)
+	adminGroup.GET("/password", m.handler.HandleRevealPassword)
 	adminGroup.DELETE("", m.handler.HandleDeleteCredential)
 }
 

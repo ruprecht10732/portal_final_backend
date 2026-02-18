@@ -52,7 +52,8 @@ func (h *Handler) GlobalSearch(c *gin.Context) {
 	}
 	tenantID := *tenantIDPtr
 
-	result, err := h.svc.GlobalSearch(c.Request.Context(), tenantID, req)
+	isAdmin := identity.HasRole("admin")
+	result, err := h.svc.GlobalSearch(c.Request.Context(), tenantID, req, isAdmin)
 	if httpkit.HandleError(c, err) {
 		return
 	}

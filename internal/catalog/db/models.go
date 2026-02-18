@@ -462,14 +462,15 @@ type RacGoogleAdsExport struct {
 }
 
 type RacGoogleAdsExportCredential struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrganizationID pgtype.UUID        `json:"organization_id"`
-	Username       string             `json:"username"`
-	PasswordHash   string             `json:"password_hash"`
-	CreatedBy      pgtype.UUID        `json:"created_by"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrganizationID    pgtype.UUID        `json:"organization_id"`
+	Username          string             `json:"username"`
+	PasswordHash      string             `json:"password_hash"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	LastUsedAt        pgtype.Timestamptz `json:"last_used_at"`
+	PasswordEncrypted pgtype.Text        `json:"password_encrypted"`
 }
 
 type RacGoogleLeadID struct {

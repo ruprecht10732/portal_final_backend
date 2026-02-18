@@ -5,6 +5,7 @@ import "time"
 type SearchRequest struct {
 	Query string `form:"q" validate:"required,min=2,max=100"`
 	Limit int    `form:"limit" validate:"omitempty,min=1,max=50"`
+	Types string `form:"types" validate:"omitempty,max=200"`
 }
 
 type SearchResultItem struct {
