@@ -31,8 +31,8 @@ type Partner struct {
 	ID              uuid.UUID
 	OrganizationID  uuid.UUID
 	BusinessName    string
-	KVKNumber       string
-	VATNumber       string
+	KVKNumber       *string
+	VATNumber       *string
 	AddressLine1    string
 	AddressLine2    *string
 	HouseNumber     *string
@@ -218,8 +218,8 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		UPDATE RAC_partners
 		SET
 			business_name = COALESCE($3, business_name),
-			kvk_number = COALESCE($4, kvk_number),
-			vat_number = COALESCE($5, vat_number),
+			kvk_number = CASE WHEN $4::text IS NULL THEN kvk_number ELSE NULLIF($4, '') END,
+			vat_number = CASE WHEN $5::text IS NULL THEN vat_number ELSE NULLIF($5, '') END,
 			address_line1 = COALESCE($6, address_line1),
 			address_line2 = COALESCE($7, address_line2),
 			house_number = COALESCE($8, house_number),

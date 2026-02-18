@@ -8,8 +8,8 @@ import (
 
 type CreatePartnerRequest struct {
 	BusinessName    string      `json:"businessName" validate:"required,min=1,max=200"`
-	KVKNumber       string      `json:"kvkNumber" validate:"required,max=20"`
-	VATNumber       string      `json:"vatNumber" validate:"required,max=20"`
+	KVKNumber       *string     `json:"kvkNumber,omitempty" validate:"omitempty,max=20"`
+	VATNumber       *string     `json:"vatNumber,omitempty" validate:"omitempty,max=20"`
 	AddressLine1    string      `json:"addressLine1" validate:"required,max=200"`
 	AddressLine2    string      `json:"addressLine2,omitempty" validate:"omitempty,max=200"`
 	HouseNumber     string      `json:"houseNumber" validate:"required,max=20"`
@@ -47,8 +47,8 @@ type UpdatePartnerRequest struct {
 type PartnerResponse struct {
 	ID              uuid.UUID   `json:"id"`
 	BusinessName    string      `json:"businessName"`
-	KVKNumber       string      `json:"kvkNumber"`
-	VATNumber       string      `json:"vatNumber"`
+	KVKNumber       *string     `json:"kvkNumber,omitempty"`
+	VATNumber       *string     `json:"vatNumber,omitempty"`
 	AddressLine1    string      `json:"addressLine1"`
 	AddressLine2    *string     `json:"addressLine2,omitempty"`
 	HouseNumber     *string     `json:"houseNumber,omitempty"`

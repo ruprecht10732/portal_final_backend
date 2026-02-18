@@ -51,8 +51,8 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 		ID:              uuid.New(),
 		OrganizationID:  tenantID,
 		BusinessName:    sanitize.Text(req.BusinessName),
-		KVKNumber:       strings.TrimSpace(req.KVKNumber),
-		VATNumber:       strings.TrimSpace(req.VATNumber),
+		KVKNumber:       normalizeOptionalString(req.KVKNumber, strings.TrimSpace),
+		VATNumber:       normalizeOptionalString(req.VATNumber, func(value string) string { return strings.ToUpper(strings.TrimSpace(value)) }),
 		AddressLine1:    sanitize.Text(req.AddressLine1),
 		AddressLine2:    normalizeOptional(req.AddressLine2),
 		HouseNumber:     normalizeOptional(req.HouseNumber),
@@ -69,7 +69,15 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 		UpdatedAt:       time.Now(),
 	}
 
-	if err := validatePartnerNumbers(partner.KVKNumber, partner.VATNumber); err != nil {
+	createdKVK := ""
+	if partner.KVKNumber != nil {
+		createdKVK = *partner.KVKNumber
+	}
+	createdVAT := ""
+	if partner.VATNumber != nil {
+		createdVAT = *partner.VATNumber
+	}
+	if err := validatePartnerNumbers(createdKVK, createdVAT); err != nil {
 		return transport.PartnerResponse{}, err
 	}
 
@@ -114,8 +122,8 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 		ID:              id,
 		OrganizationID:  tenantID,
 		BusinessName:    normalizeOptionalString(req.BusinessName, sanitize.Text),
-		KVKNumber:       normalizeOptionalString(req.KVKNumber, strings.TrimSpace),
-		VATNumber:       normalizeOptionalString(req.VATNumber, strings.TrimSpace),
+		KVKNumber:       normalizeNullableString(req.KVKNumber, strings.TrimSpace),
+		VATNumber:       normalizeNullableString(req.VATNumber, func(value string) string { return strings.ToUpper(strings.TrimSpace(value)) }),
 		AddressLine1:    normalizeOptionalString(req.AddressLine1, sanitize.Text),
 		AddressLine2:    normalizeOptionalString(req.AddressLine2, sanitize.Text),
 		HouseNumber:     normalizeOptionalString(req.HouseNumber, strings.TrimSpace),
@@ -550,6 +558,19 @@ func normalizeOptionalString(value *string, normalize func(string) string) *stri
 	if normalized == "" {
 		return nil
 	}
+	return &normalized
+}
+
+func normalizeNullableString(value *string, normalize func(string) string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		empty := ""
+		return &empty
+	}
+	normalized := normalize(trimmed)
 	return &normalized
 }
 

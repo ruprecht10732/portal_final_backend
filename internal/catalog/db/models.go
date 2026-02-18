@@ -818,8 +818,8 @@ type RacPartner struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrganizationID  pgtype.UUID        `json:"organization_id"`
 	BusinessName    string             `json:"business_name"`
-	KvkNumber       string             `json:"kvk_number"`
-	VatNumber       string             `json:"vat_number"`
+	KvkNumber       pgtype.Text        `json:"kvk_number"`
+	VatNumber       pgtype.Text        `json:"vat_number"`
 	AddressLine1    string             `json:"address_line1"`
 	AddressLine2    pgtype.Text        `json:"address_line2"`
 	PostalCode      string             `json:"postal_code"`
