@@ -153,6 +153,18 @@ type ManualInterventionRequired struct {
 
 func (e ManualInterventionRequired) EventName() string { return "leads.manual_intervention.required" }
 
+// LeadAutoDisqualified is published when the system automatically disqualifies a lead service.
+// Used for transparency and downstream handlers (e.g. notifications).
+type LeadAutoDisqualified struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	Reason        string    `json:"reason"` // e.g. "junk_quality"
+}
+
+func (e LeadAutoDisqualified) EventName() string { return "leads.lead.auto_disqualified" }
+
 // =============================================================================
 // Webhook Domain Events
 // =============================================================================

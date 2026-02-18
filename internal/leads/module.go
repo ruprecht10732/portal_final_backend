@@ -131,7 +131,6 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 
 func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, *agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
 	_ = storageSvc
-	_ = scorer
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
@@ -142,7 +141,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus)
+	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus, scorer)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -290,6 +289,7 @@ func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsReposit
 
 func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorLeadDataChanged(eventBus, orchestrator)
+	subscribeOrchestratorLeadAutoDisqualified(eventBus, orchestrator)
 	subscribeOrchestratorQuoteAccepted(eventBus, orchestrator)
 	subscribeOrchestratorQuoteRejected(eventBus, orchestrator)
 	subscribeOrchestratorQuoteSent(eventBus, orchestrator)
@@ -304,6 +304,17 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorQuoteDeleted(eventBus, orchestrator)
 	subscribeOrchestratorAppointmentCreated(eventBus, orchestrator)
 	subscribeOrchestratorAppointmentStatusChanged(eventBus, orchestrator)
+}
+
+func subscribeOrchestratorLeadAutoDisqualified(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.LeadAutoDisqualified{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.LeadAutoDisqualified)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnLeadAutoDisqualified(ctx, e)
+		return nil
+	}))
 }
 
 func subscribeOrchestratorQuoteCreated(eventBus events.Bus, orchestrator *Orchestrator) {

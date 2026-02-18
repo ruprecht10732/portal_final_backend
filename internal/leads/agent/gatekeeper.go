@@ -17,7 +17,9 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/platform/ai/moonshot"
 )
 
@@ -33,7 +35,7 @@ type Gatekeeper struct {
 }
 
 // NewGatekeeper creates a Gatekeeper agent.
-func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus events.Bus) (*Gatekeeper, error) {
+func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
 	kimi := moonshot.NewModel(moonshot.Config{
 		APIKey:          apiKey,
 		Model:           "kimi-k2.5",
@@ -43,6 +45,7 @@ func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus even
 	deps := &ToolDependencies{
 		Repo:     repo,
 		EventBus: eventBus,
+		Scorer:   scorer,
 	}
 
 	updateStageTool, err := createUpdatePipelineStageTool(deps)
@@ -149,6 +152,54 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		g.createFallbackAnalysis(ctx, lead, leadID, serviceID, tenantID)
 	} else {
 		log.Printf("gatekeeper: SaveAnalysis was called successfully for lead=%s service=%s", leadID, serviceID)
+	}
+
+	// Autonomous "Junk" disposal: if the latest analysis marks this lead as Junk,
+	// automatically move it to Disqualified/Lost and record a transparent timeline event.
+	// This lives here (instead of only the orchestrator) so it applies regardless of who triggered Gatekeeper.Run.
+	if service.Status != domain.LeadStatusDisqualified {
+		analysis, err := g.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+		if err != nil && err != repository.ErrNotFound {
+			log.Printf("gatekeeper: failed to fetch latest AI analysis for junk check: %v", err)
+		} else if err == nil && analysis.LeadQuality == "Junk" {
+			log.Printf("gatekeeper: auto-disqualifying Junk lead (service=%s lead=%s)", serviceID, leadID)
+
+			if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageLost); err != nil {
+				log.Printf("gatekeeper: failed to set pipeline stage to Lost during junk auto-disqualify: %v", err)
+			}
+			if _, err := g.repo.UpdateServiceStatus(ctx, serviceID, tenantID, domain.LeadStatusDisqualified); err != nil {
+				log.Printf("gatekeeper: failed to set service status to Disqualified during junk auto-disqualify: %v", err)
+				return nil
+			}
+
+			summary := "AI detected Junk quality. Lead automatically moved to Disqualified."
+			_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+				LeadID:         leadID,
+				ServiceID:      &serviceID,
+				OrganizationID: tenantID,
+				ActorType:      "AI",
+				ActorName:      "Gatekeeper",
+				EventType:      "stage_change",
+				Title:          "Auto-Disqualified",
+				Summary:        &summary,
+				Metadata: map[string]any{
+					"leadQuality":       analysis.LeadQuality,
+					"recommendedAction": analysis.RecommendedAction,
+					"analysisId":        analysis.ID,
+					"reason":            "junk_quality",
+				},
+			})
+
+			if g.toolDeps != nil && g.toolDeps.EventBus != nil {
+				g.toolDeps.EventBus.Publish(ctx, events.LeadAutoDisqualified{
+					BaseEvent:     events.NewBaseEvent(),
+					LeadID:        leadID,
+					LeadServiceID: serviceID,
+					TenantID:      tenantID,
+					Reason:        "junk_quality",
+				})
+			}
+		}
 	}
 
 	return nil
