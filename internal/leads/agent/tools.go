@@ -1081,27 +1081,13 @@ func resolveOfferContext(deps *ToolDependencies, partnerIDRaw string, expiration
 
 	hours := expirationHours
 	if hours <= 0 {
-		hours = 48
+		hours = 12
 	}
-	if hours > 168 {
-		hours = 168
+	if hours > 12 {
+		hours = 12
 	}
 
 	return tenantID, serviceID, partnerID, hours, "", nil
-}
-
-func resolveOfferPricing(ctx tool.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (string, int64, error) {
-	totalCents, err := deps.Repo.GetLatestQuoteTotal(ctx, serviceID, tenantID)
-	if err != nil {
-		return "", 0, err
-	}
-
-	pricingSource := "quote"
-	if totalCents <= 0 {
-		pricingSource = "estimate"
-	}
-
-	return pricingSource, totalCents, nil
 }
 
 func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
@@ -1118,19 +1104,17 @@ func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
 			return CreatePartnerOfferOutput{Success: false, Message: contextMessage}, err
 		}
 
-		pricingSource, totalCents, err := resolveOfferPricing(ctx, deps, serviceID, tenantID)
+		quoteID, err := deps.Repo.GetLatestAcceptedQuoteIDForService(ctx, serviceID, tenantID)
 		if err != nil {
-			return CreatePartnerOfferOutput{Success: false, Message: "Quote not found for service"}, err
+			return CreatePartnerOfferOutput{Success: false, Message: "Accepted quote not found for service"}, err
 		}
 
 		summary := truncateRunes(strings.TrimSpace(input.JobSummaryShort), 200)
-		result, err := deps.OfferCreator.CreateOffer(ctx, tenantID, ports.CreateOfferParams{
-			PartnerID:          partnerID,
-			LeadServiceID:      serviceID,
-			PricingSource:      pricingSource,
-			CustomerPriceCents: totalCents,
-			ExpiresInHours:     hours,
-			JobSummaryShort:    summary,
+		result, err := deps.OfferCreator.CreateOfferFromQuote(ctx, tenantID, ports.CreateOfferFromQuoteParams{
+			PartnerID:       partnerID,
+			QuoteID:         quoteID,
+			ExpiresInHours:  hours,
+			JobSummaryShort: summary,
 		})
 		if err != nil {
 			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err

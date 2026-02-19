@@ -315,6 +315,38 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, tenantID uuid.
 	return resp, nil
 }
 
+func (s *Service) SetLeadServiceID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID, leadServiceID uuid.UUID) (*transport.QuoteResponse, error) {
+	current, err := s.repo.GetByID(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if current.LeadServiceID != nil && *current.LeadServiceID == leadServiceID {
+		return s.GetByID(ctx, id, tenantID)
+	}
+
+	if err := s.repo.SetLeadServiceID(ctx, id, tenantID, leadServiceID); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.GetByID(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.emitTimelineEvent(ctx, TimelineEventParams{
+		LeadID:         resp.LeadID,
+		ServiceID:      resp.LeadServiceID,
+		OrganizationID: tenantID,
+		ActorType:      "User",
+		ActorName:      actorID.String(),
+		EventType:      "quote_service_linked",
+		Title:          fmt.Sprintf("Quote %s linked to service", resp.QuoteNumber),
+		Metadata:       map[string]any{"quoteId": resp.ID, "leadServiceId": leadServiceID},
+	})
+
+	return resp, nil
+}
+
 func (s *Service) Delete(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID) error {
 	quote, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {

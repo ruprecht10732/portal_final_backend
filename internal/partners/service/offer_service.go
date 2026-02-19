@@ -41,21 +41,40 @@ const (
 	offerTokenBytes = 32
 	// platformFeeMultiplier: vakman receives 90% of customer price (10% platform fee).
 	platformFeeMultiplier = 0.90
+	maxOfferExpiryHours   = 12
 )
 
-// CreateOffer generates a new job offer for a vakman based on customer pricing.
-func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req transport.CreateOfferRequest) (transport.CreateOfferResponse, error) {
+// CreateOfferFromQuote creates an offer based on a specific quote.
+// This enforces that the quote is Accepted and has a linked leadServiceId.
+func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, req transport.CreateOfferFromQuoteRequest) (transport.CreateOfferResponse, error) {
 	partner, err := s.repo.GetByID(ctx, req.PartnerID, tenantID)
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
 
-	serviceCtx, err := s.resolveOfferContext(ctx, tenantID, req.LeadServiceID)
+	q, err := s.repo.GetQuoteForOffer(ctx, req.QuoteID, tenantID)
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
 
-	if err := s.ensureOfferAvailable(ctx, req.LeadServiceID); err != nil {
+	if strings.TrimSpace(q.Status) != "Accepted" {
+		return transport.CreateOfferResponse{}, apperr.Conflict("quote must be Accepted")
+	}
+	if q.LeadServiceID == nil || *q.LeadServiceID == uuid.Nil {
+		return transport.CreateOfferResponse{}, apperr.Validation("quote must be linked to a lead service")
+	}
+	if q.TotalCents <= 0 {
+		return transport.CreateOfferResponse{}, apperr.Validation("quote total must be greater than 0")
+	}
+
+	leadServiceID := *q.LeadServiceID
+
+	serviceCtx, err := s.resolveOfferContext(ctx, tenantID, leadServiceID)
+	if err != nil {
+		return transport.CreateOfferResponse{}, err
+	}
+
+	if err := s.ensureOfferAvailable(ctx, leadServiceID); err != nil {
 		return transport.CreateOfferResponse{}, err
 	}
 
@@ -64,22 +83,33 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 		return transport.CreateOfferResponse{}, err
 	}
 
-	vakmanPrice := calculateVakmanPrice(req.CustomerPriceCents)
-	expiry := time.Now().UTC().Add(time.Duration(req.ExpiresInHours) * time.Hour)
-	items := s.fetchOfferItems(ctx, req.LeadServiceID, tenantID)
+	vakmanPrice := calculateVakmanPrice(q.TotalCents)
+	effectiveExpiryHours := req.ExpiresInHours
+	if effectiveExpiryHours <= 0 {
+		effectiveExpiryHours = maxOfferExpiryHours
+	}
+	if effectiveExpiryHours > maxOfferExpiryHours {
+		effectiveExpiryHours = maxOfferExpiryHours
+	}
+	expiry := time.Now().UTC().Add(time.Duration(effectiveExpiryHours) * time.Hour)
+
+	items, itemsErr := s.repo.GetQuoteItemsForQuote(ctx, req.QuoteID, tenantID)
+	if itemsErr != nil {
+		items = nil
+	}
 
 	scopeAssessment := buildScopeAssessment(items)
-	builderSummaryPtr := s.resolveBuilderSummary(ctx, tenantID, items, scopeAssessment, serviceCtx, req.LeadServiceID)
+	builderSummaryPtr := s.resolveBuilderSummary(ctx, tenantID, items, scopeAssessment, serviceCtx, leadServiceID)
 	jobSummaryPtr := sanitizeJobSummary(req.JobSummaryShort)
 
 	offer, err := s.repo.CreateOffer(ctx, repository.PartnerOffer{
 		OrganizationID:     tenantID,
 		PartnerID:          req.PartnerID,
-		LeadServiceID:      req.LeadServiceID,
+		LeadServiceID:      leadServiceID,
 		PublicToken:        rawToken,
 		ExpiresAt:          expiry,
-		PricingSource:      req.PricingSource,
-		CustomerPriceCents: req.CustomerPriceCents,
+		PricingSource:      "quote",
+		CustomerPriceCents: q.TotalCents,
 		VakmanPriceCents:   vakmanPrice,
 		JobSummaryShort:    jobSummaryPtr,
 		BuilderSummary:     builderSummaryPtr,
@@ -92,7 +122,7 @@ func (s *Service) CreateOffer(ctx context.Context, tenantID uuid.UUID, req trans
 		offerID:       offer.ID,
 		tenantID:      tenantID,
 		partnerID:     req.PartnerID,
-		leadServiceID: req.LeadServiceID,
+		leadServiceID: leadServiceID,
 		leadID:        serviceCtx.LeadID,
 		vakmanPrice:   vakmanPrice,
 		rawToken:      rawToken,
@@ -532,6 +562,38 @@ func parseInclusionList(value string) []string {
 	return items
 }
 
+// ListOffers returns the global offers overview (admin view), paginated.
+func (s *Service) ListOffers(ctx context.Context, tenantID uuid.UUID, req transport.ListOffersRequest) (transport.OfferListResponse, error) {
+	result, err := s.repo.ListOffers(ctx, repository.OfferListParams{
+		OrganizationID: tenantID,
+		Search:         req.Search,
+		Status:         req.Status,
+		PartnerID:      req.PartnerID,
+		LeadServiceID:  req.LeadServiceID,
+		ServiceTypeID:  req.ServiceTypeID,
+		SortBy:         req.SortBy,
+		SortOrder:      req.SortOrder,
+		Page:           req.Page,
+		PageSize:       req.PageSize,
+	})
+	if err != nil {
+		return transport.OfferListResponse{}, err
+	}
+
+	items := make([]transport.OfferResponse, 0, len(result.Items))
+	for _, o := range result.Items {
+		items = append(items, mapOfferResponse(o))
+	}
+
+	return transport.OfferListResponse{
+		Items:      items,
+		Total:      result.Total,
+		Page:       result.Page,
+		PageSize:   result.PageSize,
+		TotalPages: result.TotalPages,
+	}, nil
+}
+
 // ListOffersByPartner returns all offers for a given partner (admin view).
 func (s *Service) ListOffersByPartner(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID) (transport.ListOffersResponse, error) {
 	if err := s.ensurePartnerExists(ctx, tenantID, partnerID); err != nil {
@@ -611,6 +673,17 @@ func mapOfferResponse(oc repository.PartnerOfferWithContext) transport.OfferResp
 		RejectedAt:         oc.RejectedAt,
 		CreatedAt:          oc.CreatedAt,
 	}
+	if strings.TrimSpace(oc.ServiceType) != "" {
+		resp.ServiceType = &oc.ServiceType
+	}
+	if strings.TrimSpace(oc.LeadCity) != "" {
+		resp.LeadCity = &oc.LeadCity
+	}
+
+	if oc.ServiceTypeID != uuid.Nil {
+		resp.ServiceTypeID = &oc.ServiceTypeID
+	}
+
 	if oc.RejectionReason != nil {
 		resp.RejectionReason = *oc.RejectionReason
 	}

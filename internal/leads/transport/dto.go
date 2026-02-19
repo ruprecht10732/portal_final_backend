@@ -101,6 +101,10 @@ type AddServiceRequest struct {
 	Source             string      `json:"source,omitempty" validate:"max=50"`
 }
 
+type UpdateServiceTypeRequest struct {
+	ServiceType ServiceType `json:"serviceType" validate:"required,min=1,max=100"`
+}
+
 type UpdateLeadStatusRequest struct {
 	Status LeadStatus `json:"status" validate:"required,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Disqualified"`
 }

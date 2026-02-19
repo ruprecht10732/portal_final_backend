@@ -52,7 +52,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:id/offers", h.ListPartnerOffers)
 
 	// Offer routes (authenticated / admin)
-	rg.POST("/offers", h.CreateOffer)
+	rg.POST("/offers/from-quote", h.CreateOfferFromQuote)
+	rg.GET("/offers", h.ListOffers)
 	rg.GET("/services/:serviceId/offers", h.ListServiceOffers)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 }
@@ -478,8 +479,8 @@ func (h *Handler) RevokeInvite(c *gin.Context) {
 	httpkit.OK(c, result)
 }
 
-func (h *Handler) CreateOffer(c *gin.Context) {
-	var req transport.CreateOfferRequest
+func (h *Handler) CreateOfferFromQuote(c *gin.Context) {
+	var req transport.CreateOfferFromQuoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
@@ -498,7 +499,7 @@ func (h *Handler) CreateOffer(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.CreateOffer(c.Request.Context(), tenantID, req)
+	result, err := h.svc.CreateOfferFromQuote(c.Request.Context(), tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -571,6 +572,34 @@ func (h *Handler) ListServiceOffers(c *gin.Context) {
 	}
 
 	result, err := h.svc.ListOffersForService(c.Request.Context(), tenantID, serviceID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) ListOffers(c *gin.Context) {
+	var req transport.ListOffersRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.ListOffers(c.Request.Context(), tenantID, req)
 	if httpkit.HandleError(c, err) {
 		return
 	}

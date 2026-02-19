@@ -43,6 +43,7 @@ type PartnerOfferWithContext struct {
 	OrganizationName   string
 	LeadCity           string
 	ServiceType        string
+	ServiceTypeID      uuid.UUID
 	LeadPostcode4      *string
 	LeadBuurtcode      *string
 	LeadEnergyBouwjaar *int
@@ -60,6 +61,17 @@ type LeadServiceSummaryContext struct {
 	LeadID       uuid.UUID
 	ServiceType  string
 	UrgencyLevel *string
+}
+
+// QuoteForOffer is the minimal quote header data needed to validate and create an offer.
+// Kept local to the partners context to avoid cross-module dependencies.
+type QuoteForOffer struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	LeadID         uuid.UUID
+	LeadServiceID  *uuid.UUID
+	Status         string
+	TotalCents     int64
 }
 
 const offerNotFoundMsg = "offer not found"
@@ -309,6 +321,62 @@ func (r *Repository) GetLatestQuoteItemsForService(ctx context.Context, leadServ
 	return items, nil
 }
 
+// GetQuoteForOffer retrieves the quote header needed for offer creation.
+func (r *Repository) GetQuoteForOffer(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID) (QuoteForOffer, error) {
+	query := `
+		SELECT id, organization_id, lead_id, lead_service_id, status, total_cents
+		FROM RAC_quotes
+		WHERE id = $1 AND organization_id = $2`
+
+	var q QuoteForOffer
+	err := r.pool.QueryRow(ctx, query, quoteID, organizationID).Scan(
+		&q.ID,
+		&q.OrganizationID,
+		&q.LeadID,
+		&q.LeadServiceID,
+		&q.Status,
+		&q.TotalCents,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return QuoteForOffer{}, apperr.NotFound("quote not found")
+	}
+	if err != nil {
+		return QuoteForOffer{}, fmt.Errorf("get quote for offer: %w", err)
+	}
+
+	return q, nil
+}
+
+// GetQuoteItemsForQuote returns selected/non-optional line items for a specific quote.
+func (r *Repository) GetQuoteItemsForQuote(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID) ([]QuoteItemSummary, error) {
+	query := `
+		SELECT qi.description, qi.quantity
+		FROM RAC_quote_items qi
+		WHERE qi.quote_id = $1 AND qi.organization_id = $2
+			AND (qi.is_optional = false OR qi.is_selected = true)
+		ORDER BY qi.sort_order ASC`
+
+	rows, err := r.pool.Query(ctx, query, quoteID, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("query quote items for quote: %w", err)
+	}
+	defer rows.Close()
+
+	var items []QuoteItemSummary
+	for rows.Next() {
+		var it QuoteItemSummary
+		if err := rows.Scan(&it.Description, &it.Quantity); err != nil {
+			return nil, fmt.Errorf("scan quote item summary: %w", err)
+		}
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate quote item summaries: %w", err)
+	}
+
+	return items, nil
+}
+
 // ListOffersForService returns all offers for a given lead service.
 func (r *Repository) ListOffersForService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]PartnerOfferWithContext, error) {
 	query := `
@@ -395,6 +463,7 @@ func (r *Repository) ListOffersByPartner(ctx context.Context, partnerID uuid.UUI
 			&oc.OrganizationName,
 			&oc.LeadCity,
 			&oc.ServiceType,
+			&oc.ServiceTypeID,
 		); err != nil {
 			return nil, fmt.Errorf("scan partner offer: %w", err)
 		}
@@ -501,4 +570,205 @@ func (r *Repository) ExpireOffers(ctx context.Context) ([]PartnerOffer, error) {
 	}
 
 	return expired, nil
+}
+
+// OfferListParams defines filters/sort/paging for the global offers overview.
+// NOTE: SortBy/SortOrder are validated at the transport layer, but we still
+// resolve them here to safe SQL fragments.
+type OfferListParams struct {
+	OrganizationID uuid.UUID
+	Search         string
+	Status         string
+	PartnerID      *uuid.UUID
+	LeadServiceID  *uuid.UUID
+	ServiceTypeID  *uuid.UUID
+	SortBy         string
+	SortOrder      string
+	Page           int
+	PageSize       int
+}
+
+type OfferListResult struct {
+	Items      []PartnerOfferWithContext
+	Total      int
+	Page       int
+	PageSize   int
+	TotalPages int
+}
+
+func normalizeOfferListPaging(page int, pageSize int) (normalizedPage int, normalizedPageSize int, offset int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize, (page - 1) * pageSize
+}
+
+func calcTotalPages(total int, pageSize int) int {
+	if pageSize <= 0 {
+		return 0
+	}
+	return (total + pageSize - 1) / pageSize
+}
+
+func buildOfferListWhere(params OfferListParams) (whereSQL string, args []interface{}, nextArg int) {
+	where := []string{"o.organization_id = $1"}
+	args = []interface{}{params.OrganizationID}
+	nextArg = 2
+
+	if strings.TrimSpace(params.Search) != "" {
+		search := "%" + strings.TrimSpace(params.Search) + "%"
+		where = append(where, fmt.Sprintf("(p.business_name ILIKE $%d OR st.name ILIKE $%d OR l.address_city ILIKE $%d)", nextArg, nextArg, nextArg))
+		args = append(args, search)
+		nextArg++
+	}
+	if strings.TrimSpace(params.Status) != "" {
+		where = append(where, fmt.Sprintf("o.status = $%d", nextArg))
+		args = append(args, strings.TrimSpace(params.Status))
+		nextArg++
+	}
+	if params.PartnerID != nil {
+		where = append(where, fmt.Sprintf("o.partner_id = $%d", nextArg))
+		args = append(args, *params.PartnerID)
+		nextArg++
+	}
+	if params.LeadServiceID != nil {
+		where = append(where, fmt.Sprintf("o.lead_service_id = $%d", nextArg))
+		args = append(args, *params.LeadServiceID)
+		nextArg++
+	}
+	if params.ServiceTypeID != nil {
+		where = append(where, fmt.Sprintf("ls.service_type_id = $%d", nextArg))
+		args = append(args, *params.ServiceTypeID)
+		nextArg++
+	}
+
+	return "WHERE " + strings.Join(where, " AND "), args, nextArg
+}
+
+// ListOffers returns a paginated list of offers across all partners in a tenant.
+func (r *Repository) ListOffers(ctx context.Context, params OfferListParams) (OfferListResult, error) {
+	sortCol, err := resolveOfferSortBy(params.SortBy)
+	if err != nil {
+		return OfferListResult{}, err
+	}
+	orderBy, err := resolveOfferSortOrder(params.SortOrder)
+	if err != nil {
+		return OfferListResult{}, err
+	}
+
+	page, pageSize, offset := normalizeOfferListPaging(params.Page, params.PageSize)
+
+	baseFrom := `
+FROM RAC_partner_offers o
+JOIN RAC_partners p ON p.id = o.partner_id
+JOIN RAC_organizations org ON org.id = o.organization_id
+JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
+JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+JOIN RAC_leads l ON l.id = ls.lead_id
+`
+
+	whereSQL, args, argN := buildOfferListWhere(params)
+
+	var total int
+	countQuery := "SELECT COUNT(*) " + baseFrom + " " + whereSQL
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return OfferListResult{}, fmt.Errorf("count offers: %w", err)
+	}
+
+	totalPages := calcTotalPages(total, pageSize)
+
+	selectQuery := `
+SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
+       o.public_token, o.expires_at,
+       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
+       o.job_summary_short,
+       o.builder_summary,
+       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
+       o.inspection_availability, o.job_availability,
+       o.created_at, o.updated_at,
+       p.business_name,
+       org.name,
+       l.address_city,
+	st.name AS service_type,
+	ls.service_type_id
+` + baseFrom + " " + whereSQL + "\n" +
+		"ORDER BY " + sortCol + " " + orderBy + ", o.created_at DESC\n" +
+		fmt.Sprintf("LIMIT $%d OFFSET $%d", argN, argN+1)
+
+	args = append(args, pageSize, offset)
+	rows, err := r.pool.Query(ctx, selectQuery, args...)
+	if err != nil {
+		return OfferListResult{}, fmt.Errorf("list offers: %w", err)
+	}
+	defer rows.Close()
+
+	offers := make([]PartnerOfferWithContext, 0)
+	for rows.Next() {
+		var oc PartnerOfferWithContext
+		if err := rows.Scan(
+			&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
+			&oc.PublicToken, &oc.ExpiresAt,
+			&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
+			&oc.JobSummaryShort,
+			&oc.BuilderSummary,
+			&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
+			&oc.InspectionAvailability, &oc.JobAvailability,
+			&oc.CreatedAt, &oc.UpdatedAt,
+			&oc.PartnerName,
+			&oc.OrganizationName,
+			&oc.LeadCity,
+			&oc.ServiceType,
+			&oc.ServiceTypeID,
+		); err != nil {
+			return OfferListResult{}, fmt.Errorf("scan offer: %w", err)
+		}
+		offers = append(offers, oc)
+	}
+	if err := rows.Err(); err != nil {
+		return OfferListResult{}, fmt.Errorf("iterate offers: %w", err)
+	}
+
+	return OfferListResult{Items: offers, Total: total, Page: page, PageSize: pageSize, TotalPages: totalPages}, nil
+}
+
+func resolveOfferSortBy(value string) (string, error) {
+	if value == "" {
+		return "o.created_at", nil
+	}
+	switch value {
+	case "createdAt":
+		return "o.created_at", nil
+	case "expiresAt":
+		return "o.expires_at", nil
+	case "status":
+		return "o.status", nil
+	case "partnerName":
+		return "p.business_name", nil
+	case "serviceType":
+		return "st.name", nil
+	case "vakmanPriceCents":
+		return "o.vakman_price_cents", nil
+	case "customerPriceCents":
+		return "o.customer_price_cents", nil
+	default:
+		return "", apperr.BadRequest("invalid sort field")
+	}
+}
+
+func resolveOfferSortOrder(value string) (string, error) {
+	if value == "" {
+		return "desc", nil
+	}
+	switch value {
+	case "asc", "desc":
+		return value, nil
+	default:
+		return "", apperr.BadRequest("invalid sort order")
+	}
 }

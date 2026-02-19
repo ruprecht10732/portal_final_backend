@@ -860,6 +860,41 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 	return s.GetByID(ctx, leadID, tenantID)
 }
 
+// UpdateServiceType updates the service type of a specific service.
+func (s *Service) UpdateServiceType(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, req transport.UpdateServiceTypeRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
+	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
+		}
+		return transport.LeadResponse{}, err
+	}
+	if svc.LeadID != leadID {
+		return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
+	}
+
+	_, err = s.repo.UpdateLeadServiceType(ctx, serviceID, tenantID, string(req.ServiceType))
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceTypeNotFound) {
+			return transport.LeadResponse{}, apperr.Validation("service type not found or inactive")
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	// Publish event for potential workflow reassessment and AI re-analysis
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.LeadDataChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        leadID,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			Source:        "service_type_update",
+		})
+	}
+
+	return s.GetByID(ctx, leadID, tenantID)
+}
+
 func (s *Service) disqualifyServiceAndMarkLost(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, tenantID uuid.UUID, notFoundMsg string) (transport.LeadResponse, error) {
 	if _, err := s.repo.UpdateServiceStatusAndPipelineStage(ctx, serviceID, tenantID, domain.LeadStatusDisqualified, domain.PipelineStageLost); err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {

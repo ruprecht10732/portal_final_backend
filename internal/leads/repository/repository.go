@@ -354,23 +354,27 @@ func (r *Repository) GetByPhoneOrEmail(ctx context.Context, phone string, email 
 	return &summary, services, nil
 }
 
-// GetLatestQuoteTotal returns the most recent quote total for a lead service.
-func (r *Repository) GetLatestQuoteTotal(ctx context.Context, serviceID, organizationID uuid.UUID) (int64, error) {
-	var total int64
+// GetLatestAcceptedQuoteIDForService returns the most recent Accepted quote ID for a lead service.
+// This is used by agent tooling to create partner offers in quote-only mode.
+func (r *Repository) GetLatestAcceptedQuoteIDForService(ctx context.Context, serviceID, organizationID uuid.UUID) (uuid.UUID, error) {
+	var quoteID uuid.UUID
 	err := r.pool.QueryRow(ctx, `
-		SELECT total_cents
+		SELECT id
 		FROM RAC_quotes
-		WHERE lead_service_id = $1 AND organization_id = $2
+		WHERE lead_service_id = $1
+			AND organization_id = $2
+			AND status = 'Accepted'
+			AND total_cents > 0
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, serviceID, organizationID).Scan(&total)
+	`, serviceID, organizationID).Scan(&quoteID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, apperr.NotFound("quote not found")
+		return uuid.Nil, apperr.NotFound("accepted quote not found")
 	}
 	if err != nil {
-		return 0, err
+		return uuid.Nil, err
 	}
-	return total, nil
+	return quoteID, nil
 }
 
 func (r *Repository) HasNonDraftQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (bool, error) {

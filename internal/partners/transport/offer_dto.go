@@ -8,14 +8,13 @@ import (
 
 // --- Internal API (Dispatcher / Agent) ---
 
-// CreateOfferRequest is the internal request to create a partner offer.
-type CreateOfferRequest struct {
-	PartnerID          uuid.UUID `json:"partnerId" validate:"required"`
-	LeadServiceID      uuid.UUID `json:"leadServiceId" validate:"required"`
-	PricingSource      string    `json:"pricingSource" validate:"required,oneof=quote estimate"`
-	CustomerPriceCents int64     `json:"customerPriceCents" validate:"min=0"`
-	ExpiresInHours     int       `json:"expiresInHours" validate:"required,min=1,max=168"`
-	JobSummaryShort    string    `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
+// CreateOfferFromQuoteRequest creates a partner offer from a specific quote.
+// The backend derives leadServiceId and customerPriceCents from the quote.
+type CreateOfferFromQuoteRequest struct {
+	PartnerID       uuid.UUID `json:"partnerId" validate:"required"`
+	QuoteID         uuid.UUID `json:"quoteId" validate:"required"`
+	ExpiresInHours  int       `json:"expiresInHours" validate:"required,min=1,max=12"`
+	JobSummaryShort string    `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
 }
 
 // CreateOfferResponse is returned after successfully creating an offer.
@@ -31,6 +30,9 @@ type OfferResponse struct {
 	ID                 uuid.UUID  `json:"id"`
 	PartnerID          uuid.UUID  `json:"partnerId"`
 	PartnerName        string     `json:"partnerName"`
+	ServiceType        *string    `json:"serviceType,omitempty"`
+	ServiceTypeID      *uuid.UUID `json:"serviceTypeId,omitempty"`
+	LeadCity           *string    `json:"leadCity,omitempty"`
 	LeadServiceID      uuid.UUID  `json:"leadServiceId"`
 	PricingSource      string     `json:"pricingSource"`
 	CustomerPriceCents int64      `json:"customerPriceCents"`
@@ -47,6 +49,29 @@ type OfferResponse struct {
 // ListOffersResponse is the paginated list of offers for a lead service.
 type ListOffersResponse struct {
 	Items []OfferResponse `json:"items"`
+}
+
+// ListOffersRequest is the admin/agent query for the global offers overview.
+// Mirrors other list endpoints: search + paging + sort + filters.
+type ListOffersRequest struct {
+	Search        string     `form:"search" validate:"max=100"`
+	Page          int        `form:"page" validate:"omitempty,min=1"`
+	PageSize      int        `form:"pageSize" validate:"omitempty,min=1,max=100"`
+	SortBy        string     `form:"sortBy" validate:"omitempty,oneof=createdAt expiresAt status partnerName serviceType vakmanPriceCents customerPriceCents"`
+	SortOrder     string     `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
+	Status        string     `form:"status" validate:"omitempty,oneof=pending sent accepted rejected expired"`
+	PartnerID     *uuid.UUID `form:"partnerId" validate:"omitempty"`
+	LeadServiceID *uuid.UUID `form:"leadServiceId" validate:"omitempty"`
+	ServiceTypeID *uuid.UUID `form:"serviceTypeId" validate:"omitempty"`
+}
+
+// OfferListResponse is the paginated list response for the global offers overview.
+type OfferListResponse struct {
+	Items      []OfferResponse `json:"items"`
+	Total      int             `json:"total"`
+	Page       int             `json:"page"`
+	PageSize   int             `json:"pageSize"`
+	TotalPages int             `json:"totalPages"`
 }
 
 // --- Public API (Vakman-facing) ---

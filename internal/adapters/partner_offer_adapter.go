@@ -19,17 +19,15 @@ func NewPartnerOfferAdapter(s *service.Service) *PartnerOfferAdapter {
 	return &PartnerOfferAdapter{service: s}
 }
 
-func (a *PartnerOfferAdapter) CreateOffer(ctx context.Context, tenantID uuid.UUID, req ports.CreateOfferParams) (*ports.CreateOfferResult, error) {
-	transportReq := transport.CreateOfferRequest{
-		PartnerID:          req.PartnerID,
-		LeadServiceID:      req.LeadServiceID,
-		PricingSource:      req.PricingSource,
-		CustomerPriceCents: req.CustomerPriceCents,
-		ExpiresInHours:     req.ExpiresInHours,
-		JobSummaryShort:    req.JobSummaryShort,
+func (a *PartnerOfferAdapter) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, req ports.CreateOfferFromQuoteParams) (*ports.CreateOfferResult, error) {
+	transportReq := transport.CreateOfferFromQuoteRequest{
+		PartnerID:       req.PartnerID,
+		QuoteID:         req.QuoteID,
+		ExpiresInHours:  req.ExpiresInHours,
+		JobSummaryShort: req.JobSummaryShort,
 	}
 
-	resp, err := a.service.CreateOffer(ctx, tenantID, transportReq)
+	resp, err := a.service.CreateOfferFromQuote(ctx, tenantID, transportReq)
 	if err != nil {
 		return nil, err
 	}
