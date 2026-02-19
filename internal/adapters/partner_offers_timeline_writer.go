@@ -5,8 +5,6 @@ import (
 
 	leadsrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
-
-	"github.com/google/uuid"
 )
 
 // PartnerOffersTimelineWriter adapts the leads TimelineEventStore for the partner offers domain.
@@ -20,17 +18,17 @@ func NewPartnerOffersTimelineWriter(store leadsrepo.TimelineEventStore) *Partner
 }
 
 // WriteOfferEvent writes a timeline event from the partner-offer domain into the leads timeline.
-func (a *PartnerOffersTimelineWriter) WriteOfferEvent(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, orgID uuid.UUID, actorType, actorName, eventType, title string, summary *string, metadata map[string]any) error {
+func (a *PartnerOffersTimelineWriter) WriteOfferEvent(ctx context.Context, p notification.PartnerOfferTimelineEventParams) error {
 	_, err := a.store.CreateTimelineEvent(ctx, leadsrepo.CreateTimelineEventParams{
-		LeadID:         leadID,
-		ServiceID:      serviceID,
-		OrganizationID: orgID,
-		ActorType:      actorType,
-		ActorName:      actorName,
-		EventType:      eventType,
-		Title:          title,
-		Summary:        summary,
-		Metadata:       metadata,
+		LeadID:         p.LeadID,
+		ServiceID:      p.ServiceID,
+		OrganizationID: p.OrgID,
+		ActorType:      p.ActorType,
+		ActorName:      p.ActorName,
+		EventType:      p.EventType,
+		Title:          p.Title,
+		Summary:        p.Summary,
+		Metadata:       p.Metadata,
 	})
 	return err
 }

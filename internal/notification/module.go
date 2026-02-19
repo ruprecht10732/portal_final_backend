@@ -42,9 +42,23 @@ type QuoteActivityWriter interface {
 	CreateActivity(ctx context.Context, quoteID, orgID uuid.UUID, eventType, message string, metadata map[string]interface{}) error
 }
 
+// PartnerOfferTimelineEventParams describes the payload for a partner-offer timeline event.
+// Kept as a struct to avoid long parameter lists at call sites.
+type PartnerOfferTimelineEventParams struct {
+	LeadID    uuid.UUID
+	ServiceID *uuid.UUID
+	OrgID     uuid.UUID
+	ActorType string
+	ActorName string
+	EventType string
+	Title     string
+	Summary   *string
+	Metadata  map[string]any
+}
+
 // PartnerOfferTimelineWriter writes partner-offer events into the leads timeline.
 type PartnerOfferTimelineWriter interface {
-	WriteOfferEvent(ctx context.Context, leadID uuid.UUID, serviceID *uuid.UUID, orgID uuid.UUID, actorType, actorName, eventType, title string, summary *string, metadata map[string]any) error
+	WriteOfferEvent(ctx context.Context, params PartnerOfferTimelineEventParams) error
 }
 
 // WhatsAppSender sends WhatsApp messages.
@@ -1065,13 +1079,16 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 		serviceID := e.LeadServiceID
 		summary := fmt.Sprintf("Aanbod van %s naar %s verstuurd", priceFormatted, e.PartnerName)
 		drafts := buildPartnerOfferCreatedDrafts(e.PartnerName, priceFormatted, acceptURL)
-		if err := m.offerTimeline.WriteOfferEvent(ctx,
-			e.LeadID, &serviceID, e.OrganizationID,
-			"System", "Offer Dispatch",
-			"partner_offer_created",
-			"Werkaanbod verstuurd naar vakman",
-			&summary,
-			map[string]any{
+		if err := m.offerTimeline.WriteOfferEvent(ctx, PartnerOfferTimelineEventParams{
+			LeadID:    e.LeadID,
+			ServiceID: &serviceID,
+			OrgID:     e.OrganizationID,
+			ActorType: "System",
+			ActorName: "Offer Dispatch",
+			EventType: "partner_offer_created",
+			Title:     "Werkaanbod verstuurd naar vakman",
+			Summary:   &summary,
+			Metadata: map[string]any{
 				"offerId":          e.OfferID.String(),
 				"partnerId":        e.PartnerID.String(),
 				"partnerName":      e.PartnerName,
@@ -1081,7 +1098,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 				"whatsappUrl":      whatsappURL,
 				"drafts":           drafts,
 			},
-		); err != nil {
+		}); err != nil {
 			m.log.Error("failed to write partner offer timeline event",
 				"offerId", e.OfferID,
 				"error", err,
@@ -1251,18 +1268,21 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 	if m.offerTimeline != nil {
 		serviceID := e.LeadServiceID
 		summary := fmt.Sprintf("%s heeft het werkaanbod geaccepteerd en beschikbaarheid doorgegeven", e.PartnerName)
-		if err := m.offerTimeline.WriteOfferEvent(ctx,
-			e.LeadID, &serviceID, e.OrganizationID,
-			"Partner", e.PartnerName,
-			"partner_offer_accepted",
-			"Werkaanbod geaccepteerd",
-			&summary,
-			map[string]any{
+		if err := m.offerTimeline.WriteOfferEvent(ctx, PartnerOfferTimelineEventParams{
+			LeadID:    e.LeadID,
+			ServiceID: &serviceID,
+			OrgID:     e.OrganizationID,
+			ActorType: "Partner",
+			ActorName: e.PartnerName,
+			EventType: "partner_offer_accepted",
+			Title:     "Werkaanbod geaccepteerd",
+			Summary:   &summary,
+			Metadata: map[string]any{
 				"offerId":     e.OfferID.String(),
 				"partnerId":   e.PartnerID.String(),
 				"partnerName": e.PartnerName,
 			},
-		); err != nil {
+		}); err != nil {
 			m.log.Error("failed to write partner offer accepted timeline event",
 				"offerId", e.OfferID,
 				"error", err,
@@ -1342,20 +1362,23 @@ func (m *Module) handlePartnerOfferRejected(ctx context.Context, e events.Partne
 			summary += fmt.Sprintf(" — reden: %s", e.Reason)
 		}
 		drafts := buildPartnerOfferRejectedDrafts(e.PartnerName, e.Reason)
-		if err := m.offerTimeline.WriteOfferEvent(ctx,
-			e.LeadID, &serviceID, e.OrganizationID,
-			"Partner", e.PartnerName,
-			"partner_offer_rejected",
-			"Werkaanbod afgewezen",
-			&summary,
-			map[string]any{
+		if err := m.offerTimeline.WriteOfferEvent(ctx, PartnerOfferTimelineEventParams{
+			LeadID:    e.LeadID,
+			ServiceID: &serviceID,
+			OrgID:     e.OrganizationID,
+			ActorType: "Partner",
+			ActorName: e.PartnerName,
+			EventType: "partner_offer_rejected",
+			Title:     "Werkaanbod afgewezen",
+			Summary:   &summary,
+			Metadata: map[string]any{
 				"offerId":     e.OfferID.String(),
 				"partnerId":   e.PartnerID.String(),
 				"partnerName": e.PartnerName,
 				"reason":      e.Reason,
 				"drafts":      drafts,
 			},
-		); err != nil {
+		}); err != nil {
 			m.log.Error("failed to write partner offer rejected timeline event",
 				"offerId", e.OfferID,
 				"error", err,
@@ -1393,19 +1416,22 @@ func (m *Module) handlePartnerOfferExpired(ctx context.Context, e events.Partner
 		serviceID := e.LeadServiceID
 		summary := fmt.Sprintf("Werkaanbod naar %s is verlopen zonder reactie", e.PartnerName)
 		drafts := buildPartnerOfferExpiredDrafts(e.PartnerName)
-		if err := m.offerTimeline.WriteOfferEvent(ctx,
-			e.LeadID, &serviceID, e.OrganizationID,
-			"System", "Offer Expiry",
-			"partner_offer_expired",
-			"Werkaanbod verlopen",
-			&summary,
-			map[string]any{
+		if err := m.offerTimeline.WriteOfferEvent(ctx, PartnerOfferTimelineEventParams{
+			LeadID:    e.LeadID,
+			ServiceID: &serviceID,
+			OrgID:     e.OrganizationID,
+			ActorType: "System",
+			ActorName: "Offer Expiry",
+			EventType: "partner_offer_expired",
+			Title:     "Werkaanbod verlopen",
+			Summary:   &summary,
+			Metadata: map[string]any{
 				"offerId":     e.OfferID.String(),
 				"partnerId":   e.PartnerID.String(),
 				"partnerName": e.PartnerName,
 				"drafts":      drafts,
 			},
-		); err != nil {
+		}); err != nil {
 			m.log.Error("failed to write partner offer expired timeline event",
 				"offerId", e.OfferID,
 				"error", err,
