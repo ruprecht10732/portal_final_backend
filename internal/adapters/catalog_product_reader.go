@@ -34,6 +34,16 @@ func (a *CatalogProductReader) GetProductDetails(ctx context.Context, orgID uuid
 		return nil, fmt.Errorf("catalog adapter: get products: %w", err)
 	}
 
+	// Safety: never expose draft products to the leads AI flows.
+	filtered := make([]catrepo.Product, 0, len(products))
+	for _, p := range products {
+		if p.IsDraft {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	products = filtered
+
 	// Collect unique VAT rate IDs.
 	vatIDs := make(map[uuid.UUID]struct{})
 	for _, p := range products {

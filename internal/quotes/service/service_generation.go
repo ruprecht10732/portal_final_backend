@@ -8,6 +8,7 @@ import (
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/quotes/repository"
 	"portal_final_backend/internal/quotes/transport"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
@@ -63,7 +64,15 @@ func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, l
 
 	s.publishJobProgress(job)
 
-	if err := s.jobQueue.EnqueueGenerateQuoteJobRequest(ctx, job.JobID, tenantID, userID, leadID, serviceID, prompt, existingQuoteID); err != nil {
+	if err := s.jobQueue.EnqueueGenerateQuoteJobRequest(ctx, scheduler.GenerateQuoteJobRequest{
+		JobID:         job.JobID,
+		TenantID:      tenantID,
+		UserID:        userID,
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		Prompt:        prompt,
+		QuoteID:       existingQuoteID,
+	}); err != nil {
 		errText := err.Error()
 		if progressErr := s.updateJobProgress(ctx, job.JobID, GenerateQuoteJobStatusFailed, jobStepQueueFailed, 100, &errText); progressErr != nil {
 			return uuid.Nil, fmt.Errorf("enqueue generate quote job: %w (status update failed: %v)", err, progressErr)

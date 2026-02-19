@@ -26,7 +26,7 @@ func New(pool *pgxpool.Pool) *Repository {
 // ListActiveServiceTypes returns active service types with intake guidelines for AI context.
 func (r *Repository) ListActiveServiceTypes(ctx context.Context, organizationID uuid.UUID) ([]ServiceContextDefinition, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT name, description, intake_guidelines
+		SELECT name, description, intake_guidelines, estimation_guidelines
 		FROM RAC_service_types
 		WHERE organization_id = $1 AND is_active = true
 		ORDER BY name ASC
@@ -39,7 +39,7 @@ func (r *Repository) ListActiveServiceTypes(ctx context.Context, organizationID 
 	items := make([]ServiceContextDefinition, 0)
 	for rows.Next() {
 		var item ServiceContextDefinition
-		if err := rows.Scan(&item.Name, &item.Description, &item.IntakeGuidelines); err != nil {
+		if err := rows.Scan(&item.Name, &item.Description, &item.IntakeGuidelines, &item.EstimationGuidelines); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

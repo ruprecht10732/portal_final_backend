@@ -334,6 +334,11 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays:            settings.QuotePaymentDays,
 		QuoteValidDays:              settings.QuoteValidDays,
+		AIAutoDisqualifyJunk:        settings.AIAutoDisqualifyJunk,
+		AIAutoDispatch:              settings.AIAutoDispatch,
+		AIAutoEstimate:              settings.AIAutoEstimate,
+		CatalogGapThreshold:         settings.CatalogGapThreshold,
+		CatalogGapLookbackDays:      settings.CatalogGapLookbackDays,
 		NotificationEmail:           settings.NotificationEmail,
 		WhatsAppDeviceID:            settings.WhatsAppDeviceID,
 		WhatsAppWelcomeDelayMinutes: settings.WhatsAppWelcomeDelayMinutes,
@@ -379,6 +384,11 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 	settings, err := h.svc.UpdateOrganizationSettings(c.Request.Context(), *tenantID, repository.OrganizationSettingsUpdate{
 		QuotePaymentDays:            req.QuotePaymentDays,
 		QuoteValidDays:              req.QuoteValidDays,
+		AIAutoDisqualifyJunk:        req.AIAutoDisqualifyJunk,
+		AIAutoDispatch:              req.AIAutoDispatch,
+		AIAutoEstimate:              req.AIAutoEstimate,
+		CatalogGapThreshold:         req.CatalogGapThreshold,
+		CatalogGapLookbackDays:      req.CatalogGapLookbackDays,
 		NotificationEmail:           req.NotificationEmail,
 		WhatsAppWelcomeDelayMinutes: req.WhatsAppWelcomeDelayMinutes,
 	})
@@ -389,6 +399,11 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays:            settings.QuotePaymentDays,
 		QuoteValidDays:              settings.QuoteValidDays,
+		AIAutoDisqualifyJunk:        settings.AIAutoDisqualifyJunk,
+		AIAutoDispatch:              settings.AIAutoDispatch,
+		AIAutoEstimate:              settings.AIAutoEstimate,
+		CatalogGapThreshold:         settings.CatalogGapThreshold,
+		CatalogGapLookbackDays:      settings.CatalogGapLookbackDays,
 		NotificationEmail:           settings.NotificationEmail,
 		WhatsAppDeviceID:            settings.WhatsAppDeviceID,
 		WhatsAppWelcomeDelayMinutes: settings.WhatsAppWelcomeDelayMinutes,

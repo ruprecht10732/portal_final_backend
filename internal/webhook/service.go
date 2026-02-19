@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"time"
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
@@ -74,6 +75,23 @@ func (s *Service) ProcessFormSubmission(ctx context.Context, sub FormSubmission,
 	extracted := ExtractFields(sub.Fields)
 	isIncomplete := extracted.IsIncomplete()
 	requestedServiceType := strings.TrimSpace(extracted.ServiceType)
+
+	// 1. Check for recent duplicate
+	dupID, err := s.repo.FindRecentDuplicateLead(ctx, orgID, extracted.Email, extracted.Phone, 60*time.Second)
+	if err != nil {
+		s.log.Error("webhook: failed to check for duplicate lead", "error", err, "domain", sub.SourceDomain)
+		// Continue anyway, better to have a duplicate than lose a lead
+	} else if dupID != nil {
+		s.log.Info("webhook: duplicate lead detected, skipping creation", "leadId", *dupID, "domain", sub.SourceDomain)
+
+		extractedMap := buildExtractedMap(extracted)
+		return FormSubmissionResponse{
+			LeadID:       *dupID,
+			IsIncomplete: isIncomplete,
+			Extracted:    extractedMap,
+			Message:      "Duplicate lead ignored",
+		}, nil
+	}
 
 	createReq := buildCreateLeadRequest(extracted, sub.SourceDomain)
 	applyLeadPlaceholders(&createReq)

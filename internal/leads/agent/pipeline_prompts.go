@@ -129,12 +129,13 @@ Respond ONLY with tool calls.
 	)
 }
 
-func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis) string {
+func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis, estimationContext string) string {
 	notesSection := buildNotesSection(notes, maxEstimatorNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxEstimatorPreferencesChars)
 	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
+	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
 
 	return fmt.Sprintf(`You are a Technical Estimator.
 
@@ -181,13 +182,21 @@ Preferences (from customer portal):
 Photo Analysis:
 %s
 
+Estimation Guidelines:
+%s
+
+Catalog Improvement Signals:
+- You MUST call ListCatalogGaps once at the start to see frequent catalog search misses and frequently used ad-hoc quote items.
+- ListCatalogGaps defaults use the organization's configured catalog gap period + threshold.
+
 Instruction:
+0) Call ListCatalogGaps once at the start. Use it to:
+	- Reuse consistent wording for ad-hoc items that show up frequently.
+	- Mention up to 3 top gaps in your SaveEstimation notes as suggestions for catalog expansion.
 1) Identify the materials/products needed based on the service description and photos.
 2) Call SearchProductMaterials to find products. The tool uses semantic (vector) search, so craft your queries carefully:
 	- Use generic category names, synonyms, and Dutch/English variants.
 	- Translate consumer wording into trade + DIY/shop synonyms before searching.
-	- For each material, try at least 3 variants: (a) consumer wording, (b) professional term, (c) colloquial/store term.
-	- Example for "kantstukken": "dagkantafwerking", "deurlijst/chambranle", "aftimmerlat/afdeklat", "kozijnplint", "sponninglat".
 	- Search broad first, then narrow.
 	- Call SearchProductMaterials multiple times with DIFFERENT queries per material category.
    Always prefer the catalog collection by default.
@@ -206,7 +215,8 @@ Instruction:
 	  - Scores in 0.35-0.45 are candidate matches; verify variant/unit before using.
 	  - Items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
 	  - IMPORTANT: Do NOT decide margins/markup here. Use catalog prices as provided; commercial logic lives outside the LLM.
-3) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
+3) Use the Estimation Guidelines to ensure your quote is complete and includes all necessary layers, materials, and labor steps.
+4) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
 	Provide structured inputs (material items, quantities, labor hours range, hourly rate range, optional extra costs).
 	For each material item's unitPrice (EUROS):
 	- Prefer converting from the product's priceCents: call Calculator(operation="divide", a=priceCents, b=100).
@@ -220,7 +230,7 @@ Instruction:
 	- type = "product" or "material": the price is material-only. You MUST add separate arbeid line items for installing/mounting these.
 	Example: A "houten kozijn vervangen" at EUR 950/m2 with type "service" includes installation — no extra arbeid.
 	But "RVS scharnieren" with type "material" are material-only — add arbeid for mounting them.
-3a) Call DraftQuote to create a draft quote for the customer. For each item:
+4a) Call DraftQuote to create a draft quote for the customer. For each item:
 	- Set description using the product name. If the product has materials (the "materials" array), format as:
 	  "Product name\nInclusief:\n- Material A\n- Material B"
 	  Example: "Houten kozijn 120x80\nInclusief:\n- HR++ glas\n- Beslag set"
@@ -239,11 +249,11 @@ Instruction:
 	- For labor or ad-hoc items NOT from the catalog, omit catalogProductId.
 	- Include a notes field (in Dutch) summarizing why this quote was generated.
 	Note: Catalog product documents (PDFs, specs) and terms URLs are automatically attached to the quote — you do not need to handle attachments yourself.
-4) Determine scope: Small, Medium, or Large based on work complexity.
-5) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
+5) Determine scope: Small, Medium, or Large based on work complexity.
+6) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
 	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
 	Format notes as multiline Markdown with headings and bullet/numbered lists.
-6) Call UpdatePipelineStage with stage="Estimation" and a reason in Dutch.
+7) Call UpdatePipelineStage with stage="Estimation" and a reason in Dutch.
 	IMPORTANT: DO NOT move to "Fulfillment". We must wait for the customer to accept the quote first.
 
 Tool-call order:
@@ -268,6 +278,7 @@ Respond ONLY with tool calls.
 		notesSection,
 		preferencesSummary,
 		photoSummary,
+		estimationContextSummary,
 	)
 }
 
@@ -517,12 +528,13 @@ func containsAny(text string, terms []string) bool {
 	return false
 }
 
-func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, userPrompt string) string {
+func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, userPrompt string, estimationContext string) string {
 	notesSection := buildNotesSection(notes, maxQuoteNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxQuotePreferencesChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
 	userPromptSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(userPrompt, 2000)), maxQuoteUserPromptChars)
+	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
 
 	return fmt.Sprintf(`You are a Quote Generator.
 
@@ -556,6 +568,9 @@ Notes:
 Preferences (from customer portal):
 %s
 
+Estimation Guidelines:
+%s
+
 User Prompt:
 %s
 
@@ -582,7 +597,8 @@ Instruction:
 	 - Always check the product score/highConfidence: if highConfidence=true (score >= 0.45), you can trust the found catalog price.
 	 - Scores in 0.35-0.45 are candidate matches; verify variant/unit before using.
 	 - Items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
-3) For each product found, prepare a DraftQuote item:
+3) Use the Estimation Guidelines to ensure your quote is complete and includes all necessary layers, materials, and labor steps.
+4) For each product found, prepare a DraftQuote item:
    - Set description using the product name. If the product has materials (the "materials" array), format as:
      "Product name\nInclusief:\n- Material A\n- Material B"
      If materials is empty, just use the product name/description.
@@ -602,7 +618,7 @@ Instruction:
    - type = "service" or "digital_service": the price already INCLUDES labor. Do NOT add a separate arbeid line item.
    - type = "product" or "material": the price is material-only. Add a separate "Arbeid" line item for installing/mounting these.
    Only add arbeid for work on material/product items (e.g., mounting hinges, hanging a door).
-4) Call DraftQuote with all items and a notes field (in Dutch) summarizing what was generated.
+5) Call DraftQuote with all items and a notes field (in Dutch) summarizing what was generated.
    Catalog product documents and URLs are automatically attached — you do not need to handle attachments.
 
 If SearchProductMaterials is available, call it first. Always use Calculator for all arithmetic, then DraftQuote. Respond ONLY with tool calls.
@@ -621,6 +637,7 @@ If SearchProductMaterials is available, call it first. Always use Calculator for
 		serviceNoteSummary,
 		notesSection,
 		preferencesSummary,
+		estimationContextSummary,
 		userPromptSummary,
 	)
 }

@@ -135,6 +135,14 @@ func NewQuoteGenerator(cfg QuoteGeneratorConfig) (*QuoteGenerator, error) {
 	}, nil
 }
 
+// SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
+func (g *QuoteGenerator) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	if g == nil || g.toolDeps == nil {
+		return
+	}
+	g.toolDeps.SetOrganizationAISettingsReader(reader)
+}
+
 // SetCatalogReader injects the catalog reader (set after construction to break circular deps).
 func (g *QuoteGenerator) SetCatalogReader(cr ports.CatalogReader) {
 	g.toolDeps.CatalogReader = cr
@@ -158,6 +166,11 @@ func (g *QuoteGenerator) Generate(ctx context.Context, leadID, serviceID, tenant
 	g.toolDeps.ResetToolCallTracking()
 	g.toolDeps.SetExistingQuoteID(existingQuoteID)
 
+	// Preload org settings so shared tools (e.g. catalog search logging defaults) can use them.
+	if _, err := g.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+		log.Printf("quote generator: failed to load org AI settings (tenant=%s): %v", tenantID, err)
+	}
+
 	lead, err := g.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("quote generator: load lead: %w", err)
@@ -173,7 +186,18 @@ func (g *QuoteGenerator) Generate(ctx context.Context, leadID, serviceID, tenant
 		notes = nil
 	}
 
-	promptText := buildQuoteGeneratePrompt(lead, service, notes, userPrompt)
+	// Fetch active service types to get estimation guidelines
+	var estimationContext string
+	if serviceTypes, err := g.repo.ListActiveServiceTypes(ctx, tenantID); err == nil {
+		for _, st := range serviceTypes {
+			if st.Name == service.ServiceType && st.EstimationGuidelines != nil {
+				estimationContext = *st.EstimationGuidelines
+				break
+			}
+		}
+	}
+
+	promptText := buildQuoteGeneratePrompt(lead, service, notes, userPrompt, estimationContext)
 
 	sessionID := uuid.New().String()
 	userID := "quote-gen-" + leadID.String()

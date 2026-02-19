@@ -79,6 +79,11 @@ type OrganizationSettings struct {
 	OrganizationID              uuid.UUID
 	QuotePaymentDays            int
 	QuoteValidDays              int
+	AIAutoDisqualifyJunk        bool
+	AIAutoDispatch              bool
+	AIAutoEstimate              bool
+	CatalogGapThreshold         int
+	CatalogGapLookbackDays      int
 	NotificationEmail           *string
 	WhatsAppDeviceID            *string
 	WhatsAppWelcomeDelayMinutes int
@@ -95,6 +100,11 @@ type OrganizationSettings struct {
 type OrganizationSettingsUpdate struct {
 	QuotePaymentDays            *int
 	QuoteValidDays              *int
+	AIAutoDisqualifyJunk        *bool
+	AIAutoDispatch              *bool
+	AIAutoEstimate              *bool
+	CatalogGapThreshold         *int
+	CatalogGapLookbackDays      *int
 	NotificationEmail           *string
 	WhatsAppDeviceID            *string
 	WhatsAppWelcomeDelayMinutes *int
@@ -306,7 +316,10 @@ func (r *Repository) ClearOrganizationLogo(
 func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-	SELECT organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+	SELECT organization_id, quote_payment_days, quote_valid_days,
+	       ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate,
+	       catalog_gap_threshold, catalog_gap_lookback_days,
+	       notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
            smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
            created_at, updated_at
     FROM RAC_organization_settings
@@ -315,6 +328,11 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.AIAutoDisqualifyJunk,
+		&s.AIAutoDispatch,
+		&s.AIAutoEstimate,
+		&s.CatalogGapThreshold,
+		&s.CatalogGapLookbackDays,
 		&s.NotificationEmail,
 		&s.WhatsAppDeviceID,
 		&s.WhatsAppWelcomeDelayMinutes,
@@ -333,6 +351,11 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			OrganizationID:              organizationID,
 			QuotePaymentDays:            7,
 			QuoteValidDays:              14,
+			AIAutoDisqualifyJunk:        true,
+			AIAutoDispatch:              false,
+			AIAutoEstimate:              true,
+			CatalogGapThreshold:         3,
+			CatalogGapLookbackDays:      30,
 			WhatsAppDeviceID:            nil,
 			WhatsAppWelcomeDelayMinutes: 2,
 		}, nil
@@ -347,22 +370,70 @@ func (r *Repository) UpsertOrganizationSettings(
 ) (OrganizationSettings, error) {
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_organization_settings (organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes)
-		VALUES ($1, COALESCE($2, 7), COALESCE($3, 14), NULLIF($4, ''), NULLIF($5, ''), COALESCE($6, 2))
+		INSERT INTO RAC_organization_settings (
+			organization_id,
+			quote_payment_days,
+			quote_valid_days,
+			ai_auto_disqualify_junk,
+			ai_auto_dispatch,
+			ai_auto_estimate,
+			catalog_gap_threshold,
+			catalog_gap_lookback_days,
+			notification_email,
+			whatsapp_device_id,
+			whatsapp_welcome_delay_minutes
+		)
+		VALUES (
+			$1,
+			COALESCE($2, 7),
+			COALESCE($3, 14),
+			COALESCE($4, true),
+			COALESCE($5, false),
+			COALESCE($6, true),
+			COALESCE($7, 3),
+			COALESCE($8, 30),
+			NULLIF($9, ''),
+			NULLIF($10, ''),
+			COALESCE($11, 2)
+		)
 		ON CONFLICT (organization_id) DO UPDATE SET
 			quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
 			quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
-			notification_email = CASE WHEN $4 IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($4, '') END,
-			whatsapp_device_id = CASE WHEN $5 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($5, '') END,
-			whatsapp_welcome_delay_minutes = COALESCE($6, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+			ai_auto_disqualify_junk = COALESCE($4, RAC_organization_settings.ai_auto_disqualify_junk),
+			ai_auto_dispatch        = COALESCE($5, RAC_organization_settings.ai_auto_dispatch),
+			ai_auto_estimate        = COALESCE($6, RAC_organization_settings.ai_auto_estimate),
+			catalog_gap_threshold   = COALESCE($7, RAC_organization_settings.catalog_gap_threshold),
+			catalog_gap_lookback_days = COALESCE($8, RAC_organization_settings.catalog_gap_lookback_days),
+			notification_email = CASE WHEN $9 IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($9, '') END,
+			whatsapp_device_id = CASE WHEN $10 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($10, '') END,
+			whatsapp_welcome_delay_minutes = COALESCE($11, RAC_organization_settings.whatsapp_welcome_delay_minutes),
 			updated_at         = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+		RETURNING organization_id, quote_payment_days, quote_valid_days,
+		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate,
+		          catalog_gap_threshold, catalog_gap_lookback_days,
+		          notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		          created_at, updated_at
-	`, organizationID, update.QuotePaymentDays, update.QuoteValidDays, update.NotificationEmail, update.WhatsAppDeviceID, update.WhatsAppWelcomeDelayMinutes).Scan(
+	`, organizationID,
+		update.QuotePaymentDays,
+		update.QuoteValidDays,
+		update.AIAutoDisqualifyJunk,
+		update.AIAutoDispatch,
+		update.AIAutoEstimate,
+		update.CatalogGapThreshold,
+		update.CatalogGapLookbackDays,
+		update.NotificationEmail,
+		update.WhatsAppDeviceID,
+		update.WhatsAppWelcomeDelayMinutes,
+	).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.AIAutoDisqualifyJunk,
+		&s.AIAutoDispatch,
+		&s.AIAutoEstimate,
+		&s.CatalogGapThreshold,
+		&s.CatalogGapLookbackDays,
 		&s.NotificationEmail,
 		&s.WhatsAppDeviceID,
 		&s.WhatsAppWelcomeDelayMinutes,
@@ -399,13 +470,21 @@ func (r *Repository) UpsertOrganizationSMTP(
 			smtp_from_email = $6,
 			smtp_from_name  = $7,
 			updated_at      = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days, notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+		RETURNING organization_id, quote_payment_days, quote_valid_days,
+		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate,
+		          catalog_gap_threshold, catalog_gap_lookback_days,
+		          notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		          created_at, updated_at
 	`, organizationID, update.SMTPHost, update.SMTPPort, update.SMTPUsername, update.SMTPPassword, update.SMTPFromEmail, update.SMTPFromName).Scan(
 		&s.OrganizationID,
 		&s.QuotePaymentDays,
 		&s.QuoteValidDays,
+		&s.AIAutoDisqualifyJunk,
+		&s.AIAutoDispatch,
+		&s.AIAutoEstimate,
+		&s.CatalogGapThreshold,
+		&s.CatalogGapLookbackDays,
 		&s.NotificationEmail,
 		&s.WhatsAppDeviceID,
 		&s.WhatsAppWelcomeDelayMinutes,

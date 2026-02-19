@@ -8,40 +8,43 @@ import (
 
 // ServiceType represents a service category that can be assigned to RAC_leads.
 type ServiceType struct {
-	ID               uuid.UUID `db:"id"`
-	OrganizationID   uuid.UUID `db:"organization_id"`
-	Name             string    `db:"name"`
-	Slug             string    `db:"slug"`
-	Description      *string   `db:"description"`
-	IntakeGuidelines *string   `db:"intake_guidelines"`
-	Icon             *string   `db:"icon"`
-	Color            *string   `db:"color"`
-	IsActive         bool      `db:"is_active"`
-	CreatedAt        string    `db:"created_at"`
-	UpdatedAt        string    `db:"updated_at"`
+	ID                   uuid.UUID `db:"id"`
+	OrganizationID       uuid.UUID `db:"organization_id"`
+	Name                 string    `db:"name"`
+	Slug                 string    `db:"slug"`
+	Description          *string   `db:"description"`
+	IntakeGuidelines     *string   `db:"intake_guidelines"`
+	EstimationGuidelines *string   `db:"estimation_guidelines"`
+	Icon                 *string   `db:"icon"`
+	Color                *string   `db:"color"`
+	IsActive             bool      `db:"is_active"`
+	CreatedAt            string    `db:"created_at"`
+	UpdatedAt            string    `db:"updated_at"`
 }
 
 // CreateParams contains parameters for creating a service type.
 type CreateParams struct {
-	OrganizationID   uuid.UUID
-	Name             string
-	Slug             string
-	Description      *string
-	IntakeGuidelines *string
-	Icon             *string
-	Color            *string
+	OrganizationID       uuid.UUID
+	Name                 string
+	Slug                 string
+	Description          *string
+	IntakeGuidelines     *string
+	EstimationGuidelines *string
+	Icon                 *string
+	Color                *string
 }
 
 // UpdateParams contains parameters for updating a service type.
 type UpdateParams struct {
-	ID               uuid.UUID
-	OrganizationID   uuid.UUID
-	Name             *string
-	Slug             *string
-	Description      *string
-	IntakeGuidelines *string
-	Icon             *string
-	Color            *string
+	ID                   uuid.UUID
+	OrganizationID       uuid.UUID
+	Name                 *string
+	Slug                 *string
+	Description          *string
+	IntakeGuidelines     *string
+	EstimationGuidelines *string
+	Icon                 *string
+	Color                *string
 }
 
 // ListParams defines filters for listing service types.

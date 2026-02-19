@@ -22,6 +22,7 @@ type Product struct {
 	ID             uuid.UUID `db:"id"`
 	OrganizationID uuid.UUID `db:"organization_id"`
 	VatRateID      uuid.UUID `db:"vat_rate_id"`
+	IsDraft        bool      `db:"is_draft"`
 	Title          string    `db:"title"`
 	Reference      string    `db:"reference"`
 	Description    *string   `db:"description"`
@@ -85,6 +86,7 @@ type ListVatRatesParams struct {
 type CreateProductParams struct {
 	OrganizationID uuid.UUID
 	VatRateID      uuid.UUID
+	IsDraft        bool
 	Title          string
 	Reference      string
 	Description    *string
@@ -102,6 +104,7 @@ type UpdateProductParams struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
 	VatRateID      *uuid.UUID
+	IsDraft        *bool
 	Title          *string
 	Reference      *string
 	Description    *string
@@ -140,6 +143,7 @@ type ListProductsParams struct {
 	Title          string
 	Reference      string
 	Type           string
+	IsDraft        *bool
 	VatRateID      *uuid.UUID
 	CreatedAtFrom  *time.Time
 	CreatedAtTo    *time.Time

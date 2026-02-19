@@ -27,7 +27,19 @@ type QuoteJobScheduler interface {
 }
 
 type QuoteJobRunner interface {
-	EnqueueGenerateQuoteJobRequest(ctx context.Context, jobID, tenantID, userID, leadID, leadServiceID uuid.UUID, prompt string, quoteID *uuid.UUID) error
+	EnqueueGenerateQuoteJobRequest(ctx context.Context, req GenerateQuoteJobRequest) error
+}
+
+// GenerateQuoteJobRequest groups parameters for enqueueing a quote generation job.
+// This keeps the scheduler API ergonomic while avoiding long parameter lists.
+type GenerateQuoteJobRequest struct {
+	JobID         uuid.UUID
+	TenantID      uuid.UUID
+	UserID        uuid.UUID
+	LeadID        uuid.UUID
+	LeadServiceID uuid.UUID
+	Prompt        string
+	QuoteID       *uuid.UUID
 }
 
 func NewClient(cfg config.SchedulerConfig) (*Client, error) {
@@ -87,20 +99,20 @@ func (c *Client) EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQu
 	return err
 }
 
-func (c *Client) EnqueueGenerateQuoteJobRequest(ctx context.Context, jobID, tenantID, userID, leadID, leadServiceID uuid.UUID, prompt string, quoteID *uuid.UUID) error {
+func (c *Client) EnqueueGenerateQuoteJobRequest(ctx context.Context, req GenerateQuoteJobRequest) error {
 	var quoteIDStr *string
-	if quoteID != nil {
-		value := quoteID.String()
+	if req.QuoteID != nil {
+		value := req.QuoteID.String()
 		quoteIDStr = &value
 	}
 
 	return c.EnqueueGenerateQuoteJob(ctx, GenerateQuoteJobPayload{
-		JobID:         jobID.String(),
-		TenantID:      tenantID.String(),
-		UserID:        userID.String(),
-		LeadID:        leadID.String(),
-		LeadServiceID: leadServiceID.String(),
-		Prompt:        prompt,
+		JobID:         req.JobID.String(),
+		TenantID:      req.TenantID.String(),
+		UserID:        req.UserID.String(),
+		LeadID:        req.LeadID.String(),
+		LeadServiceID: req.LeadServiceID.String(),
+		Prompt:        req.Prompt,
 		QuoteID:       quoteIDStr,
 	})
 }

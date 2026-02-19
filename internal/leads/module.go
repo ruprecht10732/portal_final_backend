@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"portal_final_backend/internal/adapters/storage"
+	catalogrepo "portal_final_backend/internal/catalog/repository"
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/leads/adapters"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/handler"
@@ -42,6 +44,7 @@ type Module struct {
 	gatekeeper            *agent.Gatekeeper
 	estimator             *agent.Estimator
 	dispatcher            *agent.Dispatcher
+	auditor               *agent.Auditor
 	orchestrator          *Orchestrator
 	photoAnalyzer         *agent.PhotoAnalyzer
 	callLogger            *agent.CallLogger
@@ -55,15 +58,44 @@ type Module struct {
 	scorer                *scoring.Service
 }
 
+// SetOrganizationAISettingsReader injects a tenant-scoped settings reader into
+// the orchestrator and lead agents that need to respect org-level automation
+// toggles and catalog gap heuristics.
+func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	if m == nil {
+		return
+	}
+	if m.orchestrator != nil {
+		m.orchestrator.SetOrganizationAISettingsReader(reader)
+	}
+	if m.gatekeeper != nil {
+		m.gatekeeper.SetOrganizationAISettingsReader(reader)
+	}
+	if m.estimator != nil {
+		m.estimator.SetOrganizationAISettingsReader(reader)
+	}
+	if m.dispatcher != nil {
+		m.dispatcher.SetOrganizationAISettingsReader(reader)
+	}
+	if m.quoteGenerator != nil {
+		m.quoteGenerator.SetOrganizationAISettingsReader(reader)
+	}
+}
+
 // NewModule creates and initializes the RAC_leads module with all its dependencies.
 func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
 	// Create shared repository
 	repo := repository.New(pool)
 
+	// Leads agents need to safely hydrate catalog items from DB.
+	// Draft products are excluded by the adapter.
+	catalogRepo := catalogrepo.New(pool)
+	catalogReader := adapters.NewCatalogReaderAdapter(catalogRepo)
+
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
-	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, offerSummaryGenerator, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus)
+	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +114,12 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	notesSvc := notes.New(repo)
 
 	// Create orchestrator and event listeners
-	orchestrator := NewOrchestrator(gatekeeper, estimator, dispatcher, repo, eventBus, sseService, log)
+	orchestrator := NewOrchestrator(OrchestratorAgents{
+		Gatekeeper: gatekeeper,
+		Estimator:  estimator,
+		Dispatcher: dispatcher,
+		Auditor:    auditor,
+	}, repo, eventBus, sseService, log)
 	orchestrator.SetReconciliationEnabled(cfg.IsLeadsReconciliationEnabled())
 	subscribeOrchestrator(eventBus, orchestrator)
 
@@ -115,6 +152,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		gatekeeper:            gatekeeper,
 		estimator:             estimator,
 		dispatcher:            dispatcher,
+		auditor:               auditor,
 		orchestrator:          orchestrator,
 		photoAnalyzer:         photoAnalyzer,
 		callLogger:            callLogger,
@@ -129,21 +167,26 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	}, nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, *agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, *agent.Auditor, *agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
 	_ = storageSvc
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus, scorer)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
+	}
+
+	auditor, err := agent.NewAuditor(cfg.MoonshotAPIKey, repo, eventBus)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	// Create embedding and qdrant clients if configured
@@ -191,14 +234,15 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		QdrantClient:         qdrantClient,
 		BouwmaatQdrantClient: bouwmaatQdrantClient,
 		CatalogQdrantClient:  catalogQdrantClient,
+		CatalogReader:        catalogReader,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	quoteGenerator, err := agent.NewQuoteGenerator(agent.QuoteGeneratorConfig{
@@ -209,17 +253,18 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		QdrantClient:         qdrantClient,
 		BouwmaatQdrantClient: bouwmaatQdrantClient,
 		CatalogQdrantClient:  catalogQdrantClient,
+		CatalogReader:        catalogReader,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(cfg.MoonshotAPIKey)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, quoteGenerator, offerSummaryGenerator, nil
+	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, nil
 }
 
 // OfferSummaryGenerator exposes the AI summary generator for partner offers.
@@ -308,6 +353,18 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorAppointmentDeleted(eventBus, orchestrator)
 	subscribeOrchestratorQuoteStatusChanged(eventBus, orchestrator)
 	subscribeOrchestratorLeadServiceStatusChanged(eventBus, orchestrator)
+	subscribeOrchestratorVisitReportSubmitted(eventBus, orchestrator)
+}
+
+func subscribeOrchestratorVisitReportSubmitted(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.VisitReportSubmitted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.VisitReportSubmitted)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnVisitReportSubmitted(ctx, e)
+		return nil
+	}))
 }
 
 func subscribeOrchestratorLeadAutoDisqualified(eventBus events.Bus, orchestrator *Orchestrator) {

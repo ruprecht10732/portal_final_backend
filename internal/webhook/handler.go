@@ -2,7 +2,9 @@ package webhook
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"portal_final_backend/platform/httpkit"
@@ -13,12 +15,14 @@ import (
 )
 
 const (
-	errNoOrgContext      = "no organization context"
-	errInvalidRequest    = "invalid request body"
-	errValidation        = "validation error"
-	errInvalidConfigID   = "invalid config ID"
-	googleTimeFormat     = "2006-01-02T15:04:05Z"
+	errNoOrgContext    = "no organization context"
+	errInvalidRequest  = "invalid request body"
+	errValidation      = "validation error"
+	errInvalidConfigID = "invalid config ID"
+	googleTimeFormat   = "2006-01-02T15:04:05Z"
 )
+
+var gtmContainerIDRegex = regexp.MustCompile(`^GTM-[A-Z0-9]+$`)
 
 // Handler handles webhook HTTP requests.
 type Handler struct {
@@ -30,6 +34,108 @@ type Handler struct {
 // NewHandler creates a new webhook handler.
 func NewHandler(service *Service, repo *Repository, val *validator.Validator) *Handler {
 	return &Handler{service: service, repo: repo, val: val}
+}
+
+// ---- GTM Config (Webhook SDK) ----
+
+type GTMConfigResponse struct {
+	GTMContainerID *string `json:"gtmContainerId"`
+}
+
+type UpdateGTMConfigRequest struct {
+	GTMContainerID string `json:"gtmContainerId" validate:"required,min=6,max=20"`
+}
+
+// HandleGetGTMConfig returns the GTM container ID for the tenant.
+// GET /api/v1/admin/webhook/gtm-config
+func (h *Handler) HandleGetGTMConfig(c *gin.Context) {
+	tenantID, ok := h.getTenantID(c)
+	if !ok {
+		return
+	}
+
+	containerID, err := h.repo.GetGTMContainerID(c.Request.Context(), tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, GTMConfigResponse{GTMContainerID: containerID})
+}
+
+// HandleUpdateGTMConfig sets the GTM container ID for the tenant.
+// PUT /api/v1/admin/webhook/gtm-config
+func (h *Handler) HandleUpdateGTMConfig(c *gin.Context) {
+	var req UpdateGTMConfigRequest
+	if !h.bindAndValidate(c, &req) {
+		return
+	}
+
+	tenantID, ok := h.getTenantID(c)
+	if !ok {
+		return
+	}
+
+	containerID, ok := normalizeAndValidateGTMContainerID(req.GTMContainerID)
+	if !ok {
+		httpkit.Error(c, http.StatusBadRequest, "invalid GTM container ID", nil)
+		return
+	}
+
+	if err := h.repo.SetGTMContainerID(c.Request.Context(), tenantID, containerID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, GTMConfigResponse{GTMContainerID: &containerID})
+}
+
+// HandleDeleteGTMConfig clears the GTM container ID for the tenant.
+// DELETE /api/v1/admin/webhook/gtm-config
+func (h *Handler) HandleDeleteGTMConfig(c *gin.Context) {
+	tenantID, ok := h.getTenantID(c)
+	if !ok {
+		return
+	}
+
+	if err := h.repo.ClearGTMContainerID(c.Request.Context(), tenantID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// HandleGetWebhookConfig returns public SDK config for the resolved org (API-key authenticated).
+// GET /api/v1/webhook/config
+func (h *Handler) HandleGetWebhookConfig(c *gin.Context) {
+	orgID, ok := h.getWebhookOrgID(c)
+	if !ok {
+		return
+	}
+
+	containerID, err := h.repo.GetGTMContainerID(c.Request.Context(), orgID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	// Allow browser usage from any domain; cache briefly.
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Headers", "X-Webhook-API-Key, Content-Type")
+	c.Header("Vary", "X-Webhook-API-Key")
+
+	c.JSON(http.StatusOK, GTMConfigResponse{GTMContainerID: containerID})
+}
+
+func normalizeAndValidateGTMContainerID(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	value = strings.ToUpper(value)
+	if value == "" {
+		return "", false
+	}
+	if len(value) > 20 {
+		return "", false
+	}
+	return value, gtmContainerIDRegex.MatchString(value)
 }
 
 // ---- Form Submission (public, API-key authenticated) ----
@@ -44,6 +150,15 @@ func (h *Handler) HandleFormSubmission(c *gin.Context) {
 	}
 	apiKeyID, _ := c.Get("webhookKeyID")
 
+	correlationID := uuid.New().String()
+	h.service.log.Info("webhook: received form submission",
+		"correlationId", correlationID,
+		"ip", c.ClientIP(),
+		"userAgent", c.Request.UserAgent(),
+		"contentType", c.ContentType(),
+		"orgId", orgID,
+	)
+
 	submission, ok := h.parseFormSubmission(c, apiKeyID)
 	if !ok {
 		return
@@ -53,6 +168,11 @@ func (h *Handler) HandleFormSubmission(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
+
+	h.service.log.Info("webhook: processed form submission",
+		"correlationId", correlationID,
+		"leadId", resp.LeadID,
+	)
 
 	c.JSON(http.StatusCreated, resp)
 }
@@ -512,8 +632,7 @@ func (h *Handler) collectJSONFields(c *gin.Context, fields map[string]string) {
 		case string:
 			fields[key] = v
 		case float64:
-			fields[key] = c.DefaultQuery(key, "")
-			_ = v
+			fields[key] = strconv.FormatFloat(v, 'f', -1, 64)
 		}
 	}
 }

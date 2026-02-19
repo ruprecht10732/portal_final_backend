@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -180,6 +181,33 @@ func (r *Repository) UpdateWebhookLeadData(ctx context.Context, leadID uuid.UUID
 	return err
 }
 
+// FindRecentDuplicateLead checks if a lead with the same email and phone was created recently.
+func (r *Repository) FindRecentDuplicateLead(ctx context.Context, orgID uuid.UUID, email, phone string, window time.Duration) (*uuid.UUID, error) {
+	if email == "" && phone == "" {
+		return nil, nil
+	}
+
+	var leadID uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT id
+		FROM RAC_leads
+		WHERE organization_id = $1
+		  AND created_at >= now() - $2::interval
+		  AND ($3 = '' OR consumer_email = $3)
+		  AND ($4 = '' OR consumer_phone = $4)
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, orgID, window, email, phone).Scan(&leadID)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &leadID, nil
+}
+
 // ---- Google Lead Form Webhooks ----
 
 // GenerateGoogleKey creates a new random Google webhook key and returns plaintext + hash.
@@ -339,5 +367,48 @@ func (r *Repository) UpdateGoogleLeadMetadata(ctx context.Context, leadID uuid.U
 		SET google_campaign_id = $2, google_creative_id = $3, google_adgroup_id = $4, google_form_id = $5, updated_at = now()
 		WHERE id = $1
 	`, leadID, campaignID, creativeID, adGroupID, formID)
+	return err
+}
+
+// ---- GTM Config (Webhook SDK) ----
+
+// GetGTMContainerID returns the GTM container ID for an organization (or nil if not set).
+func (r *Repository) GetGTMContainerID(ctx context.Context, orgID uuid.UUID) (*string, error) {
+	var containerID *string
+	err := r.pool.QueryRow(ctx, `
+		SELECT gtm_container_id
+		FROM RAC_organizations
+		WHERE id = $1
+	`, orgID).Scan(&containerID)
+	if err != nil {
+		return nil, err
+	}
+	if containerID == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*containerID)
+	if trimmed == "" {
+		return nil, nil
+	}
+	return &trimmed, nil
+}
+
+// SetGTMContainerID sets the GTM container ID for an organization.
+func (r *Repository) SetGTMContainerID(ctx context.Context, orgID uuid.UUID, containerID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE RAC_organizations
+		SET gtm_container_id = $2, updated_at = now()
+		WHERE id = $1
+	`, orgID, containerID)
+	return err
+}
+
+// ClearGTMContainerID clears the GTM container ID for an organization.
+func (r *Repository) ClearGTMContainerID(ctx context.Context, orgID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE RAC_organizations
+		SET gtm_container_id = NULL, updated_at = now()
+		WHERE id = $1
+	`, orgID)
 	return err
 }

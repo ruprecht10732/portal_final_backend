@@ -96,6 +96,13 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 
 	tools := []tool.Tool{calculatorTool, calculateEstimateTool, saveEstimationTool, updateStageTool, draftQuoteTool}
 
+	// Optional tool: catalog gap signals for catalog improvement (uses org settings by default).
+	listCatalogGapsTool, err := createListCatalogGapsTool(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build ListCatalogGaps tool: %w", err)
+	}
+	tools = append(tools, listCatalogGapsTool)
+
 	// Add product search tool if configured
 	if deps.IsProductSearchEnabled() {
 		searchProductsTool, err := createSearchProductMaterialsTool(deps)
@@ -139,6 +146,14 @@ func NewEstimator(cfg EstimatorConfig) (*Estimator, error) {
 	}, nil
 }
 
+// SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
+func (e *Estimator) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	if e == nil || e.toolDeps == nil {
+		return
+	}
+	e.toolDeps.SetOrganizationAISettingsReader(reader)
+}
+
 // SetCatalogReader injects the catalog reader (set after construction to break circular deps).
 func (e *Estimator) SetCatalogReader(cr ports.CatalogReader) {
 	e.toolDeps.CatalogReader = cr
@@ -158,6 +173,11 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 	e.toolDeps.SetLeadContext(leadID, serviceID)
 	e.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameEstimator)
 	e.toolDeps.ResetToolCallTracking()
+
+	// Preload org AI settings so ListCatalogGaps defaults reflect the tenant configuration.
+	if _, err := e.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+		log.Printf("estimator: failed to load org AI settings (tenant=%s): %v", tenantID, err)
+	}
 
 	existingQuoteID, quoteLookupErr := e.repo.GetLatestDraftQuoteID(ctx, serviceID, tenantID)
 	if quoteLookupErr != nil {
@@ -187,7 +207,9 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 		photo = &analysis
 	}
 
-	promptText := buildEstimatorPrompt(lead, service, notes, photo)
+	estimationContext := e.fetchEstimationGuidelines(ctx, tenantID, service.ServiceType)
+
+	promptText := buildEstimatorPrompt(lead, service, notes, photo, estimationContext)
 	if err := e.runWithPrompt(ctx, promptText, leadID); err != nil {
 		return err
 	}
@@ -212,6 +234,21 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 	}
 
 	return nil
+}
+
+// fetchEstimationGuidelines returns the estimation guidelines for the given
+// service type, or an empty string when none are configured.
+func (e *Estimator) fetchEstimationGuidelines(ctx context.Context, tenantID uuid.UUID, serviceType string) string {
+	serviceTypes, err := e.repo.ListActiveServiceTypes(ctx, tenantID)
+	if err != nil {
+		return ""
+	}
+	for _, st := range serviceTypes {
+		if st.Name == serviceType && st.EstimationGuidelines != nil {
+			return *st.EstimationGuidelines
+		}
+	}
+	return ""
 }
 
 func (e *Estimator) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {

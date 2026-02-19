@@ -706,6 +706,14 @@ func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID
 			TenantID:      tenantID,
 			Source:        "visit_report",
 		})
+
+		s.eventBus.Publish(ctx, events.VisitReportSubmitted{
+			BaseEvent:     events.NewBaseEvent(),
+			AppointmentID: appointmentID,
+			LeadID:        *leadID,
+			LeadServiceID: *leadServiceID,
+			TenantID:      tenantID,
+		})
 	}
 
 	return &transport.AppointmentVisitReportResponse{

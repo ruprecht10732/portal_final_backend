@@ -90,6 +90,14 @@ func NewDispatcher(apiKey string, repo repository.LeadsRepository, eventBus even
 	}, nil
 }
 
+// SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
+func (d *Dispatcher) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	if d == nil || d.toolDeps == nil {
+		return
+	}
+	d.toolDeps.SetOrganizationAISettingsReader(reader)
+}
+
 // SetOfferCreator injects the partner offer creator after module initialization.
 func (d *Dispatcher) SetOfferCreator(creator ports.PartnerOfferCreator) {
 	d.toolDeps.mu.Lock()
@@ -106,6 +114,11 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	d.toolDeps.SetLeadContext(leadID, serviceID)
 	d.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameDispatcher)
 	d.toolDeps.ResetToolCallTracking()
+
+	// Preload org settings for consistency across agents (even if not used directly today).
+	if _, err := d.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+		fmt.Printf("dispatcher: failed to load org AI settings (tenant=%s): %v\n", tenantID, err)
+	}
 
 	lead, err := d.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {

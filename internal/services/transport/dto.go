@@ -4,20 +4,22 @@ import "github.com/google/uuid"
 
 // CreateServiceTypeRequest contains data for creating a new service type.
 type CreateServiceTypeRequest struct {
-	Name             string  `json:"name" validate:"required,min=1,max=100"`
-	Description      *string `json:"description,omitempty" validate:"omitempty,max=500"`
-	IntakeGuidelines *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=10000"`
-	Icon             *string `json:"icon,omitempty" validate:"omitempty,max=50"`
-	Color            *string `json:"color,omitempty" validate:"omitempty,max=20"`
+	Name                 string  `json:"name" validate:"required,min=1,max=100"`
+	Description          *string `json:"description,omitempty" validate:"omitempty,max=500"`
+	IntakeGuidelines     *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=10000"`
+	EstimationGuidelines *string `json:"estimationGuidelines,omitempty" validate:"omitempty,max=10000"`
+	Icon                 *string `json:"icon,omitempty" validate:"omitempty,max=50"`
+	Color                *string `json:"color,omitempty" validate:"omitempty,max=20"`
 }
 
 // UpdateServiceTypeRequest contains data for updating an existing service type.
 type UpdateServiceTypeRequest struct {
-	Name             *string `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
-	Description      *string `json:"description,omitempty" validate:"omitempty,max=500"`
-	IntakeGuidelines *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=10000"`
-	Icon             *string `json:"icon,omitempty" validate:"omitempty,max=50"`
-	Color            *string `json:"color,omitempty" validate:"omitempty,max=20"`
+	Name                 *string `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
+	Description          *string `json:"description,omitempty" validate:"omitempty,max=500"`
+	IntakeGuidelines     *string `json:"intakeGuidelines,omitempty" validate:"omitempty,max=10000"`
+	EstimationGuidelines *string `json:"estimationGuidelines,omitempty" validate:"omitempty,max=10000"`
+	Icon                 *string `json:"icon,omitempty" validate:"omitempty,max=50"`
+	Color                *string `json:"color,omitempty" validate:"omitempty,max=20"`
 }
 
 // ListServiceTypesRequest defines query params for admin listing.
@@ -32,16 +34,17 @@ type ListServiceTypesRequest struct {
 
 // ServiceTypeResponse represents a service type in API responses.
 type ServiceTypeResponse struct {
-	ID               uuid.UUID `json:"id"`
-	Name             string    `json:"name"`
-	Slug             string    `json:"slug"`
-	Description      *string   `json:"description,omitempty"`
-	IntakeGuidelines *string   `json:"intakeGuidelines,omitempty"`
-	Icon             *string   `json:"icon,omitempty"`
-	Color            *string   `json:"color,omitempty"`
-	IsActive         bool      `json:"isActive"`
-	CreatedAt        string    `json:"createdAt"`
-	UpdatedAt        string    `json:"updatedAt"`
+	ID                   uuid.UUID `json:"id"`
+	Name                 string    `json:"name"`
+	Slug                 string    `json:"slug"`
+	Description          *string   `json:"description,omitempty"`
+	IntakeGuidelines     *string   `json:"intakeGuidelines,omitempty"`
+	EstimationGuidelines *string   `json:"estimationGuidelines,omitempty"`
+	Icon                 *string   `json:"icon,omitempty"`
+	Color                *string   `json:"color,omitempty"`
+	IsActive             bool      `json:"isActive"`
+	CreatedAt            string    `json:"createdAt"`
+	UpdatedAt            string    `json:"updatedAt"`
 }
 
 // ServiceTypeListResponse wraps a list of service types.

@@ -113,6 +113,30 @@ type LeadDataChanged struct {
 
 func (e LeadDataChanged) EventName() string { return "leads.data.changed" }
 
+// VisitReportSubmitted is published when a visit report is created or updated.
+// This is a stronger signal than LeadDataChanged for downstream automation.
+type VisitReportSubmitted struct {
+	BaseEvent
+	AppointmentID uuid.UUID `json:"appointmentId"`
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+}
+
+func (e VisitReportSubmitted) EventName() string { return "appointments.visit_report.submitted" }
+
+// AuditCompleted is published after an automated audit completes.
+type AuditCompleted struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	Passed        bool      `json:"passed"`
+	Findings      []string  `json:"findings,omitempty"`
+}
+
+func (e AuditCompleted) EventName() string { return "leads.audit.completed" }
+
 // AttachmentUploaded is published when a lead service attachment is created.
 type AttachmentUploaded struct {
 	BaseEvent

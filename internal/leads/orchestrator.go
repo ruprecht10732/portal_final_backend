@@ -12,6 +12,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/domain"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/logger"
@@ -22,10 +23,15 @@ type Orchestrator struct {
 	gatekeeper *agent.Gatekeeper
 	estimator  *agent.Estimator
 	dispatcher *agent.Dispatcher
+	auditor    *agent.Auditor
 	repo       repository.LeadsRepository
 	eventBus   events.Bus
 	sse        *sse.Service
 	log        *logger.Logger
+
+	orgSettingsReader ports.OrganizationAISettingsReader
+	orgSettingsMu     sync.Mutex
+	orgSettingsCache  map[uuid.UUID]cachedOrgAISettings
 
 	reconciliationEnabled bool
 
@@ -36,6 +42,11 @@ type Orchestrator struct {
 	runsMu                 sync.Mutex
 }
 
+type cachedOrgAISettings struct {
+	settings  ports.OrganizationAISettings
+	fetchedAt time.Time
+}
+
 const (
 	dispatcherAlreadyRunningMsg = "orchestrator: dispatcher already running for service, skipping"
 	dispatcherFailedMsg         = "orchestrator: dispatcher failed"
@@ -43,11 +54,19 @@ const (
 	staleDraftDuration          = 30 * 24 * time.Hour
 )
 
-func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, dispatcher *agent.Dispatcher, repo repository.LeadsRepository, eventBus events.Bus, sse *sse.Service, log *logger.Logger) *Orchestrator {
+type OrchestratorAgents struct {
+	Gatekeeper *agent.Gatekeeper
+	Estimator  *agent.Estimator
+	Dispatcher *agent.Dispatcher
+	Auditor    *agent.Auditor
+}
+
+func NewOrchestrator(agents OrchestratorAgents, repo repository.LeadsRepository, eventBus events.Bus, sse *sse.Service, log *logger.Logger) *Orchestrator {
 	return &Orchestrator{
-		gatekeeper:             gatekeeper,
-		estimator:              estimator,
-		dispatcher:             dispatcher,
+		gatekeeper:             agents.Gatekeeper,
+		estimator:              agents.Estimator,
+		dispatcher:             agents.Dispatcher,
+		auditor:                agents.Auditor,
 		repo:                   repo,
 		eventBus:               eventBus,
 		sse:                    sse,
@@ -55,7 +74,71 @@ func NewOrchestrator(gatekeeper *agent.Gatekeeper, estimator *agent.Estimator, d
 		reconciliationEnabled:  true,
 		activeRuns:             make(map[string]bool),
 		pendingGatekeeperPhoto: make(map[uuid.UUID]events.PhotoAnalysisCompleted),
+		orgSettingsCache:       make(map[uuid.UUID]cachedOrgAISettings),
 	}
+}
+
+// SetOrganizationAISettingsReader injects the tenant settings reader.
+// When unset, the orchestrator falls back to default behavior.
+func (o *Orchestrator) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	o.orgSettingsMu.Lock()
+	defer o.orgSettingsMu.Unlock()
+	o.orgSettingsReader = reader
+	// Keep cache; reader replacement is rare and cache TTL is short.
+}
+
+func (o *Orchestrator) loadOrgAISettings(ctx context.Context, tenantID uuid.UUID) (ports.OrganizationAISettings, error) {
+	o.orgSettingsMu.Lock()
+	defer o.orgSettingsMu.Unlock()
+
+	// Cache for a short TTL to avoid hammering identity storage during bursts of events.
+	if cached, ok := o.orgSettingsCache[tenantID]; ok {
+		if time.Since(cached.fetchedAt) < 30*time.Second {
+			return cached.settings, nil
+		}
+	}
+
+	if o.orgSettingsReader == nil {
+		settings := ports.DefaultOrganizationAISettings()
+		o.orgSettingsCache[tenantID] = cachedOrgAISettings{settings: settings, fetchedAt: time.Now()}
+		return settings, nil
+	}
+
+	settings, err := o.orgSettingsReader(ctx, tenantID)
+	if err != nil {
+		return ports.OrganizationAISettings{}, err
+	}
+
+	o.orgSettingsCache[tenantID] = cachedOrgAISettings{settings: settings, fetchedAt: time.Now()}
+	return settings, nil
+}
+
+func (o *Orchestrator) OnVisitReportSubmitted(ctx context.Context, evt events.VisitReportSubmitted) {
+	if o.auditor == nil {
+		return
+	}
+
+	svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.TenantID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to load lead service for visit report", "error", err)
+		return
+	}
+	if !o.ShouldRunAgent(svc) {
+		return
+	}
+
+	if !o.markRunning("auditor", evt.LeadServiceID) {
+		return
+	}
+
+	go func() {
+		defer o.markComplete("auditor", evt.LeadServiceID)
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.auditor.AuditVisitReport(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID, evt.AppointmentID); err != nil {
+			o.log.Error("orchestrator: auditor failed (visit report)", "error", err)
+		}
+	}()
 }
 
 func (o *Orchestrator) SetReconciliationEnabled(enabled bool) {
@@ -131,6 +214,15 @@ func (o *Orchestrator) runGatekeeperForPhotoEvent(evt events.PhotoAnalysisComple
 }
 
 func (o *Orchestrator) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) {
+	settings, err := o.loadOrgAISettings(ctx, tenantID)
+	if err != nil {
+		o.log.Warn("orchestrator: skipping junk auto-disqualify (settings load failed)", "tenantId", tenantID, "error", err)
+		return
+	}
+	if !settings.AIAutoDisqualifyJunk {
+		return
+	}
+
 	svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
 		o.log.Error("orchestrator: failed to load lead service for junk auto-disqualify", "error", err)
@@ -264,29 +356,53 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 		return
 	}
 
+	o.maybeRunAuditorForCallLog(evt)
+
 	if !o.ShouldRunAgent(svc) {
 		return
 	}
 
-	if svc.PipelineStage == "Triage" || svc.PipelineStage == "Nurturing" || svc.PipelineStage == "Manual_Intervention" {
-		// Idempotency check
-		if !o.markRunning("gatekeeper", evt.LeadServiceID) {
-			o.log.Info("orchestrator: gatekeeper already running for service, skipping", "serviceId", evt.LeadServiceID)
-			return
-		}
+	o.maybeRunGatekeeperForDataChange(svc, evt)
+}
 
-		o.log.Info("orchestrator: data changed, waking gatekeeper", "leadId", evt.LeadID, "stage", svc.PipelineStage)
-		go func() {
-			defer o.markComplete("gatekeeper", evt.LeadServiceID)
-			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
-			defer cancel()
-			if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
-				o.log.Error("orchestrator: gatekeeper failed", "error", err)
-			}
-			o.maybeAutoDisqualifyJunk(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
-		}()
+func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
+	if o.auditor == nil || !strings.EqualFold(evt.Source, "call_log") {
 		return
 	}
+	if !o.markRunning("auditor", evt.LeadServiceID) {
+		return
+	}
+	go func() {
+		defer o.markComplete("auditor", evt.LeadServiceID)
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.auditor.AuditCallLog(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			o.log.Error("orchestrator: auditor failed (call log)", "error", err)
+		}
+	}()
+}
+
+func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadService, evt events.LeadDataChanged) {
+	if svc.PipelineStage != "Triage" && svc.PipelineStage != "Nurturing" && svc.PipelineStage != "Manual_Intervention" {
+		return
+	}
+
+	// Idempotency check
+	if !o.markRunning("gatekeeper", evt.LeadServiceID) {
+		o.log.Info("orchestrator: gatekeeper already running for service, skipping", "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	o.log.Info("orchestrator: data changed, waking gatekeeper", "leadId", evt.LeadID, "stage", svc.PipelineStage)
+	go func() {
+		defer o.markComplete("gatekeeper", evt.LeadServiceID)
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			o.log.Error("orchestrator: gatekeeper failed", "error", err)
+		}
+		o.maybeAutoDisqualifyJunk(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
+	}()
 }
 
 // OnPhotoAnalysisCompleted triggers gatekeeper re-evaluation once visual data is available.
@@ -369,81 +485,111 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 
 	switch evt.NewStage {
 	case domain.PipelineStageEstimation:
-		// Idempotency check
-		if !o.markRunning("estimator", evt.LeadServiceID) {
-			o.log.Info("orchestrator: estimator already running for service, skipping", "serviceId", evt.LeadServiceID)
-			return
-		}
-
-		o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
-		go func() {
-			defer o.markComplete("estimator", evt.LeadServiceID)
-			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
-			defer cancel()
-			if err := o.estimator.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
-				o.log.Error("orchestrator: estimator failed", "error", err)
-			}
-		}()
-
+		o.handleEstimationStage(evt)
 	case domain.PipelineStageFulfillment:
-		// Idempotency check
-		if !o.markRunning("dispatcher", evt.LeadServiceID) {
-			o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
-			return
-		}
-
-		o.log.Info("orchestrator: lead ready for dispatch", "leadId", evt.LeadID)
-		go func() {
-			defer o.markComplete("dispatcher", evt.LeadServiceID)
-			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
-			defer cancel()
-			if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
-				o.log.Error(dispatcherFailedMsg, "error", err)
-				o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
-			}
-		}()
-
+		o.handleFulfillmentStage(evt)
 	case domain.PipelineStageManualIntervention:
-		o.log.Warn("orchestrator: manual intervention required", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
-		// Record timeline event for audit trail
-		drafts := buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID)
-		_, _ = o.repo.CreateTimelineEvent(context.Background(), repository.CreateTimelineEventParams{
-			LeadID:         evt.LeadID,
-			ServiceID:      &evt.LeadServiceID,
-			OrganizationID: evt.TenantID,
-			ActorType:      repository.ActorTypeSystem,
-			ActorName:      repository.ActorNameOrchestrator,
-			EventType:      repository.EventTypeAlert,
-			Title:          repository.EventTitleManualIntervention,
-			Summary:        stringPtr("Geautomatiseerde verwerking vereist menselijke beoordeling"),
-			Metadata: repository.ManualInterventionMetadata{
-				PreviousStage: evt.OldStage,
-				Trigger:       "pipeline_stage_change",
-				Drafts:        drafts,
-			}.ToMap(),
-		})
-
-		// Push real-time notification to all org members via SSE
-		o.sse.PublishToOrganization(evt.TenantID, sse.Event{
-			Type:      sse.EventManualIntervention,
-			LeadID:    evt.LeadID,
-			ServiceID: evt.LeadServiceID,
-			Message:   "Geautomatiseerde verwerking vereist menselijke beoordeling",
-			Data: map[string]any{
-				"previousStage": evt.OldStage,
-			},
-		})
-
-		// Publish domain event for downstream handlers (email notifications, etc.)
-		o.eventBus.Publish(context.Background(), events.ManualInterventionRequired{
-			BaseEvent:     events.NewBaseEvent(),
-			LeadID:        evt.LeadID,
-			LeadServiceID: evt.LeadServiceID,
-			TenantID:      evt.TenantID,
-			Reason:        "pipeline_stage_change",
-			Context:       "Transitioned from " + evt.OldStage,
-		})
+		o.handleManualInterventionStage(evt)
 	}
+}
+
+func (o *Orchestrator) handleEstimationStage(evt events.PipelineStageChanged) {
+	settings, err := o.loadOrgAISettings(context.Background(), evt.TenantID)
+	if err != nil {
+		o.log.Warn("orchestrator: skipping estimator (settings load failed)", "tenantId", evt.TenantID, "error", err)
+		return
+	}
+	if !settings.AIAutoEstimate {
+		o.log.Info("orchestrator: auto-estimate disabled; skipping estimator", "tenantId", evt.TenantID, "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	// Idempotency check
+	if !o.markRunning("estimator", evt.LeadServiceID) {
+		o.log.Info("orchestrator: estimator already running for service, skipping", "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
+	go func() {
+		defer o.markComplete("estimator", evt.LeadServiceID)
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.estimator.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			o.log.Error("orchestrator: estimator failed", "error", err)
+		}
+	}()
+}
+
+func (o *Orchestrator) handleFulfillmentStage(evt events.PipelineStageChanged) {
+	settings, err := o.loadOrgAISettings(context.Background(), evt.TenantID)
+	if err != nil {
+		o.log.Warn("orchestrator: skipping dispatcher (settings load failed)", "tenantId", evt.TenantID, "error", err)
+		return
+	}
+	if !settings.AIAutoDispatch {
+		o.log.Info("orchestrator: auto-dispatch disabled; skipping dispatcher", "tenantId", evt.TenantID, "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	// Idempotency check
+	if !o.markRunning("dispatcher", evt.LeadServiceID) {
+		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	o.log.Info("orchestrator: lead ready for dispatch", "leadId", evt.LeadID)
+	go func() {
+		defer o.markComplete("dispatcher", evt.LeadServiceID)
+		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
+		defer cancel()
+		if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
+			o.log.Error(dispatcherFailedMsg, "error", err)
+			o.recordDispatcherFailure(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
+		}
+	}()
+}
+
+func (o *Orchestrator) handleManualInterventionStage(evt events.PipelineStageChanged) {
+	o.log.Warn("orchestrator: manual intervention required", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
+	// Record timeline event for audit trail
+	drafts := buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID)
+	_, _ = o.repo.CreateTimelineEvent(context.Background(), repository.CreateTimelineEventParams{
+		LeadID:         evt.LeadID,
+		ServiceID:      &evt.LeadServiceID,
+		OrganizationID: evt.TenantID,
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameOrchestrator,
+		EventType:      repository.EventTypeAlert,
+		Title:          repository.EventTitleManualIntervention,
+		Summary:        stringPtr("Geautomatiseerde verwerking vereist menselijke beoordeling"),
+		Metadata: repository.ManualInterventionMetadata{
+			PreviousStage: evt.OldStage,
+			Trigger:       "pipeline_stage_change",
+			Drafts:        drafts,
+		}.ToMap(),
+	})
+
+	// Push real-time notification to all org members via SSE
+	o.sse.PublishToOrganization(evt.TenantID, sse.Event{
+		Type:      sse.EventManualIntervention,
+		LeadID:    evt.LeadID,
+		ServiceID: evt.LeadServiceID,
+		Message:   "Geautomatiseerde verwerking vereist menselijke beoordeling",
+		Data: map[string]any{
+			"previousStage": evt.OldStage,
+		},
+	})
+
+	// Publish domain event for downstream handlers (email notifications, etc.)
+	o.eventBus.Publish(context.Background(), events.ManualInterventionRequired{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        evt.LeadID,
+		LeadServiceID: evt.LeadServiceID,
+		TenantID:      evt.TenantID,
+		Reason:        "pipeline_stage_change",
+		Context:       "Transitioned from " + evt.OldStage,
+	})
 }
 
 // OnQuoteAccepted advances pipeline after customer approval.

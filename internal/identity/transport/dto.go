@@ -96,6 +96,11 @@ type OrgLogoDownloadResponse struct {
 type OrganizationSettingsResponse struct {
 	QuotePaymentDays            int     `json:"quotePaymentDays"`
 	QuoteValidDays              int     `json:"quoteValidDays"`
+	AIAutoDisqualifyJunk        bool    `json:"aiAutoDisqualifyJunk"`
+	AIAutoDispatch              bool    `json:"aiAutoDispatch"`
+	AIAutoEstimate              bool    `json:"aiAutoEstimate"`
+	CatalogGapThreshold         int     `json:"catalogGapThreshold"`
+	CatalogGapLookbackDays      int     `json:"catalogGapLookbackDays"`
 	NotificationEmail           *string `json:"notificationEmail,omitempty"`
 	WhatsAppDeviceID            *string `json:"whatsAppDeviceId,omitempty"`
 	WhatsAppWelcomeDelayMinutes int     `json:"whatsAppWelcomeDelayMinutes"`
@@ -104,9 +109,14 @@ type OrganizationSettingsResponse struct {
 
 // UpdateOrganizationSettingsRequest updates quote default settings.
 type UpdateOrganizationSettingsRequest struct {
-	QuotePaymentDays  *int    `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
-	QuoteValidDays    *int    `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
-	NotificationEmail *string `json:"notificationEmail" validate:"omitempty,email,max=255"`
+	QuotePaymentDays       *int    `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
+	QuoteValidDays         *int    `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
+	NotificationEmail      *string `json:"notificationEmail" validate:"omitempty,email,max=255"`
+	AIAutoDisqualifyJunk   *bool   `json:"aiAutoDisqualifyJunk"`
+	AIAutoDispatch         *bool   `json:"aiAutoDispatch"`
+	AIAutoEstimate         *bool   `json:"aiAutoEstimate"`
+	CatalogGapThreshold    *int    `json:"catalogGapThreshold" validate:"omitempty,min=1,max=1000"`
+	CatalogGapLookbackDays *int    `json:"catalogGapLookbackDays" validate:"omitempty,min=1,max=365"`
 	// 0 = send immediately, otherwise delay before sending the automated WhatsApp welcome.
 	WhatsAppWelcomeDelayMinutes *int `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
 }

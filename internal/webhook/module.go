@@ -41,6 +41,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	webhookGroup := ctx.V1.Group("/webhook")
 	webhookGroup.Use(APIKeyAuthMiddleware(m.repo))
 	webhookGroup.POST("/forms", m.handler.HandleFormSubmission)
+	webhookGroup.GET("/config", m.handler.HandleGetWebhookConfig)
 
 	// Public Google Lead Form webhook (payload auth)
 	ctx.V1.POST("/webhook/google-leads", m.handler.HandleGoogleLeadWebhook)
@@ -50,6 +51,12 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.POST("", m.handler.HandleCreateAPIKey)
 	adminGroup.GET("", m.handler.HandleListAPIKeys)
 	adminGroup.DELETE("/:keyId", m.handler.HandleRevokeAPIKey)
+
+	// Admin GTM config management (JWT auth + admin role)
+	gtmAdmin := ctx.Admin.Group("/webhook/gtm-config")
+	gtmAdmin.GET("", m.handler.HandleGetGTMConfig)
+	gtmAdmin.PUT("", m.handler.HandleUpdateGTMConfig)
+	gtmAdmin.DELETE("", m.handler.HandleDeleteGTMConfig)
 
 	// Admin Google webhook config management
 	googleAdmin := ctx.Admin.Group("/webhook/google-lead-config")

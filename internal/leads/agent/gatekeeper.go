@@ -18,6 +18,7 @@ import (
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/domain"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/platform/ai/moonshot"
@@ -96,6 +97,15 @@ func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus even
 	}, nil
 }
 
+// SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
+// This is set after module initialization to avoid cross-module wiring cycles.
+func (g *Gatekeeper) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	if g == nil || g.toolDeps == nil {
+		return
+	}
+	g.toolDeps.SetOrganizationAISettingsReader(reader)
+}
+
 // Run executes the gatekeeper for a lead service.
 func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
 	g.runMu.Lock()
@@ -105,6 +115,12 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	g.toolDeps.SetLeadContext(leadID, serviceID)
 	g.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameGatekeeper)
 	g.toolDeps.ResetToolCallTracking() // Reset before each run
+
+	// Preload org AI settings so downstream tools and safeguards can use them.
+	// If settings cannot be loaded, we continue; autonomous actions will fail-safe.
+	if _, err := g.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+		log.Printf("gatekeeper: failed to load org AI settings (tenant=%s): %v", tenantID, err)
+	}
 
 	lead, service, err := g.fetchLeadAndService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
@@ -200,6 +216,23 @@ func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperProm
 }
 
 func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, service repository.LeadService) {
+	// Respect tenant settings; do not perform autonomous disqualification when disabled.
+	settings, ok := g.toolDeps.GetOrganizationAISettings()
+	if !ok {
+		if loaded, err := g.toolDeps.LoadOrganizationAISettings(ctx); err == nil {
+			settings = loaded
+			ok = true
+		}
+	}
+	if ok && !settings.AIAutoDisqualifyJunk {
+		return
+	}
+	if !ok {
+		// Fail-safe: if settings are unknown, do not perform a destructive auto action.
+		log.Printf("gatekeeper: skipping auto-disqualify (settings unavailable) service=%s tenant=%s", serviceID, tenantID)
+		return
+	}
+
 	// Autonomous "Junk" disposal: if the latest analysis marks this lead as Junk,
 	// automatically move it to Disqualified/Lost and record a transparent timeline event.
 	// This lives here (instead of only the orchestrator) so it applies regardless of who triggered Gatekeeper.Run.

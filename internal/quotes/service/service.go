@@ -7,6 +7,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/quotes/repository"
+	"portal_final_backend/internal/scheduler"
 
 	"github.com/google/uuid"
 )
@@ -103,7 +104,7 @@ type Service struct {
 
 // GenerateQuoteJobQueue enqueues async quote generation tasks.
 type GenerateQuoteJobQueue interface {
-	EnqueueGenerateQuoteJobRequest(ctx context.Context, jobID, tenantID, userID, leadID, leadServiceID uuid.UUID, prompt string, quoteID *uuid.UUID) error
+	EnqueueGenerateQuoteJobRequest(ctx context.Context, req scheduler.GenerateQuoteJobRequest) error
 }
 
 // GenerateQuoteJobStatus is the status for an async quote generation job.

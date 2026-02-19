@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/events"
@@ -213,7 +214,34 @@ func (w *Worker) handleGenerateQuoteJob(ctx context.Context, task *asynq.Task) e
 		existingQuoteID = &parsed
 	}
 
-	return w.quotes.ProcessGenerateQuoteJob(ctx, jobID, payload.Prompt, existingQuoteID)
+	start := time.Now()
+	w.log.Info(
+		"scheduler: starting quote generation job",
+		"jobId", jobID,
+		"tenantId", payload.TenantID,
+		"userId", payload.UserID,
+		"leadId", payload.LeadID,
+		"leadServiceId", payload.LeadServiceID,
+		"hasExistingQuote", existingQuoteID != nil,
+	)
+
+	err = w.quotes.ProcessGenerateQuoteJob(ctx, jobID, payload.Prompt, existingQuoteID)
+	if err != nil {
+		w.log.Error(
+			"scheduler: quote generation job failed",
+			"jobId", jobID,
+			"durationMs", time.Since(start).Milliseconds(),
+			"error", err,
+		)
+		return err
+	}
+
+	w.log.Info(
+		"scheduler: quote generation job completed",
+		"jobId", jobID,
+		"durationMs", time.Since(start).Milliseconds(),
+	)
+	return nil
 }
 
 func getOptionalString(value *string) string {

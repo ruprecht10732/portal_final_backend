@@ -83,9 +83,10 @@ type LeadServiceWriter interface {
 
 // ServiceContextDefinition provides context for the AI gatekeeper.
 type ServiceContextDefinition struct {
-	Name             string
-	Description      *string
-	IntakeGuidelines *string
+	Name                 string
+	Description          *string
+	IntakeGuidelines     *string
+	EstimationGuidelines *string
 }
 
 // ServiceTypeContextReader provides read access to active service definitions for AI context.
@@ -143,6 +144,11 @@ type LeadAppointmentStats struct {
 // AppointmentStatsReader provides appointment stats for RAC_leads (for scoring).
 type AppointmentStatsReader interface {
 	GetLeadAppointmentStats(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadAppointmentStats, error)
+}
+
+// AppointmentVisitReportReader provides read access to visit reports for appointments.
+type AppointmentVisitReportReader interface {
+	GetAppointmentVisitReport(ctx context.Context, appointmentID uuid.UUID, organizationID uuid.UUID) (*AppointmentVisitReport, error)
 }
 
 // PartnerMatcher provides partner search based on service type and location.
@@ -214,6 +220,18 @@ type OrgMemberReader interface {
 	ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]OrgMember, error)
 }
 
+// CatalogSearchLogStore records catalog search queries and outcomes.
+type CatalogSearchLogStore interface {
+	CreateCatalogSearchLog(ctx context.Context, params CreateCatalogSearchLogParams) error
+}
+
+// CatalogGapReader exposes catalog-improvement signals derived from usage:
+// repeated catalog search misses and frequently used ad-hoc quote items.
+type CatalogGapReader interface {
+	ListFrequentCatalogSearchMisses(ctx context.Context, organizationID uuid.UUID, lookbackDays int, minCount int, limit int) ([]CatalogSearchMissSummary, error)
+	ListFrequentAdHocQuoteItems(ctx context.Context, organizationID uuid.UUID, lookbackDays int, minCount int, limit int) ([]AdHocQuoteItemSummary, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -237,12 +255,15 @@ type LeadsRepository interface {
 	PhotoAnalysisStore
 	ServiceTypeContextReader
 	AppointmentStatsReader
+	AppointmentVisitReportReader
 	PartnerMatcher
 	QuotePriceReader
 	ActivityFeedReader
 	FeedReactionStore
 	FeedCommentStore
 	OrgMemberReader
+	CatalogSearchLogStore
+	CatalogGapReader
 }
 
 // Ensure Repository implements LeadsRepository

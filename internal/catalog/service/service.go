@@ -208,6 +208,7 @@ func (s *Service) ListProductsWithFilters(ctx context.Context, tenantID uuid.UUI
 		Title:          strings.TrimSpace(req.Title),
 		Reference:      strings.TrimSpace(req.Reference),
 		Type:           strings.TrimSpace(req.Type),
+		IsDraft:        req.IsDraft,
 		VatRateID:      vatRateID,
 		CreatedAtFrom:  createdAtFrom,
 		CreatedAtTo:    createdAtTo,
@@ -262,9 +263,15 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 		}
 	}
 
+	isDraft := false
+	if req.IsDraft != nil {
+		isDraft = *req.IsDraft
+	}
+
 	product, err := s.repo.CreateProduct(ctx, repository.CreateProductParams{
 		OrganizationID: tenantID,
 		VatRateID:      req.VatRateID,
+		IsDraft:        isDraft,
 		Title:          strings.TrimSpace(req.Title),
 		Reference:      reference,
 		Description:    trimPtr(req.Description),
@@ -315,6 +322,7 @@ func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 		ID:             id,
 		OrganizationID: tenantID,
 		VatRateID:      req.VatRateID,
+		IsDraft:        req.IsDraft,
 		Title:          trimPtr(req.Title),
 		Reference:      trimPtr(req.Reference),
 		Description:    trimPtr(req.Description),
@@ -757,6 +765,7 @@ func toProductResponse(product repository.Product) transport.ProductResponse {
 	return transport.ProductResponse{
 		ID:             product.ID,
 		VatRateID:      product.VatRateID,
+		IsDraft:        product.IsDraft,
 		Title:          product.Title,
 		Reference:      product.Reference,
 		Description:    product.Description,

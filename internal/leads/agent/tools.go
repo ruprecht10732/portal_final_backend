@@ -145,12 +145,14 @@ type ToolDependencies struct {
 	CatalogReader        ports.CatalogReader // optional: hydrate search results from DB
 	QuoteDrafter         ports.QuoteDrafter  // optional: draft quotes from agent
 	OfferCreator         ports.PartnerOfferCreator
+	OrgSettingsReader    ports.OrganizationAISettingsReader
 	mu                   sync.RWMutex
 	tenantID             *uuid.UUID
 	leadID               *uuid.UUID
 	serviceID            *uuid.UUID
 	actorType            string
 	actorName            string
+	orgSettings          *ports.OrganizationAISettings
 	existingQuoteID      *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
 	lastAnalysisMetadata map[string]any          // Populated by SaveAnalysis for use in stage_change events
 	saveAnalysisCalled   bool                    // Track if SaveAnalysis was called
@@ -166,6 +168,61 @@ func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.tenantID = &tenantID
+}
+
+func (d *ToolDependencies) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.OrgSettingsReader = reader
+}
+
+// LoadOrganizationAISettings fetches organization AI settings (if a reader is configured)
+// and stores them on the ToolDependencies for later tool calls.
+//
+// Returns the loaded settings. If loading fails, returns an error.
+func (d *ToolDependencies) LoadOrganizationAISettings(ctx context.Context) (ports.OrganizationAISettings, error) {
+	tenantID, ok := d.GetTenantID()
+	if !ok || tenantID == nil {
+		return ports.OrganizationAISettings{}, errors.New(missingTenantContextMessage)
+	}
+
+	d.mu.RLock()
+	reader := d.OrgSettingsReader
+	d.mu.RUnlock()
+	if reader == nil {
+		// Backward compatible fallback: behave like identity defaults.
+		settings := ports.DefaultOrganizationAISettings()
+		d.mu.Lock()
+		d.orgSettings = &settings
+		d.mu.Unlock()
+		return settings, nil
+	}
+
+	settings, err := reader(ctx, *tenantID)
+	if err != nil {
+		return ports.OrganizationAISettings{}, err
+	}
+
+	d.mu.Lock()
+	d.orgSettings = &settings
+	d.mu.Unlock()
+	return settings, nil
+}
+
+func (d *ToolDependencies) GetOrganizationAISettings() (ports.OrganizationAISettings, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.orgSettings == nil {
+		return ports.OrganizationAISettings{}, false
+	}
+	return *d.orgSettings, true
+}
+
+func (d *ToolDependencies) GetOrganizationAISettingsOrDefault() ports.OrganizationAISettings {
+	if s, ok := d.GetOrganizationAISettings(); ok {
+		return s
+	}
+	return ports.DefaultOrganizationAISettings()
 }
 
 func (d *ToolDependencies) GetTenantID() (*uuid.UUID, bool) {
@@ -1363,6 +1420,175 @@ func noMatchMessage(query string) string {
 	return fmt.Sprintf("No relevant products found for query '%s'. Try different search terms (synonyms, broader/narrower terms, Dutch and English). If no match exists, you may add an ad-hoc item.", query)
 }
 
+func recordCatalogSearch(ctx context.Context, deps *ToolDependencies, query string, collection string, resultCount int, topScore *float64) {
+	tenantID, ok := deps.GetTenantID()
+	if !ok || tenantID == nil {
+		return
+	}
+
+	_, serviceID, hasLeadCtx := deps.GetLeadContext()
+	var servicePtr *uuid.UUID
+	if hasLeadCtx {
+		sid := serviceID
+		servicePtr = &sid
+	}
+
+	if deps.Repo == nil {
+		return
+	}
+	if err := deps.Repo.CreateCatalogSearchLog(ctx, repository.CreateCatalogSearchLogParams{
+		OrganizationID: *tenantID,
+		LeadServiceID:  servicePtr,
+		Query:          query,
+		Collection:     collection,
+		ResultCount:    resultCount,
+		TopScore:       topScore,
+	}); err != nil {
+		log.Printf("SearchProductMaterials: failed to write catalog search log: %v", err)
+	}
+}
+
+type ListCatalogGapsInput struct {
+	// LookbackDays defaults to organization setting catalogGapLookbackDays.
+	LookbackDays *int `json:"lookbackDays,omitempty"`
+	// MinCount defaults to organization setting catalogGapThreshold.
+	MinCount *int `json:"minCount,omitempty"`
+	// Limit defaults to 25.
+	Limit *int `json:"limit,omitempty"`
+}
+
+type CatalogSearchMissSummaryDTO struct {
+	Query       string    `json:"query"`
+	SearchCount int       `json:"searchCount"`
+	LastSeenAt  time.Time `json:"lastSeenAt"`
+	Collections []string  `json:"collections"`
+}
+
+type AdHocQuoteItemSummaryDTO struct {
+	Description string    `json:"description"`
+	UseCount    int       `json:"useCount"`
+	LastSeenAt  time.Time `json:"lastSeenAt"`
+}
+
+type ListCatalogGapsOutput struct {
+	LookbackDays    int                           `json:"lookbackDays"`
+	MinCount        int                           `json:"minCount"`
+	SearchMisses    []CatalogSearchMissSummaryDTO `json:"searchMisses"`
+	AdHocQuoteItems []AdHocQuoteItemSummaryDTO    `json:"adHocQuoteItems"`
+	Message         string                        `json:"message,omitempty"`
+}
+
+type listCatalogGapsParams struct {
+	lookbackDays int
+	minCount     int
+	limit        int
+}
+
+func resolveOptionalIntWithin(defaultVal int, override *int, minVal int, maxVal int) int {
+	val := defaultVal
+	if override != nil {
+		val = *override
+	}
+	if val < minVal {
+		return minVal
+	}
+	if val > maxVal {
+		return maxVal
+	}
+	return val
+}
+
+func resolveListCatalogGapsParams(settings ports.OrganizationAISettings, input ListCatalogGapsInput) listCatalogGapsParams {
+	lookbackDays := resolveOptionalIntWithin(settings.CatalogGapLookbackDays, input.LookbackDays, 1, 365)
+	minCount := resolveOptionalIntWithin(settings.CatalogGapThreshold, input.MinCount, 1, 1000)
+
+	limit := 25
+	if input.Limit != nil {
+		limit = normalizeLimit(*input.Limit, 25, 100)
+	}
+
+	return listCatalogGapsParams{lookbackDays: lookbackDays, minCount: minCount, limit: limit}
+}
+
+func mapCatalogSearchMissSummaries(misses []repository.CatalogSearchMissSummary) []CatalogSearchMissSummaryDTO {
+	out := make([]CatalogSearchMissSummaryDTO, 0, len(misses))
+	for _, m := range misses {
+		out = append(out, CatalogSearchMissSummaryDTO{
+			Query:       m.Query,
+			SearchCount: m.SearchCount,
+			LastSeenAt:  m.LastSeenAt,
+			Collections: m.Collections,
+		})
+	}
+	return out
+}
+
+func mapAdHocQuoteItemSummaries(items []repository.AdHocQuoteItemSummary) []AdHocQuoteItemSummaryDTO {
+	out := make([]AdHocQuoteItemSummaryDTO, 0, len(items))
+	for _, it := range items {
+		out = append(out, AdHocQuoteItemSummaryDTO{
+			Description: it.Description,
+			UseCount:    it.UseCount,
+			LastSeenAt:  it.LastSeenAt,
+		})
+	}
+	return out
+}
+
+func buildListCatalogGapsOutput(params listCatalogGapsParams, misses []repository.CatalogSearchMissSummary, adHoc []repository.AdHocQuoteItemSummary) ListCatalogGapsOutput {
+	out := ListCatalogGapsOutput{
+		LookbackDays:    params.lookbackDays,
+		MinCount:        params.minCount,
+		SearchMisses:    mapCatalogSearchMissSummaries(misses),
+		AdHocQuoteItems: mapAdHocQuoteItemSummaries(adHoc),
+	}
+
+	if len(out.SearchMisses) == 0 && len(out.AdHocQuoteItems) == 0 {
+		out.Message = "No frequent catalog gaps detected in the selected lookback window."
+	}
+
+	return out
+}
+
+func listCatalogGapsErrorOutput(params listCatalogGapsParams, message string) ListCatalogGapsOutput {
+	return ListCatalogGapsOutput{LookbackDays: params.lookbackDays, MinCount: params.minCount, Message: message}
+}
+
+func handleListCatalogGaps(ctx tool.Context, deps *ToolDependencies, input ListCatalogGapsInput) (ListCatalogGapsOutput, error) {
+	tenantID, ok := deps.GetTenantID()
+	if !ok || tenantID == nil {
+		return ListCatalogGapsOutput{Message: missingTenantContextMessage}, nil
+	}
+	if deps.Repo == nil {
+		return ListCatalogGapsOutput{Message: "Repository not configured"}, nil
+	}
+
+	params := resolveListCatalogGapsParams(deps.GetOrganizationAISettingsOrDefault(), input)
+
+	misses, err := deps.Repo.ListFrequentCatalogSearchMisses(ctx, *tenantID, params.lookbackDays, params.minCount, params.limit)
+	if err != nil {
+		log.Printf("ListCatalogGaps: failed to list catalog search misses: %v", err)
+		return listCatalogGapsErrorOutput(params, "Failed to load catalog search misses"), nil
+	}
+
+	adHoc, err := deps.Repo.ListFrequentAdHocQuoteItems(ctx, *tenantID, params.lookbackDays, params.minCount, params.limit)
+	if err != nil {
+		log.Printf("ListCatalogGaps: failed to list ad-hoc quote items: %v", err)
+		return listCatalogGapsErrorOutput(params, "Failed to load ad-hoc quote items"), nil
+	}
+
+	return buildListCatalogGapsOutput(params, misses, adHoc), nil
+}
+
+func createListCatalogGapsTool(deps *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "ListCatalogGaps",
+		Description: "Lists frequent catalog search misses and frequently used ad-hoc quote line items for the current organization. Defaults use organization AI settings (catalogGapThreshold and catalogGapLookbackDays).",
+	}, func(ctx tool.Context, input ListCatalogGapsInput) (ListCatalogGapsOutput, error) {
+		return handleListCatalogGaps(ctx, deps, input)
+	})
+}
+
 // resolveSearchParams extracts and normalises the search parameters from input.
 func resolveSearchParams(input SearchProductMaterialsInput) (query string, limit int, useCatalog bool, scoreThreshold float64, err error) {
 	query = strings.TrimSpace(input.Query)
@@ -1396,9 +1622,16 @@ func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []
 	results, err := deps.CatalogQdrantClient.SearchWithFilter(ctx, vector, limit, scoreThreshold, filter)
 	if err != nil {
 		log.Printf("SearchProductMaterials: catalog search failed: %v", err)
+		recordCatalogSearch(ctx, deps, query, "catalog", 0, nil)
 		return nil
 	}
+	var topScore *float64
+	if len(results) > 0 {
+		s := results[0].Score
+		topScore = &s
+	}
 	products := convertSearchResults(results)
+	recordCatalogSearch(ctx, deps, query, "catalog", len(products), topScore)
 	if len(products) == 0 {
 		log.Printf("SearchProductMaterials: catalog query=%q found 0 products above threshold %.2f, falling back", query, scoreThreshold)
 		return nil
@@ -1470,7 +1703,7 @@ func searchFallbackReferenceCollections(ctx tool.Context, deps *ToolDependencies
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to search product catalog"}, err
 	}
 
-	products := flattenFallbackBatchResults(query, batchResults, requestCollections, limit)
+	products := flattenFallbackBatchResults(ctx, deps, query, batchResults, requestCollections, limit)
 	return buildFallbackSearchOutput(query, products, requestCollections, scoreThreshold), nil
 }
 
@@ -1516,14 +1749,20 @@ func newFallbackBatchRequest(collectionName string, vector []float32, limit int,
 	}
 }
 
-func flattenFallbackBatchResults(query string, batchResults [][]qdrant.SearchResult, requestCollections []string, limit int) []ProductResult {
+func flattenFallbackBatchResults(ctx tool.Context, deps *ToolDependencies, query string, batchResults [][]qdrant.SearchResult, requestCollections []string, limit int) []ProductResult {
 	products := make([]ProductResult, 0, limit*len(batchResults))
 	for idx, results := range batchResults {
 		collectionName := "unknown"
 		if idx < len(requestCollections) {
 			collectionName = requestCollections[idx]
 		}
+		var topScore *float64
+		if len(results) > 0 {
+			s := results[0].Score
+			topScore = &s
+		}
 		collectionProducts := convertSearchResults(results)
+		recordCatalogSearch(ctx, deps, query, collectionName, len(collectionProducts), topScore)
 		for i := range collectionProducts {
 			collectionProducts[i].SourceCollection = collectionName
 		}
@@ -1605,19 +1844,24 @@ func tryCatalogSearchFlow(ctx tool.Context, deps *ToolDependencies, query string
 	initialProducts := searchCatalogCollection(ctx, deps, initialVector, limit, scoreThreshold, query)
 	if len(initialProducts) > 0 {
 		if hasHighConfidenceMatch(initialProducts) {
+			// Original query produced a genuine high-confidence match — authoritative.
 			return catalogSearchOutput(initialProducts, scoreThreshold, false, true), true
 		}
 
 		bestProducts, highConfidenceProducts, _ := runCatalogRetries(ctx, deps, query, limit, scoreThreshold, initialProducts)
 		if len(highConfidenceProducts) > 0 {
-			return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, true), true
+			// Retry improved confidence but the original query did NOT have high
+			// confidence. Return products but mark highConfidence=false so the
+			// caller still tries fallback reference collections.
+			return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, false), true
 		}
-		return catalogSearchOutput(bestProducts, scoreThreshold, false, true), true
+		return catalogSearchOutput(bestProducts, scoreThreshold, false, false), true
 	}
 
 	bestRetryProducts, highConfidenceProducts, _ := runCatalogRetries(ctx, deps, query, limit, scoreThreshold, nil)
 	if len(highConfidenceProducts) > 0 {
-		return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, true), true
+		// Only retries found something — not authoritative enough to skip fallback.
+		return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, false), true
 	}
 	if len(bestRetryProducts) > 0 {
 		return catalogSearchOutput(bestRetryProducts, scoreThreshold, true, false), true
@@ -1753,8 +1997,10 @@ func buildCatalogRewordedQueries(query string) []string {
 		}
 	}
 
-	appendUniqueQuery(strings.ReplaceAll(base, " inclusief ", " "))
-	appendUniqueQuery(base + " catalog product variant maat unit")
+	without := strings.ReplaceAll(base, " inclusief ", " ")
+	if without != base {
+		appendUniqueQuery(without)
+	}
 
 	return queries
 }
@@ -2145,7 +2391,28 @@ func hydrateProductResults(ctx context.Context, deps *ToolDependencies, products
 		return products
 	}
 
-	return applyProductDetails(products, details)
+	// Safety: only keep results that resolve to a non-draft catalog product.
+	// The CatalogReader adapter omits unknown IDs and draft products.
+	resolved := make(map[string]ports.CatalogProductDetails, len(details))
+	for _, d := range details {
+		resolved[d.ID.String()] = d
+	}
+	if len(resolved) == 0 {
+		return nil
+	}
+
+	filtered := make([]ProductResult, 0, len(products))
+	for _, p := range products {
+		if p.ID == "" {
+			continue
+		}
+		if _, ok := resolved[p.ID]; !ok {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+
+	return applyProductDetails(filtered, details)
 }
 
 // collectProductUUIDs extracts unique, parseable UUIDs from product results.

@@ -103,13 +103,14 @@ func (s *Service) ListActive(ctx context.Context, tenantID uuid.UUID) (transport
 // Create creates a new service type.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.CreateServiceTypeRequest) (transport.ServiceTypeResponse, error) {
 	params := repository.CreateParams{
-		OrganizationID:   tenantID,
-		Name:             req.Name,
-		Slug:             generateSlug(req.Name),
-		Description:      req.Description,
-		IntakeGuidelines: req.IntakeGuidelines,
-		Icon:             req.Icon,
-		Color:            req.Color,
+		OrganizationID:       tenantID,
+		Name:                 req.Name,
+		Slug:                 generateSlug(req.Name),
+		Description:          req.Description,
+		IntakeGuidelines:     req.IntakeGuidelines,
+		EstimationGuidelines: req.EstimationGuidelines,
+		Icon:                 req.Icon,
+		Color:                req.Color,
 	}
 
 	st, err := s.repo.Create(ctx, params)
@@ -130,14 +131,15 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, id uuid.UUID, 
 	}
 
 	params := repository.UpdateParams{
-		ID:               id,
-		OrganizationID:   tenantID,
-		Name:             req.Name,
-		Slug:             slug,
-		Description:      req.Description,
-		IntakeGuidelines: req.IntakeGuidelines,
-		Icon:             req.Icon,
-		Color:            req.Color,
+		ID:                   id,
+		OrganizationID:       tenantID,
+		Name:                 req.Name,
+		Slug:                 slug,
+		Description:          req.Description,
+		IntakeGuidelines:     req.IntakeGuidelines,
+		EstimationGuidelines: req.EstimationGuidelines,
+		Icon:                 req.Icon,
+		Color:                req.Color,
 	}
 
 	st, err := s.repo.Update(ctx, params)
@@ -267,16 +269,17 @@ func (s *Service) ensureAlgemeen(ctx context.Context, tenantID uuid.UUID, existi
 // toResponse converts a repository ServiceType to transport response.
 func toResponse(st repository.ServiceType) transport.ServiceTypeResponse {
 	return transport.ServiceTypeResponse{
-		ID:               st.ID,
-		Name:             st.Name,
-		Slug:             st.Slug,
-		Description:      st.Description,
-		IntakeGuidelines: st.IntakeGuidelines,
-		Icon:             st.Icon,
-		Color:            st.Color,
-		IsActive:         st.IsActive,
-		CreatedAt:        st.CreatedAt,
-		UpdatedAt:        st.UpdatedAt,
+		ID:                   st.ID,
+		Name:                 st.Name,
+		Slug:                 st.Slug,
+		Description:          st.Description,
+		IntakeGuidelines:     st.IntakeGuidelines,
+		EstimationGuidelines: st.EstimationGuidelines,
+		Icon:                 st.Icon,
+		Color:                st.Color,
+		IsActive:             st.IsActive,
+		CreatedAt:            st.CreatedAt,
+		UpdatedAt:            st.UpdatedAt,
 	}
 }
 

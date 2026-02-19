@@ -17,6 +17,7 @@ import (
 	identityrepo "portal_final_backend/internal/identity/repository"
 	identityservice "portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/leads"
+	"portal_final_backend/internal/leads/maintenance"
 	leadrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
@@ -28,6 +29,7 @@ import (
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -110,6 +112,13 @@ func main() {
 	aiQuoteJobCleanup := scheduler.NewAIQuoteJobCleanup(pool, log, cleanupInterval, completedRetention, failedRetention)
 	go aiQuoteJobCleanup.Run(ctx)
 
+	// Periodic catalog gap analyzer ("Librarian"): turns frequent 0-result searches
+	// and ad-hoc quote items into draft catalog products for human review.
+	gapInterval := getDurationEnv("CATALOG_GAP_ANALYZER_INTERVAL", 6*time.Hour)
+	maxDrafts := getPositiveIntEnv("CATALOG_GAP_MAX_DRAFTS_PER_RUN", 10)
+	gapAnalyzer := maintenance.NewCatalogGapAnalyzer(leadrepo.New(pool), catalogModule.Repository(), log)
+	go runCatalogGapAnalyzerLoop(ctx, pool, gapAnalyzer, gapInterval, maxDrafts, log)
+
 	worker, err := scheduler.NewWorker(cfg, pool, eventBus, log)
 	if err != nil {
 		log.Error("failed to initialize scheduler worker", "error", err)
@@ -118,6 +127,92 @@ func main() {
 	worker.SetQuoteJobProcessor(quotesModule.Service())
 
 	worker.Run(ctx)
+}
+
+type gapOrgSettings struct {
+	OrganizationID uuid.UUID
+	Threshold      int
+	LookbackDays   int
+}
+
+func runCatalogGapAnalyzerLoop(ctx context.Context, pool *pgxpool.Pool, analyzer *maintenance.CatalogGapAnalyzer, interval time.Duration, maxDrafts int, log *logger.Logger) {
+	if interval <= 0 {
+		interval = 6 * time.Hour
+	}
+	if maxDrafts <= 0 {
+		maxDrafts = 10
+	}
+
+	// Run once shortly after startup, then on interval.
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Small startup delay to avoid competing with initial DB connection churn.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(15 * time.Second):
+	}
+
+	runCatalogGapAnalyzerOnce(ctx, pool, analyzer, maxDrafts, log)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runCatalogGapAnalyzerOnce(ctx, pool, analyzer, maxDrafts, log)
+		}
+	}
+}
+
+func runCatalogGapAnalyzerOnce(ctx context.Context, pool *pgxpool.Pool, analyzer *maintenance.CatalogGapAnalyzer, maxDrafts int, log *logger.Logger) {
+	orgs, err := listGapEnabledOrganizations(ctx, pool)
+	if err != nil {
+		log.Warn("catalog gap: failed to list org settings", "error", err)
+		return
+	}
+	if len(orgs) == 0 {
+		return
+	}
+
+	for _, o := range orgs {
+		if ctx.Err() != nil {
+			return
+		}
+		res, err := analyzer.RunForOrganization(ctx, o.OrganizationID, o.Threshold, o.LookbackDays, maxDrafts)
+		if err != nil {
+			log.Warn("catalog gap: run failed", "orgId", o.OrganizationID, "error", err)
+			continue
+		}
+		if res.CreatedDrafts > 0 || res.Candidates > 0 {
+			log.Info("catalog gap: run completed", "orgId", o.OrganizationID, "candidates", res.Candidates, "createdDrafts", res.CreatedDrafts, "skippedExists", res.SkippedExists)
+		}
+	}
+}
+
+func listGapEnabledOrganizations(ctx context.Context, pool *pgxpool.Pool) ([]gapOrgSettings, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT organization_id, catalog_gap_threshold, catalog_gap_lookback_days
+		FROM RAC_organization_settings
+		WHERE catalog_gap_threshold > 0 AND catalog_gap_lookback_days > 0
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]gapOrgSettings, 0)
+	for rows.Next() {
+		var it gapOrgSettings
+		if err := rows.Scan(&it.OrganizationID, &it.Threshold, &it.LookbackDays); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+	return items, nil
 }
 
 func withRetry(ctx context.Context, log *logger.Logger, name string, attempts int, baseDelay time.Duration, fn func() error) error {

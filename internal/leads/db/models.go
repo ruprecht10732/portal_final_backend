@@ -358,6 +358,7 @@ type RacCatalogProduct struct {
 	UnitPriceCents int64              `json:"unit_price_cents"`
 	UnitLabel      pgtype.Text        `json:"unit_label"`
 	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
+	IsDraft        bool               `json:"is_draft"`
 }
 
 // Stores metadata for catalog product assets (images, documents, and terms URLs)
@@ -389,6 +390,17 @@ type RacCatalogProductMaterial struct {
 	ProductID      pgtype.UUID `json:"product_id"`
 	MaterialID     pgtype.UUID `json:"material_id"`
 	PricingMode    string      `json:"pricing_mode"`
+}
+
+type RacCatalogSearchLog struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+	Query          string             `json:"query"`
+	Collection     string             `json:"collection"`
+	ResultCount    int32              `json:"result_count"`
+	TopScore       pgtype.Float8      `json:"top_score"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type RacCatalogVatRate struct {
@@ -774,6 +786,7 @@ type RacOrganization struct {
 	LogoFileName    pgtype.Text        `json:"logo_file_name"`
 	LogoContentType pgtype.Text        `json:"logo_content_type"`
 	LogoSizeBytes   pgtype.Int8        `json:"logo_size_bytes"`
+	GtmContainerID  pgtype.Text        `json:"gtm_container_id"`
 }
 
 type RacOrganizationInvite struct {
@@ -809,6 +822,11 @@ type RacOrganizationSetting struct {
 	SmtpFromName                pgtype.Text        `json:"smtp_from_name"`
 	WhatsappWelcomeDelayMinutes int32              `json:"whatsapp_welcome_delay_minutes"`
 	NotificationEmail           pgtype.Text        `json:"notification_email"`
+	AiAutoDisqualifyJunk        bool               `json:"ai_auto_disqualify_junk"`
+	AiAutoDispatch              bool               `json:"ai_auto_dispatch"`
+	AiAutoEstimate              bool               `json:"ai_auto_estimate"`
+	CatalogGapThreshold         int32              `json:"catalog_gap_threshold"`
+	CatalogGapLookbackDays      int32              `json:"catalog_gap_lookback_days"`
 }
 
 type RacPartner struct {
@@ -1029,17 +1047,18 @@ type RacRole struct {
 }
 
 type RacServiceType struct {
-	ID               pgtype.UUID        `json:"id"`
-	Name             string             `json:"name"`
-	Slug             string             `json:"slug"`
-	Description      pgtype.Text        `json:"description"`
-	Icon             pgtype.Text        `json:"icon"`
-	Color            pgtype.Text        `json:"color"`
-	IsActive         bool               `json:"is_active"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	OrganizationID   pgtype.UUID        `json:"organization_id"`
-	IntakeGuidelines pgtype.Text        `json:"intake_guidelines"`
+	ID                   pgtype.UUID        `json:"id"`
+	Name                 string             `json:"name"`
+	Slug                 string             `json:"slug"`
+	Description          pgtype.Text        `json:"description"`
+	Icon                 pgtype.Text        `json:"icon"`
+	Color                pgtype.Text        `json:"color"`
+	IsActive             bool               `json:"is_active"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID       pgtype.UUID        `json:"organization_id"`
+	IntakeGuidelines     pgtype.Text        `json:"intake_guidelines"`
+	EstimationGuidelines pgtype.Text        `json:"estimation_guidelines"`
 }
 
 type RacUser struct {

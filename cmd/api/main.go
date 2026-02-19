@@ -24,6 +24,7 @@ import (
 	"portal_final_backend/internal/identity"
 	"portal_final_backend/internal/leadenrichment"
 	"portal_final_backend/internal/leads"
+	leadsports "portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
@@ -40,6 +41,7 @@ import (
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/validator"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -168,6 +170,19 @@ func main() {
 	}
 	leadsModule.ManagementService().SetWorkflowOverrideWriter(identityModule.Service())
 	leadsModule.ManagementService().SetInAppNotificationService(notificationModule.InAppService())
+	leadsModule.SetOrganizationAISettingsReader(func(ctx context.Context, organizationID uuid.UUID) (leadsports.OrganizationAISettings, error) {
+		settings, err := identityModule.Service().GetOrganizationSettings(ctx, organizationID)
+		if err != nil {
+			return leadsports.OrganizationAISettings{}, err
+		}
+		return leadsports.OrganizationAISettings{
+			AIAutoDisqualifyJunk:   settings.AIAutoDisqualifyJunk,
+			AIAutoDispatch:         settings.AIAutoDispatch,
+			AIAutoEstimate:         settings.AIAutoEstimate,
+			CatalogGapThreshold:    settings.CatalogGapThreshold,
+			CatalogGapLookbackDays: settings.CatalogGapLookbackDays,
+		}, nil
+	})
 	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())
 	notificationModule.SetOrganizationMemberReader(leadsModule.Repository())
 
