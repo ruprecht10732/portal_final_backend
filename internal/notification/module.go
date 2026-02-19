@@ -37,6 +37,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// QuotePDFGenerator generates and stores an unsigned PDF for a quote.
+type QuotePDFGenerator interface {
+	RegeneratePDF(ctx context.Context, quoteID, organizationID uuid.UUID) (string, []byte, error)
+}
+
 // QuoteActivityWriter persists activity log entries for quotes.
 type QuoteActivityWriter interface {
 	CreateActivity(ctx context.Context, quoteID, orgID uuid.UUID, eventType, message string, metadata map[string]interface{}) error
@@ -123,6 +128,7 @@ type Module struct {
 	sse                *sse.Service
 	actWriter          QuoteActivityWriter
 	offerTimeline      PartnerOfferTimelineWriter
+	quotePDFGen        QuotePDFGenerator
 	whatsapp           WhatsAppSender
 	leadTimeline       LeadTimelineWriter
 	settingsReader     OrganizationSettingsReader
@@ -285,6 +291,9 @@ func (m *Module) SetOrganizationMemberReader(reader OrganizationMemberReader) {
 
 // SetLeadTimelineWriter injects the lead timeline writer.
 func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeline = writer }
+
+// SetQuotePDFGenerator injects the PDF generator for pre-generating unsigned PDFs on quote send.
+func (m *Module) SetQuotePDFGenerator(gen QuotePDFGenerator) { m.quotePDFGen = gen }
 
 // SetSMTPEncryptionKey sets the AES key used to decrypt SMTP passwords from org settings.
 func (m *Module) SetSMTPEncryptionKey(key []byte) { m.smtpEncryptionKey = key }
@@ -1946,6 +1955,14 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_sent",
 		"Offerte verstuurd naar "+e.ConsumerName,
 		map[string]interface{}{"quoteNumber": e.QuoteNumber, "consumerEmail": e.ConsumerEmail})
+
+	// Pre-generate the unsigned PDF so download links in workflows resolve instantly.
+	if m.quotePDFGen != nil {
+		if _, _, err := m.quotePDFGen.RegeneratePDF(ctx, e.QuoteID, e.OrganizationID); err != nil {
+			m.log.Warn("failed to pre-generate quote PDF on send", "quoteId", e.QuoteID, "error", err)
+		}
+	}
+
 	_ = m.dispatchQuoteSentLeadEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteSentLeadWhatsAppWorkflow(ctx, e)
 

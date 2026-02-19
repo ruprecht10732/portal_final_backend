@@ -246,6 +246,7 @@ func main() {
 	// Wire quote acceptance processor: PDF generation + upload + emails
 	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), quotesContacts, storageSvc, cfg, quoteTermsResolver)
 	quotesModule.SetPDFGenerator(quotePDFProcessor)
+	notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
 
 	// Wire quote activity writer so notification handlers persist activity history
 	quoteActivityWriter := adapters.NewQuoteActivityWriter(quotesModule.Repository())
