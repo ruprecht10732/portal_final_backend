@@ -483,33 +483,9 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 		conversionTime := event.OccurredAt.In(location)
 		conversionValue := mapConversionValue(conversionName, event.ProjectedValueCents)
 
-		hashedEmail := ""
-		hashedPhone := ""
-		hashedFirstName := ""
-		hashedLastName := ""
-		hashedStreet := ""
-		city := ""
-		zipCode := ""
-		countryCode := ""
-		if includeEnhanced {
-			if event.ConsumerEmail != nil {
-				hashedEmail = hashEmail(*event.ConsumerEmail)
-			}
-			hashedPhone = hashPhone(event.ConsumerPhone)
-			hashedFirstName = hashName(event.ConsumerFirstName)
-			hashedLastName = hashName(event.ConsumerLastName)
-			street := strings.TrimSpace(event.AddressStreet + " " + event.AddressHouseNumber)
-			hashedStreet = hashAddress(street)
-			city = strings.TrimSpace(event.AddressCity)
-			zipCode = strings.TrimSpace(event.AddressZipCode)
-			if hashedEmail != "" || hashedPhone != "" || hashedFirstName != "" {
-				countryCode = "NL"
-			}
-		}
-
-		hasEnhancedIdentifier := hashedEmail != "" || hashedPhone != "" || hashedFirstName != ""
+		enhanced := buildEnhancedData(event, includeEnhanced)
 		if event.GCLID == "" {
-			if !includeEnhanced || !hasEnhancedIdentifier {
+			if !includeEnhanced || !enhanced.HasIdentifier {
 				continue
 			}
 		}
@@ -523,17 +499,55 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 			ConversionCurrency: currency,
 			GCLID:              event.GCLID,
 			OrderID:            buildOrderID(event, conversionName),
-			HashedEmail:        hashedEmail,
-			HashedPhone:        hashedPhone,
-			HashedFirstName:    hashedFirstName,
-			HashedLastName:     hashedLastName,
-			HashedStreet:       hashedStreet,
-			City:               city,
-			ZipCode:            zipCode,
-			CountryCode:        countryCode,
+			HashedEmail:        enhanced.HashedEmail,
+			HashedPhone:        enhanced.HashedPhone,
+			HashedFirstName:    enhanced.HashedFirstName,
+			HashedLastName:     enhanced.HashedLastName,
+			HashedStreet:       enhanced.HashedStreet,
+			City:               enhanced.City,
+			ZipCode:            enhanced.ZipCode,
+			CountryCode:        enhanced.CountryCode,
 		})
 	}
 	return rows
+}
+
+type enhancedData struct {
+	HashedEmail     string
+	HashedPhone     string
+	HashedFirstName string
+	HashedLastName  string
+	HashedStreet    string
+	City            string
+	ZipCode         string
+	CountryCode     string
+	HasIdentifier   bool
+}
+
+func buildEnhancedData(event ConversionEvent, includeEnhanced bool) enhancedData {
+	if !includeEnhanced {
+		return enhancedData{}
+	}
+
+	data := enhancedData{}
+	if event.ConsumerEmail != nil {
+		data.HashedEmail = hashEmail(*event.ConsumerEmail)
+	}
+	data.HashedPhone = hashPhone(event.ConsumerPhone)
+	data.HashedFirstName = hashName(event.ConsumerFirstName)
+	data.HashedLastName = hashName(event.ConsumerLastName)
+
+	street := strings.TrimSpace(event.AddressStreet + " " + event.AddressHouseNumber)
+	data.HashedStreet = hashAddress(street)
+	data.City = strings.TrimSpace(event.AddressCity)
+	data.ZipCode = strings.TrimSpace(event.AddressZipCode)
+
+	data.HasIdentifier = data.HashedEmail != "" || data.HashedPhone != "" || data.HashedFirstName != ""
+	if data.HasIdentifier {
+		data.CountryCode = "NL"
+	}
+
+	return data
 }
 
 func mapConversionName(event ConversionEvent) string {
@@ -645,6 +659,10 @@ func hashAddress(value string) string {
 	if value == "" {
 		return ""
 	}
+
+	// Addresses are often entered with inconsistent whitespace; normalize it to avoid hashing
+	// semantically identical values to different digests.
+	value = strings.Join(strings.Fields(value), " ")
 	return sha256Sum(value)
 }
 
