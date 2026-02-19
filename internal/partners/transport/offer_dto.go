@@ -54,15 +54,15 @@ type ListOffersResponse struct {
 // ListOffersRequest is the admin/agent query for the global offers overview.
 // Mirrors other list endpoints: search + paging + sort + filters.
 type ListOffersRequest struct {
-	Search        string    `form:"search" validate:"max=100"`
-	Page          int       `form:"page" validate:"omitempty,min=1"`
-	PageSize      int       `form:"pageSize" validate:"omitempty,min=1,max=100"`
-	SortBy        string    `form:"sortBy" validate:"omitempty,oneof=createdAt expiresAt status partnerName serviceType vakmanPriceCents customerPriceCents"`
-	SortOrder     string    `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
-	Status        string    `form:"status" validate:"omitempty,oneof=pending sent accepted rejected expired"`
-	PartnerID     uuid.UUID `form:"partnerId" validate:"omitempty"`
-	LeadServiceID uuid.UUID `form:"leadServiceId" validate:"omitempty"`
-	ServiceTypeID uuid.UUID `form:"serviceTypeId" validate:"omitempty"`
+	Search        string `form:"search" validate:"max=100"`
+	Page          int    `form:"page" validate:"omitempty,min=1"`
+	PageSize      int    `form:"pageSize" validate:"omitempty,min=1,max=100"`
+	SortBy        string `form:"sortBy" validate:"omitempty,oneof=createdAt expiresAt status partnerName serviceType vakmanPriceCents customerPriceCents"`
+	SortOrder     string `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
+	Status        string `form:"status" validate:"omitempty,oneof=pending sent accepted rejected expired"`
+	PartnerID     string `form:"partnerId" validate:"omitempty,uuid"`
+	LeadServiceID string `form:"leadServiceId" validate:"omitempty,uuid"`
+	ServiceTypeID string `form:"serviceTypeId" validate:"omitempty,uuid"`
 }
 
 // OfferListResponse is the paginated list response for the global offers overview.

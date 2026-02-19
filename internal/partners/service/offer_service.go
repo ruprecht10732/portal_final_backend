@@ -564,13 +564,24 @@ func parseInclusionList(value string) []string {
 
 // ListOffers returns the global offers overview (admin view), paginated.
 func (s *Service) ListOffers(ctx context.Context, tenantID uuid.UUID, req transport.ListOffersRequest) (transport.OfferListResponse, error) {
+	var partnerID, leadServiceID, serviceTypeID uuid.UUID
+	if req.PartnerID != "" {
+		partnerID, _ = uuid.Parse(req.PartnerID)
+	}
+	if req.LeadServiceID != "" {
+		leadServiceID, _ = uuid.Parse(req.LeadServiceID)
+	}
+	if req.ServiceTypeID != "" {
+		serviceTypeID, _ = uuid.Parse(req.ServiceTypeID)
+	}
+
 	result, err := s.repo.ListOffers(ctx, repository.OfferListParams{
 		OrganizationID: tenantID,
 		Search:         req.Search,
 		Status:         req.Status,
-		PartnerID:      req.PartnerID,
-		LeadServiceID:  req.LeadServiceID,
-		ServiceTypeID:  req.ServiceTypeID,
+		PartnerID:      partnerID,
+		LeadServiceID:  leadServiceID,
+		ServiceTypeID:  serviceTypeID,
 		SortBy:         req.SortBy,
 		SortOrder:      req.SortOrder,
 		Page:           req.Page,
