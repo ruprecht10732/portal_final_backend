@@ -27,7 +27,9 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 			return nil, err
 		}
 		if !ok {
-			return []PartnerMatch{}, nil
+			// Final fallback: when we have no coordinates at all, do not claim "0 partners".
+			// Instead, return a best-effort shortlist based on service type and (if present) lead city.
+			return r.findPartnersWithoutAnchor(ctx, organizationID, leadID, serviceType, excludePartnerIDs)
 		}
 	}
 
@@ -46,6 +48,116 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 		ORDER BY dist_km ASC
 		LIMIT 5
 	`, lon, lat, organizationID, serviceType, radiusKm, excludePartnerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	matches := make([]PartnerMatch, 0)
+	for rows.Next() {
+		var match PartnerMatch
+		if err := rows.Scan(&match.ID, &match.BusinessName, &match.Email, &match.DistanceKm); err != nil {
+			return nil, err
+		}
+		matches = append(matches, match)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return matches, nil
+}
+
+func (r *Repository) findPartnersWithoutAnchor(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID, serviceType string, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {
+	// Prefer matching by lead city to keep results locally relevant.
+	city, ok, err := r.lookupLeadCity(ctx, organizationID, leadID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		matches, err := r.findPartnersByServiceTypeAndCity(ctx, organizationID, serviceType, city, excludePartnerIDs)
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) > 0 {
+			return matches, nil
+		}
+	}
+
+	// As a last resort, match by service type only.
+	return r.findPartnersByServiceType(ctx, organizationID, serviceType, excludePartnerIDs)
+}
+
+func (r *Repository) lookupLeadCity(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID) (string, bool, error) {
+	var city string
+	err := r.pool.QueryRow(ctx, `
+		SELECT address_city
+		FROM RAC_leads
+		WHERE organization_id = $1
+			AND id = $2
+		LIMIT 1
+	`, organizationID, leadID).Scan(&city)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if city == "" {
+		return "", false, nil
+	}
+	return city, true, nil
+}
+
+func (r *Repository) findPartnersByServiceTypeAndCity(ctx context.Context, organizationID uuid.UUID, serviceType string, city string, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id, p.business_name, p.contact_email,
+			0.0::double precision AS dist_km
+		FROM RAC_partners p
+		JOIN RAC_partner_service_types pst ON pst.partner_id = p.id
+		JOIN RAC_service_types st ON st.id = pst.service_type_id AND st.organization_id = p.organization_id
+		WHERE p.organization_id = $1
+			AND st.is_active = true
+			AND (st.name = $2 OR st.slug = $2)
+			AND lower(p.city) = lower($3)
+			AND (CARDINALITY($4::uuid[]) = 0 OR p.id != ALL($4::uuid[]))
+		ORDER BY p.updated_at DESC
+		LIMIT 5
+	`, organizationID, serviceType, city, excludePartnerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	matches := make([]PartnerMatch, 0)
+	for rows.Next() {
+		var match PartnerMatch
+		if err := rows.Scan(&match.ID, &match.BusinessName, &match.Email, &match.DistanceKm); err != nil {
+			return nil, err
+		}
+		matches = append(matches, match)
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return matches, nil
+}
+
+func (r *Repository) findPartnersByServiceType(ctx context.Context, organizationID uuid.UUID, serviceType string, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id, p.business_name, p.contact_email,
+			0.0::double precision AS dist_km
+		FROM RAC_partners p
+		JOIN RAC_partner_service_types pst ON pst.partner_id = p.id
+		JOIN RAC_service_types st ON st.id = pst.service_type_id AND st.organization_id = p.organization_id
+		WHERE p.organization_id = $1
+			AND st.is_active = true
+			AND (st.name = $2 OR st.slug = $2)
+			AND (CARDINALITY($3::uuid[]) = 0 OR p.id != ALL($3::uuid[]))
+		ORDER BY p.updated_at DESC
+		LIMIT 5
+	`, organizationID, serviceType, excludePartnerIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +227,24 @@ func (r *Repository) GetInvitedPartnerIDs(ctx context.Context, serviceID uuid.UU
 	}
 
 	return ids, nil
+}
+
+// HasLinkedPartners reports whether this lead has at least one manually linked partner.
+// This is used as a guard to avoid re-running the dispatcher when a human already did the matching.
+func (r *Repository) HasLinkedPartners(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM RAC_partner_leads
+			WHERE organization_id = $1
+				AND lead_id = $2
+		)
+	`, organizationID, leadID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func (r *Repository) lookupZipCoordinates(ctx context.Context, organizationID uuid.UUID, zipCode string) (float64, float64, bool, error) {

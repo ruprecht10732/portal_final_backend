@@ -120,8 +120,12 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	if err != nil {
 		return err
 	}
-	if aggs.AcceptedOffers > 0 {
-		// The service is already assigned; do not re-dispatch or force manual intervention.
+	if aggs.AcceptedOffers > 0 || aggs.PendingOffers > 0 {
+		// A partner-offer flow is already in progress (or accepted); do not re-dispatch.
+		return nil
+	}
+	if linked, err := d.repo.HasLinkedPartners(ctx, tenantID, leadID); err == nil && linked {
+		// A human linked at least one partner to this lead; do not override with AI dispatch.
 		return nil
 	}
 

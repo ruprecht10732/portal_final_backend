@@ -149,6 +149,7 @@ type AppointmentStatsReader interface {
 type PartnerMatcher interface {
 	FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID, serviceType string, zipCode string, radiusKm int, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error)
 	GetInvitedPartnerIDs(ctx context.Context, serviceID uuid.UUID) ([]uuid.UUID, error)
+	HasLinkedPartners(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID) (bool, error)
 }
 
 // QuotePriceReader provides access to the latest quote total for a lead service.
