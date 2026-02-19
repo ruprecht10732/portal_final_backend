@@ -857,6 +857,17 @@ func (s *Service) UpdateServiceStatus(ctx context.Context, leadID uuid.UUID, ser
 		return transport.LeadResponse{}, err
 	}
 
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.LeadServiceStatusChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        leadID,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			OldStatus:     svc.Status,
+			NewStatus:     string(req.Status),
+		})
+	}
+
 	return s.GetByID(ctx, leadID, tenantID)
 }
 
@@ -896,12 +907,32 @@ func (s *Service) UpdateServiceType(ctx context.Context, leadID uuid.UUID, servi
 }
 
 func (s *Service) disqualifyServiceAndMarkLost(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, tenantID uuid.UUID, notFoundMsg string) (transport.LeadResponse, error) {
+	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, apperr.NotFound(notFoundMsg)
+		}
+		return transport.LeadResponse{}, err
+	}
+
 	if _, err := s.repo.UpdateServiceStatusAndPipelineStage(ctx, serviceID, tenantID, domain.LeadStatusDisqualified, domain.PipelineStageLost); err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(notFoundMsg)
 		}
 		return transport.LeadResponse{}, err
 	}
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.LeadServiceStatusChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        leadID,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			OldStatus:     svc.Status,
+			NewStatus:     domain.LeadStatusDisqualified,
+		})
+	}
+
 	return s.GetByID(ctx, leadID, tenantID)
 }
 
@@ -934,6 +965,17 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, req transport.
 			return transport.LeadResponse{}, apperr.NotFound(leadNotFoundMsg)
 		}
 		return transport.LeadResponse{}, err
+	}
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.LeadServiceStatusChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        id,
+			LeadServiceID: service.ID,
+			TenantID:      tenantID,
+			OldStatus:     service.Status,
+			NewStatus:     string(req.Status),
+		})
 	}
 
 	return s.GetByID(ctx, id, tenantID)

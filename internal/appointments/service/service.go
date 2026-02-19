@@ -477,7 +477,22 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 		return apperr.Forbidden("not authorized to delete this appointment")
 	}
 
-	return s.repo.Delete(ctx, id, tenantID)
+	if err := s.repo.Delete(ctx, id, tenantID); err != nil {
+		return err
+	}
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.AppointmentDeleted{
+			BaseEvent:      events.NewBaseEvent(),
+			AppointmentID:  id,
+			OrganizationID: tenantID,
+			LeadID:         appt.LeadID,
+			LeadServiceID:  appt.LeadServiceID,
+			UserID:         userID,
+		})
+	}
+
+	return nil
 }
 
 // List retrieves appointments with filtering

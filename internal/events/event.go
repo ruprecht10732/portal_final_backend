@@ -165,6 +165,20 @@ type LeadAutoDisqualified struct {
 
 func (e LeadAutoDisqualified) EventName() string { return "leads.lead.auto_disqualified" }
 
+// LeadServiceStatusChanged is published when a user manually updates the status
+// of a lead service. This triggers state reconciliation so the pipeline stage
+// stays consistent with the new status.
+type LeadServiceStatusChanged struct {
+	BaseEvent
+	LeadID        uuid.UUID `json:"leadId"`
+	LeadServiceID uuid.UUID `json:"leadServiceId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	OldStatus     string    `json:"oldStatus"`
+	NewStatus     string    `json:"newStatus"`
+}
+
+func (e LeadServiceStatusChanged) EventName() string { return "leads.service.status_changed" }
+
 // =============================================================================
 // Webhook Domain Events
 // =============================================================================
@@ -309,6 +323,22 @@ type QuoteDeleted struct {
 }
 
 func (e QuoteDeleted) EventName() string { return "quotes.quote.deleted" }
+
+// QuoteStatusChanged is published when a quote status is updated via the admin API.
+// This triggers state reconciliation so the pipeline reflects the new status.
+type QuoteStatusChanged struct {
+	BaseEvent
+	QuoteID        uuid.UUID  `json:"quoteId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         uuid.UUID  `json:"leadId"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
+	QuoteNumber    string     `json:"quoteNumber"`
+	OldStatus      string     `json:"oldStatus"`
+	NewStatus      string     `json:"newStatus"`
+	ActorID        uuid.UUID  `json:"actorId"`
+}
+
+func (e QuoteStatusChanged) EventName() string { return "quotes.quote.status_changed" }
 
 // QuoteAccepted is published when a lead accepts and signs the quote.
 type QuoteAccepted struct {
@@ -462,6 +492,19 @@ type AppointmentStatusChanged struct {
 }
 
 func (e AppointmentStatusChanged) EventName() string { return "appointments.status.changed" }
+
+// AppointmentDeleted is published when an appointment is deleted.
+// This triggers state reconciliation so the pipeline regresses if needed.
+type AppointmentDeleted struct {
+	BaseEvent
+	AppointmentID  uuid.UUID  `json:"appointmentId"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	LeadID         *uuid.UUID `json:"leadId,omitempty"`
+	LeadServiceID  *uuid.UUID `json:"leadServiceId,omitempty"`
+	UserID         uuid.UUID  `json:"userId"`
+}
+
+func (e AppointmentDeleted) EventName() string { return "appointments.deleted" }
 
 // AppointmentReminderDue is published when a reminder should be sent.
 type AppointmentReminderDue struct {

@@ -300,7 +300,8 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, tenantID uuid.
 	if err != nil {
 		return nil, err
 	}
-	if current.Status == string(status) {
+	oldStatus := current.Status
+	if oldStatus == string(status) {
 		return s.GetByID(ctx, id, tenantID)
 	}
 
@@ -312,6 +313,21 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, tenantID uuid.
 		return nil, err
 	}
 	s.emitTimelineEvent(ctx, TimelineEventParams{LeadID: resp.LeadID, ServiceID: resp.LeadServiceID, OrganizationID: tenantID, ActorType: "User", ActorName: actorID.String(), EventType: "quote_status_changed", Title: fmt.Sprintf("Quote %s -> %s", resp.QuoteNumber, string(status)), Summary: toPtr(fmt.Sprintf(msgTotalFormat, float64(resp.TotalCents)/100)), Metadata: map[string]any{"quoteId": resp.ID, "status": string(status)}})
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.QuoteStatusChanged{
+			BaseEvent:      events.NewBaseEvent(),
+			QuoteID:        resp.ID,
+			OrganizationID: tenantID,
+			LeadID:         resp.LeadID,
+			LeadServiceID:  resp.LeadServiceID,
+			QuoteNumber:    resp.QuoteNumber,
+			OldStatus:      oldStatus,
+			NewStatus:      string(status),
+			ActorID:        actorID,
+		})
+	}
+
 	return resp, nil
 }
 

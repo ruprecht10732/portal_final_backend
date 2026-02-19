@@ -305,6 +305,9 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorQuoteDeleted(eventBus, orchestrator)
 	subscribeOrchestratorAppointmentCreated(eventBus, orchestrator)
 	subscribeOrchestratorAppointmentStatusChanged(eventBus, orchestrator)
+	subscribeOrchestratorAppointmentDeleted(eventBus, orchestrator)
+	subscribeOrchestratorQuoteStatusChanged(eventBus, orchestrator)
+	subscribeOrchestratorLeadServiceStatusChanged(eventBus, orchestrator)
 }
 
 func subscribeOrchestratorLeadAutoDisqualified(eventBus events.Bus, orchestrator *Orchestrator) {
@@ -358,6 +361,39 @@ func subscribeOrchestratorAppointmentStatusChanged(eventBus events.Bus, orchestr
 			return nil
 		}
 		orchestrator.OnAppointmentStatusChanged(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorAppointmentDeleted(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.AppointmentDeleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.AppointmentDeleted)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnAppointmentDeleted(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorQuoteStatusChanged(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.QuoteStatusChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.QuoteStatusChanged)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnQuoteStatusChanged(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorLeadServiceStatusChanged(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.LeadServiceStatusChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.LeadServiceStatusChanged)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnLeadServiceStatusChanged(ctx, e)
 		return nil
 	}))
 }

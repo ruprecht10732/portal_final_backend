@@ -690,6 +690,25 @@ func (o *Orchestrator) OnAppointmentStatusChanged(ctx context.Context, evt event
 	o.reconcileServiceState(ctx, *evt.LeadID, *evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), allowResurrection)
 }
 
+func (o *Orchestrator) OnAppointmentDeleted(ctx context.Context, evt events.AppointmentDeleted) {
+	if evt.LeadID == nil || evt.LeadServiceID == nil {
+		return
+	}
+	o.reconcileServiceState(ctx, *evt.LeadID, *evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
+}
+
+func (o *Orchestrator) OnQuoteStatusChanged(ctx context.Context, evt events.QuoteStatusChanged) {
+	if evt.LeadServiceID == nil {
+		return
+	}
+	allowResurrection := evt.NewStatus == "Sent" || evt.NewStatus == "Accepted"
+	o.reconcileServiceState(ctx, evt.LeadID, *evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), allowResurrection)
+}
+
+func (o *Orchestrator) OnLeadServiceStatusChanged(ctx context.Context, evt events.LeadServiceStatusChanged) {
+	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.TenantID, evt.EventName(), evt.OccurredAt(), false)
+}
+
 // reconcileServiceState is the single source of truth for LeadService state.
 // It derives pipeline stage + service status from child entities and enforces consistency.
 func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, triggerEvent string, triggerAt time.Time, allowResurrection bool) {
@@ -1042,6 +1061,12 @@ func defaultReconcileReason(triggerEvent, oldStage, newStage string) string {
 		return "Afspraakstatus gewijzigd; status opnieuw bepaald"
 	case events.AppointmentCreated{}.EventName():
 		return "Nieuwe afspraak; status opnieuw bepaald"
+	case events.AppointmentDeleted{}.EventName():
+		return "Afspraak verwijderd; status opnieuw bepaald"
+	case events.QuoteStatusChanged{}.EventName():
+		return "Offertestatus gewijzigd; status opnieuw bepaald"
+	case events.LeadServiceStatusChanged{}.EventName():
+		return "Servicestatus gewijzigd; status opnieuw bepaald"
 	default:
 		return fmt.Sprintf("Auto-correctie: %s → %s", oldStage, newStage)
 	}
