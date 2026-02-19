@@ -23,6 +23,7 @@ import (
 const (
 	dateFormat           = "2006-01-02"
 	errEndTimeAfterStart = "endTime must be after startTime"
+	defaultTimezone      = "Europe/Amsterdam"
 )
 
 // LeadAssigner provides minimal lead assignment capabilities for lead visits.
@@ -121,7 +122,15 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 
 	resp := appt.ToResponse(leadInfo)
 
-	// Broadcast appointment creation via SSE
+	if appt.Status == string(transport.AppointmentStatusScheduled) {
+		s.publishScheduledAppointment(ctx, tenantID, appt, leadInfo)
+	}
+
+	return &resp, nil
+}
+
+// publishScheduledAppointment broadcasts SSE events, publishes to the event bus, and schedules reminders for a newly scheduled appointment.
+func (s *Service) publishScheduledAppointment(ctx context.Context, tenantID uuid.UUID, appt *repository.Appointment, leadInfo *transport.AppointmentLeadInfo) {
 	s.publishSSE(tenantID, sse.Event{
 		Type:    sse.EventAppointmentCreated,
 		Message: fmt.Sprintf("Nieuwe afspraak: %s", appt.Title),
@@ -135,7 +144,6 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 		},
 	})
 
-	// Notify public lead tracking page (minimal payload)
 	s.publishLeadSSE(appt.LeadID, sse.Event{
 		Type: sse.EventAppointmentCreated,
 		Data: map[string]interface{}{
@@ -179,8 +187,6 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, isAdmin bool, te
 			}, reminderAt)
 		}
 	}
-
-	return &resp, nil
 }
 
 // validateLeadVisit validates lead_visit type requirements.
@@ -230,6 +236,10 @@ func (s *Service) checkTimeConflict(ctx context.Context, tenantID, userID uuid.U
 // buildAppointment creates a new Appointment from the request.
 func (s *Service) buildAppointment(userID, tenantID uuid.UUID, req transport.CreateAppointmentRequest) *repository.Appointment {
 	now := time.Now()
+	status := transport.AppointmentStatusScheduled
+	if req.InitialStatus != "" {
+		status = req.InitialStatus
+	}
 	return &repository.Appointment{
 		ID:             uuid.New(),
 		OrganizationID: tenantID,
@@ -243,7 +253,7 @@ func (s *Service) buildAppointment(userID, tenantID uuid.UUID, req transport.Cre
 		MeetingLink:    sanitize.TextPtr(nilIfEmpty(req.MeetingLink)),
 		StartTime:      req.StartTime,
 		EndTime:        req.EndTime,
-		Status:         string(transport.AppointmentStatusScheduled),
+		Status:         string(status),
 		AllDay:         req.AllDay,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -264,7 +274,8 @@ func (s *Service) sendConfirmationEmailIfNeeded(ctx context.Context, sendEmail *
 		return
 	}
 	if consumerEmail := s.getLeadEmail(ctx, *appt.LeadID, tenantID); consumerEmail != "" {
-		scheduledDate := appt.StartTime.Format("Monday, January 2, 2006 at 15:04")
+		nlLoc, _ := time.LoadLocation(defaultTimezone)
+		scheduledDate := appt.StartTime.In(nlLoc).Format("Monday, January 2, 2006 at 15:04")
 		_ = s.emailSender.SendVisitInviteEmail(ctx, consumerEmail, leadInfo.FirstName, scheduledDate, leadInfo.Address)
 	}
 }
@@ -1260,14 +1271,14 @@ func parseAvailabilityTimes(startTime string, endTime string, timezone string) (
 		return time.Time{}, time.Time{}, "", apperr.BadRequest(errEndTimeAfterStart)
 	}
 	if timezone == "" {
-		timezone = "Europe/Amsterdam"
+		timezone = defaultTimezone
 	}
 	return start, end, timezone, nil
 }
 
 func parseAvailabilityOptionalTimes(startTime *string, endTime *string, timezone string) (*time.Time, *time.Time, string, error) {
 	if timezone == "" {
-		timezone = "Europe/Amsterdam"
+		timezone = defaultTimezone
 	}
 	if startTime == nil && endTime == nil {
 		return nil, nil, timezone, nil

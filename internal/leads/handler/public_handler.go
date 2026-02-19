@@ -364,7 +364,8 @@ func (h *PublicHandler) RequestAppointment(c *gin.Context) {
 		return
 	}
 
-	startLabel := req.StartTime.Format("02-01-2006 om 15:04")
+	nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+	startLabel := req.StartTime.In(nlLoc).Format("02-01-2006 om 15:04")
 	summary := fmt.Sprintf("Klant heeft een inspectie aangevraagd voor %s", startLabel)
 	_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
 		LeadID:         lead.ID,
@@ -568,7 +569,8 @@ func resolveCustomerStatus(stage string, quote *ports.PublicQuoteSummary, appt *
 	}
 
 	if appt != nil {
-		apptDate := appt.StartTime.Format("02-01-2006 om 15:04")
+		nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+		apptDate := appt.StartTime.In(nlLoc).Format("02-01-2006 om 15:04")
 		return "In planning", fmt.Sprintf("We hebben een moment gereserveerd op %s.", apptDate), 2
 	}
 

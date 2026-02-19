@@ -178,6 +178,59 @@ func (m *Module) resolveOrganizationName(ctx context.Context, orgID uuid.UUID) s
 	return name
 }
 
+// leadDetails holds resolved lead contact and address fields.
+type leadDetails struct {
+	FirstName   string
+	LastName    string
+	Phone       string
+	Email       string
+	Street      string
+	HouseNumber string
+	ZipCode     string
+	City        string
+	ServiceType string
+}
+
+// resolveLeadDetails fetches first/last name, address and service type for a lead.
+func (m *Module) resolveLeadDetails(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) *leadDetails {
+	if m.pool == nil || leadID == uuid.Nil {
+		return nil
+	}
+	var d leadDetails
+	err := m.pool.QueryRow(ctx,
+		`SELECT consumer_first_name, consumer_last_name, consumer_phone, consumer_email,
+		        address_street, address_house_number, address_zip_code, address_city, service_type
+		   FROM rac_leads WHERE id = $1 AND organization_id = $2`,
+		leadID, orgID,
+	).Scan(&d.FirstName, &d.LastName, &d.Phone, &d.Email,
+		&d.Street, &d.HouseNumber, &d.ZipCode, &d.City, &d.ServiceType)
+	if err != nil {
+		return nil
+	}
+	return &d
+}
+
+// enrichLeadVars adds first name, last name, address, city, zip code and service type
+// into an existing "lead" template variable map. Creates the map if nil.
+func enrichLeadVars(vars map[string]any, d *leadDetails) {
+	if d == nil {
+		return
+	}
+	leadMap, ok := vars["lead"].(map[string]any)
+	if !ok {
+		leadMap = map[string]any{}
+		vars["lead"] = leadMap
+	}
+	leadMap["firstName"] = strings.TrimSpace(d.FirstName)
+	leadMap["lastName"] = strings.TrimSpace(d.LastName)
+	leadMap["address"] = strings.TrimSpace(d.Street + " " + d.HouseNumber)
+	leadMap["street"] = strings.TrimSpace(d.Street)
+	leadMap["houseNumber"] = strings.TrimSpace(d.HouseNumber)
+	leadMap["zipCode"] = strings.TrimSpace(d.ZipCode)
+	leadMap["city"] = strings.TrimSpace(d.City)
+	leadMap["serviceType"] = strings.TrimSpace(d.ServiceType)
+}
+
 // Name returns the module identifier.
 func (m *Module) Name() string { return "notification" }
 
@@ -792,9 +845,17 @@ func (m *Module) enqueueEmailWorkflowStep(
 func buildWorkflowStepVariables(execCtx workflowStepExecutionContext) map[string]any {
 	vars := map[string]any{
 		"lead": map[string]any{
-			"name":  "",
-			"phone": execCtx.LeadPhone,
-			"email": execCtx.LeadEmail,
+			"name":        "",
+			"firstName":   "",
+			"lastName":    "",
+			"phone":       execCtx.LeadPhone,
+			"email":       execCtx.LeadEmail,
+			"address":     "",
+			"street":      "",
+			"houseNumber": "",
+			"zipCode":     "",
+			"city":        "",
+			"serviceType": "",
 		},
 		"partner": map[string]any{
 			"name":  "",
@@ -805,8 +866,9 @@ func buildWorkflowStepVariables(execCtx workflowStepExecutionContext) map[string
 			"name": "",
 		},
 		"quote": map[string]any{
-			"number":     "",
-			"previewUrl": "",
+			"number":      "",
+			"previewUrl":  "",
+			"downloadUrl": "",
 		},
 		"links": map[string]any{
 			"track": "",
@@ -1198,6 +1260,7 @@ const (
 	maxOutboxRetryAttempts     = 5
 	workflowEngineActorName    = "Workflow Engine"
 	quotePublicPathPrefix      = "/quote/"
+	quotePDFPathFmt            = "%s/api/v1/public/quotes/%s/pdf"
 	outboxRetryBaseDelay       = time.Minute
 	outboxRetryMaxDelay        = 60 * time.Minute
 )
@@ -1463,6 +1526,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 		leadSource = &source
 	}
 	orgName := strings.TrimSpace(m.resolveOrganizationName(ctx, e.TenantID))
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.TenantID)
 	templateVars := map[string]any{
 		"lead": map[string]any{
 			"name":   consumerName,
@@ -1477,6 +1541,7 @@ func (m *Module) handleLeadCreated(ctx context.Context, e events.LeadCreated) er
 			"track": m.buildLeadTrackLink(e.PublicToken),
 		},
 	}
+	enrichLeadVars(templateVars, details)
 
 	whatsAppRule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "lead_welcome", "whatsapp", "lead", leadSource)
 	whatsAppEligible := whatsAppRule != nil && whatsAppRule.Enabled && e.WhatsAppOptedIn && strings.TrimSpace(e.ConsumerPhone) != ""
@@ -2076,12 +2141,15 @@ func (m *Module) dispatchQuoteSentLeadWhatsAppWorkflow(ctx context.Context, e ev
 
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_sent", "whatsapp", "lead", nil)
 	proposalURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
+	downloadURL := fmt.Sprintf(quotePDFPathFmt, strings.TrimRight(m.cfg.GetPublicBaseURL(), "/"), e.PublicToken)
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
-		"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL},
+		"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL, "downloadUrl": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
+	enrichLeadVars(templateVars, details)
 
 	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
 		Rule:         rule,
@@ -2102,12 +2170,15 @@ func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e event
 	}
 
 	proposalURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
+	downloadURL := fmt.Sprintf(quotePDFPathFmt, strings.TrimRight(m.cfg.GetPublicBaseURL(), "/"), e.PublicToken)
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
-		"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL},
+		"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL, "downloadUrl": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
+	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_sent", "email", "lead", nil)
 
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
@@ -2198,12 +2269,16 @@ func (m *Module) handleAppointmentWhatsApp(ctx context.Context, p appointmentWha
 	}
 
 	name := defaultName(strings.TrimSpace(p.ConsumerName), "klant")
-	dateStr := p.StartTime.Format("02-01-2006")
-	timeStr := p.StartTime.Format("15:04")
+	nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+	localStart := p.StartTime.In(nlLoc)
+	dateStr := localStart.Format("02-01-2006")
+	timeStr := localStart.Format("15:04")
+	details := m.resolveLeadDetails(ctx, *p.LeadID, p.OrgID)
 	templateVars := map[string]any{
 		"lead":        map[string]any{"name": name, "phone": p.ConsumerPhone, "email": p.ConsumerEmail},
 		"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(p.Location)},
 	}
+	enrichLeadVars(templateVars, details)
 	bodyText, err := renderWorkflowTemplateTextWithError(rule, templateVars)
 	if err != nil {
 		m.log.Warn("workflow whatsapp template render failed", "orgId", p.OrgID, "trigger", p.Trigger, "error", err)
@@ -2227,12 +2302,16 @@ func (m *Module) handleAppointmentEmail(ctx context.Context, p appointmentWhatsA
 	}
 
 	name := defaultName(strings.TrimSpace(p.ConsumerName), "klant")
-	dateStr := p.StartTime.Format("02-01-2006")
-	timeStr := p.StartTime.Format("15:04")
+	nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+	localStart := p.StartTime.In(nlLoc)
+	dateStr := localStart.Format("02-01-2006")
+	timeStr := localStart.Format("15:04")
+	details := m.resolveLeadDetails(ctx, *p.LeadID, p.OrgID)
 	templateVars := map[string]any{
 		"lead":        map[string]any{"name": name, "phone": p.ConsumerPhone, "email": p.ConsumerEmail},
 		"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(p.Location)},
 	}
+	enrichLeadVars(templateVars, details)
 
 	_ = m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 		Rule:         rule,
@@ -2390,15 +2469,17 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	baseURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
-	downloadURL := fmt.Sprintf("%s/api/v1/public/quotes/%s/pdf", baseURL, e.PublicToken)
+	downloadURL := fmt.Sprintf(quotePDFPathFmt, baseURL, e.PublicToken)
 	viewURL := baseURL + quotePublicPathPrefix + e.PublicToken
 	formattedPrice := formatCurrencyEURCents(e.TotalCents)
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
 		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL},
 		"links": map[string]any{"view": viewURL, "download": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
+	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "email", "lead", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 		Rule:         rule,
@@ -2416,12 +2497,14 @@ func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e e
 func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.AgentName), "adviseur")
 	formattedPrice := formatCurrencyEURCents(e.TotalCents)
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"partner": map[string]any{"name": name, "email": e.AgentEmail},
 		"lead":    map[string]any{"name": defaultName(strings.TrimSpace(e.ConsumerName), "de klant")},
 		"quote":   map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice},
 		"org":     map[string]any{"name": e.OrganizationName},
 	}
+	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "email", "partner", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 		Rule:         rule,
@@ -2439,14 +2522,16 @@ func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e 
 func (m *Module) dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	baseURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
-	downloadURL := fmt.Sprintf("%s/api/v1/public/quotes/%s/pdf", baseURL, e.PublicToken)
+	downloadURL := fmt.Sprintf(quotePDFPathFmt, baseURL, e.PublicToken)
 	formattedPrice := formatCurrencyEURCents(e.TotalCents)
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
 		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL},
 		"links": map[string]any{"download": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
+	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "whatsapp", "lead", nil)
 	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
 		Rule:         rule,
@@ -2525,6 +2610,7 @@ func (m *Module) handleQuoteRejected(ctx context.Context, e events.QuoteRejected
 
 func (m *Module) dispatchQuoteRejectedLeadEmailWorkflow(ctx context.Context, e events.QuoteRejected) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead": map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
 		"quote": map[string]any{
@@ -2532,6 +2618,7 @@ func (m *Module) dispatchQuoteRejectedLeadEmailWorkflow(ctx context.Context, e e
 		},
 		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), defaultOrgNameFallback)},
 	}
+	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_rejected", "email", "lead", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
 		Rule:         rule,
@@ -2548,6 +2635,7 @@ func (m *Module) dispatchQuoteRejectedLeadEmailWorkflow(ctx context.Context, e e
 
 func (m *Module) dispatchQuoteRejectedLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteRejected) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead": map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
 		"quote": map[string]any{
@@ -2555,6 +2643,7 @@ func (m *Module) dispatchQuoteRejectedLeadWhatsAppWorkflow(ctx context.Context, 
 		},
 		"org": map[string]any{"name": defaultName(strings.TrimSpace(e.OrganizationName), defaultOrgNameFallback)},
 	}
+	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_rejected", "whatsapp", "lead", nil)
 	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
 		Rule:         rule,
