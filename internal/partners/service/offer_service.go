@@ -594,6 +594,22 @@ func (s *Service) ListOffers(ctx context.Context, tenantID uuid.UUID, req transp
 	}, nil
 }
 
+// DeleteOffer deletes an offer only when it is not accepted and not rejected.
+// We allow deletion for: pending, sent, expired.
+func (s *Service) DeleteOffer(ctx context.Context, tenantID uuid.UUID, offerID uuid.UUID) error {
+	offer, err := s.repo.GetOfferByID(ctx, offerID, tenantID)
+	if err != nil {
+		return err
+	}
+
+	status := strings.ToLower(strings.TrimSpace(offer.Status))
+	if status != "pending" && status != "sent" && status != "expired" {
+		return apperr.Conflict("offer cannot be deleted").WithDetails(map[string]any{"status": offer.Status})
+	}
+
+	return s.repo.DeleteOffer(ctx, offerID, tenantID)
+}
+
 // ListOffersByPartner returns all offers for a given partner (admin view).
 func (s *Service) ListOffersByPartner(ctx context.Context, tenantID uuid.UUID, partnerID uuid.UUID) (transport.ListOffersResponse, error) {
 	if err := s.ensurePartnerExists(ctx, tenantID, partnerID); err != nil {

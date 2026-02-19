@@ -76,6 +76,8 @@ type QuoteForOffer struct {
 
 const offerNotFoundMsg = "offer not found"
 
+var deletableOfferStatuses = []string{"pending", "sent", "expired"}
+
 // CreateOffer inserts a new partner offer.
 func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (PartnerOffer, error) {
 	query := `
@@ -191,6 +193,27 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 	}
 
 	return o, nil
+}
+
+// DeleteOffer deletes an offer within a tenant if it is still in a deletable state.
+// Accepted and rejected offers are intentionally not deletable.
+func (r *Repository) DeleteOffer(ctx context.Context, offerID uuid.UUID, organizationID uuid.UUID) error {
+	query := `
+		DELETE FROM RAC_partner_offers
+		WHERE id = $1
+		  AND organization_id = $2
+		  AND status = ANY($3::text[])`
+
+	cmd, err := r.pool.Exec(ctx, query, offerID, organizationID, deletableOfferStatuses)
+	if err != nil {
+		return fmt.Errorf("delete offer: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		// Caller should have checked existence/status; this is a safety net for races.
+		return apperr.Conflict("offer cannot be deleted")
+	}
+
+	return nil
 }
 
 // GetLeadServiceSummaryContext fetches non-PII data used to build offer summaries.

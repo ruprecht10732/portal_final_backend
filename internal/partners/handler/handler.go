@@ -55,6 +55,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/offers/from-quote", h.CreateOfferFromQuote)
 	rg.GET("/offers", h.ListOffers)
 	rg.GET("/services/:serviceId/offers", h.ListServiceOffers)
+	rg.DELETE("/offers/:offerId", h.DeleteOffer)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 }
 
@@ -605,6 +606,29 @@ func (h *Handler) ListOffers(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+func (h *Handler) DeleteOffer(c *gin.Context) {
+	offerID, err := uuid.Parse(c.Param("offerId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	if err := h.svc.DeleteOffer(c.Request.Context(), tenantID, offerID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "offer deleted"})
 }
 
 func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
