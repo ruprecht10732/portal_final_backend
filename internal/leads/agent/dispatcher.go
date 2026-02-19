@@ -116,6 +116,15 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		return err
 	}
 
+	aggs, err := d.repo.GetServiceStateAggregates(ctx, serviceID, tenantID)
+	if err != nil {
+		return err
+	}
+	if aggs.AcceptedOffers > 0 {
+		// The service is already assigned; do not re-dispatch or force manual intervention.
+		return nil
+	}
+
 	excludedIDs, err := d.repo.GetInvitedPartnerIDs(ctx, serviceID)
 	if err != nil {
 		fmt.Printf("Dispatcher warning: failed to fetch exclusions: %v\n", err)

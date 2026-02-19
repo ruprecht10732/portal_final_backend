@@ -15,13 +15,20 @@ type PartnerMatch struct {
 	DistanceKm   float64
 }
 
-func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, serviceType string, zipCode string, radiusKm int, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {
-	lat, lon, ok, err := r.lookupZipCoordinates(ctx, organizationID, zipCode)
+func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID, serviceType string, zipCode string, radiusKm int, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {
+	lat, lon, ok, err := r.lookupLeadCoordinates(ctx, organizationID, leadID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return []PartnerMatch{}, nil
+		// Fallback: zip-based heuristic (kept for backward compatibility / older leads)
+		lat, lon, ok, err = r.lookupZipCoordinates(ctx, organizationID, zipCode)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return []PartnerMatch{}, nil
+		}
 	}
 
 	rows, err := r.pool.Query(ctx, `
@@ -57,6 +64,29 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 	}
 
 	return matches, nil
+}
+
+func (r *Repository) lookupLeadCoordinates(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID) (float64, float64, bool, error) {
+	var lat float64
+	var lon float64
+
+	err := r.pool.QueryRow(ctx, `
+		SELECT latitude, longitude
+		FROM RAC_leads
+		WHERE organization_id = $1
+			AND id = $2
+			AND latitude IS NOT NULL
+			AND longitude IS NOT NULL
+		LIMIT 1
+	`, organizationID, leadID).Scan(&lat, &lon)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, err
+	}
+
+	return lat, lon, true, nil
 }
 
 // GetInvitedPartnerIDs returns IDs of partners who have already received an offer for this service.

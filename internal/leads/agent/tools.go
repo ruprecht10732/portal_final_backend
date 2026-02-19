@@ -1024,7 +1024,7 @@ func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 			return FindMatchingPartnersOutput{Matches: nil}, err
 		}
 
-		matches, err := deps.Repo.FindMatchingPartners(ctx, tenantID, input.ServiceType, input.ZipCode, input.RadiusKm, excludeUUIDs)
+		matches, err := deps.Repo.FindMatchingPartners(ctx, tenantID, leadID, input.ServiceType, input.ZipCode, input.RadiusKm, excludeUUIDs)
 		if err != nil {
 			return FindMatchingPartnersOutput{Matches: nil}, err
 		}
