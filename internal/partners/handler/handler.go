@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"portal_final_backend/internal/partners/service"
 	"portal_final_backend/internal/partners/transport"
@@ -581,6 +583,13 @@ func (h *Handler) ListServiceOffers(c *gin.Context) {
 }
 
 func (h *Handler) ListOffers(c *gin.Context) {
+	// Some clients accidentally serialize query params as JSON arrays, e.g.
+	// leadServiceId=["<uuid>"] (string). Gin then tries to parse that into
+	// uuid.UUID and fails. Normalize these cases before binding.
+	normalizeSingleQueryValueFromJSONArray(c, "partnerId")
+	normalizeSingleQueryValueFromJSONArray(c, "leadServiceId")
+	normalizeSingleQueryValueFromJSONArray(c, "serviceTypeId")
+
 	var req transport.ListOffersRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
@@ -638,4 +647,38 @@ func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool
 		return uuid.UUID{}, false
 	}
 	return *tenantID, true
+}
+
+// normalizeSingleQueryValueFromJSONArray unwraps a single JSON-array encoded query param.
+// Example: ?leadServiceId=["<uuid>"] becomes ?leadServiceId=<uuid>
+// This keeps the API tolerant to client-side query serialization quirks.
+func normalizeSingleQueryValueFromJSONArray(c *gin.Context, key string) {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return
+	}
+
+	q := c.Request.URL.Query()
+	vals, ok := q[key]
+	if !ok || len(vals) != 1 {
+		return
+	}
+
+	raw := strings.TrimSpace(vals[0])
+	if raw == "" {
+		return
+	}
+	if !strings.HasPrefix(raw, "[") {
+		return
+	}
+
+	var arr []string
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return
+	}
+	if len(arr) < 1 {
+		return
+	}
+
+	q.Set(key, strings.TrimSpace(arr[0]))
+	c.Request.URL.RawQuery = q.Encode()
 }
