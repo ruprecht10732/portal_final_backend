@@ -215,17 +215,17 @@ func (h *PublicHandler) UpdatePreferences(c *gin.Context) {
 		LeadID:         lead.ID,
 		ServiceID:      &svc.ID,
 		OrganizationID: lead.OrganizationID,
-		ActorType:      "Lead",
-		ActorName:      "Klant",
-		EventType:      "preferences_updated",
-		Title:          "Voorkeuren bijgewerkt",
+		ActorType:      repository.ActorTypeLead,
+		ActorName:      repository.ActorNameKlant,
+		EventType:      repository.EventTypePreferencesUpdated,
+		Title:          repository.EventTitlePreferencesUpdated,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"budget":       req.Budget,
-			"timeframe":    req.Timeframe,
-			"availability": req.Availability,
-			"extraNotes":   req.ExtraNotes,
-		},
+		Metadata: repository.PreferencesMetadata{
+			Budget:       req.Budget,
+			Timeframe:    req.Timeframe,
+			Availability: req.Availability,
+			ExtraNotes:   req.ExtraNotes,
+		}.ToMap(),
 	})
 
 	h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
@@ -271,14 +271,14 @@ func (h *PublicHandler) AddCustomerInfo(c *gin.Context) {
 		LeadID:         lead.ID,
 		ServiceID:      &svc.ID,
 		OrganizationID: lead.OrganizationID,
-		ActorType:      "Lead",
-		ActorName:      "Klant",
-		EventType:      "info_added",
-		Title:          "Klant update",
+		ActorType:      repository.ActorTypeLead,
+		ActorName:      repository.ActorNameKlant,
+		EventType:      repository.EventTypeInfoAdded,
+		Title:          repository.EventTitleCustomerInfo,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"text": req.Text,
-		},
+		Metadata: repository.CustomerInfoMetadata{
+			Text: req.Text,
+		}.ToMap(),
 	})
 
 	h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
@@ -370,15 +370,15 @@ func (h *PublicHandler) RequestAppointment(c *gin.Context) {
 		LeadID:         lead.ID,
 		ServiceID:      &svc.ID,
 		OrganizationID: lead.OrganizationID,
-		ActorType:      "Lead",
-		ActorName:      "Klant",
-		EventType:      "appointment_requested",
-		Title:          "Inspectie aangevraagd",
+		ActorType:      repository.ActorTypeLead,
+		ActorName:      repository.ActorNameKlant,
+		EventType:      repository.EventTypeAppointmentRequested,
+		Title:          repository.EventTitleAppointmentRequested,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"startTime": req.StartTime,
-			"endTime":   req.EndTime,
-		},
+		Metadata: repository.AppointmentRequestMetadata{
+			StartTime: req.StartTime,
+			EndTime:   req.EndTime,
+		}.ToMap(),
 	})
 
 	h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{

@@ -503,26 +503,27 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	if analysisSummary == "" {
 		analysisSummary = fmt.Sprintf("AI analyse voltooid: %s urgentie, aanbevolen actie: %s", urgencyLevel, recommendedAction)
 	}
-	analysisMetadata := map[string]any{
-		"urgencyLevel":      urgencyLevel,
-		"recommendedAction": recommendedAction,
-		"leadQuality":       leadQuality,
+	meta := repository.AIAnalysisMetadata{
+		UrgencyLevel:      urgencyLevel,
+		RecommendedAction: recommendedAction,
+		LeadQuality:       leadQuality,
 	}
 	if input.SuggestedContactMessage != "" {
-		analysisMetadata["suggestedContactMessage"] = input.SuggestedContactMessage
-		analysisMetadata["preferredContactChannel"] = string(channel)
+		meta.SuggestedContactMessage = input.SuggestedContactMessage
+		meta.PreferredContactChannel = string(channel)
 	}
 	if len(input.MissingInformation) > 0 {
-		analysisMetadata["missingInformation"] = input.MissingInformation
+		meta.MissingInformation = input.MissingInformation
 	}
+	analysisMetadata := meta.ToMap()
 	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &leadServiceID,
 		OrganizationID: tenantID,
 		ActorType:      actorType,
 		ActorName:      actorName,
-		EventType:      "ai",
-		Title:          "Gatekeeper analyse voltooid",
+		EventType:      repository.EventTypeAI,
+		Title:          repository.EventTitleGatekeeperAnalysis,
 		Summary:        &analysisSummary,
 		Metadata:       analysisMetadata,
 	})
@@ -571,14 +572,14 @@ func recalculateAndRecordScore(ctx tool.Context, deps *ToolDependencies, leadID,
 		OrganizationID: tenantID,
 		ActorType:      actorType,
 		ActorName:      actorName,
-		EventType:      "analysis",
-		Title:          "Leadscore bijgewerkt",
+		EventType:      repository.EventTypeAnalysis,
+		Title:          repository.EventTitleLeadScoreUpdated,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"leadScore":        scoreResult.Score,
-			"leadScorePreAI":   scoreResult.ScorePreAI,
-			"leadScoreVersion": scoreResult.Version,
-		},
+		Metadata: repository.LeadScoreMetadata{
+			LeadScore:        scoreResult.Score,
+			LeadScorePreAI:   scoreResult.ScorePreAI,
+			LeadScoreVersion: scoreResult.Version,
+		}.ToMap(),
 	})
 }
 
@@ -632,14 +633,14 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 		OrganizationID: tenantID,
 		ActorType:      actorType,
 		ActorName:      actorName,
-		EventType:      "service_type_change",
-		Title:          "Diensttype bijgewerkt",
+		EventType:      repository.EventTypeServiceTypeChange,
+		Title:          repository.EventTitleServiceTypeUpdated,
 		Summary:        &reasonText,
-		Metadata: map[string]any{
-			"oldServiceType": leadService.ServiceType,
-			"newServiceType": serviceType,
-			"reason":         input.Reason,
-		},
+		Metadata: repository.ServiceTypeChangeMetadata{
+			OldServiceType: leadService.ServiceType,
+			NewServiceType: serviceType,
+			Reason:         input.Reason,
+		}.ToMap(),
 	})
 
 	log.Printf(
@@ -820,12 +821,6 @@ func recordLeadDetailsUpdate(ctx tool.Context, deps *ToolDependencies, leadID, t
 	if reasonText == "" {
 		reasonText = "Leadgegevens bijgewerkt"
 	}
-	metadata := map[string]any{
-		"updatedFields": updatedFields,
-	}
-	if confidence != nil {
-		metadata["confidence"] = *confidence
-	}
 
 	var serviceID *uuid.UUID
 	if _, svcID, ok := deps.GetLeadContext(); ok {
@@ -838,10 +833,13 @@ func recordLeadDetailsUpdate(ctx tool.Context, deps *ToolDependencies, leadID, t
 		OrganizationID: tenantID,
 		ActorType:      actorType,
 		ActorName:      actorName,
-		EventType:      "lead_update",
-		Title:          "Leadgegevens bijgewerkt",
+		EventType:      repository.EventTypeLeadUpdate,
+		Title:          repository.EventTitleLeadDetailsUpdated,
 		Summary:        &reasonText,
-		Metadata:       metadata,
+		Metadata: repository.LeadUpdateMetadata{
+			UpdatedFields: updatedFields,
+			Confidence:    confidence,
+		}.ToMap(),
 	})
 
 	log.Printf("gatekeeper UpdateLeadDetails: leadId=%s fields=%v reason=%s", leadID, updatedFields, reasonText)
@@ -954,10 +952,10 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 		summary = &reasonText
 	}
 
-	stageMetadata := map[string]any{
-		"oldStage": p.oldStage,
-		"newStage": p.newStage,
-	}
+	stageMetadata := repository.StageChangeMetadata{
+		OldStage: p.oldStage,
+		NewStage: p.newStage,
+	}.ToMap()
 	if analysisMeta := deps.GetLastAnalysisMetadata(); analysisMeta != nil {
 		stageMetadata["analysis"] = analysisMeta
 	}
@@ -968,8 +966,8 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 		OrganizationID: p.tenantID,
 		ActorType:      actorType,
 		ActorName:      actorName,
-		EventType:      "stage_change",
-		Title:          "Fase bijgewerkt",
+		EventType:      repository.EventTypeStageChange,
+		Title:          repository.EventTitleStageUpdated,
 		Summary:        summary,
 		Metadata:       stageMetadata,
 	})
@@ -1037,16 +1035,15 @@ func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 			OrganizationID: tenantID,
 			ActorType:      actorType,
 			ActorName:      actorName,
-			EventType:      "partner_search",
-			Title:          "Partnerzoekactie",
+			EventType:      repository.EventTypePartnerSearch,
+			Title:          repository.EventTitlePartnerSearch,
 			Summary:        &summary,
-			Metadata: map[string]any{
-				"serviceType": input.ServiceType,
-				"zipCode":     input.ZipCode,
-				"radiusKm":    input.RadiusKm,
-				"excludedIds": excludeUUIDs,
-				"matches":     matches,
-			},
+			Metadata: repository.PartnerSearchMetadata{
+				ServiceType: input.ServiceType,
+				ZipCode:     input.ZipCode,
+				RadiusKm:    input.RadiusKm,
+				MatchCount:  len(matches),
+			}.ToMap(),
 		})
 
 		output := make([]PartnerMatch, 0, len(matches))
@@ -1159,14 +1156,14 @@ func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 			OrganizationID: tenantID,
 			ActorType:      actorType,
 			ActorName:      actorName,
-			EventType:      "analysis",
-			Title:          "Schatting opgeslagen",
+			EventType:      repository.EventTypeAnalysis,
+			Title:          repository.EventTitleEstimationSaved,
 			Summary:        summaryPtr,
-			Metadata: map[string]any{
-				"scope":      input.Scope,
-				"priceRange": input.PriceRange,
-				"notes":      input.Notes,
-			},
+			Metadata: repository.EstimationMetadata{
+				Scope:      input.Scope,
+				PriceRange: input.PriceRange,
+				Notes:      input.Notes,
+			}.ToMap(),
 		})
 		if err != nil {
 			return SaveEstimationOutput{Success: false, Message: "Failed to save estimation"}, err

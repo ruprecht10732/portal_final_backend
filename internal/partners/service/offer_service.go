@@ -607,7 +607,22 @@ func (s *Service) DeleteOffer(ctx context.Context, tenantID uuid.UUID, offerID u
 		return apperr.Conflict("offer cannot be deleted").WithDetails(map[string]any{"status": offer.Status})
 	}
 
-	return s.repo.DeleteOffer(ctx, offerID, tenantID)
+	if err := s.repo.DeleteOffer(ctx, offerID, tenantID); err != nil {
+		return err
+	}
+
+	// Publish event so the orchestrator can reconcile the pipeline stage.
+	leadID, _ := s.repo.GetLeadIDForService(ctx, offer.LeadServiceID, tenantID)
+	s.eventBus.Publish(ctx, events.PartnerOfferDeleted{
+		BaseEvent:      events.NewBaseEvent(),
+		OfferID:        offerID,
+		OrganizationID: tenantID,
+		PartnerID:      offer.PartnerID,
+		LeadServiceID:  offer.LeadServiceID,
+		LeadID:         leadID,
+	})
+
+	return nil
 }
 
 // ListOffersByPartner returns all offers for a given partner (admin view).

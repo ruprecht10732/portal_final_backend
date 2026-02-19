@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"portal_final_backend/internal/events"
@@ -888,36 +887,6 @@ func (h *Handler) LogCall(c *gin.Context) {
 		return
 	}
 
-	actorName := identity.UserID().String()
-	if result.AuthorEmail != "" {
-		actorName = result.AuthorEmail
-	}
-
-	summaryText := req.Summary
-	if result.NoteBody != "" {
-		summaryText = result.NoteBody
-	}
-
-	_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
-		LeadID:         leadID,
-		ServiceID:      &serviceID,
-		OrganizationID: tenantID,
-		ActorType:      "User",
-		ActorName:      actorName,
-		EventType:      "call_log",
-		Title:          "Gesprek geregistreerd",
-		Summary:        summaryPointer(summaryText, 400),
-		Metadata: map[string]any{
-			"callOutcome":            result.CallOutcome,
-			"noteCreated":            result.NoteCreated,
-			"statusUpdated":          result.StatusUpdated,
-			"pipelineStageUpdated":   result.PipelineStageUpdated,
-			"appointmentBooked":      result.AppointmentBooked,
-			"appointmentRescheduled": result.AppointmentRescheduled,
-			"appointmentCancelled":   result.AppointmentCancelled,
-		},
-	})
-
 	h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
 		BaseEvent:     events.NewBaseEvent(),
 		LeadID:        leadID,
@@ -927,17 +896,6 @@ func (h *Handler) LogCall(c *gin.Context) {
 	})
 
 	httpkit.OK(c, result)
-}
-
-func summaryPointer(text string, maxLen int) *string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return nil
-	}
-	if len(trimmed) > maxLen {
-		trimmed = trimmed[:maxLen] + "..."
-	}
-	return &trimmed
 }
 
 // parseDateRange parses optional start and end date strings and validates the range.

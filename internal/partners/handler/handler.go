@@ -583,7 +583,7 @@ func (h *Handler) ListServiceOffers(c *gin.Context) {
 func (h *Handler) ListOffers(c *gin.Context) {
 	var req transport.ListOffersRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
 		return
 	}
 	if err := h.val.Struct(req); err != nil {

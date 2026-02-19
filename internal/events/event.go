@@ -411,6 +411,19 @@ type PartnerOfferExpired struct {
 
 func (e PartnerOfferExpired) EventName() string { return "partners.offer.expired" }
 
+// PartnerOfferDeleted is published when a pending/sent/expired offer is deleted.
+// This triggers state reconciliation so the pipeline regresses correctly.
+type PartnerOfferDeleted struct {
+	BaseEvent
+	OfferID        uuid.UUID `json:"offerId"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	PartnerID      uuid.UUID `json:"partnerId"`
+	LeadServiceID  uuid.UUID `json:"leadServiceId"`
+	LeadID         uuid.UUID `json:"leadId"`
+}
+
+func (e PartnerOfferDeleted) EventName() string { return "partners.offer.deleted" }
+
 // =============================================================================
 // Appointments Domain Events
 // =============================================================================

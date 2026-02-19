@@ -297,6 +297,7 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribeOrchestratorPartnerOfferRejected(eventBus, orchestrator)
 	subscribeOrchestratorPartnerOfferAccepted(eventBus, orchestrator)
 	subscribeOrchestratorPartnerOfferExpired(eventBus, orchestrator)
+	subscribeOrchestratorPartnerOfferDeleted(eventBus, orchestrator)
 	subscribeOrchestratorPipelineStageChanged(eventBus, orchestrator)
 	subscribeOrchestratorPhotoAnalysisCompleted(eventBus, orchestrator)
 	subscribeOrchestratorPhotoAnalysisFailed(eventBus, orchestrator)
@@ -467,6 +468,17 @@ func subscribeOrchestratorPartnerOfferExpired(eventBus events.Bus, orchestrator 
 			return nil
 		}
 		orchestrator.OnPartnerOfferExpired(ctx, e)
+		return nil
+	}))
+}
+
+func subscribeOrchestratorPartnerOfferDeleted(eventBus events.Bus, orchestrator *Orchestrator) {
+	eventBus.Subscribe(events.PartnerOfferDeleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
+		e, ok := event.(events.PartnerOfferDeleted)
+		if !ok {
+			return nil
+		}
+		orchestrator.OnPartnerOfferDeleted(ctx, e)
 		return nil
 	}))
 }

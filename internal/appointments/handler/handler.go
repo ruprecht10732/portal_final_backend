@@ -5,6 +5,7 @@ import (
 
 	"portal_final_backend/internal/appointments/service"
 	"portal_final_backend/internal/appointments/transport"
+	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -263,8 +264,15 @@ func (h *Handler) GetVisitReport(c *gin.Context) {
 
 	isAdmin := containsRole(identity.Roles(), "admin")
 	result, err := h.svc.GetVisitReport(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
-	if httpkit.HandleError(c, err) {
-		return
+	if err != nil {
+		// UX: missing visit report is not exceptional; return 200 null so the UI can show an empty editor.
+		if domainErr, ok := err.(*apperr.Error); ok && domainErr.Kind == apperr.KindNotFound && domainErr.Message == "visit report not found" {
+			httpkit.OK(c, nil)
+			return
+		}
+		if httpkit.HandleError(c, err) {
+			return
+		}
 	}
 
 	httpkit.OK(c, result)

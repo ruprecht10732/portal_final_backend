@@ -104,7 +104,7 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 
 	d.toolDeps.SetTenantID(tenantID)
 	d.toolDeps.SetLeadContext(leadID, serviceID)
-	d.toolDeps.SetActor("AI", "Dispatcher")
+	d.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameDispatcher)
 	d.toolDeps.ResetToolCallTracking()
 
 	lead, err := d.repo.GetByID(ctx, leadID, tenantID)

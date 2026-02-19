@@ -103,7 +103,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 
 	g.toolDeps.SetTenantID(tenantID)
 	g.toolDeps.SetLeadContext(leadID, serviceID)
-	g.toolDeps.SetActor("AI", "Gatekeeper")
+	g.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameGatekeeper)
 	g.toolDeps.ResetToolCallTracking() // Reset before each run
 
 	lead, err := g.repo.GetByID(ctx, leadID, tenantID)
@@ -177,17 +177,17 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 				LeadID:         leadID,
 				ServiceID:      &serviceID,
 				OrganizationID: tenantID,
-				ActorType:      "AI",
-				ActorName:      "Gatekeeper",
-				EventType:      "stage_change",
-				Title:          "Auto-Disqualified",
+				ActorType:      repository.ActorTypeAI,
+				ActorName:      repository.ActorNameGatekeeper,
+				EventType:      repository.EventTypeStageChange,
+				Title:          repository.EventTitleAutoDisqualified,
 				Summary:        &summary,
-				Metadata: map[string]any{
-					"leadQuality":       analysis.LeadQuality,
-					"recommendedAction": analysis.RecommendedAction,
-					"analysisId":        analysis.ID,
-					"reason":            "junk_quality",
-				},
+				Metadata: repository.AutoDisqualifyMetadata{
+					LeadQuality:       analysis.LeadQuality,
+					RecommendedAction: analysis.RecommendedAction,
+					AnalysisID:        analysis.ID,
+					Reason:            "junk_quality",
+				}.ToMap(),
 			})
 
 			if g.toolDeps != nil && g.toolDeps.EventBus != nil {
@@ -234,23 +234,24 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 
 	// Create timeline event for the fallback
 	summary := "AI analyse kon niet worden voltooid. Handmatige beoordeling vereist."
-	analysisMetadata := map[string]any{
-		"urgencyLevel":            "Medium",
-		"recommendedAction":       "RequestInfo",
-		"leadQuality":             "Potential",
-		"preferredContactChannel": channel,
-		"suggestedContactMessage": fmt.Sprintf("Beste %s, bedankt voor uw aanvraag. Kunt u ons meer details geven over uw project?", lead.ConsumerFirstName),
-		"missingInformation":      []string{"Intake validatie niet voltooid door AI"},
-		"fallback":                true,
+	fallbackMeta := repository.AIAnalysisMetadata{
+		UrgencyLevel:            "Medium",
+		RecommendedAction:       "RequestInfo",
+		LeadQuality:             "Potential",
+		PreferredContactChannel: channel,
+		SuggestedContactMessage: fmt.Sprintf("Beste %s, bedankt voor uw aanvraag. Kunt u ons meer details geven over uw project?", lead.ConsumerFirstName),
+		MissingInformation:      []string{"Intake validatie niet voltooid door AI"},
+		Fallback:                true,
 	}
+	analysisMetadata := fallbackMeta.ToMap()
 	_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &serviceID,
 		OrganizationID: tenantID,
-		ActorType:      "AI",
-		ActorName:      "Gatekeeper",
-		EventType:      "ai",
-		Title:          "Gatekeeper-triage (fallback)",
+		ActorType:      repository.ActorTypeAI,
+		ActorName:      repository.ActorNameGatekeeper,
+		EventType:      repository.EventTypeAI,
+		Title:          repository.EventTitleGatekeeperFallback,
 		Summary:        &summary,
 		Metadata:       analysisMetadata,
 	})

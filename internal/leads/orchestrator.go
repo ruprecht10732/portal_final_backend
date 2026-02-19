@@ -168,17 +168,17 @@ func (o *Orchestrator) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serv
 		LeadID:         leadID,
 		ServiceID:      &serviceID,
 		OrganizationID: tenantID,
-		ActorType:      "AI",
-		ActorName:      "Gatekeeper",
-		EventType:      "stage_change",
-		Title:          "Auto-Disqualified",
+		ActorType:      repository.ActorTypeAI,
+		ActorName:      repository.ActorNameGatekeeper,
+		EventType:      repository.EventTypeStageChange,
+		Title:          repository.EventTitleAutoDisqualified,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"leadQuality":       analysis.LeadQuality,
-			"recommendedAction": analysis.RecommendedAction,
-			"analysisId":        analysis.ID,
-			"reason":            "junk_quality",
-		},
+		Metadata: repository.AutoDisqualifyMetadata{
+			LeadQuality:       analysis.LeadQuality,
+			RecommendedAction: analysis.RecommendedAction,
+			AnalysisID:        analysis.ID,
+			Reason:            "junk_quality",
+		}.ToMap(),
 	})
 
 	o.eventBus.Publish(ctx, events.LeadAutoDisqualified{
@@ -230,14 +230,14 @@ func (o *Orchestrator) recordDispatcherFailure(ctx context.Context, leadID, serv
 		LeadID:         leadID,
 		ServiceID:      &serviceID,
 		OrganizationID: tenantID,
-		ActorType:      "System",
-		ActorName:      "Dispatcher",
-		EventType:      "alert",
-		Title:          "Partner matching mislukt",
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameDispatcher,
+		EventType:      repository.EventTypeAlert,
+		Title:          repository.EventTitleDispatcherFailed,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"trigger": "dispatcher_run",
-		},
+		Metadata: repository.AlertMetadata{
+			Trigger: "dispatcher_run",
+		}.ToMap(),
 	})
 }
 
@@ -325,16 +325,16 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 		LeadID:         evt.LeadID,
 		ServiceID:      &evt.LeadServiceID,
 		OrganizationID: evt.TenantID,
-		ActorType:      "System",
-		ActorName:      "Orchestrator",
-		EventType:      "alert",
-		Title:          "Foto-analyse mislukt",
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameOrchestrator,
+		EventType:      repository.EventTypeAlert,
+		Title:          repository.EventTitlePhotoAnalysisFailed,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"trigger":      "photo_analysis_failed",
-			"errorCode":    evt.ErrorCode,
-			"errorMessage": evt.ErrorMessage,
-		},
+		Metadata: repository.AlertMetadata{
+			Trigger:      "photo_analysis_failed",
+			ErrorCode:    evt.ErrorCode,
+			ErrorMessage: evt.ErrorMessage,
+		}.ToMap(),
 	})
 
 	if svc.PipelineStage != domain.PipelineStageTriage && svc.PipelineStage != domain.PipelineStageNurturing {
@@ -411,16 +411,16 @@ func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineSta
 			LeadID:         evt.LeadID,
 			ServiceID:      &evt.LeadServiceID,
 			OrganizationID: evt.TenantID,
-			ActorType:      "System",
-			ActorName:      "Orchestrator",
-			EventType:      "alert",
-			Title:          "Handmatige interventie vereist",
+			ActorType:      repository.ActorTypeSystem,
+			ActorName:      repository.ActorNameOrchestrator,
+			EventType:      repository.EventTypeAlert,
+			Title:          repository.EventTitleManualIntervention,
 			Summary:        stringPtr("Geautomatiseerde verwerking vereist menselijke beoordeling"),
-			Metadata: map[string]any{
-				"previous_stage": evt.OldStage,
-				"trigger":        "pipeline_stage_change",
-				"drafts":         drafts,
-			},
+			Metadata: repository.ManualInterventionMetadata{
+				PreviousStage: evt.OldStage,
+				Trigger:       "pipeline_stage_change",
+				Drafts:        drafts,
+			}.ToMap(),
 		})
 
 		// Push real-time notification to all org members via SSE
@@ -463,12 +463,14 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 		LeadID:         evt.LeadID,
 		ServiceID:      evt.LeadServiceID,
 		OrganizationID: evt.OrganizationID,
-		ActorType:      "System",
-		ActorName:      "Orchestrator",
-		EventType:      "stage_change",
-		Title:          "Offerte Geaccepteerd",
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameOrchestrator,
+		EventType:      repository.EventTypeStageChange,
+		Title:          repository.EventTitleQuoteAccepted,
 		Summary:        &summary,
-		Metadata:       map[string]any{"quoteId": evt.QuoteID},
+		Metadata: repository.QuoteEventMetadata{
+			QuoteID: evt.QuoteID,
+		}.ToMap(),
 	})
 
 	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageFulfillment); err != nil {
@@ -517,12 +519,15 @@ func (o *Orchestrator) OnQuoteRejected(ctx context.Context, evt events.QuoteReje
 		LeadID:         evt.LeadID,
 		ServiceID:      evt.LeadServiceID,
 		OrganizationID: evt.OrganizationID,
-		ActorType:      "System",
-		ActorName:      "Orchestrator",
-		EventType:      "stage_change",
-		Title:          "Offerte Afgewezen",
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameOrchestrator,
+		EventType:      repository.EventTypeStageChange,
+		Title:          repository.EventTitleQuoteRejected,
 		Summary:        &summary,
-		Metadata:       map[string]any{"quoteId": evt.QuoteID, "reason": evt.Reason},
+		Metadata: repository.QuoteEventMetadata{
+			QuoteID: evt.QuoteID,
+			Reason:  evt.Reason,
+		}.ToMap(),
 	})
 
 	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageLost); err != nil {
@@ -625,6 +630,11 @@ func (o *Orchestrator) OnPartnerOfferAccepted(ctx context.Context, evt events.Pa
 
 func (o *Orchestrator) OnPartnerOfferCreated(ctx context.Context, evt events.PartnerOfferCreated) {
 	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), true)
+}
+
+// OnPartnerOfferDeleted reconciles pipeline after an offer is removed.
+func (o *Orchestrator) OnPartnerOfferDeleted(ctx context.Context, evt events.PartnerOfferDeleted) {
+	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
 }
 
 func stringPtr(s string) *string {
@@ -741,7 +751,7 @@ func (o *Orchestrator) applyReconciledState(ctx context.Context, p applyReconcil
 			OrganizationID: p.TenantID,
 			LeadID:         p.LeadID,
 			LeadServiceID:  p.ServiceID,
-			EventType:      "visit_completed",
+			EventType:      repository.EventTypeVisitCompleted,
 			Status:         p.Desired.Status,
 			PipelineStage:  p.Desired.Stage,
 			OccurredAt:     p.TriggerAt,
@@ -839,20 +849,20 @@ func (o *Orchestrator) maybeWriteReconcileTimeline(ctx context.Context, p maybeW
 		LeadID:         p.LeadID,
 		ServiceID:      &p.ServiceID,
 		OrganizationID: p.TenantID,
-		ActorType:      "System",
-		ActorName:      "StateReconciler",
-		EventType:      "service_state_reconciled",
-		Title:          "Status automatisch gecorrigeerd",
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameStateReconciler,
+		EventType:      repository.EventTypeStateReconciled,
+		Title:          repository.EventTitleStateReconciled,
 		Summary:        &summary,
-		Metadata: map[string]any{
-			"reasonCode": p.ReasonCode,
-			"trigger":    p.TriggerEvent,
-			"oldStage":   p.OldStage,
-			"newStage":   p.NewStage,
-			"oldStatus":  p.OldStatus,
-			"newStatus":  p.NewStatus,
-			"evidence":   buildReconcileEvidence(p.Aggregates),
-		},
+		Metadata: repository.StateReconciledMetadata{
+			ReasonCode: p.ReasonCode,
+			Trigger:    p.TriggerEvent,
+			OldStage:   p.OldStage,
+			NewStage:   p.NewStage,
+			OldStatus:  p.OldStatus,
+			NewStatus:  p.NewStatus,
+			Evidence:   buildReconcileEvidence(p.Aggregates),
+		}.ToMap(),
 	})
 }
 
@@ -1026,6 +1036,8 @@ func defaultReconcileReason(triggerEvent, oldStage, newStage string) string {
 	switch triggerEvent {
 	case events.QuoteDeleted{}.EventName():
 		return "Offerte verwijderd; status opnieuw bepaald"
+	case events.PartnerOfferDeleted{}.EventName():
+		return "Partneraanbod verwijderd; status opnieuw bepaald"
 	case events.AppointmentStatusChanged{}.EventName():
 		return "Afspraakstatus gewijzigd; status opnieuw bepaald"
 	case events.AppointmentCreated{}.EventName():

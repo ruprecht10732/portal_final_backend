@@ -456,7 +456,8 @@ func (r *Repository) ListOffersByPartner(ctx context.Context, partnerID uuid.UUI
 		       p.business_name,
 		       org.name,
 		       l.address_city,
-		       st.name AS service_type
+		       st.name AS service_type,
+		       ls.service_type_id
 		FROM RAC_partner_offers o
 		JOIN RAC_partners p ON p.id = o.partner_id
 		JOIN RAC_organizations org ON org.id = o.organization_id
@@ -602,9 +603,9 @@ type OfferListParams struct {
 	OrganizationID uuid.UUID
 	Search         string
 	Status         string
-	PartnerID      *uuid.UUID
-	LeadServiceID  *uuid.UUID
-	ServiceTypeID  *uuid.UUID
+	PartnerID      uuid.UUID
+	LeadServiceID  uuid.UUID
+	ServiceTypeID  uuid.UUID
 	SortBy         string
 	SortOrder      string
 	Page           int
@@ -655,19 +656,19 @@ func buildOfferListWhere(params OfferListParams) (whereSQL string, args []interf
 		args = append(args, strings.TrimSpace(params.Status))
 		nextArg++
 	}
-	if params.PartnerID != nil {
+	if params.PartnerID != uuid.Nil {
 		where = append(where, fmt.Sprintf("o.partner_id = $%d", nextArg))
-		args = append(args, *params.PartnerID)
+		args = append(args, params.PartnerID)
 		nextArg++
 	}
-	if params.LeadServiceID != nil {
+	if params.LeadServiceID != uuid.Nil {
 		where = append(where, fmt.Sprintf("o.lead_service_id = $%d", nextArg))
-		args = append(args, *params.LeadServiceID)
+		args = append(args, params.LeadServiceID)
 		nextArg++
 	}
-	if params.ServiceTypeID != nil {
+	if params.ServiceTypeID != uuid.Nil {
 		where = append(where, fmt.Sprintf("ls.service_type_id = $%d", nextArg))
-		args = append(args, *params.ServiceTypeID)
+		args = append(args, params.ServiceTypeID)
 		nextArg++
 	}
 

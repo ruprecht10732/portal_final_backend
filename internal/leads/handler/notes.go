@@ -84,7 +84,7 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 		return
 	}
 
-	// Determine service ID for timeline event and data change notification.
+	// Determine service ID for the timeline event and data-change notification.
 	// Prefer the service ID from the request; fall back to GetCurrentLeadService.
 	var serviceID uuid.UUID
 	var hasServiceID bool
@@ -98,22 +98,29 @@ func (h *NotesHandler) AddNote(c *gin.Context) {
 		serviceID, hasServiceID = h.getCurrentServiceID(c, id, tenantID)
 	}
 
+	// Always record the note in the timeline — even when no service is resolvable.
+	// A nil ServiceID creates a lead-level event visible in the full timeline but
+	// not in any individual service timeline (see ListTimelineEventsByService).
+	var serviceIDPtr *uuid.UUID
 	if hasServiceID {
-		_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
-			LeadID:         id,
-			ServiceID:      &serviceID,
-			OrganizationID: tenantID,
-			ActorType:      "User",
-			ActorName:      created.AuthorEmail,
-			EventType:      "note",
-			Title:          "Notitie toegevoegd",
-			Summary:        toSummaryPointer(created.Body, 400),
-			Metadata: map[string]any{
-				"noteId":   created.ID,
-				"noteType": created.Type,
-			},
-		})
+		serviceIDPtr = &serviceID
+	}
+	_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
+		LeadID:         id,
+		ServiceID:      serviceIDPtr,
+		OrganizationID: tenantID,
+		ActorType:      repository.ActorTypeUser,
+		ActorName:      created.AuthorEmail,
+		EventType:      repository.EventTypeNote,
+		Title:          repository.EventTitleNoteAdded,
+		Summary:        toSummaryPointer(created.Body, repository.TimelineSummaryMaxLen),
+		Metadata: repository.NoteMetadata{
+			NoteID:   created.ID,
+			NoteType: created.Type,
+		}.ToMap(),
+	})
 
+	if hasServiceID {
 		h.eventBus.Publish(c.Request.Context(), events.LeadDataChanged{
 			BaseEvent:     events.NewBaseEvent(),
 			LeadID:        id,

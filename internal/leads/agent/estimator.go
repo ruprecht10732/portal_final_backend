@@ -156,7 +156,7 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 
 	e.toolDeps.SetTenantID(tenantID)
 	e.toolDeps.SetLeadContext(leadID, serviceID)
-	e.toolDeps.SetActor("AI", "Estimator")
+	e.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameEstimator)
 	e.toolDeps.ResetToolCallTracking()
 
 	existingQuoteID, quoteLookupErr := e.repo.GetLatestDraftQuoteID(ctx, serviceID, tenantID)
@@ -198,10 +198,10 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 			LeadID:         leadID,
 			ServiceID:      &serviceID,
 			OrganizationID: tenantID,
-			ActorType:      "System",
-			ActorName:      "Estimator",
-			EventType:      "alert",
-			Title:          "Schatting ontbreekt",
+			ActorType:      repository.ActorTypeSystem,
+			ActorName:      repository.ActorNameEstimator,
+			EventType:      repository.EventTypeAlert,
+			Title:          repository.EventTitleEstimationMissing,
 			Summary:        &warn,
 		})
 		log.Printf("estimator: SaveEstimation was not called for lead=%s service=%s", leadID, serviceID)

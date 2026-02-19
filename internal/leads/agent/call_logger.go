@@ -381,6 +381,36 @@ Execute the appropriate tools now.`,
 	result := c.toolDeps.GetResult()
 	result.Message = buildResultMessage(result)
 
+	// Write the call-log timeline event here so the HTTP handler stays
+	// free of persistence concerns (Issue: handler-level timeline writes).
+	actorName := result.AuthorEmail
+	if actorName == "" {
+		actorName = userID.String()
+	}
+	summaryText := summary
+	if result.NoteBody != "" {
+		summaryText = result.NoteBody
+	}
+	_, _ = c.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      repository.ActorTypeUser,
+		ActorName:      actorName,
+		EventType:      repository.EventTypeCallLog,
+		Title:          repository.EventTitleCallLog,
+		Summary:        repository.TruncateSummary(summaryText, repository.TimelineSummaryMaxLen),
+		Metadata: repository.CallLogMetadata{
+			CallOutcome:            result.CallOutcome,
+			NoteCreated:            result.NoteCreated,
+			StatusUpdated:          result.StatusUpdated,
+			PipelineStageUpdated:   result.PipelineStageUpdated,
+			AppointmentBooked:      result.AppointmentBooked,
+			AppointmentRescheduled: result.AppointmentRescheduled,
+			AppointmentCancelled:   result.AppointmentCancelled,
+		}.ToMap(),
+	})
+
 	return &result, nil
 }
 
@@ -709,15 +739,15 @@ func buildSetCallOutcomeTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 			LeadID:         leadID,
 			ServiceID:      &serviceID,
 			OrganizationID: tenantID,
-			ActorType:      "User",
+			ActorType:      repository.ActorTypeUser,
 			ActorName:      actorName,
-			EventType:      "call_outcome",
-			Title:          "Belresultaat",
+			EventType:      repository.EventTypeCallOutcome,
+			Title:          repository.EventTitleCallOutcome,
 			Summary:        &summary,
-			Metadata: map[string]any{
-				"outcome": outcome,
-				"notes":   strings.TrimSpace(input.Notes),
-			},
+			Metadata: repository.CallOutcomeMetadata{
+				Outcome: outcome,
+				Notes:   strings.TrimSpace(input.Notes),
+			}.ToMap(),
 		})
 
 		deps.SetCallOutcome(outcome)
@@ -908,15 +938,15 @@ func createCallLoggerStageTimelineEvent(deps *CallLoggerToolDeps, ctx tool.Conte
 		LeadID:         input.LeadID,
 		ServiceID:      &input.ServiceID,
 		OrganizationID: input.TenantID,
-		ActorType:      "User",
+		ActorType:      repository.ActorTypeUser,
 		ActorName:      actorName,
-		EventType:      "stage_change",
-		Title:          "Fase bijgewerkt",
+		EventType:      repository.EventTypeStageChange,
+		Title:          repository.EventTitleStageUpdated,
 		Summary:        summary,
-		Metadata: map[string]any{
-			"oldStage": input.OldStage,
-			"newStage": input.NewStage,
-		},
+		Metadata: repository.StageChangeMetadata{
+			OldStage: input.OldStage,
+			NewStage: input.NewStage,
+		}.ToMap(),
 	})
 }
 
