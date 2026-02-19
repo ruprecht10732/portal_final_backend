@@ -106,15 +106,54 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	g.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameGatekeeper)
 	g.toolDeps.ResetToolCallTracking() // Reset before each run
 
-	lead, err := g.repo.GetByID(ctx, leadID, tenantID)
-	if err != nil {
-		return err
-	}
-	service, err := g.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	lead, service, err := g.fetchLeadAndService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
 		return err
 	}
 
+	notes, attachments, photoAnalysis := g.fetchServiceContext(ctx, leadID, serviceID, tenantID)
+	intakeContext := g.buildServiceContext(ctx, tenantID, service.ServiceType)
+	if err := g.runGatekeeperPrompt(ctx, gatekeeperPromptRequest{
+		leadID:        leadID,
+		serviceID:     serviceID,
+		lead:          lead,
+		service:       service,
+		notes:         notes,
+		intakeContext: intakeContext,
+		attachments:   attachments,
+		photoAnalysis: photoAnalysis,
+	}); err != nil {
+		return err
+	}
+
+	// Validate that SaveAnalysis was called - if not, create fallback
+	wasCalled := g.toolDeps.WasSaveAnalysisCalled()
+	log.Printf("gatekeeper: WasSaveAnalysisCalled()=%v for lead=%s service=%s", wasCalled, leadID, serviceID)
+	if !wasCalled {
+		log.Printf("gatekeeper: SaveAnalysis was NOT called by agent for lead=%s service=%s, creating fallback", leadID, serviceID)
+		g.createFallbackAnalysis(ctx, lead, leadID, serviceID, tenantID)
+	} else {
+		log.Printf("gatekeeper: SaveAnalysis was called successfully for lead=%s service=%s", leadID, serviceID)
+	}
+
+	g.maybeAutoDisqualifyJunk(ctx, leadID, serviceID, tenantID, service)
+
+	return nil
+}
+
+func (g *Gatekeeper) fetchLeadAndService(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) (repository.Lead, repository.LeadService, error) {
+	lead, err := g.repo.GetByID(ctx, leadID, tenantID)
+	if err != nil {
+		return repository.Lead{}, repository.LeadService{}, err
+	}
+	service, err := g.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return repository.Lead{}, repository.LeadService{}, err
+	}
+	return lead, service, nil
+}
+
+func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) ([]repository.LeadNote, []repository.Attachment, *repository.PhotoAnalysis) {
 	notes, err := g.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
 		log.Printf("gatekeeper notes fetch failed: %v", err)
@@ -134,75 +173,88 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		log.Printf("gatekeeper photo analysis fetch failed: %v", err)
 	}
 
-	intakeContext := g.buildServiceContext(ctx, tenantID)
-	promptText := buildGatekeeperPrompt(lead, service, notes, intakeContext, attachments, photoAnalysis)
+	return notes, attachments, photoAnalysis
+}
 
-	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", leadID, serviceID)
-	if err := g.runWithPrompt(ctx, promptText, leadID); err != nil {
-		log.Printf("gatekeeper: runWithPrompt failed for lead=%s: %v", leadID, err)
+type gatekeeperPromptRequest struct {
+	leadID        uuid.UUID
+	serviceID     uuid.UUID
+	lead          repository.Lead
+	service       repository.LeadService
+	notes         []repository.LeadNote
+	intakeContext string
+	attachments   []repository.Attachment
+	photoAnalysis *repository.PhotoAnalysis
+}
+
+func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperPromptRequest) error {
+	promptText := buildGatekeeperPrompt(req.lead, req.service, req.notes, req.intakeContext, req.attachments, req.photoAnalysis)
+
+	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", req.leadID, req.serviceID)
+	if err := g.runWithPrompt(ctx, promptText, req.leadID); err != nil {
+		log.Printf("gatekeeper: runWithPrompt failed for lead=%s: %v", req.leadID, err)
 		return err
 	}
-	log.Printf("gatekeeper: runWithPrompt completed for lead=%s", leadID)
+	log.Printf("gatekeeper: runWithPrompt completed for lead=%s", req.leadID)
+	return nil
+}
 
-	// Validate that SaveAnalysis was called - if not, create fallback
-	wasCalled := g.toolDeps.WasSaveAnalysisCalled()
-	log.Printf("gatekeeper: WasSaveAnalysisCalled()=%v for lead=%s service=%s", wasCalled, leadID, serviceID)
-	if !wasCalled {
-		log.Printf("gatekeeper: SaveAnalysis was NOT called by agent for lead=%s service=%s, creating fallback", leadID, serviceID)
-		g.createFallbackAnalysis(ctx, lead, leadID, serviceID, tenantID)
-	} else {
-		log.Printf("gatekeeper: SaveAnalysis was called successfully for lead=%s service=%s", leadID, serviceID)
-	}
-
+func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, service repository.LeadService) {
 	// Autonomous "Junk" disposal: if the latest analysis marks this lead as Junk,
 	// automatically move it to Disqualified/Lost and record a transparent timeline event.
 	// This lives here (instead of only the orchestrator) so it applies regardless of who triggered Gatekeeper.Run.
-	if service.Status != domain.LeadStatusDisqualified {
-		analysis, err := g.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
-		if err != nil && err != repository.ErrNotFound {
-			log.Printf("gatekeeper: failed to fetch latest AI analysis for junk check: %v", err)
-		} else if err == nil && analysis.LeadQuality == "Junk" {
-			log.Printf("gatekeeper: auto-disqualifying Junk lead (service=%s lead=%s)", serviceID, leadID)
-
-			if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageLost); err != nil {
-				log.Printf("gatekeeper: failed to set pipeline stage to Lost during junk auto-disqualify: %v", err)
-			}
-			if _, err := g.repo.UpdateServiceStatus(ctx, serviceID, tenantID, domain.LeadStatusDisqualified); err != nil {
-				log.Printf("gatekeeper: failed to set service status to Disqualified during junk auto-disqualify: %v", err)
-				return nil
-			}
-
-			summary := "AI detected Junk quality. Lead automatically moved to Disqualified."
-			_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-				LeadID:         leadID,
-				ServiceID:      &serviceID,
-				OrganizationID: tenantID,
-				ActorType:      repository.ActorTypeAI,
-				ActorName:      repository.ActorNameGatekeeper,
-				EventType:      repository.EventTypeStageChange,
-				Title:          repository.EventTitleAutoDisqualified,
-				Summary:        &summary,
-				Metadata: repository.AutoDisqualifyMetadata{
-					LeadQuality:       analysis.LeadQuality,
-					RecommendedAction: analysis.RecommendedAction,
-					AnalysisID:        analysis.ID,
-					Reason:            "junk_quality",
-				}.ToMap(),
-			})
-
-			if g.toolDeps != nil && g.toolDeps.EventBus != nil {
-				g.toolDeps.EventBus.Publish(ctx, events.LeadAutoDisqualified{
-					BaseEvent:     events.NewBaseEvent(),
-					LeadID:        leadID,
-					LeadServiceID: serviceID,
-					TenantID:      tenantID,
-					Reason:        "junk_quality",
-				})
-			}
-		}
+	if service.Status == domain.LeadStatusDisqualified {
+		return
 	}
 
-	return nil
+	analysis, err := g.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err != nil {
+		if err != repository.ErrNotFound {
+			log.Printf("gatekeeper: failed to fetch latest AI analysis for junk check: %v", err)
+		}
+		return
+	}
+	if analysis.LeadQuality != "Junk" {
+		return
+	}
+
+	log.Printf("gatekeeper: auto-disqualifying Junk lead (service=%s lead=%s)", serviceID, leadID)
+
+	if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageLost); err != nil {
+		log.Printf("gatekeeper: failed to set pipeline stage to Lost during junk auto-disqualify: %v", err)
+	}
+	if _, err := g.repo.UpdateServiceStatus(ctx, serviceID, tenantID, domain.LeadStatusDisqualified); err != nil {
+		log.Printf("gatekeeper: failed to set service status to Disqualified during junk auto-disqualify: %v", err)
+		return
+	}
+
+	summary := "AI detected Junk quality. Lead automatically moved to Disqualified."
+	_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      repository.ActorTypeAI,
+		ActorName:      repository.ActorNameGatekeeper,
+		EventType:      repository.EventTypeStageChange,
+		Title:          repository.EventTitleAutoDisqualified,
+		Summary:        &summary,
+		Metadata: repository.AutoDisqualifyMetadata{
+			LeadQuality:       analysis.LeadQuality,
+			RecommendedAction: analysis.RecommendedAction,
+			AnalysisID:        analysis.ID,
+			Reason:            "junk_quality",
+		}.ToMap(),
+	})
+
+	if g.toolDeps != nil && g.toolDeps.EventBus != nil {
+		g.toolDeps.EventBus.Publish(ctx, events.LeadAutoDisqualified{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        leadID,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			Reason:        "junk_quality",
+		})
+	}
 }
 
 // createFallbackAnalysis creates a minimal analysis when the agent fails to call SaveAnalysis
@@ -261,27 +313,55 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 	log.Printf("gatekeeper: created fallback analysis for lead=%s service=%s", leadID, serviceID)
 }
 
-func (g *Gatekeeper) buildServiceContext(ctx context.Context, tenantID uuid.UUID) string {
+func (g *Gatekeeper) buildServiceContext(ctx context.Context, tenantID uuid.UUID, currentServiceType string) string {
 	services, err := g.repo.ListActiveServiceTypes(ctx, tenantID)
 	if err != nil {
 		return "No intake requirements available."
 	}
 
+	currentKey := strings.ToLower(strings.TrimSpace(currentServiceType))
+
+	// Keep the context focused: list all active types (for awareness), but include
+	// the detailed intake guidelines only for the currently selected service type.
+	activeNames := make([]string, 0, len(services))
+	var selected *repository.ServiceContextDefinition
+	for i := range services {
+		svc := services[i]
+		activeNames = append(activeNames, svc.Name)
+		if strings.ToLower(strings.TrimSpace(svc.Name)) == currentKey || strings.ToLower(strings.TrimSpace(getSlugLike(svc.Name))) == currentKey {
+			selected = &services[i]
+		}
+	}
+
 	var sb strings.Builder
-	for _, svc := range services {
-		sb.WriteString(fmt.Sprintf("### %s\n", svc.Name))
-		if svc.Description != nil && *svc.Description != "" {
-			sb.WriteString(fmt.Sprintf("Description: %s\n", *svc.Description))
-		}
-		if svc.IntakeGuidelines != nil && *svc.IntakeGuidelines != "" {
-			sb.WriteString(fmt.Sprintf("Intake Requirements: %s\n", *svc.IntakeGuidelines))
-		} else {
-			sb.WriteString("Intake Requirements: Not specified.\n")
-		}
-		sb.WriteString("\n")
+	sb.WriteString("Active service types: " + strings.Join(activeNames, ", ") + "\n\n")
+	sb.WriteString(fmt.Sprintf("Selected service type (current): %s\n\n", currentServiceType))
+
+	if selected == nil {
+		sb.WriteString("Intake Requirements for selected service type: Not found (service type may be inactive or renamed).\n")
+		sb.WriteString("If intake requirements are missing, move to Nurturing and request the missing details.\n")
+		return sb.String()
+	}
+
+	if selected.Description != nil && strings.TrimSpace(*selected.Description) != "" {
+		sb.WriteString("Description: " + strings.TrimSpace(*selected.Description) + "\n")
+	}
+	if selected.IntakeGuidelines != nil && strings.TrimSpace(*selected.IntakeGuidelines) != "" {
+		sb.WriteString("Intake Requirements (includes any heuristics/checklist text configured by tenant):\n")
+		sb.WriteString(strings.TrimSpace(*selected.IntakeGuidelines) + "\n")
+	} else {
+		sb.WriteString("Intake Requirements: Not specified.\n")
 	}
 
 	return sb.String()
+}
+
+// getSlugLike is a minimal helper to reduce mismatches when a tenant uses a slug-like
+// service type string (e.g. "insulation") while the DB uses a display name (e.g. "Insulation").
+func getSlugLike(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.ReplaceAll(name, " ", "-")
+	return name
 }
 
 func (g *Gatekeeper) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {

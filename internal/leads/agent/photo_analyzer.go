@@ -569,7 +569,8 @@ Schat afmetingen, oppervlaktes en aantallen uit elke foto:
 - Gebruik referentie-objecten (deuren ~2.1m, stopcontacten ~30cm, standaard tegels, etc.)
 - Gebruik de Calculator tool voor berekeningen (oppervlakte = lengte × breedte)
 - Noteer elke meting met type (dimension/area/count/volume), waarde, eenheid en confidence
-- Als een meting niet betrouwbaar uit de foto te halen is, roep FlagOnsiteMeasurement aan
+- ANTIFOUT-REGEL: Het is beter om FlagOnsiteMeasurement aan te roepen dan een onjuiste meting te geven.
+- Als je confidence niet "High" kan zijn (door onscherpte/hoek/geen referentie), roep FlagOnsiteMeasurement aan met de reden.
 
 ### 3. TEKST EXTRACTIE (OCR)
 Lees alle zichtbare tekst op foto's:
@@ -609,7 +610,8 @@ Kernregels:
 - Vergelijk claims met visueel bewijs en rapporteer tegenstrijdigheden.
 - Identificeer materialen/componenten en voorstelbare productzoektermen.
 - Geef confidence: High / Medium / Low.
-- Als een meting niet betrouwbaar uit de foto kan: roep FlagOnsiteMeasurement aan met uitleg.
+- ANTIFOUT-REGEL: liever FlagOnsiteMeasurement dan gokken.
+- Als een meting niet betrouwbaar uit de foto kan of confidence niet "High" is: roep FlagOnsiteMeasurement aan met uitleg.
 
 Veiligheid:
 - Markeer elektrische gevaren, water+elektra risico, constructieve schade, schimmel/waterschade, gasrisico's en mogelijke asbest-era materialen.

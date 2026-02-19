@@ -88,6 +88,10 @@ type PartnerMatch struct {
 	BusinessName string  `json:"businessName"`
 	Email        string  `json:"email"`
 	DistanceKm   float64 `json:"distanceKm"`
+	// Recent partner responsiveness/capacity signals (org-wide), used by Dispatcher selection logic.
+	RejectedOffers30d int `json:"rejectedOffers30d"`
+	AcceptedOffers30d int `json:"acceptedOffers30d"`
+	OpenOffers30d     int `json:"openOffers30d"`
 }
 
 type FindMatchingPartnersOutput struct {

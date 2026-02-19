@@ -148,6 +148,9 @@ type AppointmentStatsReader interface {
 // PartnerMatcher provides partner search based on service type and location.
 type PartnerMatcher interface {
 	FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID, serviceType string, zipCode string, radiusKm int, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error)
+	// GetPartnerOfferStatsSince returns recent offer outcome counts per partner.
+	// Used by the AI Dispatcher to avoid repeatedly selecting partners with high rejection rates.
+	GetPartnerOfferStatsSince(ctx context.Context, organizationID uuid.UUID, partnerIDs []uuid.UUID, since time.Time) (map[uuid.UUID]PartnerOfferStats, error)
 	GetInvitedPartnerIDs(ctx context.Context, serviceID uuid.UUID) ([]uuid.UUID, error)
 	HasLinkedPartners(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID) (bool, error)
 }

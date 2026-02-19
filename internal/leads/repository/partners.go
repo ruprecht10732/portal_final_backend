@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,15 @@ type PartnerMatch struct {
 	BusinessName string
 	Email        string
 	DistanceKm   float64
+}
+
+// PartnerOfferStats provides recent offer outcome counts for a partner.
+// These are coarse signals used by the Dispatcher to avoid repeatedly selecting
+// partners that frequently reject offers.
+type PartnerOfferStats struct {
+	Rejected int
+	Accepted int
+	Open     int // pending + sent
 }
 
 func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID, serviceType string, zipCode string, radiusKm int, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {
@@ -66,6 +76,53 @@ func (r *Repository) FindMatchingPartners(ctx context.Context, organizationID uu
 	}
 
 	return matches, nil
+}
+
+// GetPartnerOfferStatsSince returns recent offer outcome counts per partner since the given time.
+func (r *Repository) GetPartnerOfferStatsSince(ctx context.Context, organizationID uuid.UUID, partnerIDs []uuid.UUID, sinceTime time.Time) (map[uuid.UUID]PartnerOfferStats, error) {
+	if len(partnerIDs) == 0 {
+		return map[uuid.UUID]PartnerOfferStats{}, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT partner_id,
+			COUNT(*) FILTER (WHERE status = 'rejected') AS rejected_count,
+			COUNT(*) FILTER (WHERE status = 'accepted') AS accepted_count,
+			COUNT(*) FILTER (WHERE status IN ('pending', 'sent')) AS open_count
+		FROM RAC_partner_offers
+		WHERE organization_id = $1
+			AND partner_id = ANY($2::uuid[])
+			AND created_at >= $3
+		GROUP BY partner_id
+	`, organizationID, partnerIDs, sinceTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := make(map[uuid.UUID]PartnerOfferStats, len(partnerIDs))
+	for rows.Next() {
+		var pid uuid.UUID
+		var rejected int
+		var accepted int
+		var open int
+		if err := rows.Scan(&pid, &rejected, &accepted, &open); err != nil {
+			return nil, err
+		}
+		stats[pid] = PartnerOfferStats{Rejected: rejected, Accepted: accepted, Open: open}
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	// Ensure all requested partners have an entry (default 0 counts) to simplify callers.
+	for _, pid := range partnerIDs {
+		if _, ok := stats[pid]; !ok {
+			stats[pid] = PartnerOfferStats{}
+		}
+	}
+
+	return stats, nil
 }
 
 func (r *Repository) findPartnersWithoutAnchor(ctx context.Context, organizationID uuid.UUID, leadID uuid.UUID, serviceType string, excludePartnerIDs []uuid.UUID) ([]PartnerMatch, error) {

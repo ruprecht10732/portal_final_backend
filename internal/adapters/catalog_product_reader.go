@@ -62,10 +62,19 @@ func (a *CatalogProductReader) GetProductDetails(ctx context.Context, orgID uuid
 // productToDetail converts a single catalog product into a CatalogProductDetails,
 // enriching it with materials, document/URL assets, and the resolved VAT rate.
 func (a *CatalogProductReader) productToDetail(ctx context.Context, orgID uuid.UUID, p catrepo.Product, vatRates map[uuid.UUID]int) ports.CatalogProductDetails {
+	// Catalog products use either price_cents (fixed price) or unit_price_cents
+	// (per-unit price) — never both. Resolve to a single effective price so that
+	// downstream consumers (AI search hydration and catalog price enforcement) always
+	// receive the correct non-zero value regardless of which pricing mode is used.
+	effectivePriceCents := p.UnitPriceCents
+	if effectivePriceCents == 0 {
+		effectivePriceCents = p.PriceCents
+	}
+
 	detail := ports.CatalogProductDetails{
 		ID:             p.ID,
 		Title:          p.Title,
-		UnitPriceCents: p.UnitPriceCents,
+		UnitPriceCents: effectivePriceCents,
 		VatRateBps:     vatRates[p.VatRateID],
 		Materials:      a.fetchMaterialNames(ctx, orgID, p.ID),
 	}

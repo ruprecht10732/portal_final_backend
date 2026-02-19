@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/tool"
@@ -614,6 +615,13 @@ func handleUpdateLeadServiceType(ctx tool.Context, deps *ToolDependencies, input
 		return UpdateLeadServiceTypeOutput{Success: false, Message: "Lead service does not belong to lead"}, fmt.Errorf("lead service mismatch")
 	}
 
+	// Stability guard: service type changes are only allowed during initial triage.
+	// Gatekeeper re-runs on many changes (notes/attachments); without this guard the
+	// LLM can "flip-flop" service type on ambiguous new info.
+	if leadService.PipelineStage != domain.PipelineStageTriage {
+		return UpdateLeadServiceTypeOutput{Success: false, Message: "Service type is locked after Triage"}, nil
+	}
+
 	_, err = deps.Repo.UpdateLeadServiceType(ctx, leadServiceID, tenantID, serviceType)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceTypeNotFound) {
@@ -1005,59 +1013,99 @@ func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 		Name:        "FindMatchingPartners",
 		Description: "Finds partner matches by service type and distance radius. Allows excluding specific partner IDs.",
 	}, func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
-		tenantID, err := getTenantID(deps)
-		if err != nil {
-			return FindMatchingPartnersOutput{Matches: nil}, err
-		}
-
-		excludeUUIDs := make([]uuid.UUID, 0, len(input.ExcludePartnerIDs))
-		for _, idStr := range input.ExcludePartnerIDs {
-			if uid, err := uuid.Parse(idStr); err == nil {
-				excludeUUIDs = append(excludeUUIDs, uid)
-			}
-		}
-
-		leadID, serviceID, err := getLeadContext(deps)
-		if err != nil {
-			return FindMatchingPartnersOutput{Matches: nil}, err
-		}
-
-		matches, err := deps.Repo.FindMatchingPartners(ctx, tenantID, leadID, input.ServiceType, input.ZipCode, input.RadiusKm, excludeUUIDs)
-		if err != nil {
-			return FindMatchingPartnersOutput{Matches: nil}, err
-		}
-
-		actorType, actorName := deps.GetActor()
-		summary := fmt.Sprintf("Found %d partner(s)", len(matches))
-		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-			LeadID:         leadID,
-			ServiceID:      &serviceID,
-			OrganizationID: tenantID,
-			ActorType:      actorType,
-			ActorName:      actorName,
-			EventType:      repository.EventTypePartnerSearch,
-			Title:          repository.EventTitlePartnerSearch,
-			Summary:        &summary,
-			Metadata: repository.PartnerSearchMetadata{
-				ServiceType: input.ServiceType,
-				ZipCode:     input.ZipCode,
-				RadiusKm:    input.RadiusKm,
-				MatchCount:  len(matches),
-			}.ToMap(),
-		})
-
-		output := make([]PartnerMatch, 0, len(matches))
-		for _, match := range matches {
-			output = append(output, PartnerMatch{
-				PartnerID:    match.ID.String(),
-				BusinessName: match.BusinessName,
-				Email:        match.Email,
-				DistanceKm:   match.DistanceKm,
-			})
-		}
-
-		return FindMatchingPartnersOutput{Matches: output}, nil
+		return handleFindMatchingPartners(ctx, deps, input)
 	})
+}
+
+func handleFindMatchingPartners(ctx tool.Context, deps *ToolDependencies, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
+	tenantID, err := getTenantID(deps)
+	if err != nil {
+		return FindMatchingPartnersOutput{Matches: nil}, err
+	}
+
+	excludeUUIDs := parsePartnerExclusions(input.ExcludePartnerIDs)
+
+	leadID, serviceID, err := getLeadContext(deps)
+	if err != nil {
+		return FindMatchingPartnersOutput{Matches: nil}, err
+	}
+
+	matches, err := deps.Repo.FindMatchingPartners(ctx, tenantID, leadID, input.ServiceType, input.ZipCode, input.RadiusKm, excludeUUIDs)
+	if err != nil {
+		return FindMatchingPartnersOutput{Matches: nil}, err
+	}
+
+	statsByPartner := lookupPartnerOfferStats(ctx, deps, tenantID, matches)
+	recordPartnerSearchTimelineEvent(ctx, deps, tenantID, leadID, serviceID, input, len(matches))
+
+	return FindMatchingPartnersOutput{Matches: buildPartnerMatchOutput(matches, statsByPartner)}, nil
+}
+
+func parsePartnerExclusions(rawIDs []string) []uuid.UUID {
+	excludeUUIDs := make([]uuid.UUID, 0, len(rawIDs))
+	for _, idStr := range rawIDs {
+		if uid, err := uuid.Parse(idStr); err == nil {
+			excludeUUIDs = append(excludeUUIDs, uid)
+		}
+	}
+	return excludeUUIDs
+}
+
+func lookupPartnerOfferStats(ctx tool.Context, deps *ToolDependencies, tenantID uuid.UUID, matches []repository.PartnerMatch) map[uuid.UUID]repository.PartnerOfferStats {
+	partnerIDs := make([]uuid.UUID, 0, len(matches))
+	for _, m := range matches {
+		partnerIDs = append(partnerIDs, m.ID)
+	}
+	if len(partnerIDs) == 0 {
+		return map[uuid.UUID]repository.PartnerOfferStats{}
+	}
+
+	since := time.Now().AddDate(0, 0, -30)
+	statsByPartner, statsErr := deps.Repo.GetPartnerOfferStatsSince(ctx, tenantID, partnerIDs, since)
+	if statsErr != nil {
+		// Non-fatal: if stats query fails, fall back to distance-only selection.
+		log.Printf("FindMatchingPartners: offer stats lookup failed: %v", statsErr)
+		return map[uuid.UUID]repository.PartnerOfferStats{}
+	}
+	return statsByPartner
+}
+
+func recordPartnerSearchTimelineEvent(ctx tool.Context, deps *ToolDependencies, tenantID, leadID, serviceID uuid.UUID, input FindMatchingPartnersInput, matchCount int) {
+	actorType, actorName := deps.GetActor()
+	summary := fmt.Sprintf("Found %d partner(s)", matchCount)
+	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      actorType,
+		ActorName:      actorName,
+		EventType:      repository.EventTypePartnerSearch,
+		Title:          repository.EventTitlePartnerSearch,
+		Summary:        &summary,
+		Metadata: repository.PartnerSearchMetadata{
+			ServiceType: input.ServiceType,
+			ZipCode:     input.ZipCode,
+			RadiusKm:    input.RadiusKm,
+			MatchCount:  matchCount,
+		}.ToMap(),
+	})
+}
+
+func buildPartnerMatchOutput(matches []repository.PartnerMatch, statsByPartner map[uuid.UUID]repository.PartnerOfferStats) []PartnerMatch {
+	output := make([]PartnerMatch, 0, len(matches))
+	for _, match := range matches {
+		stats := statsByPartner[match.ID]
+		output = append(output, PartnerMatch{
+			PartnerID:         match.ID.String(),
+			BusinessName:      match.BusinessName,
+			Email:             match.Email,
+			DistanceKm:        match.DistanceKm,
+			RejectedOffers30d: stats.Rejected,
+			AcceptedOffers30d: stats.Accepted,
+			OpenOffers30d:     stats.Open,
+		})
+	}
+	return output
 }
 
 func resolveOfferContext(deps *ToolDependencies, partnerIDRaw string, expirationHours int) (uuid.UUID, uuid.UUID, uuid.UUID, int, string, error) {
@@ -1254,9 +1302,19 @@ Examples:
 func createCalculateEstimateTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "CalculateEstimate",
-		Description: "Calculates material subtotal, labor subtotal range, and total range from structured inputs.",
+		Description: "Calculates material subtotal, labor subtotal range, and total range from raw structured inputs (unit prices, quantities, hour ranges, hourly rate ranges). Do NOT pre-calculate subtotals; this tool performs all multiplication.",
 	}, func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
 		_ = ctx
+		// Guard against the classic unit bug: passing euro-cents (e.g. 793) as euros.
+		// This would create 100x inflated estimates. We use a high threshold to avoid
+		// blocking legitimate expensive items (e.g. heat pumps), while still catching
+		// obviously wrong values.
+		for _, item := range input.MaterialItems {
+			if item.UnitPrice > 50000 {
+				return CalculateEstimateOutput{}, fmt.Errorf("unitPrice too large (%.2f). CalculateEstimate expects euros, not cents", item.UnitPrice)
+			}
+		}
+
 		materialSubtotal := 0.0
 		for _, item := range input.MaterialItems {
 			if item.UnitPrice <= 0 || item.Quantity <= 0 {
@@ -2160,7 +2218,7 @@ Tips for effective queries:
 
 Each result includes a "score" field (0-1) indicating match quality.
 Products with score >= 0.45 are high-confidence matches and include highConfidence=true.
-For high-confidence matches, use the product price directly (no markup).
+For high-confidence matches, you can trust the found catalog price.
 Products with score 0.35-0.45 are lower-confidence candidates — verify variant/unit before using.
 
 Result fields:
@@ -2169,6 +2227,9 @@ Result fields:
 - type: product type — "service" or "digital_service" means price INCLUDES labor; "product" or "material" means price is material only.
 - priceEuros: price in euros (e.g. 7.93 = EUR 7.93). Use for CalculateEstimate unitPrice.
 - priceCents: price in euro-cents (e.g. 793). Use this directly as unitPriceCents in DraftQuote.
+
+Unit conversion tip:
+- If you need euros but you only have cents: convert with Calculator(operation="divide", a=priceCents, b=100).
 - unit: how the product is sold (e.g. "per m1", "per stuk", "per m2"). Use to compute correct quantities.
 - vatRateBps: VAT rate in basis points (2100 = 21%). Defaults to 2100 for reference products.
 - materials: included materials (e.g. ["Verzinkt staal"])
@@ -2176,8 +2237,9 @@ Result fields:
 - sourceUrl: reference URL (reference products only)
 - laborTime: estimated labor time text (if available)
 - score: similarity score (0-1)
-- highConfidence: true when score >= 0.45 (use found price without markup)
-- id: catalog product UUID (only for catalog items — use as catalogProductId in DraftQuote)`,
+- highConfidence: true when score >= 0.45 (can trust found catalog price)
+- id: catalog product UUID (only for catalog items — use as catalogProductId in DraftQuote)
+SELECTION RULE: Always prefer a result WITH an "id" field (catalog item) over a result WITHOUT an "id" field (reference item) when both match the needed product — even if the reference item scores slightly higher. Only use reference items (ad-hoc, no catalogProductId) when no catalog item exists above the minimum score threshold.`,
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, deps, input)
 	})
@@ -2363,8 +2425,8 @@ func createDraftQuoteTool(deps *ToolDependencies) (tool.Tool, error) {
 		Description: `Creates a draft quote for the current lead based on estimation results.
 Use this AFTER searching the catalog and calculating estimates.
 For each item, provide description, quantity, unitPriceCents (in euro-cents), taxRateBps.
-IMPORTANT: If a high-confidence product is found, set unitPriceCents exactly to the product's "priceCents" value from SearchProductMaterials (already in cents), without markup.
-Only estimate unitPriceCents when no suitable high-confidence product was found.
+IMPORTANT: If a suitable product is found, set unitPriceCents to the product's "priceCents" value from SearchProductMaterials (already in cents).
+Only estimate unitPriceCents when no suitable product was found.
 If the item came from SearchProductMaterials, include its catalogProductId.
 When catalogProductId is present, backend catalog metadata is authoritative: unitPriceCents and taxRateBps are normalized to catalog values.
 Ad-hoc items (not found in catalog) should omit catalogProductId.`,

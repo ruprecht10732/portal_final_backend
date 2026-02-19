@@ -30,7 +30,7 @@ type OfferSummaryGenerator struct {
 func NewOfferSummaryGenerator(apiKey string) (*OfferSummaryGenerator, error) {
 	kimi := moonshot.NewModel(moonshot.Config{
 		APIKey:          apiKey,
-		Model:           "kimi-k2.5",
+		Model:           "moonshot-v1-8k",
 		DisableThinking: true,
 	})
 

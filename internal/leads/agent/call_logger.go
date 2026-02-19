@@ -333,8 +333,7 @@ The agent provided this post-call summary:
 
 Task:
 1. Analyze the summary to determine outcome and appointment changes.
-2. ALWAYS save a clean, professional Dutch call note:
-	- Draft note → NormalizeCallNote → SaveNote (required).
+2. ALWAYS save a clean, professional Dutch call note using SaveNote (required).
 	- No raw input block, no invented facts, use 24-hour time (09:00).
 	- Prefer structure: Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen.
 3. If an appointment was scheduled (e.g., "booked next tuesday at 9", "scheduled for friday 2pm"):
@@ -483,7 +482,8 @@ func getCallLoggerSystemPrompt() string {
 Your job is to read a rough summary of a sales/qualification call and execute the necessary database updates using the available tools.
 
 IMPORTANT RULES:
-1. Draft a clean professional Dutch note, pass it through NormalizeCallNote, then ALWAYS call SaveNote.
+
+1. Draft a clean professional Dutch note, then ALWAYS call SaveNote.
 	- No raw input text and no invented details.
 	- Structure when possible (Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen).
 3. Parse dates relative to the Current Time provided in the context:
@@ -510,8 +510,7 @@ IMPORTANT RULES:
    - If unclear, default to TRUE to send confirmation
 
 Available tools:
-- NormalizeCallNote: Cleans and formats a call note draft (use before SaveNote)
-- SaveNote: Saves the call note (ALWAYS use this)
+- SaveNote: Saves the call note (ALWAYS use this; it will normalize/clean the body)
 - SetCallOutcome: Stores a short outcome label for the call
 - UpdateStatus: Updates the lead service status
 - UpdatePipelineStage: Updates the pipeline stage when explicitly indicated
@@ -530,14 +529,6 @@ type SaveNoteInput struct {
 type SaveNoteOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
-}
-
-type NormalizeCallNoteInput struct {
-	Body string `json:"body"` // Draft note to normalize
-}
-
-type NormalizeCallNoteOutput struct {
-	Body string `json:"body"`
 }
 
 type SetCallOutcomeInput struct {
@@ -593,11 +584,6 @@ type CancelVisitOutput struct {
 }
 
 func buildCallLoggerTools(deps *CallLoggerToolDeps) ([]tool.Tool, error) {
-	normalizeCallNoteTool, err := buildNormalizeCallNoteTool(deps)
-	if err != nil {
-		return nil, err
-	}
-
 	saveNoteTool, err := buildSaveNoteTool(deps)
 	if err != nil {
 		return nil, err
@@ -634,7 +620,6 @@ func buildCallLoggerTools(deps *CallLoggerToolDeps) ([]tool.Tool, error) {
 	}
 
 	return []tool.Tool{
-		normalizeCallNoteTool,
 		saveNoteTool,
 		setCallOutcomeTool,
 		updateStatusTool,
@@ -648,13 +633,13 @@ func buildCallLoggerTools(deps *CallLoggerToolDeps) ([]tool.Tool, error) {
 func buildSaveNoteTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveNote",
-		Description: "Saves the call summary as a note on the lead. ALWAYS call this tool to record the call outcome.",
+		Description: "Saves the call summary as a note on the lead. ALWAYS call this tool to record the call outcome. The body will be normalized/cleaned server-side.",
 	}, func(ctx tool.Context, input SaveNoteInput) (SaveNoteOutput, error) {
 		if _, _, _, _, ok := deps.GetContext(); !ok {
 			return SaveNoteOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
 		}
 
-		deps.SetNoteDraft(input.Body)
+		deps.SetNoteDraft(normalizeCallNoteBody(input.Body))
 		return SaveNoteOutput{Success: true, Message: "Note drafted"}, nil
 	})
 }
@@ -701,17 +686,6 @@ func appendRescheduleFallbackNote(body string, startTime time.Time) string {
 		return correction
 	}
 	return strings.TrimRight(body, "\n") + "\n\n" + correction
-}
-
-func buildNormalizeCallNoteTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
-	_ = deps
-	return functiontool.New(functiontool.Config{
-		Name:        "NormalizeCallNote",
-		Description: "Cleans and normalizes a drafted call note. Use before SaveNote.",
-	}, func(ctx tool.Context, input NormalizeCallNoteInput) (NormalizeCallNoteOutput, error) {
-		normalized := normalizeCallNoteBody(input.Body)
-		return NormalizeCallNoteOutput{Body: normalized}, nil
-	})
 }
 
 func buildSetCallOutcomeTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
@@ -970,52 +944,87 @@ func buildCallLoggerUpdatePipelineStageTool(deps *CallLoggerToolDeps) (tool.Tool
 		Name:        "UpdatePipelineStage",
 		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
 	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		if err := validateCallLoggerPipelineStage(input.Stage); err != nil {
-			return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, err
-		}
-
-		tenantID, userID, leadID, serviceID, oldStage, currentStatus, err := resolveCallLoggerStageContext(deps, ctx)
-		if err != nil {
-			if errors.Is(err, errMissingContext) {
-				return UpdatePipelineStageOutput{Success: false, Message: errMsgMissingContext}, err
-			}
-			return UpdatePipelineStageOutput{Success: false, Message: "Lead service not found"}, err
-		}
-
-		if domain.IsTerminal(currentStatus, oldStage) {
-			return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
-		}
-
-		if reason := domain.ValidateStateCombination(currentStatus, input.Stage); reason != "" {
-			return UpdatePipelineStageOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
-		}
-
-		if err := guardCallLoggerQuoteSentTransition(deps, ctx, tenantID, serviceID, input.Stage); err != nil {
-			if strings.Contains(err.Error(), "quote state guard blocked") {
-				return UpdatePipelineStageOutput{Success: false, Message: "Cannot set Proposal while quote is still draft"}, err
-			}
-			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, err
-		}
-
-		_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
-		if err != nil {
-			return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
-		}
-
-		createCallLoggerStageTimelineEvent(deps, ctx, callLoggerStageTimelineEventInput{
-			TenantID:  tenantID,
-			UserID:    userID,
-			LeadID:    leadID,
-			ServiceID: serviceID,
-			OldStage:  oldStage,
-			NewStage:  input.Stage,
-			Reason:    input.Reason,
-		})
-		publishCallLoggerStageChanged(deps, ctx, tenantID, leadID, serviceID, oldStage, input.Stage)
-
-		deps.MarkPipelineStageUpdated(input.Stage)
-		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
+		return handleCallLoggerUpdatePipelineStage(ctx, deps, input)
 	})
+}
+
+type callLoggerStageContext struct {
+	tenantID       uuid.UUID
+	userID         uuid.UUID
+	leadID         uuid.UUID
+	serviceID      uuid.UUID
+	oldStage       string
+	currentStatus  string
+	requestedStage string
+}
+
+func handleCallLoggerUpdatePipelineStage(ctx tool.Context, deps *CallLoggerToolDeps, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+	stageCtx, out, err := validateAndResolveCallLoggerStageContext(deps, ctx, input)
+	if err != nil {
+		return out, err
+	}
+
+	if err := updateCallLoggerPipelineStage(deps, ctx, stageCtx); err != nil {
+		return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
+	}
+
+	createCallLoggerStageTimelineEvent(deps, ctx, callLoggerStageTimelineEventInput{
+		TenantID:  stageCtx.tenantID,
+		UserID:    stageCtx.userID,
+		LeadID:    stageCtx.leadID,
+		ServiceID: stageCtx.serviceID,
+		OldStage:  stageCtx.oldStage,
+		NewStage:  stageCtx.requestedStage,
+		Reason:    input.Reason,
+	})
+	publishCallLoggerStageChanged(deps, ctx, stageCtx.tenantID, stageCtx.leadID, stageCtx.serviceID, stageCtx.oldStage, stageCtx.requestedStage)
+
+	deps.MarkPipelineStageUpdated(stageCtx.requestedStage)
+	return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
+}
+
+func validateAndResolveCallLoggerStageContext(deps *CallLoggerToolDeps, ctx tool.Context, input UpdatePipelineStageInput) (callLoggerStageContext, UpdatePipelineStageOutput, error) {
+	if err := validateCallLoggerPipelineStage(input.Stage); err != nil {
+		return callLoggerStageContext{}, UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, err
+	}
+
+	tenantID, userID, leadID, serviceID, oldStage, currentStatus, err := resolveCallLoggerStageContext(deps, ctx)
+	if err != nil {
+		if errors.Is(err, errMissingContext) {
+			return callLoggerStageContext{}, UpdatePipelineStageOutput{Success: false, Message: errMsgMissingContext}, err
+		}
+		return callLoggerStageContext{}, UpdatePipelineStageOutput{Success: false, Message: "Lead service not found"}, err
+	}
+
+	if domain.IsTerminal(currentStatus, oldStage) {
+		return callLoggerStageContext{}, UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
+	}
+
+	if reason := domain.ValidateStateCombination(currentStatus, input.Stage); reason != "" {
+		return callLoggerStageContext{}, UpdatePipelineStageOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
+	}
+
+	if err := guardCallLoggerQuoteSentTransition(deps, ctx, tenantID, serviceID, input.Stage); err != nil {
+		if strings.Contains(err.Error(), "quote state guard blocked") {
+			return callLoggerStageContext{}, UpdatePipelineStageOutput{Success: false, Message: "Cannot set Proposal while quote is still draft"}, err
+		}
+		return callLoggerStageContext{}, UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, err
+	}
+
+	return callLoggerStageContext{
+		tenantID:       tenantID,
+		userID:         userID,
+		leadID:         leadID,
+		serviceID:      serviceID,
+		oldStage:       oldStage,
+		currentStatus:  currentStatus,
+		requestedStage: input.Stage,
+	}, UpdatePipelineStageOutput{}, nil
+}
+
+func updateCallLoggerPipelineStage(deps *CallLoggerToolDeps, ctx tool.Context, stageCtx callLoggerStageContext) error {
+	_, err := deps.Repo.UpdatePipelineStage(ctx, stageCtx.serviceID, stageCtx.tenantID, stageCtx.requestedStage)
+	return err
 }
 
 func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput) (RescheduleVisitOutput, error) {

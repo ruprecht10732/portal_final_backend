@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,7 +20,6 @@ const (
 	maxGatekeeperPreferencesChars = 1200
 	maxGatekeeperPhotoChars       = 2500
 	maxGatekeeperLeadCtxChars     = 1200
-	maxGatekeeperRuleChecksChars  = 1000
 	maxGatekeeperIntakeChars      = 3000
 
 	maxEstimatorServiceNoteChars = 2000
@@ -33,12 +33,13 @@ const (
 	maxQuoteUserPromptChars  = 1500
 )
 
+const extraNotesLinePrefix = "\n- Extra notes: "
+
 func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, intakeContext string, attachments []repository.Attachment, photoAnalysis *repository.PhotoAnalysis) string {
-	notesSection := truncatePromptSection(buildNotesSection(notes), maxGatekeeperNotesChars)
+	notesSection := buildNotesSection(notes, maxGatekeeperNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
-	preferencesSummary := truncatePromptSection(buildPreferencesSummary(service.CustomerPreferences), maxGatekeeperPreferencesChars)
+	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxGatekeeperPreferencesChars)
 	leadContext := truncatePromptSection(buildLeadContextSection(lead, attachments), maxGatekeeperLeadCtxChars)
-	ruleChecks := truncatePromptSection(buildRuleChecksSection(service.ServiceType, serviceNote, notes), maxGatekeeperRuleChecksChars)
 	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxGatekeeperPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxGatekeeperServiceNoteChars)
 	intakeContextSummary := truncatePromptSection(intakeContext, maxGatekeeperIntakeChars)
@@ -79,9 +80,6 @@ Photo Analysis (AI visual inspection):
 Additional Context:
 %s
 
-Rule-based checks (heuristic):
-%s
-
 Intake Requirements:
 %s
 
@@ -93,13 +91,14 @@ This is mandatory.
 Instruction:
 If you find high-confidence (>=90%%) errors in lead contact or address details, call UpdateLeadDetails.
 Only update fields you are confident about. Include a short Dutch reason and your confidence.
-0) If the service type is clearly wrong, you may call UpdateLeadServiceType ONLY when you are highly confident (>=90%%).
-If you update the service type, do it BEFORE UpdatePipelineStage.
-Only change the service type when there is a clear positive match to another service based on notes/service note.
-Missing intake information alone is NOT a reason to switch service type.
-If the intent is ambiguous, keep the current service type and move to Nurturing with a short Dutch reason.
+0) Service type stability rule (NO flip-flopping):
+	- Do NOT change the service type just because new notes/attachments arrive.
+	- Only call UpdateLeadServiceType when the current service is still in pipeline stage "Triage" AND you are highly confident (>=90%%) there is a clear positive match to another active service type.
+	- Missing intake information alone is NOT a reason to switch service type.
+	- If the intent is ambiguous, keep the current service type and move to Nurturing with a short Dutch reason.
+	- If you update the service type, do it BEFORE UpdatePipelineStage.
 1) Validate intake requirements for the selected service type.
-2) Treat rule-based missing items as critical unless the info is clearly present elsewhere (e.g. in Photo Analysis).
+2) Treat missing required items as critical unless the info is clearly present elsewhere (e.g. in Photo Analysis).
 3) FIRST call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,
    a short Dutch summary, and a Dutch list of missingInformation (empty list if nothing missing).
 4) THEN call UpdatePipelineStage with stage="Estimation" (if all required info is present) or stage="Nurturing" (if critical info is missing).
@@ -126,15 +125,14 @@ Respond ONLY with tool calls.
 		preferencesSummary,
 		photoSummary,
 		leadContext,
-		ruleChecks,
 		intakeContextSummary,
 	)
 }
 
 func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis) string {
-	notesSection := truncatePromptSection(buildNotesSection(notes), maxEstimatorNotesChars)
+	notesSection := buildNotesSection(notes, maxEstimatorNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
-	preferencesSummary := truncatePromptSection(buildPreferencesSummary(service.CustomerPreferences), maxEstimatorPreferencesChars)
+	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxEstimatorPreferencesChars)
 	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
 
@@ -148,6 +146,13 @@ Action: Search for products, draft a quote, call SaveEstimation (metadata update
 CRITICAL ARITHMETIC RULE:
 You MUST use the Calculator tool for ALL math operations. NEVER perform arithmetic in your head.
 This includes area, quantity, subtotal, rounding, and unit-conversion calculations.
+
+CRITICAL UNIT RULE (EUROS vs CENTS):
+- CalculateEstimate expects unitPrice in EUROS (float), e.g. 7.93.
+- DraftQuote expects unitPriceCents in EURO-CENTS (int), e.g. 793.
+- NEVER pass cents into CalculateEstimate.
+- If you only have priceCents, convert to euros using Calculator(operation="divide", a=priceCents, b=100).
+- Do NOT invent markups/margins. Pass through catalog prices; pricing normalization is handled by backend business rules.
 
 Lead:
 - Lead ID: %s
@@ -188,7 +193,8 @@ Instruction:
    Always prefer the catalog collection by default.
    If the user explicitly says not to use the catalog (e.g., "ignore catalog", "no catalog", "zonder catalogus"), set useCatalog=false.
 	Use standard, mid-range materials unless the request explicitly calls for heavy-duty or premium.
-	If multiple products are returned, prefer the most typical/affordable option for the scenario.
+	CATALOG PRIORITY: When reviewing results, always prefer a catalog item (has an "id" field) over a reference item (no "id" field) for the same product need — even if the reference item has a slightly higher score. Reference items only appear when no catalog match exists; treat them as a last resort.
+	If multiple catalog products are returned, prefer the most typical/affordable option for the scenario.
 	Products from the catalog will include an "id" field - remember these IDs for step 3a.
 
    HANDLING NO RESULTS:
@@ -196,14 +202,18 @@ Instruction:
    - If still no match, add the item as an ad-hoc line item (without catalogProductId):
      - Use your best estimate for unitPriceCents based on typical Dutch market prices for that product.
      - Keep the description factual (e.g., "RVS scharnieren (3 stuks)") — do NOT add notes like "niet in catalogus".
-	  - Always check the product score/highConfidence: if highConfidence=true (score >= 0.45), use the found price without markup.
+	  - Always check the product score/highConfidence: if highConfidence=true (score >= 0.45), you can trust the found catalog price.
 	  - Scores in 0.35-0.45 are candidate matches; verify variant/unit before using.
 	  - Items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
+	  - IMPORTANT: Do NOT decide margins/markup here. Use catalog prices as provided; commercial logic lives outside the LLM.
 3) Use CalculateEstimate to compute material subtotal, labor subtotal range, and total range.
 	Provide structured inputs (material items, quantities, labor hours range, hourly rate range, optional extra costs).
-	For each material item's unitPrice, use the product's "priceEuros" value (in euros, e.g. 7.93).
+	For each material item's unitPrice (EUROS):
+	- Prefer converting from the product's priceCents: call Calculator(operation="divide", a=priceCents, b=100).
+	- Use that exact result as unitPrice.
 	If catalog search results include a labor time, use it as the baseline for labor hours (adjust if the scope indicates otherwise).
-	IMPORTANT: Before calling CalculateEstimate, use Calculator for each individual quantity or price calculation.
+	IMPORTANT: Before calling CalculateEstimate, use Calculator ONLY for unit conversions and quantity calculations (ceil_divide, round, etc.).
+	DO NOT pre-calculate subtotals (unitPrice × quantity) or labor totals (hours × rate). Provide raw inputs only; CalculateEstimate must do all multiplication.
 
 	LABOR RULES — check each product's "type" field:
 	- type = "service" or "digital_service": the price already INCLUDES labor/installation. Do NOT add separate arbeid hours for this item.
@@ -221,8 +231,8 @@ Instruction:
 	  Call Calculator(operation="ceil_divide", a=required_area, b=unit_size) to get the quantity (always rounds up).
 	  If the unit is "per m²" or "per m", use Calculator to compute the raw measurement as quantity.
 	- Set unitPriceCents to the product's "priceCents" value (already in euro-cents, e.g. 793 = EUR 7.93). Do NOT use priceEuros.
-	- For highConfidence=true products, use priceCents exactly (no markup).
-	- Only estimate unitPriceCents when no suitable high-confidence product was found.
+	  NEVER set unitPriceCents to 0 for a real product — if priceCents is 0, use your best Dutch market estimate instead. If the product has an "id" (catalog item), still include catalogProductId regardless; the backend will override with the correct database price.
+	- Only estimate unitPriceCents when no suitable product was found (ad-hoc items without catalogProductId).
 	- Set taxRateBps from the product's vatRateBps (e.g., 2100 for 21%%). If unknown, use 2100.
 	- If the product came from SearchProductMaterials and has an "id", include it as catalogProductId.
 	- catalogProductId is authoritative metadata: backend will enforce catalog unit price (and VAT) for those lines.
@@ -236,7 +246,10 @@ Instruction:
 6) Call UpdatePipelineStage with stage="Estimation" and a reason in Dutch.
 	IMPORTANT: DO NOT move to "Fulfillment". We must wait for the customer to accept the quote first.
 
-You MUST call SearchProductMaterials first (if available), then DraftQuote (if available), then SaveEstimation, then UpdatePipelineStage. Respond ONLY with tool calls.
+Tool-call order:
+- If SearchProductMaterials is available, call it first.
+- Then (recommended) call CalculateEstimate, then DraftQuote, then SaveEstimation, then UpdatePipelineStage.
+Respond ONLY with tool calls.
 `,
 		lead.ID,
 		service.ID,
@@ -270,7 +283,13 @@ Action: Find matches, create an offer, update the pipeline stage.%s
 
 Logic:
 - If > 0 partners found:
-  1) Select the best match (e.g., closest distance).
+	Selection strategy (do not optimize only for distance):
+	- Prefer partners with lower rejectedOffers30d.
+	- If a partner has many open offers (openOffers30d), treat as capacity risk.
+	- Use distance as a tie-breaker after responsiveness/capacity signals.
+	- Practical rule of thumb: if the closest partner has rejectedOffers30d >= 5 and there is another partner within +5km, pick the alternative.
+
+  1) Select the best match using the strategy above.
 	2) Call CreatePartnerOffer for that partner, including a short Dutch job summary.
 	3) Call UpdatePipelineStage with stage="Fulfillment" and reason "Offer verzonden naar [Partnernaam]".
 - If 0 partners found:
@@ -303,18 +322,103 @@ You MUST call FindMatchingPartners first. If matches exist, you MUST call Create
 	)
 }
 
-func buildNotesSection(notes []repository.LeadNote) string {
-	meaningful := filterMeaningfulNotes(notes)
-	if len(meaningful) == 0 {
+func buildNotesSection(notes []repository.LeadNote, maxChars int) string {
+	if len(notes) == 0 {
 		return "No notes"
 	}
 
-	var sb strings.Builder
-	for _, note := range meaningful {
-		body := sanitizeUserInput(note.Body, maxNoteLength)
-		sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", note.Type, note.CreatedAt.Format(time.RFC3339), body))
+	sorted := sortNotesForPrompt(notes)
+	contentBudget := resolveNotesContentBudget(maxChars)
+	content := renderNotesWithinBudget(sorted, contentBudget)
+	if strings.TrimSpace(content) == "" {
+		return "No notes"
 	}
-	return wrapUserData(sb.String())
+	return wrapUserData(content)
+}
+
+type scoredNote struct {
+	n repository.LeadNote
+	p int
+}
+
+func scoreNoteForPrompt(n repository.LeadNote) int {
+	nt := strings.ToLower(strings.TrimSpace(n.Type))
+	body := strings.ToLower(n.Body)
+
+	// Lowest priority: system/log style notes.
+	if nt == "system" || strings.Contains(nt, "system") || strings.Contains(nt, "log") {
+		return 100
+	}
+
+	// Highest priority: explicit contact and constraint notes.
+	if strings.Contains(nt, "call") || strings.Contains(nt, "phone") || strings.Contains(nt, "contact") || strings.Contains(nt, "email") || strings.Contains(nt, "sms") || strings.Contains(nt, "whatsapp") {
+		return 0
+	}
+	if strings.Contains(body, "bel") || strings.Contains(body, "call") || strings.Contains(body, "contact") || strings.Contains(body, "na ") || strings.Contains(body, "after") || strings.Contains(body, "alleen") || strings.Contains(body, "only") || strings.Contains(body, "allerg") {
+		return 10
+	}
+
+	return 50
+}
+
+func sortNotesForPrompt(notes []repository.LeadNote) []repository.LeadNote {
+	// Truncation blindness guard:
+	// Prefer contact/call/email constraints and operator notes over system logs.
+	candidates := make([]scoredNote, 0, len(notes))
+	for _, n := range notes {
+		candidates = append(candidates, scoredNote{n: n, p: scoreNoteForPrompt(n)})
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].p != candidates[j].p {
+			return candidates[i].p < candidates[j].p
+		}
+		return candidates[i].n.CreatedAt.After(candidates[j].n.CreatedAt)
+	})
+
+	sorted := make([]repository.LeadNote, 0, len(candidates))
+	for _, c := range candidates {
+		sorted = append(sorted, c.n)
+	}
+	return sorted
+}
+
+func resolveNotesContentBudget(maxChars int) int {
+	if maxChars <= 0 {
+		maxChars = maxEstimatorNotesChars
+	}
+	// Headroom because wrapUserData XML-escapes content and adds wrapper tags.
+	contentBudget := maxChars - 64
+	if contentBudget < 200 {
+		contentBudget = maxChars
+	}
+	return contentBudget
+}
+
+func renderNotesWithinBudget(notes []repository.LeadNote, contentBudget int) string {
+	var sb strings.Builder
+	for _, n := range notes {
+		body := sanitizeUserInput(n.Body, maxNoteLength)
+		prefix := fmt.Sprintf("- [%s] %s: ", n.Type, n.CreatedAt.Format(time.RFC3339))
+		line := prefix + body + "\n"
+
+		if len([]rune(sb.String()+line)) <= contentBudget {
+			sb.WriteString(line)
+			continue
+		}
+
+		remaining := contentBudget - len([]rune(sb.String()+prefix+"\n"))
+		if remaining <= 0 {
+			break
+		}
+		truncated := strings.TrimSpace(truncateRunes(body, remaining))
+		if truncated == "" {
+			break
+		}
+		sb.WriteString(prefix + truncated + "... [afgekapt]\n")
+		break
+	}
+	return sb.String()
 }
 
 func buildLeadContextSection(lead repository.Lead, attachments []repository.Attachment) string {
@@ -390,34 +494,6 @@ func buildAttachmentsSummary(attachments []repository.Attachment) string {
 	return fmt.Sprintf("%d file(s): %s", len(attachments), strings.Join(names, ", "))
 }
 
-func buildRuleChecksSection(serviceType string, serviceNote string, notes []repository.LeadNote) string {
-	serviceName := strings.ToLower(serviceType)
-	if !strings.Contains(serviceName, "isolat") {
-		return "No rule-based checks for this service type"
-	}
-
-	combined := strings.ToLower(serviceNote + "\n" + flattenNotes(notes))
-	missing := make([]string, 0, 4)
-	if !containsAny(combined, []string{"spouw", "dak", "vloer", "zolder", "gevel", "muur"}) {
-		missing = append(missing, "Welke delen isoleren (spouw/dak/vloer/zolder)")
-	}
-	if !containsAny(combined, []string{"m2", "vierkante meter", "oppervlakte"}) {
-		missing = append(missing, "Geschatte oppervlakte (m2)")
-	}
-	if !hasYear(combined) {
-		missing = append(missing, "Bouwjaar van de woning")
-	}
-	if !containsAny(combined, []string{"geisoleerd", "ongeisoleerd", "isolatie", "na-isolatie"}) {
-		missing = append(missing, "Huidige isolatiestatus")
-	}
-
-	if len(missing) == 0 {
-		return "No missing items detected"
-	}
-
-	return "Missing: " + strings.Join(missing, "; ")
-}
-
 func flattenNotes(notes []repository.LeadNote) string {
 	if len(notes) == 0 {
 		return ""
@@ -441,19 +517,10 @@ func containsAny(text string, terms []string) bool {
 	return false
 }
 
-func hasYear(text string) bool {
-	for i := 1900; i <= 2026; i++ {
-		if strings.Contains(text, fmt.Sprintf("%d", i)) {
-			return true
-		}
-	}
-	return false
-}
-
 func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, userPrompt string) string {
-	notesSection := truncatePromptSection(buildNotesSection(notes), maxQuoteNotesChars)
+	notesSection := buildNotesSection(notes, maxQuoteNotesChars)
 	serviceNote := getValue(service.ConsumerNote)
-	preferencesSummary := truncatePromptSection(buildPreferencesSummary(service.CustomerPreferences), maxQuotePreferencesChars)
+	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxQuotePreferencesChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
 	userPromptSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(userPrompt, 2000)), maxQuoteUserPromptChars)
 
@@ -503,6 +570,7 @@ Instruction:
    - Search broad first, then narrow.
 	- Call SearchProductMaterials multiple times with DIFFERENT queries per material category.
    Always prefer the catalog collection by default.
+	CATALOG PRIORITY: When reviewing results, always prefer a catalog item (has an "id" field) over a reference item (no "id" field) for the same product need — even if the reference item has a slightly higher score. Reference items only appear when no catalog match exists; treat them as a last resort.
 
 	If SearchProductMaterials is NOT available, skip search and continue with ad-hoc DraftQuote items using best-estimate unitPriceCents.
 
@@ -511,7 +579,7 @@ Instruction:
    - If still no match after multiple attempts, add the item as an ad-hoc line item (without catalogProductId):
      - Use your best estimate for unitPriceCents based on typical Dutch market prices.
      - Keep the description factual — do NOT add notes like "niet in catalogus".
-	 - Always check the product score/highConfidence: if highConfidence=true (score >= 0.45), use the found price without markup.
+	 - Always check the product score/highConfidence: if highConfidence=true (score >= 0.45), you can trust the found catalog price.
 	 - Scores in 0.35-0.45 are candidate matches; verify variant/unit before using.
 	 - Items with score < 0.4 may be false positives. Verify the product NAME matches what you need.
 3) For each product found, prepare a DraftQuote item:
@@ -523,8 +591,9 @@ Instruction:
      If the unit indicates a fixed size, use Calculator to compute the quantity:
      Call Calculator(operation="ceil_divide", a=required_amount, b=unit_size) to get the quantity (always rounds up).
    - Set unitPriceCents to the product's "priceCents" value (already in euro-cents). Do NOT use priceEuros.
-	- For highConfidence=true products, use priceCents exactly (no markup).
-	- Only estimate unitPriceCents when no suitable high-confidence product was found.
+	  NEVER set unitPriceCents to 0 for a real product — if priceCents is 0, use your best Dutch market estimate instead. If the product has an "id" (catalog item), still include catalogProductId regardless; the backend will override with the correct database price.
+	- If highConfidence=true, you can trust the found catalog priceCents.
+	- Only estimate unitPriceCents when no suitable high-confidence product was found (ad-hoc items without catalogProductId).
    - Set taxRateBps from the product's vatRateBps. If unknown, use 2100.
    - If the product has an "id", include it as catalogProductId.
 	- catalogProductId is authoritative metadata: backend will enforce catalog unit price (and VAT) for those lines.
@@ -573,7 +642,7 @@ func truncatePromptSection(section string, maxChars int) string {
 	return string(runes[:keep]) + suffix
 }
 
-func buildPreferencesSummary(raw json.RawMessage) string {
+func buildPreferencesSummary(raw json.RawMessage, maxChars int) string {
 	if len(raw) == 0 {
 		return noPreferencesProvided
 	}
@@ -597,14 +666,35 @@ func buildPreferencesSummary(raw json.RawMessage) string {
 		return noPreferencesProvided
 	}
 
-	lines := []string{
+	// Truncation blindness guard: keep budget/timeframe/availability visible and
+	// truncate extra notes first if we exceed the prompt budget.
+	baseLines := []string{
 		"- Budget: " + preferenceValue(budget),
 		"- Timeframe: " + preferenceValue(timeframe),
 		"- Availability: " + preferenceValue(availability),
-		"- Extra notes: " + preferenceValue(extraNotes),
+	}
+	content := strings.Join(baseLines, "\n")
+	if extraNotes != "" {
+		content = content + extraNotesLinePrefix + preferenceValue(extraNotes)
 	}
 
-	return wrapUserData(strings.Join(lines, "\n"))
+	wrapped := wrapUserData(content)
+	if maxChars > 0 && len([]rune(wrapped)) > maxChars {
+		if extraNotes != "" {
+			prefixWrapped := wrapUserData(strings.Join(baseLines, "\n") + extraNotesLinePrefix)
+			available := maxChars - len([]rune(prefixWrapped))
+			if available > 0 {
+				trimmedExtra := truncateRunes(preferenceValue(extraNotes), available)
+				content = strings.Join(baseLines, "\n") + extraNotesLinePrefix + trimmedExtra + "... [afgekapt]"
+				wrapped = wrapUserData(content)
+			}
+		}
+		if len([]rune(wrapped)) > maxChars {
+			wrapped = truncatePromptSection(wrapped, maxChars)
+		}
+	}
+
+	return wrapped
 }
 
 func preferenceValue(value string) string {
