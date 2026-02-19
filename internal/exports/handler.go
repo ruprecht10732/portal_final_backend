@@ -11,6 +11,7 @@ import (
 
 	"portal_final_backend/internal/auth/password"
 	"portal_final_backend/internal/identity/smtpcrypto"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -503,26 +504,14 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 }
 
 func mapConversionName(event ConversionEvent) string {
-	if event.EventType == "visit_completed" {
-		return "Visit_Completed"
+	name := domain.GetGoogleConversionName(event.EventType, event.Status, event.PipelineStage)
+	if name != "" {
+		return name
 	}
 
-	if event.EventType == "status_changed" && event.Status != nil {
-		switch normalizeEventValue(*event.Status) {
-		case "appointment_scheduled":
-			return "Appointment_Scheduled"
-		}
-	}
-
+	// Exports supports one additional conversion for the Google Ads pipeline.
 	if event.EventType == "pipeline_stage_changed" && event.PipelineStage != nil {
-		switch normalizeEventValue(*event.PipelineStage) {
-		case "nurturing", "estimation":
-			return "Lead_Qualified"
-		case "proposal":
-			return "Quote_Sent"
-		case "fulfillment":
-			return "Deal_Won"
-		case "completed":
+		if normalizeEventValue(*event.PipelineStage) == "completed" {
 			return "Job_Completed"
 		}
 	}

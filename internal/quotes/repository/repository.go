@@ -403,6 +403,34 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, orgID uuid.
 	return nil
 }
 
+// SetLeadServiceID sets the lead_service_id for a quote, but only if the provided lead service
+// belongs to the same lead as the quote (and same tenant).
+//
+// Note: the service layer should already have verified the quote exists; a 0-row update here
+// indicates an invalid leadServiceId for this quote.
+func (r *Repository) SetLeadServiceID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID, leadServiceID uuid.UUID) error {
+	query := `
+		UPDATE RAC_quotes q
+		SET lead_service_id = $3,
+			updated_at = $4
+		FROM RAC_lead_services ls
+		WHERE q.id = $1
+			AND q.organization_id = $2
+			AND ls.id = $3
+			AND ls.organization_id = $2
+			AND ls.lead_id = q.lead_id
+	`
+
+	result, err := r.pool.Exec(ctx, query, quoteID, orgID, leadServiceID, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to set quote lead service: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.Validation("leadServiceId does not belong to this quote")
+	}
+	return nil
+}
+
 // Delete removes a quote (cascade deletes items)
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
 	query := `DELETE FROM RAC_quotes WHERE id = $1 AND organization_id = $2`
@@ -1100,6 +1128,103 @@ func (r *Repository) GetGenerateQuoteJob(ctx context.Context, orgID, userID, job
 	}
 
 	return &job, nil
+}
+
+// ListGenerateQuoteJobs lists jobs for a tenant + user (newest first).
+func (r *Repository) ListGenerateQuoteJobs(ctx context.Context, orgID, userID uuid.UUID, limit, offset int) ([]GenerateQuoteJob, int, error) {
+	if orgID == uuid.Nil || userID == uuid.Nil {
+		return nil, 0, apperr.Validation("organizationId and userId are required")
+	}
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM RAC_ai_quote_jobs
+		WHERE organization_id = $1 AND user_id = $2
+	`, orgID, userID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count generate quote jobs: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, organization_id, user_id, lead_id, lead_service_id,
+			status, step, progress_percent, error,
+			quote_id, quote_number, item_count,
+			started_at, updated_at, finished_at
+		FROM RAC_ai_quote_jobs
+		WHERE organization_id = $1 AND user_id = $2
+		ORDER BY updated_at DESC
+		LIMIT $3 OFFSET $4
+	`, orgID, userID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list generate quote jobs: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]GenerateQuoteJob, 0, limit)
+	for rows.Next() {
+		var job GenerateQuoteJob
+		if scanErr := rows.Scan(
+			&job.ID,
+			&job.OrganizationID,
+			&job.UserID,
+			&job.LeadID,
+			&job.LeadServiceID,
+			&job.Status,
+			&job.Step,
+			&job.ProgressPercent,
+			&job.Error,
+			&job.QuoteID,
+			&job.QuoteNumber,
+			&job.ItemCount,
+			&job.StartedAt,
+			&job.UpdatedAt,
+			&job.FinishedAt,
+		); scanErr != nil {
+			return nil, 0, fmt.Errorf("scan generate quote job: %w", scanErr)
+		}
+		items = append(items, job)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, 0, fmt.Errorf("iterate generate quote jobs: %w", rowsErr)
+	}
+
+	return items, total, nil
+}
+
+// DeleteGenerateQuoteJob deletes a finished job (completed/failed) for a tenant + user.
+func (r *Repository) DeleteGenerateQuoteJob(ctx context.Context, orgID, userID, jobID uuid.UUID) error {
+	if orgID == uuid.Nil || userID == uuid.Nil || jobID == uuid.Nil {
+		return apperr.Validation("organizationId, userId and jobId are required")
+	}
+
+	result, err := r.pool.Exec(ctx, `
+		DELETE FROM RAC_ai_quote_jobs
+		WHERE id = $1 AND organization_id = $2 AND user_id = $3
+			AND status IN ('completed','failed')
+	`, jobID, orgID, userID)
+	if err != nil {
+		return fmt.Errorf("delete generate quote job: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound(quoteGenerateJobNotFoundMsg)
+	}
+	return nil
+}
+
+// DeleteCompletedGenerateQuoteJobs deletes completed jobs for a tenant + user.
+func (r *Repository) DeleteCompletedGenerateQuoteJobs(ctx context.Context, orgID, userID uuid.UUID) (int64, error) {
+	if orgID == uuid.Nil || userID == uuid.Nil {
+		return 0, apperr.Validation("organizationId and userId are required")
+	}
+
+	result, err := r.pool.Exec(ctx, `
+		DELETE FROM RAC_ai_quote_jobs
+		WHERE organization_id = $1 AND user_id = $2 AND status = 'completed'
+	`, orgID, userID)
+	if err != nil {
+		return 0, fmt.Errorf("delete completed generate quote jobs: %w", err)
+	}
+	return result.RowsAffected(), nil
 }
 
 // GetGenerateQuoteJobByID retrieves a job by id without user scoping (worker use).

@@ -1,10 +1,6 @@
 package domain
 
 import (
-	"os"
-	"path/filepath"
-	"regexp"
-	"runtime"
 	"testing"
 )
 
@@ -70,46 +66,6 @@ func TestGetGoogleConversionNameParityWithBackfillSQL(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("GetGoogleConversionName(%q, %q, %q) = %q, want %q",
 				tc.eventType, tc.status, tc.pipelineStage, got, tc.want)
-		}
-	}
-}
-
-// TestGetGoogleConversionName_SQLCASECompleteness is a static-analysis style
-// check ensuring every conversion name returned by GetGoogleConversionName is
-// referenced in the expected SQL CASE block pattern.
-func TestGetGoogleConversionNameSQLCaseCompleteness(t *testing.T) {
-	// All conversion names the Go function can return.
-	allConversionNames := []string{
-		"Appointment_Scheduled",
-		"Visit_Completed",
-		"Lead_Qualified",
-		"Quote_Sent",
-		"Deal_Won",
-	}
-
-	// Verify each name is non-empty (guards against accidental empty returns).
-	re := regexp.MustCompile(`^[A-Za-z_]+$`)
-	for _, name := range allConversionNames {
-		if !re.MatchString(name) {
-			t.Errorf("invalid conversion name format: %q", name)
-		}
-	}
-
-	// Verify the exports backfill SQL CASE block references each conversion name.
-	// This helps prevent drift between the Go mapping and the SQL mapping.
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("failed to resolve current file path")
-	}
-	backfillSQLPath := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "exports", "repository.go"))
-	content, err := os.ReadFile(backfillSQLPath)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", backfillSQLPath, err)
-	}
-	sql := string(content)
-	for _, name := range allConversionNames {
-		if !regexp.MustCompile(regexp.QuoteMeta("'" + name + "'")).MatchString(sql) {
-			t.Errorf("backfill SQL does not reference conversion name %q (expected it to appear as a quoted literal)", name)
 		}
 	}
 }

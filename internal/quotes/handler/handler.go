@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -67,7 +68,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
 	rg.POST("/generate", h.Generate)
+	rg.GET("/generate-jobs", h.ListGenerateJobs)
+	rg.DELETE("/generate-jobs/completed", h.ClearCompletedGenerateJobs)
 	rg.GET("/generate-jobs/:id", h.GetGenerateJob)
+	rg.DELETE("/generate-jobs/:id", h.DeleteGenerateJob)
 	rg.POST("/export/:provider/bulk", h.BulkExportToProvider)
 	rg.DELETE("/integrations/:provider", h.DisconnectProvider)
 	rg.GET("/:id", h.GetByID)
@@ -75,6 +79,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/export/:provider", h.ExportToProvider)
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
+	rg.PATCH("/:id/lead-service", h.SetLeadService)
 	rg.POST("/:id/send", h.Send)
 	rg.GET("/:id/preview-link", h.GetPreviewLink)
 	rg.POST("/:id/items/:itemId/annotations", h.AgentAnnotate)
@@ -83,6 +88,106 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
 	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 	rg.DELETE("/:id", h.Delete)
+}
+
+// ListGenerateJobs handles GET /api/v1/quotes/generate-jobs
+func (h *Handler) ListGenerateJobs(c *gin.Context) {
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	items, total, err := h.svc.ListGenerateQuoteJobs(c.Request.Context(), tenantID, identity.UserID(), page, limit)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	respItems := make([]transport.GenerateQuoteJobResponse, 0, len(items))
+	for _, job := range items {
+		respItems = append(respItems, transport.GenerateQuoteJobResponse{
+			JobID:           job.JobID,
+			Status:          string(job.Status),
+			Step:            job.Step,
+			ProgressPercent: job.ProgressPercent,
+			Error:           job.Error,
+			QuoteID:         job.QuoteID,
+			QuoteNumber:     job.QuoteNumber,
+			ItemCount:       job.ItemCount,
+			LeadID:          job.LeadID,
+			LeadServiceID:   job.LeadServiceID,
+			StartedAt:       job.StartedAt,
+			UpdatedAt:       job.UpdatedAt,
+			FinishedAt:      job.FinishedAt,
+		})
+	}
+
+	httpkit.OK(c, transport.GenerateQuoteJobsListResponse{
+		Items: respItems,
+		Total: total,
+		Page:  page,
+	})
+}
+
+// DeleteGenerateJob handles DELETE /api/v1/quotes/generate-jobs/:id
+func (h *Handler) DeleteGenerateJob(c *gin.Context) {
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	if err := h.svc.DeleteGenerateQuoteJob(c.Request.Context(), tenantID, identity.UserID(), jobID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "ok"})
+}
+
+// ClearCompletedGenerateJobs handles DELETE /api/v1/quotes/generate-jobs/completed
+func (h *Handler) ClearCompletedGenerateJobs(c *gin.Context) {
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	deleted, err := h.svc.ClearCompletedGenerateQuoteJobs(c.Request.Context(), tenantID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "ok", "deleted": deleted})
 }
 
 func (h *Handler) RegisterPublicRoutes(rg *gin.RouterGroup) {
@@ -436,6 +541,39 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 
 	identity := httpkit.MustGetIdentity(c)
 	result, err := h.svc.UpdateStatus(c.Request.Context(), id, tenantID, identity.UserID(), req.Status)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// SetLeadService handles PATCH /api/v1/quotes/:id/lead-service
+// Links an existing quote to a lead service (even if the quote is already Accepted).
+func (h *Handler) SetLeadService(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.SetQuoteLeadServiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	result, err := h.svc.SetLeadServiceID(c.Request.Context(), id, tenantID, identity.UserID(), req.LeadServiceID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

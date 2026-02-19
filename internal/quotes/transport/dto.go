@@ -80,6 +80,13 @@ type UpdateQuoteStatusRequest struct {
 	Status QuoteStatus `json:"status" validate:"required,oneof=Draft Sent Accepted Rejected Expired"`
 }
 
+// SetQuoteLeadServiceRequest is the request body for linking a quote to a lead service.
+// This is intentionally separate from UpdateQuoteRequest so we can allow this even for Accepted quotes
+// without reopening full quote edits.
+type SetQuoteLeadServiceRequest struct {
+	LeadServiceID uuid.UUID `json:"leadServiceId" validate:"required"`
+}
+
 // QuoteCalculationRequest is the request body for the preview calculation endpoint
 type QuoteCalculationRequest struct {
 	Items         []QuoteItemRequest `json:"items" validate:"required,dive"`
@@ -393,6 +400,14 @@ type GenerateQuoteJobResponse struct {
 	StartedAt       time.Time  `json:"startedAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
+}
+
+// GenerateQuoteJobsListResponse returns a paginated list of async generation jobs.
+// Shape mirrors the in-app notifications list response.
+type GenerateQuoteJobsListResponse struct {
+	Items []GenerateQuoteJobResponse `json:"items"`
+	Total int                        `json:"total"`
+	Page  int                        `json:"page"`
 }
 
 // QuoteActivityResponse is the response for a single activity log entry.
