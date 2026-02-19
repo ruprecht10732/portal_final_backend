@@ -57,6 +57,7 @@ type QuoteContactData struct {
 	OrganizationName string
 	AgentEmail       string
 	AgentName        string
+	LogoFileKey      *string
 }
 
 // QuoteContactReader fetches contact details for quote workflows.
@@ -81,17 +82,23 @@ type GenerateQuoteResult struct {
 	ItemCount   int
 }
 
+// LogoPresigner generates presigned download URLs for organization logos.
+type LogoPresigner interface {
+	GenerateLogoURL(ctx context.Context, fileKey string) (string, error)
+}
+
 // Service provides business logic for quotes.
 type Service struct {
-	repo       *repository.Repository
-	timeline   TimelineWriter
-	eventBus   events.Bus
-	contacts   QuoteContactReader
-	quoteTerms QuoteTermsResolver
-	promptGen  QuotePromptGenerator
-	sse        *sse.Service
-	jobQueue   GenerateQuoteJobQueue
-	moneybird  *moneybirdConfig
+	repo          *repository.Repository
+	timeline      TimelineWriter
+	eventBus      events.Bus
+	contacts      QuoteContactReader
+	quoteTerms    QuoteTermsResolver
+	promptGen     QuotePromptGenerator
+	sse           *sse.Service
+	jobQueue      GenerateQuoteJobQueue
+	moneybird     *moneybirdConfig
+	logoPresigner LogoPresigner
 }
 
 // GenerateQuoteJobQueue enqueues async quote generation tasks.
@@ -188,3 +195,4 @@ func (s *Service) SetQuoteTermsResolver(r QuoteTermsResolver)           { s.quot
 func (s *Service) SetQuotePromptGenerator(g QuotePromptGenerator)       { s.promptGen = g }
 func (s *Service) SetSSEService(sseSvc *sse.Service)                    { s.sse = sseSvc }
 func (s *Service) SetGenerateQuoteJobQueue(queue GenerateQuoteJobQueue) { s.jobQueue = queue }
+func (s *Service) SetLogoPresigner(lp LogoPresigner)                    { s.logoPresigner = lp }

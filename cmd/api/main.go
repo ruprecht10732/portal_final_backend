@@ -239,6 +239,10 @@ func main() {
 	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service(), authModule.Repository())
 	quotesModule.Service().SetQuoteContactReader(quotesContacts)
 
+	// Wire logo presigner: quotes → storage (presigned logo download URLs in public responses)
+	logoPresigner := adapters.NewQuotesLogoPresigner(storageSvc, cfg.GetMinioBucketOrganizationLogos())
+	quotesModule.SetLogoPresigner(logoPresigner)
+
 	// Wire quote terms resolver: quotes → workflow overrides + org defaults
 	quoteTermsResolver := adapters.NewQuoteTermsResolverAdapter(identityModule.Service(), identityModule.Service(), leadsModule.Repository())
 	quotesModule.Service().SetQuoteTermsResolver(quoteTermsResolver)

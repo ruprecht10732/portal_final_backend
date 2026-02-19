@@ -322,6 +322,7 @@ type PublicQuoteResponse struct {
 	Status              QuoteStatus               `json:"status"`
 	PricingMode         string                    `json:"pricingMode"`
 	OrganizationName    string                    `json:"organizationName"`
+	LogoURL             *string                   `json:"logoUrl,omitempty"`
 	CustomerName        string                    `json:"customerName"`
 	DiscountType        string                    `json:"discountType"`
 	DiscountValue       int64                     `json:"discountValue"`
