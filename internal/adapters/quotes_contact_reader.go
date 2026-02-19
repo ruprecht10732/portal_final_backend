@@ -59,6 +59,7 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 		ConsumerName:     consumerName,
 		ConsumerPhone:    consumerPhone,
 		OrganizationName: org.Name,
+		LogoFileKey:      org.LogoFileKey,
 		AgentEmail:       agentEmail,
 		AgentName:        agentName,
 	}, nil

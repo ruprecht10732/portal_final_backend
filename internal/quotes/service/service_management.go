@@ -684,15 +684,15 @@ func (s *Service) emitTimelineEvent(ctx context.Context, params TimelineEventPar
 
 func toPtr(s string) *string { return &s }
 
-func (s *Service) lookupContactNames(ctx context.Context, leadID, orgID uuid.UUID) (orgName, customerName string) {
+func (s *Service) lookupContactNames(ctx context.Context, leadID, orgID uuid.UUID) (orgName, customerName string, logoFileKey *string) {
 	if s.contacts == nil {
-		return "", ""
+		return "", "", nil
 	}
 	data, err := s.contacts.GetQuoteContactData(ctx, leadID, orgID)
 	if err != nil {
-		return "", ""
+		return "", "", nil
 	}
-	return data.OrganizationName, data.ConsumerName
+	return data.OrganizationName, data.ConsumerName, data.LogoFileKey
 }
 
 func clampPageSize(size int) int {

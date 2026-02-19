@@ -86,6 +86,11 @@ func (m *Module) SetPDFGenerator(gen handler.PDFOnDemandGenerator) {
 	m.publicHandler.SetPDFGenerator(gen)
 }
 
+// SetLogoPresigner injects a presigner for organization logo download URLs in public responses.
+func (m *Module) SetLogoPresigner(lp service.LogoPresigner) {
+	m.service.SetLogoPresigner(lp)
+}
+
 // RegisterRoutes registers the module's routes
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	quotes := ctx.Protected.Group("/quotes")

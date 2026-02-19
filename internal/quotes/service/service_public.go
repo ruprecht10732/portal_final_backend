@@ -58,8 +58,8 @@ func (s *Service) GetPublic(ctx context.Context, token string) (*transport.Publi
 	if err != nil {
 		return nil, err
 	}
-	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
-	return s.buildPublicResponse(ctx, quote, items, orgName, customerName, readOnly)
+	orgName, customerName, logoFileKey := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
+	return s.buildPublicResponse(ctx, quote, items, orgName, customerName, logoFileKey, readOnly)
 }
 
 func (s *Service) ToggleLineItem(ctx context.Context, token string, itemID uuid.UUID, req transport.ToggleItemRequest) (*transport.ToggleItemResponse, error) {
@@ -248,10 +248,10 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 		s.eventBus.Publish(ctx, evt)
 	}
 
-	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
+	orgName, customerName, logoFileKey := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
 	drafts := buildQuoteAcceptedDrafts(quote.QuoteNumber, orgName, customerName, req.SignatureName, quote.TotalCents)
 	s.emitTimelineEvent(ctx, TimelineEventParams{LeadID: quote.LeadID, ServiceID: quote.LeadServiceID, OrganizationID: quote.OrganizationID, ActorType: "Lead", ActorName: req.SignatureName, EventType: "quote_accepted", Title: fmt.Sprintf("Quote %s accepted", quote.QuoteNumber), Summary: toPtr(fmt.Sprintf("Signed by %s — "+msgTotalFormat, req.SignatureName, float64(quote.TotalCents)/100)), Metadata: map[string]any{"quoteId": quote.ID, "status": "Accepted", "signatureName": req.SignatureName, "drafts": drafts}})
-	return s.buildPublicResponse(ctx, quote, items, orgName, customerName, false)
+	return s.buildPublicResponse(ctx, quote, items, orgName, customerName, logoFileKey, false)
 }
 
 func (s *Service) Reject(ctx context.Context, token string, req transport.RejectQuoteRequest) (*transport.PublicQuoteResponse, error) {
@@ -284,10 +284,10 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 		return nil, err
 	}
 	s.publishQuoteRejectedEvent(ctx, quote, req.Reason)
-	orgName, customerName := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
+	orgName, customerName, logoFileKey := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
 	drafts := buildQuoteRejectedDrafts(quote.QuoteNumber, orgName, customerName, req.Reason)
 	s.emitTimelineEvent(ctx, TimelineEventParams{LeadID: quote.LeadID, ServiceID: quote.LeadServiceID, OrganizationID: quote.OrganizationID, ActorType: "Lead", ActorName: "Customer", EventType: "quote_rejected", Title: fmt.Sprintf("Quote %s rejected", quote.QuoteNumber), Summary: nilIfEmpty(req.Reason), Metadata: map[string]any{"quoteId": quote.ID, "status": "Rejected", "reason": req.Reason, "drafts": drafts}})
-	return s.buildPublicResponse(ctx, quote, items, orgName, customerName, false)
+	return s.buildPublicResponse(ctx, quote, items, orgName, customerName, logoFileKey, false)
 }
 
 func (s *Service) publishQuoteRejectedEvent(ctx context.Context, quote *repository.Quote, reason string) {
@@ -306,7 +306,7 @@ func (s *Service) publishQuoteRejectedEvent(ctx context.Context, quote *reposito
 	s.eventBus.Publish(ctx, evt)
 }
 
-func (s *Service) buildPublicResponse(ctx context.Context, q *repository.Quote, items []repository.QuoteItem, organizationName, customerName string, readOnly bool) (*transport.PublicQuoteResponse, error) {
+func (s *Service) buildPublicResponse(ctx context.Context, q *repository.Quote, items []repository.QuoteItem, organizationName, customerName string, logoFileKey *string, readOnly bool) (*transport.PublicQuoteResponse, error) {
 	pricingMode := q.PricingMode
 	if pricingMode == "" {
 		pricingMode = "exclusive"
@@ -353,7 +353,18 @@ func (s *Service) buildPublicResponse(ctx context.Context, q *repository.Quote, 
 		return nil, err
 	}
 
-	return &transport.PublicQuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, OrganizationName: organizationName, CustomerName: customerName, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: calc.SubtotalCents, DiscountAmountCents: calc.DiscountAmountCents, TaxTotalCents: calc.VatTotalCents, TotalCents: calc.TotalCents, VatBreakdown: calc.VatBreakdown, ValidUntil: q.ValidUntil, Notes: q.Notes, Items: respItems, Attachments: attachments, URLs: urls, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, FinancingDisclaimer: q.FinancingDisclaimer, IsReadOnly: readOnly}, nil
+	logoURL := s.presignLogoURL(ctx, logoFileKey)
+
+	return &transport.PublicQuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, OrganizationName: organizationName, LogoURL: logoURL, CustomerName: customerName, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: calc.SubtotalCents, DiscountAmountCents: calc.DiscountAmountCents, TaxTotalCents: calc.VatTotalCents, TotalCents: calc.TotalCents, VatBreakdown: calc.VatBreakdown, ValidUntil: q.ValidUntil, Notes: q.Notes, Items: respItems, Attachments: attachments, URLs: urls, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, FinancingDisclaimer: q.FinancingDisclaimer, IsReadOnly: readOnly}, nil
+}
+
+func (s *Service) presignLogoURL(ctx context.Context, logoFileKey *string) *string {
+	if logoFileKey != nil && *logoFileKey != "" && s.logoPresigner != nil {
+		if u, err := s.logoPresigner.GenerateLogoURL(ctx, *logoFileKey); err == nil {
+			return &u
+		}
+	}
+	return nil
 }
 
 func buildQuoteAcceptedDrafts(quoteNumber, orgName, customerName, signatureName string, totalCents int64) map[string]any {
