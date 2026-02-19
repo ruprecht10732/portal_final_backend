@@ -37,17 +37,18 @@ const (
 
 // CreateAppointmentRequest is the request body for creating an appointment
 type CreateAppointmentRequest struct {
-	LeadID                *uuid.UUID      `json:"leadId,omitempty"`
-	LeadServiceID         *uuid.UUID      `json:"leadServiceId,omitempty"`
-	Type                  AppointmentType `json:"type" validate:"required,oneof=lead_visit standalone blocked"`
-	Title                 string          `json:"title" validate:"required,min=1,max=200"`
-	Description           string          `json:"description,omitempty" validate:"max=2000"`
-	Location              string          `json:"location,omitempty" validate:"max=500"`
-	MeetingLink           string          `json:"meetingLink,omitempty" validate:"max=500"`
-	StartTime             time.Time       `json:"startTime" validate:"required"`
-	EndTime               time.Time       `json:"endTime" validate:"required,gtfield=StartTime"`
-	AllDay                bool            `json:"allDay"`
-	SendConfirmationEmail *bool           `json:"sendConfirmationEmail,omitempty"` // If true, sends confirmation email to lead
+	LeadID                *uuid.UUID        `json:"leadId,omitempty"`
+	LeadServiceID         *uuid.UUID        `json:"leadServiceId,omitempty"`
+	Type                  AppointmentType   `json:"type" validate:"required,oneof=lead_visit standalone blocked"`
+	Title                 string            `json:"title" validate:"required,min=1,max=200"`
+	Description           string            `json:"description,omitempty" validate:"max=2000"`
+	Location              string            `json:"location,omitempty" validate:"max=500"`
+	MeetingLink           string            `json:"meetingLink,omitempty" validate:"max=500"`
+	StartTime             time.Time         `json:"startTime" validate:"required"`
+	EndTime               time.Time         `json:"endTime" validate:"required,gtfield=StartTime"`
+	AllDay                bool              `json:"allDay"`
+	SendConfirmationEmail *bool             `json:"sendConfirmationEmail,omitempty"` // If true, sends confirmation email to lead
+	InitialStatus         AppointmentStatus `json:"-"`                              // Internal-only: override default "scheduled" status
 }
 
 // UpdateAppointmentRequest is the request body for updating an appointment

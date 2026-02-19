@@ -66,13 +66,7 @@ func (a *AppointmentSlotAdapter) CreateRequestedAppointment(ctx context.Context,
 		EndTime:               endTime,
 		AllDay:                false,
 		SendConfirmationEmail: &sendEmail,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = a.svc.UpdateStatus(ctx, appt.ID, userID, true, organizationID, transport.UpdateAppointmentStatusRequest{
-		Status: transport.AppointmentStatusRequested,
+		InitialStatus:         transport.AppointmentStatusRequested,
 	})
 	if err != nil {
 		return nil, err

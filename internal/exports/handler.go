@@ -264,6 +264,12 @@ type conversionRow struct {
 	OrderID            string
 	HashedEmail        string
 	HashedPhone        string
+	HashedFirstName    string
+	HashedLastName     string
+	HashedStreet       string
+	City               string
+	ZipCode            string
+	CountryCode        string
 }
 
 func (r conversionRow) CSV(useEnhanced bool) []string {
@@ -276,7 +282,7 @@ func (r conversionRow) CSV(useEnhanced bool) []string {
 		r.OrderID,
 	}
 	if useEnhanced {
-		fields = append(fields, r.HashedEmail, r.HashedPhone)
+		fields = append(fields, r.HashedEmail, r.HashedPhone, r.HashedFirstName, r.HashedLastName, r.HashedStreet, r.City, r.ZipCode, r.CountryCode)
 	}
 	return fields
 }
@@ -291,7 +297,7 @@ func csvHeaders(useEnhanced bool) []string {
 		"Order ID",
 	}
 	if useEnhanced {
-		headers = append(headers, "Email", "Phone Number")
+		headers = append(headers, "Email", "Phone Number", "First Name", "Last Name", "Street Address", "City", "Zip Code", "Country Code")
 	}
 	return headers
 }
@@ -457,6 +463,12 @@ func sampleSchemaRow(location *time.Location, currency string, useEnhanced bool)
 	if useEnhanced {
 		row.HashedEmail = hashEmail("example@example.com")
 		row.HashedPhone = hashPhone("+31612345678")
+		row.HashedFirstName = hashName("Jan")
+		row.HashedLastName = hashName("Jansen")
+		row.HashedStreet = hashAddress("Voorbeeldstraat 1")
+		row.City = "Amsterdam"
+		row.ZipCode = "1234AB"
+		row.CountryCode = "NL"
 	}
 	return row.CSV(useEnhanced)
 }
@@ -473,14 +485,29 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 
 		hashedEmail := ""
 		hashedPhone := ""
+		hashedFirstName := ""
+		hashedLastName := ""
+		hashedStreet := ""
+		city := ""
+		zipCode := ""
+		countryCode := ""
 		if includeEnhanced {
 			if event.ConsumerEmail != nil {
 				hashedEmail = hashEmail(*event.ConsumerEmail)
 			}
 			hashedPhone = hashPhone(event.ConsumerPhone)
+			hashedFirstName = hashName(event.ConsumerFirstName)
+			hashedLastName = hashName(event.ConsumerLastName)
+			street := strings.TrimSpace(event.AddressStreet + " " + event.AddressHouseNumber)
+			hashedStreet = hashAddress(street)
+			city = strings.TrimSpace(event.AddressCity)
+			zipCode = strings.TrimSpace(event.AddressZipCode)
+			if hashedEmail != "" || hashedPhone != "" || hashedFirstName != "" {
+				countryCode = "NL"
+			}
 		}
 
-		hasEnhancedIdentifier := hashedEmail != "" || hashedPhone != ""
+		hasEnhancedIdentifier := hashedEmail != "" || hashedPhone != "" || hashedFirstName != ""
 		if event.GCLID == "" {
 			if !includeEnhanced || !hasEnhancedIdentifier {
 				continue
@@ -498,6 +525,12 @@ func buildConversionRows(events []ConversionEvent, location *time.Location, curr
 			OrderID:            buildOrderID(event, conversionName),
 			HashedEmail:        hashedEmail,
 			HashedPhone:        hashedPhone,
+			HashedFirstName:    hashedFirstName,
+			HashedLastName:     hashedLastName,
+			HashedStreet:       hashedStreet,
+			City:               city,
+			ZipCode:            zipCode,
+			CountryCode:        countryCode,
 		})
 	}
 	return rows
@@ -591,7 +624,28 @@ func hashPhone(value string) string {
 		return ""
 	}
 
+	// Normalize Dutch local numbers (06...) to E.164 format (+316...)
+	if strings.HasPrefix(normalized, "0") && !strings.HasPrefix(normalized, "00") {
+		normalized = "31" + normalized[1:]
+	}
+
 	return sha256Sum("+" + normalized)
+}
+
+func hashName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	return sha256Sum(value)
+}
+
+func hashAddress(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	return sha256Sum(value)
 }
 
 func sha256Sum(value string) string {

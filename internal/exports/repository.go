@@ -45,6 +45,12 @@ type ConversionEvent struct {
 	GCLID               string
 	ConsumerEmail       *string
 	ConsumerPhone       string
+	ConsumerFirstName   string
+	ConsumerLastName    string
+	AddressStreet       string
+	AddressHouseNumber  string
+	AddressCity         string
+	AddressZipCode      string
 	ProjectedValueCents int64
 }
 
@@ -171,7 +177,11 @@ func (r *Repository) TouchCredential(ctx context.Context, credentialID uuid.UUID
 func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, from time.Time, to time.Time, limit int) ([]ConversionEvent, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT e.id, e.organization_id, e.lead_id, e.lead_service_id, e.event_type, e.status, e.pipeline_stage, e.occurred_at,
-			COALESCE(l.gclid, ''), l.consumer_email, COALESCE(l.consumer_phone, ''), l.projected_value_cents
+			COALESCE(l.gclid, ''), l.consumer_email, COALESCE(l.consumer_phone, ''),
+			COALESCE(l.consumer_first_name, ''), COALESCE(l.consumer_last_name, ''),
+			COALESCE(l.address_street, ''), COALESCE(l.address_house_number, ''),
+			COALESCE(l.address_city, ''), COALESCE(l.address_zip_code, ''),
+			l.projected_value_cents
 		FROM RAC_lead_service_events e
 		JOIN RAC_leads l ON l.id = e.lead_id AND l.organization_id = e.organization_id
 		WHERE e.organization_id = $1
@@ -200,6 +210,12 @@ func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, 
 			&item.GCLID,
 			&item.ConsumerEmail,
 			&item.ConsumerPhone,
+			&item.ConsumerFirstName,
+			&item.ConsumerLastName,
+			&item.AddressStreet,
+			&item.AddressHouseNumber,
+			&item.AddressCity,
+			&item.AddressZipCode,
 			&item.ProjectedValueCents,
 		); err != nil {
 			return nil, err
