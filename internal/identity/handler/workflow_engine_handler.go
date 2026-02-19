@@ -6,6 +6,7 @@ import (
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/identity/transport"
+	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-gonic/gin"
@@ -183,8 +184,16 @@ func (h *Handler) GetLeadWorkflowOverride(c *gin.Context) {
 	}
 
 	override, err := h.svc.GetLeadWorkflowOverride(c.Request.Context(), leadID, tenantID)
-	if httpkit.HandleError(c, err) {
-		return
+	if err != nil {
+		// Missing overrides are normal (most leads won't have one). Return null instead
+		// of a 404 to keep the endpoint easy to consume.
+		if apperr.Is(err, apperr.KindNotFound) {
+			httpkit.OK(c, nil)
+			return
+		}
+		if httpkit.HandleError(c, err) {
+			return
+		}
 	}
 
 	httpkit.OK(c, mapLeadWorkflowOverrideResponse(override))
