@@ -42,6 +42,12 @@ func ValidateStateCombination(status, pipelineStage string) string {
 	if pipelineStage == PipelineStageLost && status != LeadStatusDisqualified {
 		return "Lost pipeline stage requires Disqualified status"
 	}
+	if pipelineStage == PipelineStageProposal && status != LeadStatusPending {
+		return "Proposal pipeline stage requires Pending status"
+	}
+	if pipelineStage == PipelineStageFulfillment && status != LeadStatusPending && status != LeadStatusInProgress {
+		return "Fulfillment pipeline stage requires Pending or In_Progress status"
+	}
 	return ""
 }
 

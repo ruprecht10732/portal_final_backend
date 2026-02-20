@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
+	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/embeddings"
@@ -173,6 +175,8 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 	e.toolDeps.SetLeadContext(leadID, serviceID)
 	e.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameEstimator)
 	e.toolDeps.ResetToolCallTracking()
+	runID := e.toolDeps.GetRunID()
+	log.Printf("estimator: run started runID=%s lead=%s service=%s tenant=%s", runID, leadID, serviceID, tenantID)
 
 	// Preload org AI settings so ListCatalogGaps defaults reflect the tenant configuration.
 	if _, err := e.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
@@ -229,9 +233,55 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 		log.Printf("estimator: SaveEstimation was not called for lead=%s service=%s", leadID, serviceID)
 	}
 
+	insufficientIntake := false
+	insufficientReason := ""
 	if !e.toolDeps.WasDraftQuoteCalled() {
-		log.Printf("estimator: DraftQuote was not called for lead=%s service=%s", leadID, serviceID)
+		if insufficient, reason := e.hasInsufficientIntakeForDraft(ctx, serviceID, tenantID); insufficient {
+			insufficientIntake = true
+			insufficientReason = reason
+			summary := "Onvoldoende intakegegevens voor een betrouwbare conceptofferte. Vraag aanvullende metingen/details op voordat de offerte wordt opgesteld."
+			_, _ = e.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+				LeadID:         leadID,
+				ServiceID:      &serviceID,
+				OrganizationID: tenantID,
+				ActorType:      repository.ActorTypeSystem,
+				ActorName:      repository.ActorNameEstimator,
+				EventType:      repository.EventTypeAlert,
+				Title:          repository.EventTitleEstimationMissing,
+				Summary:        &summary,
+				Metadata: repository.AlertMetadata{
+					Trigger: reason,
+				}.ToMap(),
+			})
+			log.Printf("estimator: DraftQuote skipped due to insufficient intake for lead=%s service=%s reason=%s", leadID, serviceID, reason)
+		} else {
+			log.Printf("estimator: DraftQuote was not called for lead=%s service=%s", leadID, serviceID)
+		}
 	}
+
+	if insufficientIntake && !e.toolDeps.WasStageUpdateCalled() {
+		reason := "Onvoldoende intakegegevens voor betrouwbare conceptofferte; aanvullende metingen nodig."
+		if _, err := e.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
+			log.Printf("estimator: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
+		} else {
+			_, _ = e.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+				LeadID:         leadID,
+				ServiceID:      &serviceID,
+				OrganizationID: tenantID,
+				ActorType:      repository.ActorTypeSystem,
+				ActorName:      repository.ActorNameEstimator,
+				EventType:      repository.EventTypeStageChange,
+				Title:          repository.EventTitleStageUpdated,
+				Summary:        &reason,
+				Metadata: repository.StageChangeMetadata{
+					OldStage: service.PipelineStage,
+					NewStage: domain.PipelineStageNurturing,
+				}.ToMap(),
+			})
+			log.Printf("estimator: applied fallback stage update to Nurturing (runID=%s lead=%s service=%s reason=%s)", runID, leadID, serviceID, insufficientReason)
+		}
+	}
+	log.Printf("estimator: run finished runID=%s lead=%s service=%s", runID, leadID, serviceID)
 
 	return nil
 }
@@ -282,4 +332,18 @@ func (e *Estimator) runWithPrompt(ctx context.Context, promptText string, leadID
 	}
 
 	return nil
+}
+
+func (e *Estimator) hasInsufficientIntakeForDraft(ctx context.Context, serviceID, tenantID uuid.UUID) (bool, string) {
+	analysis, err := e.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err != nil {
+		return true, "gatekeeper_analysis_unavailable"
+	}
+	if strings.EqualFold(strings.TrimSpace(analysis.RecommendedAction), "RequestInfo") {
+		return true, "gatekeeper_request_info"
+	}
+	if domain.HasNonEmptyMissingInformation(analysis.MissingInformation) {
+		return true, "gatekeeper_missing_information"
+	}
+	return false, ""
 }

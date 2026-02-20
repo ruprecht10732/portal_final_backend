@@ -3,6 +3,7 @@ package leads
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,10 @@ type Orchestrator struct {
 
 	// Idempotency protection: tracks active agent runs
 	activeRuns map[string]bool
+	// Reconciliation lock per service to avoid concurrent conflicting writes.
+	activeReconciliations map[uuid.UUID]bool
+	// Dedup short-window duplicate stage-change events.
+	recentStageEvents map[string]time.Time
 	// Latest queued photo-analysis event per service, replayed after current gatekeeper run finishes.
 	pendingGatekeeperPhoto map[uuid.UUID]events.PhotoAnalysisCompleted
 	runsMu                 sync.Mutex
@@ -52,6 +57,7 @@ const (
 	dispatcherFailedMsg         = "orchestrator: dispatcher failed"
 	agentRunTimeout             = 5 * time.Minute
 	staleDraftDuration          = 30 * 24 * time.Hour
+	stageEventDedupWindow       = 5 * time.Second
 )
 
 type OrchestratorAgents struct {
@@ -73,6 +79,8 @@ func NewOrchestrator(agents OrchestratorAgents, repo repository.LeadsRepository,
 		log:                    log,
 		reconciliationEnabled:  true,
 		activeRuns:             make(map[string]bool),
+		activeReconciliations:  make(map[uuid.UUID]bool),
+		recentStageEvents:      make(map[string]time.Time),
 		pendingGatekeeperPhoto: make(map[uuid.UUID]events.PhotoAnalysisCompleted),
 		orgSettingsCache:       make(map[uuid.UUID]cachedOrgAISettings),
 	}
@@ -133,6 +141,7 @@ func (o *Orchestrator) OnVisitReportSubmitted(ctx context.Context, evt events.Vi
 
 	go func() {
 		defer o.markComplete("auditor", evt.LeadServiceID)
+		defer o.recoverAgentPanic("auditor", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.auditor.AuditVisitReport(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID, evt.AppointmentID); err != nil {
@@ -187,8 +196,12 @@ func (o *Orchestrator) runGatekeeperForPhotoEvent(evt events.PhotoAnalysisComple
 	o.log.Info("orchestrator: photo analysis complete, waking gatekeeper", "leadId", evt.LeadID, "summary", evt.Summary)
 	go func(current events.PhotoAnalysisCompleted) {
 		defer o.markComplete("gatekeeper", current.LeadServiceID)
+		defer o.recoverAgentPanic("gatekeeper", current.LeadServiceID)
 
 		for {
+			if !o.canRunGatekeeperForPhotoEvent(context.Background(), current) {
+				break
+			}
 			runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 			err := o.gatekeeper.Run(runCtx, current.LeadID, current.LeadServiceID, current.TenantID)
 			cancel()
@@ -226,6 +239,9 @@ func (o *Orchestrator) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serv
 	svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
 		o.log.Error("orchestrator: failed to load lead service for junk auto-disqualify", "error", err)
+		return
+	}
+	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
 		return
 	}
 	if svc.Status == domain.LeadStatusDisqualified {
@@ -316,6 +332,48 @@ func (o *Orchestrator) markComplete(agentName string, serviceID uuid.UUID) {
 	delete(o.activeRuns, key)
 }
 
+func (o *Orchestrator) markReconciliationRunning(serviceID uuid.UUID) bool {
+	o.runsMu.Lock()
+	defer o.runsMu.Unlock()
+	if o.activeReconciliations[serviceID] {
+		return false
+	}
+	o.activeReconciliations[serviceID] = true
+	return true
+}
+
+func (o *Orchestrator) markReconciliationComplete(serviceID uuid.UUID) {
+	o.runsMu.Lock()
+	defer o.runsMu.Unlock()
+	delete(o.activeReconciliations, serviceID)
+}
+
+func (o *Orchestrator) shouldSkipDuplicateStageEvent(evt events.PipelineStageChanged) bool {
+	o.runsMu.Lock()
+	defer o.runsMu.Unlock()
+
+	now := time.Now()
+	key := evt.LeadServiceID.String() + ":" + evt.OldStage + "->" + evt.NewStage
+
+	for existing, ts := range o.recentStageEvents {
+		if now.Sub(ts) > stageEventDedupWindow {
+			delete(o.recentStageEvents, existing)
+		}
+	}
+
+	if ts, ok := o.recentStageEvents[key]; ok && now.Sub(ts) <= stageEventDedupWindow {
+		return true
+	}
+	o.recentStageEvents[key] = now
+	return false
+}
+
+func (o *Orchestrator) recoverAgentPanic(agentName string, serviceID uuid.UUID) {
+	if r := recover(); r != nil {
+		o.log.Error("orchestrator: recovered agent panic", "agent", agentName, "serviceId", serviceID, "panic", r, "stack", string(debug.Stack()))
+	}
+}
+
 func (o *Orchestrator) recordDispatcherFailure(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) {
 	summary := "Partner matching mislukt. Probeer opnieuw."
 	_, _ = o.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
@@ -374,6 +432,7 @@ func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
 	}
 	go func() {
 		defer o.markComplete("auditor", evt.LeadServiceID)
+		defer o.recoverAgentPanic("auditor", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.auditor.AuditCallLog(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
@@ -396,6 +455,7 @@ func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadServic
 	o.log.Info("orchestrator: data changed, waking gatekeeper", "leadId", evt.LeadID, "stage", svc.PipelineStage)
 	go func() {
 		defer o.markComplete("gatekeeper", evt.LeadServiceID)
+		defer o.recoverAgentPanic("gatekeeper", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
@@ -465,6 +525,7 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 	o.log.Info("orchestrator: photo analysis failed, waking gatekeeper", "leadId", evt.LeadID, "errorCode", evt.ErrorCode)
 	go func() {
 		defer o.markComplete("gatekeeper", evt.LeadServiceID)
+		defer o.recoverAgentPanic("gatekeeper", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.gatekeeper.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
@@ -478,6 +539,10 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineStageChanged) {
 	// Terminal stages never trigger agents
 	if domain.IsTerminalPipelineStage(evt.NewStage) {
+		return
+	}
+	if o.shouldSkipDuplicateStageEvent(evt) {
+		o.log.Info("orchestrator: duplicate stage event skipped", "serviceId", evt.LeadServiceID, "oldStage", evt.OldStage, "newStage", evt.NewStage)
 		return
 	}
 	// Intentionally no generic stage-change timeline write here.
@@ -513,6 +578,7 @@ func (o *Orchestrator) handleEstimationStage(evt events.PipelineStageChanged) {
 	o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
 	go func() {
 		defer o.markComplete("estimator", evt.LeadServiceID)
+		defer o.recoverAgentPanic("estimator", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.estimator.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
@@ -541,6 +607,7 @@ func (o *Orchestrator) handleFulfillmentStage(evt events.PipelineStageChanged) {
 	o.log.Info("orchestrator: lead ready for dispatch", "leadId", evt.LeadID)
 	go func() {
 		defer o.markComplete("dispatcher", evt.LeadServiceID)
+		defer o.recoverAgentPanic("dispatcher", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
@@ -741,6 +808,7 @@ func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.Pa
 	}
 	go func() {
 		defer o.markComplete("dispatcher", evt.LeadServiceID)
+		defer o.recoverAgentPanic("dispatcher", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
@@ -760,6 +828,7 @@ func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.Par
 	}
 	go func() {
 		defer o.markComplete("dispatcher", evt.LeadServiceID)
+		defer o.recoverAgentPanic("dispatcher", evt.LeadServiceID)
 		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
 		defer cancel()
 		if err := o.dispatcher.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID); err != nil {
@@ -861,6 +930,11 @@ func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, servic
 	if !o.reconciliationEnabled {
 		return
 	}
+	if !o.markReconciliationRunning(serviceID) {
+		o.log.Info("orchestrator: reconciliation already running, skipping", "serviceId", serviceID, "trigger", triggerEvent)
+		return
+	}
+	defer o.markReconciliationComplete(serviceID)
 
 	svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
@@ -878,6 +952,7 @@ func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, servic
 	if !ok {
 		return
 	}
+	desired = o.enforceReconciliationInvariants(ctx, serviceID, tenantID, desired)
 
 	o.applyReconciledState(ctx, applyReconciledStateParams{
 		LeadID:       leadID,
@@ -889,6 +964,25 @@ func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, servic
 		Desired:      desired,
 		Aggregates:   aggs,
 	})
+}
+
+func (o *Orchestrator) enforceReconciliationInvariants(ctx context.Context, serviceID, tenantID uuid.UUID, desired desiredServiceState) desiredServiceState {
+	if desired.Stage != domain.PipelineStageEstimation {
+		return desired
+	}
+	analysis, err := o.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err != nil {
+		return desired
+	}
+	if reason := domain.ValidateAnalysisStageTransition(analysis.RecommendedAction, analysis.MissingInformation, desired.Stage); reason != "" {
+		desired.Stage = domain.PipelineStageNurturing
+		desired.Status = domain.LeadStatusAttemptedContact
+		desired.ReasonCode = "analysis_invariant_blocked_estimation"
+		if strings.TrimSpace(desired.Reason) == "" {
+			desired.Reason = "Intake is nog onvolledig; service blijft in Nurturing."
+		}
+	}
+	return desired
 }
 
 type applyReconciledStateParams struct {
@@ -905,6 +999,15 @@ type applyReconciledStateParams struct {
 func (o *Orchestrator) applyReconciledState(ctx context.Context, p applyReconciledStateParams) {
 	oldStage := p.Current.PipelineStage
 	oldStatus := p.Current.Status
+	if reason := domain.ValidateStateCombination(p.Desired.Status, p.Desired.Stage); reason != "" {
+		o.log.Warn("orchestrator: skipping invalid reconciled state",
+			"serviceId", p.ServiceID,
+			"desiredStage", p.Desired.Stage,
+			"desiredStatus", p.Desired.Status,
+			"reason", reason,
+		)
+		return
+	}
 
 	stageChanged := o.applyReconciledStage(ctx, p.LeadID, p.ServiceID, p.TenantID, oldStage, p.Desired.Stage)
 	statusChanged := o.applyReconciledStatus(ctx, p.ServiceID, p.TenantID, oldStatus, p.Desired.Status)

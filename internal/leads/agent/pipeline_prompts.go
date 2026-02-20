@@ -230,7 +230,18 @@ Instruction:
 	- type = "product" or "material": the price is material-only. You MUST add separate arbeid line items for installing/mounting these.
 	Example: A "houten kozijn vervangen" at EUR 950/m2 with type "service" includes installation — no extra arbeid.
 	But "RVS scharnieren" with type "material" are material-only — add arbeid for mounting them.
-4a) Call DraftQuote to create a draft quote for the customer. For each item:
+4a) Intake completeness gate (RELIABILITY FIRST):
+	- Before drafting a quote, verify that required measurements/quantities are available or can be derived with high confidence from notes/photos.
+	- If critical measurement inputs are missing (e.g. lengte/breedte/hoogte, m², aantallen, bereikbaarheid details), DO NOT call DraftQuote.
+	- In that case:
+	  1) Call SaveEstimation with:
+	     - scope="Onbekend"
+	     - priceRange="Onvoldoende gegevens"
+	     - notes in Dutch that clearly list which measurements/info are missing
+	     - summary in Dutch stating that a reliable conceptofferte cannot be generated yet
+	  2) Call UpdatePipelineStage with stage="Nurturing" and a short Dutch reason asking for missing measurement details.
+	- Only continue to 4b when intake is sufficiently complete for a reliable draft.
+4b) Call DraftQuote to create a draft quote for the customer. For each item:
 	- Set description using the product name. If the product has materials (the "materials" array), format as:
 	  "Product name\nInclusief:\n- Material A\n- Material B"
 	  Example: "Houten kozijn 120x80\nInclusief:\n- HR++ glas\n- Beslag set"
@@ -250,10 +261,10 @@ Instruction:
 	- Include a notes field (in Dutch) summarizing why this quote was generated.
 	Note: Catalog product documents (PDFs, specs) and terms URLs are automatically attached to the quote — you do not need to handle attachments yourself.
 5) Determine scope: Small, Medium, or Large based on work complexity.
-6) Call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
+6) If you called DraftQuote, call SaveEstimation with scope, priceRange (e.g. "EUR 500 - 900"), notes, and a short summary. Notes and summary must be in Dutch.
 	Include the products found and their prices in the notes. If a catalog item includes labor time, mention it.
 	Format notes as multiline Markdown with headings and bullet/numbered lists.
-7) Call UpdatePipelineStage with stage="Estimation" and a reason in Dutch.
+7) If you called DraftQuote, call UpdatePipelineStage with stage="Estimation" and a reason in Dutch.
 	IMPORTANT: DO NOT move to "Fulfillment". We must wait for the customer to accept the quote first.
 
 Tool-call order:

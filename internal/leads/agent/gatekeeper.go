@@ -115,6 +115,8 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	g.toolDeps.SetLeadContext(leadID, serviceID)
 	g.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameGatekeeper)
 	g.toolDeps.ResetToolCallTracking() // Reset before each run
+	runID := g.toolDeps.GetRunID()
+	log.Printf("gatekeeper: run started runID=%s lead=%s service=%s tenant=%s", runID, leadID, serviceID, tenantID)
 
 	// Preload org AI settings so downstream tools and safeguards can use them.
 	// If settings cannot be loaded, we continue; autonomous actions will fail-safe.
@@ -152,7 +154,31 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		log.Printf("gatekeeper: SaveAnalysis was called successfully for lead=%s service=%s", leadID, serviceID)
 	}
 
+	if !g.toolDeps.WasStageUpdateCalled() {
+		reason := "Intake onvolledig of analyse niet afgerond; handmatige opvolging nodig."
+		if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
+			log.Printf("gatekeeper: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
+		} else {
+			_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+				LeadID:         leadID,
+				ServiceID:      &serviceID,
+				OrganizationID: tenantID,
+				ActorType:      repository.ActorTypeSystem,
+				ActorName:      repository.ActorNameGatekeeper,
+				EventType:      repository.EventTypeStageChange,
+				Title:          repository.EventTitleStageUpdated,
+				Summary:        &reason,
+				Metadata: repository.StageChangeMetadata{
+					OldStage: service.PipelineStage,
+					NewStage: domain.PipelineStageNurturing,
+				}.ToMap(),
+			})
+			log.Printf("gatekeeper: applied fallback stage update to Nurturing (runID=%s lead=%s service=%s)", runID, leadID, serviceID)
+		}
+	}
+
 	g.maybeAutoDisqualifyJunk(ctx, leadID, serviceID, tenantID, service)
+	log.Printf("gatekeeper: run finished runID=%s lead=%s service=%s", runID, leadID, serviceID)
 
 	return nil
 }

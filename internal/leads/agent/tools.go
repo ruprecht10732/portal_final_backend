@@ -162,6 +162,7 @@ type ToolDependencies struct {
 	draftQuoteCalled     bool                    // Track if DraftQuote was called
 	offerCreated         bool                    // Track if CreatePartnerOffer was called
 	lastDraftResult      *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
+	runID                string                  // Correlates all tool calls within one agent run
 }
 
 func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
@@ -264,6 +265,13 @@ func (d *ToolDependencies) GetActor() (string, string) {
 		return "AI", "Agent"
 	}
 	return d.actorType, d.actorName
+}
+
+// GetRunID returns the correlation ID for the current agent run.
+func (d *ToolDependencies) GetRunID() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.runID
 }
 
 // SetLastAnalysisMetadata stores the analysis metadata for inclusion in subsequent events
@@ -378,6 +386,11 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	log.Printf("ToolDependencies: ResetToolCallTracking() - resetting flags (was saveAnalysisCalled=%v)", d.saveAnalysisCalled)
+	if d.serviceID != nil {
+		d.runID = d.serviceID.String() + ":" + uuid.NewString()
+	} else {
+		d.runID = uuid.NewString()
+	}
 	d.saveAnalysisCalled = false
 	d.saveEstimationCalled = false
 	d.stageUpdateCalled = false
@@ -594,7 +607,8 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	recalculateAndRecordScore(ctx, deps, leadID, leadServiceID, tenantID, actorType, actorName)
 
 	log.Printf(
-		"gatekeeper SaveAnalysis: leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d",
+		"gatekeeper SaveAnalysis: run=%s leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d",
+		deps.GetRunID(),
 		leadID,
 		leadServiceID,
 		urgencyLevel,
@@ -959,6 +973,14 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, err
 	}
 	oldStage := svc.PipelineStage
+	actorType, actorName := deps.GetActor()
+	runID := deps.GetRunID()
+
+	if oldStage == input.Stage {
+		log.Printf("agent stage transition skipped (run=%s actor=%s/%s lead=%s service=%s stage=%s): no change",
+			runID, actorType, actorName, leadID, serviceID, input.Stage)
+		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage unchanged"}, nil
+	}
 
 	// Terminal check: refuse to update pipeline stage for terminal services
 	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
@@ -982,6 +1004,28 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
 	}
 
+	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameGatekeeper && !deps.WasSaveAnalysisCalled() {
+		return UpdatePipelineStageOutput{Success: false, Message: "SaveAnalysis is required before stage update"}, fmt.Errorf("gatekeeper sequence violation: SaveAnalysis missing before UpdatePipelineStage for service %s", serviceID)
+	}
+	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameEstimator {
+		if !deps.WasSaveEstimationCalled() {
+			return UpdatePipelineStageOutput{Success: false, Message: "SaveEstimation is required before stage update"}, fmt.Errorf("estimator sequence violation: SaveEstimation missing before UpdatePipelineStage for service %s", serviceID)
+		}
+		if input.Stage == domain.PipelineStageEstimation && !deps.WasDraftQuoteCalled() {
+			return UpdatePipelineStageOutput{Success: false, Message: "DraftQuote is required before moving to Estimation"}, fmt.Errorf("estimator sequence violation: DraftQuote missing before Estimation stage update for service %s", serviceID)
+		}
+	}
+	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameDispatcher && input.Stage == domain.PipelineStageFulfillment && !deps.WasOfferCreated() {
+		return UpdatePipelineStageOutput{Success: false, Message: "CreatePartnerOffer is required before moving to Fulfillment"}, fmt.Errorf("dispatcher sequence violation: CreatePartnerOffer missing before Fulfillment stage update for service %s", serviceID)
+	}
+
+	if input.Stage == domain.PipelineStageEstimation {
+		recommendedAction, missingInformation := latestAnalysisInvariantInputs(ctx, deps, serviceID, tenantID)
+		if reason := domain.ValidateAnalysisStageTransition(recommendedAction, missingInformation, input.Stage); reason != "" {
+			return UpdatePipelineStageOutput{Success: false, Message: "Cannot move to Estimation while intake is incomplete"}, fmt.Errorf("analysis-stage invariant blocked Estimation for service %s: %s", serviceID, reason)
+		}
+	}
+
 	_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
 	if err != nil {
 		return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
@@ -996,6 +1040,8 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		reason:    input.Reason,
 	})
 	deps.MarkStageUpdateCalled(input.Stage)
+	log.Printf("agent stage transition committed (run=%s actor=%s/%s lead=%s service=%s from=%s to=%s)",
+		runID, actorType, actorName, leadID, serviceID, oldStage, input.Stage)
 	return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
 }
 
@@ -1065,6 +1111,47 @@ func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
+func hasNonEmptyMissingInformation(value any) bool {
+	switch typed := value.(type) {
+	case []string:
+		return domain.HasNonEmptyMissingInformation(typed)
+	case []any:
+		return domain.HasNonEmptyMissingInformation(stringifyAnySlice(typed))
+	}
+	return false
+}
+
+func latestAnalysisInvariantInputs(ctx context.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (string, []string) {
+	if analysis, err := deps.Repo.GetLatestAIAnalysis(ctx, serviceID, tenantID); err == nil {
+		return analysis.RecommendedAction, analysis.MissingInformation
+	}
+	analysisMeta := deps.GetLastAnalysisMetadata()
+	if analysisMeta == nil {
+		return "", nil
+	}
+	recommendedAction := strings.TrimSpace(fmt.Sprint(analysisMeta["recommendedAction"]))
+	return recommendedAction, parseMissingInformationMetadata(analysisMeta["missingInformation"])
+}
+
+func parseMissingInformationMetadata(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		return stringifyAnySlice(typed)
+	default:
+		return nil
+	}
+}
+
+func stringifyAnySlice(items []any) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, strings.TrimSpace(fmt.Sprint(item)))
+	}
+	return out
+}
+
 func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "FindMatchingPartners",
@@ -1094,6 +1181,7 @@ func handleFindMatchingPartners(ctx tool.Context, deps *ToolDependencies, input 
 
 	statsByPartner := lookupPartnerOfferStats(ctx, deps, tenantID, matches)
 	recordPartnerSearchTimelineEvent(ctx, deps, tenantID, leadID, serviceID, input, len(matches))
+	log.Printf("dispatcher FindMatchingPartners: run=%s lead=%s service=%s matches=%d", deps.GetRunID(), leadID, serviceID, len(matches))
 
 	return FindMatchingPartnersOutput{Matches: buildPartnerMatchOutput(matches, statsByPartner)}, nil
 }
@@ -1223,6 +1311,7 @@ func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
 		}
 
 		deps.MarkOfferCreated()
+		log.Printf("dispatcher CreatePartnerOffer: run=%s service=%s partner=%s offer=%s", deps.GetRunID(), serviceID, partnerID, result.OfferID)
 
 		return CreatePartnerOfferOutput{
 			Success:     true,
@@ -2528,12 +2617,20 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		return DraftQuoteOutput{Success: false, Message: "Lead context not available"}, errors.New(missingLeadContextError)
 	}
 
+	if blocked, reason := shouldBlockDraftQuoteForInsufficientIntake(ctx, deps, serviceID, *tenantID); blocked {
+		log.Printf("DraftQuote: blocked run=%s service=%s reason=%s", deps.GetRunID(), serviceID, reason)
+		return DraftQuoteOutput{Success: false, Message: "Onvoldoende intakegegevens voor een betrouwbare conceptofferte"}, fmt.Errorf("draft quote blocked: %s", reason)
+	}
+
 	if len(input.Items) == 0 {
 		return DraftQuoteOutput{Success: false, Message: "At least one item is required"}, fmt.Errorf("empty items")
 	}
 
 	portItems := convertDraftItems(input.Items)
-	portItems = enforceCatalogUnitPrices(ctx, deps, *tenantID, portItems)
+	portItems, err := enforceCatalogUnitPrices(ctx, deps, *tenantID, portItems)
+	if err != nil {
+		return DraftQuoteOutput{Success: false, Message: err.Error()}, err
+	}
 	portAttachments, portURLs := collectCatalogAssetsForDraft(ctx, deps, tenantID, portItems)
 
 	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
@@ -2552,7 +2649,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		return DraftQuoteOutput{Success: false, Message: fmt.Sprintf("Failed to draft quote: %v", err)}, err
 	}
 
-	log.Printf("DraftQuote: created %s with %d items for lead %s", result.QuoteNumber, result.ItemCount, leadID)
+	log.Printf("DraftQuote: created run=%s quote=%s items=%d lead=%s service=%s", deps.GetRunID(), result.QuoteNumber, result.ItemCount, leadID, serviceID)
 	deps.SetLastDraftResult(result)
 	deps.MarkDraftQuoteCalled()
 
@@ -2565,31 +2662,44 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 	}, nil
 }
 
+func shouldBlockDraftQuoteForInsufficientIntake(ctx context.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (bool, string) {
+	analysis, err := deps.Repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err != nil {
+		return true, "latest analysis unavailable"
+	}
+	if reason := domain.ValidateAnalysisStageTransition(analysis.RecommendedAction, analysis.MissingInformation, domain.PipelineStageEstimation); reason != "" {
+		return true, reason
+	}
+	return false, ""
+}
+
 // enforceCatalogUnitPrices ensures catalog-linked quote items use authoritative
 // catalog pricing metadata (unit price + VAT). Ad-hoc items (without
 // catalogProductId) are left unchanged so they can be estimated.
-func enforceCatalogUnitPrices(ctx context.Context, deps *ToolDependencies, tenantID uuid.UUID, items []ports.DraftQuoteItem) []ports.DraftQuoteItem {
+func enforceCatalogUnitPrices(ctx context.Context, deps *ToolDependencies, tenantID uuid.UUID, items []ports.DraftQuoteItem) ([]ports.DraftQuoteItem, error) {
 	if deps.CatalogReader == nil || len(items) == 0 {
-		return items
+		return items, nil
 	}
 
 	catalogIDs := collectCatalogProductIDs(items)
 	if len(catalogIDs) == 0 {
-		return items
+		return items, nil
 	}
 
 	details, err := deps.CatalogReader.GetProductDetails(ctx, tenantID, catalogIDs)
 	if err != nil {
-		log.Printf("DraftQuote: catalog price normalization skipped, details fetch failed: %v", err)
-		return items
+		return nil, fmt.Errorf("failed to validate catalog-linked quote items: %w", err)
 	}
 
 	detailByID := mapCatalogDetailsByID(details)
 
 	priceAdjusted, vatAdjusted, unresolvedCatalogIDs := normalizeCatalogLinkedItems(items, detailByID)
+	if unresolvedCatalogIDs > 0 {
+		return nil, fmt.Errorf("failed to resolve %d catalog-linked quote item(s)", unresolvedCatalogIDs)
+	}
 
 	logCatalogNormalizationSummary(priceAdjusted, vatAdjusted, unresolvedCatalogIDs)
-	return items
+	return items, nil
 }
 
 func mapCatalogDetailsByID(details []ports.CatalogProductDetails) map[uuid.UUID]ports.CatalogProductDetails {

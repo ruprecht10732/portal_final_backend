@@ -114,6 +114,8 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	d.toolDeps.SetLeadContext(leadID, serviceID)
 	d.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameDispatcher)
 	d.toolDeps.ResetToolCallTracking()
+	runID := d.toolDeps.GetRunID()
+	fmt.Printf("dispatcher: run started runID=%s lead=%s service=%s tenant=%s\n", runID, leadID, serviceID, tenantID)
 
 	// Preload org settings for consistency across agents (even if not used directly today).
 	if _, err := d.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
@@ -154,11 +156,16 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	}
 
 	if !d.toolDeps.WasStageUpdateCalled() {
-		fmt.Printf("Dispatcher warning: no stage update recorded for lead=%s service=%s\n", leadID, serviceID)
+		if _, err := d.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageManualIntervention); err != nil {
+			fmt.Printf("Dispatcher warning: fallback stage update failed runID=%s lead=%s service=%s err=%v\n", runID, leadID, serviceID, err)
+		} else {
+			fmt.Printf("Dispatcher warning: no stage update recorded, fallback to Manual_Intervention runID=%s lead=%s service=%s\n", runID, leadID, serviceID)
+		}
 	}
 	if d.toolDeps.LastStageUpdated() == domain.PipelineStageFulfillment && !d.toolDeps.WasOfferCreated() {
-		fmt.Printf("Dispatcher warning: Fulfillment without offer for lead=%s service=%s\n", leadID, serviceID)
+		fmt.Printf("Dispatcher warning: Fulfillment without offer runID=%s lead=%s service=%s\n", runID, leadID, serviceID)
 	}
+	fmt.Printf("dispatcher: run finished runID=%s lead=%s service=%s\n", runID, leadID, serviceID)
 
 	return nil
 }

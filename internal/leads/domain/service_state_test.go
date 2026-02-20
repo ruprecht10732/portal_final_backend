@@ -83,6 +83,8 @@ func TestValidateStateCombination(t *testing.T) {
 		{LeadStatusNew, PipelineStageEstimation, false},
 		{LeadStatusPending, PipelineStageProposal, false},
 		{LeadStatusInProgress, PipelineStageFulfillment, false},
+		{LeadStatusNew, PipelineStageProposal, true},
+		{LeadStatusNew, PipelineStageFulfillment, true},
 	}
 
 	for _, tc := range tests {
@@ -92,6 +94,54 @@ func TestValidateStateCombination(t *testing.T) {
 		}
 		if !tc.wantFail && reason != "" {
 			t.Errorf("ValidateStateCombination(%q, %q) unexpected error: %s", tc.status, tc.stage, reason)
+		}
+	}
+}
+
+func TestValidateAnalysisStageTransition(t *testing.T) {
+	tests := []struct {
+		name              string
+		recommendedAction string
+		missing           []string
+		stage             string
+		wantFail          bool
+	}{
+		{
+			name:              "blocks estimation when request info",
+			recommendedAction: "RequestInfo",
+			stage:             PipelineStageEstimation,
+			wantFail:          true,
+		},
+		{
+			name:              "blocks estimation when missing information exists",
+			recommendedAction: "ScheduleSurvey",
+			missing:           []string{"Afmetingen ontbreken"},
+			stage:             PipelineStageEstimation,
+			wantFail:          true,
+		},
+		{
+			name:              "allows non-estimation stages",
+			recommendedAction: "RequestInfo",
+			missing:           []string{"Afmetingen ontbreken"},
+			stage:             PipelineStageNurturing,
+			wantFail:          false,
+		},
+		{
+			name:              "allows estimation when complete",
+			recommendedAction: "ScheduleSurvey",
+			missing:           []string{},
+			stage:             PipelineStageEstimation,
+			wantFail:          false,
+		},
+	}
+
+	for _, tc := range tests {
+		reason := ValidateAnalysisStageTransition(tc.recommendedAction, tc.missing, tc.stage)
+		if tc.wantFail && reason == "" {
+			t.Errorf("%s: expected failure but got success", tc.name)
+		}
+		if !tc.wantFail && reason != "" {
+			t.Errorf("%s: expected success but got failure: %s", tc.name, reason)
 		}
 	}
 }
