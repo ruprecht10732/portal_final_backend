@@ -47,7 +47,12 @@
   function getConfigEndpoint() {
     try {
       var url = new URL(config.endpoint);
-      var path = url.pathname.replace(/\/forms$/, '/config');
+      var path = url.pathname;
+      if (path.match(/\/forms$/)) {
+        path = path.replace(/\/forms$/, '/config');
+      } else {
+        path = path.replace(/\/$/, '') + '/config';
+      }
       return url.origin + path + url.search + url.hash;
     } catch (e) {
       return '/api/v1/webhook/config';
