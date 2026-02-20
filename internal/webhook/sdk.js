@@ -46,8 +46,9 @@
 
   function getConfigEndpoint() {
     try {
-      var endpointUrl = new URL(config.endpoint, window.location.href);
-      return endpointUrl.origin + '/api/v1/webhook/config';
+      var url = new URL(config.endpoint);
+      var path = url.pathname.replace(/\/forms$/, '/config');
+      return url.origin + path + url.search + url.hash;
     } catch (e) {
       return '/api/v1/webhook/config';
     }
@@ -402,12 +403,6 @@
     forms.forEach(function (form) {
       // Skip forms that are already captured or explicitly excluded
       if (form.hasAttribute('data-rac-ignore') || form.hasAttribute('data-rac-attached')) {
-        return;
-      }
-
-      // Skip forms that already submit to our endpoint natively
-      var action = form.getAttribute('action');
-      if (action && action.indexOf(config.endpoint) !== -1) {
         return;
       }
 

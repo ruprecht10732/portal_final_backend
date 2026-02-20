@@ -74,7 +74,7 @@ func webhookCorsBypass() gin.HandlerFunc {
 			if origin != "" {
 				c.Header("Access-Control-Allow-Origin", origin)
 				c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, X-Webhook-API-Key")
+				c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, X-Webhook-API-Key, X-Idempotency-Key")
 				c.Header("Access-Control-Max-Age", "43200")
 				c.Set("webhookOrigin", origin)
 				c.Request.Header.Del("Origin")
@@ -91,7 +91,7 @@ func webhookCorsBypass() gin.HandlerFunc {
 func buildCorsConfig(cfg config.HTTPConfig) cors.Config {
 	corsConfig := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Webhook-API-Key"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Webhook-API-Key", "X-Idempotency-Key"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: cfg.GetCORSAllowCreds(),
 		MaxAge:           12 * time.Hour,
