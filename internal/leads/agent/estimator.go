@@ -261,7 +261,13 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 
 	if insufficientIntake && !e.toolDeps.WasStageUpdateCalled() {
 		reason := "Onvoldoende intakegegevens voor betrouwbare conceptofferte; aanvullende metingen nodig."
-		if _, err := e.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
+		currentService := service
+		if latestService, loadErr := e.repo.GetLeadServiceByID(ctx, serviceID, tenantID); loadErr == nil {
+			currentService = latestService
+		}
+		if currentService.PipelineStage == domain.PipelineStageNurturing {
+			log.Printf("estimator: skipping fallback stage update (already Nurturing) runID=%s lead=%s service=%s", runID, leadID, serviceID)
+		} else if _, err := e.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
 			log.Printf("estimator: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
 		} else {
 			_, _ = e.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
@@ -274,7 +280,7 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 				Title:          repository.EventTitleStageUpdated,
 				Summary:        &reason,
 				Metadata: repository.StageChangeMetadata{
-					OldStage: service.PipelineStage,
+					OldStage: currentService.PipelineStage,
 					NewStage: domain.PipelineStageNurturing,
 				}.ToMap(),
 			})

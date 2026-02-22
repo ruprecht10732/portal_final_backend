@@ -445,6 +445,10 @@ func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadServic
 	if svc.PipelineStage != "Triage" && svc.PipelineStage != "Nurturing" && svc.PipelineStage != "Manual_Intervention" {
 		return
 	}
+	if strings.EqualFold(strings.TrimSpace(evt.Source), "customer_portal_upload") && o.serviceHasImageAttachments(context.Background(), evt.LeadServiceID, evt.TenantID) {
+		o.log.Info("orchestrator: deferring gatekeeper run until photo analysis concludes", "serviceId", evt.LeadServiceID, "source", evt.Source)
+		return
+	}
 
 	// Idempotency check
 	if !o.markRunning("gatekeeper", evt.LeadServiceID) {
@@ -463,6 +467,19 @@ func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadServic
 		}
 		o.maybeAutoDisqualifyJunk(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID)
 	}()
+}
+
+func (o *Orchestrator) serviceHasImageAttachments(ctx context.Context, serviceID, tenantID uuid.UUID) bool {
+	attachments, err := o.repo.ListAttachmentsByService(ctx, serviceID, tenantID)
+	if err != nil {
+		return false
+	}
+	for _, att := range attachments {
+		if att.ContentType != nil && isImageContentType(*att.ContentType) {
+			return true
+		}
+	}
+	return false
 }
 
 // OnPhotoAnalysisCompleted triggers gatekeeper re-evaluation once visual data is available.

@@ -3,15 +3,19 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // TimelineSummaryMaxLen is the canonical maximum character length for timeline event summaries.
 // Callers should use TruncateSummary when populating CreateTimelineEventParams.Summary.
 const TimelineSummaryMaxLen = 400
+const timelineDedupWindow = 90 * time.Second
 
 // TruncateSummary trims text to maxLen, appending "..." on overflow.
 // Returns nil for blank input.
@@ -53,6 +57,12 @@ type CreateTimelineEventParams struct {
 }
 
 func (r *Repository) CreateTimelineEvent(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, error) {
+	if shouldAttemptTimelineDedup(params) {
+		if existing, found, dedupeErr := r.findRecentDuplicateTimelineEvent(ctx, params); dedupeErr == nil && found {
+			return existing, nil
+		}
+	}
+
 	metadataJSON, err := json.Marshal(params.Metadata)
 	if err != nil {
 		return TimelineEvent{}, err
@@ -105,6 +115,66 @@ func (r *Repository) CreateTimelineEvent(ctx context.Context, params CreateTimel
 	event.Metadata = params.Metadata
 
 	return event, nil
+}
+
+func shouldAttemptTimelineDedup(params CreateTimelineEventParams) bool {
+	if params.ActorType != ActorTypeAI && params.ActorType != ActorTypeSystem {
+		return false
+	}
+	switch params.EventType {
+	case EventTypeAI, EventTypeAnalysis, EventTypePhotoAnalysisCompleted, EventTypeStageChange:
+		return true
+	default:
+		return false
+	}
+}
+
+func metadataStringValue(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func (r *Repository) findRecentDuplicateTimelineEvent(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, bool, error) {
+	oldStage := metadataStringValue(params.Metadata, "oldStage")
+	newStage := metadataStringValue(params.Metadata, "newStage")
+	windowSeconds := int(timelineDedupWindow / time.Second)
+
+	row := r.pool.QueryRow(ctx, `
+		SELECT`+timelineSelectCols+`
+		FROM lead_timeline_events
+		WHERE lead_id = $1
+			AND organization_id = $2
+			AND (service_id = $3 OR (service_id IS NULL AND $3 IS NULL))
+			AND actor_type = $4
+			AND actor_name = $5
+			AND event_type = $6
+			AND title = $7
+			AND (($8 IS NULL AND summary IS NULL) OR ($8 IS NOT NULL AND summary = $8))
+			AND created_at >= now() - make_interval(secs => $9)
+			AND (
+				$6 <> $10 OR (
+					COALESCE(metadata->>'oldStage', '') = $11
+					AND COALESCE(metadata->>'newStage', '') = $12
+				)
+			)
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, params.LeadID, params.OrganizationID, params.ServiceID, params.ActorType, params.ActorName, params.EventType, params.Title, params.Summary, windowSeconds, EventTypeStageChange, oldStage, newStage)
+
+	event, err := scanTimelineEvent(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TimelineEvent{}, false, nil
+	}
+	if err != nil {
+		return TimelineEvent{}, false, err
+	}
+	return event, true, nil
 }
 
 // timelineRowScanner is satisfied by pgx.Rows and pgx.Row so that scanTimelineEvent

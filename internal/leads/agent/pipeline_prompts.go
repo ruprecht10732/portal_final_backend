@@ -40,7 +40,7 @@ func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService,
 	serviceNote := getValue(service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxGatekeeperPreferencesChars)
 	leadContext := truncatePromptSection(buildLeadContextSection(lead, attachments), maxGatekeeperLeadCtxChars)
-	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxGatekeeperPhotoChars)
+	photoSummary := truncatePromptSection(buildGatekeeperPhotoSummary(photoAnalysis, service.ServiceType), maxGatekeeperPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxGatekeeperServiceNoteChars)
 	intakeContextSummary := truncatePromptSection(intakeContext, maxGatekeeperIntakeChars)
 
@@ -99,8 +99,10 @@ Only update fields you are confident about. Include a short Dutch reason and you
 	- If you update the service type, do it BEFORE UpdatePipelineStage.
 1) Validate intake requirements for the selected service type.
 2) Treat missing required items as critical unless the info is clearly present elsewhere (e.g. in Photo Analysis).
+2a) If Photo Analysis indicates mismatch/irrelevance (low confidence + discrepancies), do NOT treat it as proof of intake completeness.
 3) FIRST call SaveAnalysis with urgencyLevel, leadQuality, recommendedAction, preferredContactChannel, suggestedContactMessage,
    a short Dutch summary, and a Dutch list of missingInformation (empty list if nothing missing).
+   suggestedContactMessage must be correct Dutch (no typo's), professional and concise.
 4) THEN call UpdatePipelineStage with stage="Estimation" (if all required info is present) or stage="Nurturing" (if critical info is missing).
 5) Include a short reason in UpdatePipelineStage, written in Dutch.
 
@@ -732,11 +734,7 @@ func preferenceValue(value string) string {
 	return sanitizeUserInput(value, maxNoteLength)
 }
 
-func buildPhotoSummary(photoAnalysis *repository.PhotoAnalysis) string {
-	if photoAnalysis == nil {
-		return "No photo analysis available."
-	}
-
+func buildPhotoSummaryContent(photoAnalysis *repository.PhotoAnalysis) string {
 	var sb strings.Builder
 	if photoAnalysis.Summary != "" {
 		sb.WriteString("Summary: " + photoAnalysis.Summary + "\n")
@@ -777,5 +775,47 @@ func buildPhotoSummary(photoAnalysis *repository.PhotoAnalysis) string {
 		sb.WriteString("Suggested product search terms: " + strings.Join(photoAnalysis.SuggestedSearchTerms, ", ") + "\n")
 	}
 
-	return wrapUserData(sb.String())
+	return sb.String()
+}
+
+func buildPhotoSummary(photoAnalysis *repository.PhotoAnalysis) string {
+	if photoAnalysis == nil {
+		return "No photo analysis available."
+	}
+
+	return wrapUserData(buildPhotoSummaryContent(photoAnalysis))
+}
+
+func buildGatekeeperPhotoSummary(photoAnalysis *repository.PhotoAnalysis, serviceType string) string {
+	if photoAnalysis == nil {
+		return "No photo analysis available."
+	}
+	if isPhotoAnalysisLikelyIrrelevant(photoAnalysis) {
+		details := strings.TrimSpace(buildPhotoSummaryContent(photoAnalysis))
+		return wrapUserData(fmt.Sprintf(
+			"Photo relevance: low for service type '%s'. The image content likely does not match the requested service. Use this photo analysis only as mismatch signal, not as evidence that intake requirements are complete.\n\nMismatch evidence from photo analysis:\n%s",
+			serviceType,
+			details,
+		))
+	}
+	return buildPhotoSummary(photoAnalysis)
+}
+
+func isPhotoAnalysisLikelyIrrelevant(photoAnalysis *repository.PhotoAnalysis) bool {
+	if photoAnalysis == nil {
+		return false
+	}
+	combined := strings.ToLower(strings.TrimSpace(photoAnalysis.Summary + " " + strings.Join(photoAnalysis.Discrepancies, " ")))
+	if containsAny(combined, []string{
+		"niet de betreffende",
+		"komt niet overeen",
+		"niet relevant",
+		"mismatch",
+		"onverwant",
+		"does not match",
+		"not relevant",
+	}) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(photoAnalysis.ConfidenceLevel), "low") && len(photoAnalysis.Discrepancies) > 0
 }

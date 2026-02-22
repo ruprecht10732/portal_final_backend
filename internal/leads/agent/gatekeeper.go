@@ -156,7 +156,13 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 
 	if !g.toolDeps.WasStageUpdateCalled() {
 		reason := "Intake onvolledig of analyse niet afgerond; handmatige opvolging nodig."
-		if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
+		currentService := service
+		if latestService, loadErr := g.repo.GetLeadServiceByID(ctx, serviceID, tenantID); loadErr == nil {
+			currentService = latestService
+		}
+		if currentService.PipelineStage == domain.PipelineStageNurturing {
+			log.Printf("gatekeeper: skipping fallback stage update (already Nurturing) runID=%s lead=%s service=%s", runID, leadID, serviceID)
+		} else if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
 			log.Printf("gatekeeper: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
 		} else {
 			_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
@@ -169,7 +175,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 				Title:          repository.EventTitleStageUpdated,
 				Summary:        &reason,
 				Metadata: repository.StageChangeMetadata{
-					OldStage: service.PipelineStage,
+					OldStage: currentService.PipelineStage,
 					NewStage: domain.PipelineStageNurturing,
 				}.ToMap(),
 			})

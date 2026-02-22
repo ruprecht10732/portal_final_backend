@@ -531,6 +531,7 @@ Pas je analyse aan voor dit specifieke vakgebied. Gebruik je vakkennis over '%s'
 - Relevante Nederlandse bouwstandaarden en -normen toe te passen (NEN, KOMO, BRL, etc.)
 - Typische afmetingen in te schatten op basis van standaardmaten voor dit type werk
 - Productzoektermen te suggereren die de Schatter kan gebruiken om materialen te vinden
+- Controleer eerst of de foto's inhoudelijk matchen met dit diensttype. Bij mismatch: zet confidence op Low, benoem de mismatch expliciet in summary én discrepancies, en vermijd speculatieve aannames.
 `, serviceType, serviceType)
 	}
 
@@ -610,6 +611,7 @@ Kernregels:
 - Vergelijk claims met visueel bewijs en rapporteer tegenstrijdigheden.
 - Identificeer materialen/componenten en voorstelbare productzoektermen.
 - Geef confidence: High / Medium / Low.
+- Als foto's niet bij het diensttype passen: confidence = Low, noem dit expliciet in summary en discrepancies.
 - ANTIFOUT-REGEL: liever FlagOnsiteMeasurement dan gokken.
 - Als een meting niet betrouwbaar uit de foto kan of confidence niet "High" is: roep FlagOnsiteMeasurement aan met uitleg.
 

@@ -292,6 +292,10 @@ func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, 
 				log.Info("gatekeeper: skipping terminal service on lead created", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
 				return
 			}
+			if attachments, attErr := repo.ListAttachmentsByService(bg, e.LeadServiceID, e.TenantID); attErr == nil && hasImageAttachments(attachments) {
+				log.Info("gatekeeper: deferring initial run until photo analysis concludes", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
+				return
+			}
 
 			if err := gatekeeper.Run(bg, e.LeadID, e.LeadServiceID, e.TenantID); err != nil {
 				log.Error("gatekeeper run failed", "error", err, "leadId", e.LeadID)
@@ -322,6 +326,10 @@ func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsReposit
 				log.Info("gatekeeper: skipping terminal service on service added", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
 				return
 			}
+			if attachments, attErr := repo.ListAttachmentsByService(bg, e.LeadServiceID, e.TenantID); attErr == nil && hasImageAttachments(attachments) {
+				log.Info("gatekeeper: deferring initial run until photo analysis concludes", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
+				return
+			}
 
 			if err := gatekeeper.Run(bg, e.LeadID, e.LeadServiceID, e.TenantID); err != nil {
 				log.Error("gatekeeper run failed for new service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
@@ -330,6 +338,15 @@ func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsReposit
 
 		return nil
 	}))
+}
+
+func hasImageAttachments(items []repository.Attachment) bool {
+	for _, att := range items {
+		if att.ContentType != nil && isImageContentType(*att.ContentType) {
+			return true
+		}
+	}
+	return false
 }
 
 func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {

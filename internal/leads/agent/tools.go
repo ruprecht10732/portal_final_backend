@@ -34,6 +34,7 @@ const (
 	leadNotFoundMessage         = "Lead not found"
 	leadServiceNotFoundMessage  = "Lead service not found"
 	invalidFieldFormat          = "invalid %s"
+	recentEquivalentAnalysisTTL = 2 * time.Minute
 )
 
 const highConfidenceScoreThreshold = 0.45
@@ -482,6 +483,76 @@ func resolvePreferredChannel(inputChannel string, lead repository.Lead) (string,
 	return "Email", nil
 }
 
+func normalizeMissingInformation(items []string) []string {
+	normalized := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		normalized = append(normalized, trimmed)
+	}
+	sort.Strings(normalized)
+	return normalized
+}
+
+func normalizeSuggestedContactMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return ""
+	}
+
+	normalized := strings.ReplaceAll(message, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\\t", " ")
+	normalized = strings.ReplaceAll(normalized, "\r", "")
+	normalized = strings.ReplaceAll(normalized, "nodie", "nodig")
+	normalized = strings.ReplaceAll(normalized, "nodien", "nodig")
+
+	lines := strings.Split(normalized, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = strings.Join(strings.Fields(line), " ")
+	}
+	normalized = strings.Join(lines, "\n")
+	return strings.TrimSpace(normalized)
+}
+
+func isEquivalentRecentAnalysis(current repository.AIAnalysis, urgencyLevel, leadQuality, recommendedAction, channel, message string, missingInformation []string) bool {
+	if time.Since(current.CreatedAt) > recentEquivalentAnalysisTTL {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(current.UrgencyLevel), strings.TrimSpace(urgencyLevel)) {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(current.LeadQuality), strings.TrimSpace(leadQuality)) {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(current.RecommendedAction), strings.TrimSpace(recommendedAction)) {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(current.PreferredContactChannel), strings.TrimSpace(channel)) {
+		return false
+	}
+	if strings.TrimSpace(normalizeSuggestedContactMessage(current.SuggestedContactMessage)) != strings.TrimSpace(normalizeSuggestedContactMessage(message)) {
+		return false
+	}
+
+	currentMissing := normalizeMissingInformation(current.MissingInformation)
+	candidateMissing := normalizeMissingInformation(missingInformation)
+	if len(currentMissing) != len(candidateMissing) {
+		return false
+	}
+	for i := range currentMissing {
+		if !strings.EqualFold(currentMissing[i], candidateMissing[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func parseLeadServiceID(value string) (uuid.UUID, error) {
 	if strings.TrimSpace(value) == "" {
 		return uuid.UUID{}, fmt.Errorf("missing lead service ID")
@@ -529,8 +600,9 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	}
 
 	var urgencyReason *string
-	if input.UrgencyReason != "" {
-		urgencyReason = &input.UrgencyReason
+	trimmedUrgencyReason := strings.TrimSpace(input.UrgencyReason)
+	if trimmedUrgencyReason != "" {
+		urgencyReason = &trimmedUrgencyReason
 	}
 
 	lead, err := deps.Repo.GetByID(ctx, leadID, tenantID)
@@ -550,27 +622,9 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	recommendedAction := normalizeRecommendedAction(input.RecommendedAction)
 	log.Printf("handleSaveAnalysis: normalized recommendedAction '%s' -> '%s'", input.RecommendedAction, recommendedAction)
 
-	_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
-		LeadID:                  leadID,
-		OrganizationID:          tenantID,
-		LeadServiceID:           leadServiceID,
-		UrgencyLevel:            urgencyLevel,
-		UrgencyReason:           urgencyReason,
-		LeadQuality:             leadQuality,
-		RecommendedAction:       recommendedAction,
-		MissingInformation:      input.MissingInformation,
-		PreferredContactChannel: channel,
-		SuggestedContactMessage: input.SuggestedContactMessage,
-		Summary:                 input.Summary,
-	})
-	if err != nil {
-		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
-	}
-
-	actorType, actorName := deps.GetActor()
-
-	// Create comprehensive analysis timeline event for frontend rendering
-	analysisSummary := input.Summary
+	missingInformation := normalizeMissingInformation(input.MissingInformation)
+	normalizedMessage := normalizeSuggestedContactMessage(input.SuggestedContactMessage)
+	analysisSummary := strings.TrimSpace(input.Summary)
 	if analysisSummary == "" {
 		analysisSummary = fmt.Sprintf("AI analyse voltooid: %s urgentie, aanbevolen actie: %s", urgencyLevel, recommendedAction)
 	}
@@ -579,14 +633,42 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		RecommendedAction: recommendedAction,
 		LeadQuality:       leadQuality,
 	}
-	if input.SuggestedContactMessage != "" {
-		meta.SuggestedContactMessage = input.SuggestedContactMessage
+	if normalizedMessage != "" {
+		meta.SuggestedContactMessage = normalizedMessage
 		meta.PreferredContactChannel = string(channel)
 	}
-	if len(input.MissingInformation) > 0 {
-		meta.MissingInformation = input.MissingInformation
+	if len(missingInformation) > 0 {
+		meta.MissingInformation = missingInformation
 	}
 	analysisMetadata := meta.ToMap()
+	if latest, latestErr := deps.Repo.GetLatestAIAnalysis(ctx, leadServiceID, tenantID); latestErr == nil &&
+		isEquivalentRecentAnalysis(latest, urgencyLevel, leadQuality, recommendedAction, channel, normalizedMessage, missingInformation) {
+		deps.SetLastAnalysisMetadata(analysisMetadata)
+		deps.MarkSaveAnalysisCalled()
+		log.Printf("handleSaveAnalysis: skipped duplicate-equivalent analysis for lead=%s service=%s", leadID, leadServiceID)
+		return SaveAnalysisOutput{Success: true, Message: "Analysis unchanged; duplicate save skipped"}, nil
+	}
+
+	_, err = deps.Repo.CreateAIAnalysis(context.Background(), repository.CreateAIAnalysisParams{
+		LeadID:                  leadID,
+		OrganizationID:          tenantID,
+		LeadServiceID:           leadServiceID,
+		UrgencyLevel:            urgencyLevel,
+		UrgencyReason:           urgencyReason,
+		LeadQuality:             leadQuality,
+		RecommendedAction:       recommendedAction,
+		MissingInformation:      missingInformation,
+		PreferredContactChannel: channel,
+		SuggestedContactMessage: normalizedMessage,
+		Summary:                 analysisSummary,
+	})
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
+	}
+
+	actorType, actorName := deps.GetActor()
+
+	// Create comprehensive analysis timeline event for frontend rendering.
 	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &leadServiceID,
