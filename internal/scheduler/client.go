@@ -26,6 +26,11 @@ type QuoteJobScheduler interface {
 	EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQuoteJobPayload) error
 }
 
+type IMAPSyncScheduler interface {
+	EnqueueIMAPSyncAccount(ctx context.Context, payload IMAPSyncAccountPayload) error
+	EnqueueIMAPSyncSweep(ctx context.Context) error
+}
+
 type QuoteJobRunner interface {
 	EnqueueGenerateQuoteJobRequest(ctx context.Context, req GenerateQuoteJobRequest) error
 }
@@ -95,6 +100,30 @@ func (c *Client) EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQu
 		return err
 	}
 
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	return err
+}
+
+func (c *Client) EnqueueIMAPSyncAccount(ctx context.Context, payload IMAPSyncAccountPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	task, err := NewIMAPSyncAccountTask(payload)
+	if err != nil {
+		return err
+	}
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	return err
+}
+
+func (c *Client) EnqueueIMAPSyncSweep(ctx context.Context) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	task, err := NewIMAPSyncSweepTask(IMAPSyncSweepPayload{})
+	if err != nil {
+		return err
+	}
 	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
 	return err
 }

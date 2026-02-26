@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"portal_final_backend/internal/events"
 	identityrepo "portal_final_backend/internal/identity/repository"
 	identityservice "portal_final_backend/internal/identity/service"
+	"portal_final_backend/internal/imap"
 	"portal_final_backend/internal/leads"
 	"portal_final_backend/internal/leads/maintenance"
 	leadrepo "portal_final_backend/internal/leads/repository"
@@ -125,6 +127,9 @@ func main() {
 		panic("failed to initialize scheduler worker: " + err.Error())
 	}
 	worker.SetQuoteJobProcessor(quotesModule.Service())
+	imapModule := imap.NewModule(pool, val)
+	worker.SetIMAPSyncProcessor(imapModule.Service())
+	wireSchedulerIMAPEncryptionKey(cfg, log, imapModule.Service())
 
 	worker.Run(ctx)
 }
@@ -271,4 +276,22 @@ func getDurationEnv(key string, fallback time.Duration) time.Duration {
 	}
 
 	return parsed
+}
+
+func wireSchedulerIMAPEncryptionKey(cfg *config.Config, log *logger.Logger, imapSvc interface{ SetEncryptionKey([]byte) }) {
+	keyHex := cfg.GetIMAPEncryptionKey()
+	if strings.TrimSpace(keyHex) == "" {
+		return
+	}
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		log.Error("invalid IMAP_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+		panic("invalid IMAP_ENCRYPTION_KEY: " + err.Error())
+	}
+	if len(key) != 32 {
+		log.Error("IMAP_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(key))
+		panic("IMAP_ENCRYPTION_KEY must be 32 bytes")
+	}
+	imapSvc.SetEncryptionKey(key)
+	log.Info("scheduler imap encryption key configured")
 }

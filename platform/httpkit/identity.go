@@ -125,5 +125,8 @@ func isOnboardingAllowedPath(c *gin.Context) bool {
 		"/api/v1/users/me/onboarding": true,
 		"/api/v1/users/me/password":   true,
 	}
-	return allowed[path]
+	if allowed[path] {
+		return true
+	}
+	return strings.HasPrefix(path, "/api/v1/users/me/imap-accounts")
 }

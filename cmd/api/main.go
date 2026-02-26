@@ -22,6 +22,7 @@ import (
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/http/router"
 	"portal_final_backend/internal/identity"
+	"portal_final_backend/internal/imap"
 	"portal_final_backend/internal/leadenrichment"
 	"portal_final_backend/internal/leads"
 	leadsports "portal_final_backend/internal/leads/ports"
@@ -161,6 +162,11 @@ func main() {
 	notificationModule.SetWorkflowResolver(identityModule.Service())
 
 	wireSMTPEncryptionKey(cfg, log, identityModule.Service(), notificationModule)
+	imapModule := imap.NewModule(pool, val)
+	if reminderScheduler != nil {
+		imapModule.Service().SetScheduler(reminderScheduler)
+		go runIMAPPeriodicSweep(ctx, reminderScheduler, log)
+	}
 
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
 	leadsModule, err := leads.NewModule(pool, eventBus, storageSvc, val, cfg, log)
@@ -311,6 +317,7 @@ func main() {
 			notificationModule,
 			authModule,
 			identityModule,
+			imapModule,
 			leadsModule,
 			mapsModule,
 			servicesModule,
@@ -323,6 +330,9 @@ func main() {
 			exportsModule,
 		},
 	}
+
+	wireIMAPEncryptionKey(cfg, log, imapModule.Service())
+	wireSMTPEncryptionKeyForIMAP(cfg, log, imapModule.Service())
 
 	engine := router.New(app)
 
@@ -423,6 +433,42 @@ func wireExportsEncryptionKey(cfg *config.Config, log *logger.Logger, exportsMod
 	log.Info("exports encryption key configured")
 }
 
+func wireIMAPEncryptionKey(cfg *config.Config, log *logger.Logger, imapSvc interface{ SetEncryptionKey([]byte) }) {
+	keyHex := cfg.GetIMAPEncryptionKey()
+	if keyHex == "" {
+		return
+	}
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		log.Error("invalid IMAP_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+		panic("invalid IMAP_ENCRYPTION_KEY: " + err.Error())
+	}
+	if len(key) != 32 {
+		log.Error("IMAP_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(key))
+		panic("IMAP_ENCRYPTION_KEY must be 32 bytes")
+	}
+	imapSvc.SetEncryptionKey(key)
+	log.Info("imap encryption key configured")
+}
+
+func wireSMTPEncryptionKeyForIMAP(cfg *config.Config, log *logger.Logger, imapSvc interface{ SetSMTPEncryptionKey([]byte) }) {
+	smtpKeyHex := cfg.GetSMTPEncryptionKey()
+	if smtpKeyHex == "" {
+		return
+	}
+	smtpKey, err := hex.DecodeString(smtpKeyHex)
+	if err != nil {
+		log.Error("invalid SMTP_ENCRYPTION_KEY for imap (must be hex-encoded)", "error", err)
+		panic("invalid SMTP_ENCRYPTION_KEY for imap: " + err.Error())
+	}
+	if len(smtpKey) != 32 {
+		log.Error("SMTP_ENCRYPTION_KEY for imap must be 32 bytes (64 hex chars)", "length", len(smtpKey))
+		panic("SMTP_ENCRYPTION_KEY for imap must be 32 bytes")
+	}
+	imapSvc.SetSMTPEncryptionKey(smtpKey)
+	log.Info("imap smtp encryption key configured")
+}
+
 func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (*scheduler.Client, func()) {
 	if cfg.GetRedisURL() == "" {
 		log.Warn("REDIS_URL not configured; appointment reminders and async quote generation are disabled")
@@ -437,6 +483,22 @@ func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (*sch
 
 	return reminderClient, func() {
 		_ = reminderClient.Close()
+	}
+}
+
+func runIMAPPeriodicSweep(ctx context.Context, schedulerClient *scheduler.Client, log *logger.Logger) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := schedulerClient.EnqueueIMAPSyncSweep(ctx); err != nil {
+				log.Warn("failed to enqueue periodic imap sync sweep", "error", err)
+			}
+		}
 	}
 }
 

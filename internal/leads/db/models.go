@@ -1073,6 +1073,52 @@ type RacUser struct {
 	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
 }
 
+type RacUserImapAccount struct {
+	ID                    pgtype.UUID        `json:"id"`
+	UserID                pgtype.UUID        `json:"user_id"`
+	EmailAddress          string             `json:"email_address"`
+	ImapHost              string             `json:"imap_host"`
+	ImapPort              int32              `json:"imap_port"`
+	ImapUsername          string             `json:"imap_username"`
+	ImapPasswordEncrypted string             `json:"imap_password_encrypted"`
+	FolderName            string             `json:"folder_name"`
+	Enabled               bool               `json:"enabled"`
+	LastSyncAt            pgtype.Timestamptz `json:"last_sync_at"`
+	LastError             pgtype.Text        `json:"last_error"`
+	LastErrorAt           pgtype.Timestamptz `json:"last_error_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	SmtpHost              pgtype.Text        `json:"smtp_host"`
+	SmtpPort              pgtype.Int4        `json:"smtp_port"`
+	SmtpUsername          pgtype.Text        `json:"smtp_username"`
+	SmtpPasswordEncrypted pgtype.Text        `json:"smtp_password_encrypted"`
+	SmtpFromEmail         pgtype.Text        `json:"smtp_from_email"`
+	SmtpFromName          pgtype.Text        `json:"smtp_from_name"`
+}
+
+type RacUserImapMessage struct {
+	ID             pgtype.UUID        `json:"id"`
+	AccountID      pgtype.UUID        `json:"account_id"`
+	FolderName     string             `json:"folder_name"`
+	Uid            int64              `json:"uid"`
+	MessageID      pgtype.Text        `json:"message_id"`
+	FromName       pgtype.Text        `json:"from_name"`
+	FromAddress    pgtype.Text        `json:"from_address"`
+	Subject        string             `json:"subject"`
+	SentAt         pgtype.Timestamptz `json:"sent_at"`
+	ReceivedAt     pgtype.Timestamptz `json:"received_at"`
+	Snippet        pgtype.Text        `json:"snippet"`
+	SizeBytes      int64              `json:"size_bytes"`
+	Seen           bool               `json:"seen"`
+	Flagged        bool               `json:"flagged"`
+	Answered       bool               `json:"answered"`
+	Deleted        bool               `json:"deleted"`
+	HasAttachments bool               `json:"has_attachments"`
+	SyncedAt       pgtype.Timestamptz `json:"synced_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacUserRole struct {
 	UserID    pgtype.UUID        `json:"user_id"`
 	RoleID    pgtype.UUID        `json:"role_id"`

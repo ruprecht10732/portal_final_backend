@@ -23,10 +23,16 @@ type Worker struct {
 	bus    events.Bus
 	log    *logger.Logger
 	quotes QuoteJobProcessor
+	imap   IMAPSyncProcessor
 }
 
 type QuoteJobProcessor interface {
 	ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) error
+}
+
+type IMAPSyncProcessor interface {
+	SyncAccount(ctx context.Context, userID uuid.UUID, accountID uuid.UUID) error
+	SyncEligibleAccounts(ctx context.Context) error
 }
 
 func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, log *logger.Logger) (*Worker, error) {
@@ -69,12 +75,18 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskAppointmentReminder, w.handleAppointmentReminder)
 	mux.HandleFunc(TaskNotificationOutboxDue, w.handleNotificationOutboxDue)
 	mux.HandleFunc(TaskGenerateQuoteJob, w.handleGenerateQuoteJob)
+	mux.HandleFunc(TaskIMAPSyncAccount, w.handleIMAPSyncAccount)
+	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
 
 	return w, nil
 }
 
 func (w *Worker) SetQuoteJobProcessor(processor QuoteJobProcessor) {
 	w.quotes = processor
+}
+
+func (w *Worker) SetIMAPSyncProcessor(processor IMAPSyncProcessor) {
+	w.imap = processor
 }
 
 func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
@@ -242,6 +254,32 @@ func (w *Worker) handleGenerateQuoteJob(ctx context.Context, task *asynq.Task) e
 		"durationMs", time.Since(start).Milliseconds(),
 	)
 	return nil
+}
+
+func (w *Worker) handleIMAPSyncAccount(ctx context.Context, task *asynq.Task) error {
+	if w.imap == nil {
+		return fmt.Errorf("imap sync processor is not configured")
+	}
+	payload, err := ParseIMAPSyncAccountPayload(task)
+	if err != nil {
+		return err
+	}
+	accountID, err := uuid.Parse(payload.AccountID)
+	if err != nil {
+		return err
+	}
+	userID, err := uuid.Parse(payload.UserID)
+	if err != nil {
+		return err
+	}
+	return w.imap.SyncAccount(ctx, userID, accountID)
+}
+
+func (w *Worker) handleIMAPSyncSweep(ctx context.Context, _ *asynq.Task) error {
+	if w.imap == nil {
+		return nil
+	}
+	return w.imap.SyncEligibleAccounts(ctx)
 }
 
 func getOptionalString(value *string) string {

@@ -11,6 +11,8 @@ const TaskAppointmentReminder = "appointments.reminder"
 const TaskNotificationOutboxDue = "notification.outbox.due"
 
 const TaskGenerateQuoteJob = "quotes.generate"
+const TaskIMAPSyncAccount = "imap.sync.account"
+const TaskIMAPSyncSweep = "imap.sync.sweep"
 
 type AppointmentReminderPayload struct {
 	AppointmentID  string `json:"appointmentId"`
@@ -31,6 +33,13 @@ type GenerateQuoteJobPayload struct {
 	Prompt        string  `json:"prompt"`
 	QuoteID       *string `json:"quoteId,omitempty"`
 }
+
+type IMAPSyncAccountPayload struct {
+	AccountID string `json:"accountId"`
+	UserID    string `json:"userId"`
+}
+
+type IMAPSyncSweepPayload struct{}
 
 func NewAppointmentReminderTask(payload AppointmentReminderPayload) (*asynq.Task, error) {
 	data, err := json.Marshal(payload)
@@ -78,4 +87,28 @@ func ParseGenerateQuoteJobPayload(task *asynq.Task) (GenerateQuoteJobPayload, er
 		return GenerateQuoteJobPayload{}, err
 	}
 	return payload, nil
+}
+
+func NewIMAPSyncAccountTask(payload IMAPSyncAccountPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskIMAPSyncAccount, data), nil
+}
+
+func ParseIMAPSyncAccountPayload(task *asynq.Task) (IMAPSyncAccountPayload, error) {
+	var payload IMAPSyncAccountPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return IMAPSyncAccountPayload{}, err
+	}
+	return payload, nil
+}
+
+func NewIMAPSyncSweepTask(payload IMAPSyncSweepPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskIMAPSyncSweep, data), nil
 }
