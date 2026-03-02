@@ -166,8 +166,15 @@ func (e *Estimator) SetQuoteDrafter(qd ports.QuoteDrafter) {
 	e.toolDeps.QuoteDrafter = qd
 }
 
+
 // Run executes estimation for a lead service.
-func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
+func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {
+	log.Printf("estimator: scheduling run for lead=%s service=%s tenant=%s force=%t", leadID, serviceID, tenantID, force)
+	go e.runEstimation(ctx, leadID, serviceID, tenantID, force)
+	return nil
+}
+
+func (e *Estimator) runEstimation(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) {
 	e.runMu.Lock()
 	defer e.runMu.Unlock()
 
@@ -193,11 +200,13 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 
 	lead, err := e.repo.GetByID(ctx, leadID, tenantID)
 	if err != nil {
-		return err
+		log.Printf("estimator: failed to get lead by id: %v", err)
+		return
 	}
 	service, err := e.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
-		return err
+		log.Printf("estimator: failed to get lead service by id: %v", err)
+		return
 	}
 
 	notes, err := e.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
@@ -215,7 +224,8 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 
 	promptText := buildEstimatorPrompt(lead, service, notes, photo, estimationContext)
 	if err := e.runWithPrompt(ctx, promptText, leadID); err != nil {
-		return err
+		log.Printf("estimator: error from runWithPrompt: %v", err)
+		return
 	}
 
 	if !e.toolDeps.WasSaveEstimationCalled() {
@@ -236,26 +246,28 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 	insufficientIntake := false
 	insufficientReason := ""
 	if !e.toolDeps.WasDraftQuoteCalled() {
-		if insufficient, reason := e.hasInsufficientIntakeForDraft(ctx, serviceID, tenantID); insufficient {
-			insufficientIntake = true
-			insufficientReason = reason
-			summary := "Onvoldoende intakegegevens voor een betrouwbare conceptofferte. Vraag aanvullende metingen/details op voordat de offerte wordt opgesteld."
-			_, _ = e.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-				LeadID:         leadID,
-				ServiceID:      &serviceID,
-				OrganizationID: tenantID,
-				ActorType:      repository.ActorTypeSystem,
-				ActorName:      repository.ActorNameEstimator,
-				EventType:      repository.EventTypeAlert,
-				Title:          repository.EventTitleEstimationMissing,
-				Summary:        &summary,
-				Metadata: repository.AlertMetadata{
-					Trigger: reason,
-				}.ToMap(),
-			})
-			log.Printf("estimator: DraftQuote skipped due to insufficient intake for lead=%s service=%s reason=%s", leadID, serviceID, reason)
-		} else {
-			log.Printf("estimator: DraftQuote was not called for lead=%s service=%s", leadID, serviceID)
+		if !force {
+			if insufficient, reason := e.hasInsufficientIntakeForDraft(ctx, serviceID, tenantID); insufficient {
+				insufficientIntake = true
+				insufficientReason = reason
+				summary := "Onvoldoende intakegegevens voor een betrouwbare conceptofferte. Vraag aanvullende metingen/details op voordat de offerte wordt opgesteld."
+				_, _ = e.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+					LeadID:         leadID,
+					ServiceID:      &serviceID,
+					OrganizationID: tenantID,
+					ActorType:      repository.ActorTypeSystem,
+					ActorName:      repository.ActorNameEstimator,
+					EventType:      repository.EventTypeAlert,
+					Title:          repository.EventTitleEstimationMissing,
+					Summary:        &summary,
+					Metadata: repository.AlertMetadata{
+						Trigger: reason,
+					}.ToMap(),
+				})
+				log.Printf("estimator: DraftQuote skipped due to insufficient intake for lead=%s service=%s reason=%s", leadID, serviceID, reason)
+			} else {
+				log.Printf("estimator: DraftQuote was not called for lead=%s service=%s", leadID, serviceID)
+			}
 		}
 	}
 
@@ -288,9 +300,8 @@ func (e *Estimator) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UU
 		}
 	}
 	log.Printf("estimator: run finished runID=%s lead=%s service=%s", runID, leadID, serviceID)
-
-	return nil
 }
+
 
 // fetchEstimationGuidelines returns the estimation guidelines for the given
 // service type, or an empty string when none are configured.

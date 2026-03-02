@@ -143,6 +143,7 @@ func (c *Client) EnqueueGenerateQuoteJobRequest(ctx context.Context, req Generat
 		LeadServiceID: req.LeadServiceID.String(),
 		Prompt:        req.Prompt,
 		QuoteID:       quoteIDStr,
+		Force:         req.Force,
 	})
 }
 

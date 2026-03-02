@@ -32,6 +32,7 @@ type GenerateQuoteJobPayload struct {
 	LeadServiceID string  `json:"leadServiceId"`
 	Prompt        string  `json:"prompt"`
 	QuoteID       *string `json:"quoteId,omitempty"`
+	Force         bool    `json:"force,omitempty"`
 }
 
 type IMAPSyncAccountPayload struct {

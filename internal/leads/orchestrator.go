@@ -593,15 +593,9 @@ func (o *Orchestrator) handleEstimationStage(evt events.PipelineStageChanged) {
 	}
 
 	o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
-	go func() {
-		defer o.markComplete("estimator", evt.LeadServiceID)
-		defer o.recoverAgentPanic("estimator", evt.LeadServiceID)
-		runCtx, cancel := context.WithTimeout(context.Background(), agentRunTimeout)
-		defer cancel()
-		if err := o.estimator.Run(runCtx, evt.LeadID, evt.LeadServiceID, evt.TenantID); err != nil {
-			o.log.Error("orchestrator: estimator failed", "error", err)
-		}
-	}()
+	if err := o.estimator.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID, false); err != nil {
+		o.log.Error("orchestrator: estimator failed to start", "error", err)
+	}
 }
 
 func (o *Orchestrator) handleFulfillmentStage(evt events.PipelineStageChanged) {
