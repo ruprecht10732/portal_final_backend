@@ -416,7 +416,7 @@ func (h *Handler) Generate(c *gin.Context) {
 	}
 
 	identity := httpkit.MustGetIdentity(c)
-	jobID, err := h.svc.StartGenerateQuoteJob(c.Request.Context(), tenantID, identity.UserID(), req.LeadID, *req.LeadServiceID, req.Prompt, req.QuoteID)
+	jobID, err := h.svc.StartGenerateQuoteJob(c.Request.Context(), tenantID, identity.UserID(), req.LeadID, *req.LeadServiceID, req.Prompt, req.QuoteID, req.Force)
 	if httpkit.HandleError(c, err) {
 		return
 	}

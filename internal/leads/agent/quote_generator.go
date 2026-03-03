@@ -156,7 +156,7 @@ func (g *QuoteGenerator) SetQuoteDrafter(qd ports.QuoteDrafter) {
 // Generate runs the quote generator agent with the user's prompt and lead context.
 // If existingQuoteID is non-nil, the DraftQuote tool will update the existing quote.
 // It returns the generated draft quote result or an error.
-func (g *QuoteGenerator) Generate(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userPrompt string, existingQuoteID *uuid.UUID) (*GenerateResult, error) {
+func (g *QuoteGenerator) Generate(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userPrompt string, existingQuoteID *uuid.UUID, force bool) (*GenerateResult, error) {
 	g.runMu.Lock()
 	defer g.runMu.Unlock()
 
@@ -165,6 +165,7 @@ func (g *QuoteGenerator) Generate(ctx context.Context, leadID, serviceID, tenant
 	g.toolDeps.SetActor("AI", "Quote Generator")
 	g.toolDeps.ResetToolCallTracking()
 	g.toolDeps.SetExistingQuoteID(existingQuoteID)
+	g.toolDeps.SetForceDraftQuote(force)
 
 	// Preload org settings so shared tools (e.g. catalog search logging defaults) can use them.
 	if _, err := g.toolDeps.LoadOrganizationAISettings(ctx); err != nil {

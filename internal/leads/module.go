@@ -778,8 +778,8 @@ func (m *Module) SetPartnerOfferCreator(poc ports.PartnerOfferCreator) {
 }
 
 // GenerateQuoteFromPrompt runs the QuoteGenerator agent with a user prompt.
-func (m *Module) GenerateQuoteFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*agent.GenerateResult, error) {
-	return m.quoteGenerator.Generate(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID)
+func (m *Module) GenerateQuoteFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) (*agent.GenerateResult, error) {
+	return m.quoteGenerator.Generate(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID, force)
 }
 
 // RegisterRoutes mounts RAC_leads routes on the provided router context.

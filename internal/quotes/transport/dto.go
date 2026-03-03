@@ -378,6 +378,7 @@ type GenerateQuoteRequest struct {
 	LeadServiceID *uuid.UUID `json:"leadServiceId"`
 	Prompt        string     `json:"prompt" validate:"required,min=5,max=2000"`
 	QuoteID       *uuid.UUID `json:"quoteId"` // If set, update the existing quote instead of creating a new one
+	Force         bool       `json:"force,omitempty"`
 }
 
 // GenerateQuoteAcceptedResponse is returned when async generation is started.

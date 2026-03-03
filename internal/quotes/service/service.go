@@ -73,7 +73,7 @@ type QuoteTermsResolver interface {
 
 // QuotePromptGenerator generates quotes from prompt input.
 type QuotePromptGenerator interface {
-	GenerateFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*GenerateQuoteResult, error)
+	GenerateFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) (*GenerateQuoteResult, error)
 }
 
 // GenerateQuoteResult is the result of a prompt-based quote generation.

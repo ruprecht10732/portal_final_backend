@@ -164,6 +164,7 @@ type ToolDependencies struct {
 	offerCreated         bool                    // Track if CreatePartnerOffer was called
 	lastDraftResult      *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
 	runID                string                  // Correlates all tool calls within one agent run
+	forceDraftQuote      bool                    // Allows manual runs to bypass intake gating
 }
 
 func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
@@ -375,6 +376,20 @@ func (d *ToolDependencies) SetExistingQuoteID(id *uuid.UUID) {
 	d.existingQuoteID = id
 }
 
+// SetForceDraftQuote controls whether intake gating is bypassed for manual quote generation.
+func (d *ToolDependencies) SetForceDraftQuote(force bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.forceDraftQuote = force
+}
+
+// ShouldForceDraftQuote returns true when manual quote generation should bypass intake gating.
+func (d *ToolDependencies) ShouldForceDraftQuote() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.forceDraftQuote
+}
+
 // GetExistingQuoteID returns the existing quote ID if set.
 func (d *ToolDependencies) GetExistingQuoteID() *uuid.UUID {
 	d.mu.RLock()
@@ -401,6 +416,7 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.lastAnalysisMetadata = nil
 	d.lastDraftResult = nil
 	d.existingQuoteID = nil
+	d.forceDraftQuote = false
 }
 
 // SetLastDraftResult stores the last DraftQuoteResult for retrieval by callers.
@@ -2699,9 +2715,13 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		return DraftQuoteOutput{Success: false, Message: "Lead context not available"}, errors.New(missingLeadContextError)
 	}
 
-	if blocked, reason := shouldBlockDraftQuoteForInsufficientIntake(ctx, deps, serviceID, *tenantID); blocked {
-		log.Printf("DraftQuote: blocked run=%s service=%s reason=%s", deps.GetRunID(), serviceID, reason)
-		return DraftQuoteOutput{Success: false, Message: "Onvoldoende intakegegevens voor een betrouwbare conceptofferte"}, fmt.Errorf("draft quote blocked: %s", reason)
+	if !deps.ShouldForceDraftQuote() {
+		if blocked, reason := shouldBlockDraftQuoteForInsufficientIntake(ctx, deps, serviceID, *tenantID); blocked {
+			log.Printf("DraftQuote: blocked run=%s service=%s reason=%s", deps.GetRunID(), serviceID, reason)
+			return DraftQuoteOutput{Success: false, Message: "Onvoldoende intakegegevens voor een betrouwbare conceptofferte"}, fmt.Errorf("draft quote blocked: %s", reason)
+		}
+	} else {
+		log.Printf("DraftQuote: intake guard bypass enabled run=%s service=%s", deps.GetRunID(), serviceID)
 	}
 
 	if len(input.Items) == 0 {

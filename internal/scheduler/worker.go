@@ -27,7 +27,7 @@ type Worker struct {
 }
 
 type QuoteJobProcessor interface {
-	ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) error
+	ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) error
 }
 
 type IMAPSyncProcessor interface {
@@ -237,7 +237,7 @@ func (w *Worker) handleGenerateQuoteJob(ctx context.Context, task *asynq.Task) e
 		"hasExistingQuote", existingQuoteID != nil,
 	)
 
-	err = w.quotes.ProcessGenerateQuoteJob(ctx, jobID, payload.Prompt, existingQuoteID)
+	err = w.quotes.ProcessGenerateQuoteJob(ctx, jobID, payload.Prompt, existingQuoteID, payload.Force)
 	if err != nil {
 		w.log.Error(
 			"scheduler: quote generation job failed",

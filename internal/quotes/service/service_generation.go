@@ -18,14 +18,14 @@ func (s *Service) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID,
 	return s.repo.GetLatestNonDraftByLead(ctx, leadID, orgID)
 }
 
-func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (*GenerateQuoteResult, error) {
+func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) (*GenerateQuoteResult, error) {
 	if s.promptGen == nil {
 		return nil, apperr.Internal("quote generation is not configured")
 	}
-	return s.promptGen.GenerateFromPrompt(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID)
+	return s.promptGen.GenerateFromPrompt(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID, force)
 }
 
-func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, leadID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) (uuid.UUID, error) {
+func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, leadID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) (uuid.UUID, error) {
 	if s.promptGen == nil {
 		return uuid.Nil, apperr.Internal("quote generation is not configured")
 	}
@@ -72,6 +72,7 @@ func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, l
 		LeadServiceID: serviceID,
 		Prompt:        prompt,
 		QuoteID:       existingQuoteID,
+		Force:         force,
 	}); err != nil {
 		errText := err.Error()
 		if progressErr := s.updateJobProgress(ctx, job.JobID, GenerateQuoteJobStatusFailed, jobStepQueueFailed, 100, &errText); progressErr != nil {
@@ -108,7 +109,7 @@ func (s *Service) GetGenerateQuoteJob(ctx context.Context, tenantID, userID, job
 	}, nil
 }
 
-func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID) error {
+func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) error {
 	claimed, err := s.repo.ClaimGenerateQuoteJob(ctx, jobID, jobStepPreparingContext, 10, time.Now())
 	if err != nil {
 		return err
@@ -133,7 +134,7 @@ func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, 
 		return err
 	}
 
-	result, err := s.GenerateQuote(ctx, claimed.OrganizationID, claimed.LeadID, claimed.LeadServiceID, prompt, existingQuoteID)
+	result, err := s.GenerateQuote(ctx, claimed.OrganizationID, claimed.LeadID, claimed.LeadServiceID, prompt, existingQuoteID, force)
 	if err != nil {
 		errText := err.Error()
 		if progressErr := s.updateJobProgress(ctx, jobID, GenerateQuoteJobStatusFailed, jobStepGenerationFailed, 100, &errText); progressErr != nil {
