@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 set -e
 
+# Ensure Go-installed tools (like sqlc) are discoverable in hook execution.
+PATH="$(go env GOPATH)/bin:$PATH"
+
 sqlc generate
 
 git diff --exit-code
