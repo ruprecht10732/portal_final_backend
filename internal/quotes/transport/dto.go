@@ -378,7 +378,16 @@ type GenerateQuoteRequest struct {
 	LeadServiceID *uuid.UUID `json:"leadServiceId"`
 	Prompt        string     `json:"prompt" validate:"required,min=5,max=2000"`
 	QuoteID       *uuid.UUID `json:"quoteId"` // If set, update the existing quote instead of creating a new one
-	Force         bool       `json:"force,omitempty"`
+	// Force defaults to true for the explicit manual /quotes/generate flow when omitted.
+	Force *bool `json:"force,omitempty"`
+}
+
+// EffectiveForce returns the request force value, defaulting to true when omitted.
+func (r GenerateQuoteRequest) EffectiveForce() bool {
+	if r.Force == nil {
+		return true
+	}
+	return *r.Force
 }
 
 // GenerateQuoteAcceptedResponse is returned when async generation is started.
