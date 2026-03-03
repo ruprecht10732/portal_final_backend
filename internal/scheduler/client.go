@@ -45,6 +45,7 @@ type GenerateQuoteJobRequest struct {
 	LeadServiceID uuid.UUID
 	Prompt        string
 	QuoteID       *uuid.UUID
+	Force         bool
 }
 
 func NewClient(cfg config.SchedulerConfig) (*Client, error) {
