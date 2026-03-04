@@ -2509,6 +2509,14 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 	_ = m.dispatchQuoteAcceptedLeadEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteAcceptedAgentEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx, e)
+
+	// Regenerate and store the signed PDF so subsequent downloads serve the accepted version.
+	if m.quotePDFGen != nil {
+		if _, _, err := m.quotePDFGen.RegeneratePDF(ctx, e.QuoteID, e.OrganizationID); err != nil {
+			m.log.Warn("failed to regenerate quote PDF on acceptance", "quoteId", e.QuoteID, "error", err)
+		}
+	}
+
 	m.notifyOrgMembersInAppByRoles(ctx, e.OrganizationID, operationsNotificationRoles, inapp.SendParams{
 		Title:        "Offerte geaccepteerd",
 		Content:      fmt.Sprintf("%s heeft offerte %s geaccepteerd.", defaultName(strings.TrimSpace(e.ConsumerName), "Klant"), e.QuoteNumber),
