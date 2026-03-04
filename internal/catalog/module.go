@@ -10,8 +10,10 @@ import (
 	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/platform/ai/embeddingapi"
+	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/qdrant"
 	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,7 +39,24 @@ func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket str
 		})
 	}
 
-	svc := service.New(repo, storageSvc, bucket, log, embedClient, cfg.GetCatalogEmbeddingCollection())
+	var searchEmbeddingClient *embeddings.Client
+	if cfg.IsEmbeddingEnabled() {
+		searchEmbeddingClient = embeddings.NewClient(embeddings.Config{
+			BaseURL: cfg.GetEmbeddingAPIURL(),
+			APIKey:  cfg.GetEmbeddingAPIKey(),
+		})
+	}
+
+	var catalogQdrantClient *qdrant.Client
+	if cfg.GetQdrantURL() != "" && cfg.GetCatalogEmbeddingCollection() != "" {
+		catalogQdrantClient = qdrant.NewClient(qdrant.Config{
+			BaseURL:    cfg.GetQdrantURL(),
+			APIKey:     cfg.GetQdrantAPIKey(),
+			Collection: cfg.GetCatalogEmbeddingCollection(),
+		})
+	}
+
+	svc := service.New(repo, storageSvc, bucket, log, embedClient, cfg.GetCatalogEmbeddingCollection(), searchEmbeddingClient, catalogQdrantClient)
 	h := handler.New(svc, val)
 
 	return &Module{
