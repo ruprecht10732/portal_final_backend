@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ const (
 	autocompleteMaxResults       = 10
 	autocompletePrimaryMax       = 3
 	autocompleteQdrantMinResults = 6
-	autocompleteQdrantTimeout    = 350 * time.Millisecond
+	autocompleteQdrantTimeout    = 1200 * time.Millisecond
 	autocompleteScoreThreshold   = 0.30
 )
 
@@ -900,9 +901,15 @@ func (s *Service) qdrantSearch(ctx context.Context, tenantID uuid.UUID, query st
 
 	out := make([]uuid.UUID, 0, len(results))
 	seen := make(map[uuid.UUID]struct{}, len(results))
+	droppedCount := 0
+	firstDroppedKeys := ""
 	for _, res := range results {
 		id, ok := extractUUIDFromQdrantResult(res)
 		if !ok {
+			droppedCount++
+			if firstDroppedKeys == "" {
+				firstDroppedKeys = payloadKeyList(res.Payload)
+			}
 			continue
 		}
 		if _, exists := seen[id]; exists {
@@ -912,12 +919,22 @@ func (s *Service) qdrantSearch(ctx context.Context, tenantID uuid.UUID, query st
 		out = append(out, id)
 	}
 
+	if droppedCount > 0 {
+		s.log.WithContext(ctx).Warn("catalog qdrant results dropped", "dropped", droppedCount, "payloadKeys", firstDroppedKeys)
+	}
+
 	return out, nil
 }
 
 func extractUUIDFromQdrantResult(result qdrant.SearchResult) (uuid.UUID, bool) {
-	for _, key := range []string{"id", "product_id", "productId"} {
-		if raw, ok := result.Payload[key]; ok {
+	preferredKeys := []string{"id", "product_id", "productid", "document_id", "catalog_product_id", "product_uuid", "uuid"}
+	payloadByLower := make(map[string]interface{}, len(result.Payload))
+	for key, value := range result.Payload {
+		payloadByLower[strings.ToLower(strings.TrimSpace(key))] = value
+	}
+
+	for _, key := range preferredKeys {
+		if raw, ok := payloadByLower[key]; ok {
 			if parsed, ok := parseUUIDLike(raw); ok {
 				return parsed, true
 			}
@@ -946,6 +963,18 @@ func parseUUIDLike(value interface{}) (uuid.UUID, bool) {
 		return uuid.UUID{}, false
 	}
 	return id, true
+}
+
+func payloadKeyList(payload map[string]interface{}) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }
 
 func (s *Service) buildAutocompleteItem(ctx context.Context, tenantID uuid.UUID, p repository.Product) (transport.AutocompleteItemResponse, error) {
