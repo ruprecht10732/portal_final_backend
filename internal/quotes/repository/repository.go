@@ -66,6 +66,7 @@ type QuoteItem struct {
 	ID               uuid.UUID  `db:"id"`
 	QuoteID          uuid.UUID  `db:"quote_id"`
 	OrganizationID   uuid.UUID  `db:"organization_id"`
+	Title            string     `db:"title"`
 	Description      string     `db:"description"`
 	Quantity         string     `db:"quantity"`
 	QuantityNumeric  float64    `db:"quantity_numeric"`
@@ -275,14 +276,14 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 func (r *Repository) insertItems(ctx context.Context, tx pgx.Tx, items []QuoteItem) error {
 	itemQuery := `
 		INSERT INTO RAC_quote_items (
-			id, quote_id, organization_id, description, quantity, quantity_numeric,
+			id, quote_id, organization_id, title, description, quantity, quantity_numeric,
 			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 
 	for _, item := range items {
 		if _, err := tx.Exec(ctx, itemQuery,
 			item.ID, item.QuoteID, item.OrganizationID,
-			item.Description, item.Quantity, item.QuantityNumeric,
+			item.Title, item.Description, item.Quantity, item.QuantityNumeric,
 			item.UnitPriceCents, item.TaxRateBps, item.IsOptional, item.IsSelected, item.SortOrder, item.CatalogProductID, item.CreatedAt,
 		); err != nil {
 			return fmt.Errorf("failed to insert quote item: %w", err)
@@ -361,7 +362,7 @@ func (r *Repository) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UU
 // GetItemsByQuoteID retrieves all items for a quote
 func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]QuoteItem, error) {
 	query := `
-		SELECT id, quote_id, organization_id, description, quantity, quantity_numeric,
+		SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
 			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
 		FROM RAC_quote_items WHERE quote_id = $1 AND organization_id = $2
 		ORDER BY sort_order ASC`
@@ -377,7 +378,7 @@ func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, o
 		var it QuoteItem
 		if err := rows.Scan(
 			&it.ID, &it.QuoteID, &it.OrganizationID,
-			&it.Description, &it.Quantity, &it.QuantityNumeric,
+			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
 			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan quote item: %w", err)
@@ -867,7 +868,7 @@ func (r *Repository) GetItemByID(ctx context.Context, itemID, quoteID uuid.UUID)
 // GetItemsByQuoteIDNoOrg retrieves all items for a quote without org scoping (for public access).
 func (r *Repository) GetItemsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UUID) ([]QuoteItem, error) {
 	query := `
-		SELECT id, quote_id, organization_id, description, quantity, quantity_numeric,
+		SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
 			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
 		FROM RAC_quote_items WHERE quote_id = $1
 		ORDER BY sort_order ASC`
@@ -881,7 +882,7 @@ func (r *Repository) GetItemsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UU
 		var it QuoteItem
 		if err := rows.Scan(
 			&it.ID, &it.QuoteID, &it.OrganizationID,
-			&it.Description, &it.Quantity, &it.QuantityNumeric,
+			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
 			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan quote item: %w", err)

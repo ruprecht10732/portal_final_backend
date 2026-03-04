@@ -84,8 +84,8 @@ type QuotePDFData struct {
 	VatBreakdown   []transport.VatBreakdown
 
 	// Organization settings for PDF terms
-	PaymentDays    int
-	QuoteValidDays int
+	PaymentDays         int
+	QuoteValidDays      int
 	FinancingDisclaimer bool
 
 	// Document attachments: pre-downloaded PDF bytes to merge after the content page.
@@ -152,13 +152,14 @@ type quoteViewModel struct {
 	DiscountFormatted   string
 	VatBreakdown        []vatLineViewModel
 	TotalFormatted      string
-	Notes               string
+	Notes               template.HTML
 	PaymentDays         int
 	QuoteValidDays      int
 }
 
 type itemViewModel struct {
-	Description        string
+	Title              string
+	Description        template.HTML
 	Quantity           string
 	UnitPriceFormatted string
 	VatPctFormatted    string
@@ -325,28 +326,28 @@ func buildCoverVM(data QuotePDFData, logoB64, logoMime string) coverViewModel {
 
 func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 	vm := quoteViewModel{
-		LogoBase64:         logoB64,
-		LogoMimeType:       logoMime,
-		OrganizationName:   clampPDFText(data.OrganizationName, maxPDFShortText),
-		CustomerName:       clampPDFText(data.CustomerName, maxPDFShortText),
-		QuoteNumber:        clampPDFText(data.QuoteNumber, maxPDFShortText),
-		CreatedAtFormatted: data.CreatedAt.Format(dateFormatDMY),
-		Status:             data.Status,
-		StatusLabel:        translateStatus(data.Status),
-		StatusClass:        statusCSSClass(data.Status),
+		LogoBase64:          logoB64,
+		LogoMimeType:        logoMime,
+		OrganizationName:    clampPDFText(data.OrganizationName, maxPDFShortText),
+		CustomerName:        clampPDFText(data.CustomerName, maxPDFShortText),
+		QuoteNumber:         clampPDFText(data.QuoteNumber, maxPDFShortText),
+		CreatedAtFormatted:  data.CreatedAt.Format(dateFormatDMY),
+		Status:              data.Status,
+		StatusLabel:         translateStatus(data.Status),
+		StatusClass:         statusCSSClass(data.Status),
 		FinancingDisclaimer: data.FinancingDisclaimer,
-		OrgAddressLine1:    clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
-		OrgAddressLine2:    clampPDFText(data.OrgAddressLine2, maxPDFMediumText),
-		OrgPostalCode:      clampPDFText(data.OrgPostalCode, maxPDFShortText),
-		OrgCity:            clampPDFText(data.OrgCity, maxPDFShortText),
-		OrgEmail:           clampPDFText(data.OrgEmail, maxPDFShortText),
-		OrgPhone:           clampPDFText(data.OrgPhone, maxPDFShortText),
-		OrgKvkNumber:       clampPDFText(data.OrgKvkNumber, maxPDFShortText),
-		OrgVatNumber:       clampPDFText(data.OrgVatNumber, maxPDFShortText),
-		SubtotalFormatted:  formatCurrency(data.SubtotalCents),
-		HasDiscount:        data.DiscountAmount > 0,
-		DiscountFormatted:  formatCurrency(data.DiscountAmount),
-		TotalFormatted:     formatCurrency(data.TotalCents),
+		OrgAddressLine1:     clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
+		OrgAddressLine2:     clampPDFText(data.OrgAddressLine2, maxPDFMediumText),
+		OrgPostalCode:       clampPDFText(data.OrgPostalCode, maxPDFShortText),
+		OrgCity:             clampPDFText(data.OrgCity, maxPDFShortText),
+		OrgEmail:            clampPDFText(data.OrgEmail, maxPDFShortText),
+		OrgPhone:            clampPDFText(data.OrgPhone, maxPDFShortText),
+		OrgKvkNumber:        clampPDFText(data.OrgKvkNumber, maxPDFShortText),
+		OrgVatNumber:        clampPDFText(data.OrgVatNumber, maxPDFShortText),
+		SubtotalFormatted:   formatCurrency(data.SubtotalCents),
+		HasDiscount:         data.DiscountAmount > 0,
+		DiscountFormatted:   formatCurrency(data.DiscountAmount),
+		TotalFormatted:      formatCurrency(data.TotalCents),
 	}
 	if data.ValidUntil != nil {
 		vm.ValidUntilFormatted = data.ValidUntil.Format(dateFormatDMY)
@@ -355,14 +356,15 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 		vm.AcceptedAtFormatted = data.AcceptedAt.Format(dateTimeFormatDMY)
 	}
 	if data.Notes != nil && *data.Notes != "" {
-		vm.Notes = clampPDFText(*data.Notes, maxPDFLongText)
+		vm.Notes = template.HTML(clampPDFText(*data.Notes, maxPDFLongText)) //nolint:gosec // content from trusted org editors
 	}
 
 	// Items
 	vm.Items = make([]itemViewModel, len(data.Items))
 	for i, it := range data.Items {
 		vm.Items[i] = itemViewModel{
-			Description:        clampPDFText(it.Description, maxPDFMediumText),
+			Title:              clampPDFText(it.Title, maxPDFShortText),
+			Description:        template.HTML(it.Description), //nolint:gosec // content from trusted org editors
 			Quantity:           clampPDFText(it.Quantity, maxPDFShortText),
 			UnitPriceFormatted: formatCurrency(it.UnitPriceCents),
 			VatPctFormatted:    fmt.Sprintf("%.0f%%", float64(it.TaxRateBps)/100.0),

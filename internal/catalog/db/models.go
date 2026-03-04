@@ -1019,6 +1019,7 @@ type RacQuoteItem struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	IsSelected       bool               `json:"is_selected"`
 	CatalogProductID pgtype.UUID        `json:"catalog_product_id"`
+	Title            string             `json:"title"`
 }
 
 type RacQuoteUrl struct {

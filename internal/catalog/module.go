@@ -56,7 +56,16 @@ func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket str
 		})
 	}
 
-	svc := service.New(repo, storageSvc, bucket, log, embedClient, cfg.GetCatalogEmbeddingCollection(), searchEmbeddingClient, catalogQdrantClient)
+	svc := service.New(service.Config{
+		Repository:          repo,
+		StorageService:      storageSvc,
+		Bucket:              bucket,
+		Logger:              log,
+		EmbeddingClient:     embedClient,
+		EmbeddingCollection: cfg.GetCatalogEmbeddingCollection(),
+		SearchEmbedding:     searchEmbeddingClient,
+		CatalogQdrant:       catalogQdrantClient,
+	})
 	h := handler.New(svc, val)
 
 	return &Module{

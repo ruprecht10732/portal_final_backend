@@ -332,7 +332,7 @@ func (s *Service) buildPublicResponse(ctx context.Context, q *repository.Quote, 
 		}
 		lineSubtotal := qty * netUnitPrice
 		lineVat := lineSubtotal * (float64(taxRateBps) / 10000.0)
-		respItems[i] = transport.PublicQuoteItemResponse{ID: it.ID, Description: it.Description, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, SortOrder: it.SortOrder, TotalBeforeTaxCents: roundCents(lineSubtotal), TotalTaxCents: roundCents(lineVat), LineTotalCents: roundCents(lineSubtotal + lineVat), Annotations: annotationsByItem[it.ID]}
+		respItems[i] = transport.PublicQuoteItemResponse{ID: it.ID, Title: it.Title, Description: it.Description, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, SortOrder: it.SortOrder, TotalBeforeTaxCents: roundCents(lineSubtotal), TotalTaxCents: roundCents(lineVat), LineTotalCents: roundCents(lineSubtotal + lineVat), Annotations: annotationsByItem[it.ID]}
 		if respItems[i].Annotations == nil {
 			respItems[i].Annotations = []transport.AnnotationResponse{}
 		}

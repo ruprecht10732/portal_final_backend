@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/catalog/repository"
@@ -24,6 +25,7 @@ const (
 	autocompleteMaxResults       = 10
 	autocompletePrimaryMax       = 3
 	autocompleteQdrantMinResults = 6
+	autocompleteQdrantTimeout    = 350 * time.Millisecond
 	autocompleteScoreThreshold   = 0.30
 )
 
@@ -39,26 +41,29 @@ type Service struct {
 	catalogQdrant       *qdrant.Client
 }
 
+// Config contains dependencies for constructing Service.
+type Config struct {
+	Repository          repository.Repository
+	StorageService      storage.StorageService
+	Bucket              string
+	Logger              *logger.Logger
+	EmbeddingClient     *embeddingapi.Client
+	EmbeddingCollection string
+	SearchEmbedding     *embeddings.Client
+	CatalogQdrant       *qdrant.Client
+}
+
 // New creates a new catalog service.
-func New(
-	repo repository.Repository,
-	storageSvc storage.StorageService,
-	bucket string,
-	log *logger.Logger,
-	embeddingClient *embeddingapi.Client,
-	embeddingCollection string,
-	searchEmbedding *embeddings.Client,
-	catalogQdrant *qdrant.Client,
-) *Service {
+func New(cfg Config) *Service {
 	return &Service{
-		repo:                repo,
-		storage:             storageSvc,
-		bucket:              bucket,
-		log:                 log,
-		embeddingClient:     embeddingClient,
-		embeddingCollection: strings.TrimSpace(embeddingCollection),
-		searchEmbedding:     searchEmbedding,
-		catalogQdrant:       catalogQdrant,
+		repo:                cfg.Repository,
+		storage:             cfg.StorageService,
+		bucket:              cfg.Bucket,
+		log:                 cfg.Logger,
+		embeddingClient:     cfg.EmbeddingClient,
+		embeddingCollection: strings.TrimSpace(cfg.EmbeddingCollection),
+		searchEmbedding:     cfg.SearchEmbedding,
+		catalogQdrant:       cfg.CatalogQdrant,
 	}
 }
 
@@ -681,7 +686,30 @@ func toVatRateListResponse(items []repository.VatRate, total int, page int, page
 // SearchForAutocomplete returns a lightweight list of products with their document
 // and URL assets for use in quote-line ghost-text autocomplete.
 func (s *Service) SearchForAutocomplete(ctx context.Context, tenantID uuid.UUID, req transport.AutocompleteSearchRequest) ([]transport.AutocompleteItemResponse, error) {
-	limit := req.Limit
+	query, limit, primaryLimit, qdrantLimit := normalizeAutocompleteSearch(req)
+	if query == "" {
+		return []transport.AutocompleteItemResponse{}, nil
+	}
+
+	products, qdrantIDs, err := s.fetchAutocompleteSources(ctx, tenantID, query, primaryLimit, qdrantLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	orderedIDs, productByID := mergeAutocompleteProducts(products, qdrantIDs, limit)
+
+	s.log.WithContext(ctx).Info("catalog autocomplete sources", "query", query, "postgresCount", len(products), "qdrantCount", len(qdrantIDs), "limit", limit)
+
+	if len(orderedIDs) == 0 {
+		return []transport.AutocompleteItemResponse{}, nil
+	}
+
+	s.hydrateAutocompleteProducts(ctx, tenantID, orderedIDs, productByID)
+	return s.buildAutocompleteItems(ctx, tenantID, orderedIDs, productByID), nil
+}
+
+func normalizeAutocompleteSearch(req transport.AutocompleteSearchRequest) (query string, limit int, primaryLimit int, qdrantLimit int) {
+	limit = req.Limit
 	if limit <= 0 {
 		limit = autocompleteMaxResults
 	}
@@ -689,8 +717,9 @@ func (s *Service) SearchForAutocomplete(ctx context.Context, tenantID uuid.UUID,
 		limit = autocompleteMaxResults
 	}
 
-	query := strings.TrimSpace(req.Query)
-	primaryLimit := limit
+	query = strings.TrimSpace(req.Query)
+
+	primaryLimit = limit
 	if primaryLimit > autocompletePrimaryMax {
 		primaryLimit = autocompletePrimaryMax
 	}
@@ -698,78 +727,150 @@ func (s *Service) SearchForAutocomplete(ctx context.Context, tenantID uuid.UUID,
 		primaryLimit = 1
 	}
 
-	products, _, err := s.repo.ListProducts(ctx, repository.ListProductsParams{
-		OrganizationID: tenantID,
-		Search:         query,
-		Limit:          primaryLimit,
-		Offset:         0,
-		SortBy:         "title",
-		SortOrder:      "asc",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("search products: %w", err)
-	}
-
-	result := make([]transport.AutocompleteItemResponse, 0, limit)
-	seen := make(map[uuid.UUID]struct{}, limit)
-
-	for _, p := range products {
-		item, err := s.buildAutocompleteItem(ctx, tenantID, p)
-		if err != nil {
-			return nil, err
-		}
-		seen[p.ID] = struct{}{}
-		result = append(result, item)
-	}
-
-	qdrantLimit := limit
+	qdrantLimit = limit
 	if qdrantLimit < autocompleteQdrantMinResults {
 		qdrantLimit = autocompleteQdrantMinResults
 	}
 
-	qdrantIDs, err := s.qdrantSearch(ctx, tenantID, query, qdrantLimit)
-	if err != nil {
-		s.log.WithContext(ctx).Warn("catalog qdrant autocomplete fallback", "error", err)
-		return result, nil
+	return query, limit, primaryLimit, qdrantLimit
+}
+
+func (s *Service) fetchAutocompleteSources(ctx context.Context, tenantID uuid.UUID, query string, primaryLimit int, qdrantLimit int) ([]repository.Product, []uuid.UUID, error) {
+	var (
+		products  []repository.Product
+		qdrantIDs []uuid.UUID
+	)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		items, _, err := s.repo.ListProducts(groupCtx, repository.ListProductsParams{
+			OrganizationID: tenantID,
+			Search:         query,
+			Limit:          primaryLimit,
+			Offset:         0,
+			SortBy:         "title",
+			SortOrder:      "asc",
+		})
+		if err != nil {
+			return fmt.Errorf("search products: %w", err)
+		}
+		products = items
+		return nil
+	})
+
+	group.Go(func() error {
+		qdrantCtx, cancel := context.WithTimeout(groupCtx, autocompleteQdrantTimeout)
+		defer cancel()
+		ids, err := s.qdrantSearch(qdrantCtx, tenantID, query, qdrantLimit)
+		if err != nil {
+			s.log.WithContext(ctx).Warn("catalog qdrant autocomplete fallback", "error", err)
+			return nil
+		}
+		qdrantIDs = ids
+		return nil
+	})
+
+	if err := group.Wait(); err != nil {
+		return nil, nil, err
 	}
 
-	s.log.WithContext(ctx).Info("catalog autocomplete sources", "query", query, "postgresCount", len(result), "qdrantCount", len(qdrantIDs), "limit", limit)
+	return products, qdrantIDs, nil
+}
 
-	if len(qdrantIDs) == 0 {
-		return result, nil
-	}
+func mergeAutocompleteProducts(products []repository.Product, qdrantIDs []uuid.UUID, limit int) ([]uuid.UUID, map[uuid.UUID]repository.Product) {
+	seen := make(map[uuid.UUID]struct{}, limit)
+	orderedIDs := make([]uuid.UUID, 0, limit)
+	productByID := make(map[uuid.UUID]repository.Product, limit)
 
-	qdrantProducts, err := s.repo.GetProductsByIDs(ctx, tenantID, qdrantIDs)
-	if err != nil {
-		s.log.WithContext(ctx).Warn("catalog autocomplete qdrant hydration fallback", "error", err)
-		return result, nil
-	}
-
-	productByID := make(map[uuid.UUID]repository.Product, len(qdrantProducts))
-	for _, p := range qdrantProducts {
+	for _, p := range products {
+		if len(orderedIDs) >= limit {
+			break
+		}
+		if _, exists := seen[p.ID]; exists {
+			continue
+		}
+		seen[p.ID] = struct{}{}
+		orderedIDs = append(orderedIDs, p.ID)
 		productByID[p.ID] = p
 	}
 
 	for _, id := range qdrantIDs {
-		if len(result) >= limit {
+		if len(orderedIDs) >= limit {
 			break
 		}
 		if _, exists := seen[id]; exists {
 			continue
 		}
-		product, ok := productByID[id]
-		if !ok {
-			continue
-		}
-		item, err := s.buildAutocompleteItem(ctx, tenantID, product)
-		if err != nil {
-			continue
-		}
 		seen[id] = struct{}{}
-		result = append(result, item)
+		orderedIDs = append(orderedIDs, id)
 	}
 
-	return result, nil
+	return orderedIDs, productByID
+}
+
+func (s *Service) hydrateAutocompleteProducts(ctx context.Context, tenantID uuid.UUID, orderedIDs []uuid.UUID, productByID map[uuid.UUID]repository.Product) {
+	missingIDs := make([]uuid.UUID, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if _, ok := productByID[id]; !ok {
+			missingIDs = append(missingIDs, id)
+		}
+	}
+
+	if len(missingIDs) == 0 {
+		return
+	}
+
+	qdrantProducts, err := s.repo.GetProductsByIDs(ctx, tenantID, missingIDs)
+	if err != nil {
+		s.log.WithContext(ctx).Warn("catalog autocomplete qdrant hydration fallback", "error", err)
+		return
+	}
+
+	for _, p := range qdrantProducts {
+		productByID[p.ID] = p
+	}
+}
+
+func (s *Service) buildAutocompleteItems(ctx context.Context, tenantID uuid.UUID, orderedIDs []uuid.UUID, productByID map[uuid.UUID]repository.Product) []transport.AutocompleteItemResponse {
+	const maxWorkers = 4
+
+	type resultEntry struct {
+		item transport.AutocompleteItemResponse
+		ok   bool
+	}
+
+	entries := make([]resultEntry, len(orderedIDs))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(maxWorkers)
+
+	for idx, id := range orderedIDs {
+		product, exists := productByID[id]
+		if !exists {
+			continue
+		}
+		i := idx
+		p := product
+		group.Go(func() error {
+			item, err := s.buildAutocompleteItem(groupCtx, tenantID, p)
+			if err != nil {
+				return nil
+			}
+			entries[i] = resultEntry{item: item, ok: true}
+			return nil
+		})
+	}
+
+	_ = group.Wait()
+
+	result := make([]transport.AutocompleteItemResponse, 0, len(orderedIDs))
+	for _, entry := range entries {
+		if !entry.ok {
+			continue
+		}
+		result = append(result, entry.item)
+	}
+
+	return result
 }
 
 func (s *Service) qdrantSearch(ctx context.Context, tenantID uuid.UUID, query string, limit int) ([]uuid.UUID, error) {
@@ -848,28 +949,47 @@ func parseUUIDLike(value interface{}) (uuid.UUID, bool) {
 }
 
 func (s *Service) buildAutocompleteItem(ctx context.Context, tenantID uuid.UUID, p repository.Product) (transport.AutocompleteItemResponse, error) {
-	docs, err := s.repo.ListProductAssets(ctx, repository.ListProductAssetsParams{
-		OrganizationID: tenantID,
-		ProductID:      p.ID,
-		AssetType:      strPtr("document"),
-	})
-	if err != nil {
-		return transport.AutocompleteItemResponse{}, fmt.Errorf("list product assets: %w", err)
-	}
+	var (
+		docs       []repository.ProductAsset
+		urls       []repository.ProductAsset
+		vatRateBps int
+	)
 
-	urls, err := s.repo.ListProductAssets(ctx, repository.ListProductAssetsParams{
-		OrganizationID: tenantID,
-		ProductID:      p.ID,
-		AssetType:      strPtr("terms_url"),
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		assets, err := s.repo.ListProductAssets(groupCtx, repository.ListProductAssetsParams{
+			OrganizationID: tenantID,
+			ProductID:      p.ID,
+			AssetType:      strPtr("document"),
+		})
+		if err != nil {
+			return fmt.Errorf("list product assets: %w", err)
+		}
+		docs = assets
+		return nil
 	})
-	if err != nil {
-		return transport.AutocompleteItemResponse{}, fmt.Errorf("list product url assets: %w", err)
-	}
+	group.Go(func() error {
+		assets, err := s.repo.ListProductAssets(groupCtx, repository.ListProductAssetsParams{
+			OrganizationID: tenantID,
+			ProductID:      p.ID,
+			AssetType:      strPtr("terms_url"),
+		})
+		if err != nil {
+			return fmt.Errorf("list product url assets: %w", err)
+		}
+		urls = assets
+		return nil
+	})
+	group.Go(func() error {
+		rate, err := s.repo.GetVatRateByID(groupCtx, tenantID, p.VatRateID)
+		if err == nil {
+			vatRateBps = rate.RateBps
+		}
+		return nil
+	})
 
-	var vatRateBps int
-	rate, err := s.repo.GetVatRateByID(ctx, tenantID, p.VatRateID)
-	if err == nil {
-		vatRateBps = rate.RateBps
+	if err := group.Wait(); err != nil {
+		return transport.AutocompleteItemResponse{}, err
 	}
 
 	return transport.AutocompleteItemResponse{

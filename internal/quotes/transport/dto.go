@@ -21,6 +21,7 @@ const (
 
 // QuoteItemRequest is the input for a single line item
 type QuoteItemRequest struct {
+	Title            string     `json:"title,omitempty"`
 	Description      string     `json:"description" validate:"required"`
 	Quantity         string     `json:"quantity" validate:"required"`
 	UnitPriceCents   int64      `json:"unitPriceCents" validate:"min=0"`
@@ -123,6 +124,7 @@ type ListPendingApprovalsRequest struct {
 // QuoteItemResponse is the response for a single line item
 type QuoteItemResponse struct {
 	ID                  uuid.UUID            `json:"id"`
+	Title               string               `json:"title"`
 	Description         string               `json:"description"`
 	Quantity            string               `json:"quantity"`
 	UnitPriceCents      int64                `json:"unitPriceCents"`
@@ -302,6 +304,7 @@ type AnnotationResponse struct {
 // PublicQuoteItemResponse is the public-facing response for a line item (includes annotations).
 type PublicQuoteItemResponse struct {
 	ID                  uuid.UUID            `json:"id"`
+	Title               string               `json:"title"`
 	Description         string               `json:"description"`
 	Quantity            string               `json:"quantity"`
 	UnitPriceCents      int64                `json:"unitPriceCents"`

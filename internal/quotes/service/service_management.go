@@ -156,7 +156,7 @@ func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteI
 		if it.IsOptional {
 			selected = it.IsSelected
 		}
-		result[i] = repository.QuoteItem{ID: uuid.New(), QuoteID: quoteID, OrganizationID: tenantID, Description: it.Description, Quantity: it.Quantity, QuantityNumeric: parseQuantityNumber(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: selected, SortOrder: i, CatalogProductID: it.CatalogProductID, CreatedAt: now}
+		result[i] = repository.QuoteItem{ID: uuid.New(), QuoteID: quoteID, OrganizationID: tenantID, Title: it.Title, Description: it.Description, Quantity: it.Quantity, QuantityNumeric: parseQuantityNumber(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: selected, SortOrder: i, CatalogProductID: it.CatalogProductID, CreatedAt: now}
 	}
 	return result
 }
@@ -164,7 +164,7 @@ func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteI
 func toItemRequests(items []repository.QuoteItem) []transport.QuoteItemRequest {
 	reqs := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
-		reqs[i] = transport.QuoteItemRequest{Description: it.Description, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
+		reqs[i] = transport.QuoteItemRequest{Title: it.Title, Description: it.Description, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
 	}
 	return reqs
 }
@@ -568,7 +568,7 @@ func (s *Service) buildResponse(ctx context.Context, q *repository.Quote, items 
 		}
 		lineSubtotal := qty * netUnitPrice
 		lineVat := lineSubtotal * (float64(taxRateBps) / 10000.0)
-		respItems[i] = transport.QuoteItemResponse{ID: it.ID, Description: it.Description, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, SortOrder: it.SortOrder, CatalogProductID: it.CatalogProductID, TotalBeforeTaxCents: roundCents(lineSubtotal), TotalTaxCents: roundCents(lineVat), LineTotalCents: roundCents(lineSubtotal + lineVat), Annotations: annotationsByItem[it.ID]}
+		respItems[i] = transport.QuoteItemResponse{ID: it.ID, Title: it.Title, Description: it.Description, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, SortOrder: it.SortOrder, CatalogProductID: it.CatalogProductID, TotalBeforeTaxCents: roundCents(lineSubtotal), TotalTaxCents: roundCents(lineVat), LineTotalCents: roundCents(lineSubtotal + lineVat), Annotations: annotationsByItem[it.ID]}
 		if respItems[i].Annotations == nil {
 			respItems[i].Annotations = []transport.AnnotationResponse{}
 		}
