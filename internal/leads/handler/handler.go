@@ -13,6 +13,7 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -31,6 +32,7 @@ type Handler struct {
 	eventBus     events.Bus
 	repo         repository.LeadsRepository
 	val          *validator.Validator
+	callLogQueue scheduler.CallLogScheduler
 }
 
 // HandlerDeps bundles dependencies for Handler construction.
@@ -43,6 +45,7 @@ type HandlerDeps struct {
 	EventBus     events.Bus
 	Repo         repository.LeadsRepository
 	Validator    *validator.Validator
+	CallLogQueue scheduler.CallLogScheduler
 }
 
 const (
@@ -75,7 +78,12 @@ func New(deps HandlerDeps) *Handler {
 		eventBus:     deps.EventBus,
 		repo:         deps.Repo,
 		val:          deps.Validator,
+		callLogQueue: deps.CallLogQueue,
 	}
+}
+
+func (h *Handler) SetCallLogScheduler(queue scheduler.CallLogScheduler) {
+	h.callLogQueue = queue
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -882,6 +890,23 @@ func (h *Handler) LogCall(c *gin.Context) {
 		return
 	}
 
+	if h.callLogQueue != nil {
+		err = h.callLogQueue.EnqueueLogCall(c.Request.Context(), scheduler.LogCallPayload{
+			TenantID:  tenantID.String(),
+			LeadID:    leadID.String(),
+			ServiceID: serviceID.String(),
+			UserID:    identity.UserID().String(),
+			Summary:   req.Summary,
+		})
+		if httpkit.HandleError(c, err) {
+			return
+		}
+
+		httpkit.JSON(c, http.StatusAccepted, gin.H{"status": "processing"})
+		return
+	}
+
+	// Backward-compatible fallback when scheduler is unavailable.
 	result, err := h.callLogger.ProcessSummary(c.Request.Context(), leadID, serviceID, identity.UserID(), tenantID, req.Summary)
 	if httpkit.HandleError(c, err) {
 		return

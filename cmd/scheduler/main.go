@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/adapters"
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/catalog"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
@@ -128,9 +129,19 @@ func main() {
 		panic("failed to initialize scheduler worker: " + err.Error())
 	}
 	worker.SetQuoteJobProcessor(quotesModule.Service())
+	worker.SetCallLogProcessor(leadsModule)
 	imapModule := imap.NewModule(pool, val, eventBus)
 	worker.SetIMAPSyncProcessor(imapModule.Service())
 	wireSchedulerIMAPEncryptionKey(cfg, log, imapModule.Service())
+
+	storageSvc, storageErr := storage.NewMinIOService(cfg)
+	if storageErr != nil {
+		log.Warn("failed to initialize storage service for accepted quote PDF tasks", "error", storageErr)
+	} else {
+		quoteTermsResolver := adapters.NewQuoteTermsResolverAdapter(identitySvc, identitySvc, leadsModule.Repository())
+		quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identitySvc, nil, storageSvc, cfg, quoteTermsResolver)
+		worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
+	}
 
 	worker.Run(ctx)
 }

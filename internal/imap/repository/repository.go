@@ -550,6 +550,23 @@ func (r *Repository) UpdateMessageAnsweredByUID(ctx context.Context, accountID u
 	return nil
 }
 
+func (r *Repository) GetMessageSizeByUID(ctx context.Context, accountID uuid.UUID, uid int64) (int64, error) {
+	var sizeBytes int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT size_bytes
+		FROM RAC_user_imap_messages
+		WHERE account_id = $1 AND uid = $2
+		LIMIT 1
+	`, accountID, uid).Scan(&sizeBytes)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("get imap message size by uid: %w", err)
+	}
+	return sizeBytes, nil
+}
+
 // GetMaxUID returns the highest UID currently synced for a given account and folder.
 func (r *Repository) GetMaxUID(ctx context.Context, accountID uuid.UUID, folderName string) (int64, error) {
 	var maxUID *int64

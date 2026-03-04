@@ -20,7 +20,9 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/maps"
+	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/httpkit"
@@ -42,15 +44,16 @@ type Module struct {
 	management            *management.Service
 	notes                 *notes.Service
 	gatekeeper            *agent.Gatekeeper
-	estimator             *agent.Estimator
+	estimator             *agent.QuotingAgent
 	dispatcher            *agent.Dispatcher
 	auditor               *agent.Auditor
 	orchestrator          *Orchestrator
 	photoAnalyzer         *agent.PhotoAnalyzer
 	callLogger            *agent.CallLogger
-	quoteGenerator        *agent.QuoteGenerator
+	quoteGenerator        *agent.QuotingAgent
 	offerSummaryGenerator *agent.OfferSummaryGenerator
 	sse                   *sse.Service
+	eventBus              events.Bus
 	repo                  repository.LeadsRepository
 	storage               storage.StorageService
 	attachmentsBucket     string
@@ -114,12 +117,13 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	notesSvc := notes.New(repo)
 
 	// Create orchestrator and event listeners
+	outboxRepo := notificationoutbox.New(pool)
 	orchestrator := NewOrchestrator(OrchestratorAgents{
 		Gatekeeper: gatekeeper,
 		Estimator:  estimator,
 		Dispatcher: dispatcher,
 		Auditor:    auditor,
-	}, repo, eventBus, sseService, log)
+	}, repo, outboxRepo, eventBus, sseService, log)
 	orchestrator.SetReconciliationEnabled(cfg.IsLeadsReconciliationEnabled())
 	subscribeOrchestrator(eventBus, orchestrator)
 
@@ -136,9 +140,10 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		Config:        cfg,
 		Validator:     val,
 		PhotoAnalyzer: photoAnalyzer,
+		CallLogQueue:  nil,
 	})
 
-	photoBatcher := newPhotoAnalysisBatcher(photoAnalysisHandler, 5*time.Second, log)
+	photoBatcher := newPhotoAnalysisBatcher(photoAnalysisHandler, 30*time.Second, log)
 	subscribeAttachmentUploaded(eventBus, repo, photoBatcher, log)
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
@@ -159,6 +164,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		quoteGenerator:        quoteGenerator,
 		offerSummaryGenerator: offerSummaryGenerator,
 		sse:                   sseService,
+		eventBus:              eventBus,
 		repo:                  repo,
 		storage:               storageSvc,
 		attachmentsBucket:     cfg.GetMinioBucketLeadServiceAttachments(),
@@ -167,7 +173,7 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 	}, nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.Estimator, *agent.Dispatcher, *agent.Auditor, *agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.QuotingAgent, *agent.Dispatcher, *agent.Auditor, *agent.QuotingAgent, *agent.OfferSummaryGenerator, error) {
 	_ = storageSvc
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
@@ -226,7 +232,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		})
 	}
 
-	estimator, err := agent.NewEstimator(agent.EstimatorConfig{
+	estimator, err := agent.NewQuotingAgent(agent.QuotingAgentConfig{
 		APIKey:               cfg.MoonshotAPIKey,
 		Repo:                 repo,
 		EventBus:             eventBus,
@@ -235,6 +241,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		BouwmaatQdrantClient: bouwmaatQdrantClient,
 		CatalogQdrantClient:  catalogQdrantClient,
 		CatalogReader:        catalogReader,
+		IsAutonomous:         true,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
@@ -245,7 +252,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	quoteGenerator, err := agent.NewQuoteGenerator(agent.QuoteGeneratorConfig{
+	quoteGenerator, err := agent.NewQuotingAgent(agent.QuotingAgentConfig{
 		APIKey:               cfg.MoonshotAPIKey,
 		Repo:                 repo,
 		EventBus:             eventBus,
@@ -254,6 +261,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		BouwmaatQdrantClient: bouwmaatQdrantClient,
 		CatalogQdrantClient:  catalogQdrantClient,
 		CatalogReader:        catalogReader,
+		IsAutonomous:         false,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
@@ -350,258 +358,13 @@ func hasImageAttachments(items []repository.Attachment) bool {
 }
 
 func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
-	subscribeOrchestratorLeadDataChanged(eventBus, orchestrator)
-	subscribeOrchestratorLeadAutoDisqualified(eventBus, orchestrator)
-	subscribeOrchestratorQuoteAccepted(eventBus, orchestrator)
-	subscribeOrchestratorQuoteRejected(eventBus, orchestrator)
-	subscribeOrchestratorQuoteSent(eventBus, orchestrator)
-	subscribeOrchestratorPartnerOfferCreated(eventBus, orchestrator)
-	subscribeOrchestratorPartnerOfferRejected(eventBus, orchestrator)
-	subscribeOrchestratorPartnerOfferAccepted(eventBus, orchestrator)
-	subscribeOrchestratorPartnerOfferExpired(eventBus, orchestrator)
-	subscribeOrchestratorPartnerOfferDeleted(eventBus, orchestrator)
-	subscribeOrchestratorPipelineStageChanged(eventBus, orchestrator)
-	subscribeOrchestratorPhotoAnalysisCompleted(eventBus, orchestrator)
-	subscribeOrchestratorPhotoAnalysisFailed(eventBus, orchestrator)
-	subscribeOrchestratorQuoteCreated(eventBus, orchestrator)
-	subscribeOrchestratorQuoteDeleted(eventBus, orchestrator)
-	subscribeOrchestratorAppointmentCreated(eventBus, orchestrator)
-	subscribeOrchestratorAppointmentStatusChanged(eventBus, orchestrator)
-	subscribeOrchestratorAppointmentDeleted(eventBus, orchestrator)
-	subscribeOrchestratorQuoteStatusChanged(eventBus, orchestrator)
-	subscribeOrchestratorLeadServiceStatusChanged(eventBus, orchestrator)
-	subscribeOrchestratorVisitReportSubmitted(eventBus, orchestrator)
-}
+	agentCoordinator := newAgentCoordinator(orchestrator)
+	stateReconciler := newStateReconciler(orchestrator)
+	pipelineManager := newPipelineManager(orchestrator)
 
-func subscribeOrchestratorVisitReportSubmitted(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.VisitReportSubmitted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.VisitReportSubmitted)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnVisitReportSubmitted(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorLeadAutoDisqualified(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.LeadAutoDisqualified{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.LeadAutoDisqualified)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnLeadAutoDisqualified(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorQuoteCreated(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.QuoteCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.QuoteCreated)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnQuoteCreated(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorQuoteDeleted(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.QuoteDeleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.QuoteDeleted)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnQuoteDeleted(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorAppointmentCreated(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.AppointmentCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.AppointmentCreated)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnAppointmentCreated(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorAppointmentStatusChanged(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.AppointmentStatusChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.AppointmentStatusChanged)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnAppointmentStatusChanged(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorAppointmentDeleted(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.AppointmentDeleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.AppointmentDeleted)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnAppointmentDeleted(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorQuoteStatusChanged(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.QuoteStatusChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.QuoteStatusChanged)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnQuoteStatusChanged(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorLeadServiceStatusChanged(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.LeadServiceStatusChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.LeadServiceStatusChanged)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnLeadServiceStatusChanged(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPhotoAnalysisCompleted(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PhotoAnalysisCompleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PhotoAnalysisCompleted)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnPhotoAnalysisCompleted(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPhotoAnalysisFailed(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PhotoAnalysisFailed{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PhotoAnalysisFailed)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnPhotoAnalysisFailed(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorLeadDataChanged(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.LeadDataChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.LeadDataChanged)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnDataChange(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorQuoteAccepted(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.QuoteAccepted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.QuoteAccepted)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnQuoteAccepted(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorQuoteRejected(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.QuoteRejected{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.QuoteRejected)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnQuoteRejected(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorQuoteSent(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.QuoteSent{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.QuoteSent)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnQuoteSent(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPartnerOfferCreated(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PartnerOfferCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PartnerOfferCreated)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnPartnerOfferCreated(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPartnerOfferRejected(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PartnerOfferRejected{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PartnerOfferRejected)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnPartnerOfferRejected(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPartnerOfferAccepted(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PartnerOfferAccepted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PartnerOfferAccepted)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnPartnerOfferAccepted(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPartnerOfferExpired(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PartnerOfferExpired{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PartnerOfferExpired)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnPartnerOfferExpired(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPartnerOfferDeleted(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PartnerOfferDeleted{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PartnerOfferDeleted)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnPartnerOfferDeleted(ctx, e)
-		return nil
-	}))
-}
-
-func subscribeOrchestratorPipelineStageChanged(eventBus events.Bus, orchestrator *Orchestrator) {
-	eventBus.Subscribe(events.PipelineStageChanged{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
-		e, ok := event.(events.PipelineStageChanged)
-		if !ok {
-			return nil
-		}
-		orchestrator.OnStageChange(ctx, e)
-		return nil
-	}))
+	subscribeAgentCoordinator(eventBus, agentCoordinator)
+	subscribeStateReconciler(eventBus, stateReconciler)
+	subscribePipelineManager(eventBus, pipelineManager)
 }
 
 func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepository, batcher *photoAnalysisBatcher, log *logger.Logger) {
@@ -663,6 +426,7 @@ type buildHandlersDeps struct {
 	Config        *config.Config
 	Validator     *validator.Validator
 	PhotoAnalyzer *agent.PhotoAnalyzer
+	CallLogQueue  scheduler.CallLogScheduler
 }
 
 func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.AttachmentsHandler, *handler.PhotoAnalysisHandler) {
@@ -678,6 +442,7 @@ func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.Attachmen
 		EventBus:     deps.EventBus,
 		Repo:         deps.Repo,
 		Validator:    deps.Validator,
+		CallLogQueue: deps.CallLogQueue,
 	})
 
 	return h, attachmentsHandler, photoAnalysisHandler
@@ -722,6 +487,37 @@ func (m *Module) Repository() repository.LeadsRepository {
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
 	m.callLogger.SetAppointmentBooker(booker)
+}
+
+// SetCallLogScheduler injects the scheduler-backed queue for async call logging.
+func (m *Module) SetCallLogScheduler(queue scheduler.CallLogScheduler) {
+	if m == nil || m.handler == nil {
+		return
+	}
+	m.handler.SetCallLogScheduler(queue)
+}
+
+// ProcessLogCallJob executes a queued call log summary and publishes lead data updates.
+func (m *Module) ProcessLogCallJob(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) error {
+	if m == nil || m.callLogger == nil {
+		return nil
+	}
+
+	if _, err := m.callLogger.ProcessSummary(ctx, leadID, serviceID, userID, tenantID, summary); err != nil {
+		return err
+	}
+
+	if m.eventBus != nil {
+		m.eventBus.Publish(ctx, events.LeadDataChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        leadID,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			Source:        "call_log",
+		})
+	}
+
+	return nil
 }
 
 // SetPublicViewers injects quote and appointment viewers for the public portal.

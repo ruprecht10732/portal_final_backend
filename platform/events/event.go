@@ -56,4 +56,7 @@ type Bus interface {
 	// Subscribe registers a handler for a specific event type.
 	// The eventName should match the value returned by Event.EventName().
 	Subscribe(eventName string, handler Handler)
+
+	// Shutdown waits for in-flight asynchronous handler executions to complete.
+	Shutdown(ctx context.Context) error
 }

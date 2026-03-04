@@ -15,6 +15,7 @@ import (
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/logger"
 )
@@ -22,10 +23,11 @@ import (
 // Orchestrator routes pipeline events to specialized agents.
 type Orchestrator struct {
 	gatekeeper *agent.Gatekeeper
-	estimator  *agent.Estimator
+	estimator  *agent.QuotingAgent
 	dispatcher *agent.Dispatcher
 	auditor    *agent.Auditor
 	repo       repository.LeadsRepository
+	outbox     *notificationoutbox.Repository
 	eventBus   events.Bus
 	sse        *sse.Service
 	log        *logger.Logger
@@ -62,18 +64,26 @@ const (
 
 type OrchestratorAgents struct {
 	Gatekeeper *agent.Gatekeeper
-	Estimator  *agent.Estimator
+	Estimator  *agent.QuotingAgent
 	Dispatcher *agent.Dispatcher
 	Auditor    *agent.Auditor
 }
 
-func NewOrchestrator(agents OrchestratorAgents, repo repository.LeadsRepository, eventBus events.Bus, sse *sse.Service, log *logger.Logger) *Orchestrator {
+func NewOrchestrator(
+	agents OrchestratorAgents,
+	repo repository.LeadsRepository,
+	outbox *notificationoutbox.Repository,
+	eventBus events.Bus,
+	sse *sse.Service,
+	log *logger.Logger,
+) *Orchestrator {
 	return &Orchestrator{
 		gatekeeper:             agents.Gatekeeper,
 		estimator:              agents.Estimator,
 		dispatcher:             agents.Dispatcher,
 		auditor:                agents.Auditor,
 		repo:                   repo,
+		outbox:                 outbox,
 		eventBus:               eventBus,
 		sse:                    sse,
 		log:                    log,
@@ -299,6 +309,8 @@ func (o *Orchestrator) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serv
 }
 
 func (o *Orchestrator) OnLeadAutoDisqualified(ctx context.Context, evt events.LeadAutoDisqualified) {
+	o.cancelPendingWorkflows(ctx, evt.TenantID, evt.LeadID, "lead_auto_disqualified")
+
 	o.sse.PublishToOrganization(evt.TenantID, sse.Event{
 		Type:      sse.EventLeadStatusChanged,
 		LeadID:    evt.LeadID,
@@ -308,6 +320,22 @@ func (o *Orchestrator) OnLeadAutoDisqualified(ctx context.Context, evt events.Le
 			"reason": evt.Reason,
 		},
 	})
+}
+
+func (o *Orchestrator) cancelPendingWorkflows(ctx context.Context, tenantID, leadID uuid.UUID, trigger string) {
+	if o.outbox == nil {
+		return
+	}
+
+	cancelled, err := o.outbox.CancelPendingForLead(ctx, tenantID, leadID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to cancel pending workflow outbox messages", "tenantId", tenantID, "leadId", leadID, "trigger", trigger, "error", err)
+		return
+	}
+
+	if cancelled > 0 {
+		o.log.Info("orchestrator: cancelled pending workflow outbox messages", "tenantId", tenantID, "leadId", leadID, "trigger", trigger, "count", cancelled)
+	}
 }
 
 // markRunning attempts to mark an agent run as active. Returns true if successfully marked, false if already running.
@@ -711,6 +739,8 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 			o.log.Error("orchestrator: failed to update lead projected value after quote acceptance", "error", err)
 		}
 	}
+
+	o.cancelPendingWorkflows(ctx, evt.OrganizationID, evt.LeadID, "quote_accepted")
 
 	o.eventBus.Publish(ctx, events.PipelineStageChanged{
 		BaseEvent:     events.NewBaseEvent(),

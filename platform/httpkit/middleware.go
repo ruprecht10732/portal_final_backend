@@ -3,6 +3,7 @@
 package httpkit
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -71,6 +72,19 @@ type IPRateLimiter struct {
 	rate     rate.Limit
 	burst    int
 	log      *logger.Logger
+}
+
+type TokenRevocationLookup func(ctx context.Context, jti string) (bool, error)
+
+var (
+	tokenRevocationLookupMu sync.RWMutex
+	tokenRevocationLookup   TokenRevocationLookup
+)
+
+func SetTokenRevocationLookup(lookup TokenRevocationLookup) {
+	tokenRevocationLookupMu.Lock()
+	defer tokenRevocationLookupMu.Unlock()
+	tokenRevocationLookup = lookup
 }
 
 // NewIPRateLimiter creates a new IP-based rate limiter.
@@ -160,6 +174,10 @@ func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 		}
 
 		roles := extractRoles(claims["roles"])
+		if isTokenRevoked(c.Request.Context(), claims) {
+			abortUnauthorized(c, errInvalidToken)
+			return
+		}
 		c.Set(ContextUserIDKey, userID)
 		c.Set(ContextRolesKey, roles)
 
@@ -171,6 +189,28 @@ func AuthRequired(cfg config.JWTConfig) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func isTokenRevoked(ctx context.Context, claims jwt.MapClaims) bool {
+	jti, _ := claims["jti"].(string)
+	jti = strings.TrimSpace(jti)
+	if jti == "" {
+		return false
+	}
+
+	tokenRevocationLookupMu.RLock()
+	lookup := tokenRevocationLookup
+	tokenRevocationLookupMu.RUnlock()
+	if lookup == nil {
+		return false
+	}
+
+	revoked, err := lookup(ctx, jti)
+	if err != nil {
+		// Fail open on lookup errors so auth does not depend on Redis availability.
+		return false
+	}
+	return revoked
 }
 
 // RequireRole returns middleware that checks if the user has the specified role.

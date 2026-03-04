@@ -16,6 +16,7 @@ type InMemoryBus struct {
 	mu       sync.RWMutex
 	handlers map[string][]Handler
 	log      *logger.Logger
+	wg       sync.WaitGroup
 }
 
 // NewInMemoryBus creates a new in-memory event bus.
@@ -42,7 +43,9 @@ func (b *InMemoryBus) Publish(ctx context.Context, event Event) {
 	// Execute all handlers asynchronously with a background context
 	// to prevent cancellation when the original request completes
 	for _, h := range handlers {
+		b.wg.Add(1)
 		go func(handler Handler) {
+			defer b.wg.Done()
 			if err := handler.Handle(context.Background(), event); err != nil {
 				b.log.Error("event handler failed",
 					"event", event.EventName(),
@@ -104,6 +107,23 @@ func (b *InMemoryBus) Subscribe(eventName string, handler Handler) {
 // SubscribeFunc is a convenience method to subscribe a function as a handler.
 func (b *InMemoryBus) SubscribeFunc(eventName string, fn func(ctx context.Context, event Event) error) {
 	b.Subscribe(eventName, HandlerFunc(fn))
+}
+
+// Shutdown waits until all in-flight async handler executions complete
+// or the provided context expires.
+func (b *InMemoryBus) Shutdown(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		b.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Ensure InMemoryBus implements Bus

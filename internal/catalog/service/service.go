@@ -26,7 +26,8 @@ const (
 	autocompleteMaxResults       = 10
 	autocompletePrimaryMax       = 3
 	autocompleteQdrantMinResults = 6
-	autocompleteQdrantTimeout    = 1200 * time.Millisecond
+	// The timeout must cover both query embedding and Qdrant search.
+	autocompleteQdrantTimeout  = 3500 * time.Millisecond
 	autocompleteScoreThreshold   = 0.30
 )
 

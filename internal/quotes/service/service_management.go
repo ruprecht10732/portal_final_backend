@@ -263,13 +263,19 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, req transport.Li
 		return nil, err
 	}
 
+	quoteIDs := make([]uuid.UUID, 0, len(result.Items))
+	for _, q := range result.Items {
+		quoteIDs = append(quoteIDs, q.ID)
+	}
+
+	itemsByQuoteID, err := s.repo.GetItemsByQuoteIDs(ctx, tenantID, quoteIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]transport.QuoteResponse, len(result.Items))
 	for i, q := range result.Items {
-		qItems, qItemsErr := s.repo.GetItemsByQuoteID(ctx, q.ID, tenantID)
-		if qItemsErr != nil {
-			return nil, qItemsErr
-		}
-		mapped, mapErr := s.buildResponse(ctx, &q, qItems)
+		mapped, mapErr := s.buildResponse(ctx, &q, itemsByQuoteID[q.ID])
 		if mapErr != nil {
 			return nil, mapErr
 		}

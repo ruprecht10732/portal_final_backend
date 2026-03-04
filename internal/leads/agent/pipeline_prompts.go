@@ -201,6 +201,7 @@ Instruction:
 	- Translate consumer wording into trade + DIY/shop synonyms before searching.
 	- Search broad first, then narrow.
 	- Call SearchProductMaterials multiple times with DIFFERENT queries per material category.
+	- Do NOT call SearchProductMaterials more than 3 times for the same product/material type.
    Always prefer the catalog collection by default.
    If the user explicitly says not to use the catalog (e.g., "ignore catalog", "no catalog", "zonder catalogus"), set useCatalog=false.
 	Use standard, mid-range materials unless the request explicitly calls for heavy-duty or premium.
@@ -209,7 +210,7 @@ Instruction:
 	Products from the catalog will include an "id" field - remember these IDs for step 3a.
 
    HANDLING NO RESULTS:
-   - If SearchProductMaterials returns "No relevant products found", try at least 2 more queries with different terms/synonyms.
+	- If SearchProductMaterials returns "No relevant products found", try up to 2 additional queries with different terms/synonyms (3 total attempts).
    - If still no match, add the item as an ad-hoc line item (without catalogProductId):
      - Use your best estimate for unitPriceCents based on typical Dutch market prices for that product.
      - Keep the description factual (e.g., "RVS scharnieren (3 stuks)") — do NOT add notes like "niet in catalogus".
@@ -597,13 +598,14 @@ Instruction:
    - Mix Dutch and English terms.
    - Search broad first, then narrow.
 	- Call SearchProductMaterials multiple times with DIFFERENT queries per material category.
+	- Do NOT call SearchProductMaterials more than 3 times for the same product/material type.
    Always prefer the catalog collection by default.
 	CATALOG PRIORITY: When reviewing results, always prefer a catalog item (has an "id" field) over a reference item (no "id" field) for the same product need — even if the reference item has a slightly higher score. Reference items only appear when no catalog match exists; treat them as a last resort.
 
 	If SearchProductMaterials is NOT available, skip search and continue with ad-hoc DraftQuote items using best-estimate unitPriceCents.
 
    HANDLING NO RESULTS:
-   - If SearchProductMaterials returns "No relevant products found", try at least 2 more queries with different terms/synonyms.
+	- If SearchProductMaterials returns "No relevant products found", try up to 2 additional queries with different terms/synonyms (3 total attempts).
    - If still no match after multiple attempts, add the item as an ad-hoc line item (without catalogProductId):
      - Use your best estimate for unitPriceCents based on typical Dutch market prices.
      - Keep the description factual — do NOT add notes like "niet in catalogus".

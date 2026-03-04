@@ -765,6 +765,8 @@ type RacNotificationOutbox struct {
 	LastError pgtype.Text        `json:"last_error"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	LeadID    pgtype.UUID        `json:"lead_id"`
+	ServiceID pgtype.UUID        `json:"service_id"`
 }
 
 type RacOrganization struct {

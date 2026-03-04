@@ -23,6 +23,8 @@ type Worker struct {
 	bus    events.Bus
 	log    *logger.Logger
 	quotes QuoteJobProcessor
+	pdf    QuoteAcceptedPDFProcessor
+	call   CallLogProcessor
 	imap   IMAPSyncProcessor
 }
 
@@ -33,6 +35,14 @@ type QuoteJobProcessor interface {
 type IMAPSyncProcessor interface {
 	SyncAccount(ctx context.Context, userID uuid.UUID, accountID uuid.UUID) error
 	SyncEligibleAccounts(ctx context.Context) error
+}
+
+type QuoteAcceptedPDFProcessor interface {
+	GenerateAndStorePDF(ctx context.Context, quoteID, organizationID uuid.UUID, orgName, customerName, signatureName string) (string, []byte, error)
+}
+
+type CallLogProcessor interface {
+	ProcessLogCallJob(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) error
 }
 
 func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, log *logger.Logger) (*Worker, error) {
@@ -75,6 +85,8 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskAppointmentReminder, w.handleAppointmentReminder)
 	mux.HandleFunc(TaskNotificationOutboxDue, w.handleNotificationOutboxDue)
 	mux.HandleFunc(TaskGenerateQuoteJob, w.handleGenerateQuoteJob)
+	mux.HandleFunc(TaskGenerateAcceptedQuotePDF, w.handleGenerateAcceptedQuotePDF)
+	mux.HandleFunc(TaskLogCall, w.handleLogCall)
 	mux.HandleFunc(TaskIMAPSyncAccount, w.handleIMAPSyncAccount)
 	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
 
@@ -85,8 +97,16 @@ func (w *Worker) SetQuoteJobProcessor(processor QuoteJobProcessor) {
 	w.quotes = processor
 }
 
+func (w *Worker) SetAcceptedQuotePDFProcessor(processor QuoteAcceptedPDFProcessor) {
+	w.pdf = processor
+}
+
 func (w *Worker) SetIMAPSyncProcessor(processor IMAPSyncProcessor) {
 	w.imap = processor
+}
+
+func (w *Worker) SetCallLogProcessor(processor CallLogProcessor) {
+	w.call = processor
 }
 
 func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
@@ -253,6 +273,112 @@ func (w *Worker) handleGenerateQuoteJob(ctx context.Context, task *asynq.Task) e
 		"jobId", jobID,
 		"durationMs", time.Since(start).Milliseconds(),
 	)
+	return nil
+}
+
+func (w *Worker) handleGenerateAcceptedQuotePDF(ctx context.Context, task *asynq.Task) error {
+	if w.pdf == nil {
+		return fmt.Errorf("accepted quote PDF processor is not configured")
+	}
+
+	payload, err := ParseGenerateAcceptedQuotePDFPayload(task)
+	if err != nil {
+		return err
+	}
+
+	quoteID, err := uuid.Parse(payload.QuoteID)
+	if err != nil {
+		return err
+	}
+
+	tenantID, err := uuid.Parse(payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	start := time.Now()
+	_, _, err = w.pdf.GenerateAndStorePDF(ctx, quoteID, tenantID, payload.OrgName, payload.CustomerName, payload.SignatureName)
+	if err != nil {
+		w.log.Error(
+			"scheduler: accepted quote PDF generation failed",
+			"quoteId", quoteID,
+			"tenantId", tenantID,
+			"durationMs", time.Since(start).Milliseconds(),
+			"error", err,
+		)
+		return err
+	}
+
+	w.log.Info(
+		"scheduler: accepted quote PDF generation completed",
+		"quoteId", quoteID,
+		"tenantId", tenantID,
+		"durationMs", time.Since(start).Milliseconds(),
+	)
+
+	return nil
+}
+
+func (w *Worker) handleLogCall(ctx context.Context, task *asynq.Task) error {
+	if w.call == nil {
+		return fmt.Errorf("call log processor is not configured")
+	}
+
+	payload, err := ParseLogCallPayload(task)
+	if err != nil {
+		return err
+	}
+
+	leadID, err := uuid.Parse(payload.LeadID)
+	if err != nil {
+		return err
+	}
+
+	serviceID, err := uuid.Parse(payload.ServiceID)
+	if err != nil {
+		return err
+	}
+
+	userID, err := uuid.Parse(payload.UserID)
+	if err != nil {
+		return err
+	}
+
+	tenantID, err := uuid.Parse(payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	start := time.Now()
+	w.log.Info(
+		"scheduler: starting async call log processing",
+		"leadId", leadID,
+		"serviceId", serviceID,
+		"tenantId", tenantID,
+		"userId", userID,
+	)
+
+	err = w.call.ProcessLogCallJob(ctx, leadID, serviceID, userID, tenantID, payload.Summary)
+	if err != nil {
+		w.log.Error(
+			"scheduler: async call log processing failed",
+			"leadId", leadID,
+			"serviceId", serviceID,
+			"tenantId", tenantID,
+			"durationMs", time.Since(start).Milliseconds(),
+			"error", err,
+		)
+		return err
+	}
+
+	w.log.Info(
+		"scheduler: async call log processing completed",
+		"leadId", leadID,
+		"serviceId", serviceID,
+		"tenantId", tenantID,
+		"durationMs", time.Since(start).Milliseconds(),
+	)
+
 	return nil
 }
 

@@ -31,8 +31,16 @@ type IMAPSyncScheduler interface {
 	EnqueueIMAPSyncSweep(ctx context.Context) error
 }
 
+type CallLogScheduler interface {
+	EnqueueLogCall(ctx context.Context, payload LogCallPayload) error
+}
+
 type QuoteJobRunner interface {
 	EnqueueGenerateQuoteJobRequest(ctx context.Context, req GenerateQuoteJobRequest) error
+}
+
+type QuoteAcceptedPDFRunner interface {
+	EnqueueGenerateAcceptedQuotePDFRequest(ctx context.Context, req GenerateAcceptedQuotePDFRequest) error
 }
 
 // GenerateQuoteJobRequest groups parameters for enqueueing a quote generation job.
@@ -46,6 +54,14 @@ type GenerateQuoteJobRequest struct {
 	Prompt        string
 	QuoteID       *uuid.UUID
 	Force         bool
+}
+
+type GenerateAcceptedQuotePDFRequest struct {
+	QuoteID       uuid.UUID
+	TenantID      uuid.UUID
+	OrgName       string
+	CustomerName  string
+	SignatureName string
 }
 
 func NewClient(cfg config.SchedulerConfig) (*Client, error) {
@@ -105,6 +121,34 @@ func (c *Client) EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQu
 	return err
 }
 
+func (c *Client) EnqueueGenerateAcceptedQuotePDF(ctx context.Context, payload GenerateAcceptedQuotePDFPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewGenerateAcceptedQuotePDFTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	return err
+}
+
+func (c *Client) EnqueueLogCall(ctx context.Context, payload LogCallPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewLogCallTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	return err
+}
+
 func (c *Client) EnqueueIMAPSyncAccount(ctx context.Context, payload IMAPSyncAccountPayload) error {
 	if c == nil || c.client == nil {
 		return nil
@@ -145,6 +189,16 @@ func (c *Client) EnqueueGenerateQuoteJobRequest(ctx context.Context, req Generat
 		Prompt:        req.Prompt,
 		QuoteID:       quoteIDStr,
 		Force:         req.Force,
+	})
+}
+
+func (c *Client) EnqueueGenerateAcceptedQuotePDFRequest(ctx context.Context, req GenerateAcceptedQuotePDFRequest) error {
+	return c.EnqueueGenerateAcceptedQuotePDF(ctx, GenerateAcceptedQuotePDFPayload{
+		QuoteID:       req.QuoteID.String(),
+		TenantID:      req.TenantID.String(),
+		OrgName:       req.OrgName,
+		CustomerName:  req.CustomerName,
+		SignatureName: req.SignatureName,
 	})
 }
 

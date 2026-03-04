@@ -11,6 +11,8 @@ const TaskAppointmentReminder = "appointments.reminder"
 const TaskNotificationOutboxDue = "notification.outbox.due"
 
 const TaskGenerateQuoteJob = "quotes.generate"
+const TaskGenerateAcceptedQuotePDF = "quotes.generate_accepted_pdf"
+const TaskLogCall = "leads.log_call"
 const TaskIMAPSyncAccount = "imap.sync.account"
 const TaskIMAPSyncSweep = "imap.sync.sweep"
 
@@ -33,6 +35,22 @@ type GenerateQuoteJobPayload struct {
 	Prompt        string  `json:"prompt"`
 	QuoteID       *string `json:"quoteId,omitempty"`
 	Force         bool    `json:"force,omitempty"`
+}
+
+type GenerateAcceptedQuotePDFPayload struct {
+	QuoteID       string `json:"quoteId"`
+	TenantID      string `json:"tenantId"`
+	OrgName       string `json:"orgName"`
+	CustomerName  string `json:"customerName"`
+	SignatureName string `json:"signatureName"`
+}
+
+type LogCallPayload struct {
+	TenantID  string `json:"tenantId"`
+	LeadID    string `json:"leadId"`
+	ServiceID string `json:"serviceId"`
+	UserID    string `json:"userId"`
+	Summary   string `json:"summary"`
 }
 
 type IMAPSyncAccountPayload struct {
@@ -86,6 +104,38 @@ func ParseGenerateQuoteJobPayload(task *asynq.Task) (GenerateQuoteJobPayload, er
 	var payload GenerateQuoteJobPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return GenerateQuoteJobPayload{}, err
+	}
+	return payload, nil
+}
+
+func NewGenerateAcceptedQuotePDFTask(payload GenerateAcceptedQuotePDFPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskGenerateAcceptedQuotePDF, data), nil
+}
+
+func ParseGenerateAcceptedQuotePDFPayload(task *asynq.Task) (GenerateAcceptedQuotePDFPayload, error) {
+	var payload GenerateAcceptedQuotePDFPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return GenerateAcceptedQuotePDFPayload{}, err
+	}
+	return payload, nil
+}
+
+func NewLogCallTask(payload LogCallPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskLogCall, data), nil
+}
+
+func ParseLogCallPayload(task *asynq.Task) (LogCallPayload, error) {
+	var payload LogCallPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return LogCallPayload{}, err
 	}
 	return payload, nil
 }

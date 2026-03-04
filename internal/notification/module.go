@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
+	htmlstd "html"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,6 +28,7 @@ import (
 	"portal_final_backend/internal/notification/inapp"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
@@ -35,6 +36,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	htmlnode "golang.org/x/net/html"
 )
 
 // QuotePDFGenerator generates and stores an unsigned PDF for a quote.
@@ -45,6 +47,10 @@ type QuotePDFGenerator interface {
 // QuoteActivityWriter persists activity log entries for quotes.
 type QuoteActivityWriter interface {
 	CreateActivity(ctx context.Context, quoteID, orgID uuid.UUID, eventType, message string, metadata map[string]interface{}) error
+}
+
+type QuoteAcceptedPDFScheduler interface {
+	EnqueueGenerateAcceptedQuotePDFRequest(ctx context.Context, req scheduler.GenerateAcceptedQuotePDFRequest) error
 }
 
 // PartnerOfferTimelineEventParams describes the payload for a partner-offer timeline event.
@@ -139,6 +145,7 @@ type Module struct {
 	actWriter           QuoteActivityWriter
 	offerTimeline       PartnerOfferTimelineWriter
 	quotePDFGen         QuotePDFGenerator
+	quotePDFScheduler   QuoteAcceptedPDFScheduler
 	whatsapp            WhatsAppSender
 	leadTimeline        LeadTimelineWriter
 	settingsReader      OrganizationSettingsReader
@@ -317,6 +324,11 @@ func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeli
 
 // SetQuotePDFGenerator injects the PDF generator for pre-generating unsigned PDFs on quote send.
 func (m *Module) SetQuotePDFGenerator(gen QuotePDFGenerator) { m.quotePDFGen = gen }
+
+// SetQuoteAcceptedPDFScheduler injects async PDF task enqueueing for accepted quotes.
+func (m *Module) SetQuoteAcceptedPDFScheduler(scheduler QuoteAcceptedPDFScheduler) {
+	m.quotePDFScheduler = scheduler
+}
 
 // SetSMTPEncryptionKey sets the AES key used to decrypt SMTP passwords from org settings.
 func (m *Module) SetSMTPEncryptionKey(key []byte) { m.smtpEncryptionKey = key }
@@ -846,11 +858,13 @@ func (m *Module) enqueueWhatsAppWorkflowStep(ctx context.Context, dispatchCtx wo
 			ActorName:   dispatchCtx.ActorName,
 		}
 		rec, err := m.notificationOutbox.Insert(ctx, notificationoutbox.InsertParams{
-			TenantID: dispatchCtx.Exec.OrgID,
-			Kind:     "whatsapp",
-			Template: "whatsapp_send",
-			Payload:  payload,
-			RunAt:    dispatchCtx.RunAt,
+			TenantID:  dispatchCtx.Exec.OrgID,
+			LeadID:    dispatchCtx.Exec.LeadID,
+			ServiceID: dispatchCtx.Exec.ServiceID,
+			Kind:      "whatsapp",
+			Template:  "whatsapp_send",
+			Payload:   payload,
+			RunAt:     dispatchCtx.RunAt,
 		})
 		if err != nil {
 			return err
@@ -890,11 +904,13 @@ func (m *Module) enqueueEmailWorkflowStep(
 			ServiceID: ptrUUIDString(dispatchCtx.Exec.ServiceID),
 		}
 		rec, err := m.notificationOutbox.Insert(ctx, notificationoutbox.InsertParams{
-			TenantID: dispatchCtx.Exec.OrgID,
-			Kind:     "email",
-			Template: "email_send",
-			Payload:  payload,
-			RunAt:    dispatchCtx.RunAt,
+			TenantID:  dispatchCtx.Exec.OrgID,
+			LeadID:    dispatchCtx.Exec.LeadID,
+			ServiceID: dispatchCtx.Exec.ServiceID,
+			Kind:      "email",
+			Template:  "email_send",
+			Payload:   payload,
+			RunAt:     dispatchCtx.RunAt,
 		})
 		if err != nil {
 			return err
@@ -1338,31 +1354,16 @@ var adminOnlyRoles = map[string]struct{}{
 	"admin": {},
 }
 
-var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
-
 func normalizeWhatsAppMessage(value string) string {
 	text := strings.TrimSpace(value)
 	if text == "" {
 		return ""
 	}
 
-	// Common rich-text editor HTML (Quill) -> line breaks.
-	replacer := strings.NewReplacer(
-		"<br>", "\n",
-		"<br/>", "\n",
-		"<br />", "\n",
-		"</p>", "\n",
-		"<p>", "",
-		"</div>", "\n",
-		"<div>", "",
-	)
-	text = replacer.Replace(text)
-
-	// Remove any remaining tags.
-	text = htmlTagPattern.ReplaceAllString(text, "")
+	text = htmlToWhatsAppMarkdown(text)
 
 	// Decode entities (&nbsp; etc.).
-	text = html.UnescapeString(text)
+	text = htmlstd.UnescapeString(text)
 	text = strings.ReplaceAll(text, "\u00a0", " ")
 
 	// Normalize whitespace while preserving newlines.
@@ -1384,6 +1385,74 @@ func normalizeWhatsAppMessage(value string) string {
 	}
 
 	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
+
+func htmlToWhatsAppMarkdown(input string) string {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return ""
+	}
+
+	doc, err := htmlnode.Parse(strings.NewReader(raw))
+	if err != nil {
+		return htmlstd.UnescapeString(raw)
+	}
+
+	var b strings.Builder
+	for child := doc.FirstChild; child != nil; child = child.NextSibling {
+		appendWhatsAppNode(&b, child)
+	}
+
+	return b.String()
+}
+
+func appendWhatsAppNode(b *strings.Builder, node *htmlnode.Node) {
+	if node == nil {
+		return
+	}
+
+	switch node.Type {
+	case htmlnode.TextNode:
+		b.WriteString(htmlstd.UnescapeString(node.Data))
+	case htmlnode.ElementNode:
+		tag := strings.ToLower(node.Data)
+		switch tag {
+		case "br":
+			b.WriteString("\n")
+		case "strong", "b":
+			appendWrappedWhatsAppNode(b, node, "*")
+		case "em", "i":
+			appendWrappedWhatsAppNode(b, node, "_")
+		case "del", "s", "strike":
+			appendWrappedWhatsAppNode(b, node, "~")
+		case "p", "div", "li":
+			appendWhatsAppChildren(b, node)
+			b.WriteString("\n")
+		default:
+			appendWhatsAppChildren(b, node)
+		}
+	default:
+		appendWhatsAppChildren(b, node)
+	}
+}
+
+func appendWhatsAppChildren(b *strings.Builder, node *htmlnode.Node) {
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		appendWhatsAppNode(b, child)
+	}
+}
+
+func appendWrappedWhatsAppNode(b *strings.Builder, node *htmlnode.Node, marker string) {
+	var inner strings.Builder
+	appendWhatsAppChildren(&inner, node)
+	content := inner.String()
+	if strings.TrimSpace(content) == "" {
+		b.WriteString(content)
+		return
+	}
+	b.WriteString(marker)
+	b.WriteString(content)
+	b.WriteString(marker)
 }
 
 func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.PartnerOfferAccepted) error {
@@ -2564,8 +2633,24 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 	_ = m.dispatchQuoteAcceptedAgentEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx, e)
 
-	// Regenerate and store the signed PDF so subsequent downloads serve the accepted version.
-	if m.quotePDFGen != nil {
+	// Queue signed-PDF generation in the background so quote acceptance stays fast.
+	queued := false
+	if m.quotePDFScheduler != nil {
+		err := m.quotePDFScheduler.EnqueueGenerateAcceptedQuotePDFRequest(ctx, scheduler.GenerateAcceptedQuotePDFRequest{
+			QuoteID:       e.QuoteID,
+			TenantID:      e.OrganizationID,
+			OrgName:       e.OrganizationName,
+			CustomerName:  e.ConsumerName,
+			SignatureName: e.SignatureName,
+		})
+		if err != nil {
+			m.log.Warn("failed to enqueue accepted quote PDF generation", "quoteId", e.QuoteID, "error", err)
+		} else {
+			queued = true
+		}
+	}
+
+	if !queued && m.quotePDFGen != nil {
 		if _, _, err := m.quotePDFGen.RegeneratePDF(ctx, e.QuoteID, e.OrganizationID); err != nil {
 			m.log.Warn("failed to regenerate quote PDF on acceptance", "quoteId", e.QuoteID, "error", err)
 		}

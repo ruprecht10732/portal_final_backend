@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/auth/service"
@@ -230,8 +231,10 @@ func (h *Handler) Refresh(c *gin.Context) {
 }
 
 func (h *Handler) SignOut(c *gin.Context) {
+	accessToken, _ := extractBearerToken(c.GetHeader("Authorization"))
+
 	if refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName()); err == nil && refreshToken != "" {
-		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken)) {
+		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken, accessToken)) {
 			return
 		}
 	}
@@ -239,6 +242,19 @@ func (h *Handler) SignOut(c *gin.Context) {
 	h.clearRefreshCookie(c)
 
 	httpkit.OK(c, gin.H{"message": "signed out"})
+}
+
+func extractBearerToken(authHeader string) (string, bool) {
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", false
+	}
+
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		return "", false
+	}
+
+	return token, true
 }
 
 func (h *Handler) ForgotPassword(c *gin.Context) {

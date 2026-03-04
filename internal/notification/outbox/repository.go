@@ -20,6 +20,7 @@ const (
 	StatusProcessing     Status = "processing"
 	StatusSucceeded      Status = "succeeded"
 	StatusFailed         Status = "failed"
+	StatusCancelled      Status = "cancelled"
 	errRepoNotConfigured        = "outbox repository not configured"
 )
 
@@ -36,6 +37,8 @@ type Record struct {
 
 type InsertParams struct {
 	TenantID  uuid.UUID
+	LeadID    *uuid.UUID
+	ServiceID *uuid.UUID
 	Kind      string
 	Template  string
 	Payload   any
@@ -80,10 +83,10 @@ func (r *Repository) Insert(ctx context.Context, p InsertParams) (uuid.UUID, err
 
 	var id uuid.UUID
 	err = r.pool.QueryRow(ctx,
-		`INSERT INTO RAC_notification_outbox (tenant_id, kind, template, payload, run_at, status, last_error)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO RAC_notification_outbox (tenant_id, lead_id, service_id, kind, template, payload, run_at, status, last_error)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id`,
-		p.TenantID, p.Kind, p.Template, payloadBytes, p.RunAt, string(status), p.LastError,
+		p.TenantID, p.LeadID, p.ServiceID, p.Kind, p.Template, payloadBytes, p.RunAt, string(status), p.LastError,
 	).Scan(&id)
 	if err != nil {
 		return uuid.Nil, err
@@ -229,4 +232,28 @@ func (r *Repository) MarkFailed(ctx context.Context, id uuid.UUID, lastError str
 		id, lastError,
 	)
 	return err
+}
+
+func (r *Repository) CancelPendingForLead(ctx context.Context, tenantID, leadID uuid.UUID) (int64, error) {
+	if r == nil || r.pool == nil {
+		return 0, errors.New(errRepoNotConfigured)
+	}
+	if tenantID == uuid.Nil {
+		return 0, fmt.Errorf("tenantId is required")
+	}
+	if leadID == uuid.Nil {
+		return 0, fmt.Errorf("leadId is required")
+	}
+
+	result, err := r.pool.Exec(ctx,
+		`UPDATE RAC_notification_outbox
+		 SET status = $3, updated_at = now()
+		 WHERE tenant_id = $1 AND lead_id = $2 AND status = $4`,
+		tenantID, leadID, string(StatusCancelled), string(StatusPending),
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	return result.RowsAffected(), nil
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -38,6 +39,7 @@ type Service struct {
 	cfg      config.AuthServiceConfig
 	eventBus events.Bus
 	log      *logger.Logger
+	redis    *redis.Client
 }
 
 type Profile struct {
@@ -56,6 +58,10 @@ type Profile struct {
 
 func New(repo *repository.Repository, identity *identityservice.Service, cfg config.AuthServiceConfig, eventBus events.Bus, log *logger.Logger) *Service {
 	return &Service{repo: repo, identity: identity, cfg: cfg, eventBus: eventBus, log: log}
+}
+
+func (s *Service) SetAccessTokenBlocklistRedis(client *redis.Client) {
+	s.redis = client
 }
 
 func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organizationName *string, inviteToken *string) error {
@@ -192,9 +198,17 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, str
 	return s.issueTokens(ctx, userID)
 }
 
-func (s *Service) SignOut(ctx context.Context, refreshToken string) error {
+func (s *Service) SignOut(ctx context.Context, refreshToken string, accessToken string) error {
 	hash := token.HashSHA256(refreshToken)
-	return s.repo.RevokeRefreshToken(ctx, hash)
+	if err := s.repo.RevokeRefreshToken(ctx, hash); err != nil {
+		return err
+	}
+
+	if err := s.blocklistAccessToken(ctx, accessToken); err != nil {
+		s.log.Warn("failed to blocklist access token on sign out", "error", err)
+	}
+
+	return nil
 }
 
 func (s *Service) ForgotPassword(ctx context.Context, email string) error {
@@ -312,6 +326,7 @@ func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string,
 		"sub":   userID.String(),
 		"type":  tokenType,
 		"roles": roles,
+		"jti":   uuid.NewString(),
 		"exp":   time.Now().Add(ttl).Unix(),
 		"iat":   time.Now().Unix(),
 	}
@@ -321,6 +336,44 @@ func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string,
 
 	tokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tokenObj.SignedString([]byte(secret))
+}
+
+func (s *Service) blocklistAccessToken(ctx context.Context, accessToken string) error {
+	if s.redis == nil || strings.TrimSpace(accessToken) == "" {
+		return nil
+	}
+
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser(jwt.WithoutClaimsValidation()).ParseUnverified(accessToken, claims); err != nil {
+		return err
+	}
+
+	jti, _ := claims["jti"].(string)
+	jti = strings.TrimSpace(jti)
+	if jti == "" {
+		return nil
+	}
+
+	expValue, ok := claims["exp"]
+	if !ok {
+		return nil
+	}
+
+	expFloat, ok := expValue.(float64)
+	if !ok {
+		return nil
+	}
+
+	ttl := time.Until(time.Unix(int64(expFloat), 0))
+	if ttl <= 0 {
+		return nil
+	}
+
+	return s.redis.Set(ctx, tokenBlocklistKey(jti), "1", ttl).Err()
+}
+
+func tokenBlocklistKey(jti string) string {
+	return "auth:blocklist:jti:" + strings.TrimSpace(jti)
 }
 
 func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {

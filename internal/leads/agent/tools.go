@@ -38,6 +38,7 @@ const (
 )
 
 const highConfidenceScoreThreshold = 0.45
+const catalogEarlyReturnScoreThreshold = 0.55
 const (
 	defaultHouthandelCollection = "houthandel_products"
 	defaultBouwmaatCollection   = "bouwmaat_products"
@@ -165,6 +166,7 @@ type ToolDependencies struct {
 	lastDraftResult      *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
 	runID                string                  // Correlates all tool calls within one agent run
 	forceDraftQuote      bool                    // Allows manual runs to bypass intake gating
+	searchCache          map[string]SearchProductMaterialsOutput
 }
 
 func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
@@ -417,6 +419,26 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.lastDraftResult = nil
 	d.existingQuoteID = nil
 	d.forceDraftQuote = false
+	d.searchCache = nil
+}
+
+func (d *ToolDependencies) getSearchCache(key string) (SearchProductMaterialsOutput, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.searchCache == nil {
+		return SearchProductMaterialsOutput{}, false
+	}
+	output, ok := d.searchCache[key]
+	return output, ok
+}
+
+func (d *ToolDependencies) setSearchCache(key string, output SearchProductMaterialsOutput) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.searchCache == nil {
+		d.searchCache = make(map[string]SearchProductMaterialsOutput)
+	}
+	d.searchCache[key] = output
 }
 
 // SetLastDraftResult stores the last DraftQuoteResult for retrieval by callers.
@@ -576,19 +598,16 @@ func parseLeadServiceID(value string) (uuid.UUID, error) {
 	return parseUUID(value, invalidLeadServiceIDMessage)
 }
 
-func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
-	log.Printf("handleSaveAnalysis: CALLED with leadID=%s serviceID=%s urgency=%s action=%s",
-		input.LeadID, input.LeadServiceID, input.UrgencyLevel, input.RecommendedAction)
-
+func resolveSaveAnalysisContext(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput) (uuid.UUID, uuid.UUID, uuid.UUID, SaveAnalysisOutput, error) {
 	leadID, err := parseUUID(input.LeadID, invalidLeadIDMessage)
 	if err != nil {
 		log.Printf("handleSaveAnalysis: FAILED - invalid leadID: %s", input.LeadID)
-		return SaveAnalysisOutput{Success: false, Message: invalidLeadIDMessage}, err
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, SaveAnalysisOutput{Success: false, Message: invalidLeadIDMessage}, err
 	}
 
 	tenantID, err := getTenantID(deps)
 	if err != nil {
-		return SaveAnalysisOutput{Success: false, Message: missingTenantContextMessage}, err
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, SaveAnalysisOutput{Success: false, Message: missingTenantContextMessage}, err
 	}
 
 	leadServiceID, err := parseLeadServiceID(input.LeadServiceID)
@@ -597,10 +616,18 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		if err.Error() == invalidLeadServiceIDMessage {
 			message = invalidLeadServiceIDMessage
 		}
-		return SaveAnalysisOutput{Success: false, Message: message}, err
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, SaveAnalysisOutput{Success: false, Message: message}, err
 	}
 
-	// Terminal check: refuse to save analysis for terminal services
+	if out, err := rejectTerminalAnalysisService(ctx, deps, tenantID, leadServiceID); err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, out, err
+	}
+
+	return leadID, tenantID, leadServiceID, SaveAnalysisOutput{}, nil
+}
+
+func rejectTerminalAnalysisService(ctx tool.Context, deps *ToolDependencies, tenantID, leadServiceID uuid.UUID) (SaveAnalysisOutput, error) {
+	// Terminal check: refuse to save analysis for terminal services.
 	svc, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, tenantID)
 	if err != nil {
 		return SaveAnalysisOutput{Success: false, Message: leadServiceNotFoundMessage}, err
@@ -609,10 +636,25 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		log.Printf("handleSaveAnalysis: REJECTED - service %s is in terminal state (status=%s, stage=%s)", leadServiceID, svc.Status, svc.PipelineStage)
 		return SaveAnalysisOutput{Success: false, Message: "Cannot save analysis for a service in terminal state"}, fmt.Errorf("service %s is terminal", leadServiceID)
 	}
+	return SaveAnalysisOutput{}, nil
+}
 
+type normalizedAnalysisInput struct {
+	UrgencyLevel      string
+	UrgencyReason     *string
+	LeadQuality       string
+	RecommendedAction string
+	Channel           string
+	MissingInformation []string
+	SuggestedMessage  string
+	Summary           string
+	Metadata          map[string]any
+}
+
+func normalizeAnalysisInput(input SaveAnalysisInput, lead repository.Lead) (normalizedAnalysisInput, error) {
 	urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
 	if err != nil {
-		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
+		return normalizedAnalysisInput{}, err
 	}
 
 	var urgencyReason *string
@@ -621,20 +663,12 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		urgencyReason = &trimmedUrgencyReason
 	}
 
-	lead, err := deps.Repo.GetByID(ctx, leadID, tenantID)
-	if err != nil {
-		return SaveAnalysisOutput{Success: false, Message: leadNotFoundMessage}, err
-	}
-
 	channel, err := resolvePreferredChannel(input.PreferredContactChannel, lead)
 	if err != nil {
-		return SaveAnalysisOutput{Success: false, Message: "Invalid preferred contact channel"}, err
+		return normalizedAnalysisInput{}, fmt.Errorf("Invalid preferred contact channel")
 	}
 
-	// Normalize lead quality to valid enum value
 	leadQuality := normalizeLeadQuality(input.LeadQuality)
-
-	// Normalize recommended action to valid enum value
 	recommendedAction := normalizeRecommendedAction(input.RecommendedAction)
 	log.Printf("handleSaveAnalysis: normalized recommendedAction '%s' -> '%s'", input.RecommendedAction, recommendedAction)
 
@@ -644,6 +678,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	if analysisSummary == "" {
 		analysisSummary = fmt.Sprintf("AI analyse voltooid: %s urgentie, aanbevolen actie: %s", urgencyLevel, recommendedAction)
 	}
+
 	meta := repository.AIAnalysisMetadata{
 		UrgencyLevel:      urgencyLevel,
 		RecommendedAction: recommendedAction,
@@ -656,10 +691,57 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	if len(missingInformation) > 0 {
 		meta.MissingInformation = missingInformation
 	}
-	analysisMetadata := meta.ToMap()
-	if latest, latestErr := deps.Repo.GetLatestAIAnalysis(ctx, leadServiceID, tenantID); latestErr == nil &&
-		isEquivalentRecentAnalysis(latest, urgencyLevel, leadQuality, recommendedAction, channel, normalizedMessage, missingInformation) {
-		deps.SetLastAnalysisMetadata(analysisMetadata)
+
+	return normalizedAnalysisInput{
+		UrgencyLevel:       urgencyLevel,
+		UrgencyReason:      urgencyReason,
+		LeadQuality:        leadQuality,
+		RecommendedAction:  recommendedAction,
+		Channel:            channel,
+		MissingInformation: missingInformation,
+		SuggestedMessage:   normalizedMessage,
+		Summary:            analysisSummary,
+		Metadata:           meta.ToMap(),
+	}, nil
+}
+
+func shouldSkipEquivalentRecentAnalysis(ctx tool.Context, deps *ToolDependencies, leadServiceID, tenantID uuid.UUID, normalized normalizedAnalysisInput) bool {
+	latest, latestErr := deps.Repo.GetLatestAIAnalysis(ctx, leadServiceID, tenantID)
+	if latestErr != nil {
+		return false
+	}
+	return isEquivalentRecentAnalysis(
+		latest,
+		normalized.UrgencyLevel,
+		normalized.LeadQuality,
+		normalized.RecommendedAction,
+		normalized.Channel,
+		normalized.SuggestedMessage,
+		normalized.MissingInformation,
+	)
+}
+
+func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
+	log.Printf("handleSaveAnalysis: CALLED with leadID=%s serviceID=%s urgency=%s action=%s",
+		input.LeadID, input.LeadServiceID, input.UrgencyLevel, input.RecommendedAction)
+
+	leadID, tenantID, leadServiceID, contextOut, err := resolveSaveAnalysisContext(ctx, deps, input)
+	if err != nil {
+		return contextOut, err
+	}
+
+	lead, err := deps.Repo.GetByID(ctx, leadID, tenantID)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: leadNotFoundMessage}, err
+	}
+
+	normalized, err := normalizeAnalysisInput(input, lead)
+	if err != nil {
+		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
+	}
+
+	if shouldSkipEquivalentRecentAnalysis(ctx, deps, leadServiceID, tenantID, normalized) {
+		deps.SetLastAnalysisMetadata(normalized.Metadata)
 		deps.MarkSaveAnalysisCalled()
 		log.Printf("handleSaveAnalysis: skipped duplicate-equivalent analysis for lead=%s service=%s", leadID, leadServiceID)
 		return SaveAnalysisOutput{Success: true, Message: "Analysis unchanged; duplicate save skipped"}, nil
@@ -669,14 +751,14 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		LeadID:                  leadID,
 		OrganizationID:          tenantID,
 		LeadServiceID:           leadServiceID,
-		UrgencyLevel:            urgencyLevel,
-		UrgencyReason:           urgencyReason,
-		LeadQuality:             leadQuality,
-		RecommendedAction:       recommendedAction,
-		MissingInformation:      missingInformation,
-		PreferredContactChannel: channel,
-		SuggestedContactMessage: normalizedMessage,
-		Summary:                 analysisSummary,
+		UrgencyLevel:            normalized.UrgencyLevel,
+		UrgencyReason:           normalized.UrgencyReason,
+		LeadQuality:             normalized.LeadQuality,
+		RecommendedAction:       normalized.RecommendedAction,
+		MissingInformation:      normalized.MissingInformation,
+		PreferredContactChannel: normalized.Channel,
+		SuggestedContactMessage: normalized.SuggestedMessage,
+		Summary:                 normalized.Summary,
 	})
 	if err != nil {
 		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
@@ -693,14 +775,14 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		ActorName:      actorName,
 		EventType:      repository.EventTypeAI,
 		Title:          repository.EventTitleGatekeeperAnalysis,
-		Summary:        &analysisSummary,
-		Metadata:       analysisMetadata,
+		Summary:        &normalized.Summary,
+		Metadata:       normalized.Metadata,
 	})
 
 	// Store analysis metadata for use in stage_change events
-	deps.SetLastAnalysisMetadata(analysisMetadata)
+	deps.SetLastAnalysisMetadata(normalized.Metadata)
 	log.Printf("SaveAnalysis: stored analysis metadata for lead=%s service=%s channel=%s action=%s",
-		leadID, leadServiceID, channel, recommendedAction)
+		leadID, leadServiceID, normalized.Channel, normalized.RecommendedAction)
 
 	recalculateAndRecordScore(ctx, deps, leadID, leadServiceID, tenantID, actorType, actorName)
 
@@ -709,9 +791,9 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		deps.GetRunID(),
 		leadID,
 		leadServiceID,
-		urgencyLevel,
-		leadQuality,
-		recommendedAction,
+		normalized.UrgencyLevel,
+		normalized.LeadQuality,
+		normalized.RecommendedAction,
 		len(input.MissingInformation),
 	)
 
@@ -1051,6 +1133,56 @@ func createUpdateLeadDetailsTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
+func validateProposalQuoteGuard(ctx tool.Context, deps *ToolDependencies, stage string, serviceID, tenantID uuid.UUID) (UpdatePipelineStageOutput, error) {
+	if stage != domain.PipelineStageProposal {
+		return UpdatePipelineStageOutput{}, nil
+	}
+
+	hasNonDraftQuote, checkErr := deps.Repo.HasNonDraftQuote(ctx, serviceID, tenantID)
+	if checkErr != nil {
+		return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, checkErr
+	}
+	if !hasNonDraftQuote {
+		return UpdatePipelineStageOutput{Success: false, Message: "Cannot move to Proposal while quote is still draft"}, fmt.Errorf("quote state guard blocked Proposal for service %s", serviceID)
+	}
+
+	return UpdatePipelineStageOutput{}, nil
+}
+
+func validateActorSequence(stage string, serviceID uuid.UUID, deps *ToolDependencies, actorType, actorName string) (UpdatePipelineStageOutput, error) {
+	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameGatekeeper && !deps.WasSaveAnalysisCalled() {
+		return UpdatePipelineStageOutput{Success: false, Message: "SaveAnalysis is required before stage update"}, fmt.Errorf("gatekeeper sequence violation: SaveAnalysis missing before UpdatePipelineStage for service %s", serviceID)
+	}
+
+	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameEstimator {
+		if !deps.WasSaveEstimationCalled() {
+			return UpdatePipelineStageOutput{Success: false, Message: "SaveEstimation is required before stage update"}, fmt.Errorf("estimator sequence violation: SaveEstimation missing before UpdatePipelineStage for service %s", serviceID)
+		}
+		if stage == domain.PipelineStageEstimation && !deps.WasDraftQuoteCalled() {
+			return UpdatePipelineStageOutput{Success: false, Message: "DraftQuote is required before moving to Estimation"}, fmt.Errorf("estimator sequence violation: DraftQuote missing before Estimation stage update for service %s", serviceID)
+		}
+	}
+
+	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameDispatcher && stage == domain.PipelineStageFulfillment && !deps.WasOfferCreated() {
+		return UpdatePipelineStageOutput{Success: false, Message: "CreatePartnerOffer is required before moving to Fulfillment"}, fmt.Errorf("dispatcher sequence violation: CreatePartnerOffer missing before Fulfillment stage update for service %s", serviceID)
+	}
+
+	return UpdatePipelineStageOutput{}, nil
+}
+
+func validateEstimationInvariant(ctx tool.Context, deps *ToolDependencies, stage string, serviceID, tenantID uuid.UUID) (UpdatePipelineStageOutput, error) {
+	if stage != domain.PipelineStageEstimation {
+		return UpdatePipelineStageOutput{}, nil
+	}
+
+	recommendedAction, missingInformation := latestAnalysisInvariantInputs(ctx, deps, serviceID, tenantID)
+	if reason := domain.ValidateAnalysisStageTransition(recommendedAction, missingInformation, stage); reason != "" {
+		return UpdatePipelineStageOutput{Success: false, Message: "Cannot move to Estimation while intake is incomplete"}, fmt.Errorf("analysis-stage invariant blocked Estimation for service %s: %s", serviceID, reason)
+	}
+
+	return UpdatePipelineStageOutput{}, nil
+}
+
 func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
 	if !domain.IsKnownPipelineStage(input.Stage) {
 		return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
@@ -1086,14 +1218,8 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
 	}
 
-	if input.Stage == domain.PipelineStageProposal {
-		hasNonDraftQuote, checkErr := deps.Repo.HasNonDraftQuote(ctx, serviceID, tenantID)
-		if checkErr != nil {
-			return UpdatePipelineStageOutput{Success: false, Message: "Failed to validate quote state"}, checkErr
-		}
-		if !hasNonDraftQuote {
-			return UpdatePipelineStageOutput{Success: false, Message: "Cannot move to Proposal while quote is still draft"}, fmt.Errorf("quote state guard blocked Proposal for service %s", serviceID)
-		}
+	if out, err := validateProposalQuoteGuard(ctx, deps, input.Stage, serviceID, tenantID); err != nil {
+		return out, err
 	}
 
 	// Validate state combination
@@ -1102,26 +1228,12 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 		return UpdatePipelineStageOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
 	}
 
-	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameGatekeeper && !deps.WasSaveAnalysisCalled() {
-		return UpdatePipelineStageOutput{Success: false, Message: "SaveAnalysis is required before stage update"}, fmt.Errorf("gatekeeper sequence violation: SaveAnalysis missing before UpdatePipelineStage for service %s", serviceID)
-	}
-	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameEstimator {
-		if !deps.WasSaveEstimationCalled() {
-			return UpdatePipelineStageOutput{Success: false, Message: "SaveEstimation is required before stage update"}, fmt.Errorf("estimator sequence violation: SaveEstimation missing before UpdatePipelineStage for service %s", serviceID)
-		}
-		if input.Stage == domain.PipelineStageEstimation && !deps.WasDraftQuoteCalled() {
-			return UpdatePipelineStageOutput{Success: false, Message: "DraftQuote is required before moving to Estimation"}, fmt.Errorf("estimator sequence violation: DraftQuote missing before Estimation stage update for service %s", serviceID)
-		}
-	}
-	if actorType == repository.ActorTypeAI && actorName == repository.ActorNameDispatcher && input.Stage == domain.PipelineStageFulfillment && !deps.WasOfferCreated() {
-		return UpdatePipelineStageOutput{Success: false, Message: "CreatePartnerOffer is required before moving to Fulfillment"}, fmt.Errorf("dispatcher sequence violation: CreatePartnerOffer missing before Fulfillment stage update for service %s", serviceID)
+	if out, err := validateActorSequence(input.Stage, serviceID, deps, actorType, actorName); err != nil {
+		return out, err
 	}
 
-	if input.Stage == domain.PipelineStageEstimation {
-		recommendedAction, missingInformation := latestAnalysisInvariantInputs(ctx, deps, serviceID, tenantID)
-		if reason := domain.ValidateAnalysisStageTransition(recommendedAction, missingInformation, input.Stage); reason != "" {
-			return UpdatePipelineStageOutput{Success: false, Message: "Cannot move to Estimation while intake is incomplete"}, fmt.Errorf("analysis-stage invariant blocked Estimation for service %s: %s", serviceID, reason)
-		}
+	if out, err := validateEstimationInvariant(ctx, deps, input.Stage, serviceID, tenantID); err != nil {
+		return out, err
 	}
 
 	_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
@@ -1842,6 +1954,12 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return SearchProductMaterialsOutput{Products: nil, Message: "Query cannot be empty"}, err
 	}
 
+	cacheKey := fmt.Sprintf("%s|%d|%t|%.4f", strings.ToLower(strings.TrimSpace(query)), limit, useCatalog, scoreThreshold)
+	if cached, ok := deps.getSearchCache(cacheKey); ok {
+		log.Printf("SearchProductMaterials: cache hit query=%q limit=%d useCatalog=%t minScore=%.2f", query, limit, useCatalog, scoreThreshold)
+		return cached, nil
+	}
+
 	vector, err := deps.EmbeddingClient.Embed(ctx, query)
 	if err != nil {
 		log.Printf("SearchProductMaterials: embedding failed: %v", err)
@@ -1849,7 +1967,8 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	}
 
 	catalogOutput, foundInCatalog := tryCatalogSearchFlow(ctx, deps, query, limit, scoreThreshold, useCatalog, vector)
-	if foundInCatalog && hasHighConfidenceMatch(catalogOutput.Products) {
+	if foundInCatalog && hasStrongCatalogMatch(catalogOutput.Products) {
+		deps.setSearchCache(cacheKey, catalogOutput)
 		return catalogOutput, nil
 	}
 
@@ -1857,6 +1976,7 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	if fallbackErr != nil {
 		if foundInCatalog && len(catalogOutput.Products) > 0 {
 			log.Printf("SearchProductMaterials: fallback search failed, returning catalog-only low-confidence results: %v", fallbackErr)
+			deps.setSearchCache(cacheKey, catalogOutput)
 			return catalogOutput, nil
 		}
 		return fallbackOutput, fallbackErr
@@ -1864,13 +1984,17 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 
 	if foundInCatalog && len(catalogOutput.Products) > 0 {
 		if len(fallbackOutput.Products) == 0 {
+			deps.setSearchCache(cacheKey, catalogOutput)
 			return catalogOutput, nil
 		}
 
 		log.Printf("SearchProductMaterials: catalog had no high-confidence matches, adding fallback collections")
-		return combineCatalogAndFallbackResults(catalogOutput, fallbackOutput, query, scoreThreshold, limit), nil
+		combinedOutput := combineCatalogAndFallbackResults(catalogOutput, fallbackOutput, query, scoreThreshold, limit)
+		deps.setSearchCache(cacheKey, combinedOutput)
+		return combinedOutput, nil
 	}
 
+	deps.setSearchCache(cacheKey, fallbackOutput)
 	return fallbackOutput, nil
 }
 
@@ -2126,6 +2250,15 @@ func searchCatalogRetryQuery(ctx tool.Context, deps *ToolDependencies, retryQuer
 func hasHighConfidenceMatch(products []ProductResult) bool {
 	for _, product := range products {
 		if product.HighConfidence {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStrongCatalogMatch(products []ProductResult) bool {
+	for _, product := range products {
+		if product.Score >= catalogEarlyReturnScoreThreshold {
 			return true
 		}
 	}

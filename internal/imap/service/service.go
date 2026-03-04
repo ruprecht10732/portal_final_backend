@@ -25,10 +25,12 @@ import (
 const (
 	defaultFolder           = "INBOX"
 	defaultSyncBatchSize    = 50
+	maxMessageContentBytes  = 25_000_000
 	maxSyncErrorLength      = 1000
 	defaultPeriodicSyncTTL  = 10 * time.Minute
 	errIMAPKeyNotConfigured = "imap encryption key not configured"
 	errConnectIMAPServer    = "failed to connect to imap server"
+	errMessageTooLarge      = "message is too large to fetch content"
 )
 
 type Service struct {
@@ -298,6 +300,11 @@ func (s *Service) GetMessageContent(ctx context.Context, userID, accountID uuid.
 	if err != nil {
 		return transport.MessageContentResponse{}, err
 	}
+	if sizeBytes, err := s.repo.GetMessageSizeByUID(ctx, accountID, uid); err == nil && sizeBytes > maxMessageContentBytes {
+		return transport.MessageContentResponse{}, apperr.BadRequest(errMessageTooLarge)
+	} else if err != nil {
+		return transport.MessageContentResponse{}, err
+	}
 	password, err := s.decryptPassword(account.IMAPPasswordEncrypted)
 	if err != nil {
 		return transport.MessageContentResponse{}, err
@@ -357,7 +364,7 @@ func (s *Service) SendMessage(ctx context.Context, userID, accountID uuid.UUID, 
 	if err != nil {
 		return err
 	}
-	parentMsgID, refs, err := s.replyHeadersFromUID(account, req.InReply)
+	parentMsgID, refs, err := s.replyHeadersFromUID(ctx, account, req.InReply)
 	if err != nil {
 		return err
 	}
@@ -570,6 +577,11 @@ func (s *Service) loadMessageForReply(ctx context.Context, userID, accountID uui
 	if err != nil {
 		return client.MessageContent{}, repository.Account{}, err
 	}
+	if sizeBytes, err := s.repo.GetMessageSizeByUID(ctx, accountID, uid); err == nil && sizeBytes > maxMessageContentBytes {
+		return client.MessageContent{}, repository.Account{}, apperr.BadRequest(errMessageTooLarge)
+	} else if err != nil {
+		return client.MessageContent{}, repository.Account{}, err
+	}
 	password, err := s.decryptPassword(account.IMAPPasswordEncrypted)
 	if err != nil {
 		return client.MessageContent{}, repository.Account{}, err
@@ -611,9 +623,14 @@ func (s *Service) markAnswered(ctx context.Context, account repository.Account, 
 	return nil
 }
 
-func (s *Service) replyHeadersFromUID(account repository.Account, uid *int64) (*string, *string, error) {
+func (s *Service) replyHeadersFromUID(ctx context.Context, account repository.Account, uid *int64) (*string, *string, error) {
 	if uid == nil {
 		return nil, nil, nil
+	}
+	if sizeBytes, err := s.repo.GetMessageSizeByUID(ctx, account.ID, *uid); err == nil && sizeBytes > maxMessageContentBytes {
+		return nil, nil, apperr.BadRequest(errMessageTooLarge)
+	} else if err != nil {
+		return nil, nil, err
 	}
 	password, err := s.decryptPassword(account.IMAPPasswordEncrypted)
 	if err != nil {

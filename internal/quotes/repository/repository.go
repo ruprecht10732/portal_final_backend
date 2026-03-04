@@ -170,6 +170,7 @@ func buildQuoteListFilters(params ListParams) quoteListFilters {
 const (
 	quoteNotFoundMsg            = "quote not found"
 	quoteGenerateJobNotFoundMsg = "quote generate job not found"
+	errScanQuoteItemFmt         = "failed to scan quote item: %w"
 )
 
 // Repository provides database operations for quotes
@@ -381,7 +382,7 @@ func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, o
 			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
 			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan quote item: %w", err)
+			return nil, fmt.Errorf(errScanQuoteItemFmt, err)
 		}
 		items = append(items, it)
 	}
@@ -389,6 +390,45 @@ func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, o
 		return nil, fmt.Errorf("failed to iterate quote items: %w", err)
 	}
 	return items, nil
+}
+
+// GetItemsByQuoteIDs retrieves all items for the provided quotes in a single query,
+// grouped by quote_id and sorted by sort_order.
+func (r *Repository) GetItemsByQuoteIDs(ctx context.Context, orgID uuid.UUID, quoteIDs []uuid.UUID) (map[uuid.UUID][]QuoteItem, error) {
+	result := make(map[uuid.UUID][]QuoteItem, len(quoteIDs))
+	if len(quoteIDs) == 0 {
+		return result, nil
+	}
+
+	query := `
+		SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
+			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
+		FROM RAC_quote_items
+		WHERE organization_id = $1 AND quote_id = ANY($2)
+		ORDER BY quote_id, sort_order ASC`
+
+	rows, err := r.pool.Query(ctx, query, orgID, quoteIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query quote items by quote ids: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var it QuoteItem
+		if err := rows.Scan(
+			&it.ID, &it.QuoteID, &it.OrganizationID,
+			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
+			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf(errScanQuoteItemFmt, err)
+		}
+		result[it.QuoteID] = append(result[it.QuoteID], it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate quote items by quote ids: %w", err)
+	}
+
+	return result, nil
 }
 
 // UpdateStatus updates the status of a quote
@@ -885,7 +925,7 @@ func (r *Repository) GetItemsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UU
 			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
 			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan quote item: %w", err)
+			return nil, fmt.Errorf(errScanQuoteItemFmt, err)
 		}
 		items = append(items, it)
 	}

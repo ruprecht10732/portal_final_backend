@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -39,11 +40,14 @@ import (
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
+	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/rediskit"
 	"portal_final_backend/platform/validator"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 const storageBucketEnsureErrPrefix = "failed to ensure storage bucket exists: "
@@ -69,19 +73,48 @@ func loadConfigOrPanic() *config.Config {
 
 func main() {
 	cfg := loadConfigOrPanic()
-	var err error
-
-	// Initialize structured logger
 	log := logger.New(cfg.Env)
 	log.Info("starting server", "env", cfg.Env, "addr", cfg.HTTPAddr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// ========================================================================
-	// Infrastructure Layer
-	// ========================================================================
+	runMigrationsOrPanic(ctx, cfg, log)
+	pool := initDBPoolOrPanic(ctx, cfg, log)
+	defer pool.Close()
 
+	eventBus := events.NewInMemoryBus(log)
+	tokenBlocklistRedis, closeTokenBlocklistRedis := initTokenBlocklistRedis(cfg, log)
+	defer closeTokenBlocklistRedis()
+
+	reminderScheduler, closeScheduler := initReminderSchedulerWithCloser(cfg, log)
+	defer closeScheduler()
+
+	sender := initEmailSenderOrPanic(cfg, log)
+	val := validator.New()
+	storageSvc := initStorageOrPanic(ctx, cfg, log)
+	initGotenbergIfEnabled(cfg, log)
+
+	app := buildHTTPApp(appBuildDeps{
+		ctx:                 ctx,
+		cfg:                 cfg,
+		log:                 log,
+		pool:                pool,
+		eventBus:            eventBus,
+		sender:              sender,
+		storageSvc:          storageSvc,
+		val:                 val,
+		reminderScheduler:   reminderScheduler,
+		tokenBlocklistRedis: tokenBlocklistRedis,
+	})
+	serveUntilShutdown(ctx, cfg, log, eventBus, app)
+}
+
+func noOpCloser() {
+	// Intentionally empty: used as a safe default closer when no resource was initialized.
+}
+
+func runMigrationsOrPanic(ctx context.Context, cfg *config.Config, log *logger.Logger) {
 	if err := withRetry(ctx, log, "database migrations", 5, 2*time.Second, func() error {
 		return db.RunMigrations(ctx, cfg, "migrations")
 	}); err != nil {
@@ -89,7 +122,9 @@ func main() {
 		panic("failed to run database migrations: " + err.Error())
 	}
 	log.Info("database migrations complete")
+}
 
+func initDBPoolOrPanic(ctx context.Context, cfg *config.Config, log *logger.Logger) *pgxpool.Pool {
 	var pool *pgxpool.Pool
 	if err := withRetry(ctx, log, "database connection", 5, 2*time.Second, func() error {
 		p, err := db.NewPool(ctx, cfg)
@@ -102,32 +137,59 @@ func main() {
 		log.Error("failed to connect to database", "error", err)
 		panic("failed to connect to database: " + err.Error())
 	}
-	defer pool.Close()
 	log.Info("database connection established")
+	return pool
+}
 
-	// Event bus for decoupled communication between modules
-	eventBus := events.NewInMemoryBus(log)
-
-	reminderScheduler, closeScheduler := initReminderScheduler(cfg, log)
-	if closeScheduler != nil {
-		defer closeScheduler()
+func initTokenBlocklistRedis(cfg *config.Config, log *logger.Logger) (*redis.Client, func()) {
+	if cfg.GetRedisURL() == "" {
+		return nil, noOpCloser
 	}
 
+	redisClient, redisErr := rediskit.NewClient(cfg.GetRedisURL(), cfg.GetRedisTLSInsecure())
+	if redisErr != nil {
+		log.Warn("failed to initialize redis token blocklist", "error", redisErr)
+		return nil, noOpCloser
+	}
+
+	httpkit.SetTokenRevocationLookup(func(ctx context.Context, jti string) (bool, error) {
+		err := redisClient.Get(ctx, "auth:blocklist:jti:"+jti).Err()
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, redis.Nil) {
+			return false, nil
+		}
+		return false, err
+	})
+
+	return redisClient, func() { _ = redisClient.Close() }
+}
+
+func initReminderSchedulerWithCloser(cfg *config.Config, log *logger.Logger) (*scheduler.Client, func()) {
+	client, closer := initReminderScheduler(cfg, log)
+	if closer == nil {
+		return client, noOpCloser
+	}
+	return client, closer
+}
+
+func initEmailSenderOrPanic(cfg *config.Config, log *logger.Logger) email.Sender {
 	sender, err := email.NewSender(cfg)
 	if err != nil {
 		log.Error("failed to initialize email sender", "error", err)
 		panic("failed to initialize email sender: " + err.Error())
 	}
+	return sender
+}
 
-	// Shared validator instance for dependency injection
-	val := validator.New()
-
-	// Storage service for file uploads (MinIO)
+func initStorageOrPanic(ctx context.Context, cfg *config.Config, log *logger.Logger) storage.StorageService {
 	storageSvc, err := storage.NewMinIOService(cfg)
 	if err != nil {
 		log.Error("failed to initialize storage service", "error", err)
 		panic("failed to initialize storage service: " + err.Error())
 	}
+
 	ensureBucket(ctx, log, storageSvc, "lead-service-attachments", cfg.GetMinioBucketLeadServiceAttachments())
 	ensureBucket(ctx, log, storageSvc, "catalog-assets", cfg.GetMinioBucketCatalogAssets())
 	ensureBucket(ctx, log, storageSvc, "partner-logos", cfg.GetMinioBucketPartnerLogos())
@@ -144,24 +206,49 @@ func main() {
 		"quoteAttachmentsBucket", cfg.GetMinioBucketQuoteAttachments(),
 	)
 
-	// Gotenberg PDF generator
-	if cfg.IsGotenbergEnabled() {
-		pdf.Init(cfg.GetGotenbergURL(), cfg.GetGotenbergUsername(), cfg.GetGotenbergPassword())
-		log.Info("gotenberg PDF generator initialized", "url", cfg.GetGotenbergURL())
+	return storageSvc
+}
+
+func initGotenbergIfEnabled(cfg *config.Config, log *logger.Logger) {
+	if !cfg.IsGotenbergEnabled() {
+		return
 	}
+	pdf.Init(cfg.GetGotenbergURL(), cfg.GetGotenbergUsername(), cfg.GetGotenbergPassword())
+	log.Info("gotenberg PDF generator initialized", "url", cfg.GetGotenbergURL())
+}
 
-	// ========================================================================
-	// Domain Modules (Composition Root)
-	// ========================================================================
+type appBuildDeps struct {
+	ctx                 context.Context
+	cfg                 *config.Config
+	log                 *logger.Logger
+	pool                *pgxpool.Pool
+	eventBus            *events.InMemoryBus
+	sender              email.Sender
+	storageSvc          storage.StorageService
+	val                 *validator.Validator
+	reminderScheduler   *scheduler.Client
+	tokenBlocklistRedis *redis.Client
+}
 
-	// Notification module subscribes to domain events (not HTTP-facing)
+func buildHTTPApp(deps appBuildDeps) *apphttp.App {
+	ctx := deps.ctx
+	cfg := deps.cfg
+	log := deps.log
+	pool := deps.pool
+	eventBus := deps.eventBus
+	sender := deps.sender
+	storageSvc := deps.storageSvc
+	val := deps.val
+	reminderScheduler := deps.reminderScheduler
+	tokenBlocklistRedis := deps.tokenBlocklistRedis
+
 	notificationModule := notification.New(pool, sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
+	notificationModule.SetQuoteAcceptedPDFScheduler(reminderScheduler)
 	whatsappClient := whatsapp.NewClient(cfg, log)
 	notificationModule.SetWhatsAppSender(whatsappClient)
 	notificationModule.SetNotificationOutbox(outbox.New(pool))
 
-	// Initialize domain modules
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)
 	identityModule.RegisterHandlers(eventBus)
 	notificationModule.SetOrganizationSettingsReader(identityModule.Service())
@@ -176,6 +263,8 @@ func main() {
 	}
 
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
+	authModule.Service().SetAccessTokenBlocklistRedis(tokenBlocklistRedis)
+
 	leadsModule, err := leads.NewModule(pool, eventBus, storageSvc, val, cfg, log)
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
@@ -200,27 +289,22 @@ func main() {
 	notificationModule.SetOrganizationMemberReader(leadsModule.Repository())
 	notificationModule.SetLeadAssigneeReader(adapters.NewLeadAssigneeReader(leadsModule.Repository()))
 
-	// Share SSE service with notification module so quote events reach agents
 	notificationModule.SetSSE(leadsModule.SSE())
 	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
 	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender, eventBus, reminderScheduler)
 	appointmentsModule.SetSSE(leadsModule.SSE())
-
-	// Set appointment booker on leads module (breaks circular dependency)
 	appointmentBooker := adapters.NewAppointmentsAdapter(appointmentsModule.Service)
 	leadsModule.SetAppointmentBooker(appointmentBooker)
+	leadsModule.SetCallLogScheduler(reminderScheduler)
 
-	// Energy label module for lead enrichment
 	energyLabelModule := energylabel.NewModule(cfg, log)
 	if energyLabelModule.IsEnabled() {
 		energyLabelEnricher := adapters.NewEnergyLabelAdapter(energyLabelModule.Service())
 		leadsModule.SetEnergyLabelEnricher(energyLabelEnricher)
 	}
 
-	// Lead enrichment module for PDOK/CBS signals
 	leadEnrichmentModule := leadenrichment.NewModule(log)
-	leadEnricher := adapters.NewLeadEnrichmentAdapter(leadEnrichmentModule.Service())
-	leadsModule.SetLeadEnricher(leadEnricher)
+	leadsModule.SetLeadEnricher(adapters.NewLeadEnrichmentAdapter(leadEnrichmentModule.Service()))
 
 	mapsModule := maps.NewModule(log)
 	servicesModule := services.NewModule(pool, val, log)
@@ -233,90 +317,46 @@ func main() {
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
 	wireMoneybirdConfig(cfg, log, quotesModule.Service())
 
-	// Wire public viewers for lead portal (quotes + appointments)
-	quotePublicViewer := adapters.NewQuotePublicAdapter(quotesModule.Service())
-	appointmentPublicViewer := adapters.NewAppointmentPublicAdapter(appointmentsModule.Service)
-	appointmentSlotViewer := adapters.NewAppointmentSlotAdapter(appointmentsModule.Service)
-	leadsModule.SetPublicViewers(quotePublicViewer, appointmentPublicViewer, appointmentSlotViewer)
+	leadsModule.SetPublicViewers(
+		adapters.NewQuotePublicAdapter(quotesModule.Service()),
+		adapters.NewAppointmentPublicAdapter(appointmentsModule.Service),
+		adapters.NewAppointmentSlotAdapter(appointmentsModule.Service),
+	)
+	leadsModule.SetPublicOrgViewer(adapters.NewOrganizationPublicAdapter(identityModule.Service()))
+	leadsModule.SetPartnerOfferCreator(adapters.NewPartnerOfferAdapter(partnersModule.Service()))
+	partnersModule.Service().SetOfferSummaryGenerator(adapters.NewOfferSummaryGeneratorAdapter(leadsModule.OfferSummaryGenerator()))
 
-	orgPublicViewer := adapters.NewOrganizationPublicAdapter(identityModule.Service())
-	leadsModule.SetPublicOrgViewer(orgPublicViewer)
-
-	offerAdapter := adapters.NewPartnerOfferAdapter(partnersModule.Service())
-	leadsModule.SetPartnerOfferCreator(offerAdapter)
-
-	offerSummaryAdapter := adapters.NewOfferSummaryGeneratorAdapter(leadsModule.OfferSummaryGenerator())
-	partnersModule.Service().SetOfferSummaryGenerator(offerSummaryAdapter)
-
-	// Share SSE service with quotes module so public viewers get real-time updates
 	quotesModule.SetSSE(leadsModule.SSE())
-
-	// Inject storage for PDF download endpoints
 	quotesModule.SetStorageForPDF(storageSvc, cfg.GetMinioBucketQuotePDFs())
-
-	// Inject bucket for manual quote attachment uploads
 	quotesModule.SetAttachmentBucket(cfg.GetMinioBucketQuoteAttachments())
-
-	// Inject catalog bucket for attachment preview (catalog-sourced docs)
 	quotesModule.SetCatalogBucket(cfg.GetMinioBucketCatalogAssets())
+	quotesModule.Service().SetTimelineWriter(adapters.NewQuotesTimelineWriter(leadsModule.Repository()))
 
-	// Wire timeline integration: quotes → leads timeline
-	quotesTimeline := adapters.NewQuotesTimelineWriter(leadsModule.Repository())
-	quotesModule.Service().SetTimelineWriter(quotesTimeline)
-
-	// Wire contact reader: quotes → leads + identity + auth (for email enrichment)
 	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service(), authModule.Repository())
 	quotesModule.Service().SetQuoteContactReader(quotesContacts)
+	quotesModule.SetLogoPresigner(adapters.NewQuotesLogoPresigner(storageSvc, cfg.GetMinioBucketOrganizationLogos()))
 
-	// Wire logo presigner: quotes → storage (presigned logo download URLs in public responses)
-	logoPresigner := adapters.NewQuotesLogoPresigner(storageSvc, cfg.GetMinioBucketOrganizationLogos())
-	quotesModule.SetLogoPresigner(logoPresigner)
-
-	// Wire quote terms resolver: quotes → workflow overrides + org defaults
 	quoteTermsResolver := adapters.NewQuoteTermsResolverAdapter(identityModule.Service(), identityModule.Service(), leadsModule.Repository())
 	quotesModule.Service().SetQuoteTermsResolver(quoteTermsResolver)
-
-	// Wire quote acceptance processor: PDF generation + upload + emails
 	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identityModule.Service(), quotesContacts, storageSvc, cfg, quoteTermsResolver)
 	quotesModule.SetPDFGenerator(quotePDFProcessor)
 	notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
 
-	// Wire quote activity writer so notification handlers persist activity history
-	quoteActivityWriter := adapters.NewQuoteActivityWriter(quotesModule.Repository())
-	notificationModule.SetQuoteActivityWriter(quoteActivityWriter)
+	notificationModule.SetQuoteActivityWriter(adapters.NewQuoteActivityWriter(quotesModule.Repository()))
+	notificationModule.SetOfferTimelineWriter(adapters.NewPartnerOffersTimelineWriter(leadsModule.Repository()))
+	notificationModule.SetLeadTimelineWriter(adapters.NewLeadTimelineWriter(leadsModule.Repository()))
+	leadsModule.SetCatalogReader(adapters.NewCatalogProductReader(catalogModule.Repository()))
+	leadsModule.SetQuoteDrafter(adapters.NewQuotesDraftWriter(quotesModule.Service()))
+	quotesModule.Service().SetQuotePromptGenerator(adapters.NewQuoteGeneratorAdapter(leadsModule))
 
-	// Wire partner-offer timeline writer so offer events create lead timeline entries
-	offerTimelineWriter := adapters.NewPartnerOffersTimelineWriter(leadsModule.Repository())
-	notificationModule.SetOfferTimelineWriter(offerTimelineWriter)
-
-	// Wire lead timeline writer for generic lead events (e.g., WhatsApp sent)
-	leadTimelineWriter := adapters.NewLeadTimelineWriter(leadsModule.Repository())
-	notificationModule.SetLeadTimelineWriter(leadTimelineWriter)
-
-	// Wire catalog reader: leads → catalog (for hydrating product search results)
-	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
-	leadsModule.SetCatalogReader(catalogReader)
-
-	// Wire quote drafter: leads → quotes (for AI-drafted quotes)
-	quotesDrafter := adapters.NewQuotesDraftWriter(quotesModule.Service())
-	leadsModule.SetQuoteDrafter(quotesDrafter)
-
-	// Wire prompt-based quote generator: quotes → leads (for /quotes/generate endpoint)
-	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule)
-	quotesModule.Service().SetQuotePromptGenerator(quoteGenAdapter)
-
-	// Webhook module for external form capture
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
-
-	// Exports module for Google Ads conversions
 	exportsModule := exports.NewModule(pool, val)
 	wireExportsEncryptionKey(cfg, log, exportsModule)
 
-	// ========================================================================
-	// HTTP Layer
-	// ========================================================================
+	wireIMAPEncryptionKey(cfg, log, imapModule.Service())
+	wireSMTPEncryptionKeyForIMAP(cfg, log, imapModule.Service())
 
-	app := &apphttp.App{
+	return &apphttp.App{
 		Config:   cfg,
 		Logger:   log,
 		Health:   db.NewPoolAdapter(pool),
@@ -338,16 +378,16 @@ func main() {
 			exportsModule,
 		},
 	}
+}
 
-	wireIMAPEncryptionKey(cfg, log, imapModule.Service())
-	wireSMTPEncryptionKeyForIMAP(cfg, log, imapModule.Service())
-
+func serveUntilShutdown(ctx context.Context, cfg *config.Config, log *logger.Logger, eventBus *events.InMemoryBus, app *apphttp.App) {
 	engine := router.New(app)
+	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: engine}
 
 	srvErr := make(chan error, 1)
 	go func() {
 		log.Info("server listening", "addr", cfg.HTTPAddr)
-		srvErr <- engine.Run(cfg.HTTPAddr)
+		srvErr <- httpServer.ListenAndServe()
 	}()
 
 	select {
@@ -355,9 +395,14 @@ func main() {
 		log.Info("shutdown signal received, gracefully shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = shutdownCtx
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Error("http server shutdown failed", "error", err)
+		}
+		if err := eventBus.Shutdown(shutdownCtx); err != nil {
+			log.Error("event bus shutdown timed out", "error", err)
+		}
 	case err := <-srvErr:
-		if err != nil {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("server error", "error", err)
 			panic("server error: " + err.Error())
 		}
