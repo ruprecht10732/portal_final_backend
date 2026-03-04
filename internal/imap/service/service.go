@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"portal_final_backend/internal/imap/client"
+	"portal_final_backend/internal/events"
 	identityrepo "portal_final_backend/internal/identity/repository"
+	"portal_final_backend/internal/imap/client"
 	"portal_final_backend/internal/imap/repository"
 	"portal_final_backend/internal/imap/sanitize"
 	"portal_final_backend/internal/imap/transport"
@@ -22,10 +23,12 @@ import (
 )
 
 const (
-	defaultFolder          = "INBOX"
-	defaultSyncBatchSize   = 50
-	maxSyncErrorLength     = 1000
-	defaultPeriodicSyncTTL = 10 * time.Minute
+	defaultFolder           = "INBOX"
+	defaultSyncBatchSize    = 50
+	maxSyncErrorLength      = 1000
+	defaultPeriodicSyncTTL  = 10 * time.Minute
+	errIMAPKeyNotConfigured = "imap encryption key not configured"
+	errConnectIMAPServer    = "failed to connect to imap server"
 )
 
 type Service struct {
@@ -33,17 +36,20 @@ type Service struct {
 	scheduler     IMAPSyncScheduler
 	encryptionKey []byte
 	lockMap       sync.Map
+	eventBus      events.Bus
 }
 
 type IMAPSyncScheduler interface {
 	EnqueueIMAPSyncAccount(ctx context.Context, payload scheduler.IMAPSyncAccountPayload) error
 }
 
-func New(repo *repository.Repository, _ *identityrepo.Repository) *Service {
-	return &Service{repo: repo}
+func New(repo *repository.Repository, _ *identityrepo.Repository, bus events.Bus) *Service {
+	return &Service{repo: repo, eventBus: bus}
 }
 
-func (s *Service) SetSMTPEncryptionKey(_ []byte) {}
+func (s *Service) SetSMTPEncryptionKey(_ []byte) {
+	// SMTP credentials are stored encrypted with the same key as IMAP credentials.
+}
 
 func (s *Service) SetEncryptionKey(key []byte) {
 	s.encryptionKey = key
@@ -55,7 +61,7 @@ func (s *Service) SetScheduler(scheduler IMAPSyncScheduler) {
 
 func (s *Service) CreateAccount(ctx context.Context, userID uuid.UUID, req transport.CreateAccountRequest) (repository.Account, error) {
 	if len(s.encryptionKey) != 32 {
-		return repository.Account{}, apperr.Internal("imap encryption key not configured")
+		return repository.Account{}, apperr.Internal(errIMAPKeyNotConfigured)
 	}
 	encryptedPassword, err := imapcrypto.Encrypt(req.IMAPPassword, s.encryptionKey)
 	if err != nil {
@@ -66,17 +72,17 @@ func (s *Service) CreateAccount(ctx context.Context, userID uuid.UUID, req trans
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	smtpHost, smtpPort, smtpUsername, smtpPasswordEncrypted, smtpFromEmail, smtpFromName, err := s.resolveSMTPSettings(
-		strings.TrimSpace(req.EmailAddress),
-		strings.TrimSpace(req.IMAPHost),
-		strings.TrimSpace(req.IMAPPassword),
-		req.SMTPHost,
-		req.SMTPPort,
-		req.SMTPUsername,
-		req.SMTPPassword,
-		req.SMTPFromEmail,
-		req.SMTPFromName,
-	)
+	smtpHost, smtpPort, smtpUsername, smtpPasswordEncrypted, smtpFromEmail, smtpFromName, err := s.resolveSMTPSettings(smtpSettingsInput{
+		emailAddress: strings.TrimSpace(req.EmailAddress),
+		imapHost:     strings.TrimSpace(req.IMAPHost),
+		imapPassword: strings.TrimSpace(req.IMAPPassword),
+		reqHost:      req.SMTPHost,
+		reqPort:      req.SMTPPort,
+		reqUsername:  req.SMTPUsername,
+		reqPassword:  req.SMTPPassword,
+		reqFromEmail: req.SMTPFromEmail,
+		reqFromName:  req.SMTPFromName,
+	})
 	if err != nil {
 		return repository.Account{}, err
 	}
@@ -106,7 +112,7 @@ func (s *Service) UpdateAccount(ctx context.Context, userID, accountID uuid.UUID
 	var encryptedPassword *string
 	if req.IMAPPassword != nil && strings.TrimSpace(*req.IMAPPassword) != "" {
 		if len(s.encryptionKey) != 32 {
-			return repository.Account{}, apperr.Internal("imap encryption key not configured")
+			return repository.Account{}, apperr.Internal(errIMAPKeyNotConfigured)
 		}
 		enc, err := imapcrypto.Encrypt(strings.TrimSpace(*req.IMAPPassword), s.encryptionKey)
 		if err != nil {
@@ -114,14 +120,14 @@ func (s *Service) UpdateAccount(ctx context.Context, userID, accountID uuid.UUID
 		}
 		encryptedPassword = &enc
 	}
-	smtpHost, smtpPort, smtpUsername, smtpPasswordEncrypted, smtpFromEmail, smtpFromName, err := s.resolveSMTPUpdate(
-		req.SMTPHost,
-		req.SMTPPort,
-		req.SMTPUsername,
-		req.SMTPPassword,
-		req.SMTPFromEmail,
-		req.SMTPFromName,
-	)
+	smtpHost, smtpPort, smtpUsername, smtpPasswordEncrypted, smtpFromEmail, smtpFromName, err := s.resolveSMTPUpdate(smtpUpdateInput{
+		reqHost:      req.SMTPHost,
+		reqPort:      req.SMTPPort,
+		reqUsername:  req.SMTPUsername,
+		reqPassword:  req.SMTPPassword,
+		reqFromEmail: req.SMTPFromEmail,
+		reqFromName:  req.SMTPFromName,
+	})
 	if err != nil {
 		return repository.Account{}, err
 	}
@@ -170,7 +176,7 @@ func (s *Service) TestAccountConnection(ctx context.Context, userID, accountID u
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		return apperr.BadRequest("failed to connect to imap server")
+		return apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
 
@@ -220,6 +226,10 @@ func (s *Service) ListMessages(ctx context.Context, userID, accountID uuid.UUID,
 	})
 }
 
+func (s *Service) GetUnreadCount(ctx context.Context, userID uuid.UUID) (int, error) {
+	return s.repo.CountUnreadMessagesByUser(ctx, userID)
+}
+
 func (s *Service) DeleteMessage(ctx context.Context, userID, accountID uuid.UUID, uid int64) error {
 	account, err := s.repo.GetAccountByUser(ctx, accountID, userID)
 	if err != nil {
@@ -237,7 +247,7 @@ func (s *Service) DeleteMessage(ctx context.Context, userID, accountID uuid.UUID
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		return apperr.BadRequest("failed to connect to imap server")
+		return apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
 
@@ -267,7 +277,7 @@ func (s *Service) SetMessageSeen(ctx context.Context, userID, accountID uuid.UUI
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		return apperr.BadRequest("failed to connect to imap server")
+		return apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
 
@@ -300,7 +310,7 @@ func (s *Service) GetMessageContent(ctx context.Context, userID, accountID uuid.
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		return transport.MessageContentResponse{}, apperr.BadRequest("failed to connect to imap server")
+		return transport.MessageContentResponse{}, apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
 
@@ -347,11 +357,19 @@ func (s *Service) SendMessage(ctx context.Context, userID, accountID uuid.UUID, 
 	if err != nil {
 		return err
 	}
-	parentMsgID, refs, err := s.replyHeadersFromUID(ctx, account, req.InReply)
+	parentMsgID, refs, err := s.replyHeadersFromUID(account, req.InReply)
 	if err != nil {
 		return err
 	}
-	return s.sendViaAccountSMTP(ctx, account, req.To, req.Cc, req.Subject, req.Body, req.IsHTML, parentMsgID, refs)
+	return s.sendViaAccountSMTP(ctx, account, smtpSendRequest{
+		To:         req.To,
+		Cc:         req.Cc,
+		Subject:    req.Subject,
+		Body:       req.Body,
+		IsHTML:     req.IsHTML,
+		InReplyTo:  parentMsgID,
+		References: refs,
+	})
 }
 
 func (s *Service) ReplyMessage(ctx context.Context, userID, accountID uuid.UUID, uid int64, req transport.ReplyRequest, includeAll bool) error {
@@ -364,7 +382,15 @@ func (s *Service) ReplyMessage(ctx context.Context, userID, accountID uuid.UUID,
 		return apperr.BadRequest("no valid reply recipients found")
 	}
 	subject := normalizeReplySubject(content.Subject)
-	if err := s.sendViaAccountSMTP(ctx, account, recipients.To, recipients.Cc, subject, req.Body, req.IsHTML, content.MessageID, buildReferences(content.MessageID)); err != nil {
+	if err := s.sendViaAccountSMTP(ctx, account, smtpSendRequest{
+		To:         recipients.To,
+		Cc:         recipients.Cc,
+		Subject:    subject,
+		Body:       req.Body,
+		IsHTML:     req.IsHTML,
+		InReplyTo:  content.MessageID,
+		References: buildReferences(content.MessageID),
+	}); err != nil {
 		return err
 	}
 	return s.markAnswered(ctx, account, uid)
@@ -379,16 +405,20 @@ type smtpEnvelope struct {
 	FromName  string
 }
 
+type smtpSendRequest struct {
+	To         []string
+	Cc         []string
+	Subject    string
+	Body       string
+	IsHTML     *bool
+	InReplyTo  *string
+	References *string
+}
+
 func (s *Service) sendViaAccountSMTP(
 	ctx context.Context,
 	account repository.Account,
-	to []string,
-	cc []string,
-	subject string,
-	body string,
-	isHTML *bool,
-	inReplyTo *string,
-	references *string,
+	req smtpSendRequest,
 ) error {
 	env, err := s.loadSMTPSender(account)
 	if err != nil {
@@ -398,29 +428,29 @@ func (s *Service) sendViaAccountSMTP(
 	if err := msg.FromFormat(env.FromName, env.FromEmail); err != nil {
 		return apperr.Validation("invalid smtp from address")
 	}
-	if err := msg.To(to...); err != nil {
+	if err := msg.To(req.To...); err != nil {
 		return apperr.Validation("invalid recipient list")
 	}
-	if len(cc) > 0 {
-		if err := msg.Cc(cc...); err != nil {
+	if len(req.Cc) > 0 {
+		if err := msg.Cc(req.Cc...); err != nil {
 			return apperr.Validation("invalid cc recipient list")
 		}
 	}
-	msg.Subject(subject)
+	msg.Subject(req.Subject)
 	useHTML := true
-	if isHTML != nil {
-		useHTML = *isHTML
+	if req.IsHTML != nil {
+		useHTML = *req.IsHTML
 	}
 	if useHTML {
-		msg.SetBodyString(gomail.TypeTextHTML, body)
+		msg.SetBodyString(gomail.TypeTextHTML, req.Body)
 	} else {
-		msg.SetBodyString(gomail.TypeTextPlain, body)
+		msg.SetBodyString(gomail.TypeTextPlain, req.Body)
 	}
-	if inReplyTo != nil && strings.TrimSpace(*inReplyTo) != "" {
-		msg.SetGenHeader("In-Reply-To", strings.TrimSpace(*inReplyTo))
+	if req.InReplyTo != nil && strings.TrimSpace(*req.InReplyTo) != "" {
+		msg.SetGenHeader("In-Reply-To", strings.TrimSpace(*req.InReplyTo))
 	}
-	if references != nil && strings.TrimSpace(*references) != "" {
-		msg.SetGenHeader("References", strings.TrimSpace(*references))
+	if req.References != nil && strings.TrimSpace(*req.References) != "" {
+		msg.SetGenHeader("References", strings.TrimSpace(*req.References))
 	}
 	clientSMTP, err := gomail.NewClient(env.Host,
 		gomail.WithPort(env.Port),
@@ -464,34 +494,45 @@ func (s *Service) loadSMTPSender(account repository.Account) (smtpEnvelope, erro
 	}, nil
 }
 
-func (s *Service) resolveSMTPSettings(
-	emailAddress string,
-	imapHost string,
-	imapPassword string,
-	reqHost *string,
-	reqPort *int,
-	reqUsername *string,
-	reqPassword *string,
-	reqFromEmail *string,
-	reqFromName *string,
-) (*string, *int, *string, *string, *string, *string, error) {
-	host := trimPtr(reqHost)
+type smtpSettingsInput struct {
+	emailAddress string
+	imapHost     string
+	imapPassword string
+	reqHost      *string
+	reqPort      *int
+	reqUsername  *string
+	reqPassword  *string
+	reqFromEmail *string
+	reqFromName  *string
+}
+
+type smtpUpdateInput struct {
+	reqHost      *string
+	reqPort      *int
+	reqUsername  *string
+	reqPassword  *string
+	reqFromEmail *string
+	reqFromName  *string
+}
+
+func (s *Service) resolveSMTPSettings(input smtpSettingsInput) (*string, *int, *string, *string, *string, *string, error) {
+	host := trimPtr(input.reqHost)
 	if host == nil || *host == "" {
-		defaultHost := imapHost
+		defaultHost := input.imapHost
 		host = &defaultHost
 	}
-	port := reqPort
+	port := input.reqPort
 	if port == nil || *port <= 0 {
 		defaultPort := 587
 		port = &defaultPort
 	}
-	username := trimPtr(reqUsername)
+	username := trimPtr(input.reqUsername)
 	if username == nil || *username == "" {
-		username = &emailAddress
+		username = &input.emailAddress
 	}
-	smtpPassword := strings.TrimSpace(imapPassword)
-	if reqPassword != nil && strings.TrimSpace(*reqPassword) != "" {
-		smtpPassword = strings.TrimSpace(*reqPassword)
+	smtpPassword := strings.TrimSpace(input.imapPassword)
+	if input.reqPassword != nil && strings.TrimSpace(*input.reqPassword) != "" {
+		smtpPassword = strings.TrimSpace(*input.reqPassword)
 	}
 	if smtpPassword == "" {
 		return nil, nil, nil, nil, nil, nil, apperr.Validation("smtp password or imap password is required")
@@ -501,34 +542,27 @@ func (s *Service) resolveSMTPSettings(
 		return nil, nil, nil, nil, nil, nil, apperr.Internal("failed to encrypt smtp password")
 	}
 	passwordEncrypted := &enc
-	fromEmail := trimPtr(reqFromEmail)
+	fromEmail := trimPtr(input.reqFromEmail)
 	if fromEmail == nil || *fromEmail == "" {
-		fromEmail = &emailAddress
+		fromEmail = &input.emailAddress
 	}
-	fromName := trimPtr(reqFromName)
+	fromName := trimPtr(input.reqFromName)
 	return host, port, username, passwordEncrypted, fromEmail, fromName, nil
 }
 
-func (s *Service) resolveSMTPUpdate(
-	reqHost *string,
-	reqPort *int,
-	reqUsername *string,
-	reqPassword *string,
-	reqFromEmail *string,
-	reqFromName *string,
-) (*string, *int, *string, *string, *string, *string, error) {
+func (s *Service) resolveSMTPUpdate(input smtpUpdateInput) (*string, *int, *string, *string, *string, *string, error) {
 	var passwordEncrypted *string
-	if reqPassword != nil {
-		if strings.TrimSpace(*reqPassword) == "" {
+	if input.reqPassword != nil {
+		if strings.TrimSpace(*input.reqPassword) == "" {
 			return nil, nil, nil, nil, nil, nil, apperr.Validation("smtp password cannot be empty")
 		}
-		enc, err := imapcrypto.Encrypt(strings.TrimSpace(*reqPassword), s.encryptionKey)
+		enc, err := imapcrypto.Encrypt(strings.TrimSpace(*input.reqPassword), s.encryptionKey)
 		if err != nil {
 			return nil, nil, nil, nil, nil, nil, apperr.Internal("failed to encrypt smtp password")
 		}
 		passwordEncrypted = &enc
 	}
-	return trimPtr(reqHost), reqPort, trimPtr(reqUsername), passwordEncrypted, trimPtr(reqFromEmail), trimPtr(reqFromName), nil
+	return trimPtr(input.reqHost), input.reqPort, trimPtr(input.reqUsername), passwordEncrypted, trimPtr(input.reqFromEmail), trimPtr(input.reqFromName), nil
 }
 
 func (s *Service) loadMessageForReply(ctx context.Context, userID, accountID uuid.UUID, uid int64) (client.MessageContent, repository.Account, error) {
@@ -547,7 +581,7 @@ func (s *Service) loadMessageForReply(ctx context.Context, userID, accountID uui
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		return client.MessageContent{}, repository.Account{}, apperr.BadRequest("failed to connect to imap server")
+		return client.MessageContent{}, repository.Account{}, apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
 	content, err := imapClient.GetMessageContent(account.FolderName, uid)
@@ -577,7 +611,7 @@ func (s *Service) markAnswered(ctx context.Context, account repository.Account, 
 	return nil
 }
 
-func (s *Service) replyHeadersFromUID(ctx context.Context, account repository.Account, uid *int64) (*string, *string, error) {
+func (s *Service) replyHeadersFromUID(account repository.Account, uid *int64) (*string, *string, error) {
 	if uid == nil {
 		return nil, nil, nil
 	}
@@ -592,7 +626,7 @@ func (s *Service) replyHeadersFromUID(ctx context.Context, account repository.Ac
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		return nil, nil, apperr.BadRequest("failed to connect to imap server")
+		return nil, nil, apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
 	content, err := imapClient.GetMessageContent(account.FolderName, *uid)
@@ -708,9 +742,13 @@ func (s *Service) syncAccount(ctx context.Context, account repository.Account) e
 		return err
 	}
 
+	maxUID := s.getMaxUIDOrZero(ctx, account.ID, account.FolderName)
+
 	inputs := make([]repository.UpsertMessageInput, 0, len(metadata))
 	now := time.Now().UTC()
 	for _, item := range metadata {
+		s.publishNewEmailEvent(ctx, account, item, maxUID)
+
 		inputs = append(inputs, repository.UpsertMessageInput{
 			AccountID:      account.ID,
 			FolderName:     account.FolderName,
@@ -745,13 +783,46 @@ func (s *Service) syncAccount(ctx context.Context, account repository.Account) e
 
 func (s *Service) decryptPassword(encrypted string) (string, error) {
 	if len(s.encryptionKey) != 32 {
-		return "", apperr.Internal("imap encryption key not configured")
+		return "", apperr.Internal(errIMAPKeyNotConfigured)
 	}
 	password, err := imapcrypto.Decrypt(encrypted, s.encryptionKey)
 	if err != nil {
 		return "", apperr.Internal("failed to decrypt imap password")
 	}
 	return password, nil
+}
+
+func (s *Service) getMaxUIDOrZero(ctx context.Context, accountID uuid.UUID, folderName string) int64 {
+	uid, err := s.repo.GetMaxUID(ctx, accountID, folderName)
+	if err != nil {
+		return 0
+	}
+	return uid
+}
+
+func (s *Service) publishNewEmailEvent(ctx context.Context, account repository.Account, item client.MessageMetadata, maxUID int64) {
+	if item.UID <= maxUID || item.Seen || s.eventBus == nil {
+		return
+	}
+
+	msgID := ""
+	if item.MessageID != nil {
+		msgID = *item.MessageID
+	}
+	fromAddr := ""
+	if item.FromAddress != nil {
+		fromAddr = *item.FromAddress
+	}
+
+	s.eventBus.Publish(ctx, events.NewEmailReceived{
+		BaseEvent:   events.NewBaseEvent(),
+		AccountID:   account.ID,
+		UserID:      account.UserID,
+		MessageID:   msgID,
+		FromAddress: fromAddr,
+		Subject:     item.Subject,
+		UID:         item.UID,
+	})
 }
 
 func (s *Service) tryLock(accountID uuid.UUID) bool {

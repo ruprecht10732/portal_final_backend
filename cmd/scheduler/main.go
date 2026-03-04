@@ -78,6 +78,7 @@ func main() {
 	identityReader := identityrepo.New(pool)
 	identitySvc := identityservice.New(identityReader, nil, nil, "", nil)
 	notificationModule.SetOrganizationSettingsReader(identityReader)
+	notificationModule.SetUserTenancyReader(identitySvc)
 	notificationModule.SetWorkflowResolver(identitySvc)
 
 	val := validator.New()
@@ -127,7 +128,7 @@ func main() {
 		panic("failed to initialize scheduler worker: " + err.Error())
 	}
 	worker.SetQuoteJobProcessor(quotesModule.Service())
-	imapModule := imap.NewModule(pool, val)
+	imapModule := imap.NewModule(pool, val, eventBus)
 	worker.SetIMAPSyncProcessor(imapModule.Service())
 	wireSchedulerIMAPEncryptionKey(cfg, log, imapModule.Service())
 

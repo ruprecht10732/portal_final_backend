@@ -59,11 +59,17 @@ func ensureBucket(ctx context.Context, log *logger.Logger, storageSvc storage.St
 	}
 }
 
-func main() {
+func loadConfigOrPanic() *config.Config {
 	cfg, err := config.Load()
 	if err != nil {
 		panic("failed to load config: " + err.Error())
 	}
+	return cfg
+}
+
+func main() {
+	cfg := loadConfigOrPanic()
+	var err error
 
 	// Initialize structured logger
 	log := logger.New(cfg.Env)
@@ -159,10 +165,11 @@ func main() {
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)
 	identityModule.RegisterHandlers(eventBus)
 	notificationModule.SetOrganizationSettingsReader(identityModule.Service())
+	notificationModule.SetUserTenancyReader(identityModule.Service())
 	notificationModule.SetWorkflowResolver(identityModule.Service())
 
 	wireSMTPEncryptionKey(cfg, log, identityModule.Service(), notificationModule)
-	imapModule := imap.NewModule(pool, val)
+	imapModule := imap.NewModule(pool, val, eventBus)
 	if reminderScheduler != nil {
 		imapModule.Service().SetScheduler(reminderScheduler)
 		go runIMAPPeriodicSweep(ctx, reminderScheduler, log)

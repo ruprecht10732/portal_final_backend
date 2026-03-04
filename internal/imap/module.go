@@ -1,11 +1,12 @@
 package imap
 
 import (
+	"portal_final_backend/internal/events"
 	apphttp "portal_final_backend/internal/http"
+	identityrepo "portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/imap/handler"
 	"portal_final_backend/internal/imap/repository"
 	"portal_final_backend/internal/imap/service"
-	identityrepo "portal_final_backend/internal/identity/repository"
 	"portal_final_backend/platform/validator"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,10 +17,10 @@ type Module struct {
 	service *service.Service
 }
 
-func NewModule(pool *pgxpool.Pool, val *validator.Validator) *Module {
+func NewModule(pool *pgxpool.Pool, val *validator.Validator, bus events.Bus) *Module {
 	repo := repository.New(pool)
 	identityRepository := identityrepo.New(pool)
-	svc := service.New(repo, identityRepository)
+	svc := service.New(repo, identityRepository, bus)
 	h := handler.New(svc, val)
 	return &Module{
 		handler: h,

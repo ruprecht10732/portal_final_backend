@@ -30,6 +30,7 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.ListAccounts)
+	rg.GET("/unread-count", h.GetUnreadCount)
 	rg.POST("", h.CreateAccount)
 	rg.POST("/detect", h.DetectAccount)
 	rg.PATCH("/:id", h.UpdateAccount)
@@ -44,6 +45,20 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/messages/:uid/unseen", h.MarkMessageUnseen)
 	rg.GET("/:id/messages/:uid/content", h.GetMessageContent)
 	rg.POST("/:id/messages/:uid/delete", h.DeleteMessage)
+}
+
+func (h *Handler) GetUnreadCount(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	count, err := h.svc.GetUnreadCount(c.Request.Context(), identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.UnreadCountResponse{Count: count})
 }
 
 func (h *Handler) DetectAccount(c *gin.Context) {

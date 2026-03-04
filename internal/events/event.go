@@ -591,3 +591,20 @@ type PhotoAnalysisFailed struct {
 }
 
 func (e PhotoAnalysisFailed) EventName() string { return "ai.photo_analysis.failed" }
+
+// =============================================================================
+// IMAP Domain Events
+// =============================================================================
+
+// NewEmailReceived is published when a new email arrives in a synced IMAP account.
+type NewEmailReceived struct {
+	BaseEvent
+	AccountID   uuid.UUID `json:"accountId"`
+	UserID      uuid.UUID `json:"userId"`
+	MessageID   string    `json:"messageId"`
+	FromAddress string    `json:"fromAddress"`
+	Subject     string    `json:"subject"`
+	UID         int64     `json:"uid"`
+}
+
+func (e NewEmailReceived) EventName() string { return "imap.email.received" }

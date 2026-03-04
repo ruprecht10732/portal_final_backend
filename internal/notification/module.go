@@ -76,6 +76,11 @@ type OrganizationSettingsReader interface {
 	GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (repository.OrganizationSettings, error)
 }
 
+// UserTenancyReader resolves organization membership for users.
+type UserTenancyReader interface {
+	GetUserOrganizationID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
+}
+
 type WorkflowResolver interface {
 	ResolveLeadWorkflow(ctx context.Context, input identityservice.ResolveLeadWorkflowInput) (identityservice.ResolveLeadWorkflowResult, error)
 }
@@ -132,6 +137,7 @@ type Module struct {
 	whatsapp           WhatsAppSender
 	leadTimeline       LeadTimelineWriter
 	settingsReader     OrganizationSettingsReader
+	tenancyReader      UserTenancyReader
 	workflowResolver   WorkflowResolver
 	leadWhatsAppReader LeadWhatsAppReader
 	orgMemberReader    OrganizationMemberReader
@@ -275,6 +281,11 @@ func (m *Module) SetWhatsAppSender(sender WhatsAppSender) { m.whatsapp = sender 
 // SetOrganizationSettingsReader injects org settings reader for WhatsApp device resolution.
 func (m *Module) SetOrganizationSettingsReader(reader OrganizationSettingsReader) {
 	m.settingsReader = reader
+}
+
+// SetUserTenancyReader injects user-to-organization lookup for in-app fanout.
+func (m *Module) SetUserTenancyReader(reader UserTenancyReader) {
+	m.tenancyReader = reader
 }
 
 func (m *Module) SetWorkflowResolver(resolver WorkflowResolver) {
@@ -423,6 +434,9 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	bus.Subscribe(events.AppointmentReminderDue{}.EventName(), m)
 	bus.Subscribe(events.NotificationOutboxDue{}.EventName(), m)
 
+	// IMAP domain events
+	bus.Subscribe(events.NewEmailReceived{}.EventName(), m)
+
 	m.log.Info("notification module registered event handlers")
 }
 
@@ -476,10 +490,38 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 		return m.handleAppointmentReminderDue(ctx, e)
 	case events.NotificationOutboxDue:
 		return m.handleNotificationOutboxDue(ctx, e)
+	case events.NewEmailReceived:
+		return m.handleNewEmailReceived(ctx, e)
 	default:
 		m.log.Warn("unhandled event type", "event", event.EventName())
 		return nil
 	}
+}
+
+func (m *Module) handleNewEmailReceived(ctx context.Context, e events.NewEmailReceived) error {
+	if m.inAppService == nil || m.tenancyReader == nil {
+		return nil
+	}
+
+	orgID, err := m.tenancyReader.GetUserOrganizationID(ctx, e.UserID)
+	if err != nil {
+		return err
+	}
+
+	from := strings.TrimSpace(e.FromAddress)
+	if from == "" {
+		from = "Onbekende afzender"
+	}
+
+	return m.inAppService.Send(ctx, inapp.SendParams{
+		OrgID:        orgID,
+		UserID:       e.UserID,
+		Title:        "Nieuwe e-mail ontvangen",
+		Content:      fmt.Sprintf("Van: %s\nOnderwerp: %s", from, e.Subject),
+		ResourceID:   &e.AccountID,
+		ResourceType: "imap_account",
+		Category:     "info",
+	})
 }
 
 type whatsAppSendOutboxPayload struct {

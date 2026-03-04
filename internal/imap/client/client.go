@@ -9,6 +9,8 @@ import (
 	goimap "github.com/BrianLeishman/go-imap"
 )
 
+const errClientNotInitialized = "imap client is not initialized"
+
 type Config struct {
 	Username string
 	Password string
@@ -86,7 +88,7 @@ func (c *Client) Close() error {
 
 func (c *Client) TestConnection() error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf("imap client is not initialized")
+		return fmt.Errorf(errClientNotInitialized)
 	}
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
@@ -106,7 +108,7 @@ func (c *Client) TestConnection() error {
 
 func (c *Client) SyncFolderMetadata(folder string, maxMessages int) ([]MessageMetadata, error) {
 	if c == nil || c.dialer == nil {
-		return nil, fmt.Errorf("imap client is not initialized")
+		return nil, fmt.Errorf(errClientNotInitialized)
 	}
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return nil, err
@@ -155,7 +157,7 @@ func (c *Client) SyncFolderMetadata(folder string, maxMessages int) ([]MessageMe
 
 func (c *Client) MoveToTrashAndDelete(folder string, uid int64) error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf("imap client is not initialized")
+		return fmt.Errorf(errClientNotInitialized)
 	}
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return err
@@ -174,7 +176,7 @@ func (c *Client) MoveToTrashAndDelete(folder string, uid int64) error {
 
 func (c *Client) SetSeen(folder string, uid int64, seen bool) error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf("imap client is not initialized")
+		return fmt.Errorf(errClientNotInitialized)
 	}
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return err
@@ -185,7 +187,7 @@ func (c *Client) SetSeen(folder string, uid int64, seen bool) error {
 
 func (c *Client) SetAnswered(folder string, uid int64, answered bool) error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf("imap client is not initialized")
+		return fmt.Errorf(errClientNotInitialized)
 	}
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return err
@@ -196,36 +198,12 @@ func (c *Client) SetAnswered(folder string, uid int64, answered bool) error {
 
 func (c *Client) GetMessageContent(folder string, uid int64) (MessageContent, error) {
 	if c == nil || c.dialer == nil {
-		return MessageContent{}, fmt.Errorf("imap client is not initialized")
+		return MessageContent{}, fmt.Errorf(errClientNotInitialized)
 	}
 
-	var (
-		emails map[int]*goimap.Email
-		err    error
-	)
-	for attempt := 0; attempt < 2; attempt++ {
-		if err = c.dialer.SelectFolder(folder); err != nil {
-			if !isTransientIMAPError(err) {
-				return MessageContent{}, err
-			}
-		} else {
-			emails, err = c.dialer.GetEmails(int(uid))
-			if err == nil {
-				break
-			}
-			if !isTransientIMAPError(err) {
-				return MessageContent{}, err
-			}
-		}
-		_ = c.dialer.Reconnect()
-		time.Sleep(200 * time.Millisecond)
-	}
+	email, err := c.fetchEmailWithRetry(folder, uid)
 	if err != nil {
 		return MessageContent{}, err
-	}
-	email, ok := emails[int(uid)]
-	if !ok || email == nil {
-		return MessageContent{}, fmt.Errorf("message not found")
 	}
 	fromName, fromAddress := parseFrom(email.From)
 	return MessageContent{
@@ -242,6 +220,39 @@ func (c *Client) GetMessageContent(folder string, uid int64) (MessageContent, er
 		HTML:        optionalString(email.HTML),
 		Text:        optionalString(email.Text),
 	}, nil
+}
+
+func (c *Client) fetchEmailWithRetry(folder string, uid int64) (*goimap.Email, error) {
+	var (
+		emails map[int]*goimap.Email
+		err    error
+	)
+	for attempt := 0; attempt < 2; attempt++ {
+		emails, err = c.fetchEmailsOnce(folder, uid)
+		if err == nil {
+			break
+		}
+		if !isTransientIMAPError(err) {
+			return nil, err
+		}
+		_ = c.dialer.Reconnect()
+		time.Sleep(200 * time.Millisecond)
+	}
+	if err != nil {
+		return nil, err
+	}
+	email, ok := emails[int(uid)]
+	if !ok || email == nil {
+		return nil, fmt.Errorf("message not found")
+	}
+	return email, nil
+}
+
+func (c *Client) fetchEmailsOnce(folder string, uid int64) (map[int]*goimap.Email, error) {
+	if err := c.dialer.SelectFolder(folder); err != nil {
+		return nil, err
+	}
+	return c.dialer.GetEmails(int(uid))
 }
 
 func (c *Client) setFlag(uid int64, flag string, enabled bool) error {

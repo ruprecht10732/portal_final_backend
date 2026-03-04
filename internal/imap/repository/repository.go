@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	defaultListPage     = 1
-	defaultListPageSize = 25
+	defaultListPage        = 1
+	defaultListPageSize    = 25
+	errIMAPAccountNotFound = "imap account not found"
 )
 
 type Repository struct {
@@ -261,7 +262,7 @@ func (r *Repository) GetAccountByUser(ctx context.Context, accountID, userID uui
 		&account.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Account{}, apperr.NotFound("imap account not found")
+		return Account{}, apperr.NotFound(errIMAPAccountNotFound)
 	}
 	if err != nil {
 		return Account{}, fmt.Errorf("get imap account: %w", err)
@@ -318,7 +319,7 @@ func (r *Repository) UpdateAccountByUser(ctx context.Context, accountID, userID 
 		&account.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Account{}, apperr.NotFound("imap account not found")
+		return Account{}, apperr.NotFound(errIMAPAccountNotFound)
 	}
 	if err != nil {
 		return Account{}, fmt.Errorf("update imap account: %w", err)
@@ -332,7 +333,7 @@ func (r *Repository) DeleteAccountByUser(ctx context.Context, accountID, userID 
 		return fmt.Errorf("delete imap account: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return apperr.NotFound("imap account not found")
+		return apperr.NotFound(errIMAPAccountNotFound)
 	}
 	return nil
 }
@@ -498,6 +499,22 @@ func (r *Repository) ListMessagesByUser(ctx context.Context, params ListMessages
 	}, rows.Err()
 }
 
+// CountUnreadMessagesByUser returns the exact unread IMAP message count across all accounts for a user.
+func (r *Repository) CountUnreadMessagesByUser(ctx context.Context, userID uuid.UUID) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(m.id)
+		FROM RAC_user_imap_messages m
+		JOIN RAC_user_imap_accounts a ON a.id = m.account_id
+		WHERE a.user_id = $1
+		  AND m.seen = false
+	`, userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count unread imap messages: %w", err)
+	}
+	return count, nil
+}
+
 func (r *Repository) DeleteMessageMetadataByUID(ctx context.Context, accountID uuid.UUID, uid int64) error {
 	_, err := r.pool.Exec(ctx, `
 		DELETE FROM RAC_user_imap_messages
@@ -531,6 +548,23 @@ func (r *Repository) UpdateMessageAnsweredByUID(ctx context.Context, accountID u
 		return fmt.Errorf("update message answered metadata: %w", err)
 	}
 	return nil
+}
+
+// GetMaxUID returns the highest UID currently synced for a given account and folder.
+func (r *Repository) GetMaxUID(ctx context.Context, accountID uuid.UUID, folderName string) (int64, error) {
+	var maxUID *int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT MAX(uid)
+		FROM RAC_user_imap_messages
+		WHERE account_id = $1 AND folder_name = $2
+	`, accountID, folderName).Scan(&maxUID)
+	if err != nil {
+		return 0, fmt.Errorf("get max imap uid: %w", err)
+	}
+	if maxUID == nil {
+		return 0, nil
+	}
+	return *maxUID, nil
 }
 
 func (r *Repository) ListAccountsNeedingSync(ctx context.Context, maxAge time.Duration, limit int) ([]Account, error) {
