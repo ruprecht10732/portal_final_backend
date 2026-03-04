@@ -50,7 +50,7 @@ func (s *Service) GetPublic(ctx context.Context, token string) (*transport.Publi
 		now := time.Now()
 		quote.ViewedAt = &now
 		if s.eventBus != nil {
-			s.eventBus.Publish(ctx, events.QuoteViewed{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID})
+			s.eventBus.Publish(ctx, events.QuoteViewed{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID, QuoteNumber: quote.QuoteNumber})
 		}
 	}
 
@@ -294,7 +294,7 @@ func (s *Service) publishQuoteRejectedEvent(ctx context.Context, quote *reposito
 	if s.eventBus == nil {
 		return
 	}
-	evt := events.QuoteRejected{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID, LeadServiceID: quote.LeadServiceID, Reason: reason}
+	evt := events.QuoteRejected{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID, LeadServiceID: quote.LeadServiceID, QuoteNumber: quote.QuoteNumber, Reason: reason}
 	if s.contacts != nil {
 		if contactData, lookupErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, quote.OrganizationID); lookupErr == nil {
 			evt.ConsumerEmail = contactData.ConsumerEmail

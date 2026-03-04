@@ -95,6 +95,11 @@ type OrganizationMemberReader interface {
 	ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]leadrepo.OrgMember, error)
 }
 
+// LeadAssigneeReader fetches the currently assigned agent for a lead.
+type LeadAssigneeReader interface {
+	GetAssignedAgentID(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) (*uuid.UUID, error)
+}
+
 // LeadTimelineEventParams describes a lead timeline event payload.
 type LeadTimelineEventParams struct {
 	LeadID    uuid.UUID
@@ -126,27 +131,29 @@ type cachedOrgName struct {
 
 // Module handles all notification-related event subscriptions.
 type Module struct {
-	pool               *pgxpool.Pool
-	sender             email.Sender
-	cfg                config.NotificationConfig
-	log                *logger.Logger
-	sse                *sse.Service
-	actWriter          QuoteActivityWriter
-	offerTimeline      PartnerOfferTimelineWriter
-	quotePDFGen        QuotePDFGenerator
-	whatsapp           WhatsAppSender
-	leadTimeline       LeadTimelineWriter
-	settingsReader     OrganizationSettingsReader
-	tenancyReader      UserTenancyReader
-	workflowResolver   WorkflowResolver
-	leadWhatsAppReader LeadWhatsAppReader
-	orgMemberReader    OrganizationMemberReader
-	notificationOutbox *notificationoutbox.Repository
-	inAppService       *inapp.Service
-	inAppHandler       *notifhandler.HTTPHandler
-	smtpEncryptionKey  []byte
-	senderCache        sync.Map // map[uuid.UUID]cachedSender
-	orgNameCache       sync.Map // map[uuid.UUID]cachedOrgName
+	pool                *pgxpool.Pool
+	sender              email.Sender
+	cfg                 config.NotificationConfig
+	log                 *logger.Logger
+	sse                 *sse.Service
+	actWriter           QuoteActivityWriter
+	offerTimeline       PartnerOfferTimelineWriter
+	quotePDFGen         QuotePDFGenerator
+	whatsapp            WhatsAppSender
+	leadTimeline        LeadTimelineWriter
+	settingsReader      OrganizationSettingsReader
+	tenancyReader       UserTenancyReader
+	workflowResolver    WorkflowResolver
+	leadWhatsAppReader  LeadWhatsAppReader
+	orgMemberReader     OrganizationMemberReader
+	leadAssigneeReader  LeadAssigneeReader
+	notificationOutbox  *notificationoutbox.Repository
+	inAppService        *inapp.Service
+	inAppHandler        *notifhandler.HTTPHandler
+	smtpEncryptionKey   []byte
+	senderCache         sync.Map // map[uuid.UUID]cachedSender
+	orgNameCache        sync.Map // map[uuid.UUID]cachedOrgName
+	quoteViewedDebounce sync.Map // map[uuid.UUID]time.Time
 }
 
 // New creates a new notification module.
@@ -298,6 +305,11 @@ func (m *Module) SetLeadWhatsAppReader(reader LeadWhatsAppReader) { m.leadWhatsA
 // SetOrganizationMemberReader injects a reader for org members.
 func (m *Module) SetOrganizationMemberReader(reader OrganizationMemberReader) {
 	m.orgMemberReader = reader
+}
+
+// SetLeadAssigneeReader injects a reader for lead assignee lookup.
+func (m *Module) SetLeadAssigneeReader(reader LeadAssigneeReader) {
+	m.leadAssigneeReader = reader
 }
 
 // SetLeadTimelineWriter injects the lead timeline writer.
@@ -1322,6 +1334,10 @@ var operationsNotificationRoles = map[string]struct{}{
 	"scout": {},
 }
 
+var adminOnlyRoles = map[string]struct{}{
+	"admin": {},
+}
+
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
 func normalizeWhatsAppMessage(value string) string {
@@ -1902,13 +1918,10 @@ func (m *Module) buildLeadTrackLink(publicToken string) string {
 	return fmt.Sprintf("%s/track/%s", base, publicToken)
 }
 
-func (m *Module) handleLeadDataChanged(_ context.Context, e events.LeadDataChanged) error {
-	if m.sse == nil {
-		return nil
-	}
-
+func (m *Module) handleLeadDataChanged(ctx context.Context, e events.LeadDataChanged) error {
 	var eventType sse.EventType
 	var message string
+	shouldNotifyAgent := false
 
 	switch e.Source {
 	case "customer_preferences":
@@ -1917,9 +1930,11 @@ func (m *Module) handleLeadDataChanged(_ context.Context, e events.LeadDataChang
 	case "customer_portal_update":
 		eventType = sse.EventLeadInfoAdded
 		message = "Klant heeft extra info toegevoegd"
+		shouldNotifyAgent = true
 	case "customer_portal_upload":
 		eventType = sse.EventLeadAttachmentUploaded
 		message = "Klant heeft bestanden geupload"
+		shouldNotifyAgent = true
 	case "customer_portal_delete":
 		eventType = sse.EventLeadAttachmentDeleted
 		message = "Klant heeft een bestand verwijderd"
@@ -1930,15 +1945,32 @@ func (m *Module) handleLeadDataChanged(_ context.Context, e events.LeadDataChang
 		return nil
 	}
 
-	m.sse.PublishToOrganization(e.TenantID, sse.Event{
-		Type:      eventType,
-		LeadID:    e.LeadID,
-		ServiceID: e.LeadServiceID,
-		Message:   message,
-		Data: map[string]interface{}{
-			"source": e.Source,
-		},
-	})
+	if m.sse != nil {
+		m.sse.PublishToOrganization(e.TenantID, sse.Event{
+			Type:      eventType,
+			LeadID:    e.LeadID,
+			ServiceID: e.LeadServiceID,
+			Message:   message,
+			Data: map[string]interface{}{
+				"source": e.Source,
+			},
+		})
+	}
+
+	if shouldNotifyAgent {
+		leadID := e.LeadID
+		content := "Nieuwe informatie toegevoegd door de klant voor lead."
+		if e.Source == "customer_portal_upload" {
+			content = "Nieuwe foto's/informatie geupload door de klant voor lead."
+		}
+		m.sendToAgentOrAdmins(ctx, e.TenantID, e.LeadID, inapp.SendParams{
+			Title:        "Nieuwe informatie van klant",
+			Content:      content,
+			ResourceID:   &leadID,
+			ResourceType: "lead",
+			Category:     "info",
+		})
+	}
 
 	return nil
 }
@@ -2466,6 +2498,28 @@ func (m *Module) handleQuoteViewed(ctx context.Context, e events.QuoteViewed) er
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_viewed",
 		"Klant heeft de offerte geopend",
 		map[string]interface{}{"viewerIp": e.ViewerIP})
+
+	if raw, ok := m.quoteViewedDebounce.Load(e.QuoteID); ok {
+		if lastSentAt, ok := raw.(time.Time); ok && time.Since(lastSentAt) < 60*time.Minute {
+			m.log.Info("quote viewed in-app notification debounced", "quoteId", e.QuoteID)
+			m.log.Info("quote viewed event processed", "quoteId", e.QuoteID)
+			return nil
+		}
+	}
+	m.quoteViewedDebounce.Store(e.QuoteID, time.Now())
+
+	quoteNumber := strings.TrimSpace(e.QuoteNumber)
+	if quoteNumber == "" {
+		quoteNumber = "onbekend"
+	}
+	m.sendToAgentOrAdmins(ctx, e.OrganizationID, e.LeadID, inapp.SendParams{
+		Title:        "Offerte bekeken door klant",
+		Content:      fmt.Sprintf("De klant bekijkt momenteel jouw offerte %s.", quoteNumber),
+		ResourceID:   &e.QuoteID,
+		ResourceType: "quote",
+		Category:     "info",
+	})
+
 	m.log.Info("quote viewed event processed", "quoteId", e.QuoteID)
 	return nil
 }
@@ -2517,9 +2571,13 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 		}
 	}
 
-	m.notifyOrgMembersInAppByRoles(ctx, e.OrganizationID, operationsNotificationRoles, inapp.SendParams{
+	quoteNumber := strings.TrimSpace(e.QuoteNumber)
+	if quoteNumber == "" {
+		quoteNumber = "onbekend"
+	}
+	m.sendToAgentOrAdmins(ctx, e.OrganizationID, e.LeadID, inapp.SendParams{
 		Title:        "Offerte geaccepteerd",
-		Content:      fmt.Sprintf("%s heeft offerte %s geaccepteerd.", defaultName(strings.TrimSpace(e.ConsumerName), "Klant"), e.QuoteNumber),
+		Content:      fmt.Sprintf("Geweldig! %s heeft offerte %s geaccepteerd.", defaultName(strings.TrimSpace(e.ConsumerName), "Klant"), quoteNumber),
 		ResourceID:   &e.QuoteID,
 		ResourceType: "quote",
 		Category:     "success",
@@ -2641,9 +2699,13 @@ func (m *Module) publishQuoteAcceptedSSE(e events.QuoteAccepted) {
 func (m *Module) handleQuoteRejected(ctx context.Context, e events.QuoteRejected) error {
 	_ = m.dispatchQuoteRejectedLeadEmailWorkflow(ctx, e)
 	_ = m.dispatchQuoteRejectedLeadWhatsAppWorkflow(ctx, e)
-	m.notifyOrgMembersInAppByRoles(ctx, e.OrganizationID, operationsNotificationRoles, inapp.SendParams{
+	quoteNumber := strings.TrimSpace(e.QuoteNumber)
+	if quoteNumber == "" {
+		quoteNumber = "onbekend"
+	}
+	m.sendToAgentOrAdmins(ctx, e.OrganizationID, e.LeadID, inapp.SendParams{
 		Title:        "Offerte afgewezen",
-		Content:      fmt.Sprintf("%s heeft offerte afgewezen.", defaultName(strings.TrimSpace(e.ConsumerName), "Klant")),
+		Content:      fmt.Sprintf("Offerte %s is afgewezen door %s.", quoteNumber, defaultName(strings.TrimSpace(e.ConsumerName), "Klant")),
 		ResourceID:   &e.QuoteID,
 		ResourceType: "quote",
 		Category:     "warning",
@@ -3000,6 +3062,27 @@ func (m *Module) notifyOrgMembersInAppByRoles(ctx context.Context, orgID uuid.UU
 		params.UserID = member.ID
 		_ = m.inAppService.Send(ctx, params)
 	}
+}
+
+func (m *Module) sendToAgentOrAdmins(ctx context.Context, orgID uuid.UUID, leadID uuid.UUID, p inapp.SendParams) {
+	if m.inAppService == nil {
+		return
+	}
+
+	if m.leadAssigneeReader != nil {
+		agentID, err := m.leadAssigneeReader.GetAssignedAgentID(ctx, leadID, orgID)
+		if err != nil {
+			m.log.Warn("failed to resolve lead assignee for in-app notification", "error", err, "leadId", leadID, "orgId", orgID)
+		} else if agentID != nil {
+			params := p
+			params.OrgID = orgID
+			params.UserID = *agentID
+			_ = m.inAppService.Send(ctx, params)
+			return
+		}
+	}
+
+	m.notifyOrgMembersInAppByRoles(ctx, orgID, adminOnlyRoles, p)
 }
 
 func memberMatchesRoles(member leadrepo.OrgMember, allowedRoles map[string]struct{}) bool {

@@ -198,6 +198,7 @@ func main() {
 	})
 	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())
 	notificationModule.SetOrganizationMemberReader(leadsModule.Repository())
+	notificationModule.SetLeadAssigneeReader(adapters.NewLeadAssigneeReader(leadsModule.Repository()))
 
 	// Share SSE service with notification module so quote events reach agents
 	notificationModule.SetSSE(leadsModule.SSE())

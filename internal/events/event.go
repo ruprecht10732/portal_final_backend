@@ -289,6 +289,7 @@ type QuoteViewed struct {
 	QuoteID        uuid.UUID `json:"quoteId"`
 	OrganizationID uuid.UUID `json:"organizationId"`
 	LeadID         uuid.UUID `json:"leadId"`
+	QuoteNumber    string    `json:"quoteNumber"`
 	ViewerIP       string    `json:"viewerIp"`
 }
 
@@ -392,6 +393,7 @@ type QuoteRejected struct {
 	OrganizationID   uuid.UUID  `json:"organizationId"`
 	LeadID           uuid.UUID  `json:"leadId"`
 	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
+	QuoteNumber      string     `json:"quoteNumber"`
 	Reason           string     `json:"reason"`
 	ConsumerEmail    string     `json:"consumerEmail"`
 	ConsumerName     string     `json:"consumerName"`
