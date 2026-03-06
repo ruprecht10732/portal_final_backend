@@ -98,6 +98,7 @@ type Service struct {
 	promptGen     QuotePromptGenerator
 	sse           *sse.Service
 	jobQueue      GenerateQuoteJobQueue
+	feedbackQueue HumanFeedbackMemoryQueue
 	moneybird     *moneybirdConfig
 	logoPresigner LogoPresigner
 }
@@ -105,6 +106,11 @@ type Service struct {
 // GenerateQuoteJobQueue enqueues async quote generation tasks.
 type GenerateQuoteJobQueue interface {
 	EnqueueGenerateQuoteJobRequest(ctx context.Context, req scheduler.GenerateQuoteJobRequest) error
+}
+
+// HumanFeedbackMemoryQueue enqueues asynchronous memory application tasks for feedback.
+type HumanFeedbackMemoryQueue interface {
+	EnqueueApplyHumanFeedbackMemory(ctx context.Context, payload scheduler.ApplyHumanFeedbackMemoryPayload) error
 }
 
 // GenerateQuoteJobStatus is the status for an async quote generation job.
@@ -196,4 +202,7 @@ func (s *Service) SetQuoteTermsResolver(r QuoteTermsResolver)           { s.quot
 func (s *Service) SetQuotePromptGenerator(g QuotePromptGenerator)       { s.promptGen = g }
 func (s *Service) SetSSEService(sseSvc *sse.Service)                    { s.sse = sseSvc }
 func (s *Service) SetGenerateQuoteJobQueue(queue GenerateQuoteJobQueue) { s.jobQueue = queue }
-func (s *Service) SetLogoPresigner(lp LogoPresigner)                    { s.logoPresigner = lp }
+func (s *Service) SetHumanFeedbackMemoryQueue(queue HumanFeedbackMemoryQueue) {
+	s.feedbackQueue = queue
+}
+func (s *Service) SetLogoPresigner(lp LogoPresigner) { s.logoPresigner = lp }

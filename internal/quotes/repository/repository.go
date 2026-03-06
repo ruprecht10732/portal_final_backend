@@ -472,6 +472,30 @@ func (r *Repository) SetLeadServiceID(ctx context.Context, quoteID uuid.UUID, or
 	return nil
 }
 
+// ValidateLeadServiceID checks whether the provided lead service belongs to the
+// same lead and organization as the target quote.
+func (r *Repository) ValidateLeadServiceID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID, leadServiceID uuid.UUID) error {
+	query := `
+		SELECT 1
+		FROM RAC_quotes q
+		JOIN RAC_lead_services ls
+		  ON ls.id = $3
+		 AND ls.organization_id = q.organization_id
+		 AND ls.lead_id = q.lead_id
+		WHERE q.id = $1 AND q.organization_id = $2
+	`
+
+	var exists int
+	if err := r.pool.QueryRow(ctx, query, quoteID, orgID, leadServiceID).Scan(&exists); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.Validation("leadServiceId does not belong to this quote")
+		}
+		return fmt.Errorf("failed to validate quote lead service: %w", err)
+	}
+
+	return nil
+}
+
 // Delete removes a quote (cascade deletes items)
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
 	query := `DELETE FROM RAC_quotes WHERE id = $1 AND organization_id = $2`

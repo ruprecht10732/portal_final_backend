@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Client is an HTTP client for Qdrant vector database.
@@ -89,6 +91,17 @@ type SearchResponse struct {
 	Time   float64        `json:"time"`
 }
 
+// Point represents a Qdrant point for upsert operations.
+type Point struct {
+	ID      string         `json:"id"`
+	Vector  []float32      `json:"vector"`
+	Payload map[string]any `json:"payload,omitempty"`
+}
+
+type upsertPointsRequest struct {
+	Points []Point `json:"points"`
+}
+
 // SearchWithThreshold performs a vector similarity search with a minimum score threshold.
 func (c *Client) SearchWithThreshold(ctx context.Context, vector []float32, limit int, scoreThreshold float64) ([]SearchResult, error) {
 	return c.searchInternal(ctx, vector, limit, &scoreThreshold, nil)
@@ -104,7 +117,10 @@ func (c *Client) Search(ctx context.Context, vector []float32, limit int) ([]Sea
 	return c.searchInternal(ctx, vector, limit, nil, nil)
 }
 
-// BatchSearch performs vector searches across multiple collections.
+// maxResponseBody is the upper limit for reading external response bodies (10 MB).
+const maxResponseBody = 10 << 20
+
+// BatchSearch performs vector searches across multiple collections in parallel.
 // Each request targets a (possibly different) collection. If a request omits
 // CollectionName, the client's configured default collection is used.
 func (c *Client) BatchSearch(ctx context.Context, requests []SearchRequest) ([][]SearchResult, error) {
@@ -113,16 +129,23 @@ func (c *Client) BatchSearch(ctx context.Context, requests []SearchRequest) ([][
 	}
 
 	results := make([][]SearchResult, len(requests))
+	g, gCtx := errgroup.WithContext(ctx)
 	for i, sr := range requests {
 		col := sr.CollectionName
 		if col == "" {
 			col = c.collection
 		}
-		res, err := c.searchCollection(ctx, col, sr.Vector, sr.Limit, sr.ScoreThreshold, sr.Filter)
-		if err != nil {
-			return nil, fmt.Errorf("qdrant batch search returned %v", err)
-		}
-		results[i] = res
+		g.Go(func() error {
+			res, err := c.searchCollection(gCtx, col, sr.Vector, sr.Limit, sr.ScoreThreshold, sr.Filter)
+			if err != nil {
+				return fmt.Errorf("qdrant batch search returned %v", err)
+			}
+			results[i] = res
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 	return results, nil
 }
@@ -164,7 +187,7 @@ func (c *Client) searchCollection(ctx context.Context, collection string, vector
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 		return nil, fmt.Errorf("qdrant returned %d for collection %s: %s", resp.StatusCode, collection, string(body))
 	}
 
@@ -194,4 +217,44 @@ func NewOrganizationFilter(organizationID string) *Filter {
 
 func (c *Client) searchInternal(ctx context.Context, vector []float32, limit int, scoreThreshold *float64, filter *Filter) ([]SearchResult, error) {
 	return c.searchCollection(ctx, c.collection, vector, limit, scoreThreshold, filter)
+}
+
+// UpsertPoint writes or updates a single point in the configured collection.
+func (c *Client) UpsertPoint(ctx context.Context, point Point) error {
+	if point.ID == "" {
+		return fmt.Errorf("point id is required")
+	}
+	if len(point.Vector) == 0 {
+		return fmt.Errorf("point vector is required")
+	}
+
+	reqBody := upsertPointsRequest{Points: []Point{point}}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal upsert request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/collections/%s/points", c.baseURL, c.collection)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create upsert request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("api-key", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upsert request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+		return fmt.Errorf("qdrant upsert returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }

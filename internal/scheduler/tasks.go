@@ -15,6 +15,7 @@ const TaskGenerateAcceptedQuotePDF = "quotes.generate_accepted_pdf"
 const TaskLogCall = "leads.log_call"
 const TaskIMAPSyncAccount = "imap.sync.account"
 const TaskIMAPSyncSweep = "imap.sync.sweep"
+const TaskApplyHumanFeedbackMemory = "leads.human_feedback.apply_memory"
 
 type AppointmentReminderPayload struct {
 	AppointmentID  string `json:"appointmentId"`
@@ -59,6 +60,11 @@ type IMAPSyncAccountPayload struct {
 }
 
 type IMAPSyncSweepPayload struct{}
+
+type ApplyHumanFeedbackMemoryPayload struct {
+	TenantID   string `json:"tenantId"`
+	FeedbackID string `json:"feedbackId"`
+}
 
 func NewAppointmentReminderTask(payload AppointmentReminderPayload) (*asynq.Task, error) {
 	data, err := json.Marshal(payload)
@@ -162,4 +168,20 @@ func NewIMAPSyncSweepTask(payload IMAPSyncSweepPayload) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TaskIMAPSyncSweep, data), nil
+}
+
+func NewApplyHumanFeedbackMemoryTask(payload ApplyHumanFeedbackMemoryPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskApplyHumanFeedbackMemory, data), nil
+}
+
+func ParseApplyHumanFeedbackMemoryPayload(task *asynq.Task) (ApplyHumanFeedbackMemoryPayload, error) {
+	var payload ApplyHumanFeedbackMemoryPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return ApplyHumanFeedbackMemoryPayload{}, err
+	}
+	return payload, nil
 }

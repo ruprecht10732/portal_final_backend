@@ -64,6 +64,11 @@ func (m *Module) SetGenerateQuoteJobQueue(queue service.GenerateQuoteJobQueue) {
 	m.service.SetGenerateQuoteJobQueue(queue)
 }
 
+// SetHumanFeedbackMemoryQueue injects background queueing for feedback memory application.
+func (m *Module) SetHumanFeedbackMemoryQueue(queue service.HumanFeedbackMemoryQueue) {
+	m.service.SetHumanFeedbackMemoryQueue(queue)
+}
+
 // SetStorageForPDF injects storage service for PDF download endpoints.
 func (m *Module) SetStorageForPDF(svc storage.StorageService, bucket string) {
 	m.handler.SetStorageForPDF(svc, bucket)

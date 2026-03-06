@@ -31,6 +31,10 @@ type IMAPSyncScheduler interface {
 	EnqueueIMAPSyncSweep(ctx context.Context) error
 }
 
+type HumanFeedbackMemoryScheduler interface {
+	EnqueueApplyHumanFeedbackMemory(ctx context.Context, payload ApplyHumanFeedbackMemoryPayload) error
+}
+
 type CallLogScheduler interface {
 	EnqueueLogCall(ctx context.Context, payload LogCallPayload) error
 }
@@ -166,6 +170,18 @@ func (c *Client) EnqueueIMAPSyncSweep(ctx context.Context) error {
 		return nil
 	}
 	task, err := NewIMAPSyncSweepTask(IMAPSyncSweepPayload{})
+	if err != nil {
+		return err
+	}
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	return err
+}
+
+func (c *Client) EnqueueApplyHumanFeedbackMemory(ctx context.Context, payload ApplyHumanFeedbackMemoryPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	task, err := NewApplyHumanFeedbackMemoryTask(payload)
 	if err != nil {
 		return err
 	}

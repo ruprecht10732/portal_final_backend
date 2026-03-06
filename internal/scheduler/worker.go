@@ -2,14 +2,19 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/events"
+	leadrepo "portal_final_backend/internal/leads/repository"
+	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/qdrant"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -20,12 +25,15 @@ type Worker struct {
 	server *asynq.Server
 	mux    *asynq.ServeMux
 	repo   *repository.Repository
+	leads  *leadrepo.Repository
 	bus    events.Bus
 	log    *logger.Logger
 	quotes QuoteJobProcessor
 	pdf    QuoteAcceptedPDFProcessor
 	call   CallLogProcessor
 	imap   IMAPSyncProcessor
+	embed  *embeddings.Client
+	qdrant *qdrant.Client
 }
 
 type QuoteJobProcessor interface {
@@ -78,8 +86,33 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 		server: server,
 		mux:    mux,
 		repo:   repository.New(pool),
+		leads:  leadrepo.New(pool),
 		bus:    bus,
 		log:    log,
+	}
+
+	if embeddingCfg, ok := any(cfg).(interface {
+		IsEmbeddingEnabled() bool
+		GetEmbeddingAPIURL() string
+		GetEmbeddingAPIKey() string
+	}); ok && embeddingCfg.IsEmbeddingEnabled() {
+		w.embed = embeddings.NewClient(embeddings.Config{
+			BaseURL: embeddingCfg.GetEmbeddingAPIURL(),
+			APIKey:  embeddingCfg.GetEmbeddingAPIKey(),
+		})
+	}
+
+	if qdrantCfg, ok := any(cfg).(interface {
+		IsQdrantEnabled() bool
+		GetQdrantURL() string
+		GetQdrantAPIKey() string
+		GetQdrantCollection() string
+	}); ok && qdrantCfg.IsQdrantEnabled() {
+		w.qdrant = qdrant.NewClient(qdrant.Config{
+			BaseURL:    qdrantCfg.GetQdrantURL(),
+			APIKey:     qdrantCfg.GetQdrantAPIKey(),
+			Collection: qdrantCfg.GetQdrantCollection(),
+		})
 	}
 
 	mux.HandleFunc(TaskAppointmentReminder, w.handleAppointmentReminder)
@@ -89,6 +122,7 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskLogCall, w.handleLogCall)
 	mux.HandleFunc(TaskIMAPSyncAccount, w.handleIMAPSyncAccount)
 	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
+	mux.HandleFunc(TaskApplyHumanFeedbackMemory, w.handleApplyHumanFeedbackMemory)
 
 	return w, nil
 }
@@ -134,6 +168,100 @@ func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Ta
 		OutboxID:  outboxID,
 		TenantID:  tenantID,
 	})
+}
+
+func (w *Worker) handleApplyHumanFeedbackMemory(ctx context.Context, task *asynq.Task) error {
+	if w.leads == nil {
+		return nil
+	}
+
+	payload, err := ParseApplyHumanFeedbackMemoryPayload(task)
+	if err != nil {
+		return err
+	}
+
+	tenantID, err := uuid.Parse(payload.TenantID)
+	if err != nil {
+		return err
+	}
+	feedbackID, err := uuid.Parse(payload.FeedbackID)
+	if err != nil {
+		return err
+	}
+
+	feedback, err := w.leads.GetHumanFeedbackByID(ctx, feedbackID, tenantID)
+	if err != nil {
+		if errors.Is(err, leadrepo.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if feedback.AppliedToMemory {
+		return nil
+	}
+	if w.embed == nil || w.qdrant == nil {
+		return fmt.Errorf("human feedback memory dependencies not configured for feedbackId=%s tenantId=%s", feedbackID, tenantID)
+	}
+
+	text := buildHumanFeedbackMemoryDocument(feedback)
+	vector, err := w.embed.Embed(ctx, text)
+	if err != nil {
+		return err
+	}
+
+	pointID := "hf:" + feedback.ID.String()
+	point := qdrant.Point{
+		ID:     pointID,
+		Vector: vector,
+		Payload: map[string]any{
+			"type":             "human_feedback",
+			"organization_id":  feedback.OrganizationID.String(),
+			"quote_id":         feedback.QuoteID.String(),
+			"field_changed":    feedback.FieldChanged,
+			"delta_percentage": feedback.DeltaPercentage,
+			"created_at":       feedback.CreatedAt.Format(time.RFC3339),
+			"memory_text":      text,
+			"ai_value":         feedback.AIValue,
+			"human_value":      feedback.HumanValue,
+		},
+	}
+	if feedback.LeadServiceID != nil {
+		point.Payload["lead_service_id"] = feedback.LeadServiceID.String()
+	}
+
+	if err := w.qdrant.UpsertPoint(ctx, point); err != nil {
+		return err
+	}
+
+	embeddingRef := w.qdrant.CollectionName() + "/" + pointID
+	if _, err := w.leads.MarkHumanFeedbackApplied(ctx, feedback.ID, tenantID, &embeddingRef); err != nil {
+		return err
+	}
+
+	w.log.Info("human feedback memory applied", "feedbackId", feedback.ID, "tenantId", tenantID, "embeddingId", embeddingRef)
+	return nil
+}
+
+func buildHumanFeedbackMemoryDocument(feedback leadrepo.HumanFeedback) string {
+	aiJSON, _ := json.Marshal(feedback.AIValue)
+	humanJSON, _ := json.Marshal(feedback.HumanValue)
+
+	var sb strings.Builder
+	sb.WriteString("Human feedback correction\n")
+	sb.WriteString("field_changed: ")
+	sb.WriteString(feedback.FieldChanged)
+	sb.WriteString("\n")
+	if feedback.DeltaPercentage != nil {
+		sb.WriteString(fmt.Sprintf("delta_percentage: %.2f\n", *feedback.DeltaPercentage))
+	}
+	sb.WriteString("ai_value: ")
+	sb.Write(aiJSON)
+	sb.WriteString("\n")
+	sb.WriteString("human_value: ")
+	sb.Write(humanJSON)
+	sb.WriteString("\n")
+
+	return sb.String()
 }
 
 func (w *Worker) Run(ctx context.Context) {

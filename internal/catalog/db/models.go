@@ -259,6 +259,20 @@ type PartnerInvite struct {
 	InviteMetadata []byte             `json:"invite_metadata"`
 }
 
+type RacAiDecisionMemory struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+	ServiceType    string             `json:"service_type"`
+	DecisionType   string             `json:"decision_type"`
+	Outcome        string             `json:"outcome"`
+	Confidence     pgtype.Numeric     `json:"confidence"`
+	ContextSummary string             `json:"context_summary"`
+	ActionSummary  string             `json:"action_summary"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacAiQuoteJob struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrganizationID  pgtype.UUID        `json:"organization_id"`
@@ -502,6 +516,20 @@ type RacGoogleWebhookConfig struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RacHumanFeedback struct {
+	ID                 pgtype.UUID        `json:"id"`
+	OrganizationID     pgtype.UUID        `json:"organization_id"`
+	QuoteID            pgtype.UUID        `json:"quote_id"`
+	LeadServiceID      pgtype.UUID        `json:"lead_service_id"`
+	FieldChanged       string             `json:"field_changed"`
+	AiValue            []byte             `json:"ai_value"`
+	HumanValue         []byte             `json:"human_value"`
+	DeltaPercentage    pgtype.Float8      `json:"delta_percentage"`
+	ContextEmbeddingID pgtype.Text        `json:"context_embedding_id"`
+	AppliedToMemory    bool               `json:"applied_to_memory"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacInAppNotification struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
@@ -648,6 +676,9 @@ type RacLeadAiAnalysis struct {
 	MissingInformation      []byte             `json:"missing_information"`
 	PreferredContactChannel string             `json:"preferred_contact_channel"`
 	SuggestedContactMessage string             `json:"suggested_contact_message"`
+	CompositeConfidence     pgtype.Float8      `json:"composite_confidence"`
+	ConfidenceBreakdown     []byte             `json:"confidence_breakdown"`
+	RiskFlags               []byte             `json:"risk_flags"`
 }
 
 type RacLeadNote struct {
@@ -829,6 +860,11 @@ type RacOrganizationSetting struct {
 	AiAutoEstimate              bool               `json:"ai_auto_estimate"`
 	CatalogGapThreshold         int32              `json:"catalog_gap_threshold"`
 	CatalogGapLookbackDays      int32              `json:"catalog_gap_lookback_days"`
+	AiConfidenceGateEnabled     bool               `json:"ai_confidence_gate_enabled"`
+	AiAdaptiveReasoningEnabled  bool               `json:"ai_adaptive_reasoning_enabled"`
+	AiExperienceMemoryEnabled   bool               `json:"ai_experience_memory_enabled"`
+	AiCouncilEnabled            bool               `json:"ai_council_enabled"`
+	AiCouncilConsensusMode      string             `json:"ai_council_consensus_mode"`
 }
 
 type RacPartner struct {

@@ -68,6 +68,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
 	rg.POST("/generate", h.Generate)
+	rg.POST("/:id/feedback", h.SubmitHumanFeedback)
 	rg.GET("/generate-jobs", h.ListGenerateJobs)
 	rg.DELETE("/generate-jobs/completed", h.ClearCompletedGenerateJobs)
 	rg.GET("/generate-jobs/:id", h.GetGenerateJob)
@@ -88,6 +89,37 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
 	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 	rg.DELETE("/:id", h.Delete)
+}
+
+// SubmitHumanFeedback handles POST /api/v1/quotes/:id/feedback
+func (h *Handler) SubmitHumanFeedback(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.CreateHumanFeedbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.SubmitHumanFeedback(c.Request.Context(), id, tenantID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
 }
 
 // ListGenerateJobs handles GET /api/v1/quotes/generate-jobs

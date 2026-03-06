@@ -96,6 +96,14 @@ type QuoteCalculationRequest struct {
 	DiscountValue int64              `json:"discountValue" validate:"min=0"`
 }
 
+// CreateHumanFeedbackRequest captures a human correction over an AI-generated quote field.
+type CreateHumanFeedbackRequest struct {
+	LeadServiceID *uuid.UUID     `json:"leadServiceId,omitempty"`
+	FieldChanged  string         `json:"fieldChanged" validate:"required,min=1,max=100"`
+	AIValue       map[string]any `json:"aiValue" validate:"required"`
+	HumanValue    map[string]any `json:"humanValue" validate:"required"`
+}
+
 // ListQuotesRequest defines the query parameters for listing quotes
 type ListQuotesRequest struct {
 	LeadID         string `form:"leadId"`
@@ -251,6 +259,16 @@ type PendingApprovalsResponse struct {
 	Page       int                   `json:"page"`
 	PageSize   int                   `json:"pageSize"`
 	TotalPages int                   `json:"totalPages"`
+}
+
+type HumanFeedbackResponse struct {
+	ID              uuid.UUID  `json:"id"`
+	QuoteID         uuid.UUID  `json:"quoteId"`
+	LeadServiceID   *uuid.UUID `json:"leadServiceId,omitempty"`
+	FieldChanged    string     `json:"fieldChanged"`
+	DeltaPercentage *float64   `json:"deltaPercentage,omitempty"`
+	AppliedToMemory bool       `json:"appliedToMemory"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
 // QuotePreviewLinkResponse is the response for a read-only preview link.
