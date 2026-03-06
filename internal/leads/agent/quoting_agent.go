@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -37,9 +36,9 @@ type QuotingAgent struct {
 	runner         *runner.Runner
 	sessionService session.Service
 	appName        string
+	modelConfig    moonshot.Config
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
-	runMu          sync.Mutex
 	autonomous     bool
 }
 
@@ -59,11 +58,12 @@ type QuotingAgentConfig struct {
 
 // NewQuotingAgent creates a quoting agent in autonomous (estimator) or prompt mode.
 func NewQuotingAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
-	kimi := moonshot.NewModel(moonshot.Config{
+	modelConfig := moonshot.Config{
 		APIKey:          cfg.APIKey,
 		Model:           "kimi-k2.5",
 		DisableThinking: true,
-	})
+	}
+	kimi := moonshot.NewModel(modelConfig)
 
 	deps := &ToolDependencies{
 		Repo:                 cfg.Repo,
@@ -74,6 +74,7 @@ func NewQuotingAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
 		CatalogQdrantClient:  cfg.CatalogQdrantClient,
 		CatalogReader:        cfg.CatalogReader,
 		QuoteDrafter:         cfg.QuoteDrafter,
+		CouncilService:       NewDefaultMultiAgentCouncil(cfg.Repo),
 	}
 
 	tools, err := buildQuotingTools(deps, cfg.IsAutonomous)
@@ -118,6 +119,7 @@ func NewQuotingAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
 		runner:         r,
 		sessionService: sessionService,
 		appName:        appName,
+		modelConfig:    modelConfig,
 		repo:           cfg.Repo,
 		toolDeps:       deps,
 		autonomous:     cfg.IsAutonomous,
@@ -175,6 +177,22 @@ func buildQuotingTools(deps *ToolDependencies, autonomous bool) ([]tool.Tool, er
 	return tools, nil
 }
 
+func (q *QuotingAgent) buildScopeAnalyzerTools() ([]tool.Tool, error) {
+	commitScopeTool, err := createCommitScopeArtifactTool(q.toolDeps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build CommitScopeArtifact tool: %w", err)
+	}
+	return []tool.Tool{commitScopeTool}, nil
+}
+
+func (q *QuotingAgent) buildInvestigativeTools() ([]tool.Tool, error) {
+	askClarificationTool, err := createAskCustomerClarificationTool(q.toolDeps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build AskCustomerClarification tool: %w", err)
+	}
+	return []tool.Tool{askClarificationTool}, nil
+}
+
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
 func (q *QuotingAgent) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
 	if q == nil || q.toolDeps == nil {
@@ -199,15 +217,14 @@ func (q *QuotingAgent) Run(ctx context.Context, leadID, serviceID, tenantID uuid
 		return fmt.Errorf("quoting agent is not configured for autonomous runs")
 	}
 	log.Printf("quoting-agent: scheduling autonomous run for lead=%s service=%s tenant=%s force=%t", leadID, serviceID, tenantID, force)
-	go q.runEstimation(ctx, leadID, serviceID, tenantID, force)
+	reqDeps := q.toolDeps.NewRequestDeps()
+	ctx = WithDependencies(ctx, reqDeps)
+	go q.runEstimation(ctx, reqDeps, leadID, serviceID, tenantID, force)
 	return nil
 }
 
-func (q *QuotingAgent) runEstimation(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) {
-	q.runMu.Lock()
-	defer q.runMu.Unlock()
-
-	runID := q.startAutonomousRun(ctx, leadID, serviceID, tenantID)
+func (q *QuotingAgent) runEstimation(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, force bool) {
+	runID := q.startAutonomousRun(ctx, reqDeps, leadID, serviceID, tenantID)
 	lead, service, notes, photo, ok := q.loadAutonomousRunContext(ctx, leadID, serviceID, tenantID)
 	if !ok {
 		return
@@ -217,9 +234,11 @@ func (q *QuotingAgent) runEstimation(ctx context.Context, leadID, serviceID, ten
 		return
 	}
 
-	q.maybeRecordMissingEstimation(ctx, leadID, serviceID, tenantID)
-	insufficientIntake, insufficientReason := q.evaluateDraftReadiness(ctx, leadID, serviceID, tenantID, force)
-	q.maybeApplyNurturingFallback(ctx, nurturingFallbackContext{
+	if !reqDeps.WasClarificationAsked() {
+		q.maybeRecordMissingEstimation(ctx, reqDeps, leadID, serviceID, tenantID)
+	}
+	insufficientIntake, insufficientReason := q.evaluateDraftReadiness(ctx, reqDeps, leadID, serviceID, tenantID, force)
+	q.maybeApplyNurturingFallback(ctx, reqDeps, nurturingFallbackContext{
 		LeadID:             leadID,
 		ServiceID:          serviceID,
 		TenantID:           tenantID,
@@ -228,6 +247,7 @@ func (q *QuotingAgent) runEstimation(ctx context.Context, leadID, serviceID, ten
 		InsufficientIntake: insufficientIntake,
 		InsufficientReason: insufficientReason,
 	})
+	q.persistEstimatorDecisionMemory(ctx, reqDeps, leadID, serviceID, tenantID, service)
 
 	log.Printf("quoting-agent: autonomous run finished runID=%s lead=%s service=%s", runID, leadID, serviceID)
 }
@@ -242,24 +262,24 @@ type nurturingFallbackContext struct {
 	InsufficientReason string
 }
 
-func (q *QuotingAgent) startAutonomousRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) string {
-	q.toolDeps.SetTenantID(tenantID)
-	q.toolDeps.SetLeadContext(leadID, serviceID)
-	q.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameEstimator)
-	q.toolDeps.ResetToolCallTracking()
-	runID := q.toolDeps.GetRunID()
+func (q *QuotingAgent) startAutonomousRun(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID) string {
+	reqDeps.SetTenantID(tenantID)
+	reqDeps.SetLeadContext(leadID, serviceID)
+	reqDeps.SetActor(repository.ActorTypeAI, repository.ActorNameEstimator)
+	reqDeps.ResetToolCallTracking()
+	runID := reqDeps.GetRunID()
 	log.Printf("quoting-agent: autonomous run started runID=%s lead=%s service=%s tenant=%s", runID, leadID, serviceID, tenantID)
 
-	if _, err := q.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+	if _, err := reqDeps.LoadOrganizationAISettings(ctx); err != nil {
 		log.Printf("quoting-agent: failed to load org AI settings (tenant=%s): %v", tenantID, err)
 	}
 
 	existingQuoteID, quoteLookupErr := q.repo.GetLatestDraftQuoteID(ctx, serviceID, tenantID)
 	if quoteLookupErr != nil {
 		log.Printf("quoting-agent: failed to lookup existing draft quote for service=%s: %v", serviceID, quoteLookupErr)
-		q.toolDeps.SetExistingQuoteID(nil)
+		reqDeps.SetExistingQuoteID(nil)
 	} else {
-		q.toolDeps.SetExistingQuoteID(existingQuoteID)
+		reqDeps.SetExistingQuoteID(existingQuoteID)
 	}
 
 	return runID
@@ -294,16 +314,181 @@ func (q *QuotingAgent) loadAutonomousRunContext(ctx context.Context, leadID, ser
 
 func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, tenantID uuid.UUID) bool {
 	estimationContext := q.fetchEstimationGuidelines(ctx, tenantID, service.ServiceType)
-	promptText := buildEstimatorPrompt(lead, service, notes, photo, estimationContext)
-	if err := q.runWithPrompt(ctx, promptText, "estimator-"+lead.ID.String()); err != nil {
+	reasoningMode, enrichedContext := q.buildEnhancedEstimationContext(ctx, tenantID, service, notes, photo, estimationContext)
+
+	if isInvestigativeMode(reasoningMode) {
+		investigativeTools, err := q.buildInvestigativeTools()
+		if err != nil {
+			log.Printf("quoting-agent: failed to build investigative tools: %v", err)
+			return false
+		}
+
+		missing := make([]string, 0)
+		if analysis, err := q.repo.GetLatestAIAnalysis(ctx, service.ID, tenantID); err == nil {
+			missing = append(missing, analysis.MissingInformation...)
+		}
+
+		promptText := buildInvestigativePrompt(lead, service, notes, photo, missing, enrichedContext)
+		if err := q.runWithPromptUsingTools(ctx, promptText, "estimator-investigative-"+lead.ID.String(), "EstimatorInvestigative", "Investigative intake clarification mode", investigativeTools); err != nil {
+			log.Printf("quoting-agent: error from investigative mode run: %v", err)
+			return false
+		}
+		return true
+	}
+
+	scopeTools, err := q.buildScopeAnalyzerTools()
+	if err != nil {
+		log.Printf("quoting-agent: failed to build scope analyzer tools: %v", err)
+		return false
+	}
+
+	scopePrompt := buildScopeAnalyzerPrompt(lead, service, notes, photo)
+	if err := q.runWithPromptUsingTools(ctx, scopePrompt, "estimator-scope-"+lead.ID.String(), "ScopeAnalyzer", "Analyzes scope and commits artifact", scopeTools); err != nil {
+		log.Printf("quoting-agent: error from scope analyzer run: %v", err)
+		return false
+	}
+
+	scopeArtifact, ok := GetDependencies(ctx).GetScopeArtifact()
+	if !ok {
+		log.Printf("quoting-agent: scope analyzer did not commit artifact for lead=%s service=%s", lead.ID, service.ID)
+		return false
+	}
+
+	quoteBuilderTools, err := buildQuotingTools(GetDependencies(ctx), true)
+	if err != nil {
+		log.Printf("quoting-agent: failed to build quote builder tools: %v", err)
+		return false
+	}
+
+	promptText := buildQuoteBuilderPrompt(lead, service, notes, photo, enrichedContext, scopeArtifact)
+	if err := q.runWithPromptUsingTools(ctx, promptText, "estimator-quote-"+lead.ID.String(), "QuoteBuilder", "Builds estimate and draft quote from scope artifact", quoteBuilderTools); err != nil {
 		log.Printf("quoting-agent: error from autonomous runWithPrompt: %v", err)
 		return false
 	}
 	return true
 }
 
-func (q *QuotingAgent) maybeRecordMissingEstimation(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) {
-	if q.toolDeps.WasSaveEstimationCalled() {
+func (q *QuotingAgent) buildEnhancedEstimationContext(ctx context.Context, tenantID uuid.UUID, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, baseGuidelines string) (estimatorReasoningMode, string) {
+	settings := GetDependencies(ctx).GetOrganizationAISettingsOrDefault()
+	latestAnalysis := q.loadLatestAnalysis(ctx, tenantID, service.ID)
+	reasoningMode := chooseEstimatorReasoningMode(settings, latestAnalysis, photo)
+	councilAdvice := q.resolveEstimatorCouncilAdvice(settings, latestAnalysis, photo, notes)
+	memorySection := q.loadExperienceMemorySection(ctx, settings, tenantID, service.ServiceType)
+	humanFeedbackSection := q.loadHumanFeedbackSection(ctx, settings, tenantID, service.ServiceType)
+
+	var sb strings.Builder
+	sb.WriteString(baseGuidelines)
+	sb.WriteString("\n\n=== REASONING MODE ===\n")
+	sb.WriteString("mode=")
+	sb.WriteString(string(reasoningMode))
+	sb.WriteString("\n")
+	switch reasoningMode {
+	case reasoningModeFast:
+		sb.WriteString("Use concise reasoning and prioritize execution speed.\n")
+	case reasoningModeDeliberate:
+		sb.WriteString("Use careful, stepwise reasoning and enforce conservative assumptions.\n")
+	default:
+		sb.WriteString("Use balanced reasoning with explicit checks before final stage update.\n")
+	}
+
+	appendContextSection(&sb, memorySection)
+	appendContextSection(&sb, humanFeedbackSection)
+	if settings.AICouncilMode {
+		appendContextSection(&sb, buildCouncilSection(councilAdvice))
+	}
+
+	return reasoningMode, strings.TrimSpace(sb.String())
+}
+
+func (q *QuotingAgent) loadLatestAnalysis(ctx context.Context, tenantID, serviceID uuid.UUID) *repository.AIAnalysis {
+	analysis, err := q.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err != nil {
+		return nil
+	}
+	return &analysis
+}
+
+func (q *QuotingAgent) resolveEstimatorCouncilAdvice(settings ports.OrganizationAISettings, latestAnalysis *repository.AIAnalysis, photo *repository.PhotoAnalysis, notes []repository.LeadNote) estimatorCouncilAdvice {
+	if !settings.AICouncilMode {
+		return estimatorCouncilAdvice{}
+	}
+	return runEstimatorCouncil(latestAnalysis, photo, notes)
+}
+
+func (q *QuotingAgent) loadExperienceMemorySection(ctx context.Context, settings ports.OrganizationAISettings, tenantID uuid.UUID, serviceType string) string {
+	if !settings.AIExperienceMemory {
+		return ""
+	}
+	memories, err := q.repo.ListRecentAIDecisionMemories(ctx, tenantID, serviceType, 6)
+	if err != nil {
+		return ""
+	}
+	return buildExperienceMemorySection(memories)
+}
+
+func (q *QuotingAgent) loadHumanFeedbackSection(ctx context.Context, settings ports.OrganizationAISettings, tenantID uuid.UUID, serviceType string) string {
+	if !settings.AIExperienceMemory {
+		return ""
+	}
+	feedbackItems, err := q.repo.ListRecentAppliedHumanFeedbackByServiceType(ctx, tenantID, serviceType, 6)
+	if err != nil {
+		return ""
+	}
+	return buildHumanFeedbackMemorySection(feedbackItems)
+}
+
+func appendContextSection(sb *strings.Builder, section string) {
+	if section == "" {
+		return
+	}
+	sb.WriteString("\n")
+	sb.WriteString(section)
+	sb.WriteString("\n")
+}
+
+func (q *QuotingAgent) persistEstimatorDecisionMemory(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, service repository.LeadService) {
+	settings := reqDeps.GetOrganizationAISettingsOrDefault()
+	if !settings.AIExperienceMemory {
+		return
+	}
+
+	updatedService, err := q.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return
+	}
+
+	analysis, analysisErr := q.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if analysisErr != nil {
+		analysis = repository.AIAnalysis{}
+	}
+
+	outcome := "estimation_pending"
+	if strings.EqualFold(updatedService.PipelineStage, domain.PipelineStageNurturing) {
+		outcome = "nurturing_fallback"
+	} else if reqDeps.WasDraftQuoteCalled() {
+		outcome = "draft_quote_created"
+	} else if reqDeps.WasSaveEstimationCalled() {
+		outcome = "estimation_saved"
+	}
+
+	contextSummary := fmt.Sprintf("serviceType=%s, stage=%s, status=%s, missingInfo=%d", service.ServiceType, updatedService.PipelineStage, updatedService.Status, len(analysis.MissingInformation))
+	actionSummary := fmt.Sprintf("draftQuote=%t, saveEstimation=%t, updateStage=%t", reqDeps.WasDraftQuoteCalled(), reqDeps.WasSaveEstimationCalled(), reqDeps.WasStageUpdateCalled())
+
+	_, _ = q.repo.CreateAIDecisionMemory(ctx, repository.CreateAIDecisionMemoryParams{
+		OrganizationID: tenantID,
+		LeadID:         &leadID,
+		LeadServiceID:  &serviceID,
+		ServiceType:    service.ServiceType,
+		DecisionType:   "estimator_run",
+		Outcome:        outcome,
+		Confidence:     analysis.CompositeConfidence,
+		ContextSummary: contextSummary,
+		ActionSummary:  actionSummary,
+	})
+}
+
+func (q *QuotingAgent) maybeRecordMissingEstimation(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID) {
+	if reqDeps.WasSaveEstimationCalled() {
 		return
 	}
 
@@ -321,8 +506,8 @@ func (q *QuotingAgent) maybeRecordMissingEstimation(ctx context.Context, leadID,
 	log.Printf("quoting-agent: SaveEstimation was not called for lead=%s service=%s", leadID, serviceID)
 }
 
-func (q *QuotingAgent) evaluateDraftReadiness(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) (bool, string) {
-	if q.toolDeps.WasDraftQuoteCalled() || force {
+func (q *QuotingAgent) evaluateDraftReadiness(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, force bool) (bool, string) {
+	if reqDeps.WasDraftQuoteCalled() || force {
 		return false, ""
 	}
 
@@ -351,8 +536,8 @@ func (q *QuotingAgent) evaluateDraftReadiness(ctx context.Context, leadID, servi
 	return true, reason
 }
 
-func (q *QuotingAgent) maybeApplyNurturingFallback(ctx context.Context, fallback nurturingFallbackContext) {
-	if !fallback.InsufficientIntake || q.toolDeps.WasStageUpdateCalled() {
+func (q *QuotingAgent) maybeApplyNurturingFallback(ctx context.Context, reqDeps *ToolDependencies, fallback nurturingFallbackContext) {
+	if !fallback.InsufficientIntake || reqDeps.WasStageUpdateCalled() {
 		return
 	}
 
@@ -360,6 +545,14 @@ func (q *QuotingAgent) maybeApplyNurturingFallback(ctx context.Context, fallback
 	currentService := fallback.Service
 	if latestService, loadErr := q.repo.GetLeadServiceByID(ctx, fallback.ServiceID, fallback.TenantID); loadErr == nil {
 		currentService = latestService
+	}
+
+	// If the stage changed since the run started, a human (or another process)
+	// already acted — do not override their decision.
+	if currentService.PipelineStage != fallback.Service.PipelineStage {
+		log.Printf("quoting-agent: stage changed externally during run (was %s, now %s), skipping fallback runID=%s lead=%s service=%s",
+			fallback.Service.PipelineStage, currentService.PipelineStage, fallback.RunID, fallback.LeadID, fallback.ServiceID)
+		return
 	}
 
 	if currentService.PipelineStage == domain.PipelineStageNurturing {
@@ -391,17 +584,17 @@ func (q *QuotingAgent) maybeApplyNurturingFallback(ctx context.Context, fallback
 
 // Generate runs prompt-driven quote generation.
 func (q *QuotingAgent) Generate(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userPrompt string, existingQuoteID *uuid.UUID, force bool) (*GenerateResult, error) {
-	q.runMu.Lock()
-	defer q.runMu.Unlock()
+	reqDeps := q.toolDeps.NewRequestDeps()
+	reqDeps.SetTenantID(tenantID)
+	reqDeps.SetLeadContext(leadID, serviceID)
+	reqDeps.SetActor("AI", "Quote Generator")
+	reqDeps.ResetToolCallTracking()
+	reqDeps.SetExistingQuoteID(existingQuoteID)
+	reqDeps.SetForceDraftQuote(force)
 
-	q.toolDeps.SetTenantID(tenantID)
-	q.toolDeps.SetLeadContext(leadID, serviceID)
-	q.toolDeps.SetActor("AI", "Quote Generator")
-	q.toolDeps.ResetToolCallTracking()
-	q.toolDeps.SetExistingQuoteID(existingQuoteID)
-	q.toolDeps.SetForceDraftQuote(force)
+	ctx = WithDependencies(ctx, reqDeps)
 
-	if _, err := q.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+	if _, err := reqDeps.LoadOrganizationAISettings(ctx); err != nil {
 		log.Printf("quoting-agent: failed to load org AI settings (tenant=%s): %v", tenantID, err)
 	}
 
@@ -427,7 +620,7 @@ func (q *QuotingAgent) Generate(ctx context.Context, leadID, serviceID, tenantID
 		return nil, fmt.Errorf("quote generator: run failed: %w", err)
 	}
 
-	result := q.toolDeps.GetLastDraftResult()
+	result := reqDeps.GetLastDraftResult()
 	if result == nil {
 		return nil, fmt.Errorf("quote generator: agent did not produce a draft quote")
 	}
@@ -453,10 +646,43 @@ func (q *QuotingAgent) fetchEstimationGuidelines(ctx context.Context, tenantID u
 }
 
 func (q *QuotingAgent) runWithPrompt(ctx context.Context, promptText, userID string) error {
+	return q.runWithPromptUsingTools(ctx, promptText, userID, "EstimatorRunner", "Runs the configured estimator agent", nil)
+}
+
+func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, userID, agentName, description string, tools []tool.Tool) error {
+	activeRunner := q.runner
+	activeSessionService := q.sessionService
+	activeAppName := q.appName
+
+	if len(tools) > 0 {
+		kimi := moonshot.NewModel(q.modelConfig)
+		dynamicAgent, err := llmagent.New(llmagent.Config{
+			Name:        agentName,
+			Model:       kimi,
+			Description: description,
+			Instruction: "Follow prompt instructions and return tool calls only.",
+			Tools:       tools,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create dynamic quoting agent: %w", err)
+		}
+
+		activeSessionService = session.InMemoryService()
+		activeAppName = strings.ToLower(agentName)
+		activeRunner, err = runner.New(runner.Config{
+			AppName:        activeAppName,
+			Agent:          dynamicAgent,
+			SessionService: activeSessionService,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create dynamic runner: %w", err)
+		}
+	}
+
 	sessionID := uuid.New().String()
 
-	_, err := q.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   q.appName,
+	_, err := activeSessionService.Create(ctx, &session.CreateRequest{
+		AppName:   activeAppName,
 		UserID:    userID,
 		SessionID: sessionID,
 	})
@@ -464,8 +690,8 @@ func (q *QuotingAgent) runWithPrompt(ctx context.Context, promptText, userID str
 		return fmt.Errorf("failed to create quoting session: %w", err)
 	}
 	defer func() {
-		_ = q.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   q.appName,
+		_ = activeSessionService.Delete(ctx, &session.DeleteRequest{
+			AppName:   activeAppName,
 			UserID:    userID,
 			SessionID: sessionID,
 		})
@@ -477,7 +703,7 @@ func (q *QuotingAgent) runWithPrompt(ctx context.Context, promptText, userID str
 	}
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	for event := range q.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
+	for event := range activeRunner.Run(ctx, userID, sessionID, userMessage, runConfig) {
 		_ = event
 	}
 

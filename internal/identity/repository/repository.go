@@ -82,6 +82,11 @@ type OrganizationSettings struct {
 	AIAutoDisqualifyJunk        bool
 	AIAutoDispatch              bool
 	AIAutoEstimate              bool
+	AIConfidenceGateEnabled     bool
+	AIAdaptiveReasoningEnabled  bool
+	AIExperienceMemoryEnabled   bool
+	AICouncilEnabled            bool
+	AICouncilConsensusMode      string
 	CatalogGapThreshold         int
 	CatalogGapLookbackDays      int
 	NotificationEmail           *string
@@ -103,6 +108,11 @@ type OrganizationSettingsUpdate struct {
 	AIAutoDisqualifyJunk        *bool
 	AIAutoDispatch              *bool
 	AIAutoEstimate              *bool
+	AIConfidenceGateEnabled     *bool
+	AIAdaptiveReasoningEnabled  *bool
+	AIExperienceMemoryEnabled   *bool
+	AICouncilEnabled            *bool
+	AICouncilConsensusMode      *string
 	CatalogGapThreshold         *int
 	CatalogGapLookbackDays      *int
 	NotificationEmail           *string
@@ -317,7 +327,9 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 	var s OrganizationSettings
 	err := r.pool.QueryRow(ctx, `
 	SELECT organization_id, quote_payment_days, quote_valid_days,
-	       ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate,
+	       ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
+	       ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
+	       ai_council_consensus_mode,
 	       catalog_gap_threshold, catalog_gap_lookback_days,
 	       notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
            smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
@@ -331,6 +343,11 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&s.AIAutoDisqualifyJunk,
 		&s.AIAutoDispatch,
 		&s.AIAutoEstimate,
+		&s.AIConfidenceGateEnabled,
+		&s.AIAdaptiveReasoningEnabled,
+		&s.AIExperienceMemoryEnabled,
+		&s.AICouncilEnabled,
+		&s.AICouncilConsensusMode,
 		&s.CatalogGapThreshold,
 		&s.CatalogGapLookbackDays,
 		&s.NotificationEmail,
@@ -354,6 +371,11 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			AIAutoDisqualifyJunk:        true,
 			AIAutoDispatch:              false,
 			AIAutoEstimate:              true,
+			AIConfidenceGateEnabled:     false,
+			AIAdaptiveReasoningEnabled:  true,
+			AIExperienceMemoryEnabled:   true,
+			AICouncilEnabled:            true,
+			AICouncilConsensusMode:      "weighted",
 			CatalogGapThreshold:         3,
 			CatalogGapLookbackDays:      30,
 			WhatsAppDeviceID:            nil,
@@ -377,6 +399,11 @@ func (r *Repository) UpsertOrganizationSettings(
 			ai_auto_disqualify_junk,
 			ai_auto_dispatch,
 			ai_auto_estimate,
+			ai_confidence_gate_enabled,
+			ai_adaptive_reasoning_enabled,
+			ai_experience_memory_enabled,
+			ai_council_enabled,
+			ai_council_consensus_mode,
 			catalog_gap_threshold,
 			catalog_gap_lookback_days,
 			notification_email,
@@ -390,11 +417,16 @@ func (r *Repository) UpsertOrganizationSettings(
 			COALESCE($4, true),
 			COALESCE($5, false),
 			COALESCE($6, true),
-			COALESCE($7, 3),
-			COALESCE($8, 30),
-			NULLIF($9, ''),
-			NULLIF($10, ''),
-			COALESCE($11, 2)
+			COALESCE($7, false),
+			COALESCE($8, true),
+			COALESCE($9, true),
+			COALESCE($10, true),
+			COALESCE(NULLIF($11, ''), 'weighted'),
+			COALESCE($12, 3),
+			COALESCE($13, 30),
+			NULLIF($14, ''),
+			NULLIF($15, ''),
+			COALESCE($16, 2)
 		)
 		ON CONFLICT (organization_id) DO UPDATE SET
 			quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
@@ -402,14 +434,21 @@ func (r *Repository) UpsertOrganizationSettings(
 			ai_auto_disqualify_junk = COALESCE($4, RAC_organization_settings.ai_auto_disqualify_junk),
 			ai_auto_dispatch        = COALESCE($5, RAC_organization_settings.ai_auto_dispatch),
 			ai_auto_estimate        = COALESCE($6, RAC_organization_settings.ai_auto_estimate),
-			catalog_gap_threshold   = COALESCE($7, RAC_organization_settings.catalog_gap_threshold),
-			catalog_gap_lookback_days = COALESCE($8, RAC_organization_settings.catalog_gap_lookback_days),
-			notification_email = CASE WHEN $9 IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($9, '') END,
-			whatsapp_device_id = CASE WHEN $10 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($10, '') END,
-			whatsapp_welcome_delay_minutes = COALESCE($11, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+			ai_confidence_gate_enabled = COALESCE($7, RAC_organization_settings.ai_confidence_gate_enabled),
+			ai_adaptive_reasoning_enabled = COALESCE($8, RAC_organization_settings.ai_adaptive_reasoning_enabled),
+			ai_experience_memory_enabled = COALESCE($9, RAC_organization_settings.ai_experience_memory_enabled),
+			ai_council_enabled = COALESCE($10, RAC_organization_settings.ai_council_enabled),
+			ai_council_consensus_mode = COALESCE(NULLIF($11, ''), RAC_organization_settings.ai_council_consensus_mode),
+			catalog_gap_threshold   = COALESCE($12, RAC_organization_settings.catalog_gap_threshold),
+			catalog_gap_lookback_days = COALESCE($13, RAC_organization_settings.catalog_gap_lookback_days),
+			notification_email = CASE WHEN $14 IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($14, '') END,
+			whatsapp_device_id = CASE WHEN $15 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($15, '') END,
+			whatsapp_welcome_delay_minutes = COALESCE($16, RAC_organization_settings.whatsapp_welcome_delay_minutes),
 			updated_at         = now()
 		RETURNING organization_id, quote_payment_days, quote_valid_days,
-		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate,
+		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
+		          ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
+		          ai_council_consensus_mode,
 		          catalog_gap_threshold, catalog_gap_lookback_days,
 		          notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
@@ -420,6 +459,11 @@ func (r *Repository) UpsertOrganizationSettings(
 		update.AIAutoDisqualifyJunk,
 		update.AIAutoDispatch,
 		update.AIAutoEstimate,
+		update.AIConfidenceGateEnabled,
+		update.AIAdaptiveReasoningEnabled,
+		update.AIExperienceMemoryEnabled,
+		update.AICouncilEnabled,
+		update.AICouncilConsensusMode,
 		update.CatalogGapThreshold,
 		update.CatalogGapLookbackDays,
 		update.NotificationEmail,
@@ -432,6 +476,11 @@ func (r *Repository) UpsertOrganizationSettings(
 		&s.AIAutoDisqualifyJunk,
 		&s.AIAutoDispatch,
 		&s.AIAutoEstimate,
+		&s.AIConfidenceGateEnabled,
+		&s.AIAdaptiveReasoningEnabled,
+		&s.AIExperienceMemoryEnabled,
+		&s.AICouncilEnabled,
+		&s.AICouncilConsensusMode,
 		&s.CatalogGapThreshold,
 		&s.CatalogGapLookbackDays,
 		&s.NotificationEmail,
@@ -471,7 +520,9 @@ func (r *Repository) UpsertOrganizationSMTP(
 			smtp_from_name  = $7,
 			updated_at      = now()
 		RETURNING organization_id, quote_payment_days, quote_valid_days,
-		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate,
+		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
+		          ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
+		          ai_council_consensus_mode,
 		          catalog_gap_threshold, catalog_gap_lookback_days,
 		          notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
 		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
@@ -483,6 +534,11 @@ func (r *Repository) UpsertOrganizationSMTP(
 		&s.AIAutoDisqualifyJunk,
 		&s.AIAutoDispatch,
 		&s.AIAutoEstimate,
+		&s.AIConfidenceGateEnabled,
+		&s.AIAdaptiveReasoningEnabled,
+		&s.AIExperienceMemoryEnabled,
+		&s.AICouncilEnabled,
+		&s.AICouncilConsensusMode,
 		&s.CatalogGapThreshold,
 		&s.CatalogGapLookbackDays,
 		&s.NotificationEmail,

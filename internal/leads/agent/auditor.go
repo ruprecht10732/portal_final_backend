@@ -30,7 +30,6 @@ type Auditor struct {
 	repo           repository.LeadsRepository
 	eventBus       events.Bus
 	toolDeps       *AuditorToolDeps
-	runMu          sync.Mutex
 }
 
 type AuditorToolDeps struct {
@@ -58,6 +57,10 @@ func (d *AuditorToolDeps) GetContext() (tenantID, leadID, serviceID uuid.UUID, o
 		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, false
 	}
 	return *d.tenantID, *d.leadID, *d.serviceID, true
+}
+
+func (d *AuditorToolDeps) NewRequestDeps() *AuditorToolDeps {
+	return &AuditorToolDeps{Repo: d.Repo, EventBus: d.EventBus}
 }
 
 type SubmitAuditResultInput struct {
@@ -147,7 +150,9 @@ func NewAuditor(apiKey string, repo repository.LeadsRepository, eventBus events.
 	submitTool, err := functiontool.New(functiontool.Config{
 		Name:        "SubmitAuditResult",
 		Description: "Submit the audit result. If required info is missing, flag Manual_Intervention and explain what is missing.",
-	}, deps.handleSubmitAuditResult)
+	}, func(ctx tool.Context, input SubmitAuditResultInput) (SubmitAuditResultOutput, error) {
+		return GetAuditorDeps(ctx).handleSubmitAuditResult(ctx, input)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SubmitAuditResult tool: %w", err)
 	}
@@ -185,10 +190,9 @@ func NewAuditor(apiKey string, repo repository.LeadsRepository, eventBus events.
 }
 
 func (a *Auditor) AuditVisitReport(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error {
-	a.runMu.Lock()
-	defer a.runMu.Unlock()
-
-	a.toolDeps.SetContext(tenantID, leadID, serviceID)
+	reqDeps := a.toolDeps.NewRequestDeps()
+	reqDeps.SetContext(tenantID, leadID, serviceID)
+	ctx = WithAuditorDeps(ctx, reqDeps)
 
 	service, err := a.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
@@ -212,10 +216,9 @@ func (a *Auditor) AuditVisitReport(ctx context.Context, leadID, serviceID, tenan
 }
 
 func (a *Auditor) AuditCallLog(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
-	a.runMu.Lock()
-	defer a.runMu.Unlock()
-
-	a.toolDeps.SetContext(tenantID, leadID, serviceID)
+	reqDeps := a.toolDeps.NewRequestDeps()
+	reqDeps.SetContext(tenantID, leadID, serviceID)
+	ctx = WithAuditorDeps(ctx, reqDeps)
 
 	service, err := a.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {

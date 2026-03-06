@@ -226,19 +226,22 @@ type LeadScoreResponse struct {
 }
 
 type AIAnalysisResponse struct {
-	ID                      uuid.UUID `json:"id"`
-	LeadID                  uuid.UUID `json:"leadId"`
-	OrganizationID          uuid.UUID `json:"organizationId"`
-	LeadServiceID           uuid.UUID `json:"leadServiceId"`
-	UrgencyLevel            string    `json:"urgencyLevel"`
-	UrgencyReason           *string   `json:"urgencyReason,omitempty"`
-	LeadQuality             string    `json:"leadQuality"`
-	RecommendedAction       string    `json:"recommendedAction"`
-	MissingInformation      []string  `json:"missingInformation"`
-	PreferredContactChannel string    `json:"preferredContactChannel"`
-	SuggestedContactMessage string    `json:"suggestedContactMessage"`
-	Summary                 string    `json:"summary"`
-	CreatedAt               time.Time `json:"createdAt"`
+	ID                      uuid.UUID          `json:"id"`
+	LeadID                  uuid.UUID          `json:"leadId"`
+	OrganizationID          uuid.UUID          `json:"organizationId"`
+	LeadServiceID           uuid.UUID          `json:"leadServiceId"`
+	UrgencyLevel            string             `json:"urgencyLevel"`
+	UrgencyReason           *string            `json:"urgencyReason,omitempty"`
+	LeadQuality             string             `json:"leadQuality"`
+	RecommendedAction       string             `json:"recommendedAction"`
+	MissingInformation      []string           `json:"missingInformation"`
+	CompositeConfidence     *float64           `json:"compositeConfidence,omitempty"`
+	ConfidenceBreakdown     map[string]float64 `json:"confidenceBreakdown,omitempty"`
+	RiskFlags               []string           `json:"riskFlags,omitempty"`
+	PreferredContactChannel string             `json:"preferredContactChannel"`
+	SuggestedContactMessage string             `json:"suggestedContactMessage"`
+	Summary                 string             `json:"summary"`
+	CreatedAt               time.Time          `json:"createdAt"`
 }
 
 func ToAIAnalysisResponse(analysis repository.AIAnalysis) AIAnalysisResponse {
@@ -252,6 +255,9 @@ func ToAIAnalysisResponse(analysis repository.AIAnalysis) AIAnalysisResponse {
 		LeadQuality:             analysis.LeadQuality,
 		RecommendedAction:       analysis.RecommendedAction,
 		MissingInformation:      analysis.MissingInformation,
+		CompositeConfidence:     analysis.CompositeConfidence,
+		ConfidenceBreakdown:     analysis.ConfidenceBreakdown,
+		RiskFlags:               analysis.RiskFlags,
 		PreferredContactChannel: analysis.PreferredContactChannel,
 		SuggestedContactMessage: analysis.SuggestedContactMessage,
 		Summary:                 analysis.Summary,

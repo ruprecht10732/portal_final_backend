@@ -57,13 +57,16 @@ func (m StageChangeMetadata) ToMap() map[string]any { return toMap(m) }
 
 // AIAnalysisMetadata is the typed metadata for EventTypeAI (gatekeeper analysis) events.
 type AIAnalysisMetadata struct {
-	UrgencyLevel            string   `json:"urgencyLevel"`
-	RecommendedAction       string   `json:"recommendedAction"`
-	LeadQuality             string   `json:"leadQuality"`
-	SuggestedContactMessage string   `json:"suggestedContactMessage,omitempty"`
-	PreferredContactChannel string   `json:"preferredContactChannel,omitempty"`
-	MissingInformation      []string `json:"missingInformation,omitempty"`
-	Fallback                bool     `json:"fallback,omitempty"`
+	UrgencyLevel            string             `json:"urgencyLevel"`
+	RecommendedAction       string             `json:"recommendedAction"`
+	LeadQuality             string             `json:"leadQuality"`
+	SuggestedContactMessage string             `json:"suggestedContactMessage,omitempty"`
+	PreferredContactChannel string             `json:"preferredContactChannel,omitempty"`
+	MissingInformation      []string           `json:"missingInformation,omitempty"`
+	CompositeConfidence     float64            `json:"compositeConfidence,omitempty"`
+	ConfidenceBreakdown     map[string]float64 `json:"confidenceBreakdown,omitempty"`
+	RiskFlags               []string           `json:"riskFlags,omitempty"`
+	Fallback                bool               `json:"fallback,omitempty"`
 }
 
 func (m AIAnalysisMetadata) ToMap() map[string]any { return toMap(m) }
@@ -186,3 +189,15 @@ type PartnerSearchMetadata struct {
 }
 
 func (m PartnerSearchMetadata) ToMap() map[string]any { return toMap(m) }
+
+// CouncilAdviceMetadata captures multi-agent council advice and consensus outcomes.
+type CouncilAdviceMetadata struct {
+	Decision         string   `json:"decision"`
+	ReasonCode       string   `json:"reasonCode,omitempty"`
+	Summary          string   `json:"summary,omitempty"`
+	EstimatorSignals []string `json:"estimatorSignals,omitempty"`
+	RiskSignals      []string `json:"riskSignals,omitempty"`
+	ReadinessSignals []string `json:"readinessSignals,omitempty"`
+}
+
+func (m CouncilAdviceMetadata) ToMap() map[string]any { return toMap(m) }

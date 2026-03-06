@@ -65,7 +65,6 @@ type CallLogger struct {
 	repo           repository.LeadsRepository
 	booker         ports.AppointmentBooker
 	toolDeps       *CallLoggerToolDeps
-	runMu          sync.Mutex
 }
 
 // SetAppointmentBooker sets the appointment booker after initialization.
@@ -191,6 +190,14 @@ func (d *CallLoggerToolDeps) GetResult() CallLogResult {
 	return d.result
 }
 
+func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
+	return &CallLoggerToolDeps{
+		Repo:     d.Repo,
+		Booker:   d.Booker,
+		EventBus: d.EventBus,
+	}
+}
+
 // NewCallLogger creates a new CallLogger agent
 func NewCallLogger(apiKey string, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
 	// Use kimi-k2.5 with thinking disabled for reliable tool calling
@@ -213,7 +220,7 @@ func NewCallLogger(apiKey string, repo repository.LeadsRepository, booker ports.
 	}
 
 	// Build tools
-	tools, err := buildCallLoggerTools(logger.toolDeps)
+	tools, err := buildCallLoggerTools()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build call logger tools: %w", err)
 	}
@@ -312,11 +319,9 @@ func (c *CallLogger) executeAgentRun(ctx context.Context, userIDStr, sessionID, 
 
 // ProcessSummary is the main entry point for processing a call summary
 func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) (*CallLogResult, error) {
-	c.runMu.Lock()
-	defer c.runMu.Unlock()
-
-	// Set context for tools
-	c.toolDeps.SetContext(tenantID, userID, leadID, serviceID)
+	reqDeps := c.toolDeps.NewRequestDeps()
+	reqDeps.SetContext(tenantID, userID, leadID, serviceID)
+	ctx = WithCallLoggerDeps(ctx, reqDeps)
 
 	existingAppointment := c.resolveExistingAppointment(ctx, tenantID, serviceID, userID)
 
@@ -377,7 +382,7 @@ Execute the appropriate tools now.`,
 	}
 
 	// Get the result and build message
-	result := c.toolDeps.GetResult()
+	result := GetCallLoggerDeps(ctx).GetResult()
 	result.Message = buildResultMessage(result)
 
 	// Write the call-log timeline event here so the HTTP handler stays
@@ -414,18 +419,19 @@ Execute the appropriate tools now.`,
 }
 
 func (c *CallLogger) persistDraftedNote(ctx context.Context) error {
-	body, ok := c.toolDeps.GetNoteDraft()
+	reqDeps := GetCallLoggerDeps(ctx)
+	body, ok := reqDeps.GetNoteDraft()
 	if !ok {
 		return nil
 	}
 
-	result := c.toolDeps.GetResult()
+	result := reqDeps.GetResult()
 	finalBody := body
 	if result.AppointmentRescheduleFallback && result.AppointmentBooked != nil {
 		finalBody = appendRescheduleFallbackNote(finalBody, *result.AppointmentBooked)
 	}
 
-	tenantID, userID, leadID, _, ok := c.toolDeps.GetContext()
+	tenantID, userID, leadID, _, ok := reqDeps.GetContext()
 	if !ok {
 		return errMissingContext
 	}
@@ -441,8 +447,8 @@ func (c *CallLogger) persistDraftedNote(ctx context.Context) error {
 		return err
 	}
 
-	c.toolDeps.MarkNoteCreated()
-	c.toolDeps.SetNoteDetails(finalBody, note.AuthorEmail)
+	reqDeps.MarkNoteCreated()
+	reqDeps.SetNoteDetails(finalBody, note.AuthorEmail)
 	return nil
 }
 
@@ -583,38 +589,38 @@ type CancelVisitOutput struct {
 	Message string `json:"message"`
 }
 
-func buildCallLoggerTools(deps *CallLoggerToolDeps) ([]tool.Tool, error) {
-	saveNoteTool, err := buildSaveNoteTool(deps)
+func buildCallLoggerTools() ([]tool.Tool, error) {
+	saveNoteTool, err := buildSaveNoteTool()
 	if err != nil {
 		return nil, err
 	}
 
-	setCallOutcomeTool, err := buildSetCallOutcomeTool(deps)
+	setCallOutcomeTool, err := buildSetCallOutcomeTool()
 	if err != nil {
 		return nil, err
 	}
 
-	updateStatusTool, err := buildUpdateStatusTool(deps)
+	updateStatusTool, err := buildUpdateStatusTool()
 	if err != nil {
 		return nil, err
 	}
 
-	updatePipelineStageTool, err := buildCallLoggerUpdatePipelineStageTool(deps)
+	updatePipelineStageTool, err := buildCallLoggerUpdatePipelineStageTool()
 	if err != nil {
 		return nil, err
 	}
 
-	scheduleVisitTool, err := buildScheduleVisitTool(deps)
+	scheduleVisitTool, err := buildScheduleVisitTool()
 	if err != nil {
 		return nil, err
 	}
 
-	rescheduleVisitTool, err := buildRescheduleVisitTool(deps)
+	rescheduleVisitTool, err := buildRescheduleVisitTool()
 	if err != nil {
 		return nil, err
 	}
 
-	cancelVisitTool, err := buildCancelVisitTool(deps)
+	cancelVisitTool, err := buildCancelVisitTool()
 	if err != nil {
 		return nil, err
 	}
@@ -630,11 +636,12 @@ func buildCallLoggerTools(deps *CallLoggerToolDeps) ([]tool.Tool, error) {
 	}, nil
 }
 
-func buildSaveNoteTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+func buildSaveNoteTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveNote",
 		Description: "Saves the call summary as a note on the lead. ALWAYS call this tool to record the call outcome. The body will be normalized/cleaned server-side.",
 	}, func(ctx tool.Context, input SaveNoteInput) (SaveNoteOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
 		if _, _, _, _, ok := deps.GetContext(); !ok {
 			return SaveNoteOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
 		}
@@ -688,11 +695,12 @@ func appendRescheduleFallbackNote(body string, startTime time.Time) string {
 	return strings.TrimRight(body, "\n") + "\n\n" + correction
 }
 
-func buildSetCallOutcomeTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+func buildSetCallOutcomeTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SetCallOutcome",
 		Description: "Stores a short call outcome label on the timeline.",
 	}, func(ctx tool.Context, input SetCallOutcomeInput) (SetCallOutcomeOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
 		tenantID, userID, leadID, serviceID, ok := deps.GetContext()
 		if !ok {
 			return SetCallOutcomeOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -740,11 +748,12 @@ var validLeadStatuses = map[string]bool{
 	"Disqualified":          true,
 }
 
-func buildUpdateStatusTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+func buildUpdateStatusTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdateStatus",
 		Description: "Updates the status of the lead service. Valid statuses: New, Pending, In_Progress, Attempted_Contact, Appointment_Scheduled, Needs_Rescheduling, Disqualified",
 	}, func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
 		tenantID, _, _, serviceID, ok := deps.GetContext()
 		if !ok {
 			return UpdateStatusOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -777,29 +786,32 @@ func buildUpdateStatusTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
 	})
 }
 
-func buildScheduleVisitTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+func buildScheduleVisitTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "ScheduleVisit",
 		Description: "Books an inspection/visit appointment for the lead. Provide start and end times in ISO 8601 format. Set sendConfirmationEmail to false if the call notes mention not sending email; otherwise it defaults to true.",
 	}, func(ctx tool.Context, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
 		return executeScheduleVisit(deps, input)
 	})
 }
 
-func buildRescheduleVisitTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+func buildRescheduleVisitTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "RescheduleVisit",
 		Description: "Reschedules an existing lead visit appointment. Provide start and end times in ISO 8601 format.",
 	}, func(ctx tool.Context, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
 		return executeRescheduleVisit(deps, input)
 	})
 }
 
-func buildCancelVisitTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+func buildCancelVisitTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "CancelVisit",
 		Description: "Cancels the existing lead visit appointment.",
 	}, func(ctx tool.Context, input CancelVisitInput) (CancelVisitOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
 		return executeCancelVisit(deps, input)
 	})
 }
@@ -939,11 +951,12 @@ func publishCallLoggerStageChanged(deps *CallLoggerToolDeps, ctx tool.Context, t
 	})
 }
 
-func buildCallLoggerUpdatePipelineStageTool(deps *CallLoggerToolDeps) (tool.Tool, error) {
+func buildCallLoggerUpdatePipelineStageTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdatePipelineStage",
 		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
 	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
 		return handleCallLoggerUpdatePipelineStage(ctx, deps, input)
 	})
 }

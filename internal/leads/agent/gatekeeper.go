@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -32,7 +31,6 @@ type Gatekeeper struct {
 	appName        string
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
-	runMu          sync.Mutex
 }
 
 // NewGatekeeper creates a Gatekeeper agent.
@@ -44,9 +42,10 @@ func NewGatekeeper(apiKey string, repo repository.LeadsRepository, eventBus even
 	})
 
 	deps := &ToolDependencies{
-		Repo:     repo,
-		EventBus: eventBus,
-		Scorer:   scorer,
+		Repo:           repo,
+		EventBus:       eventBus,
+		Scorer:         scorer,
+		CouncilService: NewDefaultMultiAgentCouncil(repo),
 	}
 
 	updateStageTool, err := createUpdatePipelineStageTool(deps)
@@ -108,19 +107,19 @@ func (g *Gatekeeper) SetOrganizationAISettingsReader(reader ports.OrganizationAI
 
 // Run executes the gatekeeper for a lead service.
 func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
-	g.runMu.Lock()
-	defer g.runMu.Unlock()
-
-	g.toolDeps.SetTenantID(tenantID)
-	g.toolDeps.SetLeadContext(leadID, serviceID)
-	g.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameGatekeeper)
-	g.toolDeps.ResetToolCallTracking() // Reset before each run
-	runID := g.toolDeps.GetRunID()
+	reqDeps := g.toolDeps.NewRequestDeps()
+	reqDeps.SetTenantID(tenantID)
+	reqDeps.SetLeadContext(leadID, serviceID)
+	reqDeps.SetActor(repository.ActorTypeAI, repository.ActorNameGatekeeper)
+	reqDeps.ResetToolCallTracking() // Reset before each run
+	runID := reqDeps.GetRunID()
 	log.Printf("gatekeeper: run started runID=%s lead=%s service=%s tenant=%s", runID, leadID, serviceID, tenantID)
+
+	ctx = WithDependencies(ctx, reqDeps)
 
 	// Preload org AI settings so downstream tools and safeguards can use them.
 	// If settings cannot be loaded, we continue; autonomous actions will fail-safe.
-	if _, err := g.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+	if _, err := reqDeps.LoadOrganizationAISettings(ctx); err != nil {
 		log.Printf("gatekeeper: failed to load org AI settings (tenant=%s): %v", tenantID, err)
 	}
 
@@ -145,7 +144,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	}
 
 	// Validate that SaveAnalysis was called - if not, create fallback
-	wasCalled := g.toolDeps.WasSaveAnalysisCalled()
+	wasCalled := reqDeps.WasSaveAnalysisCalled()
 	log.Printf("gatekeeper: WasSaveAnalysisCalled()=%v for lead=%s service=%s", wasCalled, leadID, serviceID)
 	if !wasCalled {
 		log.Printf("gatekeeper: SaveAnalysis was NOT called by agent for lead=%s service=%s, creating fallback", leadID, serviceID)
@@ -154,13 +153,18 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		log.Printf("gatekeeper: SaveAnalysis was called successfully for lead=%s service=%s", leadID, serviceID)
 	}
 
-	if !g.toolDeps.WasStageUpdateCalled() {
+	if !reqDeps.WasStageUpdateCalled() {
 		reason := "Intake onvolledig of analyse niet afgerond; handmatige opvolging nodig."
 		currentService := service
 		if latestService, loadErr := g.repo.GetLeadServiceByID(ctx, serviceID, tenantID); loadErr == nil {
 			currentService = latestService
 		}
-		if currentService.PipelineStage == domain.PipelineStageNurturing {
+		// If the stage changed since the run started, a human (or another process)
+		// already acted — do not override their decision.
+		if currentService.PipelineStage != service.PipelineStage {
+			log.Printf("gatekeeper: stage changed externally during run (was %s, now %s), skipping fallback runID=%s lead=%s service=%s",
+				service.PipelineStage, currentService.PipelineStage, runID, leadID, serviceID)
+		} else if currentService.PipelineStage == domain.PipelineStageNurturing {
 			log.Printf("gatekeeper: skipping fallback stage update (already Nurturing) runID=%s lead=%s service=%s", runID, leadID, serviceID)
 		} else if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
 			log.Printf("gatekeeper: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
@@ -248,10 +252,11 @@ func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperProm
 }
 
 func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, service repository.LeadService) {
+	reqDeps := GetDependencies(ctx)
 	// Respect tenant settings; do not perform autonomous disqualification when disabled.
-	settings, ok := g.toolDeps.GetOrganizationAISettings()
+	settings, ok := reqDeps.GetOrganizationAISettings()
 	if !ok {
-		if loaded, err := g.toolDeps.LoadOrganizationAISettings(ctx); err == nil {
+		if loaded, err := reqDeps.LoadOrganizationAISettings(ctx); err == nil {
 			settings = loaded
 			ok = true
 		}
@@ -311,8 +316,8 @@ func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, servic
 		}.ToMap(),
 	})
 
-	if g.toolDeps != nil && g.toolDeps.EventBus != nil {
-		g.toolDeps.EventBus.Publish(ctx, events.LeadAutoDisqualified{
+	if reqDeps.EventBus != nil {
+		reqDeps.EventBus.Publish(ctx, events.LeadAutoDisqualified{
 			BaseEvent:     events.NewBaseEvent(),
 			LeadID:        leadID,
 			LeadServiceID: serviceID,
@@ -374,7 +379,7 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 	})
 
 	// Store for stage_change event if needed
-	g.toolDeps.SetLastAnalysisMetadata(analysisMetadata)
+	GetDependencies(ctx).SetLastAnalysisMetadata(analysisMetadata)
 	log.Printf("gatekeeper: created fallback analysis for lead=%s service=%s", leadID, serviceID)
 }
 

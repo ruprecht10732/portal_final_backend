@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -28,7 +27,6 @@ type Dispatcher struct {
 	appName        string
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
-	runMu          sync.Mutex
 }
 
 // NewDispatcher creates a Dispatcher agent.
@@ -40,8 +38,9 @@ func NewDispatcher(apiKey string, repo repository.LeadsRepository, eventBus even
 	})
 
 	deps := &ToolDependencies{
-		Repo:     repo,
-		EventBus: eventBus,
+		Repo:           repo,
+		EventBus:       eventBus,
+		CouncilService: NewDefaultMultiAgentCouncil(repo),
 	}
 
 	findPartnersTool, err := createFindMatchingPartnersTool(deps)
@@ -107,18 +106,18 @@ func (d *Dispatcher) SetOfferCreator(creator ports.PartnerOfferCreator) {
 
 // Run executes partner matching for a lead service.
 func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
-	d.runMu.Lock()
-	defer d.runMu.Unlock()
-
-	d.toolDeps.SetTenantID(tenantID)
-	d.toolDeps.SetLeadContext(leadID, serviceID)
-	d.toolDeps.SetActor(repository.ActorTypeAI, repository.ActorNameDispatcher)
-	d.toolDeps.ResetToolCallTracking()
-	runID := d.toolDeps.GetRunID()
+	reqDeps := d.toolDeps.NewRequestDeps()
+	reqDeps.SetTenantID(tenantID)
+	reqDeps.SetLeadContext(leadID, serviceID)
+	reqDeps.SetActor(repository.ActorTypeAI, repository.ActorNameDispatcher)
+	reqDeps.ResetToolCallTracking()
+	runID := reqDeps.GetRunID()
 	fmt.Printf("dispatcher: run started runID=%s lead=%s service=%s tenant=%s\n", runID, leadID, serviceID, tenantID)
 
+	ctx = WithDependencies(ctx, reqDeps)
+
 	// Preload org settings for consistency across agents (even if not used directly today).
-	if _, err := d.toolDeps.LoadOrganizationAISettings(ctx); err != nil {
+	if _, err := reqDeps.LoadOrganizationAISettings(ctx); err != nil {
 		fmt.Printf("dispatcher: failed to load org AI settings (tenant=%s): %v\n", tenantID, err)
 	}
 
@@ -135,12 +134,7 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	if err != nil {
 		return err
 	}
-	if aggs.AcceptedOffers > 0 || aggs.PendingOffers > 0 {
-		// A partner-offer flow is already in progress (or accepted); do not re-dispatch.
-		return nil
-	}
-	if linked, err := d.repo.HasLinkedPartners(ctx, tenantID, leadID); err == nil && linked {
-		// A human linked at least one partner to this lead; do not override with AI dispatch.
+	if d.shouldSkipDispatch(ctx, leadID, tenantID, aggs) {
 		return nil
 	}
 
@@ -155,19 +149,45 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		return err
 	}
 
-	if !d.toolDeps.WasStageUpdateCalled() {
+	d.ensureDispatchPostconditions(ctx, runID, leadID, serviceID, tenantID, service.PipelineStage)
+	fmt.Printf("dispatcher: run finished runID=%s lead=%s service=%s\n", runID, leadID, serviceID)
+
+	return nil
+}
+
+func (d *Dispatcher) shouldSkipDispatch(ctx context.Context, leadID, tenantID uuid.UUID, aggs repository.ServiceStateAggregates) bool {
+	if aggs.AcceptedOffers > 0 || aggs.PendingOffers > 0 {
+		// A partner-offer flow is already in progress (or accepted); do not re-dispatch.
+		return true
+	}
+	if linked, err := d.repo.HasLinkedPartners(ctx, tenantID, leadID); err == nil && linked {
+		// A human linked at least one partner to this lead; do not override with AI dispatch.
+		return true
+	}
+	return false
+}
+
+func (d *Dispatcher) ensureDispatchPostconditions(ctx context.Context, runID string, leadID, serviceID, tenantID uuid.UUID, stageAtStart string) {
+	reqDeps := GetDependencies(ctx)
+	// Re-read the current stage. If it changed since the run started a human
+	// (or another process) already acted — do not override their decision.
+	if current, err := d.repo.GetLeadServiceByID(ctx, serviceID, tenantID); err == nil {
+		if current.PipelineStage != stageAtStart {
+			fmt.Printf("Dispatcher: stage changed externally during run (was %s, now %s), skipping fallback runID=%s\n", stageAtStart, current.PipelineStage, runID)
+			return
+		}
+	}
+
+	if !reqDeps.WasStageUpdateCalled() {
 		if _, err := d.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageManualIntervention); err != nil {
 			fmt.Printf("Dispatcher warning: fallback stage update failed runID=%s lead=%s service=%s err=%v\n", runID, leadID, serviceID, err)
 		} else {
 			fmt.Printf("Dispatcher warning: no stage update recorded, fallback to Manual_Intervention runID=%s lead=%s service=%s\n", runID, leadID, serviceID)
 		}
 	}
-	if d.toolDeps.LastStageUpdated() == domain.PipelineStageFulfillment && !d.toolDeps.WasOfferCreated() {
+	if reqDeps.LastStageUpdated() == domain.PipelineStageFulfillment && !reqDeps.WasOfferCreated() {
 		fmt.Printf("Dispatcher warning: Fulfillment without offer runID=%s lead=%s service=%s\n", runID, leadID, serviceID)
 	}
-	fmt.Printf("dispatcher: run finished runID=%s lead=%s service=%s\n", runID, leadID, serviceID)
-
-	return nil
 }
 
 func (d *Dispatcher) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {

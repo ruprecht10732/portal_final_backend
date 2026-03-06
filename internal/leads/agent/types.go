@@ -125,6 +125,42 @@ type SaveEstimationOutput struct {
 	Message string `json:"message"`
 }
 
+// ScopeWorkItem captures a concrete task/material chunk discovered during scope analysis.
+type ScopeWorkItem struct {
+	Material   string  `json:"material"`
+	Qty        float64 `json:"qty"`
+	Unit       string  `json:"unit"`
+	LaborHours float64 `json:"laborHours,omitempty"`
+	Notes      string  `json:"notes,omitempty"`
+}
+
+// ScopeArtifact is the structured handoff between Scope Analyzer and Quote Builder.
+type ScopeArtifact struct {
+	WorkItems         []ScopeWorkItem `json:"workItems"`
+	ConfidenceReasons []string        `json:"confidenceReasons,omitempty"`
+	IsComplete        bool            `json:"isComplete"`
+	MissingDimensions []string        `json:"missingDimensions,omitempty"`
+}
+
+type CommitScopeArtifactInput struct {
+	Artifact ScopeArtifact `json:"artifact"`
+}
+
+type CommitScopeArtifactOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+type AskCustomerClarificationInput struct {
+	Message           string   `json:"message"`
+	MissingDimensions []string `json:"missingDimensions,omitempty"`
+}
+
+type AskCustomerClarificationOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // SearchProductMaterialsInput searches the product catalog for matching materials.
 type SearchProductMaterialsInput struct {
 	Query      string   `json:"query"`                // Natural language description of materials needed

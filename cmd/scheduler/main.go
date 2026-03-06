@@ -86,7 +86,7 @@ func main() {
 
 	// Worker-side quote generation wiring (no HTTP handlers required).
 	catalogModule := catalog.NewModule(pool, nil, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
-	leadsModule, err := leads.NewModule(pool, eventBus, nil, val, cfg, log)
+	leadsModule, err := leads.NewModule(ctx, pool, eventBus, nil, val, cfg, log)
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())

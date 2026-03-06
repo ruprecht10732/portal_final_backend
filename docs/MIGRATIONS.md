@@ -158,6 +158,33 @@ pg_dump --schema-only --no-owner --no-privileges \
 
 ## Latest Migration Notes
 
+### 122_ai_adaptive_memory.sql
+
+Adds advanced AI workflow controls and durable decision memory.
+
+**Organization settings columns** (`RAC_organization_settings`)
+- `ai_adaptive_reasoning_enabled` (default `true`)
+- `ai_experience_memory_enabled` (default `true`)
+- `ai_council_enabled` (default `true`)
+
+**New table**: `RAC_ai_decision_memory`
+- Stores compact AI run outcomes for reuse in future estimator runs.
+- Includes service type, decision type, outcome, confidence, context summary, and action summary.
+
+**Indexes**
+- `idx_ai_decision_memory_org_service_created`
+- `idx_ai_decision_memory_org_type_created`
+
+### 124_ai_council_modes.sql
+
+Adds explicit mode controls for council consensus behavior.
+
+**Organization settings columns** (`RAC_organization_settings`)
+- `ai_council_consensus_mode` (default `weighted`)
+
+This setting complements the existing boolean toggles by allowing stricter rollout behavior:
+- consensus policy selection (`weighted`, `majority`, `estimator_final`)
+
 ### 090_workflow_engine_foundation.sql
 
 This migration introduces the additive foundation for the new workflow engine.

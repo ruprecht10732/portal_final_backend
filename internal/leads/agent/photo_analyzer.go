@@ -106,6 +106,10 @@ func (d *PhotoAnalyzerDeps) ResetAccumulators() {
 	d.needsOnsiteMeasurements = nil
 }
 
+func (d *PhotoAnalyzerDeps) NewRequestDeps() *PhotoAnalyzerDeps {
+	return &PhotoAnalyzerDeps{Repo: d.Repo}
+}
+
 // PhotoAnalyzer provides AI-powered photo analysis for lead services
 type PhotoAnalyzer struct {
 	agent          agent.Agent
@@ -113,7 +117,6 @@ type PhotoAnalyzer struct {
 	sessionService session.Service
 	appName        string
 	deps           *PhotoAnalyzerDeps
-	runMu          sync.Mutex
 }
 
 // NewPhotoAnalyzer creates a new photo analyzer agent
@@ -134,7 +137,7 @@ func NewPhotoAnalyzer(apiKey string, repo repository.LeadsRepository) (*PhotoAna
 		deps:    deps,
 	}
 
-	tools, err := buildPhotoAnalyzerTools(deps)
+	tools, err := buildPhotoAnalyzerTools()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build photo analyzer tools: %w", err)
 	}
@@ -170,15 +173,13 @@ func NewPhotoAnalyzer(apiKey string, repo repository.LeadsRepository) (*PhotoAna
 
 // AnalyzePhotos analyzes a set of photos for a lead service.
 func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, req PhotoAnalysisRequest) (*PhotoAnalysis, error) {
-	pa.runMu.Lock()
-	defer pa.runMu.Unlock()
-
 	if len(req.Images) == 0 {
 		return nil, fmt.Errorf("no images provided")
 	}
 
-	pa.deps.SetTenantID(req.TenantID)
-	pa.deps.ResetAccumulators() // Clear previous result and onsite flags
+	reqDeps := pa.deps.NewRequestDeps()
+	reqDeps.SetTenantID(req.TenantID)
+	ctx = WithPhotoAnalyzerDeps(ctx, reqDeps)
 
 	userContent := buildUserContent(req)
 	userID, sessionID, err := pa.createSession(ctx, req.LeadID, req.ServiceID)
@@ -198,7 +199,7 @@ func (pa *PhotoAnalyzer) AnalyzePhotos(ctx context.Context, req PhotoAnalysisReq
 		return nil, err
 	}
 
-	pa.mergeOnsiteFlags(result)
+	pa.mergeOnsiteFlags(ctx, result)
 	return result, nil
 }
 
@@ -277,7 +278,8 @@ func (pa *PhotoAnalyzer) runAnalysis(ctx context.Context, userID, sessionID stri
 }
 
 func (pa *PhotoAnalyzer) getOrRetryResult(ctx context.Context, userID, sessionID string, output string) (*PhotoAnalysis, error) {
-	result := pa.deps.GetResult()
+	reqDeps := GetPhotoAnalyzerDeps(ctx)
+	result := reqDeps.GetResult()
 	if result != nil {
 		return result, nil
 	}
@@ -288,7 +290,7 @@ func (pa *PhotoAnalyzer) getOrRetryResult(ctx context.Context, userID, sessionID
 	}
 	_ = retryOutput
 
-	result = pa.deps.GetResult()
+	result = reqDeps.GetResult()
 	if result == nil {
 		return nil, fmt.Errorf("AI did not save photo analysis")
 	}
@@ -331,8 +333,9 @@ func collectContentText(content *genai.Content) string {
 	return output
 }
 
-func (pa *PhotoAnalyzer) mergeOnsiteFlags(result *PhotoAnalysis) {
-	if flags := pa.deps.GetOnsiteFlags(); len(flags) > 0 {
+func (pa *PhotoAnalyzer) mergeOnsiteFlags(ctx context.Context, result *PhotoAnalysis) {
+	reqDeps := GetPhotoAnalyzerDeps(ctx)
+	if flags := reqDeps.GetOnsiteFlags(); len(flags) > 0 {
 		result.NeedsOnsiteMeasurement = append(result.NeedsOnsiteMeasurement, flags...)
 	}
 }
@@ -383,11 +386,12 @@ type SavePhotoAnalysisOutput struct {
 	Message string `json:"message"`
 }
 
-func buildPhotoAnalyzerTools(deps *PhotoAnalyzerDeps) ([]tool.Tool, error) {
+func buildPhotoAnalyzerTools() ([]tool.Tool, error) {
 	savePhotoAnalysis, err := functiontool.New(functiontool.Config{
 		Name:        "SavePhotoAnalysis",
 		Description: "Save the analysis of photos for a lead service. Call this after analyzing all photos. Include measurements, discrepancies, extracted text, and suggested search terms.",
 	}, func(ctx tool.Context, args SavePhotoAnalysisInput) (SavePhotoAnalysisOutput, error) {
+		deps := GetPhotoAnalyzerDeps(ctx)
 		leadID, err := uuid.Parse(args.LeadID)
 		if err != nil {
 			return SavePhotoAnalysisOutput{Success: false, Message: "Invalid leadId"}, err
@@ -459,6 +463,7 @@ func buildPhotoAnalyzerTools(deps *PhotoAnalyzerDeps) ([]tool.Tool, error) {
 		Name:        "FlagOnsiteMeasurement",
 		Description: "Flag that a specific measurement cannot be determined from photos alone and requires on-site measurement. Call this for EACH measurement that needs on-site verification.",
 	}, func(ctx tool.Context, args FlagOnsiteMeasurementInput) (map[string]any, error) {
+		deps := GetPhotoAnalyzerDeps(ctx)
 		if args.Reason == "" {
 			return map[string]any{"success": false, "message": "reason is required"}, nil
 		}

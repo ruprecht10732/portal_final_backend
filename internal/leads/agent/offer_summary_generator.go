@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -23,7 +22,6 @@ type OfferSummaryGenerator struct {
 	runner         *runner.Runner
 	sessionService session.Service
 	appName        string
-	runMu          sync.Mutex
 }
 
 // NewOfferSummaryGenerator creates a summary generator agent without tools.
@@ -65,8 +63,6 @@ func NewOfferSummaryGenerator(apiKey string) (*OfferSummaryGenerator, error) {
 // GenerateOfferSummary renders a markdown summary using only allowed fields.
 func (g *OfferSummaryGenerator) GenerateOfferSummary(ctx context.Context, tenantID uuid.UUID, input ports.OfferSummaryInput) (string, error) {
 	_ = tenantID
-	g.runMu.Lock()
-	defer g.runMu.Unlock()
 
 	promptText := buildOfferSummaryPrompt(input)
 	sessionID := uuid.New().String()

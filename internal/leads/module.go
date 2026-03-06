@@ -86,7 +86,7 @@ func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISett
 }
 
 // NewModule creates and initializes the RAC_leads module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
+func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
 	// Create shared repository
 	repo := repository.New(pool)
 
@@ -125,6 +125,10 @@ func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.Stora
 		Auditor:    auditor,
 	}, repo, outboxRepo, eventBus, sseService, log)
 	orchestrator.SetReconciliationEnabled(cfg.IsLeadsReconciliationEnabled())
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	orchestrator.StartCleanupLoop(ctx)
 	subscribeOrchestrator(eventBus, orchestrator)
 
 	// Create handlers

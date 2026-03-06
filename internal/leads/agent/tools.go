@@ -147,6 +147,7 @@ type ToolDependencies struct {
 	CatalogReader        ports.CatalogReader // optional: hydrate search results from DB
 	QuoteDrafter         ports.QuoteDrafter  // optional: draft quotes from agent
 	OfferCreator         ports.PartnerOfferCreator
+	CouncilService       MultiAgentCouncil
 	OrgSettingsReader    ports.OrganizationAISettingsReader
 	mu                   sync.RWMutex
 	tenantID             *uuid.UUID
@@ -157,6 +158,7 @@ type ToolDependencies struct {
 	orgSettings          *ports.OrganizationAISettings
 	existingQuoteID      *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
 	lastAnalysisMetadata map[string]any          // Populated by SaveAnalysis for use in stage_change events
+	lastCouncilMetadata  map[string]any          // Populated by council evaluation for stage/quote governance events
 	saveAnalysisCalled   bool                    // Track if SaveAnalysis was called
 	saveEstimationCalled bool                    // Track if SaveEstimation was called
 	stageUpdateCalled    bool                    // Track if UpdatePipelineStage was called
@@ -164,9 +166,33 @@ type ToolDependencies struct {
 	draftQuoteCalled     bool                    // Track if DraftQuote was called
 	offerCreated         bool                    // Track if CreatePartnerOffer was called
 	lastDraftResult      *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
+	scopeArtifact        *ScopeArtifact          // Produced by Scope Analyzer and consumed by Quote Builder
+	clarificationAsked   bool                    // Track if AskCustomerClarification was called in investigative mode
 	runID                string                  // Correlates all tool calls within one agent run
 	forceDraftQuote      bool                    // Allows manual runs to bypass intake gating
 	searchCache          map[string]SearchProductMaterialsOutput
+}
+
+// NewRequestDeps creates a request-scoped ToolDependencies that shares the
+// immutable service references from the receiver but has its own mutable state.
+// This enables concurrent agent runs without a global mutex.
+func (d *ToolDependencies) NewRequestDeps() *ToolDependencies {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return &ToolDependencies{
+		Repo:                 d.Repo,
+		Scorer:               d.Scorer,
+		EventBus:             d.EventBus,
+		EmbeddingClient:      d.EmbeddingClient,
+		QdrantClient:         d.QdrantClient,
+		BouwmaatQdrantClient: d.BouwmaatQdrantClient,
+		CatalogQdrantClient:  d.CatalogQdrantClient,
+		CatalogReader:        d.CatalogReader,
+		QuoteDrafter:         d.QuoteDrafter,
+		OfferCreator:         d.OfferCreator,
+		CouncilService:       d.CouncilService,
+		OrgSettingsReader:    d.OrgSettingsReader,
+	}
 }
 
 func (d *ToolDependencies) SetTenantID(tenantID uuid.UUID) {
@@ -262,6 +288,29 @@ func (d *ToolDependencies) SetActor(actorType, actorName string) {
 	d.actorName = actorName
 }
 
+func (d *ToolDependencies) SetCouncilMetadata(metadata map[string]any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if metadata == nil {
+		d.lastCouncilMetadata = nil
+		return
+	}
+	d.lastCouncilMetadata = metadata
+}
+
+func (d *ToolDependencies) GetLastCouncilMetadata() map[string]any {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.lastCouncilMetadata == nil {
+		return nil
+	}
+	dup := make(map[string]any, len(d.lastCouncilMetadata))
+	for k, v := range d.lastCouncilMetadata {
+		dup[k] = v
+	}
+	return dup
+}
+
 func (d *ToolDependencies) GetActor() (string, string) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -285,11 +334,18 @@ func (d *ToolDependencies) SetLastAnalysisMetadata(metadata map[string]any) {
 	d.lastAnalysisMetadata = metadata
 }
 
-// GetLastAnalysisMetadata retrieves the analysis metadata saved by SaveAnalysis
+// GetLastAnalysisMetadata retrieves a shallow copy of the analysis metadata saved by SaveAnalysis.
 func (d *ToolDependencies) GetLastAnalysisMetadata() map[string]any {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return d.lastAnalysisMetadata
+	if d.lastAnalysisMetadata == nil {
+		return nil
+	}
+	cp := make(map[string]any, len(d.lastAnalysisMetadata))
+	for k, v := range d.lastAnalysisMetadata {
+		cp[k] = v
+	}
+	return cp
 }
 
 // MarkSaveAnalysisCalled marks that SaveAnalysis tool was called
@@ -416,7 +472,10 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.draftQuoteCalled = false
 	d.offerCreated = false
 	d.lastAnalysisMetadata = nil
+	d.lastCouncilMetadata = nil
 	d.lastDraftResult = nil
+	d.scopeArtifact = nil
+	d.clarificationAsked = false
 	d.existingQuoteID = nil
 	d.forceDraftQuote = false
 	d.searchCache = nil
@@ -446,6 +505,39 @@ func (d *ToolDependencies) SetLastDraftResult(result *ports.DraftQuoteResult) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.lastDraftResult = result
+}
+
+// SetScopeArtifact stores the scope analyzer artifact for downstream quote building.
+func (d *ToolDependencies) SetScopeArtifact(artifact ScopeArtifact) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	copyArtifact := artifact
+	d.scopeArtifact = &copyArtifact
+}
+
+// GetScopeArtifact returns the latest scope artifact if available.
+func (d *ToolDependencies) GetScopeArtifact() (*ScopeArtifact, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.scopeArtifact == nil {
+		return nil, false
+	}
+	copyArtifact := *d.scopeArtifact
+	return &copyArtifact, true
+}
+
+// MarkClarificationAsked marks that investigative mode asked the customer for more intake details.
+func (d *ToolDependencies) MarkClarificationAsked() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.clarificationAsked = true
+}
+
+// WasClarificationAsked reports whether AskCustomerClarification was called.
+func (d *ToolDependencies) WasClarificationAsked() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.clarificationAsked
 }
 
 // GetLastDraftResult returns the last DraftQuoteResult (set by handleDraftQuote).
@@ -534,17 +626,22 @@ func normalizeMissingInformation(items []string) []string {
 	return normalized
 }
 
+// contactMessageReplacer is compiled once and reused for all contact message normalisations.
+var contactMessageReplacer = strings.NewReplacer(
+	"\r\n", "\n",
+	"\\n", "\n",
+	"\\t", " ",
+	"\r", "",
+	"nodie", "nodig",
+	"nodien", "nodig",
+)
+
 func normalizeSuggestedContactMessage(message string) string {
 	if strings.TrimSpace(message) == "" {
 		return ""
 	}
 
-	normalized := strings.ReplaceAll(message, "\r\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\\t", " ")
-	normalized = strings.ReplaceAll(normalized, "\r", "")
-	normalized = strings.ReplaceAll(normalized, "nodie", "nodig")
-	normalized = strings.ReplaceAll(normalized, "nodien", "nodig")
+	normalized := contactMessageReplacer.Replace(message)
 
 	lines := strings.Split(normalized, "\n")
 	for i, line := range lines {
@@ -640,18 +737,21 @@ func rejectTerminalAnalysisService(ctx tool.Context, deps *ToolDependencies, ten
 }
 
 type normalizedAnalysisInput struct {
-	UrgencyLevel      string
-	UrgencyReason     *string
-	LeadQuality       string
-	RecommendedAction string
-	Channel           string
-	MissingInformation []string
-	SuggestedMessage  string
-	Summary           string
-	Metadata          map[string]any
+	UrgencyLevel        string
+	UrgencyReason       *string
+	LeadQuality         string
+	RecommendedAction   string
+	Channel             string
+	MissingInformation  []string
+	SuggestedMessage    string
+	Summary             string
+	CompositeConfidence float64
+	ConfidenceBreakdown map[string]float64
+	RiskFlags           []string
+	Metadata            map[string]any
 }
 
-func normalizeAnalysisInput(input SaveAnalysisInput, lead repository.Lead) (normalizedAnalysisInput, error) {
+func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput, lead repository.Lead, tenantID, leadServiceID uuid.UUID) (normalizedAnalysisInput, error) {
 	urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
 	if err != nil {
 		return normalizedAnalysisInput{}, err
@@ -692,16 +792,29 @@ func normalizeAnalysisInput(input SaveAnalysisInput, lead repository.Lead) (norm
 		meta.MissingInformation = missingInformation
 	}
 
+	var photoAnalysis *repository.PhotoAnalysis
+	if pa, paErr := deps.Repo.GetLatestPhotoAnalysis(ctx, leadServiceID, tenantID); paErr == nil {
+		photoAnalysis = &pa
+	}
+
+	confidence := calculateAnalysisConfidence(lead, leadQuality, recommendedAction, missingInformation, photoAnalysis)
+	meta.CompositeConfidence = confidence.Score
+	meta.ConfidenceBreakdown = confidence.Breakdown
+	meta.RiskFlags = confidence.RiskFlags
+
 	return normalizedAnalysisInput{
-		UrgencyLevel:       urgencyLevel,
-		UrgencyReason:      urgencyReason,
-		LeadQuality:        leadQuality,
-		RecommendedAction:  recommendedAction,
-		Channel:            channel,
-		MissingInformation: missingInformation,
-		SuggestedMessage:   normalizedMessage,
-		Summary:            analysisSummary,
-		Metadata:           meta.ToMap(),
+		UrgencyLevel:        urgencyLevel,
+		UrgencyReason:       urgencyReason,
+		LeadQuality:         leadQuality,
+		RecommendedAction:   recommendedAction,
+		Channel:             channel,
+		MissingInformation:  missingInformation,
+		SuggestedMessage:    normalizedMessage,
+		Summary:             analysisSummary,
+		CompositeConfidence: confidence.Score,
+		ConfidenceBreakdown: confidence.Breakdown,
+		RiskFlags:           confidence.RiskFlags,
+		Metadata:            meta.ToMap(),
 	}, nil
 }
 
@@ -735,7 +848,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		return SaveAnalysisOutput{Success: false, Message: leadNotFoundMessage}, err
 	}
 
-	normalized, err := normalizeAnalysisInput(input, lead)
+	normalized, err := normalizeAnalysisInput(ctx, deps, input, lead, tenantID, leadServiceID)
 	if err != nil {
 		return SaveAnalysisOutput{Success: false, Message: err.Error()}, err
 	}
@@ -756,6 +869,9 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		LeadQuality:             normalized.LeadQuality,
 		RecommendedAction:       normalized.RecommendedAction,
 		MissingInformation:      normalized.MissingInformation,
+		CompositeConfidence:     &normalized.CompositeConfidence,
+		ConfidenceBreakdown:     normalized.ConfidenceBreakdown,
+		RiskFlags:               normalized.RiskFlags,
 		PreferredContactChannel: normalized.Channel,
 		SuggestedContactMessage: normalized.SuggestedMessage,
 		Summary:                 normalized.Summary,
@@ -787,7 +903,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	recalculateAndRecordScore(ctx, deps, leadID, leadServiceID, tenantID, actorType, actorName)
 
 	log.Printf(
-		"gatekeeper SaveAnalysis: run=%s leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d",
+		"gatekeeper SaveAnalysis: run=%s leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d confidence=%.2f",
 		deps.GetRunID(),
 		leadID,
 		leadServiceID,
@@ -795,6 +911,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		normalized.LeadQuality,
 		normalized.RecommendedAction,
 		len(input.MissingInformation),
+		normalized.CompositeConfidence,
 	)
 
 	deps.MarkSaveAnalysisCalled()
@@ -1105,31 +1222,31 @@ func recordLeadDetailsUpdate(ctx tool.Context, deps *ToolDependencies, leadID, t
 }
 
 // createSaveAnalysisTool creates the SaveAnalysis tool
-func createSaveAnalysisTool(deps *ToolDependencies) (tool.Tool, error) {
+func createSaveAnalysisTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveAnalysis",
 		Description: "Saves the gatekeeper triage analysis to the database. Call this ONCE after completing your full analysis. Include urgency, lead quality, recommended action, missing information, preferred contact channel, message, and summary.",
 	}, func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
-		return handleSaveAnalysis(ctx, deps, input)
+		return handleSaveAnalysis(ctx, GetDependencies(ctx), input)
 	})
 }
 
 // createUpdateLeadServiceTypeTool creates the UpdateLeadServiceType tool
-func createUpdateLeadServiceTypeTool(deps *ToolDependencies) (tool.Tool, error) {
+func createUpdateLeadServiceTypeTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdateLeadServiceType",
 		Description: "Updates the service type for a lead service when there is a confident mismatch. The service type must match an active service type name or slug.",
 	}, func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
-		return handleUpdateLeadServiceType(ctx, deps, input)
+		return handleUpdateLeadServiceType(ctx, GetDependencies(ctx), input)
 	})
 }
 
-func createUpdateLeadDetailsTool(deps *ToolDependencies) (tool.Tool, error) {
+func createUpdateLeadDetailsTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdateLeadDetails",
 		Description: "Updates lead contact or address details when you are highly confident the current data is wrong.",
 	}, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
-		return handleUpdateLeadDetails(ctx, deps, input)
+		return handleUpdateLeadDetails(ctx, GetDependencies(ctx), input)
 	})
 }
 
@@ -1183,76 +1300,176 @@ func validateEstimationInvariant(ctx tool.Context, deps *ToolDependencies, stage
 	return UpdatePipelineStageOutput{}, nil
 }
 
+func evaluateCouncilForStageUpdate(ctx tool.Context, deps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, targetStage string) (CouncilEvaluation, error) {
+	settings := deps.GetOrganizationAISettingsOrDefault()
+	if !settings.AICouncilMode || deps.CouncilService == nil {
+		deps.SetCouncilMetadata(nil)
+		return CouncilEvaluation{Decision: CouncilDecisionAllow, ReasonCode: "council_disabled", Summary: "Council uitgeschakeld."}, nil
+	}
+
+	evaluation, err := deps.CouncilService.Evaluate(ctx, CouncilEvaluationInput{
+		Action:      CouncilActionStageUpdate,
+		LeadID:      leadID,
+		ServiceID:   serviceID,
+		TenantID:    tenantID,
+		Mode:        settings.AICouncilConsensusMode,
+		TargetStage: targetStage,
+	})
+	if err != nil {
+		return CouncilEvaluation{}, err
+	}
+
+	deps.SetCouncilMetadata(repository.CouncilAdviceMetadata{
+		Decision:         evaluation.Decision,
+		ReasonCode:       evaluation.ReasonCode,
+		Summary:          evaluation.Summary,
+		EstimatorSignals: evaluation.EstimatorSignals,
+		RiskSignals:      evaluation.RiskSignals,
+		ReadinessSignals: evaluation.ReadinessSignals,
+	}.ToMap())
+
+	return evaluation, nil
+}
+
 func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-	if !domain.IsKnownPipelineStage(input.Stage) {
-		return UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
-	}
-
-	tenantID, err := getTenantID(deps)
-	if err != nil {
-		return UpdatePipelineStageOutput{Success: false, Message: missingTenantContextMessage}, err
-	}
-
-	leadID, serviceID, err := getLeadContext(deps)
-	if err != nil {
-		return UpdatePipelineStageOutput{Success: false, Message: missingLeadContextMessage}, err
-	}
-
-	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
-	if err != nil {
-		return UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, err
-	}
-	oldStage := svc.PipelineStage
-	actorType, actorName := deps.GetActor()
-	runID := deps.GetRunID()
-
-	if oldStage == input.Stage {
-		log.Printf("agent stage transition skipped (run=%s actor=%s/%s lead=%s service=%s stage=%s): no change",
-			runID, actorType, actorName, leadID, serviceID, input.Stage)
-		return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage unchanged"}, nil
-	}
-
-	// Terminal check: refuse to update pipeline stage for terminal services
-	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
-		log.Printf("handleUpdatePipelineStage: REJECTED - service %s is in terminal state (status=%s, stage=%s)", serviceID, svc.Status, svc.PipelineStage)
-		return UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
-	}
-
-	if out, err := validateProposalQuoteGuard(ctx, deps, input.Stage, serviceID, tenantID); err != nil {
+	state, out, done, err := prepareStageUpdate(ctx, deps, input)
+	if done || err != nil {
 		return out, err
 	}
 
-	// Validate state combination
-	if reason := domain.ValidateStateCombination(svc.Status, input.Stage); reason != "" {
-		log.Printf("handleUpdatePipelineStage: invalid state combination: status=%s, newStage=%s - %s", svc.Status, input.Stage, reason)
-		return UpdatePipelineStageOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
+	councilEval, councilErr := evaluateCouncilForStageUpdate(ctx, deps, state.leadID, state.serviceID, state.tenantID, input.Stage)
+	if councilErr != nil {
+		return UpdatePipelineStageOutput{Success: false, Message: "Council evaluatie mislukt"}, councilErr
 	}
 
-	if out, err := validateActorSequence(input.Stage, serviceID, deps, actorType, actorName); err != nil {
+	out, err = applyCouncilDecision(ctx, deps, councilEval, state, &input)
+	if err != nil || out.Message != "" {
 		return out, err
 	}
 
-	if out, err := validateEstimationInvariant(ctx, deps, input.Stage, serviceID, tenantID); err != nil {
-		return out, err
-	}
-
-	_, err = deps.Repo.UpdatePipelineStage(ctx, serviceID, tenantID, input.Stage)
+	_, err = deps.Repo.UpdatePipelineStage(ctx, state.serviceID, state.tenantID, input.Stage)
 	if err != nil {
 		return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
 	}
 
 	recordPipelineStageChange(ctx, deps, stageChangeParams{
-		leadID:    leadID,
-		serviceID: serviceID,
-		tenantID:  tenantID,
-		oldStage:  oldStage,
+		leadID:    state.leadID,
+		serviceID: state.serviceID,
+		tenantID:  state.tenantID,
+		oldStage:  state.oldStage,
 		newStage:  input.Stage,
 		reason:    input.Reason,
 	})
 	deps.MarkStageUpdateCalled(input.Stage)
 	log.Printf("agent stage transition committed (run=%s actor=%s/%s lead=%s service=%s from=%s to=%s)",
-		runID, actorType, actorName, leadID, serviceID, oldStage, input.Stage)
+		state.runID, state.actorType, state.actorName, state.leadID, state.serviceID, state.oldStage, input.Stage)
 	return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
+}
+
+type stageUpdateState struct {
+	tenantID  uuid.UUID
+	leadID    uuid.UUID
+	serviceID uuid.UUID
+	oldStage  string
+	actorType string
+	actorName string
+	runID     string
+}
+
+func prepareStageUpdate(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (stageUpdateState, UpdatePipelineStageOutput, bool, error) {
+	if !domain.IsKnownPipelineStage(input.Stage) {
+		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, true, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
+	}
+
+	tenantID, err := getTenantID(deps)
+	if err != nil {
+		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: missingTenantContextMessage}, true, err
+	}
+	leadID, serviceID, err := getLeadContext(deps)
+	if err != nil {
+		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: missingLeadContextMessage}, true, err
+	}
+
+	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, true, err
+	}
+	actorType, actorName := deps.GetActor()
+	state := stageUpdateState{
+		tenantID:  tenantID,
+		leadID:    leadID,
+		serviceID: serviceID,
+		oldStage:  svc.PipelineStage,
+		actorType: actorType,
+		actorName: actorName,
+		runID:     deps.GetRunID(),
+	}
+
+	if state.oldStage == input.Stage {
+		log.Printf("agent stage transition skipped (run=%s actor=%s/%s lead=%s service=%s stage=%s): no change",
+			state.runID, state.actorType, state.actorName, state.leadID, state.serviceID, input.Stage)
+		return state, UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage unchanged"}, true, nil
+	}
+	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
+		log.Printf("handleUpdatePipelineStage: REJECTED - service %s is in terminal state (status=%s, stage=%s)", state.serviceID, svc.Status, svc.PipelineStage)
+		return state, UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, true, fmt.Errorf("service %s is terminal", state.serviceID)
+	}
+	if out, err := validateProposalQuoteGuard(ctx, deps, input.Stage, state.serviceID, state.tenantID); err != nil {
+		return state, out, true, err
+	}
+	if reason := domain.ValidateStateCombination(svc.Status, input.Stage); reason != "" {
+		log.Printf("handleUpdatePipelineStage: invalid state combination: status=%s, newStage=%s - %s", svc.Status, input.Stage, reason)
+		return state, UpdatePipelineStageOutput{Success: false, Message: reason}, true, fmt.Errorf("invalid state combination: %s", reason)
+	}
+	if out, err := validateActorSequence(input.Stage, state.serviceID, deps, state.actorType, state.actorName); err != nil {
+		return state, out, true, err
+	}
+	if out, err := validateEstimationInvariant(ctx, deps, input.Stage, state.serviceID, state.tenantID); err != nil {
+		return state, out, true, err
+	}
+
+	return state, UpdatePipelineStageOutput{}, false, nil
+}
+
+func applyCouncilDecision(ctx tool.Context, deps *ToolDependencies, eval CouncilEvaluation, state stageUpdateState, input *UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+	if eval.Decision == CouncilDecisionRequireManualReview {
+		summary := strings.TrimSpace(eval.Summary)
+		if summary == "" {
+			summary = "Council vraagt handmatige beoordeling voordat de stage kan wijzigen."
+		}
+		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         state.leadID,
+			ServiceID:      &state.serviceID,
+			OrganizationID: state.tenantID,
+			ActorType:      repository.ActorTypeSystem,
+			ActorName:      "Council",
+			EventType:      repository.EventTypeAlert,
+			Title:          repository.EventTitleManualIntervention,
+			Summary:        &summary,
+			Metadata: repository.CouncilAdviceMetadata{
+				Decision:         eval.Decision,
+				ReasonCode:       eval.ReasonCode,
+				Summary:          eval.Summary,
+				EstimatorSignals: eval.EstimatorSignals,
+				RiskSignals:      eval.RiskSignals,
+				ReadinessSignals: eval.ReadinessSignals,
+			}.ToMap(),
+		})
+		return UpdatePipelineStageOutput{Success: false, Message: summary}, fmt.Errorf("council blocked stage update: %s", eval.ReasonCode)
+	}
+
+	if eval.Decision == CouncilDecisionDowngradeToNurture && input.Stage == domain.PipelineStageEstimation {
+		input.Stage = domain.PipelineStageNurturing
+		if strings.TrimSpace(input.Reason) == "" {
+			if strings.TrimSpace(eval.Summary) != "" {
+				input.Reason = eval.Summary
+			} else {
+				input.Reason = "Council verlaagt stage: aanvullende intake nodig."
+			}
+		}
+	}
+
+	return UpdatePipelineStageOutput{}, nil
 }
 
 // stageChangeParams groups parameters for recording a pipeline stage change.
@@ -1279,6 +1496,9 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 	}.ToMap()
 	if analysisMeta := deps.GetLastAnalysisMetadata(); analysisMeta != nil {
 		stageMetadata["analysis"] = analysisMeta
+	}
+	if councilMeta := deps.GetLastCouncilMetadata(); councilMeta != nil {
+		stageMetadata["council"] = councilMeta
 	}
 
 	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
@@ -1312,12 +1532,12 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 		p.leadID, p.serviceID, p.oldStage, p.newStage, logReason)
 }
 
-func createUpdatePipelineStageTool(deps *ToolDependencies) (tool.Tool, error) {
+func createUpdatePipelineStageTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "UpdatePipelineStage",
 		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
 	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		return handleUpdatePipelineStage(ctx, deps, input)
+		return handleUpdatePipelineStage(ctx, GetDependencies(ctx), input)
 	})
 }
 
@@ -1362,12 +1582,12 @@ func stringifyAnySlice(items []any) []string {
 	return out
 }
 
-func createFindMatchingPartnersTool(deps *ToolDependencies) (tool.Tool, error) {
+func createFindMatchingPartnersTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "FindMatchingPartners",
 		Description: "Finds partner matches by service type and distance radius. Allows excluding specific partner IDs.",
 	}, func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
-		return handleFindMatchingPartners(ctx, deps, input)
+		return handleFindMatchingPartners(ctx, GetDependencies(ctx), input)
 	})
 }
 
@@ -1490,11 +1710,12 @@ func resolveOfferContext(deps *ToolDependencies, partnerIDRaw string, expiration
 	return tenantID, serviceID, partnerID, hours, "", nil
 }
 
-func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
+func createCreatePartnerOfferTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "CreatePartnerOffer",
 		Description: "Creates a formal job offer for a specific partner. This generates the unique link they use to accept the job.",
 	}, func(ctx tool.Context, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
+		deps := GetDependencies(ctx)
 		if deps.OfferCreator == nil {
 			return CreatePartnerOfferOutput{Success: false, Message: "Offer creation not configured"}, fmt.Errorf("offer creator not configured")
 		}
@@ -1532,11 +1753,12 @@ func createCreatePartnerOfferTool(deps *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
-func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
+func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveEstimation",
 		Description: "Saves estimation metadata (scope and price range) to the lead timeline.",
 	}, func(ctx tool.Context, input SaveEstimationInput) (SaveEstimationOutput, error) {
+		deps := GetDependencies(ctx)
 		tenantID, err := getTenantID(deps)
 		if err != nil {
 			return SaveEstimationOutput{Success: false, Message: missingTenantContextMessage}, err
@@ -1576,6 +1798,74 @@ func createSaveEstimationTool(deps *ToolDependencies) (tool.Tool, error) {
 		deps.MarkSaveEstimationCalled()
 
 		return SaveEstimationOutput{Success: true, Message: "Estimation saved"}, nil
+	})
+}
+
+func createCommitScopeArtifactTool(_ *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "CommitScopeArtifact",
+		Description: "Commits structured scope analysis output for the quote builder phase.",
+	}, func(ctx tool.Context, input CommitScopeArtifactInput) (CommitScopeArtifactOutput, error) {
+		deps := GetDependencies(ctx)
+		artifact := input.Artifact
+		if len(artifact.MissingDimensions) > 0 {
+			artifact.IsComplete = false
+		}
+		if artifact.WorkItems == nil {
+			artifact.WorkItems = make([]ScopeWorkItem, 0)
+		}
+		deps.SetScopeArtifact(artifact)
+		return CommitScopeArtifactOutput{Success: true, Message: "Scope artifact opgeslagen"}, nil
+	})
+}
+
+func createAskCustomerClarificationTool(_ *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "AskCustomerClarification",
+		Description: "Stores a Dutch clarification request for the customer when intake is incomplete.",
+	}, func(ctx tool.Context, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
+		deps := GetDependencies(ctx)
+		tenantID, err := getTenantID(deps)
+		if err != nil {
+			return AskCustomerClarificationOutput{Success: false, Message: missingTenantContextMessage}, err
+		}
+
+		leadID, serviceID, err := getLeadContext(deps)
+		if err != nil {
+			return AskCustomerClarificationOutput{Success: false, Message: missingLeadContextMessage}, err
+		}
+
+		message := strings.TrimSpace(input.Message)
+		if message == "" {
+			return AskCustomerClarificationOutput{Success: false, Message: "Bericht is verplicht"}, fmt.Errorf("empty clarification message")
+		}
+
+		if len([]rune(message)) > 1200 {
+			message = truncateRunes(message, 1200)
+		}
+
+		actorType, actorName := deps.GetActor()
+		_, err = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &serviceID,
+			OrganizationID: tenantID,
+			ActorType:      actorType,
+			ActorName:      actorName,
+			EventType:      repository.EventTypeNote,
+			Title:          repository.EventTitleNoteAdded,
+			Summary:        &message,
+			Metadata: map[string]any{
+				"noteType":          "ai_clarification_request",
+				"missingDimensions": input.MissingDimensions,
+			},
+		})
+		if err != nil {
+			return AskCustomerClarificationOutput{Success: false, Message: "Kon verduidelijkingsvraag niet opslaan"}, err
+		}
+
+		deps.MarkClarificationAsked()
+		log.Printf("estimator AskCustomerClarification: run=%s lead=%s service=%s missing=%d", deps.GetRunID(), leadID, serviceID, len(input.MissingDimensions))
+		return AskCustomerClarificationOutput{Success: true, Message: "Verduidelijkingsvraag opgeslagen"}, nil
 	})
 }
 
@@ -1655,58 +1945,83 @@ Examples:
 	}, handleCalculator)
 }
 
+// MaxSafeUnitPrice is the ceiling for a single material item (€5M).
+const MaxSafeUnitPrice = 5_000_000.00
+
 func createCalculateEstimateTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "CalculateEstimate",
 		Description: "Calculates material subtotal, labor subtotal range, and total range from raw structured inputs (unit prices, quantities, hour ranges, hourly rate ranges). Do NOT pre-calculate subtotals; this tool performs all multiplication.",
 	}, func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
 		_ = ctx
-		// Guard against the classic unit bug: passing euro-cents (e.g. 793) as euros.
-		// This would create 100x inflated estimates. We use a high threshold to avoid
-		// blocking legitimate expensive items (e.g. heat pumps), while still catching
-		// obviously wrong values.
-		for _, item := range input.MaterialItems {
-			if item.UnitPrice > 50000 {
-				return CalculateEstimateOutput{}, fmt.Errorf("unitPrice too large (%.2f). CalculateEstimate expects euros, not cents", item.UnitPrice)
-			}
+		if err := validateCalculateEstimateInput(input); err != nil {
+			return CalculateEstimateOutput{}, err
 		}
 
-		materialSubtotal := 0.0
-		for _, item := range input.MaterialItems {
-			if item.UnitPrice <= 0 || item.Quantity <= 0 {
-				continue
-			}
-			materialSubtotal += item.UnitPrice * item.Quantity
-		}
+		materialCents := calculateMaterialSubtotalCents(input)
+		laborLowCents, laborHighCents := calculateLaborSubtotalRangeCents(input)
+		extraCents := int64(math.Round(input.ExtraCosts * 100))
 
-		laborLow := clampNonNegative(input.LaborHoursLow) * clampNonNegative(input.HourlyRateLow)
-		laborHigh := clampNonNegative(input.LaborHoursHigh) * clampNonNegative(input.HourlyRateHigh)
-		if laborHigh < laborLow {
-			laborLow, laborHigh = laborHigh, laborLow
-		}
-
-		extra := clampNonNegative(input.ExtraCosts)
-
-		return CalculateEstimateOutput{
-			MaterialSubtotal:  round2(materialSubtotal),
-			LaborSubtotalLow:  round2(laborLow),
-			LaborSubtotalHigh: round2(laborHigh),
-			TotalLow:          round2(materialSubtotal + laborLow + extra),
-			TotalHigh:         round2(materialSubtotal + laborHigh + extra),
-			AppliedExtraCosts: round2(extra),
-		}, nil
+		return buildCalculateEstimateOutput(materialCents, laborLowCents, laborHighCents, extraCents), nil
 	})
 }
 
-func round2(value float64) float64 {
-	return math.Round(value*100) / 100
+func validateCalculateEstimateInput(input CalculateEstimateInput) error {
+	// Reject negative financial inputs (AI hallucination guard).
+	if input.LaborHoursLow < 0 || input.LaborHoursHigh < 0 ||
+		input.HourlyRateLow < 0 || input.HourlyRateHigh < 0 ||
+		input.ExtraCosts < 0 {
+		return fmt.Errorf("financial inputs cannot be negative")
+	}
+
+	for _, item := range input.MaterialItems {
+		if item.UnitPrice < 0 || item.Quantity < 0 {
+			return fmt.Errorf("material item price and quantity cannot be negative")
+		}
+		if item.UnitPrice > MaxSafeUnitPrice {
+			return fmt.Errorf("unitPrice %.2f exceeds safety limit of %.2f", item.UnitPrice, MaxSafeUnitPrice)
+		}
+	}
+
+	return nil
 }
 
-func clampNonNegative(value float64) float64 {
-	if value < 0 {
-		return 0
+func calculateMaterialSubtotalCents(input CalculateEstimateInput) int64 {
+	// Calculate using integer cents to avoid IEEE 754 precision loss.
+	var materialCents int64
+	for _, item := range input.MaterialItems {
+		if item.UnitPrice <= 0 || item.Quantity <= 0 {
+			continue
+		}
+		unitCents := int64(math.Round(item.UnitPrice * 100))
+		lineCents := int64(math.Round(float64(unitCents) * item.Quantity))
+		materialCents += lineCents
 	}
-	return value
+	return materialCents
+}
+
+func calculateLaborSubtotalRangeCents(input CalculateEstimateInput) (int64, int64) {
+	laborLowCents := int64(math.Round(input.LaborHoursLow * input.HourlyRateLow * 100))
+	laborHighCents := int64(math.Round(input.LaborHoursHigh * input.HourlyRateHigh * 100))
+	if laborHighCents < laborLowCents {
+		laborLowCents, laborHighCents = laborHighCents, laborLowCents
+	}
+	return laborLowCents, laborHighCents
+}
+
+func buildCalculateEstimateOutput(materialCents, laborLowCents, laborHighCents, extraCents int64) CalculateEstimateOutput {
+	return CalculateEstimateOutput{
+		MaterialSubtotal:  centsToEuro(materialCents),
+		LaborSubtotalLow:  centsToEuro(laborLowCents),
+		LaborSubtotalHigh: centsToEuro(laborHighCents),
+		TotalLow:          centsToEuro(materialCents + laborLowCents + extraCents),
+		TotalHigh:         centsToEuro(materialCents + laborHighCents + extraCents),
+		AppliedExtraCosts: centsToEuro(extraCents),
+	}
+}
+
+func centsToEuro(cents int64) float64 {
+	return math.Round(float64(cents)) / 100.0
 }
 
 // defaultSearchScoreThreshold is the minimum cosine similarity score for
@@ -1879,12 +2194,12 @@ func handleListCatalogGaps(ctx tool.Context, deps *ToolDependencies, input ListC
 	return buildListCatalogGapsOutput(params, misses, adHoc), nil
 }
 
-func createListCatalogGapsTool(deps *ToolDependencies) (tool.Tool, error) {
+func createListCatalogGapsTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "ListCatalogGaps",
 		Description: "Lists frequent catalog search misses and frequently used ad-hoc quote line items for the current organization. Defaults use organization AI settings (catalogGapThreshold and catalogGapLookbackDays).",
 	}, func(ctx tool.Context, input ListCatalogGapsInput) (ListCatalogGapsOutput, error) {
-		return handleListCatalogGaps(ctx, deps, input)
+		return handleListCatalogGaps(ctx, GetDependencies(ctx), input)
 	})
 }
 
@@ -2527,13 +2842,23 @@ func isDimensionToken(token string) bool {
 	return hasDigit && hasSeparator
 }
 
+// unitLookup is the set of recognised unit tokens for exact matching.
+var unitLookup = map[string]bool{
+	"m1": true, "m2": true, "m3": true,
+	"stuk": true, "stuks": true,
+	"liter": true, "l": true,
+	"cm": true, "mm": true,
+	"meter": true, "per": true,
+}
+
 func extractUnitTokens(value string) map[string]struct{} {
 	units := map[string]struct{}{}
-	lookup := []string{"m1", "m2", "m3", "stuk", "stuks", "liter", "l", "cm", "mm", "meter", "per"}
-	lower := strings.ToLower(value)
-	for _, unit := range lookup {
-		if strings.Contains(lower, unit) {
-			units[unit] = struct{}{}
+	tokens := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+	for _, token := range tokens {
+		if unitLookup[token] {
+			units[token] = struct{}{}
 		}
 	}
 	return units
@@ -2569,8 +2894,11 @@ func hasAnyUnitToken(text string, units map[string]struct{}) bool {
 	if len(units) == 0 {
 		return false
 	}
-	for unit := range units {
-		if strings.Contains(text, unit) {
+	tokens := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+	for _, token := range tokens {
+		if _, ok := units[token]; ok {
 			return true
 		}
 	}
@@ -2786,7 +3114,7 @@ func mergeOptionalString(dst *string, src string) {
 	}
 }
 
-func createSearchProductMaterialsTool(deps *ToolDependencies) (tool.Tool, error) {
+func createSearchProductMaterialsTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name: "SearchProductMaterials",
 		Description: `Searches the product catalog for materials and their prices via semantic (vector) search.
@@ -2828,7 +3156,7 @@ Unit conversion tip:
 - id: catalog product UUID (only for catalog items — use as catalogProductId in DraftQuote)
 SELECTION RULE: Always prefer a result WITH an "id" field (catalog item) over a result WITHOUT an "id" field (reference item) when both match the needed product — even if the reference item scores slightly higher. Only use reference items (ad-hoc, no catalogProductId) when no catalog item exists above the minimum score threshold.`,
 	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
-		return handleSearchProductMaterials(ctx, deps, input)
+		return handleSearchProductMaterials(ctx, GetDependencies(ctx), input)
 	})
 }
 
@@ -2859,6 +3187,36 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 
 	if len(input.Items) == 0 {
 		return DraftQuoteOutput{Success: false, Message: "At least one item is required"}, fmt.Errorf("empty items")
+	}
+
+	councilEval, councilErr := evaluateCouncilForDraftQuote(ctx, deps, leadID, serviceID, *tenantID, len(input.Items))
+	if councilErr != nil {
+		return DraftQuoteOutput{Success: false, Message: "Council evaluatie mislukt"}, councilErr
+	}
+	if councilEval.Decision != CouncilDecisionAllow {
+		summary := strings.TrimSpace(councilEval.Summary)
+		if summary == "" {
+			summary = "Council blokkeert conceptofferte: handmatige beoordeling vereist."
+		}
+		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &serviceID,
+			OrganizationID: *tenantID,
+			ActorType:      repository.ActorTypeSystem,
+			ActorName:      "Council",
+			EventType:      repository.EventTypeAlert,
+			Title:          repository.EventTitleManualIntervention,
+			Summary:        &summary,
+			Metadata: repository.CouncilAdviceMetadata{
+				Decision:         councilEval.Decision,
+				ReasonCode:       councilEval.ReasonCode,
+				Summary:          councilEval.Summary,
+				EstimatorSignals: councilEval.EstimatorSignals,
+				RiskSignals:      councilEval.RiskSignals,
+				ReadinessSignals: councilEval.ReadinessSignals,
+			}.ToMap(),
+		})
+		return DraftQuoteOutput{Success: false, Message: summary}, fmt.Errorf("council blocked draft quote: %s", councilEval.ReasonCode)
 	}
 
 	portItems := convertDraftItems(input.Items)
@@ -2895,6 +3253,37 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		QuoteNumber: result.QuoteNumber,
 		ItemCount:   result.ItemCount,
 	}, nil
+}
+
+func evaluateCouncilForDraftQuote(ctx tool.Context, deps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, itemCount int) (CouncilEvaluation, error) {
+	settings := deps.GetOrganizationAISettingsOrDefault()
+	if !settings.AICouncilMode || deps.CouncilService == nil {
+		deps.SetCouncilMetadata(nil)
+		return CouncilEvaluation{Decision: CouncilDecisionAllow, ReasonCode: "council_disabled", Summary: "Council uitgeschakeld."}, nil
+	}
+
+	evaluation, err := deps.CouncilService.Evaluate(ctx, CouncilEvaluationInput{
+		Action:    CouncilActionDraftQuote,
+		LeadID:    leadID,
+		ServiceID: serviceID,
+		TenantID:  tenantID,
+		Mode:      settings.AICouncilConsensusMode,
+		ItemCount: itemCount,
+	})
+	if err != nil {
+		return CouncilEvaluation{}, err
+	}
+
+	deps.SetCouncilMetadata(repository.CouncilAdviceMetadata{
+		Decision:         evaluation.Decision,
+		ReasonCode:       evaluation.ReasonCode,
+		Summary:          evaluation.Summary,
+		EstimatorSignals: evaluation.EstimatorSignals,
+		RiskSignals:      evaluation.RiskSignals,
+		ReadinessSignals: evaluation.ReadinessSignals,
+	}.ToMap())
+
+	return evaluation, nil
 }
 
 func shouldBlockDraftQuoteForInsufficientIntake(ctx context.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (bool, string) {
@@ -3031,7 +3420,7 @@ func collectCatalogAssetsForDraft(ctx context.Context, deps *ToolDependencies, t
 	return collectCatalogAssets(details)
 }
 
-func createDraftQuoteTool(deps *ToolDependencies) (tool.Tool, error) {
+func createDraftQuoteTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name: "DraftQuote",
 		Description: `Creates a draft quote for the current lead based on estimation results.
@@ -3043,7 +3432,7 @@ If the item came from SearchProductMaterials, include its catalogProductId.
 When catalogProductId is present, backend catalog metadata is authoritative: unitPriceCents and taxRateBps are normalized to catalog values.
 Ad-hoc items (not found in catalog) should omit catalogProductId.`,
 	}, func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
-		return handleDraftQuote(ctx, deps, input)
+		return handleDraftQuote(ctx, GetDependencies(ctx), input)
 	})
 }
 

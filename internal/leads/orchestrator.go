@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"strings"
@@ -44,6 +45,7 @@ type Orchestrator struct {
 	activeReconciliations map[uuid.UUID]bool
 	// Dedup short-window duplicate stage-change events.
 	recentStageEvents map[string]time.Time
+	stageEventsMu     sync.Mutex // dedicated lock for recentStageEvents only
 	// Latest queued photo-analysis event per service, replayed after current gatekeeper run finishes.
 	pendingGatekeeperPhoto map[uuid.UUID]events.PhotoAnalysisCompleted
 	runsMu                 sync.Mutex
@@ -60,6 +62,7 @@ const (
 	agentRunTimeout             = 5 * time.Minute
 	staleDraftDuration          = 30 * 24 * time.Hour
 	stageEventDedupWindow       = 5 * time.Second
+	minimumEstimationConfidence = 0.45
 )
 
 type OrchestratorAgents struct {
@@ -377,23 +380,45 @@ func (o *Orchestrator) markReconciliationComplete(serviceID uuid.UUID) {
 }
 
 func (o *Orchestrator) shouldSkipDuplicateStageEvent(evt events.PipelineStageChanged) bool {
-	o.runsMu.Lock()
-	defer o.runsMu.Unlock()
+	o.stageEventsMu.Lock()
+	defer o.stageEventsMu.Unlock()
 
 	now := time.Now()
 	key := evt.LeadServiceID.String() + ":" + evt.OldStage + "->" + evt.NewStage
-
-	for existing, ts := range o.recentStageEvents {
-		if now.Sub(ts) > stageEventDedupWindow {
-			delete(o.recentStageEvents, existing)
-		}
-	}
 
 	if ts, ok := o.recentStageEvents[key]; ok && now.Sub(ts) <= stageEventDedupWindow {
 		return true
 	}
 	o.recentStageEvents[key] = now
 	return false
+}
+
+// StartCleanupLoop runs a background goroutine that periodically evicts expired
+// entries from recentStageEvents so the map does not grow unboundedly.
+func (o *Orchestrator) StartCleanupLoop(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				o.cleanupStageEvents()
+			}
+		}
+	}()
+}
+
+func (o *Orchestrator) cleanupStageEvents() {
+	o.stageEventsMu.Lock()
+	defer o.stageEventsMu.Unlock()
+	now := time.Now()
+	for key, ts := range o.recentStageEvents {
+		if now.Sub(ts) > stageEventDedupWindow {
+			delete(o.recentStageEvents, key)
+		}
+	}
 }
 
 func (o *Orchestrator) recoverAgentPanic(agentName string, serviceID uuid.UUID) {
@@ -1008,11 +1033,42 @@ func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, servic
 }
 
 func (o *Orchestrator) enforceReconciliationInvariants(ctx context.Context, serviceID, tenantID uuid.UUID, desired desiredServiceState) desiredServiceState {
+	if desired.Stage == domain.PipelineStageFulfillment {
+		return o.enforceFulfillmentInvariant(ctx, serviceID, tenantID, desired)
+	}
+
 	if desired.Stage != domain.PipelineStageEstimation {
 		return desired
 	}
+	return o.enforceEstimationInvariants(ctx, serviceID, tenantID, desired)
+}
+
+func (o *Orchestrator) enforceFulfillmentInvariant(ctx context.Context, serviceID, tenantID uuid.UUID, desired desiredServiceState) desiredServiceState {
+	hasNonDraftQuote, err := o.repo.HasNonDraftQuote(ctx, serviceID, tenantID)
+	if err == nil && !hasNonDraftQuote {
+		desired.Stage = domain.PipelineStageProposal
+		desired.Status = domain.LeadStatusPending
+		desired.ReasonCode = "artifact_guard_missing_quote_for_fulfillment"
+		if strings.TrimSpace(desired.Reason) == "" {
+			desired.Reason = "Geen definitieve offerte beschikbaar; service blijft in Proposal."
+		}
+	}
+	return desired
+}
+
+func (o *Orchestrator) enforceEstimationInvariants(ctx context.Context, serviceID, tenantID uuid.UUID, desired desiredServiceState) desiredServiceState {
 	analysis, err := o.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
 	if err != nil {
+		if !errors.Is(err, repository.ErrNotFound) {
+			o.log.Error("orchestrator: failed to load latest AI analysis for reconciliation", "serviceId", serviceID, "tenantId", tenantID, "error", err)
+			return desired
+		}
+		desired.Stage = domain.PipelineStageNurturing
+		desired.Status = domain.LeadStatusAttemptedContact
+		desired.ReasonCode = "artifact_guard_missing_analysis"
+		if strings.TrimSpace(desired.Reason) == "" {
+			desired.Reason = "Geen recente intake-analyse beschikbaar; service blijft in Nurturing."
+		}
 		return desired
 	}
 	if reason := domain.ValidateAnalysisStageTransition(analysis.RecommendedAction, analysis.MissingInformation, desired.Stage); reason != "" {
@@ -1021,6 +1077,17 @@ func (o *Orchestrator) enforceReconciliationInvariants(ctx context.Context, serv
 		desired.ReasonCode = "analysis_invariant_blocked_estimation"
 		if strings.TrimSpace(desired.Reason) == "" {
 			desired.Reason = "Intake is nog onvolledig; service blijft in Nurturing."
+		}
+		return desired
+	}
+
+	settings, settingsErr := o.loadOrgAISettings(ctx, tenantID)
+	if settingsErr == nil && settings.AIConfidenceGateEnabled && analysis.CompositeConfidence != nil && *analysis.CompositeConfidence < minimumEstimationConfidence {
+		desired.Stage = domain.PipelineStageNurturing
+		desired.Status = domain.LeadStatusAttemptedContact
+		desired.ReasonCode = "confidence_blocked_estimation"
+		if strings.TrimSpace(desired.Reason) == "" {
+			desired.Reason = "Onvoldoende zekerheid in intake-analyse; service blijft in Nurturing."
 		}
 	}
 	return desired

@@ -265,7 +265,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
 	authModule.Service().SetAccessTokenBlocklistRedis(tokenBlocklistRedis)
 
-	leadsModule, err := leads.NewModule(pool, eventBus, storageSvc, val, cfg, log)
+	leadsModule, err := leads.NewModule(ctx, pool, eventBus, storageSvc, val, cfg, log)
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
@@ -278,11 +278,16 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 			return leadsports.OrganizationAISettings{}, err
 		}
 		return leadsports.OrganizationAISettings{
-			AIAutoDisqualifyJunk:   settings.AIAutoDisqualifyJunk,
-			AIAutoDispatch:         settings.AIAutoDispatch,
-			AIAutoEstimate:         settings.AIAutoEstimate,
-			CatalogGapThreshold:    settings.CatalogGapThreshold,
-			CatalogGapLookbackDays: settings.CatalogGapLookbackDays,
+			AIAutoDisqualifyJunk:    settings.AIAutoDisqualifyJunk,
+			AIAutoDispatch:          settings.AIAutoDispatch,
+			AIAutoEstimate:          settings.AIAutoEstimate,
+			AIConfidenceGateEnabled: settings.AIConfidenceGateEnabled,
+			AIAdaptiveReasoning:     settings.AIAdaptiveReasoningEnabled,
+			AIExperienceMemory:      settings.AIExperienceMemoryEnabled,
+			AICouncilMode:           settings.AICouncilEnabled,
+			AICouncilConsensusMode:  settings.AICouncilConsensusMode,
+			CatalogGapThreshold:     settings.CatalogGapThreshold,
+			CatalogGapLookbackDays:  settings.CatalogGapLookbackDays,
 		}, nil
 	})
 	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())
@@ -315,6 +320,9 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 	searchModule := search.NewModule(pool, val)
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
+	if cfg.IsEmbeddingEnabled() && cfg.IsQdrantEnabled() {
+		quotesModule.SetHumanFeedbackMemoryQueue(reminderScheduler)
+	}
 	wireMoneybirdConfig(cfg, log, quotesModule.Service())
 
 	leadsModule.SetPublicViewers(

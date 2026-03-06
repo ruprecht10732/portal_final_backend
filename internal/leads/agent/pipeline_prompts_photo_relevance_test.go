@@ -7,7 +7,7 @@ import (
 	"portal_final_backend/internal/leads/repository"
 )
 
-func TestIsPhotoAnalysisLikelyIrrelevant_MismatchInSummary(t *testing.T) {
+func TestIsPhotoAnalysisLikelyIrrelevantMismatchInSummary(t *testing.T) {
 	analysis := &repository.PhotoAnalysis{
 		Summary:         "Bijgevoegde foto's tonen niet de betreffende trapopening.",
 		ConfidenceLevel: "Low",
@@ -17,7 +17,7 @@ func TestIsPhotoAnalysisLikelyIrrelevant_MismatchInSummary(t *testing.T) {
 	}
 }
 
-func TestIsPhotoAnalysisLikelyIrrelevant_LowConfidenceWithDiscrepancy(t *testing.T) {
+func TestIsPhotoAnalysisLikelyIrrelevantLowConfidenceWithDiscrepancy(t *testing.T) {
 	analysis := &repository.PhotoAnalysis{
 		Summary:         "Foto toont een andere ruimte.",
 		ConfidenceLevel: "Low",
@@ -28,7 +28,7 @@ func TestIsPhotoAnalysisLikelyIrrelevant_LowConfidenceWithDiscrepancy(t *testing
 	}
 }
 
-func TestBuildGatekeeperPhotoSummary_IncludesDetailsWhenIrrelevant(t *testing.T) {
+func TestBuildGatekeeperPhotoSummaryIncludesDetailsWhenIrrelevant(t *testing.T) {
 	analysis := &repository.PhotoAnalysis{
 		Summary:         "Foto toont plafond, niet trapopening.",
 		ConfidenceLevel: "Low",
@@ -47,4 +47,3 @@ func TestBuildGatekeeperPhotoSummary_IncludesDetailsWhenIrrelevant(t *testing.T)
 		t.Fatalf("expected discrepancy details to be included")
 	}
 }
-

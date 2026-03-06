@@ -115,6 +115,21 @@ type AIAnalysisStore interface {
 	ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) ([]AIAnalysis, error)
 }
 
+// AIDecisionMemoryStore persists concise AI decision outcomes to improve future runs.
+type AIDecisionMemoryStore interface {
+	CreateAIDecisionMemory(ctx context.Context, params CreateAIDecisionMemoryParams) (AIDecisionMemory, error)
+	ListRecentAIDecisionMemories(ctx context.Context, organizationID uuid.UUID, serviceType string, limit int) ([]AIDecisionMemory, error)
+}
+
+// HumanFeedbackStore persists field-level human corrections over AI-generated quotes.
+type HumanFeedbackStore interface {
+	CreateHumanFeedback(ctx context.Context, params CreateHumanFeedbackParams) (HumanFeedback, error)
+	GetHumanFeedbackByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (HumanFeedback, error)
+	ListHumanFeedbackByOrg(ctx context.Context, organizationID uuid.UUID, limit int) ([]HumanFeedback, error)
+	ListRecentAppliedHumanFeedbackByServiceType(ctx context.Context, organizationID uuid.UUID, serviceType string, limit int) ([]HumanFeedback, error)
+	MarkHumanFeedbackApplied(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, embeddingID *string) (HumanFeedback, error)
+}
+
 // AttachmentStore manages file attachments for lead services.
 type AttachmentStore interface {
 	CreateAttachment(ctx context.Context, params CreateAttachmentParams) (Attachment, error)
@@ -251,6 +266,8 @@ type LeadsRepository interface {
 	NoteStore
 	TimelineEventStore
 	AIAnalysisStore
+	AIDecisionMemoryStore
+	HumanFeedbackStore
 	AttachmentStore
 	PhotoAnalysisStore
 	ServiceTypeContextReader
