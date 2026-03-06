@@ -72,12 +72,12 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return nil, fmt.Errorf("embedding API returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Accept both {"vector": [...]} and raw array responses for compatibility.
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read embedding response: %w", err)
 	}

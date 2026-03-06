@@ -146,11 +146,11 @@ func (g *GotenbergClient) doPost(ctx context.Context, path string, body *bytes.B
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return nil, fmt.Errorf("gotenberg %s returned %d: %s", path, resp.StatusCode, string(errBody))
 	}
 
-	result, err := io.ReadAll(resp.Body)
+	result, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read response from %s: %w", path, err)
 	}

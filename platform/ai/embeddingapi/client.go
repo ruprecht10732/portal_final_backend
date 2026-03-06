@@ -91,7 +91,7 @@ func (c *Client) AddDocuments(ctx context.Context, req AddDocumentsRequest) (Add
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return AddDocumentsResponse{}, fmt.Errorf("embedding API returned %d: %s", resp.StatusCode, string(body))
 	}
 

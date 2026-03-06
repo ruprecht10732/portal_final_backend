@@ -167,7 +167,7 @@ func (c *Client) doSendMessage(ctx context.Context, deviceID string, payload gow
 	}()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		data, _ := io.ReadAll(resp.Body)
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return fmt.Errorf("whatsapp service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
@@ -207,7 +207,7 @@ func (c *Client) CreateDevice(ctx context.Context, deviceID string) error {
 		return nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(resp.Body)
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return fmt.Errorf("failed to create device, status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
@@ -270,7 +270,7 @@ func (c *Client) fetchLoginQR(ctx context.Context, url string, deviceID string) 
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		body := strings.TrimSpace(string(data))
 		msgLower := strings.ToLower(body)
 		// If the endpoint says "not implemented", signal the caller to try the next fallback.
@@ -284,7 +284,7 @@ func (c *Client) fetchLoginQR(ctx context.Context, url string, deviceID string) 
 		return nil, false, fmt.Errorf("failed to get QR, status %d: %s", resp.StatusCode, body)
 	}
 
-	qrBytes, err := io.ReadAll(resp.Body)
+	qrBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, false, err
 	}
@@ -375,7 +375,7 @@ func (c *Client) fetchImageFromURL(ctx context.Context, imageURL string) ([]byte
 		return nil, fmt.Errorf("QR image fetch returned %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 }
 
 func (c *Client) DeleteDevice(ctx context.Context, deviceID string) error {
@@ -400,7 +400,7 @@ func (c *Client) DeleteDevice(ctx context.Context, deviceID string) error {
 	}()
 
 	if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode != http.StatusNotFound {
-		data, _ := io.ReadAll(resp.Body)
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return fmt.Errorf("failed to delete device, status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
@@ -431,7 +431,7 @@ func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceS
 		return nil, apperr.NotFound("device not found in provider")
 	}
 	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		body := strings.TrimSpace(string(data))
 		if resp.StatusCode >= http.StatusInternalServerError {
 			msgLower := strings.ToLower(body)
@@ -476,7 +476,7 @@ func (c *Client) ReconnectDevice(ctx context.Context, deviceID string) error {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return fmt.Errorf("reconnect failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
