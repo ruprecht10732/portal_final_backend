@@ -2,6 +2,9 @@ package notification
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -9,6 +12,7 @@ import (
 	"portal_final_backend/internal/events"
 	identityrepo "portal_final_backend/internal/identity/repository"
 	identityservice "portal_final_backend/internal/identity/service"
+	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
@@ -31,11 +35,43 @@ type testSender struct {
 	quoteProposalCalls         int
 	quoteAcceptedCalls         int
 	quoteAcceptedThankYouCalls int
+	customEmailCalls           int
+	lastCustomAttachments      []email.Attachment
+}
+
+type testQuotePDFGenerator struct {
+	fileKey string
+	pdfData []byte
+	err     error
+	calls   int
+}
+
+func (g *testQuotePDFGenerator) RegeneratePDF(_ context.Context, _ uuid.UUID, _ uuid.UUID) (string, []byte, error) {
+	g.calls++
+	if g.err != nil {
+		return "", nil, g.err
+	}
+	return g.fileKey, g.pdfData, nil
+}
+
+type testQuotePDFStorage struct {
+	data  []byte
+	err   error
+	calls int
+}
+
+func (s *testQuotePDFStorage) DownloadFile(_ context.Context, _ string, _ string) (io.ReadCloser, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return io.NopCloser(strings.NewReader(string(s.data))), nil
 }
 
 const testLeadEmail = "lead@example.com"
 const testOrgName = "Vakman Portal"
 const errUnexpectedRenderedText = "unexpected rendered text: %q"
+const generatedPDFContent = "generated-pdf"
 
 func (s *testSender) SendVerificationEmail(context.Context, string, string) error  { return nil }
 func (s *testSender) SendPasswordResetEmail(context.Context, string, string) error { return nil }
@@ -69,7 +105,11 @@ func (s *testSender) SendPartnerOfferAcceptedConfirmationEmail(context.Context, 
 func (s *testSender) SendPartnerOfferRejectedEmail(context.Context, string, string, string, string) error {
 	return nil
 }
-func (s *testSender) SendCustomEmail(context.Context, string, string, string) error { return nil }
+func (s *testSender) SendCustomEmail(_ context.Context, _ string, _ string, _ string, attachments ...email.Attachment) error {
+	s.customEmailCalls++
+	s.lastCustomAttachments = append([]email.Attachment(nil), attachments...)
+	return nil
+}
 
 func TestNormalizeWhatsAppMessage_StripsHTMLAndEntities(t *testing.T) {
 	input := "<p>Hallo&nbsp;Robin Oost,&nbsp;welkom&nbsp;bij&nbsp;ons team.&nbsp;We&nbsp;hebben&nbsp;je&nbsp;aanvraag&nbsp;ontvangen.</p><p></p><p>https://example.com/track/abc</p>"
@@ -300,5 +340,122 @@ func TestRenderWorkflowTemplateTextConvertsEscapedLineBreaks(t *testing.T) {
 	}
 	if !strings.Contains(body, "\n\n") {
 		t.Fatalf("expected rendered body to contain real line breaks, got: %q", body)
+	}
+}
+
+func TestProcessGenericEmailOutboxAttachesQuotePDFFromStorage(t *testing.T) {
+	sender := &testSender{}
+	storage := &testQuotePDFStorage{data: []byte("stored-pdf")}
+	generator := &testQuotePDFGenerator{pdfData: []byte(generatedPDFContent)}
+	orgID := uuid.New()
+	quoteID := uuid.New().String()
+
+	m := New(nil, sender, testNotificationConfig{}, logger.New("development"))
+	m.SetQuotePDFStorage(storage, "quote-pdfs")
+	m.SetQuotePDFGenerator(generator)
+
+	payloadBytes, err := json.Marshal(emailSendOutboxPayload{
+		OrgID:    orgID.String(),
+		ToEmail:  testLeadEmail,
+		Subject:  "Onderwerp",
+		BodyHTML: "<p>Body</p>",
+		Attachments: []emailSendAttachmentSpec{{
+			Kind:     "quote_pdf",
+			QuoteID:  &quoteID,
+			FileKey:  "quotes/file.pdf",
+			FileName: "offerte-test.pdf",
+			MIMEType: "application/pdf",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
+	if err != nil {
+		t.Fatalf("processGenericEmailOutbox returned error: %v", err)
+	}
+	if sender.customEmailCalls != 1 {
+		t.Fatalf("expected 1 custom email call, got %d", sender.customEmailCalls)
+	}
+	if len(sender.lastCustomAttachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(sender.lastCustomAttachments))
+	}
+	if string(sender.lastCustomAttachments[0].Content) != "stored-pdf" {
+		t.Fatalf("expected stored pdf content, got %q", string(sender.lastCustomAttachments[0].Content))
+	}
+	if generator.calls != 0 {
+		t.Fatalf("expected storage hit to avoid regeneration, got %d generator calls", generator.calls)
+	}
+}
+
+func TestProcessGenericEmailOutboxRegeneratesQuotePDFAfterStorageFailure(t *testing.T) {
+	sender := &testSender{}
+	storage := &testQuotePDFStorage{err: errors.New("storage unavailable")}
+	generator := &testQuotePDFGenerator{pdfData: []byte(generatedPDFContent)}
+	orgID := uuid.New()
+	quoteID := uuid.New().String()
+
+	m := New(nil, sender, testNotificationConfig{}, logger.New("development"))
+	m.SetQuotePDFStorage(storage, "quote-pdfs")
+	m.SetQuotePDFGenerator(generator)
+
+	payloadBytes, err := json.Marshal(emailSendOutboxPayload{
+		OrgID:    orgID.String(),
+		ToEmail:  testLeadEmail,
+		Subject:  "Onderwerp",
+		BodyHTML: "<p>Body</p>",
+		Attachments: []emailSendAttachmentSpec{{
+			Kind:    "quote_pdf",
+			QuoteID: &quoteID,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
+	if err != nil {
+		t.Fatalf("processGenericEmailOutbox returned error: %v", err)
+	}
+	if len(sender.lastCustomAttachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(sender.lastCustomAttachments))
+	}
+	if string(sender.lastCustomAttachments[0].Content) != generatedPDFContent {
+		t.Fatalf("expected generated pdf content, got %q", string(sender.lastCustomAttachments[0].Content))
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected 1 generator call, got %d", generator.calls)
+	}
+}
+
+func TestBuildEmailAttachmentSpecsIncludesQuoteAcceptedPDF(t *testing.T) {
+	quoteID := uuid.New().String()
+	dispatchCtx := workflowStepDispatchContext{
+		Exec: workflowStepExecutionContext{
+			Trigger: "quote_accepted",
+			Variables: map[string]any{
+				"quote": map[string]any{
+					"id":         quoteID,
+					"number":     "OFF-2026-0003",
+					"pdfFileKey": "quotes/signed.pdf",
+				},
+			},
+		},
+	}
+
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	attachments := m.buildEmailAttachmentSpecs(dispatchCtx)
+	if len(attachments) != 1 {
+		t.Fatalf("expected 1 attachment spec, got %d", len(attachments))
+	}
+	if attachments[0].Kind != "quote_pdf" {
+		t.Fatalf("expected quote_pdf kind, got %q", attachments[0].Kind)
+	}
+	if attachments[0].QuoteID == nil || *attachments[0].QuoteID != quoteID {
+		t.Fatalf("expected quote id %q, got %#v", quoteID, attachments[0].QuoteID)
+	}
+	if attachments[0].FileKey != "quotes/signed.pdf" {
+		t.Fatalf("expected signed file key, got %q", attachments[0].FileKey)
 	}
 }

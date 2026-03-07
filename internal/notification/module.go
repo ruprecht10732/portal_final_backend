@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	htmlstd "html"
+	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -51,6 +52,10 @@ type QuoteActivityWriter interface {
 
 type QuoteAcceptedPDFScheduler interface {
 	EnqueueGenerateAcceptedQuotePDFRequest(ctx context.Context, req scheduler.GenerateAcceptedQuotePDFRequest) error
+}
+
+type QuotePDFFileStorage interface {
+	DownloadFile(ctx context.Context, bucket, fileKey string) (io.ReadCloser, error)
 }
 
 // PartnerOfferTimelineEventParams describes the payload for a partner-offer timeline event.
@@ -145,6 +150,8 @@ type Module struct {
 	actWriter           QuoteActivityWriter
 	offerTimeline       PartnerOfferTimelineWriter
 	quotePDFGen         QuotePDFGenerator
+	quotePDFStorage     QuotePDFFileStorage
+	quotePDFBucket      string
 	quotePDFScheduler   QuoteAcceptedPDFScheduler
 	whatsapp            WhatsAppSender
 	leadTimeline        LeadTimelineWriter
@@ -324,6 +331,12 @@ func (m *Module) SetLeadTimelineWriter(writer LeadTimelineWriter) { m.leadTimeli
 
 // SetQuotePDFGenerator injects the PDF generator for pre-generating unsigned PDFs on quote send.
 func (m *Module) SetQuotePDFGenerator(gen QuotePDFGenerator) { m.quotePDFGen = gen }
+
+// SetQuotePDFStorage injects storage access for already-generated quote PDFs.
+func (m *Module) SetQuotePDFStorage(storage QuotePDFFileStorage, bucket string) {
+	m.quotePDFStorage = storage
+	m.quotePDFBucket = strings.TrimSpace(bucket)
+}
 
 // SetQuoteAcceptedPDFScheduler injects async PDF task enqueueing for accepted quotes.
 func (m *Module) SetQuoteAcceptedPDFScheduler(scheduler QuoteAcceptedPDFScheduler) {
@@ -563,12 +576,21 @@ type whatsAppSendOutboxPayload struct {
 }
 
 type emailSendOutboxPayload struct {
-	OrgID     string  `json:"orgId"`
-	ToEmail   string  `json:"toEmail"`
-	Subject   string  `json:"subject"`
-	BodyHTML  string  `json:"bodyHtml"`
-	LeadID    *string `json:"leadId,omitempty"`
-	ServiceID *string `json:"serviceId,omitempty"`
+	OrgID       string                    `json:"orgId"`
+	ToEmail     string                    `json:"toEmail"`
+	Subject     string                    `json:"subject"`
+	BodyHTML    string                    `json:"bodyHtml"`
+	LeadID      *string                   `json:"leadId,omitempty"`
+	ServiceID   *string                   `json:"serviceId,omitempty"`
+	Attachments []emailSendAttachmentSpec `json:"attachments,omitempty"`
+}
+
+type emailSendAttachmentSpec struct {
+	Kind     string  `json:"kind,omitempty"`
+	QuoteID  *string `json:"quoteId,omitempty"`
+	FileKey  string  `json:"fileKey,omitempty"`
+	FileName string  `json:"fileName,omitempty"`
+	MIMEType string  `json:"mimeType,omitempty"`
 }
 
 type workflowRule struct {
@@ -895,13 +917,15 @@ func (m *Module) enqueueEmailWorkflowStep(
 		return nil
 	}
 	for _, toEmail := range emails {
+		attachments := m.buildEmailAttachmentSpecs(dispatchCtx)
 		payload := emailSendOutboxPayload{
-			OrgID:     dispatchCtx.Exec.OrgID.String(),
-			ToEmail:   toEmail,
-			Subject:   subject,
-			BodyHTML:  dispatchCtx.Body,
-			LeadID:    ptrUUIDString(dispatchCtx.Exec.LeadID),
-			ServiceID: ptrUUIDString(dispatchCtx.Exec.ServiceID),
+			OrgID:       dispatchCtx.Exec.OrgID.String(),
+			ToEmail:     toEmail,
+			Subject:     subject,
+			BodyHTML:    dispatchCtx.Body,
+			LeadID:      ptrUUIDString(dispatchCtx.Exec.LeadID),
+			ServiceID:   ptrUUIDString(dispatchCtx.Exec.ServiceID),
+			Attachments: attachments,
 		}
 		rec, err := m.notificationOutbox.Insert(ctx, notificationoutbox.InsertParams{
 			TenantID:  dispatchCtx.Exec.OrgID,
@@ -919,6 +943,47 @@ func (m *Module) enqueueEmailWorkflowStep(
 	}
 
 	return nil
+}
+
+func (m *Module) buildEmailAttachmentSpecs(dispatchCtx workflowStepDispatchContext) []emailSendAttachmentSpec {
+	trigger := strings.ToLower(strings.TrimSpace(dispatchCtx.Exec.Trigger))
+	if trigger != "quote_sent" && trigger != "quote_accepted" {
+		return nil
+	}
+
+	quoteMap, ok := dispatchCtx.Exec.Variables["quote"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	quoteIDText, _ := quoteMap["id"].(string)
+	quoteIDText = strings.TrimSpace(quoteIDText)
+	if quoteIDText == "" {
+		return nil
+	}
+
+	quoteNumber, _ := quoteMap["number"].(string)
+	quoteNumber = strings.TrimSpace(quoteNumber)
+	if quoteNumber == "" {
+		quoteNumber = "offerte"
+	}
+
+	fileKey, _ := quoteMap["pdfFileKey"].(string)
+	return []emailSendAttachmentSpec{{
+		Kind:     "quote_pdf",
+		QuoteID:  &quoteIDText,
+		FileKey:  strings.TrimSpace(fileKey),
+		FileName: buildQuotePDFAttachmentFileName(quoteNumber),
+		MIMEType: "application/pdf",
+	}}
+}
+
+func buildQuotePDFAttachmentFileName(quoteNumber string) string {
+	trimmed := strings.TrimSpace(quoteNumber)
+	if trimmed == "" {
+		return "offerte.pdf"
+	}
+	return fmt.Sprintf("offerte-%s.pdf", trimmed)
 }
 
 func buildWorkflowStepVariables(execCtx workflowStepExecutionContext) map[string]any {
@@ -1949,14 +2014,93 @@ func (m *Module) processGenericEmailOutbox(ctx context.Context, e events.Notific
 		}
 	}
 
+	attachments, err := m.resolveEmailOutboxAttachments(ctx, orgID, payload)
+	if err != nil {
+		if errors.Is(err, errInvalidOutboxPayload) {
+			_ = m.notificationOutbox.MarkFailed(ctx, rec.ID, invalidOutboxPayloadPrefix+err.Error())
+			return nil
+		}
+		return err
+	}
+
 	sender := m.resolveSender(ctx, orgID)
-	if err := sender.SendCustomEmail(ctx, payload.ToEmail, payload.Subject, payload.BodyHTML); err != nil {
+	if err := sender.SendCustomEmail(ctx, payload.ToEmail, payload.Subject, payload.BodyHTML, attachments...); err != nil {
 		return err
 	}
 
 	_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
 	m.log.Info("email outbox delivered", "outboxId", rec.ID.String(), "orgId", orgID, "toEmail", payload.ToEmail)
 	return nil
+}
+
+var errInvalidOutboxPayload = errors.New("invalid outbox payload")
+
+func (m *Module) resolveEmailOutboxAttachments(ctx context.Context, orgID uuid.UUID, payload emailSendOutboxPayload) ([]email.Attachment, error) {
+	if len(payload.Attachments) == 0 {
+		return nil, nil
+	}
+
+	attachments := make([]email.Attachment, 0, len(payload.Attachments))
+	for _, spec := range payload.Attachments {
+		attachment, err := m.resolveEmailAttachment(ctx, orgID, spec)
+		if err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, attachment)
+	}
+	return attachments, nil
+}
+
+func (m *Module) resolveEmailAttachment(ctx context.Context, orgID uuid.UUID, spec emailSendAttachmentSpec) (email.Attachment, error) {
+	switch strings.TrimSpace(spec.Kind) {
+	case "", "quote_pdf":
+		return m.resolveQuotePDFAttachment(ctx, orgID, spec)
+	default:
+		return email.Attachment{}, fmt.Errorf("%w: unsupported attachment kind %q", errInvalidOutboxPayload, spec.Kind)
+	}
+}
+
+func (m *Module) resolveQuotePDFAttachment(ctx context.Context, orgID uuid.UUID, spec emailSendAttachmentSpec) (email.Attachment, error) {
+	if spec.QuoteID == nil || strings.TrimSpace(*spec.QuoteID) == "" {
+		return email.Attachment{}, fmt.Errorf("%w: quote attachment missing quoteId", errInvalidOutboxPayload)
+	}
+	quoteID, err := uuid.Parse(strings.TrimSpace(*spec.QuoteID))
+	if err != nil {
+		return email.Attachment{}, fmt.Errorf("%w: invalid quoteId %q", errInvalidOutboxPayload, strings.TrimSpace(*spec.QuoteID))
+	}
+
+	fileName := strings.TrimSpace(spec.FileName)
+	if fileName == "" {
+		fileName = buildQuotePDFAttachmentFileName(quoteID.String())
+	}
+	mimeType := strings.TrimSpace(spec.MIMEType)
+	if mimeType == "" {
+		mimeType = "application/pdf"
+	}
+
+	if m.quotePDFStorage != nil && m.quotePDFBucket != "" && strings.TrimSpace(spec.FileKey) != "" {
+		reader, err := m.quotePDFStorage.DownloadFile(ctx, m.quotePDFBucket, strings.TrimSpace(spec.FileKey))
+		if err == nil {
+			defer func() { _ = reader.Close() }()
+			data, readErr := io.ReadAll(reader)
+			if readErr == nil {
+				return email.Attachment{Content: data, FileName: fileName, MIMEType: mimeType}, nil
+			}
+			m.log.Warn("failed to read stored quote pdf attachment; regenerating", "quoteId", quoteID, "error", readErr)
+		} else {
+			m.log.Warn("failed to download stored quote pdf attachment; regenerating", "quoteId", quoteID, "fileKey", strings.TrimSpace(spec.FileKey), "error", err)
+		}
+	}
+
+	if m.quotePDFGen == nil {
+		return email.Attachment{}, fmt.Errorf("quote pdf generator not configured")
+	}
+
+	_, data, err := m.quotePDFGen.RegeneratePDF(ctx, quoteID, orgID)
+	if err != nil {
+		return email.Attachment{}, fmt.Errorf("generate quote pdf attachment: %w", err)
+	}
+	return email.Attachment{Content: data, FileName: fileName, MIMEType: mimeType}, nil
 }
 
 func (m *Module) markOutboxUnsupported(ctx context.Context, rec notificationoutbox.Record) {
@@ -2100,13 +2244,16 @@ func (m *Module) handleQuoteSent(ctx context.Context, e events.QuoteSent) error 
 		map[string]interface{}{"quoteNumber": e.QuoteNumber, "consumerEmail": e.ConsumerEmail})
 
 	// Pre-generate the unsigned PDF so download links in workflows resolve instantly.
+	pdfFileKey := ""
 	if m.quotePDFGen != nil {
-		if _, _, err := m.quotePDFGen.RegeneratePDF(ctx, e.QuoteID, e.OrganizationID); err != nil {
+		if fileKey, _, err := m.quotePDFGen.RegeneratePDF(ctx, e.QuoteID, e.OrganizationID); err != nil {
 			m.log.Warn("failed to pre-generate quote PDF on send", "quoteId", e.QuoteID, "error", err)
+		} else {
+			pdfFileKey = strings.TrimSpace(fileKey)
 		}
 	}
 
-	_ = m.dispatchQuoteSentLeadEmailWorkflow(ctx, e)
+	_ = m.dispatchQuoteSentLeadEmailWorkflow(ctx, e, pdfFileKey)
 	_ = m.dispatchQuoteSentLeadWhatsAppWorkflow(ctx, e)
 
 	m.log.Info("quote sent event processed", "quoteId", e.QuoteID)
@@ -2324,7 +2471,7 @@ func (m *Module) dispatchQuoteSentLeadWhatsAppWorkflow(ctx context.Context, e ev
 	})
 }
 
-func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e events.QuoteSent) bool {
+func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e events.QuoteSent, pdfFileKey string) bool {
 	if strings.TrimSpace(e.ConsumerEmail) == "" {
 		return true
 	}
@@ -2335,7 +2482,7 @@ func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e event
 	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
-		"quote": map[string]any{"number": e.QuoteNumber, "previewUrl": proposalURL, "downloadUrl": downloadURL},
+		"quote": map[string]any{"id": e.QuoteID.String(), "number": e.QuoteNumber, "previewUrl": proposalURL, "downloadUrl": downloadURL, "pdfFileKey": strings.TrimSpace(pdfFileKey)},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
 	enrichLeadVars(templateVars, details)
@@ -2629,12 +2776,9 @@ func (m *Module) handleQuoteAnnotated(ctx context.Context, e events.QuoteAnnotat
 }
 
 func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted) error {
-	_ = m.dispatchQuoteAcceptedLeadEmailWorkflow(ctx, e)
-	_ = m.dispatchQuoteAcceptedAgentEmailWorkflow(ctx, e)
-	_ = m.dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx, e)
-
 	// Queue signed-PDF generation in the background so quote acceptance stays fast.
 	queued := false
+	pdfFileKey := ""
 	if m.quotePDFScheduler != nil {
 		err := m.quotePDFScheduler.EnqueueGenerateAcceptedQuotePDFRequest(ctx, scheduler.GenerateAcceptedQuotePDFRequest{
 			QuoteID:       e.QuoteID,
@@ -2651,10 +2795,16 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 	}
 
 	if !queued && m.quotePDFGen != nil {
-		if _, _, err := m.quotePDFGen.RegeneratePDF(ctx, e.QuoteID, e.OrganizationID); err != nil {
+		if fileKey, _, err := m.quotePDFGen.RegeneratePDF(ctx, e.QuoteID, e.OrganizationID); err != nil {
 			m.log.Warn("failed to regenerate quote PDF on acceptance", "quoteId", e.QuoteID, "error", err)
+		} else {
+			pdfFileKey = strings.TrimSpace(fileKey)
 		}
 	}
+
+	_ = m.dispatchQuoteAcceptedLeadEmailWorkflow(ctx, e, pdfFileKey)
+	_ = m.dispatchQuoteAcceptedAgentEmailWorkflow(ctx, e)
+	_ = m.dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx, e)
 
 	quoteNumber := strings.TrimSpace(e.QuoteNumber)
 	if quoteNumber == "" {
@@ -2676,7 +2826,7 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 	return nil
 }
 
-func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
+func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e events.QuoteAccepted, pdfFileKey string) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	baseURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
 	downloadURL := fmt.Sprintf(quotePDFPathFmt, baseURL, e.PublicToken)
@@ -2685,7 +2835,7 @@ func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e e
 	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
-		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL},
+		"quote": map[string]any{"id": e.QuoteID.String(), "number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL, "pdfFileKey": strings.TrimSpace(pdfFileKey)},
 		"links": map[string]any{"view": viewURL, "download": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}

@@ -32,7 +32,7 @@ type Sender interface {
 	SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail, partnerName, offerID string) error
 	SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error
 	SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error
-	SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string) error
+	SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error
 }
 
 type NoopSender struct{}
@@ -81,7 +81,7 @@ func (NoopSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, pa
 	return nil
 }
 
-func (NoopSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string) error {
+func (NoopSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error {
 	return nil
 }
 
@@ -313,8 +313,8 @@ func (b *BrevoSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail
 	return b.send(ctx, toEmail, subject, content)
 }
 
-func (b *BrevoSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string) error {
-	return b.send(ctx, toEmail, subject, htmlContent)
+func (b *BrevoSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error {
+	return b.sendWithAttachments(ctx, toEmail, subject, htmlContent, attachments...)
 }
 
 func (b *BrevoSender) send(ctx context.Context, toEmail, subject, htmlContent string) error {

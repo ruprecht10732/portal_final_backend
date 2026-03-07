@@ -248,6 +248,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	whatsappClient := whatsapp.NewClient(cfg, log)
 	notificationModule.SetWhatsAppSender(whatsappClient)
 	notificationModule.SetNotificationOutbox(outbox.New(pool))
+	notificationModule.SetQuotePDFStorage(storageSvc, cfg.GetMinioBucketQuotePDFs())
 
 	identityModule := identity.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketOrganizationLogos(), val, whatsappClient)
 	identityModule.RegisterHandlers(eventBus)

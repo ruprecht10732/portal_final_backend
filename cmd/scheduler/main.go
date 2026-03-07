@@ -138,8 +138,10 @@ func main() {
 	if storageErr != nil {
 		log.Warn("failed to initialize storage service for accepted quote PDF tasks", "error", storageErr)
 	} else {
+		notificationModule.SetQuotePDFStorage(storageSvc, cfg.GetMinioBucketQuotePDFs())
 		quoteTermsResolver := adapters.NewQuoteTermsResolverAdapter(identitySvc, identitySvc, leadsModule.Repository())
 		quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identitySvc, nil, storageSvc, cfg, quoteTermsResolver)
+		notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
 		worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
 	}
 
