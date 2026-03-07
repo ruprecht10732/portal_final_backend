@@ -21,6 +21,8 @@ import (
 )
 
 const errPriceAndUnitPriceNonNegative = "priceCents and unitPriceCents must be 0 or greater"
+const errChooseEitherPriceOrUnitPrice = "choose either priceCents or unitPriceCents"
+const errUnitLabelRequiredForUnitPrice = "unitLabel is required when unitPriceCents is set"
 
 const (
 	autocompleteMaxResults       = 10
@@ -28,7 +30,7 @@ const (
 	autocompleteQdrantMinResults = 6
 	// The timeout must cover both query embedding and Qdrant search.
 	autocompleteQdrantTimeout  = 3500 * time.Millisecond
-	autocompleteScoreThreshold   = 0.30
+	autocompleteScoreThreshold = 0.30
 )
 
 // Service provides business logic for catalog.
@@ -276,7 +278,12 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 	if err := s.validatePeriod(req.PeriodCount, req.PeriodUnit); err != nil {
 		return transport.ProductResponse{}, err
 	}
-	unitLabel, err := s.validatePricingCreate(req.PriceCents, req.UnitPriceCents, req.UnitLabel)
+	isDraft := false
+	if req.IsDraft != nil {
+		isDraft = *req.IsDraft
+	}
+
+	unitLabel, err := s.validatePricingCreate(req.PriceCents, req.UnitPriceCents, req.UnitLabel, isDraft)
 	if err != nil {
 		return transport.ProductResponse{}, err
 	}
@@ -290,11 +297,6 @@ func (s *Service) CreateProduct(ctx context.Context, tenantID uuid.UUID, req tra
 		if err != nil {
 			return transport.ProductResponse{}, err
 		}
-	}
-
-	isDraft := false
-	if req.IsDraft != nil {
-		isDraft = *req.IsDraft
 	}
 
 	product, err := s.repo.CreateProduct(ctx, repository.CreateProductParams{
@@ -336,7 +338,17 @@ func (s *Service) UpdateProduct(ctx context.Context, tenantID uuid.UUID, id uuid
 	if err := s.ensureVatRateExists(ctx, tenantID, req.VatRateID); err != nil {
 		return transport.ProductResponse{}, err
 	}
-	unitLabel, err := s.validatePricingUpdate(req.PriceCents, req.UnitPriceCents, req.UnitLabel)
+	currentProduct, err := s.repo.GetProductByID(ctx, tenantID, id)
+	if err != nil {
+		return transport.ProductResponse{}, err
+	}
+
+	isDraft := currentProduct.IsDraft
+	if req.IsDraft != nil {
+		isDraft = *req.IsDraft
+	}
+
+	unitLabel, err := s.validatePricingUpdate(currentProduct, req.PriceCents, req.UnitPriceCents, req.UnitLabel, isDraft)
 	if err != nil {
 		return transport.ProductResponse{}, err
 	}
@@ -1091,46 +1103,67 @@ func toProductResponse(product repository.Product) transport.ProductResponse {
 	}
 }
 
-func (s *Service) validatePricingCreate(priceCents int64, unitPriceCents int64, unitLabel *string) (*string, error) {
+func (s *Service) validatePricingCreate(priceCents int64, unitPriceCents int64, unitLabel *string, isDraft bool) (*string, error) {
 	trimmed := trimPtr(unitLabel)
-	if priceCents < 0 || unitPriceCents < 0 {
-		return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
-	}
-	if priceCents > 0 && unitPriceCents > 0 {
-		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
-	}
-	if unitPriceCents > 0 && (trimmed == nil || *trimmed == "") {
-		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")
+	if err := validatePricingValues(priceCents, unitPriceCents, trimmed, isDraft); err != nil {
+		return nil, err
 	}
 	return trimmed, nil
 }
 
-func (s *Service) validatePricingUpdate(priceCents *int64, unitPriceCents *int64, unitLabel *string) (*string, error) {
+func (s *Service) validatePricingUpdate(current repository.Product, priceCents *int64, unitPriceCents *int64, unitLabel *string, isDraft bool) (*string, error) {
 	trimmed := trimPtr(unitLabel)
-	if priceCents == nil && unitPriceCents == nil {
-		return trimmed, nil
+	price, unitPrice, err := resolveEffectivePricing(current, priceCents, unitPriceCents)
+	if err != nil {
+		return nil, err
 	}
-	price := int64(0)
-	unitPrice := int64(0)
+	if err := validatePricingValues(price, unitPrice, effectiveUnitLabel(current.UnitLabel, unitLabel, trimmed), isDraft); err != nil {
+		return nil, err
+	}
+	return trimmed, nil
+}
+
+func resolveEffectivePricing(current repository.Product, priceCents *int64, unitPriceCents *int64) (int64, int64, error) {
+	price := current.PriceCents
+	unitPrice := current.UnitPriceCents
+
 	if priceCents != nil {
 		price = *priceCents
 		if price < 0 {
-			return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+			return 0, 0, apperr.Validation(errPriceAndUnitPriceNonNegative)
 		}
 	}
 	if unitPriceCents != nil {
 		unitPrice = *unitPriceCents
 		if unitPrice < 0 {
-			return nil, apperr.Validation(errPriceAndUnitPriceNonNegative)
+			return 0, 0, apperr.Validation(errPriceAndUnitPriceNonNegative)
 		}
 	}
-	if price > 0 && unitPrice > 0 {
-		return nil, apperr.Validation("choose either priceCents or unitPriceCents")
+
+	return price, unitPrice, nil
+}
+
+func effectiveUnitLabel(current *string, requested *string, trimmed *string) *string {
+	if requested != nil {
+		return trimmed
 	}
-	if unitPrice > 0 && (trimmed == nil || *trimmed == "") {
-		return nil, apperr.Validation("unitLabel is required when unitPriceCents is set")
+	return current
+}
+
+func validatePricingValues(priceCents int64, unitPriceCents int64, unitLabel *string, isDraft bool) error {
+	if priceCents < 0 || unitPriceCents < 0 {
+		return apperr.Validation(errPriceAndUnitPriceNonNegative)
 	}
-	return trimmed, nil
+	if priceCents > 0 && unitPriceCents > 0 {
+		return apperr.Validation(errChooseEitherPriceOrUnitPrice)
+	}
+	if !isDraft && priceCents == 0 && unitPriceCents == 0 {
+		return apperr.Validation(errChooseEitherPriceOrUnitPrice)
+	}
+	if unitPriceCents > 0 && (unitLabel == nil || *unitLabel == "") {
+		return apperr.Validation(errUnitLabelRequiredForUnitPrice)
+	}
+	return nil
 }
 
 func toProductListResponse(items []repository.Product, total int, page int, pageSize int) transport.ProductListResponse {
