@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"portal_final_backend/platform/apperr"
 
@@ -42,7 +43,33 @@ func (s *Service) ListGenerateQuoteJobs(ctx context.Context, tenantID, userID uu
 	return result, total, nil
 }
 
-// DeleteGenerateQuoteJob deletes a finished (completed/failed) job for the current user.
+// CancelGenerateQuoteJob cancels an active job for the current user.
+func (s *Service) CancelGenerateQuoteJob(ctx context.Context, tenantID, userID, jobID uuid.UUID) (*GenerateQuoteJob, error) {
+	if tenantID == uuid.Nil || userID == uuid.Nil || jobID == uuid.Nil {
+		return nil, apperr.Validation("tenantId, userId and jobId are required")
+	}
+
+	current, err := s.GetGenerateQuoteJob(ctx, tenantID, userID, jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	if current.Status == GenerateQuoteJobStatusCompleted || current.Status == GenerateQuoteJobStatusFailed || current.Status == GenerateQuoteJobStatusCancelled {
+		return nil, apperr.Conflict("cannot cancel a finished job")
+	}
+
+	now := time.Now()
+	job, err := s.repo.CancelGenerateQuoteJob(ctx, tenantID, userID, jobID, now, now)
+	if err != nil {
+		return nil, err
+	}
+
+	mapped := repositoryJobToServiceJob(job)
+	s.publishJobProgress(mapped)
+	return mapped, nil
+}
+
+// DeleteGenerateQuoteJob deletes a finished (completed/failed/cancelled) job for the current user.
 // Active jobs cannot be deleted.
 func (s *Service) DeleteGenerateQuoteJob(ctx context.Context, tenantID, userID, jobID uuid.UUID) error {
 	if tenantID == uuid.Nil || userID == uuid.Nil || jobID == uuid.Nil {

@@ -121,6 +121,7 @@ const (
 	GenerateQuoteJobStatusRunning   GenerateQuoteJobStatus = "running"
 	GenerateQuoteJobStatusCompleted GenerateQuoteJobStatus = "completed"
 	GenerateQuoteJobStatusFailed    GenerateQuoteJobStatus = "failed"
+	GenerateQuoteJobStatusCancelled GenerateQuoteJobStatus = "cancelled"
 )
 
 // GenerateQuoteJob stores progress and result data for an async generation run.

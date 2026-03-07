@@ -72,6 +72,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/generate-jobs", h.ListGenerateJobs)
 	rg.DELETE("/generate-jobs/completed", h.ClearCompletedGenerateJobs)
 	rg.GET("/generate-jobs/:id", h.GetGenerateJob)
+	rg.POST("/generate-jobs/:id/cancel", h.CancelGenerateJob)
 	rg.DELETE("/generate-jobs/:id", h.DeleteGenerateJob)
 	rg.POST("/export/:provider/bulk", h.BulkExportToProvider)
 	rg.DELETE("/integrations/:provider", h.DisconnectProvider)
@@ -89,6 +90,42 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
 	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 	rg.DELETE("/:id", h.Delete)
+}
+
+// CancelGenerateJob handles POST /api/v1/quotes/generate-jobs/:id/cancel
+func (h *Handler) CancelGenerateJob(c *gin.Context) {
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	job, err := h.svc.CancelGenerateQuoteJob(c.Request.Context(), tenantID, identity.UserID(), jobID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.GenerateQuoteJobResponse{
+		JobID:           job.JobID,
+		Status:          string(job.Status),
+		Step:            job.Step,
+		ProgressPercent: job.ProgressPercent,
+		Error:           job.Error,
+		QuoteID:         job.QuoteID,
+		QuoteNumber:     job.QuoteNumber,
+		ItemCount:       job.ItemCount,
+		LeadID:          job.LeadID,
+		LeadServiceID:   job.LeadServiceID,
+		StartedAt:       job.StartedAt,
+		UpdatedAt:       job.UpdatedAt,
+		FinishedAt:      job.FinishedAt,
+	})
 }
 
 // SubmitHumanFeedback handles POST /api/v1/quotes/:id/feedback

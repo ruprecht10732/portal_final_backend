@@ -1256,7 +1256,7 @@ func (r *Repository) ListGenerateQuoteJobs(ctx context.Context, orgID, userID uu
 	return items, total, nil
 }
 
-// DeleteGenerateQuoteJob deletes a finished job (completed/failed) for a tenant + user.
+// DeleteGenerateQuoteJob deletes a finished job (completed/failed/cancelled) for a tenant + user.
 func (r *Repository) DeleteGenerateQuoteJob(ctx context.Context, orgID, userID, jobID uuid.UUID) error {
 	if orgID == uuid.Nil || userID == uuid.Nil || jobID == uuid.Nil {
 		return apperr.Validation("organizationId, userId and jobId are required")
@@ -1265,7 +1265,7 @@ func (r *Repository) DeleteGenerateQuoteJob(ctx context.Context, orgID, userID, 
 	result, err := r.pool.Exec(ctx, `
 		DELETE FROM RAC_ai_quote_jobs
 		WHERE id = $1 AND organization_id = $2 AND user_id = $3
-			AND status IN ('completed','failed')
+			AND status IN ('completed','failed','cancelled')
 	`, jobID, orgID, userID)
 	if err != nil {
 		return fmt.Errorf("delete generate quote job: %w", err)
@@ -1274,6 +1274,55 @@ func (r *Repository) DeleteGenerateQuoteJob(ctx context.Context, orgID, userID, 
 		return apperr.NotFound(quoteGenerateJobNotFoundMsg)
 	}
 	return nil
+}
+
+// CancelGenerateQuoteJob transitions an active job to cancelled for a tenant + user.
+func (r *Repository) CancelGenerateQuoteJob(ctx context.Context, orgID, userID, jobID uuid.UUID, updatedAt time.Time, finishedAt time.Time) (*GenerateQuoteJob, error) {
+	if orgID == uuid.Nil || userID == uuid.Nil || jobID == uuid.Nil {
+		return nil, apperr.Validation("organizationId, userId and jobId are required")
+	}
+
+	query := `
+		UPDATE RAC_ai_quote_jobs
+		SET status = 'cancelled',
+			step = 'cancelled',
+			progress_percent = CASE WHEN progress_percent > 100 THEN 100 ELSE progress_percent END,
+			error = NULL,
+			updated_at = $4,
+			finished_at = $5
+		WHERE id = $1 AND organization_id = $2 AND user_id = $3
+			AND status IN ('pending', 'running')
+		RETURNING id, organization_id, user_id, lead_id, lead_service_id,
+			status, step, progress_percent, error,
+			quote_id, quote_number, item_count,
+			started_at, updated_at, finished_at`
+
+	var job GenerateQuoteJob
+	err := r.pool.QueryRow(ctx, query, jobID, orgID, userID, updatedAt, finishedAt).Scan(
+		&job.ID,
+		&job.OrganizationID,
+		&job.UserID,
+		&job.LeadID,
+		&job.LeadServiceID,
+		&job.Status,
+		&job.Step,
+		&job.ProgressPercent,
+		&job.Error,
+		&job.QuoteID,
+		&job.QuoteNumber,
+		&job.ItemCount,
+		&job.StartedAt,
+		&job.UpdatedAt,
+		&job.FinishedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
+		}
+		return nil, fmt.Errorf("cancel generate quote job: %w", err)
+	}
+
+	return &job, nil
 }
 
 // DeleteCompletedGenerateQuoteJobs deletes completed jobs for a tenant + user.

@@ -120,31 +120,27 @@ func (s *Service) GetGenerateQuoteJob(ctx context.Context, tenantID, userID, job
 }
 
 func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) error {
-	claimed, err := s.repo.ClaimGenerateQuoteJob(ctx, jobID, jobStepPreparingContext, 10, time.Now())
-	if err != nil {
+	claimed, shouldStop, err := s.claimGenerateQuoteJobForProcessing(ctx, jobID)
+	if err != nil || shouldStop {
 		return err
 	}
 
-	if claimed == nil {
-		current, currentErr := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
-		if currentErr != nil {
-			return currentErr
-		}
-		switch current.Status {
-		case string(GenerateQuoteJobStatusRunning), string(GenerateQuoteJobStatusCompleted), string(GenerateQuoteJobStatusFailed):
-			return nil
-		default:
-			return fmt.Errorf("generate quote job %s cannot be claimed from status %s", jobID, current.Status)
-		}
-	}
-
 	s.publishJobProgress(repositoryJobToServiceJob(claimed))
+
+	if shouldStop, err := s.stopIfCancelled(ctx, jobID); err != nil || shouldStop {
+		return err
+	}
 
 	if err := s.updateJobProgress(ctx, jobID, GenerateQuoteJobStatusRunning, jobStepGeneratingAIQuote, 55, nil); err != nil {
 		return err
 	}
 
 	result, err := s.GenerateQuote(ctx, claimed.OrganizationID, claimed.LeadID, claimed.LeadServiceID, prompt, existingQuoteID, force)
+	if shouldStop, cancelErr := s.stopIfCancelled(ctx, jobID); cancelErr != nil {
+		return cancelErr
+	} else if shouldStop {
+		return nil
+	}
 	if err != nil {
 		errText := err.Error()
 		if progressErr := s.updateJobProgress(ctx, jobID, GenerateQuoteJobStatusFailed, jobStepGenerationFailed, 100, &errText); progressErr != nil {
@@ -157,6 +153,52 @@ func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, 
 		return err
 	}
 
+	if shouldStop, err := s.stopIfCancelled(ctx, jobID); err != nil || shouldStop {
+		return err
+	}
+
+	if err := s.completeGenerateQuoteJob(ctx, jobID, result); err != nil {
+		return err
+	}
+
+	stored, err := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	s.publishJobProgress(repositoryJobToServiceJob(stored))
+	return nil
+}
+
+func (s *Service) claimGenerateQuoteJobForProcessing(ctx context.Context, jobID uuid.UUID) (*repository.GenerateQuoteJob, bool, error) {
+	claimed, err := s.repo.ClaimGenerateQuoteJob(ctx, jobID, jobStepPreparingContext, 10, time.Now())
+	if err != nil {
+		return nil, false, err
+	}
+	if claimed != nil {
+		return claimed, false, nil
+	}
+
+	current, currentErr := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
+	if currentErr != nil {
+		return nil, false, currentErr
+	}
+	switch current.Status {
+	case string(GenerateQuoteJobStatusRunning), string(GenerateQuoteJobStatusCompleted), string(GenerateQuoteJobStatusFailed), string(GenerateQuoteJobStatusCancelled):
+		return nil, true, nil
+	default:
+		return nil, false, fmt.Errorf("generate quote job %s cannot be claimed from status %s", jobID, current.Status)
+	}
+}
+
+func (s *Service) stopIfCancelled(ctx context.Context, jobID uuid.UUID) (bool, error) {
+	cancelled, err := s.isJobCancelled(ctx, jobID)
+	if err != nil {
+		return false, err
+	}
+	return cancelled, nil
+}
+
+func (s *Service) completeGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, result *GenerateQuoteResult) error {
 	now := time.Now()
 	entry := &repository.GenerateQuoteJob{
 		ID:              jobID,
@@ -169,16 +211,15 @@ func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, 
 		UpdatedAt:       now,
 		FinishedAt:      &now,
 	}
-	if err := s.repo.UpdateGenerateQuoteJob(ctx, entry); err != nil {
-		return err
-	}
+	return s.repo.UpdateGenerateQuoteJob(ctx, entry)
+}
 
+func (s *Service) isJobCancelled(ctx context.Context, jobID uuid.UUID) (bool, error) {
 	stored, err := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	s.publishJobProgress(repositoryJobToServiceJob(stored))
-	return nil
+	return stored.Status == string(GenerateQuoteJobStatusCancelled), nil
 }
 
 func repositoryJobToServiceJob(job *repository.GenerateQuoteJob) *GenerateQuoteJob {
@@ -208,6 +249,9 @@ func (s *Service) updateJobProgress(ctx context.Context, jobID uuid.UUID, status
 	stored, err := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
 	if err != nil {
 		return err
+	}
+	if stored.Status == string(GenerateQuoteJobStatusCancelled) {
+		return nil
 	}
 
 	now := time.Now()
