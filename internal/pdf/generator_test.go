@@ -4,6 +4,13 @@ import (
 	"testing"
 )
 
+const (
+	firstAttachmentFilename  = "first.pdf"
+	secondAttachmentFilename = "second.pdf"
+	sharedPDFBytes           = "same-pdf"
+	differentPDFBytes        = "different-pdf"
+)
+
 func TestNormalizePDFQuantity(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -30,9 +37,9 @@ func TestNormalizePDFQuantity(t *testing.T) {
 
 func TestDedupeAttachmentPDFsPreservesFirstOccurrenceAndOrder(t *testing.T) {
 	attachments := []AttachmentPDFEntry{
-		{Filename: "first.pdf", PDFBytes: []byte("same-pdf")},
-		{Filename: "duplicate.pdf", PDFBytes: []byte("same-pdf")},
-		{Filename: "second.pdf", PDFBytes: []byte("different-pdf")},
+		{Filename: firstAttachmentFilename, PDFBytes: []byte(sharedPDFBytes)},
+		{Filename: "duplicate.pdf", PDFBytes: []byte(sharedPDFBytes)},
+		{Filename: secondAttachmentFilename, PDFBytes: []byte(differentPDFBytes)},
 	}
 
 	actual := dedupeAttachmentPDFs(attachments)
@@ -40,19 +47,19 @@ func TestDedupeAttachmentPDFsPreservesFirstOccurrenceAndOrder(t *testing.T) {
 		t.Fatalf("dedupeAttachmentPDFs() length = %d, want 2", len(actual))
 	}
 
-	if actual[0].Filename != "first.pdf" {
-		t.Fatalf("first attachment = %q, want %q", actual[0].Filename, "first.pdf")
+	if actual[0].Filename != firstAttachmentFilename {
+		t.Fatalf("first attachment = %q, want %q", actual[0].Filename, firstAttachmentFilename)
 	}
 
-	if actual[1].Filename != "second.pdf" {
-		t.Fatalf("second attachment = %q, want %q", actual[1].Filename, "second.pdf")
+	if actual[1].Filename != secondAttachmentFilename {
+		t.Fatalf("second attachment = %q, want %q", actual[1].Filename, secondAttachmentFilename)
 	}
 
-	if string(actual[0].PDFBytes) != "same-pdf" {
+	if string(actual[0].PDFBytes) != sharedPDFBytes {
 		t.Fatalf("first attachment bytes changed unexpectedly")
 	}
 
-	if string(actual[1].PDFBytes) != "different-pdf" {
+	if string(actual[1].PDFBytes) != differentPDFBytes {
 		t.Fatalf("second attachment bytes changed unexpectedly")
 	}
 }
