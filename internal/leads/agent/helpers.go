@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
-
-	"portal_final_backend/internal/leads/repository"
 )
 
 const (
@@ -18,18 +16,6 @@ const (
 	bulletLine       = "- %s\n"
 	valueNotProvided = "Niet opgegeven"
 )
-
-// filterMeaningfulNotes filters out system notes that don't count as meaningful information.
-func filterMeaningfulNotes(notes []repository.LeadNote) []repository.LeadNote {
-	const noteTypeSystem = "system"
-	var meaningful []repository.LeadNote
-	for _, note := range notes {
-		if note.Type != noteTypeSystem {
-			meaningful = append(meaningful, note)
-		}
-	}
-	return meaningful
-}
 
 // sanitizeUserInput removes control characters and truncates to max length.
 func sanitizeUserInput(s string, maxLen int) string {

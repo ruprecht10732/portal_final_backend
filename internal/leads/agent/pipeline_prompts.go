@@ -713,20 +713,6 @@ func buildAttachmentsSummary(attachments []repository.Attachment) string {
 	return fmt.Sprintf("%d file(s): %s", len(attachments), strings.Join(names, ", "))
 }
 
-func flattenNotes(notes []repository.LeadNote) string {
-	if len(notes) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	for _, note := range notes {
-		body := sanitizeUserInput(note.Body, maxNoteLength)
-		sb.WriteString(body)
-		sb.WriteString(" ")
-	}
-	return sb.String()
-}
-
 func containsAny(text string, terms []string) bool {
 	for _, term := range terms {
 		if strings.Contains(text, term) {

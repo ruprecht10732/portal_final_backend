@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"portal_final_backend/internal/events"
@@ -856,13 +855,6 @@ func (h *Handler) ListAnalyses(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"items": items})
-}
-func stringPointerOrNil(value string) *string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	return &trimmed
 }
 
 // LogCall processes a post-call summary and executes appropriate actions (notes, status updates, RAC_appointments)
