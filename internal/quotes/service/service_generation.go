@@ -14,6 +14,16 @@ import (
 	"github.com/google/uuid"
 )
 
+type StartGenerateQuoteJobParams struct {
+	TenantID        uuid.UUID
+	UserID          uuid.UUID
+	LeadID          uuid.UUID
+	LeadServiceID   uuid.UUID
+	Prompt          string
+	ExistingQuoteID *uuid.UUID
+	Force           bool
+}
+
 func (s *Service) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) (*repository.Quote, error) {
 	return s.repo.GetLatestNonDraftByLead(ctx, leadID, orgID)
 }
@@ -25,7 +35,7 @@ func (s *Service) GenerateQuote(ctx context.Context, tenantID uuid.UUID, leadID 
 	return s.promptGen.GenerateFromPrompt(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID, force)
 }
 
-func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, leadID, serviceID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) (uuid.UUID, error) {
+func (s *Service) StartGenerateQuoteJob(ctx context.Context, params StartGenerateQuoteJobParams) (uuid.UUID, error) {
 	if s.promptGen == nil {
 		return uuid.Nil, apperr.Internal("quote generation is not configured")
 	}
@@ -36,10 +46,10 @@ func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, l
 	now := time.Now()
 	job := &GenerateQuoteJob{
 		JobID:           uuid.New(),
-		TenantID:        tenantID,
-		UserID:          userID,
-		LeadID:          leadID,
-		LeadServiceID:   serviceID,
+		TenantID:        params.TenantID,
+		UserID:          params.UserID,
+		LeadID:          params.LeadID,
+		LeadServiceID:   params.LeadServiceID,
 		Status:          GenerateQuoteJobStatusPending,
 		Step:            jobStepQueued,
 		ProgressPercent: 0,
@@ -66,13 +76,13 @@ func (s *Service) StartGenerateQuoteJob(ctx context.Context, tenantID, userID, l
 
 	if err := s.jobQueue.EnqueueGenerateQuoteJobRequest(ctx, scheduler.GenerateQuoteJobRequest{
 		JobID:         job.JobID,
-		TenantID:      tenantID,
-		UserID:        userID,
-		LeadID:        leadID,
-		LeadServiceID: serviceID,
-		Prompt:        prompt,
-		QuoteID:       existingQuoteID,
-		Force:         force,
+		TenantID:      params.TenantID,
+		UserID:        params.UserID,
+		LeadID:        params.LeadID,
+		LeadServiceID: params.LeadServiceID,
+		Prompt:        params.Prompt,
+		QuoteID:       params.ExistingQuoteID,
+		Force:         params.Force,
 	}); err != nil {
 		errText := err.Error()
 		if progressErr := s.updateJobProgress(ctx, job.JobID, GenerateQuoteJobStatusFailed, jobStepQueueFailed, 100, &errText); progressErr != nil {
