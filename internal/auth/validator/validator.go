@@ -8,19 +8,10 @@ import (
 	gpvalidator "github.com/go-playground/validator/v10"
 )
 
-// Validate is an alias to the platform validator for convenience within the auth domain.
-// DEPRECATED: Use injected validator instead. This is kept for backward compatibility.
-var Validate = validator.Validate
-
 // RegisterAuthValidations registers auth-specific validation rules on a validator instance.
 // This should be called once during module initialization with the injected validator.
 func RegisterAuthValidations(v *validator.Validator) error {
 	return v.RegisterValidation("strongpassword", validateStrongPassword)
-}
-
-func init() {
-	// Register on the global validator for backward compatibility
-	_ = Validate.RegisterValidation("strongpassword", validateStrongPassword)
 }
 
 // validateStrongPassword checks for password complexity:
