@@ -3,13 +3,13 @@
 -- name: CreateUser :one
 INSERT INTO RAC_users (email, password_hash, is_email_verified)
 VALUES ($1, $2, false)
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at;
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at;
 
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE email = $1;
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE email = $1;
 
 -- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE id = $1;
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE id = $1;
 
 -- name: MarkEmailVerified :exec
 UPDATE RAC_users SET is_email_verified = true, updated_at = now() WHERE id = $1;
@@ -21,7 +21,13 @@ UPDATE RAC_users SET password_hash = $2, updated_at = now() WHERE id = $1;
 UPDATE RAC_users
 SET email = $2, is_email_verified = false, updated_at = now()
 WHERE id = $1
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at;
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at;
+
+-- name: UpdateUserNames :one
+UPDATE RAC_users
+SET first_name = $2, last_name = $3, updated_at = now()
+WHERE id = $1
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at;
 
 -- name: CreateUserToken :exec
 INSERT INTO RAC_user_tokens (user_id, token_hash, type, expires_at)
@@ -58,7 +64,13 @@ WHERE ur.user_id = $1
 ORDER BY r.name;
 
 -- name: ListUsers :many
-SELECT u.id, u.email, COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles FROM RAC_users u
+SELECT
+	u.id,
+	u.email,
+	u.first_name,
+	u.last_name,
+	COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
+FROM RAC_users u
 LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
 LEFT JOIN RAC_roles r ON r.id = ur.role_id
 GROUP BY u.id
@@ -72,4 +84,42 @@ INSERT INTO RAC_user_roles (user_id, role_id)
 SELECT $1, id FROM RAC_roles WHERE name = ANY($2::text[]);
 
 -- name: GetValidRoles :many
-SELECT name FROM RAC_roles WHERE name = ANY($1::text[]);
+SELECT name FROM RAC_roles WHERE name = ANY(sqlc.arg(roleNames)::text[]);
+
+-- name: EnsureUserSettings :exec
+INSERT INTO RAC_user_settings (user_id)
+VALUES ($1)
+ON CONFLICT (user_id) DO NOTHING;
+
+-- name: GetUserSettings :one
+SELECT preferred_language AS preferredLanguage
+FROM RAC_user_settings
+WHERE user_id = $1;
+
+-- name: UpsertUserSettings :exec
+INSERT INTO RAC_user_settings (user_id, preferred_language)
+VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE
+SET preferred_language = EXCLUDED.preferred_language, updated_at = now();
+
+-- name: TouchUserUpdatedAt :exec
+UPDATE RAC_users SET updated_at = now() WHERE id = $1;
+
+-- name: ListUsersByOrganization :many
+SELECT
+	u.id,
+	u.email,
+	u.first_name,
+	u.last_name,
+	COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
+FROM RAC_organization_members om
+JOIN RAC_users u ON u.id = om.user_id
+LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
+LEFT JOIN RAC_roles r ON r.id = ur.role_id
+WHERE om.organization_id = $1
+GROUP BY u.id
+ORDER BY u.email;
+
+-- name: MarkOnboardingComplete :exec
+UPDATE RAC_users SET onboarding_completed_at = now(), updated_at = now()
+WHERE id = $1 AND onboarding_completed_at IS NULL;

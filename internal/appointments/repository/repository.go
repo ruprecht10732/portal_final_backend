@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"time"
 
+	appointmentsdb "portal_final_backend/internal/appointments/db"
 	"portal_final_backend/internal/appointments/transport"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,31 +49,154 @@ type LeadInfo struct {
 
 // Repository provides database operations for RAC_appointments
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *appointmentsdb.Queries
 }
 
 const appointmentNotFoundMsg = "appointment not found"
 
 // New creates a new RAC_appointments repository
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, queries: appointmentsdb.New(pool)}
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return toPgUUID(*id)
+}
+
+func toPgUUIDSlice(ids []uuid.UUID) []pgtype.UUID {
+	items := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		items = append(items, toPgUUID(id))
+	}
+	return items
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func toPgTextValue(value string) pgtype.Text {
+	return pgtype.Text{String: value, Valid: true}
+}
+
+func toPgTimestamp(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func toPgTimestampPtr(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return toPgTimestamp(*value)
+}
+
+func toPgDate(value time.Time) pgtype.Date {
+	dateOnly := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
+	return pgtype.Date{Time: dateOnly, Valid: true}
+}
+
+func toPgDatePtr(value *time.Time) pgtype.Date {
+	if value == nil {
+		return pgtype.Date{}
+	}
+	return toPgDate(*value)
+}
+
+func toPgTimeOfDay(value time.Time) pgtype.Time {
+	microseconds := int64(value.Hour())*int64(time.Hour/time.Microsecond) +
+		int64(value.Minute())*int64(time.Minute/time.Microsecond) +
+		int64(value.Second())*int64(time.Second/time.Microsecond) +
+		int64(value.Nanosecond()/1000)
+	return pgtype.Time{Microseconds: microseconds, Valid: true}
+}
+
+func toPgTimeOfDayPtr(value *time.Time) pgtype.Time {
+	if value == nil {
+		return pgtype.Time{}
+	}
+	return toPgTimeOfDay(*value)
+}
+
+func optionalUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id := uuid.UUID(value.Bytes)
+	return &id
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
+func appointmentFromModel(model appointmentsdb.RacAppointment) Appointment {
+	return Appointment{
+		ID:             uuid.UUID(model.ID.Bytes),
+		OrganizationID: uuid.UUID(model.OrganizationID.Bytes),
+		UserID:         uuid.UUID(model.UserID.Bytes),
+		LeadID:         optionalUUID(model.LeadID),
+		LeadServiceID:  optionalUUID(model.LeadServiceID),
+		Type:           model.Type,
+		Title:          model.Title,
+		Description:    optionalString(model.Description),
+		Location:       optionalString(model.Location),
+		MeetingLink:    optionalString(model.MeetingLink),
+		StartTime:      model.StartTime.Time,
+		EndTime:        model.EndTime.Time,
+		Status:         model.Status,
+		AllDay:         model.AllDay,
+		CreatedAt:      model.CreatedAt.Time,
+		UpdatedAt:      model.UpdatedAt.Time,
+	}
+}
+
+func leadInfoFromModel(model appointmentsdb.RacLead) LeadInfo {
+	return LeadInfo{
+		ID:          uuid.UUID(model.ID.Bytes),
+		FirstName:   model.ConsumerFirstName,
+		LastName:    model.ConsumerLastName,
+		Phone:       model.ConsumerPhone,
+		Street:      model.AddressStreet,
+		HouseNumber: model.AddressHouseNumber,
+		City:        model.AddressCity,
+	}
 }
 
 // Create inserts a new appointment
 func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
-	query := `
-		INSERT INTO RAC_appointments (
-			id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
-		)`
-
-	_, err := r.pool.Exec(ctx, query,
-		appt.ID, appt.OrganizationID, appt.UserID, appt.LeadID, appt.LeadServiceID, appt.Type,
-		appt.Title, appt.Description, appt.Location, appt.MeetingLink, appt.StartTime,
-		appt.EndTime, appt.Status, appt.AllDay, appt.CreatedAt, appt.UpdatedAt,
-	)
+	err := r.queries.CreateAppointment(ctx, appointmentsdb.CreateAppointmentParams{
+		ID:             toPgUUID(appt.ID),
+		OrganizationID: toPgUUID(appt.OrganizationID),
+		UserID:         toPgUUID(appt.UserID),
+		LeadID:         toPgUUIDPtr(appt.LeadID),
+		LeadServiceID:  toPgUUIDPtr(appt.LeadServiceID),
+		Type:           appt.Type,
+		Title:          appt.Title,
+		Description:    toPgText(appt.Description),
+		Location:       toPgText(appt.Location),
+		MeetingLink:    toPgText(appt.MeetingLink),
+		StartTime:      toPgTimestamp(appt.StartTime),
+		EndTime:        toPgTimestamp(appt.EndTime),
+		Status:         appt.Status,
+		AllDay:         appt.AllDay,
+		CreatedAt:      toPgTimestamp(appt.CreatedAt),
+		UpdatedAt:      toPgTimestamp(appt.UpdatedAt),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create appointment: %w", err)
 	}
@@ -81,16 +206,7 @@ func (r *Repository) Create(ctx context.Context, appt *Appointment) error {
 
 // GetByID retrieves an appointment by its ID
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
-	var appt Appointment
-	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM RAC_appointments WHERE id = $1 AND organization_id = $2`
-
-	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
-		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-	)
+	row, err := r.queries.GetAppointmentByID(ctx, appointmentsdb.GetAppointmentByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound(appointmentNotFoundMsg)
@@ -98,21 +214,13 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 		return nil, fmt.Errorf("failed to get appointment: %w", err)
 	}
 
+	appt := appointmentFromModel(appointmentsdb.RacAppointment{ID: row.ID, UserID: row.UserID, LeadID: row.LeadID, LeadServiceID: row.LeadServiceID, Type: row.Type, Title: row.Title, Description: row.Description, Location: row.Location, StartTime: row.StartTime, EndTime: row.EndTime, Status: row.Status, AllDay: row.AllDay, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, MeetingLink: row.MeetingLink})
 	return &appt, nil
 }
 
 // GetByLeadServiceID retrieves an appointment by lead service ID (for sync)
 func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
-	var appt Appointment
-	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM RAC_appointments WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'cancelled' ORDER BY created_at DESC LIMIT 1`
-
-	err := r.pool.QueryRow(ctx, query, leadServiceID, organizationID).Scan(
-		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-	)
+	row, err := r.queries.GetAppointmentByLeadServiceID(ctx, appointmentsdb.GetAppointmentByLeadServiceIDParams{LeadServiceID: toPgUUID(leadServiceID), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // Not found is acceptable
@@ -120,82 +228,36 @@ func (r *Repository) GetByLeadServiceID(ctx context.Context, leadServiceID uuid.
 		return nil, fmt.Errorf("failed to get appointment by lead service: %w", err)
 	}
 
+	appt := appointmentFromModel(appointmentsdb.RacAppointment{ID: row.ID, UserID: row.UserID, LeadID: row.LeadID, LeadServiceID: row.LeadServiceID, Type: row.Type, Title: row.Title, Description: row.Description, Location: row.Location, StartTime: row.StartTime, EndTime: row.EndTime, Status: row.Status, AllDay: row.AllDay, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, MeetingLink: row.MeetingLink})
 	return &appt, nil
 }
 
 // GetNextScheduledVisit returns the next upcoming scheduled lead visit for a lead.
 func (r *Repository) GetNextScheduledVisit(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
-	var appt Appointment
-	queryUpcoming := `
-		SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM RAC_appointments
-		WHERE lead_id = $1
-			AND organization_id = $2
-			AND type = 'lead_visit'
-			AND status = 'scheduled'
-			AND start_time > now()
-		ORDER BY start_time ASC
-		LIMIT 1
-	`
-
-	err := r.pool.QueryRow(ctx, queryUpcoming, leadID, organizationID).Scan(
-		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-	)
+	row, err := r.queries.GetNextUpcomingScheduledVisitByLead(ctx, appointmentsdb.GetNextUpcomingScheduledVisitByLeadParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("failed to get next scheduled visit: %w", err)
 		}
-		queryLatest := `
-			SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-				location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-			FROM RAC_appointments
-			WHERE lead_id = $1
-				AND organization_id = $2
-				AND type = 'lead_visit'
-				AND status = 'scheduled'
-			ORDER BY start_time DESC
-			LIMIT 1
-		`
-
-		err = r.pool.QueryRow(ctx, queryLatest, leadID, organizationID).Scan(
-			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-		)
+		latestRow, latestErr := r.queries.GetLatestScheduledVisitByLead(ctx, appointmentsdb.GetLatestScheduledVisitByLeadParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
+		err = latestErr
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("failed to get latest scheduled visit: %w", err)
 		}
+		appt := appointmentFromModel(appointmentsdb.RacAppointment{ID: latestRow.ID, UserID: latestRow.UserID, LeadID: latestRow.LeadID, LeadServiceID: latestRow.LeadServiceID, Type: latestRow.Type, Title: latestRow.Title, Description: latestRow.Description, Location: latestRow.Location, StartTime: latestRow.StartTime, EndTime: latestRow.EndTime, Status: latestRow.Status, AllDay: latestRow.AllDay, CreatedAt: latestRow.CreatedAt, UpdatedAt: latestRow.UpdatedAt, OrganizationID: latestRow.OrganizationID, MeetingLink: latestRow.MeetingLink})
+		return &appt, nil
 	}
 
+	appt := appointmentFromModel(appointmentsdb.RacAppointment{ID: row.ID, UserID: row.UserID, LeadID: row.LeadID, LeadServiceID: row.LeadServiceID, Type: row.Type, Title: row.Title, Description: row.Description, Location: row.Location, StartTime: row.StartTime, EndTime: row.EndTime, Status: row.Status, AllDay: row.AllDay, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, MeetingLink: row.MeetingLink})
 	return &appt, nil
 }
 
 // GetNextRequestedVisit returns the next upcoming requested lead visit for a lead.
 func (r *Repository) GetNextRequestedVisit(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*Appointment, error) {
-	var appt Appointment
-	query := `
-		SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM RAC_appointments
-		WHERE lead_id = $1
-			AND organization_id = $2
-			AND type = 'lead_visit'
-			AND status = 'requested'
-		ORDER BY start_time ASC
-		LIMIT 1
-	`
-
-	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(
-		&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-		&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-		&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-	)
+	row, err := r.queries.GetNextRequestedVisitByLead(ctx, appointmentsdb.GetNextRequestedVisitByLeadParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -203,6 +265,7 @@ func (r *Repository) GetNextRequestedVisit(ctx context.Context, leadID uuid.UUID
 		return nil, fmt.Errorf("failed to get requested appointment: %w", err)
 	}
 
+	appt := appointmentFromModel(appointmentsdb.RacAppointment{ID: row.ID, UserID: row.UserID, LeadID: row.LeadID, LeadServiceID: row.LeadServiceID, Type: row.Type, Title: row.Title, Description: row.Description, Location: row.Location, StartTime: row.StartTime, EndTime: row.EndTime, Status: row.Status, AllDay: row.AllDay, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, MeetingLink: row.MeetingLink})
 	return &appt, nil
 }
 
@@ -212,38 +275,14 @@ func (r *Repository) ListLeadVisitsByStatus(ctx context.Context, leadID uuid.UUI
 		return []Appointment{}, nil
 	}
 
-	query := `
-		SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-			location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM RAC_appointments
-		WHERE lead_id = $1
-			AND organization_id = $2
-			AND type = 'lead_visit'
-			AND status = ANY($3)
-		ORDER BY start_time ASC
-	`
-
-	rows, err := r.pool.Query(ctx, query, leadID, organizationID, statuses)
+	rows, err := r.queries.ListLeadVisitsByStatus(ctx, appointmentsdb.ListLeadVisitsByStatusParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID), Column3: statuses})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list lead visits: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]Appointment, 0)
-	for rows.Next() {
-		var appt Appointment
-		if err := rows.Scan(
-			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan lead visit: %w", err)
-		}
-		items = append(items, appt)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate lead visits: %w", err)
+	items := make([]Appointment, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, appointmentFromModel(appointmentsdb.RacAppointment{ID: row.ID, UserID: row.UserID, LeadID: row.LeadID, LeadServiceID: row.LeadServiceID, Type: row.Type, Title: row.Title, Description: row.Description, Location: row.Location, StartTime: row.StartTime, EndTime: row.EndTime, Status: row.Status, AllDay: row.AllDay, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, MeetingLink: row.MeetingLink}))
 	}
 
 	return items, nil
@@ -251,27 +290,23 @@ func (r *Repository) ListLeadVisitsByStatus(ctx context.Context, leadID uuid.UUI
 
 // Update updates an existing appointment
 func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
-	query := `
-		UPDATE RAC_appointments SET
-			title = $2,
-			description = $3,
-			location = $4,
-			meeting_link = $5,
-			start_time = $6,
-			end_time = $7,
-			all_day = $8,
-			updated_at = $9
-		WHERE id = $1 AND organization_id = $10`
-
-	result, err := r.pool.Exec(ctx, query,
-		appt.ID, appt.Title, appt.Description, appt.Location, appt.MeetingLink,
-		appt.StartTime, appt.EndTime, appt.AllDay, appt.UpdatedAt, appt.OrganizationID,
-	)
+	result, err := r.queries.UpdateAppointment(ctx, appointmentsdb.UpdateAppointmentParams{
+		ID:             toPgUUID(appt.ID),
+		Title:          appt.Title,
+		Description:    toPgText(appt.Description),
+		Location:       toPgText(appt.Location),
+		MeetingLink:    toPgText(appt.MeetingLink),
+		StartTime:      toPgTimestamp(appt.StartTime),
+		EndTime:        toPgTimestamp(appt.EndTime),
+		AllDay:         appt.AllDay,
+		UpdatedAt:      toPgTimestamp(appt.UpdatedAt),
+		OrganizationID: toPgUUID(appt.OrganizationID),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update appointment: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
+	if result == 0 {
 		return apperr.NotFound(appointmentNotFoundMsg)
 	}
 
@@ -280,14 +315,12 @@ func (r *Repository) Update(ctx context.Context, appt *Appointment) error {
 
 // UpdateStatus updates the status of an appointment
 func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) error {
-	query := `UPDATE RAC_appointments SET status = $3, updated_at = $4 WHERE id = $1 AND organization_id = $2`
-
-	result, err := r.pool.Exec(ctx, query, id, organizationID, status, time.Now())
+	result, err := r.queries.UpdateAppointmentStatus(ctx, appointmentsdb.UpdateAppointmentStatusParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID), Status: status, UpdatedAt: toPgTimestamp(time.Now())})
 	if err != nil {
 		return fmt.Errorf("failed to update appointment status: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
+	if result == 0 {
 		return apperr.NotFound(appointmentNotFoundMsg)
 	}
 
@@ -296,14 +329,12 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, organizatio
 
 // Delete removes an appointment
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	query := `DELETE FROM RAC_appointments WHERE id = $1 AND organization_id = $2`
-
-	result, err := r.pool.Exec(ctx, query, id, organizationID)
+	result, err := r.queries.DeleteAppointment(ctx, appointmentsdb.DeleteAppointmentParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return fmt.Errorf("failed to delete appointment: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
+	if result == 0 {
 		return apperr.NotFound(appointmentNotFoundMsg)
 	}
 
@@ -338,12 +369,12 @@ type ListResult struct {
 // List retrieves RAC_appointments with optional filtering
 func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, error) {
 	filters := appointmentListFilters{
-		userID:    optionalParam(params.UserID),
-		leadID:    optionalParam(params.LeadID),
-		typeValue: optionalParam(params.Type),
-		status:    optionalParam(params.Status),
-		startFrom: optionalParam(params.StartFrom),
-		startTo:   optionalParam(params.StartTo),
+		userID:    toPgUUIDPtr(params.UserID),
+		leadID:    toPgUUIDPtr(params.LeadID),
+		typeValue: toPgText(params.Type),
+		status:    toPgText(params.Status),
+		startFrom: toPgTimestampPtr(params.StartFrom),
+		startTo:   toPgTimestampPtr(params.StartTo),
 		search:    optionalSearchParam(params.Search),
 	}
 
@@ -357,84 +388,48 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		return nil, err
 	}
 
-	baseQuery := `
-		FROM RAC_appointments
-		WHERE organization_id = $1
-			AND ($2::uuid IS NULL OR user_id = $2)
-			AND ($3::uuid IS NULL OR lead_id = $3)
-			AND ($4::text IS NULL OR type = $4)
-			AND ($5::text IS NULL OR status = $5)
-			AND ($6::timestamptz IS NULL OR start_time >= $6)
-			AND ($7::timestamptz IS NULL OR start_time <= $7)
-			AND ($8::text IS NULL OR title ILIKE $8 OR location ILIKE $8 OR meeting_link ILIKE $8)
-	`
-	args := []interface{}{
-		params.OrganizationID,
-		filters.userID,
-		filters.leadID,
-		filters.typeValue,
-		filters.status,
-		filters.startFrom,
-		filters.startTo,
-		filters.search,
-	}
-
-	var total int
-	countQuery := "SELECT COUNT(*) " + baseQuery
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	total, err := r.queries.CountAppointments(ctx, appointmentsdb.CountAppointmentsParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		UserID:         filters.userID,
+		LeadID:         filters.leadID,
+		Type:           filters.typeValue,
+		Status:         filters.status,
+		StartFrom:      filters.startFrom,
+		StartTo:        filters.startTo,
+		Search:         filters.search,
+	})
+	if err != nil {
 		return nil, fmt.Errorf("failed to count RAC_appointments: %w", err)
 	}
 
-	totalPages := (total + params.PageSize - 1) / params.PageSize
+	totalPages := (int(total) + params.PageSize - 1) / params.PageSize
 	offset := (params.Page - 1) * params.PageSize
-
-	selectQuery := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		` + baseQuery + `
-		ORDER BY
-			CASE WHEN $9 = 'title' AND $10 = 'asc' THEN title END ASC,
-			CASE WHEN $9 = 'title' AND $10 = 'desc' THEN title END DESC,
-			CASE WHEN $9 = 'type' AND $10 = 'asc' THEN type END ASC,
-			CASE WHEN $9 = 'type' AND $10 = 'desc' THEN type END DESC,
-			CASE WHEN $9 = 'status' AND $10 = 'asc' THEN status END ASC,
-			CASE WHEN $9 = 'status' AND $10 = 'desc' THEN status END DESC,
-			CASE WHEN $9 = 'startTime' AND $10 = 'asc' THEN start_time END ASC,
-			CASE WHEN $9 = 'startTime' AND $10 = 'desc' THEN start_time END DESC,
-			CASE WHEN $9 = 'endTime' AND $10 = 'asc' THEN end_time END ASC,
-			CASE WHEN $9 = 'endTime' AND $10 = 'desc' THEN end_time END DESC,
-			CASE WHEN $9 = 'createdAt' AND $10 = 'asc' THEN created_at END ASC,
-			CASE WHEN $9 = 'createdAt' AND $10 = 'desc' THEN created_at END DESC,
-			start_time ASC
-		LIMIT $11 OFFSET $12`
-
-	args = append(args, sortBy, sortOrder, params.PageSize, offset)
-
-	rows, err := r.pool.Query(ctx, selectQuery, args...)
+	rows, err := r.queries.ListAppointments(ctx, appointmentsdb.ListAppointmentsParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		UserID:         filters.userID,
+		LeadID:         filters.leadID,
+		Type:           filters.typeValue,
+		Status:         filters.status,
+		StartFrom:      filters.startFrom,
+		StartTo:        filters.startTo,
+		Search:         filters.search,
+		SortBy:         sortBy,
+		SortOrder:      sortOrder,
+		OffsetCount:    int32(offset),
+		LimitCount:     int32(params.PageSize),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list RAC_appointments: %w", err)
 	}
-	defer rows.Close()
 
-	var items []Appointment
-	for rows.Next() {
-		var appt Appointment
-		if err := rows.Scan(
-			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan appointment: %w", err)
-		}
-		items = append(items, appt)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate RAC_appointments: %w", err)
+	items := make([]Appointment, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, appointmentFromModel(appointmentsdb.RacAppointment{ID: row.ID, UserID: row.UserID, LeadID: row.LeadID, LeadServiceID: row.LeadServiceID, Type: row.Type, Title: row.Title, Description: row.Description, Location: row.Location, StartTime: row.StartTime, EndTime: row.EndTime, Status: row.Status, AllDay: row.AllDay, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, MeetingLink: row.MeetingLink}))
 	}
 
 	return &ListResult{
 		Items:      items,
-		Total:      total,
+		Total:      int(total),
 		Page:       params.Page,
 		PageSize:   params.PageSize,
 		TotalPages: totalPages,
@@ -442,27 +437,20 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 }
 
 type appointmentListFilters struct {
-	userID    interface{}
-	leadID    interface{}
-	typeValue interface{}
-	status    interface{}
-	startFrom interface{}
-	startTo   interface{}
-	search    interface{}
+	userID    pgtype.UUID
+	leadID    pgtype.UUID
+	typeValue pgtype.Text
+	status    pgtype.Text
+	startFrom pgtype.Timestamptz
+	startTo   pgtype.Timestamptz
+	search    pgtype.Text
 }
 
-func optionalParam[T any](value *T) interface{} {
-	if value == nil {
-		return nil
-	}
-	return *value
-}
-
-func optionalSearchParam(value string) interface{} {
+func optionalSearchParam(value string) pgtype.Text {
 	if value == "" {
-		return nil
+		return pgtype.Text{}
 	}
-	return "%" + value + "%"
+	return pgtype.Text{String: "%" + value + "%", Valid: true}
 }
 
 func resolveAppointmentSortBy(sortBy string) (string, error) {
@@ -491,14 +479,10 @@ func resolveAppointmentSortOrder(sortOrder string) (string, error) {
 
 // GetLeadInfo retrieves basic lead information for embedding in appointment responses
 func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*LeadInfo, error) {
-	var info LeadInfo
-	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
-		FROM RAC_leads WHERE id = $1 AND organization_id = $2`
-
-	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(
-		&info.ID, &info.FirstName, &info.LastName, &info.Phone,
-		&info.Street, &info.HouseNumber, &info.City,
-	)
+	row, err := r.queries.GetAppointmentLeadInfo(ctx, appointmentsdb.GetAppointmentLeadInfoParams{
+		ID:             toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -506,15 +490,16 @@ func (r *Repository) GetLeadInfo(ctx context.Context, leadID uuid.UUID, organiza
 		return nil, fmt.Errorf("failed to get lead info: %w", err)
 	}
 
+	info := leadInfoFromModel(appointmentsdb.RacLead{ID: row.ID, ConsumerFirstName: row.ConsumerFirstName, ConsumerLastName: row.ConsumerLastName, ConsumerPhone: row.ConsumerPhone, AddressStreet: row.AddressStreet, AddressHouseNumber: row.AddressHouseNumber, AddressCity: row.AddressCity})
 	return &info, nil
 }
 
 // GetLeadEmail retrieves the email for a lead
 func (r *Repository) GetLeadEmail(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (string, error) {
-	var email string
-	query := `SELECT COALESCE(consumer_email, '') FROM RAC_leads WHERE id = $1 AND organization_id = $2`
-
-	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(&email)
+	email, err := r.queries.GetAppointmentLeadEmail(ctx, appointmentsdb.GetAppointmentLeadEmailParams{
+		ID:             toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", nil
@@ -531,29 +516,18 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 		return make(map[uuid.UUID]*LeadInfo), nil
 	}
 
-	query := `SELECT id, consumer_first_name, consumer_last_name, consumer_phone, address_street, address_house_number, address_city 
-		FROM RAC_leads WHERE id = ANY($1) AND organization_id = $2`
-
-	rows, err := r.pool.Query(ctx, query, leadIDs, organizationID)
+	rows, err := r.queries.ListAppointmentLeadInfoByIDs(ctx, appointmentsdb.ListAppointmentLeadInfoByIDsParams{
+		Column1:        toPgUUIDSlice(leadIDs),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get lead info batch: %w", err)
 	}
-	defer rows.Close()
 
 	result := make(map[uuid.UUID]*LeadInfo)
-	for rows.Next() {
-		var info LeadInfo
-		if err := rows.Scan(
-			&info.ID, &info.FirstName, &info.LastName, &info.Phone,
-			&info.Street, &info.HouseNumber, &info.City,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan lead info: %w", err)
-		}
+	for _, row := range rows {
+		info := leadInfoFromModel(appointmentsdb.RacLead{ID: row.ID, ConsumerFirstName: row.ConsumerFirstName, ConsumerLastName: row.ConsumerLastName, ConsumerPhone: row.ConsumerPhone, AddressStreet: row.AddressStreet, AddressHouseNumber: row.AddressHouseNumber, AddressCity: row.AddressCity})
 		result[info.ID] = &info
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate RAC_leads: %w", err)
 	}
 
 	return result, nil
@@ -562,35 +536,19 @@ func (r *Repository) GetLeadInfoBatch(ctx context.Context, leadIDs []uuid.UUID, 
 // ListForDateRange retrieves all RAC_appointments for a user within a date range (for slots computation)
 // Uses proper overlap detection: an appointment overlaps if it starts before the window ends AND ends after the window starts
 func (r *Repository) ListForDateRange(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate, endDate time.Time) ([]Appointment, error) {
-	query := `SELECT id, organization_id, user_id, lead_id, lead_service_id, type, title, description,
-		location, meeting_link, start_time, end_time, status, all_day, created_at, updated_at
-		FROM RAC_appointments 
-		WHERE organization_id = $1 AND user_id = $2 
-		AND start_time < $4 AND end_time > $3
-		AND status = 'scheduled'
-		ORDER BY start_time ASC`
-
-	rows, err := r.pool.Query(ctx, query, organizationID, userID, startDate, endDate)
+	rows, err := r.queries.ListAppointmentsForDateRange(ctx, appointmentsdb.ListAppointmentsForDateRangeParams{
+		OrganizationID: toPgUUID(organizationID),
+		UserID:         toPgUUID(userID),
+		EndTime:        toPgTimestamp(startDate),
+		StartTime:      toPgTimestamp(endDate),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list RAC_appointments for date range: %w", err)
 	}
-	defer rows.Close()
 
-	var items []Appointment
-	for rows.Next() {
-		var appt Appointment
-		if err := rows.Scan(
-			&appt.ID, &appt.OrganizationID, &appt.UserID, &appt.LeadID, &appt.LeadServiceID, &appt.Type,
-			&appt.Title, &appt.Description, &appt.Location, &appt.MeetingLink, &appt.StartTime,
-			&appt.EndTime, &appt.Status, &appt.AllDay, &appt.CreatedAt, &appt.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan appointment: %w", err)
-		}
-		items = append(items, appt)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate RAC_appointments: %w", err)
+	items := make([]Appointment, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, appointmentFromModel(appointmentsdb.RacAppointment{ID: row.ID, UserID: row.UserID, LeadID: row.LeadID, LeadServiceID: row.LeadServiceID, Type: row.Type, Title: row.Title, Description: row.Description, Location: row.Location, StartTime: row.StartTime, EndTime: row.EndTime, Status: row.Status, AllDay: row.AllDay, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, MeetingLink: row.MeetingLink}))
 	}
 
 	return items, nil

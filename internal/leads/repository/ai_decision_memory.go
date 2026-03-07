@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 // AIDecisionMemory is a compact historical record of an AI decision.
@@ -62,43 +64,22 @@ func (r *Repository) CreateAIDecisionMemory(ctx context.Context, params CreateAI
 		return AIDecisionMemory{}, fmt.Errorf("action_summary is required")
 	}
 
-	var item AIDecisionMemory
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_ai_decision_memory (
-			organization_id, lead_id, lead_service_id, service_type, decision_type, outcome,
-			confidence, context_summary, action_summary
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, organization_id, lead_id, lead_service_id, service_type, decision_type, outcome,
-		          confidence, context_summary, action_summary, created_at
-	`,
-		params.OrganizationID,
-		params.LeadID,
-		params.LeadServiceID,
-		params.ServiceType,
-		params.DecisionType,
-		params.Outcome,
-		params.Confidence,
-		params.ContextSummary,
-		params.ActionSummary,
-	).Scan(
-		&item.ID,
-		&item.OrganizationID,
-		&item.LeadID,
-		&item.LeadServiceID,
-		&item.ServiceType,
-		&item.DecisionType,
-		&item.Outcome,
-		&item.Confidence,
-		&item.ContextSummary,
-		&item.ActionSummary,
-		&item.CreatedAt,
-	)
+	row, err := r.queries.CreateAIDecisionMemory(ctx, leadsdb.CreateAIDecisionMemoryParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		LeadID:         toPgUUIDPtr(params.LeadID),
+		LeadServiceID:  toPgUUIDPtr(params.LeadServiceID),
+		ServiceType:    params.ServiceType,
+		DecisionType:   params.DecisionType,
+		Outcome:        params.Outcome,
+		Confidence:     toPgNumericPtr(params.Confidence),
+		ContextSummary: params.ContextSummary,
+		ActionSummary:  params.ActionSummary,
+	})
 	if err != nil {
 		return AIDecisionMemory{}, err
 	}
 
-	return item, nil
+	return aiDecisionMemoryFromRow(row), nil
 }
 
 func (r *Repository) ListRecentAIDecisionMemories(ctx context.Context, organizationID uuid.UUID, serviceType string, limit int) ([]AIDecisionMemory, error) {
@@ -113,56 +94,40 @@ func (r *Repository) ListRecentAIDecisionMemories(ctx context.Context, organizat
 	}
 
 	serviceType = strings.TrimSpace(serviceType)
-
-	// Build dynamic WHERE clause so Postgres can use optimal indexes.
-	args := []any{organizationID}
-	serviceTypeClause := ""
-	argIdx := 2
+	var serviceTypeFilter *string
 	if serviceType != "" {
-		serviceTypeClause = fmt.Sprintf(" AND service_type = $%d", argIdx)
-		args = append(args, serviceType)
-		argIdx++
+		serviceTypeFilter = &serviceType
 	}
 
-	query := fmt.Sprintf(`
-		SELECT id, organization_id, lead_id, lead_service_id, service_type, decision_type, outcome,
-		       confidence, context_summary, action_summary, created_at
-		FROM RAC_ai_decision_memory
-		WHERE organization_id = $1%s
-		ORDER BY created_at DESC
-		LIMIT $%d
-	`, serviceTypeClause, argIdx)
-	args = append(args, limit)
-
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.queries.ListRecentAIDecisionMemories(ctx, leadsdb.ListRecentAIDecisionMemoriesParams{
+		OrganizationID: toPgUUID(organizationID),
+		Limit:          int32(limit),
+		ServiceType:    toPgText(serviceTypeFilter),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query ai decision memories: %w", err)
 	}
-	defer rows.Close()
 
 	items := make([]AIDecisionMemory, 0, limit)
-	for rows.Next() {
-		var it AIDecisionMemory
-		if err := rows.Scan(
-			&it.ID,
-			&it.OrganizationID,
-			&it.LeadID,
-			&it.LeadServiceID,
-			&it.ServiceType,
-			&it.DecisionType,
-			&it.Outcome,
-			&it.Confidence,
-			&it.ContextSummary,
-			&it.ActionSummary,
-			&it.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan ai decision memory: %w", err)
-		}
-		items = append(items, it)
-	}
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("iterate ai decision memories: %w", rows.Err())
+	for _, row := range rows {
+		items = append(items, aiDecisionMemoryFromRow(row))
 	}
 
 	return items, nil
+}
+
+func aiDecisionMemoryFromRow(row leadsdb.RacAiDecisionMemory) AIDecisionMemory {
+	return AIDecisionMemory{
+		ID:             row.ID.Bytes,
+		OrganizationID: row.OrganizationID.Bytes,
+		LeadID:         optionalUUID(row.LeadID),
+		LeadServiceID:  optionalUUID(row.LeadServiceID),
+		ServiceType:    row.ServiceType,
+		DecisionType:   row.DecisionType,
+		Outcome:        row.Outcome,
+		Confidence:     optionalNumericFloat64(row.Confidence),
+		ContextSummary: row.ContextSummary,
+		ActionSummary:  row.ActionSummary,
+		CreatedAt:      row.CreatedAt.Time,
+	}
 }

@@ -31,7 +31,7 @@ const createUser = `-- name: CreateUser :one
 
 INSERT INTO RAC_users (email, password_hash, is_email_verified)
 VALUES ($1, $2, false)
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -40,14 +40,15 @@ type CreateUserParams struct {
 }
 
 type CreateUserRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	Email           string             `json:"email"`
-	PasswordHash    string             `json:"password_hash"`
-	IsEmailVerified bool               `json:"is_email_verified"`
-	FirstName       pgtype.Text        `json:"first_name"`
-	LastName        pgtype.Text        `json:"last_name"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 // Auth Domain SQL Queries
@@ -61,6 +62,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -98,6 +100,17 @@ func (q *Queries) DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	return err
 }
 
+const ensureUserSettings = `-- name: EnsureUserSettings :exec
+INSERT INTO RAC_user_settings (user_id)
+VALUES ($1)
+ON CONFLICT (user_id) DO NOTHING
+`
+
+func (q *Queries) EnsureUserSettings(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, ensureUserSettings, userID)
+	return err
+}
+
 const getRefreshToken = `-- name: GetRefreshToken :one
 SELECT user_id, expires_at FROM RAC_refresh_tokens
 WHERE token_hash = $1 AND revoked_at IS NULL
@@ -116,18 +129,19 @@ func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (GetRef
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE email = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE email = $1
 `
 
 type GetUserByEmailRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	Email           string             `json:"email"`
-	PasswordHash    string             `json:"password_hash"`
-	IsEmailVerified bool               `json:"is_email_verified"`
-	FirstName       pgtype.Text        `json:"first_name"`
-	LastName        pgtype.Text        `json:"last_name"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
@@ -140,6 +154,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -147,18 +162,19 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at FROM RAC_users WHERE id = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE id = $1
 `
 
 type GetUserByIDRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	Email           string             `json:"email"`
-	PasswordHash    string             `json:"password_hash"`
-	IsEmailVerified bool               `json:"is_email_verified"`
-	FirstName       pgtype.Text        `json:"first_name"`
-	LastName        pgtype.Text        `json:"last_name"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error) {
@@ -171,6 +187,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -204,6 +221,19 @@ func (q *Queries) GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]strin
 	return items, nil
 }
 
+const getUserSettings = `-- name: GetUserSettings :one
+SELECT preferred_language AS preferredLanguage
+FROM RAC_user_settings
+WHERE user_id = $1
+`
+
+func (q *Queries) GetUserSettings(ctx context.Context, userID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getUserSettings, userID)
+	var preferredlanguage string
+	err := row.Scan(&preferredlanguage)
+	return preferredlanguage, err
+}
+
 const getUserToken = `-- name: GetUserToken :one
 SELECT user_id, expires_at FROM RAC_user_tokens
 WHERE token_hash = $1 AND type = $2 AND used_at IS NULL
@@ -230,8 +260,8 @@ const getValidRoles = `-- name: GetValidRoles :many
 SELECT name FROM RAC_roles WHERE name = ANY($1::text[])
 `
 
-func (q *Queries) GetValidRoles(ctx context.Context, dollar_1 []string) ([]string, error) {
-	rows, err := q.db.Query(ctx, getValidRoles, dollar_1)
+func (q *Queries) GetValidRoles(ctx context.Context, rolenames []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, getValidRoles, rolenames)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +296,13 @@ func (q *Queries) InsertUserRoles(ctx context.Context, arg InsertUserRolesParams
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT u.id, u.email, COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles FROM RAC_users u
+SELECT
+	u.id,
+	u.email,
+	u.first_name,
+	u.last_name,
+	COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
+FROM RAC_users u
 LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
 LEFT JOIN RAC_roles r ON r.id = ur.role_id
 GROUP BY u.id
@@ -274,9 +310,11 @@ ORDER BY u.email
 `
 
 type ListUsersRow struct {
-	ID    pgtype.UUID `json:"id"`
-	Email string      `json:"email"`
-	Roles interface{} `json:"roles"`
+	ID        pgtype.UUID `json:"id"`
+	Email     string      `json:"email"`
+	FirstName pgtype.Text `json:"first_name"`
+	LastName  pgtype.Text `json:"last_name"`
+	Roles     []string    `json:"roles"`
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -288,7 +326,63 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 	var items []ListUsersRow
 	for rows.Next() {
 		var i ListUsersRow
-		if err := rows.Scan(&i.ID, &i.Email, &i.Roles); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+			&i.Roles,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsersByOrganization = `-- name: ListUsersByOrganization :many
+SELECT
+	u.id,
+	u.email,
+	u.first_name,
+	u.last_name,
+	COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
+FROM RAC_organization_members om
+JOIN RAC_users u ON u.id = om.user_id
+LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
+LEFT JOIN RAC_roles r ON r.id = ur.role_id
+WHERE om.organization_id = $1
+GROUP BY u.id
+ORDER BY u.email
+`
+
+type ListUsersByOrganizationRow struct {
+	ID        pgtype.UUID `json:"id"`
+	Email     string      `json:"email"`
+	FirstName pgtype.Text `json:"first_name"`
+	LastName  pgtype.Text `json:"last_name"`
+	Roles     []string    `json:"roles"`
+}
+
+func (q *Queries) ListUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]ListUsersByOrganizationRow, error) {
+	rows, err := q.db.Query(ctx, listUsersByOrganization, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsersByOrganizationRow
+	for rows.Next() {
+		var i ListUsersByOrganizationRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+			&i.Roles,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -305,6 +399,16 @@ UPDATE RAC_users SET is_email_verified = true, updated_at = now() WHERE id = $1
 
 func (q *Queries) MarkEmailVerified(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markEmailVerified, id)
+	return err
+}
+
+const markOnboardingComplete = `-- name: MarkOnboardingComplete :exec
+UPDATE RAC_users SET onboarding_completed_at = now(), updated_at = now()
+WHERE id = $1 AND onboarding_completed_at IS NULL
+`
+
+func (q *Queries) MarkOnboardingComplete(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markOnboardingComplete, id)
 	return err
 }
 
@@ -328,6 +432,15 @@ func (q *Queries) RevokeRefreshToken(ctx context.Context, tokenHash string) erro
 	return err
 }
 
+const touchUserUpdatedAt = `-- name: TouchUserUpdatedAt :exec
+UPDATE RAC_users SET updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) TouchUserUpdatedAt(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchUserUpdatedAt, id)
+	return err
+}
+
 const updatePassword = `-- name: UpdatePassword :exec
 UPDATE RAC_users SET password_hash = $2, updated_at = now() WHERE id = $1
 `
@@ -346,7 +459,7 @@ const updateUserEmail = `-- name: UpdateUserEmail :one
 UPDATE RAC_users
 SET email = $2, is_email_verified = false, updated_at = now()
 WHERE id = $1
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, created_at, updated_at
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
 `
 
 type UpdateUserEmailParams struct {
@@ -355,14 +468,15 @@ type UpdateUserEmailParams struct {
 }
 
 type UpdateUserEmailRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	Email           string             `json:"email"`
-	PasswordHash    string             `json:"password_hash"`
-	IsEmailVerified bool               `json:"is_email_verified"`
-	FirstName       pgtype.Text        `json:"first_name"`
-	LastName        pgtype.Text        `json:"last_name"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (UpdateUserEmailRow, error) {
@@ -375,10 +489,70 @@ func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateUserNames = `-- name: UpdateUserNames :one
+UPDATE RAC_users
+SET first_name = $2, last_name = $3, updated_at = now()
+WHERE id = $1
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
+`
+
+type UpdateUserNamesParams struct {
+	ID        pgtype.UUID `json:"id"`
+	FirstName pgtype.Text `json:"first_name"`
+	LastName  pgtype.Text `json:"last_name"`
+}
+
+type UpdateUserNamesRow struct {
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateUserNames(ctx context.Context, arg UpdateUserNamesParams) (UpdateUserNamesRow, error) {
+	row := q.db.QueryRow(ctx, updateUserNames, arg.ID, arg.FirstName, arg.LastName)
+	var i UpdateUserNamesRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsEmailVerified,
+		&i.FirstName,
+		&i.LastName,
+		&i.OnboardingCompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertUserSettings = `-- name: UpsertUserSettings :exec
+INSERT INTO RAC_user_settings (user_id, preferred_language)
+VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE
+SET preferred_language = EXCLUDED.preferred_language, updated_at = now()
+`
+
+type UpsertUserSettingsParams struct {
+	UserID            pgtype.UUID `json:"user_id"`
+	PreferredLanguage string      `json:"preferred_language"`
+}
+
+func (q *Queries) UpsertUserSettings(ctx context.Context, arg UpsertUserSettingsParams) error {
+	_, err := q.db.Exec(ctx, upsertUserSettings, arg.UserID, arg.PreferredLanguage)
+	return err
 }
 
 const useUserToken = `-- name: UseUserToken :exec

@@ -11,6 +11,1741 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addLeadActivity = `-- name: AddLeadActivity :exec
+INSERT INTO RAC_lead_activity (lead_id, organization_id, user_id, action, meta)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type AddLeadActivityParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	Action         string      `json:"action"`
+	Meta           []byte      `json:"meta"`
+}
+
+func (q *Queries) AddLeadActivity(ctx context.Context, arg AddLeadActivityParams) error {
+	_, err := q.db.Exec(ctx, addLeadActivity,
+		arg.LeadID,
+		arg.OrganizationID,
+		arg.UserID,
+		arg.Action,
+		arg.Meta,
+	)
+	return err
+}
+
+const bulkDeleteLeads = `-- name: BulkDeleteLeads :execrows
+UPDATE RAC_leads
+SET deleted_at = now(), updated_at = now()
+WHERE id = ANY($1::uuid[])
+	AND organization_id = $2
+	AND deleted_at IS NULL
+`
+
+type BulkDeleteLeadsParams struct {
+	Column1        []pgtype.UUID `json:"column_1"`
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+}
+
+func (q *Queries) BulkDeleteLeads(ctx context.Context, arg BulkDeleteLeadsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bulkDeleteLeads, arg.Column1, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const closeAllActiveServices = `-- name: CloseAllActiveServices :exec
+WITH updated AS (
+	UPDATE RAC_lead_services ls
+	SET pipeline_stage = 'Completed', updated_at = now()
+	WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage NOT IN ('Completed', 'Lost')
+	RETURNING id, lead_id, organization_id, status, pipeline_stage, updated_at
+)
+INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+SELECT u.organization_id, u.lead_id, u.id, 'pipeline_stage_changed', u.status, u.pipeline_stage, u.updated_at
+FROM updated u
+`
+
+type CloseAllActiveServicesParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) CloseAllActiveServices(ctx context.Context, arg CloseAllActiveServicesParams) error {
+	_, err := q.db.Exec(ctx, closeAllActiveServices, arg.LeadID, arg.OrganizationID)
+	return err
+}
+
+const countActionItems = `-- name: CountActionItems :one
+SELECT COUNT(*)::int
+FROM RAC_leads l
+LEFT JOIN (
+	SELECT DISTINCT ON (lead_id) lead_id, urgency_level, urgency_reason, created_at
+	FROM RAC_lead_ai_analysis
+	ORDER BY lead_id, created_at DESC
+) ai ON ai.lead_id = l.id
+WHERE l.organization_id = $1
+	AND l.deleted_at IS NULL
+	AND (ai.urgency_level = 'High' OR l.created_at >= now() - ($2::int || ' days')::interval)
+`
+
+type CountActionItemsParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        int32       `json:"column_2"`
+}
+
+func (q *Queries) CountActionItems(ctx context.Context, arg CountActionItemsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countActionItems, arg.OrganizationID, arg.Column2)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countLeads = `-- name: CountLeads :one
+SELECT COUNT(DISTINCT l.id)::int
+FROM RAC_leads l
+LEFT JOIN LATERAL (
+	SELECT ls.id, ls.status, ls.service_type_id
+	FROM RAC_lead_services ls
+	WHERE ls.lead_id = l.id AND ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified'
+	ORDER BY ls.created_at DESC
+	LIMIT 1
+) cs ON true
+LEFT JOIN RAC_service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id
+WHERE l.organization_id = $1
+	AND l.deleted_at IS NULL
+	AND ($2::text IS NULL OR cs.status = $2::text)
+	AND ($3::text IS NULL OR st.name = $3::text)
+	AND ($4::text IS NULL OR (
+		l.consumer_first_name ILIKE $4::text OR l.consumer_last_name ILIKE $4::text OR l.consumer_phone ILIKE $4::text OR l.consumer_email ILIKE $4::text OR l.address_city ILIKE $4::text
+	))
+	AND ($5::text IS NULL OR l.consumer_first_name ILIKE $5::text)
+	AND ($6::text IS NULL OR l.consumer_last_name ILIKE $6::text)
+	AND ($7::text IS NULL OR l.consumer_phone ILIKE $7::text)
+	AND ($8::text IS NULL OR l.consumer_email ILIKE $8::text)
+	AND ($9::text IS NULL OR l.consumer_role = $9::text)
+	AND ($10::text IS NULL OR l.address_street ILIKE $10::text)
+	AND ($11::text IS NULL OR l.address_house_number ILIKE $11::text)
+	AND ($12::text IS NULL OR l.address_zip_code ILIKE $12::text)
+	AND ($13::text IS NULL OR l.address_city ILIKE $13::text)
+	AND ($14::uuid IS NULL OR l.assigned_agent_id = $14::uuid)
+	AND ($15::timestamptz IS NULL OR l.created_at >= $15::timestamptz)
+	AND ($16::timestamptz IS NULL OR l.created_at < $16::timestamptz)
+`
+
+type CountLeadsParams struct {
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	Status          pgtype.Text        `json:"status"`
+	ServiceType     pgtype.Text        `json:"service_type"`
+	Search          pgtype.Text        `json:"search"`
+	FirstName       pgtype.Text        `json:"first_name"`
+	LastName        pgtype.Text        `json:"last_name"`
+	Phone           pgtype.Text        `json:"phone"`
+	Email           pgtype.Text        `json:"email"`
+	Role            pgtype.Text        `json:"role"`
+	Street          pgtype.Text        `json:"street"`
+	HouseNumber     pgtype.Text        `json:"house_number"`
+	ZipCode         pgtype.Text        `json:"zip_code"`
+	City            pgtype.Text        `json:"city"`
+	AssignedAgentID pgtype.UUID        `json:"assigned_agent_id"`
+	CreatedAtFrom   pgtype.Timestamptz `json:"created_at_from"`
+	CreatedAtTo     pgtype.Timestamptz `json:"created_at_to"`
+}
+
+func (q *Queries) CountLeads(ctx context.Context, arg CountLeadsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countLeads,
+		arg.OrganizationID,
+		arg.Status,
+		arg.ServiceType,
+		arg.Search,
+		arg.FirstName,
+		arg.LastName,
+		arg.Phone,
+		arg.Email,
+		arg.Role,
+		arg.Street,
+		arg.HouseNumber,
+		arg.ZipCode,
+		arg.City,
+		arg.AssignedAgentID,
+		arg.CreatedAtFrom,
+		arg.CreatedAtTo,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const createAIAnalysis = `-- name: CreateAIAnalysis :one
+INSERT INTO RAC_lead_ai_analysis (
+	lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
+	lead_quality, recommended_action, missing_information,
+	preferred_contact_channel, suggested_contact_message, summary,
+	composite_confidence, confidence_breakdown, risk_flags
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
+	lead_quality, recommended_action, missing_information,
+	preferred_contact_channel, suggested_contact_message, summary,
+	composite_confidence, confidence_breakdown, risk_flags, created_at
+`
+
+type CreateAIAnalysisParams struct {
+	LeadID                  pgtype.UUID   `json:"lead_id"`
+	OrganizationID          pgtype.UUID   `json:"organization_id"`
+	LeadServiceID           pgtype.UUID   `json:"lead_service_id"`
+	UrgencyLevel            string        `json:"urgency_level"`
+	UrgencyReason           pgtype.Text   `json:"urgency_reason"`
+	LeadQuality             string        `json:"lead_quality"`
+	RecommendedAction       string        `json:"recommended_action"`
+	MissingInformation      []byte        `json:"missing_information"`
+	PreferredContactChannel string        `json:"preferred_contact_channel"`
+	SuggestedContactMessage string        `json:"suggested_contact_message"`
+	Summary                 string        `json:"summary"`
+	CompositeConfidence     pgtype.Float8 `json:"composite_confidence"`
+	ConfidenceBreakdown     []byte        `json:"confidence_breakdown"`
+	RiskFlags               []byte        `json:"risk_flags"`
+}
+
+type CreateAIAnalysisRow struct {
+	ID                      pgtype.UUID        `json:"id"`
+	LeadID                  pgtype.UUID        `json:"lead_id"`
+	OrganizationID          pgtype.UUID        `json:"organization_id"`
+	LeadServiceID           pgtype.UUID        `json:"lead_service_id"`
+	UrgencyLevel            string             `json:"urgency_level"`
+	UrgencyReason           pgtype.Text        `json:"urgency_reason"`
+	LeadQuality             string             `json:"lead_quality"`
+	RecommendedAction       string             `json:"recommended_action"`
+	MissingInformation      []byte             `json:"missing_information"`
+	PreferredContactChannel string             `json:"preferred_contact_channel"`
+	SuggestedContactMessage string             `json:"suggested_contact_message"`
+	Summary                 string             `json:"summary"`
+	CompositeConfidence     pgtype.Float8      `json:"composite_confidence"`
+	ConfidenceBreakdown     []byte             `json:"confidence_breakdown"`
+	RiskFlags               []byte             `json:"risk_flags"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateAIAnalysis(ctx context.Context, arg CreateAIAnalysisParams) (CreateAIAnalysisRow, error) {
+	row := q.db.QueryRow(ctx, createAIAnalysis,
+		arg.LeadID,
+		arg.OrganizationID,
+		arg.LeadServiceID,
+		arg.UrgencyLevel,
+		arg.UrgencyReason,
+		arg.LeadQuality,
+		arg.RecommendedAction,
+		arg.MissingInformation,
+		arg.PreferredContactChannel,
+		arg.SuggestedContactMessage,
+		arg.Summary,
+		arg.CompositeConfidence,
+		arg.ConfidenceBreakdown,
+		arg.RiskFlags,
+	)
+	var i CreateAIAnalysisRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.LeadServiceID,
+		&i.UrgencyLevel,
+		&i.UrgencyReason,
+		&i.LeadQuality,
+		&i.RecommendedAction,
+		&i.MissingInformation,
+		&i.PreferredContactChannel,
+		&i.SuggestedContactMessage,
+		&i.Summary,
+		&i.CompositeConfidence,
+		&i.ConfidenceBreakdown,
+		&i.RiskFlags,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createAIDecisionMemory = `-- name: CreateAIDecisionMemory :one
+INSERT INTO RAC_ai_decision_memory (
+	organization_id, lead_id, lead_service_id, service_type, decision_type, outcome,
+	confidence, context_summary, action_summary
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, organization_id, lead_id, lead_service_id, service_type, decision_type, outcome,
+	confidence, context_summary, action_summary, created_at
+`
+
+type CreateAIDecisionMemoryParams struct {
+	OrganizationID pgtype.UUID    `json:"organization_id"`
+	LeadID         pgtype.UUID    `json:"lead_id"`
+	LeadServiceID  pgtype.UUID    `json:"lead_service_id"`
+	ServiceType    string         `json:"service_type"`
+	DecisionType   string         `json:"decision_type"`
+	Outcome        string         `json:"outcome"`
+	Confidence     pgtype.Numeric `json:"confidence"`
+	ContextSummary string         `json:"context_summary"`
+	ActionSummary  string         `json:"action_summary"`
+}
+
+func (q *Queries) CreateAIDecisionMemory(ctx context.Context, arg CreateAIDecisionMemoryParams) (RacAiDecisionMemory, error) {
+	row := q.db.QueryRow(ctx, createAIDecisionMemory,
+		arg.OrganizationID,
+		arg.LeadID,
+		arg.LeadServiceID,
+		arg.ServiceType,
+		arg.DecisionType,
+		arg.Outcome,
+		arg.Confidence,
+		arg.ContextSummary,
+		arg.ActionSummary,
+	)
+	var i RacAiDecisionMemory
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.ServiceType,
+		&i.DecisionType,
+		&i.Outcome,
+		&i.Confidence,
+		&i.ContextSummary,
+		&i.ActionSummary,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createAttachment = `-- name: CreateAttachment :one
+INSERT INTO RAC_lead_service_attachments (lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
+`
+
+type CreateAttachmentParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	FileKey        string      `json:"file_key"`
+	FileName       string      `json:"file_name"`
+	ContentType    pgtype.Text `json:"content_type"`
+	SizeBytes      pgtype.Int8 `json:"size_bytes"`
+	UploadedBy     pgtype.UUID `json:"uploaded_by"`
+}
+
+func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentParams) (RacLeadServiceAttachment, error) {
+	row := q.db.QueryRow(ctx, createAttachment,
+		arg.LeadServiceID,
+		arg.OrganizationID,
+		arg.FileKey,
+		arg.FileName,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.UploadedBy,
+	)
+	var i RacLeadServiceAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.LeadServiceID,
+		&i.OrganizationID,
+		&i.FileKey,
+		&i.FileName,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.UploadedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createCatalogSearchLog = `-- name: CreateCatalogSearchLog :exec
+INSERT INTO RAC_catalog_search_log (
+	organization_id, lead_service_id, query, collection, result_count, top_score, created_at
+)
+VALUES (
+	$1,
+	$2,
+	$3,
+	$4,
+	$5,
+	$6,
+	COALESCE($7::timestamptz, NOW())
+)
+`
+
+type CreateCatalogSearchLogParams struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+	Query          string             `json:"query"`
+	Collection     string             `json:"collection"`
+	ResultCount    int32              `json:"result_count"`
+	TopScore       pgtype.Float8      `json:"top_score"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateCatalogSearchLog(ctx context.Context, arg CreateCatalogSearchLogParams) error {
+	_, err := q.db.Exec(ctx, createCatalogSearchLog,
+		arg.OrganizationID,
+		arg.LeadServiceID,
+		arg.Query,
+		arg.Collection,
+		arg.ResultCount,
+		arg.TopScore,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const createFeedComment = `-- name: CreateFeedComment :one
+INSERT INTO RAC_feed_comments (event_id, event_source, user_id, org_id, body)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, event_id, event_source, user_id, org_id, body, created_at, updated_at
+`
+
+type CreateFeedCommentParams struct {
+	EventID     string      `json:"event_id"`
+	EventSource string      `json:"event_source"`
+	UserID      pgtype.UUID `json:"user_id"`
+	OrgID       pgtype.UUID `json:"org_id"`
+	Body        string      `json:"body"`
+}
+
+func (q *Queries) CreateFeedComment(ctx context.Context, arg CreateFeedCommentParams) (RacFeedComment, error) {
+	row := q.db.QueryRow(ctx, createFeedComment,
+		arg.EventID,
+		arg.EventSource,
+		arg.UserID,
+		arg.OrgID,
+		arg.Body,
+	)
+	var i RacFeedComment
+	err := row.Scan(
+		&i.ID,
+		&i.EventID,
+		&i.EventSource,
+		&i.UserID,
+		&i.OrgID,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createFeedCommentMention = `-- name: CreateFeedCommentMention :exec
+INSERT INTO RAC_feed_comment_mentions (comment_id, mentioned_user_id)
+VALUES ($1, $2)
+ON CONFLICT DO NOTHING
+`
+
+type CreateFeedCommentMentionParams struct {
+	CommentID       pgtype.UUID `json:"comment_id"`
+	MentionedUserID pgtype.UUID `json:"mentioned_user_id"`
+}
+
+func (q *Queries) CreateFeedCommentMention(ctx context.Context, arg CreateFeedCommentMentionParams) error {
+	_, err := q.db.Exec(ctx, createFeedCommentMention, arg.CommentID, arg.MentionedUserID)
+	return err
+}
+
+const createFeedReaction = `-- name: CreateFeedReaction :exec
+INSERT INTO RAC_feed_reactions (event_id, event_source, reaction_type, user_id, org_id)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT DO NOTHING
+`
+
+type CreateFeedReactionParams struct {
+	EventID      string      `json:"event_id"`
+	EventSource  string      `json:"event_source"`
+	ReactionType string      `json:"reaction_type"`
+	UserID       pgtype.UUID `json:"user_id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) CreateFeedReaction(ctx context.Context, arg CreateFeedReactionParams) error {
+	_, err := q.db.Exec(ctx, createFeedReaction,
+		arg.EventID,
+		arg.EventSource,
+		arg.ReactionType,
+		arg.UserID,
+		arg.OrgID,
+	)
+	return err
+}
+
+const createHumanFeedback = `-- name: CreateHumanFeedback :one
+INSERT INTO RAC_human_feedback (
+	organization_id, quote_id, lead_service_id,
+	field_changed, ai_value, human_value, delta_percentage
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, organization_id, quote_id, lead_service_id,
+	field_changed, ai_value, human_value, delta_percentage,
+	context_embedding_id, applied_to_memory, created_at
+`
+
+type CreateHumanFeedbackParams struct {
+	OrganizationID  pgtype.UUID   `json:"organization_id"`
+	QuoteID         pgtype.UUID   `json:"quote_id"`
+	LeadServiceID   pgtype.UUID   `json:"lead_service_id"`
+	FieldChanged    string        `json:"field_changed"`
+	AiValue         []byte        `json:"ai_value"`
+	HumanValue      []byte        `json:"human_value"`
+	DeltaPercentage pgtype.Float8 `json:"delta_percentage"`
+}
+
+func (q *Queries) CreateHumanFeedback(ctx context.Context, arg CreateHumanFeedbackParams) (RacHumanFeedback, error) {
+	row := q.db.QueryRow(ctx, createHumanFeedback,
+		arg.OrganizationID,
+		arg.QuoteID,
+		arg.LeadServiceID,
+		arg.FieldChanged,
+		arg.AiValue,
+		arg.HumanValue,
+		arg.DeltaPercentage,
+	)
+	var i RacHumanFeedback
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.QuoteID,
+		&i.LeadServiceID,
+		&i.FieldChanged,
+		&i.AiValue,
+		&i.HumanValue,
+		&i.DeltaPercentage,
+		&i.ContextEmbeddingID,
+		&i.AppliedToMemory,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createLead = `-- name: CreateLead :one
+INSERT INTO RAC_leads (
+	organization_id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role,
+	address_street, address_house_number, address_zip_code, address_city, latitude, longitude,
+	assigned_agent_id, source,
+	gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url,
+	whatsapp_opted_in
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, assigned_agent_id, viewed_by_id, viewed_at, created_at, updated_at, deleted_at, source, projected_value_cents, latitude, longitude, organization_id, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype, energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id, energy_label_fetched_at, lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_buurtcode, lead_enrichment_gem_aardgasverbruik, lead_enrichment_huishouden_grootte, lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_confidence, lead_enrichment_fetched_at, lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at, lead_enrichment_postcode4, lead_enrichment_data_year, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_woz_waarde, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen, lead_enrichment_stedelijkheid, public_token, public_token_expires_at, raw_form_data, webhook_source_domain, is_incomplete, gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url, whatsapp_opted_in, google_campaign_id, google_adgroup_id, google_creative_id, google_form_id
+`
+
+type CreateLeadParams struct {
+	OrganizationID     pgtype.UUID   `json:"organization_id"`
+	ConsumerFirstName  string        `json:"consumer_first_name"`
+	ConsumerLastName   string        `json:"consumer_last_name"`
+	ConsumerPhone      string        `json:"consumer_phone"`
+	ConsumerEmail      pgtype.Text   `json:"consumer_email"`
+	ConsumerRole       string        `json:"consumer_role"`
+	AddressStreet      string        `json:"address_street"`
+	AddressHouseNumber string        `json:"address_house_number"`
+	AddressZipCode     string        `json:"address_zip_code"`
+	AddressCity        string        `json:"address_city"`
+	Latitude           pgtype.Float8 `json:"latitude"`
+	Longitude          pgtype.Float8 `json:"longitude"`
+	AssignedAgentID    pgtype.UUID   `json:"assigned_agent_id"`
+	Source             pgtype.Text   `json:"source"`
+	Gclid              pgtype.Text   `json:"gclid"`
+	UtmSource          pgtype.Text   `json:"utm_source"`
+	UtmMedium          pgtype.Text   `json:"utm_medium"`
+	UtmCampaign        pgtype.Text   `json:"utm_campaign"`
+	UtmContent         pgtype.Text   `json:"utm_content"`
+	UtmTerm            pgtype.Text   `json:"utm_term"`
+	AdLandingPage      pgtype.Text   `json:"ad_landing_page"`
+	ReferrerUrl        pgtype.Text   `json:"referrer_url"`
+	WhatsappOptedIn    bool          `json:"whatsapp_opted_in"`
+}
+
+func (q *Queries) CreateLead(ctx context.Context, arg CreateLeadParams) (RacLead, error) {
+	row := q.db.QueryRow(ctx, createLead,
+		arg.OrganizationID,
+		arg.ConsumerFirstName,
+		arg.ConsumerLastName,
+		arg.ConsumerPhone,
+		arg.ConsumerEmail,
+		arg.ConsumerRole,
+		arg.AddressStreet,
+		arg.AddressHouseNumber,
+		arg.AddressZipCode,
+		arg.AddressCity,
+		arg.Latitude,
+		arg.Longitude,
+		arg.AssignedAgentID,
+		arg.Source,
+		arg.Gclid,
+		arg.UtmSource,
+		arg.UtmMedium,
+		arg.UtmCampaign,
+		arg.UtmContent,
+		arg.UtmTerm,
+		arg.AdLandingPage,
+		arg.ReferrerUrl,
+		arg.WhatsappOptedIn,
+	)
+	var i RacLead
+	err := row.Scan(
+		&i.ID,
+		&i.ConsumerFirstName,
+		&i.ConsumerLastName,
+		&i.ConsumerPhone,
+		&i.ConsumerEmail,
+		&i.ConsumerRole,
+		&i.AddressStreet,
+		&i.AddressHouseNumber,
+		&i.AddressZipCode,
+		&i.AddressCity,
+		&i.AssignedAgentID,
+		&i.ViewedByID,
+		&i.ViewedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Source,
+		&i.ProjectedValueCents,
+		&i.Latitude,
+		&i.Longitude,
+		&i.OrganizationID,
+		&i.EnergyClass,
+		&i.EnergyIndex,
+		&i.EnergyBouwjaar,
+		&i.EnergyGebouwtype,
+		&i.EnergyLabelValidUntil,
+		&i.EnergyLabelRegisteredAt,
+		&i.EnergyPrimairFossiel,
+		&i.EnergyBagVerblijfsobjectID,
+		&i.EnergyLabelFetchedAt,
+		&i.LeadEnrichmentSource,
+		&i.LeadEnrichmentPostcode6,
+		&i.LeadEnrichmentBuurtcode,
+		&i.LeadEnrichmentGemAardgasverbruik,
+		&i.LeadEnrichmentHuishoudenGrootte,
+		&i.LeadEnrichmentKoopwoningenPct,
+		&i.LeadEnrichmentBouwjaarVanaf2000Pct,
+		&i.LeadEnrichmentMediaanVermogenX1000,
+		&i.LeadEnrichmentHuishoudensMetKinderenPct,
+		&i.LeadEnrichmentConfidence,
+		&i.LeadEnrichmentFetchedAt,
+		&i.LeadScore,
+		&i.LeadScorePreAi,
+		&i.LeadScoreFactors,
+		&i.LeadScoreVersion,
+		&i.LeadScoreUpdatedAt,
+		&i.LeadEnrichmentPostcode4,
+		&i.LeadEnrichmentDataYear,
+		&i.LeadEnrichmentGemElektriciteitsverbruik,
+		&i.LeadEnrichmentWozWaarde,
+		&i.LeadEnrichmentGemInkomen,
+		&i.LeadEnrichmentPctHoogInkomen,
+		&i.LeadEnrichmentPctLaagInkomen,
+		&i.LeadEnrichmentStedelijkheid,
+		&i.PublicToken,
+		&i.PublicTokenExpiresAt,
+		&i.RawFormData,
+		&i.WebhookSourceDomain,
+		&i.IsIncomplete,
+		&i.Gclid,
+		&i.UtmSource,
+		&i.UtmMedium,
+		&i.UtmCampaign,
+		&i.UtmContent,
+		&i.UtmTerm,
+		&i.AdLandingPage,
+		&i.ReferrerUrl,
+		&i.WhatsappOptedIn,
+		&i.GoogleCampaignID,
+		&i.GoogleAdgroupID,
+		&i.GoogleCreativeID,
+		&i.GoogleFormID,
+	)
+	return i, err
+}
+
+const createLeadNote = `-- name: CreateLeadNote :one
+WITH inserted AS (
+	INSERT INTO RAC_lead_notes (lead_id, organization_id, author_id, type, body, service_id)
+	VALUES ($1, $2, $3, $4, $5, $6)
+	RETURNING id, lead_id, organization_id, author_id, type, body, service_id, created_at, updated_at
+)
+SELECT inserted.id, inserted.lead_id, inserted.organization_id, inserted.author_id, u.email, inserted.type, inserted.body, inserted.service_id, inserted.created_at, inserted.updated_at
+FROM inserted
+JOIN RAC_users u ON u.id = inserted.author_id
+`
+
+type CreateLeadNoteParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	AuthorID       pgtype.UUID `json:"author_id"`
+	Type           string      `json:"type"`
+	Body           string      `json:"body"`
+	ServiceID      pgtype.UUID `json:"service_id"`
+}
+
+type CreateLeadNoteRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	Email          string             `json:"email"`
+	Type           string             `json:"type"`
+	Body           string             `json:"body"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CreateLeadNote(ctx context.Context, arg CreateLeadNoteParams) (CreateLeadNoteRow, error) {
+	row := q.db.QueryRow(ctx, createLeadNote,
+		arg.LeadID,
+		arg.OrganizationID,
+		arg.AuthorID,
+		arg.Type,
+		arg.Body,
+		arg.ServiceID,
+	)
+	var i CreateLeadNoteRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.AuthorID,
+		&i.Email,
+		&i.Type,
+		&i.Body,
+		&i.ServiceID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createLeadService = `-- name: CreateLeadService :one
+WITH resolved_service_type AS (
+	SELECT COALESCE(
+		(SELECT st.id FROM RAC_service_types st WHERE (st.name = $3 OR st.slug = $3) AND st.organization_id = $2 LIMIT 1),
+		(SELECT st.id FROM RAC_service_types st WHERE st.organization_id = $2 AND st.is_active = true ORDER BY st.name ASC LIMIT 1),
+		(SELECT st.id FROM RAC_service_types st WHERE st.organization_id = $2 ORDER BY st.name ASC LIMIT 1)
+	) AS id
+), inserted AS (
+	INSERT INTO RAC_lead_services (lead_id, organization_id, service_type_id, status, consumer_note, source)
+	SELECT $1, $2, id, 'New', $4, $5
+	FROM resolved_service_type
+	WHERE id IS NOT NULL
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+), event AS (
+	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+	SELECT i.organization_id, i.lead_id, i.id, 'service_created', i.status, i.pipeline_stage, i.created_at
+	FROM inserted i
+)
+SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
+	i.customer_preferences, i.created_at, i.updated_at
+FROM inserted i
+JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = i.organization_id
+`
+
+type CreateLeadServiceParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Name           string      `json:"name"`
+	ConsumerNote   pgtype.Text `json:"consumer_note"`
+	Source         pgtype.Text `json:"source"`
+}
+
+type CreateLeadServiceRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CreateLeadService(ctx context.Context, arg CreateLeadServiceParams) (CreateLeadServiceRow, error) {
+	row := q.db.QueryRow(ctx, createLeadService,
+		arg.LeadID,
+		arg.OrganizationID,
+		arg.Name,
+		arg.ConsumerNote,
+		arg.Source,
+	)
+	var i CreateLeadServiceRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createPhotoAnalysis = `-- name: CreatePhotoAnalysis :one
+INSERT INTO RAC_lead_photo_analyses (
+	lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
+	safety_concerns, additional_info, confidence_level, photo_count,
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+RETURNING id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
+	safety_concerns, additional_info, confidence_level, photo_count,
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	created_at, updated_at
+`
+
+type CreatePhotoAnalysisParams struct {
+	LeadID                 pgtype.UUID `json:"lead_id"`
+	ServiceID              pgtype.UUID `json:"service_id"`
+	OrgID                  pgtype.UUID `json:"org_id"`
+	Summary                string      `json:"summary"`
+	Observations           []byte      `json:"observations"`
+	ScopeAssessment        string      `json:"scope_assessment"`
+	CostIndicators         pgtype.Text `json:"cost_indicators"`
+	SafetyConcerns         []byte      `json:"safety_concerns"`
+	AdditionalInfo         []byte      `json:"additional_info"`
+	ConfidenceLevel        string      `json:"confidence_level"`
+	PhotoCount             int32       `json:"photo_count"`
+	Measurements           []byte      `json:"measurements"`
+	NeedsOnsiteMeasurement []byte      `json:"needs_onsite_measurement"`
+	Discrepancies          []byte      `json:"discrepancies"`
+	ExtractedText          []byte      `json:"extracted_text"`
+	SuggestedSearchTerms   []byte      `json:"suggested_search_terms"`
+}
+
+type CreatePhotoAnalysisRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	LeadID                 pgtype.UUID        `json:"lead_id"`
+	ServiceID              pgtype.UUID        `json:"service_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	Summary                string             `json:"summary"`
+	Observations           []byte             `json:"observations"`
+	ScopeAssessment        string             `json:"scope_assessment"`
+	CostIndicators         pgtype.Text        `json:"cost_indicators"`
+	SafetyConcerns         []byte             `json:"safety_concerns"`
+	AdditionalInfo         []byte             `json:"additional_info"`
+	ConfidenceLevel        string             `json:"confidence_level"`
+	PhotoCount             int32              `json:"photo_count"`
+	Measurements           []byte             `json:"measurements"`
+	NeedsOnsiteMeasurement []byte             `json:"needs_onsite_measurement"`
+	Discrepancies          []byte             `json:"discrepancies"`
+	ExtractedText          []byte             `json:"extracted_text"`
+	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CreatePhotoAnalysis(ctx context.Context, arg CreatePhotoAnalysisParams) (CreatePhotoAnalysisRow, error) {
+	row := q.db.QueryRow(ctx, createPhotoAnalysis,
+		arg.LeadID,
+		arg.ServiceID,
+		arg.OrgID,
+		arg.Summary,
+		arg.Observations,
+		arg.ScopeAssessment,
+		arg.CostIndicators,
+		arg.SafetyConcerns,
+		arg.AdditionalInfo,
+		arg.ConfidenceLevel,
+		arg.PhotoCount,
+		arg.Measurements,
+		arg.NeedsOnsiteMeasurement,
+		arg.Discrepancies,
+		arg.ExtractedText,
+		arg.SuggestedSearchTerms,
+	)
+	var i CreatePhotoAnalysisRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.OrgID,
+		&i.Summary,
+		&i.Observations,
+		&i.ScopeAssessment,
+		&i.CostIndicators,
+		&i.SafetyConcerns,
+		&i.AdditionalInfo,
+		&i.ConfidenceLevel,
+		&i.PhotoCount,
+		&i.Measurements,
+		&i.NeedsOnsiteMeasurement,
+		&i.Discrepancies,
+		&i.ExtractedText,
+		&i.SuggestedSearchTerms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createTimelineEvent = `-- name: CreateTimelineEvent :one
+INSERT INTO lead_timeline_events (
+	lead_id,
+	service_id,
+	organization_id,
+	actor_type,
+	actor_name,
+	event_type,
+	title,
+	summary,
+	metadata
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+`
+
+type CreateTimelineEventParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	ServiceID      pgtype.UUID `json:"service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ActorType      string      `json:"actor_type"`
+	ActorName      string      `json:"actor_name"`
+	EventType      string      `json:"event_type"`
+	Title          string      `json:"title"`
+	Summary        pgtype.Text `json:"summary"`
+	Metadata       []byte      `json:"metadata"`
+}
+
+func (q *Queries) CreateTimelineEvent(ctx context.Context, arg CreateTimelineEventParams) (LeadTimelineEvent, error) {
+	row := q.db.QueryRow(ctx, createTimelineEvent,
+		arg.LeadID,
+		arg.ServiceID,
+		arg.OrganizationID,
+		arg.ActorType,
+		arg.ActorName,
+		arg.EventType,
+		arg.Title,
+		arg.Summary,
+		arg.Metadata,
+	)
+	var i LeadTimelineEvent
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.OrganizationID,
+		&i.ActorType,
+		&i.ActorName,
+		&i.EventType,
+		&i.Title,
+		&i.Summary,
+		&i.Metadata,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteAttachment = `-- name: DeleteAttachment :execrows
+DELETE FROM RAC_lead_service_attachments
+WHERE id = $1 AND organization_id = $2
+`
+
+type DeleteAttachmentParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) DeleteAttachment(ctx context.Context, arg DeleteAttachmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAttachment, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteFeedComment = `-- name: DeleteFeedComment :execrows
+DELETE FROM RAC_feed_comments
+WHERE id = $1
+	AND user_id = $2
+	AND org_id = $3
+`
+
+type DeleteFeedCommentParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+	OrgID  pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) DeleteFeedComment(ctx context.Context, arg DeleteFeedCommentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFeedComment, arg.ID, arg.UserID, arg.OrgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteFeedReaction = `-- name: DeleteFeedReaction :execrows
+DELETE FROM RAC_feed_reactions
+WHERE event_id = $1
+	AND event_source = $2
+	AND reaction_type = $3
+	AND user_id = $4
+	AND org_id = $5
+`
+
+type DeleteFeedReactionParams struct {
+	EventID      string      `json:"event_id"`
+	EventSource  string      `json:"event_source"`
+	ReactionType string      `json:"reaction_type"`
+	UserID       pgtype.UUID `json:"user_id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) DeleteFeedReaction(ctx context.Context, arg DeleteFeedReactionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFeedReaction,
+		arg.EventID,
+		arg.EventSource,
+		arg.ReactionType,
+		arg.UserID,
+		arg.OrgID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteLead = `-- name: DeleteLead :execrows
+UPDATE RAC_leads
+SET deleted_at = now(), updated_at = now()
+WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+`
+
+type DeleteLeadParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) DeleteLead(ctx context.Context, arg DeleteLeadParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteLead, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const findMatchingPartnersByCoordinates = `-- name: FindMatchingPartnersByCoordinates :many
+SELECT p.id, p.business_name, p.contact_email,
+	CAST(earth_distance(ll_to_earth($2, $1), ll_to_earth(p.latitude, p.longitude)) / 1000.0 AS double precision) AS dist_km
+FROM RAC_partners p
+JOIN RAC_partner_service_types pst ON pst.partner_id = p.id
+JOIN RAC_service_types st ON st.id = pst.service_type_id AND st.organization_id = p.organization_id
+WHERE p.organization_id = $3
+	AND st.is_active = true
+	AND (st.name = $4 OR st.slug = $4)
+	AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+	AND earth_distance(ll_to_earth($2, $1), ll_to_earth(p.latitude, p.longitude)) <= ($5 * 1000.0)
+	AND (CARDINALITY($6::uuid[]) = 0 OR p.id != ALL($6::uuid[]))
+ORDER BY dist_km ASC
+LIMIT 5
+`
+
+type FindMatchingPartnersByCoordinatesParams struct {
+	LlToEarth      float64       `json:"ll_to_earth"`
+	LlToEarth_2    float64       `json:"ll_to_earth_2"`
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+	Name           string        `json:"name"`
+	Column5        interface{}   `json:"column_5"`
+	Column6        []pgtype.UUID `json:"column_6"`
+}
+
+type FindMatchingPartnersByCoordinatesRow struct {
+	ID           pgtype.UUID `json:"id"`
+	BusinessName string      `json:"business_name"`
+	ContactEmail string      `json:"contact_email"`
+	DistKm       float64     `json:"dist_km"`
+}
+
+func (q *Queries) FindMatchingPartnersByCoordinates(ctx context.Context, arg FindMatchingPartnersByCoordinatesParams) ([]FindMatchingPartnersByCoordinatesRow, error) {
+	rows, err := q.db.Query(ctx, findMatchingPartnersByCoordinates,
+		arg.LlToEarth,
+		arg.LlToEarth_2,
+		arg.OrganizationID,
+		arg.Name,
+		arg.Column5,
+		arg.Column6,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindMatchingPartnersByCoordinatesRow
+	for rows.Next() {
+		var i FindMatchingPartnersByCoordinatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessName,
+			&i.ContactEmail,
+			&i.DistKm,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findPartnersByServiceType = `-- name: FindPartnersByServiceType :many
+SELECT p.id, p.business_name, p.contact_email,
+	0.0::double precision AS dist_km
+FROM RAC_partners p
+JOIN RAC_partner_service_types pst ON pst.partner_id = p.id
+JOIN RAC_service_types st ON st.id = pst.service_type_id AND st.organization_id = p.organization_id
+WHERE p.organization_id = $1
+	AND st.is_active = true
+	AND (st.name = $2 OR st.slug = $2)
+	AND (CARDINALITY($3::uuid[]) = 0 OR p.id != ALL($3::uuid[]))
+ORDER BY p.updated_at DESC
+LIMIT 5
+`
+
+type FindPartnersByServiceTypeParams struct {
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+	Name           string        `json:"name"`
+	Column3        []pgtype.UUID `json:"column_3"`
+}
+
+type FindPartnersByServiceTypeRow struct {
+	ID           pgtype.UUID `json:"id"`
+	BusinessName string      `json:"business_name"`
+	ContactEmail string      `json:"contact_email"`
+	DistKm       float64     `json:"dist_km"`
+}
+
+func (q *Queries) FindPartnersByServiceType(ctx context.Context, arg FindPartnersByServiceTypeParams) ([]FindPartnersByServiceTypeRow, error) {
+	rows, err := q.db.Query(ctx, findPartnersByServiceType, arg.OrganizationID, arg.Name, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindPartnersByServiceTypeRow
+	for rows.Next() {
+		var i FindPartnersByServiceTypeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessName,
+			&i.ContactEmail,
+			&i.DistKm,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findPartnersByServiceTypeAndCity = `-- name: FindPartnersByServiceTypeAndCity :many
+SELECT p.id, p.business_name, p.contact_email,
+	0.0::double precision AS dist_km
+FROM RAC_partners p
+JOIN RAC_partner_service_types pst ON pst.partner_id = p.id
+JOIN RAC_service_types st ON st.id = pst.service_type_id AND st.organization_id = p.organization_id
+WHERE p.organization_id = $1
+	AND st.is_active = true
+	AND (st.name = $2 OR st.slug = $2)
+	AND lower(p.city) = lower($3)
+	AND (CARDINALITY($4::uuid[]) = 0 OR p.id != ALL($4::uuid[]))
+ORDER BY p.updated_at DESC
+LIMIT 5
+`
+
+type FindPartnersByServiceTypeAndCityParams struct {
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+	Name           string        `json:"name"`
+	Lower          string        `json:"lower"`
+	Column4        []pgtype.UUID `json:"column_4"`
+}
+
+type FindPartnersByServiceTypeAndCityRow struct {
+	ID           pgtype.UUID `json:"id"`
+	BusinessName string      `json:"business_name"`
+	ContactEmail string      `json:"contact_email"`
+	DistKm       float64     `json:"dist_km"`
+}
+
+func (q *Queries) FindPartnersByServiceTypeAndCity(ctx context.Context, arg FindPartnersByServiceTypeAndCityParams) ([]FindPartnersByServiceTypeAndCityRow, error) {
+	rows, err := q.db.Query(ctx, findPartnersByServiceTypeAndCity,
+		arg.OrganizationID,
+		arg.Name,
+		arg.Lower,
+		arg.Column4,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindPartnersByServiceTypeAndCityRow
+	for rows.Next() {
+		var i FindPartnersByServiceTypeAndCityRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessName,
+			&i.ContactEmail,
+			&i.DistKm,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findRecentDuplicateTimelineEvent = `-- name: FindRecentDuplicateTimelineEvent :one
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+FROM lead_timeline_events
+WHERE lead_id = $1
+	AND organization_id = $2
+	AND (service_id = $3 OR (service_id IS NULL AND $3 IS NULL))
+	AND actor_type = $4
+	AND actor_name = $5
+	AND event_type = $6
+	AND title = $7
+	AND (($8 = '' AND summary IS NULL) OR ($8 <> '' AND summary = $8))
+	AND created_at >= now() - make_interval(secs => $9)
+	AND (
+		$6 <> $10 OR (
+			COALESCE(metadata->>'oldStage', '') = CAST($11 AS text)
+			AND COALESCE(metadata->>'newStage', '') = CAST($12 AS text)
+		)
+	)
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type FindRecentDuplicateTimelineEventParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceID      pgtype.UUID `json:"service_id"`
+	ActorType      string      `json:"actor_type"`
+	ActorName      string      `json:"actor_name"`
+	EventType      string      `json:"event_type"`
+	Title          string      `json:"title"`
+	Column8        interface{} `json:"column_8"`
+	Secs           float64     `json:"secs"`
+	Column10       interface{} `json:"column_10"`
+	Column11       string      `json:"column_11"`
+	Column12       string      `json:"column_12"`
+}
+
+func (q *Queries) FindRecentDuplicateTimelineEvent(ctx context.Context, arg FindRecentDuplicateTimelineEventParams) (LeadTimelineEvent, error) {
+	row := q.db.QueryRow(ctx, findRecentDuplicateTimelineEvent,
+		arg.LeadID,
+		arg.OrganizationID,
+		arg.ServiceID,
+		arg.ActorType,
+		arg.ActorName,
+		arg.EventType,
+		arg.Title,
+		arg.Column8,
+		arg.Secs,
+		arg.Column10,
+		arg.Column11,
+		arg.Column12,
+	)
+	var i LeadTimelineEvent
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.OrganizationID,
+		&i.ActorType,
+		&i.ActorName,
+		&i.EventType,
+		&i.Title,
+		&i.Summary,
+		&i.Metadata,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getAppointmentVisitReport = `-- name: GetAppointmentVisitReport :one
+SELECT appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at
+FROM RAC_appointment_visit_reports
+WHERE appointment_id = $1 AND organization_id = $2
+`
+
+type GetAppointmentVisitReportParams struct {
+	AppointmentID  pgtype.UUID `json:"appointment_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetAppointmentVisitReportRow struct {
+	AppointmentID    pgtype.UUID        `json:"appointment_id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	Measurements     pgtype.Text        `json:"measurements"`
+	AccessDifficulty pgtype.Text        `json:"access_difficulty"`
+	Notes            pgtype.Text        `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetAppointmentVisitReport(ctx context.Context, arg GetAppointmentVisitReportParams) (GetAppointmentVisitReportRow, error) {
+	row := q.db.QueryRow(ctx, getAppointmentVisitReport, arg.AppointmentID, arg.OrganizationID)
+	var i GetAppointmentVisitReportRow
+	err := row.Scan(
+		&i.AppointmentID,
+		&i.OrganizationID,
+		&i.Measurements,
+		&i.AccessDifficulty,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getAttachmentByID = `-- name: GetAttachmentByID :one
+SELECT id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
+FROM RAC_lead_service_attachments
+WHERE id = $1 AND organization_id = $2
+`
+
+type GetAttachmentByIDParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetAttachmentByID(ctx context.Context, arg GetAttachmentByIDParams) (RacLeadServiceAttachment, error) {
+	row := q.db.QueryRow(ctx, getAttachmentByID, arg.ID, arg.OrganizationID)
+	var i RacLeadServiceAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.LeadServiceID,
+		&i.OrganizationID,
+		&i.FileKey,
+		&i.FileName,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.UploadedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getCurrentActiveLeadService = `-- name: GetCurrentActiveLeadService :one
+SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
+	ls.customer_preferences, ls.created_at, ls.updated_at
+FROM RAC_lead_services ls
+JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage NOT IN ('Completed', 'Lost')
+ORDER BY ls.created_at DESC
+LIMIT 1
+`
+
+type GetCurrentActiveLeadServiceParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetCurrentActiveLeadServiceRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetCurrentActiveLeadService(ctx context.Context, arg GetCurrentActiveLeadServiceParams) (GetCurrentActiveLeadServiceRow, error) {
+	row := q.db.QueryRow(ctx, getCurrentActiveLeadService, arg.LeadID, arg.OrganizationID)
+	var i GetCurrentActiveLeadServiceRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getHumanFeedbackByID = `-- name: GetHumanFeedbackByID :one
+SELECT id, organization_id, quote_id, lead_service_id,
+	field_changed, ai_value, human_value, delta_percentage,
+	context_embedding_id, applied_to_memory, created_at
+FROM RAC_human_feedback
+WHERE id = $1 AND organization_id = $2
+`
+
+type GetHumanFeedbackByIDParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetHumanFeedbackByID(ctx context.Context, arg GetHumanFeedbackByIDParams) (RacHumanFeedback, error) {
+	row := q.db.QueryRow(ctx, getHumanFeedbackByID, arg.ID, arg.OrganizationID)
+	var i RacHumanFeedback
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.QuoteID,
+		&i.LeadServiceID,
+		&i.FieldChanged,
+		&i.AiValue,
+		&i.HumanValue,
+		&i.DeltaPercentage,
+		&i.ContextEmbeddingID,
+		&i.AppliedToMemory,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLatestAIAnalysis = `-- name: GetLatestAIAnalysis :one
+SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
+	lead_quality, recommended_action, missing_information,
+	preferred_contact_channel, suggested_contact_message, summary,
+	composite_confidence, confidence_breakdown, risk_flags, created_at
+FROM RAC_lead_ai_analysis
+WHERE lead_service_id = $1 AND organization_id = $2
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestAIAnalysisParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLatestAIAnalysisRow struct {
+	ID                      pgtype.UUID        `json:"id"`
+	LeadID                  pgtype.UUID        `json:"lead_id"`
+	OrganizationID          pgtype.UUID        `json:"organization_id"`
+	LeadServiceID           pgtype.UUID        `json:"lead_service_id"`
+	UrgencyLevel            string             `json:"urgency_level"`
+	UrgencyReason           pgtype.Text        `json:"urgency_reason"`
+	LeadQuality             string             `json:"lead_quality"`
+	RecommendedAction       string             `json:"recommended_action"`
+	MissingInformation      []byte             `json:"missing_information"`
+	PreferredContactChannel string             `json:"preferred_contact_channel"`
+	SuggestedContactMessage string             `json:"suggested_contact_message"`
+	Summary                 string             `json:"summary"`
+	CompositeConfidence     pgtype.Float8      `json:"composite_confidence"`
+	ConfidenceBreakdown     []byte             `json:"confidence_breakdown"`
+	RiskFlags               []byte             `json:"risk_flags"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetLatestAIAnalysis(ctx context.Context, arg GetLatestAIAnalysisParams) (GetLatestAIAnalysisRow, error) {
+	row := q.db.QueryRow(ctx, getLatestAIAnalysis, arg.LeadServiceID, arg.OrganizationID)
+	var i GetLatestAIAnalysisRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.LeadServiceID,
+		&i.UrgencyLevel,
+		&i.UrgencyReason,
+		&i.LeadQuality,
+		&i.RecommendedAction,
+		&i.MissingInformation,
+		&i.PreferredContactChannel,
+		&i.SuggestedContactMessage,
+		&i.Summary,
+		&i.CompositeConfidence,
+		&i.ConfidenceBreakdown,
+		&i.RiskFlags,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLatestAcceptedQuoteIDForService = `-- name: GetLatestAcceptedQuoteIDForService :one
+SELECT id
+FROM RAC_quotes
+WHERE lead_service_id = $1
+	AND organization_id = $2
+	AND status = 'Accepted'
+	AND total_cents > 0
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestAcceptedQuoteIDForServiceParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLatestAcceptedQuoteIDForService(ctx context.Context, arg GetLatestAcceptedQuoteIDForServiceParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getLatestAcceptedQuoteIDForService, arg.LeadServiceID, arg.OrganizationID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const getLatestAppointment = `-- name: GetLatestAppointment :one
+SELECT start_time, status
+FROM RAC_appointments
+WHERE lead_id = $1 AND organization_id = $2
+ORDER BY start_time DESC
+LIMIT 1
+`
+
+type GetLatestAppointmentParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLatestAppointmentRow struct {
+	StartTime pgtype.Timestamptz `json:"start_time"`
+	Status    string             `json:"status"`
+}
+
+func (q *Queries) GetLatestAppointment(ctx context.Context, arg GetLatestAppointmentParams) (GetLatestAppointmentRow, error) {
+	row := q.db.QueryRow(ctx, getLatestAppointment, arg.LeadID, arg.OrganizationID)
+	var i GetLatestAppointmentRow
+	err := row.Scan(&i.StartTime, &i.Status)
+	return i, err
+}
+
+const getLatestAppointmentVisitReportByService = `-- name: GetLatestAppointmentVisitReportByService :one
+SELECT avr.appointment_id, avr.organization_id, avr.measurements, avr.access_difficulty, avr.notes, avr.created_at, avr.updated_at
+FROM RAC_appointment_visit_reports avr
+JOIN RAC_appointments a ON a.id = avr.appointment_id AND a.organization_id = avr.organization_id
+WHERE a.lead_service_id = $1 AND avr.organization_id = $2 AND a.status != 'cancelled'
+ORDER BY a.start_time DESC, avr.updated_at DESC
+LIMIT 1
+`
+
+type GetLatestAppointmentVisitReportByServiceParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLatestAppointmentVisitReportByServiceRow struct {
+	AppointmentID    pgtype.UUID        `json:"appointment_id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	Measurements     pgtype.Text        `json:"measurements"`
+	AccessDifficulty pgtype.Text        `json:"access_difficulty"`
+	Notes            pgtype.Text        `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetLatestAppointmentVisitReportByService(ctx context.Context, arg GetLatestAppointmentVisitReportByServiceParams) (GetLatestAppointmentVisitReportByServiceRow, error) {
+	row := q.db.QueryRow(ctx, getLatestAppointmentVisitReportByService, arg.LeadServiceID, arg.OrganizationID)
+	var i GetLatestAppointmentVisitReportByServiceRow
+	err := row.Scan(
+		&i.AppointmentID,
+		&i.OrganizationID,
+		&i.Measurements,
+		&i.AccessDifficulty,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestDraftQuoteID = `-- name: GetLatestDraftQuoteID :one
+SELECT id
+FROM RAC_quotes
+WHERE lead_service_id = $1
+	AND organization_id = $2
+	AND status = 'Draft'
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestDraftQuoteIDParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLatestDraftQuoteID(ctx context.Context, arg GetLatestDraftQuoteIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getLatestDraftQuoteID, arg.LeadServiceID, arg.OrganizationID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const getLatestLeadService = `-- name: GetLatestLeadService :one
+SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
+	ls.customer_preferences, ls.created_at, ls.updated_at
+FROM RAC_lead_services ls
+JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+WHERE ls.lead_id = $1 AND ls.organization_id = $2
+ORDER BY ls.created_at DESC
+LIMIT 1
+`
+
+type GetLatestLeadServiceParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLatestLeadServiceRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetLatestLeadService(ctx context.Context, arg GetLatestLeadServiceParams) (GetLatestLeadServiceRow, error) {
+	row := q.db.QueryRow(ctx, getLatestLeadService, arg.LeadID, arg.OrganizationID)
+	var i GetLatestLeadServiceRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestPhotoAnalysis = `-- name: GetLatestPhotoAnalysis :one
+SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
+	safety_concerns, additional_info, confidence_level, photo_count,
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	created_at, updated_at
+FROM RAC_lead_photo_analyses
+WHERE service_id = $1 AND org_id = $2
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestPhotoAnalysisParams struct {
+	ServiceID pgtype.UUID `json:"service_id"`
+	OrgID     pgtype.UUID `json:"org_id"`
+}
+
+type GetLatestPhotoAnalysisRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	LeadID                 pgtype.UUID        `json:"lead_id"`
+	ServiceID              pgtype.UUID        `json:"service_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	Summary                string             `json:"summary"`
+	Observations           []byte             `json:"observations"`
+	ScopeAssessment        string             `json:"scope_assessment"`
+	CostIndicators         pgtype.Text        `json:"cost_indicators"`
+	SafetyConcerns         []byte             `json:"safety_concerns"`
+	AdditionalInfo         []byte             `json:"additional_info"`
+	ConfidenceLevel        string             `json:"confidence_level"`
+	PhotoCount             int32              `json:"photo_count"`
+	Measurements           []byte             `json:"measurements"`
+	NeedsOnsiteMeasurement []byte             `json:"needs_onsite_measurement"`
+	Discrepancies          []byte             `json:"discrepancies"`
+	ExtractedText          []byte             `json:"extracted_text"`
+	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetLatestPhotoAnalysis(ctx context.Context, arg GetLatestPhotoAnalysisParams) (GetLatestPhotoAnalysisRow, error) {
+	row := q.db.QueryRow(ctx, getLatestPhotoAnalysis, arg.ServiceID, arg.OrgID)
+	var i GetLatestPhotoAnalysisRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.OrgID,
+		&i.Summary,
+		&i.Observations,
+		&i.ScopeAssessment,
+		&i.CostIndicators,
+		&i.SafetyConcerns,
+		&i.AdditionalInfo,
+		&i.ConfidenceLevel,
+		&i.PhotoCount,
+		&i.Measurements,
+		&i.NeedsOnsiteMeasurement,
+		&i.Discrepancies,
+		&i.ExtractedText,
+		&i.SuggestedSearchTerms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLeadAppointmentStats = `-- name: GetLeadAppointmentStats :one
+SELECT
+	COUNT(*) AS total,
+	COUNT(*) FILTER (WHERE status = 'Scheduled') AS scheduled,
+	COUNT(*) FILTER (WHERE status = 'Completed') AS completed,
+	COUNT(*) FILTER (WHERE status = 'Cancelled') AS cancelled,
+	EXISTS(
+		SELECT 1 FROM RAC_appointments upcoming
+		WHERE upcoming.lead_id = $1 AND upcoming.organization_id = $2
+			AND status = 'Scheduled' AND start_time > NOW()
+	) AS has_upcoming
+FROM RAC_appointments a
+WHERE a.lead_id = $1 AND a.organization_id = $2
+`
+
+type GetLeadAppointmentStatsParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLeadAppointmentStatsRow struct {
+	Total       int64 `json:"total"`
+	Scheduled   int64 `json:"scheduled"`
+	Completed   int64 `json:"completed"`
+	Cancelled   int64 `json:"cancelled"`
+	HasUpcoming bool  `json:"has_upcoming"`
+}
+
+func (q *Queries) GetLeadAppointmentStats(ctx context.Context, arg GetLeadAppointmentStatsParams) (GetLeadAppointmentStatsRow, error) {
+	row := q.db.QueryRow(ctx, getLeadAppointmentStats, arg.LeadID, arg.OrganizationID)
+	var i GetLeadAppointmentStatsRow
+	err := row.Scan(
+		&i.Total,
+		&i.Scheduled,
+		&i.Completed,
+		&i.Cancelled,
+		&i.HasUpcoming,
+	)
+	return i, err
+}
+
 const getLeadByID = `-- name: GetLeadByID :one
 
 SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, assigned_agent_id, viewed_by_id, viewed_at, created_at, updated_at, deleted_at, source, projected_value_cents, latitude, longitude, organization_id, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype, energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id, energy_label_fetched_at, lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_buurtcode, lead_enrichment_gem_aardgasverbruik, lead_enrichment_huishouden_grootte, lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_confidence, lead_enrichment_fetched_at, lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at, lead_enrichment_postcode4, lead_enrichment_data_year, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_woz_waarde, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen, lead_enrichment_stedelijkheid, public_token, public_token_expires_at, raw_form_data, webhook_source_domain, is_incomplete, gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url, whatsapp_opted_in, google_campaign_id, google_adgroup_id, google_creative_id, google_form_id FROM rac_leads WHERE id = $1 AND organization_id = $2
@@ -99,6 +1834,3437 @@ func (q *Queries) GetLeadByID(ctx context.Context, arg GetLeadByIDParams) (RacLe
 		&i.GoogleAdgroupID,
 		&i.GoogleCreativeID,
 		&i.GoogleFormID,
+	)
+	return i, err
+}
+
+const getLeadByPhone = `-- name: GetLeadByPhone :one
+SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, assigned_agent_id, viewed_by_id, viewed_at, created_at, updated_at, deleted_at, source, projected_value_cents, latitude, longitude, organization_id, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype, energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id, energy_label_fetched_at, lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_buurtcode, lead_enrichment_gem_aardgasverbruik, lead_enrichment_huishouden_grootte, lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_confidence, lead_enrichment_fetched_at, lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at, lead_enrichment_postcode4, lead_enrichment_data_year, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_woz_waarde, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen, lead_enrichment_stedelijkheid, public_token, public_token_expires_at, raw_form_data, webhook_source_domain, is_incomplete, gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url, whatsapp_opted_in, google_campaign_id, google_adgroup_id, google_creative_id, google_form_id
+FROM RAC_leads
+WHERE consumer_phone = $1 AND organization_id = $2 AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLeadByPhoneParams struct {
+	ConsumerPhone  string      `json:"consumer_phone"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLeadByPhone(ctx context.Context, arg GetLeadByPhoneParams) (RacLead, error) {
+	row := q.db.QueryRow(ctx, getLeadByPhone, arg.ConsumerPhone, arg.OrganizationID)
+	var i RacLead
+	err := row.Scan(
+		&i.ID,
+		&i.ConsumerFirstName,
+		&i.ConsumerLastName,
+		&i.ConsumerPhone,
+		&i.ConsumerEmail,
+		&i.ConsumerRole,
+		&i.AddressStreet,
+		&i.AddressHouseNumber,
+		&i.AddressZipCode,
+		&i.AddressCity,
+		&i.AssignedAgentID,
+		&i.ViewedByID,
+		&i.ViewedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Source,
+		&i.ProjectedValueCents,
+		&i.Latitude,
+		&i.Longitude,
+		&i.OrganizationID,
+		&i.EnergyClass,
+		&i.EnergyIndex,
+		&i.EnergyBouwjaar,
+		&i.EnergyGebouwtype,
+		&i.EnergyLabelValidUntil,
+		&i.EnergyLabelRegisteredAt,
+		&i.EnergyPrimairFossiel,
+		&i.EnergyBagVerblijfsobjectID,
+		&i.EnergyLabelFetchedAt,
+		&i.LeadEnrichmentSource,
+		&i.LeadEnrichmentPostcode6,
+		&i.LeadEnrichmentBuurtcode,
+		&i.LeadEnrichmentGemAardgasverbruik,
+		&i.LeadEnrichmentHuishoudenGrootte,
+		&i.LeadEnrichmentKoopwoningenPct,
+		&i.LeadEnrichmentBouwjaarVanaf2000Pct,
+		&i.LeadEnrichmentMediaanVermogenX1000,
+		&i.LeadEnrichmentHuishoudensMetKinderenPct,
+		&i.LeadEnrichmentConfidence,
+		&i.LeadEnrichmentFetchedAt,
+		&i.LeadScore,
+		&i.LeadScorePreAi,
+		&i.LeadScoreFactors,
+		&i.LeadScoreVersion,
+		&i.LeadScoreUpdatedAt,
+		&i.LeadEnrichmentPostcode4,
+		&i.LeadEnrichmentDataYear,
+		&i.LeadEnrichmentGemElektriciteitsverbruik,
+		&i.LeadEnrichmentWozWaarde,
+		&i.LeadEnrichmentGemInkomen,
+		&i.LeadEnrichmentPctHoogInkomen,
+		&i.LeadEnrichmentPctLaagInkomen,
+		&i.LeadEnrichmentStedelijkheid,
+		&i.PublicToken,
+		&i.PublicTokenExpiresAt,
+		&i.RawFormData,
+		&i.WebhookSourceDomain,
+		&i.IsIncomplete,
+		&i.Gclid,
+		&i.UtmSource,
+		&i.UtmMedium,
+		&i.UtmCampaign,
+		&i.UtmContent,
+		&i.UtmTerm,
+		&i.AdLandingPage,
+		&i.ReferrerUrl,
+		&i.WhatsappOptedIn,
+		&i.GoogleCampaignID,
+		&i.GoogleAdgroupID,
+		&i.GoogleCreativeID,
+		&i.GoogleFormID,
+	)
+	return i, err
+}
+
+const getLeadByPublicToken = `-- name: GetLeadByPublicToken :one
+SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, assigned_agent_id, viewed_by_id, viewed_at, created_at, updated_at, deleted_at, source, projected_value_cents, latitude, longitude, organization_id, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype, energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id, energy_label_fetched_at, lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_buurtcode, lead_enrichment_gem_aardgasverbruik, lead_enrichment_huishouden_grootte, lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_confidence, lead_enrichment_fetched_at, lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at, lead_enrichment_postcode4, lead_enrichment_data_year, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_woz_waarde, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen, lead_enrichment_stedelijkheid, public_token, public_token_expires_at, raw_form_data, webhook_source_domain, is_incomplete, gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url, whatsapp_opted_in, google_campaign_id, google_adgroup_id, google_creative_id, google_form_id
+FROM RAC_leads
+WHERE public_token = $1
+	AND deleted_at IS NULL
+	AND (public_token_expires_at IS NULL OR public_token_expires_at > now())
+`
+
+func (q *Queries) GetLeadByPublicToken(ctx context.Context, publicToken pgtype.Text) (RacLead, error) {
+	row := q.db.QueryRow(ctx, getLeadByPublicToken, publicToken)
+	var i RacLead
+	err := row.Scan(
+		&i.ID,
+		&i.ConsumerFirstName,
+		&i.ConsumerLastName,
+		&i.ConsumerPhone,
+		&i.ConsumerEmail,
+		&i.ConsumerRole,
+		&i.AddressStreet,
+		&i.AddressHouseNumber,
+		&i.AddressZipCode,
+		&i.AddressCity,
+		&i.AssignedAgentID,
+		&i.ViewedByID,
+		&i.ViewedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Source,
+		&i.ProjectedValueCents,
+		&i.Latitude,
+		&i.Longitude,
+		&i.OrganizationID,
+		&i.EnergyClass,
+		&i.EnergyIndex,
+		&i.EnergyBouwjaar,
+		&i.EnergyGebouwtype,
+		&i.EnergyLabelValidUntil,
+		&i.EnergyLabelRegisteredAt,
+		&i.EnergyPrimairFossiel,
+		&i.EnergyBagVerblijfsobjectID,
+		&i.EnergyLabelFetchedAt,
+		&i.LeadEnrichmentSource,
+		&i.LeadEnrichmentPostcode6,
+		&i.LeadEnrichmentBuurtcode,
+		&i.LeadEnrichmentGemAardgasverbruik,
+		&i.LeadEnrichmentHuishoudenGrootte,
+		&i.LeadEnrichmentKoopwoningenPct,
+		&i.LeadEnrichmentBouwjaarVanaf2000Pct,
+		&i.LeadEnrichmentMediaanVermogenX1000,
+		&i.LeadEnrichmentHuishoudensMetKinderenPct,
+		&i.LeadEnrichmentConfidence,
+		&i.LeadEnrichmentFetchedAt,
+		&i.LeadScore,
+		&i.LeadScorePreAi,
+		&i.LeadScoreFactors,
+		&i.LeadScoreVersion,
+		&i.LeadScoreUpdatedAt,
+		&i.LeadEnrichmentPostcode4,
+		&i.LeadEnrichmentDataYear,
+		&i.LeadEnrichmentGemElektriciteitsverbruik,
+		&i.LeadEnrichmentWozWaarde,
+		&i.LeadEnrichmentGemInkomen,
+		&i.LeadEnrichmentPctHoogInkomen,
+		&i.LeadEnrichmentPctLaagInkomen,
+		&i.LeadEnrichmentStedelijkheid,
+		&i.PublicToken,
+		&i.PublicTokenExpiresAt,
+		&i.RawFormData,
+		&i.WebhookSourceDomain,
+		&i.IsIncomplete,
+		&i.Gclid,
+		&i.UtmSource,
+		&i.UtmMedium,
+		&i.UtmCampaign,
+		&i.UtmContent,
+		&i.UtmTerm,
+		&i.AdLandingPage,
+		&i.ReferrerUrl,
+		&i.WhatsappOptedIn,
+		&i.GoogleCampaignID,
+		&i.GoogleAdgroupID,
+		&i.GoogleCreativeID,
+		&i.GoogleFormID,
+	)
+	return i, err
+}
+
+const getLeadCity = `-- name: GetLeadCity :one
+SELECT address_city
+FROM RAC_leads
+WHERE organization_id = $1
+	AND id = $2
+LIMIT 1
+`
+
+type GetLeadCityParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetLeadCity(ctx context.Context, arg GetLeadCityParams) (string, error) {
+	row := q.db.QueryRow(ctx, getLeadCity, arg.OrganizationID, arg.ID)
+	var address_city string
+	err := row.Scan(&address_city)
+	return address_city, err
+}
+
+const getLeadCoordinates = `-- name: GetLeadCoordinates :one
+SELECT latitude, longitude
+FROM RAC_leads
+WHERE organization_id = $1
+	AND id = $2
+	AND latitude IS NOT NULL
+	AND longitude IS NOT NULL
+LIMIT 1
+`
+
+type GetLeadCoordinatesParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+type GetLeadCoordinatesRow struct {
+	Latitude  pgtype.Float8 `json:"latitude"`
+	Longitude pgtype.Float8 `json:"longitude"`
+}
+
+func (q *Queries) GetLeadCoordinates(ctx context.Context, arg GetLeadCoordinatesParams) (GetLeadCoordinatesRow, error) {
+	row := q.db.QueryRow(ctx, getLeadCoordinates, arg.OrganizationID, arg.ID)
+	var i GetLeadCoordinatesRow
+	err := row.Scan(&i.Latitude, &i.Longitude)
+	return i, err
+}
+
+const getLeadMetricsSummary = `-- name: GetLeadMetricsSummary :one
+SELECT
+	(
+		SELECT COUNT(DISTINCT l.id)
+		FROM RAC_leads l
+		JOIN RAC_lead_services ls ON ls.lead_id = l.id
+		WHERE l.organization_id = $1 AND l.deleted_at IS NULL
+			AND ls.pipeline_stage NOT IN ('Completed', 'Lost')
+			AND ls.status != 'Disqualified'
+	)::int AS active_leads,
+	(
+		SELECT COUNT(*)
+		FROM RAC_quotes q
+		WHERE q.organization_id = $1
+			AND q.status::text IN ('Accepted', 'Quote_Accepted')
+	)::int AS accepted_quotes,
+	(
+		SELECT COUNT(*)
+		FROM RAC_quotes q
+		WHERE q.organization_id = $1
+			AND q.status::text IN ('Sent', 'Quote_Sent')
+	)::int AS sent_quotes,
+	(
+		SELECT COALESCE(SUM(q.total_cents), 0)
+		FROM RAC_quotes q
+		WHERE q.organization_id = $1
+			AND q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted')
+	)::bigint AS quote_pipeline_cents,
+	(
+		SELECT COALESCE(AVG(q.total_cents)::bigint, 0)
+		FROM RAC_quotes q
+		WHERE q.organization_id = $1
+			AND q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted')
+	)::bigint AS avg_quote_value_cents
+`
+
+type GetLeadMetricsSummaryRow struct {
+	ActiveLeads        int32 `json:"active_leads"`
+	AcceptedQuotes     int32 `json:"accepted_quotes"`
+	SentQuotes         int32 `json:"sent_quotes"`
+	QuotePipelineCents int64 `json:"quote_pipeline_cents"`
+	AvgQuoteValueCents int64 `json:"avg_quote_value_cents"`
+}
+
+func (q *Queries) GetLeadMetricsSummary(ctx context.Context, organizationID pgtype.UUID) (GetLeadMetricsSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getLeadMetricsSummary, organizationID)
+	var i GetLeadMetricsSummaryRow
+	err := row.Scan(
+		&i.ActiveLeads,
+		&i.AcceptedQuotes,
+		&i.SentQuotes,
+		&i.QuotePipelineCents,
+		&i.AvgQuoteValueCents,
+	)
+	return i, err
+}
+
+const getLeadServiceByID = `-- name: GetLeadServiceByID :one
+SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
+	ls.customer_preferences, ls.created_at, ls.updated_at
+FROM RAC_lead_services ls
+JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+WHERE ls.id = $1 AND ls.organization_id = $2
+`
+
+type GetLeadServiceByIDParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLeadServiceByIDRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetLeadServiceByID(ctx context.Context, arg GetLeadServiceByIDParams) (GetLeadServiceByIDRow, error) {
+	row := q.db.QueryRow(ctx, getLeadServiceByID, arg.ID, arg.OrganizationID)
+	var i GetLeadServiceByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLeadSummaryByPhoneOrEmail = `-- name: GetLeadSummaryByPhoneOrEmail :one
+SELECT
+	l.id,
+	l.organization_id,
+	l.consumer_first_name || ' ' || l.consumer_last_name AS consumer_name,
+	l.consumer_phone,
+	l.consumer_email,
+	l.address_city,
+	COUNT(ls.id)::int AS service_count,
+	COALESCE((
+		SELECT st.name
+		FROM RAC_lead_services ls2
+		JOIN RAC_service_types st ON st.id = ls2.service_type_id AND st.organization_id = l.organization_id
+		WHERE ls2.lead_id = l.id
+		ORDER BY ls2.created_at DESC
+		LIMIT 1
+	), '') AS last_service_type,
+	COALESCE((
+		SELECT ls2.status
+		FROM RAC_lead_services ls2
+		WHERE ls2.lead_id = l.id
+		ORDER BY ls2.created_at DESC
+		LIMIT 1
+	), '') AS last_status,
+	l.created_at
+FROM RAC_leads l
+LEFT JOIN RAC_lead_services ls ON ls.lead_id = l.id
+WHERE l.deleted_at IS NULL
+	AND l.organization_id = $3
+	AND (($1 != '' AND l.consumer_phone = $1) OR ($2 != '' AND l.consumer_email = $2))
+GROUP BY l.id
+ORDER BY l.created_at DESC
+LIMIT 1
+`
+
+type GetLeadSummaryByPhoneOrEmailParams struct {
+	Column1        interface{} `json:"column_1"`
+	Column2        interface{} `json:"column_2"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetLeadSummaryByPhoneOrEmailRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	ConsumerName    interface{}        `json:"consumer_name"`
+	ConsumerPhone   string             `json:"consumer_phone"`
+	ConsumerEmail   pgtype.Text        `json:"consumer_email"`
+	AddressCity     string             `json:"address_city"`
+	ServiceCount    int32              `json:"service_count"`
+	LastServiceType interface{}        `json:"last_service_type"`
+	LastStatus      interface{}        `json:"last_status"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetLeadSummaryByPhoneOrEmail(ctx context.Context, arg GetLeadSummaryByPhoneOrEmailParams) (GetLeadSummaryByPhoneOrEmailRow, error) {
+	row := q.db.QueryRow(ctx, getLeadSummaryByPhoneOrEmail, arg.Column1, arg.Column2, arg.OrganizationID)
+	var i GetLeadSummaryByPhoneOrEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.ConsumerName,
+		&i.ConsumerPhone,
+		&i.ConsumerEmail,
+		&i.AddressCity,
+		&i.ServiceCount,
+		&i.LastServiceType,
+		&i.LastStatus,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLeadWhatsAppOptIn = `-- name: GetLeadWhatsAppOptIn :one
+SELECT whatsapp_opted_in
+FROM RAC_leads
+WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+`
+
+type GetLeadWhatsAppOptInParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLeadWhatsAppOptIn(ctx context.Context, arg GetLeadWhatsAppOptInParams) (bool, error) {
+	row := q.db.QueryRow(ctx, getLeadWhatsAppOptIn, arg.ID, arg.OrganizationID)
+	var whatsapp_opted_in bool
+	err := row.Scan(&whatsapp_opted_in)
+	return whatsapp_opted_in, err
+}
+
+const getPartnerOfferStatsSince = `-- name: GetPartnerOfferStatsSince :many
+SELECT partner_id,
+	COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected_count,
+	COUNT(*) FILTER (WHERE status = 'accepted')::int AS accepted_count,
+	COUNT(*) FILTER (WHERE status IN ('pending', 'sent'))::int AS open_count
+FROM RAC_partner_offers
+WHERE organization_id = $1
+	AND partner_id = ANY($2::uuid[])
+	AND created_at >= $3
+GROUP BY partner_id
+`
+
+type GetPartnerOfferStatsSinceParams struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Column2        []pgtype.UUID      `json:"column_2"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type GetPartnerOfferStatsSinceRow struct {
+	PartnerID     pgtype.UUID `json:"partner_id"`
+	RejectedCount int32       `json:"rejected_count"`
+	AcceptedCount int32       `json:"accepted_count"`
+	OpenCount     int32       `json:"open_count"`
+}
+
+func (q *Queries) GetPartnerOfferStatsSince(ctx context.Context, arg GetPartnerOfferStatsSinceParams) ([]GetPartnerOfferStatsSinceRow, error) {
+	rows, err := q.db.Query(ctx, getPartnerOfferStatsSince, arg.OrganizationID, arg.Column2, arg.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPartnerOfferStatsSinceRow
+	for rows.Next() {
+		var i GetPartnerOfferStatsSinceRow
+		if err := rows.Scan(
+			&i.PartnerID,
+			&i.RejectedCount,
+			&i.AcceptedCount,
+			&i.OpenCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPhotoAnalysisByID = `-- name: GetPhotoAnalysisByID :one
+SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
+	safety_concerns, additional_info, confidence_level, photo_count,
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	created_at, updated_at
+FROM RAC_lead_photo_analyses
+WHERE id = $1 AND org_id = $2
+`
+
+type GetPhotoAnalysisByIDParams struct {
+	ID    pgtype.UUID `json:"id"`
+	OrgID pgtype.UUID `json:"org_id"`
+}
+
+type GetPhotoAnalysisByIDRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	LeadID                 pgtype.UUID        `json:"lead_id"`
+	ServiceID              pgtype.UUID        `json:"service_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	Summary                string             `json:"summary"`
+	Observations           []byte             `json:"observations"`
+	ScopeAssessment        string             `json:"scope_assessment"`
+	CostIndicators         pgtype.Text        `json:"cost_indicators"`
+	SafetyConcerns         []byte             `json:"safety_concerns"`
+	AdditionalInfo         []byte             `json:"additional_info"`
+	ConfidenceLevel        string             `json:"confidence_level"`
+	PhotoCount             int32              `json:"photo_count"`
+	Measurements           []byte             `json:"measurements"`
+	NeedsOnsiteMeasurement []byte             `json:"needs_onsite_measurement"`
+	Discrepancies          []byte             `json:"discrepancies"`
+	ExtractedText          []byte             `json:"extracted_text"`
+	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetPhotoAnalysisByID(ctx context.Context, arg GetPhotoAnalysisByIDParams) (GetPhotoAnalysisByIDRow, error) {
+	row := q.db.QueryRow(ctx, getPhotoAnalysisByID, arg.ID, arg.OrgID)
+	var i GetPhotoAnalysisByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.OrgID,
+		&i.Summary,
+		&i.Observations,
+		&i.ScopeAssessment,
+		&i.CostIndicators,
+		&i.SafetyConcerns,
+		&i.AdditionalInfo,
+		&i.ConfidenceLevel,
+		&i.PhotoCount,
+		&i.Measurements,
+		&i.NeedsOnsiteMeasurement,
+		&i.Discrepancies,
+		&i.ExtractedText,
+		&i.SuggestedSearchTerms,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getServiceStateAggregates = `-- name: GetServiceStateAggregates :one
+WITH quote_stats AS (
+	SELECT
+		COUNT(*) FILTER (WHERE status = 'Accepted') AS accepted,
+		COUNT(*) FILTER (WHERE status = 'Sent') AS sent,
+		COUNT(*) FILTER (WHERE status = 'Draft') AS draft,
+		COUNT(*) FILTER (WHERE status = 'Rejected') AS rejected,
+		MAX(updated_at) AS latest_at
+	FROM rac_quotes
+		WHERE rac_quotes.lead_service_id = $1 AND rac_quotes.organization_id = $2
+),
+offer_counts AS (
+	SELECT
+		COUNT(*) FILTER (WHERE status = 'accepted') AS accepted,
+		COUNT(*) FILTER (WHERE status IN ('pending', 'sent')) AS pending,
+		MAX(
+			GREATEST(
+				created_at,
+				updated_at,
+				COALESCE(accepted_at, created_at),
+				COALESCE(rejected_at, created_at)
+			)
+		) AS latest_at
+	FROM rac_partner_offers
+		WHERE rac_partner_offers.lead_service_id = $1 AND rac_partner_offers.organization_id = $2
+),
+appt_counts AS (
+	SELECT
+		COUNT(*) FILTER (WHERE status IN ('scheduled', 'requested') AND start_time > NOW()) AS scheduled,
+		COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+		COUNT(*) FILTER (WHERE status IN ('cancelled', 'no_show')) AS cancelled,
+		MAX(updated_at) AS latest_at
+	FROM rac_appointments
+	WHERE lead_service_id = $1 AND organization_id = $2
+),
+report_check AS (
+	SELECT EXISTS(
+		SELECT 1
+		FROM rac_appointment_visit_reports avr
+		JOIN rac_appointments a ON a.id = avr.appointment_id
+		WHERE a.lead_service_id = $1 AND a.organization_id = $2 AND avr.organization_id = $2
+	) AS has_report
+),
+ai_data AS (
+	SELECT recommended_action
+	FROM rac_lead_ai_analysis
+	WHERE lead_service_id = $1 AND organization_id = $2
+	ORDER BY created_at DESC
+	LIMIT 1
+),
+terminal_event AS (
+	SELECT MAX(occurred_at) AS terminal_at
+	FROM rac_lead_service_events
+	WHERE lead_service_id = $1 AND organization_id = $2
+		AND pipeline_stage IN ('Completed', 'Lost')
+)
+SELECT
+	COALESCE(q.accepted, 0),
+	COALESCE(q.sent, 0),
+	COALESCE(q.draft, 0),
+	COALESCE(q.rejected, 0),
+	q.latest_at,
+	COALESCE(o.accepted, 0),
+	COALESCE(o.pending, 0),
+	o.latest_at,
+	COALESCE(ap.scheduled, 0),
+	COALESCE(ap.completed, 0),
+	COALESCE(ap.cancelled, 0),
+	ap.latest_at,
+	COALESCE(rc.has_report, false),
+	a.recommended_action,
+	t.terminal_at
+FROM quote_stats q
+CROSS JOIN offer_counts o
+CROSS JOIN appt_counts ap
+CROSS JOIN report_check rc
+LEFT JOIN ai_data a ON true
+CROSS JOIN terminal_event t
+`
+
+type GetServiceStateAggregatesParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetServiceStateAggregatesRow struct {
+	Accepted          int64       `json:"accepted"`
+	Sent              int64       `json:"sent"`
+	Draft             int64       `json:"draft"`
+	Rejected          int64       `json:"rejected"`
+	LatestAt          interface{} `json:"latest_at"`
+	Accepted_2        int64       `json:"accepted_2"`
+	Pending           int64       `json:"pending"`
+	LatestAt_2        interface{} `json:"latest_at_2"`
+	Scheduled         int64       `json:"scheduled"`
+	Completed         int64       `json:"completed"`
+	Cancelled         int64       `json:"cancelled"`
+	LatestAt_3        interface{} `json:"latest_at_3"`
+	HasReport         bool        `json:"has_report"`
+	RecommendedAction pgtype.Text `json:"recommended_action"`
+	TerminalAt        interface{} `json:"terminal_at"`
+}
+
+func (q *Queries) GetServiceStateAggregates(ctx context.Context, arg GetServiceStateAggregatesParams) (GetServiceStateAggregatesRow, error) {
+	row := q.db.QueryRow(ctx, getServiceStateAggregates, arg.LeadServiceID, arg.OrganizationID)
+	var i GetServiceStateAggregatesRow
+	err := row.Scan(
+		&i.Accepted,
+		&i.Sent,
+		&i.Draft,
+		&i.Rejected,
+		&i.LatestAt,
+		&i.Accepted_2,
+		&i.Pending,
+		&i.LatestAt_2,
+		&i.Scheduled,
+		&i.Completed,
+		&i.Cancelled,
+		&i.LatestAt_3,
+		&i.HasReport,
+		&i.RecommendedAction,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
+const getZipCoordinates = `-- name: GetZipCoordinates :one
+SELECT latitude, longitude
+FROM RAC_leads
+WHERE organization_id = $1
+	AND address_zip_code = $2
+	AND latitude IS NOT NULL
+	AND longitude IS NOT NULL
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetZipCoordinatesParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	AddressZipCode string      `json:"address_zip_code"`
+}
+
+type GetZipCoordinatesRow struct {
+	Latitude  pgtype.Float8 `json:"latitude"`
+	Longitude pgtype.Float8 `json:"longitude"`
+}
+
+func (q *Queries) GetZipCoordinates(ctx context.Context, arg GetZipCoordinatesParams) (GetZipCoordinatesRow, error) {
+	row := q.db.QueryRow(ctx, getZipCoordinates, arg.OrganizationID, arg.AddressZipCode)
+	var i GetZipCoordinatesRow
+	err := row.Scan(&i.Latitude, &i.Longitude)
+	return i, err
+}
+
+const hasLinkedPartners = `-- name: HasLinkedPartners :one
+SELECT EXISTS(
+	SELECT 1
+	FROM RAC_partner_leads
+	WHERE organization_id = $1
+		AND lead_id = $2
+)
+`
+
+type HasLinkedPartnersParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	LeadID         pgtype.UUID `json:"lead_id"`
+}
+
+func (q *Queries) HasLinkedPartners(ctx context.Context, arg HasLinkedPartnersParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasLinkedPartners, arg.OrganizationID, arg.LeadID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const hasNonDraftQuote = `-- name: HasNonDraftQuote :one
+SELECT EXISTS (
+	SELECT 1
+	FROM RAC_quotes
+	WHERE lead_service_id = $1
+		AND organization_id = $2
+		AND status <> 'Draft'
+)
+`
+
+type HasNonDraftQuoteParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) HasNonDraftQuote(ctx context.Context, arg HasNonDraftQuoteParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasNonDraftQuote, arg.LeadServiceID, arg.OrganizationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const insertLeadServiceEvent = `-- name: InsertLeadServiceEvent :exec
+INSERT INTO RAC_lead_service_events (
+	organization_id, lead_id, lead_service_id,
+	event_type, status, pipeline_stage, occurred_at
+)
+SELECT $1, $2, $3, $4, $5, $6, $7
+WHERE NOT EXISTS (
+	SELECT 1 FROM RAC_lead_service_events
+	WHERE lead_service_id = $3 AND event_type = $4
+)
+`
+
+type InsertLeadServiceEventParams struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	LeadServiceID  pgtype.UUID        `json:"lead_service_id"`
+	EventType      string             `json:"event_type"`
+	Status         pgtype.Text        `json:"status"`
+	PipelineStage  pgtype.Text        `json:"pipeline_stage"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+}
+
+func (q *Queries) InsertLeadServiceEvent(ctx context.Context, arg InsertLeadServiceEventParams) error {
+	_, err := q.db.Exec(ctx, insertLeadServiceEvent,
+		arg.OrganizationID,
+		arg.LeadID,
+		arg.LeadServiceID,
+		arg.EventType,
+		arg.Status,
+		arg.PipelineStage,
+		arg.OccurredAt,
+	)
+	return err
+}
+
+const listAIAnalyses = `-- name: ListAIAnalyses :many
+SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
+	lead_quality, recommended_action, missing_information,
+	preferred_contact_channel, suggested_contact_message, summary,
+	composite_confidence, confidence_breakdown, risk_flags, created_at
+FROM RAC_lead_ai_analysis
+WHERE lead_service_id = $1 AND organization_id = $2
+ORDER BY created_at DESC
+`
+
+type ListAIAnalysesParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type ListAIAnalysesRow struct {
+	ID                      pgtype.UUID        `json:"id"`
+	LeadID                  pgtype.UUID        `json:"lead_id"`
+	OrganizationID          pgtype.UUID        `json:"organization_id"`
+	LeadServiceID           pgtype.UUID        `json:"lead_service_id"`
+	UrgencyLevel            string             `json:"urgency_level"`
+	UrgencyReason           pgtype.Text        `json:"urgency_reason"`
+	LeadQuality             string             `json:"lead_quality"`
+	RecommendedAction       string             `json:"recommended_action"`
+	MissingInformation      []byte             `json:"missing_information"`
+	PreferredContactChannel string             `json:"preferred_contact_channel"`
+	SuggestedContactMessage string             `json:"suggested_contact_message"`
+	Summary                 string             `json:"summary"`
+	CompositeConfidence     pgtype.Float8      `json:"composite_confidence"`
+	ConfidenceBreakdown     []byte             `json:"confidence_breakdown"`
+	RiskFlags               []byte             `json:"risk_flags"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListAIAnalyses(ctx context.Context, arg ListAIAnalysesParams) ([]ListAIAnalysesRow, error) {
+	rows, err := q.db.Query(ctx, listAIAnalyses, arg.LeadServiceID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAIAnalysesRow
+	for rows.Next() {
+		var i ListAIAnalysesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.OrganizationID,
+			&i.LeadServiceID,
+			&i.UrgencyLevel,
+			&i.UrgencyReason,
+			&i.LeadQuality,
+			&i.RecommendedAction,
+			&i.MissingInformation,
+			&i.PreferredContactChannel,
+			&i.SuggestedContactMessage,
+			&i.Summary,
+			&i.CompositeConfidence,
+			&i.ConfidenceBreakdown,
+			&i.RiskFlags,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActionItems = `-- name: ListActionItems :many
+SELECT l.id, l.consumer_first_name, l.consumer_last_name, ai.urgency_level, ai.urgency_reason, l.created_at
+FROM RAC_leads l
+LEFT JOIN (
+	SELECT DISTINCT ON (lead_id) lead_id, urgency_level, urgency_reason, created_at
+	FROM RAC_lead_ai_analysis
+	ORDER BY lead_id, created_at DESC
+) ai ON ai.lead_id = l.id
+WHERE l.organization_id = $1
+	AND l.deleted_at IS NULL
+	AND (ai.urgency_level = 'High' OR l.created_at >= now() - ($2::int || ' days')::interval)
+ORDER BY
+	CASE WHEN ai.urgency_level = 'High' THEN 0 ELSE 1 END,
+	l.created_at DESC
+LIMIT $3 OFFSET $4
+`
+
+type ListActionItemsParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        int32       `json:"column_2"`
+	Limit          int32       `json:"limit"`
+	Offset         int32       `json:"offset"`
+}
+
+type ListActionItemsRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	ConsumerFirstName string             `json:"consumer_first_name"`
+	ConsumerLastName  string             `json:"consumer_last_name"`
+	UrgencyLevel      string             `json:"urgency_level"`
+	UrgencyReason     pgtype.Text        `json:"urgency_reason"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListActionItems(ctx context.Context, arg ListActionItemsParams) ([]ListActionItemsRow, error) {
+	rows, err := q.db.Query(ctx, listActionItems,
+		arg.OrganizationID,
+		arg.Column2,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActionItemsRow
+	for rows.Next() {
+		var i ListActionItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConsumerFirstName,
+			&i.ConsumerLastName,
+			&i.UrgencyLevel,
+			&i.UrgencyReason,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveLeadsTrend = `-- name: ListActiveLeadsTrend :many
+WITH weeks AS (
+	SELECT generate_series(
+		date_trunc('week', NOW()) - (($2 - 1) * INTERVAL '1 week'),
+		date_trunc('week', NOW()),
+		INTERVAL '1 week'
+	) AS week_start
+)
+SELECT COALESCE(COUNT(DISTINCT CASE WHEN ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified' THEN l.id END), 0)::int AS active_leads
+FROM weeks w
+LEFT JOIN RAC_leads l
+	ON l.organization_id = $1
+	AND l.deleted_at IS NULL
+	AND l.created_at >= w.week_start
+	AND l.created_at < w.week_start + INTERVAL '1 week'
+LEFT JOIN RAC_lead_services ls ON ls.lead_id = l.id
+GROUP BY w.week_start
+ORDER BY w.week_start
+`
+
+type ListActiveLeadsTrendParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        interface{} `json:"column_2"`
+}
+
+func (q *Queries) ListActiveLeadsTrend(ctx context.Context, arg ListActiveLeadsTrendParams) ([]int32, error) {
+	rows, err := q.db.Query(ctx, listActiveLeadsTrend, arg.OrganizationID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var active_leads int32
+		if err := rows.Scan(&active_leads); err != nil {
+			return nil, err
+		}
+		items = append(items, active_leads)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveServiceTypes = `-- name: ListActiveServiceTypes :many
+SELECT name, description, intake_guidelines, estimation_guidelines
+FROM RAC_service_types
+WHERE organization_id = $1 AND is_active = true
+ORDER BY name ASC
+`
+
+type ListActiveServiceTypesRow struct {
+	Name                 string      `json:"name"`
+	Description          pgtype.Text `json:"description"`
+	IntakeGuidelines     pgtype.Text `json:"intake_guidelines"`
+	EstimationGuidelines pgtype.Text `json:"estimation_guidelines"`
+}
+
+func (q *Queries) ListActiveServiceTypes(ctx context.Context, organizationID pgtype.UUID) ([]ListActiveServiceTypesRow, error) {
+	rows, err := q.db.Query(ctx, listActiveServiceTypes, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveServiceTypesRow
+	for rows.Next() {
+		var i ListActiveServiceTypesRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.Description,
+			&i.IntakeGuidelines,
+			&i.EstimationGuidelines,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAttachmentsByService = `-- name: ListAttachmentsByService :many
+SELECT id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
+FROM RAC_lead_service_attachments
+WHERE lead_service_id = $1 AND organization_id = $2
+ORDER BY created_at DESC
+`
+
+type ListAttachmentsByServiceParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) ListAttachmentsByService(ctx context.Context, arg ListAttachmentsByServiceParams) ([]RacLeadServiceAttachment, error) {
+	rows, err := q.db.Query(ctx, listAttachmentsByService, arg.LeadServiceID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacLeadServiceAttachment
+	for rows.Next() {
+		var i RacLeadServiceAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadServiceID,
+			&i.OrganizationID,
+			&i.FileKey,
+			&i.FileName,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.UploadedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAvgQuoteValueTrend = `-- name: ListAvgQuoteValueTrend :many
+WITH weeks AS (
+	SELECT generate_series(
+		date_trunc('week', NOW()) - (($2 - 1) * INTERVAL '1 week'),
+		date_trunc('week', NOW()),
+		INTERVAL '1 week'
+	) AS week_start
+)
+SELECT COALESCE(AVG(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents END)::bigint, 0)::bigint AS avg_quote_value_cents
+FROM weeks w
+LEFT JOIN RAC_quotes q
+	ON q.organization_id = $1
+	AND q.created_at >= w.week_start
+	AND q.created_at < w.week_start + INTERVAL '1 week'
+GROUP BY w.week_start
+ORDER BY w.week_start
+`
+
+type ListAvgQuoteValueTrendParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        interface{} `json:"column_2"`
+}
+
+func (q *Queries) ListAvgQuoteValueTrend(ctx context.Context, arg ListAvgQuoteValueTrendParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listAvgQuoteValueTrend, arg.OrganizationID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var avg_quote_value_cents int64
+		if err := rows.Scan(&avg_quote_value_cents); err != nil {
+			return nil, err
+		}
+		items = append(items, avg_quote_value_cents)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCommentCountsByEvents = `-- name: ListCommentCountsByEvents :many
+SELECT event_id, COUNT(*)::int
+FROM RAC_feed_comments
+WHERE event_id = ANY($1::text[])
+	AND org_id = $2
+GROUP BY event_id
+`
+
+type ListCommentCountsByEventsParams struct {
+	Column1 []string    `json:"column_1"`
+	OrgID   pgtype.UUID `json:"org_id"`
+}
+
+type ListCommentCountsByEventsRow struct {
+	EventID string `json:"event_id"`
+	Column2 int32  `json:"column_2"`
+}
+
+func (q *Queries) ListCommentCountsByEvents(ctx context.Context, arg ListCommentCountsByEventsParams) ([]ListCommentCountsByEventsRow, error) {
+	rows, err := q.db.Query(ctx, listCommentCountsByEvents, arg.Column1, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCommentCountsByEventsRow
+	for rows.Next() {
+		var i ListCommentCountsByEventsRow
+		if err := rows.Scan(&i.EventID, &i.Column2); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCommentsByEvent = `-- name: ListCommentsByEvent :many
+SELECT c.id, c.event_id, c.event_source, c.user_id, u.email, c.body, c.created_at, c.updated_at
+FROM RAC_feed_comments c
+JOIN RAC_users u ON u.id = c.user_id
+WHERE c.event_id = $1
+	AND c.event_source = $2
+	AND c.org_id = $3
+ORDER BY c.created_at ASC
+`
+
+type ListCommentsByEventParams struct {
+	EventID     string      `json:"event_id"`
+	EventSource string      `json:"event_source"`
+	OrgID       pgtype.UUID `json:"org_id"`
+}
+
+type ListCommentsByEventRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	EventID     string             `json:"event_id"`
+	EventSource string             `json:"event_source"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Email       string             `json:"email"`
+	Body        string             `json:"body"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListCommentsByEvent(ctx context.Context, arg ListCommentsByEventParams) ([]ListCommentsByEventRow, error) {
+	rows, err := q.db.Query(ctx, listCommentsByEvent, arg.EventID, arg.EventSource, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCommentsByEventRow
+	for rows.Next() {
+		var i ListCommentsByEventRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.EventSource,
+			&i.UserID,
+			&i.Email,
+			&i.Body,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFrequentAdHocQuoteItems = `-- name: ListFrequentAdHocQuoteItems :many
+WITH items AS (
+	SELECT
+		LOWER(REGEXP_REPLACE(TRIM(qi.description), '\s+', ' ', 'g')) AS dnorm,
+		qi.description,
+		q.created_at
+	FROM RAC_quote_items qi
+	JOIN RAC_quotes q ON q.id = qi.quote_id
+	WHERE qi.organization_id = $1
+		AND q.organization_id = $1
+		AND q.status != 'Draft'
+		AND qi.catalog_product_id IS NULL
+		AND qi.description IS NOT NULL
+		AND TRIM(qi.description) != ''
+		AND q.created_at >= (NOW() - ($2::int || ' days')::interval)
+		AND (qi.is_optional = false OR qi.is_selected = true)
+)
+SELECT
+	MIN(description) AS representative_description,
+	COUNT(*)::int AS cnt,
+	MAX(created_at) AS last_seen
+FROM items
+GROUP BY dnorm
+HAVING COUNT(*) >= $3
+ORDER BY cnt DESC, last_seen DESC
+LIMIT $4
+`
+
+type ListFrequentAdHocQuoteItemsParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        int32       `json:"column_2"`
+	Column3        interface{} `json:"column_3"`
+	Limit          int32       `json:"limit"`
+}
+
+type ListFrequentAdHocQuoteItemsRow struct {
+	RepresentativeDescription interface{} `json:"representative_description"`
+	Cnt                       int32       `json:"cnt"`
+	LastSeen                  interface{} `json:"last_seen"`
+}
+
+func (q *Queries) ListFrequentAdHocQuoteItems(ctx context.Context, arg ListFrequentAdHocQuoteItemsParams) ([]ListFrequentAdHocQuoteItemsRow, error) {
+	rows, err := q.db.Query(ctx, listFrequentAdHocQuoteItems,
+		arg.OrganizationID,
+		arg.Column2,
+		arg.Column3,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFrequentAdHocQuoteItemsRow
+	for rows.Next() {
+		var i ListFrequentAdHocQuoteItemsRow
+		if err := rows.Scan(&i.RepresentativeDescription, &i.Cnt, &i.LastSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFrequentCatalogSearchMisses = `-- name: ListFrequentCatalogSearchMisses :many
+WITH misses AS (
+	SELECT
+		LOWER(REGEXP_REPLACE(TRIM(query), '\s+', ' ', 'g')) AS qnorm,
+		query,
+		collection,
+		created_at
+	FROM RAC_catalog_search_log
+	WHERE organization_id = $1
+		AND result_count = 0
+		AND created_at >= (NOW() - ($2::int || ' days')::interval)
+)
+SELECT
+	MIN(query) AS representative_query,
+	COUNT(*)::int AS cnt,
+	MAX(created_at) AS last_seen,
+	ARRAY_AGG(DISTINCT collection)::text[] AS collections
+FROM misses
+GROUP BY qnorm
+HAVING COUNT(*) >= $3
+ORDER BY cnt DESC, last_seen DESC
+LIMIT $4
+`
+
+type ListFrequentCatalogSearchMissesParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        int32       `json:"column_2"`
+	Column3        interface{} `json:"column_3"`
+	Limit          int32       `json:"limit"`
+}
+
+type ListFrequentCatalogSearchMissesRow struct {
+	RepresentativeQuery interface{} `json:"representative_query"`
+	Cnt                 int32       `json:"cnt"`
+	LastSeen            interface{} `json:"last_seen"`
+	Collections         []string    `json:"collections"`
+}
+
+func (q *Queries) ListFrequentCatalogSearchMisses(ctx context.Context, arg ListFrequentCatalogSearchMissesParams) ([]ListFrequentCatalogSearchMissesRow, error) {
+	rows, err := q.db.Query(ctx, listFrequentCatalogSearchMisses,
+		arg.OrganizationID,
+		arg.Column2,
+		arg.Column3,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFrequentCatalogSearchMissesRow
+	for rows.Next() {
+		var i ListFrequentCatalogSearchMissesRow
+		if err := rows.Scan(
+			&i.RepresentativeQuery,
+			&i.Cnt,
+			&i.LastSeen,
+			&i.Collections,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHeatmapPoints = `-- name: ListHeatmapPoints :many
+SELECT latitude, longitude
+FROM RAC_leads
+WHERE organization_id = $1
+	AND deleted_at IS NULL
+	AND latitude IS NOT NULL
+	AND longitude IS NOT NULL
+	AND ($2::timestamptz IS NULL OR created_at >= $2)
+	AND ($3::timestamptz IS NULL OR created_at < $3)
+`
+
+type ListHeatmapPointsParams struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Column2        pgtype.Timestamptz `json:"column_2"`
+	Column3        pgtype.Timestamptz `json:"column_3"`
+}
+
+type ListHeatmapPointsRow struct {
+	Latitude  pgtype.Float8 `json:"latitude"`
+	Longitude pgtype.Float8 `json:"longitude"`
+}
+
+func (q *Queries) ListHeatmapPoints(ctx context.Context, arg ListHeatmapPointsParams) ([]ListHeatmapPointsRow, error) {
+	rows, err := q.db.Query(ctx, listHeatmapPoints, arg.OrganizationID, arg.Column2, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHeatmapPointsRow
+	for rows.Next() {
+		var i ListHeatmapPointsRow
+		if err := rows.Scan(&i.Latitude, &i.Longitude); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInvitedPartnerIDs = `-- name: ListInvitedPartnerIDs :many
+SELECT partner_id
+FROM RAC_partner_offers
+WHERE lead_service_id = $1
+	AND status IN ('rejected', 'expired', 'sent', 'pending')
+`
+
+func (q *Queries) ListInvitedPartnerIDs(ctx context.Context, leadServiceID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listInvitedPartnerIDs, leadServiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var partner_id pgtype.UUID
+		if err := rows.Scan(&partner_id); err != nil {
+			return nil, err
+		}
+		items = append(items, partner_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLeadNotes = `-- name: ListLeadNotes :many
+SELECT ln.id, ln.lead_id, ln.organization_id, ln.author_id, u.email, ln.type, ln.body, ln.service_id, ln.created_at, ln.updated_at
+FROM RAC_lead_notes ln
+JOIN RAC_users u ON u.id = ln.author_id
+WHERE ln.lead_id = $1 AND ln.organization_id = $2
+ORDER BY ln.created_at DESC
+`
+
+type ListLeadNotesParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type ListLeadNotesRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	Email          string             `json:"email"`
+	Type           string             `json:"type"`
+	Body           string             `json:"body"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListLeadNotes(ctx context.Context, arg ListLeadNotesParams) ([]ListLeadNotesRow, error) {
+	rows, err := q.db.Query(ctx, listLeadNotes, arg.LeadID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLeadNotesRow
+	for rows.Next() {
+		var i ListLeadNotesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.OrganizationID,
+			&i.AuthorID,
+			&i.Email,
+			&i.Type,
+			&i.Body,
+			&i.ServiceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLeadOrgMembers = `-- name: ListLeadOrgMembers :many
+SELECT
+	u.id,
+	u.email,
+	COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
+FROM RAC_organization_members om
+JOIN RAC_users u ON u.id = om.user_id
+LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
+LEFT JOIN RAC_roles r ON r.id = ur.role_id
+WHERE om.organization_id = $1
+GROUP BY u.id, u.email
+ORDER BY u.email
+`
+
+type ListLeadOrgMembersRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Email string      `json:"email"`
+	Roles interface{} `json:"roles"`
+}
+
+func (q *Queries) ListLeadOrgMembers(ctx context.Context, organizationID pgtype.UUID) ([]ListLeadOrgMembersRow, error) {
+	rows, err := q.db.Query(ctx, listLeadOrgMembers, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLeadOrgMembersRow
+	for rows.Next() {
+		var i ListLeadOrgMembersRow
+		if err := rows.Scan(&i.ID, &i.Email, &i.Roles); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLeadServices = `-- name: ListLeadServices :many
+SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
+	ls.customer_preferences, ls.created_at, ls.updated_at
+FROM RAC_lead_services ls
+JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+WHERE ls.lead_id = $1 AND ls.organization_id = $2
+ORDER BY ls.created_at DESC
+`
+
+type ListLeadServicesParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type ListLeadServicesRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListLeadServices(ctx context.Context, arg ListLeadServicesParams) ([]ListLeadServicesRow, error) {
+	rows, err := q.db.Query(ctx, listLeadServices, arg.LeadID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLeadServicesRow
+	for rows.Next() {
+		var i ListLeadServicesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.OrganizationID,
+			&i.ServiceType,
+			&i.Status,
+			&i.PipelineStage,
+			&i.ConsumerNote,
+			&i.Source,
+			&i.CustomerPreferences,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLeads = `-- name: ListLeads :many
+SELECT id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, assigned_agent_id, viewed_by_id, viewed_at, created_at, updated_at, deleted_at, source, projected_value_cents, latitude, longitude, organization_id, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype, energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id, energy_label_fetched_at, lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_buurtcode, lead_enrichment_gem_aardgasverbruik, lead_enrichment_huishouden_grootte, lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_confidence, lead_enrichment_fetched_at, lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at, lead_enrichment_postcode4, lead_enrichment_data_year, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_woz_waarde, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen, lead_enrichment_stedelijkheid, public_token, public_token_expires_at, raw_form_data, webhook_source_domain, is_incomplete, gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url, whatsapp_opted_in, google_campaign_id, google_adgroup_id, google_creative_id, google_form_id FROM (
+	SELECT DISTINCT l.id, l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email, l.consumer_role, l.address_street, l.address_house_number, l.address_zip_code, l.address_city, l.assigned_agent_id, l.viewed_by_id, l.viewed_at, l.created_at, l.updated_at, l.deleted_at, l.source, l.projected_value_cents, l.latitude, l.longitude, l.organization_id, l.energy_class, l.energy_index, l.energy_bouwjaar, l.energy_gebouwtype, l.energy_label_valid_until, l.energy_label_registered_at, l.energy_primair_fossiel, l.energy_bag_verblijfsobject_id, l.energy_label_fetched_at, l.lead_enrichment_source, l.lead_enrichment_postcode6, l.lead_enrichment_buurtcode, l.lead_enrichment_gem_aardgasverbruik, l.lead_enrichment_huishouden_grootte, l.lead_enrichment_koopwoningen_pct, l.lead_enrichment_bouwjaar_vanaf2000_pct, l.lead_enrichment_mediaan_vermogen_x1000, l.lead_enrichment_huishoudens_met_kinderen_pct, l.lead_enrichment_confidence, l.lead_enrichment_fetched_at, l.lead_score, l.lead_score_pre_ai, l.lead_score_factors, l.lead_score_version, l.lead_score_updated_at, l.lead_enrichment_postcode4, l.lead_enrichment_data_year, l.lead_enrichment_gem_elektriciteitsverbruik, l.lead_enrichment_woz_waarde, l.lead_enrichment_gem_inkomen, l.lead_enrichment_pct_hoog_inkomen, l.lead_enrichment_pct_laag_inkomen, l.lead_enrichment_stedelijkheid, l.public_token, l.public_token_expires_at, l.raw_form_data, l.webhook_source_domain, l.is_incomplete, l.gclid, l.utm_source, l.utm_medium, l.utm_campaign, l.utm_content, l.utm_term, l.ad_landing_page, l.referrer_url, l.whatsapp_opted_in, l.google_campaign_id, l.google_adgroup_id, l.google_creative_id, l.google_form_id
+	FROM RAC_leads l
+	LEFT JOIN LATERAL (
+		SELECT ls.id, ls.status, ls.service_type_id
+		FROM RAC_lead_services ls
+		WHERE ls.lead_id = l.id AND ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified'
+		ORDER BY ls.created_at DESC
+		LIMIT 1
+	) cs ON true
+	LEFT JOIN RAC_service_types st ON st.id = cs.service_type_id AND st.organization_id = l.organization_id
+	WHERE l.organization_id = $1
+		AND l.deleted_at IS NULL
+		AND ($2::text IS NULL OR cs.status = $2::text)
+		AND ($3::text IS NULL OR st.name = $3::text)
+		AND ($4::text IS NULL OR (
+			l.consumer_first_name ILIKE $4::text OR l.consumer_last_name ILIKE $4::text OR l.consumer_phone ILIKE $4::text OR l.consumer_email ILIKE $4::text OR l.address_city ILIKE $4::text
+		))
+		AND ($5::text IS NULL OR l.consumer_first_name ILIKE $5::text)
+		AND ($6::text IS NULL OR l.consumer_last_name ILIKE $6::text)
+		AND ($7::text IS NULL OR l.consumer_phone ILIKE $7::text)
+		AND ($8::text IS NULL OR l.consumer_email ILIKE $8::text)
+		AND ($9::text IS NULL OR l.consumer_role = $9::text)
+		AND ($10::text IS NULL OR l.address_street ILIKE $10::text)
+		AND ($11::text IS NULL OR l.address_house_number ILIKE $11::text)
+		AND ($12::text IS NULL OR l.address_zip_code ILIKE $12::text)
+		AND ($13::text IS NULL OR l.address_city ILIKE $13::text)
+		AND ($14::uuid IS NULL OR l.assigned_agent_id = $14::uuid)
+		AND ($15::timestamptz IS NULL OR l.created_at >= $15::timestamptz)
+		AND ($16::timestamptz IS NULL OR l.created_at < $16::timestamptz)
+) leads
+ORDER BY
+	CASE WHEN $17::text = 'createdAt' AND $18::text = 'asc' THEN leads.created_at END ASC,
+	CASE WHEN $17::text = 'createdAt' AND $18::text = 'desc' THEN leads.created_at END DESC,
+	CASE WHEN $17::text = 'firstName' AND $18::text = 'asc' THEN leads.consumer_first_name END ASC,
+	CASE WHEN $17::text = 'firstName' AND $18::text = 'desc' THEN leads.consumer_first_name END DESC,
+	CASE WHEN $17::text = 'lastName' AND $18::text = 'asc' THEN leads.consumer_last_name END ASC,
+	CASE WHEN $17::text = 'lastName' AND $18::text = 'desc' THEN leads.consumer_last_name END DESC,
+	CASE WHEN $17::text = 'phone' AND $18::text = 'asc' THEN leads.consumer_phone END ASC,
+	CASE WHEN $17::text = 'phone' AND $18::text = 'desc' THEN leads.consumer_phone END DESC,
+	CASE WHEN $17::text = 'email' AND $18::text = 'asc' THEN leads.consumer_email END ASC,
+	CASE WHEN $17::text = 'email' AND $18::text = 'desc' THEN leads.consumer_email END DESC,
+	CASE WHEN $17::text = 'role' AND $18::text = 'asc' THEN leads.consumer_role END ASC,
+	CASE WHEN $17::text = 'role' AND $18::text = 'desc' THEN leads.consumer_role END DESC,
+	CASE WHEN $17::text = 'street' AND $18::text = 'asc' THEN leads.address_street END ASC,
+	CASE WHEN $17::text = 'street' AND $18::text = 'desc' THEN leads.address_street END DESC,
+	CASE WHEN $17::text = 'houseNumber' AND $18::text = 'asc' THEN leads.address_house_number END ASC,
+	CASE WHEN $17::text = 'houseNumber' AND $18::text = 'desc' THEN leads.address_house_number END DESC,
+	CASE WHEN $17::text = 'zipCode' AND $18::text = 'asc' THEN leads.address_zip_code END ASC,
+	CASE WHEN $17::text = 'zipCode' AND $18::text = 'desc' THEN leads.address_zip_code END DESC,
+	CASE WHEN $17::text = 'city' AND $18::text = 'asc' THEN leads.address_city END ASC,
+	CASE WHEN $17::text = 'city' AND $18::text = 'desc' THEN leads.address_city END DESC,
+	CASE WHEN $17::text = 'assignedAgentId' AND $18::text = 'asc' THEN leads.assigned_agent_id END ASC,
+	CASE WHEN $17::text = 'assignedAgentId' AND $18::text = 'desc' THEN leads.assigned_agent_id END DESC,
+	leads.created_at DESC
+LIMIT $20 OFFSET $19
+`
+
+type ListLeadsParams struct {
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	Status          pgtype.Text        `json:"status"`
+	ServiceType     pgtype.Text        `json:"service_type"`
+	Search          pgtype.Text        `json:"search"`
+	FirstName       pgtype.Text        `json:"first_name"`
+	LastName        pgtype.Text        `json:"last_name"`
+	Phone           pgtype.Text        `json:"phone"`
+	Email           pgtype.Text        `json:"email"`
+	Role            pgtype.Text        `json:"role"`
+	Street          pgtype.Text        `json:"street"`
+	HouseNumber     pgtype.Text        `json:"house_number"`
+	ZipCode         pgtype.Text        `json:"zip_code"`
+	City            pgtype.Text        `json:"city"`
+	AssignedAgentID pgtype.UUID        `json:"assigned_agent_id"`
+	CreatedAtFrom   pgtype.Timestamptz `json:"created_at_from"`
+	CreatedAtTo     pgtype.Timestamptz `json:"created_at_to"`
+	SortBy          string             `json:"sort_by"`
+	SortOrder       string             `json:"sort_order"`
+	OffsetCount     int32              `json:"offset_count"`
+	LimitCount      int32              `json:"limit_count"`
+}
+
+func (q *Queries) ListLeads(ctx context.Context, arg ListLeadsParams) ([]RacLead, error) {
+	rows, err := q.db.Query(ctx, listLeads,
+		arg.OrganizationID,
+		arg.Status,
+		arg.ServiceType,
+		arg.Search,
+		arg.FirstName,
+		arg.LastName,
+		arg.Phone,
+		arg.Email,
+		arg.Role,
+		arg.Street,
+		arg.HouseNumber,
+		arg.ZipCode,
+		arg.City,
+		arg.AssignedAgentID,
+		arg.CreatedAtFrom,
+		arg.CreatedAtTo,
+		arg.SortBy,
+		arg.SortOrder,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacLead
+	for rows.Next() {
+		var i RacLead
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConsumerFirstName,
+			&i.ConsumerLastName,
+			&i.ConsumerPhone,
+			&i.ConsumerEmail,
+			&i.ConsumerRole,
+			&i.AddressStreet,
+			&i.AddressHouseNumber,
+			&i.AddressZipCode,
+			&i.AddressCity,
+			&i.AssignedAgentID,
+			&i.ViewedByID,
+			&i.ViewedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Source,
+			&i.ProjectedValueCents,
+			&i.Latitude,
+			&i.Longitude,
+			&i.OrganizationID,
+			&i.EnergyClass,
+			&i.EnergyIndex,
+			&i.EnergyBouwjaar,
+			&i.EnergyGebouwtype,
+			&i.EnergyLabelValidUntil,
+			&i.EnergyLabelRegisteredAt,
+			&i.EnergyPrimairFossiel,
+			&i.EnergyBagVerblijfsobjectID,
+			&i.EnergyLabelFetchedAt,
+			&i.LeadEnrichmentSource,
+			&i.LeadEnrichmentPostcode6,
+			&i.LeadEnrichmentBuurtcode,
+			&i.LeadEnrichmentGemAardgasverbruik,
+			&i.LeadEnrichmentHuishoudenGrootte,
+			&i.LeadEnrichmentKoopwoningenPct,
+			&i.LeadEnrichmentBouwjaarVanaf2000Pct,
+			&i.LeadEnrichmentMediaanVermogenX1000,
+			&i.LeadEnrichmentHuishoudensMetKinderenPct,
+			&i.LeadEnrichmentConfidence,
+			&i.LeadEnrichmentFetchedAt,
+			&i.LeadScore,
+			&i.LeadScorePreAi,
+			&i.LeadScoreFactors,
+			&i.LeadScoreVersion,
+			&i.LeadScoreUpdatedAt,
+			&i.LeadEnrichmentPostcode4,
+			&i.LeadEnrichmentDataYear,
+			&i.LeadEnrichmentGemElektriciteitsverbruik,
+			&i.LeadEnrichmentWozWaarde,
+			&i.LeadEnrichmentGemInkomen,
+			&i.LeadEnrichmentPctHoogInkomen,
+			&i.LeadEnrichmentPctLaagInkomen,
+			&i.LeadEnrichmentStedelijkheid,
+			&i.PublicToken,
+			&i.PublicTokenExpiresAt,
+			&i.RawFormData,
+			&i.WebhookSourceDomain,
+			&i.IsIncomplete,
+			&i.Gclid,
+			&i.UtmSource,
+			&i.UtmMedium,
+			&i.UtmCampaign,
+			&i.UtmContent,
+			&i.UtmTerm,
+			&i.AdLandingPage,
+			&i.ReferrerUrl,
+			&i.WhatsappOptedIn,
+			&i.GoogleCampaignID,
+			&i.GoogleAdgroupID,
+			&i.GoogleCreativeID,
+			&i.GoogleFormID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMentionsByComments = `-- name: ListMentionsByComments :many
+SELECT m.comment_id, m.mentioned_user_id, u.email
+FROM RAC_feed_comment_mentions m
+JOIN RAC_users u ON u.id = m.mentioned_user_id
+WHERE m.comment_id = ANY($1::uuid[])
+ORDER BY m.created_at
+`
+
+type ListMentionsByCommentsRow struct {
+	CommentID       pgtype.UUID `json:"comment_id"`
+	MentionedUserID pgtype.UUID `json:"mentioned_user_id"`
+	Email           string      `json:"email"`
+}
+
+func (q *Queries) ListMentionsByComments(ctx context.Context, dollar_1 []pgtype.UUID) ([]ListMentionsByCommentsRow, error) {
+	rows, err := q.db.Query(ctx, listMentionsByComments, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMentionsByCommentsRow
+	for rows.Next() {
+		var i ListMentionsByCommentsRow
+		if err := rows.Scan(&i.CommentID, &i.MentionedUserID, &i.Email); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNotesByService = `-- name: ListNotesByService :many
+SELECT ln.id, ln.lead_id, ln.organization_id, ln.author_id, u.email, ln.type, ln.body, ln.service_id, ln.created_at, ln.updated_at
+FROM RAC_lead_notes ln
+JOIN RAC_users u ON u.id = ln.author_id
+WHERE ln.lead_id = $1 AND ln.organization_id = $2 AND (ln.service_id = $3 OR ln.service_id IS NULL)
+ORDER BY ln.created_at DESC
+`
+
+type ListNotesByServiceParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceID      pgtype.UUID `json:"service_id"`
+}
+
+type ListNotesByServiceRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	AuthorID       pgtype.UUID        `json:"author_id"`
+	Email          string             `json:"email"`
+	Type           string             `json:"type"`
+	Body           string             `json:"body"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListNotesByService(ctx context.Context, arg ListNotesByServiceParams) ([]ListNotesByServiceRow, error) {
+	rows, err := q.db.Query(ctx, listNotesByService, arg.LeadID, arg.OrganizationID, arg.ServiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNotesByServiceRow
+	for rows.Next() {
+		var i ListNotesByServiceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.OrganizationID,
+			&i.AuthorID,
+			&i.Email,
+			&i.Type,
+			&i.Body,
+			&i.ServiceID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPhotoAnalysesByLead = `-- name: ListPhotoAnalysesByLead :many
+SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
+	safety_concerns, additional_info, confidence_level, photo_count,
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	created_at, updated_at
+FROM RAC_lead_photo_analyses
+WHERE lead_id = $1 AND org_id = $2
+ORDER BY created_at DESC
+`
+
+type ListPhotoAnalysesByLeadParams struct {
+	LeadID pgtype.UUID `json:"lead_id"`
+	OrgID  pgtype.UUID `json:"org_id"`
+}
+
+type ListPhotoAnalysesByLeadRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	LeadID                 pgtype.UUID        `json:"lead_id"`
+	ServiceID              pgtype.UUID        `json:"service_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	Summary                string             `json:"summary"`
+	Observations           []byte             `json:"observations"`
+	ScopeAssessment        string             `json:"scope_assessment"`
+	CostIndicators         pgtype.Text        `json:"cost_indicators"`
+	SafetyConcerns         []byte             `json:"safety_concerns"`
+	AdditionalInfo         []byte             `json:"additional_info"`
+	ConfidenceLevel        string             `json:"confidence_level"`
+	PhotoCount             int32              `json:"photo_count"`
+	Measurements           []byte             `json:"measurements"`
+	NeedsOnsiteMeasurement []byte             `json:"needs_onsite_measurement"`
+	Discrepancies          []byte             `json:"discrepancies"`
+	ExtractedText          []byte             `json:"extracted_text"`
+	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListPhotoAnalysesByLead(ctx context.Context, arg ListPhotoAnalysesByLeadParams) ([]ListPhotoAnalysesByLeadRow, error) {
+	rows, err := q.db.Query(ctx, listPhotoAnalysesByLead, arg.LeadID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPhotoAnalysesByLeadRow
+	for rows.Next() {
+		var i ListPhotoAnalysesByLeadRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.ServiceID,
+			&i.OrgID,
+			&i.Summary,
+			&i.Observations,
+			&i.ScopeAssessment,
+			&i.CostIndicators,
+			&i.SafetyConcerns,
+			&i.AdditionalInfo,
+			&i.ConfidenceLevel,
+			&i.PhotoCount,
+			&i.Measurements,
+			&i.NeedsOnsiteMeasurement,
+			&i.Discrepancies,
+			&i.ExtractedText,
+			&i.SuggestedSearchTerms,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPhotoAnalysesByService = `-- name: ListPhotoAnalysesByService :many
+SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
+	safety_concerns, additional_info, confidence_level, photo_count,
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	created_at, updated_at
+FROM RAC_lead_photo_analyses
+WHERE service_id = $1 AND org_id = $2
+ORDER BY created_at DESC
+`
+
+type ListPhotoAnalysesByServiceParams struct {
+	ServiceID pgtype.UUID `json:"service_id"`
+	OrgID     pgtype.UUID `json:"org_id"`
+}
+
+type ListPhotoAnalysesByServiceRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	LeadID                 pgtype.UUID        `json:"lead_id"`
+	ServiceID              pgtype.UUID        `json:"service_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	Summary                string             `json:"summary"`
+	Observations           []byte             `json:"observations"`
+	ScopeAssessment        string             `json:"scope_assessment"`
+	CostIndicators         pgtype.Text        `json:"cost_indicators"`
+	SafetyConcerns         []byte             `json:"safety_concerns"`
+	AdditionalInfo         []byte             `json:"additional_info"`
+	ConfidenceLevel        string             `json:"confidence_level"`
+	PhotoCount             int32              `json:"photo_count"`
+	Measurements           []byte             `json:"measurements"`
+	NeedsOnsiteMeasurement []byte             `json:"needs_onsite_measurement"`
+	Discrepancies          []byte             `json:"discrepancies"`
+	ExtractedText          []byte             `json:"extracted_text"`
+	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListPhotoAnalysesByService(ctx context.Context, arg ListPhotoAnalysesByServiceParams) ([]ListPhotoAnalysesByServiceRow, error) {
+	rows, err := q.db.Query(ctx, listPhotoAnalysesByService, arg.ServiceID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPhotoAnalysesByServiceRow
+	for rows.Next() {
+		var i ListPhotoAnalysesByServiceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.ServiceID,
+			&i.OrgID,
+			&i.Summary,
+			&i.Observations,
+			&i.ScopeAssessment,
+			&i.CostIndicators,
+			&i.SafetyConcerns,
+			&i.AdditionalInfo,
+			&i.ConfidenceLevel,
+			&i.PhotoCount,
+			&i.Measurements,
+			&i.NeedsOnsiteMeasurement,
+			&i.Discrepancies,
+			&i.ExtractedText,
+			&i.SuggestedSearchTerms,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQuoteOutcomeTrend = `-- name: ListQuoteOutcomeTrend :many
+WITH weeks AS (
+	SELECT generate_series(
+		date_trunc('week', NOW()) - (($2 - 1) * INTERVAL '1 week'),
+		date_trunc('week', NOW()),
+		INTERVAL '1 week'
+	) AS week_start
+)
+SELECT
+	COALESCE(COUNT(*) FILTER (WHERE q.status::text IN ('Accepted', 'Quote_Accepted')), 0)::int AS accepted_quotes,
+	COALESCE(COUNT(*) FILTER (WHERE q.status::text IN ('Sent', 'Quote_Sent')), 0)::int AS sent_quotes
+FROM weeks w
+LEFT JOIN RAC_quotes q
+	ON q.organization_id = $1
+	AND q.created_at >= w.week_start
+	AND q.created_at < w.week_start + INTERVAL '1 week'
+GROUP BY w.week_start
+ORDER BY w.week_start
+`
+
+type ListQuoteOutcomeTrendParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        interface{} `json:"column_2"`
+}
+
+type ListQuoteOutcomeTrendRow struct {
+	AcceptedQuotes int32 `json:"accepted_quotes"`
+	SentQuotes     int32 `json:"sent_quotes"`
+}
+
+func (q *Queries) ListQuoteOutcomeTrend(ctx context.Context, arg ListQuoteOutcomeTrendParams) ([]ListQuoteOutcomeTrendRow, error) {
+	rows, err := q.db.Query(ctx, listQuoteOutcomeTrend, arg.OrganizationID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQuoteOutcomeTrendRow
+	for rows.Next() {
+		var i ListQuoteOutcomeTrendRow
+		if err := rows.Scan(&i.AcceptedQuotes, &i.SentQuotes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQuotePipelineTrend = `-- name: ListQuotePipelineTrend :many
+WITH weeks AS (
+	SELECT generate_series(
+		date_trunc('week', NOW()) - (($2 - 1) * INTERVAL '1 week'),
+		date_trunc('week', NOW()),
+		INTERVAL '1 week'
+	) AS week_start
+)
+SELECT COALESCE(SUM(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents ELSE 0 END), 0)::bigint AS quote_pipeline_cents
+FROM weeks w
+LEFT JOIN RAC_quotes q
+	ON q.organization_id = $1
+	AND q.created_at >= w.week_start
+	AND q.created_at < w.week_start + INTERVAL '1 week'
+GROUP BY w.week_start
+ORDER BY w.week_start
+`
+
+type ListQuotePipelineTrendParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Column2        interface{} `json:"column_2"`
+}
+
+func (q *Queries) ListQuotePipelineTrend(ctx context.Context, arg ListQuotePipelineTrendParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listQuotePipelineTrend, arg.OrganizationID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var quote_pipeline_cents int64
+		if err := rows.Scan(&quote_pipeline_cents); err != nil {
+			return nil, err
+		}
+		items = append(items, quote_pipeline_cents)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReactionsByEvent = `-- name: ListReactionsByEvent :many
+SELECT fr.id, fr.event_id, fr.event_source, fr.reaction_type, fr.user_id, u.email, fr.created_at
+FROM RAC_feed_reactions fr
+JOIN RAC_users u ON u.id = fr.user_id
+WHERE fr.event_id = $1
+	AND fr.event_source = $2
+	AND fr.org_id = $3
+ORDER BY fr.created_at
+`
+
+type ListReactionsByEventParams struct {
+	EventID     string      `json:"event_id"`
+	EventSource string      `json:"event_source"`
+	OrgID       pgtype.UUID `json:"org_id"`
+}
+
+type ListReactionsByEventRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	EventID      string             `json:"event_id"`
+	EventSource  string             `json:"event_source"`
+	ReactionType string             `json:"reaction_type"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Email        string             `json:"email"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListReactionsByEvent(ctx context.Context, arg ListReactionsByEventParams) ([]ListReactionsByEventRow, error) {
+	rows, err := q.db.Query(ctx, listReactionsByEvent, arg.EventID, arg.EventSource, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReactionsByEventRow
+	for rows.Next() {
+		var i ListReactionsByEventRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.EventSource,
+			&i.ReactionType,
+			&i.UserID,
+			&i.Email,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReactionsByEvents = `-- name: ListReactionsByEvents :many
+SELECT fr.id, fr.event_id, fr.event_source, fr.reaction_type, fr.user_id, u.email, fr.created_at
+FROM RAC_feed_reactions fr
+JOIN RAC_users u ON u.id = fr.user_id
+WHERE fr.event_id = ANY($1::text[])
+	AND fr.org_id = $2
+ORDER BY fr.event_id, fr.created_at
+`
+
+type ListReactionsByEventsParams struct {
+	Column1 []string    `json:"column_1"`
+	OrgID   pgtype.UUID `json:"org_id"`
+}
+
+type ListReactionsByEventsRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	EventID      string             `json:"event_id"`
+	EventSource  string             `json:"event_source"`
+	ReactionType string             `json:"reaction_type"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Email        string             `json:"email"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListReactionsByEvents(ctx context.Context, arg ListReactionsByEventsParams) ([]ListReactionsByEventsRow, error) {
+	rows, err := q.db.Query(ctx, listReactionsByEvents, arg.Column1, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReactionsByEventsRow
+	for rows.Next() {
+		var i ListReactionsByEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.EventSource,
+			&i.ReactionType,
+			&i.UserID,
+			&i.Email,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentAIDecisionMemories = `-- name: ListRecentAIDecisionMemories :many
+SELECT id, organization_id, lead_id, lead_service_id, service_type, decision_type, outcome,
+	confidence, context_summary, action_summary, created_at
+FROM RAC_ai_decision_memory
+WHERE organization_id = $1
+	AND ($3::text IS NULL OR service_type = $3::text)
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListRecentAIDecisionMemoriesParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Limit          int32       `json:"limit"`
+	ServiceType    pgtype.Text `json:"service_type"`
+}
+
+func (q *Queries) ListRecentAIDecisionMemories(ctx context.Context, arg ListRecentAIDecisionMemoriesParams) ([]RacAiDecisionMemory, error) {
+	rows, err := q.db.Query(ctx, listRecentAIDecisionMemories, arg.OrganizationID, arg.Limit, arg.ServiceType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacAiDecisionMemory
+	for rows.Next() {
+		var i RacAiDecisionMemory
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.LeadID,
+			&i.LeadServiceID,
+			&i.ServiceType,
+			&i.DecisionType,
+			&i.Outcome,
+			&i.Confidence,
+			&i.ContextSummary,
+			&i.ActionSummary,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentActivity = `-- name: ListRecentActivity :many
+WITH unified AS (
+	SELECT
+		la.id,
+		'leads'::text AS category,
+		la.action AS event_type,
+		la.action AS title,
+		''::text AS description,
+		la.lead_id AS entity_id,
+		COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+		COALESCE(l.consumer_phone, '') AS phone,
+		COALESCE(l.consumer_email, '') AS email,
+		COALESCE(svc.status, '') AS lead_status,
+		COALESCE(svc.name, '') AS service_type,
+		l.lead_score,
+		NULL::text AS address,
+		NULL::double precision AS latitude,
+		NULL::double precision AS longitude,
+		NULL::timestamptz AS scheduled_at,
+		la.created_at,
+		COALESCE(NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''), 'Systeem') AS actor_name,
+		la.meta AS raw_metadata,
+		NULL::uuid AS service_id
+	FROM RAC_lead_activity la
+	LEFT JOIN RAC_leads l ON l.id = la.lead_id AND l.organization_id = la.organization_id
+	LEFT JOIN RAC_users u ON u.id = la.user_id
+	LEFT JOIN LATERAL (
+		SELECT ls.status, st.name
+		FROM RAC_lead_services ls
+		LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+		WHERE ls.lead_id = l.id
+		ORDER BY ls.created_at DESC
+		LIMIT 1
+	) svc ON true
+	WHERE la.organization_id = $1
+		AND la.action != 'lead_viewed'
+
+	UNION ALL
+
+	SELECT
+		qa.id,
+		'quotes'::text AS category,
+		qa.event_type,
+		qa.message AS title,
+		''::text AS description,
+		qa.quote_id AS entity_id,
+		COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+		COALESCE(l.consumer_phone, '') AS phone,
+		COALESCE(l.consumer_email, '') AS email,
+		COALESCE(ls.status, '') AS lead_status,
+		COALESCE(st.name, '') AS service_type,
+		l.lead_score,
+		NULL::text AS address,
+		NULL::double precision AS latitude,
+		NULL::double precision AS longitude,
+		NULL::timestamptz AS scheduled_at,
+		qa.created_at,
+		'Systeem'::text AS actor_name,
+		qa.metadata AS raw_metadata,
+		NULL::uuid AS service_id
+	FROM RAC_quote_activity qa
+	LEFT JOIN RAC_quotes q ON q.id = qa.quote_id
+	LEFT JOIN RAC_lead_services ls ON ls.id = q.lead_service_id
+	LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = qa.organization_id
+	LEFT JOIN RAC_leads l ON l.id = ls.lead_id AND l.organization_id = qa.organization_id
+	WHERE qa.organization_id = $1
+
+	UNION ALL
+
+	SELECT
+		a.id,
+		'appointments'::text AS category,
+		CASE
+			WHEN a.created_at = a.updated_at THEN 'appointment_created'::text
+			ELSE 'appointment_updated'::text
+		END AS event_type,
+		a.title,
+		COALESCE(a.description, '') AS description,
+		a.id AS entity_id,
+		COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+		COALESCE(l.consumer_phone, '') AS phone,
+		COALESCE(l.consumer_email, '') AS email,
+		COALESCE(als.status, svc.status, '') AS lead_status,
+		COALESCE(ast.name, svc.name, '') AS service_type,
+		l.lead_score,
+		COALESCE(
+			NULLIF(a.location, ''),
+			concat_ws(', ',
+				concat_ws(' ', l.address_street, l.address_house_number),
+				concat_ws(' ', l.address_zip_code, l.address_city)
+			)
+		) AS address,
+		l.latitude,
+		l.longitude,
+		a.start_time AS scheduled_at,
+		a.updated_at AS created_at,
+		'Systeem'::text AS actor_name,
+		NULL::jsonb AS raw_metadata,
+		NULL::uuid AS service_id
+	FROM RAC_appointments a
+	LEFT JOIN RAC_leads l ON l.id = a.lead_id AND l.organization_id = a.organization_id
+	LEFT JOIN RAC_lead_services als ON als.id = a.lead_service_id
+	LEFT JOIN RAC_service_types ast ON ast.id = als.service_type_id AND ast.organization_id = a.organization_id
+	LEFT JOIN LATERAL (
+		SELECT ls.status, st.name
+		FROM RAC_lead_services ls
+		LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+		WHERE ls.lead_id = l.id
+		ORDER BY ls.created_at DESC
+		LIMIT 1
+	) svc ON true
+	WHERE a.organization_id = $1
+
+	UNION ALL
+
+	SELECT
+		te.id,
+		'ai'::text AS category,
+		te.event_type,
+		te.title,
+		COALESCE(te.summary, '') AS description,
+		te.lead_id AS entity_id,
+		COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+		COALESCE(l.consumer_phone, '') AS phone,
+		COALESCE(l.consumer_email, '') AS email,
+		COALESCE(svc.status, '') AS lead_status,
+		COALESCE(svc.name, '') AS service_type,
+		l.lead_score,
+		NULL::text AS address,
+		NULL::double precision AS latitude,
+		NULL::double precision AS longitude,
+		NULL::timestamptz AS scheduled_at,
+		te.created_at,
+		COALESCE(te.actor_name, 'AI') AS actor_name,
+		te.metadata AS raw_metadata,
+		te.service_id
+	FROM lead_timeline_events te
+	LEFT JOIN RAC_leads l ON l.id = te.lead_id AND l.organization_id = te.organization_id
+	LEFT JOIN LATERAL (
+		SELECT ls.status, st.name
+		FROM RAC_lead_services ls
+		LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+		WHERE ls.lead_id = l.id
+		ORDER BY ls.created_at DESC
+		LIMIT 1
+	) svc ON true
+	WHERE te.organization_id = $1
+		AND te.event_type IN ('ai', 'photo_analysis_completed')
+),
+with_gap AS (
+	SELECT id, category, event_type, title, description, entity_id, lead_name, phone, email, lead_status, service_type, lead_score, address, latitude, longitude, scheduled_at, created_at, actor_name, raw_metadata, service_id,
+		CASE
+			WHEN created_at - LAG(created_at) OVER (
+				PARTITION BY entity_id, event_type, category
+				ORDER BY created_at
+			) <= interval '15 minutes' THEN 0
+			ELSE 1
+		END AS is_new_cluster
+	FROM unified
+),
+clustered AS (
+	SELECT id, category, event_type, title, description, entity_id, lead_name, phone, email, lead_status, service_type, lead_score, address, latitude, longitude, scheduled_at, created_at, actor_name, raw_metadata, service_id, is_new_cluster,
+		SUM(is_new_cluster) OVER (
+			PARTITION BY entity_id, event_type, category
+			ORDER BY created_at
+		) AS cluster_id
+	FROM with_gap
+),
+with_count AS (
+	SELECT id, category, event_type, title, description, entity_id, lead_name, phone, email, lead_status, service_type, lead_score, address, latitude, longitude, scheduled_at, created_at, actor_name, raw_metadata, service_id, is_new_cluster, cluster_id,
+		COUNT(*) OVER (
+			PARTITION BY entity_id, event_type, category, cluster_id
+		)::int AS group_count
+	FROM clustered
+),
+deduped AS (
+	SELECT DISTINCT ON (entity_id, event_type, category, cluster_id)
+		id, category, event_type, title, description, entity_id,
+		service_id,
+		lead_name, phone, email, lead_status, service_type, lead_score,
+		COALESCE(address, '') AS address, latitude, longitude,
+		scheduled_at, created_at, 0::int AS priority,
+		group_count, COALESCE(actor_name, '') AS actor_name, raw_metadata
+	FROM with_count
+	ORDER BY entity_id, event_type, category, cluster_id, created_at DESC
+)
+SELECT id, category, event_type, title, description, entity_id, service_id, lead_name, phone, email, lead_status, service_type, lead_score, address, latitude, longitude, scheduled_at, created_at, priority, group_count, actor_name, raw_metadata FROM deduped
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListRecentActivityParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Limit          int32       `json:"limit"`
+	Offset         int32       `json:"offset"`
+}
+
+type ListRecentActivityRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	Category    string             `json:"category"`
+	EventType   string             `json:"event_type"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	EntityID    pgtype.UUID        `json:"entity_id"`
+	ServiceID   pgtype.UUID        `json:"service_id"`
+	LeadName    interface{}        `json:"lead_name"`
+	Phone       string             `json:"phone"`
+	Email       string             `json:"email"`
+	LeadStatus  string             `json:"lead_status"`
+	ServiceType string             `json:"service_type"`
+	LeadScore   pgtype.Int4        `json:"lead_score"`
+	Address     string             `json:"address"`
+	Latitude    pgtype.Float8      `json:"latitude"`
+	Longitude   pgtype.Float8      `json:"longitude"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Priority    int32              `json:"priority"`
+	GroupCount  int32              `json:"group_count"`
+	ActorName   interface{}        `json:"actor_name"`
+	RawMetadata []byte             `json:"raw_metadata"`
+}
+
+func (q *Queries) ListRecentActivity(ctx context.Context, arg ListRecentActivityParams) ([]ListRecentActivityRow, error) {
+	rows, err := q.db.Query(ctx, listRecentActivity, arg.OrganizationID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecentActivityRow
+	for rows.Next() {
+		var i ListRecentActivityRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Category,
+			&i.EventType,
+			&i.Title,
+			&i.Description,
+			&i.EntityID,
+			&i.ServiceID,
+			&i.LeadName,
+			&i.Phone,
+			&i.Email,
+			&i.LeadStatus,
+			&i.ServiceType,
+			&i.LeadScore,
+			&i.Address,
+			&i.Latitude,
+			&i.Longitude,
+			&i.ScheduledAt,
+			&i.CreatedAt,
+			&i.Priority,
+			&i.GroupCount,
+			&i.ActorName,
+			&i.RawMetadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentAppliedHumanFeedbackByServiceType = `-- name: ListRecentAppliedHumanFeedbackByServiceType :many
+SELECT hf.id, hf.organization_id, hf.quote_id, hf.lead_service_id,
+	hf.field_changed, hf.ai_value, hf.human_value, hf.delta_percentage,
+	hf.context_embedding_id, hf.applied_to_memory, hf.created_at
+FROM RAC_human_feedback hf
+JOIN RAC_lead_services ls
+	ON ls.id = hf.lead_service_id
+	AND ls.organization_id = hf.organization_id
+JOIN RAC_service_types st
+	ON st.id = ls.service_type_id
+	AND st.organization_id = ls.organization_id
+WHERE hf.organization_id = $1
+	AND hf.applied_to_memory = true
+	AND st.name = $2
+ORDER BY hf.created_at DESC
+LIMIT $3
+`
+
+type ListRecentAppliedHumanFeedbackByServiceTypeParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Name           string      `json:"name"`
+	Limit          int32       `json:"limit"`
+}
+
+func (q *Queries) ListRecentAppliedHumanFeedbackByServiceType(ctx context.Context, arg ListRecentAppliedHumanFeedbackByServiceTypeParams) ([]RacHumanFeedback, error) {
+	rows, err := q.db.Query(ctx, listRecentAppliedHumanFeedbackByServiceType, arg.OrganizationID, arg.Name, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacHumanFeedback
+	for rows.Next() {
+		var i RacHumanFeedback
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.QuoteID,
+			&i.LeadServiceID,
+			&i.FieldChanged,
+			&i.AiValue,
+			&i.HumanValue,
+			&i.DeltaPercentage,
+			&i.ContextEmbeddingID,
+			&i.AppliedToMemory,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTimelineEvents = `-- name: ListTimelineEvents :many
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+FROM lead_timeline_events
+WHERE lead_id = $1 AND organization_id = $2
+ORDER BY created_at DESC
+`
+
+type ListTimelineEventsParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) ListTimelineEvents(ctx context.Context, arg ListTimelineEventsParams) ([]LeadTimelineEvent, error) {
+	rows, err := q.db.Query(ctx, listTimelineEvents, arg.LeadID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LeadTimelineEvent
+	for rows.Next() {
+		var i LeadTimelineEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.ServiceID,
+			&i.OrganizationID,
+			&i.ActorType,
+			&i.ActorName,
+			&i.EventType,
+			&i.Title,
+			&i.Summary,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTimelineEventsByService = `-- name: ListTimelineEventsByService :many
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+FROM lead_timeline_events
+WHERE lead_id = $1 AND organization_id = $2 AND service_id = $3
+ORDER BY created_at DESC
+`
+
+type ListTimelineEventsByServiceParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceID      pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) ListTimelineEventsByService(ctx context.Context, arg ListTimelineEventsByServiceParams) ([]LeadTimelineEvent, error) {
+	rows, err := q.db.Query(ctx, listTimelineEventsByService, arg.LeadID, arg.OrganizationID, arg.ServiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LeadTimelineEvent
+	for rows.Next() {
+		var i LeadTimelineEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.ServiceID,
+			&i.OrganizationID,
+			&i.ActorType,
+			&i.ActorName,
+			&i.EventType,
+			&i.Title,
+			&i.Summary,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUpcomingAppointments = `-- name: ListUpcomingAppointments :many
+SELECT
+	a.id,
+	'appointments'::text AS category,
+	'appointment_upcoming'::text AS event_type,
+	a.title,
+	COALESCE(a.description, '') AS description,
+	a.id AS entity_id,
+	COALESCE(NULLIF(trim(concat_ws(' ', l.consumer_first_name, l.consumer_last_name)), ''), '') AS lead_name,
+	COALESCE(l.consumer_phone, '') AS phone,
+	COALESCE(l.consumer_email, '') AS email,
+	COALESCE(als.status, svc.status, '') AS lead_status,
+	COALESCE(ast.name, svc.name, '') AS service_type,
+	l.lead_score,
+	COALESCE(
+		NULLIF(a.location, ''),
+		concat_ws(', ',
+			concat_ws(' ', l.address_street, l.address_house_number),
+			concat_ws(' ', l.address_zip_code, l.address_city)
+		)
+	) AS address,
+	l.latitude,
+	l.longitude,
+	a.start_time AS scheduled_at,
+	now() AS created_at,
+	2::int AS priority
+FROM RAC_appointments a
+LEFT JOIN RAC_leads l ON l.id = a.lead_id AND l.organization_id = a.organization_id
+LEFT JOIN RAC_lead_services als ON als.id = a.lead_service_id
+LEFT JOIN RAC_service_types ast ON ast.id = als.service_type_id AND ast.organization_id = a.organization_id
+LEFT JOIN LATERAL (
+	SELECT ls.status, st.name
+	FROM RAC_lead_services ls
+	LEFT JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = l.organization_id
+	WHERE ls.lead_id = l.id
+	ORDER BY ls.created_at DESC
+	LIMIT 1
+) svc ON true
+WHERE a.organization_id = $1
+	AND a.status = 'scheduled'
+	AND a.start_time > now()
+	AND a.start_time <= now() + interval '48 hours'
+ORDER BY a.start_time ASC
+LIMIT $2
+`
+
+type ListUpcomingAppointmentsParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Limit          int32       `json:"limit"`
+}
+
+type ListUpcomingAppointmentsRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	Category    string             `json:"category"`
+	EventType   string             `json:"event_type"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	EntityID    pgtype.UUID        `json:"entity_id"`
+	LeadName    interface{}        `json:"lead_name"`
+	Phone       string             `json:"phone"`
+	Email       string             `json:"email"`
+	LeadStatus  string             `json:"lead_status"`
+	ServiceType string             `json:"service_type"`
+	LeadScore   pgtype.Int4        `json:"lead_score"`
+	Address     interface{}        `json:"address"`
+	Latitude    pgtype.Float8      `json:"latitude"`
+	Longitude   pgtype.Float8      `json:"longitude"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	CreatedAt   interface{}        `json:"created_at"`
+	Priority    int32              `json:"priority"`
+}
+
+func (q *Queries) ListUpcomingAppointments(ctx context.Context, arg ListUpcomingAppointmentsParams) ([]ListUpcomingAppointmentsRow, error) {
+	rows, err := q.db.Query(ctx, listUpcomingAppointments, arg.OrganizationID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUpcomingAppointmentsRow
+	for rows.Next() {
+		var i ListUpcomingAppointmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Category,
+			&i.EventType,
+			&i.Title,
+			&i.Description,
+			&i.EntityID,
+			&i.LeadName,
+			&i.Phone,
+			&i.Email,
+			&i.LeadStatus,
+			&i.ServiceType,
+			&i.LeadScore,
+			&i.Address,
+			&i.Latitude,
+			&i.Longitude,
+			&i.ScheduledAt,
+			&i.CreatedAt,
+			&i.Priority,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markHumanFeedbackApplied = `-- name: MarkHumanFeedbackApplied :one
+UPDATE RAC_human_feedback
+SET applied_to_memory = true,
+	context_embedding_id = COALESCE($3, context_embedding_id)
+WHERE id = $1 AND organization_id = $2
+RETURNING id, organization_id, quote_id, lead_service_id,
+	field_changed, ai_value, human_value, delta_percentage,
+	context_embedding_id, applied_to_memory, created_at
+`
+
+type MarkHumanFeedbackAppliedParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	OrganizationID     pgtype.UUID `json:"organization_id"`
+	ContextEmbeddingID pgtype.Text `json:"context_embedding_id"`
+}
+
+func (q *Queries) MarkHumanFeedbackApplied(ctx context.Context, arg MarkHumanFeedbackAppliedParams) (RacHumanFeedback, error) {
+	row := q.db.QueryRow(ctx, markHumanFeedbackApplied, arg.ID, arg.OrganizationID, arg.ContextEmbeddingID)
+	var i RacHumanFeedback
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.QuoteID,
+		&i.LeadServiceID,
+		&i.FieldChanged,
+		&i.AiValue,
+		&i.HumanValue,
+		&i.DeltaPercentage,
+		&i.ContextEmbeddingID,
+		&i.AppliedToMemory,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const setLeadPublicToken = `-- name: SetLeadPublicToken :exec
+UPDATE RAC_leads
+SET public_token = $3, public_token_expires_at = $4, updated_at = now()
+WHERE id = $1 AND organization_id = $2
+`
+
+type SetLeadPublicTokenParams struct {
+	ID                   pgtype.UUID        `json:"id"`
+	OrganizationID       pgtype.UUID        `json:"organization_id"`
+	PublicToken          pgtype.Text        `json:"public_token"`
+	PublicTokenExpiresAt pgtype.Timestamptz `json:"public_token_expires_at"`
+}
+
+func (q *Queries) SetLeadPublicToken(ctx context.Context, arg SetLeadPublicTokenParams) error {
+	_, err := q.db.Exec(ctx, setLeadPublicToken,
+		arg.ID,
+		arg.OrganizationID,
+		arg.PublicToken,
+		arg.PublicTokenExpiresAt,
+	)
+	return err
+}
+
+const setLeadViewedBy = `-- name: SetLeadViewedBy :exec
+UPDATE RAC_leads
+SET viewed_by_id = $3, viewed_at = now(), updated_at = now()
+WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+`
+
+type SetLeadViewedByParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ViewedByID     pgtype.UUID `json:"viewed_by_id"`
+}
+
+func (q *Queries) SetLeadViewedBy(ctx context.Context, arg SetLeadViewedByParams) error {
+	_, err := q.db.Exec(ctx, setLeadViewedBy, arg.ID, arg.OrganizationID, arg.ViewedByID)
+	return err
+}
+
+const updateEnergyLabel = `-- name: UpdateEnergyLabel :execrows
+UPDATE RAC_leads
+SET energy_class = $3,
+	energy_index = $4,
+	energy_bouwjaar = $5,
+	energy_gebouwtype = $6,
+	energy_label_valid_until = $7,
+	energy_label_registered_at = $8,
+	energy_primair_fossiel = $9,
+	energy_bag_verblijfsobject_id = $10,
+	energy_label_fetched_at = $11,
+	updated_at = $12
+WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+`
+
+type UpdateEnergyLabelParams struct {
+	ID                         pgtype.UUID        `json:"id"`
+	OrganizationID             pgtype.UUID        `json:"organization_id"`
+	EnergyClass                pgtype.Text        `json:"energy_class"`
+	EnergyIndex                pgtype.Float8      `json:"energy_index"`
+	EnergyBouwjaar             pgtype.Int4        `json:"energy_bouwjaar"`
+	EnergyGebouwtype           pgtype.Text        `json:"energy_gebouwtype"`
+	EnergyLabelValidUntil      pgtype.Timestamptz `json:"energy_label_valid_until"`
+	EnergyLabelRegisteredAt    pgtype.Timestamptz `json:"energy_label_registered_at"`
+	EnergyPrimairFossiel       pgtype.Float8      `json:"energy_primair_fossiel"`
+	EnergyBagVerblijfsobjectID pgtype.Text        `json:"energy_bag_verblijfsobject_id"`
+	EnergyLabelFetchedAt       pgtype.Timestamptz `json:"energy_label_fetched_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateEnergyLabel(ctx context.Context, arg UpdateEnergyLabelParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateEnergyLabel,
+		arg.ID,
+		arg.OrganizationID,
+		arg.EnergyClass,
+		arg.EnergyIndex,
+		arg.EnergyBouwjaar,
+		arg.EnergyGebouwtype,
+		arg.EnergyLabelValidUntil,
+		arg.EnergyLabelRegisteredAt,
+		arg.EnergyPrimairFossiel,
+		arg.EnergyBagVerblijfsobjectID,
+		arg.EnergyLabelFetchedAt,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateLead = `-- name: UpdateLead :one
+UPDATE RAC_leads
+SET
+	consumer_first_name = COALESCE($1::text, consumer_first_name),
+	consumer_last_name = COALESCE($2::text, consumer_last_name),
+	consumer_phone = COALESCE($3::text, consumer_phone),
+	consumer_email = COALESCE($4::text, consumer_email),
+	consumer_role = COALESCE($5::text, consumer_role),
+	address_street = COALESCE($6::text, address_street),
+	address_house_number = COALESCE($7::text, address_house_number),
+	address_zip_code = COALESCE($8::text, address_zip_code),
+	address_city = COALESCE($9::text, address_city),
+	latitude = COALESCE($10::double precision, latitude),
+	longitude = COALESCE($11::double precision, longitude),
+	assigned_agent_id = CASE WHEN $12::bool THEN $13::uuid ELSE assigned_agent_id END,
+	whatsapp_opted_in = CASE WHEN $14::bool THEN $15::bool ELSE whatsapp_opted_in END,
+	updated_at = now()
+WHERE id = $16 AND organization_id = $17 AND deleted_at IS NULL
+RETURNING id, consumer_first_name, consumer_last_name, consumer_phone, consumer_email, consumer_role, address_street, address_house_number, address_zip_code, address_city, assigned_agent_id, viewed_by_id, viewed_at, created_at, updated_at, deleted_at, source, projected_value_cents, latitude, longitude, organization_id, energy_class, energy_index, energy_bouwjaar, energy_gebouwtype, energy_label_valid_until, energy_label_registered_at, energy_primair_fossiel, energy_bag_verblijfsobject_id, energy_label_fetched_at, lead_enrichment_source, lead_enrichment_postcode6, lead_enrichment_buurtcode, lead_enrichment_gem_aardgasverbruik, lead_enrichment_huishouden_grootte, lead_enrichment_koopwoningen_pct, lead_enrichment_bouwjaar_vanaf2000_pct, lead_enrichment_mediaan_vermogen_x1000, lead_enrichment_huishoudens_met_kinderen_pct, lead_enrichment_confidence, lead_enrichment_fetched_at, lead_score, lead_score_pre_ai, lead_score_factors, lead_score_version, lead_score_updated_at, lead_enrichment_postcode4, lead_enrichment_data_year, lead_enrichment_gem_elektriciteitsverbruik, lead_enrichment_woz_waarde, lead_enrichment_gem_inkomen, lead_enrichment_pct_hoog_inkomen, lead_enrichment_pct_laag_inkomen, lead_enrichment_stedelijkheid, public_token, public_token_expires_at, raw_form_data, webhook_source_domain, is_incomplete, gclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term, ad_landing_page, referrer_url, whatsapp_opted_in, google_campaign_id, google_adgroup_id, google_creative_id, google_form_id
+`
+
+type UpdateLeadParams struct {
+	ConsumerFirstName  pgtype.Text   `json:"consumer_first_name"`
+	ConsumerLastName   pgtype.Text   `json:"consumer_last_name"`
+	ConsumerPhone      pgtype.Text   `json:"consumer_phone"`
+	ConsumerEmail      pgtype.Text   `json:"consumer_email"`
+	ConsumerRole       pgtype.Text   `json:"consumer_role"`
+	AddressStreet      pgtype.Text   `json:"address_street"`
+	AddressHouseNumber pgtype.Text   `json:"address_house_number"`
+	AddressZipCode     pgtype.Text   `json:"address_zip_code"`
+	AddressCity        pgtype.Text   `json:"address_city"`
+	Latitude           pgtype.Float8 `json:"latitude"`
+	Longitude          pgtype.Float8 `json:"longitude"`
+	AssignedAgentIDSet bool          `json:"assigned_agent_id_set"`
+	AssignedAgentID    pgtype.UUID   `json:"assigned_agent_id"`
+	WhatsappOptedInSet bool          `json:"whatsapp_opted_in_set"`
+	WhatsappOptedIn    bool          `json:"whatsapp_opted_in"`
+	ID                 pgtype.UUID   `json:"id"`
+	OrganizationID     pgtype.UUID   `json:"organization_id"`
+}
+
+func (q *Queries) UpdateLead(ctx context.Context, arg UpdateLeadParams) (RacLead, error) {
+	row := q.db.QueryRow(ctx, updateLead,
+		arg.ConsumerFirstName,
+		arg.ConsumerLastName,
+		arg.ConsumerPhone,
+		arg.ConsumerEmail,
+		arg.ConsumerRole,
+		arg.AddressStreet,
+		arg.AddressHouseNumber,
+		arg.AddressZipCode,
+		arg.AddressCity,
+		arg.Latitude,
+		arg.Longitude,
+		arg.AssignedAgentIDSet,
+		arg.AssignedAgentID,
+		arg.WhatsappOptedInSet,
+		arg.WhatsappOptedIn,
+		arg.ID,
+		arg.OrganizationID,
+	)
+	var i RacLead
+	err := row.Scan(
+		&i.ID,
+		&i.ConsumerFirstName,
+		&i.ConsumerLastName,
+		&i.ConsumerPhone,
+		&i.ConsumerEmail,
+		&i.ConsumerRole,
+		&i.AddressStreet,
+		&i.AddressHouseNumber,
+		&i.AddressZipCode,
+		&i.AddressCity,
+		&i.AssignedAgentID,
+		&i.ViewedByID,
+		&i.ViewedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Source,
+		&i.ProjectedValueCents,
+		&i.Latitude,
+		&i.Longitude,
+		&i.OrganizationID,
+		&i.EnergyClass,
+		&i.EnergyIndex,
+		&i.EnergyBouwjaar,
+		&i.EnergyGebouwtype,
+		&i.EnergyLabelValidUntil,
+		&i.EnergyLabelRegisteredAt,
+		&i.EnergyPrimairFossiel,
+		&i.EnergyBagVerblijfsobjectID,
+		&i.EnergyLabelFetchedAt,
+		&i.LeadEnrichmentSource,
+		&i.LeadEnrichmentPostcode6,
+		&i.LeadEnrichmentBuurtcode,
+		&i.LeadEnrichmentGemAardgasverbruik,
+		&i.LeadEnrichmentHuishoudenGrootte,
+		&i.LeadEnrichmentKoopwoningenPct,
+		&i.LeadEnrichmentBouwjaarVanaf2000Pct,
+		&i.LeadEnrichmentMediaanVermogenX1000,
+		&i.LeadEnrichmentHuishoudensMetKinderenPct,
+		&i.LeadEnrichmentConfidence,
+		&i.LeadEnrichmentFetchedAt,
+		&i.LeadScore,
+		&i.LeadScorePreAi,
+		&i.LeadScoreFactors,
+		&i.LeadScoreVersion,
+		&i.LeadScoreUpdatedAt,
+		&i.LeadEnrichmentPostcode4,
+		&i.LeadEnrichmentDataYear,
+		&i.LeadEnrichmentGemElektriciteitsverbruik,
+		&i.LeadEnrichmentWozWaarde,
+		&i.LeadEnrichmentGemInkomen,
+		&i.LeadEnrichmentPctHoogInkomen,
+		&i.LeadEnrichmentPctLaagInkomen,
+		&i.LeadEnrichmentStedelijkheid,
+		&i.PublicToken,
+		&i.PublicTokenExpiresAt,
+		&i.RawFormData,
+		&i.WebhookSourceDomain,
+		&i.IsIncomplete,
+		&i.Gclid,
+		&i.UtmSource,
+		&i.UtmMedium,
+		&i.UtmCampaign,
+		&i.UtmContent,
+		&i.UtmTerm,
+		&i.AdLandingPage,
+		&i.ReferrerUrl,
+		&i.WhatsappOptedIn,
+		&i.GoogleCampaignID,
+		&i.GoogleAdgroupID,
+		&i.GoogleCreativeID,
+		&i.GoogleFormID,
+	)
+	return i, err
+}
+
+const updateLeadEnrichment = `-- name: UpdateLeadEnrichment :execrows
+UPDATE RAC_leads
+SET lead_enrichment_source = $3,
+	lead_enrichment_postcode6 = $4,
+	lead_enrichment_postcode4 = $5,
+	lead_enrichment_buurtcode = $6,
+	lead_enrichment_data_year = $7,
+	lead_enrichment_gem_aardgasverbruik = $8,
+	lead_enrichment_gem_elektriciteitsverbruik = $9,
+	lead_enrichment_huishouden_grootte = $10,
+	lead_enrichment_koopwoningen_pct = $11,
+	lead_enrichment_bouwjaar_vanaf2000_pct = $12,
+	lead_enrichment_woz_waarde = $13,
+	lead_enrichment_mediaan_vermogen_x1000 = $14,
+	lead_enrichment_gem_inkomen = $15,
+	lead_enrichment_pct_hoog_inkomen = $16,
+	lead_enrichment_pct_laag_inkomen = $17,
+	lead_enrichment_huishoudens_met_kinderen_pct = $18,
+	lead_enrichment_stedelijkheid = $19,
+	lead_enrichment_confidence = $20,
+	lead_enrichment_fetched_at = $21,
+	lead_score = $22,
+	lead_score_pre_ai = $23,
+	lead_score_factors = $24,
+	lead_score_version = $25,
+	lead_score_updated_at = $26,
+	updated_at = $27
+WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+`
+
+type UpdateLeadEnrichmentParams struct {
+	ID                                      pgtype.UUID        `json:"id"`
+	OrganizationID                          pgtype.UUID        `json:"organization_id"`
+	LeadEnrichmentSource                    pgtype.Text        `json:"lead_enrichment_source"`
+	LeadEnrichmentPostcode6                 pgtype.Text        `json:"lead_enrichment_postcode6"`
+	LeadEnrichmentPostcode4                 pgtype.Text        `json:"lead_enrichment_postcode4"`
+	LeadEnrichmentBuurtcode                 pgtype.Text        `json:"lead_enrichment_buurtcode"`
+	LeadEnrichmentDataYear                  pgtype.Int4        `json:"lead_enrichment_data_year"`
+	LeadEnrichmentGemAardgasverbruik        pgtype.Float8      `json:"lead_enrichment_gem_aardgasverbruik"`
+	LeadEnrichmentGemElektriciteitsverbruik pgtype.Float8      `json:"lead_enrichment_gem_elektriciteitsverbruik"`
+	LeadEnrichmentHuishoudenGrootte         pgtype.Float8      `json:"lead_enrichment_huishouden_grootte"`
+	LeadEnrichmentKoopwoningenPct           pgtype.Float8      `json:"lead_enrichment_koopwoningen_pct"`
+	LeadEnrichmentBouwjaarVanaf2000Pct      pgtype.Float8      `json:"lead_enrichment_bouwjaar_vanaf2000_pct"`
+	LeadEnrichmentWozWaarde                 pgtype.Float8      `json:"lead_enrichment_woz_waarde"`
+	LeadEnrichmentMediaanVermogenX1000      pgtype.Float8      `json:"lead_enrichment_mediaan_vermogen_x1000"`
+	LeadEnrichmentGemInkomen                pgtype.Float8      `json:"lead_enrichment_gem_inkomen"`
+	LeadEnrichmentPctHoogInkomen            pgtype.Float8      `json:"lead_enrichment_pct_hoog_inkomen"`
+	LeadEnrichmentPctLaagInkomen            pgtype.Float8      `json:"lead_enrichment_pct_laag_inkomen"`
+	LeadEnrichmentHuishoudensMetKinderenPct pgtype.Float8      `json:"lead_enrichment_huishoudens_met_kinderen_pct"`
+	LeadEnrichmentStedelijkheid             pgtype.Int4        `json:"lead_enrichment_stedelijkheid"`
+	LeadEnrichmentConfidence                pgtype.Float8      `json:"lead_enrichment_confidence"`
+	LeadEnrichmentFetchedAt                 pgtype.Timestamptz `json:"lead_enrichment_fetched_at"`
+	LeadScore                               pgtype.Int4        `json:"lead_score"`
+	LeadScorePreAi                          pgtype.Int4        `json:"lead_score_pre_ai"`
+	LeadScoreFactors                        []byte             `json:"lead_score_factors"`
+	LeadScoreVersion                        pgtype.Text        `json:"lead_score_version"`
+	LeadScoreUpdatedAt                      pgtype.Timestamptz `json:"lead_score_updated_at"`
+	UpdatedAt                               pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateLeadEnrichment(ctx context.Context, arg UpdateLeadEnrichmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateLeadEnrichment,
+		arg.ID,
+		arg.OrganizationID,
+		arg.LeadEnrichmentSource,
+		arg.LeadEnrichmentPostcode6,
+		arg.LeadEnrichmentPostcode4,
+		arg.LeadEnrichmentBuurtcode,
+		arg.LeadEnrichmentDataYear,
+		arg.LeadEnrichmentGemAardgasverbruik,
+		arg.LeadEnrichmentGemElektriciteitsverbruik,
+		arg.LeadEnrichmentHuishoudenGrootte,
+		arg.LeadEnrichmentKoopwoningenPct,
+		arg.LeadEnrichmentBouwjaarVanaf2000Pct,
+		arg.LeadEnrichmentWozWaarde,
+		arg.LeadEnrichmentMediaanVermogenX1000,
+		arg.LeadEnrichmentGemInkomen,
+		arg.LeadEnrichmentPctHoogInkomen,
+		arg.LeadEnrichmentPctLaagInkomen,
+		arg.LeadEnrichmentHuishoudensMetKinderenPct,
+		arg.LeadEnrichmentStedelijkheid,
+		arg.LeadEnrichmentConfidence,
+		arg.LeadEnrichmentFetchedAt,
+		arg.LeadScore,
+		arg.LeadScorePreAi,
+		arg.LeadScoreFactors,
+		arg.LeadScoreVersion,
+		arg.LeadScoreUpdatedAt,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateLeadScore = `-- name: UpdateLeadScore :execrows
+UPDATE RAC_leads
+SET lead_score = $3,
+	lead_score_pre_ai = $4,
+	lead_score_factors = $5,
+	lead_score_version = $6,
+	lead_score_updated_at = $7,
+	updated_at = $8
+WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+`
+
+type UpdateLeadScoreParams struct {
+	ID                 pgtype.UUID        `json:"id"`
+	OrganizationID     pgtype.UUID        `json:"organization_id"`
+	LeadScore          pgtype.Int4        `json:"lead_score"`
+	LeadScorePreAi     pgtype.Int4        `json:"lead_score_pre_ai"`
+	LeadScoreFactors   []byte             `json:"lead_score_factors"`
+	LeadScoreVersion   pgtype.Text        `json:"lead_score_version"`
+	LeadScoreUpdatedAt pgtype.Timestamptz `json:"lead_score_updated_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateLeadScore(ctx context.Context, arg UpdateLeadScoreParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateLeadScore,
+		arg.ID,
+		arg.OrganizationID,
+		arg.LeadScore,
+		arg.LeadScorePreAi,
+		arg.LeadScoreFactors,
+		arg.LeadScoreVersion,
+		arg.LeadScoreUpdatedAt,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateLeadServiceType = `-- name: UpdateLeadServiceType :one
+WITH target AS (
+	SELECT st.id FROM RAC_service_types st
+	WHERE (st.name = $3 OR st.slug = $3)
+		AND st.organization_id = $2
+		AND st.is_active = true
+	LIMIT 1
+), updated AS (
+	UPDATE RAC_lead_services ls
+	SET service_type_id = (SELECT target.id FROM target), updated_at = now()
+	WHERE ls.id = $1 AND ls.organization_id = $2 AND EXISTS (SELECT 1 FROM target)
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+)
+SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
+	u.customer_preferences, u.created_at, u.updated_at
+FROM updated u
+JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+`
+
+type UpdateLeadServiceTypeParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Name           string      `json:"name"`
+}
+
+type UpdateLeadServiceTypeRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateLeadServiceType(ctx context.Context, arg UpdateLeadServiceTypeParams) (UpdateLeadServiceTypeRow, error) {
+	row := q.db.QueryRow(ctx, updateLeadServiceType, arg.ID, arg.OrganizationID, arg.Name)
+	var i UpdateLeadServiceTypeRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updatePipelineStage = `-- name: UpdatePipelineStage :one
+WITH updated AS (
+	UPDATE RAC_lead_services ls SET pipeline_stage = $3, updated_at = now()
+	WHERE ls.id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage IS DISTINCT FROM $3
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+), selected AS (
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences FROM updated
+	UNION ALL
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences
+	FROM RAC_lead_services ls
+	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
+), event AS (
+	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+	SELECT u.organization_id, u.lead_id, u.id, 'pipeline_stage_changed', u.status, u.pipeline_stage, u.updated_at
+	FROM updated u
+)
+SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
+	u.customer_preferences, u.created_at, u.updated_at
+FROM selected u
+JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+`
+
+type UpdatePipelineStageParams struct {
+	ID             pgtype.UUID   `json:"id"`
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+	PipelineStage  PipelineStage `json:"pipeline_stage"`
+}
+
+type UpdatePipelineStageRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdatePipelineStage(ctx context.Context, arg UpdatePipelineStageParams) (UpdatePipelineStageRow, error) {
+	row := q.db.QueryRow(ctx, updatePipelineStage, arg.ID, arg.OrganizationID, arg.PipelineStage)
+	var i UpdatePipelineStageRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateProjectedValueCents = `-- name: UpdateProjectedValueCents :execrows
+UPDATE RAC_leads
+SET projected_value_cents = $3, updated_at = now()
+WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+`
+
+type UpdateProjectedValueCentsParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	OrganizationID      pgtype.UUID `json:"organization_id"`
+	ProjectedValueCents int64       `json:"projected_value_cents"`
+}
+
+func (q *Queries) UpdateProjectedValueCents(ctx context.Context, arg UpdateProjectedValueCentsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateProjectedValueCents, arg.ID, arg.OrganizationID, arg.ProjectedValueCents)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateServicePreferences = `-- name: UpdateServicePreferences :exec
+UPDATE RAC_lead_services
+SET customer_preferences = $3, updated_at = now()
+WHERE id = $1 AND organization_id = $2
+`
+
+type UpdateServicePreferencesParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	OrganizationID      pgtype.UUID `json:"organization_id"`
+	CustomerPreferences []byte      `json:"customer_preferences"`
+}
+
+func (q *Queries) UpdateServicePreferences(ctx context.Context, arg UpdateServicePreferencesParams) error {
+	_, err := q.db.Exec(ctx, updateServicePreferences, arg.ID, arg.OrganizationID, arg.CustomerPreferences)
+	return err
+}
+
+const updateServiceStatus = `-- name: UpdateServiceStatus :one
+WITH updated AS (
+	UPDATE RAC_lead_services ls SET status = $3, updated_at = now()
+	WHERE ls.id = $1 AND ls.organization_id = $2 AND ls.status IS DISTINCT FROM $3
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+), selected AS (
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences FROM updated
+	UNION ALL
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences
+	FROM RAC_lead_services ls
+	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
+), event AS (
+	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+	SELECT u.organization_id, u.lead_id, u.id, 'status_changed', u.status, u.pipeline_stage, u.updated_at
+	FROM updated u
+)
+SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
+	u.customer_preferences, u.created_at, u.updated_at
+FROM selected u
+JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+`
+
+type UpdateServiceStatusParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Status         string      `json:"status"`
+}
+
+type UpdateServiceStatusRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateServiceStatus(ctx context.Context, arg UpdateServiceStatusParams) (UpdateServiceStatusRow, error) {
+	row := q.db.QueryRow(ctx, updateServiceStatus, arg.ID, arg.OrganizationID, arg.Status)
+	var i UpdateServiceStatusRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateServiceStatusAndPipelineStage = `-- name: UpdateServiceStatusAndPipelineStage :one
+WITH current AS (
+	SELECT status AS old_status, pipeline_stage AS old_stage
+	FROM RAC_lead_services ls
+	WHERE ls.id = $1 AND ls.organization_id = $2
+), updated AS (
+	UPDATE RAC_lead_services ls
+	SET status = $3, pipeline_stage = $4, updated_at = now()
+	WHERE ls.id = $1 AND ls.organization_id = $2
+		AND (status IS DISTINCT FROM $3 OR pipeline_stage IS DISTINCT FROM $4)
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+), selected AS (
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences FROM updated
+	UNION ALL
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences
+	FROM RAC_lead_services ls
+	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
+), status_event AS (
+	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+	SELECT u.organization_id, u.lead_id, u.id, 'status_changed', u.status, u.pipeline_stage, u.updated_at
+	FROM updated u
+	WHERE (SELECT old_status FROM current) IS DISTINCT FROM $3
+), stage_event AS (
+	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+	SELECT u.organization_id, u.lead_id, u.id, 'pipeline_stage_changed', u.status, u.pipeline_stage, u.updated_at
+	FROM updated u
+	WHERE (SELECT old_stage FROM current) IS DISTINCT FROM $4
+)
+SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
+	u.customer_preferences, u.created_at, u.updated_at
+FROM selected u
+JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
+`
+
+type UpdateServiceStatusAndPipelineStageParams struct {
+	ID             pgtype.UUID   `json:"id"`
+	OrganizationID pgtype.UUID   `json:"organization_id"`
+	Status         string        `json:"status"`
+	PipelineStage  PipelineStage `json:"pipeline_stage"`
+}
+
+type UpdateServiceStatusAndPipelineStageRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	ServiceType         string             `json:"service_type"`
+	Status              string             `json:"status"`
+	PipelineStage       PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote        pgtype.Text        `json:"consumer_note"`
+	Source              pgtype.Text        `json:"source"`
+	CustomerPreferences []byte             `json:"customer_preferences"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateServiceStatusAndPipelineStage(ctx context.Context, arg UpdateServiceStatusAndPipelineStageParams) (UpdateServiceStatusAndPipelineStageRow, error) {
+	row := q.db.QueryRow(ctx, updateServiceStatusAndPipelineStage,
+		arg.ID,
+		arg.OrganizationID,
+		arg.Status,
+		arg.PipelineStage,
+	)
+	var i UpdateServiceStatusAndPipelineStageRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.OrganizationID,
+		&i.ServiceType,
+		&i.Status,
+		&i.PipelineStage,
+		&i.ConsumerNote,
+		&i.Source,
+		&i.CustomerPreferences,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

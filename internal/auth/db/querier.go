@@ -16,19 +16,26 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	CreateUserToken(ctx context.Context, arg CreateUserTokenParams) error
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
+	EnsureUserSettings(ctx context.Context, userID pgtype.UUID) error
 	GetRefreshToken(ctx context.Context, tokenHash string) (GetRefreshTokenRow, error)
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error)
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
+	GetUserSettings(ctx context.Context, userID pgtype.UUID) (string, error)
 	GetUserToken(ctx context.Context, arg GetUserTokenParams) (GetUserTokenRow, error)
-	GetValidRoles(ctx context.Context, dollar_1 []string) ([]string, error)
+	GetValidRoles(ctx context.Context, rolenames []string) ([]string, error)
 	InsertUserRoles(ctx context.Context, arg InsertUserRolesParams) error
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
+	ListUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]ListUsersByOrganizationRow, error)
 	MarkEmailVerified(ctx context.Context, id pgtype.UUID) error
+	MarkOnboardingComplete(ctx context.Context, id pgtype.UUID) error
 	RevokeAllRefreshTokens(ctx context.Context, userID pgtype.UUID) error
 	RevokeRefreshToken(ctx context.Context, tokenHash string) error
+	TouchUserUpdatedAt(ctx context.Context, id pgtype.UUID) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (UpdateUserEmailRow, error)
+	UpdateUserNames(ctx context.Context, arg UpdateUserNamesParams) (UpdateUserNamesRow, error)
+	UpsertUserSettings(ctx context.Context, arg UpsertUserSettingsParams) error
 	UseUserToken(ctx context.Context, arg UseUserTokenParams) error
 }
 

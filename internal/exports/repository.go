@@ -7,8 +7,11 @@ import (
 	"errors"
 	"time"
 
+	exportsdb "portal_final_backend/internal/exports/db"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -56,11 +59,68 @@ type ConversionEvent struct {
 
 // Repository provides data access for export operations.
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *exportsdb.Queries
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, queries: exportsdb.New(pool)}
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return toPgUUID(*id)
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
+func optionalUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id := uuid.UUID(value.Bytes)
+	return &id
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	timestamp := value.Time
+	return &timestamp
+}
+
+func exportCredentialFromModel(model exportsdb.RacGoogleAdsExportCredential) ExportCredential {
+	return ExportCredential{
+		ID:                uuid.UUID(model.ID.Bytes),
+		OrganizationID:    uuid.UUID(model.OrganizationID.Bytes),
+		Username:          model.Username,
+		PasswordHash:      model.PasswordHash,
+		PasswordEncrypted: optionalString(model.PasswordEncrypted),
+		CreatedBy:         optionalUUID(model.CreatedBy),
+		CreatedAt:         model.CreatedAt.Time,
+		UpdatedAt:         model.UpdatedAt.Time,
+		LastUsedAt:        optionalTime(model.LastUsedAt),
+	}
 }
 
 // GenerateCredential generates random username/password for Google Ads HTTPS Basic Auth.
@@ -81,85 +141,80 @@ func GenerateCredential() (username string, password string, err error) {
 
 // UpsertCredential creates or rotates an organization credential.
 func (r *Repository) UpsertCredential(ctx context.Context, orgID uuid.UUID, username string, passwordHash string, passwordEncrypted *string, createdBy *uuid.UUID) (ExportCredential, error) {
-	var credential ExportCredential
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_google_ads_export_credentials (organization_id, username, password_hash, password_encrypted, created_by)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (organization_id)
-		DO UPDATE SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash, password_encrypted = EXCLUDED.password_encrypted, created_by = EXCLUDED.created_by, updated_at = now(), last_used_at = NULL
-		RETURNING id, organization_id, username, password_hash, password_encrypted, created_by, created_at, updated_at, last_used_at
-	`, orgID, username, passwordHash, passwordEncrypted, createdBy).Scan(
-		&credential.ID,
-		&credential.OrganizationID,
-		&credential.Username,
-		&credential.PasswordHash,
-		&credential.PasswordEncrypted,
-		&credential.CreatedBy,
-		&credential.CreatedAt,
-		&credential.UpdatedAt,
-		&credential.LastUsedAt,
-	)
-	return credential, err
+	row, err := r.queries.UpsertGoogleAdsExportCredential(ctx, exportsdb.UpsertGoogleAdsExportCredentialParams{
+		OrganizationID:    toPgUUID(orgID),
+		Username:          username,
+		PasswordHash:      passwordHash,
+		PasswordEncrypted: toPgText(passwordEncrypted),
+		CreatedBy:         toPgUUIDPtr(createdBy),
+	})
+	if err != nil {
+		return ExportCredential{}, err
+	}
+	return exportCredentialFromModel(exportsdb.RacGoogleAdsExportCredential{
+		ID:                row.ID,
+		OrganizationID:    row.OrganizationID,
+		Username:          row.Username,
+		PasswordHash:      row.PasswordHash,
+		CreatedBy:         row.CreatedBy,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+		LastUsedAt:        row.LastUsedAt,
+		PasswordEncrypted: row.PasswordEncrypted,
+	}), nil
 }
 
 // GetCredentialByUsername retrieves Google Ads export credential by username.
 func (r *Repository) GetCredentialByUsername(ctx context.Context, username string) (ExportCredential, error) {
-	var credential ExportCredential
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, username, password_hash, password_encrypted, created_by, created_at, updated_at, last_used_at
-		FROM RAC_google_ads_export_credentials
-		WHERE username = $1
-	`, username).Scan(
-		&credential.ID,
-		&credential.OrganizationID,
-		&credential.Username,
-		&credential.PasswordHash,
-		&credential.PasswordEncrypted,
-		&credential.CreatedBy,
-		&credential.CreatedAt,
-		&credential.UpdatedAt,
-		&credential.LastUsedAt,
-	)
+	row, err := r.queries.GetGoogleAdsExportCredentialByUsername(ctx, username)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ExportCredential{}, ErrCredentialNotFound
 	}
-	return credential, err
+	if err != nil {
+		return ExportCredential{}, err
+	}
+	return exportCredentialFromModel(exportsdb.RacGoogleAdsExportCredential{
+		ID:                row.ID,
+		OrganizationID:    row.OrganizationID,
+		Username:          row.Username,
+		PasswordHash:      row.PasswordHash,
+		CreatedBy:         row.CreatedBy,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+		LastUsedAt:        row.LastUsedAt,
+		PasswordEncrypted: row.PasswordEncrypted,
+	}), nil
 }
 
 // GetCredentialByOrganization retrieves credential metadata for an organization.
 func (r *Repository) GetCredentialByOrganization(ctx context.Context, orgID uuid.UUID) (ExportCredential, error) {
-	var credential ExportCredential
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, username, password_hash, password_encrypted, created_by, created_at, updated_at, last_used_at
-		FROM RAC_google_ads_export_credentials
-		WHERE organization_id = $1
-	`, orgID).Scan(
-		&credential.ID,
-		&credential.OrganizationID,
-		&credential.Username,
-		&credential.PasswordHash,
-		&credential.PasswordEncrypted,
-		&credential.CreatedBy,
-		&credential.CreatedAt,
-		&credential.UpdatedAt,
-		&credential.LastUsedAt,
-	)
+	row, err := r.queries.GetGoogleAdsExportCredentialByOrganization(ctx, toPgUUID(orgID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ExportCredential{}, ErrCredentialNotFound
 	}
-	return credential, err
+	if err != nil {
+		return ExportCredential{}, err
+	}
+	return exportCredentialFromModel(exportsdb.RacGoogleAdsExportCredential{
+		ID:                row.ID,
+		OrganizationID:    row.OrganizationID,
+		Username:          row.Username,
+		PasswordHash:      row.PasswordHash,
+		CreatedBy:         row.CreatedBy,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+		LastUsedAt:        row.LastUsedAt,
+		PasswordEncrypted: row.PasswordEncrypted,
+	}), nil
 }
 
 // DeleteCredential removes an organization's credential.
 func (r *Repository) DeleteCredential(ctx context.Context, orgID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_google_ads_export_credentials
-		WHERE organization_id = $1
-	`, orgID)
+	rowsAffected, err := r.queries.DeleteGoogleAdsExportCredential(ctx, toPgUUID(orgID))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrCredentialNotFound
 	}
 	return nil
@@ -167,60 +222,43 @@ func (r *Repository) DeleteCredential(ctx context.Context, orgID uuid.UUID) erro
 
 // TouchCredential updates the last_used_at timestamp for the credential.
 func (r *Repository) TouchCredential(ctx context.Context, credentialID uuid.UUID) {
-	_, _ = r.pool.Exec(ctx, `
-		UPDATE RAC_google_ads_export_credentials SET last_used_at = now(), updated_at = now()
-		WHERE id = $1
-	`, credentialID)
+	_ = r.queries.TouchGoogleAdsExportCredential(ctx, toPgUUID(credentialID))
 }
 
 // ListConversionEvents returns conversion-relevant lead service events.
 func (r *Repository) ListConversionEvents(ctx context.Context, orgID uuid.UUID, from time.Time, to time.Time, limit int) ([]ConversionEvent, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT e.id, e.organization_id, e.lead_id, e.lead_service_id, e.event_type, e.status, e.pipeline_stage, e.occurred_at,
-			COALESCE(l.gclid, ''), l.consumer_email, COALESCE(l.consumer_phone, ''),
-			COALESCE(l.consumer_first_name, ''), COALESCE(l.consumer_last_name, ''),
-			COALESCE(l.address_street, ''), COALESCE(l.address_house_number, ''),
-			COALESCE(l.address_city, ''), COALESCE(l.address_zip_code, ''),
-			l.projected_value_cents
-		FROM RAC_lead_service_events e
-		JOIN RAC_leads l ON l.id = e.lead_id AND l.organization_id = e.organization_id
-		WHERE e.organization_id = $1
-			AND l.deleted_at IS NULL
-			AND e.occurred_at >= $2 AND e.occurred_at <= $3
-		ORDER BY e.occurred_at ASC
-		LIMIT $4
-	`, orgID, from, to, limit)
+	rows, err := r.queries.ListGoogleAdsConversionEvents(ctx, exportsdb.ListGoogleAdsConversionEventsParams{
+		OrganizationID: toPgUUID(orgID),
+		OccurredAt:     pgtype.Timestamptz{Time: from, Valid: true},
+		OccurredAt_2:   pgtype.Timestamptz{Time: to, Valid: true},
+		Limit:          int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	items := make([]ConversionEvent, 0)
-	for rows.Next() {
-		var item ConversionEvent
-		if err := rows.Scan(
-			&item.EventID,
-			&item.OrganizationID,
-			&item.LeadID,
-			&item.LeadServiceID,
-			&item.EventType,
-			&item.Status,
-			&item.PipelineStage,
-			&item.OccurredAt,
-			&item.GCLID,
-			&item.ConsumerEmail,
-			&item.ConsumerPhone,
-			&item.ConsumerFirstName,
-			&item.ConsumerLastName,
-			&item.AddressStreet,
-			&item.AddressHouseNumber,
-			&item.AddressCity,
-			&item.AddressZipCode,
-			&item.ProjectedValueCents,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
+	items := make([]ConversionEvent, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, ConversionEvent{
+			EventID:             uuid.UUID(row.ID.Bytes),
+			OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
+			LeadID:              uuid.UUID(row.LeadID.Bytes),
+			LeadServiceID:       uuid.UUID(row.LeadServiceID.Bytes),
+			EventType:           row.EventType,
+			Status:              optionalString(row.Status),
+			PipelineStage:       optionalString(row.PipelineStage),
+			OccurredAt:          row.OccurredAt.Time,
+			GCLID:               row.Gclid,
+			ConsumerEmail:       optionalString(row.ConsumerEmail),
+			ConsumerPhone:       row.ConsumerPhone,
+			ConsumerFirstName:   row.ConsumerFirstName,
+			ConsumerLastName:    row.ConsumerLastName,
+			AddressStreet:       row.AddressStreet,
+			AddressHouseNumber:  row.AddressHouseNumber,
+			AddressCity:         row.AddressCity,
+			AddressZipCode:      row.AddressZipCode,
+			ProjectedValueCents: row.ProjectedValueCents,
+		})
 	}
-	return items, rows.Err()
+	return items, nil
 }

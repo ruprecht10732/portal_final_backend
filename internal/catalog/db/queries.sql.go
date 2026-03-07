@@ -11,49 +11,49 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addProductMaterials = `-- name: AddProductMaterials :exec
-
-INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id)
-SELECT $1, $2, material_id
-FROM RAC_catalog_products p
-CROSS JOIN LATERAL unnest($3::uuid[]) AS material_id
-WHERE p.id = $2 AND p.organization_id = $1
-ON CONFLICT DO NOTHING
-`
-
-type AddProductMaterialsParams struct {
-	OrganizationID pgtype.UUID   `json:"organization_id"`
-	ProductID      pgtype.UUID   `json:"product_id"`
-	Column3        []pgtype.UUID `json:"column_3"`
-}
-
-// Materials
-func (q *Queries) AddProductMaterials(ctx context.Context, arg AddProductMaterialsParams) error {
-	_, err := q.db.Exec(ctx, addProductMaterials, arg.OrganizationID, arg.ProductID, arg.Column3)
-	return err
-}
-
 const countProducts = `-- name: CountProducts :one
-SELECT COUNT(*) FROM RAC_catalog_products
+SELECT COUNT(*)
+FROM RAC_catalog_products
 WHERE organization_id = $1
-  AND ($2 = '' OR title ILIKE $2 OR reference ILIKE $2)
-  AND ($3 = '' OR type = $3)
-  AND ($4::uuid IS NULL OR vat_rate_id = $4)
+  AND ($2::text IS NULL OR (title ILIKE $2::text OR reference ILIKE $2::text))
+  AND ($3::text IS NULL OR title ILIKE $3::text)
+  AND ($4::text IS NULL OR reference ILIKE $4::text)
+  AND ($5::text IS NULL OR type = $5::text)
+  AND ($6::bool IS NULL OR is_draft = $6::bool)
+  AND ($7::uuid IS NULL OR vat_rate_id = $7::uuid)
+  AND ($8::timestamptz IS NULL OR created_at >= $8::timestamptz)
+  AND ($9::timestamptz IS NULL OR created_at <= $9::timestamptz)
+  AND ($10::timestamptz IS NULL OR updated_at >= $10::timestamptz)
+  AND ($11::timestamptz IS NULL OR updated_at <= $11::timestamptz)
 `
 
 type CountProductsParams struct {
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	Column2        interface{} `json:"column_2"`
-	Column3        interface{} `json:"column_3"`
-	Column4        pgtype.UUID `json:"column_4"`
+	Organizationid   pgtype.UUID        `json:"organizationid"`
+	Searchpattern    pgtype.Text        `json:"searchpattern"`
+	Titlepattern     pgtype.Text        `json:"titlepattern"`
+	Referencepattern pgtype.Text        `json:"referencepattern"`
+	Producttype      pgtype.Text        `json:"producttype"`
+	Isdraft          pgtype.Bool        `json:"isdraft"`
+	Vatrateid        pgtype.UUID        `json:"vatrateid"`
+	Createdatfrom    pgtype.Timestamptz `json:"createdatfrom"`
+	Createdatto      pgtype.Timestamptz `json:"createdatto"`
+	Updatedatfrom    pgtype.Timestamptz `json:"updatedatfrom"`
+	Updatedatto      pgtype.Timestamptz `json:"updatedatto"`
 }
 
 func (q *Queries) CountProducts(ctx context.Context, arg CountProductsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countProducts,
-		arg.OrganizationID,
-		arg.Column2,
-		arg.Column3,
-		arg.Column4,
+		arg.Organizationid,
+		arg.Searchpattern,
+		arg.Titlepattern,
+		arg.Referencepattern,
+		arg.Producttype,
+		arg.Isdraft,
+		arg.Vatrateid,
+		arg.Createdatfrom,
+		arg.Createdatto,
+		arg.Updatedatfrom,
+		arg.Updatedatto,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -61,18 +61,19 @@ func (q *Queries) CountProducts(ctx context.Context, arg CountProductsParams) (i
 }
 
 const countVatRates = `-- name: CountVatRates :one
-SELECT COUNT(*) FROM RAC_catalog_vat_rates
+SELECT COUNT(*)
+FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
-  AND ($2 = '' OR name ILIKE $2)
+  AND ($2::text IS NULL OR name ILIKE $2::text)
 `
 
 type CountVatRatesParams struct {
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	Column2        interface{} `json:"column_2"`
+	Organizationid pgtype.UUID `json:"organizationid"`
+	Searchpattern  pgtype.Text `json:"searchpattern"`
 }
 
 func (q *Queries) CountVatRates(ctx context.Context, arg CountVatRatesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countVatRates, arg.OrganizationID, arg.Column2)
+	row := q.db.QueryRow(ctx, countVatRates, arg.Organizationid, arg.Searchpattern)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -81,18 +82,29 @@ func (q *Queries) CountVatRates(ctx context.Context, arg CountVatRatesParams) (i
 const createProduct = `-- name: CreateProduct :one
 
 INSERT INTO RAC_catalog_products (
-  organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
+  organization_id, vat_rate_id, is_draft,
+  title, reference, description,
+  price_cents, unit_price_cents, unit_label, labor_time_text,
+  type, period_count, period_unit
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING id, organization_id, vat_rate_id, is_draft,
+  title, reference, description,
+  price_cents, unit_price_cents, unit_label, labor_time_text,
+  type, period_count, period_unit,
+  created_at, updated_at
 `
 
 type CreateProductParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 	VatRateID      pgtype.UUID `json:"vat_rate_id"`
+	IsDraft        bool        `json:"is_draft"`
 	Title          string      `json:"title"`
 	Reference      string      `json:"reference"`
 	Description    pgtype.Text `json:"description"`
 	PriceCents     int64       `json:"price_cents"`
+	UnitPriceCents int64       `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text `json:"unit_label"`
+	LaborTimeText  pgtype.Text `json:"labor_time_text"`
 	Type           string      `json:"type"`
 	PeriodCount    pgtype.Int4 `json:"period_count"`
 	PeriodUnit     pgtype.Text `json:"period_unit"`
@@ -102,10 +114,14 @@ type CreateProductRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	IsDraft        bool               `json:"is_draft"`
 	Title          string             `json:"title"`
 	Reference      string             `json:"reference"`
 	Description    pgtype.Text        `json:"description"`
 	PriceCents     int64              `json:"price_cents"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text        `json:"unit_label"`
+	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
 	Type           string             `json:"type"`
 	PeriodCount    pgtype.Int4        `json:"period_count"`
 	PeriodUnit     pgtype.Text        `json:"period_unit"`
@@ -118,10 +134,14 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (C
 	row := q.db.QueryRow(ctx, createProduct,
 		arg.OrganizationID,
 		arg.VatRateID,
+		arg.IsDraft,
 		arg.Title,
 		arg.Reference,
 		arg.Description,
 		arg.PriceCents,
+		arg.UnitPriceCents,
+		arg.UnitLabel,
+		arg.LaborTimeText,
 		arg.Type,
 		arg.PeriodCount,
 		arg.PeriodUnit,
@@ -131,15 +151,66 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (C
 		&i.ID,
 		&i.OrganizationID,
 		&i.VatRateID,
+		&i.IsDraft,
 		&i.Title,
 		&i.Reference,
 		&i.Description,
 		&i.PriceCents,
+		&i.UnitPriceCents,
+		&i.UnitLabel,
+		&i.LaborTimeText,
 		&i.Type,
 		&i.PeriodCount,
 		&i.PeriodUnit,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createProductAsset = `-- name: CreateProductAsset :one
+
+INSERT INTO RAC_catalog_product_assets (
+  organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url, created_at
+`
+
+type CreateProductAssetParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ProductID      pgtype.UUID `json:"product_id"`
+	AssetType      string      `json:"asset_type"`
+	FileKey        pgtype.Text `json:"file_key"`
+	FileName       pgtype.Text `json:"file_name"`
+	ContentType    pgtype.Text `json:"content_type"`
+	SizeBytes      pgtype.Int8 `json:"size_bytes"`
+	Url            pgtype.Text `json:"url"`
+}
+
+// Product Assets
+func (q *Queries) CreateProductAsset(ctx context.Context, arg CreateProductAssetParams) (RacCatalogProductAsset, error) {
+	row := q.db.QueryRow(ctx, createProductAsset,
+		arg.OrganizationID,
+		arg.ProductID,
+		arg.AssetType,
+		arg.FileKey,
+		arg.FileName,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.Url,
+	)
+	var i RacCatalogProductAsset
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.ProductID,
+		&i.AssetType,
+		&i.FileKey,
+		&i.FileName,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Url,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -174,7 +245,7 @@ func (q *Queries) CreateVatRate(ctx context.Context, arg CreateVatRateParams) (R
 	return i, err
 }
 
-const deleteProduct = `-- name: DeleteProduct :exec
+const deleteProduct = `-- name: DeleteProduct :execrows
 DELETE FROM RAC_catalog_products
 WHERE id = $1 AND organization_id = $2
 `
@@ -184,12 +255,33 @@ type DeleteProductParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 }
 
-func (q *Queries) DeleteProduct(ctx context.Context, arg DeleteProductParams) error {
-	_, err := q.db.Exec(ctx, deleteProduct, arg.ID, arg.OrganizationID)
-	return err
+func (q *Queries) DeleteProduct(ctx context.Context, arg DeleteProductParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProduct, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const deleteVatRate = `-- name: DeleteVatRate :exec
+const deleteProductAsset = `-- name: DeleteProductAsset :execrows
+DELETE FROM RAC_catalog_product_assets
+WHERE id = $1 AND organization_id = $2
+`
+
+type DeleteProductAssetParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) DeleteProductAsset(ctx context.Context, arg DeleteProductAssetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProductAsset, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteVatRate = `-- name: DeleteVatRate :execrows
 DELETE FROM RAC_catalog_vat_rates
 WHERE id = $1 AND organization_id = $2
 `
@@ -199,13 +291,65 @@ type DeleteVatRateParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 }
 
-func (q *Queries) DeleteVatRate(ctx context.Context, arg DeleteVatRateParams) error {
-	_, err := q.db.Exec(ctx, deleteVatRate, arg.ID, arg.OrganizationID)
-	return err
+func (q *Queries) DeleteVatRate(ctx context.Context, arg DeleteVatRateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVatRate, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getNextProductCounter = `-- name: GetNextProductCounter :one
+INSERT INTO RAC_catalog_product_counters (organization_id, last_number)
+VALUES ($1, 1)
+ON CONFLICT (organization_id) DO UPDATE
+SET last_number = RAC_catalog_product_counters.last_number + 1
+RETURNING last_number
+`
+
+func (q *Queries) GetNextProductCounter(ctx context.Context, organizationID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, getNextProductCounter, organizationID)
+	var last_number int32
+	err := row.Scan(&last_number)
+	return last_number, err
+}
+
+const getProductAssetByID = `-- name: GetProductAssetByID :one
+SELECT id, organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url, created_at
+FROM RAC_catalog_product_assets
+WHERE id = $1 AND organization_id = $2
+`
+
+type GetProductAssetByIDParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetProductAssetByID(ctx context.Context, arg GetProductAssetByIDParams) (RacCatalogProductAsset, error) {
+	row := q.db.QueryRow(ctx, getProductAssetByID, arg.ID, arg.OrganizationID)
+	var i RacCatalogProductAsset
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.ProductID,
+		&i.AssetType,
+		&i.FileKey,
+		&i.FileName,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Url,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getProductByID = `-- name: GetProductByID :one
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, is_draft,
+  title, reference, description,
+  price_cents, unit_price_cents, unit_label, labor_time_text,
+  type, period_count, period_unit,
+  created_at, updated_at
+FROM RAC_catalog_products
 WHERE id = $1 AND organization_id = $2
 `
 
@@ -218,10 +362,14 @@ type GetProductByIDRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	IsDraft        bool               `json:"is_draft"`
 	Title          string             `json:"title"`
 	Reference      string             `json:"reference"`
 	Description    pgtype.Text        `json:"description"`
 	PriceCents     int64              `json:"price_cents"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text        `json:"unit_label"`
+	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
 	Type           string             `json:"type"`
 	PeriodCount    pgtype.Int4        `json:"period_count"`
 	PeriodUnit     pgtype.Text        `json:"period_unit"`
@@ -236,10 +384,14 @@ func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) 
 		&i.ID,
 		&i.OrganizationID,
 		&i.VatRateID,
+		&i.IsDraft,
 		&i.Title,
 		&i.Reference,
 		&i.Description,
 		&i.PriceCents,
+		&i.UnitPriceCents,
+		&i.UnitLabel,
+		&i.LaborTimeText,
 		&i.Type,
 		&i.PeriodCount,
 		&i.PeriodUnit,
@@ -250,23 +402,33 @@ func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) 
 }
 
 const getProductsByIDs = `-- name: GetProductsByIDs :many
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
-WHERE organization_id = $1 AND id = ANY($2::uuid[])
+SELECT id, organization_id, vat_rate_id, is_draft,
+  title, reference, description,
+  price_cents, unit_price_cents, unit_label, labor_time_text,
+  type, period_count, period_unit,
+  created_at, updated_at
+FROM RAC_catalog_products
+WHERE organization_id = $1
+  AND id = ANY($2::uuid[])
 `
 
 type GetProductsByIDsParams struct {
-	OrganizationID pgtype.UUID   `json:"organization_id"`
-	Column2        []pgtype.UUID `json:"column_2"`
+	Organizationid pgtype.UUID   `json:"organizationid"`
+	Productids     []pgtype.UUID `json:"productids"`
 }
 
 type GetProductsByIDsRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	IsDraft        bool               `json:"is_draft"`
 	Title          string             `json:"title"`
 	Reference      string             `json:"reference"`
 	Description    pgtype.Text        `json:"description"`
 	PriceCents     int64              `json:"price_cents"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text        `json:"unit_label"`
+	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
 	Type           string             `json:"type"`
 	PeriodCount    pgtype.Int4        `json:"period_count"`
 	PeriodUnit     pgtype.Text        `json:"period_unit"`
@@ -275,7 +437,7 @@ type GetProductsByIDsRow struct {
 }
 
 func (q *Queries) GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]GetProductsByIDsRow, error) {
-	rows, err := q.db.Query(ctx, getProductsByIDs, arg.OrganizationID, arg.Column2)
+	rows, err := q.db.Query(ctx, getProductsByIDs, arg.Organizationid, arg.Productids)
 	if err != nil {
 		return nil, err
 	}
@@ -287,10 +449,14 @@ func (q *Queries) GetProductsByIDs(ctx context.Context, arg GetProductsByIDsPara
 			&i.ID,
 			&i.OrganizationID,
 			&i.VatRateID,
+			&i.IsDraft,
 			&i.Title,
 			&i.Reference,
 			&i.Description,
 			&i.PriceCents,
+			&i.UnitPriceCents,
+			&i.UnitLabel,
+			&i.LaborTimeText,
 			&i.Type,
 			&i.PeriodCount,
 			&i.PeriodUnit,
@@ -308,7 +474,8 @@ func (q *Queries) GetProductsByIDs(ctx context.Context, arg GetProductsByIDsPara
 }
 
 const getVatRateByID = `-- name: GetVatRateByID :one
-SELECT id, organization_id, name, rate_bps, created_at, updated_at FROM RAC_catalog_vat_rates
+SELECT id, organization_id, name, rate_bps, created_at, updated_at
+FROM RAC_catalog_vat_rates
 WHERE id = $1 AND organization_id = $2
 `
 
@@ -363,8 +530,59 @@ func (q *Queries) HasProductsWithVatRate(ctx context.Context, arg HasProductsWit
 	return exists, err
 }
 
+const listProductAssets = `-- name: ListProductAssets :many
+SELECT id, organization_id, product_id, asset_type, file_key, file_name, content_type, size_bytes, url, created_at
+FROM RAC_catalog_product_assets
+WHERE organization_id = $1
+  AND product_id = $2
+  AND ($3::text IS NULL OR asset_type = $3::text)
+ORDER BY created_at DESC
+`
+
+type ListProductAssetsParams struct {
+	Organizationid pgtype.UUID `json:"organizationid"`
+	Productid      pgtype.UUID `json:"productid"`
+	Assettype      pgtype.Text `json:"assettype"`
+}
+
+func (q *Queries) ListProductAssets(ctx context.Context, arg ListProductAssetsParams) ([]RacCatalogProductAsset, error) {
+	rows, err := q.db.Query(ctx, listProductAssets, arg.Organizationid, arg.Productid, arg.Assettype)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacCatalogProductAsset
+	for rows.Next() {
+		var i RacCatalogProductAsset
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.ProductID,
+			&i.AssetType,
+			&i.FileKey,
+			&i.FileName,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Url,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductMaterials = `-- name: ListProductMaterials :many
-SELECT p.id, p.organization_id, p.vat_rate_id, p.title, p.reference, p.description, p.price_cents, p.type, p.period_count, p.period_unit, p.created_at, p.updated_at FROM RAC_catalog_products p
+SELECT p.id, p.organization_id, p.vat_rate_id, p.is_draft,
+  p.title, p.reference, p.description,
+  p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text,
+  p.type, pm.pricing_mode, p.period_count, p.period_unit,
+  p.created_at, p.updated_at
+FROM RAC_catalog_products p
 JOIN RAC_catalog_product_materials pm
   ON pm.material_id = p.id AND pm.organization_id = p.organization_id
 WHERE pm.organization_id = $1 AND pm.product_id = $2
@@ -380,11 +598,16 @@ type ListProductMaterialsRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	IsDraft        bool               `json:"is_draft"`
 	Title          string             `json:"title"`
 	Reference      string             `json:"reference"`
 	Description    pgtype.Text        `json:"description"`
 	PriceCents     int64              `json:"price_cents"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text        `json:"unit_label"`
+	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
 	Type           string             `json:"type"`
+	PricingMode    string             `json:"pricing_mode"`
 	PeriodCount    pgtype.Int4        `json:"period_count"`
 	PeriodUnit     pgtype.Text        `json:"period_unit"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
@@ -404,11 +627,16 @@ func (q *Queries) ListProductMaterials(ctx context.Context, arg ListProductMater
 			&i.ID,
 			&i.OrganizationID,
 			&i.VatRateID,
+			&i.IsDraft,
 			&i.Title,
 			&i.Reference,
 			&i.Description,
 			&i.PriceCents,
+			&i.UnitPriceCents,
+			&i.UnitLabel,
+			&i.LaborTimeText,
 			&i.Type,
+			&i.PricingMode,
 			&i.PeriodCount,
 			&i.PeriodUnit,
 			&i.CreatedAt,
@@ -425,32 +653,74 @@ func (q *Queries) ListProductMaterials(ctx context.Context, arg ListProductMater
 }
 
 const listProducts = `-- name: ListProducts :many
-SELECT id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at FROM RAC_catalog_products
+SELECT id, organization_id, vat_rate_id, is_draft,
+  title, reference, description,
+  price_cents, unit_price_cents, unit_label, labor_time_text,
+  type, period_count, period_unit,
+  created_at, updated_at
+FROM RAC_catalog_products
 WHERE organization_id = $1
-  AND ($2 = '' OR title ILIKE $2 OR reference ILIKE $2)
-  AND ($3 = '' OR type = $3)
-  AND ($4::uuid IS NULL OR vat_rate_id = $4)
-ORDER BY created_at DESC
-LIMIT $5 OFFSET $6
+  AND ($2::text IS NULL OR (title ILIKE $2::text OR reference ILIKE $2::text))
+  AND ($3::text IS NULL OR title ILIKE $3::text)
+  AND ($4::text IS NULL OR reference ILIKE $4::text)
+  AND ($5::text IS NULL OR type = $5::text)
+  AND ($6::bool IS NULL OR is_draft = $6::bool)
+  AND ($7::uuid IS NULL OR vat_rate_id = $7::uuid)
+  AND ($8::timestamptz IS NULL OR created_at >= $8::timestamptz)
+  AND ($9::timestamptz IS NULL OR created_at <= $9::timestamptz)
+  AND ($10::timestamptz IS NULL OR updated_at >= $10::timestamptz)
+  AND ($11::timestamptz IS NULL OR updated_at <= $11::timestamptz)
+ORDER BY
+  CASE WHEN $12 = 'title' AND $13 = 'asc' THEN title END ASC,
+  CASE WHEN $12 = 'title' AND $13 = 'desc' THEN title END DESC,
+  CASE WHEN $12 = 'reference' AND $13 = 'asc' THEN reference END ASC,
+  CASE WHEN $12 = 'reference' AND $13 = 'desc' THEN reference END DESC,
+  CASE WHEN $12 = 'priceCents' AND $13 = 'asc' THEN price_cents END ASC,
+  CASE WHEN $12 = 'priceCents' AND $13 = 'desc' THEN price_cents END DESC,
+  CASE WHEN $12 = 'type' AND $13 = 'asc' THEN type END ASC,
+  CASE WHEN $12 = 'type' AND $13 = 'desc' THEN type END DESC,
+  CASE WHEN $12 = 'isDraft' AND $13 = 'asc' THEN is_draft END ASC,
+  CASE WHEN $12 = 'isDraft' AND $13 = 'desc' THEN is_draft END DESC,
+  CASE WHEN $12 = 'vatRateId' AND $13 = 'asc' THEN vat_rate_id END ASC,
+  CASE WHEN $12 = 'vatRateId' AND $13 = 'desc' THEN vat_rate_id END DESC,
+  CASE WHEN $12 = 'createdAt' AND $13 = 'asc' THEN created_at END ASC,
+  CASE WHEN $12 = 'createdAt' AND $13 = 'desc' THEN created_at END DESC,
+  CASE WHEN $12 = 'updatedAt' AND $13 = 'asc' THEN updated_at END ASC,
+  CASE WHEN $12 = 'updatedAt' AND $13 = 'desc' THEN updated_at END DESC,
+  created_at DESC
+LIMIT $15 OFFSET $14
 `
 
 type ListProductsParams struct {
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	Column2        interface{} `json:"column_2"`
-	Column3        interface{} `json:"column_3"`
-	Column4        pgtype.UUID `json:"column_4"`
-	Limit          int32       `json:"limit"`
-	Offset         int32       `json:"offset"`
+	Organizationid   pgtype.UUID        `json:"organizationid"`
+	Searchpattern    pgtype.Text        `json:"searchpattern"`
+	Titlepattern     pgtype.Text        `json:"titlepattern"`
+	Referencepattern pgtype.Text        `json:"referencepattern"`
+	Producttype      pgtype.Text        `json:"producttype"`
+	Isdraft          pgtype.Bool        `json:"isdraft"`
+	Vatrateid        pgtype.UUID        `json:"vatrateid"`
+	Createdatfrom    pgtype.Timestamptz `json:"createdatfrom"`
+	Createdatto      pgtype.Timestamptz `json:"createdatto"`
+	Updatedatfrom    pgtype.Timestamptz `json:"updatedatfrom"`
+	Updatedatto      pgtype.Timestamptz `json:"updatedatto"`
+	Sortby           interface{}        `json:"sortby"`
+	Sortorder        interface{}        `json:"sortorder"`
+	Offsetcount      int32              `json:"offsetcount"`
+	Limitcount       int32              `json:"limitcount"`
 }
 
 type ListProductsRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	IsDraft        bool               `json:"is_draft"`
 	Title          string             `json:"title"`
 	Reference      string             `json:"reference"`
 	Description    pgtype.Text        `json:"description"`
 	PriceCents     int64              `json:"price_cents"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text        `json:"unit_label"`
+	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
 	Type           string             `json:"type"`
 	PeriodCount    pgtype.Int4        `json:"period_count"`
 	PeriodUnit     pgtype.Text        `json:"period_unit"`
@@ -460,12 +730,21 @@ type ListProductsRow struct {
 
 func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error) {
 	rows, err := q.db.Query(ctx, listProducts,
-		arg.OrganizationID,
-		arg.Column2,
-		arg.Column3,
-		arg.Column4,
-		arg.Limit,
-		arg.Offset,
+		arg.Organizationid,
+		arg.Searchpattern,
+		arg.Titlepattern,
+		arg.Referencepattern,
+		arg.Producttype,
+		arg.Isdraft,
+		arg.Vatrateid,
+		arg.Createdatfrom,
+		arg.Createdatto,
+		arg.Updatedatfrom,
+		arg.Updatedatto,
+		arg.Sortby,
+		arg.Sortorder,
+		arg.Offsetcount,
+		arg.Limitcount,
 	)
 	if err != nil {
 		return nil, err
@@ -478,10 +757,14 @@ func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]L
 			&i.ID,
 			&i.OrganizationID,
 			&i.VatRateID,
+			&i.IsDraft,
 			&i.Title,
 			&i.Reference,
 			&i.Description,
 			&i.PriceCents,
+			&i.UnitPriceCents,
+			&i.UnitLabel,
+			&i.LaborTimeText,
 			&i.Type,
 			&i.PeriodCount,
 			&i.PeriodUnit,
@@ -499,26 +782,40 @@ func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]L
 }
 
 const listVatRates = `-- name: ListVatRates :many
-SELECT id, organization_id, name, rate_bps, created_at, updated_at FROM RAC_catalog_vat_rates
+SELECT id, organization_id, name, rate_bps, created_at, updated_at
+FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
-  AND ($2 = '' OR name ILIKE $2)
-ORDER BY name ASC
-LIMIT $3 OFFSET $4
+  AND ($2::text IS NULL OR name ILIKE $2::text)
+ORDER BY
+  CASE WHEN $3 = 'name' AND $4 = 'asc' THEN name END ASC,
+  CASE WHEN $3 = 'name' AND $4 = 'desc' THEN name END DESC,
+  CASE WHEN $3 = 'rateBps' AND $4 = 'asc' THEN rate_bps END ASC,
+  CASE WHEN $3 = 'rateBps' AND $4 = 'desc' THEN rate_bps END DESC,
+  CASE WHEN $3 = 'createdAt' AND $4 = 'asc' THEN created_at END ASC,
+  CASE WHEN $3 = 'createdAt' AND $4 = 'desc' THEN created_at END DESC,
+  CASE WHEN $3 = 'updatedAt' AND $4 = 'asc' THEN updated_at END ASC,
+  CASE WHEN $3 = 'updatedAt' AND $4 = 'desc' THEN updated_at END DESC,
+  name ASC
+LIMIT $6 OFFSET $5
 `
 
 type ListVatRatesParams struct {
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	Column2        interface{} `json:"column_2"`
-	Limit          int32       `json:"limit"`
-	Offset         int32       `json:"offset"`
+	Organizationid pgtype.UUID `json:"organizationid"`
+	Searchpattern  pgtype.Text `json:"searchpattern"`
+	Sortby         interface{} `json:"sortby"`
+	Sortorder      interface{} `json:"sortorder"`
+	Offsetcount    int32       `json:"offsetcount"`
+	Limitcount     int32       `json:"limitcount"`
 }
 
 func (q *Queries) ListVatRates(ctx context.Context, arg ListVatRatesParams) ([]RacCatalogVatRate, error) {
 	rows, err := q.db.Query(ctx, listVatRates,
-		arg.OrganizationID,
-		arg.Column2,
-		arg.Limit,
-		arg.Offset,
+		arg.Organizationid,
+		arg.Searchpattern,
+		arg.Sortby,
+		arg.Sortorder,
+		arg.Offsetcount,
+		arg.Limitcount,
 	)
 	if err != nil {
 		return nil, err
@@ -564,40 +861,56 @@ func (q *Queries) RemoveProductMaterials(ctx context.Context, arg RemoveProductM
 const updateProduct = `-- name: UpdateProduct :one
 UPDATE RAC_catalog_products
 SET
-  vat_rate_id = COALESCE($3, vat_rate_id),
-  title = COALESCE($4, title),
-  reference = COALESCE($5, reference),
-  description = COALESCE($6, description),
-  price_cents = COALESCE($7, price_cents),
-  type = COALESCE($8, type),
-  period_count = COALESCE($9, period_count),
-  period_unit = COALESCE($10, period_unit),
+  vat_rate_id = COALESCE($1, vat_rate_id),
+  is_draft = COALESCE($2, is_draft),
+  title = COALESCE($3, title),
+  reference = COALESCE($4, reference),
+  description = COALESCE($5, description),
+  price_cents = COALESCE($6, price_cents),
+  unit_price_cents = COALESCE($7, unit_price_cents),
+  unit_label = COALESCE($8, unit_label),
+  labor_time_text = COALESCE($9, labor_time_text),
+  type = COALESCE($10, type),
+  period_count = COALESCE($11, period_count),
+  period_unit = COALESCE($12, period_unit),
   updated_at = now()
-WHERE id = $1 AND organization_id = $2
-RETURNING id, organization_id, vat_rate_id, title, reference, description, price_cents, type, period_count, period_unit, created_at, updated_at
+WHERE id = $13 AND organization_id = $14
+RETURNING id, organization_id, vat_rate_id, is_draft,
+  title, reference, description,
+  price_cents, unit_price_cents, unit_label, labor_time_text,
+  type, period_count, period_unit,
+  created_at, updated_at
 `
 
 type UpdateProductParams struct {
-	ID             pgtype.UUID `json:"id"`
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	VatRateID      pgtype.UUID `json:"vat_rate_id"`
-	Title          string      `json:"title"`
-	Reference      string      `json:"reference"`
+	Vatrateid      pgtype.UUID `json:"vatrateid"`
+	Isdraft        pgtype.Bool `json:"isdraft"`
+	Title          pgtype.Text `json:"title"`
+	Reference      pgtype.Text `json:"reference"`
 	Description    pgtype.Text `json:"description"`
-	PriceCents     int64       `json:"price_cents"`
-	Type           string      `json:"type"`
-	PeriodCount    pgtype.Int4 `json:"period_count"`
-	PeriodUnit     pgtype.Text `json:"period_unit"`
+	Pricecents     pgtype.Int8 `json:"pricecents"`
+	Unitpricecents pgtype.Int8 `json:"unitpricecents"`
+	Unitlabel      pgtype.Text `json:"unitlabel"`
+	Labortimetext  pgtype.Text `json:"labortimetext"`
+	Type           pgtype.Text `json:"type"`
+	Periodcount    pgtype.Int4 `json:"periodcount"`
+	Periodunit     pgtype.Text `json:"periodunit"`
+	ID             pgtype.UUID `json:"id"`
+	Organizationid pgtype.UUID `json:"organizationid"`
 }
 
 type UpdateProductRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	VatRateID      pgtype.UUID        `json:"vat_rate_id"`
+	IsDraft        bool               `json:"is_draft"`
 	Title          string             `json:"title"`
 	Reference      string             `json:"reference"`
 	Description    pgtype.Text        `json:"description"`
 	PriceCents     int64              `json:"price_cents"`
+	UnitPriceCents int64              `json:"unit_price_cents"`
+	UnitLabel      pgtype.Text        `json:"unit_label"`
+	LaborTimeText  pgtype.Text        `json:"labor_time_text"`
 	Type           string             `json:"type"`
 	PeriodCount    pgtype.Int4        `json:"period_count"`
 	PeriodUnit     pgtype.Text        `json:"period_unit"`
@@ -607,26 +920,34 @@ type UpdateProductRow struct {
 
 func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (UpdateProductRow, error) {
 	row := q.db.QueryRow(ctx, updateProduct,
-		arg.ID,
-		arg.OrganizationID,
-		arg.VatRateID,
+		arg.Vatrateid,
+		arg.Isdraft,
 		arg.Title,
 		arg.Reference,
 		arg.Description,
-		arg.PriceCents,
+		arg.Pricecents,
+		arg.Unitpricecents,
+		arg.Unitlabel,
+		arg.Labortimetext,
 		arg.Type,
-		arg.PeriodCount,
-		arg.PeriodUnit,
+		arg.Periodcount,
+		arg.Periodunit,
+		arg.ID,
+		arg.Organizationid,
 	)
 	var i UpdateProductRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrganizationID,
 		&i.VatRateID,
+		&i.IsDraft,
 		&i.Title,
 		&i.Reference,
 		&i.Description,
 		&i.PriceCents,
+		&i.UnitPriceCents,
+		&i.UnitLabel,
+		&i.LaborTimeText,
 		&i.Type,
 		&i.PeriodCount,
 		&i.PeriodUnit,
@@ -639,26 +960,26 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (U
 const updateVatRate = `-- name: UpdateVatRate :one
 UPDATE RAC_catalog_vat_rates
 SET
-  name = COALESCE($3, name),
-  rate_bps = COALESCE($4, rate_bps),
+  name = COALESCE($1, name),
+  rate_bps = COALESCE($2, rate_bps),
   updated_at = now()
-WHERE id = $1 AND organization_id = $2
+WHERE id = $3 AND organization_id = $4
 RETURNING id, organization_id, name, rate_bps, created_at, updated_at
 `
 
 type UpdateVatRateParams struct {
+	Name           pgtype.Text `json:"name"`
+	Ratebps        pgtype.Int4 `json:"ratebps"`
 	ID             pgtype.UUID `json:"id"`
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	Name           string      `json:"name"`
-	RateBps        int32       `json:"rate_bps"`
+	Organizationid pgtype.UUID `json:"organizationid"`
 }
 
 func (q *Queries) UpdateVatRate(ctx context.Context, arg UpdateVatRateParams) (RacCatalogVatRate, error) {
 	row := q.db.QueryRow(ctx, updateVatRate,
-		arg.ID,
-		arg.OrganizationID,
 		arg.Name,
-		arg.RateBps,
+		arg.Ratebps,
+		arg.ID,
+		arg.Organizationid,
 	)
 	var i RacCatalogVatRate
 	err := row.Scan(
@@ -670,4 +991,30 @@ func (q *Queries) UpdateVatRate(ctx context.Context, arg UpdateVatRateParams) (R
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertProductMaterial = `-- name: UpsertProductMaterial :exec
+
+INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id, pricing_mode)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (organization_id, product_id, material_id)
+DO UPDATE SET pricing_mode = EXCLUDED.pricing_mode
+`
+
+type UpsertProductMaterialParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ProductID      pgtype.UUID `json:"product_id"`
+	MaterialID     pgtype.UUID `json:"material_id"`
+	PricingMode    string      `json:"pricing_mode"`
+}
+
+// Product Materials
+func (q *Queries) UpsertProductMaterial(ctx context.Context, arg UpsertProductMaterialParams) error {
+	_, err := q.db.Exec(ctx, upsertProductMaterial,
+		arg.OrganizationID,
+		arg.ProductID,
+		arg.MaterialID,
+		arg.PricingMode,
+	)
+	return err
 }

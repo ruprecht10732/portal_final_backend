@@ -8,6 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 var ErrServiceNotFound = errors.New("lead service not found")
@@ -35,291 +38,133 @@ type CreateLeadServiceParams struct {
 	Source         *string
 }
 
+type leadServiceFields struct {
+	ID                  pgtype.UUID
+	LeadID              pgtype.UUID
+	OrganizationID      pgtype.UUID
+	ServiceType         string
+	Status              string
+	PipelineStage       string
+	ConsumerNote        pgtype.Text
+	Source              pgtype.Text
+	CustomerPreferences []byte
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
 func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadServiceParams) (LeadService, error) {
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, `
-		WITH resolved_service_type AS (
-			SELECT COALESCE(
-				(SELECT id FROM RAC_service_types WHERE (name = $3 OR slug = $3) AND organization_id = $2 LIMIT 1),
-				(SELECT id FROM RAC_service_types WHERE organization_id = $2 AND is_active = true ORDER BY name ASC LIMIT 1),
-				(SELECT id FROM RAC_service_types WHERE organization_id = $2 ORDER BY name ASC LIMIT 1)
-			) AS id
-		), inserted AS (
-			INSERT INTO RAC_lead_services (lead_id, organization_id, service_type_id, status, consumer_note, source)
-				SELECT
-					$1,
-					$2,
-					id,
-					'New',
-					$4,
-					$5
-				FROM resolved_service_type
-				WHERE id IS NOT NULL
-			RETURNING *
-		), event AS (
-			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-			SELECT organization_id, lead_id, id, 'service_created', status, pipeline_stage, created_at
-			FROM inserted
-		)
-		SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
-			i.customer_preferences, i.created_at, i.updated_at
-		FROM inserted i
-		JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = i.organization_id
-	`, params.LeadID, params.OrganizationID, params.ServiceType, params.ConsumerNote, params.Source).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
+	row, err := r.queries.CreateLeadService(ctx, leadsdb.CreateLeadServiceParams{
+		LeadID:         toPgUUID(params.LeadID),
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Name:           params.ServiceType,
+		ConsumerNote:   toPgText(params.ConsumerNote),
+		Source:         toPgText(params.Source),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceTypeNotFound
 	}
-	return svc, err
+	if err != nil {
+		return LeadService{}, err
+	}
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (LeadService, error) {
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, `
-		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-			ls.customer_preferences, ls.created_at, ls.updated_at
-		FROM RAC_lead_services ls
-		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		WHERE ls.id = $1 AND ls.organization_id = $2
-	`, id, organizationID).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
+	row, err := r.queries.GetLeadServiceByID(ctx, leadsdb.GetLeadServiceByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
 	}
-	return svc, err
+	if err != nil {
+		return LeadService{}, err
+	}
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadService, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-			ls.customer_preferences, ls.created_at, ls.updated_at
-		FROM RAC_lead_services ls
-		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		WHERE ls.lead_id = $1 AND ls.organization_id = $2
-		ORDER BY ls.created_at DESC
-	`, leadID, organizationID)
+	rows, err := r.queries.ListLeadServices(ctx, leadsdb.ListLeadServicesParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	services := make([]LeadService, 0)
-	for rows.Next() {
-		var svc LeadService
-		if err := rows.Scan(
-			&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-			&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		services = append(services, svc)
+	services := make([]LeadService, 0, len(rows))
+	for _, row := range rows {
+		services = append(services, leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}))
 	}
-	return services, rows.Err()
+	return services, nil
 }
 
 // GetCurrentLeadService returns the most recent non-terminal service,
 // or falls back to the most recent service if all are terminal.
 func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadService, error) {
-	var svc LeadService
-	// Try to find an active (non-terminal) service first
-	err := r.pool.QueryRow(ctx, `
-		SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-			ls.customer_preferences, ls.created_at, ls.updated_at
-		FROM RAC_lead_services ls
-		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage NOT IN ('Completed', 'Lost')
-		ORDER BY ls.created_at DESC
-		LIMIT 1
-	`, leadID, organizationID).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
+	row, err := r.queries.GetCurrentActiveLeadService(ctx, leadsdb.GetCurrentActiveLeadServiceParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Fallback to most recent service of any status
-		err = r.pool.QueryRow(ctx, `
-			SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-				ls.customer_preferences, ls.created_at, ls.updated_at
-			FROM RAC_lead_services ls
-			JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-			WHERE ls.lead_id = $1 AND ls.organization_id = $2
-			ORDER BY ls.created_at DESC
-			LIMIT 1
-		`, leadID, organizationID).Scan(
-			&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-			&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-		)
+		fallback, fallbackErr := r.queries.GetLatestLeadService(ctx, leadsdb.GetLatestLeadServiceParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
+		if errors.Is(fallbackErr, pgx.ErrNoRows) {
+			return LeadService{}, ErrServiceNotFound
+		}
+		if fallbackErr != nil {
+			return LeadService{}, fallbackErr
+		}
+		return leadServiceFromRow(leadServiceFields{ID: fallback.ID, LeadID: fallback.LeadID, OrganizationID: fallback.OrganizationID, ServiceType: fallback.ServiceType, Status: fallback.Status, PipelineStage: string(fallback.PipelineStage), ConsumerNote: fallback.ConsumerNote, Source: fallback.Source, CustomerPreferences: fallback.CustomerPreferences, CreatedAt: fallback.CreatedAt, UpdatedAt: fallback.UpdatedAt}), nil
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LeadService{}, ErrServiceNotFound
+	if err != nil {
+		return LeadService{}, err
 	}
-	return svc, err
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error) {
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, `
-		WITH current AS (
-			SELECT status AS old_status, pipeline_stage AS old_stage
-			FROM RAC_lead_services
-			WHERE id = $1 AND organization_id = $2
-		), updated AS (
-			UPDATE RAC_lead_services
-			SET status = $3, pipeline_stage = $4, updated_at = now()
-			WHERE id = $1 AND organization_id = $2
-				AND (status IS DISTINCT FROM $3 OR pipeline_stage IS DISTINCT FROM $4)
-			RETURNING *
-		), selected AS (
-			SELECT * FROM updated
-			UNION ALL
-			SELECT *
-			FROM RAC_lead_services
-			WHERE id = $1 AND organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
-		), status_event AS (
-			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-			SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
-			FROM updated
-			WHERE (SELECT old_status FROM current) IS DISTINCT FROM $3
-		), stage_event AS (
-			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-			SELECT organization_id, lead_id, id, 'pipeline_stage_changed', status, pipeline_stage, updated_at
-			FROM updated
-			WHERE (SELECT old_stage FROM current) IS DISTINCT FROM $4
-		)
-		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.customer_preferences, u.created_at, u.updated_at
-		FROM selected u
-		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
-	`, id, organizationID, status, stage).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
+	row, err := r.queries.UpdateServiceStatusAndPipelineStage(ctx, leadsdb.UpdateServiceStatusAndPipelineStageParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID), Status: status, PipelineStage: leadsdb.PipelineStage(stage)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
 	}
-	return svc, err
+	if err != nil {
+		return LeadService{}, err
+	}
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 // UpdateLeadServiceType updates the service type for a lead service using an active service type name/slug.
 func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error) {
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, `
-		WITH target AS (
-			SELECT id FROM RAC_service_types
-			WHERE (name = $3 OR slug = $3)
-				AND organization_id = $2
-				AND is_active = true
-			LIMIT 1
-		), updated AS (
-			UPDATE RAC_lead_services
-			SET service_type_id = (SELECT id FROM target), updated_at = now()
-			WHERE id = $1 AND organization_id = $2 AND EXISTS (SELECT 1 FROM target)
-			RETURNING *
-		)
-		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.customer_preferences, u.created_at, u.updated_at
-		FROM updated u
-		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
-	`, id, organizationID, serviceType).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
+	row, err := r.queries.UpdateLeadServiceType(ctx, leadsdb.UpdateLeadServiceTypeParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID), Name: serviceType})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceTypeNotFound
 	}
-	return svc, err
+	if err != nil {
+		return LeadService{}, err
+	}
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error) {
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, `
-		WITH updated AS (
-			UPDATE RAC_lead_services SET status = $3, updated_at = now()
-			WHERE id = $1 AND organization_id = $2 AND status IS DISTINCT FROM $3
-			RETURNING *
-		), selected AS (
-			SELECT * FROM updated
-			UNION ALL
-			SELECT *
-			FROM RAC_lead_services
-			WHERE id = $1 AND organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
-		), event AS (
-			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-			SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
-			FROM updated
-		)
-		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.customer_preferences, u.created_at, u.updated_at
-		FROM selected u
-		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
-	`, id, organizationID, status).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
+	row, err := r.queries.UpdateServiceStatus(ctx, leadsdb.UpdateServiceStatusParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID), Status: status})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
 	}
-	return svc, err
+	if err != nil {
+		return LeadService{}, err
+	}
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error) {
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, `
-		WITH updated AS (
-			UPDATE RAC_lead_services SET pipeline_stage = $3, updated_at = now()
-			WHERE id = $1 AND organization_id = $2 AND pipeline_stage IS DISTINCT FROM $3
-			RETURNING *
-		), selected AS (
-			SELECT * FROM updated
-			UNION ALL
-			SELECT *
-			FROM RAC_lead_services
-			WHERE id = $1 AND organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
-		), event AS (
-			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-			SELECT organization_id, lead_id, id, 'pipeline_stage_changed', status, pipeline_stage, updated_at
-			FROM updated
-		)
-		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.customer_preferences, u.created_at, u.updated_at
-		FROM selected u
-		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
-	`, id, organizationID, stage).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
+	row, err := r.queries.UpdatePipelineStage(ctx, leadsdb.UpdatePipelineStageParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID), PipelineStage: leadsdb.PipelineStage(stage)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
 	}
-	return svc, err
+	if err != nil {
+		return LeadService{}, err
+	}
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 // CloseAllActiveServices marks all non-terminal services for a lead as Completed (pipeline stage).
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		WITH updated AS (
-			UPDATE RAC_lead_services 
-			SET pipeline_stage = 'Completed', updated_at = now()
-			WHERE lead_id = $1 AND organization_id = $2 AND pipeline_stage NOT IN ('Completed', 'Lost')
-			RETURNING id, lead_id, organization_id, status, pipeline_stage, updated_at
-		)
-		INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-		SELECT organization_id, lead_id, id, 'pipeline_stage_changed', status, pipeline_stage, updated_at
-		FROM updated
-	`, leadID, organizationID)
-	return err
+	return r.queries.CloseAllActiveServices(ctx, leadsdb.CloseAllActiveServicesParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
 }
 
 func (r *Repository) UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_lead_services
-		SET customer_preferences = $3, updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, serviceID, organizationID, prefs)
-	return err
+	return r.queries.UpdateServicePreferences(ctx, leadsdb.UpdateServicePreferencesParams{ID: toPgUUID(serviceID), OrganizationID: toPgUUID(organizationID), CustomerPreferences: prefs})
 }
 
 // InsertServiceEventParams groups the fields for inserting a service event.
@@ -338,16 +183,29 @@ type InsertServiceEventParams struct {
 // The insert is guarded by a NOT EXISTS check to prevent duplicates for the same
 // (lead_service_id, event_type) combination.
 func (r *Repository) InsertLeadServiceEvent(ctx context.Context, params InsertServiceEventParams) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO RAC_lead_service_events (
-			organization_id, lead_id, lead_service_id,
-			event_type, status, pipeline_stage, occurred_at
-		)
-		SELECT $1, $2, $3, $4, $5, $6, $7
-		WHERE NOT EXISTS (
-			SELECT 1 FROM RAC_lead_service_events
-			WHERE lead_service_id = $3 AND event_type = $4
-		)
-	`, params.OrganizationID, params.LeadID, params.LeadServiceID, params.EventType, params.Status, params.PipelineStage, params.OccurredAt)
-	return err
+	return r.queries.InsertLeadServiceEvent(ctx, leadsdb.InsertLeadServiceEventParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		LeadID:         toPgUUID(params.LeadID),
+		LeadServiceID:  toPgUUID(params.LeadServiceID),
+		EventType:      params.EventType,
+		Status:         toPgTextValue(params.Status),
+		PipelineStage:  toPgTextValue(params.PipelineStage),
+		OccurredAt:     toPgTimestamp(params.OccurredAt),
+	})
+}
+
+func leadServiceFromRow(fields leadServiceFields) LeadService {
+	return LeadService{
+		ID:                  fields.ID.Bytes,
+		LeadID:              fields.LeadID.Bytes,
+		OrganizationID:      fields.OrganizationID.Bytes,
+		ServiceType:         fields.ServiceType,
+		Status:              fields.Status,
+		PipelineStage:       fields.PipelineStage,
+		ConsumerNote:        optionalString(fields.ConsumerNote),
+		Source:              optionalString(fields.Source),
+		CustomerPreferences: fields.CustomerPreferences,
+		CreatedAt:           fields.CreatedAt.Time,
+		UpdatedAt:           fields.UpdatedAt.Time,
+	}
 }

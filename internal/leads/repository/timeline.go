@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 // TimelineSummaryMaxLen is the canonical maximum character length for timeline event summaries.
@@ -68,52 +70,24 @@ func (r *Repository) CreateTimelineEvent(ctx context.Context, params CreateTimel
 		return TimelineEvent{}, err
 	}
 
-	var event TimelineEvent
-	var rawServiceID *uuid.UUID
-	var summary *string
-
-	// metadata is excluded from RETURNING: we already hold params.Metadata as a Go value.
-	// Re-scanning the stored JSONB would add a redundant json.Unmarshal on every insert and
-	// risks double-encoding if a caller ever passes pre-serialised data.
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO lead_timeline_events (
-			lead_id,
-			service_id,
-			organization_id,
-			actor_type,
-			actor_name,
-			event_type,
-			title,
-			summary,
-			metadata
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, created_at
-	`, params.LeadID, params.ServiceID, params.OrganizationID, params.ActorType, params.ActorName, params.EventType, params.Title, params.Summary, metadataJSON).Scan(
-		&event.ID,
-		&event.LeadID,
-		&rawServiceID,
-		&event.OrganizationID,
-		&event.ActorType,
-		&event.ActorName,
-		&event.EventType,
-		&event.Title,
-		&summary,
-		&event.CreatedAt,
-	)
+	row, err := r.queries.CreateTimelineEvent(ctx, leadsdb.CreateTimelineEventParams{
+		LeadID:         toPgUUID(params.LeadID),
+		ServiceID:      toPgUUIDPtr(params.ServiceID),
+		OrganizationID: toPgUUID(params.OrganizationID),
+		ActorType:      params.ActorType,
+		ActorName:      params.ActorName,
+		EventType:      params.EventType,
+		Title:          params.Title,
+		Summary:        toPgText(params.Summary),
+		Metadata:       metadataJSON,
+	})
 	if err != nil {
 		return TimelineEvent{}, err
 	}
 
-	if rawServiceID != nil {
-		event.ServiceID = rawServiceID
-	}
-	if summary != nil {
-		event.Summary = summary
-	}
-	// Assign directly from params — no JSON roundtrip needed.
+	event := timelineEventFromDB(row)
+	// Preserve the original Go map and avoid a needless JSON roundtrip on insert.
 	event.Metadata = params.Metadata
-
 	return event, nil
 }
 
@@ -145,96 +119,44 @@ func (r *Repository) findRecentDuplicateTimelineEvent(ctx context.Context, param
 	newStage := metadataStringValue(params.Metadata, "newStage")
 	windowSeconds := int(timelineDedupWindow / time.Second)
 
-	row := r.pool.QueryRow(ctx, `
-		SELECT`+timelineSelectCols+`
-		FROM lead_timeline_events
-		WHERE lead_id = $1
-			AND organization_id = $2
-			AND (service_id = $3 OR (service_id IS NULL AND $3 IS NULL))
-			AND actor_type = $4
-			AND actor_name = $5
-			AND event_type = $6
-			AND title = $7
-			AND (($8 IS NULL AND summary IS NULL) OR ($8 IS NOT NULL AND summary = $8))
-			AND created_at >= now() - make_interval(secs => $9)
-			AND (
-				$6 <> $10 OR (
-					COALESCE(metadata->>'oldStage', '') = $11
-					AND COALESCE(metadata->>'newStage', '') = $12
-				)
-			)
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, params.LeadID, params.OrganizationID, params.ServiceID, params.ActorType, params.ActorName, params.EventType, params.Title, params.Summary, windowSeconds, EventTypeStageChange, oldStage, newStage)
-
-	event, err := scanTimelineEvent(row)
+	row, err := r.queries.FindRecentDuplicateTimelineEvent(ctx, leadsdb.FindRecentDuplicateTimelineEventParams{
+		LeadID:         toPgUUID(params.LeadID),
+		OrganizationID: toPgUUID(params.OrganizationID),
+		ServiceID:      toPgUUIDPtr(params.ServiceID),
+		ActorType:      params.ActorType,
+		ActorName:      params.ActorName,
+		EventType:      params.EventType,
+		Title:          params.Title,
+		Column8:        params.Summary,
+		Secs:           float64(windowSeconds),
+		Column10:       EventTypeStageChange,
+		Column11:       oldStage,
+		Column12:       newStage,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TimelineEvent{}, false, nil
 	}
 	if err != nil {
 		return TimelineEvent{}, false, err
 	}
-	return event, true, nil
+	return timelineEventFromDB(row), true, nil
 }
-
-// timelineRowScanner is satisfied by pgx.Rows and pgx.Row so that scanTimelineEvent
-// can be shared between single-row and multi-row queries.
-type timelineRowScanner interface {
-	Scan(dest ...any) error
-}
-
-// scanTimelineEvent populates a TimelineEvent from a standard SELECT row.
-// Column order must be: id, lead_id, service_id, organization_id,
-// actor_type, actor_name, event_type, title, summary, metadata, created_at.
-func scanTimelineEvent(s timelineRowScanner) (TimelineEvent, error) {
-	var event TimelineEvent
-	var rawServiceID *uuid.UUID
-	var summary *string
-	var rawMetadata []byte
-	if err := s.Scan(
-		&event.ID,
-		&event.LeadID,
-		&rawServiceID,
-		&event.OrganizationID,
-		&event.ActorType,
-		&event.ActorName,
-		&event.EventType,
-		&event.Title,
-		&summary,
-		&rawMetadata,
-		&event.CreatedAt,
-	); err != nil {
-		return TimelineEvent{}, err
-	}
-	if rawServiceID != nil {
-		event.ServiceID = rawServiceID
-	}
-	if summary != nil {
-		event.Summary = summary
-	}
-	if len(rawMetadata) > 0 {
-		_ = json.Unmarshal(rawMetadata, &event.Metadata)
-	}
-	return event, nil
-}
-
-const timelineSelectCols = `
-	id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at`
 
 // ListTimelineEvents returns all timeline events for a lead, ordered newest first.
 // This includes both service-scoped events and lead-level events (service_id IS NULL).
 func (r *Repository) ListTimelineEvents(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]TimelineEvent, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT`+timelineSelectCols+`
-		FROM lead_timeline_events
-		WHERE lead_id = $1 AND organization_id = $2
-		ORDER BY created_at DESC
-	`, leadID, organizationID)
+	rows, err := r.queries.ListTimelineEvents(ctx, leadsdb.ListTimelineEventsParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return collectTimelineEvents(rows)
+	items := make([]TimelineEvent, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, timelineEventFromDB(row))
+	}
+	return items, nil
 }
 
 // ListTimelineEventsByService returns timeline events explicitly scoped to a specific
@@ -245,35 +167,36 @@ func (r *Repository) ListTimelineEvents(ctx context.Context, leadID uuid.UUID, o
 // multi-service leads (e.g., a "Manual Update" note must not appear in both the
 // Solar and Windows service timelines just because it has no service_id attached).
 func (r *Repository) ListTimelineEventsByService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, organizationID uuid.UUID) ([]TimelineEvent, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT`+timelineSelectCols+`
-		FROM lead_timeline_events
-		WHERE lead_id = $1 AND organization_id = $2 AND service_id = $3
-		ORDER BY created_at DESC
-	`, leadID, organizationID, serviceID)
+	rows, err := r.queries.ListTimelineEventsByService(ctx, leadsdb.ListTimelineEventsByServiceParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+		ServiceID:      toPgUUID(serviceID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return collectTimelineEvents(rows)
-}
-
-// collectTimelineEvents drains pgx rows into a slice of TimelineEvent.
-func collectTimelineEvents(rows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}) ([]TimelineEvent, error) {
-	items := make([]TimelineEvent, 0)
-	for rows.Next() {
-		event, err := scanTimelineEvent(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	items := make([]TimelineEvent, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, timelineEventFromDB(row))
 	}
 	return items, nil
+}
+
+func timelineEventFromDB(row leadsdb.LeadTimelineEvent) TimelineEvent {
+	event := TimelineEvent{
+		ID:             row.ID.Bytes,
+		LeadID:         row.LeadID.Bytes,
+		ServiceID:      optionalUUID(row.ServiceID),
+		OrganizationID: row.OrganizationID.Bytes,
+		ActorType:      row.ActorType,
+		ActorName:      row.ActorName,
+		EventType:      row.EventType,
+		Title:          row.Title,
+		Summary:        optionalString(row.Summary),
+		CreatedAt:      row.CreatedAt.Time,
+	}
+	if len(row.Metadata) > 0 {
+		_ = json.Unmarshal(row.Metadata, &event.Metadata)
+	}
+	return event
 }

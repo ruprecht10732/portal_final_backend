@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"time"
 
+	servicesdb "portal_final_backend/internal/services/db"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"portal_final_backend/platform/apperr"
@@ -17,31 +20,71 @@ const serviceTypeNotFoundMessage = "service type not found"
 
 // Repo implements the Repository interface with PostgreSQL.
 type Repo struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *servicesdb.Queries
 }
 
 // New creates a new service types repository.
 func New(pool *pgxpool.Pool) *Repo {
-	return &Repo{pool: pool}
+	return &Repo{pool: pool, queries: servicesdb.New(pool)}
 }
 
 // Compile-time check that Repo implements Repository.
 var _ Repository = (*Repo)(nil)
 
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
+func toPgBoolPtr(value *bool) pgtype.Bool {
+	if value == nil {
+		return pgtype.Bool{}
+	}
+	return pgtype.Bool{Bool: *value, Valid: true}
+}
+
+func serviceSearchParam(value string) pgtype.Text {
+	if value == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: "%" + value + "%", Valid: true}
+}
+
+func serviceTypeFromModel(model servicesdb.RacServiceType) ServiceType {
+	return ServiceType{
+		ID:                   uuid.UUID(model.ID.Bytes),
+		OrganizationID:       uuid.UUID(model.OrganizationID.Bytes),
+		Name:                 model.Name,
+		Slug:                 model.Slug,
+		Description:          optionalString(model.Description),
+		IntakeGuidelines:     optionalString(model.IntakeGuidelines),
+		EstimationGuidelines: optionalString(model.EstimationGuidelines),
+		Icon:                 optionalString(model.Icon),
+		Color:                optionalString(model.Color),
+		IsActive:             model.IsActive,
+		CreatedAt:            model.CreatedAt.Time.Format(time.RFC3339),
+		UpdatedAt:            model.UpdatedAt.Time.Format(time.RFC3339),
+	}
+}
+
 // GetByID retrieves a service type by its ID.
 func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ServiceType, error) {
-	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color, is_active, created_at, updated_at
-		FROM RAC_service_types
-		WHERE id = $1 AND organization_id = $2`
-
-	var st ServiceType
-	var createdAt, updatedAt time.Time
-
-	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.EstimationGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &createdAt, &updatedAt,
-	)
+	row, err := r.queries.GetServiceTypeByID(ctx, servicesdb.GetServiceTypeByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceType{}, apperr.NotFound(serviceTypeNotFoundMessage)
@@ -49,26 +92,12 @@ func (r *Repo) GetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UU
 		return ServiceType{}, fmt.Errorf("get service type by id: %w", err)
 	}
 
-	st.CreatedAt = createdAt.Format(time.RFC3339)
-	st.UpdatedAt = updatedAt.Format(time.RFC3339)
-
-	return st, nil
+	return serviceTypeFromModel(servicesdb.RacServiceType{ID: row.ID, Name: row.Name, Slug: row.Slug, Description: row.Description, Icon: row.Icon, Color: row.Color, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, IntakeGuidelines: row.IntakeGuidelines, EstimationGuidelines: row.EstimationGuidelines}), nil
 }
 
 // GetBySlug retrieves a service type by its slug.
 func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug string) (ServiceType, error) {
-	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color, is_active, created_at, updated_at
-		FROM RAC_service_types
-		WHERE slug = $1 AND organization_id = $2`
-
-	var st ServiceType
-	var createdAt, updatedAt time.Time
-
-	err := r.pool.QueryRow(ctx, query, slug, organizationID).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.EstimationGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &createdAt, &updatedAt,
-	)
+	row, err := r.queries.GetServiceTypeBySlug(ctx, servicesdb.GetServiceTypeBySlugParams{Slug: slug, OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceType{}, apperr.NotFound(serviceTypeNotFoundMessage)
@@ -76,57 +105,41 @@ func (r *Repo) GetBySlug(ctx context.Context, organizationID uuid.UUID, slug str
 		return ServiceType{}, fmt.Errorf("get service type by slug: %w", err)
 	}
 
-	st.CreatedAt = createdAt.Format(time.RFC3339)
-	st.UpdatedAt = updatedAt.Format(time.RFC3339)
-
-	return st, nil
+	return serviceTypeFromModel(servicesdb.RacServiceType{ID: row.ID, Name: row.Name, Slug: row.Slug, Description: row.Description, Icon: row.Icon, Color: row.Color, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, IntakeGuidelines: row.IntakeGuidelines, EstimationGuidelines: row.EstimationGuidelines}), nil
 }
 
 // List retrieves all service types ordered by name.
 func (r *Repo) List(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
-	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color, is_active, created_at, updated_at
-		FROM RAC_service_types
-		WHERE organization_id = $1
-		ORDER BY name ASC`
-
-	rows, err := r.pool.Query(ctx, query, organizationID)
+	rows, err := r.queries.ListServiceTypes(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return nil, fmt.Errorf("list service types: %w", err)
 	}
-	defer rows.Close()
 
-	return scanServiceTypes(rows)
+	items := make([]ServiceType, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, serviceTypeFromModel(servicesdb.RacServiceType{ID: row.ID, Name: row.Name, Slug: row.Slug, Description: row.Description, Icon: row.Icon, Color: row.Color, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, IntakeGuidelines: row.IntakeGuidelines, EstimationGuidelines: row.EstimationGuidelines}))
+	}
+
+	return items, nil
 }
 
 // ListActive retrieves only active service types ordered by name.
 func (r *Repo) ListActive(ctx context.Context, organizationID uuid.UUID) ([]ServiceType, error) {
-	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color, is_active, created_at, updated_at
-		FROM RAC_service_types
-		WHERE organization_id = $1 AND is_active = true
-		ORDER BY name ASC`
-
-	rows, err := r.pool.Query(ctx, query, organizationID)
+	rows, err := r.queries.ListActiveServiceTypes(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return nil, fmt.Errorf("list active service types: %w", err)
 	}
-	defer rows.Close()
 
-	return scanServiceTypes(rows)
+	items := make([]ServiceType, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, serviceTypeFromModel(servicesdb.RacServiceType{ID: row.ID, Name: row.Name, Slug: row.Slug, Description: row.Description, Icon: row.Icon, Color: row.Color, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, IntakeGuidelines: row.IntakeGuidelines, EstimationGuidelines: row.EstimationGuidelines}))
+	}
+
+	return items, nil
 }
 
 // ListWithFilters retrieves service types with search, active filter, pagination, and sorting.
 func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]ServiceType, int, error) {
-	var searchParam interface{}
-	if params.Search != "" {
-		searchParam = "%" + params.Search + "%"
-	}
-	var isActiveParam interface{}
-	if params.IsActive != nil {
-		isActiveParam = *params.IsActive
-	}
-
 	sortBy := "name"
 	if params.SortBy != "" {
 		switch params.SortBy {
@@ -147,63 +160,38 @@ func (r *Repo) ListWithFilters(ctx context.Context, params ListParams) ([]Servic
 		}
 	}
 
-	args := []interface{}{params.OrganizationID, searchParam, isActiveParam}
-
-	countQuery := `
-		SELECT COUNT(*)
-		FROM RAC_service_types
-		WHERE organization_id = $1
-			AND ($2::text IS NULL OR name ILIKE $2 OR slug ILIKE $2)
-			AND ($3::boolean IS NULL OR is_active = $3)
-	`
-
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	total, err := r.queries.CountServiceTypes(ctx, servicesdb.CountServiceTypesParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Search:         serviceSearchParam(params.Search),
+		IsActive:       toPgBoolPtr(params.IsActive),
+	})
+	if err != nil {
 		return nil, 0, fmt.Errorf("count service types: %w", err)
 	}
-
-	query := `
-		SELECT id, organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color, is_active, created_at, updated_at
-		FROM RAC_service_types
-		WHERE organization_id = $1
-			AND ($2::text IS NULL OR name ILIKE $2 OR slug ILIKE $2)
-			AND ($3::boolean IS NULL OR is_active = $3)
-		ORDER BY
-			CASE WHEN $4 = 'name' AND $5 = 'asc' THEN name END ASC,
-			CASE WHEN $4 = 'name' AND $5 = 'desc' THEN name END DESC,
-			CASE WHEN $4 = 'slug' AND $5 = 'asc' THEN slug END ASC,
-			CASE WHEN $4 = 'slug' AND $5 = 'desc' THEN slug END DESC,
-			CASE WHEN $4 = 'isActive' AND $5 = 'asc' THEN is_active END ASC,
-			CASE WHEN $4 = 'isActive' AND $5 = 'desc' THEN is_active END DESC,
-			CASE WHEN $4 = 'createdAt' AND $5 = 'asc' THEN created_at END ASC,
-			CASE WHEN $4 = 'createdAt' AND $5 = 'desc' THEN created_at END DESC,
-			CASE WHEN $4 = 'updatedAt' AND $5 = 'asc' THEN updated_at END ASC,
-			CASE WHEN $4 = 'updatedAt' AND $5 = 'desc' THEN updated_at END DESC,
-			name ASC
-		LIMIT $6 OFFSET $7
-	`
-
-	args = append(args, sortBy, sortOrder, params.Limit, params.Offset)
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.queries.ListServiceTypesWithFilters(ctx, servicesdb.ListServiceTypesWithFiltersParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Search:         serviceSearchParam(params.Search),
+		IsActive:       toPgBoolPtr(params.IsActive),
+		SortBy:         sortBy,
+		SortOrder:      sortOrder,
+		Offset:         int32(params.Offset),
+		Limit:          int32(params.Limit),
+	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("list service types: %w", err)
 	}
-	defer rows.Close()
 
-	items, err := scanServiceTypes(rows)
-	if err != nil {
-		return nil, 0, err
+	items := make([]ServiceType, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, serviceTypeFromModel(servicesdb.RacServiceType{ID: row.ID, Name: row.Name, Slug: row.Slug, Description: row.Description, Icon: row.Icon, Color: row.Color, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, IntakeGuidelines: row.IntakeGuidelines, EstimationGuidelines: row.EstimationGuidelines}))
 	}
 
-	return items, total, nil
+	return items, int(total), nil
 }
 
 // Exists checks if a service type exists by ID.
 func (r *Repo) Exists(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM RAC_service_types WHERE id = $1 AND organization_id = $2)`
-
-	var exists bool
-	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists)
+	exists, err := r.queries.ServiceTypeExists(ctx, servicesdb.ServiceTypeExistsParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return false, fmt.Errorf("check service type exists: %w", err)
 	}
@@ -213,10 +201,8 @@ func (r *Repo) Exists(ctx context.Context, organizationID uuid.UUID, id uuid.UUI
 
 // HasLeadServices checks if a service type is referenced by RAC_lead_services.
 func (r *Repo) HasLeadServices(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM RAC_lead_services WHERE service_type_id = $1 AND organization_id = $2)`
-
-	var exists bool
-	if err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists); err != nil {
+	exists, err := r.queries.ServiceTypeHasLeadServices(ctx, servicesdb.ServiceTypeHasLeadServicesParams{ServiceTypeID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
+	if err != nil {
 		return false, fmt.Errorf("check service type lead services: %w", err)
 	}
 
@@ -225,55 +211,36 @@ func (r *Repo) HasLeadServices(ctx context.Context, organizationID uuid.UUID, id
 
 // Create creates a new service type.
 func (r *Repo) Create(ctx context.Context, params CreateParams) (ServiceType, error) {
-	query := `
-		INSERT INTO RAC_service_types (organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color, is_active, created_at, updated_at`
-
-	var st ServiceType
-	var createdAt, updatedAt time.Time
-
-	err := r.pool.QueryRow(ctx, query,
-		params.OrganizationID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.EstimationGuidelines, params.Icon, params.Color,
-	).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.EstimationGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &createdAt, &updatedAt,
-	)
+	row, err := r.queries.CreateServiceType(ctx, servicesdb.CreateServiceTypeParams{
+		OrganizationID:       toPgUUID(params.OrganizationID),
+		Name:                 params.Name,
+		Slug:                 params.Slug,
+		Description:          toPgText(params.Description),
+		IntakeGuidelines:     toPgText(params.IntakeGuidelines),
+		EstimationGuidelines: toPgText(params.EstimationGuidelines),
+		Icon:                 toPgText(params.Icon),
+		Color:                toPgText(params.Color),
+	})
 	if err != nil {
 		return ServiceType{}, fmt.Errorf("create service type: %w", err)
 	}
 
-	st.CreatedAt = createdAt.Format(time.RFC3339)
-	st.UpdatedAt = updatedAt.Format(time.RFC3339)
-
-	return st, nil
+	return serviceTypeFromModel(servicesdb.RacServiceType{ID: row.ID, Name: row.Name, Slug: row.Slug, Description: row.Description, Icon: row.Icon, Color: row.Color, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, IntakeGuidelines: row.IntakeGuidelines, EstimationGuidelines: row.EstimationGuidelines}), nil
 }
 
 // Update updates an existing service type.
 func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, error) {
-	// Build dynamic update query
-	query := `
-		UPDATE RAC_service_types SET
-			name = COALESCE($2, name),
-			slug = COALESCE($3, slug),
-			description = COALESCE($4, description),
-			intake_guidelines = COALESCE($5, intake_guidelines),
-			estimation_guidelines = COALESCE($6, estimation_guidelines),
-			icon = COALESCE($7, icon),
-			color = COALESCE($8, color),
-			updated_at = now()
-		WHERE id = $1 AND organization_id = $9
-		RETURNING id, organization_id, name, slug, description, intake_guidelines, estimation_guidelines, icon, color, is_active, created_at, updated_at`
-
-	var st ServiceType
-	var createdAt, updatedAt time.Time
-
-	err := r.pool.QueryRow(ctx, query,
-		params.ID, params.Name, params.Slug, params.Description, params.IntakeGuidelines, params.EstimationGuidelines, params.Icon, params.Color, params.OrganizationID,
-	).Scan(
-		&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.EstimationGuidelines, &st.Icon, &st.Color,
-		&st.IsActive, &createdAt, &updatedAt,
-	)
+	row, err := r.queries.UpdateServiceType(ctx, servicesdb.UpdateServiceTypeParams{
+		Name:                 toPgText(params.Name),
+		Slug:                 toPgText(params.Slug),
+		Description:          toPgText(params.Description),
+		IntakeGuidelines:     toPgText(params.IntakeGuidelines),
+		EstimationGuidelines: toPgText(params.EstimationGuidelines),
+		Icon:                 toPgText(params.Icon),
+		Color:                toPgText(params.Color),
+		ID:                   toPgUUID(params.ID),
+		OrganizationID:       toPgUUID(params.OrganizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceType{}, apperr.NotFound(serviceTypeNotFoundMessage)
@@ -281,23 +248,18 @@ func (r *Repo) Update(ctx context.Context, params UpdateParams) (ServiceType, er
 		return ServiceType{}, fmt.Errorf("update service type: %w", err)
 	}
 
-	st.CreatedAt = createdAt.Format(time.RFC3339)
-	st.UpdatedAt = updatedAt.Format(time.RFC3339)
-
-	return st, nil
+	return serviceTypeFromModel(servicesdb.RacServiceType{ID: row.ID, Name: row.Name, Slug: row.Slug, Description: row.Description, Icon: row.Icon, Color: row.Color, IsActive: row.IsActive, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID, IntakeGuidelines: row.IntakeGuidelines, EstimationGuidelines: row.EstimationGuidelines}), nil
 }
 
 // Delete removes a service type by ID (hard delete).
 // Use SetActive(false) for soft delete.
 func (r *Repo) Delete(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
-	query := `DELETE FROM RAC_service_types WHERE id = $1 AND organization_id = $2`
-
-	result, err := r.pool.Exec(ctx, query, id, organizationID)
+	result, err := r.queries.DeleteServiceType(ctx, servicesdb.DeleteServiceTypeParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return fmt.Errorf("delete service type: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
+	if result == 0 {
 		return apperr.NotFound(serviceTypeNotFoundMessage)
 	}
 
@@ -306,45 +268,14 @@ func (r *Repo) Delete(ctx context.Context, organizationID uuid.UUID, id uuid.UUI
 
 // SetActive sets the is_active flag for a service type.
 func (r *Repo) SetActive(ctx context.Context, organizationID uuid.UUID, id uuid.UUID, isActive bool) error {
-	query := `UPDATE RAC_service_types SET is_active = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`
-
-	result, err := r.pool.Exec(ctx, query, id, organizationID, isActive)
+	result, err := r.queries.SetServiceTypeActive(ctx, servicesdb.SetServiceTypeActiveParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID), IsActive: isActive})
 	if err != nil {
 		return fmt.Errorf("set service type active: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
+	if result == 0 {
 		return apperr.NotFound(serviceTypeNotFoundMessage)
 	}
 
 	return nil
-}
-
-// scanServiceTypes is a helper to scan multiple rows into ServiceType slice.
-func scanServiceTypes(rows pgx.Rows) ([]ServiceType, error) {
-	var results []ServiceType
-
-	for rows.Next() {
-		var st ServiceType
-		var createdAt, updatedAt time.Time
-
-		err := rows.Scan(
-			&st.ID, &st.OrganizationID, &st.Name, &st.Slug, &st.Description, &st.IntakeGuidelines, &st.EstimationGuidelines, &st.Icon, &st.Color,
-			&st.IsActive, &createdAt, &updatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scan service type: %w", err)
-		}
-
-		st.CreatedAt = createdAt.Format(time.RFC3339)
-		st.UpdatedAt = updatedAt.Format(time.RFC3339)
-
-		results = append(results, st)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate service types: %w", err)
-	}
-
-	return results, nil
 }

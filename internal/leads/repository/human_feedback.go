@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 const organizationIDRequiredMessage = "organization_id is required"
@@ -62,55 +63,20 @@ func (r *Repository) CreateHumanFeedback(ctx context.Context, params CreateHuman
 	humanValueJSON, _ := json.Marshal(params.HumanValue)
 	delta := calculateFeedbackDelta(params.AIValue, params.HumanValue)
 
-	var out HumanFeedback
-	var aiRaw []byte
-	var humanRaw []byte
-	var deltaNullable sql.NullFloat64
-	var embeddingNullable sql.NullString
-	if err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_human_feedback (
-			organization_id, quote_id, lead_service_id,
-			field_changed, ai_value, human_value, delta_percentage
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, organization_id, quote_id, lead_service_id,
-		          field_changed, ai_value, human_value, delta_percentage,
-		          context_embedding_id, applied_to_memory, created_at
-	`,
-		params.OrganizationID,
-		params.QuoteID,
-		params.LeadServiceID,
-		params.FieldChanged,
-		aiValueJSON,
-		humanValueJSON,
-		delta,
-	).Scan(
-		&out.ID,
-		&out.OrganizationID,
-		&out.QuoteID,
-		&out.LeadServiceID,
-		&out.FieldChanged,
-		&aiRaw,
-		&humanRaw,
-		&deltaNullable,
-		&embeddingNullable,
-		&out.AppliedToMemory,
-		&out.CreatedAt,
-	); err != nil {
+	row, err := r.queries.CreateHumanFeedback(ctx, leadsdb.CreateHumanFeedbackParams{
+		OrganizationID:  toPgUUID(params.OrganizationID),
+		QuoteID:         toPgUUID(params.QuoteID),
+		LeadServiceID:   toPgUUIDPtr(params.LeadServiceID),
+		FieldChanged:    params.FieldChanged,
+		AiValue:         aiValueJSON,
+		HumanValue:      humanValueJSON,
+		DeltaPercentage: toPgFloat8Ptr(delta),
+	})
+	if err != nil {
 		return HumanFeedback{}, err
 	}
 
-	_ = json.Unmarshal(aiRaw, &out.AIValue)
-	_ = json.Unmarshal(humanRaw, &out.HumanValue)
-	if deltaNullable.Valid {
-		d := deltaNullable.Float64
-		out.DeltaPercentage = &d
-	}
-	if embeddingNullable.Valid {
-		e := embeddingNullable.String
-		out.ContextEmbedding = &e
-	}
-	return out, nil
+	return humanFeedbackFromDB(row), nil
 }
 
 func (r *Repository) ListRecentAppliedHumanFeedbackByServiceType(ctx context.Context, organizationID uuid.UUID, serviceType string, limit int) ([]HumanFeedback, error) {
@@ -128,64 +94,18 @@ func (r *Repository) ListRecentAppliedHumanFeedbackByServiceType(ctx context.Con
 		limit = 100
 	}
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT hf.id, hf.organization_id, hf.quote_id, hf.lead_service_id,
-		       hf.field_changed, hf.ai_value, hf.human_value, hf.delta_percentage,
-		       hf.context_embedding_id, hf.applied_to_memory, hf.created_at
-		FROM RAC_human_feedback hf
-		JOIN RAC_lead_services ls
-		  ON ls.id = hf.lead_service_id
-		 AND ls.organization_id = hf.organization_id
-		JOIN RAC_service_types st
-		  ON st.id = ls.service_type_id
-		 AND st.organization_id = ls.organization_id
-		WHERE hf.organization_id = $1
-		  AND hf.applied_to_memory = true
-		  AND st.name = $2
-		ORDER BY hf.created_at DESC
-		LIMIT $3
-	`, organizationID, serviceType, limit)
+	rows, err := r.queries.ListRecentAppliedHumanFeedbackByServiceType(ctx, leadsdb.ListRecentAppliedHumanFeedbackByServiceTypeParams{
+		OrganizationID: toPgUUID(organizationID),
+		Name:           serviceType,
+		Limit:          int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	items := make([]HumanFeedback, 0, limit)
-	for rows.Next() {
-		var item HumanFeedback
-		var aiRaw []byte
-		var humanRaw []byte
-		var deltaNullable sql.NullFloat64
-		var embeddingNullable sql.NullString
-		if err := rows.Scan(
-			&item.ID,
-			&item.OrganizationID,
-			&item.QuoteID,
-			&item.LeadServiceID,
-			&item.FieldChanged,
-			&aiRaw,
-			&humanRaw,
-			&deltaNullable,
-			&embeddingNullable,
-			&item.AppliedToMemory,
-			&item.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		_ = json.Unmarshal(aiRaw, &item.AIValue)
-		_ = json.Unmarshal(humanRaw, &item.HumanValue)
-		if deltaNullable.Valid {
-			d := deltaNullable.Float64
-			item.DeltaPercentage = &d
-		}
-		if embeddingNullable.Valid {
-			e := embeddingNullable.String
-			item.ContextEmbedding = &e
-		}
-		items = append(items, item)
-	}
-	if rows.Err() != nil {
-		return nil, rows.Err()
+	for _, row := range rows {
+		items = append(items, humanFeedbackFromDB(row))
 	}
 
 	return items, nil
@@ -199,30 +119,10 @@ func (r *Repository) GetHumanFeedbackByID(ctx context.Context, id uuid.UUID, org
 		return HumanFeedback{}, fmt.Errorf(organizationIDRequiredMessage)
 	}
 
-	var out HumanFeedback
-	var aiRaw []byte
-	var humanRaw []byte
-	var deltaNullable sql.NullFloat64
-	var embeddingNullable sql.NullString
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, quote_id, lead_service_id,
-		       field_changed, ai_value, human_value, delta_percentage,
-		       context_embedding_id, applied_to_memory, created_at
-		FROM RAC_human_feedback
-		WHERE id = $1 AND organization_id = $2
-	`, id, organizationID).Scan(
-		&out.ID,
-		&out.OrganizationID,
-		&out.QuoteID,
-		&out.LeadServiceID,
-		&out.FieldChanged,
-		&aiRaw,
-		&humanRaw,
-		&deltaNullable,
-		&embeddingNullable,
-		&out.AppliedToMemory,
-		&out.CreatedAt,
-	)
+	row, err := r.queries.GetHumanFeedbackByID(ctx, leadsdb.GetHumanFeedbackByIDParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return HumanFeedback{}, ErrNotFound
@@ -230,18 +130,7 @@ func (r *Repository) GetHumanFeedbackByID(ctx context.Context, id uuid.UUID, org
 		return HumanFeedback{}, err
 	}
 
-	_ = json.Unmarshal(aiRaw, &out.AIValue)
-	_ = json.Unmarshal(humanRaw, &out.HumanValue)
-	if deltaNullable.Valid {
-		d := deltaNullable.Float64
-		out.DeltaPercentage = &d
-	}
-	if embeddingNullable.Valid {
-		e := embeddingNullable.String
-		out.ContextEmbedding = &e
-	}
-
-	return out, nil
+	return humanFeedbackFromDB(row), nil
 }
 
 func (r *Repository) MarkHumanFeedbackApplied(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, embeddingID *string) (HumanFeedback, error) {
@@ -252,46 +141,41 @@ func (r *Repository) MarkHumanFeedbackApplied(ctx context.Context, id uuid.UUID,
 		return HumanFeedback{}, fmt.Errorf("organization_id is required")
 	}
 
-	var out HumanFeedback
-	var aiRaw []byte
-	var humanRaw []byte
-	var deltaNullable sql.NullFloat64
-	var embeddingNullable sql.NullString
-	if err := r.pool.QueryRow(ctx, `
-		UPDATE RAC_human_feedback
-		SET applied_to_memory = true,
-		    context_embedding_id = COALESCE($3, context_embedding_id)
-		WHERE id = $1 AND organization_id = $2
-		RETURNING id, organization_id, quote_id, lead_service_id,
-		          field_changed, ai_value, human_value, delta_percentage,
-		          context_embedding_id, applied_to_memory, created_at
-	`, id, organizationID, embeddingID).Scan(
-		&out.ID,
-		&out.OrganizationID,
-		&out.QuoteID,
-		&out.LeadServiceID,
-		&out.FieldChanged,
-		&aiRaw,
-		&humanRaw,
-		&deltaNullable,
-		&embeddingNullable,
-		&out.AppliedToMemory,
-		&out.CreatedAt,
-	); err != nil {
+	row, err := r.queries.MarkHumanFeedbackApplied(ctx, leadsdb.MarkHumanFeedbackAppliedParams{
+		ID:                 toPgUUID(id),
+		OrganizationID:     toPgUUID(organizationID),
+		ContextEmbeddingID: toPgText(embeddingID),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return HumanFeedback{}, ErrNotFound
+		}
 		return HumanFeedback{}, err
 	}
+	return humanFeedbackFromDB(row), nil
+}
 
-	_ = json.Unmarshal(aiRaw, &out.AIValue)
-	_ = json.Unmarshal(humanRaw, &out.HumanValue)
-	if deltaNullable.Valid {
-		d := deltaNullable.Float64
-		out.DeltaPercentage = &d
+func humanFeedbackFromDB(row leadsdb.RacHumanFeedback) HumanFeedback {
+	item := HumanFeedback{
+		ID:               uuid.UUID(row.ID.Bytes),
+		OrganizationID:   uuid.UUID(row.OrganizationID.Bytes),
+		QuoteID:          uuid.UUID(row.QuoteID.Bytes),
+		LeadServiceID:    optionalUUID(row.LeadServiceID),
+		FieldChanged:     row.FieldChanged,
+		DeltaPercentage:  optionalFloat64(row.DeltaPercentage),
+		ContextEmbedding: optionalString(row.ContextEmbeddingID),
+		AppliedToMemory:  row.AppliedToMemory,
+		CreatedAt:        row.CreatedAt.Time,
 	}
-	if embeddingNullable.Valid {
-		e := embeddingNullable.String
-		out.ContextEmbedding = &e
+	_ = json.Unmarshal(row.AiValue, &item.AIValue)
+	_ = json.Unmarshal(row.HumanValue, &item.HumanValue)
+	if item.AIValue == nil {
+		item.AIValue = map[string]any{}
 	}
-	return out, nil
+	if item.HumanValue == nil {
+		item.HumanValue = map[string]any{}
+	}
+	return item
 }
 
 func calculateFeedbackDelta(aiValue, humanValue map[string]any) *float64 {

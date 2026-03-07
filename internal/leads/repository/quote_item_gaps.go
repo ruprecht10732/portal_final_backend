@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 // AdHocQuoteItemSummary aggregates frequently used ad-hoc quote line items.
@@ -31,48 +33,25 @@ func (r *Repository) ListFrequentAdHocQuoteItems(ctx context.Context, organizati
 		limit = 25
 	}
 
-	rows, err := r.pool.Query(ctx, `
-		WITH items AS (
-			SELECT
-				LOWER(REGEXP_REPLACE(TRIM(qi.description), '\\s+', ' ', 'g')) AS dnorm,
-				qi.description,
-				q.created_at
-			FROM RAC_quote_items qi
-			JOIN RAC_quotes q ON q.id = qi.quote_id
-			WHERE qi.organization_id = $1
-				AND q.organization_id = $1
-				AND q.status != 'Draft'
-				AND qi.catalog_product_id IS NULL
-				AND qi.description IS NOT NULL
-				AND TRIM(qi.description) != ''
-				AND q.created_at >= (NOW() - ($2::int || ' days')::interval)
-				AND (qi.is_optional = false OR qi.is_selected = true)
-		)
-		SELECT
-			MIN(description) AS representative_description,
-			COUNT(*)::int AS cnt,
-			MAX(created_at) AS last_seen
-		FROM items
-		GROUP BY dnorm
-		HAVING COUNT(*) >= $3
-		ORDER BY cnt DESC, last_seen DESC
-		LIMIT $4
-	`, organizationID, lookbackDays, minCount, limit)
+	rows, err := r.queries.ListFrequentAdHocQuoteItems(ctx, leadsdb.ListFrequentAdHocQuoteItemsParams{
+		OrganizationID: toPgUUID(organizationID),
+		Column2:        int32(lookbackDays),
+		Column3:        int64(minCount),
+		Limit:          int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query ad-hoc quote item summaries: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]AdHocQuoteItemSummary, 0)
-	for rows.Next() {
-		var it AdHocQuoteItemSummary
-		if err := rows.Scan(&it.Description, &it.UseCount, &it.LastSeenAt); err != nil {
-			return nil, fmt.Errorf("scan ad-hoc quote item summary: %w", err)
-		}
-		items = append(items, it)
-	}
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("iterate ad-hoc quote item summaries: %w", rows.Err())
+	items := make([]AdHocQuoteItemSummary, 0, len(rows))
+	for _, row := range rows {
+		description, _ := row.RepresentativeDescription.(string)
+		lastSeen, _ := row.LastSeen.(time.Time)
+		items = append(items, AdHocQuoteItemSummary{
+			Description: description,
+			UseCount:    int(row.Cnt),
+			LastSeenAt:  lastSeen,
+		})
 	}
 
 	return items, nil

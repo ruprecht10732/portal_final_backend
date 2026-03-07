@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 // ServiceStateAggregates holds counts and timestamps to determine service state contextually.
@@ -49,110 +51,29 @@ type ServiceStateAggregates struct {
 
 // GetServiceStateAggregates returns rich data for deep reconciliation.
 func (r *Repository) GetServiceStateAggregates(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (ServiceStateAggregates, error) {
-	var aggs ServiceStateAggregates
-
-	query := `
-		WITH quote_stats AS (
-			SELECT
-				COUNT(*) FILTER (WHERE status = 'Accepted') AS accepted,
-				COUNT(*) FILTER (WHERE status = 'Sent') AS sent,
-				COUNT(*) FILTER (WHERE status = 'Draft') AS draft,
-				COUNT(*) FILTER (WHERE status = 'Rejected') AS rejected,
-				MAX(updated_at) AS latest_at
-			FROM rac_quotes
-			WHERE lead_service_id = $1 AND organization_id = $2
-		),
-		offer_counts AS (
-			SELECT
-				COUNT(*) FILTER (WHERE status = 'accepted') AS accepted,
-				COUNT(*) FILTER (WHERE status IN ('pending', 'sent')) AS pending,
-				MAX(
-					GREATEST(
-						created_at,
-						updated_at,
-						COALESCE(accepted_at, created_at),
-						COALESCE(rejected_at, created_at)
-					)
-				) AS latest_at
-			FROM rac_partner_offers
-			WHERE lead_service_id = $1 AND organization_id = $2
-		),
-		appt_counts AS (
-			SELECT
-				COUNT(*) FILTER (WHERE status IN ('scheduled', 'requested') AND start_time > NOW()) AS scheduled,
-				COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-				COUNT(*) FILTER (WHERE status IN ('cancelled', 'no_show')) AS cancelled,
-				MAX(updated_at) AS latest_at
-			FROM rac_appointments
-			WHERE lead_service_id = $1 AND organization_id = $2
-		),
-		report_check AS (
-			SELECT EXISTS(
-				SELECT 1
-				FROM rac_appointment_visit_reports avr
-				JOIN rac_appointments a ON a.id = avr.appointment_id
-				WHERE a.lead_service_id = $1 AND a.organization_id = $2 AND avr.organization_id = $2
-			) AS has_report
-		),
-		ai_data AS (
-			SELECT recommended_action
-			FROM rac_lead_ai_analysis
-			WHERE lead_service_id = $1 AND organization_id = $2
-			ORDER BY created_at DESC
-			LIMIT 1
-		),
-		terminal_event AS (
-			SELECT MAX(occurred_at) AS terminal_at
-			FROM rac_lead_service_events
-			WHERE lead_service_id = $1 AND organization_id = $2
-				AND (
-					pipeline_stage IN ('Completed', 'Lost')
-				)
-		)
-		SELECT
-			COALESCE(q.accepted, 0),
-			COALESCE(q.sent, 0),
-			COALESCE(q.draft, 0),
-			COALESCE(q.rejected, 0),
-			q.latest_at,
-			COALESCE(o.accepted, 0),
-			COALESCE(o.pending, 0),
-			o.latest_at,
-			COALESCE(ap.scheduled, 0),
-			COALESCE(ap.completed, 0),
-			COALESCE(ap.cancelled, 0),
-			ap.latest_at,
-			COALESCE(rc.has_report, false),
-			a.recommended_action,
-			t.terminal_at
-		FROM quote_stats q
-		CROSS JOIN offer_counts o
-		CROSS JOIN appt_counts ap
-		CROSS JOIN report_check rc
-		LEFT JOIN ai_data a ON true
-		CROSS JOIN terminal_event t
-	`
-
-	err := r.pool.QueryRow(ctx, query, serviceID, organizationID).Scan(
-		&aggs.AcceptedQuotes,
-		&aggs.SentQuotes,
-		&aggs.DraftQuotes,
-		&aggs.RejectedQuotes,
-		&aggs.LatestQuoteAt,
-		&aggs.AcceptedOffers,
-		&aggs.PendingOffers,
-		&aggs.LatestOfferAt,
-		&aggs.ScheduledAppointments,
-		&aggs.CompletedAppointments,
-		&aggs.CancelledAppointments,
-		&aggs.LatestAppointmentAt,
-		&aggs.HasVisitReport,
-		&aggs.AiAction,
-		&aggs.TerminalAt,
-	)
+	row, err := r.queries.GetServiceStateAggregates(ctx, leadsdb.GetServiceStateAggregatesParams{
+		LeadServiceID:  toPgUUID(serviceID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return ServiceStateAggregates{}, fmt.Errorf("get service aggregates: %w", err)
 	}
 
-	return aggs, nil
+	return ServiceStateAggregates{
+		AcceptedQuotes:        int(row.Accepted),
+		SentQuotes:            int(row.Sent),
+		DraftQuotes:           int(row.Draft),
+		RejectedQuotes:        int(row.Rejected),
+		LatestQuoteAt:         optionalTimeValue(row.LatestAt),
+		AcceptedOffers:        int(row.Accepted_2),
+		PendingOffers:         int(row.Pending),
+		LatestOfferAt:         optionalTimeValue(row.LatestAt_2),
+		ScheduledAppointments: int(row.Scheduled),
+		CompletedAppointments: int(row.Completed),
+		CancelledAppointments: int(row.Cancelled),
+		LatestAppointmentAt:   optionalTimeValue(row.LatestAt_3),
+		HasVisitReport:        row.HasReport,
+		AiAction:              optionalString(row.RecommendedAction),
+		TerminalAt:            optionalTimeValue(row.TerminalAt),
+	}, nil
 }

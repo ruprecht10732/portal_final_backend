@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 type CreateCatalogSearchLogParams struct {
@@ -40,20 +43,20 @@ func (r *Repository) CreateCatalogSearchLog(ctx context.Context, params CreateCa
 		return fmt.Errorf("result_count cannot be negative")
 	}
 
-	// Prefer DB-side now() unless an explicit timestamp is provided.
-	if params.CreatedAt == nil {
-		_, err := r.pool.Exec(ctx, `
-			INSERT INTO RAC_catalog_search_log (organization_id, lead_service_id, query, collection, result_count, top_score)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, params.OrganizationID, params.LeadServiceID, params.Query, params.Collection, params.ResultCount, params.TopScore)
-		return err
+	createdAt := pgtype.Timestamptz{}
+	if params.CreatedAt != nil {
+		createdAt = toPgTimestamp(*params.CreatedAt)
 	}
 
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO RAC_catalog_search_log (organization_id, lead_service_id, query, collection, result_count, top_score, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, params.OrganizationID, params.LeadServiceID, params.Query, params.Collection, params.ResultCount, params.TopScore, *params.CreatedAt)
-	return err
+	return r.queries.CreateCatalogSearchLog(ctx, leadsdb.CreateCatalogSearchLogParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		LeadServiceID:  toPgUUIDPtr(params.LeadServiceID),
+		Query:          params.Query,
+		Collection:     params.Collection,
+		ResultCount:    int32(params.ResultCount),
+		TopScore:       toPgFloat8Ptr(params.TopScore),
+		CreatedAt:      createdAt,
+	})
 }
 
 // ListFrequentCatalogSearchMisses returns distinct query strings that repeatedly
@@ -72,46 +75,26 @@ func (r *Repository) ListFrequentCatalogSearchMisses(ctx context.Context, organi
 		limit = 25
 	}
 
-	// Normalize in SQL to reduce trivial duplicates (case, whitespace).
-	// Keep the original "representative" query via min(query) for human review.
-	rows, err := r.pool.Query(ctx, `
-		WITH misses AS (
-			SELECT
-				LOWER(REGEXP_REPLACE(TRIM(query), '\\s+', ' ', 'g')) AS qnorm,
-				query,
-				collection,
-				created_at
-			FROM RAC_catalog_search_log
-			WHERE organization_id = $1
-				AND result_count = 0
-				AND created_at >= (NOW() - ($2::int || ' days')::interval)
-		)
-		SELECT
-			MIN(query) AS representative_query,
-			COUNT(*)::int AS cnt,
-			MAX(created_at) AS last_seen,
-			ARRAY_AGG(DISTINCT collection) AS collections
-		FROM misses
-		GROUP BY qnorm
-		HAVING COUNT(*) >= $3
-		ORDER BY cnt DESC, last_seen DESC
-		LIMIT $4
-	`, organizationID, lookbackDays, minCount, limit)
+	rows, err := r.queries.ListFrequentCatalogSearchMisses(ctx, leadsdb.ListFrequentCatalogSearchMissesParams{
+		OrganizationID: toPgUUID(organizationID),
+		Column2:        int32(lookbackDays),
+		Column3:        int64(minCount),
+		Limit:          int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query catalog search misses: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]CatalogSearchMissSummary, 0)
-	for rows.Next() {
-		var it CatalogSearchMissSummary
-		if err := rows.Scan(&it.Query, &it.SearchCount, &it.LastSeenAt, &it.Collections); err != nil {
-			return nil, fmt.Errorf("scan catalog search miss summary: %w", err)
-		}
-		items = append(items, it)
-	}
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("iterate catalog search miss summaries: %w", rows.Err())
+	items := make([]CatalogSearchMissSummary, 0, len(rows))
+	for _, row := range rows {
+		query, _ := row.RepresentativeQuery.(string)
+		lastSeen, _ := row.LastSeen.(time.Time)
+		items = append(items, CatalogSearchMissSummary{
+			Query:       query,
+			SearchCount: int(row.Cnt),
+			LastSeenAt:  lastSeen,
+			Collections: row.Collections,
+		})
 	}
 
 	return items, nil

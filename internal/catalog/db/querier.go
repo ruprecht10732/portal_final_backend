@@ -6,31 +6,39 @@ package catalogdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
-	// Materials
-	AddProductMaterials(ctx context.Context, arg AddProductMaterialsParams) error
 	CountProducts(ctx context.Context, arg CountProductsParams) (int64, error)
 	CountVatRates(ctx context.Context, arg CountVatRatesParams) (int64, error)
 	// Products
 	CreateProduct(ctx context.Context, arg CreateProductParams) (CreateProductRow, error)
+	// Product Assets
+	CreateProductAsset(ctx context.Context, arg CreateProductAssetParams) (RacCatalogProductAsset, error)
 	// Catalog Domain SQL Queries
 	// VAT Rates
 	CreateVatRate(ctx context.Context, arg CreateVatRateParams) (RacCatalogVatRate, error)
-	DeleteProduct(ctx context.Context, arg DeleteProductParams) error
-	DeleteVatRate(ctx context.Context, arg DeleteVatRateParams) error
+	DeleteProduct(ctx context.Context, arg DeleteProductParams) (int64, error)
+	DeleteProductAsset(ctx context.Context, arg DeleteProductAssetParams) (int64, error)
+	DeleteVatRate(ctx context.Context, arg DeleteVatRateParams) (int64, error)
+	GetNextProductCounter(ctx context.Context, organizationID pgtype.UUID) (int32, error)
+	GetProductAssetByID(ctx context.Context, arg GetProductAssetByIDParams) (RacCatalogProductAsset, error)
 	GetProductByID(ctx context.Context, arg GetProductByIDParams) (GetProductByIDRow, error)
 	GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]GetProductsByIDsRow, error)
 	GetVatRateByID(ctx context.Context, arg GetVatRateByIDParams) (RacCatalogVatRate, error)
 	HasProductMaterials(ctx context.Context, arg HasProductMaterialsParams) (bool, error)
 	HasProductsWithVatRate(ctx context.Context, arg HasProductsWithVatRateParams) (bool, error)
+	ListProductAssets(ctx context.Context, arg ListProductAssetsParams) ([]RacCatalogProductAsset, error)
 	ListProductMaterials(ctx context.Context, arg ListProductMaterialsParams) ([]ListProductMaterialsRow, error)
 	ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error)
 	ListVatRates(ctx context.Context, arg ListVatRatesParams) ([]RacCatalogVatRate, error)
 	RemoveProductMaterials(ctx context.Context, arg RemoveProductMaterialsParams) error
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) (UpdateProductRow, error)
 	UpdateVatRate(ctx context.Context, arg UpdateVatRateParams) (RacCatalogVatRate, error)
+	// Product Materials
+	UpsertProductMaterial(ctx context.Context, arg UpsertProductMaterialParams) error
 }
 
 var _ Querier = (*Queries)(nil)

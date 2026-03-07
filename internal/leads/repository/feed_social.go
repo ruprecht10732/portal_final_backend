@@ -2,9 +2,14 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 // ──────────────────────────────────────────────────
@@ -13,27 +18,28 @@ import (
 
 func (r *Repository) ToggleReaction(ctx context.Context, eventID, eventSource, reactionType string, userID, orgID uuid.UUID) (exists bool, err error) {
 	// Try delete first – if a row was removed, the toggle means "remove"
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_feed_reactions
-		WHERE event_id      = $1
-		  AND event_source  = $2
-		  AND reaction_type = $3
-		  AND user_id       = $4
-		  AND org_id        = $5
-	`, eventID, eventSource, reactionType, userID, orgID)
+	rowsAffected, err := r.queries.DeleteFeedReaction(ctx, leadsdb.DeleteFeedReactionParams{
+		EventID:      eventID,
+		EventSource:  eventSource,
+		ReactionType: reactionType,
+		UserID:       toPgUUID(userID),
+		OrgID:        toPgUUID(orgID),
+	})
 	if err != nil {
 		return false, err
 	}
-	if tag.RowsAffected() > 0 {
+	if rowsAffected > 0 {
 		return false, nil // removed
 	}
 
 	// Not present → insert
-	_, err = r.pool.Exec(ctx, `
-		INSERT INTO RAC_feed_reactions (event_id, event_source, reaction_type, user_id, org_id)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT DO NOTHING
-	`, eventID, eventSource, reactionType, userID, orgID)
+	err = r.queries.CreateFeedReaction(ctx, leadsdb.CreateFeedReactionParams{
+		EventID:      eventID,
+		EventSource:  eventSource,
+		ReactionType: reactionType,
+		UserID:       toPgUUID(userID),
+		OrgID:        toPgUUID(orgID),
+	})
 	if err != nil {
 		return false, err
 	}
@@ -41,55 +47,37 @@ func (r *Repository) ToggleReaction(ctx context.Context, eventID, eventSource, r
 }
 
 func (r *Repository) ListReactionsByEvent(ctx context.Context, eventID, eventSource string, orgID uuid.UUID) ([]FeedReaction, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT fr.id, fr.event_id, fr.event_source, fr.reaction_type, fr.user_id, u.email, fr.created_at
-		FROM RAC_feed_reactions fr
-		JOIN RAC_users u ON u.id = fr.user_id
-		WHERE fr.event_id     = $1
-		  AND fr.event_source = $2
-		  AND fr.org_id       = $3
-		ORDER BY fr.created_at
-	`, eventID, eventSource, orgID)
+	rows, err := r.queries.ListReactionsByEvent(ctx, leadsdb.ListReactionsByEventParams{
+		EventID:     eventID,
+		EventSource: eventSource,
+		OrgID:       toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var out []FeedReaction
-	for rows.Next() {
-		var r FeedReaction
-		if err := rows.Scan(&r.ID, &r.EventID, &r.EventSource, &r.ReactionType, &r.UserID, &r.UserEmail, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]FeedReaction, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, feedReactionFromRow(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListReactionsByEvents returns reactions for a batch of event IDs (used by feed enrichment).
 func (r *Repository) ListReactionsByEvents(ctx context.Context, eventIDs []string, orgID uuid.UUID) ([]FeedReaction, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT fr.id, fr.event_id, fr.event_source, fr.reaction_type, fr.user_id, u.email, fr.created_at
-		FROM RAC_feed_reactions fr
-		JOIN RAC_users u ON u.id = fr.user_id
-		WHERE fr.event_id = ANY($1)
-		  AND fr.org_id   = $2
-		ORDER BY fr.event_id, fr.created_at
-	`, eventIDs, orgID)
+	rows, err := r.queries.ListReactionsByEvents(ctx, leadsdb.ListReactionsByEventsParams{
+		Column1: eventIDs,
+		OrgID:   toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var out []FeedReaction
-	for rows.Next() {
-		var r FeedReaction
-		if err := rows.Scan(&r.ID, &r.EventID, &r.EventSource, &r.ReactionType, &r.UserID, &r.UserEmail, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]FeedReaction, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, feedReactionFromBatchRow(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -97,55 +85,42 @@ func (r *Repository) ListReactionsByEvents(ctx context.Context, eventIDs []strin
 // ──────────────────────────────────────────────────
 
 func (r *Repository) CreateComment(ctx context.Context, eventID, eventSource string, userID, orgID uuid.UUID, body string, mentionIDs []uuid.UUID) (FeedComment, error) {
-	var c FeedComment
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_feed_comments (event_id, event_source, user_id, org_id, body)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, event_id, event_source, user_id, org_id, body, created_at, updated_at
-	`, eventID, eventSource, userID, orgID, body).Scan(
-		&c.ID, &c.EventID, &c.EventSource, &c.UserID, &c.OrgID, &c.Body, &c.CreatedAt, &c.UpdatedAt,
-	)
+	row, err := r.queries.CreateFeedComment(ctx, leadsdb.CreateFeedCommentParams{
+		EventID:     eventID,
+		EventSource: eventSource,
+		UserID:      toPgUUID(userID),
+		OrgID:       toPgUUID(orgID),
+		Body:        body,
+	})
 	if err != nil {
 		return FeedComment{}, err
 	}
+	c := feedCommentFromRow(row)
 
 	// Insert mentions
 	for _, mentionedID := range mentionIDs {
-		_, _ = r.pool.Exec(ctx, `
-			INSERT INTO RAC_feed_comment_mentions (comment_id, mentioned_user_id)
-			VALUES ($1, $2)
-			ON CONFLICT DO NOTHING
-		`, c.ID, mentionedID)
+		_ = r.queries.CreateFeedCommentMention(ctx, leadsdb.CreateFeedCommentMentionParams{
+			CommentID:       toPgUUID(c.ID),
+			MentionedUserID: toPgUUID(mentionedID),
+		})
 	}
 
 	return c, nil
 }
 
 func (r *Repository) ListCommentsByEvent(ctx context.Context, eventID, eventSource string, orgID uuid.UUID) ([]FeedCommentWithAuthor, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT c.id, c.event_id, c.event_source, c.user_id, u.email, c.body, c.created_at, c.updated_at
-		FROM RAC_feed_comments c
-		JOIN RAC_users u ON u.id = c.user_id
-		WHERE c.event_id     = $1
-		  AND c.event_source = $2
-		  AND c.org_id       = $3
-		ORDER BY c.created_at ASC
-	`, eventID, eventSource, orgID)
+	rows, err := r.queries.ListCommentsByEvent(ctx, leadsdb.ListCommentsByEventParams{
+		EventID:     eventID,
+		EventSource: eventSource,
+		OrgID:       toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var out []FeedCommentWithAuthor
-	for rows.Next() {
-		var c FeedCommentWithAuthor
-		if err := rows.Scan(&c.ID, &c.EventID, &c.EventSource, &c.UserID, &c.UserEmail, &c.Body, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	out := make([]FeedCommentWithAuthor, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, feedCommentWithAuthorFromRow(row))
 	}
 
 	// Batch-load mentions for all returned comments
@@ -167,16 +142,15 @@ func (r *Repository) ListCommentsByEvent(ctx context.Context, eventID, eventSour
 }
 
 func (r *Repository) DeleteComment(ctx context.Context, commentID uuid.UUID, userID, orgID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_feed_comments
-		WHERE id      = $1
-		  AND user_id = $2
-		  AND org_id  = $3
-	`, commentID, userID, orgID)
+	rowsAffected, err := r.queries.DeleteFeedComment(ctx, leadsdb.DeleteFeedCommentParams{
+		ID:     toPgUUID(commentID),
+		UserID: toPgUUID(userID),
+		OrgID:  toPgUUID(orgID),
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -184,28 +158,19 @@ func (r *Repository) DeleteComment(ctx context.Context, commentID uuid.UUID, use
 
 // ListCommentCountsByEvents returns comment counts per event_id for a batch (feed enrichment).
 func (r *Repository) ListCommentCountsByEvents(ctx context.Context, eventIDs []string, orgID uuid.UUID) (map[string]int, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT event_id, COUNT(*)::int
-		FROM RAC_feed_comments
-		WHERE event_id = ANY($1)
-		  AND org_id   = $2
-		GROUP BY event_id
-	`, eventIDs, orgID)
+	rows, err := r.queries.ListCommentCountsByEvents(ctx, leadsdb.ListCommentCountsByEventsParams{
+		Column1: eventIDs,
+		OrgID:   toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	out := make(map[string]int)
-	for rows.Next() {
-		var id string
-		var cnt int
-		if err := rows.Scan(&id, &cnt); err != nil {
-			return nil, err
-		}
-		out[id] = cnt
+	for _, row := range rows {
+		out[row.EventID] = int(row.Column2)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -213,28 +178,20 @@ func (r *Repository) ListCommentCountsByEvents(ctx context.Context, eventIDs []s
 // ──────────────────────────────────────────────────
 
 func (r *Repository) listMentionsByComments(ctx context.Context, commentIDs []uuid.UUID) (map[uuid.UUID][]CommentMention, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT m.comment_id, m.mentioned_user_id, u.email
-		FROM RAC_feed_comment_mentions m
-		JOIN RAC_users u ON u.id = m.mentioned_user_id
-		WHERE m.comment_id = ANY($1)
-		ORDER BY m.created_at
-	`, commentIDs)
+	rows, err := r.queries.ListMentionsByComments(ctx, toPgUUIDSlice(commentIDs))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	out := make(map[uuid.UUID][]CommentMention)
-	for rows.Next() {
-		var commentID uuid.UUID
-		var m CommentMention
-		if err := rows.Scan(&commentID, &m.UserID, &m.Email); err != nil {
-			return nil, err
-		}
-		out[commentID] = append(out[commentID], m)
+	for _, row := range rows {
+		commentID := uuid.UUID(row.CommentID.Bytes)
+		out[commentID] = append(out[commentID], CommentMention{
+			UserID: uuid.UUID(row.MentionedUserID.Bytes),
+			Email:  row.Email,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ──────────────────────────────────────────────────
@@ -242,33 +199,106 @@ func (r *Repository) listMentionsByComments(ctx context.Context, commentIDs []uu
 // ──────────────────────────────────────────────────
 
 func (r *Repository) ListOrgMembers(ctx context.Context, orgID uuid.UUID) ([]OrgMember, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT
-			u.id,
-			u.email,
-			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
-		FROM RAC_organization_members om
-		JOIN RAC_users u ON u.id = om.user_id
-		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
-		LEFT JOIN RAC_roles r ON r.id = ur.role_id
-		WHERE om.organization_id = $1
-		GROUP BY u.id, u.email
-		ORDER BY u.email
-	`, orgID)
+	rows, err := r.queries.ListLeadOrgMembers(ctx, toPgUUID(orgID))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var out []OrgMember
-	for rows.Next() {
-		var m OrgMember
-		if err := rows.Scan(&m.ID, &m.Email, &m.Roles); err != nil {
+	out := make([]OrgMember, 0, len(rows))
+	for _, row := range rows {
+		roles, err := stringSliceFromAny(row.Roles)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		out = append(out, OrgMember{ID: uuid.UUID(row.ID.Bytes), Email: row.Email, Roles: roles})
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+func toPgUUIDSlice(ids []uuid.UUID) []pgtype.UUID {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, toPgUUID(id))
+	}
+	return out
+}
+
+func feedReactionFromRow(row leadsdb.ListReactionsByEventRow) FeedReaction {
+	return FeedReaction{
+		ID:           uuid.UUID(row.ID.Bytes),
+		EventID:      row.EventID,
+		EventSource:  row.EventSource,
+		ReactionType: row.ReactionType,
+		UserID:       uuid.UUID(row.UserID.Bytes),
+		UserEmail:    row.Email,
+		CreatedAt:    row.CreatedAt.Time,
+	}
+}
+
+func feedReactionFromBatchRow(row leadsdb.ListReactionsByEventsRow) FeedReaction {
+	return FeedReaction{
+		ID:           uuid.UUID(row.ID.Bytes),
+		EventID:      row.EventID,
+		EventSource:  row.EventSource,
+		ReactionType: row.ReactionType,
+		UserID:       uuid.UUID(row.UserID.Bytes),
+		UserEmail:    row.Email,
+		CreatedAt:    row.CreatedAt.Time,
+	}
+}
+
+func feedCommentFromRow(row leadsdb.RacFeedComment) FeedComment {
+	return FeedComment{
+		ID:          uuid.UUID(row.ID.Bytes),
+		EventID:     row.EventID,
+		EventSource: row.EventSource,
+		UserID:      uuid.UUID(row.UserID.Bytes),
+		OrgID:       uuid.UUID(row.OrgID.Bytes),
+		Body:        row.Body,
+		CreatedAt:   row.CreatedAt.Time,
+		UpdatedAt:   row.UpdatedAt.Time,
+	}
+}
+
+func feedCommentWithAuthorFromRow(row leadsdb.ListCommentsByEventRow) FeedCommentWithAuthor {
+	return FeedCommentWithAuthor{
+		ID:          uuid.UUID(row.ID.Bytes),
+		EventID:     row.EventID,
+		EventSource: row.EventSource,
+		UserID:      uuid.UUID(row.UserID.Bytes),
+		UserEmail:   row.Email,
+		Body:        row.Body,
+		CreatedAt:   row.CreatedAt.Time,
+		UpdatedAt:   row.UpdatedAt.Time,
+	}
+}
+
+func stringSliceFromAny(value any) ([]string, error) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		return typed, nil
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, fmt.Sprint(item))
+		}
+		return out, nil
+	default:
+		reflected := reflect.ValueOf(value)
+		if reflected.Kind() == reflect.Slice {
+			out := make([]string, 0, reflected.Len())
+			for index := 0; index < reflected.Len(); index++ {
+				out = append(out, fmt.Sprint(reflected.Index(index).Interface()))
+			}
+			return out, nil
+		}
+		return nil, fmt.Errorf("unsupported roles type %T", value)
+	}
 }
 
 // ──────────────────────────────────────────────────

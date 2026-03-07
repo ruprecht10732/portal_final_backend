@@ -2,62 +2,47 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 // GetLeadAppointmentStats returns appointment statistics for a lead (for scoring purposes).
 func (r *Repository) GetLeadAppointmentStats(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadAppointmentStats, error) {
-	var stats LeadAppointmentStats
-
-	query := `
-		SELECT
-			COUNT(*) AS total,
-			COUNT(*) FILTER (WHERE status = 'Scheduled') AS scheduled,
-			COUNT(*) FILTER (WHERE status = 'Completed') AS completed,
-			COUNT(*) FILTER (WHERE status = 'Cancelled') AS cancelled,
-			EXISTS(
-				SELECT 1 FROM RAC_appointments
-				WHERE lead_id = $1 AND organization_id = $2
-				AND status = 'Scheduled' AND start_time > NOW()
-			) AS has_upcoming
-		FROM RAC_appointments
-		WHERE lead_id = $1 AND organization_id = $2
-	`
-
-	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(
-		&stats.Total,
-		&stats.Scheduled,
-		&stats.Completed,
-		&stats.Cancelled,
-		&stats.HasUpcoming,
-	)
+	row, err := r.queries.GetLeadAppointmentStats(ctx, leadsdb.GetLeadAppointmentStatsParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		// Return zero stats on error (no RAC_appointments is valid)
 		return LeadAppointmentStats{}, nil
 	}
 
-	return stats, nil
+	return LeadAppointmentStats{
+		Total:       int(row.Total),
+		Scheduled:   int(row.Scheduled),
+		Completed:   int(row.Completed),
+		Cancelled:   int(row.Cancelled),
+		HasUpcoming: row.HasUpcoming,
+	}, nil
 }
 
 // GetLatestAppointment returns the most recent appointment for a lead.
 func (r *Repository) GetLatestAppointment(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (*time.Time, string, error) {
-	var startTime time.Time
-	var status string
-
-	query := `
-		SELECT start_time, status
-		FROM RAC_appointments
-		WHERE lead_id = $1 AND organization_id = $2
-		ORDER BY start_time DESC
-		LIMIT 1
-	`
-
-	err := r.pool.QueryRow(ctx, query, leadID, organizationID).Scan(&startTime, &status)
-	if err != nil {
+	row, err := r.queries.GetLatestAppointment(ctx, leadsdb.GetLatestAppointmentParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", nil // No appointment found
 	}
+	if err != nil {
+		return nil, "", err
+	}
 
-	return &startTime, status, nil
+	return optionalTime(row.StartTime), row.Status, nil
 }

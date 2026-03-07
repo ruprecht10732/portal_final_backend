@@ -2,14 +2,15 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 const aiAnalysisSelectColumns = `id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
@@ -17,31 +18,31 @@ const aiAnalysisSelectColumns = `id, lead_id, organization_id, lead_service_id, 
 		preferred_contact_channel, suggested_contact_message, summary,
 		composite_confidence, confidence_breakdown, risk_flags, created_at`
 
-// AIAnalysis represents a single AI analysis for a lead service
+// AIAnalysis represents a single AI analysis for a lead service.
 type AIAnalysis struct {
 	ID                      uuid.UUID
 	LeadID                  uuid.UUID
 	OrganizationID          uuid.UUID
-	LeadServiceID           uuid.UUID // The specific service this analysis is for
-	UrgencyLevel            string    // High, Medium, Low
+	LeadServiceID           uuid.UUID
+	UrgencyLevel            string
 	UrgencyReason           *string
-	LeadQuality             string // Junk, Low, Potential, High, Urgent
-	RecommendedAction       string // Reject, RequestInfo, ScheduleSurvey, CallImmediately
+	LeadQuality             string
+	RecommendedAction       string
 	MissingInformation      []string
 	CompositeConfidence     *float64
 	ConfidenceBreakdown     map[string]float64
 	RiskFlags               []string
-	PreferredContactChannel string // WhatsApp, Email
+	PreferredContactChannel string
 	SuggestedContactMessage string
 	Summary                 string
 	CreatedAt               time.Time
 }
 
-// CreateAIAnalysisParams contains the parameters for creating an AI analysis
+// CreateAIAnalysisParams contains the parameters for creating an AI analysis.
 type CreateAIAnalysisParams struct {
 	LeadID                  uuid.UUID
 	OrganizationID          uuid.UUID
-	LeadServiceID           uuid.UUID // The specific service this analysis is for
+	LeadServiceID           uuid.UUID
 	UrgencyLevel            string
 	UrgencyReason           *string
 	LeadQuality             string
@@ -55,140 +56,105 @@ type CreateAIAnalysisParams struct {
 	Summary                 string
 }
 
-// CreateAIAnalysis stores a new AI analysis for a lead service
+// CreateAIAnalysis stores a new AI analysis for a lead service.
 func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalysisParams) (AIAnalysis, error) {
-	missingInfo := params.MissingInformation
-	if missingInfo == nil {
-		missingInfo = []string{}
-	}
-	missingInfoJSON, _ := json.Marshal(missingInfo)
+	missingInfoJSON := marshalJSONArray(params.MissingInformation)
+	breakdownJSON := marshalJSONMap(params.ConfidenceBreakdown)
+	riskFlagsJSON := marshalJSONArray(params.RiskFlags)
 
-	breakdown := params.ConfidenceBreakdown
-	if breakdown == nil {
-		breakdown = map[string]float64{}
-	}
-	breakdownJSON, _ := json.Marshal(breakdown)
-
-	riskFlags := params.RiskFlags
-	if riskFlags == nil {
-		riskFlags = []string{}
-	}
-	riskFlagsJSON, _ := json.Marshal(riskFlags)
-
-	var analysis AIAnalysis
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_lead_ai_analysis (
-			lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-			lead_quality, recommended_action, missing_information,
-			preferred_contact_channel, suggested_contact_message, summary,
-			composite_confidence, confidence_breakdown, risk_flags
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		RETURNING `+aiAnalysisSelectColumns+`
-	`,
-		params.LeadID, params.OrganizationID, params.LeadServiceID, params.UrgencyLevel, params.UrgencyReason,
-		params.LeadQuality, params.RecommendedAction, missingInfoJSON,
-		params.PreferredContactChannel, params.SuggestedContactMessage, params.Summary,
-		params.CompositeConfidence, breakdownJSON, riskFlagsJSON,
-	).Scan(
-		&analysis.ID, &analysis.LeadID, &analysis.OrganizationID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
-		&analysis.LeadQuality, &analysis.RecommendedAction, &missingInfoJSON,
-		&analysis.PreferredContactChannel, &analysis.SuggestedContactMessage, &analysis.Summary,
-		&analysis.CompositeConfidence, &breakdownJSON, &riskFlagsJSON, &analysis.CreatedAt,
-	)
+	row, err := r.queries.CreateAIAnalysis(ctx, leadsdb.CreateAIAnalysisParams{
+		LeadID:                  toPgUUID(params.LeadID),
+		OrganizationID:          toPgUUID(params.OrganizationID),
+		LeadServiceID:           toPgUUID(params.LeadServiceID),
+		UrgencyLevel:            params.UrgencyLevel,
+		UrgencyReason:           toPgText(params.UrgencyReason),
+		LeadQuality:             params.LeadQuality,
+		RecommendedAction:       params.RecommendedAction,
+		MissingInformation:      missingInfoJSON,
+		PreferredContactChannel: params.PreferredContactChannel,
+		SuggestedContactMessage: params.SuggestedContactMessage,
+		Summary:                 params.Summary,
+		CompositeConfidence:     toPgFloat8Ptr(params.CompositeConfidence),
+		ConfidenceBreakdown:     breakdownJSON,
+		RiskFlags:               riskFlagsJSON,
+	})
 	if err != nil {
 		return AIAnalysis{}, err
 	}
-
-	_ = json.Unmarshal(missingInfoJSON, &analysis.MissingInformation)
-	if err := json.Unmarshal(breakdownJSON, &analysis.ConfidenceBreakdown); err != nil {
-		log.Printf("warn: failed to unmarshal ConfidenceBreakdown for analysis %s: %v", analysis.ID, err)
-	}
-	_ = json.Unmarshal(riskFlagsJSON, &analysis.RiskFlags)
-
-	return analysis, nil
+	return aiAnalysisFromRow(row.ID, row.LeadID, row.OrganizationID, row.LeadServiceID, row.UrgencyLevel, row.UrgencyReason, row.LeadQuality, row.RecommendedAction, row.MissingInformation, row.CompositeConfidence, row.ConfidenceBreakdown, row.RiskFlags, row.PreferredContactChannel, row.SuggestedContactMessage, row.Summary, row.CreatedAt), nil
 }
 
-// GetLatestAIAnalysis returns the most recent AI analysis for a service
+// GetLatestAIAnalysis returns the most recent AI analysis for a service.
 func (r *Repository) GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (AIAnalysis, error) {
-	var analysis AIAnalysis
-	var missingInfoJSON []byte
-	var breakdownJSON []byte
-	var riskFlagsJSON []byte
-	var compositeConfidence sql.NullFloat64
-
-	err := r.pool.QueryRow(ctx, `
-		SELECT `+aiAnalysisSelectColumns+`
-		FROM RAC_lead_ai_analysis
-		WHERE lead_service_id = $1 AND organization_id = $2
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, serviceID, organizationID).Scan(
-		&analysis.ID, &analysis.LeadID, &analysis.OrganizationID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
-		&analysis.LeadQuality, &analysis.RecommendedAction, &missingInfoJSON,
-		&analysis.PreferredContactChannel, &analysis.SuggestedContactMessage, &analysis.Summary,
-		&compositeConfidence, &breakdownJSON, &riskFlagsJSON, &analysis.CreatedAt,
-	)
+	row, err := r.queries.GetLatestAIAnalysis(ctx, leadsdb.GetLatestAIAnalysisParams{LeadServiceID: toPgUUID(serviceID), OrganizationID: toPgUUID(organizationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AIAnalysis{}, ErrNotFound
 	}
 	if err != nil {
 		return AIAnalysis{}, err
 	}
-
-	_ = json.Unmarshal(missingInfoJSON, &analysis.MissingInformation)
-	if err := json.Unmarshal(breakdownJSON, &analysis.ConfidenceBreakdown); err != nil {
-		log.Printf("warn: failed to unmarshal ConfidenceBreakdown for analysis %s: %v", analysis.ID, err)
-	}
-	_ = json.Unmarshal(riskFlagsJSON, &analysis.RiskFlags)
-	if compositeConfidence.Valid {
-		analysis.CompositeConfidence = &compositeConfidence.Float64
-	}
-
-	return analysis, nil
+	return aiAnalysisFromRow(row.ID, row.LeadID, row.OrganizationID, row.LeadServiceID, row.UrgencyLevel, row.UrgencyReason, row.LeadQuality, row.RecommendedAction, row.MissingInformation, row.CompositeConfidence, row.ConfidenceBreakdown, row.RiskFlags, row.PreferredContactChannel, row.SuggestedContactMessage, row.Summary, row.CreatedAt), nil
 }
 
-// ListAIAnalyses returns all AI analyses for a service, ordered by most recent first
+// ListAIAnalyses returns all AI analyses for a service, ordered by most recent first.
 func (r *Repository) ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) ([]AIAnalysis, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT `+aiAnalysisSelectColumns+`
-		FROM RAC_lead_ai_analysis
-		WHERE lead_service_id = $1 AND organization_id = $2
-		ORDER BY created_at DESC
-	`, serviceID, organizationID)
+	rows, err := r.queries.ListAIAnalyses(ctx, leadsdb.ListAIAnalysesParams{LeadServiceID: toPgUUID(serviceID), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var analyses []AIAnalysis
-	for rows.Next() {
-		var analysis AIAnalysis
-		var missingInfoJSON []byte
-		var breakdownJSON []byte
-		var riskFlagsJSON []byte
-		var compositeConfidence sql.NullFloat64
-
-		if err := rows.Scan(
-			&analysis.ID, &analysis.LeadID, &analysis.OrganizationID, &analysis.LeadServiceID, &analysis.UrgencyLevel, &analysis.UrgencyReason,
-			&analysis.LeadQuality, &analysis.RecommendedAction, &missingInfoJSON,
-			&analysis.PreferredContactChannel, &analysis.SuggestedContactMessage, &analysis.Summary,
-			&compositeConfidence, &breakdownJSON, &riskFlagsJSON, &analysis.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-
-		_ = json.Unmarshal(missingInfoJSON, &analysis.MissingInformation)
-		_ = json.Unmarshal(breakdownJSON, &analysis.ConfidenceBreakdown)
-		_ = json.Unmarshal(riskFlagsJSON, &analysis.RiskFlags)
-		if compositeConfidence.Valid {
-			analysis.CompositeConfidence = &compositeConfidence.Float64
-		}
-
-		analyses = append(analyses, analysis)
+	analyses := make([]AIAnalysis, 0, len(rows))
+	for _, row := range rows {
+		analyses = append(analyses, aiAnalysisFromRow(row.ID, row.LeadID, row.OrganizationID, row.LeadServiceID, row.UrgencyLevel, row.UrgencyReason, row.LeadQuality, row.RecommendedAction, row.MissingInformation, row.CompositeConfidence, row.ConfidenceBreakdown, row.RiskFlags, row.PreferredContactChannel, row.SuggestedContactMessage, row.Summary, row.CreatedAt))
 	}
+	return analyses, nil
+}
 
-	return analyses, rows.Err()
+func aiAnalysisFromRow(id, leadID, organizationID, leadServiceID pgtype.UUID, urgencyLevel string, urgencyReason pgtype.Text, leadQuality, recommendedAction string, missingInformation []byte, compositeConfidence pgtype.Float8, confidenceBreakdown, riskFlags []byte, preferredContactChannel, suggestedContactMessage, summary string, createdAt pgtype.Timestamptz) AIAnalysis {
+	analysis := AIAnalysis{
+		ID:                      id.Bytes,
+		LeadID:                  leadID.Bytes,
+		OrganizationID:          organizationID.Bytes,
+		LeadServiceID:           leadServiceID.Bytes,
+		UrgencyLevel:            urgencyLevel,
+		UrgencyReason:           optionalString(urgencyReason),
+		LeadQuality:             leadQuality,
+		RecommendedAction:       recommendedAction,
+		CompositeConfidence:     optionalFloat64(compositeConfidence),
+		PreferredContactChannel: preferredContactChannel,
+		SuggestedContactMessage: suggestedContactMessage,
+		Summary:                 summary,
+		CreatedAt:               createdAt.Time,
+	}
+	_ = json.Unmarshal(missingInformation, &analysis.MissingInformation)
+	_ = json.Unmarshal(confidenceBreakdown, &analysis.ConfidenceBreakdown)
+	_ = json.Unmarshal(riskFlags, &analysis.RiskFlags)
+	if analysis.ConfidenceBreakdown == nil {
+		analysis.ConfidenceBreakdown = map[string]float64{}
+	}
+	if analysis.MissingInformation == nil {
+		analysis.MissingInformation = []string{}
+	}
+	if analysis.RiskFlags == nil {
+		analysis.RiskFlags = []string{}
+	}
+	return analysis
+}
+
+func marshalJSONArray(values []string) []byte {
+	if values == nil {
+		values = []string{}
+	}
+	data, _ := json.Marshal(values)
+	return data
+}
+
+func marshalJSONMap(values map[string]float64) []byte {
+	if values == nil {
+		values = map[string]float64{}
+	}
+	data, _ := json.Marshal(values)
+	return data
 }
 
 func requiredAIAnalysisColumns() []string {

@@ -41,3 +41,45 @@ sql:
         emit_prepared_queries: false
         emit_interface: true
         emit_exact_table_names: false
+
+  # Exports Domain – Google Ads export credentials and conversion events
+  - schema: "migrations"
+    queries: "internal/exports/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "exportsdb"
+        out: "internal/exports/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # Appointments Domain – appointments, availability, visit reports, attachments
+  - schema: "migrations"
+    queries: "internal/appointments/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "appointmentsdb"
+        out: "internal/appointments/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # Services Domain – service types
+  - schema: "migrations"
+    queries: "internal/services/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "servicesdb"
+        out: "internal/services/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false

@@ -7,7 +7,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	authdb "portal_final_backend/internal/auth/db"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -17,8 +20,12 @@ const (
 	TokenTypeEmailVerify   = "EMAIL_VERIFY"
 	TokenTypePasswordReset = "PASSWORD_RESET"
 	listUsersQuery         = `
-		SELECT u.id, u.email, u.first_name, u.last_name,
-			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
+		SELECT
+			u.id,
+			u.email,
+			u.first_name,
+			u.last_name,
+			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
 		FROM RAC_users u
 		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
 		LEFT JOIN RAC_roles r ON r.id = ur.role_id
@@ -26,8 +33,12 @@ const (
 		ORDER BY u.email
 	`
 	listUsersByOrganizationQuery = `
-		SELECT u.id, u.email, u.first_name, u.last_name,
-			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles
+		SELECT
+			u.id,
+			u.email,
+			u.first_name,
+			u.last_name,
+			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
 		FROM RAC_organization_members om
 		JOIN RAC_users u ON u.id = om.user_id
 		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
@@ -39,11 +50,12 @@ const (
 )
 
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *authdb.Queries
 }
 
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, queries: authdb.New(pool)}
 }
 
 func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
@@ -70,8 +82,19 @@ type UserWithRoles struct {
 	Roles     []string
 }
 
+type authUserFields struct {
+	ID                    pgtype.UUID
+	Email                 string
+	PasswordHash          string
+	EmailVerified         bool
+	FirstName             pgtype.Text
+	LastName              pgtype.Text
+	OnboardingCompletedAt pgtype.Timestamptz
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string) (User, error) {
-	var user User
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return User{}, err
@@ -82,30 +105,13 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 		}
 	}()
 
-	err = tx.QueryRow(ctx, `
-		INSERT INTO RAC_users (email, password_hash, is_email_verified)
-		VALUES ($1, $2, false)
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
-	`, email, passwordHash).Scan(
-		&user.ID,
-		&user.Email,
-		&user.PasswordHash,
-		&user.EmailVerified,
-		&user.FirstName,
-		&user.LastName,
-		&user.OnboardingCompletedAt,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
+	queries := r.queries.WithTx(tx)
+	row, err := queries.CreateUser(ctx, authdb.CreateUserParams{Email: email, PasswordHash: passwordHash})
 	if err != nil {
 		return User{}, err
 	}
 
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO RAC_user_settings (user_id)
-		VALUES ($1)
-		ON CONFLICT (user_id) DO NOTHING
-	`, user.ID); err != nil {
+	if err = queries.EnsureUserSettings(ctx, toPgUUID(row.ID.Bytes)); err != nil {
 		return User{}, err
 	}
 
@@ -113,159 +119,95 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 		return User{}, err
 	}
 
-	return user, nil
+	return userFromAuthRow(authUserFields{
+		ID:                    row.ID,
+		Email:                 row.Email,
+		PasswordHash:          row.PasswordHash,
+		EmailVerified:         row.IsEmailVerified,
+		FirstName:             row.FirstName,
+		LastName:              row.LastName,
+		OnboardingCompletedAt: row.OnboardingCompletedAt,
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwordHash string) (User, error) {
-	var user User
-	err := tx.QueryRow(ctx, `
-		INSERT INTO RAC_users (email, password_hash, is_email_verified)
-		VALUES ($1, $2, false)
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
-	`, email, passwordHash).Scan(
-		&user.ID,
-		&user.Email,
-		&user.PasswordHash,
-		&user.EmailVerified,
-		&user.FirstName,
-		&user.LastName,
-		&user.OnboardingCompletedAt,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
+	queries := r.queries.WithTx(tx)
+	row, err := queries.CreateUser(ctx, authdb.CreateUserParams{Email: email, PasswordHash: passwordHash})
 	if err != nil {
 		return User{}, err
 	}
 
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO RAC_user_settings (user_id)
-		VALUES ($1)
-		ON CONFLICT (user_id) DO NOTHING
-	`, user.ID); err != nil {
+	if err = queries.EnsureUserSettings(ctx, toPgUUID(row.ID.Bytes)); err != nil {
 		return User{}, err
 	}
 
-	return user, nil
+	return userFromAuthRow(authUserFields{
+		ID:                    row.ID,
+		Email:                 row.Email,
+		PasswordHash:          row.PasswordHash,
+		EmailVerified:         row.IsEmailVerified,
+		FirstName:             row.FirstName,
+		LastName:              row.LastName,
+		OnboardingCompletedAt: row.OnboardingCompletedAt,
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {
-	var user User
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
-		FROM RAC_users WHERE email = $1
-	`, email).Scan(
-		&user.ID,
-		&user.Email,
-		&user.PasswordHash,
-		&user.EmailVerified,
-		&user.FirstName,
-		&user.LastName,
-		&user.OnboardingCompletedAt,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
+	row, err := r.queries.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
-	return user, err
+	if err != nil {
+		return User{}, err
+	}
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, error) {
-	var user User
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
-		FROM RAC_users WHERE id = $1
-	`, userID).Scan(
-		&user.ID,
-		&user.Email,
-		&user.PasswordHash,
-		&user.EmailVerified,
-		&user.FirstName,
-		&user.LastName,
-		&user.OnboardingCompletedAt,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
+	row, err := r.queries.GetUserByID(ctx, toPgUUID(userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
-	return user, err
+	if err != nil {
+		return User{}, err
+	}
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) MarkEmailVerified(ctx context.Context, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_users SET is_email_verified = true, updated_at = now()
-		WHERE id = $1
-	`, userID)
-	return err
+	return r.queries.MarkEmailVerified(ctx, toPgUUID(userID))
 }
 
 func (r *Repository) UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_users SET password_hash = $2, updated_at = now()
-		WHERE id = $1
-	`, userID, passwordHash)
-	return err
+	return r.queries.UpdatePassword(ctx, authdb.UpdatePasswordParams{ID: toPgUUID(userID), PasswordHash: passwordHash})
 }
 
 func (r *Repository) UpdateUserEmail(ctx context.Context, userID uuid.UUID, email string) (User, error) {
-	var user User
-	err := r.pool.QueryRow(ctx, `
-		UPDATE RAC_users
-		SET email = $2, is_email_verified = false, updated_at = now()
-		WHERE id = $1
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
-	`, userID, email).Scan(
-		&user.ID,
-		&user.Email,
-		&user.PasswordHash,
-		&user.EmailVerified,
-		&user.FirstName,
-		&user.LastName,
-		&user.OnboardingCompletedAt,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-	return user, err
+	row, err := r.queries.UpdateUserEmail(ctx, authdb.UpdateUserEmailParams{ID: toPgUUID(userID), Email: email})
+	if err != nil {
+		return User{}, err
+	}
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firstName, lastName *string) (User, error) {
-	var user User
-	err := r.pool.QueryRow(ctx, `
-		UPDATE RAC_users
-		SET first_name = $2, last_name = $3, updated_at = now()
-		WHERE id = $1
-		RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
-	`, userID, firstName, lastName).Scan(
-		&user.ID,
-		&user.Email,
-		&user.PasswordHash,
-		&user.EmailVerified,
-		&user.FirstName,
-		&user.LastName,
-		&user.OnboardingCompletedAt,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-	return user, err
+	row, err := r.queries.UpdateUserNames(ctx, authdb.UpdateUserNamesParams{ID: toPgUUID(userID), FirstName: toPgText(firstName), LastName: toPgText(lastName)})
+	if err != nil {
+		return User{}, err
+	}
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) EnsureUserSettings(ctx context.Context, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO RAC_user_settings (user_id)
-		VALUES ($1)
-		ON CONFLICT (user_id) DO NOTHING
-	`, userID)
-	return err
+	return r.queries.EnsureUserSettings(ctx, toPgUUID(userID))
 }
 
 func (r *Repository) GetUserSettings(ctx context.Context, userID uuid.UUID) (string, error) {
-	var preferredLanguage string
-	err := r.pool.QueryRow(ctx, `
-		SELECT preferred_language
-		FROM RAC_user_settings
-		WHERE user_id = $1
-	`, userID).Scan(&preferredLanguage)
+	preferredLanguage, err := r.queries.GetUserSettings(ctx, toPgUUID(userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -283,18 +225,15 @@ func (r *Repository) UpdateUserSettings(ctx context.Context, userID uuid.UUID, p
 		}
 	}()
 
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO RAC_user_settings (user_id, preferred_language)
-		VALUES ($1, $2)
-		ON CONFLICT (user_id) DO UPDATE
-		SET preferred_language = EXCLUDED.preferred_language, updated_at = now()
-	`, userID, preferredLanguage); err != nil {
+	queries := r.queries.WithTx(tx)
+	if err = queries.UpsertUserSettings(ctx, authdb.UpsertUserSettingsParams{
+		UserID:            toPgUUID(userID),
+		PreferredLanguage: preferredLanguage,
+	}); err != nil {
 		return err
 	}
 
-	if _, err = tx.Exec(ctx, `
-		UPDATE RAC_users SET updated_at = now() WHERE id = $1
-	`, userID); err != nil {
+	if err = queries.TouchUserUpdatedAt(ctx, toPgUUID(userID)); err != nil {
 		return err
 	}
 
@@ -302,97 +241,58 @@ func (r *Repository) UpdateUserSettings(ctx context.Context, userID uuid.UUID, p
 }
 
 func (r *Repository) CreateUserToken(ctx context.Context, userID uuid.UUID, tokenHash string, tokenType string, expiresAt time.Time) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO RAC_user_tokens (user_id, token_hash, type, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, userID, tokenHash, tokenType, expiresAt)
-	return err
+	return r.queries.CreateUserToken(ctx, authdb.CreateUserTokenParams{
+		UserID:    toPgUUID(userID),
+		TokenHash: tokenHash,
+		Type:      tokenType,
+		ExpiresAt: toPgTimestamp(expiresAt),
+	})
 }
 
 func (r *Repository) GetUserToken(ctx context.Context, tokenHash string, tokenType string) (uuid.UUID, time.Time, error) {
-	var userID uuid.UUID
-	var expiresAt time.Time
-	err := r.pool.QueryRow(ctx, `
-		SELECT user_id, expires_at FROM RAC_user_tokens
-		WHERE token_hash = $1 AND type = $2 AND used_at IS NULL
-	`, tokenHash, tokenType).Scan(&userID, &expiresAt)
+	row, err := r.queries.GetUserToken(ctx, authdb.GetUserTokenParams{TokenHash: tokenHash, Type: tokenType})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.UUID{}, time.Time{}, ErrNotFound
 	}
-	return userID, expiresAt, err
+	if err != nil {
+		return uuid.UUID{}, time.Time{}, err
+	}
+	return row.UserID.Bytes, row.ExpiresAt.Time, nil
 }
 
 func (r *Repository) UseUserToken(ctx context.Context, tokenHash string, tokenType string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_user_tokens SET used_at = now()
-		WHERE token_hash = $1 AND type = $2 AND used_at IS NULL
-	`, tokenHash, tokenType)
-	return err
+	return r.queries.UseUserToken(ctx, authdb.UseUserTokenParams{TokenHash: tokenHash, Type: tokenType})
 }
 
 func (r *Repository) CreateRefreshToken(ctx context.Context, userID uuid.UUID, tokenHash string, expiresAt time.Time) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO RAC_refresh_tokens (user_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, tokenHash, expiresAt)
-	return err
+	return r.queries.CreateRefreshToken(ctx, authdb.CreateRefreshTokenParams{
+		UserID:    toPgUUID(userID),
+		TokenHash: tokenHash,
+		ExpiresAt: toPgTimestamp(expiresAt),
+	})
 }
 
 func (r *Repository) GetRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, time.Time, error) {
-	var userID uuid.UUID
-	var expiresAt time.Time
-	err := r.pool.QueryRow(ctx, `
-		SELECT user_id, expires_at FROM RAC_refresh_tokens
-		WHERE token_hash = $1 AND revoked_at IS NULL
-	`, tokenHash).Scan(&userID, &expiresAt)
+	row, err := r.queries.GetRefreshToken(ctx, tokenHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.UUID{}, time.Time{}, ErrNotFound
 	}
-	return userID, expiresAt, err
+	if err != nil {
+		return uuid.UUID{}, time.Time{}, err
+	}
+	return row.UserID.Bytes, row.ExpiresAt.Time, nil
 }
 
 func (r *Repository) RevokeRefreshToken(ctx context.Context, tokenHash string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_refresh_tokens SET revoked_at = now()
-		WHERE token_hash = $1 AND revoked_at IS NULL
-	`, tokenHash)
-	return err
+	return r.queries.RevokeRefreshToken(ctx, tokenHash)
 }
 
 func (r *Repository) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_refresh_tokens SET revoked_at = now()
-		WHERE user_id = $1 AND revoked_at IS NULL
-	`, userID)
-	return err
+	return r.queries.RevokeAllRefreshTokens(ctx, toPgUUID(userID))
 }
 
 func (r *Repository) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT r.name
-		FROM RAC_roles r
-		JOIN RAC_user_roles ur ON ur.role_id = r.id
-		WHERE ur.user_id = $1
-		ORDER BY r.name
-	`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	roles := make([]string, 0)
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		roles = append(roles, name)
-	}
-	if rows.Err() != nil {
-		return nil, rows.Err()
-	}
-
-	return roles, nil
+	return r.queries.GetUserRoles(ctx, toPgUUID(userID))
 }
 
 func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
@@ -410,35 +310,20 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles [
 		}
 	}()
 
-	rows, err := tx.Query(ctx, `SELECT name FROM RAC_roles WHERE name = ANY($1)`, roles)
+	queries := r.queries.WithTx(tx)
+	validRoles, err := queries.GetValidRoles(ctx, roles)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	valid := make(map[string]struct{})
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return err
-		}
-		valid[name] = struct{}{}
-	}
-	if rows.Err() != nil {
-		return rows.Err()
-	}
-	if len(valid) != len(uniqueStrings(roles)) {
+	if len(validRoles) != len(uniqueStrings(roles)) {
 		return ErrInvalidRole
 	}
 
-	if _, err := tx.Exec(ctx, `DELETE FROM RAC_user_roles WHERE user_id = $1`, userID); err != nil {
+	if err := queries.DeleteUserRoles(ctx, toPgUUID(userID)); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO RAC_user_roles (user_id, role_id)
-		SELECT $1, id FROM RAC_roles WHERE name = ANY($2)
-	`, userID, roles); err != nil {
+	if err := queries.InsertUserRoles(ctx, authdb.InsertUserRolesParams{UserID: toPgUUID(userID), Column2: roles}); err != nil {
 		return err
 	}
 
@@ -454,35 +339,20 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 		return ErrInvalidRole
 	}
 
-	rows, err := tx.Query(ctx, `SELECT name FROM RAC_roles WHERE name = ANY($1)`, roles)
+	queries := r.queries.WithTx(tx)
+	validRoles, err := queries.GetValidRoles(ctx, roles)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	valid := make(map[string]struct{})
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return err
-		}
-		valid[name] = struct{}{}
-	}
-	if rows.Err() != nil {
-		return rows.Err()
-	}
-	if len(valid) != len(uniqueStrings(roles)) {
+	if len(validRoles) != len(uniqueStrings(roles)) {
 		return ErrInvalidRole
 	}
 
-	if _, err := tx.Exec(ctx, `DELETE FROM RAC_user_roles WHERE user_id = $1`, userID); err != nil {
+	if err := queries.DeleteUserRoles(ctx, toPgUUID(userID)); err != nil {
 		return err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO RAC_user_roles (user_id, role_id)
-		SELECT $1, id FROM RAC_roles WHERE name = ANY($2)
-	`, userID, roles); err != nil {
+	if err := queries.InsertUserRoles(ctx, authdb.InsertUserRolesParams{UserID: toPgUUID(userID), Column2: roles}); err != nil {
 		return err
 	}
 
@@ -490,55 +360,35 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 }
 
 func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
-	rows, err := r.pool.Query(ctx, listUsersQuery)
+	rows, err := r.queries.ListUsers(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	users := make([]UserWithRoles, 0)
-	for rows.Next() {
-		var user UserWithRoles
-		if err := rows.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Roles); err != nil {
-			return nil, err
-		}
-		users = append(users, user)
-	}
-	if rows.Err() != nil {
-		return nil, rows.Err()
+	users := make([]UserWithRoles, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, userWithRolesFromAuthRow(row.ID, row.Email, row.FirstName, row.LastName, row.Roles))
 	}
 
 	return users, nil
 }
 
 func (r *Repository) ListUsersByOrganization(ctx context.Context, organizationID uuid.UUID) ([]UserWithRoles, error) {
-	rows, err := r.pool.Query(ctx, listUsersByOrganizationQuery, organizationID)
+	rows, err := r.queries.ListUsersByOrganization(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	users := make([]UserWithRoles, 0)
-	for rows.Next() {
-		var user UserWithRoles
-		if err := rows.Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Roles); err != nil {
-			return nil, err
-		}
-		users = append(users, user)
-	}
-	if rows.Err() != nil {
-		return nil, rows.Err()
+	users := make([]UserWithRoles, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, userWithRolesFromAuthRow(row.ID, row.Email, row.FirstName, row.LastName, row.Roles))
 	}
 
 	return users, nil
 }
 
 func (r *Repository) MarkOnboardingComplete(ctx context.Context, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_users SET onboarding_completed_at = now(), updated_at = now()
-		WHERE id = $1 AND onboarding_completed_at IS NULL
-	`, userID)
-	return err
+	return r.queries.MarkOnboardingComplete(ctx, toPgUUID(userID))
 }
 
 func uniqueStrings(values []string) []string {
@@ -552,4 +402,59 @@ func uniqueStrings(values []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func toPgTimestamp(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	timestamp := value.Time
+	return &timestamp
+}
+
+func userFromAuthRow(fields authUserFields) User {
+	return User{
+		ID:                    fields.ID.Bytes,
+		Email:                 fields.Email,
+		PasswordHash:          fields.PasswordHash,
+		EmailVerified:         fields.EmailVerified,
+		FirstName:             optionalString(fields.FirstName),
+		LastName:              optionalString(fields.LastName),
+		OnboardingCompletedAt: optionalTime(fields.OnboardingCompletedAt),
+		CreatedAt:             fields.CreatedAt.Time,
+		UpdatedAt:             fields.UpdatedAt.Time,
+	}
+}
+
+func userWithRolesFromAuthRow(id pgtype.UUID, email string, firstName, lastName pgtype.Text, roles []string) UserWithRoles {
+	return UserWithRoles{
+		ID:        id.Bytes,
+		Email:     email,
+		FirstName: optionalString(firstName),
+		LastName:  optionalString(lastName),
+		Roles:     roles,
+	}
 }

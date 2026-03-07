@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	leadsdb "portal_final_backend/internal/leads/db"
 )
 
 var ErrAttachmentNotFound = errors.New("attachment not found")
@@ -37,70 +39,69 @@ type CreateAttachmentParams struct {
 
 // CreateAttachment inserts a new attachment record.
 func (r *Repository) CreateAttachment(ctx context.Context, params CreateAttachmentParams) (Attachment, error) {
-	var att Attachment
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_lead_service_attachments (lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
-	`, params.LeadServiceID, params.OrganizationID, params.FileKey, params.FileName, params.ContentType, params.SizeBytes, params.UploadedBy).Scan(
-		&att.ID, &att.LeadServiceID, &att.OrganizationID, &att.FileKey, &att.FileName, &att.ContentType, &att.SizeBytes, &att.UploadedBy, &att.CreatedAt,
-	)
-	return att, err
+	row, err := r.queries.CreateAttachment(ctx, leadsdb.CreateAttachmentParams{
+		LeadServiceID:  toPgUUID(params.LeadServiceID),
+		OrganizationID: toPgUUID(params.OrganizationID),
+		FileKey:        params.FileKey,
+		FileName:       params.FileName,
+		ContentType:    toPgTextValue(params.ContentType),
+		SizeBytes:      toPgInt8Value(params.SizeBytes),
+		UploadedBy:     toPgUUIDPtr(params.UploadedBy),
+	})
+	if err != nil {
+		return Attachment{}, err
+	}
+	return attachmentFromRow(row), nil
 }
 
 // GetAttachmentByID retrieves an attachment by ID, scoped to organization.
 func (r *Repository) GetAttachmentByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Attachment, error) {
-	var att Attachment
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
-		FROM RAC_lead_service_attachments
-		WHERE id = $1 AND organization_id = $2
-	`, id, organizationID).Scan(
-		&att.ID, &att.LeadServiceID, &att.OrganizationID, &att.FileKey, &att.FileName, &att.ContentType, &att.SizeBytes, &att.UploadedBy, &att.CreatedAt,
-	)
+	row, err := r.queries.GetAttachmentByID(ctx, leadsdb.GetAttachmentByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Attachment{}, ErrAttachmentNotFound
 	}
-	return att, err
+	if err != nil {
+		return Attachment{}, err
+	}
+	return attachmentFromRow(row), nil
 }
 
 // ListAttachmentsByService retrieves all attachments for a lead service.
 func (r *Repository) ListAttachmentsByService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]Attachment, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, lead_service_id, organization_id, file_key, file_name, content_type, size_bytes, uploaded_by, created_at
-		FROM RAC_lead_service_attachments
-		WHERE lead_service_id = $1 AND organization_id = $2
-		ORDER BY created_at DESC
-	`, leadServiceID, organizationID)
+	rows, err := r.queries.ListAttachmentsByService(ctx, leadsdb.ListAttachmentsByServiceParams{LeadServiceID: toPgUUID(leadServiceID), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	attachments := make([]Attachment, 0)
-	for rows.Next() {
-		var att Attachment
-		if err := rows.Scan(
-			&att.ID, &att.LeadServiceID, &att.OrganizationID, &att.FileKey, &att.FileName, &att.ContentType, &att.SizeBytes, &att.UploadedBy, &att.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		attachments = append(attachments, att)
+	attachments := make([]Attachment, 0, len(rows))
+	for _, row := range rows {
+		attachments = append(attachments, attachmentFromRow(row))
 	}
-	return attachments, rows.Err()
+	return attachments, nil
 }
 
 // DeleteAttachment removes an attachment record by ID.
 func (r *Repository) DeleteAttachment(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	result, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_lead_service_attachments
-		WHERE id = $1 AND organization_id = $2
-	`, id, organizationID)
+	rowsAffected, err := r.queries.DeleteAttachment(ctx, leadsdb.DeleteAttachmentParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrAttachmentNotFound
 	}
 	return nil
+}
+
+func attachmentFromRow(row leadsdb.RacLeadServiceAttachment) Attachment {
+	return Attachment{
+		ID:             row.ID.Bytes,
+		LeadServiceID:  row.LeadServiceID.Bytes,
+		OrganizationID: row.OrganizationID.Bytes,
+		FileKey:        row.FileKey,
+		FileName:       row.FileName,
+		ContentType:    optionalString(row.ContentType),
+		SizeBytes:      optionalInt64(row.SizeBytes),
+		UploadedBy:     optionalUUID(row.UploadedBy),
+		CreatedAt:      row.CreatedAt.Time,
+	}
 }

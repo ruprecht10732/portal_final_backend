@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	appointmentsdb "portal_final_backend/internal/appointments/db"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AvailabilityRule struct {
@@ -37,115 +39,116 @@ type AvailabilityOverride struct {
 	UpdatedAt      time.Time
 }
 
-func (r *Repository) CreateAvailabilityRule(ctx context.Context, rule AvailabilityRule) (*AvailabilityRule, error) {
-	query := `
-		INSERT INTO RAC_appointment_availability_rules
-			(id, organization_id, user_id, weekday, start_time, end_time, timezone)
-		VALUES
-			($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at`
+func timeOfDayFromPg(value pgtype.Time) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
 
-	var saved AvailabilityRule
-	err := r.pool.QueryRow(ctx, query,
-		rule.ID,
-		rule.OrganizationID,
-		rule.UserID,
-		rule.Weekday,
-		rule.StartTime,
-		rule.EndTime,
-		rule.Timezone,
-	).Scan(
-		&saved.ID,
-		&saved.OrganizationID,
-		&saved.UserID,
-		&saved.Weekday,
-		&saved.StartTime,
-		&saved.EndTime,
-		&saved.Timezone,
-		&saved.CreatedAt,
-		&saved.UpdatedAt,
-	)
+	microsPerHour := int64(time.Hour / time.Microsecond)
+	microsPerMinute := int64(time.Minute / time.Microsecond)
+	microsPerSecond := int64(time.Second / time.Microsecond)
+
+	hours := value.Microseconds / microsPerHour
+	remaining := value.Microseconds % microsPerHour
+	minutes := remaining / microsPerMinute
+	remaining %= microsPerMinute
+	seconds := remaining / microsPerSecond
+	microseconds := remaining % microsPerSecond
+
+	return time.Date(1, time.January, 1, int(hours), int(minutes), int(seconds), int(microseconds)*1000, time.UTC)
+}
+
+func optionalTimeOfDayFromPg(value pgtype.Time) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	timeOfDay := timeOfDayFromPg(value)
+	return &timeOfDay
+}
+
+func availabilityRuleFromModel(model appointmentsdb.RacAppointmentAvailabilityRule) AvailabilityRule {
+	return AvailabilityRule{
+		ID:             uuid.UUID(model.ID.Bytes),
+		OrganizationID: uuid.UUID(model.OrganizationID.Bytes),
+		UserID:         uuid.UUID(model.UserID.Bytes),
+		Weekday:        int(model.Weekday),
+		StartTime:      timeOfDayFromPg(model.StartTime),
+		EndTime:        timeOfDayFromPg(model.EndTime),
+		Timezone:       model.Timezone,
+		CreatedAt:      model.CreatedAt.Time,
+		UpdatedAt:      model.UpdatedAt.Time,
+	}
+}
+
+func availabilityOverrideFromModel(model appointmentsdb.RacAppointmentAvailabilityOverride) AvailabilityOverride {
+	return AvailabilityOverride{
+		ID:             uuid.UUID(model.ID.Bytes),
+		OrganizationID: uuid.UUID(model.OrganizationID.Bytes),
+		UserID:         uuid.UUID(model.UserID.Bytes),
+		Date:           model.Date.Time,
+		IsAvailable:    model.IsAvailable,
+		StartTime:      optionalTimeOfDayFromPg(model.StartTime),
+		EndTime:        optionalTimeOfDayFromPg(model.EndTime),
+		Timezone:       model.Timezone,
+		CreatedAt:      model.CreatedAt.Time,
+		UpdatedAt:      model.UpdatedAt.Time,
+	}
+}
+
+func (r *Repository) CreateAvailabilityRule(ctx context.Context, rule AvailabilityRule) (*AvailabilityRule, error) {
+	row, err := r.queries.CreateAvailabilityRule(ctx, appointmentsdb.CreateAvailabilityRuleParams{
+		ID:             toPgUUID(rule.ID),
+		OrganizationID: toPgUUID(rule.OrganizationID),
+		UserID:         toPgUUID(rule.UserID),
+		Weekday:        int16(rule.Weekday),
+		StartTime:      toPgTimeOfDay(rule.StartTime),
+		EndTime:        toPgTimeOfDay(rule.EndTime),
+		Timezone:       rule.Timezone,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create availability rule: %w", err)
 	}
 
+	saved := availabilityRuleFromModel(appointmentsdb.RacAppointmentAvailabilityRule{ID: row.ID, UserID: row.UserID, Weekday: row.Weekday, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &saved, nil
 }
 
 func (r *Repository) ListAvailabilityRules(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID) ([]AvailabilityRule, error) {
-	query := `SELECT id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at
-		FROM RAC_appointment_availability_rules WHERE organization_id = $1 AND user_id = $2 ORDER BY weekday, start_time`
-
-	rows, err := r.pool.Query(ctx, query, organizationID, userID)
+	rows, err := r.queries.ListAvailabilityRules(ctx, appointmentsdb.ListAvailabilityRulesParams{
+		OrganizationID: toPgUUID(organizationID),
+		UserID:         toPgUUID(userID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list availability rules: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]AvailabilityRule, 0)
-	for rows.Next() {
-		var item AvailabilityRule
-		if err := rows.Scan(
-			&item.ID,
-			&item.OrganizationID,
-			&item.UserID,
-			&item.Weekday,
-			&item.StartTime,
-			&item.EndTime,
-			&item.Timezone,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan availability rule: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate availability rules: %w", err)
+	items := make([]AvailabilityRule, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, availabilityRuleFromModel(appointmentsdb.RacAppointmentAvailabilityRule{ID: row.ID, UserID: row.UserID, Weekday: row.Weekday, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID}))
 	}
 
 	return items, nil
 }
 
 func (r *Repository) ListAvailabilityRuleUserIDs(ctx context.Context, organizationID uuid.UUID) ([]uuid.UUID, error) {
-	query := `SELECT DISTINCT user_id FROM RAC_appointment_availability_rules WHERE organization_id = $1`
-	rows, err := r.pool.Query(ctx, query, organizationID)
+	rows, err := r.queries.ListAvailabilityRuleUserIDs(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list availability rule users: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]uuid.UUID, 0)
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan availability rule user: %w", err)
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate availability rule users: %w", err)
+	items := make([]uuid.UUID, 0, len(rows))
+	for _, id := range rows {
+		items = append(items, uuid.UUID(id.Bytes))
 	}
 
 	return items, nil
 }
 
 func (r *Repository) GetAvailabilityRuleByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*AvailabilityRule, error) {
-	query := `SELECT id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at
-		FROM RAC_appointment_availability_rules WHERE id = $1 AND organization_id = $2`
-
-	var item AvailabilityRule
-	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
-		&item.ID,
-		&item.OrganizationID,
-		&item.UserID,
-		&item.Weekday,
-		&item.StartTime,
-		&item.EndTime,
-		&item.Timezone,
-		&item.CreatedAt,
-		&item.UpdatedAt,
-	)
+	row, err := r.queries.GetAvailabilityRuleByID(ctx, appointmentsdb.GetAvailabilityRuleByIDParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("availability rule not found")
 	}
@@ -153,11 +156,15 @@ func (r *Repository) GetAvailabilityRuleByID(ctx context.Context, id uuid.UUID, 
 		return nil, fmt.Errorf("failed to get availability rule: %w", err)
 	}
 
+	item := availabilityRuleFromModel(appointmentsdb.RacAppointmentAvailabilityRule{ID: row.ID, UserID: row.UserID, Weekday: row.Weekday, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &item, nil
 }
 
 func (r *Repository) DeleteAvailabilityRule(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM RAC_appointment_availability_rules WHERE id = $1 AND organization_id = $2`, id, organizationID)
+	_, err := r.queries.DeleteAvailabilityRule(ctx, appointmentsdb.DeleteAvailabilityRuleParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to delete availability rule: %w", err)
 	}
@@ -165,35 +172,14 @@ func (r *Repository) DeleteAvailabilityRule(ctx context.Context, id uuid.UUID, o
 }
 
 func (r *Repository) UpdateAvailabilityRule(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, rule AvailabilityRule) (*AvailabilityRule, error) {
-	query := `
-		UPDATE RAC_appointment_availability_rules SET
-			weekday = $3,
-			start_time = $4,
-			end_time = $5,
-			timezone = $6,
-			updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-		RETURNING id, organization_id, user_id, weekday, start_time, end_time, timezone, created_at, updated_at`
-
-	var saved AvailabilityRule
-	err := r.pool.QueryRow(ctx, query,
-		id,
-		organizationID,
-		rule.Weekday,
-		rule.StartTime,
-		rule.EndTime,
-		rule.Timezone,
-	).Scan(
-		&saved.ID,
-		&saved.OrganizationID,
-		&saved.UserID,
-		&saved.Weekday,
-		&saved.StartTime,
-		&saved.EndTime,
-		&saved.Timezone,
-		&saved.CreatedAt,
-		&saved.UpdatedAt,
-	)
+	row, err := r.queries.UpdateAvailabilityRule(ctx, appointmentsdb.UpdateAvailabilityRuleParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+		Weekday:        int16(rule.Weekday),
+		StartTime:      toPgTimeOfDay(rule.StartTime),
+		EndTime:        toPgTimeOfDay(rule.EndTime),
+		Timezone:       rule.Timezone,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("availability rule not found")
 	}
@@ -201,112 +187,53 @@ func (r *Repository) UpdateAvailabilityRule(ctx context.Context, id uuid.UUID, o
 		return nil, fmt.Errorf("failed to update availability rule: %w", err)
 	}
 
+	saved := availabilityRuleFromModel(appointmentsdb.RacAppointmentAvailabilityRule{ID: row.ID, UserID: row.UserID, Weekday: row.Weekday, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &saved, nil
 }
 
 func (r *Repository) CreateAvailabilityOverride(ctx context.Context, override AvailabilityOverride) (*AvailabilityOverride, error) {
-	query := `
-		INSERT INTO RAC_appointment_availability_overrides
-			(id, organization_id, user_id, date, is_available, start_time, end_time, timezone)
-		VALUES
-			($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at`
-
-	var saved AvailabilityOverride
-	err := r.pool.QueryRow(ctx, query,
-		override.ID,
-		override.OrganizationID,
-		override.UserID,
-		override.Date,
-		override.IsAvailable,
-		override.StartTime,
-		override.EndTime,
-		override.Timezone,
-	).Scan(
-		&saved.ID,
-		&saved.OrganizationID,
-		&saved.UserID,
-		&saved.Date,
-		&saved.IsAvailable,
-		&saved.StartTime,
-		&saved.EndTime,
-		&saved.Timezone,
-		&saved.CreatedAt,
-		&saved.UpdatedAt,
-	)
+	row, err := r.queries.CreateAvailabilityOverride(ctx, appointmentsdb.CreateAvailabilityOverrideParams{
+		ID:             toPgUUID(override.ID),
+		OrganizationID: toPgUUID(override.OrganizationID),
+		UserID:         toPgUUID(override.UserID),
+		Date:           toPgDate(override.Date),
+		IsAvailable:    override.IsAvailable,
+		StartTime:      toPgTimeOfDayPtr(override.StartTime),
+		EndTime:        toPgTimeOfDayPtr(override.EndTime),
+		Timezone:       override.Timezone,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create availability override: %w", err)
 	}
 
+	saved := availabilityOverrideFromModel(appointmentsdb.RacAppointmentAvailabilityOverride{ID: row.ID, UserID: row.UserID, Date: row.Date, IsAvailable: row.IsAvailable, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &saved, nil
 }
 
 func (r *Repository) ListAvailabilityOverrides(ctx context.Context, organizationID uuid.UUID, userID uuid.UUID, startDate *time.Time, endDate *time.Time) ([]AvailabilityOverride, error) {
-	query := `SELECT id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at
-		FROM RAC_appointment_availability_overrides
-		WHERE organization_id = $1 AND user_id = $2
-			AND ($3::date IS NULL OR date >= $3)
-			AND ($4::date IS NULL OR date <= $4)
-		ORDER BY date ASC`
-
-	var startParam interface{}
-	if startDate != nil {
-		startParam = *startDate
-	}
-	var endParam interface{}
-	if endDate != nil {
-		endParam = *endDate
-	}
-
-	rows, err := r.pool.Query(ctx, query, organizationID, userID, startParam, endParam)
+	rows, err := r.queries.ListAvailabilityOverrides(ctx, appointmentsdb.ListAvailabilityOverridesParams{
+		OrganizationID: toPgUUID(organizationID),
+		UserID:         toPgUUID(userID),
+		Column3:        toPgDatePtr(startDate),
+		Column4:        toPgDatePtr(endDate),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list availability overrides: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]AvailabilityOverride, 0)
-	for rows.Next() {
-		var item AvailabilityOverride
-		if err := rows.Scan(
-			&item.ID,
-			&item.OrganizationID,
-			&item.UserID,
-			&item.Date,
-			&item.IsAvailable,
-			&item.StartTime,
-			&item.EndTime,
-			&item.Timezone,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan availability override: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate availability overrides: %w", err)
+	items := make([]AvailabilityOverride, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, availabilityOverrideFromModel(appointmentsdb.RacAppointmentAvailabilityOverride{ID: row.ID, UserID: row.UserID, Date: row.Date, IsAvailable: row.IsAvailable, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID}))
 	}
 
 	return items, nil
 }
 
 func (r *Repository) GetAvailabilityOverrideByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (*AvailabilityOverride, error) {
-	query := `SELECT id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at
-		FROM RAC_appointment_availability_overrides WHERE id = $1 AND organization_id = $2`
-
-	var item AvailabilityOverride
-	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
-		&item.ID,
-		&item.OrganizationID,
-		&item.UserID,
-		&item.Date,
-		&item.IsAvailable,
-		&item.StartTime,
-		&item.EndTime,
-		&item.Timezone,
-		&item.CreatedAt,
-		&item.UpdatedAt,
-	)
+	row, err := r.queries.GetAvailabilityOverrideByID(ctx, appointmentsdb.GetAvailabilityOverrideByIDParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("availability override not found")
 	}
@@ -314,11 +241,15 @@ func (r *Repository) GetAvailabilityOverrideByID(ctx context.Context, id uuid.UU
 		return nil, fmt.Errorf("failed to get availability override: %w", err)
 	}
 
+	item := availabilityOverrideFromModel(appointmentsdb.RacAppointmentAvailabilityOverride{ID: row.ID, UserID: row.UserID, Date: row.Date, IsAvailable: row.IsAvailable, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &item, nil
 }
 
 func (r *Repository) DeleteAvailabilityOverride(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM RAC_appointment_availability_overrides WHERE id = $1 AND organization_id = $2`, id, organizationID)
+	_, err := r.queries.DeleteAvailabilityOverride(ctx, appointmentsdb.DeleteAvailabilityOverrideParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to delete availability override: %w", err)
 	}
@@ -326,38 +257,15 @@ func (r *Repository) DeleteAvailabilityOverride(ctx context.Context, id uuid.UUI
 }
 
 func (r *Repository) UpdateAvailabilityOverride(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, override AvailabilityOverride) (*AvailabilityOverride, error) {
-	query := `
-		UPDATE RAC_appointment_availability_overrides SET
-			date = $3,
-			is_available = $4,
-			start_time = $5,
-			end_time = $6,
-			timezone = $7,
-			updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-		RETURNING id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at`
-
-	var saved AvailabilityOverride
-	err := r.pool.QueryRow(ctx, query,
-		id,
-		organizationID,
-		override.Date,
-		override.IsAvailable,
-		override.StartTime,
-		override.EndTime,
-		override.Timezone,
-	).Scan(
-		&saved.ID,
-		&saved.OrganizationID,
-		&saved.UserID,
-		&saved.Date,
-		&saved.IsAvailable,
-		&saved.StartTime,
-		&saved.EndTime,
-		&saved.Timezone,
-		&saved.CreatedAt,
-		&saved.UpdatedAt,
-	)
+	row, err := r.queries.UpdateAvailabilityOverride(ctx, appointmentsdb.UpdateAvailabilityOverrideParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+		Date:           toPgDate(override.Date),
+		IsAvailable:    override.IsAvailable,
+		StartTime:      toPgTimeOfDayPtr(override.StartTime),
+		EndTime:        toPgTimeOfDayPtr(override.EndTime),
+		Timezone:       override.Timezone,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("availability override not found")
 	}
@@ -365,5 +273,6 @@ func (r *Repository) UpdateAvailabilityOverride(ctx context.Context, id uuid.UUI
 		return nil, fmt.Errorf("failed to update availability override: %w", err)
 	}
 
+	saved := availabilityOverrideFromModel(appointmentsdb.RacAppointmentAvailabilityOverride{ID: row.ID, UserID: row.UserID, Date: row.Date, IsAvailable: row.IsAvailable, StartTime: row.StartTime, EndTime: row.EndTime, Timezone: row.Timezone, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &saved, nil
 }
