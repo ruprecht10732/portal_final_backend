@@ -459,3 +459,40 @@ func TestBuildEmailAttachmentSpecsIncludesQuoteAcceptedPDF(t *testing.T) {
 		t.Fatalf("expected signed file key, got %q", attachments[0].FileKey)
 	}
 }
+
+func TestBuildEmailAttachmentSpecsIncludesQuoteSentPDF(t *testing.T) {
+	quoteID := uuid.New().String()
+	dispatchCtx := workflowStepDispatchContext{
+		Exec: workflowStepExecutionContext{
+			Trigger: "quote_sent",
+			Variables: map[string]any{
+				"quote": map[string]any{
+					"id":         quoteID,
+					"number":     "OFF-2026-0004",
+					"pdfFileKey": "quotes/unsigned.pdf",
+				},
+			},
+		},
+	}
+
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	attachments := m.buildEmailAttachmentSpecs(dispatchCtx)
+	if len(attachments) != 1 {
+		t.Fatalf("expected 1 attachment spec, got %d", len(attachments))
+	}
+	if attachments[0].Kind != "quote_pdf" {
+		t.Fatalf("expected quote_pdf kind, got %q", attachments[0].Kind)
+	}
+	if attachments[0].QuoteID == nil || *attachments[0].QuoteID != quoteID {
+		t.Fatalf("expected quote id %q, got %#v", quoteID, attachments[0].QuoteID)
+	}
+	if attachments[0].FileKey != "quotes/unsigned.pdf" {
+		t.Fatalf("expected unsigned file key, got %q", attachments[0].FileKey)
+	}
+	if attachments[0].FileName != "offerte-OFF-2026-0004.pdf" {
+		t.Fatalf("expected attachment filename to be derived from quote number, got %q", attachments[0].FileName)
+	}
+	if attachments[0].MIMEType != "application/pdf" {
+		t.Fatalf("expected application/pdf mime type, got %q", attachments[0].MIMEType)
+	}
+}

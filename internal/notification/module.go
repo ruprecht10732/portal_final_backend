@@ -2332,6 +2332,7 @@ func (m *Module) dispatchQuoteEmailWorkflow(ctx context.Context, p dispatchQuote
 		DefaultSummary: p.Summary,
 		DefaultActor:   "System",
 		DefaultOrigin:  workflowEngineActorName,
+		Variables:      p.TemplateVars,
 	})
 	if err != nil {
 		m.log.Warn(p.FallbackNote, "error", err, "orgId", p.OrgID)

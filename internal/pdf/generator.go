@@ -7,10 +7,12 @@ package pdf
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/base64"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -271,12 +273,35 @@ func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 }
 
 func addAttachmentPDFs(mergeMap map[string][]byte, attachments []AttachmentPDFEntry) {
-	for i, att := range attachments {
+	for i, att := range dedupeAttachmentPDFs(attachments) {
 		if len(att.PDFBytes) > 0 {
 			key := fmt.Sprintf("04_attachment_%03d.pdf", i)
 			mergeMap[key] = att.PDFBytes
 		}
 	}
+}
+
+func dedupeAttachmentPDFs(attachments []AttachmentPDFEntry) []AttachmentPDFEntry {
+	unique := make([]AttachmentPDFEntry, 0, len(attachments))
+	seen := make(map[[sha256.Size]byte]string, len(attachments))
+
+	for _, att := range attachments {
+		if len(att.PDFBytes) == 0 {
+			unique = append(unique, att)
+			continue
+		}
+
+		hash := sha256.Sum256(att.PDFBytes)
+		if firstFilename, exists := seen[hash]; exists {
+			slog.Info("skipping duplicate quote PDF attachment before merge", "filename", att.Filename, "duplicateOf", firstFilename)
+			continue
+		}
+
+		seen[hash] = att.Filename
+		unique = append(unique, att)
+	}
+
+	return unique
 }
 
 func addSignaturePageIfNeeded(mergeMap map[string][]byte, data QuotePDFData, logoB64, logoMime string, opts ConvertOpts) error {
@@ -365,7 +390,7 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 		vm.Items[i] = itemViewModel{
 			Title:              clampPDFText(it.Title, maxPDFShortText),
 			Description:        template.HTML(it.Description), //nolint:gosec // content from trusted org editors
-			Quantity:           clampPDFText(it.Quantity, maxPDFShortText),
+			Quantity:           clampPDFText(normalizePDFQuantity(it.Quantity), maxPDFShortText),
 			UnitPriceFormatted: formatCurrency(it.UnitPriceCents),
 			VatPctFormatted:    fmt.Sprintf("%.0f%%", float64(it.TaxRateBps)/100.0),
 			LineTotalFormatted: formatCurrency(it.LineTotalCents),
@@ -394,6 +419,24 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 	}
 
 	return vm
+}
+
+func normalizePDFQuantity(quantity string) string {
+	trimmed := strings.TrimSpace(quantity)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.TrimSpace(strings.TrimRight(trimmed, "×"))
+	if strings.HasSuffix(strings.ToLower(normalized), " x") {
+		normalized = strings.TrimSpace(normalized[:len(normalized)-2])
+	}
+
+	if normalized == "" {
+		return trimmed
+	}
+
+	return normalized
 }
 
 func buildSignatureVM(data QuotePDFData, logoB64, logoMime string) signatureViewModel {
