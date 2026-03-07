@@ -164,6 +164,7 @@ type AppointmentStatsReader interface {
 // AppointmentVisitReportReader provides read access to visit reports for appointments.
 type AppointmentVisitReportReader interface {
 	GetAppointmentVisitReport(ctx context.Context, appointmentID uuid.UUID, organizationID uuid.UUID) (*AppointmentVisitReport, error)
+	GetLatestAppointmentVisitReportByService(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (*AppointmentVisitReport, error)
 }
 
 // PartnerMatcher provides partner search based on service type and location.

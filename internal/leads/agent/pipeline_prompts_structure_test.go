@@ -12,10 +12,12 @@ import (
 
 const toolOrderMandatoryHeader = "=== TOOL ORDER (MANDATORY) ==="
 
-func testPromptFixtures() (repository.Lead, repository.LeadService, []repository.LeadNote, []repository.Attachment, *repository.PhotoAnalysis) {
+func testPromptFixtures() (repository.Lead, repository.LeadService, []repository.LeadNote, *repository.AppointmentVisitReport, []repository.Attachment, *repository.PhotoAnalysis) {
 	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
 	email := "jane@example.com"
 	noteText := "Klant wil teruggebeld worden na 18:00"
+	measurementText := "Breedte 830 mm, hoogte 1525 mm"
+	visitNotes := "Trap dichtmaken met stootborden en kastconstructie"
 
 	lead := repository.Lead{
 		ID:                 uuid.New(),
@@ -44,6 +46,12 @@ func testPromptFixtures() (repository.Lead, repository.LeadService, []repository
 		CreatedAt: now,
 	}}
 
+	visitReport := &repository.AppointmentVisitReport{
+		AppointmentID: uuid.New(),
+		Measurements:  &measurementText,
+		Notes:         &visitNotes,
+	}
+
 	attachments := []repository.Attachment{{
 		FileName: "foto-voordeur.jpg",
 	}}
@@ -53,12 +61,12 @@ func testPromptFixtures() (repository.Lead, repository.LeadService, []repository
 		ConfidenceLevel: "High",
 	}
 
-	return lead, service, notes, attachments, photo
+	return lead, service, notes, visitReport, attachments, photo
 }
 
 func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
-	lead, service, notes, attachments, photo := testPromptFixtures()
-	prompt := buildGatekeeperPrompt(lead, service, notes, "Meetgegevens vereist", attachments, photo)
+	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	prompt := buildGatekeeperPrompt(lead, service, notes, visitReport, "Meetgegevens vereist", attachments, photo)
 
 	checks := []string{
 		"=== EXECUTION CONTRACT ===",
@@ -78,8 +86,25 @@ func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
 	}
 }
 
+func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
+	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	prompt := buildGatekeeperPrompt(lead, service, notes, visitReport, "Meetgegevens vereist", attachments, photo)
+
+	checks := []string{
+		"Visit Report (latest appointment):",
+		"Breedte 830 mm, hoogte 1525 mm",
+		"Trap dichtmaken met stootborden en kastconstructie",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf("expected gatekeeper prompt to contain %q", token)
+		}
+	}
+}
+
 func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
-	lead, service, notes, _, photo := testPromptFixtures()
+	lead, service, notes, _, _, photo := testPromptFixtures()
 	prompt := buildEstimatorPrompt(lead, service, notes, photo, "Gebruik standaard afwerking")
 
 	checks := []string{
@@ -104,7 +129,7 @@ func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 }
 
 func TestBuildDispatcherPromptUsesScoringModel(t *testing.T) {
-	lead, service, _, _, _ := testPromptFixtures()
+	lead, service, _, _, _, _ := testPromptFixtures()
 	prompt := buildDispatcherPrompt(lead, service, 25, nil)
 
 	checks := []string{
@@ -124,7 +149,7 @@ func TestBuildDispatcherPromptUsesScoringModel(t *testing.T) {
 }
 
 func TestBuildQuoteGeneratePromptUsesToolScopeAndSharedRules(t *testing.T) {
-	lead, service, notes, _, _ := testPromptFixtures()
+	lead, service, notes, _, _, _ := testPromptFixtures()
 	prompt := buildQuoteGeneratePrompt(lead, service, notes, "Vervang voordeur inclusief scharnieren", "Let op isolatie")
 
 	checks := []string{

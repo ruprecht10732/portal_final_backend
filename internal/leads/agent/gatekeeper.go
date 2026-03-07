@@ -128,7 +128,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		return err
 	}
 
-	notes, attachments, photoAnalysis := g.fetchServiceContext(ctx, leadID, serviceID, tenantID)
+	notes, attachments, photoAnalysis, visitReport := g.fetchServiceContext(ctx, leadID, serviceID, tenantID)
 	intakeContext := g.buildServiceContext(ctx, tenantID, service.ServiceType)
 	if err := g.runGatekeeperPrompt(ctx, gatekeeperPromptRequest{
 		leadID:        leadID,
@@ -136,6 +136,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		lead:          lead,
 		service:       service,
 		notes:         notes,
+		visitReport:   visitReport,
 		intakeContext: intakeContext,
 		attachments:   attachments,
 		photoAnalysis: photoAnalysis,
@@ -205,7 +206,7 @@ func (g *Gatekeeper) fetchLeadAndService(ctx context.Context, leadID, serviceID,
 	return lead, service, nil
 }
 
-func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) ([]repository.LeadNote, []repository.Attachment, *repository.PhotoAnalysis) {
+func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) ([]repository.LeadNote, []repository.Attachment, *repository.PhotoAnalysis, *repository.AppointmentVisitReport) {
 	notes, err := g.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
 	if err != nil {
 		log.Printf("gatekeeper notes fetch failed: %v", err)
@@ -225,7 +226,14 @@ func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID,
 		log.Printf("gatekeeper photo analysis fetch failed: %v", err)
 	}
 
-	return notes, attachments, photoAnalysis
+	var visitReport *repository.AppointmentVisitReport
+	if vr, err := g.repo.GetLatestAppointmentVisitReportByService(ctx, serviceID, tenantID); err == nil {
+		visitReport = vr
+	} else if !errors.Is(err, repository.ErrNotFound) {
+		log.Printf("gatekeeper visit report fetch failed: %v", err)
+	}
+
+	return notes, attachments, photoAnalysis, visitReport
 }
 
 type gatekeeperPromptRequest struct {
@@ -234,13 +242,14 @@ type gatekeeperPromptRequest struct {
 	lead          repository.Lead
 	service       repository.LeadService
 	notes         []repository.LeadNote
+	visitReport   *repository.AppointmentVisitReport
 	intakeContext string
 	attachments   []repository.Attachment
 	photoAnalysis *repository.PhotoAnalysis
 }
 
 func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperPromptRequest) error {
-	promptText := buildGatekeeperPrompt(req.lead, req.service, req.notes, req.intakeContext, req.attachments, req.photoAnalysis)
+	promptText := buildGatekeeperPrompt(req.lead, req.service, req.notes, req.visitReport, req.intakeContext, req.attachments, req.photoAnalysis)
 
 	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", req.leadID, req.serviceID)
 	if err := g.runWithPrompt(ctx, promptText, req.leadID); err != nil {

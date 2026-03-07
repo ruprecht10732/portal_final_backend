@@ -357,7 +357,7 @@ type LeadMetricsResponse struct {
 type TimelineItem struct {
 	ID        uuid.UUID      `json:"id"`
 	ServiceID *uuid.UUID     `json:"serviceId,omitempty"`
-	Type      string         `json:"type"` // 'ai', 'user', 'stage'
+	Type      string         `json:"type"` // 'ai', 'user', 'stage', 'system'
 	Title     string         `json:"title"`
 	Summary   string         `json:"summary"`
 	Timestamp time.Time      `json:"timestamp"`

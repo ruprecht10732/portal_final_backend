@@ -17,6 +17,7 @@ const noPreferencesProvided = "No preferences provided"
 const (
 	maxGatekeeperServiceNoteChars = 2000
 	maxGatekeeperNotesChars       = 3000
+	maxGatekeeperVisitReportChars = 2200
 	maxGatekeeperPreferencesChars = 1200
 	maxGatekeeperPhotoChars       = 2500
 	maxGatekeeperLeadCtxChars     = 1200
@@ -61,8 +62,9 @@ const sharedProductSelectionRules = `=== PRODUCT DECISION TABLE ===
 2. Trade/professional synonym
 3. Retail/store synonym`
 
-func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, intakeContext string, attachments []repository.Attachment, photoAnalysis *repository.PhotoAnalysis) string {
+func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, visitReport *repository.AppointmentVisitReport, intakeContext string, attachments []repository.Attachment, photoAnalysis *repository.PhotoAnalysis) string {
 	notesSection := buildNotesSection(notes, maxGatekeeperNotesChars)
+	visitReportSummary := truncatePromptSection(buildVisitReportSummary(visitReport), maxGatekeeperVisitReportChars)
 	serviceNote := getValue(service.ConsumerNote)
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxGatekeeperPreferencesChars)
 	leadContext := truncatePromptSection(buildLeadContextSection(lead, attachments), maxGatekeeperLeadCtxChars)
@@ -123,6 +125,9 @@ Service Note (raw):
 Notes:
 %s
 
+Visit Report (latest appointment):
+%s
+
 Preferences (from customer portal):
 %s
 
@@ -153,11 +158,37 @@ Respond ONLY with tool calls.
 		lead.AddressCity,
 		serviceNoteSummary,
 		notesSection,
+		visitReportSummary,
 		preferencesSummary,
 		photoSummary,
 		leadContext,
 		intakeContextSummary,
 	)
+}
+
+func buildVisitReportSummary(report *repository.AppointmentVisitReport) string {
+	if report == nil {
+		return "No visit report available."
+	}
+
+	lines := []string{
+		"- Measurements: " + visitReportValue(report.Measurements),
+		"- Access difficulty: " + visitReportValue(report.AccessDifficulty),
+		"- Notes: " + visitReportValue(report.Notes),
+	}
+
+	return wrapUserData(strings.Join(lines, "\n"))
+}
+
+func visitReportValue(value *string) string {
+	if value == nil {
+		return valueNotProvided
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return valueNotProvided
+	}
+	return sanitizeUserInput(trimmed, maxNoteLength)
 }
 
 func buildScopeAnalyzerPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis) string {

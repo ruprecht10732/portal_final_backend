@@ -1121,6 +1121,8 @@ func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uu
 		timelineType := "user"
 		if event.EventType == "stage_change" {
 			timelineType = "stage"
+		} else if event.EventType == repository.EventTypeAlert || event.ActorType == repository.ActorTypeSystem {
+			timelineType = "system"
 		} else if event.ActorType == "AI" {
 			timelineType = "ai"
 		}
