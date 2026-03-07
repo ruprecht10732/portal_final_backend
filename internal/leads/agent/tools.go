@@ -171,6 +171,7 @@ type ToolDependencies struct {
 	runID                string                  // Correlates all tool calls within one agent run
 	forceDraftQuote      bool                    // Allows manual runs to bypass intake gating
 	searchCache          map[string]SearchProductMaterialsOutput
+	emittedAlertKeys     map[string]struct{}     // Dedupe identical alerts within a single agent run
 }
 
 // NewRequestDeps creates a request-scoped ToolDependencies that shares the
@@ -318,6 +319,28 @@ func (d *ToolDependencies) GetActor() (string, string) {
 		return "AI", "Agent"
 	}
 	return d.actorType, d.actorName
+}
+
+func buildAlertDedupKey(category, reasonCode, summary string) string {
+	parts := []string{strings.TrimSpace(category), strings.TrimSpace(reasonCode), strings.TrimSpace(summary)}
+	return strings.Join(parts, "|")
+}
+
+func (d *ToolDependencies) MarkAlertEmitted(category, reasonCode, summary string) bool {
+	key := buildAlertDedupKey(category, reasonCode, summary)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.emittedAlertKeys == nil {
+		d.emittedAlertKeys = make(map[string]struct{})
+	}
+	if _, exists := d.emittedAlertKeys[key]; exists {
+		return false
+	}
+	defer func() {
+		d.emittedAlertKeys[key] = struct{}{}
+	}()
+	return true
 }
 
 // GetRunID returns the correlation ID for the current agent run.
@@ -479,6 +502,7 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.existingQuoteID = nil
 	d.forceDraftQuote = false
 	d.searchCache = nil
+	d.emittedAlertKeys = nil
 }
 
 func (d *ToolDependencies) getSearchCache(key string) (SearchProductMaterialsOutput, bool) {
@@ -1437,24 +1461,26 @@ func applyCouncilDecision(ctx tool.Context, deps *ToolDependencies, eval Council
 		if summary == "" {
 			summary = "Council vraagt handmatige beoordeling voordat de stage kan wijzigen."
 		}
-		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-			LeadID:         state.leadID,
-			ServiceID:      &state.serviceID,
-			OrganizationID: state.tenantID,
-			ActorType:      repository.ActorTypeSystem,
-			ActorName:      "Council",
-			EventType:      repository.EventTypeAlert,
-			Title:          repository.EventTitleManualIntervention,
-			Summary:        &summary,
-			Metadata: repository.CouncilAdviceMetadata{
-				Decision:         eval.Decision,
-				ReasonCode:       eval.ReasonCode,
-				Summary:          eval.Summary,
-				EstimatorSignals: eval.EstimatorSignals,
-				RiskSignals:      eval.RiskSignals,
-				ReadinessSignals: eval.ReadinessSignals,
-			}.ToMap(),
-		})
+		if deps.MarkAlertEmitted("council_stage_update", eval.ReasonCode, summary) {
+			_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+				LeadID:         state.leadID,
+				ServiceID:      &state.serviceID,
+				OrganizationID: state.tenantID,
+				ActorType:      repository.ActorTypeSystem,
+				ActorName:      "Council",
+				EventType:      repository.EventTypeAlert,
+				Title:          repository.EventTitleManualIntervention,
+				Summary:        &summary,
+				Metadata: repository.CouncilAdviceMetadata{
+					Decision:         eval.Decision,
+					ReasonCode:       eval.ReasonCode,
+					Summary:          eval.Summary,
+					EstimatorSignals: eval.EstimatorSignals,
+					RiskSignals:      eval.RiskSignals,
+					ReadinessSignals: eval.ReadinessSignals,
+				}.ToMap(),
+			})
+		}
 		return UpdatePipelineStageOutput{Success: false, Message: summary}, fmt.Errorf("council blocked stage update: %s", eval.ReasonCode)
 	}
 
@@ -3198,24 +3224,26 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		if summary == "" {
 			summary = "Council blokkeert conceptofferte: handmatige beoordeling vereist."
 		}
-		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-			LeadID:         leadID,
-			ServiceID:      &serviceID,
-			OrganizationID: *tenantID,
-			ActorType:      repository.ActorTypeSystem,
-			ActorName:      "Council",
-			EventType:      repository.EventTypeAlert,
-			Title:          repository.EventTitleManualIntervention,
-			Summary:        &summary,
-			Metadata: repository.CouncilAdviceMetadata{
-				Decision:         councilEval.Decision,
-				ReasonCode:       councilEval.ReasonCode,
-				Summary:          councilEval.Summary,
-				EstimatorSignals: councilEval.EstimatorSignals,
-				RiskSignals:      councilEval.RiskSignals,
-				ReadinessSignals: councilEval.ReadinessSignals,
-			}.ToMap(),
-		})
+		if deps.MarkAlertEmitted("council_draft_quote", councilEval.ReasonCode, summary) {
+			_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+				LeadID:         leadID,
+				ServiceID:      &serviceID,
+				OrganizationID: *tenantID,
+				ActorType:      repository.ActorTypeSystem,
+				ActorName:      "Council",
+				EventType:      repository.EventTypeAlert,
+				Title:          repository.EventTitleManualIntervention,
+				Summary:        &summary,
+				Metadata: repository.CouncilAdviceMetadata{
+					Decision:         councilEval.Decision,
+					ReasonCode:       councilEval.ReasonCode,
+					Summary:          councilEval.Summary,
+					EstimatorSignals: councilEval.EstimatorSignals,
+					RiskSignals:      councilEval.RiskSignals,
+					ReadinessSignals: councilEval.ReadinessSignals,
+				}.ToMap(),
+			})
+		}
 		return DraftQuoteOutput{Success: false, Message: summary}, fmt.Errorf("council blocked draft quote: %s", councilEval.ReasonCode)
 	}
 
