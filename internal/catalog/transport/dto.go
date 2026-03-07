@@ -187,16 +187,22 @@ type AutocompleteURLResponse struct {
 }
 
 type AutocompleteItemResponse struct {
-	ID             uuid.UUID                      `json:"id"`
-	Title          string                         `json:"title"`
-	Description    *string                        `json:"description,omitempty"`
-	PriceCents     int64                          `json:"priceCents"`
-	UnitPriceCents int64                          `json:"unitPriceCents"`
-	UnitLabel      *string                        `json:"unitLabel,omitempty"`
-	VatRateID      uuid.UUID                      `json:"vatRateId"`
-	VatRateBps     int                            `json:"vatRateBps"`
-	Documents      []AutocompleteDocumentResponse `json:"documents"`
-	URLs           []AutocompleteURLResponse      `json:"urls"`
+	ID               string                         `json:"id"`
+	CatalogProductID *uuid.UUID                     `json:"catalogProductId,omitempty"`
+	Title            string                         `json:"title"`
+	Description      *string                        `json:"description,omitempty"`
+	PriceCents       int64                          `json:"priceCents"`
+	UnitPriceCents   int64                          `json:"unitPriceCents"`
+	UnitLabel        *string                        `json:"unitLabel,omitempty"`
+	VatRateID        *uuid.UUID                     `json:"vatRateId,omitempty"`
+	VatRateBps       int                            `json:"vatRateBps"`
+	Documents        []AutocompleteDocumentResponse `json:"documents"`
+	URLs             []AutocompleteURLResponse      `json:"urls"`
+	SourceType       string                         `json:"sourceType"`
+	SourceCollection string                         `json:"sourceCollection,omitempty"`
+	SourceLabel      string                         `json:"sourceLabel,omitempty"`
+	SourceURL        *string                        `json:"sourceUrl,omitempty"`
+	Score            *float64                       `json:"score,omitempty"`
 }
 
 // Materials

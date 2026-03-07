@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,27 @@ const (
 	// The timeout must cover both query embedding and Qdrant search.
 	autocompleteQdrantTimeout  = 3500 * time.Millisecond
 	autocompleteScoreThreshold = 0.30
+	autocompleteSourceCatalog  = "catalog"
+	autocompleteSourceRef      = "reference"
 )
+
+type autocompleteCollectionSearch struct {
+	kind       string
+	collection string
+	filter     *qdrant.Filter
+}
+
+type autocompleteCatalogHit struct {
+	productID  uuid.UUID
+	collection string
+	score      float64
+}
+
+type autocompleteQdrantSources struct {
+	catalogHits      []autocompleteCatalogHit
+	referenceItems   []transport.AutocompleteItemResponse
+	collectionCounts map[string]int
+}
 
 // Service provides business logic for catalog.
 type Service struct {
@@ -43,6 +64,8 @@ type Service struct {
 	embeddingCollection string
 	searchEmbedding     *embeddings.Client
 	catalogQdrant       *qdrant.Client
+	qdrantClient        *qdrant.Client
+	bouwmaatQdrant      *qdrant.Client
 }
 
 // Config contains dependencies for constructing Service.
@@ -55,6 +78,8 @@ type Config struct {
 	EmbeddingCollection string
 	SearchEmbedding     *embeddings.Client
 	CatalogQdrant       *qdrant.Client
+	QdrantClient        *qdrant.Client
+	BouwmaatQdrant      *qdrant.Client
 }
 
 // New creates a new catalog service.
@@ -68,6 +93,8 @@ func New(cfg Config) *Service {
 		embeddingCollection: strings.TrimSpace(cfg.EmbeddingCollection),
 		searchEmbedding:     cfg.SearchEmbedding,
 		catalogQdrant:       cfg.CatalogQdrant,
+		qdrantClient:        cfg.QdrantClient,
+		bouwmaatQdrant:      cfg.BouwmaatQdrant,
 	}
 }
 
@@ -705,21 +732,33 @@ func (s *Service) SearchForAutocomplete(ctx context.Context, tenantID uuid.UUID,
 		return []transport.AutocompleteItemResponse{}, nil
 	}
 
-	products, qdrantIDs, err := s.fetchAutocompleteSources(ctx, tenantID, query, primaryLimit, qdrantLimit)
+	products, qdrantSources, err := s.fetchAutocompleteSources(ctx, tenantID, query, primaryLimit, qdrantLimit)
 	if err != nil {
 		return nil, err
 	}
 
-	orderedIDs, productByID := mergeAutocompleteProducts(products, qdrantIDs, limit)
+	orderedIDs, productByID := mergeAutocompleteProducts(products, catalogHitIDs(qdrantSources.catalogHits), limit)
+	hydratedCount := s.hydrateAutocompleteProducts(ctx, tenantID, orderedIDs, productByID)
+	catalogItems := s.buildAutocompleteItems(ctx, tenantID, orderedIDs, productByID, qdrantSources.catalogHits)
+	items := mergeAutocompleteResults(catalogItems, qdrantSources.referenceItems, limit)
 
-	s.log.WithContext(ctx).Info("catalog autocomplete sources", "query", query, "postgresCount", len(products), "qdrantCount", len(qdrantIDs), "limit", limit)
+	s.log.WithContext(ctx).Info(
+		"catalog autocomplete sources",
+		"query", query,
+		"postgresCount", len(products),
+		"catalogQdrantCount", len(qdrantSources.catalogHits),
+		"referenceQdrantCount", len(qdrantSources.referenceItems),
+		"hydratedCount", hydratedCount,
+		"finalCount", len(items),
+		"collections", formatCollectionCounts(qdrantSources.collectionCounts),
+		"limit", limit,
+	)
 
-	if len(orderedIDs) == 0 {
+	if len(items) == 0 {
 		return []transport.AutocompleteItemResponse{}, nil
 	}
 
-	s.hydrateAutocompleteProducts(ctx, tenantID, orderedIDs, productByID)
-	return s.buildAutocompleteItems(ctx, tenantID, orderedIDs, productByID), nil
+	return items, nil
 }
 
 func normalizeAutocompleteSearch(req transport.AutocompleteSearchRequest) (query string, limit int, primaryLimit int, qdrantLimit int) {
@@ -749,10 +788,10 @@ func normalizeAutocompleteSearch(req transport.AutocompleteSearchRequest) (query
 	return query, limit, primaryLimit, qdrantLimit
 }
 
-func (s *Service) fetchAutocompleteSources(ctx context.Context, tenantID uuid.UUID, query string, primaryLimit int, qdrantLimit int) ([]repository.Product, []uuid.UUID, error) {
+func (s *Service) fetchAutocompleteSources(ctx context.Context, tenantID uuid.UUID, query string, primaryLimit int, qdrantLimit int) ([]repository.Product, autocompleteQdrantSources, error) {
 	var (
-		products  []repository.Product
-		qdrantIDs []uuid.UUID
+		products      []repository.Product
+		qdrantSources autocompleteQdrantSources
 	)
 
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -775,20 +814,28 @@ func (s *Service) fetchAutocompleteSources(ctx context.Context, tenantID uuid.UU
 	group.Go(func() error {
 		qdrantCtx, cancel := context.WithTimeout(groupCtx, autocompleteQdrantTimeout)
 		defer cancel()
-		ids, err := s.qdrantSearch(qdrantCtx, tenantID, query, qdrantLimit)
+		sources, err := s.qdrantSearch(qdrantCtx, tenantID, query, qdrantLimit)
 		if err != nil {
 			s.log.WithContext(ctx).Warn("catalog qdrant autocomplete fallback", "error", err)
 			return nil
 		}
-		qdrantIDs = ids
+		qdrantSources = sources
 		return nil
 	})
 
 	if err := group.Wait(); err != nil {
-		return nil, nil, err
+		return nil, autocompleteQdrantSources{}, err
 	}
 
-	return products, qdrantIDs, nil
+	return products, qdrantSources, nil
+}
+
+func catalogHitIDs(hits []autocompleteCatalogHit) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.productID)
+	}
+	return ids
 }
 
 func mergeAutocompleteProducts(products []repository.Product, qdrantIDs []uuid.UUID, limit int) ([]uuid.UUID, map[uuid.UUID]repository.Product) {
@@ -822,7 +869,7 @@ func mergeAutocompleteProducts(products []repository.Product, qdrantIDs []uuid.U
 	return orderedIDs, productByID
 }
 
-func (s *Service) hydrateAutocompleteProducts(ctx context.Context, tenantID uuid.UUID, orderedIDs []uuid.UUID, productByID map[uuid.UUID]repository.Product) {
+func (s *Service) hydrateAutocompleteProducts(ctx context.Context, tenantID uuid.UUID, orderedIDs []uuid.UUID, productByID map[uuid.UUID]repository.Product) int {
 	missingIDs := make([]uuid.UUID, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		if _, ok := productByID[id]; !ok {
@@ -831,26 +878,35 @@ func (s *Service) hydrateAutocompleteProducts(ctx context.Context, tenantID uuid
 	}
 
 	if len(missingIDs) == 0 {
-		return
+		return 0
 	}
 
 	qdrantProducts, err := s.repo.GetProductsByIDs(ctx, tenantID, missingIDs)
 	if err != nil {
 		s.log.WithContext(ctx).Warn("catalog autocomplete qdrant hydration fallback", "error", err)
-		return
+		return 0
 	}
 
 	for _, p := range qdrantProducts {
 		productByID[p.ID] = p
 	}
+
+	return len(qdrantProducts)
 }
 
-func (s *Service) buildAutocompleteItems(ctx context.Context, tenantID uuid.UUID, orderedIDs []uuid.UUID, productByID map[uuid.UUID]repository.Product) []transport.AutocompleteItemResponse {
+func (s *Service) buildAutocompleteItems(ctx context.Context, tenantID uuid.UUID, orderedIDs []uuid.UUID, productByID map[uuid.UUID]repository.Product, hits []autocompleteCatalogHit) []transport.AutocompleteItemResponse {
 	const maxWorkers = 4
 
 	type resultEntry struct {
 		item transport.AutocompleteItemResponse
 		ok   bool
+	}
+
+	hitByID := make(map[uuid.UUID]autocompleteCatalogHit, len(hits))
+	for _, hit := range hits {
+		if _, exists := hitByID[hit.productID]; !exists {
+			hitByID[hit.productID] = hit
+		}
 	}
 
 	entries := make([]resultEntry, len(orderedIDs))
@@ -864,8 +920,9 @@ func (s *Service) buildAutocompleteItems(ctx context.Context, tenantID uuid.UUID
 		}
 		i := idx
 		p := product
+		hit, hasHit := hitByID[id]
 		group.Go(func() error {
-			item, err := s.buildAutocompleteItem(groupCtx, tenantID, p)
+			item, err := s.buildAutocompleteItem(groupCtx, tenantID, p, hit, hasHit)
 			if err != nil {
 				return nil
 			}
@@ -887,32 +944,88 @@ func (s *Service) buildAutocompleteItems(ctx context.Context, tenantID uuid.UUID
 	return result
 }
 
-func (s *Service) qdrantSearch(ctx context.Context, tenantID uuid.UUID, query string, limit int) ([]uuid.UUID, error) {
-	if s.searchEmbedding == nil || s.catalogQdrant == nil {
-		s.log.WithContext(ctx).Warn("catalog qdrant autocomplete unavailable", "hasEmbeddingClient", s.searchEmbedding != nil, "hasQdrantClient", s.catalogQdrant != nil)
-		return nil, nil
+func (s *Service) qdrantSearch(ctx context.Context, tenantID uuid.UUID, query string, limit int) (autocompleteQdrantSources, error) {
+	if s.searchEmbedding == nil {
+		s.log.WithContext(ctx).Warn("catalog qdrant autocomplete unavailable", "hasEmbeddingClient", false, "hasCatalogQdrantClient", s.catalogQdrant != nil, "hasFallbackQdrantClient", s.qdrantClient != nil, "hasBouwmaatQdrantClient", s.bouwmaatQdrant != nil)
+		return autocompleteQdrantSources{}, nil
 	}
 	if strings.TrimSpace(query) == "" || limit <= 0 {
-		return nil, nil
+		return autocompleteQdrantSources{}, nil
+	}
+
+	searches, batchClient := s.buildAutocompleteCollectionSearches(tenantID)
+	if len(searches) == 0 || batchClient == nil {
+		s.log.WithContext(ctx).Warn("catalog qdrant autocomplete unavailable", "hasEmbeddingClient", true, "hasCatalogQdrantClient", s.catalogQdrant != nil, "hasFallbackQdrantClient", s.qdrantClient != nil, "hasBouwmaatQdrantClient", s.bouwmaatQdrant != nil)
+		return autocompleteQdrantSources{}, nil
 	}
 
 	vector, err := s.searchEmbedding.Embed(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("embed query: %w", err)
+		return autocompleteQdrantSources{}, fmt.Errorf("embed query: %w", err)
 	}
 
-	results, err := s.catalogQdrant.SearchWithFilter(
-		ctx,
-		vector,
-		limit,
-		autocompleteScoreThreshold,
-		qdrant.NewOrganizationFilter(tenantID.String()),
-	)
+	requests := make([]qdrant.SearchRequest, 0, len(searches))
+	for _, search := range searches {
+		requests = append(requests, qdrant.SearchRequest{
+			CollectionName: search.collection,
+			Vector:         vector,
+			Limit:          limit,
+			WithPayload:    true,
+			ScoreThreshold: float64Ptr(autocompleteScoreThreshold),
+			Filter:         search.filter,
+		})
+	}
+
+	results, err := batchClient.BatchSearch(ctx, requests)
 	if err != nil {
-		return nil, fmt.Errorf("qdrant search: %w", err)
+		return autocompleteQdrantSources{}, fmt.Errorf("qdrant search: %w", err)
 	}
 
-	out := make([]uuid.UUID, 0, len(results))
+	out := autocompleteQdrantSources{
+		catalogHits:      make([]autocompleteCatalogHit, 0, limit),
+		referenceItems:   make([]transport.AutocompleteItemResponse, 0, limit),
+		collectionCounts: make(map[string]int, len(searches)),
+	}
+	for idx, search := range searches {
+		if idx >= len(results) {
+			continue
+		}
+		collectionResults := results[idx]
+		out.collectionCounts[search.collection] = len(collectionResults)
+		if search.kind == autocompleteSourceCatalog {
+			out.catalogHits = append(out.catalogHits, s.extractCatalogAutocompleteHits(ctx, collectionResults, search.collection)...)
+			continue
+		}
+		out.referenceItems = append(out.referenceItems, buildReferenceAutocompleteItems(collectionResults, search.collection)...)
+	}
+
+	return out, nil
+}
+
+func (s *Service) buildAutocompleteCollectionSearches(tenantID uuid.UUID) ([]autocompleteCollectionSearch, *qdrant.Client) {
+	searches := make([]autocompleteCollectionSearch, 0, 3)
+	var batchClient *qdrant.Client
+	appendSearch := func(client *qdrant.Client, kind string, filter *qdrant.Filter) {
+		if client == nil {
+			return
+		}
+		collection := strings.TrimSpace(client.CollectionName())
+		if collection == "" {
+			return
+		}
+		if batchClient == nil {
+			batchClient = client
+		}
+		searches = append(searches, autocompleteCollectionSearch{kind: kind, collection: collection, filter: filter})
+	}
+	appendSearch(s.catalogQdrant, autocompleteSourceCatalog, qdrant.NewOrganizationFilter(tenantID.String()))
+	appendSearch(s.qdrantClient, autocompleteSourceRef, nil)
+	appendSearch(s.bouwmaatQdrant, autocompleteSourceRef, nil)
+	return searches, batchClient
+}
+
+func (s *Service) extractCatalogAutocompleteHits(ctx context.Context, results []qdrant.SearchResult, collection string) []autocompleteCatalogHit {
+	out := make([]autocompleteCatalogHit, 0, len(results))
 	seen := make(map[uuid.UUID]struct{}, len(results))
 	droppedCount := 0
 	firstDroppedKeys := ""
@@ -929,14 +1042,14 @@ func (s *Service) qdrantSearch(ctx context.Context, tenantID uuid.UUID, query st
 			continue
 		}
 		seen[id] = struct{}{}
-		out = append(out, id)
+		out = append(out, autocompleteCatalogHit{productID: id, collection: collection, score: res.Score})
 	}
 
 	if droppedCount > 0 {
-		s.log.WithContext(ctx).Warn("catalog qdrant results dropped", "dropped", droppedCount, "payloadKeys", firstDroppedKeys)
+		s.log.WithContext(ctx).Warn("catalog qdrant results dropped", "collection", collection, "dropped", droppedCount, "payloadKeys", firstDroppedKeys)
 	}
 
-	return out, nil
+	return out
 }
 
 func extractUUIDFromQdrantResult(result qdrant.SearchResult) (uuid.UUID, bool) {
@@ -990,7 +1103,7 @@ func payloadKeyList(payload map[string]interface{}) string {
 	return strings.Join(keys, ",")
 }
 
-func (s *Service) buildAutocompleteItem(ctx context.Context, tenantID uuid.UUID, p repository.Product) (transport.AutocompleteItemResponse, error) {
+func (s *Service) buildAutocompleteItem(ctx context.Context, tenantID uuid.UUID, p repository.Product, hit autocompleteCatalogHit, hasHit bool) (transport.AutocompleteItemResponse, error) {
 	var (
 		docs       []repository.ProductAsset
 		urls       []repository.ProductAsset
@@ -1034,18 +1147,244 @@ func (s *Service) buildAutocompleteItem(ctx context.Context, tenantID uuid.UUID,
 		return transport.AutocompleteItemResponse{}, err
 	}
 
+	catalogProductID := p.ID
+	item := transport.AutocompleteItemResponse{
+		ID:               p.ID.String(),
+		CatalogProductID: &catalogProductID,
+		Title:            p.Title,
+		Description:      p.Description,
+		PriceCents:       p.PriceCents,
+		UnitPriceCents:   p.UnitPriceCents,
+		UnitLabel:        p.UnitLabel,
+		VatRateID:        &p.VatRateID,
+		VatRateBps:       vatRateBps,
+		Documents:        toAutocompleteDocuments(docs),
+		URLs:             toAutocompleteURLs(urls),
+		SourceType:       autocompleteSourceCatalog,
+		SourceCollection: s.catalogCollectionName(),
+		SourceLabel:      sourceLabelForCollection(s.catalogCollectionName()),
+	}
+	if hasHit {
+		item.SourceCollection = hit.collection
+		item.SourceLabel = sourceLabelForCollection(hit.collection)
+		item.Score = float64Ptr(hit.score)
+	}
+
+	return item, nil
+}
+
+func mergeAutocompleteResults(catalogItems []transport.AutocompleteItemResponse, referenceItems []transport.AutocompleteItemResponse, limit int) []transport.AutocompleteItemResponse {
+	result := make([]transport.AutocompleteItemResponse, 0, limit)
+	appendItems := func(items []transport.AutocompleteItemResponse) {
+		for _, item := range items {
+			if len(result) >= limit {
+				return
+			}
+			result = append(result, item)
+		}
+	}
+	appendItems(catalogItems)
+	appendItems(referenceItems)
+	return result
+}
+
+func formatCollectionCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (s *Service) catalogCollectionName() string {
+	if s.catalogQdrant == nil {
+		return "catalog"
+	}
+	collection := strings.TrimSpace(s.catalogQdrant.CollectionName())
+	if collection == "" {
+		return "catalog"
+	}
+	return collection
+}
+
+func sourceLabelForCollection(collection string) string {
+	switch strings.TrimSpace(strings.ToLower(collection)) {
+	case "catalog":
+		return "Catalog"
+	case "houthandel_products":
+		return "Houthandel"
+	case "bouwmaat_products":
+		return "Bouwmaat"
+	default:
+		if collection == "" {
+			return "Referentie"
+		}
+		return strings.ReplaceAll(collection, "_", " ")
+	}
+}
+
+func buildReferenceAutocompleteItems(results []qdrant.SearchResult, collection string) []transport.AutocompleteItemResponse {
+	items := make([]transport.AutocompleteItemResponse, 0, len(results))
+	seen := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		item, ok := referenceAutocompleteItem(result, collection)
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(item.Title)) + "|" + item.SourceCollection
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		items = append(items, item)
+	}
+	return items
+}
+
+func referenceAutocompleteItem(result qdrant.SearchResult, collection string) (transport.AutocompleteItemResponse, bool) {
+	payload := result.Payload
+	title := strings.TrimSpace(firstNonEmptyString(payload, "name", "title"))
+	if title == "" {
+		return transport.AutocompleteItemResponse{}, false
+	}
+	description := firstNonEmptyString(payload, "description")
+	unitLabel := resolveAutocompleteUnit(payload)
+	priceCents := autocompletePayloadPriceCents(payload)
+	vatRateBps := autocompletePayloadVatRateBps(payload)
+	id := strings.TrimSpace(firstNonEmptyString(payload, "id", "product_id", "product_uuid", "uuid"))
+	if id == "" {
+		id = strings.TrimSpace(fmt.Sprint(result.ID))
+	}
+
 	return transport.AutocompleteItemResponse{
-		ID:             p.ID,
-		Title:          p.Title,
-		Description:    p.Description,
-		PriceCents:     p.PriceCents,
-		UnitPriceCents: p.UnitPriceCents,
-		UnitLabel:      p.UnitLabel,
-		VatRateID:      p.VatRateID,
-		VatRateBps:     vatRateBps,
-		Documents:      toAutocompleteDocuments(docs),
-		URLs:           toAutocompleteURLs(urls),
-	}, nil
+		ID:               id,
+		Title:            title,
+		Description:      optionalString(description),
+		PriceCents:       priceCents,
+		UnitPriceCents:   priceCents,
+		UnitLabel:        optionalString(unitLabel),
+		VatRateBps:       vatRateBps,
+		Documents:        []transport.AutocompleteDocumentResponse{},
+		URLs:             []transport.AutocompleteURLResponse{},
+		SourceType:       autocompleteSourceRef,
+		SourceCollection: collection,
+		SourceLabel:      sourceLabelForCollection(collection),
+		SourceURL:        optionalString(firstNonEmptyString(payload, "source_url")),
+		Score:            float64Ptr(result.Score),
+	}, true
+}
+
+func firstNonEmptyString(payload map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(payloadString(payload, key))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func payloadString(payload map[string]interface{}, key string) string {
+	value, ok := payload[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func autocompletePayloadPriceCents(payload map[string]interface{}) int64 {
+	price := payloadFloat(payload, "price")
+	if price <= 0 {
+		price = payloadFloat(payload, "unit_price")
+	}
+	if price <= 0 {
+		price = payloadFloat(payload, "price_euros")
+	}
+	if price <= 0 {
+		return 0
+	}
+	return int64(price * 100)
+}
+
+func autocompletePayloadVatRateBps(payload map[string]interface{}) int {
+	if value := int(payloadFloat(payload, "vat_rate_bps")); value > 0 {
+		return value
+	}
+	if value := int(payloadFloat(payload, "vat_rate")); value > 0 {
+		if value <= 100 {
+			return value * 100
+		}
+		return value
+	}
+	return 2100
+}
+
+func resolveAutocompleteUnit(payload map[string]interface{}) string {
+	if unit := firstNonEmptyString(payload, "unit_label", "unit"); unit != "" {
+		return unit
+	}
+	priceRaw := payloadString(payload, "price_raw")
+	if priceRaw == "" {
+		return ""
+	}
+	idx := strings.LastIndex(priceRaw, "/")
+	if idx < 0 || idx >= len(priceRaw)-1 {
+		return ""
+	}
+	unit := strings.TrimSpace(priceRaw[idx+1:])
+	if unit == "" {
+		return ""
+	}
+	return "per " + unit
+}
+
+func payloadFloat(payload map[string]interface{}, key string) float64 {
+	value, ok := payload[key]
+	if !ok || value == nil {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case string:
+		parsed := strings.TrimSpace(strings.ReplaceAll(typed, ",", "."))
+		if parsed == "" {
+			return 0
+		}
+		f, err := strconv.ParseFloat(parsed, 64)
+		if err != nil {
+			return 0
+		}
+		return f
+	default:
+		return 0
+	}
+}
+
+func optionalString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func float64Ptr(value float64) *float64 {
+	return &value
 }
 
 func strPtr(s string) *string { return &s }

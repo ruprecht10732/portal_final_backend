@@ -56,6 +56,24 @@ func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket str
 		})
 	}
 
+	var qdrantClient *qdrant.Client
+	if cfg.IsQdrantEnabled() {
+		qdrantClient = qdrant.NewClient(qdrant.Config{
+			BaseURL:    cfg.GetQdrantURL(),
+			APIKey:     cfg.GetQdrantAPIKey(),
+			Collection: cfg.GetQdrantCollection(),
+		})
+	}
+
+	var bouwmaatQdrantClient *qdrant.Client
+	if cfg.GetQdrantURL() != "" && cfg.GetBouwmaatEmbeddingCollection() != "" {
+		bouwmaatQdrantClient = qdrant.NewClient(qdrant.Config{
+			BaseURL:    cfg.GetQdrantURL(),
+			APIKey:     cfg.GetQdrantAPIKey(),
+			Collection: cfg.GetBouwmaatEmbeddingCollection(),
+		})
+	}
+
 	svc := service.New(service.Config{
 		Repository:          repo,
 		StorageService:      storageSvc,
@@ -65,6 +83,8 @@ func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket str
 		EmbeddingCollection: cfg.GetCatalogEmbeddingCollection(),
 		SearchEmbedding:     searchEmbeddingClient,
 		CatalogQdrant:       catalogQdrantClient,
+		QdrantClient:        qdrantClient,
+		BouwmaatQdrant:      bouwmaatQdrantClient,
 	})
 	h := handler.New(svc, val)
 
