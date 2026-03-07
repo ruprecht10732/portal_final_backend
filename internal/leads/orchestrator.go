@@ -24,7 +24,7 @@ import (
 // Orchestrator routes pipeline events to specialized agents.
 type Orchestrator struct {
 	gatekeeper *agent.Gatekeeper
-	estimator  *agent.QuotingAgent
+	estimator  agent.Estimator
 	dispatcher *agent.Dispatcher
 	auditor    *agent.Auditor
 	repo       repository.LeadsRepository
@@ -67,7 +67,7 @@ const (
 
 type OrchestratorAgents struct {
 	Gatekeeper *agent.Gatekeeper
-	Estimator  *agent.QuotingAgent
+	Estimator  agent.Estimator
 	Dispatcher *agent.Dispatcher
 	Auditor    *agent.Auditor
 }

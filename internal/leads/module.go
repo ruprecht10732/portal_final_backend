@@ -44,13 +44,13 @@ type Module struct {
 	management            *management.Service
 	notes                 *notes.Service
 	gatekeeper            *agent.Gatekeeper
-	estimator             *agent.QuotingAgent
+	estimator             agent.Estimator
 	dispatcher            *agent.Dispatcher
 	auditor               *agent.Auditor
 	orchestrator          *Orchestrator
 	photoAnalyzer         *agent.PhotoAnalyzer
 	callLogger            *agent.CallLogger
-	quoteGenerator        *agent.QuotingAgent
+	quoteGenerator        agent.QuoteGenerator
 	offerSummaryGenerator *agent.OfferSummaryGenerator
 	sse                   *sse.Service
 	eventBus              events.Bus
@@ -177,7 +177,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	}, nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, *agent.QuotingAgent, *agent.Dispatcher, *agent.Auditor, *agent.QuotingAgent, *agent.OfferSummaryGenerator, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
 	_ = storageSvc
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
 	if err != nil {
@@ -236,7 +236,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		})
 	}
 
-	estimator, err := agent.NewQuotingAgent(agent.QuotingAgentConfig{
+	estimator, err := agent.NewEstimatorAgent(agent.QuotingAgentConfig{
 		APIKey:               cfg.MoonshotAPIKey,
 		Repo:                 repo,
 		EventBus:             eventBus,
@@ -245,7 +245,6 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		BouwmaatQdrantClient: bouwmaatQdrantClient,
 		CatalogQdrantClient:  catalogQdrantClient,
 		CatalogReader:        catalogReader,
-		IsAutonomous:         true,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
@@ -256,7 +255,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	quoteGenerator, err := agent.NewQuotingAgent(agent.QuotingAgentConfig{
+	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
 		APIKey:               cfg.MoonshotAPIKey,
 		Repo:                 repo,
 		EventBus:             eventBus,
@@ -265,7 +264,6 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		BouwmaatQdrantClient: bouwmaatQdrantClient,
 		CatalogQdrantClient:  catalogQdrantClient,
 		CatalogReader:        catalogReader,
-		IsAutonomous:         false,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
@@ -577,9 +575,12 @@ func (m *Module) SetPartnerOfferCreator(poc ports.PartnerOfferCreator) {
 	m.dispatcher.SetOfferCreator(poc)
 }
 
-// GenerateQuoteFromPrompt runs the QuoteGenerator agent with a user prompt.
-func (m *Module) GenerateQuoteFromPrompt(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) (*agent.GenerateResult, error) {
-	return m.quoteGenerator.Generate(ctx, leadID, serviceID, tenantID, prompt, existingQuoteID, force)
+// QuoteGeneratorAgent exposes the prompt-driven quote generator through its narrow interface.
+func (m *Module) QuoteGeneratorAgent() agent.QuoteGenerator {
+	if m == nil {
+		return nil
+	}
+	return m.quoteGenerator
 }
 
 // RegisterRoutes mounts RAC_leads routes on the provided router context.

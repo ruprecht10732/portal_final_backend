@@ -30,6 +30,30 @@ type GenerateResult struct {
 	ItemCount   int
 }
 
+// QuotingAgentDependencies captures shared dependency injection hooks.
+type QuotingAgentDependencies interface {
+	SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader)
+	SetCatalogReader(cr ports.CatalogReader)
+	SetQuoteDrafter(qd ports.QuoteDrafter)
+}
+
+// Estimator exposes the autonomous estimation workflow surface.
+type Estimator interface {
+	QuotingAgentDependencies
+	Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error
+}
+
+// QuoteGenerator exposes the prompt-driven quote generation surface.
+type QuoteGenerator interface {
+	QuotingAgentDependencies
+	Generate(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userPrompt string, existingQuoteID *uuid.UUID, force bool) (*GenerateResult, error)
+}
+
+var (
+	_ Estimator      = (*QuotingAgent)(nil)
+	_ QuoteGenerator = (*QuotingAgent)(nil)
+)
+
 // QuotingAgent unifies autonomous estimation and prompt-driven quote generation.
 type QuotingAgent struct {
 	agent          agent.Agent
@@ -39,7 +63,21 @@ type QuotingAgent struct {
 	modelConfig    moonshot.Config
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
-	autonomous     bool
+	mode           quotingAgentMode
+}
+
+type quotingAgentMode string
+
+const (
+	quotingAgentModeEstimator      quotingAgentMode = "estimator"
+	quotingAgentModeQuoteGenerator quotingAgentMode = "quote-generator"
+)
+
+type quotingAgentProfile struct {
+	name        string
+	description string
+	instruction string
+	appName     string
 }
 
 // QuotingAgentConfig holds shared dependencies for both quoting modes.
@@ -53,11 +91,19 @@ type QuotingAgentConfig struct {
 	CatalogQdrantClient  *qdrant.Client
 	CatalogReader        ports.CatalogReader
 	QuoteDrafter         ports.QuoteDrafter
-	IsAutonomous         bool
 }
 
-// NewQuotingAgent creates a quoting agent in autonomous (estimator) or prompt mode.
-func NewQuotingAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
+// NewEstimatorAgent creates the autonomous estimator agent.
+func NewEstimatorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
+	return newQuotingAgent(cfg, quotingAgentModeEstimator)
+}
+
+// NewQuoteGeneratorAgent creates the prompt-driven quote generator agent.
+func NewQuoteGeneratorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
+	return newQuotingAgent(cfg, quotingAgentModeQuoteGenerator)
+}
+
+func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAgent, error) {
 	modelConfig := moonshot.Config{
 		APIKey:          cfg.APIKey,
 		Model:           "kimi-k2.5",
@@ -77,56 +123,70 @@ func NewQuotingAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
 		CouncilService:       NewDefaultMultiAgentCouncil(cfg.Repo),
 	}
 
-	tools, err := buildQuotingTools(deps, cfg.IsAutonomous)
+	tools, err := buildQuotingTools(deps, mode)
 	if err != nil {
 		return nil, err
 	}
 
-	name := "QuoteGenerator"
-	description := "Generates draft quotes from a user prompt using catalog search."
-	instruction := "You are a Quote Generator. Search for products and create draft quotes."
-	appName := "quote-generator"
-	if cfg.IsAutonomous {
-		name = "Estimator"
-		description = "Technical estimator that scopes work and suggests price ranges."
-		instruction = "You are a Technical Estimator."
-		appName = "estimator"
-	}
+	profile := mode.profile()
 
 	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        name,
+		Name:        profile.name,
 		Model:       kimi,
-		Description: description,
-		Instruction: instruction,
+		Description: profile.description,
+		Instruction: profile.instruction,
 		Tools:       tools,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create quoting agent: %w", err)
+		return nil, fmt.Errorf("failed to create %s agent: %w", mode, err)
 	}
 
 	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
-		AppName:        appName,
+		AppName:        profile.appName,
 		Agent:          adkAgent,
 		SessionService: sessionService,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create quoting agent runner: %w", err)
+		return nil, fmt.Errorf("failed to create %s runner: %w", mode, err)
 	}
 
 	return &QuotingAgent{
 		agent:          adkAgent,
 		runner:         r,
 		sessionService: sessionService,
-		appName:        appName,
+		appName:        profile.appName,
 		modelConfig:    modelConfig,
 		repo:           cfg.Repo,
 		toolDeps:       deps,
-		autonomous:     cfg.IsAutonomous,
+		mode:           mode,
 	}, nil
 }
 
-func buildQuotingTools(deps *ToolDependencies, autonomous bool) ([]tool.Tool, error) {
+func (m quotingAgentMode) isAutonomous() bool {
+	return m == quotingAgentModeEstimator
+}
+
+func (m quotingAgentMode) profile() quotingAgentProfile {
+	switch m {
+	case quotingAgentModeEstimator:
+		return quotingAgentProfile{
+			name:        "Estimator",
+			description: "Technical estimator that scopes work and suggests price ranges.",
+			instruction: "You are a Technical Estimator.",
+			appName:     "estimator",
+		}
+	default:
+		return quotingAgentProfile{
+			name:        "QuoteGenerator",
+			description: "Generates draft quotes from a user prompt using catalog search.",
+			instruction: "You are a Quote Generator. Search for products and create draft quotes.",
+			appName:     "quote-generator",
+		}
+	}
+}
+
+func buildQuotingTools(deps *ToolDependencies, mode quotingAgentMode) ([]tool.Tool, error) {
 	calculatorTool, err := createCalculatorTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Calculator tool: %w", err)
@@ -139,7 +199,7 @@ func buildQuotingTools(deps *ToolDependencies, autonomous bool) ([]tool.Tool, er
 
 	tools := []tool.Tool{calculatorTool, draftQuoteTool}
 
-	if autonomous {
+	if mode.isAutonomous() {
 		calculateEstimateTool, err := createCalculateEstimateTool()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build CalculateEstimate tool: %w", err)
@@ -169,9 +229,9 @@ func buildQuotingTools(deps *ToolDependencies, autonomous bool) ([]tool.Tool, er
 			return nil, fmt.Errorf("failed to build SearchProductMaterials tool: %w", err)
 		}
 		tools = append(tools, searchTool)
-		log.Printf("QuotingAgent: product search enabled (autonomous=%t)", autonomous)
+		log.Printf("QuotingAgent[%s]: product search enabled", mode)
 	} else {
-		log.Printf("QuotingAgent: product search disabled (autonomous=%t)", autonomous)
+		log.Printf("QuotingAgent[%s]: product search disabled", mode)
 	}
 
 	return tools, nil
@@ -213,10 +273,10 @@ func (q *QuotingAgent) SetQuoteDrafter(qd ports.QuoteDrafter) {
 
 // Run executes autonomous estimation for a lead service.
 func (q *QuotingAgent) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {
-	if !q.autonomous {
+	if !q.mode.isAutonomous() {
 		return fmt.Errorf("quoting agent is not configured for autonomous runs")
 	}
-	log.Printf("quoting-agent: scheduling autonomous run for lead=%s service=%s tenant=%s force=%t", leadID, serviceID, tenantID, force)
+	log.Printf("quoting-agent[%s]: scheduling run for lead=%s service=%s tenant=%s force=%t", q.mode, leadID, serviceID, tenantID, force)
 	reqDeps := q.toolDeps.NewRequestDeps()
 	ctx = WithDependencies(ctx, reqDeps)
 	go q.runEstimation(ctx, reqDeps, leadID, serviceID, tenantID, force)
@@ -249,7 +309,7 @@ func (q *QuotingAgent) runEstimation(ctx context.Context, reqDeps *ToolDependenc
 	})
 	q.persistEstimatorDecisionMemory(ctx, reqDeps, leadID, serviceID, tenantID, service)
 
-	log.Printf("quoting-agent: autonomous run finished runID=%s lead=%s service=%s", runID, leadID, serviceID)
+	log.Printf("quoting-agent[%s]: run finished runID=%s lead=%s service=%s", q.mode, runID, leadID, serviceID)
 }
 
 type nurturingFallbackContext struct {
@@ -268,7 +328,7 @@ func (q *QuotingAgent) startAutonomousRun(ctx context.Context, reqDeps *ToolDepe
 	reqDeps.SetActor(repository.ActorTypeAI, repository.ActorNameEstimator)
 	reqDeps.ResetToolCallTracking()
 	runID := reqDeps.GetRunID()
-	log.Printf("quoting-agent: autonomous run started runID=%s lead=%s service=%s tenant=%s", runID, leadID, serviceID, tenantID)
+	log.Printf("quoting-agent[%s]: run started runID=%s lead=%s service=%s tenant=%s", q.mode, runID, leadID, serviceID, tenantID)
 
 	if _, err := reqDeps.LoadOrganizationAISettings(ctx); err != nil {
 		log.Printf("quoting-agent: failed to load org AI settings (tenant=%s): %v", tenantID, err)
@@ -354,7 +414,7 @@ func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead reposit
 		return false
 	}
 
-	quoteBuilderTools, err := buildQuotingTools(GetDependencies(ctx), true)
+	quoteBuilderTools, err := buildQuotingTools(GetDependencies(ctx), q.mode)
 	if err != nil {
 		log.Printf("quoting-agent: failed to build quote builder tools: %v", err)
 		return false

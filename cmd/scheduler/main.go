@@ -99,7 +99,7 @@ func main() {
 	quotesDrafter := adapters.NewQuotesDraftWriter(quotesModule.Service())
 	leadsModule.SetQuoteDrafter(quotesDrafter)
 
-	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule)
+	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent())
 	quotesModule.Service().SetQuotePromptGenerator(quoteGenAdapter)
 
 	dispatcher, err := scheduler.NewNotificationOutboxDispatcher(cfg, pool, log)
