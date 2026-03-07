@@ -104,11 +104,6 @@ func (b *InMemoryBus) Subscribe(eventName string, handler Handler) {
 	b.log.Debug("event handler subscribed", "event", eventName)
 }
 
-// SubscribeFunc is a convenience method to subscribe a function as a handler.
-func (b *InMemoryBus) SubscribeFunc(eventName string, fn func(ctx context.Context, event Event) error) {
-	b.Subscribe(eventName, HandlerFunc(fn))
-}
-
 // Shutdown waits until all in-flight async handler executions complete
 // or the provided context expires.
 func (b *InMemoryBus) Shutdown(ctx context.Context) error {

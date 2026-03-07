@@ -71,7 +71,6 @@ type LeadServiceReader interface {
 // LeadServiceWriter provides write operations for lead services.
 type LeadServiceWriter interface {
 	CreateLeadService(ctx context.Context, params CreateLeadServiceParams) (LeadService, error)
-	UpdateLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadServiceParams) (LeadService, error)
 	UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error)
 	UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error)
 	UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error)
@@ -125,7 +124,6 @@ type AIDecisionMemoryStore interface {
 type HumanFeedbackStore interface {
 	CreateHumanFeedback(ctx context.Context, params CreateHumanFeedbackParams) (HumanFeedback, error)
 	GetHumanFeedbackByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (HumanFeedback, error)
-	ListHumanFeedbackByOrg(ctx context.Context, organizationID uuid.UUID, limit int) ([]HumanFeedback, error)
 	ListRecentAppliedHumanFeedbackByServiceType(ctx context.Context, organizationID uuid.UUID, serviceType string, limit int) ([]HumanFeedback, error)
 	MarkHumanFeedbackApplied(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, embeddingID *string) (HumanFeedback, error)
 }

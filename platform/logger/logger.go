@@ -126,14 +126,6 @@ func (l *Logger) AuthEvent(event, email string, success bool, reason string) {
 	}
 }
 
-// DatabaseError logs database errors
-func (l *Logger) DatabaseError(operation string, err error) {
-	l.Error("database_error",
-		slog.String("operation", operation),
-		slog.String("error", err.Error()),
-	)
-}
-
 // RateLimitExceeded logs rate limit events
 func (l *Logger) RateLimitExceeded(clientIP, path string) {
 	l.Warn("rate_limit_exceeded",

@@ -159,42 +159,6 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 	return svc, err
 }
 
-type UpdateLeadServiceParams struct {
-	Status *string
-}
-
-func (r *Repository) UpdateLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, params UpdateLeadServiceParams) (LeadService, error) {
-	if params.Status == nil {
-		return r.GetLeadServiceByID(ctx, id, organizationID)
-	}
-
-	query := `
-		WITH updated AS (
-			UPDATE RAC_lead_services SET status = $3, updated_at = now()
-			WHERE id = $1 AND organization_id = $2
-			RETURNING *
-		), event AS (
-			INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
-			SELECT organization_id, lead_id, id, 'status_changed', status, pipeline_stage, updated_at
-			FROM updated
-		)
-		SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-			u.customer_preferences, u.created_at, u.updated_at
-		FROM updated u
-		JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
-	`
-
-	var svc LeadService
-	err := r.pool.QueryRow(ctx, query, id, organizationID, *params.Status).Scan(
-		&svc.ID, &svc.LeadID, &svc.OrganizationID, &svc.ServiceType, &svc.Status, &svc.PipelineStage, &svc.ConsumerNote, &svc.Source,
-		&svc.CustomerPreferences, &svc.CreatedAt, &svc.UpdatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LeadService{}, ErrServiceNotFound
-	}
-	return svc, err
-}
-
 func (r *Repository) UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error) {
 	var svc LeadService
 	err := r.pool.QueryRow(ctx, `
