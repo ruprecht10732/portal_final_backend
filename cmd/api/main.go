@@ -256,7 +256,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	notificationModule.SetWorkflowResolver(identityModule.Service())
 
 	wireSMTPEncryptionKey(cfg, log, identityModule.Service(), notificationModule)
-	imapModule := imap.NewModule(pool, val, eventBus)
+	imapModule := imap.NewModule(pool, val, eventBus, log)
 	if reminderScheduler != nil {
 		imapModule.Service().SetScheduler(reminderScheduler)
 		go runIMAPPeriodicSweep(ctx, reminderScheduler, log)

@@ -130,7 +130,7 @@ func main() {
 	}
 	worker.SetQuoteJobProcessor(quotesModule.Service())
 	worker.SetCallLogProcessor(leadsModule)
-	imapModule := imap.NewModule(pool, val, eventBus)
+	imapModule := imap.NewModule(pool, val, eventBus, log)
 	worker.SetIMAPSyncProcessor(imapModule.Service())
 	wireSchedulerIMAPEncryptionKey(cfg, log, imapModule.Service())
 

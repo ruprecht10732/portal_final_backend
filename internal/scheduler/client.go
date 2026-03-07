@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	imapSyncAccountTaskTimeout   = 90 * time.Second
+	imapSyncAccountTaskUniqueTTL = 2 * time.Minute
+	imapSyncAccountTaskMaxRetry  = 3
+	imapSyncSweepTaskTimeout     = 5 * time.Minute
+	imapSyncSweepTaskUniqueTTL   = 9 * time.Minute
+	imapSyncSweepTaskMaxRetry    = 1
 )
 
 type Client struct {
@@ -161,8 +171,8 @@ func (c *Client) EnqueueIMAPSyncAccount(ctx context.Context, payload IMAPSyncAcc
 	if err != nil {
 		return err
 	}
-	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
-	return err
+	_, err = c.client.EnqueueContext(ctx, task, imapSyncAccountTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
 }
 
 func (c *Client) EnqueueIMAPSyncSweep(ctx context.Context) error {
@@ -173,7 +183,32 @@ func (c *Client) EnqueueIMAPSyncSweep(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	_, err = c.client.EnqueueContext(ctx, task, imapSyncSweepTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func imapSyncAccountTaskOptions(queue string) []asynq.Option {
+	return []asynq.Option{
+		asynq.Queue(queue),
+		asynq.MaxRetry(imapSyncAccountTaskMaxRetry),
+		asynq.Timeout(imapSyncAccountTaskTimeout),
+		asynq.Unique(imapSyncAccountTaskUniqueTTL),
+	}
+}
+
+func imapSyncSweepTaskOptions(queue string) []asynq.Option {
+	return []asynq.Option{
+		asynq.Queue(queue),
+		asynq.MaxRetry(imapSyncSweepTaskMaxRetry),
+		asynq.Timeout(imapSyncSweepTaskTimeout),
+		asynq.Unique(imapSyncSweepTaskUniqueTTL),
+	}
+}
+
+func normalizeEnqueueError(err error) error {
+	if errors.Is(err, asynq.ErrDuplicateTask) {
+		return nil
+	}
 	return err
 }
 

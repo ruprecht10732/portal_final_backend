@@ -17,6 +17,7 @@ import (
 	"portal_final_backend/internal/imapcrypto"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
+	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
 	gomail "github.com/wneessen/go-mail"
@@ -28,6 +29,7 @@ const (
 	maxMessageContentBytes  = 25_000_000
 	maxSyncErrorLength      = 1000
 	defaultPeriodicSyncTTL  = 10 * time.Minute
+	defaultSyncTimeout      = 45 * time.Second
 	errIMAPKeyNotConfigured = "imap encryption key not configured"
 	errConnectIMAPServer    = "failed to connect to imap server"
 	errMessageTooLarge      = "message is too large to fetch content"
@@ -39,14 +41,15 @@ type Service struct {
 	encryptionKey []byte
 	lockMap       sync.Map
 	eventBus      events.Bus
+	log           *logger.Logger
 }
 
 type IMAPSyncScheduler interface {
 	EnqueueIMAPSyncAccount(ctx context.Context, payload scheduler.IMAPSyncAccountPayload) error
 }
 
-func New(repo *repository.Repository, _ *identityrepo.Repository, bus events.Bus) *Service {
-	return &Service{repo: repo, eventBus: bus}
+func New(repo *repository.Repository, _ *identityrepo.Repository, bus events.Bus, log *logger.Logger) *Service {
+	return &Service{repo: repo, eventBus: bus, log: log}
 }
 
 func (s *Service) SetSMTPEncryptionKey(_ []byte) {
@@ -182,7 +185,7 @@ func (s *Service) TestAccountConnection(ctx context.Context, userID, accountID u
 	}
 	defer func() { _ = imapClient.Close() }()
 
-	if err := imapClient.TestConnection(); err != nil {
+	if err := imapClient.TestConnectionContext(ctx); err != nil {
 		return apperr.BadRequest("imap connection test failed")
 	}
 	_ = s.repo.ClearAccountSyncError(ctx, account.ID)
@@ -194,16 +197,39 @@ func (s *Service) SyncAccount(ctx context.Context, userID, accountID uuid.UUID) 
 	if err != nil {
 		return err
 	}
-	if s.scheduler != nil {
-		payload := scheduler.IMAPSyncAccountPayload{
-			AccountID: account.ID.String(),
-			UserID:    account.UserID.String(),
-		}
-		if err := s.scheduler.EnqueueIMAPSyncAccount(ctx, payload); err == nil {
-			return nil
-		}
+	if s.enqueueAccountSync(ctx, account) {
+		return nil
 	}
 	return s.syncAccount(ctx, account)
+}
+
+func (s *Service) ExecuteAccountSync(ctx context.Context, userID, accountID uuid.UUID) error {
+	account, err := s.repo.GetAccountByUser(ctx, accountID, userID)
+	if err != nil {
+		return err
+	}
+	return s.syncAccount(ctx, account)
+}
+
+func (s *Service) enqueueAccountSync(ctx context.Context, account repository.Account) bool {
+	if s.scheduler == nil {
+		return false
+	}
+	payload := scheduler.IMAPSyncAccountPayload{
+		AccountID: account.ID.String(),
+		UserID:    account.UserID.String(),
+	}
+	err := s.scheduler.EnqueueIMAPSyncAccount(ctx, payload)
+	if err != nil {
+		s.logWarn("imap account sync enqueue failed; falling back to direct execution",
+			"accountId", account.ID,
+			"userId", account.UserID,
+			"folder", account.FolderName,
+			"error", err.Error(),
+		)
+		return false
+	}
+	return true
 }
 
 func (s *Service) SyncEligibleAccounts(ctx context.Context) error {
@@ -212,9 +238,7 @@ func (s *Service) SyncEligibleAccounts(ctx context.Context) error {
 		return err
 	}
 	for _, account := range accounts {
-		if err := s.syncAccount(ctx, account); err != nil {
-			_ = s.repo.SetAccountSyncError(ctx, account.ID, limitError(err.Error()))
-		}
+		_ = s.syncAccount(ctx, account)
 	}
 	return nil
 }
@@ -321,7 +345,7 @@ func (s *Service) GetMessageContent(ctx context.Context, userID, accountID uuid.
 	}
 	defer func() { _ = imapClient.Close() }()
 
-	content, err := imapClient.GetMessageContent(account.FolderName, uid)
+	content, err := imapClient.GetMessageContentContext(ctx, account.FolderName, uid)
 	if err != nil {
 		if client.IsTransientError(err) {
 			return transport.MessageContentResponse{}, apperr.Internal("temporary imap server error; please retry")
@@ -596,7 +620,7 @@ func (s *Service) loadMessageForReply(ctx context.Context, userID, accountID uui
 		return client.MessageContent{}, repository.Account{}, apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
-	content, err := imapClient.GetMessageContent(account.FolderName, uid)
+	content, err := imapClient.GetMessageContentContext(ctx, account.FolderName, uid)
 	if err != nil {
 		return client.MessageContent{}, repository.Account{}, apperr.BadRequest("failed to fetch message content")
 	}
@@ -646,7 +670,7 @@ func (s *Service) replyHeadersFromUID(ctx context.Context, account repository.Ac
 		return nil, nil, apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
-	content, err := imapClient.GetMessageContent(account.FolderName, *uid)
+	content, err := imapClient.GetMessageContentContext(ctx, account.FolderName, *uid)
 	if err != nil {
 		return nil, nil, apperr.BadRequest("failed to fetch parent message")
 	}
@@ -730,15 +754,54 @@ func addressesToStrings(items []client.Address) []string {
 	return out
 }
 
-func (s *Service) syncAccount(ctx context.Context, account repository.Account) error {
+func (s *Service) syncAccount(ctx context.Context, account repository.Account) (err error) {
+	syncCtx, cancel := context.WithTimeout(ctx, defaultSyncTimeout)
+	defer cancel()
+
 	if !s.tryLock(account.ID) {
+		s.logInfo(
+			"imap account sync skipped",
+			"accountId", account.ID,
+			"userId", account.UserID,
+			"folder", account.FolderName,
+			"reason", "already_in_progress",
+		)
 		return nil
 	}
 	defer s.unlock(account.ID)
 
+	startedAt := time.Now()
+	messageCount := 0
+	s.logInfo(
+		"imap account sync started",
+		"accountId", account.ID,
+		"userId", account.UserID,
+		"folder", account.FolderName,
+	)
+	defer func() {
+		fields := []any{
+			"accountId", account.ID,
+			"userId", account.UserID,
+			"folder", account.FolderName,
+			"durationMs", time.Since(startedAt).Milliseconds(),
+			"messageCount", messageCount,
+		}
+		if err != nil {
+			fields = append(fields, "error", err.Error())
+			s.logWarn("imap account sync failed", fields...)
+			return
+		}
+		s.logInfo("imap account sync completed", fields...)
+	}()
+
+	if err = syncCtx.Err(); err != nil {
+		s.recordSyncError(syncCtx, account.ID, err)
+		return err
+	}
+
 	password, err := s.decryptPassword(account.IMAPPasswordEncrypted)
 	if err != nil {
-		_ = s.repo.SetAccountSyncError(ctx, account.ID, limitError(err.Error()))
+		s.recordSyncError(syncCtx, account.ID, err)
 		return err
 	}
 	imapClient, err := client.New(client.Config{
@@ -748,23 +811,24 @@ func (s *Service) syncAccount(ctx context.Context, account repository.Account) e
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		_ = s.repo.SetAccountSyncError(ctx, account.ID, limitError(err.Error()))
+		s.recordSyncError(syncCtx, account.ID, err)
 		return err
 	}
 	defer func() { _ = imapClient.Close() }()
 
-	metadata, err := imapClient.SyncFolderMetadata(account.FolderName, defaultSyncBatchSize)
+	metadata, err := imapClient.SyncFolderMetadataContext(syncCtx, account.FolderName, defaultSyncBatchSize)
 	if err != nil {
-		_ = s.repo.SetAccountSyncError(ctx, account.ID, limitError(err.Error()))
+		s.recordSyncError(syncCtx, account.ID, err)
 		return err
 	}
+	messageCount = len(metadata)
 
-	maxUID := s.getMaxUIDOrZero(ctx, account.ID, account.FolderName)
+	maxUID := s.getMaxUIDOrZero(syncCtx, account.ID, account.FolderName)
 
 	inputs := make([]repository.UpsertMessageInput, 0, len(metadata))
 	now := time.Now().UTC()
 	for _, item := range metadata {
-		s.publishNewEmailEvent(ctx, account, item, maxUID)
+		s.publishNewEmailEvent(syncCtx, account, item, maxUID)
 
 		inputs = append(inputs, repository.UpsertMessageInput{
 			AccountID:      account.ID,
@@ -787,15 +851,41 @@ func (s *Service) syncAccount(ctx context.Context, account repository.Account) e
 		})
 	}
 	if len(inputs) == 0 {
-		_ = s.repo.MarkAccountSynced(ctx, account.ID, now)
-		return nil
+		err = s.repo.MarkAccountSynced(syncCtx, account.ID, now)
+		if err != nil {
+			s.recordSyncError(syncCtx, account.ID, err)
+		}
+		return err
 	}
-	if err := s.repo.UpsertMessages(ctx, inputs); err != nil {
-		_ = s.repo.SetAccountSyncError(ctx, account.ID, limitError(err.Error()))
+	if err = s.repo.UpsertMessages(syncCtx, inputs); err != nil {
+		s.recordSyncError(syncCtx, account.ID, err)
 		return err
 	}
 
 	return nil
+}
+
+func (s *Service) recordSyncError(ctx context.Context, accountID uuid.UUID, err error) {
+	if err == nil || s.repo == nil {
+		return
+	}
+	if setErr := s.repo.SetAccountSyncError(ctx, accountID, limitError(err.Error())); setErr != nil {
+		s.logWarn("failed to persist imap sync error", "accountId", accountID, "error", setErr.Error())
+	}
+}
+
+func (s *Service) logInfo(msg string, args ...any) {
+	if s.log == nil {
+		return
+	}
+	s.log.Info(msg, args...)
+}
+
+func (s *Service) logWarn(msg string, args ...any) {
+	if s.log == nil {
+		return
+	}
+	s.log.Warn(msg, args...)
 }
 
 func (s *Service) decryptPassword(encrypted string) (string, error) {

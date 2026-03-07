@@ -42,6 +42,7 @@ type QuoteJobProcessor interface {
 
 type IMAPSyncProcessor interface {
 	SyncAccount(ctx context.Context, userID uuid.UUID, accountID uuid.UUID) error
+	ExecuteAccountSync(ctx context.Context, userID uuid.UUID, accountID uuid.UUID) error
 	SyncEligibleAccounts(ctx context.Context) error
 }
 
@@ -526,7 +527,7 @@ func (w *Worker) handleIMAPSyncAccount(ctx context.Context, task *asynq.Task) er
 	if err != nil {
 		return err
 	}
-	return w.imap.SyncAccount(ctx, userID, accountID)
+	return w.imap.ExecuteAccountSync(ctx, userID, accountID)
 }
 
 func (w *Worker) handleIMAPSyncSweep(ctx context.Context, _ *asynq.Task) error {

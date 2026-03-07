@@ -1,15 +1,22 @@
 package client
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	goimap "github.com/BrianLeishman/go-imap"
 )
 
 const errClientNotInitialized = "imap client is not initialized"
+
+const defaultRetryDelay = 200 * time.Millisecond
 
 type Config struct {
 	Username string
@@ -87,12 +94,18 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) TestConnection() error {
+	return c.TestConnectionContext(context.Background())
+}
+
+func (c *Client) TestConnectionContext(ctx context.Context) error {
 	if c == nil || c.dialer == nil {
 		return fmt.Errorf(errClientNotInitialized)
 	}
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		_, err := c.dialer.GetFolders()
+		_, err := runWithContext(ctx, c.Close, func() ([]string, error) {
+			return c.dialer.GetFolders()
+		})
 		if err == nil {
 			return nil
 		}
@@ -101,15 +114,27 @@ func (c *Client) TestConnection() error {
 		if !isEOFError(err) {
 			break
 		}
-		time.Sleep(250 * time.Millisecond)
+		if waitErr := waitForRetry(ctx, 250*time.Millisecond); waitErr != nil {
+			return waitErr
+		}
 	}
 	return lastErr
 }
 
 func (c *Client) SyncFolderMetadata(folder string, maxMessages int) ([]MessageMetadata, error) {
+	return c.SyncFolderMetadataContext(context.Background(), folder, maxMessages)
+}
+
+func (c *Client) SyncFolderMetadataContext(ctx context.Context, folder string, maxMessages int) ([]MessageMetadata, error) {
 	if c == nil || c.dialer == nil {
 		return nil, fmt.Errorf(errClientNotInitialized)
 	}
+	return runWithContext(ctx, c.Close, func() ([]MessageMetadata, error) {
+		return c.syncFolderMetadata(folder, maxMessages)
+	})
+}
+
+func (c *Client) syncFolderMetadata(folder string, maxMessages int) ([]MessageMetadata, error) {
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return nil, err
 	}
@@ -197,11 +222,15 @@ func (c *Client) SetAnswered(folder string, uid int64, answered bool) error {
 }
 
 func (c *Client) GetMessageContent(folder string, uid int64) (MessageContent, error) {
+	return c.GetMessageContentContext(context.Background(), folder, uid)
+}
+
+func (c *Client) GetMessageContentContext(ctx context.Context, folder string, uid int64) (MessageContent, error) {
 	if c == nil || c.dialer == nil {
 		return MessageContent{}, fmt.Errorf(errClientNotInitialized)
 	}
 
-	email, err := c.fetchEmailWithRetry(folder, uid)
+	email, err := c.fetchEmailWithRetryContext(ctx, folder, uid)
 	if err != nil {
 		return MessageContent{}, err
 	}
@@ -223,12 +252,21 @@ func (c *Client) GetMessageContent(folder string, uid int64) (MessageContent, er
 }
 
 func (c *Client) fetchEmailWithRetry(folder string, uid int64) (*goimap.Email, error) {
+	return c.fetchEmailWithRetryContext(context.Background(), folder, uid)
+}
+
+func (c *Client) fetchEmailWithRetryContext(ctx context.Context, folder string, uid int64) (*goimap.Email, error) {
 	var (
 		emails map[int]*goimap.Email
 		err    error
 	)
 	for attempt := 0; attempt < 2; attempt++ {
-		emails, err = c.fetchEmailsOnce(folder, uid)
+		if err := contextError(ctx); err != nil {
+			return nil, err
+		}
+		emails, err = runWithContext(ctx, c.Close, func() (map[int]*goimap.Email, error) {
+			return c.fetchEmailsOnce(folder, uid)
+		})
 		if err == nil {
 			break
 		}
@@ -236,7 +274,9 @@ func (c *Client) fetchEmailWithRetry(folder string, uid int64) (*goimap.Email, e
 			return nil, err
 		}
 		_ = c.dialer.Reconnect()
-		time.Sleep(200 * time.Millisecond)
+		if waitErr := waitForRetry(ctx, defaultRetryDelay); waitErr != nil {
+			return nil, waitErr
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -246,6 +286,55 @@ func (c *Client) fetchEmailWithRetry(folder string, uid int64) (*goimap.Email, e
 		return nil, fmt.Errorf("message not found")
 	}
 	return email, nil
+}
+
+type callResult[T any] struct {
+	value T
+	err   error
+}
+
+func runWithContext[T any](ctx context.Context, cancel func() error, fn func() (T, error)) (T, error) {
+	var zero T
+	if err := contextError(ctx); err != nil {
+		return zero, err
+	}
+	resultCh := make(chan callResult[T], 1)
+	go func() {
+		value, err := fn()
+		resultCh <- callResult[T]{value: value, err: err}
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result.value, result.err
+	case <-ctx.Done():
+		if cancel != nil {
+			_ = cancel()
+		}
+		return zero, ctx.Err()
+	}
+}
+
+func contextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	if ctx == nil {
+		time.Sleep(delay)
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (c *Client) fetchEmailsOnce(folder string, uid int64) (map[int]*goimap.Email, error) {
@@ -340,6 +429,9 @@ func isEOFError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	return strings.Contains(msg, "eof")
 }
@@ -348,6 +440,19 @@ func isTransientIMAPError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNABORTED) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	if strings.Contains(msg, "eof") {
 		return true
@@ -355,7 +460,7 @@ func isTransientIMAPError(err error) bool {
 	if strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out") {
 		return true
 	}
-	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "broken pipe") {
+	if strings.Contains(msg, "connection reset") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection aborted") {
 		return true
 	}
 	return false
