@@ -169,9 +169,9 @@ type ToolDependencies struct {
 	scopeArtifact        *ScopeArtifact          // Produced by Scope Analyzer and consumed by Quote Builder
 	clarificationAsked   bool                    // Track if AskCustomerClarification was called in investigative mode
 	runID                string                  // Correlates all tool calls within one agent run
-	forceDraftQuote      bool                    // Allows manual runs to bypass intake gating
+	forceDraftQuote      bool                    // Allows manual runs to bypass draft governance (intake + council)
 	searchCache          map[string]SearchProductMaterialsOutput
-	emittedAlertKeys     map[string]struct{}     // Dedupe identical alerts within a single agent run
+	emittedAlertKeys     map[string]struct{} // Dedupe identical alerts within a single agent run
 }
 
 // NewRequestDeps creates a request-scoped ToolDependencies that shares the
@@ -457,14 +457,14 @@ func (d *ToolDependencies) SetExistingQuoteID(id *uuid.UUID) {
 	d.existingQuoteID = id
 }
 
-// SetForceDraftQuote controls whether intake gating is bypassed for manual quote generation.
+// SetForceDraftQuote controls whether draft governance is bypassed for manual quote generation.
 func (d *ToolDependencies) SetForceDraftQuote(force bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.forceDraftQuote = force
 }
 
-// ShouldForceDraftQuote returns true when manual quote generation should bypass intake gating.
+// ShouldForceDraftQuote returns true when manual quote generation should bypass draft governance.
 func (d *ToolDependencies) ShouldForceDraftQuote() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -3215,36 +3215,8 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		return DraftQuoteOutput{Success: false, Message: "At least one item is required"}, fmt.Errorf("empty items")
 	}
 
-	councilEval, councilErr := evaluateCouncilForDraftQuote(ctx, deps, leadID, serviceID, *tenantID, len(input.Items))
-	if councilErr != nil {
-		return DraftQuoteOutput{Success: false, Message: "Council evaluatie mislukt"}, councilErr
-	}
-	if councilEval.Decision != CouncilDecisionAllow {
-		summary := strings.TrimSpace(councilEval.Summary)
-		if summary == "" {
-			summary = "Council blokkeert conceptofferte: handmatige beoordeling vereist."
-		}
-		if deps.MarkAlertEmitted("council_draft_quote", councilEval.ReasonCode, summary) {
-			_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-				LeadID:         leadID,
-				ServiceID:      &serviceID,
-				OrganizationID: *tenantID,
-				ActorType:      repository.ActorTypeSystem,
-				ActorName:      "Council",
-				EventType:      repository.EventTypeAlert,
-				Title:          repository.EventTitleManualIntervention,
-				Summary:        &summary,
-				Metadata: repository.CouncilAdviceMetadata{
-					Decision:         councilEval.Decision,
-					ReasonCode:       councilEval.ReasonCode,
-					Summary:          councilEval.Summary,
-					EstimatorSignals: councilEval.EstimatorSignals,
-					RiskSignals:      councilEval.RiskSignals,
-					ReadinessSignals: councilEval.ReadinessSignals,
-				}.ToMap(),
-			})
-		}
-		return DraftQuoteOutput{Success: false, Message: summary}, fmt.Errorf("council blocked draft quote: %s", councilEval.ReasonCode)
+	if blockedOutput, blockedErr := validateDraftQuoteGovernance(ctx, deps, leadID, serviceID, *tenantID, len(input.Items)); blockedErr != nil {
+		return blockedOutput, blockedErr
 	}
 
 	portItems := convertDraftItems(input.Items)
@@ -3281,6 +3253,53 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		QuoteNumber: result.QuoteNumber,
 		ItemCount:   result.ItemCount,
 	}, nil
+}
+
+func validateDraftQuoteGovernance(ctx tool.Context, deps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, itemCount int) (DraftQuoteOutput, error) {
+	if deps.ShouldForceDraftQuote() {
+		log.Printf("DraftQuote: manual governance bypass enabled run=%s service=%s", deps.GetRunID(), serviceID)
+		return DraftQuoteOutput{}, nil
+	}
+
+	if blocked, reason := shouldBlockDraftQuoteForInsufficientIntake(ctx, deps, serviceID, tenantID); blocked {
+		log.Printf("DraftQuote: blocked run=%s service=%s reason=%s", deps.GetRunID(), serviceID, reason)
+		return DraftQuoteOutput{Success: false, Message: "Onvoldoende intakegegevens voor een betrouwbare conceptofferte"}, fmt.Errorf("draft quote blocked: %s", reason)
+	}
+
+	councilEval, councilErr := evaluateCouncilForDraftQuote(ctx, deps, leadID, serviceID, tenantID, itemCount)
+	if councilErr != nil {
+		return DraftQuoteOutput{Success: false, Message: "Council evaluatie mislukt"}, councilErr
+	}
+	if councilEval.Decision == CouncilDecisionAllow {
+		return DraftQuoteOutput{}, nil
+	}
+
+	summary := strings.TrimSpace(councilEval.Summary)
+	if summary == "" {
+		summary = "Council blokkeert conceptofferte: handmatige beoordeling vereist."
+	}
+	if deps.MarkAlertEmitted("council_draft_quote", councilEval.ReasonCode, summary) {
+		_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+			LeadID:         leadID,
+			ServiceID:      &serviceID,
+			OrganizationID: tenantID,
+			ActorType:      repository.ActorTypeSystem,
+			ActorName:      "Council",
+			EventType:      repository.EventTypeAlert,
+			Title:          repository.EventTitleManualIntervention,
+			Summary:        &summary,
+			Metadata: repository.CouncilAdviceMetadata{
+				Decision:         councilEval.Decision,
+				ReasonCode:       councilEval.ReasonCode,
+				Summary:          councilEval.Summary,
+				EstimatorSignals: councilEval.EstimatorSignals,
+				RiskSignals:      councilEval.RiskSignals,
+				ReadinessSignals: councilEval.ReadinessSignals,
+			}.ToMap(),
+		})
+	}
+
+	return DraftQuoteOutput{Success: false, Message: summary}, fmt.Errorf("council blocked draft quote: %s", councilEval.ReasonCode)
 }
 
 func evaluateCouncilForDraftQuote(ctx tool.Context, deps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, itemCount int) (CouncilEvaluation, error) {

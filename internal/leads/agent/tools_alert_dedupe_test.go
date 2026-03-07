@@ -48,3 +48,16 @@ func TestResetToolCallTrackingClearsAlertDedupeState(t *testing.T) {
 		t.Fatal("expected alert emission to be allowed after resetting run state")
 	}
 }
+
+func TestForceDraftQuoteTracksManualGovernanceBypass(t *testing.T) {
+	deps := &ToolDependencies{}
+	if deps.ShouldForceDraftQuote() {
+		t.Fatal("expected manual governance bypass to be disabled by default")
+	}
+
+	deps.SetForceDraftQuote(true)
+
+	if !deps.ShouldForceDraftQuote() {
+		t.Fatal("expected manual governance bypass to be enabled")
+	}
+}
