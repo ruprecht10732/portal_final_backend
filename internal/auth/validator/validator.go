@@ -58,6 +58,3 @@ func validateStrongPassword(fl gpvalidator.FieldLevel) bool {
 
 	return hasUpper && hasLower && hasDigit && hasSpecial
 }
-
-// PasswordPolicy describes the password requirements for API error messages
-const PasswordPolicy = "Password must be at least 8 characters and include: uppercase letter, lowercase letter, number, and special character"

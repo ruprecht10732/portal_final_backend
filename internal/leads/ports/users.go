@@ -23,17 +23,3 @@ type UserProvider interface {
 	// GetUserByID returns basic user info. Returns error if user not found.
 	GetUserByID(ctx context.Context, userID uuid.UUID) (UserInfo, error)
 }
-
-// UserExistenceChecker verifies if RAC_users exist without exposing full user data.
-// Useful for validating assignee IDs without tight coupling to auth internals.
-type UserExistenceChecker interface {
-	// UserExists returns true if a user with the given ID exists.
-	UserExists(ctx context.Context, userID uuid.UUID) (bool, error)
-}
-
-// UserLister provides a list of RAC_users for assignment dropdowns.
-type UserLister interface {
-	// ListAssignableUsers returns RAC_users that can be assigned to RAC_leads.
-	// Implementation may filter by role (e.g., agents, scouts).
-	ListAssignableUsers(ctx context.Context) ([]UserInfo, error)
-}
