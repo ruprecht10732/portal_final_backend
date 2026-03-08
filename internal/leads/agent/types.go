@@ -197,9 +197,10 @@ type SearchProductMaterialsOutput struct {
 // CalculatorInput is the input for the general-purpose Calculator tool.
 // The LLM MUST use this for ANY arithmetic to avoid mental-math errors.
 type CalculatorInput struct {
-	Operation string  `json:"operation"` // "add", "subtract", "multiply", "divide", "ceil_divide", "ceil", "floor", "round", "percentage"
-	A         float64 `json:"a"`         // First operand (always required)
-	B         float64 `json:"b"`         // Second operand (required for binary ops; for "round" = decimal places)
+	Expression string  `json:"expression,omitempty"` // Preferred: arithmetic expression with +, -, *, /, parentheses, and ceil/floor/round/percentage/ceil_divide
+	Operation  string  `json:"operation,omitempty"`  // Legacy fallback: "add", "subtract", "multiply", "divide", "ceil_divide", "ceil", "floor", "round", "percentage"
+	A          float64 `json:"a,omitempty"`          // Legacy first operand
+	B          float64 `json:"b,omitempty"`          // Legacy second operand (for "round" = decimal places)
 }
 
 // CalculatorOutput returns the exact arithmetic result.

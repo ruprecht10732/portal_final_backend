@@ -13,6 +13,9 @@ import (
 const toolOrderMandatoryHeader = "=== TOOL ORDER (MANDATORY) ==="
 const gatekeeperIntakeRequirement = "Meetgegevens vereist"
 const expectedGatekeeperPromptContainsFmt = "expected gatekeeper prompt to contain %q"
+const estimatorPromptInstruction = "Gebruik standaard afwerking"
+const quoteGeneratorPromptRequest = "Vervang voordeur inclusief scharnieren"
+const quoteGeneratorPromptEstimation = "Let op isolatie"
 
 func testPromptFixtures() (repository.Lead, repository.LeadService, []repository.LeadNote, *repository.AppointmentVisitReport, []repository.Attachment, *repository.PhotoAnalysis) {
 	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
@@ -199,7 +202,7 @@ func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurem
 
 func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, "Gebruik standaard afwerking", nil)
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
 
 	checks := []string{
 		"=== EXECUTION PRIORITY ===",
@@ -222,6 +225,23 @@ func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 	}
 }
 
+func TestBuildEstimatorPromptIncludesSingleExpressionMathExamples(t *testing.T) {
+	lead, service, notes, _, _, photo := testPromptFixtures()
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
+
+	checks := []string{
+		"[MANDATORY] Prefer one Calculator expression for subtotal + VAT + markup adjustments instead of chained calculator calls.",
+		"[EXAMPLE] Material subtotal + VAT: Calculator(expression=\"((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21\").",
+		"[EXAMPLE] Material subtotal + VAT + markup: Calculator(expression=\"(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10\").",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf("expected estimator prompt to contain %q", token)
+		}
+	}
+}
+
 func TestPromptBuildersOmitDirectCustomerPII(t *testing.T) {
 	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
 	prompts := []string{
@@ -234,8 +254,8 @@ func TestPromptBuildersOmitDirectCustomerPII(t *testing.T) {
 			attachments:   attachments,
 			photoAnalysis: photo,
 		}),
-		buildQuoteBuilderPrompt(lead, service, notes, photo, "Gebruik standaard afwerking", nil),
-		buildQuoteGeneratePrompt(lead, service, notes, "Vervang voordeur inclusief scharnieren", "Let op isolatie"),
+		buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil),
+		buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation),
 	}
 
 	for _, prompt := range prompts {
@@ -275,7 +295,7 @@ func TestBuildDispatcherPromptUsesScoringModel(t *testing.T) {
 
 func TestBuildQuoteGeneratePromptUsesToolScopeAndSharedRules(t *testing.T) {
 	lead, service, notes, _, _, _ := testPromptFixtures()
-	prompt := buildQuoteGeneratePrompt(lead, service, notes, "Vervang voordeur inclusief scharnieren", "Let op isolatie")
+	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
 
 	checks := []string{
 		"=== TOOL SCOPE (MANDATORY) ===",
@@ -283,6 +303,23 @@ func TestBuildQuoteGeneratePromptUsesToolScopeAndSharedRules(t *testing.T) {
 		toolOrderMandatoryHeader,
 		"=== PRODUCT DECISION TABLE ===",
 		"=== SEARCH STRATEGY (MAX 3 PER MATERIAL) ===",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf("expected quote generator prompt to contain %q", token)
+		}
+	}
+}
+
+func TestBuildQuoteGeneratePromptIncludesSingleExpressionMathExamples(t *testing.T) {
+	lead, service, notes, _, _, _ := testPromptFixtures()
+	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
+
+	checks := []string{
+		"[MANDATORY] Prefer one Calculator expression when you need subtotal + VAT + markup in a single step.",
+		"[EXAMPLE] VAT-inclusive subtotal: Calculator(expression=\"((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21\").",
+		"[EXAMPLE] VAT-inclusive subtotal plus markup: Calculator(expression=\"(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10\").",
 	}
 
 	for _, token := range checks {

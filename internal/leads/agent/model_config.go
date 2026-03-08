@@ -9,3 +9,11 @@ func newMoonshotModelConfig(apiKey string, modelName string) moonshot.Config {
 		DisableThinking: true,
 	}
 }
+
+func newMoonshotReasoningModelConfig(apiKey string, modelName string) moonshot.Config {
+	return moonshot.Config{
+		APIKey:          apiKey,
+		Model:           modelName,
+		DisableThinking: false,
+	}
+}

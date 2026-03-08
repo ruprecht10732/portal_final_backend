@@ -23,6 +23,8 @@ import (
 	"portal_final_backend/platform/ai/moonshot"
 )
 
+const gatekeeperInstruction = "You validate intake requirements and may reason step-by-step internally, but your final output must contain only the required tool calls."
+
 // Gatekeeper validates intake requirements and advances pipeline stage.
 type Gatekeeper struct {
 	agent          agent.Agent
@@ -35,7 +37,7 @@ type Gatekeeper struct {
 
 // NewGatekeeper creates a Gatekeeper agent.
 func NewGatekeeper(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
-	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
+	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
 
 	deps := &ToolDependencies{
 		Repo:           repo,
@@ -65,7 +67,7 @@ func NewGatekeeper(apiKey string, modelName string, repo repository.LeadsReposit
 		Name:        "Gatekeeper",
 		Model:       kimi,
 		Description: "Validates intake requirements and advances the lead pipeline.",
-		Instruction: "You validate intake requirements and advance the pipeline stage.",
+		Instruction: gatekeeperInstruction,
 		Tools:       []tool.Tool{saveAnalysisTool, updateLeadDetailsTool, updateServiceTypeTool, updateStageTool},
 	})
 	if err != nil {

@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +39,7 @@ const (
 	leadServiceNotFoundMessage  = "Lead service not found"
 	invalidFieldFormat          = "invalid %s"
 	recentEquivalentAnalysisTTL = 2 * time.Minute
+	divisionByZeroMessage       = "division by zero"
 )
 
 const highConfidenceScoreThreshold = 0.45
@@ -223,7 +228,6 @@ func (d *ToolDependencies) LoadOrganizationAISettings(ctx context.Context) (port
 	reader := d.OrgSettingsReader
 	d.mu.RUnlock()
 	if reader == nil {
-		// Backward compatible fallback: behave like identity defaults.
 		settings := ports.DefaultOrganizationAISettings()
 		d.mu.Lock()
 		d.orgSettings = &settings
@@ -1924,6 +1928,22 @@ func createAskCustomerClarificationTool(_ *ToolDependencies) (tool.Tool, error) 
 // handleCalculator evaluates a single arithmetic operation deterministically.
 // The LLM MUST call this for ANY math instead of doing it in its head.
 func handleCalculator(_ tool.Context, input CalculatorInput) (CalculatorOutput, error) {
+	expression := strings.TrimSpace(input.Expression)
+	if expression != "" {
+		result, err := evaluateCalculatorExpression(expression)
+		if err != nil {
+			return CalculatorOutput{}, err
+		}
+		return CalculatorOutput{
+			Result:     result,
+			Expression: fmt.Sprintf("%s = %g", expression, result),
+		}, nil
+	}
+
+	return evaluateLegacyCalculatorOperation(input)
+}
+
+func evaluateLegacyCalculatorOperation(input CalculatorInput) (CalculatorOutput, error) {
 	var result float64
 	var expr string
 
@@ -1939,13 +1959,13 @@ func handleCalculator(_ tool.Context, input CalculatorInput) (CalculatorOutput, 
 		expr = fmt.Sprintf("%g × %g = %g", input.A, input.B, result)
 	case "divide":
 		if input.B == 0 {
-			return CalculatorOutput{}, fmt.Errorf("division by zero")
+			return CalculatorOutput{}, fmt.Errorf(divisionByZeroMessage)
 		}
 		result = input.A / input.B
 		expr = fmt.Sprintf("%g ÷ %g = %g", input.A, input.B, result)
 	case "ceil_divide":
 		if input.B == 0 {
-			return CalculatorOutput{}, fmt.Errorf("division by zero")
+			return CalculatorOutput{}, fmt.Errorf(divisionByZeroMessage)
 		}
 		result = math.Ceil(input.A / input.B)
 		expr = fmt.Sprintf("⌈%g ÷ %g⌉ = %g", input.A, input.B, result)
@@ -1976,24 +1996,211 @@ func handleCalculator(_ tool.Context, input CalculatorInput) (CalculatorOutput, 
 	return CalculatorOutput{Result: result, Expression: expr}, nil
 }
 
+func evaluateCalculatorExpression(raw string) (float64, error) {
+	expr, err := parser.ParseExpr(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid expression: %w", err)
+	}
+
+	result, err := evaluateCalculatorAST(expr)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return 0, fmt.Errorf("expression result must be finite")
+	}
+	return result, nil
+}
+
+func evaluateCalculatorAST(expr ast.Expr) (float64, error) {
+	switch node := expr.(type) {
+	case *ast.BasicLit:
+		return parseCalculatorLiteral(node)
+	case *ast.ParenExpr:
+		return evaluateCalculatorAST(node.X)
+	case *ast.UnaryExpr:
+		return evaluateCalculatorUnary(node)
+	case *ast.BinaryExpr:
+		return evaluateCalculatorBinary(node)
+	case *ast.CallExpr:
+		return evaluateCalculatorCall(node)
+	default:
+		return 0, fmt.Errorf("unsupported expression element %T", expr)
+	}
+}
+
+func parseCalculatorLiteral(node *ast.BasicLit) (float64, error) {
+	if node.Kind != token.INT && node.Kind != token.FLOAT {
+		return 0, fmt.Errorf("unsupported literal %q", node.Value)
+	}
+	value, err := strconv.ParseFloat(node.Value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid numeric literal %q", node.Value)
+	}
+	return value, nil
+}
+
+func evaluateCalculatorUnary(node *ast.UnaryExpr) (float64, error) {
+	value, err := evaluateCalculatorAST(node.X)
+	if err != nil {
+		return 0, err
+	}
+	if node.Op == token.ADD {
+		return value, nil
+	}
+	if node.Op == token.SUB {
+		return -value, nil
+	}
+	return 0, fmt.Errorf("unsupported unary operator %q", node.Op)
+}
+
+func evaluateCalculatorBinary(node *ast.BinaryExpr) (float64, error) {
+	left, err := evaluateCalculatorAST(node.X)
+	if err != nil {
+		return 0, err
+	}
+	right, err := evaluateCalculatorAST(node.Y)
+	if err != nil {
+		return 0, err
+	}
+
+	switch node.Op {
+	case token.ADD:
+		return left + right, nil
+	case token.SUB:
+		return left - right, nil
+	case token.MUL:
+		return left * right, nil
+	case token.QUO:
+		if right == 0 {
+			return 0, fmt.Errorf(divisionByZeroMessage)
+		}
+		return left / right, nil
+	default:
+		return 0, fmt.Errorf("unsupported operator %q", node.Op)
+	}
+}
+
+func evaluateCalculatorCall(node *ast.CallExpr) (float64, error) {
+	name, ok := node.Fun.(*ast.Ident)
+	if !ok {
+		return 0, fmt.Errorf("unsupported function call")
+	}
+
+	args, err := evaluateCalculatorArgs(node.Args)
+	if err != nil {
+		return 0, err
+	}
+
+	return evaluateCalculatorFunction(name.Name, args)
+}
+
+func evaluateCalculatorArgs(expressions []ast.Expr) ([]float64, error) {
+	args := make([]float64, 0, len(expressions))
+	for _, expression := range expressions {
+		value, err := evaluateCalculatorAST(expression)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, value)
+	}
+	return args, nil
+}
+
+func evaluateCalculatorFunction(name string, args []float64) (float64, error) {
+	handler, ok := map[string]func([]float64) (float64, error){
+		"ceil":        calculatorCeil,
+		"floor":       calculatorFloor,
+		"round":       calculatorRound,
+		"percentage":  calculatorPercentage,
+		"ceil_divide": calculatorCeilDivide,
+	}[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return 0, fmt.Errorf("unsupported function %q; use ceil, floor, round, percentage, ceil_divide", name)
+	}
+	return handler(args)
+}
+
+func calculatorCeil(args []float64) (float64, error) {
+	if err := requireCalculatorArgCount("ceil", args, 1); err != nil {
+		return 0, err
+	}
+	return math.Ceil(args[0]), nil
+}
+
+func calculatorFloor(args []float64) (float64, error) {
+	if err := requireCalculatorArgCount("floor", args, 1); err != nil {
+		return 0, err
+	}
+	return math.Floor(args[0]), nil
+}
+
+func calculatorRound(args []float64) (float64, error) {
+	if len(args) == 1 {
+		return math.Round(args[0]), nil
+	}
+	if err := requireCalculatorArgCountRange("round", args, 1, 2); err != nil {
+		return 0, err
+	}
+	places := args[1]
+	if places != math.Trunc(places) {
+		return 0, fmt.Errorf("round decimal places must be an integer")
+	}
+	if places < 0 {
+		places = 0
+	}
+	if places > 10 {
+		places = 10
+	}
+	factor := math.Pow(10, places)
+	return math.Round(args[0]*factor) / factor, nil
+}
+
+func calculatorPercentage(args []float64) (float64, error) {
+	if err := requireCalculatorArgCount("percentage", args, 2); err != nil {
+		return 0, err
+	}
+	return args[0] * args[1] / 100, nil
+}
+
+func calculatorCeilDivide(args []float64) (float64, error) {
+	if err := requireCalculatorArgCount("ceil_divide", args, 2); err != nil {
+		return 0, err
+	}
+	if args[1] == 0 {
+		return 0, fmt.Errorf(divisionByZeroMessage)
+	}
+	return math.Ceil(args[0] / args[1]), nil
+}
+
+func requireCalculatorArgCount(name string, args []float64, want int) error {
+	if len(args) != want {
+		return fmt.Errorf("%s expects %d argument", name, want)
+	}
+	return nil
+}
+
+func requireCalculatorArgCountRange(name string, args []float64, min int, max int) error {
+	if len(args) < min || len(args) > max {
+		return fmt.Errorf("%s expects %d or %d arguments", name, min, max)
+	}
+	return nil
+}
+
 func createCalculatorTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name: "Calculator",
-		Description: `Performs exact arithmetic. You MUST use this for ANY calculation — never do math yourself.
-Supported operations:
-  "add"         → a + b
-  "subtract"    → a - b
-  "multiply"    → a × b
-  "divide"      → a ÷ b
-  "ceil_divide" → ⌈a ÷ b⌉  (divide then round UP — use for quantity-needed calculations)
-  "ceil"        → ⌈a⌉      (round a up to nearest integer)
-  "floor"       → ⌊a⌋      (round a down to nearest integer)
-  "round"       → round a to b decimal places
-  "percentage"  → a × b / 100  (e.g., tax amount)
+		Description: `Performs exact arithmetic. You MUST use this for ANY calculation and never do math in your head.
+Preferred input:
+  expression      -> one full arithmetic expression using +, -, *, /, parentheses,
+                    and helper functions ceil(...), floor(...), round(...), percentage(...), ceil_divide(...)
+Legacy input remains supported:
+  operation + a/b -> add, subtract, multiply, divide, ceil_divide, ceil, floor, round, percentage
 Examples:
-  Window area 2m × 1.5m: Calculator(operation="multiply", a=2, b=1.5) → 3
-  Sheets needed: 4 m² ÷ 2.5 m²/sheet, round up: Calculator(operation="ceil_divide", a=4, b=2.5) → 2
-  Price total: Calculator(operation="multiply", a=15.99, b=3) → 47.97`,
+  Window area 2m x 1.5m: Calculator(expression="2 * 1.5") -> 3
+  Sheets needed: Calculator(expression="ceil_divide(4, 2.5)") -> 2
+	Material subtotal plus VAT: Calculator(expression="((15.99 * 3) + (12.50 * 2)) * 1.21") -> 88.2937
+	Material subtotal plus VAT plus 10%% markup: Calculator(expression="(((15.99 * 3) + (12.50 * 2)) * 1.21) * 1.10") -> 97.12307`,
 	}, handleCalculator)
 }
 
@@ -3196,7 +3403,7 @@ Result fields:
 - priceCents: price in euro-cents (e.g. 793). Use this directly as unitPriceCents in DraftQuote.
 
 Unit conversion tip:
-- If you need euros but you only have cents: convert with Calculator(operation="divide", a=priceCents, b=100).
+- If you need euros but you only have cents: convert with Calculator(expression="793 / 100") by substituting the numeric cents value.
 - unit: how the product is sold (e.g. "per m1", "per stuk", "per m2"). Use to compute correct quantities.
 - vatRateBps: VAT rate in basis points (2100 = 21%). Defaults to 2100 for reference products.
 - materials: included materials (e.g. ["Verzinkt staal"])

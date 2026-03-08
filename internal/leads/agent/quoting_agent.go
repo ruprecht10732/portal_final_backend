@@ -79,6 +79,7 @@ type quotingAgentProfile struct {
 	description string
 	instruction string
 	appName     string
+	reasoning   bool
 }
 
 // QuotingAgentConfig holds shared dependencies for both quoting modes.
@@ -106,7 +107,11 @@ func NewQuoteGeneratorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
 }
 
 func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAgent, error) {
+	profile := mode.profile()
 	modelConfig := newMoonshotModelConfig(cfg.APIKey, cfg.Model)
+	if profile.reasoning {
+		modelConfig = newMoonshotReasoningModelConfig(cfg.APIKey, cfg.Model)
+	}
 	kimi := moonshot.NewModel(modelConfig)
 
 	deps := &ToolDependencies{
@@ -125,8 +130,6 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 	if err != nil {
 		return nil, err
 	}
-
-	profile := mode.profile()
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        profile.name,
@@ -171,8 +174,9 @@ func (m quotingAgentMode) profile() quotingAgentProfile {
 		return quotingAgentProfile{
 			name:        "Estimator",
 			description: "Technical estimator that scopes work and suggests price ranges.",
-			instruction: "You are a Technical Estimator.",
+			instruction: "You are a Technical Estimator. You may reason step-by-step internally, but your final output must contain only the required tool calls.",
 			appName:     "estimator",
+			reasoning:   true,
 		}
 	default:
 		return quotingAgentProfile{
@@ -180,6 +184,7 @@ func (m quotingAgentMode) profile() quotingAgentProfile {
 			description: "Generates draft quotes from a user prompt using catalog search.",
 			instruction: "You are a Quote Generator. Search for products and create draft quotes.",
 			appName:     "quote-generator",
+			reasoning:   false,
 		}
 	}
 }

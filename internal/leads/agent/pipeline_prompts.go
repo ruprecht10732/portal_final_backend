@@ -338,14 +338,17 @@ LEVEL 3 [STYLE]
 === TOOL ORDER (MANDATORY) ===
 1. ListCatalogGaps (once)
 2. SearchProductMaterials (repeat as needed)
-3. Calculator (unit conversions, rounding, ceil_divide, measurement derivation)
+3. Calculator (prefer one-shot expressions for unit conversions, rounding, ceil_divide, measurement derivation)
 4. CalculateEstimate (all pricing arithmetic)
 5. DraftQuote (only if intake is complete)
 6. SaveEstimation
 7. UpdatePipelineStage
 
 === MATH MODEL ===
-[MANDATORY] Calculator handles: unit conversion, rounding, ceil_divide, quantity derivation.
+[MANDATORY] Calculator handles: unit conversion, rounding, ceil_divide, quantity derivation, and chained arithmetic in a single expression.
+[MANDATORY] Prefer one Calculator expression for subtotal + VAT + markup adjustments instead of chained calculator calls.
+[EXAMPLE] Material subtotal + VAT: Calculator(expression="((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21").
+[EXAMPLE] Material subtotal + VAT + markup: Calculator(expression="(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10").
 [MANDATORY] CalculateEstimate handles: subtotal and total price arithmetic.
 [MANDATORY] CalculateEstimate unitPrice is in euros; DraftQuote unitPriceCents is in euro-cents.
 [MANDATORY] Never modify catalog prices.
@@ -366,7 +369,7 @@ LEVEL 3 [STYLE]
 [MANDATORY] Use product name as description.
 [DECISION RULE] If product has materials list: format as "Product\nInclusief:\n- ...".
 [MANDATORY] Respect product unit semantics for quantity.
-[MANDATORY] For fixed-size units, use Calculator(operation="ceil_divide", a=required_amount, b=unit_size).
+[MANDATORY] For fixed-size units, prefer Calculator(expression="ceil_divide(required_amount, unit_size)").
 [MANDATORY] For each catalog item, include catalogProductId when present.
 [MANDATORY] If priceCents is 0 for a real product, estimate Dutch market unitPriceCents but keep catalogProductId when available.
 [MANDATORY] taxRateBps uses product vatRateBps, fallback 2100.
@@ -786,6 +789,7 @@ You MAY call only: SearchProductMaterials, Calculator, DraftQuote.
 === OBJECTIVE ===
 [MANDATORY] Convert user prompt into a draft quote with catalog-first product lines.
 [MANDATORY] Use Calculator for all arithmetic (quantity/unit math).
+[MANDATORY] Prefer one Calculator expression when you need subtotal + VAT + markup in a single step.
 
 === TOOL ORDER (MANDATORY) ===
 1. SearchProductMaterials (if available)
@@ -798,7 +802,9 @@ You MAY call only: SearchProductMaterials, Calculator, DraftQuote.
 [MANDATORY] Description uses product name.
 [DECISION RULE] If materials list exists: format as "Product\nInclusief:\n- ...".
 [MANDATORY] Respect unit semantics for quantity.
-[MANDATORY] Fixed-size units require Calculator(operation="ceil_divide", a=required_amount, b=unit_size).
+[MANDATORY] Fixed-size units require Calculator(expression="ceil_divide(required_amount, unit_size)").
+[EXAMPLE] VAT-inclusive subtotal: Calculator(expression="((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21").
+[EXAMPLE] VAT-inclusive subtotal plus markup: Calculator(expression="(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10").
 [MANDATORY] Use unitPriceCents from product priceCents.
 [MANDATORY] If product priceCents is 0, use market estimate but keep catalogProductId when available.
 [MANDATORY] taxRateBps uses product vatRateBps, fallback 2100.
