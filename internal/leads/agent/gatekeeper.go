@@ -134,16 +134,17 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	intakeContext := g.buildServiceContext(ctx, tenantID, service.ServiceType)
 	priorAnalysis := g.loadPriorAnalysis(ctx, serviceID, tenantID)
 	if err := g.runGatekeeperPrompt(ctx, gatekeeperPromptRequest{
-		leadID:        leadID,
-		serviceID:     serviceID,
-		lead:          lead,
-		service:       service,
-		notes:         notes,
-		visitReport:   visitReport,
-		intakeContext: intakeContext,
-		attachments:   attachments,
-		photoAnalysis: photoAnalysis,
-		priorAnalysis: priorAnalysis,
+		leadID:             leadID,
+		serviceID:          serviceID,
+		lead:               lead,
+		service:            service,
+		notes:              notes,
+		visitReport:        visitReport,
+		intakeContext:      intakeContext,
+		attachments:        attachments,
+		photoAnalysis:      photoAnalysis,
+		priorAnalysis:      priorAnalysis,
+		nurturingLoopCount: service.GatekeeperNurturingLoopCount,
 	}); err != nil {
 		return err
 	}
@@ -248,28 +249,30 @@ func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID,
 }
 
 type gatekeeperPromptRequest struct {
-	leadID        uuid.UUID
-	serviceID     uuid.UUID
-	lead          repository.Lead
-	service       repository.LeadService
-	notes         []repository.LeadNote
-	visitReport   *repository.AppointmentVisitReport
-	intakeContext string
-	attachments   []repository.Attachment
-	photoAnalysis *repository.PhotoAnalysis
-	priorAnalysis *repository.AIAnalysis
+	leadID             uuid.UUID
+	serviceID          uuid.UUID
+	lead               repository.Lead
+	service            repository.LeadService
+	notes              []repository.LeadNote
+	visitReport        *repository.AppointmentVisitReport
+	intakeContext      string
+	attachments        []repository.Attachment
+	photoAnalysis      *repository.PhotoAnalysis
+	priorAnalysis      *repository.AIAnalysis
+	nurturingLoopCount int
 }
 
 func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperPromptRequest) error {
 	promptText := buildGatekeeperPrompt(gatekeeperPromptInput{
-		lead:          req.lead,
-		service:       req.service,
-		notes:         req.notes,
-		visitReport:   req.visitReport,
-		intakeContext: req.intakeContext,
-		attachments:   req.attachments,
-		photoAnalysis: req.photoAnalysis,
-		priorAnalysis: req.priorAnalysis,
+		lead:               req.lead,
+		service:            req.service,
+		notes:              req.notes,
+		visitReport:        req.visitReport,
+		intakeContext:      req.intakeContext,
+		attachments:        req.attachments,
+		photoAnalysis:      req.photoAnalysis,
+		priorAnalysis:      req.priorAnalysis,
+		nurturingLoopCount: req.nurturingLoopCount,
 	})
 
 	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", req.leadID, req.serviceID)

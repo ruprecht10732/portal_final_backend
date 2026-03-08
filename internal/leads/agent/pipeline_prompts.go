@@ -64,14 +64,15 @@ const sharedProductSelectionRules = `=== PRODUCT DECISION TABLE ===
 3. Retail/store synonym`
 
 type gatekeeperPromptInput struct {
-	lead          repository.Lead
-	service       repository.LeadService
-	notes         []repository.LeadNote
-	visitReport   *repository.AppointmentVisitReport
-	intakeContext string
-	attachments   []repository.Attachment
-	photoAnalysis *repository.PhotoAnalysis
-	priorAnalysis *repository.AIAnalysis
+	lead               repository.Lead
+	service            repository.LeadService
+	notes              []repository.LeadNote
+	visitReport        *repository.AppointmentVisitReport
+	intakeContext      string
+	attachments        []repository.Attachment
+	photoAnalysis      *repository.PhotoAnalysis
+	priorAnalysis      *repository.AIAnalysis
+	nurturingLoopCount int
 }
 
 type quotePromptInput struct {
@@ -95,6 +96,18 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	previousEstimatorBlockers := buildPreviousEstimatorBlockersSection(input.priorAnalysis)
 	consumerSummary := buildPromptConsumerSection(input.lead)
 	locationSummary := buildPromptLocationLine(input.lead)
+	recoveryModeSection := ""
+	if input.nurturingLoopCount > 1 {
+		recoveryModeSection = fmt.Sprintf(`
+
+=== RECOVERY MODE ===
+[MANDATORY] The customer already tried to provide information, but it was still insufficient (Attempt %d).
+[MANDATORY] Do NOT send a generic request.
+[MANDATORY] Explicitly acknowledge the previous reply or photo before asking for anything else.
+[MANDATORY] Explain exactly why the previous information was not enough, for example visibility, angle, shadow, missing scale, or missing measurement.
+[MANDATORY] Offer an alternative path when helpful, such as a short call or a specialist visit if the customer cannot provide the requested detail.
+`, input.nurturingLoopCount)
+	}
 
 	return fmt.Sprintf(`Role: Gatekeeper (intake validator).
 
@@ -134,11 +147,13 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [MANDATORY] Structure the message in 3 parts: (1) thank the customer for the information/photos already shared, (2) explain briefly that you need a few extra details to provide an accurate quote without surprises, (3) list the missing items as clear bullets.
 [MANDATORY] Avoid technical jargon in customer messages. Translate trade terms such as "dagmaat" or "rachels" into simple consumer language.
 [MANDATORY] Reduce cognitive load: if asking for a preference such as material, style, finish, or type, NEVER ask an open-ended question. Always provide 2 or 3 common options.
+[MANDATORY] Maximum Ask Rule: Never ask for more than 2 distinct items in one message. If more items are missing, ask only for the 2 most critical ones required to determine the price.
 [MANDATORY] Be specific: say exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them clearly, for example an overview photo from enough distance or a close-up of the relevant area.
 [MANDATORY] If photo quality or angle is the issue, explain this gently and ask for a better angle or verified measurement.
 [MANDATORY] Keep cognitive load low: combine related requests and keep the message compact.
 [MANDATORY] Close by reassuring the customer that the quote will be prepared as soon as the details are received.
+%s
 
 === SELF-CHECK BEFORE FINAL TOOL CALL ===
 [MANDATORY] SaveAnalysis called exactly once.
@@ -202,6 +217,7 @@ Respond ONLY with tool calls.
 		previousEstimatorBlockers,
 		leadContext,
 		intakeContextSummary,
+		recoveryModeSection,
 	)
 }
 
@@ -514,6 +530,7 @@ You MAY call only: AskCustomerClarification.
 3. Actionable Request: list the missing items clearly using bullet points.
 [MANDATORY] Avoid technical jargon in customer messages. Translate trade terms such as "dagmaat" or "rachels" into simple consumer language.
 [MANDATORY] Reduce cognitive load: if asking for a preference such as material, style, finish, or type, NEVER ask an open-ended question. Always provide 2 or 3 common options.
+[MANDATORY] Maximum Ask Rule: Never ask for more than 2 distinct items in one message. If more items are missing, ask only for the 2 most critical ones required to determine the price.
 [MANDATORY] Be specific: do not just ask for "measurements". State exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them, for example an overview photo from some distance or a close-up of the relevant detail.
 [MANDATORY] If photo analysis flagged an issue such as poor angle, darkness, no scale, or on-site verification need, explain this gently and ask for a better photo or a verified measurement instead of relying on the current image alone.
