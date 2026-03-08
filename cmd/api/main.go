@@ -546,14 +546,14 @@ func wireSMTPEncryptionKeyForIMAP(cfg *config.Config, log *logger.Logger, imapSv
 
 func initReminderScheduler(cfg config.SchedulerConfig, log *logger.Logger) (*scheduler.Client, func()) {
 	if cfg.GetRedisURL() == "" {
-		log.Warn("REDIS_URL not configured; appointment reminders and async quote generation are disabled")
-		return nil, nil
+		log.Error("REDIS_URL not configured; async scheduler is required")
+		panic("REDIS_URL not configured: async scheduler is required")
 	}
 
 	reminderClient, err := scheduler.NewClient(cfg)
 	if err != nil {
 		log.Error("failed to initialize reminder scheduler client", "error", err)
-		return nil, nil
+		panic("failed to initialize reminder scheduler client: " + err.Error())
 	}
 
 	return reminderClient, func() {

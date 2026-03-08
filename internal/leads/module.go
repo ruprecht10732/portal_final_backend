@@ -316,7 +316,7 @@ func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, 
 			return nil
 		}
 
-		go runInitialGatekeeper(context.Background(), repo, module, log, initialGatekeeperTrigger{
+		runInitialGatekeeper(context.Background(), repo, module, log, initialGatekeeperTrigger{
 			LeadID:    e.LeadID,
 			ServiceID: e.LeadServiceID,
 			TenantID:  e.TenantID,
@@ -334,7 +334,7 @@ func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsReposit
 			return nil
 		}
 
-		go runInitialGatekeeper(context.Background(), repo, module, log, initialGatekeeperTrigger{
+		runInitialGatekeeper(context.Background(), repo, module, log, initialGatekeeperTrigger{
 			LeadID:    e.LeadID,
 			ServiceID: e.LeadServiceID,
 			TenantID:  e.TenantID,
@@ -359,8 +359,8 @@ func runInitialGatekeeper(ctx context.Context, repo repository.LeadsRepository, 
 	if enqueueGatekeeperRun(ctx, module, log, trigger.LeadID, trigger.ServiceID, trigger.TenantID) {
 		return
 	}
-	if err := module.gatekeeper.Run(ctx, trigger.LeadID, trigger.ServiceID, trigger.TenantID); err != nil {
-		log.Error("gatekeeper run failed", "error", err, "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
+	if log != nil {
+		log.Error("gatekeeper queue not configured for initial run", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
 	}
 }
 
@@ -476,7 +476,9 @@ func queueOrRunPhotoAnalysis(ctx context.Context, module *Module, log *logger.Lo
 		}
 		return
 	}
-	go module.photoAnalysisHandler.RunAutoAnalysis(leadID, serviceID, tenantID)
+	if log != nil {
+		log.Error("photo analysis queue not configured", "leadId", leadID, "serviceId", serviceID)
+	}
 }
 
 type buildHandlersDeps struct {
@@ -609,7 +611,13 @@ func (m *Module) ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, te
 	if m == nil || m.gatekeeper == nil {
 		return nil
 	}
-	return m.gatekeeper.Run(ctx, leadID, serviceID, tenantID)
+	if err := m.gatekeeper.Run(ctx, leadID, serviceID, tenantID); err != nil {
+		return err
+	}
+	if m.orchestrator != nil {
+		m.orchestrator.maybeAutoDisqualifyJunk(ctx, leadID, serviceID, tenantID)
+	}
+	return nil
 }
 
 func (m *Module) ProcessEstimatorRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {

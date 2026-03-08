@@ -31,28 +31,24 @@ return 0
 `)
 
 type orchestratorRunLocker interface {
-	TryAcquireAgentRun(agentName string, serviceID uuid.UUID) (bool, error)
-	ReleaseAgentRun(agentName string, serviceID uuid.UUID) error
 	TryAcquireReconciliation(serviceID uuid.UUID) (bool, error)
 	ReleaseReconciliation(serviceID uuid.UUID) error
 }
 
+const reconciliationLockTimeout = 5 * time.Minute
+
 func newOrchestratorRunLocker(redisClient *redis.Client, log *logger.Logger) orchestratorRunLocker {
 	if redisClient == nil {
 		if log != nil {
-			log.Warn("orchestrator: redis unavailable, using in-memory run locks")
+			log.Warn("orchestrator: redis unavailable, using in-memory reconciliation locks")
 		}
 		return newInMemoryOrchestratorRunLocker()
 	}
 
 	if log != nil {
-		log.Info("orchestrator: redis-backed run locks enabled", "ttl", agentRunTimeout)
+		log.Info("orchestrator: redis-backed reconciliation locks enabled", "ttl", reconciliationLockTimeout)
 	}
-	return newRedisOrchestratorRunLocker(redisClient, agentRunTimeout, log)
-}
-
-func agentRunLockKey(agentName string, serviceID uuid.UUID) string {
-	return fmt.Sprintf("%s:agent:%s:%s", orchestratorLockPrefix, agentName, serviceID)
+	return newRedisOrchestratorRunLocker(redisClient, reconciliationLockTimeout, log)
 }
 
 func reconciliationLockKey(serviceID uuid.UUID) string {
@@ -61,35 +57,13 @@ func reconciliationLockKey(serviceID uuid.UUID) string {
 
 type inMemoryOrchestratorRunLocker struct {
 	mu                    sync.Mutex
-	activeRuns            map[string]bool
 	activeReconciliations map[uuid.UUID]bool
 }
 
 func newInMemoryOrchestratorRunLocker() orchestratorRunLocker {
 	return &inMemoryOrchestratorRunLocker{
-		activeRuns:            make(map[string]bool),
 		activeReconciliations: make(map[uuid.UUID]bool),
 	}
-}
-
-func (l *inMemoryOrchestratorRunLocker) TryAcquireAgentRun(agentName string, serviceID uuid.UUID) (bool, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	key := agentRunLockKey(agentName, serviceID)
-	if l.activeRuns[key] {
-		return false, nil
-	}
-	l.activeRuns[key] = true
-	return true, nil
-}
-
-func (l *inMemoryOrchestratorRunLocker) ReleaseAgentRun(agentName string, serviceID uuid.UUID) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	delete(l.activeRuns, agentRunLockKey(agentName, serviceID))
-	return nil
 }
 
 func (l *inMemoryOrchestratorRunLocker) TryAcquireReconciliation(serviceID uuid.UUID) (bool, error) {
@@ -134,14 +108,6 @@ func newRedisOrchestratorRunLocker(client *redis.Client, ttl time.Duration, logs
 		ttl:    ttl,
 		log:    log,
 	}
-}
-
-func (l *redisOrchestratorRunLocker) TryAcquireAgentRun(agentName string, serviceID uuid.UUID) (bool, error) {
-	return l.tryAcquire(agentRunLockKey(agentName, serviceID))
-}
-
-func (l *redisOrchestratorRunLocker) ReleaseAgentRun(agentName string, serviceID uuid.UUID) error {
-	return l.release(agentRunLockKey(agentName, serviceID))
 }
 
 func (l *redisOrchestratorRunLocker) TryAcquireReconciliation(serviceID uuid.UUID) (bool, error) {

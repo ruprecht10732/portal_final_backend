@@ -21,29 +21,10 @@ func newGuardOnlyOrchestrator(locker orchestratorRunLocker) *Orchestrator {
 	}
 
 	return &Orchestrator{
-		runLocker:              locker,
-		recentStageEvents:      make(map[string]time.Time),
-		pendingGatekeeperPhoto: make(map[uuid.UUID]events.PhotoAnalysisCompleted),
-		orgSettingsCache:       make(map[uuid.UUID]cachedOrgAISettings),
-		log:                    logger.New("development"),
-	}
-}
-
-func TestMarkRunning(t *testing.T) {
-	o := newGuardOnlyOrchestrator(nil)
-	serviceID := uuid.New()
-
-	if !o.markRunning("estimator", serviceID) {
-		t.Fatalf("expected first agent lock acquisition to succeed")
-	}
-	if o.markRunning("estimator", serviceID) {
-		t.Fatalf("expected duplicate agent lock acquisition to fail")
-	}
-
-	o.markComplete("estimator", serviceID)
-
-	if !o.markRunning("estimator", serviceID) {
-		t.Fatalf("expected agent lock acquisition to succeed after completion")
+		runLocker:         locker,
+		recentStageEvents: make(map[string]time.Time),
+		orgSettingsCache:  make(map[uuid.UUID]cachedOrgAISettings),
+		log:               logger.New("development"),
 	}
 }
 
@@ -92,7 +73,7 @@ func TestShouldSkipDuplicateStageEvent(t *testing.T) {
 	}
 }
 
-func TestRedisRunLocksAreSharedAcrossOrchestrators(t *testing.T) {
+func TestRedisReconciliationLocksAreSharedAcrossOrchestrators(t *testing.T) {
 	redisServer, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf(miniredisStartFailedMsg, err)
@@ -102,42 +83,34 @@ func TestRedisRunLocksAreSharedAcrossOrchestrators(t *testing.T) {
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	defer func() { _ = redisClient.Close() }()
 
-	o1 := newGuardOnlyOrchestrator(newRedisOrchestratorRunLocker(redisClient, agentRunTimeout))
-	o2 := newGuardOnlyOrchestrator(newRedisOrchestratorRunLocker(redisClient, agentRunTimeout))
+	o1 := newGuardOnlyOrchestrator(newRedisOrchestratorRunLocker(redisClient, reconciliationLockTimeout))
+	o2 := newGuardOnlyOrchestrator(newRedisOrchestratorRunLocker(redisClient, reconciliationLockTimeout))
 	serviceID := uuid.New()
 
-	if !o1.markRunning("gatekeeper", serviceID) {
-		t.Fatalf("expected first redis-backed agent lock acquisition to succeed")
+	if !o1.markReconciliationRunning(serviceID) {
+		t.Fatalf("expected first reconciliation lock acquisition to succeed")
 	}
-	if o2.markRunning("gatekeeper", serviceID) {
-		t.Fatalf("expected second orchestrator to observe the shared redis lock")
-	}
-	if !o2.markReconciliationRunning(serviceID) {
-		t.Fatalf("expected reconciliation lock namespace to be independent from agent locks")
+	if o2.markReconciliationRunning(serviceID) {
+		t.Fatalf("expected second orchestrator to observe the shared reconciliation lock")
 	}
 
 	ctx := context.Background()
-	agentKey := agentRunLockKey("gatekeeper", serviceID)
 	reconcileKey := reconciliationLockKey(serviceID)
-	if ttl := redisClient.TTL(ctx, agentKey).Val(); ttl <= 0 || ttl > agentRunTimeout {
-		t.Fatalf("expected redis agent lock TTL within (0,%s], got %s", agentRunTimeout, ttl)
-	}
-	if ttl := redisClient.TTL(ctx, reconcileKey).Val(); ttl <= 0 || ttl > agentRunTimeout {
-		t.Fatalf("expected redis reconciliation lock TTL within (0,%s], got %s", agentRunTimeout, ttl)
+	if ttl := redisClient.TTL(ctx, reconcileKey).Val(); ttl <= 0 || ttl > reconciliationLockTimeout {
+		t.Fatalf("expected redis reconciliation lock TTL within (0,%s], got %s", reconciliationLockTimeout, ttl)
 	}
 
-	o1.markComplete("gatekeeper", serviceID)
-	o2.markReconciliationComplete(serviceID)
+	o1.markReconciliationComplete(serviceID)
 
-	if exists := redisClient.Exists(ctx, agentKey, reconcileKey).Val(); exists != 0 {
+	if exists := redisClient.Exists(ctx, reconcileKey).Val(); exists != 0 {
 		t.Fatalf("expected redis lock keys to be released, found %d keys", exists)
 	}
-	if !o2.markRunning("gatekeeper", serviceID) {
-		t.Fatalf("expected agent lock acquisition to succeed after redis release")
+	if !o2.markReconciliationRunning(serviceID) {
+		t.Fatalf("expected reconciliation lock acquisition to succeed after redis release")
 	}
 }
 
-func TestRedisRunLockReleaseDoesNotDeleteDifferentOwner(t *testing.T) {
+func TestRedisReconciliationLockReleaseDoesNotDeleteDifferentOwner(t *testing.T) {
 	redisServer, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf(miniredisStartFailedMsg, err)
@@ -149,10 +122,10 @@ func TestRedisRunLockReleaseDoesNotDeleteDifferentOwner(t *testing.T) {
 
 	ctx := context.Background()
 	serviceID := uuid.New()
-	key := agentRunLockKey("dispatcher", serviceID)
+	key := reconciliationLockKey(serviceID)
 	locker := newRedisOrchestratorRunLocker(redisClient, time.Second).(*redisOrchestratorRunLocker)
 
-	ok, err := locker.TryAcquireAgentRun("dispatcher", serviceID)
+	ok, err := locker.TryAcquireReconciliation(serviceID)
 	if err != nil {
 		t.Fatalf("expected redis lock acquisition without error, got %v", err)
 	}
@@ -163,7 +136,7 @@ func TestRedisRunLockReleaseDoesNotDeleteDifferentOwner(t *testing.T) {
 	if err := redisClient.Set(ctx, key, "different-owner", time.Second).Err(); err != nil {
 		t.Fatalf("expected test overwrite to succeed, got %v", err)
 	}
-	if err := locker.ReleaseAgentRun("dispatcher", serviceID); err != nil {
+	if err := locker.ReleaseReconciliation(serviceID); err != nil {
 		t.Fatalf("expected release to succeed, got %v", err)
 	}
 
@@ -176,7 +149,7 @@ func TestRedisRunLockReleaseDoesNotDeleteDifferentOwner(t *testing.T) {
 	}
 }
 
-func TestRedisRunLockHeartbeatKeepsKeyAlivePastOriginalTTL(t *testing.T) {
+func TestRedisReconciliationLockHeartbeatKeepsKeyAlivePastOriginalTTL(t *testing.T) {
 	redisServer, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf(miniredisStartFailedMsg, err)
@@ -189,10 +162,10 @@ func TestRedisRunLockHeartbeatKeepsKeyAlivePastOriginalTTL(t *testing.T) {
 	ctx := context.Background()
 	ttl := 300 * time.Millisecond
 	serviceID := uuid.New()
-	key := agentRunLockKey("auditor", serviceID)
+	key := reconciliationLockKey(serviceID)
 	locker := newRedisOrchestratorRunLocker(redisClient, ttl).(*redisOrchestratorRunLocker)
 
-	ok, err := locker.TryAcquireAgentRun("auditor", serviceID)
+	ok, err := locker.TryAcquireReconciliation(serviceID)
 	if err != nil {
 		t.Fatalf("expected redis lock acquisition without error, got %v", err)
 	}
@@ -209,7 +182,7 @@ func TestRedisRunLockHeartbeatKeepsKeyAlivePastOriginalTTL(t *testing.T) {
 		t.Fatalf("expected redis lock to have positive remaining TTL, got %s", remaining)
 	}
 
-	if err := locker.ReleaseAgentRun("auditor", serviceID); err != nil {
+	if err := locker.ReleaseReconciliation(serviceID); err != nil {
 		t.Fatalf("expected redis lock release without error, got %v", err)
 	}
 }
