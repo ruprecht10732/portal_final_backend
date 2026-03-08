@@ -455,6 +455,7 @@ func (g *Gatekeeper) buildServiceContext(ctx context.Context, tenantID uuid.UUID
 	} else {
 		sb.WriteString("Intake Requirements: Not specified.\n")
 	}
+	sb.WriteString("Customer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph.\n")
 
 	return sb.String()
 }

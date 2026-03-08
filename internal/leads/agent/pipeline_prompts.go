@@ -112,6 +112,13 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 3. SaveAnalysis
 4. UpdatePipelineStage
 
+=== COMMUNICATION GUIDELINES (FOR SUGGESTED CONTACT MESSAGE) ===
+[DECISION RULE] When requesting missing info, use the "Acknowledge -> Justify -> Instruct" framework.
+[DECISION RULE] Acknowledge: "Bedankt voor uw aanvraag voor [Service Type]..."
+[DECISION RULE] Justify: "...Om u direct een exacte prijs te kunnen geven, hebben we nog X nodig."
+[DECISION RULE] Instruct: Give explicit, simple instructions. (e.g., "Kunt u een foto sturen waarbij ook de vloer zichtbaar is?")
+[DECISION RULE] Tone must be warm, service-oriented, and conversational.
+
 === DECISION TABLE ===
 [DECISION RULE] Missing required intake item -> critical missingInformation.
 [DECISION RULE] Required info clearly present in trusted context -> not missing.
@@ -125,6 +132,7 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [MANDATORY] Only include suggestedContactMessage when critical intake details are still missing.
 [MANDATORY] Tone: friendly, helpful, and professional Dutch. Do NOT sound robotic or like a cold checklist.
 [MANDATORY] Structure the message in 3 parts: (1) thank the customer for the information/photos already shared, (2) explain briefly that you need a few extra details to provide an accurate quote without surprises, (3) list the missing items as clear bullets.
+[MANDATORY] Avoid technical jargon in customer messages. Translate trade terms such as "dagmaat" or "rachels" into simple consumer language.
 [MANDATORY] Be specific: say exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them clearly, for example an overview photo from enough distance or a close-up of the relevant area.
 [MANDATORY] If photo quality or angle is the issue, explain this gently and ask for a better angle or verified measurement.
@@ -503,6 +511,7 @@ You MAY call only: AskCustomerClarification.
 1. Acknowledge & Validate: thank the customer for the information or photos already shared.
 2. Explain WHY: briefly explain that you need a few extra details to provide an accurate quote without surprises.
 3. Actionable Request: list the missing items clearly using bullet points.
+[MANDATORY] Avoid technical jargon in customer messages. Translate trade terms such as "dagmaat" or "rachels" into simple consumer language.
 [MANDATORY] Be specific: do not just ask for "measurements". State exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them, for example an overview photo from some distance or a close-up of the relevant detail.
 [MANDATORY] If photo analysis flagged an issue such as poor angle, darkness, no scale, or on-site verification need, explain this gently and ask for a better photo or a verified measurement instead of relying on the current image alone.

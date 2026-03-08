@@ -1151,10 +1151,14 @@ func (q *QuotingAgent) fetchEstimationGuidelines(ctx context.Context, tenantID u
 	}
 	for _, st := range serviceTypes {
 		if st.Name == serviceType && st.EstimationGuidelines != nil {
-			return *st.EstimationGuidelines
+			guidelines := strings.TrimSpace(*st.EstimationGuidelines)
+			if guidelines == "" {
+				return "Customer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph."
+			}
+			return guidelines + "\n\nCustomer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph."
 		}
 	}
-	return ""
+	return "Customer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph."
 }
 
 func (q *QuotingAgent) runWithPrompt(ctx context.Context, promptText, userID string) error {
