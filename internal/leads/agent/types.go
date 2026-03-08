@@ -234,6 +234,16 @@ type CalculateEstimateOutput struct {
 	AppliedExtraCosts float64 `json:"appliedExtraCosts"`
 }
 
+// EstimateComputationSnapshot preserves the structured estimate used during quote drafting.
+type EstimateComputationSnapshot struct {
+	MaterialSubtotalCents  int64
+	LaborSubtotalLowCents  int64
+	LaborSubtotalHighCents int64
+	TotalLowCents          int64
+	TotalHighCents         int64
+	ExtraCostsCents        int64
+}
+
 // DraftQuoteItem represents a single line item for the DraftQuote tool.
 type DraftQuoteItem struct {
 	Description      string  `json:"description"`

@@ -222,7 +222,7 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 	if quote.Status == string(transport.QuoteStatusRejected) {
 		return nil, apperr.BadRequest("this quote has been rejected")
 	}
-	if err := s.repo.AcceptQuote(ctx, quote.ID, req.SignatureName, req.SignatureData, clientIP); err != nil {
+	if err := s.repo.AcceptQuote(ctx, quote, req.SignatureName, req.SignatureData, clientIP); err != nil {
 		return nil, err
 	}
 	quote, _, err = s.resolveToken(ctx, token)
@@ -272,7 +272,7 @@ func (s *Service) Reject(ctx context.Context, token string, req transport.Reject
 	if req.Reason == "" {
 		reasonPtr = nil
 	}
-	if err := s.repo.RejectQuote(ctx, quote.ID, reasonPtr); err != nil {
+	if err := s.repo.RejectQuote(ctx, quote, reasonPtr); err != nil {
 		return nil, err
 	}
 	quote, _, err = s.resolveToken(ctx, token)

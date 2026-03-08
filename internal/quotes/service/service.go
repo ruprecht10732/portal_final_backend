@@ -155,6 +155,7 @@ type DraftQuoteParams struct {
 	Items          []DraftQuoteItemParams
 	Attachments    []DraftQuoteAttachmentParams
 	URLs           []DraftQuoteURLParams
+	PricingSnapshot *QuotePricingSnapshotParams
 }
 
 type DraftQuoteItemParams struct {
@@ -177,6 +178,23 @@ type DraftQuoteURLParams struct {
 	Label            string
 	Href             string
 	CatalogProductID *uuid.UUID
+}
+
+type QuotePricingSnapshotParams struct {
+	ServiceType            string
+	PostcodeRaw            string
+	PostcodePrefixZIP4     string
+	SourceType             string
+	MaterialSubtotalCents  *int64
+	LaborSubtotalLowCents  *int64
+	LaborSubtotalHighCents *int64
+	ExtraCostsCents        *int64
+	ScopeText              *string
+	PriceRangeText         *string
+	EstimatorRunID         *string
+	ModelName              *string
+	CreatedByActor         string
+	CreatedByUserID        *uuid.UUID
 }
 
 type DraftQuoteResult struct {

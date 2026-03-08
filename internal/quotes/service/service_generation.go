@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/notification/sse"
@@ -349,7 +350,7 @@ func (s *Service) createDraftQuote(ctx context.Context, params DraftQuoteParams)
 	}
 
 	items, catalogCount := buildDraftRepoItems(quote.ID, params.OrganizationID, params.Items, now)
-	if err := s.repo.CreateWithItems(ctx, &quote, items); err != nil {
+	if err := s.repo.CreateWithItems(ctx, &quote, items, buildRepositoryPricingSnapshot(quote, params.PricingSnapshot, len(items), catalogCount)); err != nil {
 		return nil, fmt.Errorf("draft quote: %w", err)
 	}
 	if err := s.saveDraftAssets(ctx, quote.ID, params); err != nil {
@@ -375,8 +376,8 @@ func (s *Service) updateDraftQuote(ctx context.Context, params DraftQuoteParams)
 	quote.Notes = nilIfEmpty(params.Notes)
 	quote.UpdatedAt = now
 
-	items, _ := buildDraftRepoItems(quoteID, params.OrganizationID, params.Items, now)
-	if err := s.repo.UpdateWithItems(ctx, quote, items, true); err != nil {
+	items, catalogCount := buildDraftRepoItems(quoteID, params.OrganizationID, params.Items, now)
+	if err := s.repo.UpdateWithItems(ctx, quote, items, true, buildRepositoryPricingSnapshot(*quote, params.PricingSnapshot, len(items), catalogCount)); err != nil {
 		return nil, fmt.Errorf("update draft quote: %w", err)
 	}
 	if err := s.saveDraftAssets(ctx, quoteID, params); err != nil {
@@ -425,6 +426,52 @@ func buildDraftRepoItems(quoteID, orgID uuid.UUID, items []DraftQuoteItemParams,
 		}
 	}
 	return repoItems, catalogCount
+}
+
+func buildRepositoryPricingSnapshot(quote repository.Quote, snapshot *QuotePricingSnapshotParams, itemCount int, catalogCount int) *repository.QuotePricingSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+
+	return &repository.QuotePricingSnapshot{
+		QuoteID:                quote.ID,
+		OrganizationID:         quote.OrganizationID,
+		LeadID:                 quote.LeadID,
+		LeadServiceID:          quote.LeadServiceID,
+		ServiceType:            nilIfBlankString(snapshot.ServiceType),
+		PostcodeRaw:            nilIfBlankString(snapshot.PostcodeRaw),
+		PostcodePrefixZIP4:     nilIfBlankString(snapshot.PostcodePrefixZIP4),
+		SourceType:             snapshot.SourceType,
+		PricingMode:            quote.PricingMode,
+		DiscountType:           quote.DiscountType,
+		DiscountValue:          quote.DiscountValue,
+		MaterialSubtotalCents:  snapshot.MaterialSubtotalCents,
+		LaborSubtotalLowCents:  snapshot.LaborSubtotalLowCents,
+		LaborSubtotalHighCents: snapshot.LaborSubtotalHighCents,
+		ExtraCostsCents:        snapshot.ExtraCostsCents,
+		SubtotalCents:          quote.SubtotalCents,
+		DiscountAmountCents:    quote.DiscountAmountCents,
+		TaxTotalCents:          quote.TaxTotalCents,
+		TotalCents:             quote.TotalCents,
+		ItemCount:              itemCount,
+		CatalogItemCount:       catalogCount,
+		AdHocItemCount:         itemCount - catalogCount,
+		Notes:                  quote.Notes,
+		PriceRangeText:         snapshot.PriceRangeText,
+		ScopeText:              snapshot.ScopeText,
+		EstimatorRunID:         snapshot.EstimatorRunID,
+		ModelName:              snapshot.ModelName,
+		CreatedByActor:         snapshot.CreatedByActor,
+		CreatedByUserID:        snapshot.CreatedByUserID,
+	}
+}
+
+func nilIfBlankString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func (s *Service) resolveValidUntil(ctx context.Context, orgID uuid.UUID, leadID uuid.UUID, leadServiceID *uuid.UUID, now time.Time) *time.Time {

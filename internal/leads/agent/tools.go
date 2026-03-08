@@ -156,6 +156,7 @@ type ToolDependencies struct {
 	CatalogQdrantClient    *qdrant.Client
 	CatalogReader          ports.CatalogReader // optional: hydrate search results from DB
 	QuoteDrafter           ports.QuoteDrafter  // optional: draft quotes from agent
+	PricingIntelligence    ports.PricingIntelligenceReader
 	OfferCreator           ports.PartnerOfferCreator
 	CouncilService         MultiAgentCouncil
 	OrgSettingsReader      ports.OrganizationAISettingsReader
@@ -169,6 +170,7 @@ type ToolDependencies struct {
 	existingQuoteID        *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
 	lastAnalysisMetadata   map[string]any          // Populated by SaveAnalysis for use in stage_change events
 	lastEstimationMetadata map[string]any          // Populated by SaveEstimation for use in stage_change events
+	lastEstimateSnapshot   *EstimateComputationSnapshot
 	lastCouncilMetadata    map[string]any          // Populated by council evaluation for stage/quote governance events
 	saveAnalysisCalled     bool                    // Track if SaveAnalysis was called
 	saveEstimationCalled   bool                    // Track if SaveEstimation was called
@@ -205,6 +207,7 @@ func (d *ToolDependencies) NewRequestDeps() *ToolDependencies {
 		CatalogQdrantClient:  d.CatalogQdrantClient,
 		CatalogReader:        d.CatalogReader,
 		QuoteDrafter:         d.QuoteDrafter,
+		PricingIntelligence:  d.PricingIntelligence,
 		OfferCreator:         d.OfferCreator,
 		CouncilService:       d.CouncilService,
 		OrgSettingsReader:    d.OrgSettingsReader,
@@ -377,6 +380,13 @@ func (d *ToolDependencies) SetLastEstimationMetadata(metadata map[string]any) {
 	d.lastEstimationMetadata = metadata
 }
 
+func (d *ToolDependencies) SetLastEstimateSnapshot(snapshot EstimateComputationSnapshot) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	copySnapshot := snapshot
+	d.lastEstimateSnapshot = &copySnapshot
+}
+
 // GetLastAnalysisMetadata retrieves a shallow copy of the analysis metadata saved by SaveAnalysis.
 func (d *ToolDependencies) GetLastAnalysisMetadata() map[string]any {
 	d.mu.RLock()
@@ -402,6 +412,16 @@ func (d *ToolDependencies) GetLastEstimationMetadata() map[string]any {
 		cp[k] = v
 	}
 	return cp
+}
+
+func (d *ToolDependencies) GetLastEstimateSnapshot() (*EstimateComputationSnapshot, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.lastEstimateSnapshot == nil {
+		return nil, false
+	}
+	copySnapshot := *d.lastEstimateSnapshot
+	return &copySnapshot, true
 }
 
 // MarkSaveAnalysisCalled marks that SaveAnalysis tool was called
@@ -529,6 +549,7 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.offerCreated = false
 	d.lastAnalysisMetadata = nil
 	d.lastEstimationMetadata = nil
+	d.lastEstimateSnapshot = nil
 	d.lastCouncilMetadata = nil
 	d.lastDraftResult = nil
 	d.lastDraftInput = nil
@@ -2435,7 +2456,7 @@ func createCalculateEstimateTool() (tool.Tool, error) {
 		Name:        "CalculateEstimate",
 		Description: "Calculates material subtotal, labor subtotal range, and total range from raw structured inputs (unit prices, quantities, hour ranges, hourly rate ranges). Do NOT pre-calculate subtotals; this tool performs all multiplication.",
 	}, func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
-		_ = ctx
+		deps := GetDependencies(ctx)
 		if err := validateCalculateEstimateInput(input); err != nil {
 			return CalculateEstimateOutput{}, err
 		}
@@ -2443,6 +2464,14 @@ func createCalculateEstimateTool() (tool.Tool, error) {
 		materialCents := calculateMaterialSubtotalCents(input)
 		laborLowCents, laborHighCents := calculateLaborSubtotalRangeCents(input)
 		extraCents := int64(math.Round(input.ExtraCosts * 100))
+		deps.SetLastEstimateSnapshot(EstimateComputationSnapshot{
+			MaterialSubtotalCents:  materialCents,
+			LaborSubtotalLowCents:  laborLowCents,
+			LaborSubtotalHighCents: laborHighCents,
+			TotalLowCents:          materialCents + laborLowCents + extraCents,
+			TotalHighCents:         materialCents + laborHighCents + extraCents,
+			ExtraCostsCents:        extraCents,
+		})
 
 		return buildCalculateEstimateOutput(materialCents, laborLowCents, laborHighCents, extraCents), nil
 	})
@@ -3683,6 +3712,10 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		return DraftQuoteOutput{Success: false, Message: err.Error()}, err
 	}
 	portAttachments, portURLs := collectCatalogAssetsForDraft(ctx, deps, tenantID, portItems)
+	pricingSnapshot, pricingSnapshotErr := buildDraftPricingSnapshot(ctx, deps, *tenantID, leadID, serviceID)
+	if pricingSnapshotErr != nil {
+		log.Printf("DraftQuote: pricing snapshot context unavailable: %v", pricingSnapshotErr)
+	}
 
 	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
 		QuoteID:        deps.GetExistingQuoteID(),
@@ -3694,6 +3727,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		Items:          portItems,
 		Attachments:    portAttachments,
 		URLs:           portURLs,
+		PricingSnapshot: pricingSnapshot,
 	})
 	if err != nil {
 		log.Printf("DraftQuote: failed: %v", err)
@@ -3712,6 +3746,70 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		QuoteNumber: result.QuoteNumber,
 		ItemCount:   result.ItemCount,
 	}, nil
+}
+
+func buildDraftPricingSnapshot(ctx context.Context, deps *ToolDependencies, tenantID, leadID, serviceID uuid.UUID) (*ports.QuotePricingSnapshot, error) {
+	lead, err := deps.Repo.GetByID(ctx, leadID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("load lead for pricing snapshot: %w", err)
+	}
+
+	service, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("load service for pricing snapshot: %w", err)
+	}
+
+	var materialSubtotalCents *int64
+	var laborSubtotalLowCents *int64
+	var laborSubtotalHighCents *int64
+	var extraCostsCents *int64
+	if snapshot, ok := deps.GetLastEstimateSnapshot(); ok {
+		materialSubtotalCents = &snapshot.MaterialSubtotalCents
+		laborSubtotalLowCents = &snapshot.LaborSubtotalLowCents
+		laborSubtotalHighCents = &snapshot.LaborSubtotalHighCents
+		extraCostsCents = &snapshot.ExtraCostsCents
+	}
+
+	runID := deps.GetRunID()
+	postcodeRaw := strings.TrimSpace(lead.AddressZipCode)
+
+	return &ports.QuotePricingSnapshot{
+		ServiceType:            service.ServiceType,
+		PostcodeRaw:            postcodeRaw,
+		PostcodePrefixZIP4:     derivePostcodePrefixZIP4(postcodeRaw),
+		SourceType:             "ai_draft",
+		MaterialSubtotalCents:  materialSubtotalCents,
+		LaborSubtotalLowCents:  laborSubtotalLowCents,
+		LaborSubtotalHighCents: laborSubtotalHighCents,
+		ExtraCostsCents:        extraCostsCents,
+		EstimatorRunID:         nilIfEmptyString(runID),
+		CreatedByActor:         repository.ActorNameEstimator,
+	}, nil
+}
+
+func derivePostcodePrefixZIP4(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	digits := make([]rune, 0, 4)
+	for _, r := range trimmed {
+		if r >= '0' && r <= '9' {
+			digits = append(digits, r)
+			if len(digits) == 4 {
+				return string(digits)
+			}
+		}
+	}
+	return ""
+}
+
+func nilIfEmptyString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func createSubmitQuoteCritiqueTool(_ *ToolDependencies) (tool.Tool, error) {

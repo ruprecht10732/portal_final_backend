@@ -631,6 +631,288 @@ func (q *Queries) CreateQuoteItem(ctx context.Context, arg CreateQuoteItemParams
 	return err
 }
 
+const createQuotePricingCorrection = `-- name: CreateQuotePricingCorrection :one
+INSERT INTO RAC_quote_pricing_corrections (
+  id, quote_id, snapshot_id, organization_id, quote_item_id,
+  field_name, ai_value, human_value, delta_cents, delta_percentage,
+  reason, ai_finding_code, created_by_user_id, created_at
+)
+VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9, $10,
+  $11, $12, $13, $14
+)
+RETURNING id, quote_id, snapshot_id, organization_id, quote_item_id,
+  field_name, ai_value, human_value, delta_cents, delta_percentage,
+  reason, ai_finding_code, created_by_user_id, created_at
+`
+
+type CreateQuotePricingCorrectionParams struct {
+	ID              pgtype.UUID        `json:"id"`
+	QuoteID         pgtype.UUID        `json:"quote_id"`
+	SnapshotID      pgtype.UUID        `json:"snapshot_id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	QuoteItemID     pgtype.UUID        `json:"quote_item_id"`
+	FieldName       string             `json:"field_name"`
+	AiValue         []byte             `json:"ai_value"`
+	HumanValue      []byte             `json:"human_value"`
+	DeltaCents      pgtype.Int8        `json:"delta_cents"`
+	DeltaPercentage pgtype.Float8      `json:"delta_percentage"`
+	Reason          pgtype.Text        `json:"reason"`
+	AiFindingCode   pgtype.Text        `json:"ai_finding_code"`
+	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateQuotePricingCorrection(ctx context.Context, arg CreateQuotePricingCorrectionParams) (RacQuotePricingCorrection, error) {
+	row := q.db.QueryRow(ctx, createQuotePricingCorrection,
+		arg.ID,
+		arg.QuoteID,
+		arg.SnapshotID,
+		arg.OrganizationID,
+		arg.QuoteItemID,
+		arg.FieldName,
+		arg.AiValue,
+		arg.HumanValue,
+		arg.DeltaCents,
+		arg.DeltaPercentage,
+		arg.Reason,
+		arg.AiFindingCode,
+		arg.CreatedByUserID,
+		arg.CreatedAt,
+	)
+	var i RacQuotePricingCorrection
+	err := row.Scan(
+		&i.ID,
+		&i.QuoteID,
+		&i.SnapshotID,
+		&i.OrganizationID,
+		&i.QuoteItemID,
+		&i.FieldName,
+		&i.AiValue,
+		&i.HumanValue,
+		&i.DeltaCents,
+		&i.DeltaPercentage,
+		&i.Reason,
+		&i.AiFindingCode,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createQuotePricingOutcome = `-- name: CreateQuotePricingOutcome :one
+INSERT INTO RAC_quote_pricing_outcomes (
+  id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_at, metadata, created_at
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6,
+  $7, $8, $9, $10,
+  $11, $12, $13
+)
+RETURNING id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_at, metadata, created_at
+`
+
+type CreateQuotePricingOutcomeParams struct {
+	ID                 pgtype.UUID        `json:"id"`
+	QuoteID            pgtype.UUID        `json:"quote_id"`
+	SnapshotID         pgtype.UUID        `json:"snapshot_id"`
+	OrganizationID     pgtype.UUID        `json:"organization_id"`
+	LeadID             pgtype.UUID        `json:"lead_id"`
+	LeadServiceID      pgtype.UUID        `json:"lead_service_id"`
+	OutcomeType        string             `json:"outcome_type"`
+	RejectionReason    pgtype.Text        `json:"rejection_reason"`
+	AcceptedTotalCents pgtype.Int8        `json:"accepted_total_cents"`
+	FinalTotalCents    pgtype.Int8        `json:"final_total_cents"`
+	OutcomeAt          pgtype.Timestamptz `json:"outcome_at"`
+	Metadata           []byte             `json:"metadata"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateQuotePricingOutcome(ctx context.Context, arg CreateQuotePricingOutcomeParams) (RacQuotePricingOutcome, error) {
+	row := q.db.QueryRow(ctx, createQuotePricingOutcome,
+		arg.ID,
+		arg.QuoteID,
+		arg.SnapshotID,
+		arg.OrganizationID,
+		arg.LeadID,
+		arg.LeadServiceID,
+		arg.OutcomeType,
+		arg.RejectionReason,
+		arg.AcceptedTotalCents,
+		arg.FinalTotalCents,
+		arg.OutcomeAt,
+		arg.Metadata,
+		arg.CreatedAt,
+	)
+	var i RacQuotePricingOutcome
+	err := row.Scan(
+		&i.ID,
+		&i.QuoteID,
+		&i.SnapshotID,
+		&i.OrganizationID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.OutcomeType,
+		&i.RejectionReason,
+		&i.AcceptedTotalCents,
+		&i.FinalTotalCents,
+		&i.OutcomeAt,
+		&i.Metadata,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createQuotePricingSnapshot = `-- name: CreateQuotePricingSnapshot :one
+INSERT INTO RAC_quote_pricing_snapshots (
+  id, quote_id, organization_id, lead_id, lead_service_id,
+  service_type, postcode_raw, postcode_prefix_zip4,
+  source_type, quote_revision,
+  pricing_mode, discount_type, discount_value,
+  material_subtotal_cents, labor_subtotal_low_cents, labor_subtotal_high_cents, extra_costs_cents,
+  subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+  item_count, catalog_item_count, ad_hoc_item_count,
+  structured_items, notes, price_range_text, scope_text,
+  estimator_run_id, model_name, created_by_actor, created_by_user_id, created_at
+)
+VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8,
+  $9, $10,
+  $11, $12, $13,
+  $14, $15, $16, $17,
+  $18, $19, $20, $21,
+  $22, $23, $24,
+  $25, $26, $27, $28,
+  $29, $30, $31, $32, $33
+)
+RETURNING id, quote_id, organization_id, lead_id, lead_service_id,
+  service_type, postcode_raw, postcode_prefix_zip4,
+  source_type, quote_revision,
+  pricing_mode, discount_type, discount_value,
+  material_subtotal_cents, labor_subtotal_low_cents, labor_subtotal_high_cents, extra_costs_cents,
+  subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+  item_count, catalog_item_count, ad_hoc_item_count,
+  structured_items, notes, price_range_text, scope_text,
+  estimator_run_id, model_name, created_by_actor, created_by_user_id, created_at
+`
+
+type CreateQuotePricingSnapshotParams struct {
+	ID                     pgtype.UUID        `json:"id"`
+	QuoteID                pgtype.UUID        `json:"quote_id"`
+	OrganizationID         pgtype.UUID        `json:"organization_id"`
+	LeadID                 pgtype.UUID        `json:"lead_id"`
+	LeadServiceID          pgtype.UUID        `json:"lead_service_id"`
+	ServiceType            pgtype.Text        `json:"service_type"`
+	PostcodeRaw            pgtype.Text        `json:"postcode_raw"`
+	PostcodePrefixZip4     pgtype.Text        `json:"postcode_prefix_zip4"`
+	SourceType             string             `json:"source_type"`
+	QuoteRevision          int32              `json:"quote_revision"`
+	PricingMode            string             `json:"pricing_mode"`
+	DiscountType           string             `json:"discount_type"`
+	DiscountValue          int64              `json:"discount_value"`
+	MaterialSubtotalCents  pgtype.Int8        `json:"material_subtotal_cents"`
+	LaborSubtotalLowCents  pgtype.Int8        `json:"labor_subtotal_low_cents"`
+	LaborSubtotalHighCents pgtype.Int8        `json:"labor_subtotal_high_cents"`
+	ExtraCostsCents        pgtype.Int8        `json:"extra_costs_cents"`
+	SubtotalCents          int64              `json:"subtotal_cents"`
+	DiscountAmountCents    int64              `json:"discount_amount_cents"`
+	TaxTotalCents          int64              `json:"tax_total_cents"`
+	TotalCents             int64              `json:"total_cents"`
+	ItemCount              int32              `json:"item_count"`
+	CatalogItemCount       int32              `json:"catalog_item_count"`
+	AdHocItemCount         int32              `json:"ad_hoc_item_count"`
+	StructuredItems        []byte             `json:"structured_items"`
+	Notes                  pgtype.Text        `json:"notes"`
+	PriceRangeText         pgtype.Text        `json:"price_range_text"`
+	ScopeText              pgtype.Text        `json:"scope_text"`
+	EstimatorRunID         pgtype.Text        `json:"estimator_run_id"`
+	ModelName              pgtype.Text        `json:"model_name"`
+	CreatedByActor         string             `json:"created_by_actor"`
+	CreatedByUserID        pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateQuotePricingSnapshot(ctx context.Context, arg CreateQuotePricingSnapshotParams) (RacQuotePricingSnapshot, error) {
+	row := q.db.QueryRow(ctx, createQuotePricingSnapshot,
+		arg.ID,
+		arg.QuoteID,
+		arg.OrganizationID,
+		arg.LeadID,
+		arg.LeadServiceID,
+		arg.ServiceType,
+		arg.PostcodeRaw,
+		arg.PostcodePrefixZip4,
+		arg.SourceType,
+		arg.QuoteRevision,
+		arg.PricingMode,
+		arg.DiscountType,
+		arg.DiscountValue,
+		arg.MaterialSubtotalCents,
+		arg.LaborSubtotalLowCents,
+		arg.LaborSubtotalHighCents,
+		arg.ExtraCostsCents,
+		arg.SubtotalCents,
+		arg.DiscountAmountCents,
+		arg.TaxTotalCents,
+		arg.TotalCents,
+		arg.ItemCount,
+		arg.CatalogItemCount,
+		arg.AdHocItemCount,
+		arg.StructuredItems,
+		arg.Notes,
+		arg.PriceRangeText,
+		arg.ScopeText,
+		arg.EstimatorRunID,
+		arg.ModelName,
+		arg.CreatedByActor,
+		arg.CreatedByUserID,
+		arg.CreatedAt,
+	)
+	var i RacQuotePricingSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.QuoteID,
+		&i.OrganizationID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.ServiceType,
+		&i.PostcodeRaw,
+		&i.PostcodePrefixZip4,
+		&i.SourceType,
+		&i.QuoteRevision,
+		&i.PricingMode,
+		&i.DiscountType,
+		&i.DiscountValue,
+		&i.MaterialSubtotalCents,
+		&i.LaborSubtotalLowCents,
+		&i.LaborSubtotalHighCents,
+		&i.ExtraCostsCents,
+		&i.SubtotalCents,
+		&i.DiscountAmountCents,
+		&i.TaxTotalCents,
+		&i.TotalCents,
+		&i.ItemCount,
+		&i.CatalogItemCount,
+		&i.AdHocItemCount,
+		&i.StructuredItems,
+		&i.Notes,
+		&i.PriceRangeText,
+		&i.ScopeText,
+		&i.EstimatorRunID,
+		&i.ModelName,
+		&i.CreatedByActor,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createQuoteURL = `-- name: CreateQuoteURL :exec
 INSERT INTO RAC_quote_urls
   (id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at)
@@ -967,6 +1249,86 @@ func (q *Queries) GetLatestQuoteAIReview(ctx context.Context, arg GetLatestQuote
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getLatestQuotePricingSnapshotByQuote = `-- name: GetLatestQuotePricingSnapshotByQuote :one
+SELECT id, quote_id, organization_id, lead_id, lead_service_id,
+  service_type, postcode_raw, postcode_prefix_zip4,
+  source_type, quote_revision,
+  pricing_mode, discount_type, discount_value,
+  material_subtotal_cents, labor_subtotal_low_cents, labor_subtotal_high_cents, extra_costs_cents,
+  subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+  item_count, catalog_item_count, ad_hoc_item_count,
+  structured_items, notes, price_range_text, scope_text,
+  estimator_run_id, model_name, created_by_actor, created_by_user_id, created_at
+FROM RAC_quote_pricing_snapshots
+WHERE quote_id = $1 AND organization_id = $2
+ORDER BY quote_revision DESC, created_at DESC, id DESC
+LIMIT 1
+`
+
+type GetLatestQuotePricingSnapshotByQuoteParams struct {
+	QuoteID        pgtype.UUID `json:"quote_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLatestQuotePricingSnapshotByQuote(ctx context.Context, arg GetLatestQuotePricingSnapshotByQuoteParams) (RacQuotePricingSnapshot, error) {
+	row := q.db.QueryRow(ctx, getLatestQuotePricingSnapshotByQuote, arg.QuoteID, arg.OrganizationID)
+	var i RacQuotePricingSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.QuoteID,
+		&i.OrganizationID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.ServiceType,
+		&i.PostcodeRaw,
+		&i.PostcodePrefixZip4,
+		&i.SourceType,
+		&i.QuoteRevision,
+		&i.PricingMode,
+		&i.DiscountType,
+		&i.DiscountValue,
+		&i.MaterialSubtotalCents,
+		&i.LaborSubtotalLowCents,
+		&i.LaborSubtotalHighCents,
+		&i.ExtraCostsCents,
+		&i.SubtotalCents,
+		&i.DiscountAmountCents,
+		&i.TaxTotalCents,
+		&i.TotalCents,
+		&i.ItemCount,
+		&i.CatalogItemCount,
+		&i.AdHocItemCount,
+		&i.StructuredItems,
+		&i.Notes,
+		&i.PriceRangeText,
+		&i.ScopeText,
+		&i.EstimatorRunID,
+		&i.ModelName,
+		&i.CreatedByActor,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLatestQuotePricingSnapshotRevision = `-- name: GetLatestQuotePricingSnapshotRevision :one
+SELECT COALESCE(MAX(quote_revision), 0)::int4 AS current_revision
+FROM RAC_quote_pricing_snapshots
+WHERE quote_id = $1 AND organization_id = $2
+`
+
+type GetLatestQuotePricingSnapshotRevisionParams struct {
+	QuoteID        pgtype.UUID `json:"quote_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLatestQuotePricingSnapshotRevision(ctx context.Context, arg GetLatestQuotePricingSnapshotRevisionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getLatestQuotePricingSnapshotRevision, arg.QuoteID, arg.OrganizationID)
+	var current_revision int32
+	err := row.Scan(&current_revision)
+	return current_revision, err
 }
 
 const getProviderIntegration = `-- name: GetProviderIntegration :one
@@ -1411,6 +1773,39 @@ func (q *Queries) GetQuoteItemByID(ctx context.Context, arg GetQuoteItemByIDPara
 	return i, err
 }
 
+const getQuotePricingSnapshotContext = `-- name: GetQuotePricingSnapshotContext :one
+SELECT
+  st.name AS service_type,
+  l.address_zip_code AS postcode_raw
+FROM RAC_leads l
+LEFT JOIN RAC_lead_services ls
+  ON ls.id = $1
+ AND ls.lead_id = l.id
+ AND ls.organization_id = l.organization_id
+LEFT JOIN RAC_service_types st
+  ON st.id = ls.service_type_id
+ AND st.organization_id = l.organization_id
+WHERE l.id = $2 AND l.organization_id = $3
+`
+
+type GetQuotePricingSnapshotContextParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+type GetQuotePricingSnapshotContextRow struct {
+	ServiceType pgtype.Text `json:"service_type"`
+	PostcodeRaw string      `json:"postcode_raw"`
+}
+
+func (q *Queries) GetQuotePricingSnapshotContext(ctx context.Context, arg GetQuotePricingSnapshotContextParams) (GetQuotePricingSnapshotContextRow, error) {
+	row := q.db.QueryRow(ctx, getQuotePricingSnapshotContext, arg.LeadServiceID, arg.LeadID, arg.OrganizationID)
+	var i GetQuotePricingSnapshotContextRow
+	err := row.Scan(&i.ServiceType, &i.PostcodeRaw)
+	return i, err
+}
+
 const getQuoteStatus = `-- name: GetQuoteStatus :one
 SELECT status
 FROM RAC_quotes
@@ -1541,6 +1936,97 @@ func (q *Queries) ListPendingApprovals(ctx context.Context, arg ListPendingAppro
 			&i.TotalCents,
 			&i.LeadScore,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPricingIntelligenceAggregates = `-- name: ListPricingIntelligenceAggregates :many
+SELECT
+  COALESCE(s.postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN s.total_cents < 100000 THEN 'under_1000'
+    WHEN s.total_cents < 250000 THEN '1000_2500'
+    WHEN s.total_cents < 500000 THEN '2500_5000'
+    WHEN s.total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  COUNT(*) FILTER (WHERE o.outcome_type IN ('accepted', 'rejected'))::int4 AS sample_count,
+  COUNT(*) FILTER (WHERE o.outcome_type = 'accepted')::int4 AS accepted_count,
+  COUNT(*) FILTER (WHERE o.outcome_type = 'rejected')::int4 AS rejected_count,
+  COALESCE(
+    ROUND(
+      100.0 * COUNT(*) FILTER (WHERE o.outcome_type = 'accepted')
+      / NULLIF(COUNT(*) FILTER (WHERE o.outcome_type IN ('accepted', 'rejected')), 0),
+      1
+    ),
+    0
+  )::float8 AS conversion_rate,
+  COALESCE(ROUND(AVG(s.total_cents)), 0)::bigint AS average_quoted_cents,
+  COALESCE(ROUND(AVG(o.final_total_cents) FILTER (WHERE o.final_total_cents IS NOT NULL)), 0)::bigint AS average_outcome_cents,
+  COUNT(*) FILTER (WHERE o.final_total_cents IS NOT NULL)::int4 AS outcome_total_count
+FROM RAC_quote_pricing_snapshots s
+LEFT JOIN RAC_quote_pricing_outcomes o ON o.snapshot_id = s.id
+WHERE s.organization_id = $1 AND s.service_type = $2
+  AND ($3 = '' OR COALESCE(s.postcode_prefix_zip4, '') = $3)
+GROUP BY COALESCE(s.postcode_prefix_zip4, ''), price_band
+ORDER BY
+  sample_count DESC,
+  average_quoted_cents DESC,
+  COALESCE(s.postcode_prefix_zip4, '') ASC,
+  price_band ASC
+LIMIT $4
+`
+
+type ListPricingIntelligenceAggregatesParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceType    pgtype.Text `json:"service_type"`
+	Column3        interface{} `json:"column_3"`
+	Limit          int32       `json:"limit"`
+}
+
+type ListPricingIntelligenceAggregatesRow struct {
+	RegionPrefix        string  `json:"region_prefix"`
+	PriceBand           string  `json:"price_band"`
+	SampleCount         int32   `json:"sample_count"`
+	AcceptedCount       int32   `json:"accepted_count"`
+	RejectedCount       int32   `json:"rejected_count"`
+	ConversionRate      float64 `json:"conversion_rate"`
+	AverageQuotedCents  int64   `json:"average_quoted_cents"`
+	AverageOutcomeCents int64   `json:"average_outcome_cents"`
+	OutcomeTotalCount   int32   `json:"outcome_total_count"`
+}
+
+func (q *Queries) ListPricingIntelligenceAggregates(ctx context.Context, arg ListPricingIntelligenceAggregatesParams) ([]ListPricingIntelligenceAggregatesRow, error) {
+	rows, err := q.db.Query(ctx, listPricingIntelligenceAggregates,
+		arg.OrganizationID,
+		arg.ServiceType,
+		arg.Column3,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPricingIntelligenceAggregatesRow
+	for rows.Next() {
+		var i ListPricingIntelligenceAggregatesRow
+		if err := rows.Scan(
+			&i.RegionPrefix,
+			&i.PriceBand,
+			&i.SampleCount,
+			&i.AcceptedCount,
+			&i.RejectedCount,
+			&i.ConversionRate,
+			&i.AverageQuotedCents,
+			&i.AverageOutcomeCents,
+			&i.OutcomeTotalCount,
 		); err != nil {
 			return nil, err
 		}
@@ -2159,6 +2645,236 @@ func (q *Queries) ListQuotes(ctx context.Context, arg ListQuotesParams) ([]ListQ
 			&i.SignatureIp,
 			&i.PdfFileKey,
 			&i.FinancingDisclaimer,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentPricingCorrections = `-- name: ListRecentPricingCorrections :many
+SELECT
+  c.quote_id,
+  COALESCE(s.postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN s.total_cents < 100000 THEN 'under_1000'
+    WHEN s.total_cents < 250000 THEN '1000_2500'
+    WHEN s.total_cents < 500000 THEN '2500_5000'
+    WHEN s.total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  c.field_name,
+  c.delta_cents,
+  c.delta_percentage,
+  c.reason,
+  c.ai_finding_code,
+  c.created_at
+FROM RAC_quote_pricing_corrections c
+JOIN RAC_quote_pricing_snapshots s ON s.id = c.snapshot_id
+WHERE c.organization_id = $1 AND s.service_type = $2
+  AND ($3 = '' OR COALESCE(s.postcode_prefix_zip4, '') = $3)
+ORDER BY
+  c.created_at DESC,
+  c.id DESC
+LIMIT $4
+`
+
+type ListRecentPricingCorrectionsParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceType    pgtype.Text `json:"service_type"`
+	Column3        interface{} `json:"column_3"`
+	Limit          int32       `json:"limit"`
+}
+
+type ListRecentPricingCorrectionsRow struct {
+	QuoteID         pgtype.UUID        `json:"quote_id"`
+	RegionPrefix    string             `json:"region_prefix"`
+	PriceBand       string             `json:"price_band"`
+	FieldName       string             `json:"field_name"`
+	DeltaCents      pgtype.Int8        `json:"delta_cents"`
+	DeltaPercentage pgtype.Float8      `json:"delta_percentage"`
+	Reason          pgtype.Text        `json:"reason"`
+	AiFindingCode   pgtype.Text        `json:"ai_finding_code"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListRecentPricingCorrections(ctx context.Context, arg ListRecentPricingCorrectionsParams) ([]ListRecentPricingCorrectionsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentPricingCorrections,
+		arg.OrganizationID,
+		arg.ServiceType,
+		arg.Column3,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecentPricingCorrectionsRow
+	for rows.Next() {
+		var i ListRecentPricingCorrectionsRow
+		if err := rows.Scan(
+			&i.QuoteID,
+			&i.RegionPrefix,
+			&i.PriceBand,
+			&i.FieldName,
+			&i.DeltaCents,
+			&i.DeltaPercentage,
+			&i.Reason,
+			&i.AiFindingCode,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentPricingOutcomes = `-- name: ListRecentPricingOutcomes :many
+SELECT
+  o.quote_id,
+  COALESCE(s.postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN s.total_cents < 100000 THEN 'under_1000'
+    WHEN s.total_cents < 250000 THEN '1000_2500'
+    WHEN s.total_cents < 500000 THEN '2500_5000'
+    WHEN s.total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  o.outcome_type,
+  o.final_total_cents,
+  o.rejection_reason,
+  o.created_at
+FROM RAC_quote_pricing_outcomes o
+JOIN RAC_quote_pricing_snapshots s ON s.id = o.snapshot_id
+WHERE o.organization_id = $1 AND s.service_type = $2
+  AND ($3 = '' OR COALESCE(s.postcode_prefix_zip4, '') = $3)
+ORDER BY
+  o.created_at DESC,
+  o.id DESC
+LIMIT $4
+`
+
+type ListRecentPricingOutcomesParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceType    pgtype.Text `json:"service_type"`
+	Column3        interface{} `json:"column_3"`
+	Limit          int32       `json:"limit"`
+}
+
+type ListRecentPricingOutcomesRow struct {
+	QuoteID         pgtype.UUID        `json:"quote_id"`
+	RegionPrefix    string             `json:"region_prefix"`
+	PriceBand       string             `json:"price_band"`
+	OutcomeType     string             `json:"outcome_type"`
+	FinalTotalCents pgtype.Int8        `json:"final_total_cents"`
+	RejectionReason pgtype.Text        `json:"rejection_reason"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListRecentPricingOutcomes(ctx context.Context, arg ListRecentPricingOutcomesParams) ([]ListRecentPricingOutcomesRow, error) {
+	rows, err := q.db.Query(ctx, listRecentPricingOutcomes,
+		arg.OrganizationID,
+		arg.ServiceType,
+		arg.Column3,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecentPricingOutcomesRow
+	for rows.Next() {
+		var i ListRecentPricingOutcomesRow
+		if err := rows.Scan(
+			&i.QuoteID,
+			&i.RegionPrefix,
+			&i.PriceBand,
+			&i.OutcomeType,
+			&i.FinalTotalCents,
+			&i.RejectionReason,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentPricingSnapshots = `-- name: ListRecentPricingSnapshots :many
+SELECT
+  quote_id,
+  COALESCE(postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN total_cents < 100000 THEN 'under_1000'
+    WHEN total_cents < 250000 THEN '1000_2500'
+    WHEN total_cents < 500000 THEN '2500_5000'
+    WHEN total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  source_type,
+  quote_revision,
+  total_cents,
+  created_at
+FROM RAC_quote_pricing_snapshots
+WHERE organization_id = $1 AND service_type = $2
+  AND ($3 = '' OR COALESCE(postcode_prefix_zip4, '') = $3)
+ORDER BY
+  created_at DESC,
+  id DESC
+LIMIT $4
+`
+
+type ListRecentPricingSnapshotsParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceType    pgtype.Text `json:"service_type"`
+	Column3        interface{} `json:"column_3"`
+	Limit          int32       `json:"limit"`
+}
+
+type ListRecentPricingSnapshotsRow struct {
+	QuoteID       pgtype.UUID        `json:"quote_id"`
+	RegionPrefix  string             `json:"region_prefix"`
+	PriceBand     string             `json:"price_band"`
+	SourceType    string             `json:"source_type"`
+	QuoteRevision int32              `json:"quote_revision"`
+	TotalCents    int64              `json:"total_cents"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListRecentPricingSnapshots(ctx context.Context, arg ListRecentPricingSnapshotsParams) ([]ListRecentPricingSnapshotsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentPricingSnapshots,
+		arg.OrganizationID,
+		arg.ServiceType,
+		arg.Column3,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRecentPricingSnapshotsRow
+	for rows.Next() {
+		var i ListRecentPricingSnapshotsRow
+		if err := rows.Scan(
+			&i.QuoteID,
+			&i.RegionPrefix,
+			&i.PriceBand,
+			&i.SourceType,
+			&i.QuoteRevision,
+			&i.TotalCents,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -68,6 +68,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
 	rg.POST("/generate", h.Generate)
+	rg.GET("/debug/pricing-intelligence/summary", h.GetPricingIntelligenceSummary)
+	rg.GET("/debug/pricing-intelligence/records", h.GetPricingIntelligenceRecords)
 	rg.POST("/:id/feedback", h.SubmitHumanFeedback)
 	rg.GET("/generate-jobs", h.ListGenerateJobs)
 	rg.DELETE("/generate-jobs/completed", h.ClearCompletedGenerateJobs)
@@ -585,7 +587,12 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.Update(c.Request.Context(), id, tenantID, req)
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	result, err := h.svc.Update(c.Request.Context(), id, tenantID, identity.UserID(), req)
 	if httpkit.HandleError(c, err) {
 		return
 	}

@@ -143,6 +143,7 @@ const (
 	quoteNotFoundMsg            = "quote not found"
 	quoteGenerateJobNotFoundMsg = "quote generate job not found"
 	errScanQuoteItemFmt         = "failed to scan quote item: %w"
+	errBeginTransactionFmt      = "failed to begin transaction: %w"
 )
 
 // Repository provides database operations for quotes
@@ -167,11 +168,11 @@ func (r *Repository) NextQuoteNumber(ctx context.Context, orgID uuid.UUID) (stri
 	return fmt.Sprintf("OFF-%d-%04d", year, nextNum), nil
 }
 
-// CreateWithItems inserts a quote and its line items in a single transaction
-func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []QuoteItem) error {
+// CreateWithItems inserts a quote and its line items in a single transaction.
+func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []QuoteItem, pricingSnapshot *QuotePricingSnapshot) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf(errBeginTransactionFmt, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -207,19 +208,26 @@ func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []
 	if err := r.insertItems(ctx, qtx, items); err != nil {
 		return err
 	}
+	if err := r.insertPricingSnapshot(ctx, qtx, quote, items, pricingSnapshot); err != nil {
+		return err
+	}
 
 	return tx.Commit(ctx)
 }
 
-// UpdateWithItems updates a quote and optionally replaces its line items
-func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []QuoteItem, replaceItems bool) error {
+// UpdateWithItems updates a quote and optionally replaces its line items.
+func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []QuoteItem, replaceItems bool, pricingSnapshot *QuotePricingSnapshot) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf(errBeginTransactionFmt, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := r.queries.WithTx(tx)
+	previousPricingSnapshot, err := r.getLatestPricingSnapshot(ctx, qtx, quote.ID, quote.OrganizationID)
+	if err != nil {
+		return err
+	}
 	rowsAffected, err := qtx.UpdateQuoteWithItems(ctx, quotesdb.UpdateQuoteWithItemsParams{
 		ID:                  toPgUUID(quote.ID),
 		PricingMode:         quote.PricingMode,
@@ -252,6 +260,12 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 		if err := r.insertItems(ctx, qtx, items); err != nil {
 			return err
 		}
+	}
+	if err := r.insertPricingSnapshot(ctx, qtx, quote, items, pricingSnapshot); err != nil {
+		return err
+	}
+	if err := r.insertPricingCorrections(ctx, qtx, quote, items, previousPricingSnapshot, pricingSnapshot); err != nil {
+		return err
 	}
 
 	return tx.Commit(ctx)
@@ -654,11 +668,18 @@ func (r *Repository) UpdateQuoteTotals(ctx context.Context, quoteID uuid.UUID, s
 	return nil
 }
 
-// AcceptQuote sets the quote to Accepted status with signature data.
-func (r *Repository) AcceptQuote(ctx context.Context, quoteID uuid.UUID, signatureName, signatureData, signatureIP string) error {
+// AcceptQuote sets the quote to Accepted status with signature data and records the pricing outcome.
+func (r *Repository) AcceptQuote(ctx context.Context, quote *Quote, signatureName, signatureData, signatureIP string) error {
 	now := time.Now()
-	rowsAffected, err := r.queries.AcceptQuote(ctx, quotesdb.AcceptQuoteParams{
-		ID:            toPgUUID(quoteID),
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf(errBeginTransactionFmt, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := r.queries.WithTx(tx)
+	rowsAffected, err := qtx.AcceptQuote(ctx, quotesdb.AcceptQuoteParams{
+		ID:            toPgUUID(quote.ID),
 		AcceptedAt:    toPgTimestamp(now),
 		SignatureName: pgtype.Text{String: signatureName, Valid: true},
 		SignatureData: pgtype.Text{String: signatureData, Valid: true},
@@ -670,14 +691,34 @@ func (r *Repository) AcceptQuote(ctx context.Context, quoteID uuid.UUID, signatu
 	if rowsAffected == 0 {
 		return apperr.Conflict("quote cannot be accepted in its current state")
 	}
-	return nil
+	if err := r.insertPricingOutcome(ctx, qtx, quote, quotePricingOutcomeParams{
+		OutcomeType:        "accepted",
+		AcceptedTotalCents: &quote.TotalCents,
+		FinalTotalCents:    &quote.TotalCents,
+		OutcomeAt:          now,
+		Metadata: map[string]any{
+			"signatureName": signatureName,
+			"signatureIP":   signatureIP,
+		},
+	}); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
-// RejectQuote sets the quote to Rejected status with an optional reason.
-func (r *Repository) RejectQuote(ctx context.Context, quoteID uuid.UUID, reason *string) error {
+// RejectQuote sets the quote to Rejected status with an optional reason and records the pricing outcome.
+func (r *Repository) RejectQuote(ctx context.Context, quote *Quote, reason *string) error {
 	now := time.Now()
-	rowsAffected, err := r.queries.RejectQuote(ctx, quotesdb.RejectQuoteParams{
-		ID:              toPgUUID(quoteID),
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf(errBeginTransactionFmt, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := r.queries.WithTx(tx)
+	rowsAffected, err := qtx.RejectQuote(ctx, quotesdb.RejectQuoteParams{
+		ID:              toPgUUID(quote.ID),
 		RejectedAt:      toPgTimestamp(now),
 		RejectionReason: toPgTextPtr(reason),
 	})
@@ -687,7 +728,19 @@ func (r *Repository) RejectQuote(ctx context.Context, quoteID uuid.UUID, reason 
 	if rowsAffected == 0 {
 		return apperr.Conflict("quote cannot be rejected in its current state")
 	}
-	return nil
+	if err := r.insertPricingOutcome(ctx, qtx, quote, quotePricingOutcomeParams{
+		OutcomeType:     "rejected",
+		RejectionReason: reason,
+		FinalTotalCents: &quote.TotalCents,
+		OutcomeAt:       now,
+		Metadata: map[string]any{
+			"rejectionReason": reason,
+		},
+	}); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // SetPDFFileKey stores the MinIO reference for the generated PDF.

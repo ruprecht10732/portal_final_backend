@@ -36,6 +36,24 @@ type DraftQuoteURL struct {
 	CatalogProductID *uuid.UUID // originating product
 }
 
+// QuotePricingSnapshot captures the structured price state that produced a quote revision.
+type QuotePricingSnapshot struct {
+	ServiceType            string
+	PostcodeRaw            string
+	PostcodePrefixZIP4     string
+	SourceType             string
+	MaterialSubtotalCents  *int64
+	LaborSubtotalLowCents  *int64
+	LaborSubtotalHighCents *int64
+	ExtraCostsCents        *int64
+	ScopeText              *string
+	PriceRangeText         *string
+	EstimatorRunID         *string
+	ModelName              *string
+	CreatedByActor         string
+	CreatedByUserID        *uuid.UUID
+}
+
 // DraftQuoteParams contains everything the leads agent needs to create a draft quote.
 type DraftQuoteParams struct {
 	QuoteID        *uuid.UUID // If set, update the existing quote instead of creating a new one
@@ -47,6 +65,7 @@ type DraftQuoteParams struct {
 	Items          []DraftQuoteItem
 	Attachments    []DraftQuoteAttachment
 	URLs           []DraftQuoteURL
+	PricingSnapshot *QuotePricingSnapshot
 }
 
 // DraftQuoteResult is the minimal response the leads domain needs after a quote
@@ -92,10 +111,68 @@ type QuoteAIReviewResult struct {
 	CreatedAt    time.Time
 }
 
+type PricingIntelligenceAggregate struct {
+	RegionPrefix        string
+	PriceBand           string
+	SampleCount         int
+	AcceptedCount       int
+	RejectedCount       int
+	ConversionRate      float64
+	AverageQuotedCents  int64
+	AverageOutcomeCents *int64
+}
+
+type PricingIntelligenceSnapshotRecord struct {
+	QuoteID        uuid.UUID
+	RegionPrefix   string
+	PriceBand      string
+	SourceType     string
+	QuoteRevision  int
+	TotalCents     int64
+	CreatedAt      time.Time
+}
+
+type PricingIntelligenceOutcomeRecord struct {
+	QuoteID         uuid.UUID
+	RegionPrefix    string
+	PriceBand       string
+	OutcomeType     string
+	FinalTotalCents *int64
+	Reason          *string
+	CreatedAt       time.Time
+}
+
+type PricingIntelligenceCorrectionRecord struct {
+	QuoteID          uuid.UUID
+	RegionPrefix     string
+	PriceBand        string
+	FieldName        string
+	DeltaCents       *int64
+	DeltaPercentage  *float64
+	Reason           *string
+	AIFindingCode    *string
+	CreatedAt        time.Time
+}
+
+type PricingIntelligenceReport struct {
+	ServiceType       string
+	RegionPrefix      string
+	Aggregates        []PricingIntelligenceAggregate
+	RecentSnapshots   []PricingIntelligenceSnapshotRecord
+	RecentOutcomes    []PricingIntelligenceOutcomeRecord
+	RecentCorrections []PricingIntelligenceCorrectionRecord
+}
+
 // QuoteDrafter is the ACL interface through which the leads agent can draft
 // quotes in the quotes domain. The adapter delegates to the quotes service.
 type QuoteDrafter interface {
 	// DraftQuote creates a new draft quote and emits the appropriate timeline event.
 	DraftQuote(ctx context.Context, params DraftQuoteParams) (*DraftQuoteResult, error)
 	RecordQuoteAIReview(ctx context.Context, params RecordQuoteAIReviewParams) (*QuoteAIReviewResult, error)
+}
+
+// PricingIntelligenceReader provides read-only access to pricing intelligence
+// derived from quote pricing snapshots, outcomes, and corrections.
+type PricingIntelligenceReader interface {
+	GetPricingIntelligenceReport(ctx context.Context, organizationID uuid.UUID, serviceType string, postcodePrefix string) (*PricingIntelligenceReport, error)
 }

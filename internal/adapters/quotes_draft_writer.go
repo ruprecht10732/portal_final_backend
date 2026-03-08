@@ -53,6 +53,26 @@ func (a *QuotesDraftWriter) DraftQuote(ctx context.Context, params ports.DraftQu
 		}
 	}
 
+	var pricingSnapshot *quotesvc.QuotePricingSnapshotParams
+	if params.PricingSnapshot != nil {
+		pricingSnapshot = &quotesvc.QuotePricingSnapshotParams{
+			ServiceType:            params.PricingSnapshot.ServiceType,
+			PostcodeRaw:            params.PricingSnapshot.PostcodeRaw,
+			PostcodePrefixZIP4:     params.PricingSnapshot.PostcodePrefixZIP4,
+			SourceType:             params.PricingSnapshot.SourceType,
+			MaterialSubtotalCents:  params.PricingSnapshot.MaterialSubtotalCents,
+			LaborSubtotalLowCents:  params.PricingSnapshot.LaborSubtotalLowCents,
+			LaborSubtotalHighCents: params.PricingSnapshot.LaborSubtotalHighCents,
+			ExtraCostsCents:        params.PricingSnapshot.ExtraCostsCents,
+			ScopeText:              params.PricingSnapshot.ScopeText,
+			PriceRangeText:         params.PricingSnapshot.PriceRangeText,
+			EstimatorRunID:         params.PricingSnapshot.EstimatorRunID,
+			ModelName:              params.PricingSnapshot.ModelName,
+			CreatedByActor:         params.PricingSnapshot.CreatedByActor,
+			CreatedByUserID:        params.PricingSnapshot.CreatedByUserID,
+		}
+	}
+
 	result, err := a.svc.DraftQuote(ctx, quotesvc.DraftQuoteParams{
 		QuoteID:        params.QuoteID,
 		LeadID:         params.LeadID,
@@ -63,6 +83,7 @@ func (a *QuotesDraftWriter) DraftQuote(ctx context.Context, params ports.DraftQu
 		Items:          svcItems,
 		Attachments:    svcAttachments,
 		URLs:           svcURLs,
+		PricingSnapshot: pricingSnapshot,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("quotes draft adapter: %w", err)

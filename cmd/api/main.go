@@ -369,6 +369,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	notificationModule.SetLeadTimelineWriter(adapters.NewLeadTimelineWriter(leadsModule.Repository()))
 	leadsModule.SetCatalogReader(adapters.NewCatalogProductReader(catalogModule.Repository()))
 	leadsModule.SetQuoteDrafter(adapters.NewQuotesDraftWriter(quotesModule.Service()))
+	leadsModule.SetPricingIntelligenceReader(adapters.NewQuotePricingIntelligenceReader(quotesModule.Repository()))
 	quotesModule.Service().SetQuotePromptGenerator(adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent()))
 
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)

@@ -271,6 +271,63 @@ type HumanFeedbackResponse struct {
 	CreatedAt       time.Time  `json:"createdAt"`
 }
 
+type PricingIntelligenceAggregateResponse struct {
+	RegionPrefix       string `json:"regionPrefix"`
+	PriceBand          string `json:"priceBand"`
+	SampleCount        int    `json:"sampleCount"`
+	AcceptedCount      int    `json:"acceptedCount"`
+	RejectedCount      int    `json:"rejectedCount"`
+	ConversionRate     float64 `json:"conversionRate"`
+	AverageQuotedCents int64  `json:"averageQuotedCents"`
+	AverageOutcomeCents *int64 `json:"averageOutcomeCents,omitempty"`
+}
+
+type PricingIntelligenceSnapshotResponse struct {
+	QuoteID       uuid.UUID `json:"quoteId"`
+	RegionPrefix  string    `json:"regionPrefix"`
+	PriceBand     string    `json:"priceBand"`
+	SourceType    string    `json:"sourceType"`
+	QuoteRevision int       `json:"quoteRevision"`
+	TotalCents    int64     `json:"totalCents"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+type PricingIntelligenceOutcomeResponse struct {
+	QuoteID         uuid.UUID `json:"quoteId"`
+	RegionPrefix    string    `json:"regionPrefix"`
+	PriceBand       string    `json:"priceBand"`
+	OutcomeType     string    `json:"outcomeType"`
+	FinalTotalCents *int64    `json:"finalTotalCents,omitempty"`
+	Reason          *string   `json:"reason,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+type PricingIntelligenceCorrectionResponse struct {
+	QuoteID         uuid.UUID `json:"quoteId"`
+	RegionPrefix    string    `json:"regionPrefix"`
+	PriceBand       string    `json:"priceBand"`
+	FieldName       string    `json:"fieldName"`
+	DeltaCents      *int64    `json:"deltaCents,omitempty"`
+	DeltaPercentage *float64  `json:"deltaPercentage,omitempty"`
+	Reason          *string   `json:"reason,omitempty"`
+	AIFindingCode   *string   `json:"aiFindingCode,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+type PricingIntelligenceSummaryResponse struct {
+	ServiceType  string                               `json:"serviceType"`
+	RegionPrefix string                               `json:"regionPrefix"`
+	Aggregates   []PricingIntelligenceAggregateResponse `json:"aggregates"`
+}
+
+type PricingIntelligenceRecordsResponse struct {
+	ServiceType       string                                 `json:"serviceType"`
+	RegionPrefix      string                                 `json:"regionPrefix"`
+	Snapshots         []PricingIntelligenceSnapshotResponse   `json:"snapshots"`
+	Outcomes          []PricingIntelligenceOutcomeResponse    `json:"outcomes"`
+	Corrections       []PricingIntelligenceCorrectionResponse `json:"corrections"`
+}
+
 // QuotePreviewLinkResponse is the response for a read-only preview link.
 type QuotePreviewLinkResponse struct {
 	Token     string     `json:"token"`

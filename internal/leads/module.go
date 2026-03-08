@@ -706,6 +706,12 @@ func (m *Module) SetQuoteDrafter(qd ports.QuoteDrafter) {
 	m.quoteGenerator.SetQuoteDrafter(qd)
 }
 
+// SetPricingIntelligenceReader injects read-only quote pricing intelligence into estimator agents.
+func (m *Module) SetPricingIntelligenceReader(reader ports.PricingIntelligenceReader) {
+	m.estimator.SetPricingIntelligenceReader(reader)
+	m.quoteGenerator.SetPricingIntelligenceReader(reader)
+}
+
 // SetPartnerOfferCreator sets the partner offer creator on the Dispatcher agent.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetPartnerOfferCreator(poc ports.PartnerOfferCreator) {

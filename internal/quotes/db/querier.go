@@ -26,6 +26,9 @@ type Querier interface {
 	CreateQuoteAttachment(ctx context.Context, arg CreateQuoteAttachmentParams) error
 	CreateQuoteExport(ctx context.Context, arg CreateQuoteExportParams) error
 	CreateQuoteItem(ctx context.Context, arg CreateQuoteItemParams) error
+	CreateQuotePricingCorrection(ctx context.Context, arg CreateQuotePricingCorrectionParams) (RacQuotePricingCorrection, error)
+	CreateQuotePricingOutcome(ctx context.Context, arg CreateQuotePricingOutcomeParams) (RacQuotePricingOutcome, error)
+	CreateQuotePricingSnapshot(ctx context.Context, arg CreateQuotePricingSnapshotParams) (RacQuotePricingSnapshot, error)
 	CreateQuoteURL(ctx context.Context, arg CreateQuoteURLParams) error
 	DeleteCompletedGenerateQuoteJobs(ctx context.Context, arg DeleteCompletedGenerateQuoteJobsParams) (int64, error)
 	DeleteFinishedGenerateQuoteJobsBefore(ctx context.Context, arg DeleteFinishedGenerateQuoteJobsBeforeParams) (int64, error)
@@ -40,6 +43,8 @@ type Querier interface {
 	GetGenerateQuoteJobByID(ctx context.Context, id pgtype.UUID) (RacAiQuoteJob, error)
 	GetLatestNonDraftByLead(ctx context.Context, arg GetLatestNonDraftByLeadParams) (GetLatestNonDraftByLeadRow, error)
 	GetLatestQuoteAIReview(ctx context.Context, arg GetLatestQuoteAIReviewParams) (RacQuoteAiReview, error)
+	GetLatestQuotePricingSnapshotByQuote(ctx context.Context, arg GetLatestQuotePricingSnapshotByQuoteParams) (RacQuotePricingSnapshot, error)
+	GetLatestQuotePricingSnapshotRevision(ctx context.Context, arg GetLatestQuotePricingSnapshotRevisionParams) (int32, error)
 	GetProviderIntegration(ctx context.Context, arg GetProviderIntegrationParams) (GetProviderIntegrationRow, error)
 	GetQuoteAttachmentByID(ctx context.Context, arg GetQuoteAttachmentByIDParams) (RacQuoteAttachment, error)
 	GetQuoteByID(ctx context.Context, arg GetQuoteByIDParams) (GetQuoteByIDRow, error)
@@ -47,9 +52,11 @@ type Querier interface {
 	GetQuoteByToken(ctx context.Context, publicToken pgtype.Text) (GetQuoteByTokenRow, error)
 	GetQuoteExport(ctx context.Context, arg GetQuoteExportParams) (RacQuoteExport, error)
 	GetQuoteItemByID(ctx context.Context, arg GetQuoteItemByIDParams) (GetQuoteItemByIDRow, error)
+	GetQuotePricingSnapshotContext(ctx context.Context, arg GetQuotePricingSnapshotContextParams) (GetQuotePricingSnapshotContextRow, error)
 	GetQuoteStatus(ctx context.Context, arg GetQuoteStatusParams) (QuoteStatus, error)
 	ListGenerateQuoteJobs(ctx context.Context, arg ListGenerateQuoteJobsParams) ([]RacAiQuoteJob, error)
 	ListPendingApprovals(ctx context.Context, arg ListPendingApprovalsParams) ([]ListPendingApprovalsRow, error)
+	ListPricingIntelligenceAggregates(ctx context.Context, arg ListPricingIntelligenceAggregatesParams) ([]ListPricingIntelligenceAggregatesRow, error)
 	ListQuoteActivities(ctx context.Context, arg ListQuoteActivitiesParams) ([]RacQuoteActivity, error)
 	ListQuoteAnnotationsByQuoteID(ctx context.Context, quoteID pgtype.UUID) ([]RacQuoteAnnotation, error)
 	ListQuoteAttachmentsByQuoteID(ctx context.Context, arg ListQuoteAttachmentsByQuoteIDParams) ([]RacQuoteAttachment, error)
@@ -60,6 +67,9 @@ type Querier interface {
 	ListQuoteURLsByQuoteID(ctx context.Context, arg ListQuoteURLsByQuoteIDParams) ([]RacQuoteUrl, error)
 	ListQuoteURLsByQuoteIDNoOrg(ctx context.Context, quoteID pgtype.UUID) ([]RacQuoteUrl, error)
 	ListQuotes(ctx context.Context, arg ListQuotesParams) ([]ListQuotesRow, error)
+	ListRecentPricingCorrections(ctx context.Context, arg ListRecentPricingCorrectionsParams) ([]ListRecentPricingCorrectionsRow, error)
+	ListRecentPricingOutcomes(ctx context.Context, arg ListRecentPricingOutcomesParams) ([]ListRecentPricingOutcomesRow, error)
+	ListRecentPricingSnapshots(ctx context.Context, arg ListRecentPricingSnapshotsParams) ([]ListRecentPricingSnapshotsRow, error)
 	// Quotes Domain SQL Queries
 	NextQuoteNumber(ctx context.Context, organizationID pgtype.UUID) (int32, error)
 	RejectQuote(ctx context.Context, arg RejectQuoteParams) (int64, error)

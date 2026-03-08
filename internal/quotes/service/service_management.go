@@ -90,7 +90,22 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		}
 	}
 
-	if err := s.repo.CreateWithItems(ctx, &quote, items); err != nil {
+	if err := s.repo.CreateWithItems(ctx, &quote, items, &repository.QuotePricingSnapshot{
+		QuoteID:             quote.ID,
+		OrganizationID:      tenantID,
+		LeadID:              quote.LeadID,
+		LeadServiceID:       quote.LeadServiceID,
+		SourceType:          "manual_create",
+		PricingMode:         quote.PricingMode,
+		DiscountType:        quote.DiscountType,
+		DiscountValue:       quote.DiscountValue,
+		SubtotalCents:       quote.SubtotalCents,
+		DiscountAmountCents: quote.DiscountAmountCents,
+		TaxTotalCents:       quote.TaxTotalCents,
+		TotalCents:          quote.TotalCents,
+		CreatedByActor:      "user",
+		CreatedByUserID:     &actorID,
+	}); err != nil {
 		return nil, err
 	}
 	if err := s.saveAttachments(ctx, quote.ID, tenantID, req.Attachments); err != nil {
@@ -169,7 +184,7 @@ func toItemRequests(items []repository.QuoteItem) []transport.QuoteItemRequest {
 	return reqs
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, req transport.UpdateQuoteRequest) (*transport.QuoteResponse, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID, req transport.UpdateQuoteRequest) (*transport.QuoteResponse, error) {
 	quote, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
@@ -197,7 +212,22 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 	quote.TotalCents = calc.TotalCents
 	quote.UpdatedAt = time.Now()
 
-	if err := s.repo.UpdateWithItems(ctx, quote, items, req.Items != nil); err != nil {
+	if err := s.repo.UpdateWithItems(ctx, quote, items, req.Items != nil, &repository.QuotePricingSnapshot{
+		QuoteID:             quote.ID,
+		OrganizationID:      tenantID,
+		LeadID:              quote.LeadID,
+		LeadServiceID:       quote.LeadServiceID,
+		SourceType:          "manual_update",
+		PricingMode:         quote.PricingMode,
+		DiscountType:        quote.DiscountType,
+		DiscountValue:       quote.DiscountValue,
+		SubtotalCents:       quote.SubtotalCents,
+		DiscountAmountCents: quote.DiscountAmountCents,
+		TaxTotalCents:       quote.TaxTotalCents,
+		TotalCents:          quote.TotalCents,
+		CreatedByActor:      "user",
+		CreatedByUserID:     &actorID,
+	}); err != nil {
 		return nil, err
 	}
 	if req.Attachments != nil {

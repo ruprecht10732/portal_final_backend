@@ -107,6 +107,85 @@ func buildHumanFeedbackMemorySection(feedbackItems []repository.HumanFeedback) s
 	return strings.TrimSpace(sb.String())
 }
 
+func buildPricingIntelligenceSection(report *ports.PricingIntelligenceReport) string {
+	if report == nil {
+		return ""
+	}
+	if len(report.Aggregates) == 0 && len(report.RecentOutcomes) == 0 && len(report.RecentCorrections) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("=== PRICING INTELLIGENCE ===\n")
+	if strings.TrimSpace(report.RegionPrefix) != "" {
+		sb.WriteString(fmt.Sprintf("Filtered region: %s\n", report.RegionPrefix))
+	}
+	appendPricingAggregateLines(&sb, report.Aggregates)
+	appendPricingOutcomeLines(&sb, report.RecentOutcomes)
+	appendPricingCorrectionLines(&sb, report.RecentCorrections)
+	return strings.TrimSpace(sb.String())
+}
+
+func appendPricingAggregateLines(sb *strings.Builder, aggregates []ports.PricingIntelligenceAggregate) {
+	for i, aggregate := range aggregates {
+		if i >= 4 {
+			break
+		}
+		line := fmt.Sprintf("- aggregate region=%s | band=%s | samples=%d | accepted=%d | rejected=%d | conversion=%.1f%% | avgQuote=%s",
+			compactText(fallbackRegion(aggregate.RegionPrefix), 12),
+			compactText(aggregate.PriceBand, 24),
+			aggregate.SampleCount,
+			aggregate.AcceptedCount,
+			aggregate.RejectedCount,
+			aggregate.ConversionRate,
+			formatEuroCents(aggregate.AverageQuotedCents),
+		)
+		if aggregate.AverageOutcomeCents != nil {
+			line += fmt.Sprintf(" | avgOutcome=%s", formatEuroCents(*aggregate.AverageOutcomeCents))
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+}
+
+func appendPricingOutcomeLines(sb *strings.Builder, outcomes []ports.PricingIntelligenceOutcomeRecord) {
+	for i, outcome := range outcomes {
+		if i >= 3 {
+			break
+		}
+		line := fmt.Sprintf("- outcome=%s | region=%s | band=%s | total=%s",
+			compactText(outcome.OutcomeType, 16),
+			compactText(fallbackRegion(outcome.RegionPrefix), 12),
+			compactText(outcome.PriceBand, 24),
+			formatOptionalEuroCents(outcome.FinalTotalCents),
+		)
+		if outcome.Reason != nil {
+			line += " | reason=" + compactText(*outcome.Reason, 80)
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+}
+
+func appendPricingCorrectionLines(sb *strings.Builder, corrections []ports.PricingIntelligenceCorrectionRecord) {
+	for i, correction := range corrections {
+		if i >= 4 {
+			break
+		}
+		line := fmt.Sprintf("- correction field=%s | region=%s | band=%s | delta=%s",
+			compactText(correction.FieldName, 48),
+			compactText(fallbackRegion(correction.RegionPrefix), 12),
+			compactText(correction.PriceBand, 24),
+			formatOptionalPercentage(correction.DeltaPercentage),
+		)
+		if correction.Reason != nil {
+			line += " | reason=" + compactText(*correction.Reason, 60)
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+}
+
 func buildCouncilSection(advice estimatorCouncilAdvice) string {
 	if advice.RecommendedStage == "" && len(advice.Warnings) == 0 && len(advice.Signals) == 0 {
 		return ""
@@ -195,4 +274,29 @@ func compactText(s string, max int) string {
 		return string(r[:max])
 	}
 	return string(r[:max-3]) + "..."
+}
+
+func formatEuroCents(value int64) string {
+	return fmt.Sprintf("EUR %.2f", float64(value)/100)
+}
+
+func formatOptionalEuroCents(value *int64) string {
+	if value == nil {
+		return "n/a"
+	}
+	return formatEuroCents(*value)
+}
+
+func formatOptionalPercentage(value *float64) string {
+	if value == nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1f%%", *value)
+}
+
+func fallbackRegion(region string) string {
+	if strings.TrimSpace(region) == "" {
+		return "all"
+	}
+	return region
 }

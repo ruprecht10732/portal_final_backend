@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,6 +44,17 @@ func toPgFloat8Ptr(value *float64) pgtype.Float8 {
 	return pgtype.Float8{Float64: *value, Valid: true}
 }
 
+func marshalJSON(value any) []byte {
+	if value == nil {
+		return []byte("null")
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return []byte("null")
+	}
+	return data
+}
+
 func optionalString(value pgtype.Text) *string {
 	if !value.Valid {
 		return nil
@@ -73,6 +85,14 @@ func optionalFloat(value pgtype.Float8) *float64 {
 	}
 	floatValue := value.Float64
 	return &floatValue
+}
+
+func optionalInt64(value pgtype.Int8) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	intValue := value.Int64
+	return &intValue
 }
 
 func timeFromPg(value pgtype.Timestamptz) time.Time {

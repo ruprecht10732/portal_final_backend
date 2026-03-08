@@ -112,6 +112,7 @@ func main() {
 
 	quotesDrafter := adapters.NewQuotesDraftWriter(quotesModule.Service())
 	leadsModule.SetQuoteDrafter(quotesDrafter)
+	leadsModule.SetPricingIntelligenceReader(adapters.NewQuotePricingIntelligenceReader(quotesModule.Repository()))
 
 	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent())
 	quotesModule.Service().SetQuotePromptGenerator(quoteGenAdapter)

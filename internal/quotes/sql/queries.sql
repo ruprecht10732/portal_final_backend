@@ -245,6 +245,212 @@ WHERE quote_id = $1 AND organization_id = $2
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
+-- name: GetLatestQuotePricingSnapshotRevision :one
+SELECT COALESCE(MAX(quote_revision), 0)::int4 AS current_revision
+FROM RAC_quote_pricing_snapshots
+WHERE quote_id = $1 AND organization_id = $2;
+
+-- name: CreateQuotePricingSnapshot :one
+INSERT INTO RAC_quote_pricing_snapshots (
+  id, quote_id, organization_id, lead_id, lead_service_id,
+  service_type, postcode_raw, postcode_prefix_zip4,
+  source_type, quote_revision,
+  pricing_mode, discount_type, discount_value,
+  material_subtotal_cents, labor_subtotal_low_cents, labor_subtotal_high_cents, extra_costs_cents,
+  subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+  item_count, catalog_item_count, ad_hoc_item_count,
+  structured_items, notes, price_range_text, scope_text,
+  estimator_run_id, model_name, created_by_actor, created_by_user_id, created_at
+)
+VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8,
+  $9, $10,
+  $11, $12, $13,
+  $14, $15, $16, $17,
+  $18, $19, $20, $21,
+  $22, $23, $24,
+  $25, $26, $27, $28,
+  $29, $30, $31, $32, $33
+)
+RETURNING id, quote_id, organization_id, lead_id, lead_service_id,
+  service_type, postcode_raw, postcode_prefix_zip4,
+  source_type, quote_revision,
+  pricing_mode, discount_type, discount_value,
+  material_subtotal_cents, labor_subtotal_low_cents, labor_subtotal_high_cents, extra_costs_cents,
+  subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+  item_count, catalog_item_count, ad_hoc_item_count,
+  structured_items, notes, price_range_text, scope_text,
+  estimator_run_id, model_name, created_by_actor, created_by_user_id, created_at;
+
+-- name: GetLatestQuotePricingSnapshotByQuote :one
+SELECT id, quote_id, organization_id, lead_id, lead_service_id,
+  service_type, postcode_raw, postcode_prefix_zip4,
+  source_type, quote_revision,
+  pricing_mode, discount_type, discount_value,
+  material_subtotal_cents, labor_subtotal_low_cents, labor_subtotal_high_cents, extra_costs_cents,
+  subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+  item_count, catalog_item_count, ad_hoc_item_count,
+  structured_items, notes, price_range_text, scope_text,
+  estimator_run_id, model_name, created_by_actor, created_by_user_id, created_at
+FROM RAC_quote_pricing_snapshots
+WHERE quote_id = $1 AND organization_id = $2
+ORDER BY quote_revision DESC, created_at DESC, id DESC
+LIMIT 1;
+
+-- name: GetQuotePricingSnapshotContext :one
+SELECT
+  st.name AS service_type,
+  l.address_zip_code AS postcode_raw
+FROM RAC_leads l
+LEFT JOIN RAC_lead_services ls
+  ON ls.id = sqlc.arg(lead_service_id)
+ AND ls.lead_id = l.id
+ AND ls.organization_id = l.organization_id
+LEFT JOIN RAC_service_types st
+  ON st.id = ls.service_type_id
+ AND st.organization_id = l.organization_id
+WHERE l.id = sqlc.arg(lead_id) AND l.organization_id = sqlc.arg(organization_id);
+
+-- name: CreateQuotePricingOutcome :one
+INSERT INTO RAC_quote_pricing_outcomes (
+  id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_at, metadata, created_at
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6,
+  $7, $8, $9, $10,
+  $11, $12, $13
+)
+RETURNING id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_at, metadata, created_at;
+
+-- name: CreateQuotePricingCorrection :one
+INSERT INTO RAC_quote_pricing_corrections (
+  id, quote_id, snapshot_id, organization_id, quote_item_id,
+  field_name, ai_value, human_value, delta_cents, delta_percentage,
+  reason, ai_finding_code, created_by_user_id, created_at
+)
+VALUES (
+  $1, $2, $3, $4, $5,
+  $6, $7, $8, $9, $10,
+  $11, $12, $13, $14
+)
+RETURNING id, quote_id, snapshot_id, organization_id, quote_item_id,
+  field_name, ai_value, human_value, delta_cents, delta_percentage,
+  reason, ai_finding_code, created_by_user_id, created_at;
+
+-- name: ListPricingIntelligenceAggregates :many
+SELECT
+  COALESCE(s.postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN s.total_cents < 100000 THEN 'under_1000'
+    WHEN s.total_cents < 250000 THEN '1000_2500'
+    WHEN s.total_cents < 500000 THEN '2500_5000'
+    WHEN s.total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  COUNT(*) FILTER (WHERE o.outcome_type IN ('accepted', 'rejected'))::int4 AS sample_count,
+  COUNT(*) FILTER (WHERE o.outcome_type = 'accepted')::int4 AS accepted_count,
+  COUNT(*) FILTER (WHERE o.outcome_type = 'rejected')::int4 AS rejected_count,
+  COALESCE(
+    ROUND(
+      100.0 * COUNT(*) FILTER (WHERE o.outcome_type = 'accepted')
+      / NULLIF(COUNT(*) FILTER (WHERE o.outcome_type IN ('accepted', 'rejected')), 0),
+      1
+    ),
+    0
+  )::float8 AS conversion_rate,
+  COALESCE(ROUND(AVG(s.total_cents)), 0)::bigint AS average_quoted_cents,
+  COALESCE(ROUND(AVG(o.final_total_cents) FILTER (WHERE o.final_total_cents IS NOT NULL)), 0)::bigint AS average_outcome_cents,
+  COUNT(*) FILTER (WHERE o.final_total_cents IS NOT NULL)::int4 AS outcome_total_count
+FROM RAC_quote_pricing_snapshots s
+LEFT JOIN RAC_quote_pricing_outcomes o ON o.snapshot_id = s.id
+WHERE s.organization_id = $1 AND s.service_type = $2
+  AND ($3 = '' OR COALESCE(s.postcode_prefix_zip4, '') = $3)
+GROUP BY COALESCE(s.postcode_prefix_zip4, ''), price_band
+ORDER BY
+  sample_count DESC,
+  average_quoted_cents DESC,
+  COALESCE(s.postcode_prefix_zip4, '') ASC,
+  price_band ASC
+LIMIT $4;
+
+-- name: ListRecentPricingSnapshots :many
+SELECT
+  quote_id,
+  COALESCE(postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN total_cents < 100000 THEN 'under_1000'
+    WHEN total_cents < 250000 THEN '1000_2500'
+    WHEN total_cents < 500000 THEN '2500_5000'
+    WHEN total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  source_type,
+  quote_revision,
+  total_cents,
+  created_at
+FROM RAC_quote_pricing_snapshots
+WHERE organization_id = $1 AND service_type = $2
+  AND ($3 = '' OR COALESCE(postcode_prefix_zip4, '') = $3)
+ORDER BY
+  created_at DESC,
+  id DESC
+LIMIT $4;
+
+-- name: ListRecentPricingOutcomes :many
+SELECT
+  o.quote_id,
+  COALESCE(s.postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN s.total_cents < 100000 THEN 'under_1000'
+    WHEN s.total_cents < 250000 THEN '1000_2500'
+    WHEN s.total_cents < 500000 THEN '2500_5000'
+    WHEN s.total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  o.outcome_type,
+  o.final_total_cents,
+  o.rejection_reason,
+  o.created_at
+FROM RAC_quote_pricing_outcomes o
+JOIN RAC_quote_pricing_snapshots s ON s.id = o.snapshot_id
+WHERE o.organization_id = $1 AND s.service_type = $2
+  AND ($3 = '' OR COALESCE(s.postcode_prefix_zip4, '') = $3)
+ORDER BY
+  o.created_at DESC,
+  o.id DESC
+LIMIT $4;
+
+-- name: ListRecentPricingCorrections :many
+SELECT
+  c.quote_id,
+  COALESCE(s.postcode_prefix_zip4, '') AS region_prefix,
+  CASE
+    WHEN s.total_cents < 100000 THEN 'under_1000'
+    WHEN s.total_cents < 250000 THEN '1000_2500'
+    WHEN s.total_cents < 500000 THEN '2500_5000'
+    WHEN s.total_cents < 1000000 THEN '5000_10000'
+    ELSE 'over_10000'
+  END AS price_band,
+  c.field_name,
+  c.delta_cents,
+  c.delta_percentage,
+  c.reason,
+  c.ai_finding_code,
+  c.created_at
+FROM RAC_quote_pricing_corrections c
+JOIN RAC_quote_pricing_snapshots s ON s.id = c.snapshot_id
+WHERE c.organization_id = $1 AND s.service_type = $2
+  AND ($3 = '' OR COALESCE(s.postcode_prefix_zip4, '') = $3)
+ORDER BY
+  c.created_at DESC,
+  c.id DESC
+LIMIT $4;
+
 -- name: GetQuoteByPublicToken :one
 SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
   pricing_mode, discount_type, discount_value,

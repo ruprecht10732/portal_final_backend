@@ -36,6 +36,7 @@ type QuotingAgentDependencies interface {
 	SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader)
 	SetCatalogReader(cr ports.CatalogReader)
 	SetQuoteDrafter(qd ports.QuoteDrafter)
+	SetPricingIntelligenceReader(reader ports.PricingIntelligenceReader)
 }
 
 // Estimator exposes the autonomous estimation workflow surface.
@@ -109,6 +110,7 @@ type QuotingAgentConfig struct {
 	CatalogQdrantClient  *qdrant.Client
 	CatalogReader        ports.CatalogReader
 	QuoteDrafter         ports.QuoteDrafter
+	PricingIntelligence  ports.PricingIntelligenceReader
 }
 
 // NewEstimatorAgent creates the autonomous estimator agent.
@@ -138,6 +140,7 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 		CatalogQdrantClient:  cfg.CatalogQdrantClient,
 		CatalogReader:        cfg.CatalogReader,
 		QuoteDrafter:         cfg.QuoteDrafter,
+		PricingIntelligence:  cfg.PricingIntelligence,
 		CouncilService:       NewDefaultMultiAgentCouncil(cfg.Repo),
 	}
 
@@ -325,6 +328,11 @@ func (q *QuotingAgent) SetQuoteDrafter(qd ports.QuoteDrafter) {
 	q.toolDeps.QuoteDrafter = qd
 }
 
+// SetPricingIntelligenceReader injects quote pricing intelligence retrieval.
+func (q *QuotingAgent) SetPricingIntelligenceReader(reader ports.PricingIntelligenceReader) {
+	q.toolDeps.PricingIntelligence = reader
+}
+
 // Run executes autonomous estimation for a lead service.
 func (q *QuotingAgent) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {
 	if !q.mode.isAutonomous() {
@@ -445,7 +453,7 @@ func (q *QuotingAgent) loadAutonomousRunContext(ctx context.Context, leadID, ser
 
 func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, tenantID uuid.UUID) bool {
 	estimationContext := q.fetchEstimationGuidelines(ctx, tenantID, service.ServiceType)
-	reasoningMode, enrichedContext := q.buildEnhancedEstimationContext(ctx, tenantID, service, notes, photo, estimationContext)
+	reasoningMode, enrichedContext := q.buildEnhancedEstimationContext(ctx, tenantID, lead, service, notes, photo, estimationContext)
 
 	if isInvestigativeMode(reasoningMode) {
 		investigativeTools, err := q.buildInvestigativeTools()
@@ -499,13 +507,14 @@ func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead reposit
 	return true
 }
 
-func (q *QuotingAgent) buildEnhancedEstimationContext(ctx context.Context, tenantID uuid.UUID, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, baseGuidelines string) (estimatorReasoningMode, string) {
+func (q *QuotingAgent) buildEnhancedEstimationContext(ctx context.Context, tenantID uuid.UUID, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, baseGuidelines string) (estimatorReasoningMode, string) {
 	settings := GetDependencies(ctx).GetOrganizationAISettingsOrDefault()
 	latestAnalysis := q.loadLatestAnalysis(ctx, tenantID, service.ID)
 	reasoningMode := chooseEstimatorReasoningMode(settings, latestAnalysis, photo)
 	councilAdvice := q.resolveEstimatorCouncilAdvice(settings, latestAnalysis, photo, notes)
 	memorySection := q.loadExperienceMemorySection(ctx, settings, tenantID, service.ServiceType)
 	humanFeedbackSection := q.loadHumanFeedbackSection(ctx, settings, tenantID, service.ServiceType)
+	pricingIntelligenceSection := q.loadPricingIntelligenceSection(ctx, settings, tenantID, service.ServiceType, derivePostcodePrefixZIP4(lead.AddressZipCode))
 
 	var sb strings.Builder
 	sb.WriteString(baseGuidelines)
@@ -524,11 +533,27 @@ func (q *QuotingAgent) buildEnhancedEstimationContext(ctx context.Context, tenan
 
 	appendContextSection(&sb, memorySection)
 	appendContextSection(&sb, humanFeedbackSection)
+	appendContextSection(&sb, pricingIntelligenceSection)
 	if settings.AICouncilMode {
 		appendContextSection(&sb, buildCouncilSection(councilAdvice))
 	}
 
 	return reasoningMode, strings.TrimSpace(sb.String())
+}
+
+func (q *QuotingAgent) loadPricingIntelligenceSection(ctx context.Context, settings ports.OrganizationAISettings, tenantID uuid.UUID, serviceType string, postcodePrefix string) string {
+	if !settings.AIExperienceMemory {
+		return ""
+	}
+	deps := GetDependencies(ctx)
+	if deps == nil || deps.PricingIntelligence == nil {
+		return ""
+	}
+	report, err := deps.PricingIntelligence.GetPricingIntelligenceReport(ctx, tenantID, serviceType, postcodePrefix)
+	if err != nil || report == nil {
+		return ""
+	}
+	return buildPricingIntelligenceSection(report)
 }
 
 func (q *QuotingAgent) loadLatestAnalysis(ctx context.Context, tenantID, serviceID uuid.UUID) *repository.AIAnalysis {

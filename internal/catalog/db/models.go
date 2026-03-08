@@ -1085,6 +1085,75 @@ type RacQuoteItem struct {
 	Title            string             `json:"title"`
 }
 
+type RacQuotePricingCorrection struct {
+	ID              pgtype.UUID        `json:"id"`
+	QuoteID         pgtype.UUID        `json:"quote_id"`
+	SnapshotID      pgtype.UUID        `json:"snapshot_id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	QuoteItemID     pgtype.UUID        `json:"quote_item_id"`
+	FieldName       string             `json:"field_name"`
+	AiValue         []byte             `json:"ai_value"`
+	HumanValue      []byte             `json:"human_value"`
+	DeltaCents      pgtype.Int8        `json:"delta_cents"`
+	DeltaPercentage pgtype.Float8      `json:"delta_percentage"`
+	Reason          pgtype.Text        `json:"reason"`
+	AiFindingCode   pgtype.Text        `json:"ai_finding_code"`
+	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacQuotePricingOutcome struct {
+	ID                 pgtype.UUID        `json:"id"`
+	QuoteID            pgtype.UUID        `json:"quote_id"`
+	SnapshotID         pgtype.UUID        `json:"snapshot_id"`
+	OrganizationID     pgtype.UUID        `json:"organization_id"`
+	LeadID             pgtype.UUID        `json:"lead_id"`
+	LeadServiceID      pgtype.UUID        `json:"lead_service_id"`
+	OutcomeType        string             `json:"outcome_type"`
+	RejectionReason    pgtype.Text        `json:"rejection_reason"`
+	AcceptedTotalCents pgtype.Int8        `json:"accepted_total_cents"`
+	FinalTotalCents    pgtype.Int8        `json:"final_total_cents"`
+	OutcomeAt          pgtype.Timestamptz `json:"outcome_at"`
+	Metadata           []byte             `json:"metadata"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacQuotePricingSnapshot struct {
+	ID                     pgtype.UUID        `json:"id"`
+	QuoteID                pgtype.UUID        `json:"quote_id"`
+	OrganizationID         pgtype.UUID        `json:"organization_id"`
+	LeadID                 pgtype.UUID        `json:"lead_id"`
+	LeadServiceID          pgtype.UUID        `json:"lead_service_id"`
+	ServiceType            pgtype.Text        `json:"service_type"`
+	PostcodeRaw            pgtype.Text        `json:"postcode_raw"`
+	PostcodePrefixZip4     pgtype.Text        `json:"postcode_prefix_zip4"`
+	SourceType             string             `json:"source_type"`
+	QuoteRevision          int32              `json:"quote_revision"`
+	PricingMode            string             `json:"pricing_mode"`
+	DiscountType           string             `json:"discount_type"`
+	DiscountValue          int64              `json:"discount_value"`
+	MaterialSubtotalCents  pgtype.Int8        `json:"material_subtotal_cents"`
+	LaborSubtotalLowCents  pgtype.Int8        `json:"labor_subtotal_low_cents"`
+	LaborSubtotalHighCents pgtype.Int8        `json:"labor_subtotal_high_cents"`
+	ExtraCostsCents        pgtype.Int8        `json:"extra_costs_cents"`
+	SubtotalCents          int64              `json:"subtotal_cents"`
+	DiscountAmountCents    int64              `json:"discount_amount_cents"`
+	TaxTotalCents          int64              `json:"tax_total_cents"`
+	TotalCents             int64              `json:"total_cents"`
+	ItemCount              int32              `json:"item_count"`
+	CatalogItemCount       int32              `json:"catalog_item_count"`
+	AdHocItemCount         int32              `json:"ad_hoc_item_count"`
+	StructuredItems        []byte             `json:"structured_items"`
+	Notes                  pgtype.Text        `json:"notes"`
+	PriceRangeText         pgtype.Text        `json:"price_range_text"`
+	ScopeText              pgtype.Text        `json:"scope_text"`
+	EstimatorRunID         pgtype.Text        `json:"estimator_run_id"`
+	ModelName              pgtype.Text        `json:"model_name"`
+	CreatedByActor         string             `json:"created_by_actor"`
+	CreatedByUserID        pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacQuoteUrl struct {
 	ID               pgtype.UUID        `json:"id"`
 	QuoteID          pgtype.UUID        `json:"quote_id"`
