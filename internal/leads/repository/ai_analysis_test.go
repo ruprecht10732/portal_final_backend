@@ -10,6 +10,8 @@ func TestAIAnalysisSelectColumnsIncludesConfidenceFields(t *testing.T) {
 		"composite_confidence",
 		"confidence_breakdown",
 		"risk_flags",
+		"resolved_information",
+		"extracted_facts",
 	} {
 		if !strings.Contains(aiAnalysisSelectColumns, column) {
 			t.Fatalf("expected aiAnalysisSelectColumns to contain %q", column)

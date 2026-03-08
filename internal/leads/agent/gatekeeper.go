@@ -371,6 +371,8 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 	if strings.TrimSpace(lead.ConsumerPhone) != "" {
 		channel = "WhatsApp"
 	}
+	deps := GetDependencies(ctx)
+	resolvedInformation, extractedFacts := populateAnalysisFacts(ctx, deps, lead, tenantID, serviceID, nil, nil)
 
 	// Create a default analysis record
 	_, err := g.repo.CreateAIAnalysis(ctx, repository.CreateAIAnalysisParams{
@@ -382,6 +384,8 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 		LeadQuality:             "Potential",
 		RecommendedAction:       "RequestInfo",
 		MissingInformation:      []string{"Intake validatie niet voltooid door AI"},
+		ResolvedInformation:     resolvedInformation,
+		ExtractedFacts:          extractedFacts,
 		PreferredContactChannel: channel,
 		SuggestedContactMessage: fmt.Sprintf("Beste %s, bedankt voor uw aanvraag. Kunt u ons meer details geven over uw project?", lead.ConsumerFirstName),
 		Summary:                 "AI analyse kon niet worden voltooid. Handmatige beoordeling vereist.",
@@ -400,10 +404,11 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 		PreferredContactChannel: channel,
 		SuggestedContactMessage: fmt.Sprintf("Beste %s, bedankt voor uw aanvraag. Kunt u ons meer details geven over uw project?", lead.ConsumerFirstName),
 		MissingInformation:      []string{"Intake validatie niet voltooid door AI"},
+		ResolvedInformation:     resolvedInformation,
+		ExtractedFacts:          extractedFacts,
 		Fallback:                true,
 	}
 	analysisMetadata := fallbackMeta.ToMap()
-	deps := GetDependencies(ctx)
 	deps.SetLastAnalysisMetadata(analysisMetadata)
 	deps.MarkSaveAnalysisCalled()
 	_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{

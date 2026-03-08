@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -948,6 +949,255 @@ type normalizedAnalysisInput struct {
 	Metadata            map[string]any
 }
 
+type trustedAnalysisContext struct {
+	service       *repository.LeadService
+	priorAnalysis *repository.AIAnalysis
+	visitReport   *repository.AppointmentVisitReport
+	photoAnalysis *repository.PhotoAnalysis
+	attachments   []repository.Attachment
+}
+
+type analysisFactCollector struct {
+	resolved map[string]string
+	facts    map[string]string
+}
+
+type analysisPreferences struct {
+	Budget       string `json:"budget"`
+	Timeframe    string `json:"timeframe"`
+	Availability string `json:"availability"`
+	ExtraNotes   string `json:"extraNotes"`
+}
+
+func loadTrustedAnalysisContext(ctx context.Context, deps *ToolDependencies, tenantID, leadServiceID uuid.UUID) trustedAnalysisContext {
+	trusted := trustedAnalysisContext{}
+	if service, err := deps.Repo.GetLeadServiceByID(ctx, leadServiceID, tenantID); err == nil {
+		trusted.service = &service
+	}
+	if analysis, err := deps.Repo.GetLatestAIAnalysis(ctx, leadServiceID, tenantID); err == nil {
+		trusted.priorAnalysis = &analysis
+	}
+	if report, err := deps.Repo.GetLatestAppointmentVisitReportByService(ctx, leadServiceID, tenantID); err == nil {
+		trusted.visitReport = report
+	}
+	if photoAnalysis, err := deps.Repo.GetLatestPhotoAnalysis(ctx, leadServiceID, tenantID); err == nil {
+		trusted.photoAnalysis = &photoAnalysis
+	}
+	if attachments, err := deps.Repo.ListAttachmentsByService(ctx, leadServiceID, tenantID); err == nil {
+		trusted.attachments = attachments
+	}
+	return trusted
+}
+
+func populateAnalysisFacts(ctx context.Context, deps *ToolDependencies, lead repository.Lead, tenantID, leadServiceID uuid.UUID, resolvedInformation []string, extractedFacts map[string]string) ([]string, map[string]string) {
+	trusted := loadTrustedAnalysisContext(ctx, deps, tenantID, leadServiceID)
+	collector := newAnalysisFactCollector(resolvedInformation, extractedFacts)
+	mergeLeadFacts(&collector, lead)
+	mergeServiceFacts(&collector, trusted.service)
+	mergeVisitReportFacts(&collector, trusted.visitReport)
+	mergePhotoAnalysisFacts(&collector, trusted.photoAnalysis)
+	mergeAttachmentFacts(&collector, trusted.attachments)
+	mergePriorAnalysisFacts(&collector, trusted.priorAnalysis)
+	return collector.resolvedValues(), collector.extractedFactMap()
+}
+
+func newAnalysisFactCollector(resolvedInformation []string, extractedFacts map[string]string) analysisFactCollector {
+	collector := analysisFactCollector{
+		resolved: map[string]string{},
+		facts:    map[string]string{},
+	}
+	for _, value := range normalizeMissingInformation(resolvedInformation) {
+		collector.addResolved(value)
+	}
+	for key, value := range normalizeExtractedFacts(extractedFacts) {
+		collector.addFact(key, value)
+	}
+	return collector
+}
+
+func (c *analysisFactCollector) addResolved(value string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return
+	}
+	normalized := strings.ToLower(trimmed)
+	if _, exists := c.resolved[normalized]; exists {
+		return
+	}
+	c.resolved[normalized] = trimmed
+}
+
+func (c *analysisFactCollector) addFact(key string, value string) {
+	trimmedKey := strings.TrimSpace(key)
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedKey == "" || trimmedValue == "" {
+		return
+	}
+	if _, exists := c.facts[trimmedKey]; exists {
+		return
+	}
+	c.facts[trimmedKey] = trimmedValue
+}
+
+func (c *analysisFactCollector) resolvedValues() []string {
+	values := make([]string, 0, len(c.resolved))
+	for _, value := range c.resolved {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		return strings.ToLower(values[i]) < strings.ToLower(values[j])
+	})
+	return values
+}
+
+func (c *analysisFactCollector) extractedFactMap() map[string]string {
+	result := make(map[string]string, len(c.facts))
+	for key, value := range c.facts {
+		result[key] = value
+	}
+	return result
+}
+
+func mergePriorAnalysisFacts(collector *analysisFactCollector, priorAnalysis *repository.AIAnalysis) {
+	if priorAnalysis == nil {
+		return
+	}
+	for _, value := range priorAnalysis.ResolvedInformation {
+		collector.addResolved(value)
+	}
+	for key, value := range priorAnalysis.ExtractedFacts {
+		collector.addFact(key, value)
+	}
+}
+
+func mergeLeadFacts(collector *analysisFactCollector, lead repository.Lead) {
+	if lead.EnergyClass != nil {
+		collector.addFact("energy_class", *lead.EnergyClass)
+	}
+	if lead.EnergyBouwjaar != nil {
+		collector.addFact("build_year", strconv.Itoa(*lead.EnergyBouwjaar))
+	}
+	if lead.EnergyGebouwtype != nil {
+		collector.addFact("building_type", *lead.EnergyGebouwtype)
+	}
+}
+
+func mergeServiceFacts(collector *analysisFactCollector, service *repository.LeadService) {
+	if service == nil {
+		return
+	}
+	collector.addFact("service_type", service.ServiceType)
+	collector.addFact("consumer_note", trustedOptionalString(service.ConsumerNote))
+	prefs := parseAnalysisPreferences(service.CustomerPreferences)
+	addPreferenceFact(collector, "budget", prefs.Budget, "Budget gedeeld: %s")
+	addPreferenceFact(collector, "timeframe", prefs.Timeframe, "Gewenste termijn: %s")
+	addPreferenceFact(collector, "availability", prefs.Availability, "Beschikbaarheid gedeeld: %s")
+	collector.addFact("preference_notes", prefs.ExtraNotes)
+}
+
+func parseAnalysisPreferences(raw json.RawMessage) analysisPreferences {
+	if len(raw) == 0 {
+		return analysisPreferences{}
+	}
+	var prefs analysisPreferences
+	if err := json.Unmarshal(raw, &prefs); err != nil {
+		return analysisPreferences{}
+	}
+	prefs.Budget = strings.TrimSpace(prefs.Budget)
+	prefs.Timeframe = strings.TrimSpace(prefs.Timeframe)
+	prefs.Availability = strings.TrimSpace(prefs.Availability)
+	prefs.ExtraNotes = strings.TrimSpace(prefs.ExtraNotes)
+	return prefs
+}
+
+func addPreferenceFact(collector *analysisFactCollector, key string, value string, resolvedTemplate string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	collector.addFact(key, value)
+	collector.addResolved(fmt.Sprintf(resolvedTemplate, value))
+}
+
+func trustedOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" || strings.EqualFold(trimmed, valueNotProvided) {
+		return ""
+	}
+	return trimmed
+}
+
+func mergeVisitReportFacts(collector *analysisFactCollector, visitReport *repository.AppointmentVisitReport) {
+	if visitReport == nil {
+		return
+	}
+	if measurements := trustedOptionalString(visitReport.Measurements); measurements != "" {
+		collector.addFact("visit_report_measurements", measurements)
+		collector.addResolved("Ingemeten tijdens afspraak: " + measurements)
+	}
+	collector.addFact("visit_report_access_difficulty", trustedOptionalString(visitReport.AccessDifficulty))
+	collector.addFact("visit_report_notes", trustedOptionalString(visitReport.Notes))
+}
+
+func mergePhotoAnalysisFacts(collector *analysisFactCollector, photoAnalysis *repository.PhotoAnalysis) {
+	if photoAnalysis == nil {
+		return
+	}
+	collector.addFact("photo_summary", strings.TrimSpace(photoAnalysis.Summary))
+	collector.addFact("photo_scope_assessment", strings.TrimSpace(photoAnalysis.ScopeAssessment))
+	collector.addFact("photo_measurements", summarizePhotoMeasurements(photoAnalysis.Measurements))
+	collector.addFact("photo_ocr_text", strings.Join(compactPromptList(photoAnalysis.ExtractedText), "; "))
+	collector.addFact("photo_needs_onsite_measurement", strings.Join(compactPromptList(photoAnalysis.NeedsOnsiteMeasurement), "; "))
+}
+
+func summarizePhotoMeasurements(measurements []repository.Measurement) string {
+	if len(measurements) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(measurements))
+	for _, measurement := range measurements {
+		description := strings.TrimSpace(measurement.Description)
+		unit := strings.TrimSpace(measurement.Unit)
+		if description == "" {
+			description = "maat"
+		}
+		value := strconv.FormatFloat(measurement.Value, 'f', -1, 64)
+		segment := description + ": " + value
+		if unit != "" {
+			segment += " " + unit
+		}
+		parts = append(parts, segment)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func mergeAttachmentFacts(collector *analysisFactCollector, attachments []repository.Attachment) {
+	if len(attachments) == 0 {
+		return
+	}
+	documentNames := make([]string, 0, len(attachments))
+	requiresDocumentReview := false
+	for _, attachment := range attachments {
+		_, isNonImageDocument, requiresReview := classifyAttachment(attachment)
+		if isNonImageDocument {
+			documentNames = append(documentNames, strings.TrimSpace(attachment.FileName))
+		}
+		if requiresReview {
+			requiresDocumentReview = true
+		}
+	}
+	if len(documentNames) > 0 {
+		sort.Strings(documentNames)
+		collector.addFact("attachment_documents", strings.Join(documentNames, ", "))
+	}
+	if requiresDocumentReview {
+		collector.addFact("document_review_required", "true")
+		collector.addResolved("Klant heeft document(en) geüpload voor handmatige controle")
+	}
+}
+
 func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput, lead repository.Lead, tenantID, leadServiceID uuid.UUID) (normalizedAnalysisInput, error) {
 	urgencyLevel, err := normalizeUrgencyLevel(input.UrgencyLevel)
 	if err != nil {
@@ -972,6 +1222,7 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 	missingInformation := normalizeMissingInformation(input.MissingInformation)
 	resolvedInformation := normalizeMissingInformation(input.ResolvedInformation)
 	extractedFacts := normalizeExtractedFacts(input.ExtractedFacts)
+	resolvedInformation, extractedFacts = populateAnalysisFacts(ctx, deps, lead, tenantID, leadServiceID, resolvedInformation, extractedFacts)
 	normalizedMessage := normalizeSuggestedContactMessage(input.SuggestedContactMessage)
 	analysisSummary := strings.TrimSpace(input.Summary)
 	if analysisSummary == "" {
@@ -1426,7 +1677,7 @@ func recordLeadDetailsUpdate(ctx tool.Context, deps *ToolDependencies, leadID, t
 func createSaveAnalysisTool(_ *ToolDependencies) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "SaveAnalysis",
-		Description: "Saves the gatekeeper triage analysis to the database. Call this ONCE after completing your full analysis. Include urgency, lead quality, recommended action, missing information, preferred contact channel, message, and summary.",
+		Description: "Saves the gatekeeper triage analysis to the database. Call this ONCE after completing your full analysis. Include urgency, lead quality, recommended action, missing information, resolved information, extracted facts, preferred contact channel, message, and summary.",
 	}, func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
 		return handleSaveAnalysis(ctx, GetDependencies(ctx), input)
 	})

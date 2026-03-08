@@ -161,6 +161,12 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [DECISION RULE] If Attachment Awareness indicates a non-image document likely contains plans, measurements, or competitor quotes, do NOT ask the customer to restate those dimensions. Move to Manual_Intervention for human document review.
 [DECISION RULE] If the latest customer message shows inability, lack of tools, or frustration about measuring, do NOT repeat the same ask. Prefer RecommendedAction=ScheduleSurvey or CallImmediately and offer a short call or site visit.
 
+=== ANALYSIS RECORD CONTRACT ===
+[MANDATORY] SaveAnalysis.missingInformation contains only still-open blockers.
+[MANDATORY] SaveAnalysis.resolvedInformation contains facts already satisfied in trusted context, especially prior confirmed facts, visit report measurements, customer preferences, and uploaded-document signals.
+[MANDATORY] SaveAnalysis.extractedFacts contains stable key/value facts from trusted context, such as service type, budget, timeframe, visit report measurements, photo OCR, or document review signals.
+[MANDATORY] If a fact is visible in Known Facts, Visit Report, Preferences, Attachment Awareness, or Estimator Foresight, do not leave it implicit. Include it in resolvedInformation or extractedFacts.
+
 === SUGGESTED CONTACT MESSAGE (when stage = Nurturing) ===
 [MANDATORY] Follow the Communication Contract below.
 [MANDATORY] Only include suggestedContactMessage when critical intake details are still missing.
@@ -192,6 +198,7 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [MANDATORY] SaveAnalysis called exactly once.
 [MANDATORY] UpdatePipelineStage called after SaveAnalysis.
 [MANDATORY] SaveAnalysis contains Dutch summary and Dutch missingInformation list.
+[MANDATORY] SaveAnalysis fills resolvedInformation and extractedFacts whenever trusted context already contains reusable facts.
 [MANDATORY] suggestedContactMessage follows the required friendly structure in Dutch.
 
 === DATA CONTEXT ===
