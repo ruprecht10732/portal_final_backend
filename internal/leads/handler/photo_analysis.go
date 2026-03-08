@@ -13,6 +13,7 @@ import (
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -30,6 +31,7 @@ type PhotoAnalysisHandler struct {
 	sse      *sse.Service
 	val      *validator.Validator
 	eventBus events.Bus
+	queue    scheduler.PhotoAnalysisScheduler
 }
 
 // NewPhotoAnalysisHandler creates a new photo analysis handler.
@@ -43,6 +45,10 @@ func NewPhotoAnalysisHandler(analyzer *agent.PhotoAnalyzer, repo repository.Lead
 		val:      val,
 		eventBus: eventBus,
 	}
+}
+
+func (h *PhotoAnalysisHandler) SetPhotoAnalysisScheduler(queue scheduler.PhotoAnalysisScheduler) {
+	h.queue = queue
 }
 
 // RegisterRoutes registers photo analysis routes.
@@ -89,6 +95,27 @@ func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
 	}
 
 	userID := identity.UserID()
+	if h.queue != nil {
+		userIDStr := userID.String()
+		err := h.queue.EnqueuePhotoAnalysis(c.Request.Context(), scheduler.PhotoAnalysisPayload{
+			TenantID:      tenantID.String(),
+			LeadID:        leadID.String(),
+			LeadServiceID: serviceID.String(),
+			UserID:        &userIDStr,
+			ContextInfo:   contextInfo,
+		})
+		if httpkit.HandleError(c, err) {
+			return
+		}
+
+		httpkit.JSON(c, http.StatusAccepted, gin.H{
+			"status":     "processing",
+			"message":    "Photo analysis queued",
+			"photoCount": len(imageAttachments),
+		})
+		return
+	}
+
 	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, *tenantID, &userID, imageAttachments, contextInfo)
 
 	httpkit.OK(c, gin.H{
@@ -159,6 +186,32 @@ func filterImageAttachments(attachments []repository.Attachment) []repository.At
 	return imageAttachments
 }
 
+func (h *PhotoAnalysisHandler) listImageAttachments(ctx context.Context, serviceID, tenantID uuid.UUID) ([]repository.Attachment, error) {
+	attachments, err := h.repo.ListAttachmentsByService(ctx, serviceID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	imageAttachments := filterImageAttachments(attachments)
+	if len(imageAttachments) > maxPhotosPerAnalysis {
+		imageAttachments = imageAttachments[:maxPhotosPerAnalysis]
+	}
+	return imageAttachments, nil
+}
+
+func (h *PhotoAnalysisHandler) ProcessPhotoAnalysisJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, contextInfo string) error {
+	imageAttachments, err := h.listImageAttachments(ctx, serviceID, tenantID)
+	if err != nil {
+		return err
+	}
+	if len(imageAttachments) == 0 {
+		return nil
+	}
+
+	h.runPhotoAnalysis(ctx, leadID, serviceID, tenantID, userID, imageAttachments, contextInfo)
+	return nil
+}
+
 // runPhotoAnalysis performs the photo analysis in the background and sends SSE notification when done.
 func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, attachments []repository.Attachment, contextInfo string) {
 	serviceType, intakeRequirements := h.getServiceAnalysisContext(ctx, serviceID, tenantID)
@@ -209,22 +262,9 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 
 // RunAutoAnalysis triggers photo analysis without user-specific SSE notifications.
 func (h *PhotoAnalysisHandler) RunAutoAnalysis(leadID, serviceID, tenantID uuid.UUID) {
-	attachments, err := h.repo.ListAttachmentsByService(context.Background(), serviceID, tenantID)
-	if err != nil {
-		log.Printf("photo analysis: failed to load attachments for service %s: %v", serviceID, err)
-		return
+	if err := h.ProcessPhotoAnalysisJob(context.Background(), leadID, serviceID, tenantID, nil, ""); err != nil {
+		log.Printf("photo analysis: failed to process auto analysis for service %s: %v", serviceID, err)
 	}
-
-	imageAttachments := filterImageAttachments(attachments)
-	if len(imageAttachments) == 0 {
-		return
-	}
-	if len(imageAttachments) > maxPhotosPerAnalysis {
-		log.Printf("photo analysis: capping image batch from %d to %d for service %s", len(imageAttachments), maxPhotosPerAnalysis, serviceID)
-		imageAttachments = imageAttachments[:maxPhotosPerAnalysis]
-	}
-
-	h.runPhotoAnalysis(context.Background(), leadID, serviceID, tenantID, nil, imageAttachments, "")
 }
 
 func (h *PhotoAnalysisHandler) getServiceAnalysisContext(ctx context.Context, serviceID, tenantID uuid.UUID) (string, string) {

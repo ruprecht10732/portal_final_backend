@@ -18,20 +18,22 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/logger"
 )
 
 // Orchestrator routes pipeline events to specialized agents.
 type Orchestrator struct {
-	gatekeeper *agent.Gatekeeper
-	estimator  agent.Estimator
-	dispatcher *agent.Dispatcher
-	auditor    *agent.Auditor
-	repo       repository.LeadsRepository
-	outbox     *notificationoutbox.Repository
-	eventBus   events.Bus
-	sse        *sse.Service
-	log        *logger.Logger
+	gatekeeper      *agent.Gatekeeper
+	estimator       agent.Estimator
+	dispatcher      *agent.Dispatcher
+	auditor         *agent.Auditor
+	repo            repository.LeadsRepository
+	outbox          *notificationoutbox.Repository
+	eventBus        events.Bus
+	sse             *sse.Service
+	log             *logger.Logger
+	automationQueue AutomationScheduler
 
 	orgSettingsReader ports.OrganizationAISettingsReader
 	orgSettingsMu     sync.Mutex
@@ -108,6 +110,10 @@ func (o *Orchestrator) SetOrganizationAISettingsReader(reader ports.Organization
 	// Keep cache; reader replacement is rare and cache TTL is short.
 }
 
+func (o *Orchestrator) SetAutomationScheduler(queue AutomationScheduler) {
+	o.automationQueue = queue
+}
+
 func (o *Orchestrator) loadOrgAISettings(ctx context.Context, tenantID uuid.UUID) (ports.OrganizationAISettings, error) {
 	o.orgSettingsMu.Lock()
 	defer o.orgSettingsMu.Unlock()
@@ -145,6 +151,18 @@ func (o *Orchestrator) OnVisitReportSubmitted(ctx context.Context, evt events.Vi
 		return
 	}
 	if !o.ShouldRunAgent(svc) {
+		return
+	}
+
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueAuditVisitReport(ctx, scheduler.AuditVisitReportPayload{
+			TenantID:      evt.TenantID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+			AppointmentID: evt.AppointmentID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: failed to enqueue visit report audit", "error", err, "serviceId", evt.LeadServiceID)
+		}
 		return
 	}
 
@@ -480,6 +498,16 @@ func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
 	if o.auditor == nil || !strings.EqualFold(evt.Source, "call_log") {
 		return
 	}
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueAuditCallLog(context.Background(), scheduler.AuditCallLogPayload{
+			TenantID:      evt.TenantID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: failed to enqueue call log audit", "error", err, "serviceId", evt.LeadServiceID)
+		}
+		return
+	}
 	if !o.markRunning("auditor", evt.LeadServiceID) {
 		return
 	}
@@ -500,6 +528,17 @@ func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadServic
 	}
 	if strings.EqualFold(strings.TrimSpace(evt.Source), "customer_portal_upload") && o.serviceHasImageAttachments(context.Background(), evt.LeadServiceID, evt.TenantID) {
 		o.log.Info("orchestrator: deferring gatekeeper run until photo analysis concludes", "serviceId", evt.LeadServiceID, "source", evt.Source)
+		return
+	}
+
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueGatekeeperRun(context.Background(), scheduler.GatekeeperRunPayload{
+			TenantID:      evt.TenantID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: failed to enqueue gatekeeper", "error", err, "serviceId", evt.LeadServiceID)
+		}
 		return
 	}
 
@@ -538,6 +577,17 @@ func (o *Orchestrator) serviceHasImageAttachments(ctx context.Context, serviceID
 // OnPhotoAnalysisCompleted triggers gatekeeper re-evaluation once visual data is available.
 func (o *Orchestrator) OnPhotoAnalysisCompleted(ctx context.Context, evt events.PhotoAnalysisCompleted) {
 	if !o.canRunGatekeeperForPhotoEvent(ctx, evt) {
+		return
+	}
+
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueGatekeeperRun(ctx, scheduler.GatekeeperRunPayload{
+			TenantID:      evt.TenantID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: failed to enqueue gatekeeper after photo analysis", "error", err, "serviceId", evt.LeadServiceID)
+		}
 		return
 	}
 
@@ -584,6 +634,17 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 	})
 
 	if svc.PipelineStage != domain.PipelineStageTriage && svc.PipelineStage != domain.PipelineStageNurturing {
+		return
+	}
+
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueGatekeeperRun(ctx, scheduler.GatekeeperRunPayload{
+			TenantID:      evt.TenantID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: failed to enqueue gatekeeper after photo analysis failure", "error", err, "serviceId", evt.LeadServiceID)
+		}
 		return
 	}
 
@@ -639,13 +700,25 @@ func (o *Orchestrator) handleEstimationStage(evt events.PipelineStageChanged) {
 		return
 	}
 
+	o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueEstimatorRun(context.Background(), scheduler.EstimatorRunPayload{
+			TenantID:      evt.TenantID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+			Force:         false,
+		}); err != nil {
+			o.log.Error("orchestrator: estimator failed to enqueue", "error", err)
+		}
+		return
+	}
+
 	// Idempotency check
 	if !o.markRunning("estimator", evt.LeadServiceID) {
 		o.log.Info("orchestrator: estimator already running for service, skipping", "serviceId", evt.LeadServiceID)
 		return
 	}
 
-	o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
 	if err := o.estimator.Run(context.Background(), evt.LeadID, evt.LeadServiceID, evt.TenantID, false); err != nil {
 		o.log.Error("orchestrator: estimator failed to start", "error", err)
 	}
@@ -662,13 +735,24 @@ func (o *Orchestrator) handleFulfillmentStage(evt events.PipelineStageChanged) {
 		return
 	}
 
+	o.log.Info("orchestrator: lead ready for dispatch", "leadId", evt.LeadID)
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueDispatcherRun(context.Background(), scheduler.DispatcherRunPayload{
+			TenantID:      evt.TenantID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: dispatcher failed to enqueue", "error", err)
+		}
+		return
+	}
+
 	// Idempotency check
 	if !o.markRunning("dispatcher", evt.LeadServiceID) {
 		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
 		return
 	}
 
-	o.log.Info("orchestrator: lead ready for dispatch", "leadId", evt.LeadID)
 	go func() {
 		defer o.markComplete("dispatcher", evt.LeadServiceID)
 		defer o.recoverAgentPanic("dispatcher", evt.LeadServiceID)
@@ -868,6 +952,16 @@ func (o *Orchestrator) OnQuoteSent(ctx context.Context, evt events.QuoteSent) {
 func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.PartnerOfferRejected) {
 	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
 	o.log.Info("Orchestrator: Partner rejected offer, re-triggering dispatcher", "leadId", evt.LeadID)
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueDispatcherRun(ctx, scheduler.DispatcherRunPayload{
+			TenantID:      evt.OrganizationID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: failed to enqueue dispatcher after rejection", "error", err, "serviceId", evt.LeadServiceID)
+		}
+		return
+	}
 	if !o.markRunning("dispatcher", evt.LeadServiceID) {
 		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
 		return
@@ -888,6 +982,16 @@ func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.Pa
 func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.PartnerOfferExpired) {
 	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
 	o.log.Info("Orchestrator: Partner offer expired, re-triggering dispatcher", "leadId", evt.LeadID)
+	if o.automationQueue != nil {
+		if err := o.automationQueue.EnqueueDispatcherRun(ctx, scheduler.DispatcherRunPayload{
+			TenantID:      evt.OrganizationID.String(),
+			LeadID:        evt.LeadID.String(),
+			LeadServiceID: evt.LeadServiceID.String(),
+		}); err != nil {
+			o.log.Error("orchestrator: failed to enqueue dispatcher after expiry", "error", err, "serviceId", evt.LeadServiceID)
+		}
+		return
+	}
 	if !o.markRunning("dispatcher", evt.LeadServiceID) {
 		o.log.Info(dispatcherAlreadyRunningMsg, "serviceId", evt.LeadServiceID)
 		return

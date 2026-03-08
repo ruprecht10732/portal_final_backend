@@ -11,6 +11,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/partners/repository"
 	"portal_final_backend/internal/partners/transport"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
 	"portal_final_backend/platform/sanitize"
@@ -30,6 +31,11 @@ type Service struct {
 	storage          storage.StorageService
 	logoBucket       string
 	summaryGenerator OfferSummaryGenerator
+	summaryQueue     OfferSummaryJobQueue
+}
+
+type OfferSummaryJobQueue interface {
+	EnqueuePartnerOfferSummary(ctx context.Context, payload scheduler.PartnerOfferSummaryPayload) error
 }
 
 // New creates a new partners service.
@@ -97,6 +103,60 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 
 func (s *Service) SetOfferSummaryGenerator(generator OfferSummaryGenerator) {
 	s.summaryGenerator = generator
+}
+
+func (s *Service) SetOfferSummaryJobQueue(queue OfferSummaryJobQueue) {
+	s.summaryQueue = queue
+}
+
+func (s *Service) ProcessPartnerOfferSummaryJob(ctx context.Context, payload scheduler.PartnerOfferSummaryPayload) error {
+	if s == nil || s.summaryGenerator == nil {
+		return nil
+	}
+
+	leadID, err := uuid.Parse(payload.LeadID)
+	if err != nil {
+		return err
+	}
+	leadServiceID, err := uuid.Parse(payload.LeadServiceID)
+	if err != nil {
+		return err
+	}
+	tenantID, err := uuid.Parse(payload.TenantID)
+	if err != nil {
+		return err
+	}
+	offerID, err := uuid.Parse(payload.OfferID)
+	if err != nil {
+		return err
+	}
+
+	input := OfferSummaryInput{
+		LeadID:        leadID,
+		LeadServiceID: leadServiceID,
+		ServiceType:   payload.ServiceType,
+		Scope:         payload.Scope,
+		UrgencyLevel:  payload.UrgencyLevel,
+		Items:         make([]OfferSummaryItem, 0, len(payload.Items)),
+	}
+	for _, item := range payload.Items {
+		input.Items = append(input.Items, OfferSummaryItem{
+			Description: item.Description,
+			Quantity:    item.Quantity,
+		})
+	}
+
+	summary, err := s.summaryGenerator.GenerateSummary(ctx, tenantID, input)
+	if err != nil {
+		return err
+	}
+
+	clean := strings.TrimSpace(sanitize.Text(summary))
+	if clean == "" {
+		return nil
+	}
+
+	return s.repo.UpdateOfferBuilderSummaryIfEmpty(ctx, offerID, tenantID, clean)
 }
 
 func (s *Service) GetByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.PartnerResponse, error) {

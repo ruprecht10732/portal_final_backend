@@ -21,6 +21,13 @@ const (
 	imapSyncSweepTaskTimeout     = 5 * time.Minute
 	imapSyncSweepTaskUniqueTTL   = 9 * time.Minute
 	imapSyncSweepTaskMaxRetry    = 1
+	offerSummaryTaskTimeout      = 2 * time.Minute
+	offerSummaryTaskUniqueTTL    = 10 * time.Minute
+	offerSummaryTaskMaxRetry     = 3
+	leadAutomationTaskTimeout    = 5 * time.Minute
+	leadAutomationTaskUniqueTTL  = 2 * time.Minute
+	leadAutomationTaskMaxRetry   = 3
+	autoPhotoAnalysisDelay       = 30 * time.Second
 )
 
 type Client struct {
@@ -47,6 +54,32 @@ type HumanFeedbackMemoryScheduler interface {
 
 type CallLogScheduler interface {
 	EnqueueLogCall(ctx context.Context, payload LogCallPayload) error
+}
+
+type PartnerOfferSummaryScheduler interface {
+	EnqueuePartnerOfferSummary(ctx context.Context, payload PartnerOfferSummaryPayload) error
+}
+
+type GatekeeperScheduler interface {
+	EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRunPayload) error
+}
+
+type EstimatorScheduler interface {
+	EnqueueEstimatorRun(ctx context.Context, payload EstimatorRunPayload) error
+}
+
+type DispatcherScheduler interface {
+	EnqueueDispatcherRun(ctx context.Context, payload DispatcherRunPayload) error
+}
+
+type PhotoAnalysisScheduler interface {
+	EnqueuePhotoAnalysis(ctx context.Context, payload PhotoAnalysisPayload) error
+	EnqueuePhotoAnalysisIn(ctx context.Context, payload PhotoAnalysisPayload, delay time.Duration) error
+}
+
+type AuditorScheduler interface {
+	EnqueueAuditVisitReport(ctx context.Context, payload AuditVisitReportPayload) error
+	EnqueueAuditCallLog(ctx context.Context, payload AuditCallLogPayload) error
 }
 
 type QuoteJobRunner interface {
@@ -163,6 +196,112 @@ func (c *Client) EnqueueLogCall(ctx context.Context, payload LogCallPayload) err
 	return err
 }
 
+func (c *Client) EnqueuePartnerOfferSummary(ctx context.Context, payload PartnerOfferSummaryPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewPartnerOfferSummaryTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, offerSummaryTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRunPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewGatekeeperRunTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueueEstimatorRun(ctx context.Context, payload EstimatorRunPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewEstimatorRunTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueueDispatcherRun(ctx context.Context, payload DispatcherRunPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewDispatcherRunTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueuePhotoAnalysis(ctx context.Context, payload PhotoAnalysisPayload) error {
+	return c.EnqueuePhotoAnalysisIn(ctx, payload, 0)
+}
+
+func (c *Client) EnqueuePhotoAnalysisIn(ctx context.Context, payload PhotoAnalysisPayload, delay time.Duration) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewPhotoAnalysisTask(payload)
+	if err != nil {
+		return err
+	}
+
+	options := leadAutomationTaskOptions(c.queue)
+	if delay > 0 {
+		options = append(options, asynq.ProcessIn(delay))
+	}
+	_, err = c.client.EnqueueContext(ctx, task, options...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueueAuditVisitReport(ctx context.Context, payload AuditVisitReportPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewAuditVisitReportTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueueAuditCallLog(ctx context.Context, payload AuditCallLogPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewAuditCallLogTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
 func (c *Client) EnqueueIMAPSyncAccount(ctx context.Context, payload IMAPSyncAccountPayload) error {
 	if c == nil || c.client == nil {
 		return nil
@@ -202,6 +341,24 @@ func imapSyncSweepTaskOptions(queue string) []asynq.Option {
 		asynq.MaxRetry(imapSyncSweepTaskMaxRetry),
 		asynq.Timeout(imapSyncSweepTaskTimeout),
 		asynq.Unique(imapSyncSweepTaskUniqueTTL),
+	}
+}
+
+func offerSummaryTaskOptions(queue string) []asynq.Option {
+	return []asynq.Option{
+		asynq.Queue(queue),
+		asynq.MaxRetry(offerSummaryTaskMaxRetry),
+		asynq.Timeout(offerSummaryTaskTimeout),
+		asynq.Unique(offerSummaryTaskUniqueTTL),
+	}
+}
+
+func leadAutomationTaskOptions(queue string) []asynq.Option {
+	return []asynq.Option{
+		asynq.Queue(queue),
+		asynq.MaxRetry(leadAutomationTaskMaxRetry),
+		asynq.Timeout(leadAutomationTaskTimeout),
+		asynq.Unique(leadAutomationTaskUniqueTTL),
 	}
 }
 

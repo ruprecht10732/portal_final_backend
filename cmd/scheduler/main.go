@@ -24,6 +24,7 @@ import (
 	leadrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
+	"portal_final_backend/internal/partners"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
@@ -91,6 +92,7 @@ func main() {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
 	}
+	partnersModule := partners.NewModule(pool, eventBus, nil, "", val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 
 	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
@@ -101,6 +103,7 @@ func main() {
 
 	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent())
 	quotesModule.Service().SetQuotePromptGenerator(quoteGenAdapter)
+	partnersModule.Service().SetOfferSummaryGenerator(adapters.NewOfferSummaryGeneratorAdapter(leadsModule.OfferSummaryGenerator()))
 
 	dispatcher, err := scheduler.NewNotificationOutboxDispatcher(cfg, pool, log)
 	if err != nil {
@@ -130,6 +133,8 @@ func main() {
 	}
 	worker.SetQuoteJobProcessor(quotesModule.Service())
 	worker.SetCallLogProcessor(leadsModule)
+	worker.SetLeadAutomationProcessor(leadsModule)
+	worker.SetOfferSummaryProcessor(partnersModule.Service())
 	imapModule := imap.NewModule(pool, val, eventBus, log)
 	worker.SetIMAPSyncProcessor(imapModule.Service())
 	wireSchedulerIMAPEncryptionKey(cfg, log, imapModule.Service())

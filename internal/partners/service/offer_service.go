@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/partners/repository"
 	"portal_final_backend/internal/partners/transport"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/sanitize"
 
@@ -57,14 +59,8 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 		return transport.CreateOfferResponse{}, err
 	}
 
-	if strings.TrimSpace(q.Status) != "Accepted" {
-		return transport.CreateOfferResponse{}, apperr.Conflict("quote must be Accepted")
-	}
-	if q.LeadServiceID == nil || *q.LeadServiceID == uuid.Nil {
-		return transport.CreateOfferResponse{}, apperr.Validation("quote must be linked to a lead service")
-	}
-	if q.TotalCents <= 0 {
-		return transport.CreateOfferResponse{}, apperr.Validation("quote total must be greater than 0")
+	if err := validateQuoteForOffer(q); err != nil {
+		return transport.CreateOfferResponse{}, err
 	}
 
 	leadServiceID := *q.LeadServiceID
@@ -99,7 +95,6 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 	}
 
 	scopeAssessment := buildScopeAssessment(items)
-	builderSummaryPtr := s.resolveBuilderSummary(ctx, tenantID, items, scopeAssessment, serviceCtx, leadServiceID)
 	jobSummaryPtr := sanitizeJobSummary(req.JobSummaryShort)
 
 	offer, err := s.repo.CreateOffer(ctx, repository.PartnerOffer{
@@ -112,10 +107,15 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 		CustomerPriceCents: q.TotalCents,
 		VakmanPriceCents:   vakmanPrice,
 		JobSummaryShort:    jobSummaryPtr,
-		BuilderSummary:     builderSummaryPtr,
 	})
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
+	}
+
+	if payload, ok := s.buildOfferSummaryPayload(offer.ID, tenantID, leadServiceID, serviceCtx, scopeAssessment, items); ok {
+		if err := s.summaryQueue.EnqueuePartnerOfferSummary(ctx, payload); err != nil {
+			log.Printf("partners: failed to enqueue offer summary generation for offer=%s tenant=%s: %v", offer.ID, tenantID, err)
+		}
 	}
 
 	s.publishOfferCreated(ctx, offerCreatedParams{
@@ -370,6 +370,32 @@ func (s *Service) resolveBuilderSummary(ctx context.Context, tenantID uuid.UUID,
 	return buildBuilderSummary(items, scopeAssessment, serviceCtx.UrgencyLevel)
 }
 
+func (s *Service) buildOfferSummaryPayload(offerID, tenantID, leadServiceID uuid.UUID, serviceCtx repository.LeadServiceSummaryContext, scopeAssessment *string, items []repository.QuoteItemSummary) (scheduler.PartnerOfferSummaryPayload, bool) {
+	if s == nil || s.summaryQueue == nil || s.summaryGenerator == nil || len(items) == 0 {
+		return scheduler.PartnerOfferSummaryPayload{}, false
+	}
+
+	payload := scheduler.PartnerOfferSummaryPayload{
+		OfferID:       offerID.String(),
+		TenantID:      tenantID.String(),
+		LeadID:        serviceCtx.LeadID.String(),
+		LeadServiceID: leadServiceID.String(),
+		ServiceType:   serviceCtx.ServiceType,
+		Scope:         scopeAssessment,
+		UrgencyLevel:  serviceCtx.UrgencyLevel,
+		Items:         make([]scheduler.PartnerOfferSummaryItemPayload, 0, len(items)),
+	}
+
+	for _, item := range items {
+		payload.Items = append(payload.Items, scheduler.PartnerOfferSummaryItemPayload{
+			Description: item.Description,
+			Quantity:    item.Quantity,
+		})
+	}
+
+	return payload, true
+}
+
 func sanitizeJobSummary(value string) *string {
 	jobSummary := strings.TrimSpace(value)
 	jobSummary = sanitize.Text(jobSummary)
@@ -377,6 +403,19 @@ func sanitizeJobSummary(value string) *string {
 		return nil
 	}
 	return &jobSummary
+}
+
+func validateQuoteForOffer(q repository.QuoteForOffer) error {
+	if strings.TrimSpace(q.Status) != "Accepted" {
+		return apperr.Conflict("quote must be Accepted")
+	}
+	if q.LeadServiceID == nil || *q.LeadServiceID == uuid.Nil {
+		return apperr.Validation("quote must be linked to a lead service")
+	}
+	if q.TotalCents <= 0 {
+		return apperr.Validation("quote total must be greater than 0")
+	}
+	return nil
 }
 
 type offerCreatedParams struct {

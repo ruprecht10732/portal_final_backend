@@ -59,6 +59,15 @@ type Module struct {
 	attachmentsBucket     string
 	log                   *logger.Logger
 	scorer                *scoring.Service
+	automationQueue       AutomationScheduler
+}
+
+type AutomationScheduler interface {
+	scheduler.GatekeeperScheduler
+	scheduler.EstimatorScheduler
+	scheduler.DispatcherScheduler
+	scheduler.PhotoAnalysisScheduler
+	scheduler.AuditorScheduler
 }
 
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader into
@@ -106,10 +115,6 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	// SSE service for real-time notifications
 	sseService := sse.New()
 
-	// Subscribe to LeadCreated and LeadServiceAdded events to kick off gatekeeper triage
-	subscribeLeadCreated(eventBus, repo, gatekeeper, log)
-	subscribeLeadServiceAdded(eventBus, repo, gatekeeper, log)
-
 	// Create focused services (vertical slices)
 	mapsSvc := maps.NewService(log)
 	mgmtSvc := management.New(repo, eventBus, mapsSvc)
@@ -133,25 +138,24 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 
 	// Create handlers
 	h, attachmentsHandler, photoAnalysisHandler := buildHandlers(buildHandlersDeps{
-		MgmtSvc:       mgmtSvc,
-		NotesSvc:      notesSvc,
-		Gatekeeper:    gatekeeper,
-		CallLogger:    callLogger,
-		SSEService:    sseService,
-		EventBus:      eventBus,
-		Repo:          repo,
-		StorageSvc:    storageSvc,
-		Config:        cfg,
-		Validator:     val,
-		PhotoAnalyzer: photoAnalyzer,
-		CallLogQueue:  nil,
+		MgmtSvc:            mgmtSvc,
+		NotesSvc:           notesSvc,
+		Gatekeeper:         gatekeeper,
+		CallLogger:         callLogger,
+		SSEService:         sseService,
+		EventBus:           eventBus,
+		Repo:               repo,
+		StorageSvc:         storageSvc,
+		Config:             cfg,
+		Validator:          val,
+		PhotoAnalyzer:      photoAnalyzer,
+		CallLogQueue:       nil,
+		GatekeeperQueue:    nil,
+		PhotoAnalysisQueue: nil,
 	})
-
-	photoBatcher := newPhotoAnalysisBatcher(photoAnalysisHandler, 30*time.Second, log)
-	subscribeAttachmentUploaded(eventBus, repo, photoBatcher, log)
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
 
-	return &Module{
+	module := &Module{
 		handler:               h,
 		attachmentsHandler:    attachmentsHandler,
 		photoAnalysisHandler:  photoAnalysisHandler,
@@ -174,7 +178,13 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		attachmentsBucket:     cfg.GetMinioBucketLeadServiceAttachments(),
 		log:                   log,
 		scorer:                scorer,
-	}, nil
+	}
+
+	subscribeLeadCreated(eventBus, repo, module, log)
+	subscribeLeadServiceAdded(eventBus, repo, module, log)
+	subscribeAttachmentUploaded(eventBus, repo, module, log)
+
+	return module, nil
 }
 
 func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
@@ -282,72 +292,90 @@ func (m *Module) OfferSummaryGenerator() ports.OfferSummaryGenerator {
 	return m.offerSummaryGenerator
 }
 
-func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
+func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, module *Module, log *logger.Logger) {
 	eventBus.Subscribe(events.LeadCreated{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadCreated)
 		if !ok {
 			return nil
 		}
 
-		go func() {
-			bg := context.Background()
-
-			// Terminal check: verify the service is not already in a terminal state
-			service, err := repo.GetLeadServiceByID(bg, e.LeadServiceID, e.TenantID)
-			if err != nil {
-				log.Error("gatekeeper: failed to load service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
-				return
-			}
-			if domain.IsTerminal(service.Status, service.PipelineStage) {
-				log.Info("gatekeeper: skipping terminal service on lead created", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
-				return
-			}
-			if attachments, attErr := repo.ListAttachmentsByService(bg, e.LeadServiceID, e.TenantID); attErr == nil && hasImageAttachments(attachments) {
-				log.Info("gatekeeper: deferring initial run until photo analysis concludes", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
-				return
-			}
-
-			if err := gatekeeper.Run(bg, e.LeadID, e.LeadServiceID, e.TenantID); err != nil {
-				log.Error("gatekeeper run failed", "error", err, "leadId", e.LeadID)
-			}
-		}()
+		go runInitialGatekeeper(context.Background(), repo, module, log, initialGatekeeperTrigger{
+			LeadID:    e.LeadID,
+			ServiceID: e.LeadServiceID,
+			TenantID:  e.TenantID,
+			Source:    "lead created",
+		})
 
 		return nil
 	}))
 }
 
-func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsRepository, gatekeeper *agent.Gatekeeper, log *logger.Logger) {
+func subscribeLeadServiceAdded(eventBus events.Bus, repo repository.LeadsRepository, module *Module, log *logger.Logger) {
 	eventBus.Subscribe(events.LeadServiceAdded{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.LeadServiceAdded)
 		if !ok {
 			return nil
 		}
 
-		go func() {
-			bg := context.Background()
-
-			// Terminal check: verify the service is not already in a terminal state
-			service, err := repo.GetLeadServiceByID(bg, e.LeadServiceID, e.TenantID)
-			if err != nil {
-				log.Error("gatekeeper: failed to load service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
-				return
-			}
-			if domain.IsTerminal(service.Status, service.PipelineStage) {
-				log.Info("gatekeeper: skipping terminal service on service added", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
-				return
-			}
-			if attachments, attErr := repo.ListAttachmentsByService(bg, e.LeadServiceID, e.TenantID); attErr == nil && hasImageAttachments(attachments) {
-				log.Info("gatekeeper: deferring initial run until photo analysis concludes", "leadId", e.LeadID, "serviceId", e.LeadServiceID)
-				return
-			}
-
-			if err := gatekeeper.Run(bg, e.LeadID, e.LeadServiceID, e.TenantID); err != nil {
-				log.Error("gatekeeper run failed for new service", "error", err, "leadId", e.LeadID, "serviceId", e.LeadServiceID)
-			}
-		}()
+		go runInitialGatekeeper(context.Background(), repo, module, log, initialGatekeeperTrigger{
+			LeadID:    e.LeadID,
+			ServiceID: e.LeadServiceID,
+			TenantID:  e.TenantID,
+			Source:    "service added",
+		})
 
 		return nil
 	}))
+}
+
+type initialGatekeeperTrigger struct {
+	LeadID    uuid.UUID
+	ServiceID uuid.UUID
+	TenantID  uuid.UUID
+	Source    string
+}
+
+func runInitialGatekeeper(ctx context.Context, repo repository.LeadsRepository, module *Module, log *logger.Logger, trigger initialGatekeeperTrigger) {
+	if shouldSkipInitialGatekeeper(ctx, repo, log, trigger) {
+		return
+	}
+	if enqueueGatekeeperRun(ctx, module, log, trigger.LeadID, trigger.ServiceID, trigger.TenantID) {
+		return
+	}
+	if err := module.gatekeeper.Run(ctx, trigger.LeadID, trigger.ServiceID, trigger.TenantID); err != nil {
+		log.Error("gatekeeper run failed", "error", err, "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
+	}
+}
+
+func shouldSkipInitialGatekeeper(ctx context.Context, repo repository.LeadsRepository, log *logger.Logger, trigger initialGatekeeperTrigger) bool {
+	service, err := repo.GetLeadServiceByID(ctx, trigger.ServiceID, trigger.TenantID)
+	if err != nil {
+		log.Error("gatekeeper: failed to load service", "error", err, "leadId", trigger.LeadID, "serviceId", trigger.ServiceID)
+		return true
+	}
+	if domain.IsTerminal(service.Status, service.PipelineStage) {
+		log.Info("gatekeeper: skipping terminal service", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
+		return true
+	}
+	if attachments, attErr := repo.ListAttachmentsByService(ctx, trigger.ServiceID, trigger.TenantID); attErr == nil && hasImageAttachments(attachments) {
+		log.Info("gatekeeper: deferring initial run until photo analysis concludes", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
+		return true
+	}
+	return false
+}
+
+func enqueueGatekeeperRun(ctx context.Context, module *Module, log *logger.Logger, leadID, serviceID, tenantID uuid.UUID) bool {
+	if module == nil || module.automationQueue == nil {
+		return false
+	}
+	if err := module.automationQueue.EnqueueGatekeeperRun(ctx, scheduler.GatekeeperRunPayload{
+		TenantID:      tenantID.String(),
+		LeadID:        leadID.String(),
+		LeadServiceID: serviceID.String(),
+	}); err != nil {
+		log.Error("gatekeeper queue enqueue failed", "error", err, "leadId", leadID, "serviceId", serviceID)
+	}
+	return true
 }
 
 func hasImageAttachments(items []repository.Attachment) bool {
@@ -369,7 +397,7 @@ func subscribeOrchestrator(eventBus events.Bus, orchestrator *Orchestrator) {
 	subscribePipelineManager(eventBus, pipelineManager)
 }
 
-func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepository, batcher *photoAnalysisBatcher, log *logger.Logger) {
+func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepository, module *Module, log *logger.Logger) {
 	eventBus.Subscribe(events.AttachmentUploaded{}.EventName(), events.HandlerFunc(func(ctx context.Context, event events.Event) error {
 		e, ok := event.(events.AttachmentUploaded)
 		if !ok {
@@ -395,8 +423,8 @@ func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepos
 		if !isImageContentType(e.ContentType) {
 			return nil
 		}
-		if batcher == nil {
-			log.Warn("photo analysis batcher not configured")
+		if module == nil || module.photoAnalysisHandler == nil {
+			log.Warn("photo analysis handler not configured")
 			return nil
 		}
 
@@ -411,40 +439,58 @@ func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepos
 			return nil
 		}
 
-		batcher.OnImageUploaded(e.LeadID, e.LeadServiceID, e.TenantID)
+		queueOrRunPhotoAnalysis(ctx, module, log, e.LeadID, e.LeadServiceID, e.TenantID)
 		return nil
 	}))
 }
 
+func queueOrRunPhotoAnalysis(ctx context.Context, module *Module, log *logger.Logger, leadID, serviceID, tenantID uuid.UUID) {
+	if module != nil && module.automationQueue != nil {
+		if err := module.automationQueue.EnqueuePhotoAnalysisIn(ctx, scheduler.PhotoAnalysisPayload{
+			TenantID:      tenantID.String(),
+			LeadID:        leadID.String(),
+			LeadServiceID: serviceID.String(),
+		}, 30*time.Second); err != nil {
+			log.Error("photo analysis queue enqueue failed", "error", err, "leadId", leadID, "serviceId", serviceID)
+		}
+		return
+	}
+	go module.photoAnalysisHandler.RunAutoAnalysis(leadID, serviceID, tenantID)
+}
+
 type buildHandlersDeps struct {
-	MgmtSvc       *management.Service
-	NotesSvc      *notes.Service
-	Gatekeeper    *agent.Gatekeeper
-	CallLogger    *agent.CallLogger
-	SSEService    *sse.Service
-	EventBus      events.Bus
-	Repo          repository.LeadsRepository
-	StorageSvc    storage.StorageService
-	Config        *config.Config
-	Validator     *validator.Validator
-	PhotoAnalyzer *agent.PhotoAnalyzer
-	CallLogQueue  scheduler.CallLogScheduler
+	MgmtSvc            *management.Service
+	NotesSvc           *notes.Service
+	Gatekeeper         *agent.Gatekeeper
+	CallLogger         *agent.CallLogger
+	SSEService         *sse.Service
+	EventBus           events.Bus
+	Repo               repository.LeadsRepository
+	StorageSvc         storage.StorageService
+	Config             *config.Config
+	Validator          *validator.Validator
+	PhotoAnalyzer      *agent.PhotoAnalyzer
+	CallLogQueue       scheduler.CallLogScheduler
+	GatekeeperQueue    scheduler.GatekeeperScheduler
+	PhotoAnalysisQueue scheduler.PhotoAnalysisScheduler
 }
 
 func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.AttachmentsHandler, *handler.PhotoAnalysisHandler) {
 	notesHandler := handler.NewNotesHandler(deps.NotesSvc, deps.Repo, deps.EventBus, deps.Validator)
 	attachmentsHandler := handler.NewAttachmentsHandler(deps.Repo, deps.EventBus, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.Validator)
 	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator, deps.EventBus)
+	photoAnalysisHandler.SetPhotoAnalysisScheduler(deps.PhotoAnalysisQueue)
 	h := handler.New(handler.HandlerDeps{
-		Mgmt:         deps.MgmtSvc,
-		NotesHandler: notesHandler,
-		Gatekeeper:   deps.Gatekeeper,
-		CallLogger:   deps.CallLogger,
-		SSE:          deps.SSEService,
-		EventBus:     deps.EventBus,
-		Repo:         deps.Repo,
-		Validator:    deps.Validator,
-		CallLogQueue: deps.CallLogQueue,
+		Mgmt:            deps.MgmtSvc,
+		NotesHandler:    notesHandler,
+		Gatekeeper:      deps.Gatekeeper,
+		CallLogger:      deps.CallLogger,
+		SSE:             deps.SSEService,
+		EventBus:        deps.EventBus,
+		Repo:            deps.Repo,
+		Validator:       deps.Validator,
+		CallLogQueue:    deps.CallLogQueue,
+		GatekeeperQueue: deps.GatekeeperQueue,
 	})
 
 	return h, attachmentsHandler, photoAnalysisHandler
@@ -499,6 +545,22 @@ func (m *Module) SetCallLogScheduler(queue scheduler.CallLogScheduler) {
 	m.handler.SetCallLogScheduler(queue)
 }
 
+func (m *Module) SetAutomationScheduler(queue AutomationScheduler) {
+	if m == nil {
+		return
+	}
+	m.automationQueue = queue
+	if m.handler != nil {
+		m.handler.SetGatekeeperScheduler(queue)
+	}
+	if m.photoAnalysisHandler != nil {
+		m.photoAnalysisHandler.SetPhotoAnalysisScheduler(queue)
+	}
+	if m.orchestrator != nil {
+		m.orchestrator.SetAutomationScheduler(queue)
+	}
+}
+
 // ProcessLogCallJob executes a queued call log summary and publishes lead data updates.
 func (m *Module) ProcessLogCallJob(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) error {
 	if m == nil || m.callLogger == nil {
@@ -520,6 +582,52 @@ func (m *Module) ProcessLogCallJob(ctx context.Context, leadID, serviceID, userI
 	}
 
 	return nil
+}
+
+func (m *Module) ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
+	if m == nil || m.gatekeeper == nil {
+		return nil
+	}
+	return m.gatekeeper.Run(ctx, leadID, serviceID, tenantID)
+}
+
+func (m *Module) ProcessEstimatorRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {
+	if m == nil || m.estimator == nil {
+		return nil
+	}
+	return m.estimator.Execute(ctx, leadID, serviceID, tenantID, force)
+}
+
+func (m *Module) ProcessDispatcherRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
+	if m == nil || m.dispatcher == nil {
+		return nil
+	}
+	err := m.dispatcher.Run(ctx, leadID, serviceID, tenantID)
+	if err != nil && m.orchestrator != nil {
+		m.orchestrator.recordDispatcherFailure(context.Background(), leadID, serviceID, tenantID)
+	}
+	return err
+}
+
+func (m *Module) ProcessPhotoAnalysisJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, contextInfo string) error {
+	if m == nil || m.photoAnalysisHandler == nil {
+		return nil
+	}
+	return m.photoAnalysisHandler.ProcessPhotoAnalysisJob(ctx, leadID, serviceID, tenantID, userID, contextInfo)
+}
+
+func (m *Module) ProcessAuditVisitReportJob(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error {
+	if m == nil || m.auditor == nil {
+		return nil
+	}
+	return m.auditor.AuditVisitReport(ctx, leadID, serviceID, tenantID, appointmentID)
+}
+
+func (m *Module) ProcessAuditCallLogJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
+	if m == nil || m.auditor == nil {
+		return nil
+	}
+	return m.auditor.AuditCallLog(ctx, leadID, serviceID, tenantID)
 }
 
 // SetPublicViewers injects quote and appointment viewers for the public portal.

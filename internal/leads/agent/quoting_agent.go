@@ -41,6 +41,7 @@ type QuotingAgentDependencies interface {
 type Estimator interface {
 	QuotingAgentDependencies
 	Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error
+	Execute(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error
 }
 
 // QuoteGenerator exposes the prompt-driven quote generation surface.
@@ -279,19 +280,33 @@ func (q *QuotingAgent) Run(ctx context.Context, leadID, serviceID, tenantID uuid
 	log.Printf("quoting-agent[%s]: scheduling run for lead=%s service=%s tenant=%s force=%t", q.mode, leadID, serviceID, tenantID, force)
 	reqDeps := q.toolDeps.NewRequestDeps()
 	ctx = WithDependencies(ctx, reqDeps)
-	go q.runEstimation(ctx, reqDeps, leadID, serviceID, tenantID, force)
+	go func() {
+		if err := q.executeAutonomousRun(ctx, reqDeps, leadID, serviceID, tenantID, force); err != nil {
+			log.Printf("quoting-agent[%s]: autonomous run failed lead=%s service=%s tenant=%s: %v", q.mode, leadID, serviceID, tenantID, err)
+		}
+	}()
 	return nil
 }
 
-func (q *QuotingAgent) runEstimation(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, force bool) {
+func (q *QuotingAgent) Execute(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {
+	if !q.mode.isAutonomous() {
+		return fmt.Errorf("quoting agent is not configured for autonomous runs")
+	}
+
+	reqDeps := q.toolDeps.NewRequestDeps()
+	ctx = WithDependencies(ctx, reqDeps)
+	return q.executeAutonomousRun(ctx, reqDeps, leadID, serviceID, tenantID, force)
+}
+
+func (q *QuotingAgent) executeAutonomousRun(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, force bool) error {
 	runID := q.startAutonomousRun(ctx, reqDeps, leadID, serviceID, tenantID)
 	lead, service, notes, photo, ok := q.loadAutonomousRunContext(ctx, leadID, serviceID, tenantID)
 	if !ok {
-		return
+		return nil
 	}
 
 	if !q.executeAutonomousPrompt(ctx, lead, service, notes, photo, tenantID) {
-		return
+		return nil
 	}
 
 	if !reqDeps.WasClarificationAsked() {
@@ -310,6 +325,7 @@ func (q *QuotingAgent) runEstimation(ctx context.Context, reqDeps *ToolDependenc
 	q.persistEstimatorDecisionMemory(ctx, reqDeps, leadID, serviceID, tenantID, service)
 
 	log.Printf("quoting-agent[%s]: run finished runID=%s lead=%s service=%s", q.mode, runID, leadID, serviceID)
+	return nil
 }
 
 type nurturingFallbackContext struct {

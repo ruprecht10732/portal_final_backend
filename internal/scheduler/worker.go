@@ -22,19 +22,23 @@ import (
 )
 
 type Worker struct {
-	server *asynq.Server
-	mux    *asynq.ServeMux
-	repo   *repository.Repository
-	leads  *leadrepo.Repository
-	bus    events.Bus
-	log    *logger.Logger
-	quotes QuoteJobProcessor
-	pdf    QuoteAcceptedPDFProcessor
-	call   CallLogProcessor
-	imap   IMAPSyncProcessor
-	embed  *embeddings.Client
-	qdrant *qdrant.Client
+	server  *asynq.Server
+	mux     *asynq.ServeMux
+	repo    *repository.Repository
+	leads   *leadrepo.Repository
+	bus     events.Bus
+	log     *logger.Logger
+	quotes  QuoteJobProcessor
+	pdf     QuoteAcceptedPDFProcessor
+	call    CallLogProcessor
+	offer   OfferSummaryProcessor
+	leadsAI LeadAutomationProcessor
+	imap    IMAPSyncProcessor
+	embed   *embeddings.Client
+	qdrant  *qdrant.Client
 }
+
+const errLeadAutomationProcessorNotConfigured = "lead automation processor is not configured"
 
 type QuoteJobProcessor interface {
 	ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, prompt string, existingQuoteID *uuid.UUID, force bool) error
@@ -52,6 +56,19 @@ type QuoteAcceptedPDFProcessor interface {
 
 type CallLogProcessor interface {
 	ProcessLogCallJob(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) error
+}
+
+type OfferSummaryProcessor interface {
+	ProcessPartnerOfferSummaryJob(ctx context.Context, payload PartnerOfferSummaryPayload) error
+}
+
+type LeadAutomationProcessor interface {
+	ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
+	ProcessEstimatorRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error
+	ProcessDispatcherRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
+	ProcessPhotoAnalysisJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, contextInfo string) error
+	ProcessAuditVisitReportJob(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error
+	ProcessAuditCallLogJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
 }
 
 func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, log *logger.Logger) (*Worker, error) {
@@ -121,6 +138,13 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskGenerateQuoteJob, w.handleGenerateQuoteJob)
 	mux.HandleFunc(TaskGenerateAcceptedQuotePDF, w.handleGenerateAcceptedQuotePDF)
 	mux.HandleFunc(TaskLogCall, w.handleLogCall)
+	mux.HandleFunc(TaskGeneratePartnerOfferSummary, w.handlePartnerOfferSummary)
+	mux.HandleFunc(TaskRunGatekeeper, w.handleGatekeeperRun)
+	mux.HandleFunc(TaskRunEstimator, w.handleEstimatorRun)
+	mux.HandleFunc(TaskRunDispatcher, w.handleDispatcherRun)
+	mux.HandleFunc(TaskAnalyzePhotos, w.handlePhotoAnalysis)
+	mux.HandleFunc(TaskAuditVisitReport, w.handleAuditVisitReport)
+	mux.HandleFunc(TaskAuditCallLog, w.handleAuditCallLog)
 	mux.HandleFunc(TaskIMAPSyncAccount, w.handleIMAPSyncAccount)
 	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
 	mux.HandleFunc(TaskApplyHumanFeedbackMemory, w.handleApplyHumanFeedbackMemory)
@@ -142,6 +166,14 @@ func (w *Worker) SetIMAPSyncProcessor(processor IMAPSyncProcessor) {
 
 func (w *Worker) SetCallLogProcessor(processor CallLogProcessor) {
 	w.call = processor
+}
+
+func (w *Worker) SetOfferSummaryProcessor(processor OfferSummaryProcessor) {
+	w.offer = processor
+}
+
+func (w *Worker) SetLeadAutomationProcessor(processor LeadAutomationProcessor) {
+	w.leadsAI = processor
 }
 
 func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
@@ -511,6 +543,148 @@ func (w *Worker) handleLogCall(ctx context.Context, task *asynq.Task) error {
 	return nil
 }
 
+func (w *Worker) handlePartnerOfferSummary(ctx context.Context, task *asynq.Task) error {
+	if w.offer == nil {
+		return fmt.Errorf("offer summary processor is not configured")
+	}
+
+	payload, err := ParsePartnerOfferSummaryPayload(task)
+	if err != nil {
+		return err
+	}
+
+	start := time.Now()
+	w.log.Info("scheduler: starting partner offer summary generation", "offerId", payload.OfferID, "tenantId", payload.TenantID)
+	if err := w.offer.ProcessPartnerOfferSummaryJob(ctx, payload); err != nil {
+		w.log.Error("scheduler: partner offer summary generation failed", "offerId", payload.OfferID, "tenantId", payload.TenantID, "durationMs", time.Since(start).Milliseconds(), "error", err)
+		return err
+	}
+	w.log.Info("scheduler: partner offer summary generation completed", "offerId", payload.OfferID, "tenantId", payload.TenantID, "durationMs", time.Since(start).Milliseconds())
+	return nil
+}
+
+func (w *Worker) handleGatekeeperRun(ctx context.Context, task *asynq.Task) error {
+	if w.leadsAI == nil {
+		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+	}
+
+	payload, err := ParseGatekeeperRunPayload(task)
+	if err != nil {
+		return err
+	}
+
+	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	return w.leadsAI.ProcessGatekeeperRun(ctx, leadID, serviceID, tenantID)
+}
+
+func (w *Worker) handleEstimatorRun(ctx context.Context, task *asynq.Task) error {
+	if w.leadsAI == nil {
+		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+	}
+
+	payload, err := ParseEstimatorRunPayload(task)
+	if err != nil {
+		return err
+	}
+
+	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	return w.leadsAI.ProcessEstimatorRun(ctx, leadID, serviceID, tenantID, payload.Force)
+}
+
+func (w *Worker) handleDispatcherRun(ctx context.Context, task *asynq.Task) error {
+	if w.leadsAI == nil {
+		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+	}
+
+	payload, err := ParseDispatcherRunPayload(task)
+	if err != nil {
+		return err
+	}
+
+	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	return w.leadsAI.ProcessDispatcherRun(ctx, leadID, serviceID, tenantID)
+}
+
+func (w *Worker) handlePhotoAnalysis(ctx context.Context, task *asynq.Task) error {
+	if w.leadsAI == nil {
+		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+	}
+
+	payload, err := ParsePhotoAnalysisPayload(task)
+	if err != nil {
+		return err
+	}
+
+	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	var userID *uuid.UUID
+	if payload.UserID != nil && *payload.UserID != "" {
+		parsed, parseErr := uuid.Parse(*payload.UserID)
+		if parseErr != nil {
+			return parseErr
+		}
+		userID = &parsed
+	}
+
+	return w.leadsAI.ProcessPhotoAnalysisJob(ctx, leadID, serviceID, tenantID, userID, payload.ContextInfo)
+}
+
+func (w *Worker) handleAuditVisitReport(ctx context.Context, task *asynq.Task) error {
+	if w.leadsAI == nil {
+		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+	}
+
+	payload, err := ParseAuditVisitReportPayload(task)
+	if err != nil {
+		return err
+	}
+
+	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	appointmentID, err := uuid.Parse(payload.AppointmentID)
+	if err != nil {
+		return err
+	}
+
+	return w.leadsAI.ProcessAuditVisitReportJob(ctx, leadID, serviceID, tenantID, appointmentID)
+}
+
+func (w *Worker) handleAuditCallLog(ctx context.Context, task *asynq.Task) error {
+	if w.leadsAI == nil {
+		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+	}
+
+	payload, err := ParseAuditCallLogPayload(task)
+	if err != nil {
+		return err
+	}
+
+	leadID, serviceID, tenantID, err := parseLeadAutomationIDs(payload.LeadID, payload.LeadServiceID, payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	return w.leadsAI.ProcessAuditCallLogJob(ctx, leadID, serviceID, tenantID)
+}
+
 func (w *Worker) handleIMAPSyncAccount(ctx context.Context, task *asynq.Task) error {
 	if w.imap == nil {
 		return fmt.Errorf("imap sync processor is not configured")
@@ -542,4 +716,23 @@ func getOptionalString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func parseLeadAutomationIDs(leadIDValue, serviceIDValue, tenantIDValue string) (uuid.UUID, uuid.UUID, uuid.UUID, error) {
+	leadID, err := uuid.Parse(leadIDValue)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, err
+	}
+
+	serviceID, err := uuid.Parse(serviceIDValue)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, err
+	}
+
+	tenantID, err := uuid.Parse(tenantIDValue)
+	if err != nil {
+		return uuid.UUID{}, uuid.UUID{}, uuid.UUID{}, err
+	}
+
+	return leadID, serviceID, tenantID, nil
 }

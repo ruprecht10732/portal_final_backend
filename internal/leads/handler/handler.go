@@ -24,28 +24,30 @@ import (
 // Handler handles HTTP requests for RAC_leads.
 // Uses focused services following vertical slicing pattern.
 type Handler struct {
-	mgmt         *management.Service
-	notesHandler *NotesHandler
-	gatekeeper   *agent.Gatekeeper
-	callLogger   *agent.CallLogger
-	sse          *sse.Service
-	eventBus     events.Bus
-	repo         repository.LeadsRepository
-	val          *validator.Validator
-	callLogQueue scheduler.CallLogScheduler
+	mgmt            *management.Service
+	notesHandler    *NotesHandler
+	gatekeeper      *agent.Gatekeeper
+	callLogger      *agent.CallLogger
+	sse             *sse.Service
+	eventBus        events.Bus
+	repo            repository.LeadsRepository
+	val             *validator.Validator
+	callLogQueue    scheduler.CallLogScheduler
+	gatekeeperQueue scheduler.GatekeeperScheduler
 }
 
 // HandlerDeps bundles dependencies for Handler construction.
 type HandlerDeps struct {
-	Mgmt         *management.Service
-	NotesHandler *NotesHandler
-	Gatekeeper   *agent.Gatekeeper
-	CallLogger   *agent.CallLogger
-	SSE          *sse.Service
-	EventBus     events.Bus
-	Repo         repository.LeadsRepository
-	Validator    *validator.Validator
-	CallLogQueue scheduler.CallLogScheduler
+	Mgmt            *management.Service
+	NotesHandler    *NotesHandler
+	Gatekeeper      *agent.Gatekeeper
+	CallLogger      *agent.CallLogger
+	SSE             *sse.Service
+	EventBus        events.Bus
+	Repo            repository.LeadsRepository
+	Validator       *validator.Validator
+	CallLogQueue    scheduler.CallLogScheduler
+	GatekeeperQueue scheduler.GatekeeperScheduler
 }
 
 const (
@@ -70,20 +72,25 @@ func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool
 // New creates a new RAC_leads handler with focused services.
 func New(deps HandlerDeps) *Handler {
 	return &Handler{
-		mgmt:         deps.Mgmt,
-		notesHandler: deps.NotesHandler,
-		gatekeeper:   deps.Gatekeeper,
-		callLogger:   deps.CallLogger,
-		sse:          deps.SSE,
-		eventBus:     deps.EventBus,
-		repo:         deps.Repo,
-		val:          deps.Validator,
-		callLogQueue: deps.CallLogQueue,
+		mgmt:            deps.Mgmt,
+		notesHandler:    deps.NotesHandler,
+		gatekeeper:      deps.Gatekeeper,
+		callLogger:      deps.CallLogger,
+		sse:             deps.SSE,
+		eventBus:        deps.EventBus,
+		repo:            deps.Repo,
+		val:             deps.Validator,
+		callLogQueue:    deps.CallLogQueue,
+		gatekeeperQueue: deps.GatekeeperQueue,
 	}
 }
 
 func (h *Handler) SetCallLogScheduler(queue scheduler.CallLogScheduler) {
 	h.callLogQueue = queue
+}
+
+func (h *Handler) SetGatekeeperScheduler(queue scheduler.GatekeeperScheduler) {
+	h.gatekeeperQueue = queue
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -748,6 +755,25 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	}
 
 	// Trigger gatekeeper analysis asynchronously
+	if h.gatekeeperQueue != nil {
+		queuedServiceID := validation.ServiceID
+		if err := h.gatekeeperQueue.EnqueueGatekeeperRun(c.Request.Context(), scheduler.GatekeeperRunPayload{
+			TenantID:      tenantID.String(),
+			LeadID:        id.String(),
+			LeadServiceID: queuedServiceID.String(),
+		}); err != nil {
+			if httpkit.HandleError(c, err) {
+				return
+			}
+		}
+
+		httpkit.JSON(c, http.StatusAccepted, gin.H{
+			"message": "Analysis queued successfully",
+			"leadId":  id,
+		})
+		return
+	}
+
 	go func() {
 		ctx := context.Background()
 		serviceID := validation.ServiceID

@@ -335,6 +335,31 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 	return offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, LeadPostcode4: row.LeadEnrichmentPostcode4, LeadBuurtcode: row.LeadEnrichmentBuurtcode, LeadEnergyBouwjaar: row.EnergyBouwjaar, UrgencyLevel: row.UrgencyLevel}), nil
 }
 
+func (r *Repository) UpdateOfferBuilderSummaryIfEmpty(ctx context.Context, offerID, organizationID uuid.UUID, summary string) error {
+	if r == nil || r.pool == nil {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(summary)
+	if trimmed == "" {
+		return nil
+	}
+
+	_, err := r.pool.Exec(ctx, `
+		UPDATE RAC_partner_offers
+		SET builder_summary = $1,
+		    updated_at = NOW()
+		WHERE id = $2
+		  AND organization_id = $3
+		  AND builder_summary IS NULL
+	`, trimmed, offerID, organizationID)
+	if err != nil {
+		return fmt.Errorf("update offer builder summary: %w", err)
+	}
+
+	return nil
+}
+
 // GetLatestQuoteItemsForService returns line items from the latest non-draft quote for a lead service.
 func (r *Repository) GetLatestQuoteItemsForService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]QuoteItemSummary, error) {
 	rows, err := r.queries.ListLatestQuoteItemsForService(ctx, partnersdb.ListLatestQuoteItemsForServiceParams{
