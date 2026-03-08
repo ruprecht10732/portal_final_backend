@@ -200,17 +200,50 @@ LIMIT sqlc.arg('limit_count') OFFSET sqlc.arg('offset_count');
 -- name: CountPendingApprovals :one
 SELECT COUNT(q.id)
 FROM RAC_quotes q
+LEFT JOIN LATERAL (
+  SELECT qar.decision
+  FROM RAC_quote_ai_reviews qar
+  WHERE qar.quote_id = q.id AND qar.organization_id = q.organization_id
+  ORDER BY qar.created_at DESC, qar.id DESC
+  LIMIT 1
+) latest_review ON true
 WHERE q.organization_id = $1
-  AND q.status = 'Draft';
+  AND q.status = 'Draft'
+  AND (latest_review.decision IS NULL OR latest_review.decision = 'approved');
 
 -- name: ListPendingApprovals :many
 SELECT q.id, q.lead_id, q.quote_number, l.consumer_first_name, l.consumer_last_name, q.total_cents, l.lead_score, q.created_at
 FROM RAC_quotes q
 LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
+LEFT JOIN LATERAL (
+  SELECT qar.decision
+  FROM RAC_quote_ai_reviews qar
+  WHERE qar.quote_id = q.id AND qar.organization_id = q.organization_id
+  ORDER BY qar.created_at DESC, qar.id DESC
+  LIMIT 1
+) latest_review ON true
 WHERE q.organization_id = $1
   AND q.status = 'Draft'
+  AND (latest_review.decision IS NULL OR latest_review.decision = 'approved')
 ORDER BY q.updated_at DESC, q.created_at DESC
 LIMIT $2 OFFSET $3;
+
+-- name: CreateQuoteAIReview :one
+INSERT INTO RAC_quote_ai_reviews (
+  id, organization_id, quote_id, decision, summary,
+  findings, signals, attempt_count, run_id, reviewer_name, model_name, created_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, organization_id, quote_id, decision, summary,
+  findings, signals, attempt_count, run_id, reviewer_name, model_name, created_at;
+
+-- name: GetLatestQuoteAIReview :one
+SELECT id, organization_id, quote_id, decision, summary,
+  findings, signals, attempt_count, run_id, reviewer_name, model_name, created_at
+FROM RAC_quote_ai_reviews
+WHERE quote_id = $1 AND organization_id = $2
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
 
 -- name: GetQuoteByPublicToken :one
 SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,

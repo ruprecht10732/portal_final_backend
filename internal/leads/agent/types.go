@@ -259,6 +259,27 @@ type DraftQuoteOutput struct {
 	ItemCount   int    `json:"itemCount,omitempty"`
 }
 
+type QuoteCritiqueFinding struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Severity  string `json:"severity,omitempty"`
+	ItemIndex *int   `json:"itemIndex,omitempty"`
+}
+
+type SubmitQuoteCritiqueInput struct {
+	Approved bool                   `json:"approved"`
+	Summary  string                 `json:"summary"`
+	Findings []QuoteCritiqueFinding `json:"findings,omitempty"`
+	Signals  []string               `json:"signals,omitempty"`
+}
+
+type SubmitQuoteCritiqueOutput struct {
+	Success  bool   `json:"success"`
+	Message  string `json:"message"`
+	Decision string `json:"decision,omitempty"`
+	ReviewID string `json:"reviewId,omitempty"`
+}
+
 // AnalyzeResponse represents the result of an analysis request
 type AnalyzeResponse struct {
 	Status   string          `json:"status"` // "created", "no_change", "error"

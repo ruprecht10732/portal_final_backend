@@ -160,8 +160,16 @@ func (q *Queries) CountGenerateQuoteJobs(ctx context.Context, arg CountGenerateQ
 const countPendingApprovals = `-- name: CountPendingApprovals :one
 SELECT COUNT(q.id)
 FROM RAC_quotes q
+LEFT JOIN LATERAL (
+  SELECT qar.decision
+  FROM RAC_quote_ai_reviews qar
+  WHERE qar.quote_id = q.id AND qar.organization_id = q.organization_id
+  ORDER BY qar.created_at DESC, qar.id DESC
+  LIMIT 1
+) latest_review ON true
 WHERE q.organization_id = $1
   AND q.status = 'Draft'
+  AND (latest_review.decision IS NULL OR latest_review.decision = 'approved')
 `
 
 func (q *Queries) CountPendingApprovals(ctx context.Context, organizationID pgtype.UUID) (int64, error) {
@@ -392,6 +400,64 @@ func (q *Queries) CreateQuote(ctx context.Context, arg CreateQuoteParams) error 
 		arg.PreviewTokenExpiresAt,
 	)
 	return err
+}
+
+const createQuoteAIReview = `-- name: CreateQuoteAIReview :one
+INSERT INTO RAC_quote_ai_reviews (
+  id, organization_id, quote_id, decision, summary,
+  findings, signals, attempt_count, run_id, reviewer_name, model_name, created_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, organization_id, quote_id, decision, summary,
+  findings, signals, attempt_count, run_id, reviewer_name, model_name, created_at
+`
+
+type CreateQuoteAIReviewParams struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	QuoteID        pgtype.UUID        `json:"quote_id"`
+	Decision       string             `json:"decision"`
+	Summary        string             `json:"summary"`
+	Findings       []byte             `json:"findings"`
+	Signals        []byte             `json:"signals"`
+	AttemptCount   int32              `json:"attempt_count"`
+	RunID          pgtype.Text        `json:"run_id"`
+	ReviewerName   pgtype.Text        `json:"reviewer_name"`
+	ModelName      pgtype.Text        `json:"model_name"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateQuoteAIReview(ctx context.Context, arg CreateQuoteAIReviewParams) (RacQuoteAiReview, error) {
+	row := q.db.QueryRow(ctx, createQuoteAIReview,
+		arg.ID,
+		arg.OrganizationID,
+		arg.QuoteID,
+		arg.Decision,
+		arg.Summary,
+		arg.Findings,
+		arg.Signals,
+		arg.AttemptCount,
+		arg.RunID,
+		arg.ReviewerName,
+		arg.ModelName,
+		arg.CreatedAt,
+	)
+	var i RacQuoteAiReview
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.QuoteID,
+		&i.Decision,
+		&i.Summary,
+		&i.Findings,
+		&i.Signals,
+		&i.AttemptCount,
+		&i.RunID,
+		&i.ReviewerName,
+		&i.ModelName,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const createQuoteActivity = `-- name: CreateQuoteActivity :exec
@@ -865,6 +931,40 @@ func (q *Queries) GetLatestNonDraftByLead(ctx context.Context, arg GetLatestNonD
 		&i.TotalCents,
 		&i.PublicToken,
 		&i.PdfFileKey,
+	)
+	return i, err
+}
+
+const getLatestQuoteAIReview = `-- name: GetLatestQuoteAIReview :one
+SELECT id, organization_id, quote_id, decision, summary,
+  findings, signals, attempt_count, run_id, reviewer_name, model_name, created_at
+FROM RAC_quote_ai_reviews
+WHERE quote_id = $1 AND organization_id = $2
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type GetLatestQuoteAIReviewParams struct {
+	QuoteID        pgtype.UUID `json:"quote_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLatestQuoteAIReview(ctx context.Context, arg GetLatestQuoteAIReviewParams) (RacQuoteAiReview, error) {
+	row := q.db.QueryRow(ctx, getLatestQuoteAIReview, arg.QuoteID, arg.OrganizationID)
+	var i RacQuoteAiReview
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.QuoteID,
+		&i.Decision,
+		&i.Summary,
+		&i.Findings,
+		&i.Signals,
+		&i.AttemptCount,
+		&i.RunID,
+		&i.ReviewerName,
+		&i.ModelName,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -1392,8 +1492,16 @@ const listPendingApprovals = `-- name: ListPendingApprovals :many
 SELECT q.id, q.lead_id, q.quote_number, l.consumer_first_name, l.consumer_last_name, q.total_cents, l.lead_score, q.created_at
 FROM RAC_quotes q
 LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
+LEFT JOIN LATERAL (
+  SELECT qar.decision
+  FROM RAC_quote_ai_reviews qar
+  WHERE qar.quote_id = q.id AND qar.organization_id = q.organization_id
+  ORDER BY qar.created_at DESC, qar.id DESC
+  LIMIT 1
+) latest_review ON true
 WHERE q.organization_id = $1
   AND q.status = 'Draft'
+  AND (latest_review.decision IS NULL OR latest_review.decision = 'approved')
 ORDER BY q.updated_at DESC, q.created_at DESC
 LIMIT $2 OFFSET $3
 `

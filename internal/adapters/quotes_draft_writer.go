@@ -75,5 +75,42 @@ func (a *QuotesDraftWriter) DraftQuote(ctx context.Context, params ports.DraftQu
 	}, nil
 }
 
+func (a *QuotesDraftWriter) RecordQuoteAIReview(ctx context.Context, params ports.RecordQuoteAIReviewParams) (*ports.QuoteAIReviewResult, error) {
+	svcFindings := make([]quotesvc.QuoteAIReviewFinding, len(params.Findings))
+	for i, finding := range params.Findings {
+		svcFindings[i] = quotesvc.QuoteAIReviewFinding{
+			Code:      finding.Code,
+			Message:   finding.Message,
+			Severity:  finding.Severity,
+			ItemIndex: finding.ItemIndex,
+		}
+	}
+
+	result, err := a.svc.RecordQuoteAIReview(ctx, quotesvc.RecordQuoteAIReviewParams{
+		QuoteID:        params.QuoteID,
+		OrganizationID: params.OrganizationID,
+		Decision:       params.Decision,
+		Summary:        params.Summary,
+		Findings:       svcFindings,
+		Signals:        params.Signals,
+		AttemptCount:   params.AttemptCount,
+		RunID:          params.RunID,
+		ReviewerName:   params.ReviewerName,
+		ModelName:      params.ModelName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("quotes ai review adapter: %w", err)
+	}
+
+	return &ports.QuoteAIReviewResult{
+		ReviewID:     result.ReviewID,
+		QuoteID:      result.QuoteID,
+		Decision:     result.Decision,
+		Summary:      result.Summary,
+		AttemptCount: result.AttemptCount,
+		CreatedAt:    result.CreatedAt,
+	}, nil
+}
+
 // Compile-time check that QuotesDraftWriter implements ports.QuoteDrafter.
 var _ ports.QuoteDrafter = (*QuotesDraftWriter)(nil)

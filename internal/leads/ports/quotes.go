@@ -6,6 +6,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -56,9 +57,45 @@ type DraftQuoteResult struct {
 	ItemCount   int
 }
 
+type QuoteAIReviewFinding struct {
+	Code      string
+	Message   string
+	Severity  string
+	ItemIndex *int
+}
+
+const (
+	QuoteAIReviewDecisionApproved      = "approved"
+	QuoteAIReviewDecisionNeedsRepair   = "needs_repair"
+	QuoteAIReviewDecisionRequiresHuman = "requires_human"
+)
+
+type RecordQuoteAIReviewParams struct {
+	QuoteID        uuid.UUID
+	OrganizationID uuid.UUID
+	Decision       string
+	Summary        string
+	Findings       []QuoteAIReviewFinding
+	Signals        []string
+	AttemptCount   int
+	RunID          *string
+	ReviewerName   *string
+	ModelName      *string
+}
+
+type QuoteAIReviewResult struct {
+	ReviewID     uuid.UUID
+	QuoteID      uuid.UUID
+	Decision     string
+	Summary      string
+	AttemptCount int
+	CreatedAt    time.Time
+}
+
 // QuoteDrafter is the ACL interface through which the leads agent can draft
 // quotes in the quotes domain. The adapter delegates to the quotes service.
 type QuoteDrafter interface {
 	// DraftQuote creates a new draft quote and emits the appropriate timeline event.
 	DraftQuote(ctx context.Context, params DraftQuoteParams) (*DraftQuoteResult, error)
+	RecordQuoteAIReview(ctx context.Context, params RecordQuoteAIReviewParams) (*QuoteAIReviewResult, error)
 }

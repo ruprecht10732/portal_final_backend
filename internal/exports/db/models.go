@@ -1012,6 +1012,21 @@ type RacQuoteActivity struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type RacQuoteAiReview struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	QuoteID        pgtype.UUID        `json:"quote_id"`
+	Decision       string             `json:"decision"`
+	Summary        string             `json:"summary"`
+	Findings       []byte             `json:"findings"`
+	Signals        []byte             `json:"signals"`
+	AttemptCount   int32              `json:"attempt_count"`
+	RunID          pgtype.Text        `json:"run_id"`
+	ReviewerName   pgtype.Text        `json:"reviewer_name"`
+	ModelName      pgtype.Text        `json:"model_name"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacQuoteAnnotation struct {
 	ID             pgtype.UUID        `json:"id"`
 	QuoteItemID    pgtype.UUID        `json:"quote_item_id"`

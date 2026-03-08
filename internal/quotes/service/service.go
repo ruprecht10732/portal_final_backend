@@ -185,6 +185,41 @@ type DraftQuoteResult struct {
 	ItemCount   int
 }
 
+const (
+	QuoteAIReviewDecisionApproved      = "approved"
+	QuoteAIReviewDecisionNeedsRepair   = "needs_repair"
+	QuoteAIReviewDecisionRequiresHuman = "requires_human"
+)
+
+type QuoteAIReviewFinding struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Severity  string `json:"severity,omitempty"`
+	ItemIndex *int   `json:"itemIndex,omitempty"`
+}
+
+type RecordQuoteAIReviewParams struct {
+	QuoteID        uuid.UUID
+	OrganizationID uuid.UUID
+	Decision       string
+	Summary        string
+	Findings       []QuoteAIReviewFinding
+	Signals        []string
+	AttemptCount   int
+	RunID          *string
+	ReviewerName   *string
+	ModelName      *string
+}
+
+type QuoteAIReviewResult struct {
+	ReviewID     uuid.UUID
+	QuoteID      uuid.UUID
+	Decision     string
+	Summary      string
+	AttemptCount int
+	CreatedAt    time.Time
+}
+
 // PublicQuoteStorageMeta contains storage-related identifiers resolved from a public token.
 type PublicQuoteStorageMeta struct {
 	QuoteID    uuid.UUID

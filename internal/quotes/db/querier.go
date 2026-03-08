@@ -20,6 +20,7 @@ type Querier interface {
 	CreateGenerateQuoteJob(ctx context.Context, arg CreateGenerateQuoteJobParams) error
 	CreateHumanFeedback(ctx context.Context, arg CreateHumanFeedbackParams) (RacHumanFeedback, error)
 	CreateQuote(ctx context.Context, arg CreateQuoteParams) error
+	CreateQuoteAIReview(ctx context.Context, arg CreateQuoteAIReviewParams) (RacQuoteAiReview, error)
 	CreateQuoteActivity(ctx context.Context, arg CreateQuoteActivityParams) error
 	CreateQuoteAnnotation(ctx context.Context, arg CreateQuoteAnnotationParams) error
 	CreateQuoteAttachment(ctx context.Context, arg CreateQuoteAttachmentParams) error
@@ -38,6 +39,7 @@ type Querier interface {
 	GetGenerateQuoteJob(ctx context.Context, arg GetGenerateQuoteJobParams) (RacAiQuoteJob, error)
 	GetGenerateQuoteJobByID(ctx context.Context, id pgtype.UUID) (RacAiQuoteJob, error)
 	GetLatestNonDraftByLead(ctx context.Context, arg GetLatestNonDraftByLeadParams) (GetLatestNonDraftByLeadRow, error)
+	GetLatestQuoteAIReview(ctx context.Context, arg GetLatestQuoteAIReviewParams) (RacQuoteAiReview, error)
 	GetProviderIntegration(ctx context.Context, arg GetProviderIntegrationParams) (GetProviderIntegrationRow, error)
 	GetQuoteAttachmentByID(ctx context.Context, arg GetQuoteAttachmentByIDParams) (RacQuoteAttachment, error)
 	GetQuoteByID(ctx context.Context, arg GetQuoteByIDParams) (GetQuoteByIDRow, error)

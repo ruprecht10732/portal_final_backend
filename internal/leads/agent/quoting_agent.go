@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -72,7 +73,21 @@ type quotingAgentMode string
 const (
 	quotingAgentModeEstimator      quotingAgentMode = "estimator"
 	quotingAgentModeQuoteGenerator quotingAgentMode = "quote-generator"
+	maxQuoteRepairAttempts         int              = 2
 )
+
+type quoteCriticLoopReview struct {
+	result   *ports.QuoteAIReviewResult
+	critique *SubmitQuoteCritiqueInput
+}
+
+type quoteCriticContext struct {
+	lead     repository.Lead
+	service  repository.LeadService
+	notes    []repository.LeadNote
+	photo    *repository.PhotoAnalysis
+	tenantID uuid.UUID
+}
 
 type quotingAgentProfile struct {
 	name        string
@@ -256,6 +271,42 @@ func (q *QuotingAgent) buildInvestigativeTools() ([]tool.Tool, error) {
 	return []tool.Tool{askClarificationTool}, nil
 }
 
+func (q *QuotingAgent) buildQuoteCriticTools() ([]tool.Tool, error) {
+	criticTool, err := createSubmitQuoteCritiqueTool(q.toolDeps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build SubmitQuoteCritique tool: %w", err)
+	}
+	return []tool.Tool{criticTool}, nil
+}
+
+func (q *QuotingAgent) buildQuoteRepairTools() ([]tool.Tool, error) {
+	calculatorTool, err := createCalculatorTool()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Calculator tool: %w", err)
+	}
+
+	draftQuoteTool, err := createDraftQuoteTool(q.toolDeps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build DraftQuote tool: %w", err)
+	}
+
+	calculateEstimateTool, err := createCalculateEstimateTool()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build CalculateEstimate tool: %w", err)
+	}
+
+	tools := []tool.Tool{calculatorTool, draftQuoteTool, calculateEstimateTool}
+	if q.toolDeps.IsProductSearchEnabled() {
+		searchTool, searchErr := createSearchProductMaterialsTool(q.toolDeps)
+		if searchErr != nil {
+			return nil, fmt.Errorf("failed to build SearchProductMaterials tool: %w", searchErr)
+		}
+		tools = append(tools, searchTool)
+	}
+
+	return tools, nil
+}
+
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
 func (q *QuotingAgent) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
 	if q == nil || q.toolDeps == nil {
@@ -310,6 +361,8 @@ func (q *QuotingAgent) executeAutonomousRun(ctx context.Context, reqDeps *ToolDe
 	if !q.executeAutonomousPrompt(ctx, lead, service, notes, photo, tenantID) {
 		return nil
 	}
+
+	q.runQuoteCriticAndRepair(ctx, reqDeps, lead, service, notes, photo, tenantID)
 
 	if !reqDeps.WasClarificationAsked() {
 		q.maybeRecordMissingEstimation(ctx, reqDeps, leadID, serviceID, tenantID)
@@ -703,11 +756,367 @@ func (q *QuotingAgent) Generate(ctx context.Context, leadID, serviceID, tenantID
 		return nil, fmt.Errorf("quote generator: agent did not produce a draft quote")
 	}
 
+	q.runQuoteCriticAndRepair(ctx, reqDeps, lead, service, notes, nil, tenantID)
+
 	return &GenerateResult{
 		QuoteID:     result.QuoteID,
 		QuoteNumber: result.QuoteNumber,
 		ItemCount:   result.ItemCount,
 	}, nil
+}
+
+func (q *QuotingAgent) runQuoteCriticAndRepair(ctx context.Context, reqDeps *ToolDependencies, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, tenantID uuid.UUID) {
+	criticCtx := quoteCriticContext{
+		lead:     lead,
+		service:  service,
+		notes:    notes,
+		photo:    photo,
+		tenantID: tenantID,
+	}
+
+	runQuoteCriticRepairLoop(maxQuoteRepairAttempts,
+		func(attempt int) (*quoteCriticLoopReview, bool) {
+			reviewResult, ok := q.runQuoteCriticAttempt(ctx, reqDeps, criticCtx, attempt)
+			if !ok || reviewResult == nil {
+				return nil, ok
+			}
+
+			critiqueInput, hasCritique := reqDeps.GetLastQuoteCritiqueInput()
+			if !hasCritique {
+				return &quoteCriticLoopReview{result: reviewResult}, true
+			}
+
+			return &quoteCriticLoopReview{
+				result:   reviewResult,
+				critique: critiqueInput,
+			}, true
+		},
+		func(attempt int) bool {
+			return q.runQuoteRepairAttempt(ctx, reqDeps, criticCtx, attempt)
+		},
+		func(summary string) {
+			q.emitQuoteCriticHumanAlert(ctx, reqDeps, criticCtx.lead.ID, criticCtx.service.ID, criticCtx.tenantID, summary)
+		},
+		func(summary string) {
+			q.persistQuoteCriticExhausted(ctx, reqDeps, criticCtx.lead.ID, criticCtx.service.ID, criticCtx.tenantID, summary)
+		},
+		func(summary string) {
+			q.persistQuoteCriticRepeatedFindings(ctx, reqDeps, criticCtx.lead.ID, criticCtx.service.ID, criticCtx.tenantID, summary)
+		},
+	)
+}
+
+func runQuoteCriticRepairLoop(
+	maxRepairAttempts int,
+	runCritic func(attempt int) (*quoteCriticLoopReview, bool),
+	runRepair func(attempt int) bool,
+	onRequiresHuman func(summary string),
+	onExhausted func(summary string),
+	onRepeatedFindings func(summary string),
+) {
+	var previousCritique *SubmitQuoteCritiqueInput
+
+	for attempt := 1; attempt <= maxRepairAttempts+1; attempt++ {
+		review, ok := runCritic(attempt)
+		if !ok || review == nil || review.result == nil {
+			return
+		}
+
+		switch review.result.Decision {
+		case ports.QuoteAIReviewDecisionApproved:
+			return
+		case ports.QuoteAIReviewDecisionRequiresHuman:
+			onRequiresHuman(review.result.Summary)
+			return
+		}
+
+		if previousCritique != nil && review.critique != nil && quoteCritiquesEquivalent(*previousCritique, *review.critique) {
+			onRepeatedFindings(review.result.Summary)
+			return
+		}
+
+		if attempt > maxRepairAttempts {
+			onExhausted(review.result.Summary)
+			return
+		}
+
+		if !runRepair(attempt) {
+			onExhausted("AI-herstel van de conceptofferte is mislukt; menselijke controle vereist.")
+			return
+		}
+
+		if review.critique != nil {
+			copyCritique := cloneSubmitQuoteCritiqueInput(*review.critique)
+			previousCritique = &copyCritique
+		}
+	}
+}
+
+func quoteCritiquesEquivalent(previous, current SubmitQuoteCritiqueInput) bool {
+	if previous.Approved != current.Approved {
+		return false
+	}
+
+	previousFindings := canonicalQuoteCritiqueFindings(previous.Findings)
+	currentFindings := canonicalQuoteCritiqueFindings(current.Findings)
+	previousSignals := canonicalQuoteCritiqueSignals(previous.Signals)
+	currentSignals := canonicalQuoteCritiqueSignals(current.Signals)
+
+	if len(previousFindings) == 0 && len(previousSignals) == 0 {
+		return false
+	}
+	if len(currentFindings) == 0 && len(currentSignals) == 0 {
+		return false
+	}
+
+	return stringSlicesEqual(previousFindings, currentFindings) && stringSlicesEqual(previousSignals, currentSignals)
+}
+
+func cloneSubmitQuoteCritiqueInput(input SubmitQuoteCritiqueInput) SubmitQuoteCritiqueInput {
+	return SubmitQuoteCritiqueInput{
+		Approved: input.Approved,
+		Summary:  input.Summary,
+		Findings: append([]QuoteCritiqueFinding(nil), input.Findings...),
+		Signals:  append([]string(nil), input.Signals...),
+	}
+}
+
+func canonicalQuoteCritiqueFindings(findings []QuoteCritiqueFinding) []string {
+	canonical := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		itemIndex := "-"
+		if finding.ItemIndex != nil {
+			itemIndex = fmt.Sprintf("%d", *finding.ItemIndex)
+		}
+		canonical = append(canonical, strings.Join([]string{
+			strings.ToLower(strings.TrimSpace(finding.Code)),
+			strings.ToLower(strings.TrimSpace(finding.Message)),
+			strings.ToLower(strings.TrimSpace(finding.Severity)),
+			itemIndex,
+		}, "|"))
+	}
+	sort.Strings(canonical)
+	return canonical
+}
+
+func canonicalQuoteCritiqueSignals(signals []string) []string {
+	canonical := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		trimmed := strings.ToLower(strings.TrimSpace(signal))
+		if trimmed == "" {
+			continue
+		}
+		canonical = append(canonical, trimmed)
+	}
+	sort.Strings(canonical)
+	return canonical
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (q *QuotingAgent) runQuoteCriticAttempt(ctx context.Context, reqDeps *ToolDependencies, criticCtx quoteCriticContext, attempt int) (*ports.QuoteAIReviewResult, bool) {
+	draftResult := reqDeps.GetLastDraftResult()
+	if draftResult == nil {
+		return nil, false
+	}
+	draftInput, ok := reqDeps.GetLastDraftInput()
+	if !ok {
+		return nil, false
+	}
+
+	criticTools, err := q.buildQuoteCriticTools()
+	if err != nil {
+		log.Printf("quoting-agent: failed to build quote critic tools: %v", err)
+		q.persistQuoteCriticFallback(ctx, reqDeps, draftResult.QuoteID, criticCtx.tenantID, "AI-review kon niet worden gestart; menselijke controle vereist.")
+		return reqDeps.GetLastQuoteReviewResult(), false
+	}
+
+	estimationContext := q.fetchEstimationGuidelines(ctx, criticCtx.tenantID, criticCtx.service.ServiceType)
+	scopeArtifact, _ := reqDeps.GetScopeArtifact()
+	promptText := buildQuoteCriticPrompt(quotePromptInput{
+		lead:              criticCtx.lead,
+		service:           criticCtx.service,
+		notes:             criticCtx.notes,
+		photoAnalysis:     criticCtx.photo,
+		estimationContext: estimationContext,
+		scopeArtifact:     scopeArtifact,
+	}, *draftInput, draftResult)
+	reqDeps.SetQuoteCriticAttempt(attempt)
+	if err := q.runWithPromptUsingTools(ctx, promptText, "quote-critic-"+criticCtx.lead.ID.String(), "QuoteCritic", "Reviews the latest drafted quote before approval queue entry", criticTools); err != nil {
+		log.Printf("quoting-agent: quote critic run failed: %v", err)
+		q.persistQuoteCriticFallback(ctx, reqDeps, draftResult.QuoteID, criticCtx.tenantID, "AI-review is mislukt; menselijke controle vereist.")
+		return reqDeps.GetLastQuoteReviewResult(), false
+	}
+
+	if reqDeps.GetLastQuoteReviewResult() == nil {
+		q.persistQuoteCriticFallback(ctx, reqDeps, draftResult.QuoteID, criticCtx.tenantID, "AI-review leverde geen besluit op; menselijke controle vereist.")
+		return reqDeps.GetLastQuoteReviewResult(), false
+	}
+
+	return reqDeps.GetLastQuoteReviewResult(), true
+}
+
+func (q *QuotingAgent) runQuoteRepairAttempt(ctx context.Context, reqDeps *ToolDependencies, criticCtx quoteCriticContext, attempt int) bool {
+	draftInput, ok := reqDeps.GetLastDraftInput()
+	if !ok {
+		return false
+	}
+	critiqueInput, ok := reqDeps.GetLastQuoteCritiqueInput()
+	if !ok {
+		return false
+	}
+
+	repairTools, err := q.buildQuoteRepairTools()
+	if err != nil {
+		log.Printf("quoting-agent: failed to build quote repair tools: %v", err)
+		return false
+	}
+
+	estimationContext := q.fetchEstimationGuidelines(ctx, criticCtx.tenantID, criticCtx.service.ServiceType)
+	scopeArtifact, _ := reqDeps.GetScopeArtifact()
+	promptText := buildQuoteRepairPrompt(quotePromptInput{
+		lead:              criticCtx.lead,
+		service:           criticCtx.service,
+		notes:             criticCtx.notes,
+		photoAnalysis:     criticCtx.photo,
+		estimationContext: estimationContext,
+		scopeArtifact:     scopeArtifact,
+	}, *draftInput, *critiqueInput, attempt)
+	if err := q.runWithPromptUsingTools(ctx, promptText, fmt.Sprintf("quote-repair-%s-%d", criticCtx.lead.ID.String(), attempt), "QuoteRepairEstimator", "Repairs the persisted draft quote using critic findings", repairTools); err != nil {
+		log.Printf("quoting-agent: quote repair run failed: %v", err)
+		return false
+	}
+
+	return reqDeps.GetLastDraftResult() != nil
+}
+
+func (q *QuotingAgent) persistQuoteCriticFallback(ctx context.Context, reqDeps *ToolDependencies, quoteID, tenantID uuid.UUID, summary string) {
+	if reqDeps == nil || reqDeps.QuoteDrafter == nil {
+		return
+	}
+	runID := reqDeps.GetRunID()
+	reviewerName := "QuoteCritic"
+	modelName := "moonshot"
+	attemptCount := reqDeps.GetQuoteCriticAttempt()
+	if attemptCount <= 0 {
+		attemptCount = 1
+	}
+	reviewResult, err := reqDeps.QuoteDrafter.RecordQuoteAIReview(ctx, ports.RecordQuoteAIReviewParams{
+		QuoteID:        quoteID,
+		OrganizationID: tenantID,
+		Decision:       "requires_human",
+		Summary:        summary,
+		Signals:        []string{"critic_execution_failed"},
+		AttemptCount:   attemptCount,
+		RunID:          &runID,
+		ReviewerName:   &reviewerName,
+		ModelName:      &modelName,
+	})
+	if err != nil {
+		log.Printf("quoting-agent: failed to persist quote critic fallback: %v", err)
+		return
+	}
+	reqDeps.SetLastQuoteReviewResult(reviewResult)
+}
+
+func (q *QuotingAgent) persistQuoteCriticExhausted(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, previousSummary string) {
+	draftResult := reqDeps.GetLastDraftResult()
+	if draftResult == nil || reqDeps == nil || reqDeps.QuoteDrafter == nil {
+		return
+	}
+	runID := reqDeps.GetRunID()
+	reviewerName := "QuoteCritic"
+	modelName := "moonshot"
+	summary := "AI-review bleef fouten vinden na automatische herstelpogingen; menselijke controle vereist."
+	if strings.TrimSpace(previousSummary) != "" {
+		summary = summary + " Laatste beoordeling: " + strings.TrimSpace(previousSummary)
+	}
+	reviewResult, err := reqDeps.QuoteDrafter.RecordQuoteAIReview(ctx, ports.RecordQuoteAIReviewParams{
+		QuoteID:        draftResult.QuoteID,
+		OrganizationID: tenantID,
+		Decision:       ports.QuoteAIReviewDecisionRequiresHuman,
+		Summary:        summary,
+		Signals:        []string{"repair_attempts_exhausted"},
+		AttemptCount:   maxQuoteRepairAttempts + 1,
+		RunID:          &runID,
+		ReviewerName:   &reviewerName,
+		ModelName:      &modelName,
+	})
+	if err != nil {
+		log.Printf("quoting-agent: failed to persist exhausted quote critic review: %v", err)
+		return
+	}
+	reqDeps.SetLastQuoteReviewResult(reviewResult)
+	q.emitQuoteCriticHumanAlert(ctx, reqDeps, leadID, serviceID, tenantID, summary)
+}
+
+func (q *QuotingAgent) persistQuoteCriticRepeatedFindings(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, previousSummary string) {
+	draftResult := reqDeps.GetLastDraftResult()
+	if draftResult == nil || reqDeps == nil || reqDeps.QuoteDrafter == nil {
+		return
+	}
+
+	runID := reqDeps.GetRunID()
+	reviewerName := "QuoteCritic"
+	modelName := "moonshot"
+	attemptCount := reqDeps.GetQuoteCriticAttempt()
+	if attemptCount <= 0 {
+		attemptCount = 2
+	}
+
+	summary := "AI-review meldde na herstel opnieuw dezelfde bevindingen; menselijke controle vereist."
+	if strings.TrimSpace(previousSummary) != "" {
+		summary = summary + " Laatste beoordeling: " + strings.TrimSpace(previousSummary)
+	}
+
+	reviewResult, err := reqDeps.QuoteDrafter.RecordQuoteAIReview(ctx, ports.RecordQuoteAIReviewParams{
+		QuoteID:        draftResult.QuoteID,
+		OrganizationID: tenantID,
+		Decision:       ports.QuoteAIReviewDecisionRequiresHuman,
+		Summary:        summary,
+		Signals:        []string{"repair_findings_repeated"},
+		AttemptCount:   attemptCount,
+		RunID:          &runID,
+		ReviewerName:   &reviewerName,
+		ModelName:      &modelName,
+	})
+	if err != nil {
+		log.Printf("quoting-agent: failed to persist repeated quote critic review: %v", err)
+		return
+	}
+
+	reqDeps.SetLastQuoteReviewResult(reviewResult)
+	q.emitQuoteCriticHumanAlert(ctx, reqDeps, leadID, serviceID, tenantID, summary)
+}
+
+func (q *QuotingAgent) emitQuoteCriticHumanAlert(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, summary string) {
+	if !reqDeps.MarkAlertEmitted("quote_critic_requires_human", "quote_critic_requires_human", summary) {
+		return
+	}
+	_, _ = q.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      "QuoteCritic",
+		EventType:      repository.EventTypeAlert,
+		Title:          repository.EventTitleManualIntervention,
+		Summary:        &summary,
+		Metadata: repository.AlertMetadata{
+			Trigger:   "quote_critic_requires_human",
+			ErrorCode: "quote_critic_requires_human",
+		}.ToMap(),
+	})
 }
 
 func (q *QuotingAgent) fetchEstimationGuidelines(ctx context.Context, tenantID uuid.UUID, serviceType string) string {

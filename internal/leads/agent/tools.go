@@ -33,6 +33,7 @@ const (
 	invalidLeadIDMessage             = "Invalid lead ID"
 	invalidLeadServiceIDMessage      = "Invalid lead service ID"
 	missingTenantContextMessage      = "Missing tenant context"
+	missingTenantContextError        = "missing tenant context"
 	missingLeadContextMessage        = "Missing lead context"
 	missingLeadContextError          = "missing lead context"
 	leadNotFoundMessage              = "Lead not found"
@@ -176,10 +177,14 @@ type ToolDependencies struct {
 	draftQuoteCalled       bool                    // Track if DraftQuote was called
 	offerCreated           bool                    // Track if CreatePartnerOffer was called
 	lastDraftResult        *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
-	scopeArtifact          *ScopeArtifact          // Produced by Scope Analyzer and consumed by Quote Builder
-	clarificationAsked     bool                    // Track if AskCustomerClarification was called in investigative mode
-	runID                  string                  // Correlates all tool calls within one agent run
-	forceDraftQuote        bool                    // Allows manual runs to bypass draft governance (intake + council)
+	lastDraftInput         *DraftQuoteInput        // Snapshot of the latest drafted line items for downstream review
+	lastQuoteReviewResult  *ports.QuoteAIReviewResult
+	lastQuoteCritiqueInput *SubmitQuoteCritiqueInput
+	quoteCriticAttempt     int
+	scopeArtifact          *ScopeArtifact // Produced by Scope Analyzer and consumed by Quote Builder
+	clarificationAsked     bool           // Track if AskCustomerClarification was called in investigative mode
+	runID                  string         // Correlates all tool calls within one agent run
+	forceDraftQuote        bool           // Allows manual runs to bypass draft governance (intake + council)
 	searchCache            map[string]SearchProductMaterialsOutput
 	emittedAlertKeys       map[string]struct{} // Dedupe identical alerts within a single agent run
 }
@@ -526,6 +531,10 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.lastEstimationMetadata = nil
 	d.lastCouncilMetadata = nil
 	d.lastDraftResult = nil
+	d.lastDraftInput = nil
+	d.lastQuoteReviewResult = nil
+	d.lastQuoteCritiqueInput = nil
+	d.quoteCriticAttempt = 0
 	d.scopeArtifact = nil
 	d.clarificationAsked = false
 	d.existingQuoteID = nil
@@ -558,6 +567,80 @@ func (d *ToolDependencies) SetLastDraftResult(result *ports.DraftQuoteResult) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.lastDraftResult = result
+}
+
+func (d *ToolDependencies) SetLastDraftInput(input DraftQuoteInput) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	copyInput := DraftQuoteInput{
+		Notes: input.Notes,
+		Items: append([]DraftQuoteItem(nil), input.Items...),
+	}
+	d.lastDraftInput = &copyInput
+}
+
+func (d *ToolDependencies) GetLastDraftInput() (*DraftQuoteInput, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.lastDraftInput == nil {
+		return nil, false
+	}
+	copyInput := DraftQuoteInput{
+		Notes: d.lastDraftInput.Notes,
+		Items: append([]DraftQuoteItem(nil), d.lastDraftInput.Items...),
+	}
+	return &copyInput, true
+}
+
+func (d *ToolDependencies) SetLastQuoteReviewResult(result *ports.QuoteAIReviewResult) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastQuoteReviewResult = result
+}
+
+func (d *ToolDependencies) GetLastQuoteReviewResult() *ports.QuoteAIReviewResult {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastQuoteReviewResult
+}
+
+func (d *ToolDependencies) SetLastQuoteCritiqueInput(input SubmitQuoteCritiqueInput) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	copyInput := SubmitQuoteCritiqueInput{
+		Approved: input.Approved,
+		Summary:  input.Summary,
+		Findings: append([]QuoteCritiqueFinding(nil), input.Findings...),
+		Signals:  append([]string(nil), input.Signals...),
+	}
+	d.lastQuoteCritiqueInput = &copyInput
+}
+
+func (d *ToolDependencies) GetLastQuoteCritiqueInput() (*SubmitQuoteCritiqueInput, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.lastQuoteCritiqueInput == nil {
+		return nil, false
+	}
+	copyInput := SubmitQuoteCritiqueInput{
+		Approved: d.lastQuoteCritiqueInput.Approved,
+		Summary:  d.lastQuoteCritiqueInput.Summary,
+		Findings: append([]QuoteCritiqueFinding(nil), d.lastQuoteCritiqueInput.Findings...),
+		Signals:  append([]string(nil), d.lastQuoteCritiqueInput.Signals...),
+	}
+	return &copyInput, true
+}
+
+func (d *ToolDependencies) SetQuoteCriticAttempt(attempt int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.quoteCriticAttempt = attempt
+}
+
+func (d *ToolDependencies) GetQuoteCriticAttempt() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.quoteCriticAttempt
 }
 
 // SetScopeArtifact stores the scope analyzer artifact for downstream quote building.
@@ -616,7 +699,7 @@ func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
 func getTenantID(deps *ToolDependencies) (uuid.UUID, error) {
 	tenantID, ok := deps.GetTenantID()
 	if !ok {
-		return uuid.UUID{}, fmt.Errorf("missing tenant context")
+		return uuid.UUID{}, errors.New(missingTenantContextError)
 	}
 	return *tenantID, nil
 }
@@ -3567,7 +3650,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 
 	tenantID, ok := deps.GetTenantID()
 	if !ok || tenantID == nil {
-		return DraftQuoteOutput{Success: false, Message: "Organization context not available"}, fmt.Errorf("missing tenant context")
+		return DraftQuoteOutput{Success: false, Message: "Organization context not available"}, errors.New(missingTenantContextError)
 	}
 
 	leadID, serviceID, ok := deps.GetLeadContext()
@@ -3587,6 +3670,8 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 	if len(input.Items) == 0 {
 		return DraftQuoteOutput{Success: false, Message: "At least one item is required"}, fmt.Errorf("empty items")
 	}
+
+	deps.SetLastDraftInput(input)
 
 	if blockedOutput, blockedErr := validateDraftQuoteGovernance(ctx, deps, leadID, serviceID, *tenantID, len(input.Items)); blockedErr != nil {
 		return blockedOutput, blockedErr
@@ -3617,6 +3702,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 
 	log.Printf("DraftQuote: created run=%s quote=%s items=%d lead=%s service=%s", deps.GetRunID(), result.QuoteNumber, result.ItemCount, leadID, serviceID)
 	deps.SetLastDraftResult(result)
+	deps.SetExistingQuoteID(&result.QuoteID)
 	deps.MarkDraftQuoteCalled()
 
 	return DraftQuoteOutput{
@@ -3625,6 +3711,93 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		QuoteID:     result.QuoteID.String(),
 		QuoteNumber: result.QuoteNumber,
 		ItemCount:   result.ItemCount,
+	}, nil
+}
+
+func createSubmitQuoteCritiqueTool(_ *ToolDependencies) (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name: "SubmitQuoteCritique",
+		Description: `Persists the Quote Critic verdict for the latest drafted quote.
+Use approved=true only when the quote is coherent and safe for the normal human approval queue.
+Use approved=false when the draft still needs repair or manual attention. Provide concise Dutch findings.`,
+	}, func(ctx tool.Context, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
+		return handleSubmitQuoteCritique(ctx, GetDependencies(ctx), input)
+	})
+}
+
+func handleSubmitQuoteCritique(ctx tool.Context, deps *ToolDependencies, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
+	if deps.QuoteDrafter == nil {
+		return SubmitQuoteCritiqueOutput{Success: false, Message: "Quote drafting is not configured"}, nil
+	}
+
+	tenantID, ok := deps.GetTenantID()
+	if !ok || tenantID == nil {
+		return SubmitQuoteCritiqueOutput{Success: false, Message: "Organization context not available"}, errors.New(missingTenantContextError)
+	}
+
+	draftResult := deps.GetLastDraftResult()
+	if draftResult == nil {
+		return SubmitQuoteCritiqueOutput{Success: false, Message: "No draft quote available for review"}, fmt.Errorf("missing draft quote context")
+	}
+
+	decision := "needs_repair"
+	if input.Approved {
+		decision = "approved"
+	}
+
+	summary := strings.TrimSpace(input.Summary)
+	if summary == "" {
+		if input.Approved {
+			summary = "AI-review akkoord: conceptofferte is klaar voor menselijke controle."
+		} else {
+			summary = "AI-review afgekeurd: conceptofferte heeft nog herstel nodig."
+		}
+	}
+
+	findings := make([]ports.QuoteAIReviewFinding, 0, len(input.Findings))
+	for _, finding := range input.Findings {
+		message := strings.TrimSpace(finding.Message)
+		if message == "" {
+			continue
+		}
+		findings = append(findings, ports.QuoteAIReviewFinding{
+			Code:      strings.TrimSpace(finding.Code),
+			Message:   message,
+			Severity:  strings.TrimSpace(finding.Severity),
+			ItemIndex: finding.ItemIndex,
+		})
+	}
+	deps.SetLastQuoteCritiqueInput(input)
+
+	runID := deps.GetRunID()
+	reviewerName := "QuoteCritic"
+	modelName := "moonshot"
+	attemptCount := deps.GetQuoteCriticAttempt()
+	if attemptCount <= 0 {
+		attemptCount = 1
+	}
+	reviewResult, err := deps.QuoteDrafter.RecordQuoteAIReview(ctx, ports.RecordQuoteAIReviewParams{
+		QuoteID:        draftResult.QuoteID,
+		OrganizationID: *tenantID,
+		Decision:       decision,
+		Summary:        summary,
+		Findings:       findings,
+		Signals:        normalizeMissingInformation(input.Signals),
+		AttemptCount:   attemptCount,
+		RunID:          &runID,
+		ReviewerName:   &reviewerName,
+		ModelName:      &modelName,
+	})
+	if err != nil {
+		return SubmitQuoteCritiqueOutput{Success: false, Message: err.Error()}, err
+	}
+
+	deps.SetLastQuoteReviewResult(reviewResult)
+	return SubmitQuoteCritiqueOutput{
+		Success:  true,
+		Message:  summary,
+		Decision: reviewResult.Decision,
+		ReviewID: reviewResult.ReviewID.String(),
 	}, nil
 }
 

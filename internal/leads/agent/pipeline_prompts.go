@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 )
 
@@ -71,6 +72,15 @@ type gatekeeperPromptInput struct {
 	attachments   []repository.Attachment
 	photoAnalysis *repository.PhotoAnalysis
 	priorAnalysis *repository.AIAnalysis
+}
+
+type quotePromptInput struct {
+	lead              repository.Lead
+	service           repository.LeadService
+	notes             []repository.LeadNote
+	photoAnalysis     *repository.PhotoAnalysis
+	estimationContext string
+	scopeArtifact     *ScopeArtifact
 }
 
 func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
@@ -866,6 +876,222 @@ Respond ONLY with tool calls.
 		estimationContextSummary,
 		userPromptSummary,
 	)
+}
+
+func buildQuoteCriticPrompt(input quotePromptInput, draftInput DraftQuoteInput, draftResult *ports.DraftQuoteResult) string {
+	notesSection := buildNotesSection(input.notes, maxQuoteNotesChars)
+	serviceNote := getValue(input.service.ConsumerNote)
+	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxQuotePreferencesChars)
+	photoSummary := truncatePromptSection(buildPhotoSummary(input.photoAnalysis), maxEstimatorPhotoChars)
+	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
+	estimationContextSummary := truncatePromptSection(input.estimationContext, maxGatekeeperIntakeChars)
+	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxGatekeeperIntakeChars)
+	consumerSummary := buildPromptConsumerSection(input.lead)
+	locationSummary := buildPromptLocationLine(input.lead)
+	draftJSON := formatDraftQuoteForCritic(draftInput)
+
+	return fmt.Sprintf(`Role: Quote Critic.
+
+%s
+
+=== OBJECTIVE ===
+[MANDATORY] Review the persisted draft quote before it enters the normal approval queue.
+[MANDATORY] Check for missing dependencies, duplicate essentials, inconsistent quantities, implausible labor/material logic, VAT/catalog anomalies, and line items that do not fit the stated scope.
+[MANDATORY] If the quote is acceptable, approve it.
+[MANDATORY] If the quote still needs repair, reject it with concrete Dutch findings for the estimator.
+
+=== TOOL ORDER (MANDATORY) ===
+1. SubmitQuoteCritique
+
+=== DECISION RULES ===
+[DECISION RULE] Approve only when the draft is coherent enough for a human approver to review without obvious AI mistakes.
+[DECISION RULE] Reject when a required dependency is missing, a quantity is implausible, a line item contradicts the scope, or the pricing structure is clearly inconsistent.
+[DECISION RULE] Keep findings concrete and repair-oriented. Prefer exact missing items or mismatched line references.
+[DECISION RULE] Findings and summary must be Dutch.
+[DECISION RULE] Signals should be short machine-friendly tags like missing_dependency, quantity_mismatch, or scope_conflict.
+
+=== SELF-CHECK BEFORE FINAL TOOL CALL ===
+[MANDATORY] Call SubmitQuoteCritique exactly once.
+[MANDATORY] approved=false when findings contain a material problem.
+[MANDATORY] approved=true only when no concrete repair is required.
+
+=== DATA CONTEXT ===
+
+Lead:
+- Lead ID: %s
+- Service ID: %s
+- Quote ID: %s
+- Quote Number: %s
+- Service Type: %s
+
+Consumer:
+%s
+
+Address:
+%s
+
+Service Note (raw):
+%s
+
+Notes:
+%s
+
+Preferences (from customer portal):
+%s
+
+Photo Analysis:
+%s
+
+Scope Artifact:
+%s
+
+Estimation Guidelines:
+%s
+
+Draft Quote:
+%s
+
+Respond ONLY with tool calls.
+`,
+		sharedExecutionContract,
+		input.lead.ID,
+		input.service.ID,
+		draftResult.QuoteID,
+		draftResult.QuoteNumber,
+		input.service.ServiceType,
+		consumerSummary,
+		locationSummary,
+		serviceNoteSummary,
+		notesSection,
+		preferencesSummary,
+		photoSummary,
+		scopeSummary,
+		estimationContextSummary,
+		draftJSON,
+	)
+}
+
+func buildQuoteRepairPrompt(input quotePromptInput, draftInput DraftQuoteInput, critique SubmitQuoteCritiqueInput, attempt int) string {
+	notesSection := buildNotesSection(input.notes, maxQuoteNotesChars)
+	serviceNote := getValue(input.service.ConsumerNote)
+	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxQuotePreferencesChars)
+	photoSummary := truncatePromptSection(buildPhotoSummary(input.photoAnalysis), maxEstimatorPhotoChars)
+	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
+	estimationContextSummary := truncatePromptSection(input.estimationContext, maxGatekeeperIntakeChars)
+	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxGatekeeperIntakeChars)
+	consumerSummary := buildPromptConsumerSection(input.lead)
+	locationSummary := buildPromptLocationLine(input.lead)
+	draftJSON := formatDraftQuoteForCritic(draftInput)
+	critiqueJSON := formatQuoteCritiqueForRepair(critique)
+
+	return fmt.Sprintf(`Role: Quote Repair Estimator.
+
+%s
+
+=== OBJECTIVE ===
+[MANDATORY] Repair the existing persisted draft quote using the Quote Critic findings.
+[MANDATORY] Update the same draft quote, do NOT create a parallel quote.
+[MANDATORY] Preserve unaffected lines unless a finding explicitly requires a change.
+[MANDATORY] If a missing dependency or quantity issue is identified, fix it directly in the revised draft.
+
+=== TOOL ORDER (MANDATORY) ===
+1. SearchProductMaterials (if needed)
+2. Calculator (if needed)
+3. CalculateEstimate (if needed)
+4. DraftQuote
+
+=== REPAIR RULES ===
+[MANDATORY] DraftQuote must include the complete corrected quote, not only the changed lines.
+[MANDATORY] Use critic findings as binding correction input.
+[MANDATORY] Keep notes in Dutch.
+[MANDATORY] Do NOT call SaveEstimation.
+[MANDATORY] Do NOT call UpdatePipelineStage.
+[MANDATORY] Do NOT ignore a critic finding unless the draft already contains the required correction explicitly.
+
+=== SELF-CHECK BEFORE FINAL TOOL CALL ===
+[MANDATORY] DraftQuote called exactly once.
+[MANDATORY] Correct every concrete critic finding that is repairable from available context.
+[MANDATORY] Keep unchanged lines stable where possible.
+
+=== DATA CONTEXT ===
+
+Lead:
+- Lead ID: %s
+- Service ID: %s
+- Service Type: %s
+- Repair Attempt: %d
+
+Consumer:
+%s
+
+Address:
+%s
+
+Service Note (raw):
+%s
+
+Notes:
+%s
+
+Preferences (from customer portal):
+%s
+
+Photo Analysis:
+%s
+
+Scope Artifact:
+%s
+
+Estimation Guidelines:
+%s
+
+Current Draft Quote:
+%s
+
+Quote Critic Findings:
+%s
+
+Respond ONLY with tool calls.
+`,
+		sharedExecutionContract,
+		input.lead.ID,
+		input.service.ID,
+		input.service.ServiceType,
+		attempt,
+		consumerSummary,
+		locationSummary,
+		serviceNoteSummary,
+		notesSection,
+		preferencesSummary,
+		photoSummary,
+		scopeSummary,
+		estimationContextSummary,
+		draftJSON,
+		critiqueJSON,
+	)
+}
+
+func formatDraftQuoteForCritic(input DraftQuoteInput) string {
+	payload := struct {
+		Notes string           `json:"notes,omitempty"`
+		Items []DraftQuoteItem `json:"items"`
+	}{
+		Notes: input.Notes,
+		Items: input.Items,
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "Kon conceptofferte niet serialiseren voor review."
+	}
+	return string(b)
+}
+
+func formatQuoteCritiqueForRepair(input SubmitQuoteCritiqueInput) string {
+	b, err := json.MarshalIndent(input, "", "  ")
+	if err != nil {
+		return "Kon critic findings niet serialiseren voor reparatie."
+	}
+	return string(b)
 }
 
 func truncatePromptSection(section string, maxChars int) string {
