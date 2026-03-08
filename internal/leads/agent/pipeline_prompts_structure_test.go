@@ -328,3 +328,70 @@ func TestBuildQuoteGeneratePromptIncludesSingleExpressionMathExamples(t *testing
 		}
 	}
 }
+
+func TestBuildNotesSectionOrdersNewestNotesFirst(t *testing.T) {
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	notes := []repository.LeadNote{
+		{
+			Type:      "call",
+			Body:      "Oudste notitie",
+			CreatedAt: now.Add(-48 * time.Hour),
+		},
+		{
+			Type:      "system",
+			Body:      "Nieuwste systeemnotitie",
+			CreatedAt: now,
+		},
+		{
+			Type:      "message",
+			Body:      "Tussenliggende klantreactie",
+			CreatedAt: now.Add(-24 * time.Hour),
+		},
+	}
+
+	section := buildNotesSection(notes, 2000)
+
+	newestIndex := strings.Index(section, "Nieuwste systeemnotitie")
+	middleIndex := strings.Index(section, "Tussenliggende klantreactie")
+	oldestIndex := strings.Index(section, "Oudste notitie")
+
+	if newestIndex == -1 || middleIndex == -1 || oldestIndex == -1 {
+		t.Fatalf("expected all notes to be present, got %s", section)
+	}
+
+	if !(newestIndex < middleIndex && middleIndex < oldestIndex) {
+		t.Fatalf("expected newest-first note order, got %s", section)
+	}
+}
+
+func TestBuildNotesSectionTruncationKeepsNewestNotes(t *testing.T) {
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	newestBody := strings.Repeat("N", 400)
+	olderBody := strings.Repeat("O", 120)
+	notes := []repository.LeadNote{
+		{
+			Type:      "message",
+			Body:      newestBody,
+			CreatedAt: now,
+		},
+		{
+			Type:      "message",
+			Body:      olderBody,
+			CreatedAt: now.Add(-24 * time.Hour),
+		},
+	}
+
+	section := buildNotesSection(notes, 170)
+
+	if !strings.Contains(section, "2026-03-08T12:00:00Z") {
+		t.Fatalf("expected newest note to remain represented after truncation, got %s", section)
+	}
+
+	if strings.Contains(section, olderBody) {
+		t.Fatalf("expected older note to be dropped under truncation, got %s", section)
+	}
+
+	if !strings.Contains(section, "... [afgekapt]") {
+		t.Fatalf("expected truncation marker, got %s", section)
+	}
+}

@@ -629,17 +629,21 @@ func scoreNoteForPrompt(n repository.LeadNote) int {
 
 func sortNotesForPrompt(notes []repository.LeadNote) []repository.LeadNote {
 	// Truncation blindness guard:
-	// Prefer contact/call/email constraints and operator notes over system logs.
+	// Sort newest-first so prompt budget pressure drops stale notes before recent ones.
+	// Keep note priority only as a tie-breaker for identical timestamps.
 	candidates := make([]scoredNote, 0, len(notes))
 	for _, n := range notes {
 		candidates = append(candidates, scoredNote{n: n, p: scoreNoteForPrompt(n)})
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
+		if !candidates[i].n.CreatedAt.Equal(candidates[j].n.CreatedAt) {
+			return candidates[i].n.CreatedAt.After(candidates[j].n.CreatedAt)
+		}
 		if candidates[i].p != candidates[j].p {
 			return candidates[i].p < candidates[j].p
 		}
-		return candidates[i].n.CreatedAt.After(candidates[j].n.CreatedAt)
+		return false
 	})
 
 	sorted := make([]repository.LeadNote, 0, len(candidates))
