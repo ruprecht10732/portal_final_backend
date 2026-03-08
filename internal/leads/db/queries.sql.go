@@ -181,13 +181,13 @@ func (q *Queries) CountLeads(ctx context.Context, arg CountLeadsParams) (int32, 
 const createAIAnalysis = `-- name: CreateAIAnalysis :one
 INSERT INTO RAC_lead_ai_analysis (
 	lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 RETURNING id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags, created_at
 `
@@ -201,6 +201,8 @@ type CreateAIAnalysisParams struct {
 	LeadQuality             string        `json:"lead_quality"`
 	RecommendedAction       string        `json:"recommended_action"`
 	MissingInformation      []byte        `json:"missing_information"`
+	ResolvedInformation     []byte        `json:"resolved_information"`
+	ExtractedFacts          []byte        `json:"extracted_facts"`
 	PreferredContactChannel string        `json:"preferred_contact_channel"`
 	SuggestedContactMessage string        `json:"suggested_contact_message"`
 	Summary                 string        `json:"summary"`
@@ -219,6 +221,8 @@ type CreateAIAnalysisRow struct {
 	LeadQuality             string             `json:"lead_quality"`
 	RecommendedAction       string             `json:"recommended_action"`
 	MissingInformation      []byte             `json:"missing_information"`
+	ResolvedInformation     []byte             `json:"resolved_information"`
+	ExtractedFacts          []byte             `json:"extracted_facts"`
 	PreferredContactChannel string             `json:"preferred_contact_channel"`
 	SuggestedContactMessage string             `json:"suggested_contact_message"`
 	Summary                 string             `json:"summary"`
@@ -238,6 +242,8 @@ func (q *Queries) CreateAIAnalysis(ctx context.Context, arg CreateAIAnalysisPara
 		arg.LeadQuality,
 		arg.RecommendedAction,
 		arg.MissingInformation,
+		arg.ResolvedInformation,
+		arg.ExtractedFacts,
 		arg.PreferredContactChannel,
 		arg.SuggestedContactMessage,
 		arg.Summary,
@@ -256,6 +262,8 @@ func (q *Queries) CreateAIAnalysis(ctx context.Context, arg CreateAIAnalysisPara
 		&i.LeadQuality,
 		&i.RecommendedAction,
 		&i.MissingInformation,
+		&i.ResolvedInformation,
+		&i.ExtractedFacts,
 		&i.PreferredContactChannel,
 		&i.SuggestedContactMessage,
 		&i.Summary,
@@ -1474,7 +1482,7 @@ func (q *Queries) GetHumanFeedbackByID(ctx context.Context, arg GetHumanFeedback
 
 const getLatestAIAnalysis = `-- name: GetLatestAIAnalysis :one
 SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags, created_at
 FROM RAC_lead_ai_analysis
@@ -1498,6 +1506,8 @@ type GetLatestAIAnalysisRow struct {
 	LeadQuality             string             `json:"lead_quality"`
 	RecommendedAction       string             `json:"recommended_action"`
 	MissingInformation      []byte             `json:"missing_information"`
+	ResolvedInformation     []byte             `json:"resolved_information"`
+	ExtractedFacts          []byte             `json:"extracted_facts"`
 	PreferredContactChannel string             `json:"preferred_contact_channel"`
 	SuggestedContactMessage string             `json:"suggested_contact_message"`
 	Summary                 string             `json:"summary"`
@@ -1520,6 +1530,8 @@ func (q *Queries) GetLatestAIAnalysis(ctx context.Context, arg GetLatestAIAnalys
 		&i.LeadQuality,
 		&i.RecommendedAction,
 		&i.MissingInformation,
+		&i.ResolvedInformation,
+		&i.ExtractedFacts,
 		&i.PreferredContactChannel,
 		&i.SuggestedContactMessage,
 		&i.Summary,
@@ -2664,7 +2676,7 @@ func (q *Queries) InsertLeadServiceEvent(ctx context.Context, arg InsertLeadServ
 
 const listAIAnalyses = `-- name: ListAIAnalyses :many
 SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags, created_at
 FROM RAC_lead_ai_analysis
@@ -2687,6 +2699,8 @@ type ListAIAnalysesRow struct {
 	LeadQuality             string             `json:"lead_quality"`
 	RecommendedAction       string             `json:"recommended_action"`
 	MissingInformation      []byte             `json:"missing_information"`
+	ResolvedInformation     []byte             `json:"resolved_information"`
+	ExtractedFacts          []byte             `json:"extracted_facts"`
 	PreferredContactChannel string             `json:"preferred_contact_channel"`
 	SuggestedContactMessage string             `json:"suggested_contact_message"`
 	Summary                 string             `json:"summary"`
@@ -2715,6 +2729,8 @@ func (q *Queries) ListAIAnalyses(ctx context.Context, arg ListAIAnalysesParams) 
 			&i.LeadQuality,
 			&i.RecommendedAction,
 			&i.MissingInformation,
+			&i.ResolvedInformation,
+			&i.ExtractedFacts,
 			&i.PreferredContactChannel,
 			&i.SuggestedContactMessage,
 			&i.Summary,

@@ -63,6 +63,8 @@ type AIAnalysisMetadata struct {
 	SuggestedContactMessage string             `json:"suggestedContactMessage,omitempty"`
 	PreferredContactChannel string             `json:"preferredContactChannel,omitempty"`
 	MissingInformation      []string           `json:"missingInformation,omitempty"`
+	ResolvedInformation     []string           `json:"resolvedInformation,omitempty"`
+	ExtractedFacts          map[string]string  `json:"extractedFacts,omitempty"`
 	CompositeConfidence     float64            `json:"compositeConfidence,omitempty"`
 	ConfidenceBreakdown     map[string]float64 `json:"confidenceBreakdown,omitempty"`
 	RiskFlags               []string           `json:"riskFlags,omitempty"`
@@ -103,6 +105,8 @@ func (m AutoDisqualifyMetadata) ToMap() map[string]any { return toMap(m) }
 type ManualInterventionMetadata struct {
 	PreviousStage      string         `json:"previous_stage"`
 	Trigger            string         `json:"trigger"`
+	ReasonCategory     string         `json:"reasonCategory,omitempty"`
+	ReasonSummary      string         `json:"reasonSummary,omitempty"`
 	ReasonCode         string         `json:"reasonCode,omitempty"`
 	AttemptCount       int            `json:"attemptCount,omitempty"`
 	BlockerFingerprint string         `json:"blockerFingerprint,omitempty"`

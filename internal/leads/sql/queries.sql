@@ -263,19 +263,19 @@ WHERE id = $1 AND organization_id = $2;
 -- name: CreateAIAnalysis :one
 INSERT INTO RAC_lead_ai_analysis (
 	lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 RETURNING id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags, created_at;
 
 -- name: GetLatestAIAnalysis :one
 SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags, created_at
 FROM RAC_lead_ai_analysis
@@ -285,7 +285,7 @@ LIMIT 1;
 
 -- name: ListAIAnalyses :many
 SELECT id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-	lead_quality, recommended_action, missing_information,
+	lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 	preferred_contact_channel, suggested_contact_message, summary,
 	composite_confidence, confidence_breakdown, risk_flags, created_at
 FROM RAC_lead_ai_analysis

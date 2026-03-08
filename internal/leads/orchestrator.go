@@ -600,17 +600,20 @@ func (o *Orchestrator) handleManualInterventionStage(evt events.PipelineStageCha
 	title := repository.EventTitleManualIntervention
 	actorName := repository.ActorNameOrchestrator
 	metadata := repository.ManualInterventionMetadata{
-		PreviousStage: evt.OldStage,
-		Trigger:       "pipeline_stage_change",
-		Drafts:        buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID),
+		PreviousStage:  evt.OldStage,
+		Trigger:        "pipeline_stage_change",
+		ReasonCategory: evt.Trigger,
+		Drafts:         buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID),
 	}
 	if strings.TrimSpace(evt.Reason) != "" {
 		summary = strings.TrimSpace(evt.Reason)
+		metadata.ReasonSummary = summary
 	}
 	if evt.Trigger == "ai_loop_detected" {
 		title = repository.EventTitleAILoopDetected
 		actorName = repository.ActorNameLoopDetector
 		metadata.Trigger = evt.Trigger
+		metadata.ReasonCategory = evt.Trigger
 		metadata.ReasonCode = "nurturing_loop_threshold"
 		if svc, err := o.repo.GetLeadServiceByID(context.Background(), evt.LeadServiceID, evt.TenantID); err == nil {
 			metadata.AttemptCount = svc.GatekeeperNurturingLoopCount

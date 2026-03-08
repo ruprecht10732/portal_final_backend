@@ -59,6 +59,8 @@ func testPromptFixtures() (repository.Lead, repository.LeadService, []repository
 
 	attachments := []repository.Attachment{{
 		FileName: "foto-voordeur.jpg",
+	}, {
+		FileName: "plattegrond.pdf",
 	}}
 
 	photo := &repository.PhotoAnalysis{
@@ -174,29 +176,39 @@ func TestBuildGatekeeperPromptIncludesPreviousEstimatorBlockers(t *testing.T) {
 	priorAnalysis := &repository.AIAnalysis{
 		RecommendedAction:   "RequestInfo",
 		MissingInformation:  []string{"dagmaat van het kozijn", "foto van de binnenzijde"},
+		ResolvedInformation: []string{"klant wil witte afwerking"},
+		ExtractedFacts: map[string]string{
+			"gewenste kleur": "wit",
+		},
 		RiskFlags:           []string{"missing_dimensions"},
 		CompositeConfidence: &confidence,
 		Summary:             "Estimator kon nog geen scope afronden door ontbrekende maatvoering.",
 	}
 
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
-		lead:          lead,
-		service:       service,
-		notes:         notes,
-		visitReport:   visitReport,
-		intakeContext: gatekeeperIntakeRequirement,
-		attachments:   attachments,
-		photoAnalysis: photo,
-		priorAnalysis: priorAnalysis,
+		lead:              lead,
+		service:           service,
+		notes:             notes,
+		visitReport:       visitReport,
+		intakeContext:     gatekeeperIntakeRequirement,
+		estimationContext: "Vraag ook om exacte breedte en hoogte voor de prijsberekening.",
+		attachments:       attachments,
+		photoAnalysis:     photo,
+		priorAnalysis:     priorAnalysis,
 	})
 
 	checks := []string{
 		"Previous Estimator Blockers:",
 		"Laatste aanbevolen actie: RequestInfo",
 		"Eerder ontbrekende intakegegevens: dagmaat van het kozijn, foto van de binnenzijde",
+		"Known Facts (do not ask again):",
+		"Eerder bevestigde intakegegevens: klant wil witte afwerking",
+		"Feit gewenste kleur: wit",
 		"Risicosignalen: missing_dimensions",
 		"Confidence vorige analyse: 0.31",
 		"Estimator previously blocked this lead for missing information",
+		"Estimator Foresight:",
+		"Vraag ook om exacte breedte en hoogte voor de prijsberekening.",
 	}
 
 	for _, token := range checks {
@@ -221,20 +233,65 @@ func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurem
 	}
 
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
-		lead:          lead,
-		service:       service,
-		notes:         notes,
-		visitReport:   visitReport,
-		intakeContext: gatekeeperIntakeRequirement,
-		attachments:   attachments,
-		photoAnalysis: photo,
-		priorAnalysis: priorAnalysis,
+		lead:              lead,
+		service:           service,
+		notes:             notes,
+		visitReport:       visitReport,
+		intakeContext:     gatekeeperIntakeRequirement,
+		estimationContext: estimatorPromptInstruction,
+		attachments:       attachments,
+		photoAnalysis:     photo,
+		priorAnalysis:     priorAnalysis,
 	})
 
 	checks := []string{
 		"Ik heb geen meetlint.",
 		"Eerder ontbrekende intakegegevens: dagmaat van het kozijn, hoogte van de opening",
 		"you MUST NOT move to Estimation until that exact information is explicitly present in trusted context",
+		"If the latest customer message shows inability, lack of tools, or frustration about measuring, do NOT repeat the same ask.",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildGatekeeperPromptFlagsDocumentReviewAttachments(t *testing.T) {
+	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
+		lead:              lead,
+		service:           service,
+		notes:             notes,
+		visitReport:       visitReport,
+		intakeContext:     gatekeeperIntakeRequirement,
+		estimationContext: estimatorPromptInstruction,
+		attachments:       attachments,
+		photoAnalysis:     photo,
+	})
+
+	checks := []string{
+		"Attachment Awareness:",
+		"plattegrond.pdf [document/pdf]",
+		"Human document review recommended: true",
+		"If Attachment Awareness indicates a non-image document likely contains plans, measurements, or competitor quotes, do NOT ask the customer to restate those dimensions.",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildInvestigativePromptIncludesSharedCommunicationContract(t *testing.T) {
+	lead, service, notes, _, _, photo := testPromptFixtures()
+	prompt := buildInvestigativePrompt(lead, service, notes, photo, []string{"Exacte breedte opening"}, estimatorPromptInstruction)
+
+	checks := []string{
+		"=== COMMUNICATION CONTRACT (CUSTOMER FACING) ===",
+		"If context shows this is a follow-up question, briefly acknowledge the extra effort and apologize for the additional step.",
 	}
 
 	for _, token := range checks {

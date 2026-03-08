@@ -680,6 +680,8 @@ type RacLeadAiAnalysis struct {
 	CompositeConfidence     pgtype.Float8      `json:"composite_confidence"`
 	ConfidenceBreakdown     []byte             `json:"confidence_breakdown"`
 	RiskFlags               []byte             `json:"risk_flags"`
+	ResolvedInformation     []byte             `json:"resolved_information"`
+	ExtractedFacts          []byte             `json:"extracted_facts"`
 }
 
 type RacLeadNote struct {

@@ -1145,20 +1145,7 @@ func (q *QuotingAgent) emitQuoteCriticHumanAlert(ctx context.Context, reqDeps *T
 }
 
 func (q *QuotingAgent) fetchEstimationGuidelines(ctx context.Context, tenantID uuid.UUID, serviceType string) string {
-	serviceTypes, err := q.repo.ListActiveServiceTypes(ctx, tenantID)
-	if err != nil {
-		return ""
-	}
-	for _, st := range serviceTypes {
-		if st.Name == serviceType && st.EstimationGuidelines != nil {
-			guidelines := strings.TrimSpace(*st.EstimationGuidelines)
-			if guidelines == "" {
-				return "Customer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph."
-			}
-			return guidelines + "\n\nCustomer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph."
-		}
-	}
-	return "Customer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph."
+	return fetchServiceTypeEstimationGuidelines(ctx, q.repo, tenantID, serviceType)
 }
 
 func (q *QuotingAgent) runWithPrompt(ctx context.Context, promptText, userID string) error {

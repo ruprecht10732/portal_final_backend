@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -63,12 +64,21 @@ const sharedProductSelectionRules = `=== PRODUCT DECISION TABLE ===
 2. Trade/professional synonym
 3. Retail/store synonym`
 
+const sharedCommunicationContract = `=== COMMUNICATION CONTRACT (CUSTOMER FACING) ===
+[MANDATORY] Tone: warm, helpful, and professional Dutch.
+[MANDATORY] Structure every customer-facing clarification as: acknowledge what we already have -> explain why one or two extra details are needed -> give simple next steps.
+[MANDATORY] Never use trade jargon without translating it into plain consumer Dutch.
+[MANDATORY] Maximum two distinct asks per message.
+[MANDATORY] If context shows this is a follow-up question, briefly acknowledge the extra effort and apologize for the additional step.
+[MANDATORY] If the customer seems unable to measure or provide technical details, offer a short call or vrijblijvende inmeetafspraak instead of repeating the same request.`
+
 type gatekeeperPromptInput struct {
 	lead               repository.Lead
 	service            repository.LeadService
 	notes              []repository.LeadNote
 	visitReport        *repository.AppointmentVisitReport
 	intakeContext      string
+	estimationContext  string
 	attachments        []repository.Attachment
 	photoAnalysis      *repository.PhotoAnalysis
 	priorAnalysis      *repository.AIAnalysis
@@ -91,10 +101,13 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	preferredChannel := resolvePreferredContactChannel(input.lead)
 	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxGatekeeperPreferencesChars)
 	leadContext := truncatePromptSection(buildLeadContextSection(input.lead, input.attachments), maxGatekeeperLeadCtxChars)
+	attachmentAwareness := truncatePromptSection(buildAttachmentAwarenessSection(input.attachments), maxGatekeeperLeadCtxChars)
 	photoSummary := truncatePromptSection(buildGatekeeperPhotoSummary(input.photoAnalysis, input.service.ServiceType), maxGatekeeperPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxGatekeeperServiceNoteChars)
 	intakeContextSummary := truncatePromptSection(input.intakeContext, maxGatekeeperIntakeChars)
+	estimationContextSummary := truncatePromptSection(input.estimationContext, maxGatekeeperIntakeChars)
 	previousEstimatorBlockers := buildPreviousEstimatorBlockersSection(input.priorAnalysis)
+	knownFacts := buildKnownFactsSection(input.priorAnalysis, input.visitReport)
 	consumerSummary := buildPromptConsumerSection(input.lead)
 	locationSummary := buildPromptLocationLine(input.lead)
 	recoveryModeSection := ""
@@ -114,11 +127,14 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 
 %s
 
+%s
+
 === OBJECTIVE ===
 [MANDATORY] Validate intake completeness for the current service type.
 [MANDATORY] If intake is complete -> stage Estimation.
 [MANDATORY] If critical intake info is missing -> stage Nurturing.
 [MANDATORY] Do NOT calculate price. Do NOT search partners.
+[MANDATORY] Use the Estimator Foresight section to ask for pricing-critical dimensions before handing the lead to Estimation.
 
 === EXECUTION ORDER ===
 1. UpdateLeadDetails (only if factual contact/address errors are clear with confidence >= 0.90)
@@ -141,8 +157,12 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [DECISION RULE] Ambiguous service intent -> keep current service type and move to Nurturing.
 [DECISION RULE] Missing info alone is NEVER a reason to switch service type.
 [DECISION RULE] If the Estimator previously blocked this lead for missing information, you MUST NOT move to Estimation until that exact information is explicitly present in trusted context.
+[DECISION RULE] If a fact appears in Known Facts, treat it as already fulfilled unless a newer trusted source contradicts it.
+[DECISION RULE] If Attachment Awareness indicates a non-image document likely contains plans, measurements, or competitor quotes, do NOT ask the customer to restate those dimensions. Move to Manual_Intervention for human document review.
+[DECISION RULE] If the latest customer message shows inability, lack of tools, or frustration about measuring, do NOT repeat the same ask. Prefer RecommendedAction=ScheduleSurvey or CallImmediately and offer a short call or site visit.
 
 === SUGGESTED CONTACT MESSAGE (when stage = Nurturing) ===
+[MANDATORY] Follow the Communication Contract below.
 [MANDATORY] Only include suggestedContactMessage when critical intake details are still missing.
 [MANDATORY] Tone: friendly, helpful, and professional Dutch. Do NOT sound robotic or like a cold checklist.
 [MANDATORY] Channel formatting: the current preferred channel is %s.
@@ -207,14 +227,24 @@ Photo Analysis (AI visual inspection):
 Previous Estimator Blockers:
 %s
 
+Known Facts (do not ask again):
+%s
+
+Attachment Awareness:
+%s
+
 Additional Context:
 %s
 
 Intake Requirements:
 %s
+
+Estimator Foresight:
+%s
 Respond ONLY with tool calls.
 `,
 		sharedExecutionContract,
+		sharedCommunicationContract,
 		preferredChannel,
 		recoveryModeSection,
 		input.lead.ID,
@@ -230,8 +260,11 @@ Respond ONLY with tool calls.
 		preferencesSummary,
 		photoSummary,
 		previousEstimatorBlockers,
+		knownFacts,
+		attachmentAwareness,
 		leadContext,
 		intakeContextSummary,
+		estimationContextSummary,
 	)
 }
 
@@ -268,6 +301,51 @@ func buildPreviousEstimatorBlockersSection(priorAnalysis *repository.AIAnalysis)
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func buildKnownFactsSection(priorAnalysis *repository.AIAnalysis, visitReport *repository.AppointmentVisitReport) string {
+	lines := make([]string, 0, 8)
+	if priorAnalysis != nil {
+		lines = append(lines, buildPriorAnalysisKnownFacts(priorAnalysis)...)
+	}
+	if visitReport != nil {
+		if measurements := visitReportValue(visitReport.Measurements); measurements != valueNotProvided {
+			lines = append(lines, fmt.Sprintf("- Ingemeten tijdens afspraak: %s", measurements))
+		}
+	}
+	if len(lines) == 0 {
+		return "- Geen duurzame bekende feiten opgeslagen."
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildPriorAnalysisKnownFacts(priorAnalysis *repository.AIAnalysis) []string {
+	lines := make([]string, 0, len(priorAnalysis.ResolvedInformation)+len(priorAnalysis.ExtractedFacts)+1)
+	resolvedInformation := compactPromptList(priorAnalysis.ResolvedInformation)
+	if len(resolvedInformation) > 0 {
+		lines = append(lines, fmt.Sprintf("- Eerder bevestigde intakegegevens: %s", strings.Join(resolvedInformation, ", ")))
+	}
+	return append(lines, buildExtractedFactLines(priorAnalysis.ExtractedFacts)...)
+}
+
+func buildExtractedFactLines(facts map[string]string) []string {
+	if len(facts) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(facts))
+	for key := range facts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.TrimSpace(facts[key])
+		if value == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- Feit %s: %s", sanitizeUserInput(key, maxNoteLength), sanitizeUserInput(value, maxNoteLength)))
+	}
+	return lines
 }
 
 func compactPromptList(values []string) []string {
@@ -522,6 +600,8 @@ func buildInvestigativePrompt(lead repository.Lead, service repository.LeadServi
 
 %s
 
+%s
+
 === OBJECTIVE ===
 [MANDATORY] You do NOT have enough information to build a quote.
 [MANDATORY] Your only task is to draft a professional Dutch clarification message to the customer.
@@ -591,6 +671,7 @@ Estimation Guidelines:
 Respond ONLY with tool calls.
 `,
 		sharedExecutionContract,
+		sharedCommunicationContract,
 		missing,
 		preferredChannel,
 		lead.ID,
@@ -862,9 +943,79 @@ func buildAttachmentsSummary(attachments []repository.Attachment) string {
 			break
 		}
 		name := sanitizeUserInput(att.FileName, 80)
-		names = append(names, name)
+		kind, _, _ := classifyAttachment(att)
+		names = append(names, fmt.Sprintf("%s [%s]", name, kind))
 	}
 	return fmt.Sprintf("%d file(s): %s", len(attachments), strings.Join(names, ", "))
+}
+
+func buildAttachmentAwarenessSection(attachments []repository.Attachment) string {
+	if len(attachments) == 0 {
+		return "- No attachments"
+	}
+	lines := make([]string, 0, len(attachments)+3)
+	hasNonImageDocument := false
+	requiresDocumentReview := false
+	for i, att := range attachments {
+		kind, isNonImageDocument, requiresReview := classifyAttachment(att)
+		if isNonImageDocument {
+			hasNonImageDocument = true
+		}
+		if requiresReview {
+			requiresDocumentReview = true
+		}
+		if i < 5 {
+			lines = append(lines, fmt.Sprintf("- %s [%s]", sanitizeUserInput(att.FileName, 80), kind))
+		}
+	}
+	lines = append(lines, fmt.Sprintf("- Non-image documents detected: %t", hasNonImageDocument))
+	lines = append(lines, fmt.Sprintf("- Human document review recommended: %t", requiresDocumentReview))
+	if requiresDocumentReview {
+		lines = append(lines, "- Reason: attachment set may already contain measurements, plans, or quote details that the AI cannot reliably read.")
+	}
+	return wrapUserData(strings.Join(lines, "\n"))
+}
+
+func classifyAttachment(att repository.Attachment) (kind string, isNonImageDocument bool, requiresDocumentReview bool) {
+	contentType := strings.ToLower(strings.TrimSpace(getValue(att.ContentType)))
+	ext := strings.ToLower(filepath.Ext(att.FileName))
+	name := strings.ToLower(strings.TrimSpace(att.FileName))
+	if strings.HasPrefix(contentType, "image/") || isImageExtension(ext) {
+		return "image", false, false
+	}
+	if isDocumentAttachment(contentType, ext) {
+		requiresReview := strings.Contains(name, "plattegrond") || strings.Contains(name, "floorplan") || strings.Contains(name, "blueprint") || strings.Contains(name, "tekening") || strings.Contains(name, "offerte") || strings.Contains(name, "quote") || contentType == "application/pdf" || ext == ".pdf"
+		label := "document"
+		if ext != "" {
+			label = "document/" + strings.TrimPrefix(ext, ".")
+		}
+		return label, true, requiresReview
+	}
+	if contentType != "" {
+		return contentType, true, true
+	}
+	return "file", ext != "", ext != ""
+}
+
+func isImageExtension(ext string) bool {
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDocumentAttachment(contentType string, ext string) bool {
+	if strings.HasPrefix(contentType, "application/") || strings.HasPrefix(contentType, "text/") {
+		return true
+	}
+	switch ext {
+	case ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".odt", ".ods", ".csv":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsAny(text string, terms []string) bool {

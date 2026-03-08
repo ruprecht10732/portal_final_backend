@@ -10,16 +10,18 @@ import (
 
 // SaveAnalysisInput is the structured input for the SaveAnalysis tool
 type SaveAnalysisInput struct {
-	LeadID                  string   `json:"leadId"`
-	LeadServiceID           string   `json:"leadServiceId"`           // The specific service this analysis is for
-	UrgencyLevel            string   `json:"urgencyLevel"`            // High, Medium, Low
-	UrgencyReason           string   `json:"urgencyReason"`           // Why this urgency level
-	LeadQuality             string   `json:"leadQuality"`             // Junk, Low, Potential, High, Urgent
-	RecommendedAction       string   `json:"recommendedAction"`       // Reject, RequestInfo, ScheduleSurvey, CallImmediately
-	MissingInformation      []string `json:"missingInformation"`      // Missing critical info for triage
-	PreferredContactChannel string   `json:"preferredContactChannel"` // WhatsApp, Email
-	SuggestedContactMessage string   `json:"suggestedContactMessage"` // Message to send via chosen channel
-	Summary                 string   `json:"summary"`                 // Brief overall analysis
+	LeadID                  string            `json:"leadId"`
+	LeadServiceID           string            `json:"leadServiceId"`      // The specific service this analysis is for
+	UrgencyLevel            string            `json:"urgencyLevel"`       // High, Medium, Low
+	UrgencyReason           string            `json:"urgencyReason"`      // Why this urgency level
+	LeadQuality             string            `json:"leadQuality"`        // Junk, Low, Potential, High, Urgent
+	RecommendedAction       string            `json:"recommendedAction"`  // Reject, RequestInfo, ScheduleSurvey, CallImmediately
+	MissingInformation      []string          `json:"missingInformation"` // Missing critical info for triage
+	ResolvedInformation     []string          `json:"resolvedInformation,omitempty"`
+	ExtractedFacts          map[string]string `json:"extractedFacts,omitempty"`
+	PreferredContactChannel string            `json:"preferredContactChannel"` // WhatsApp, Email
+	SuggestedContactMessage string            `json:"suggestedContactMessage"` // Message to send via chosen channel
+	Summary                 string            `json:"summary"`                 // Brief overall analysis
 }
 
 type SaveAnalysisOutput struct {

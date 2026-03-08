@@ -235,6 +235,8 @@ type AIAnalysisResponse struct {
 	LeadQuality             string             `json:"leadQuality"`
 	RecommendedAction       string             `json:"recommendedAction"`
 	MissingInformation      []string           `json:"missingInformation"`
+	ResolvedInformation     []string           `json:"resolvedInformation,omitempty"`
+	ExtractedFacts          map[string]string  `json:"extractedFacts,omitempty"`
 	CompositeConfidence     *float64           `json:"compositeConfidence,omitempty"`
 	ConfidenceBreakdown     map[string]float64 `json:"confidenceBreakdown,omitempty"`
 	RiskFlags               []string           `json:"riskFlags,omitempty"`
@@ -255,6 +257,8 @@ func ToAIAnalysisResponse(analysis repository.AIAnalysis) AIAnalysisResponse {
 		LeadQuality:             analysis.LeadQuality,
 		RecommendedAction:       analysis.RecommendedAction,
 		MissingInformation:      analysis.MissingInformation,
+		ResolvedInformation:     analysis.ResolvedInformation,
+		ExtractedFacts:          analysis.ExtractedFacts,
 		CompositeConfidence:     analysis.CompositeConfidence,
 		ConfidenceBreakdown:     analysis.ConfidenceBreakdown,
 		RiskFlags:               analysis.RiskFlags,

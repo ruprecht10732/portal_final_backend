@@ -14,7 +14,7 @@ import (
 )
 
 const aiAnalysisSelectColumns = `id, lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
-		lead_quality, recommended_action, missing_information,
+		lead_quality, recommended_action, missing_information, resolved_information, extracted_facts,
 		preferred_contact_channel, suggested_contact_message, summary,
 		composite_confidence, confidence_breakdown, risk_flags, created_at`
 
@@ -29,6 +29,8 @@ type AIAnalysis struct {
 	LeadQuality             string
 	RecommendedAction       string
 	MissingInformation      []string
+	ResolvedInformation     []string
+	ExtractedFacts          map[string]string
 	CompositeConfidence     *float64
 	ConfidenceBreakdown     map[string]float64
 	RiskFlags               []string
@@ -48,6 +50,8 @@ type CreateAIAnalysisParams struct {
 	LeadQuality             string
 	RecommendedAction       string
 	MissingInformation      []string
+	ResolvedInformation     []string
+	ExtractedFacts          map[string]string
 	CompositeConfidence     *float64
 	ConfidenceBreakdown     map[string]float64
 	RiskFlags               []string
@@ -59,6 +63,8 @@ type CreateAIAnalysisParams struct {
 // CreateAIAnalysis stores a new AI analysis for a lead service.
 func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalysisParams) (AIAnalysis, error) {
 	missingInfoJSON := marshalJSONArray(params.MissingInformation)
+	resolvedInfoJSON := marshalJSONArray(params.ResolvedInformation)
+	extractedFactsJSON := marshalJSONStringMap(params.ExtractedFacts)
 	breakdownJSON := marshalJSONMap(params.ConfidenceBreakdown)
 	riskFlagsJSON := marshalJSONArray(params.RiskFlags)
 
@@ -71,6 +77,8 @@ func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalys
 		LeadQuality:             params.LeadQuality,
 		RecommendedAction:       params.RecommendedAction,
 		MissingInformation:      missingInfoJSON,
+		ResolvedInformation:     resolvedInfoJSON,
+		ExtractedFacts:          extractedFactsJSON,
 		PreferredContactChannel: params.PreferredContactChannel,
 		SuggestedContactMessage: params.SuggestedContactMessage,
 		Summary:                 params.Summary,
@@ -91,6 +99,8 @@ func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalys
 		leadQuality:             row.LeadQuality,
 		recommendedAction:       row.RecommendedAction,
 		missingInformation:      row.MissingInformation,
+		resolvedInformation:     row.ResolvedInformation,
+		extractedFacts:          row.ExtractedFacts,
 		compositeConfidence:     row.CompositeConfidence,
 		confidenceBreakdown:     row.ConfidenceBreakdown,
 		riskFlags:               row.RiskFlags,
@@ -149,6 +159,8 @@ func (r *Repository) ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, or
 			leadQuality:             row.LeadQuality,
 			recommendedAction:       row.RecommendedAction,
 			missingInformation:      row.MissingInformation,
+			resolvedInformation:     row.ResolvedInformation,
+			extractedFacts:          row.ExtractedFacts,
 			compositeConfidence:     row.CompositeConfidence,
 			confidenceBreakdown:     row.ConfidenceBreakdown,
 			riskFlags:               row.RiskFlags,
@@ -171,6 +183,8 @@ type aiAnalysisSnapshot struct {
 	leadQuality             string
 	recommendedAction       string
 	missingInformation      []byte
+	resolvedInformation     []byte
+	extractedFacts          []byte
 	compositeConfidence     pgtype.Float8
 	confidenceBreakdown     []byte
 	riskFlags               []byte
@@ -197,6 +211,8 @@ func (snapshot aiAnalysisSnapshot) toModel() AIAnalysis {
 		CreatedAt:               snapshot.createdAt.Time,
 	}
 	_ = json.Unmarshal(snapshot.missingInformation, &analysis.MissingInformation)
+	_ = json.Unmarshal(snapshot.resolvedInformation, &analysis.ResolvedInformation)
+	_ = json.Unmarshal(snapshot.extractedFacts, &analysis.ExtractedFacts)
 	_ = json.Unmarshal(snapshot.confidenceBreakdown, &analysis.ConfidenceBreakdown)
 	_ = json.Unmarshal(snapshot.riskFlags, &analysis.RiskFlags)
 	if analysis.ConfidenceBreakdown == nil {
@@ -204,6 +220,12 @@ func (snapshot aiAnalysisSnapshot) toModel() AIAnalysis {
 	}
 	if analysis.MissingInformation == nil {
 		analysis.MissingInformation = []string{}
+	}
+	if analysis.ResolvedInformation == nil {
+		analysis.ResolvedInformation = []string{}
+	}
+	if analysis.ExtractedFacts == nil {
+		analysis.ExtractedFacts = map[string]string{}
 	}
 	if analysis.RiskFlags == nil {
 		analysis.RiskFlags = []string{}
@@ -222,6 +244,14 @@ func marshalJSONArray(values []string) []byte {
 func marshalJSONMap(values map[string]float64) []byte {
 	if values == nil {
 		values = map[string]float64{}
+	}
+	data, _ := json.Marshal(values)
+	return data
+}
+
+func marshalJSONStringMap(values map[string]string) []byte {
+	if values == nil {
+		values = map[string]string{}
 	}
 	data, _ := json.Marshal(values)
 	return data

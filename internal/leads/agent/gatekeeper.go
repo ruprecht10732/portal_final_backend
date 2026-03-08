@@ -132,6 +132,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 
 	notes, attachments, photoAnalysis, visitReport := g.fetchServiceContext(ctx, leadID, serviceID, tenantID)
 	intakeContext := g.buildServiceContext(ctx, tenantID, service.ServiceType)
+	estimationContext := fetchServiceTypeEstimationGuidelines(ctx, g.repo, tenantID, service.ServiceType)
 	priorAnalysis := g.loadPriorAnalysis(ctx, serviceID, tenantID)
 	if err := g.runGatekeeperPrompt(ctx, gatekeeperPromptRequest{
 		leadID:             leadID,
@@ -141,6 +142,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		notes:              notes,
 		visitReport:        visitReport,
 		intakeContext:      intakeContext,
+		estimationContext:  estimationContext,
 		attachments:        attachments,
 		photoAnalysis:      photoAnalysis,
 		priorAnalysis:      priorAnalysis,
@@ -256,6 +258,7 @@ type gatekeeperPromptRequest struct {
 	notes              []repository.LeadNote
 	visitReport        *repository.AppointmentVisitReport
 	intakeContext      string
+	estimationContext  string
 	attachments        []repository.Attachment
 	photoAnalysis      *repository.PhotoAnalysis
 	priorAnalysis      *repository.AIAnalysis
@@ -269,6 +272,7 @@ func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperProm
 		notes:              req.notes,
 		visitReport:        req.visitReport,
 		intakeContext:      req.intakeContext,
+		estimationContext:  req.estimationContext,
 		attachments:        req.attachments,
 		photoAnalysis:      req.photoAnalysis,
 		priorAnalysis:      req.priorAnalysis,

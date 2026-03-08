@@ -167,9 +167,9 @@ type ToolDependencies struct {
 	actorType              string
 	actorName              string
 	orgSettings            *ports.OrganizationAISettings
-	existingQuoteID        *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
-	lastAnalysisMetadata   map[string]any          // Populated by SaveAnalysis for use in stage_change events
-	lastEstimationMetadata map[string]any          // Populated by SaveEstimation for use in stage_change events
+	existingQuoteID        *uuid.UUID     // If set, DraftQuote updates this quote instead of creating new
+	lastAnalysisMetadata   map[string]any // Populated by SaveAnalysis for use in stage_change events
+	lastEstimationMetadata map[string]any // Populated by SaveEstimation for use in stage_change events
 	lastEstimateSnapshot   *EstimateComputationSnapshot
 	lastCouncilMetadata    map[string]any          // Populated by council evaluation for stage/quote governance events
 	saveAnalysisCalled     bool                    // Track if SaveAnalysis was called
@@ -783,6 +783,25 @@ func normalizeMissingInformation(items []string) []string {
 	return normalized
 }
 
+func normalizeExtractedFacts(facts map[string]string) map[string]string {
+	if len(facts) == 0 {
+		return map[string]string{}
+	}
+	normalized := make(map[string]string, len(facts))
+	for key, value := range facts {
+		trimmedKey := strings.TrimSpace(key)
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		normalized[trimmedKey] = trimmedValue
+	}
+	if len(normalized) == 0 {
+		return map[string]string{}
+	}
+	return normalized
+}
+
 // contactMessageReplacer is compiled once and reused for all contact message normalisations.
 var contactMessageReplacer = strings.NewReplacer(
 	"\r\n", "\n",
@@ -812,33 +831,52 @@ func normalizeSuggestedContactMessage(message string) string {
 	return strings.TrimSpace(normalized)
 }
 
-func isEquivalentRecentAnalysis(current repository.AIAnalysis, urgencyLevel, leadQuality, recommendedAction, channel, message string, missingInformation []string) bool {
+func isEquivalentRecentAnalysis(current repository.AIAnalysis, candidate normalizedAnalysisInput) bool {
 	if time.Since(current.CreatedAt) > recentEquivalentAnalysisTTL {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(current.UrgencyLevel), strings.TrimSpace(urgencyLevel)) {
+	if !strings.EqualFold(strings.TrimSpace(current.UrgencyLevel), strings.TrimSpace(candidate.UrgencyLevel)) {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(current.LeadQuality), strings.TrimSpace(leadQuality)) {
+	if !strings.EqualFold(strings.TrimSpace(current.LeadQuality), strings.TrimSpace(candidate.LeadQuality)) {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(current.RecommendedAction), strings.TrimSpace(recommendedAction)) {
+	if !strings.EqualFold(strings.TrimSpace(current.RecommendedAction), strings.TrimSpace(candidate.RecommendedAction)) {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(current.PreferredContactChannel), strings.TrimSpace(channel)) {
+	if !strings.EqualFold(strings.TrimSpace(current.PreferredContactChannel), strings.TrimSpace(candidate.Channel)) {
 		return false
 	}
-	if strings.TrimSpace(normalizeSuggestedContactMessage(current.SuggestedContactMessage)) != strings.TrimSpace(normalizeSuggestedContactMessage(message)) {
+	if strings.TrimSpace(normalizeSuggestedContactMessage(current.SuggestedContactMessage)) != strings.TrimSpace(normalizeSuggestedContactMessage(candidate.SuggestedMessage)) {
 		return false
 	}
+	return equalNormalizedStringSlices(current.MissingInformation, candidate.MissingInformation) &&
+		equalNormalizedStringSlices(current.ResolvedInformation, candidate.ResolvedInformation) &&
+		equalNormalizedFactMaps(current.ExtractedFacts, candidate.ExtractedFacts)
+}
 
-	currentMissing := normalizeMissingInformation(current.MissingInformation)
-	candidateMissing := normalizeMissingInformation(missingInformation)
-	if len(currentMissing) != len(candidateMissing) {
+func equalNormalizedStringSlices(current []string, candidate []string) bool {
+	currentNormalized := normalizeMissingInformation(current)
+	candidateNormalized := normalizeMissingInformation(candidate)
+	if len(currentNormalized) != len(candidateNormalized) {
 		return false
 	}
-	for i := range currentMissing {
-		if !strings.EqualFold(currentMissing[i], candidateMissing[i]) {
+	for i := range currentNormalized {
+		if !strings.EqualFold(currentNormalized[i], candidateNormalized[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalNormalizedFactMaps(current map[string]string, candidate map[string]string) bool {
+	currentNormalized := normalizeExtractedFacts(current)
+	candidateNormalized := normalizeExtractedFacts(candidate)
+	if len(currentNormalized) != len(candidateNormalized) {
+		return false
+	}
+	for key, value := range currentNormalized {
+		if !strings.EqualFold(strings.TrimSpace(candidateNormalized[key]), strings.TrimSpace(value)) {
 			return false
 		}
 	}
@@ -900,6 +938,8 @@ type normalizedAnalysisInput struct {
 	RecommendedAction   string
 	Channel             string
 	MissingInformation  []string
+	ResolvedInformation []string
+	ExtractedFacts      map[string]string
 	SuggestedMessage    string
 	Summary             string
 	CompositeConfidence float64
@@ -930,6 +970,8 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 	log.Printf("handleSaveAnalysis: normalized recommendedAction '%s' -> '%s'", input.RecommendedAction, recommendedAction)
 
 	missingInformation := normalizeMissingInformation(input.MissingInformation)
+	resolvedInformation := normalizeMissingInformation(input.ResolvedInformation)
+	extractedFacts := normalizeExtractedFacts(input.ExtractedFacts)
 	normalizedMessage := normalizeSuggestedContactMessage(input.SuggestedContactMessage)
 	analysisSummary := strings.TrimSpace(input.Summary)
 	if analysisSummary == "" {
@@ -947,6 +989,12 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 	}
 	if len(missingInformation) > 0 {
 		meta.MissingInformation = missingInformation
+	}
+	if len(resolvedInformation) > 0 {
+		meta.ResolvedInformation = resolvedInformation
+	}
+	if len(extractedFacts) > 0 {
+		meta.ExtractedFacts = extractedFacts
 	}
 
 	var photoAnalysis *repository.PhotoAnalysis
@@ -966,6 +1014,8 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 		RecommendedAction:   recommendedAction,
 		Channel:             channel,
 		MissingInformation:  missingInformation,
+		ResolvedInformation: resolvedInformation,
+		ExtractedFacts:      extractedFacts,
 		SuggestedMessage:    normalizedMessage,
 		Summary:             analysisSummary,
 		CompositeConfidence: confidence.Score,
@@ -980,15 +1030,7 @@ func shouldSkipEquivalentRecentAnalysis(ctx tool.Context, deps *ToolDependencies
 	if latestErr != nil {
 		return false
 	}
-	return isEquivalentRecentAnalysis(
-		latest,
-		normalized.UrgencyLevel,
-		normalized.LeadQuality,
-		normalized.RecommendedAction,
-		normalized.Channel,
-		normalized.SuggestedMessage,
-		normalized.MissingInformation,
-	)
+	return isEquivalentRecentAnalysis(latest, normalized)
 }
 
 func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
@@ -1026,6 +1068,8 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		LeadQuality:             normalized.LeadQuality,
 		RecommendedAction:       normalized.RecommendedAction,
 		MissingInformation:      normalized.MissingInformation,
+		ResolvedInformation:     normalized.ResolvedInformation,
+		ExtractedFacts:          normalized.ExtractedFacts,
 		CompositeConfidence:     &normalized.CompositeConfidence,
 		ConfidenceBreakdown:     normalized.ConfidenceBreakdown,
 		RiskFlags:               normalized.RiskFlags,
@@ -3718,15 +3762,15 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 	}
 
 	result, err := deps.QuoteDrafter.DraftQuote(ctx, ports.DraftQuoteParams{
-		QuoteID:        deps.GetExistingQuoteID(),
-		LeadID:         leadID,
-		LeadServiceID:  serviceID,
-		OrganizationID: *tenantID,
-		CreatedByID:    uuid.Nil,
-		Notes:          input.Notes,
-		Items:          portItems,
-		Attachments:    portAttachments,
-		URLs:           portURLs,
+		QuoteID:         deps.GetExistingQuoteID(),
+		LeadID:          leadID,
+		LeadServiceID:   serviceID,
+		OrganizationID:  *tenantID,
+		CreatedByID:     uuid.Nil,
+		Notes:           input.Notes,
+		Items:           portItems,
+		Attachments:     portAttachments,
+		URLs:            portURLs,
 		PricingSnapshot: pricingSnapshot,
 	})
 	if err != nil {
