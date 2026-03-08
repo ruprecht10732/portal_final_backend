@@ -216,7 +216,7 @@ func (o *Orchestrator) canRunGatekeeperForPhotoEvent(ctx context.Context, evt ev
 		return false
 	}
 
-	if svc.PipelineStage != domain.PipelineStageTriage && svc.PipelineStage != domain.PipelineStageNurturing {
+	if !domain.AllowsGatekeeperEvaluation(svc.PipelineStage) {
 		return false
 	}
 
@@ -523,7 +523,12 @@ func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
 }
 
 func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadService, evt events.LeadDataChanged) {
-	if svc.PipelineStage != "Triage" && svc.PipelineStage != "Nurturing" && svc.PipelineStage != "Manual_Intervention" {
+	if svc.PipelineStage == domain.PipelineStageManualIntervention {
+		o.log.Info("orchestrator: suppressing gatekeeper while manual intervention is active", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID)
+		return
+	}
+
+	if !domain.AllowsGatekeeperEvaluation(svc.PipelineStage) {
 		return
 	}
 	if strings.EqualFold(strings.TrimSpace(evt.Source), "customer_portal_upload") && o.serviceHasImageAttachments(context.Background(), evt.LeadServiceID, evt.TenantID) {
@@ -633,7 +638,7 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 		}.ToMap(),
 	})
 
-	if svc.PipelineStage != domain.PipelineStageTriage && svc.PipelineStage != domain.PipelineStageNurturing {
+	if !domain.AllowsGatekeeperEvaluation(svc.PipelineStage) {
 		return
 	}
 

@@ -127,9 +127,14 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	if err != nil {
 		return err
 	}
+	if !domain.AllowsGatekeeperEvaluation(service.PipelineStage) {
+		log.Printf("gatekeeper: skipping run for unsupported stage=%s lead=%s service=%s", service.PipelineStage, leadID, serviceID)
+		return nil
+	}
 
 	notes, attachments, photoAnalysis, visitReport := g.fetchServiceContext(ctx, leadID, serviceID, tenantID)
 	intakeContext := g.buildServiceContext(ctx, tenantID, service.ServiceType)
+	priorAnalysis := g.loadPriorAnalysis(ctx, serviceID, tenantID)
 	if err := g.runGatekeeperPrompt(ctx, gatekeeperPromptRequest{
 		leadID:        leadID,
 		serviceID:     serviceID,
@@ -140,6 +145,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		intakeContext: intakeContext,
 		attachments:   attachments,
 		photoAnalysis: photoAnalysis,
+		priorAnalysis: priorAnalysis,
 	}); err != nil {
 		return err
 	}
@@ -155,37 +161,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	}
 
 	if !reqDeps.WasStageUpdateCalled() {
-		reason := "Intake onvolledig of analyse niet afgerond; handmatige opvolging nodig."
-		currentService := service
-		if latestService, loadErr := g.repo.GetLeadServiceByID(ctx, serviceID, tenantID); loadErr == nil {
-			currentService = latestService
-		}
-		// If the stage changed since the run started, a human (or another process)
-		// already acted — do not override their decision.
-		if currentService.PipelineStage != service.PipelineStage {
-			log.Printf("gatekeeper: stage changed externally during run (was %s, now %s), skipping fallback runID=%s lead=%s service=%s",
-				service.PipelineStage, currentService.PipelineStage, runID, leadID, serviceID)
-		} else if currentService.PipelineStage == domain.PipelineStageNurturing {
-			log.Printf("gatekeeper: skipping fallback stage update (already Nurturing) runID=%s lead=%s service=%s", runID, leadID, serviceID)
-		} else if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
-			log.Printf("gatekeeper: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
-		} else {
-			_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-				LeadID:         leadID,
-				ServiceID:      &serviceID,
-				OrganizationID: tenantID,
-				ActorType:      repository.ActorTypeSystem,
-				ActorName:      repository.ActorNameGatekeeper,
-				EventType:      repository.EventTypeStageChange,
-				Title:          repository.EventTitleStageUpdated,
-				Summary:        &reason,
-				Metadata: repository.StageChangeMetadata{
-					OldStage: currentService.PipelineStage,
-					NewStage: domain.PipelineStageNurturing,
-				}.ToMap(),
-			})
-			log.Printf("gatekeeper: applied fallback stage update to Nurturing (runID=%s lead=%s service=%s)", runID, leadID, serviceID)
-		}
+		g.applyFallbackNurturingStage(ctx, leadID, serviceID, tenantID, runID, service)
 	}
 
 	g.maybeAutoDisqualifyJunk(ctx, leadID, serviceID, tenantID, service)
@@ -204,6 +180,55 @@ func (g *Gatekeeper) fetchLeadAndService(ctx context.Context, leadID, serviceID,
 		return repository.Lead{}, repository.LeadService{}, err
 	}
 	return lead, service, nil
+}
+
+func (g *Gatekeeper) loadPriorAnalysis(ctx context.Context, serviceID, tenantID uuid.UUID) *repository.AIAnalysis {
+	analysis, err := g.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err == nil {
+		return &analysis
+	}
+	if !errors.Is(err, repository.ErrNotFound) {
+		log.Printf("gatekeeper: latest AI analysis fetch failed: %v", err)
+	}
+	return nil
+}
+
+func (g *Gatekeeper) applyFallbackNurturingStage(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, runID string, service repository.LeadService) {
+	reason := "Intake onvolledig of analyse niet afgerond; handmatige opvolging nodig."
+	currentService := service
+	if latestService, loadErr := g.repo.GetLeadServiceByID(ctx, serviceID, tenantID); loadErr == nil {
+		currentService = latestService
+	}
+
+	if currentService.PipelineStage != service.PipelineStage {
+		log.Printf("gatekeeper: stage changed externally during run (was %s, now %s), skipping fallback runID=%s lead=%s service=%s",
+			service.PipelineStage, currentService.PipelineStage, runID, leadID, serviceID)
+		return
+	}
+	if currentService.PipelineStage == domain.PipelineStageNurturing {
+		log.Printf("gatekeeper: skipping fallback stage update (already Nurturing) runID=%s lead=%s service=%s", runID, leadID, serviceID)
+		return
+	}
+	if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
+		log.Printf("gatekeeper: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
+		return
+	}
+
+	_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      &serviceID,
+		OrganizationID: tenantID,
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameGatekeeper,
+		EventType:      repository.EventTypeStageChange,
+		Title:          repository.EventTitleStageUpdated,
+		Summary:        &reason,
+		Metadata: repository.StageChangeMetadata{
+			OldStage: currentService.PipelineStage,
+			NewStage: domain.PipelineStageNurturing,
+		}.ToMap(),
+	})
+	log.Printf("gatekeeper: applied fallback stage update to Nurturing (runID=%s lead=%s service=%s)", runID, leadID, serviceID)
 }
 
 func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) ([]repository.LeadNote, []repository.Attachment, *repository.PhotoAnalysis, *repository.AppointmentVisitReport) {
@@ -246,10 +271,20 @@ type gatekeeperPromptRequest struct {
 	intakeContext string
 	attachments   []repository.Attachment
 	photoAnalysis *repository.PhotoAnalysis
+	priorAnalysis *repository.AIAnalysis
 }
 
 func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperPromptRequest) error {
-	promptText := buildGatekeeperPrompt(req.lead, req.service, req.notes, req.visitReport, req.intakeContext, req.attachments, req.photoAnalysis)
+	promptText := buildGatekeeperPrompt(gatekeeperPromptInput{
+		lead:          req.lead,
+		service:       req.service,
+		notes:         req.notes,
+		visitReport:   req.visitReport,
+		intakeContext: req.intakeContext,
+		attachments:   req.attachments,
+		photoAnalysis: req.photoAnalysis,
+		priorAnalysis: req.priorAnalysis,
+	})
 
 	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", req.leadID, req.serviceID)
 	if err := g.runWithPrompt(ctx, promptText, req.leadID); err != nil {

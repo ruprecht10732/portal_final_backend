@@ -1001,6 +1001,12 @@ func (h *Handler) validateServiceForAnalysis(ctx *gin.Context, svcIDStr string, 
 	if domain.IsTerminal(service.Status, service.PipelineStage) {
 		return serviceValidationResult{ErrMsg: "cannot analyze a service in terminal stage (Completed or Lost)", ErrStatus: http.StatusBadRequest}
 	}
+	if !domain.AllowsGatekeeperEvaluation(service.PipelineStage) {
+		if service.PipelineStage == domain.PipelineStageManualIntervention {
+			return serviceValidationResult{ErrMsg: "cannot analyze a service while manual intervention is active", ErrStatus: http.StatusBadRequest}
+		}
+		return serviceValidationResult{ErrMsg: "cannot analyze a service outside Triage or Nurturing", ErrStatus: http.StatusBadRequest}
+	}
 
 	return serviceValidationResult{ServiceID: &parsed}
 }

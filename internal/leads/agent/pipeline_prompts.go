@@ -62,15 +62,27 @@ const sharedProductSelectionRules = `=== PRODUCT DECISION TABLE ===
 2. Trade/professional synonym
 3. Retail/store synonym`
 
-func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, visitReport *repository.AppointmentVisitReport, intakeContext string, attachments []repository.Attachment, photoAnalysis *repository.PhotoAnalysis) string {
-	notesSection := buildNotesSection(notes, maxGatekeeperNotesChars)
-	visitReportSummary := truncatePromptSection(buildVisitReportSummary(visitReport), maxGatekeeperVisitReportChars)
-	serviceNote := getValue(service.ConsumerNote)
-	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxGatekeeperPreferencesChars)
-	leadContext := truncatePromptSection(buildLeadContextSection(lead, attachments), maxGatekeeperLeadCtxChars)
-	photoSummary := truncatePromptSection(buildGatekeeperPhotoSummary(photoAnalysis, service.ServiceType), maxGatekeeperPhotoChars)
+type gatekeeperPromptInput struct {
+	lead          repository.Lead
+	service       repository.LeadService
+	notes         []repository.LeadNote
+	visitReport   *repository.AppointmentVisitReport
+	intakeContext string
+	attachments   []repository.Attachment
+	photoAnalysis *repository.PhotoAnalysis
+	priorAnalysis *repository.AIAnalysis
+}
+
+func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
+	notesSection := buildNotesSection(input.notes, maxGatekeeperNotesChars)
+	visitReportSummary := truncatePromptSection(buildVisitReportSummary(input.visitReport), maxGatekeeperVisitReportChars)
+	serviceNote := getValue(input.service.ConsumerNote)
+	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxGatekeeperPreferencesChars)
+	leadContext := truncatePromptSection(buildLeadContextSection(input.lead, input.attachments), maxGatekeeperLeadCtxChars)
+	photoSummary := truncatePromptSection(buildGatekeeperPhotoSummary(input.photoAnalysis, input.service.ServiceType), maxGatekeeperPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxGatekeeperServiceNoteChars)
-	intakeContextSummary := truncatePromptSection(intakeContext, maxGatekeeperIntakeChars)
+	intakeContextSummary := truncatePromptSection(input.intakeContext, maxGatekeeperIntakeChars)
+	previousEstimatorBlockers := buildPreviousEstimatorBlockersSection(input.priorAnalysis)
 
 	return fmt.Sprintf(`Role: Gatekeeper (intake validator).
 
@@ -94,6 +106,7 @@ func buildGatekeeperPrompt(lead repository.Lead, service repository.LeadService,
 [DECISION RULE] Photo analysis marked low relevance/mismatch -> treat as mismatch signal only, NOT proof of completeness.
 [DECISION RULE] Ambiguous service intent -> keep current service type and move to Nurturing.
 [DECISION RULE] Missing info alone is NEVER a reason to switch service type.
+[DECISION RULE] If the Estimator previously blocked this lead for missing information, you MUST NOT move to Estimation until that exact information is explicitly present in trusted context.
 
 === SELF-CHECK BEFORE FINAL TOOL CALL ===
 [MANDATORY] SaveAnalysis called exactly once.
@@ -134,6 +147,9 @@ Preferences (from customer portal):
 Photo Analysis (AI visual inspection):
 %s
 
+Previous Estimator Blockers:
+%s
+
 Additional Context:
 %s
 
@@ -142,28 +158,76 @@ Intake Requirements:
 Respond ONLY with tool calls.
 `,
 		sharedExecutionContract,
-		lead.ID,
-		service.ID,
-		service.ServiceType,
-		service.PipelineStage,
-		lead.CreatedAt.Format(time.RFC3339),
-		lead.ConsumerFirstName,
-		lead.ConsumerLastName,
-		lead.ConsumerPhone,
-		getValue(lead.ConsumerEmail),
-		lead.ConsumerRole,
-		lead.AddressStreet,
-		lead.AddressHouseNumber,
-		lead.AddressZipCode,
-		lead.AddressCity,
+		input.lead.ID,
+		input.service.ID,
+		input.service.ServiceType,
+		input.service.PipelineStage,
+		input.lead.CreatedAt.Format(time.RFC3339),
+		input.lead.ConsumerFirstName,
+		input.lead.ConsumerLastName,
+		input.lead.ConsumerPhone,
+		getValue(input.lead.ConsumerEmail),
+		input.lead.ConsumerRole,
+		input.lead.AddressStreet,
+		input.lead.AddressHouseNumber,
+		input.lead.AddressZipCode,
+		input.lead.AddressCity,
 		serviceNoteSummary,
 		notesSection,
 		visitReportSummary,
 		preferencesSummary,
 		photoSummary,
+		previousEstimatorBlockers,
 		leadContext,
 		intakeContextSummary,
 	)
+}
+
+func buildPreviousEstimatorBlockersSection(priorAnalysis *repository.AIAnalysis) string {
+	if priorAnalysis == nil {
+		return "- Geen eerdere estimatorblokkades gevonden."
+	}
+
+	lines := make([]string, 0, 5)
+	if action := strings.TrimSpace(priorAnalysis.RecommendedAction); action != "" {
+		lines = append(lines, fmt.Sprintf("- Laatste aanbevolen actie: %s", action))
+	}
+
+	missingInformation := compactPromptList(priorAnalysis.MissingInformation)
+	if len(missingInformation) > 0 {
+		lines = append(lines, fmt.Sprintf("- Eerder ontbrekende intakegegevens: %s", strings.Join(missingInformation, ", ")))
+	}
+
+	riskFlags := compactPromptList(priorAnalysis.RiskFlags)
+	if len(riskFlags) > 0 {
+		lines = append(lines, fmt.Sprintf("- Risicosignalen: %s", strings.Join(riskFlags, ", ")))
+	}
+
+	if priorAnalysis.CompositeConfidence != nil {
+		lines = append(lines, fmt.Sprintf("- Confidence vorige analyse: %.2f", *priorAnalysis.CompositeConfidence))
+	}
+
+	if summary := strings.TrimSpace(priorAnalysis.Summary); summary != "" {
+		lines = append(lines, fmt.Sprintf("- Samenvatting vorige analyse: %s", sanitizeUserInput(summary, maxNoteLength)))
+	}
+
+	if len(lines) == 0 {
+		return "- Geen eerdere estimatorblokkades gevonden."
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func compactPromptList(values []string) []string {
+	compacted := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		compacted = append(compacted, sanitizeUserInput(trimmed, maxNoteLength))
+	}
+	return compacted
 }
 
 func buildVisitReportSummary(report *repository.AppointmentVisitReport) string {

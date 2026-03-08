@@ -357,6 +357,10 @@ func shouldSkipInitialGatekeeper(ctx context.Context, repo repository.LeadsRepos
 		log.Info("gatekeeper: skipping terminal service", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
 		return true
 	}
+	if !domain.AllowsGatekeeperEvaluation(service.PipelineStage) {
+		log.Info("gatekeeper: skipping initial run for unsupported stage", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "stage", service.PipelineStage, "source", trigger.Source)
+		return true
+	}
 	if attachments, attErr := repo.ListAttachmentsByService(ctx, trigger.ServiceID, trigger.TenantID); attErr == nil && hasImageAttachments(attachments) {
 		log.Info("gatekeeper: deferring initial run until photo analysis concludes", "leadId", trigger.LeadID, "serviceId", trigger.ServiceID, "source", trigger.Source)
 		return true

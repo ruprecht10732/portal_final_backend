@@ -11,6 +11,8 @@ import (
 )
 
 const toolOrderMandatoryHeader = "=== TOOL ORDER (MANDATORY) ==="
+const gatekeeperIntakeRequirement = "Meetgegevens vereist"
+const expectedGatekeeperPromptContainsFmt = "expected gatekeeper prompt to contain %q"
 
 func testPromptFixtures() (repository.Lead, repository.LeadService, []repository.LeadNote, *repository.AppointmentVisitReport, []repository.Attachment, *repository.PhotoAnalysis) {
 	now := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
@@ -66,7 +68,15 @@ func testPromptFixtures() (repository.Lead, repository.LeadService, []repository
 
 func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
 	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
-	prompt := buildGatekeeperPrompt(lead, service, notes, visitReport, "Meetgegevens vereist", attachments, photo)
+	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
+		lead:          lead,
+		service:       service,
+		notes:         notes,
+		visitReport:   visitReport,
+		intakeContext: gatekeeperIntakeRequirement,
+		attachments:   attachments,
+		photoAnalysis: photo,
+	})
 
 	checks := []string{
 		"=== EXECUTION CONTRACT ===",
@@ -81,14 +91,22 @@ func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
 
 	for _, token := range checks {
 		if !strings.Contains(prompt, token) {
-			t.Fatalf("expected gatekeeper prompt to contain %q", token)
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
 		}
 	}
 }
 
 func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
 	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
-	prompt := buildGatekeeperPrompt(lead, service, notes, visitReport, "Meetgegevens vereist", attachments, photo)
+	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
+		lead:          lead,
+		service:       service,
+		notes:         notes,
+		visitReport:   visitReport,
+		intakeContext: gatekeeperIntakeRequirement,
+		attachments:   attachments,
+		photoAnalysis: photo,
+	})
 
 	checks := []string{
 		"Visit Report (latest appointment):",
@@ -98,7 +116,83 @@ func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
 
 	for _, token := range checks {
 		if !strings.Contains(prompt, token) {
-			t.Fatalf("expected gatekeeper prompt to contain %q", token)
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildGatekeeperPromptIncludesPreviousEstimatorBlockers(t *testing.T) {
+	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	confidence := 0.31
+	priorAnalysis := &repository.AIAnalysis{
+		RecommendedAction:   "RequestInfo",
+		MissingInformation:  []string{"dagmaat van het kozijn", "foto van de binnenzijde"},
+		RiskFlags:           []string{"missing_dimensions"},
+		CompositeConfidence: &confidence,
+		Summary:             "Estimator kon nog geen scope afronden door ontbrekende maatvoering.",
+	}
+
+	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
+		lead:          lead,
+		service:       service,
+		notes:         notes,
+		visitReport:   visitReport,
+		intakeContext: gatekeeperIntakeRequirement,
+		attachments:   attachments,
+		photoAnalysis: photo,
+		priorAnalysis: priorAnalysis,
+	})
+
+	checks := []string{
+		"Previous Estimator Blockers:",
+		"Laatste aanbevolen actie: RequestInfo",
+		"Eerder ontbrekende intakegegevens: dagmaat van het kozijn, foto van de binnenzijde",
+		"Risicosignalen: missing_dimensions",
+		"Confidence vorige analyse: 0.31",
+		"Estimator previously blocked this lead for missing information",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
+		}
+	}
+}
+
+func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurements(t *testing.T) {
+	lead, service, _, visitReport, attachments, photo := testPromptFixtures()
+	service.PipelineStage = "Nurturing"
+	notes := []repository.LeadNote{{
+		Type:      "message",
+		Body:      "Ik heb geen meetlint.",
+		CreatedAt: lead.CreatedAt.Add(2 * time.Hour),
+	}}
+	priorAnalysis := &repository.AIAnalysis{
+		RecommendedAction:  "RequestInfo",
+		MissingInformation: []string{"dagmaat van het kozijn", "hoogte van de opening"},
+		Summary:            "Estimator heeft exacte maatvoering nodig voordat de scope compleet is.",
+	}
+
+	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
+		lead:          lead,
+		service:       service,
+		notes:         notes,
+		visitReport:   visitReport,
+		intakeContext: gatekeeperIntakeRequirement,
+		attachments:   attachments,
+		photoAnalysis: photo,
+		priorAnalysis: priorAnalysis,
+	})
+
+	checks := []string{
+		"Ik heb geen meetlint.",
+		"Eerder ontbrekende intakegegevens: dagmaat van het kozijn, hoogte van de opening",
+		"you MUST NOT move to Estimation until that exact information is explicitly present in trusted context",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
 		}
 	}
 }

@@ -136,6 +136,54 @@ func TestMaybeRunGatekeeperForDataChangeEnqueuesGatekeeperWhenSchedulerConfigure
 	}
 }
 
+func TestMaybeRunGatekeeperForDataChangeSkipsManualIntervention(t *testing.T) {
+	queue := &fakeAutomationScheduler{}
+	o := &Orchestrator{
+		automationQueue: queue,
+		log:             logger.New("development"),
+	}
+	svc := repositoryLeadService(domain.PipelineStageManualIntervention)
+	evt := eventsLeadDataChanged("user_update")
+
+	o.maybeRunGatekeeperForDataChange(svc, evt)
+
+	if len(queue.gatekeeperPayloads) != 0 {
+		t.Fatalf("expected no gatekeeper job to be enqueued while in manual intervention, got %d", len(queue.gatekeeperPayloads))
+	}
+}
+
+func TestEstimatorBlockerLoopScenarioQueuesEstimatorThenGatekeeperReplyReview(t *testing.T) {
+	queue := &fakeAutomationScheduler{}
+	o := &Orchestrator{
+		automationQueue:  queue,
+		log:              logger.New("development"),
+		orgSettingsCache: make(map[uuid.UUID]cachedOrgAISettings),
+	}
+
+	estimationEvt := eventsPipelineStageChanged(domain.PipelineStageEstimation)
+	o.handleEstimationStage(estimationEvt)
+
+	if len(queue.estimatorPayloads) != 1 {
+		t.Fatalf("expected estimator job to be enqueued once, got %d", len(queue.estimatorPayloads))
+	}
+
+	replyEvt := events.LeadDataChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        estimationEvt.LeadID,
+		LeadServiceID: estimationEvt.LeadServiceID,
+		TenantID:      estimationEvt.TenantID,
+		Source:        "note",
+	}
+	o.maybeRunGatekeeperForDataChange(repositoryLeadService(domain.PipelineStageNurturing), replyEvt)
+
+	if len(queue.gatekeeperPayloads) != 1 {
+		t.Fatalf("expected customer reply in Nurturing to queue one gatekeeper review, got %d", len(queue.gatekeeperPayloads))
+	}
+	if queue.gatekeeperPayloads[0].LeadServiceID != estimationEvt.LeadServiceID.String() {
+		t.Fatalf("unexpected gatekeeper lead service id: %#v", queue.gatekeeperPayloads[0])
+	}
+}
+
 func TestQueueOrRunPhotoAnalysisEnqueuesDelayedTaskWhenSchedulerConfigured(t *testing.T) {
 	queue := &fakeAutomationScheduler{}
 	module := &Module{automationQueue: queue, photoAnalysisHandler: &handler.PhotoAnalysisHandler{}}

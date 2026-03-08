@@ -145,3 +145,21 @@ func TestValidateAnalysisStageTransition(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowsGatekeeperEvaluation(t *testing.T) {
+	tests := []struct {
+		stage string
+		want  bool
+	}{
+		{stage: PipelineStageTriage, want: true},
+		{stage: PipelineStageNurturing, want: true},
+		{stage: PipelineStageManualIntervention, want: false},
+		{stage: PipelineStageEstimation, want: false},
+	}
+
+	for _, test := range tests {
+		if got := AllowsGatekeeperEvaluation(test.stage); got != test.want {
+			t.Fatalf("AllowsGatekeeperEvaluation(%q) = %v, want %v", test.stage, got, test.want)
+		}
+	}
+}

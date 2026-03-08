@@ -31,3 +31,7 @@ func IsKnownPipelineStage(stage string) bool {
 	_, ok := knownPipelineStages[stage]
 	return ok
 }
+
+func AllowsGatekeeperEvaluation(stage string) bool {
+	return stage == PipelineStageTriage || stage == PipelineStageNurturing
+}
