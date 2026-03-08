@@ -121,11 +121,21 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [DECISION RULE] Missing info alone is NEVER a reason to switch service type.
 [DECISION RULE] If the Estimator previously blocked this lead for missing information, you MUST NOT move to Estimation until that exact information is explicitly present in trusted context.
 
+=== SUGGESTED CONTACT MESSAGE (when stage = Nurturing) ===
+[MANDATORY] Only include suggestedContactMessage when critical intake details are still missing.
+[MANDATORY] Tone: friendly, helpful, and professional Dutch. Do NOT sound robotic or like a cold checklist.
+[MANDATORY] Structure the message in 3 parts: (1) thank the customer for the information/photos already shared, (2) explain briefly that you need a few extra details to provide an accurate quote without surprises, (3) list the missing items as clear bullets.
+[MANDATORY] Be specific: say exactly what must be measured, clarified, or photographed.
+[MANDATORY] If asking for photos, explain how to take them clearly, for example an overview photo from enough distance or a close-up of the relevant area.
+[MANDATORY] If photo quality or angle is the issue, explain this gently and ask for a better angle or verified measurement.
+[MANDATORY] Keep cognitive load low: combine related requests and keep the message compact.
+[MANDATORY] Close by reassuring the customer that the quote will be prepared as soon as the details are received.
+
 === SELF-CHECK BEFORE FINAL TOOL CALL ===
 [MANDATORY] SaveAnalysis called exactly once.
 [MANDATORY] UpdatePipelineStage called after SaveAnalysis.
 [MANDATORY] SaveAnalysis contains Dutch summary and Dutch missingInformation list.
-[MANDATORY] suggestedContactMessage is correct professional Dutch.
+[MANDATORY] suggestedContactMessage follows the required friendly structure in Dutch.
 
 === DATA CONTEXT ===
 
@@ -488,11 +498,16 @@ You MAY call only: AskCustomerClarification.
 %s
 
 === MESSAGE REQUIREMENTS ===
-[MANDATORY] Message language is Dutch.
-[MANDATORY] Be concise and professional.
-[MANDATORY] Ask only for missing dimensions/details required for pricing.
-[MANDATORY] If photo analysis suggests on-site measurement or uncertain photo-only dimensions, ask for verified measurements instead of relying on the photos.
-[MANDATORY] Mention that a complete quote follows after receiving the details.
+[MANDATORY] Tone: friendly, helpful, and professional Dutch. Do NOT sound like an automated robot or a strict checklist.
+[MANDATORY] Structure the message in 3 parts:
+1. Acknowledge & Validate: thank the customer for the information or photos already shared.
+2. Explain WHY: briefly explain that you need a few extra details to provide an accurate quote without surprises.
+3. Actionable Request: list the missing items clearly using bullet points.
+[MANDATORY] Be specific: do not just ask for "measurements". State exactly what must be measured, clarified, or photographed.
+[MANDATORY] If asking for photos, explain how to take them, for example an overview photo from some distance or a close-up of the relevant detail.
+[MANDATORY] If photo analysis flagged an issue such as poor angle, darkness, no scale, or on-site verification need, explain this gently and ask for a better photo or a verified measurement instead of relying on the current image alone.
+[MANDATORY] Limit cognitive load: combine related questions and keep the request as simple as possible.
+[MANDATORY] End by reassuring the customer that the full quote will be prepared as soon as the details are received.
 
 === DATA CONTEXT ===
 
