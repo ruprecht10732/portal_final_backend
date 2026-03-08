@@ -13,6 +13,8 @@ import (
 	"portal_final_backend/platform/logger"
 )
 
+const miniredisStartFailedMsg = "failed to start miniredis: %v"
+
 func newGuardOnlyOrchestrator(locker orchestratorRunLocker) *Orchestrator {
 	if locker == nil {
 		locker = newInMemoryOrchestratorRunLocker()
@@ -93,7 +95,7 @@ func TestShouldSkipDuplicateStageEvent(t *testing.T) {
 func TestRedisRunLocksAreSharedAcrossOrchestrators(t *testing.T) {
 	redisServer, err := miniredis.Run()
 	if err != nil {
-		t.Fatalf("failed to start miniredis: %v", err)
+		t.Fatalf(miniredisStartFailedMsg, err)
 	}
 	defer redisServer.Close()
 
@@ -132,5 +134,82 @@ func TestRedisRunLocksAreSharedAcrossOrchestrators(t *testing.T) {
 	}
 	if !o2.markRunning("gatekeeper", serviceID) {
 		t.Fatalf("expected agent lock acquisition to succeed after redis release")
+	}
+}
+
+func TestRedisRunLockReleaseDoesNotDeleteDifferentOwner(t *testing.T) {
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf(miniredisStartFailedMsg, err)
+	}
+	defer redisServer.Close()
+
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer func() { _ = redisClient.Close() }()
+
+	ctx := context.Background()
+	serviceID := uuid.New()
+	key := agentRunLockKey("dispatcher", serviceID)
+	locker := newRedisOrchestratorRunLocker(redisClient, time.Second).(*redisOrchestratorRunLocker)
+
+	ok, err := locker.TryAcquireAgentRun("dispatcher", serviceID)
+	if err != nil {
+		t.Fatalf("expected redis lock acquisition without error, got %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected redis lock acquisition to succeed")
+	}
+
+	if err := redisClient.Set(ctx, key, "different-owner", time.Second).Err(); err != nil {
+		t.Fatalf("expected test overwrite to succeed, got %v", err)
+	}
+	if err := locker.ReleaseAgentRun("dispatcher", serviceID); err != nil {
+		t.Fatalf("expected release to succeed, got %v", err)
+	}
+
+	value, err := redisClient.Get(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("expected replacement owner value to remain, got error %v", err)
+	}
+	if value != "different-owner" {
+		t.Fatalf("expected replacement owner value to remain, got %q", value)
+	}
+}
+
+func TestRedisRunLockHeartbeatKeepsKeyAlivePastOriginalTTL(t *testing.T) {
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf(miniredisStartFailedMsg, err)
+	}
+	defer redisServer.Close()
+
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer func() { _ = redisClient.Close() }()
+
+	ctx := context.Background()
+	ttl := 300 * time.Millisecond
+	serviceID := uuid.New()
+	key := agentRunLockKey("auditor", serviceID)
+	locker := newRedisOrchestratorRunLocker(redisClient, ttl).(*redisOrchestratorRunLocker)
+
+	ok, err := locker.TryAcquireAgentRun("auditor", serviceID)
+	if err != nil {
+		t.Fatalf("expected redis lock acquisition without error, got %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected redis lock acquisition to succeed")
+	}
+
+	time.Sleep(ttl + 250*time.Millisecond)
+
+	if exists := redisClient.Exists(ctx, key).Val(); exists != 1 {
+		t.Fatalf("expected heartbeat to keep redis lock alive, found %d keys", exists)
+	}
+	if remaining := redisClient.PTTL(ctx, key).Val(); remaining <= 0 {
+		t.Fatalf("expected redis lock to have positive remaining TTL, got %s", remaining)
+	}
+
+	if err := locker.ReleaseAgentRun("auditor", serviceID); err != nil {
+		t.Fatalf("expected redis lock release without error, got %v", err)
 	}
 }

@@ -14,6 +14,22 @@ import (
 
 const orchestratorLockPrefix = "leads:orchestrator"
 
+const minimumRedisLockRenewInterval = 100 * time.Millisecond
+
+var compareAndDeleteRedisLockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
+
+var compareAndExpireRedisLockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+`)
+
 type orchestratorRunLocker interface {
 	TryAcquireAgentRun(agentName string, serviceID uuid.UUID) (bool, error)
 	ReleaseAgentRun(agentName string, serviceID uuid.UUID) error
@@ -32,7 +48,7 @@ func newOrchestratorRunLocker(redisClient *redis.Client, log *logger.Logger) orc
 	if log != nil {
 		log.Info("orchestrator: redis-backed run locks enabled", "ttl", agentRunTimeout)
 	}
-	return newRedisOrchestratorRunLocker(redisClient, agentRunTimeout)
+	return newRedisOrchestratorRunLocker(redisClient, agentRunTimeout, log)
 }
 
 func agentRunLockKey(agentName string, serviceID uuid.UUID) string {
@@ -98,13 +114,25 @@ func (l *inMemoryOrchestratorRunLocker) ReleaseReconciliation(serviceID uuid.UUI
 type redisOrchestratorRunLocker struct {
 	client *redis.Client
 	ttl    time.Duration
+	log    *logger.Logger
 	owners sync.Map
 }
 
-func newRedisOrchestratorRunLocker(client *redis.Client, ttl time.Duration) orchestratorRunLocker {
+type redisLockOwner struct {
+	token  string
+	cancel context.CancelFunc
+}
+
+func newRedisOrchestratorRunLocker(client *redis.Client, ttl time.Duration, logs ...*logger.Logger) orchestratorRunLocker {
+	var log *logger.Logger
+	if len(logs) > 0 {
+		log = logs[0]
+	}
+
 	return &redisOrchestratorRunLocker{
 		client: client,
 		ttl:    ttl,
+		log:    log,
 	}
 }
 
@@ -130,11 +158,89 @@ func (l *redisOrchestratorRunLocker) tryAcquire(key string) (bool, error) {
 	if !ok || err != nil {
 		return ok, err
 	}
-	l.owners.Store(key, token)
+	l.owners.Store(key, redisLockOwner{
+		token:  token,
+		cancel: l.startRenewal(key, token),
+	})
 	return true, nil
 }
 
 func (l *redisOrchestratorRunLocker) release(key string) error {
+	ownerValue, ok := l.owners.LoadAndDelete(key)
+	if !ok {
+		return nil
+	}
+
+	owner, ok := ownerValue.(redisLockOwner)
+	if !ok {
+		return nil
+	}
+	owner.cancel()
+
+	_, err := compareAndDeleteRedisLockScript.Run(context.Background(), l.client, []string{key}, owner.token).Result()
+	return err
+}
+
+func (l *redisOrchestratorRunLocker) startRenewal(key, token string) context.CancelFunc {
+	ctx, cancel := context.WithCancel(context.Background())
+	interval := l.renewInterval()
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !l.renewKey(key, token) {
+					return
+				}
+			}
+		}
+	}()
+
+	return cancel
+}
+
+func (l *redisOrchestratorRunLocker) renewInterval() time.Duration {
+	interval := l.ttl / 3
+	if interval < minimumRedisLockRenewInterval {
+		return minimumRedisLockRenewInterval
+	}
+	return interval
+}
+
+func (l *redisOrchestratorRunLocker) renewKey(key, token string) bool {
+	result, err := compareAndExpireRedisLockScript.Run(
+		context.Background(),
+		l.client,
+		[]string{key},
+		token,
+		l.ttl.Milliseconds(),
+	).Int64()
+	if err != nil {
+		l.logRenewalError(key, err)
+		return true
+	}
+	if result != 0 {
+		return true
+	}
+
 	l.owners.Delete(key)
-	return l.client.Del(context.Background(), key).Err()
+	l.logRenewalOwnershipLoss(key)
+	return false
+}
+
+func (l *redisOrchestratorRunLocker) logRenewalError(key string, err error) {
+	if l.log != nil {
+		l.log.Warn("orchestrator: failed to renew redis lock", "error", err, "key", key)
+	}
+}
+
+func (l *redisOrchestratorRunLocker) logRenewalOwnershipLoss(key string) {
+	if l.log != nil {
+		l.log.Warn("orchestrator: redis lock renewal stopped because ownership was lost", "key", key)
+	}
 }
