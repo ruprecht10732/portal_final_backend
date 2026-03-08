@@ -144,6 +144,8 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 === SUGGESTED CONTACT MESSAGE (when stage = Nurturing) ===
 [MANDATORY] Only include suggestedContactMessage when critical intake details are still missing.
 [MANDATORY] Tone: friendly, helpful, and professional Dutch. Do NOT sound robotic or like a cold checklist.
+[MANDATORY] Consultative approach: use the Lead's house and enrichment data, such as build year or energy label, to ask smarter questions that show expertise when it helps clarify the quote.
+[MANDATORY] If the build year or house context strongly suggests a common issue, mention it in simple Dutch and ask whether the customer recognizes it.
 [MANDATORY] Structure the message in 3 parts: (1) thank the customer for the information/photos already shared, (2) explain briefly that you need a few extra details to provide an accurate quote without surprises, (3) list the missing items as clear bullets.
 [MANDATORY] Avoid technical jargon in customer messages. Translate trade terms such as "dagmaat" or "rachels" into simple consumer language.
 [MANDATORY] Reduce cognitive load: if asking for a preference such as material, style, finish, or type, NEVER ask an open-ended question. Always provide 2 or 3 common options.
@@ -151,6 +153,7 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [MANDATORY] Be specific: say exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them clearly, for example an overview photo from enough distance or a close-up of the relevant area.
 [MANDATORY] If photo quality or angle is the issue, explain this gently and ask for a better angle or verified measurement.
+[DECISION RULE] If the missing information is highly technical, or if this is not the first clarification attempt, offer the customer an escape hatch at the end of the message: a short phone call or a vrijblijvend bezoek/inmeetmoment.
 [MANDATORY] Keep cognitive load low: combine related requests and keep the message compact.
 [MANDATORY] Close by reassuring the customer that the quote will be prepared as soon as the details are received.
 %s
@@ -486,6 +489,7 @@ func buildInvestigativePrompt(lead repository.Lead, service repository.LeadServi
 	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
 	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
+	houseContextSummary := truncatePromptSection(buildHouseContextSection(lead), maxGatekeeperLeadCtxChars)
 
 	missing := "- Geen expliciete lijst ontvangen"
 	if len(missingItems) > 0 {
@@ -524,6 +528,8 @@ You MAY call only: AskCustomerClarification.
 
 === MESSAGE REQUIREMENTS ===
 [MANDATORY] Tone: friendly, helpful, and professional Dutch. Do NOT sound like an automated robot or a strict checklist.
+[MANDATORY] Consultative approach: use the Lead's house and enrichment data, such as build year or energy label, to ask smarter questions that show expertise when it helps clarify the quote.
+[MANDATORY] If the build year or house context strongly suggests a common issue, mention it in simple Dutch and ask whether the customer recognizes it.
 [MANDATORY] Structure the message in 3 parts:
 1. Acknowledge & Validate: thank the customer for the information or photos already shared.
 2. Explain WHY: briefly explain that you need a few extra details to provide an accurate quote without surprises.
@@ -534,6 +540,7 @@ You MAY call only: AskCustomerClarification.
 [MANDATORY] Be specific: do not just ask for "measurements". State exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them, for example an overview photo from some distance or a close-up of the relevant detail.
 [MANDATORY] If photo analysis flagged an issue such as poor angle, darkness, no scale, or on-site verification need, explain this gently and ask for a better photo or a verified measurement instead of relying on the current image alone.
+[DECISION RULE] If the missing information is highly technical, offer the customer an escape hatch at the end of the message: a short phone call or a vrijblijvend bezoek/inmeetmoment.
 [MANDATORY] Limit cognitive load: combine related questions and keep the request as simple as possible.
 [MANDATORY] End by reassuring the customer that the full quote will be prepared as soon as the details are received.
 
@@ -556,6 +563,9 @@ Preferences (from customer portal):
 Photo Analysis:
 %s
 
+House Context:
+%s
+
 Estimation Guidelines:
 %s
 
@@ -570,8 +580,16 @@ Respond ONLY with tool calls.
 		notesSection,
 		preferencesSummary,
 		photoSummary,
+		houseContextSummary,
 		estimationContextSummary,
 	)
+}
+
+func buildHouseContextSection(lead repository.Lead) string {
+	return wrapUserData(strings.Join([]string{
+		"Energy: " + buildEnergySummary(lead),
+		"Enrichment: " + buildEnrichmentSummary(lead),
+	}, "\n"))
 }
 
 func formatScopeArtifact(scopeArtifact *ScopeArtifact) string {
