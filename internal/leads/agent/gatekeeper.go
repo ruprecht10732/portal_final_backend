@@ -493,11 +493,10 @@ func (g *Gatekeeper) runWithPrompt(ctx context.Context, promptText string, leadI
 	}
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	for event, err := range g.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
-		if err != nil {
-			return fmt.Errorf("gatekeeper run failed: %w", err)
-		}
+	if err := consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "gatekeeper run failed", func(event *session.Event) {
 		_ = event
+	}); err != nil {
+		return err
 	}
 
 	return nil

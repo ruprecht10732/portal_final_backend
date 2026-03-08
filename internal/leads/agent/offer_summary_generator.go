@@ -90,16 +90,15 @@ func (g *OfferSummaryGenerator) GenerateOfferSummary(ctx context.Context, tenant
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 
 	var outputText strings.Builder
-	for event, err := range g.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
-		if err != nil {
-			return "", fmt.Errorf("offer summary: run failed: %w", err)
-		}
+	if err := consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "offer summary: run failed", func(event *session.Event) {
 		if event.Content == nil {
-			continue
+			return
 		}
 		for _, part := range event.Content.Parts {
 			outputText.WriteString(part.Text)
 		}
+	}); err != nil {
+		return "", err
 	}
 
 	return strings.TrimSpace(outputText.String()), nil

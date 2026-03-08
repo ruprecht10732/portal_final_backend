@@ -249,11 +249,10 @@ func (a *Auditor) runWithPrompt(ctx context.Context, promptText string, leadID u
 
 	userMessage := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}}
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	for _, err := range a.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
-		if err != nil {
-			return fmt.Errorf("auditor run failed: %w", err)
-		}
-		// discard events
+	if err := consumeRunEvents(a.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "auditor run failed", func(event *session.Event) {
+		_ = event
+	}); err != nil {
+		return err
 	}
 	return nil
 }

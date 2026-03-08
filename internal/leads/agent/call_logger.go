@@ -298,15 +298,14 @@ func (c *CallLogger) executeAgentRun(ctx context.Context, userIDStr, sessionID, 
 	}
 
 	var outputText string
-	for event, err := range c.runner.Run(ctx, userIDStr, sessionID, userMessage, runConfig) {
-		if err != nil {
-			return "", fmt.Errorf("call logger run failed: %w", err)
-		}
+	if err := consumeRunEvents(c.runner.Run(ctx, userIDStr, sessionID, userMessage, runConfig), "call logger run failed", func(event *session.Event) {
 		if event.Content != nil {
 			for _, part := range event.Content.Parts {
 				outputText += part.Text
 			}
 		}
+	}); err != nil {
+		return "", err
 	}
 
 	return outputText, nil

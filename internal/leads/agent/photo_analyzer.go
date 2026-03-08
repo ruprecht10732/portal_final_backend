@@ -282,11 +282,10 @@ func (pa *PhotoAnalyzer) runAnalysis(ctx context.Context, userID, sessionID stri
 		StreamingMode: agent.StreamingModeNone,
 	}
 
-	for event, err := range pa.runner.Run(ctx, userID, sessionID, userContent, runConfig) {
-		if err != nil {
-			return "", fmt.Errorf("photo analysis failed: %w", err)
-		}
+	if err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, userContent, runConfig), "photo analysis failed", func(event *session.Event) {
 		output += collectContentText(event.Content)
+	}); err != nil {
+		return "", err
 	}
 
 	return output, nil
@@ -325,11 +324,10 @@ func (pa *PhotoAnalyzer) retryForResult(ctx context.Context, userID, sessionID s
 		StreamingMode: agent.StreamingModeNone,
 	}
 
-	for event, err := range pa.runner.Run(ctx, userID, sessionID, retryContent, runConfig) {
-		if err != nil {
-			return output, fmt.Errorf("photo analysis retry failed: %w", err)
-		}
+	if err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, retryContent, runConfig), "photo analysis retry failed", func(event *session.Event) {
 		output += collectContentText(event.Content)
+	}); err != nil {
+		return output, err
 	}
 
 	return output, nil

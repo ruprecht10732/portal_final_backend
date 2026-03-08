@@ -212,11 +212,10 @@ func (d *Dispatcher) runWithPrompt(ctx context.Context, promptText string, leadI
 	}
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	for event, err := range d.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
-		if err != nil {
-			return fmt.Errorf("dispatcher run failed: %w", err)
-		}
+	if err := consumeRunEvents(d.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "dispatcher run failed", func(event *session.Event) {
 		_ = event
+	}); err != nil {
+		return err
 	}
 
 	return nil
