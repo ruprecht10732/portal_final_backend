@@ -133,6 +133,7 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [MANDATORY] Tone: friendly, helpful, and professional Dutch. Do NOT sound robotic or like a cold checklist.
 [MANDATORY] Structure the message in 3 parts: (1) thank the customer for the information/photos already shared, (2) explain briefly that you need a few extra details to provide an accurate quote without surprises, (3) list the missing items as clear bullets.
 [MANDATORY] Avoid technical jargon in customer messages. Translate trade terms such as "dagmaat" or "rachels" into simple consumer language.
+[MANDATORY] Reduce cognitive load: if asking for a preference such as material, style, finish, or type, NEVER ask an open-ended question. Always provide 2 or 3 common options.
 [MANDATORY] Be specific: say exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them clearly, for example an overview photo from enough distance or a close-up of the relevant area.
 [MANDATORY] If photo quality or angle is the issue, explain this gently and ask for a better angle or verified measurement.
@@ -512,6 +513,7 @@ You MAY call only: AskCustomerClarification.
 2. Explain WHY: briefly explain that you need a few extra details to provide an accurate quote without surprises.
 3. Actionable Request: list the missing items clearly using bullet points.
 [MANDATORY] Avoid technical jargon in customer messages. Translate trade terms such as "dagmaat" or "rachels" into simple consumer language.
+[MANDATORY] Reduce cognitive load: if asking for a preference such as material, style, finish, or type, NEVER ask an open-ended question. Always provide 2 or 3 common options.
 [MANDATORY] Be specific: do not just ask for "measurements". State exactly what must be measured, clarified, or photographed.
 [MANDATORY] If asking for photos, explain how to take them, for example an overview photo from some distance or a close-up of the relevant detail.
 [MANDATORY] If photo analysis flagged an issue such as poor angle, darkness, no scale, or on-site verification need, explain this gently and ask for a better photo or a verified measurement instead of relying on the current image alone.
