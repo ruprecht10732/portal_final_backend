@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"portal_final_backend/internal/leads/repository"
 )
 
 const (
@@ -58,4 +60,40 @@ func getValue(s *string) string {
 		return valueNotProvided
 	}
 	return *s
+}
+
+func buildPromptConsumerSection(lead repository.Lead) string {
+	role := sanitizePromptField(lead.ConsumerRole, 80)
+	return fmt.Sprintf("- Role: %s", role)
+}
+
+func buildPromptLocationLine(lead repository.Lead) string {
+	location := joinPromptFields(
+		sanitizePromptField(lead.AddressZipCode, 32),
+		sanitizePromptField(lead.AddressCity, 80),
+	)
+	return fmt.Sprintf("- %s", location)
+}
+
+func sanitizePromptField(value string, maxLen int) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return valueNotProvided
+	}
+	return sanitizeUserInput(trimmed, maxLen)
+}
+
+func joinPromptFields(parts ...string) string {
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" || trimmed == valueNotProvided {
+			continue
+		}
+		cleaned = append(cleaned, trimmed)
+	}
+	if len(cleaned) == 0 {
+		return valueNotProvided
+	}
+	return strings.Join(cleaned, " ")
 }

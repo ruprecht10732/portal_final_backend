@@ -201,22 +201,22 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 
 func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, error) {
 	_ = storageSvc
-	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, repo)
+	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentPhotoAnalyzer), repo)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, repo, nil, eventBus)
+	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentCallLogger), repo, nil, eventBus)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, repo, eventBus, scorer)
+	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentGatekeeper), repo, eventBus, scorer)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	auditor, err := agent.NewAuditor(cfg.MoonshotAPIKey, repo, eventBus)
+	auditor, err := agent.NewAuditor(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentAuditor), repo, eventBus)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -260,6 +260,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 
 	estimator, err := agent.NewEstimatorAgent(agent.QuotingAgentConfig{
 		APIKey:               cfg.MoonshotAPIKey,
+		Model:                cfg.ResolveLLMModel(config.LLMModelAgentEstimator),
 		Repo:                 repo,
 		EventBus:             eventBus,
 		EmbeddingClient:      embeddingClient,
@@ -272,13 +273,14 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, repo, eventBus)
+	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentDispatcher), repo, eventBus)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
 		APIKey:               cfg.MoonshotAPIKey,
+		Model:                cfg.ResolveLLMModel(config.LLMModelAgentQuoteGenerator),
 		Repo:                 repo,
 		EventBus:             eventBus,
 		EmbeddingClient:      embeddingClient,
@@ -291,7 +293,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(cfg.MoonshotAPIKey)
+	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentOfferSummaryGenerator))
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, err
 	}

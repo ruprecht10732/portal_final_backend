@@ -138,12 +138,8 @@ func (d *AuditorToolDeps) handleSubmitAuditResult(ctx tool.Context, input Submit
 	return SubmitAuditResultOutput{Status: "ok", Message: "audit stored"}, nil
 }
 
-func NewAuditor(apiKey string, repo repository.LeadsRepository, eventBus events.Bus) (*Auditor, error) {
-	kimi := moonshot.NewModel(moonshot.Config{
-		APIKey:          apiKey,
-		Model:           "kimi-k2.5",
-		DisableThinking: true,
-	})
+func NewAuditor(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus) (*Auditor, error) {
+	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
 
 	deps := &AuditorToolDeps{Repo: repo, EventBus: eventBus}
 

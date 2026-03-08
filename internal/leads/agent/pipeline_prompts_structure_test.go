@@ -222,6 +222,37 @@ func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 	}
 }
 
+func TestPromptBuildersOmitDirectCustomerPII(t *testing.T) {
+	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	prompts := []string{
+		buildGatekeeperPrompt(gatekeeperPromptInput{
+			lead:          lead,
+			service:       service,
+			notes:         notes,
+			visitReport:   visitReport,
+			intakeContext: gatekeeperIntakeRequirement,
+			attachments:   attachments,
+			photoAnalysis: photo,
+		}),
+		buildQuoteBuilderPrompt(lead, service, notes, photo, "Gebruik standaard afwerking", nil),
+		buildQuoteGeneratePrompt(lead, service, notes, "Vervang voordeur inclusief scharnieren", "Let op isolatie"),
+	}
+
+	for _, prompt := range prompts {
+		for _, forbidden := range []string{"Jane Doe", "+31612345678", "jane@example.com", "Voorbeeldstraat", "- Name:", "- Phone:", "- Email:"} {
+			if strings.Contains(prompt, forbidden) {
+				t.Fatalf("expected prompt to omit %q, got %s", forbidden, prompt)
+			}
+		}
+
+		for _, expected := range []string{"- Role: Owner", "- 1234AB Amsterdam"} {
+			if !strings.Contains(prompt, expected) {
+				t.Fatalf("expected prompt to contain %q", expected)
+			}
+		}
+	}
+}
+
 func TestBuildDispatcherPromptUsesScoringModel(t *testing.T) {
 	lead, service, _, _, _, _ := testPromptFixtures()
 	prompt := buildDispatcherPrompt(lead, service, 25, nil)

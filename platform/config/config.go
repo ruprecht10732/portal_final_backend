@@ -15,6 +15,20 @@ import (
 
 const defaultFrontendBaseURL = "http://localhost:4200"
 
+const (
+	DefaultLLMModel             = "kimi-k2.5"
+	DefaultOfferSummaryLLMModel = "moonshot-v1-8k"
+
+	LLMModelAgentPhotoAnalyzer         = "photo_analyzer"
+	LLMModelAgentCallLogger            = "call_logger"
+	LLMModelAgentGatekeeper            = "gatekeeper"
+	LLMModelAgentAuditor               = "auditor"
+	LLMModelAgentEstimator             = "estimator"
+	LLMModelAgentDispatcher            = "dispatcher"
+	LLMModelAgentQuoteGenerator        = "quote_generator"
+	LLMModelAgentOfferSummaryGenerator = "offer_summary_generator"
+)
+
 // =============================================================================
 // Module-Specific Config Interfaces (Principle of Least Privilege)
 // =============================================================================
@@ -168,6 +182,15 @@ type Config struct {
 	RefreshCookieSecure               bool
 	RefreshCookieSameSite             http.SameSite
 	MoonshotAPIKey                    string
+	LLMModelDefault                   string
+	LLMModelPhotoAnalyzer             string
+	LLMModelCallLogger                string
+	LLMModelGatekeeper                string
+	LLMModelAuditor                   string
+	LLMModelEstimator                 string
+	LLMModelDispatcher                string
+	LLMModelQuoteGenerator            string
+	LLMModelOfferSummaryGenerator     string
 	EPOnlineAPIKey                    string
 	MinIOEndpoint                     string
 	MinIOAccessKey                    string
@@ -317,6 +340,43 @@ func (c *Config) IsGotenbergEnabled() bool     { return c.GotenbergURL != "" }
 func (c *Config) GetEPOnlineAPIKey() string  { return c.EPOnlineAPIKey }
 func (c *Config) IsEnergyLabelEnabled() bool { return c.EPOnlineAPIKey != "" }
 
+// ResolveLLMModel returns the per-agent override, then the global default, then the legacy fallback.
+func (c *Config) ResolveLLMModel(agentName string) string {
+	if model := strings.TrimSpace(c.llmModelOverride(agentName)); model != "" {
+		return model
+	}
+	if model := strings.TrimSpace(c.LLMModelDefault); model != "" {
+		return model
+	}
+	if agentName == LLMModelAgentOfferSummaryGenerator {
+		return DefaultOfferSummaryLLMModel
+	}
+	return DefaultLLMModel
+}
+
+func (c *Config) llmModelOverride(agentName string) string {
+	switch agentName {
+	case LLMModelAgentPhotoAnalyzer:
+		return c.LLMModelPhotoAnalyzer
+	case LLMModelAgentCallLogger:
+		return c.LLMModelCallLogger
+	case LLMModelAgentGatekeeper:
+		return c.LLMModelGatekeeper
+	case LLMModelAgentAuditor:
+		return c.LLMModelAuditor
+	case LLMModelAgentEstimator:
+		return c.LLMModelEstimator
+	case LLMModelAgentDispatcher:
+		return c.LLMModelDispatcher
+	case LLMModelAgentQuoteGenerator:
+		return c.LLMModelQuoteGenerator
+	case LLMModelAgentOfferSummaryGenerator:
+		return c.LLMModelOfferSummaryGenerator
+	default:
+		return ""
+	}
+}
+
 // QdrantConfig implementation
 func (c *Config) GetQdrantURL() string        { return c.QdrantURL }
 func (c *Config) GetQdrantAPIKey() string     { return c.QdrantAPIKey }
@@ -390,6 +450,15 @@ func Load() (*Config, error) {
 		RefreshCookieSecure:               refreshCookieSecure,
 		RefreshCookieSameSite:             parseSameSite(getEnv("REFRESH_COOKIE_SAMESITE", "Lax")),
 		MoonshotAPIKey:                    getEnv("MOONSHOT_API_KEY", ""),
+		LLMModelDefault:                   getEnv("LLM_MODEL_DEFAULT", ""),
+		LLMModelPhotoAnalyzer:             getEnv("LLM_MODEL_PHOTO_ANALYZER", ""),
+		LLMModelCallLogger:                getEnv("LLM_MODEL_CALL_LOGGER", ""),
+		LLMModelGatekeeper:                getEnv("LLM_MODEL_GATEKEEPER", ""),
+		LLMModelAuditor:                   getEnv("LLM_MODEL_AUDITOR", ""),
+		LLMModelEstimator:                 getEnv("LLM_MODEL_ESTIMATOR", ""),
+		LLMModelDispatcher:                getEnv("LLM_MODEL_DISPATCHER", ""),
+		LLMModelQuoteGenerator:            getEnv("LLM_MODEL_QUOTE_GENERATOR", ""),
+		LLMModelOfferSummaryGenerator:     getEnv("LLM_MODEL_OFFER_SUMMARY_GENERATOR", ""),
 		EPOnlineAPIKey:                    getEnv("EP_ONLINE_API_KEY", ""),
 		MinIOEndpoint:                     getEnv("MINIO_ENDPOINT", ""),
 		MinIOAccessKey:                    getEnv("MINIO_ACCESS_KEY", ""),

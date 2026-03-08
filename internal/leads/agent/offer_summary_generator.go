@@ -25,12 +25,8 @@ type OfferSummaryGenerator struct {
 }
 
 // NewOfferSummaryGenerator creates a summary generator agent without tools.
-func NewOfferSummaryGenerator(apiKey string) (*OfferSummaryGenerator, error) {
-	kimi := moonshot.NewModel(moonshot.Config{
-		APIKey:          apiKey,
-		Model:           "moonshot-v1-8k",
-		DisableThinking: true,
-	})
+func NewOfferSummaryGenerator(apiKey string, modelName string) (*OfferSummaryGenerator, error) {
+	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "OfferSummaryGenerator",

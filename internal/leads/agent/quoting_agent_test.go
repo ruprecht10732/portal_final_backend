@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewEstimatorAgentUsesEstimatorProfile(t *testing.T) {
-	agent, err := NewEstimatorAgent(QuotingAgentConfig{})
+	agent, err := NewEstimatorAgent(QuotingAgentConfig{Model: "kimi-test-estimator"})
 	if err != nil {
 		t.Fatalf("NewEstimatorAgent returned error: %v", err)
 	}
@@ -23,10 +23,13 @@ func TestNewEstimatorAgentUsesEstimatorProfile(t *testing.T) {
 	if agent.appName != "estimator" {
 		t.Fatalf("expected estimator app name, got %q", agent.appName)
 	}
+	if agent.modelConfig.Model != "kimi-test-estimator" {
+		t.Fatalf("expected estimator model config to use configured model, got %q", agent.modelConfig.Model)
+	}
 }
 
 func TestNewQuoteGeneratorAgentUsesQuoteGeneratorProfile(t *testing.T) {
-	agent, err := NewQuoteGeneratorAgent(QuotingAgentConfig{})
+	agent, err := NewQuoteGeneratorAgent(QuotingAgentConfig{Model: "kimi-test-quote"})
 	if err != nil {
 		t.Fatalf("NewQuoteGeneratorAgent returned error: %v", err)
 	}
@@ -38,6 +41,9 @@ func TestNewQuoteGeneratorAgentUsesQuoteGeneratorProfile(t *testing.T) {
 	}
 	if agent.appName != "quote-generator" {
 		t.Fatalf("expected quote-generator app name, got %q", agent.appName)
+	}
+	if agent.modelConfig.Model != "kimi-test-quote" {
+		t.Fatalf("expected quote-generator model config to use configured model, got %q", agent.modelConfig.Model)
 	}
 }
 

@@ -83,6 +83,8 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxGatekeeperServiceNoteChars)
 	intakeContextSummary := truncatePromptSection(input.intakeContext, maxGatekeeperIntakeChars)
 	previousEstimatorBlockers := buildPreviousEstimatorBlockersSection(input.priorAnalysis)
+	consumerSummary := buildPromptConsumerSection(input.lead)
+	locationSummary := buildPromptLocationLine(input.lead)
 
 	return fmt.Sprintf(`Role: Gatekeeper (intake validator).
 
@@ -124,13 +126,10 @@ Lead:
 - Created At: %s
 
 Consumer:
-- Name: %s %s
-- Phone: %s
-- Email: %s
-- Role: %s
+%s
 
 Address:
-- %s %s, %s %s
+%s
 
 Service Note (raw):
 %s
@@ -163,15 +162,8 @@ Respond ONLY with tool calls.
 		input.service.ServiceType,
 		input.service.PipelineStage,
 		input.lead.CreatedAt.Format(time.RFC3339),
-		input.lead.ConsumerFirstName,
-		input.lead.ConsumerLastName,
-		input.lead.ConsumerPhone,
-		getValue(input.lead.ConsumerEmail),
-		input.lead.ConsumerRole,
-		input.lead.AddressStreet,
-		input.lead.AddressHouseNumber,
-		input.lead.AddressZipCode,
-		input.lead.AddressCity,
+		consumerSummary,
+		locationSummary,
 		serviceNoteSummary,
 		notesSection,
 		visitReportSummary,
@@ -322,6 +314,8 @@ func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadServic
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
 	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
 	scopeSummary := truncatePromptSection(formatScopeArtifact(scopeArtifact), maxGatekeeperIntakeChars)
+	consumerSummary := buildPromptConsumerSection(lead)
+	locationSummary := buildPromptLocationLine(lead)
 
 	return fmt.Sprintf(`Role: Technical Estimator.
 
@@ -394,12 +388,10 @@ Lead:
 - Created At: %s
 
 Consumer:
-- Name: %s %s
-- Phone: %s
-- Email: %s
+%s
 
 Address:
-- %s %s, %s %s
+%s
 
 Service Note (raw):
 %s
@@ -425,14 +417,8 @@ Respond ONLY with tool calls.
 		service.ServiceType,
 		service.PipelineStage,
 		lead.CreatedAt.Format(time.RFC3339),
-		lead.ConsumerFirstName,
-		lead.ConsumerLastName,
-		lead.ConsumerPhone,
-		getValue(lead.ConsumerEmail),
-		lead.AddressStreet,
-		lead.AddressHouseNumber,
-		lead.AddressZipCode,
-		lead.AddressCity,
+		consumerSummary,
+		locationSummary,
 		serviceNoteSummary,
 		notesSection,
 		preferencesSummary,
@@ -787,6 +773,8 @@ func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadServi
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
 	userPromptSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(userPrompt, 2000)), maxQuoteUserPromptChars)
 	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
+	consumerSummary := buildPromptConsumerSection(lead)
+	locationSummary := buildPromptLocationLine(lead)
 
 	return fmt.Sprintf(`Role: Quote Generator.
 
@@ -829,12 +817,10 @@ Lead:
 - Service Type: %s
 
 Consumer:
-- Name: %s %s
-- Phone: %s
-- Email: %s
+%s
 
 Address:
-- %s %s, %s %s
+%s
 
 Service Note (raw):
 %s
@@ -857,14 +843,8 @@ Respond ONLY with tool calls.
 		lead.ID,
 		service.ID,
 		service.ServiceType,
-		lead.ConsumerFirstName,
-		lead.ConsumerLastName,
-		lead.ConsumerPhone,
-		getValue(lead.ConsumerEmail),
-		lead.AddressStreet,
-		lead.AddressHouseNumber,
-		lead.AddressZipCode,
-		lead.AddressCity,
+		consumerSummary,
+		locationSummary,
 		serviceNoteSummary,
 		notesSection,
 		preferencesSummary,

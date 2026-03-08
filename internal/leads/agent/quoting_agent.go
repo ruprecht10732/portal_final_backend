@@ -84,6 +84,7 @@ type quotingAgentProfile struct {
 // QuotingAgentConfig holds shared dependencies for both quoting modes.
 type QuotingAgentConfig struct {
 	APIKey               string
+	Model                string
 	Repo                 repository.LeadsRepository
 	EventBus             events.Bus
 	EmbeddingClient      *embeddings.Client
@@ -105,11 +106,7 @@ func NewQuoteGeneratorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
 }
 
 func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAgent, error) {
-	modelConfig := moonshot.Config{
-		APIKey:          cfg.APIKey,
-		Model:           "kimi-k2.5",
-		DisableThinking: true,
-	}
+	modelConfig := newMoonshotModelConfig(cfg.APIKey, cfg.Model)
 	kimi := moonshot.NewModel(modelConfig)
 
 	deps := &ToolDependencies{

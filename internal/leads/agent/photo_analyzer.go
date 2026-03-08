@@ -120,13 +120,8 @@ type PhotoAnalyzer struct {
 }
 
 // NewPhotoAnalyzer creates a new photo analyzer agent
-func NewPhotoAnalyzer(apiKey string, repo repository.LeadsRepository) (*PhotoAnalyzer, error) {
-	// Use kimi-k2.5 with thinking disabled for multimodal analysis
-	kimi := moonshot.NewModel(moonshot.Config{
-		APIKey:          apiKey,
-		Model:           "kimi-k2.5",
-		DisableThinking: true,
-	})
+func NewPhotoAnalyzer(apiKey string, modelName string, repo repository.LeadsRepository) (*PhotoAnalyzer, error) {
+	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
 
 	deps := &PhotoAnalyzerDeps{
 		Repo: repo,

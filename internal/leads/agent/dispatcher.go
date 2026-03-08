@@ -30,12 +30,8 @@ type Dispatcher struct {
 }
 
 // NewDispatcher creates a Dispatcher agent.
-func NewDispatcher(apiKey string, repo repository.LeadsRepository, eventBus events.Bus) (*Dispatcher, error) {
-	kimi := moonshot.NewModel(moonshot.Config{
-		APIKey:          apiKey,
-		Model:           "kimi-k2.5",
-		DisableThinking: true,
-	})
+func NewDispatcher(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus) (*Dispatcher, error) {
+	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
 
 	deps := &ToolDependencies{
 		Repo:           repo,

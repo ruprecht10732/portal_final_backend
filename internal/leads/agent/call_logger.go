@@ -199,13 +199,8 @@ func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
 }
 
 // NewCallLogger creates a new CallLogger agent
-func NewCallLogger(apiKey string, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
-	// Use kimi-k2.5 with thinking disabled for reliable tool calling
-	kimi := moonshot.NewModel(moonshot.Config{
-		APIKey:          apiKey,
-		Model:           "kimi-k2.5",
-		DisableThinking: true,
-	})
+func NewCallLogger(apiKey string, modelName string, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
+	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
 
 	logger := &CallLogger{
 		repo:           repo,
