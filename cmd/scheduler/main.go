@@ -31,11 +31,17 @@ import (
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/rediskit"
 	"portal_final_backend/platform/validator"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
+
+func noOpRedisCloser() {
+	// Intentionally empty: used when no Redis client was initialized.
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -64,6 +70,8 @@ func main() {
 	defer pool.Close()
 
 	eventBus := events.NewInMemoryBus(log)
+	orchestratorLockRedis, closeOrchestratorLockRedis := initOrchestratorLockRedis(cfg, log)
+	defer closeOrchestratorLockRedis()
 
 	sender, err := email.NewSender(cfg)
 	if err != nil {
@@ -87,7 +95,11 @@ func main() {
 
 	// Worker-side quote generation wiring (no HTTP handlers required).
 	catalogModule := catalog.NewModule(pool, nil, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
-	leadsModule, err := leads.NewModule(ctx, pool, eventBus, nil, val, cfg, log)
+	leadsModule, err := leads.NewModule(ctx, pool, eventBus, nil, val, leads.ModuleDeps{
+		Config:                cfg,
+		Log:                   log,
+		OrchestratorLockRedis: orchestratorLockRedis,
+	})
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
@@ -151,6 +163,20 @@ func main() {
 	}
 
 	worker.Run(ctx)
+}
+
+func initOrchestratorLockRedis(cfg *config.Config, log *logger.Logger) (*redis.Client, func()) {
+	if cfg.GetRedisURL() == "" {
+		return nil, noOpRedisCloser
+	}
+
+	redisClient, err := rediskit.NewClient(cfg.GetRedisURL(), cfg.GetRedisTLSInsecure())
+	if err != nil {
+		log.Warn("failed to initialize redis orchestrator lock client", "error", err)
+		return nil, noOpRedisCloser
+	}
+
+	return redisClient, func() { _ = redisClient.Close() }
 }
 
 type gapOrgSettings struct {

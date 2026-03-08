@@ -25,7 +25,7 @@ const (
 	offerSummaryTaskUniqueTTL    = 10 * time.Minute
 	offerSummaryTaskMaxRetry     = 3
 	leadAutomationTaskTimeout    = 5 * time.Minute
-	leadAutomationTaskUniqueTTL  = 2 * time.Minute
+	leadAutomationTaskUniqueTTL  = leadAutomationTaskTimeout
 	leadAutomationTaskMaxRetry   = 3
 	autoPhotoAnalysisDelay       = 30 * time.Second
 )

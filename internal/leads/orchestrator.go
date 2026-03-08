@@ -38,13 +38,10 @@ type Orchestrator struct {
 	orgSettingsReader ports.OrganizationAISettingsReader
 	orgSettingsMu     sync.Mutex
 	orgSettingsCache  map[uuid.UUID]cachedOrgAISettings
+	runLocker         orchestratorRunLocker
 
 	reconciliationEnabled bool
 
-	// Idempotency protection: tracks active agent runs
-	activeRuns map[string]bool
-	// Reconciliation lock per service to avoid concurrent conflicting writes.
-	activeReconciliations map[uuid.UUID]bool
 	// Dedup short-window duplicate stage-change events.
 	recentStageEvents map[string]time.Time
 	stageEventsMu     sync.Mutex // dedicated lock for recentStageEvents only
@@ -81,7 +78,12 @@ func NewOrchestrator(
 	eventBus events.Bus,
 	sse *sse.Service,
 	log *logger.Logger,
+	runLocker orchestratorRunLocker,
 ) *Orchestrator {
+	if runLocker == nil {
+		runLocker = newInMemoryOrchestratorRunLocker()
+	}
+
 	return &Orchestrator{
 		gatekeeper:             agents.Gatekeeper,
 		estimator:              agents.Estimator,
@@ -92,9 +94,8 @@ func NewOrchestrator(
 		eventBus:               eventBus,
 		sse:                    sse,
 		log:                    log,
+		runLocker:              runLocker,
 		reconciliationEnabled:  true,
-		activeRuns:             make(map[string]bool),
-		activeReconciliations:  make(map[uuid.UUID]bool),
 		recentStageEvents:      make(map[string]time.Time),
 		pendingGatekeeperPhoto: make(map[uuid.UUID]events.PhotoAnalysisCompleted),
 		orgSettingsCache:       make(map[uuid.UUID]cachedOrgAISettings),
@@ -361,40 +362,34 @@ func (o *Orchestrator) cancelPendingWorkflows(ctx context.Context, tenantID, lea
 
 // markRunning attempts to mark an agent run as active. Returns true if successfully marked, false if already running.
 func (o *Orchestrator) markRunning(agentName string, serviceID uuid.UUID) bool {
-	o.runsMu.Lock()
-	defer o.runsMu.Unlock()
-
-	key := agentName + ":" + serviceID.String()
-	if o.activeRuns[key] {
-		return false // Already running
+	ok, err := o.runLocker.TryAcquireAgentRun(agentName, serviceID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to acquire agent run lock", "error", err, "agent", agentName, "serviceId", serviceID)
+		return false
 	}
-	o.activeRuns[key] = true
-	return true
+	return ok
 }
 
 // markComplete removes the active run marker.
 func (o *Orchestrator) markComplete(agentName string, serviceID uuid.UUID) {
-	o.runsMu.Lock()
-	defer o.runsMu.Unlock()
-
-	key := agentName + ":" + serviceID.String()
-	delete(o.activeRuns, key)
+	if err := o.runLocker.ReleaseAgentRun(agentName, serviceID); err != nil {
+		o.log.Warn("orchestrator: failed to release agent run lock", "error", err, "agent", agentName, "serviceId", serviceID)
+	}
 }
 
 func (o *Orchestrator) markReconciliationRunning(serviceID uuid.UUID) bool {
-	o.runsMu.Lock()
-	defer o.runsMu.Unlock()
-	if o.activeReconciliations[serviceID] {
+	ok, err := o.runLocker.TryAcquireReconciliation(serviceID)
+	if err != nil {
+		o.log.Error("orchestrator: failed to acquire reconciliation lock", "error", err, "serviceId", serviceID)
 		return false
 	}
-	o.activeReconciliations[serviceID] = true
-	return true
+	return ok
 }
 
 func (o *Orchestrator) markReconciliationComplete(serviceID uuid.UUID) {
-	o.runsMu.Lock()
-	defer o.runsMu.Unlock()
-	delete(o.activeReconciliations, serviceID)
+	if err := o.runLocker.ReleaseReconciliation(serviceID); err != nil {
+		o.log.Warn("orchestrator: failed to release reconciliation lock", "error", err, "serviceId", serviceID)
+	}
 }
 
 func (o *Orchestrator) shouldSkipDuplicateStageEvent(evt events.PipelineStageChanged) bool {

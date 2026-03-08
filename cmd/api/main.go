@@ -266,7 +266,11 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
 	authModule.Service().SetAccessTokenBlocklistRedis(tokenBlocklistRedis)
 
-	leadsModule, err := leads.NewModule(ctx, pool, eventBus, storageSvc, val, cfg, log)
+	leadsModule, err := leads.NewModule(ctx, pool, eventBus, storageSvc, val, leads.ModuleDeps{
+		Config:                cfg,
+		Log:                   log,
+		OrchestratorLockRedis: tokenBlocklistRedis,
+	})
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())

@@ -33,6 +33,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 // Module is the RAC_leads bounded context module implementing http.Module.
@@ -70,6 +71,12 @@ type AutomationScheduler interface {
 	scheduler.AuditorScheduler
 }
 
+type ModuleDeps struct {
+	Config                *config.Config
+	Log                   *logger.Logger
+	OrchestratorLockRedis *redis.Client
+}
+
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader into
 // the orchestrator and lead agents that need to respect org-level automation
 // toggles and catalog gap heuristics.
@@ -95,7 +102,11 @@ func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISett
 }
 
 // NewModule creates and initializes the RAC_leads module with all its dependencies.
-func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, cfg *config.Config, log *logger.Logger) (*Module, error) {
+func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, val *validator.Validator, deps ModuleDeps) (*Module, error) {
+	cfg := deps.Config
+	log := deps.Log
+	orchestratorLockRedis := deps.OrchestratorLockRedis
+
 	// Create shared repository
 	repo := repository.New(pool)
 
@@ -123,12 +134,13 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 
 	// Create orchestrator and event listeners
 	outboxRepo := notificationoutbox.New(pool)
+	runLocker := newOrchestratorRunLocker(orchestratorLockRedis, log)
 	orchestrator := NewOrchestrator(OrchestratorAgents{
 		Gatekeeper: gatekeeper,
 		Estimator:  estimator,
 		Dispatcher: dispatcher,
 		Auditor:    auditor,
-	}, repo, outboxRepo, eventBus, sseService, log)
+	}, repo, outboxRepo, eventBus, sseService, log, runLocker)
 	orchestrator.SetReconciliationEnabled(cfg.IsLeadsReconciliationEnabled())
 	if ctx == nil {
 		ctx = context.Background()
