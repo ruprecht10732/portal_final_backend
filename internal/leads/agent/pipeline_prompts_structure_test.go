@@ -99,6 +99,50 @@ func TestBuildGatekeeperPromptUsesExecutionContractAndOrder(t *testing.T) {
 	}
 }
 
+func TestBuildGatekeeperPromptWarnsPhotoMeasurementsAreAdvisory(t *testing.T) {
+	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
+	photo.Measurements = []repository.Measurement{{Description: "breedte opening", Value: 0.93, Unit: "m", Type: "dimension", Confidence: "Low"}}
+	photo.NeedsOnsiteMeasurement = []string{"Exacte dagmaat ontbreekt"}
+
+	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
+		lead:          lead,
+		service:       service,
+		notes:         notes,
+		visitReport:   visitReport,
+		intakeContext: gatekeeperIntakeRequirement,
+		attachments:   attachments,
+		photoAnalysis: photo,
+	})
+
+	checks := []string{
+		"Photo-derived measurements are advisory only unless explicitly visible/labeled in the image context; on-site measurement flags override them.",
+		"Measurement guardrail: Treat photo-derived dimensions as advisory only unless they are explicitly visible, labeled, or OCR-backed.",
+		"Needs on-site measurement: Exacte dagmaat ontbreekt",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildScopeAnalyzerPromptRequiresVerifiedDimensions(t *testing.T) {
+	lead, service, notes, _, _, photo := testPromptFixtures()
+	prompt := buildScopeAnalyzerPrompt(lead, service, notes, photo)
+
+	checks := []string{
+		"Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.",
+		"If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension.",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedGatekeeperPromptContainsFmt, token)
+		}
+	}
+}
+
 func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
 	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{

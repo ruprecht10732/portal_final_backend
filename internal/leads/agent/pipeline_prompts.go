@@ -106,6 +106,7 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 [DECISION RULE] Missing required intake item -> critical missingInformation.
 [DECISION RULE] Required info clearly present in trusted context -> not missing.
 [DECISION RULE] Photo analysis marked low relevance/mismatch -> treat as mismatch signal only, NOT proof of completeness.
+[DECISION RULE] Photo-derived measurements are advisory only unless explicitly visible/labeled in the image context; on-site measurement flags override them.
 [DECISION RULE] Ambiguous service intent -> keep current service type and move to Nurturing.
 [DECISION RULE] Missing info alone is NEVER a reason to switch service type.
 [DECISION RULE] If the Estimator previously blocked this lead for missing information, you MUST NOT move to Estimation until that exact information is explicitly present in trusted context.
@@ -270,6 +271,8 @@ func buildScopeAnalyzerPrompt(lead repository.Lead, service repository.LeadServi
 [MANDATORY] Use workItems[] entries with: material, qty, unit, laborHours(optional), notes(optional).
 [MANDATORY] Set isComplete=false when critical measurements are missing.
 [MANDATORY] Include every missing critical dimension in missingDimensions[].
+[MANDATORY] Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.
+[MANDATORY] If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension.
 [MANDATORY] confidenceReasons should explain why the scope is complete/incomplete.
 
 === DATA CONTEXT ===
@@ -361,6 +364,7 @@ LEVEL 3 [STYLE]
 
 === INTAKE COMPLETENESS GATE ===
 [MANDATORY] If critical measurements/quantities are missing, do NOT call DraftQuote.
+[MANDATORY] Photo-only dimensions are insufficient when they are not explicitly visible/labeled or when photo analysis requests on-site verification.
 [MANDATORY] In that case: call SaveEstimation with scope="Onbekend" and priceRange="Onvoldoende gegevens", then UpdatePipelineStage(stage="Nurturing") with Dutch reason requesting missing measurements.
 
 %s
@@ -477,6 +481,7 @@ You MAY call only: AskCustomerClarification.
 [MANDATORY] Message language is Dutch.
 [MANDATORY] Be concise and professional.
 [MANDATORY] Ask only for missing dimensions/details required for pricing.
+[MANDATORY] If photo analysis suggests on-site measurement or uncertain photo-only dimensions, ask for verified measurements instead of relying on the photos.
 [MANDATORY] Mention that a complete quote follows after receiving the details.
 
 === DATA CONTEXT ===
@@ -961,6 +966,9 @@ func buildPhotoSummaryContent(photoAnalysis *repository.PhotoAnalysis) string {
 	}
 	if len(photoAnalysis.AdditionalInfo) > 0 {
 		sb.WriteString("Additional: " + strings.Join(photoAnalysis.AdditionalInfo, "; ") + "\n")
+	}
+	if len(photoAnalysis.Measurements) > 0 || len(photoAnalysis.NeedsOnsiteMeasurement) > 0 {
+		sb.WriteString("Measurement guardrail: Treat photo-derived dimensions as advisory only unless they are explicitly visible, labeled, or OCR-backed. On-site measurement requests override uncertain dimensions.\n")
 	}
 
 	// New v2 fields

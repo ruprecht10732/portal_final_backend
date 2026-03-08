@@ -6,11 +6,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
+	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/scheduler"
@@ -24,31 +26,38 @@ import (
 
 // PhotoAnalysisHandler handles HTTP requests for photo analysis.
 type PhotoAnalysisHandler struct {
-	analyzer *agent.PhotoAnalyzer
-	repo     repository.LeadsRepository
-	storage  storage.StorageService
-	bucket   string
-	sse      *sse.Service
-	val      *validator.Validator
-	eventBus events.Bus
-	queue    scheduler.PhotoAnalysisScheduler
+	analyzer                     *agent.PhotoAnalyzer
+	preprocessor                 agent.ImagePreprocessor
+	organizationAISettingsReader ports.OrganizationAISettingsReader
+	repo                         repository.LeadsRepository
+	storage                      storage.StorageService
+	bucket                       string
+	sse                          *sse.Service
+	val                          *validator.Validator
+	eventBus                     events.Bus
+	queue                        scheduler.PhotoAnalysisScheduler
 }
 
 // NewPhotoAnalysisHandler creates a new photo analysis handler.
 func NewPhotoAnalysisHandler(analyzer *agent.PhotoAnalyzer, repo repository.LeadsRepository, storageSvc storage.StorageService, bucket string, sseSvc *sse.Service, val *validator.Validator, eventBus events.Bus) *PhotoAnalysisHandler {
 	return &PhotoAnalysisHandler{
-		analyzer: analyzer,
-		repo:     repo,
-		storage:  storageSvc,
-		bucket:   bucket,
-		sse:      sseSvc,
-		val:      val,
-		eventBus: eventBus,
+		analyzer:     analyzer,
+		preprocessor: agent.NewBasicImagePreprocessor(),
+		repo:         repo,
+		storage:      storageSvc,
+		bucket:       bucket,
+		sse:          sseSvc,
+		val:          val,
+		eventBus:     eventBus,
 	}
 }
 
 func (h *PhotoAnalysisHandler) SetPhotoAnalysisScheduler(queue scheduler.PhotoAnalysisScheduler) {
 	h.queue = queue
+}
+
+func (h *PhotoAnalysisHandler) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	h.organizationAISettingsReader = reader
 }
 
 // RegisterRoutes registers photo analysis routes.
@@ -222,11 +231,17 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 		return
 	}
 
+	preparedImages, prepErr := h.prepareImages(ctx, tenantID, serviceType, images)
+	if prepErr != nil {
+		log.Printf("photo analysis: preprocessing failed, continuing with originals for service %s: %v", serviceID, prepErr)
+	}
+
 	result, err := h.analyzer.AnalyzePhotos(ctx, agent.PhotoAnalysisRequest{
 		LeadID:             leadID,
 		ServiceID:          serviceID,
 		TenantID:           tenantID,
 		Images:             images,
+		PreparedImages:     preparedImages,
 		ContextInfo:        contextInfo,
 		ServiceType:        serviceType,
 		IntakeRequirements: intakeRequirements,
@@ -244,7 +259,7 @@ func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, ser
 		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, "Photo analysis failed to persist", "persistence_failed")
 		return
 	}
-	h.writePhotoAnalysisTimeline(ctx, leadID, serviceID, tenantID, result, attachments)
+	h.writePhotoAnalysisTimeline(ctx, leadID, serviceID, tenantID, result, attachments, preparedImages)
 
 	if h.eventBus != nil {
 		h.eventBus.Publish(ctx, events.PhotoAnalysisCompleted{
@@ -411,13 +426,45 @@ func (h *PhotoAnalysisHandler) persistPhotoAnalysis(ctx context.Context, leadID,
 	return nil
 }
 
-func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis, attachments []repository.Attachment) {
+func (h *PhotoAnalysisHandler) prepareImages(ctx context.Context, tenantID uuid.UUID, serviceType string, images []agent.ImageData) ([]agent.PreparedImage, error) {
+	if h.preprocessor == nil {
+		return nil, nil
+	}
+	return h.preprocessor.Prepare(ctx, buildPhotoPreprocessingSettings(h.resolveOrganizationAISettings(ctx, tenantID)), serviceType, images)
+}
+
+func (h *PhotoAnalysisHandler) resolveOrganizationAISettings(ctx context.Context, tenantID uuid.UUID) ports.OrganizationAISettings {
+	defaults := ports.DefaultOrganizationAISettings()
+	if h.organizationAISettingsReader == nil {
+		return defaults
+	}
+	settings, err := h.organizationAISettingsReader(ctx, tenantID)
+	if err != nil {
+		log.Printf("photo analysis: failed to load organization AI settings for tenant %s: %v", tenantID, err)
+		return defaults
+	}
+	return settings
+}
+
+func buildPhotoPreprocessingSettings(settings ports.OrganizationAISettings) agent.PhotoPreprocessingSettings {
+	return agent.PhotoPreprocessingSettings{
+		Enabled:                              settings.PhotoAnalysisPreprocessingEnabled,
+		OCRAssistEnabled:                     settings.PhotoAnalysisOCRAssistEnabled,
+		OCRAssistServiceTypes:                settings.PhotoAnalysisOCRAssistServiceTypes,
+		LensCorrectionEnabled:                settings.PhotoAnalysisLensCorrectionEnabled,
+		LensCorrectionServiceTypes:           settings.PhotoAnalysisLensCorrectionServiceTypes,
+		PerspectiveNormalizationEnabled:      settings.PhotoAnalysisPerspectiveNormalizationEnabled,
+		PerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
+	}
+}
+
+func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, result *agent.PhotoAnalysis, attachments []repository.Attachment, preparedImages []agent.PreparedImage) {
 	summary := result.Summary
 	if len(result.Observations) > 0 && summary == "" {
 		summary = result.Observations[0]
 	}
 
-	metadata := buildPhotoAnalysisMetadata(result, attachments)
+	metadata := buildPhotoAnalysisMetadata(result, attachments, preparedImages)
 	_, _ = h.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &serviceID,
@@ -432,10 +479,11 @@ func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, l
 	})
 }
 
-func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis, attachments []repository.Attachment) map[string]any {
+func buildPhotoAnalysisMetadata(result *agent.PhotoAnalysis, attachments []repository.Attachment, preparedImages []agent.PreparedImage) map[string]any {
 	metadata := buildPhotoAnalysisBaseMetadata(result)
 	addPhotoAnalysisSlices(metadata, result)
 	addPhotoAttachmentMetadata(metadata, attachments)
+	addPreprocessingMetadata(metadata, preparedImages)
 	return metadata
 }
 
@@ -481,6 +529,50 @@ func addPhotoAttachmentMetadata(metadata map[string]any, attachments []repositor
 	if len(photoAttachments) > 0 {
 		metadata["photos"] = photoAttachments
 	}
+}
+
+func addPreprocessingMetadata(metadata map[string]any, preparedImages []agent.PreparedImage) {
+	if len(preparedImages) == 0 {
+		return
+	}
+	items := make([]map[string]any, 0, len(preparedImages))
+	for _, prepared := range preparedImages {
+		items = append(items, buildPreprocessingMetadataItem(prepared))
+	}
+	metadata["preprocessing"] = items
+}
+
+func buildPreprocessingMetadataItem(prepared agent.PreparedImage) map[string]any {
+	item := map[string]any{
+		"fileName":          prepared.Metadata.Filename,
+		"mimeType":          prepared.Metadata.MIMEType,
+		"format":            prepared.Metadata.Format,
+		"width":             prepared.Metadata.Width,
+		"height":            prepared.Metadata.Height,
+		"appliedTransforms": prepared.Metadata.AppliedTransforms,
+		"skippedTransforms": prepared.Metadata.SkippedTransforms,
+		"variantCount":      len(prepared.Variants),
+	}
+	if prepared.Metadata.CameraMake != "" || prepared.Metadata.CameraModel != "" {
+		item["camera"] = strings.TrimSpace(prepared.Metadata.CameraMake + " " + prepared.Metadata.CameraModel)
+	}
+	if prepared.Metadata.FocalLengthMM != "" {
+		item["focalLengthMm"] = prepared.Metadata.FocalLengthMM
+	}
+	if prepared.Metadata.Orientation != "" {
+		item["orientation"] = prepared.Metadata.Orientation
+	}
+	if prepared.Metadata.CapturedAt != "" {
+		item["capturedAt"] = prepared.Metadata.CapturedAt
+	}
+	if len(prepared.OCRCandidates) > 0 {
+		ocrTexts := make([]string, 0, len(prepared.OCRCandidates))
+		for _, candidate := range prepared.OCRCandidates {
+			ocrTexts = append(ocrTexts, candidate.Text)
+		}
+		item["ocrCandidates"] = ocrTexts
+	}
+	return item
 }
 
 func buildPhotoAttachments(attachments []repository.Attachment) []map[string]any {

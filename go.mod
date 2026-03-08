@@ -90,6 +90,7 @@ require (
 	github.com/quic-go/quic-go v0.57.0 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
+	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/spf13/cast v1.7.0 // indirect
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56 // indirect

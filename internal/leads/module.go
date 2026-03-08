@@ -99,6 +99,9 @@ func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISett
 	if m.quoteGenerator != nil {
 		m.quoteGenerator.SetOrganizationAISettingsReader(reader)
 	}
+	if m.photoAnalysisHandler != nil {
+		m.photoAnalysisHandler.SetOrganizationAISettingsReader(reader)
+	}
 }
 
 // NewModule creates and initializes the RAC_leads module with all its dependencies.

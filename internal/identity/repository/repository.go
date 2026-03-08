@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,48 +76,62 @@ type OrganizationProfileUpdate struct {
 }
 
 type OrganizationSettings struct {
-	OrganizationID              uuid.UUID
-	QuotePaymentDays            int
-	QuoteValidDays              int
-	AIAutoDisqualifyJunk        bool
-	AIAutoDispatch              bool
-	AIAutoEstimate              bool
-	AIConfidenceGateEnabled     bool
-	AIAdaptiveReasoningEnabled  bool
-	AIExperienceMemoryEnabled   bool
-	AICouncilEnabled            bool
-	AICouncilConsensusMode      string
-	CatalogGapThreshold         int
-	CatalogGapLookbackDays      int
-	NotificationEmail           *string
-	WhatsAppDeviceID            *string
-	WhatsAppWelcomeDelayMinutes int
-	SMTPHost                    *string
-	SMTPPort                    *int
-	SMTPUsername                *string
-	SMTPPassword                *string
-	SMTPFromEmail               *string
-	SMTPFromName                *string
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
+	OrganizationID                                    uuid.UUID
+	QuotePaymentDays                                  int
+	QuoteValidDays                                    int
+	AIAutoDisqualifyJunk                              bool
+	AIAutoDispatch                                    bool
+	AIAutoEstimate                                    bool
+	AIConfidenceGateEnabled                           bool
+	AIAdaptiveReasoningEnabled                        bool
+	AIExperienceMemoryEnabled                         bool
+	AICouncilEnabled                                  bool
+	AICouncilConsensusMode                            string
+	CatalogGapThreshold                               int
+	CatalogGapLookbackDays                            int
+	PhotoAnalysisPreprocessingEnabled                 bool
+	PhotoAnalysisOCRAssistEnabled                     bool
+	PhotoAnalysisOCRAssistServiceTypes                []string
+	PhotoAnalysisLensCorrectionEnabled                bool
+	PhotoAnalysisLensCorrectionServiceTypes           []string
+	PhotoAnalysisPerspectiveNormalizationEnabled      bool
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
+	NotificationEmail                                 *string
+	WhatsAppDeviceID                                  *string
+	WhatsAppWelcomeDelayMinutes                       int
+	SMTPHost                                          *string
+	SMTPPort                                          *int
+	SMTPUsername                                      *string
+	SMTPPassword                                      *string
+	SMTPFromEmail                                     *string
+	SMTPFromName                                      *string
+	CreatedAt                                         time.Time
+	UpdatedAt                                         time.Time
 }
 
 type OrganizationSettingsUpdate struct {
-	QuotePaymentDays            *int
-	QuoteValidDays              *int
-	AIAutoDisqualifyJunk        *bool
-	AIAutoDispatch              *bool
-	AIAutoEstimate              *bool
-	AIConfidenceGateEnabled     *bool
-	AIAdaptiveReasoningEnabled  *bool
-	AIExperienceMemoryEnabled   *bool
-	AICouncilEnabled            *bool
-	AICouncilConsensusMode      *string
-	CatalogGapThreshold         *int
-	CatalogGapLookbackDays      *int
-	NotificationEmail           *string
-	WhatsAppDeviceID            *string
-	WhatsAppWelcomeDelayMinutes *int
+	QuotePaymentDays                                  *int
+	QuoteValidDays                                    *int
+	AIAutoDisqualifyJunk                              *bool
+	AIAutoDispatch                                    *bool
+	AIAutoEstimate                                    *bool
+	AIConfidenceGateEnabled                           *bool
+	AIAdaptiveReasoningEnabled                        *bool
+	AIExperienceMemoryEnabled                         *bool
+	AICouncilEnabled                                  *bool
+	AICouncilConsensusMode                            *string
+	CatalogGapThreshold                               *int
+	CatalogGapLookbackDays                            *int
+	PhotoAnalysisPreprocessingEnabled                 *bool
+	PhotoAnalysisOCRAssistEnabled                     *bool
+	PhotoAnalysisOCRAssistServiceTypes                *[]string
+	PhotoAnalysisLensCorrectionEnabled                *bool
+	PhotoAnalysisLensCorrectionServiceTypes           *[]string
+	PhotoAnalysisPerspectiveNormalizationEnabled      *bool
+	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string
+	NotificationEmail                                 *string
+	WhatsAppDeviceID                                  *string
+	WhatsAppWelcomeDelayMinutes                       *int
 }
 
 type OrganizationSMTPUpdate struct {
@@ -162,30 +177,37 @@ type organizationSnapshot struct {
 }
 
 type settingsSnapshot struct {
-	OrganizationID              pgtype.UUID
-	QuotePaymentDays            int32
-	QuoteValidDays              int32
-	AIAutoDisqualifyJunk        bool
-	AIAutoDispatch              bool
-	AIAutoEstimate              bool
-	AIConfidenceGateEnabled     bool
-	AIAdaptiveReasoningEnabled  bool
-	AIExperienceMemoryEnabled   bool
-	AICouncilEnabled            bool
-	AICouncilConsensusMode      string
-	CatalogGapThreshold         int32
-	CatalogGapLookbackDays      int32
-	NotificationEmail           pgtype.Text
-	WhatsAppDeviceID            pgtype.Text
-	WhatsAppWelcomeDelayMinutes int32
-	SMTPHost                    pgtype.Text
-	SMTPPort                    pgtype.Int4
-	SMTPUsername                pgtype.Text
-	SMTPPassword                pgtype.Text
-	SMTPFromEmail               pgtype.Text
-	SMTPFromName                pgtype.Text
-	CreatedAt                   pgtype.Timestamptz
-	UpdatedAt                   pgtype.Timestamptz
+	OrganizationID                                    pgtype.UUID
+	QuotePaymentDays                                  int32
+	QuoteValidDays                                    int32
+	AIAutoDisqualifyJunk                              bool
+	AIAutoDispatch                                    bool
+	AIAutoEstimate                                    bool
+	AIConfidenceGateEnabled                           bool
+	AIAdaptiveReasoningEnabled                        bool
+	AIExperienceMemoryEnabled                         bool
+	AICouncilEnabled                                  bool
+	AICouncilConsensusMode                            string
+	CatalogGapThreshold                               int32
+	CatalogGapLookbackDays                            int32
+	PhotoAnalysisPreprocessingEnabled                 bool
+	PhotoAnalysisOCRAssistEnabled                     bool
+	PhotoAnalysisOCRAssistServiceTypes                []string
+	PhotoAnalysisLensCorrectionEnabled                bool
+	PhotoAnalysisLensCorrectionServiceTypes           []string
+	PhotoAnalysisPerspectiveNormalizationEnabled      bool
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
+	NotificationEmail                                 pgtype.Text
+	WhatsAppDeviceID                                  pgtype.Text
+	WhatsAppWelcomeDelayMinutes                       int32
+	SMTPHost                                          pgtype.Text
+	SMTPPort                                          pgtype.Int4
+	SMTPUsername                                      pgtype.Text
+	SMTPPassword                                      pgtype.Text
+	SMTPFromEmail                                     pgtype.Text
+	SMTPFromName                                      pgtype.Text
+	CreatedAt                                         pgtype.Timestamptz
+	UpdatedAt                                         pgtype.Timestamptz
 }
 
 func (r *Repository) CreateOrganization(ctx context.Context, q DBTX, name string, createdBy uuid.UUID) (Organization, error) {
@@ -360,72 +382,93 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 	row, err := r.queries.GetOrganizationSettings(ctx, toPgUUID(organizationID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrganizationSettings{
-			OrganizationID:              organizationID,
-			QuotePaymentDays:            7,
-			QuoteValidDays:              14,
-			AIAutoDisqualifyJunk:        true,
-			AIAutoDispatch:              false,
-			AIAutoEstimate:              true,
-			AIConfidenceGateEnabled:     false,
-			AIAdaptiveReasoningEnabled:  true,
-			AIExperienceMemoryEnabled:   true,
-			AICouncilEnabled:            true,
-			AICouncilConsensusMode:      "weighted",
-			CatalogGapThreshold:         3,
-			CatalogGapLookbackDays:      30,
-			WhatsAppDeviceID:            nil,
-			WhatsAppWelcomeDelayMinutes: 2,
+			OrganizationID:                                    organizationID,
+			QuotePaymentDays:                                  7,
+			QuoteValidDays:                                    14,
+			AIAutoDisqualifyJunk:                              true,
+			AIAutoDispatch:                                    false,
+			AIAutoEstimate:                                    true,
+			AIConfidenceGateEnabled:                           false,
+			AIAdaptiveReasoningEnabled:                        true,
+			AIExperienceMemoryEnabled:                         true,
+			AICouncilEnabled:                                  true,
+			AICouncilConsensusMode:                            "weighted",
+			CatalogGapThreshold:                               3,
+			CatalogGapLookbackDays:                            30,
+			PhotoAnalysisPreprocessingEnabled:                 true,
+			PhotoAnalysisOCRAssistEnabled:                     false,
+			PhotoAnalysisOCRAssistServiceTypes:                []string{},
+			PhotoAnalysisLensCorrectionEnabled:                false,
+			PhotoAnalysisLensCorrectionServiceTypes:           []string{},
+			PhotoAnalysisPerspectiveNormalizationEnabled:      false,
+			PhotoAnalysisPerspectiveNormalizationServiceTypes: []string{},
+			WhatsAppDeviceID:                                  nil,
+			WhatsAppWelcomeDelayMinutes:                       2,
 		}, nil
 	}
 	if err != nil {
 		return OrganizationSettings{}, err
 	}
 	return organizationSettingsFromSnapshot(settingsSnapshot{
-		OrganizationID:              row.OrganizationID,
-		QuotePaymentDays:            row.QuotePaymentDays,
-		QuoteValidDays:              row.QuoteValidDays,
-		AIAutoDisqualifyJunk:        row.AiAutoDisqualifyJunk,
-		AIAutoDispatch:              row.AiAutoDispatch,
-		AIAutoEstimate:              row.AiAutoEstimate,
-		AIConfidenceGateEnabled:     row.AiConfidenceGateEnabled,
-		AIAdaptiveReasoningEnabled:  row.AiAdaptiveReasoningEnabled,
-		AIExperienceMemoryEnabled:   row.AiExperienceMemoryEnabled,
-		AICouncilEnabled:            row.AiCouncilEnabled,
-		AICouncilConsensusMode:      row.AiCouncilConsensusMode,
-		CatalogGapThreshold:         row.CatalogGapThreshold,
-		CatalogGapLookbackDays:      row.CatalogGapLookbackDays,
-		NotificationEmail:           row.NotificationEmail,
-		WhatsAppDeviceID:            row.WhatsappDeviceID,
-		WhatsAppWelcomeDelayMinutes: row.WhatsappWelcomeDelayMinutes,
-		SMTPHost:                    row.SmtpHost,
-		SMTPPort:                    row.SmtpPort,
-		SMTPUsername:                row.SmtpUsername,
-		SMTPPassword:                row.SmtpPassword,
-		SMTPFromEmail:               row.SmtpFromEmail,
-		SMTPFromName:                row.SmtpFromName,
-		CreatedAt:                   row.CreatedAt,
-		UpdatedAt:                   row.UpdatedAt,
+		OrganizationID:                                    row.OrganizationID,
+		QuotePaymentDays:                                  row.QuotePaymentDays,
+		QuoteValidDays:                                    row.QuoteValidDays,
+		AIAutoDisqualifyJunk:                              row.AiAutoDisqualifyJunk,
+		AIAutoDispatch:                                    row.AiAutoDispatch,
+		AIAutoEstimate:                                    row.AiAutoEstimate,
+		AIConfidenceGateEnabled:                           row.AiConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:                        row.AiAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:                         row.AiExperienceMemoryEnabled,
+		AICouncilEnabled:                                  row.AiCouncilEnabled,
+		AICouncilConsensusMode:                            row.AiCouncilConsensusMode,
+		CatalogGapThreshold:                               row.CatalogGapThreshold,
+		CatalogGapLookbackDays:                            row.CatalogGapLookbackDays,
+		PhotoAnalysisPreprocessingEnabled:                 row.PhotoAnalysisPreprocessingEnabled,
+		PhotoAnalysisOCRAssistEnabled:                     row.PhotoAnalysisOcrAssistEnabled,
+		PhotoAnalysisOCRAssistServiceTypes:                row.PhotoAnalysisOcrAssistServiceTypes,
+		PhotoAnalysisLensCorrectionEnabled:                row.PhotoAnalysisLensCorrectionEnabled,
+		PhotoAnalysisLensCorrectionServiceTypes:           row.PhotoAnalysisLensCorrectionServiceTypes,
+		PhotoAnalysisPerspectiveNormalizationEnabled:      row.PhotoAnalysisPerspectiveNormalizationEnabled,
+		PhotoAnalysisPerspectiveNormalizationServiceTypes: row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
+		NotificationEmail:                                 row.NotificationEmail,
+		WhatsAppDeviceID:                                  row.WhatsappDeviceID,
+		WhatsAppWelcomeDelayMinutes:                       row.WhatsappWelcomeDelayMinutes,
+		SMTPHost:                                          row.SmtpHost,
+		SMTPPort:                                          row.SmtpPort,
+		SMTPUsername:                                      row.SmtpUsername,
+		SMTPPassword:                                      row.SmtpPassword,
+		SMTPFromEmail:                                     row.SmtpFromEmail,
+		SMTPFromName:                                      row.SmtpFromName,
+		CreatedAt:                                         row.CreatedAt,
+		UpdatedAt:                                         row.UpdatedAt,
 	}), nil
 }
 
 func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizationID uuid.UUID, update OrganizationSettingsUpdate) (OrganizationSettings, error) {
 	row, err := r.queries.UpsertOrganizationSettings(ctx, identitydb.UpsertOrganizationSettingsParams{
-		OrganizationID:              toPgUUID(organizationID),
-		QuotePaymentDays:            toPgInt4Ptr(update.QuotePaymentDays),
-		QuoteValidDays:              toPgInt4Ptr(update.QuoteValidDays),
-		AiAutoDisqualifyJunk:        toPgBoolPtr(update.AIAutoDisqualifyJunk),
-		AiAutoDispatch:              toPgBoolPtr(update.AIAutoDispatch),
-		AiAutoEstimate:              toPgBoolPtr(update.AIAutoEstimate),
-		AiConfidenceGateEnabled:     toPgBoolPtr(update.AIConfidenceGateEnabled),
-		AiAdaptiveReasoningEnabled:  toPgBoolPtr(update.AIAdaptiveReasoningEnabled),
-		AiExperienceMemoryEnabled:   toPgBoolPtr(update.AIExperienceMemoryEnabled),
-		AiCouncilEnabled:            toPgBoolPtr(update.AICouncilEnabled),
-		AiCouncilConsensusMode:      toPgTextPtr(update.AICouncilConsensusMode),
-		CatalogGapThreshold:         toPgInt4Ptr(update.CatalogGapThreshold),
-		CatalogGapLookbackDays:      toPgInt4Ptr(update.CatalogGapLookbackDays),
-		NotificationEmail:           toPgTextPtr(update.NotificationEmail),
-		WhatsappDeviceID:            toPgTextPtr(update.WhatsAppDeviceID),
-		WhatsappWelcomeDelayMinutes: toPgInt4Ptr(update.WhatsAppWelcomeDelayMinutes),
+		OrganizationID:                                    toPgUUID(organizationID),
+		QuotePaymentDays:                                  toPgInt4Ptr(update.QuotePaymentDays),
+		QuoteValidDays:                                    toPgInt4Ptr(update.QuoteValidDays),
+		AiAutoDisqualifyJunk:                              toPgBoolPtr(update.AIAutoDisqualifyJunk),
+		AiAutoDispatch:                                    toPgBoolPtr(update.AIAutoDispatch),
+		AiAutoEstimate:                                    toPgBoolPtr(update.AIAutoEstimate),
+		AiConfidenceGateEnabled:                           toPgBoolPtr(update.AIConfidenceGateEnabled),
+		AiAdaptiveReasoningEnabled:                        toPgBoolPtr(update.AIAdaptiveReasoningEnabled),
+		AiExperienceMemoryEnabled:                         toPgBoolPtr(update.AIExperienceMemoryEnabled),
+		AiCouncilEnabled:                                  toPgBoolPtr(update.AICouncilEnabled),
+		AiCouncilConsensusMode:                            toPgTextPtr(update.AICouncilConsensusMode),
+		CatalogGapThreshold:                               toPgInt4Ptr(update.CatalogGapThreshold),
+		CatalogGapLookbackDays:                            toPgInt4Ptr(update.CatalogGapLookbackDays),
+		PhotoAnalysisPreprocessingEnabled:                 toPgBoolPtr(update.PhotoAnalysisPreprocessingEnabled),
+		PhotoAnalysisOcrAssistEnabled:                     toPgBoolPtr(update.PhotoAnalysisOCRAssistEnabled),
+		PhotoAnalysisOcrAssistServiceTypes:                toStringSlice(update.PhotoAnalysisOCRAssistServiceTypes),
+		PhotoAnalysisLensCorrectionEnabled:                toPgBoolPtr(update.PhotoAnalysisLensCorrectionEnabled),
+		PhotoAnalysisLensCorrectionServiceTypes:           toStringSlice(update.PhotoAnalysisLensCorrectionServiceTypes),
+		PhotoAnalysisPerspectiveNormalizationEnabled:      toPgBoolPtr(update.PhotoAnalysisPerspectiveNormalizationEnabled),
+		PhotoAnalysisPerspectiveNormalizationServiceTypes: toStringSlice(update.PhotoAnalysisPerspectiveNormalizationServiceTypes),
+		NotificationEmail:                                 toPgTextPtr(update.NotificationEmail),
+		WhatsappDeviceID:                                  toPgTextPtr(update.WhatsAppDeviceID),
+		WhatsappWelcomeDelayMinutes:                       toPgInt4Ptr(update.WhatsAppWelcomeDelayMinutes),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrganizationSettings{}, ErrNotFound
@@ -434,30 +477,37 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		return OrganizationSettings{}, err
 	}
 	return organizationSettingsFromSnapshot(settingsSnapshot{
-		OrganizationID:              row.OrganizationID,
-		QuotePaymentDays:            row.QuotePaymentDays,
-		QuoteValidDays:              row.QuoteValidDays,
-		AIAutoDisqualifyJunk:        row.AiAutoDisqualifyJunk,
-		AIAutoDispatch:              row.AiAutoDispatch,
-		AIAutoEstimate:              row.AiAutoEstimate,
-		AIConfidenceGateEnabled:     row.AiConfidenceGateEnabled,
-		AIAdaptiveReasoningEnabled:  row.AiAdaptiveReasoningEnabled,
-		AIExperienceMemoryEnabled:   row.AiExperienceMemoryEnabled,
-		AICouncilEnabled:            row.AiCouncilEnabled,
-		AICouncilConsensusMode:      row.AiCouncilConsensusMode,
-		CatalogGapThreshold:         row.CatalogGapThreshold,
-		CatalogGapLookbackDays:      row.CatalogGapLookbackDays,
-		NotificationEmail:           row.NotificationEmail,
-		WhatsAppDeviceID:            row.WhatsappDeviceID,
-		WhatsAppWelcomeDelayMinutes: row.WhatsappWelcomeDelayMinutes,
-		SMTPHost:                    row.SmtpHost,
-		SMTPPort:                    row.SmtpPort,
-		SMTPUsername:                row.SmtpUsername,
-		SMTPPassword:                row.SmtpPassword,
-		SMTPFromEmail:               row.SmtpFromEmail,
-		SMTPFromName:                row.SmtpFromName,
-		CreatedAt:                   row.CreatedAt,
-		UpdatedAt:                   row.UpdatedAt,
+		OrganizationID:                                    row.OrganizationID,
+		QuotePaymentDays:                                  row.QuotePaymentDays,
+		QuoteValidDays:                                    row.QuoteValidDays,
+		AIAutoDisqualifyJunk:                              row.AiAutoDisqualifyJunk,
+		AIAutoDispatch:                                    row.AiAutoDispatch,
+		AIAutoEstimate:                                    row.AiAutoEstimate,
+		AIConfidenceGateEnabled:                           row.AiConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:                        row.AiAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:                         row.AiExperienceMemoryEnabled,
+		AICouncilEnabled:                                  row.AiCouncilEnabled,
+		AICouncilConsensusMode:                            row.AiCouncilConsensusMode,
+		CatalogGapThreshold:                               row.CatalogGapThreshold,
+		CatalogGapLookbackDays:                            row.CatalogGapLookbackDays,
+		PhotoAnalysisPreprocessingEnabled:                 row.PhotoAnalysisPreprocessingEnabled,
+		PhotoAnalysisOCRAssistEnabled:                     row.PhotoAnalysisOcrAssistEnabled,
+		PhotoAnalysisOCRAssistServiceTypes:                row.PhotoAnalysisOcrAssistServiceTypes,
+		PhotoAnalysisLensCorrectionEnabled:                row.PhotoAnalysisLensCorrectionEnabled,
+		PhotoAnalysisLensCorrectionServiceTypes:           row.PhotoAnalysisLensCorrectionServiceTypes,
+		PhotoAnalysisPerspectiveNormalizationEnabled:      row.PhotoAnalysisPerspectiveNormalizationEnabled,
+		PhotoAnalysisPerspectiveNormalizationServiceTypes: row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
+		NotificationEmail:                                 row.NotificationEmail,
+		WhatsAppDeviceID:                                  row.WhatsappDeviceID,
+		WhatsAppWelcomeDelayMinutes:                       row.WhatsappWelcomeDelayMinutes,
+		SMTPHost:                                          row.SmtpHost,
+		SMTPPort:                                          row.SmtpPort,
+		SMTPUsername:                                      row.SmtpUsername,
+		SMTPPassword:                                      row.SmtpPassword,
+		SMTPFromEmail:                                     row.SmtpFromEmail,
+		SMTPFromName:                                      row.SmtpFromName,
+		CreatedAt:                                         row.CreatedAt,
+		UpdatedAt:                                         row.UpdatedAt,
 	}), nil
 }
 
@@ -478,30 +528,37 @@ func (r *Repository) UpsertOrganizationSMTP(ctx context.Context, organizationID 
 		return OrganizationSettings{}, err
 	}
 	return organizationSettingsFromSnapshot(settingsSnapshot{
-		OrganizationID:              row.OrganizationID,
-		QuotePaymentDays:            row.QuotePaymentDays,
-		QuoteValidDays:              row.QuoteValidDays,
-		AIAutoDisqualifyJunk:        row.AiAutoDisqualifyJunk,
-		AIAutoDispatch:              row.AiAutoDispatch,
-		AIAutoEstimate:              row.AiAutoEstimate,
-		AIConfidenceGateEnabled:     row.AiConfidenceGateEnabled,
-		AIAdaptiveReasoningEnabled:  row.AiAdaptiveReasoningEnabled,
-		AIExperienceMemoryEnabled:   row.AiExperienceMemoryEnabled,
-		AICouncilEnabled:            row.AiCouncilEnabled,
-		AICouncilConsensusMode:      row.AiCouncilConsensusMode,
-		CatalogGapThreshold:         row.CatalogGapThreshold,
-		CatalogGapLookbackDays:      row.CatalogGapLookbackDays,
-		NotificationEmail:           row.NotificationEmail,
-		WhatsAppDeviceID:            row.WhatsappDeviceID,
-		WhatsAppWelcomeDelayMinutes: row.WhatsappWelcomeDelayMinutes,
-		SMTPHost:                    row.SmtpHost,
-		SMTPPort:                    row.SmtpPort,
-		SMTPUsername:                row.SmtpUsername,
-		SMTPPassword:                row.SmtpPassword,
-		SMTPFromEmail:               row.SmtpFromEmail,
-		SMTPFromName:                row.SmtpFromName,
-		CreatedAt:                   row.CreatedAt,
-		UpdatedAt:                   row.UpdatedAt,
+		OrganizationID:                                    row.OrganizationID,
+		QuotePaymentDays:                                  row.QuotePaymentDays,
+		QuoteValidDays:                                    row.QuoteValidDays,
+		AIAutoDisqualifyJunk:                              row.AiAutoDisqualifyJunk,
+		AIAutoDispatch:                                    row.AiAutoDispatch,
+		AIAutoEstimate:                                    row.AiAutoEstimate,
+		AIConfidenceGateEnabled:                           row.AiConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:                        row.AiAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:                         row.AiExperienceMemoryEnabled,
+		AICouncilEnabled:                                  row.AiCouncilEnabled,
+		AICouncilConsensusMode:                            row.AiCouncilConsensusMode,
+		CatalogGapThreshold:                               row.CatalogGapThreshold,
+		CatalogGapLookbackDays:                            row.CatalogGapLookbackDays,
+		PhotoAnalysisPreprocessingEnabled:                 row.PhotoAnalysisPreprocessingEnabled,
+		PhotoAnalysisOCRAssistEnabled:                     row.PhotoAnalysisOcrAssistEnabled,
+		PhotoAnalysisOCRAssistServiceTypes:                row.PhotoAnalysisOcrAssistServiceTypes,
+		PhotoAnalysisLensCorrectionEnabled:                row.PhotoAnalysisLensCorrectionEnabled,
+		PhotoAnalysisLensCorrectionServiceTypes:           row.PhotoAnalysisLensCorrectionServiceTypes,
+		PhotoAnalysisPerspectiveNormalizationEnabled:      row.PhotoAnalysisPerspectiveNormalizationEnabled,
+		PhotoAnalysisPerspectiveNormalizationServiceTypes: row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
+		NotificationEmail:                                 row.NotificationEmail,
+		WhatsAppDeviceID:                                  row.WhatsappDeviceID,
+		WhatsAppWelcomeDelayMinutes:                       row.WhatsappWelcomeDelayMinutes,
+		SMTPHost:                                          row.SmtpHost,
+		SMTPPort:                                          row.SmtpPort,
+		SMTPUsername:                                      row.SmtpUsername,
+		SMTPPassword:                                      row.SmtpPassword,
+		SMTPFromEmail:                                     row.SmtpFromEmail,
+		SMTPFromName:                                      row.SmtpFromName,
+		CreatedAt:                                         row.CreatedAt,
+		UpdatedAt:                                         row.UpdatedAt,
 	}), nil
 }
 
@@ -627,30 +684,37 @@ func organizationFromSnapshot(snapshot organizationSnapshot) Organization {
 
 func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSettings {
 	return OrganizationSettings{
-		OrganizationID:              uuidFromPg(snapshot.OrganizationID),
-		QuotePaymentDays:            int(snapshot.QuotePaymentDays),
-		QuoteValidDays:              int(snapshot.QuoteValidDays),
-		AIAutoDisqualifyJunk:        snapshot.AIAutoDisqualifyJunk,
-		AIAutoDispatch:              snapshot.AIAutoDispatch,
-		AIAutoEstimate:              snapshot.AIAutoEstimate,
-		AIConfidenceGateEnabled:     snapshot.AIConfidenceGateEnabled,
-		AIAdaptiveReasoningEnabled:  snapshot.AIAdaptiveReasoningEnabled,
-		AIExperienceMemoryEnabled:   snapshot.AIExperienceMemoryEnabled,
-		AICouncilEnabled:            snapshot.AICouncilEnabled,
-		AICouncilConsensusMode:      snapshot.AICouncilConsensusMode,
-		CatalogGapThreshold:         int(snapshot.CatalogGapThreshold),
-		CatalogGapLookbackDays:      int(snapshot.CatalogGapLookbackDays),
-		NotificationEmail:           optionalString(snapshot.NotificationEmail),
-		WhatsAppDeviceID:            optionalString(snapshot.WhatsAppDeviceID),
-		WhatsAppWelcomeDelayMinutes: int(snapshot.WhatsAppWelcomeDelayMinutes),
-		SMTPHost:                    optionalString(snapshot.SMTPHost),
-		SMTPPort:                    optionalInt(snapshot.SMTPPort),
-		SMTPUsername:                optionalString(snapshot.SMTPUsername),
-		SMTPPassword:                optionalString(snapshot.SMTPPassword),
-		SMTPFromEmail:               optionalString(snapshot.SMTPFromEmail),
-		SMTPFromName:                optionalString(snapshot.SMTPFromName),
-		CreatedAt:                   timeFromPg(snapshot.CreatedAt),
-		UpdatedAt:                   timeFromPg(snapshot.UpdatedAt),
+		OrganizationID:                                    uuidFromPg(snapshot.OrganizationID),
+		QuotePaymentDays:                                  int(snapshot.QuotePaymentDays),
+		QuoteValidDays:                                    int(snapshot.QuoteValidDays),
+		AIAutoDisqualifyJunk:                              snapshot.AIAutoDisqualifyJunk,
+		AIAutoDispatch:                                    snapshot.AIAutoDispatch,
+		AIAutoEstimate:                                    snapshot.AIAutoEstimate,
+		AIConfidenceGateEnabled:                           snapshot.AIConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:                        snapshot.AIAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:                         snapshot.AIExperienceMemoryEnabled,
+		AICouncilEnabled:                                  snapshot.AICouncilEnabled,
+		AICouncilConsensusMode:                            snapshot.AICouncilConsensusMode,
+		CatalogGapThreshold:                               int(snapshot.CatalogGapThreshold),
+		CatalogGapLookbackDays:                            int(snapshot.CatalogGapLookbackDays),
+		PhotoAnalysisPreprocessingEnabled:                 snapshot.PhotoAnalysisPreprocessingEnabled,
+		PhotoAnalysisOCRAssistEnabled:                     snapshot.PhotoAnalysisOCRAssistEnabled,
+		PhotoAnalysisOCRAssistServiceTypes:                cloneStrings(snapshot.PhotoAnalysisOCRAssistServiceTypes),
+		PhotoAnalysisLensCorrectionEnabled:                snapshot.PhotoAnalysisLensCorrectionEnabled,
+		PhotoAnalysisLensCorrectionServiceTypes:           cloneStrings(snapshot.PhotoAnalysisLensCorrectionServiceTypes),
+		PhotoAnalysisPerspectiveNormalizationEnabled:      snapshot.PhotoAnalysisPerspectiveNormalizationEnabled,
+		PhotoAnalysisPerspectiveNormalizationServiceTypes: cloneStrings(snapshot.PhotoAnalysisPerspectiveNormalizationServiceTypes),
+		NotificationEmail:                                 optionalString(snapshot.NotificationEmail),
+		WhatsAppDeviceID:                                  optionalString(snapshot.WhatsAppDeviceID),
+		WhatsAppWelcomeDelayMinutes:                       int(snapshot.WhatsAppWelcomeDelayMinutes),
+		SMTPHost:                                          optionalString(snapshot.SMTPHost),
+		SMTPPort:                                          optionalInt(snapshot.SMTPPort),
+		SMTPUsername:                                      optionalString(snapshot.SMTPUsername),
+		SMTPPassword:                                      optionalString(snapshot.SMTPPassword),
+		SMTPFromEmail:                                     optionalString(snapshot.SMTPFromEmail),
+		SMTPFromName:                                      optionalString(snapshot.SMTPFromName),
+		CreatedAt:                                         timeFromPg(snapshot.CreatedAt),
+		UpdatedAt:                                         timeFromPg(snapshot.UpdatedAt),
 	}
 }
 
@@ -760,6 +824,39 @@ func optionalInt64(value pgtype.Int8) *int64 {
 	}
 	v := value.Int64
 	return &v
+}
+
+func toStringSlice(values *[]string) []string {
+	if values == nil {
+		return nil
+	}
+	return cleanStrings(*values)
+}
+
+func cleanStrings(values []string) []string {
+	cleaned := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		cleaned = append(cleaned, trimmed)
+	}
+	return cleaned
+}
+
+func cloneStrings(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
 }
 
 func optionalTime(value pgtype.Timestamptz) *time.Time {

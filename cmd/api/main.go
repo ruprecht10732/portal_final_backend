@@ -283,16 +283,23 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 			return leadsports.OrganizationAISettings{}, err
 		}
 		return leadsports.OrganizationAISettings{
-			AIAutoDisqualifyJunk:    settings.AIAutoDisqualifyJunk,
-			AIAutoDispatch:          settings.AIAutoDispatch,
-			AIAutoEstimate:          settings.AIAutoEstimate,
-			AIConfidenceGateEnabled: settings.AIConfidenceGateEnabled,
-			AIAdaptiveReasoning:     settings.AIAdaptiveReasoningEnabled,
-			AIExperienceMemory:      settings.AIExperienceMemoryEnabled,
-			AICouncilMode:           settings.AICouncilEnabled,
-			AICouncilConsensusMode:  settings.AICouncilConsensusMode,
-			CatalogGapThreshold:     settings.CatalogGapThreshold,
-			CatalogGapLookbackDays:  settings.CatalogGapLookbackDays,
+			AIAutoDisqualifyJunk:                              settings.AIAutoDisqualifyJunk,
+			AIAutoDispatch:                                    settings.AIAutoDispatch,
+			AIAutoEstimate:                                    settings.AIAutoEstimate,
+			AIConfidenceGateEnabled:                           settings.AIConfidenceGateEnabled,
+			AIAdaptiveReasoning:                               settings.AIAdaptiveReasoningEnabled,
+			AIExperienceMemory:                                settings.AIExperienceMemoryEnabled,
+			AICouncilMode:                                     settings.AICouncilEnabled,
+			AICouncilConsensusMode:                            settings.AICouncilConsensusMode,
+			CatalogGapThreshold:                               settings.CatalogGapThreshold,
+			CatalogGapLookbackDays:                            settings.CatalogGapLookbackDays,
+			PhotoAnalysisPreprocessingEnabled:                 settings.PhotoAnalysisPreprocessingEnabled,
+			PhotoAnalysisOCRAssistEnabled:                     settings.PhotoAnalysisOCRAssistEnabled,
+			PhotoAnalysisOCRAssistServiceTypes:                settings.PhotoAnalysisOCRAssistServiceTypes,
+			PhotoAnalysisLensCorrectionEnabled:                settings.PhotoAnalysisLensCorrectionEnabled,
+			PhotoAnalysisLensCorrectionServiceTypes:           settings.PhotoAnalysisLensCorrectionServiceTypes,
+			PhotoAnalysisPerspectiveNormalizationEnabled:      settings.PhotoAnalysisPerspectiveNormalizationEnabled,
+			PhotoAnalysisPerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		}, nil
 	})
 	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())

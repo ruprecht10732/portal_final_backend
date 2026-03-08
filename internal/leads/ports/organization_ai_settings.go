@@ -12,31 +12,45 @@ import (
 // These settings are persisted in the identity bounded context
 // (RAC_organization_settings) but are consumed by other domains.
 type OrganizationAISettings struct {
-	AIAutoDisqualifyJunk    bool
-	AIAutoDispatch          bool
-	AIAutoEstimate          bool
-	AIConfidenceGateEnabled bool
-	AIAdaptiveReasoning     bool
-	AIExperienceMemory      bool
-	AICouncilMode           bool
-	AICouncilConsensusMode  string
-	CatalogGapThreshold     int
-	CatalogGapLookbackDays  int
+	AIAutoDisqualifyJunk                              bool
+	AIAutoDispatch                                    bool
+	AIAutoEstimate                                    bool
+	AIConfidenceGateEnabled                           bool
+	AIAdaptiveReasoning                               bool
+	AIExperienceMemory                                bool
+	AICouncilMode                                     bool
+	AICouncilConsensusMode                            string
+	CatalogGapThreshold                               int
+	CatalogGapLookbackDays                            int
+	PhotoAnalysisPreprocessingEnabled                 bool
+	PhotoAnalysisOCRAssistEnabled                     bool
+	PhotoAnalysisOCRAssistServiceTypes                []string
+	PhotoAnalysisLensCorrectionEnabled                bool
+	PhotoAnalysisLensCorrectionServiceTypes           []string
+	PhotoAnalysisPerspectiveNormalizationEnabled      bool
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
 }
 
 // DefaultOrganizationAISettings must match the identity repository defaults.
 func DefaultOrganizationAISettings() OrganizationAISettings {
 	return OrganizationAISettings{
-		AIAutoDisqualifyJunk:    true,
-		AIAutoDispatch:          false,
-		AIAutoEstimate:          true,
-		AIConfidenceGateEnabled: false,
-		AIAdaptiveReasoning:     true,
-		AIExperienceMemory:      true,
-		AICouncilMode:           true,
-		AICouncilConsensusMode:  "weighted",
-		CatalogGapThreshold:     3,
-		CatalogGapLookbackDays:  30,
+		AIAutoDisqualifyJunk:                              true,
+		AIAutoDispatch:                                    false,
+		AIAutoEstimate:                                    true,
+		AIConfidenceGateEnabled:                           false,
+		AIAdaptiveReasoning:                               true,
+		AIExperienceMemory:                                true,
+		AICouncilMode:                                     true,
+		AICouncilConsensusMode:                            "weighted",
+		CatalogGapThreshold:                               3,
+		CatalogGapLookbackDays:                            30,
+		PhotoAnalysisPreprocessingEnabled:                 true,
+		PhotoAnalysisOCRAssistEnabled:                     false,
+		PhotoAnalysisOCRAssistServiceTypes:                []string{},
+		PhotoAnalysisLensCorrectionEnabled:                false,
+		PhotoAnalysisLensCorrectionServiceTypes:           []string{},
+		PhotoAnalysisPerspectiveNormalizationEnabled:      false,
+		PhotoAnalysisPerspectiveNormalizationServiceTypes: []string{},
 	}
 }
 

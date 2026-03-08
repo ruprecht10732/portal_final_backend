@@ -205,23 +205,43 @@ type PhotoAnalysisRequest struct {
 	ServiceID          uuid.UUID
 	TenantID           uuid.UUID
 	Images             []ImageData
+	PreparedImages     []PreparedImage
 	ContextInfo        string
 	ServiceType        string
 	IntakeRequirements string
 }
 
 func buildUserContent(req PhotoAnalysisRequest) *genai.Content {
-	parts := make([]*genai.Part, 0, len(req.Images)+1)
-	for _, img := range req.Images {
-		parts = append(parts, &genai.Part{
-			InlineData: &genai.Blob{
-				MIMEType: img.MIMEType,
-				Data:     img.Data,
-			},
-		})
+	parts := make([]*genai.Part, 0, len(req.Images)+len(req.PreparedImages)+1)
+	if len(req.PreparedImages) > 0 {
+		for _, prepared := range req.PreparedImages {
+			parts = append(parts, &genai.Part{
+				InlineData: &genai.Blob{
+					MIMEType: prepared.Original.MIMEType,
+					Data:     prepared.Original.Data,
+				},
+			})
+			for _, variant := range prepared.Variants {
+				parts = append(parts, &genai.Part{
+					InlineData: &genai.Blob{
+						MIMEType: variant.MIMEType,
+						Data:     variant.Data,
+					},
+				})
+			}
+		}
+	} else {
+		for _, img := range req.Images {
+			parts = append(parts, &genai.Part{
+				InlineData: &genai.Blob{
+					MIMEType: img.MIMEType,
+					Data:     img.Data,
+				},
+			})
+		}
 	}
 
-	prompt := buildPhotoAnalysisPrompt(req.LeadID, req.ServiceID, len(req.Images), req.ContextInfo, req.ServiceType, req.IntakeRequirements)
+	prompt := buildPhotoAnalysisPrompt(req.LeadID, req.ServiceID, len(req.Images), req.ContextInfo, req.ServiceType, req.IntakeRequirements, req.PreparedImages)
 	parts = append(parts, genai.NewPartFromText(prompt))
 
 	return &genai.Content{
@@ -516,12 +536,19 @@ func normalizeMeasurementType(t string) string {
 	}
 }
 
-func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string, serviceType string, intakeRequirements string) string {
+func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string, serviceType string, intakeRequirements string, preparedImages []PreparedImage) string {
 	prompt := fmt.Sprintf(`Analyseer de %d foto('s) voor deze thuisdienst aanvraag.
 
 Lead ID: %s
 Service ID: %s
 `, photoCount, leadID.String(), serviceID.String())
+
+	if preprocessingSummary := buildPreprocessingPromptSection(preparedImages); preprocessingSummary != "" {
+		prompt += fmt.Sprintf(`
+## PREPROCESSING CONTEXT
+%s
+`, preprocessingSummary)
+	}
 
 	if serviceType != "" {
 		prompt += fmt.Sprintf(`
@@ -529,7 +556,7 @@ Service ID: %s
 Pas je analyse aan voor dit specifieke vakgebied. Gebruik je vakkennis over '%s' om:
 - Specifieke materialen, componenten en systemen te herkennen
 - Relevante Nederlandse bouwstandaarden en -normen toe te passen (NEN, KOMO, BRL, etc.)
-- Typische afmetingen in te schatten op basis van standaardmaten voor dit type werk
+- Standaard componenten en configuraties te herkennen zonder speculatieve absolute maatinschattingen
 - Productzoektermen te suggereren die de Schatter kan gebruiken om materialen te vinden
 - Controleer eerst of de foto's inhoudelijk matchen met dit diensttype. Bij mismatch: zet confidence op Low, benoem de mismatch expliciet in summary én discrepancies, en vermijd speculatieve aannames.
 `, serviceType, serviceType)
@@ -566,15 +593,19 @@ Als een claim niet klopt met de visuele bewijzen, voeg het toe aan discrepancies
 - Veiligheidszorgen die aangepakt moeten worden
 
 ### 2. METINGEN (CRUCIAAL)
-Schat afmetingen, oppervlaktes en aantallen uit elke foto:
-- Gebruik referentie-objecten (deuren ~2.1m, stopcontacten ~30cm, standaard tegels, etc.)
-- Gebruik de Calculator tool voor berekeningen (oppervlakte = lengte × breedte)
-- Noteer elke meting met type (dimension/area/count/volume), waarde, eenheid en confidence
+Gebruik foto's NIET als betrouwbare bron voor absolute meters, vierkante meters of volumes wanneer die niet expliciet zichtbaar of gelabeld zijn:
+- Identificeer standaard componenten of configuraties, bijvoorbeeld enkel deurblad, dubbel glas, radiatorpaneel, groepenkast met meerdere groepen.
+- Tel alleen aantallen die visueel ondubbelzinnig zichtbaar zijn.
+- Leg alleen metingen vast als de waarde direct zichtbaar is op het product, op verpakking, via OCR, of anders expliciet in beeld staat.
+- Gebruik Calculator alleen voor afgeleide berekeningen op basis van expliciet zichtbare of gelabelde waarden, niet op basis van gegokte referentie-objecten.
+- Noteer elke meting met type (dimension/area/count/volume), waarde, eenheid en confidence.
 - ANTIFOUT-REGEL: Het is beter om FlagOnsiteMeasurement aan te roepen dan een onjuiste meting te geven.
-- Als je confidence niet "High" kan zijn (door onscherpte/hoek/geen referentie), roep FlagOnsiteMeasurement aan met de reden.
+- Als exacte maatvoering nodig is voor prijsbepaling of je confidence niet "High" kan zijn (door hoek, perspectief, lensvervorming, onscherpte of ontbrekende schaal), roep FlagOnsiteMeasurement aan met de reden.
+- Gebruik geen speculatieve referentie-objecten zoals deuren, stopcontacten of tegels om absolute afmetingen af te leiden.
 
 ### 3. TEKST EXTRACTIE (OCR)
 Lees alle zichtbare tekst op foto's:
+- Gebruik eventuele OCR assist candidates uit preprocessing als machine-read startpunt en verifieer ze tegen het beeld.
 - Merknamen, modelnummers, serienummers
 - Energielabels, typeplaten, CE-markeringen
 - Afmetingen op verpakkingen of producten
@@ -599,6 +630,54 @@ Gebruik Calculator voor berekeningen en FlagOnsiteMeasurement voor metingen die 
 	return prompt
 }
 
+func buildPreprocessingPromptSection(preparedImages []PreparedImage) string {
+	if len(preparedImages) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	for index, prepared := range preparedImages {
+		appendPreparedImagePromptSummary(&sb, index, prepared)
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func appendPreparedImagePromptSummary(sb *strings.Builder, index int, prepared PreparedImage) {
+	appendPreparedImageMetadataLine(sb, index, prepared.Metadata)
+	appendPreparedImageOCRCandidates(sb, prepared.OCRCandidates)
+}
+
+func appendPreparedImageMetadataLine(sb *strings.Builder, index int, metadata PreprocessingMetadata) {
+	filename := metadata.Filename
+	if strings.TrimSpace(filename) == "" {
+		filename = fmt.Sprintf("photo-%d", index+1)
+	}
+	sb.WriteString(fmt.Sprintf("- Foto %d (%s): %dx%d", index+1, filename, metadata.Width, metadata.Height))
+	if metadata.CameraMake != "" || metadata.CameraModel != "" {
+		sb.WriteString(fmt.Sprintf(", camera=%s %s", metadata.CameraMake, metadata.CameraModel))
+	}
+	if metadata.FocalLengthMM != "" {
+		sb.WriteString(fmt.Sprintf(", focal=%s", metadata.FocalLengthMM))
+	}
+	if len(metadata.AppliedTransforms) > 0 {
+		sb.WriteString(fmt.Sprintf(", transforms=%s", strings.Join(metadata.AppliedTransforms, ", ")))
+	}
+	if len(metadata.SkippedTransforms) > 0 {
+		sb.WriteString(fmt.Sprintf(", skipped=%s", strings.Join(metadata.SkippedTransforms, ", ")))
+	}
+	sb.WriteString("\n")
+}
+
+func appendPreparedImageOCRCandidates(sb *strings.Builder, candidates []OCRCandidate) {
+	for _, candidate := range candidates {
+		sb.WriteString(fmt.Sprintf("  OCR assist candidate: %s", candidate.Text))
+		if candidate.Source != "" {
+			sb.WriteString(fmt.Sprintf(" [source=%s]", candidate.Source))
+		}
+		sb.WriteString("\n")
+	}
+}
+
 func getPhotoAnalyzerPrompt() string {
 	return `Je bent een forensisch foto-analist voor een Nederlandse thuisdiensten-marktplaats.
 
@@ -606,14 +685,18 @@ Doel:
 - Haal uit foto's alles wat relevant is voor prijsschatting en kwaliteitsbeoordeling.
 
 Kernregels:
-- Schat maten/aantallen met referentie-objecten en gebruik Calculator voor ALLE berekeningen.
+- Gebruik foto's primair voor componentherkenning, zichtbare aantallen, OCR en discrepantiecontrole.
+- Gebruik OCR assist candidates uit preprocessing als extra machine-read bewijs, maar verifieer ze altijd tegen het beeld.
+- Behandel normale 2D foto's NIET als betrouwbare bron voor absolute maatvoering; perspectief, lensvervorming en camerahoek maken dat onbetrouwbaar.
+- Leg alleen metingen vast als de waarde expliciet zichtbaar, gelabeld of via OCR verifieerbaar is.
+- Gebruik Calculator alleen voor berekeningen op basis van expliciete, visueel verifieerbare waarden.
 - Lees zichtbare tekst (OCR): merken, modellen, typeplaten, labels, CE-markeringen.
 - Vergelijk claims met visueel bewijs en rapporteer tegenstrijdigheden.
 - Identificeer materialen/componenten en voorstelbare productzoektermen.
 - Geef confidence: High / Medium / Low.
 - Als foto's niet bij het diensttype passen: confidence = Low, noem dit expliciet in summary en discrepancies.
 - ANTIFOUT-REGEL: liever FlagOnsiteMeasurement dan gokken.
-- Als een meting niet betrouwbaar uit de foto kan of confidence niet "High" is: roep FlagOnsiteMeasurement aan met uitleg.
+- Als exacte maatvoering nodig is of een meting niet betrouwbaar uit de foto kan of confidence niet "High" is: roep FlagOnsiteMeasurement aan met uitleg.
 
 Veiligheid:
 - Markeer elektrische gevaren, water+elektra risico, constructieve schade, schimmel/waterschade, gasrisico's en mogelijke asbest-era materialen.

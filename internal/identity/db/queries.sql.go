@@ -477,6 +477,13 @@ SELECT organization_id, quote_payment_days, quote_valid_days,
        ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
        ai_council_consensus_mode,
        catalog_gap_threshold, catalog_gap_lookback_days,
+  photo_analysis_preprocessing_enabled,
+  photo_analysis_ocr_assist_enabled,
+  photo_analysis_ocr_assist_service_types,
+  photo_analysis_lens_correction_enabled,
+  photo_analysis_lens_correction_service_types,
+  photo_analysis_perspective_normalization_enabled,
+  photo_analysis_perspective_normalization_service_types,
        notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
        smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
        created_at, updated_at
@@ -485,30 +492,37 @@ WHERE organization_id = $1
 `
 
 type GetOrganizationSettingsRow struct {
-	OrganizationID              pgtype.UUID        `json:"organization_id"`
-	QuotePaymentDays            int32              `json:"quote_payment_days"`
-	QuoteValidDays              int32              `json:"quote_valid_days"`
-	AiAutoDisqualifyJunk        bool               `json:"ai_auto_disqualify_junk"`
-	AiAutoDispatch              bool               `json:"ai_auto_dispatch"`
-	AiAutoEstimate              bool               `json:"ai_auto_estimate"`
-	AiConfidenceGateEnabled     bool               `json:"ai_confidence_gate_enabled"`
-	AiAdaptiveReasoningEnabled  bool               `json:"ai_adaptive_reasoning_enabled"`
-	AiExperienceMemoryEnabled   bool               `json:"ai_experience_memory_enabled"`
-	AiCouncilEnabled            bool               `json:"ai_council_enabled"`
-	AiCouncilConsensusMode      string             `json:"ai_council_consensus_mode"`
-	CatalogGapThreshold         int32              `json:"catalog_gap_threshold"`
-	CatalogGapLookbackDays      int32              `json:"catalog_gap_lookback_days"`
-	NotificationEmail           pgtype.Text        `json:"notification_email"`
-	WhatsappDeviceID            pgtype.Text        `json:"whatsapp_device_id"`
-	WhatsappWelcomeDelayMinutes int32              `json:"whatsapp_welcome_delay_minutes"`
-	SmtpHost                    pgtype.Text        `json:"smtp_host"`
-	SmtpPort                    pgtype.Int4        `json:"smtp_port"`
-	SmtpUsername                pgtype.Text        `json:"smtp_username"`
-	SmtpPassword                pgtype.Text        `json:"smtp_password"`
-	SmtpFromEmail               pgtype.Text        `json:"smtp_from_email"`
-	SmtpFromName                pgtype.Text        `json:"smtp_from_name"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID                                    pgtype.UUID        `json:"organization_id"`
+	QuotePaymentDays                                  int32              `json:"quote_payment_days"`
+	QuoteValidDays                                    int32              `json:"quote_valid_days"`
+	AiAutoDisqualifyJunk                              bool               `json:"ai_auto_disqualify_junk"`
+	AiAutoDispatch                                    bool               `json:"ai_auto_dispatch"`
+	AiAutoEstimate                                    bool               `json:"ai_auto_estimate"`
+	AiConfidenceGateEnabled                           bool               `json:"ai_confidence_gate_enabled"`
+	AiAdaptiveReasoningEnabled                        bool               `json:"ai_adaptive_reasoning_enabled"`
+	AiExperienceMemoryEnabled                         bool               `json:"ai_experience_memory_enabled"`
+	AiCouncilEnabled                                  bool               `json:"ai_council_enabled"`
+	AiCouncilConsensusMode                            string             `json:"ai_council_consensus_mode"`
+	CatalogGapThreshold                               int32              `json:"catalog_gap_threshold"`
+	CatalogGapLookbackDays                            int32              `json:"catalog_gap_lookback_days"`
+	PhotoAnalysisPreprocessingEnabled                 bool               `json:"photo_analysis_preprocessing_enabled"`
+	PhotoAnalysisOcrAssistEnabled                     bool               `json:"photo_analysis_ocr_assist_enabled"`
+	PhotoAnalysisOcrAssistServiceTypes                []string           `json:"photo_analysis_ocr_assist_service_types"`
+	PhotoAnalysisLensCorrectionEnabled                bool               `json:"photo_analysis_lens_correction_enabled"`
+	PhotoAnalysisLensCorrectionServiceTypes           []string           `json:"photo_analysis_lens_correction_service_types"`
+	PhotoAnalysisPerspectiveNormalizationEnabled      bool               `json:"photo_analysis_perspective_normalization_enabled"`
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
+	NotificationEmail                                 pgtype.Text        `json:"notification_email"`
+	WhatsappDeviceID                                  pgtype.Text        `json:"whatsapp_device_id"`
+	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
+	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
+	SmtpPort                                          pgtype.Int4        `json:"smtp_port"`
+	SmtpUsername                                      pgtype.Text        `json:"smtp_username"`
+	SmtpPassword                                      pgtype.Text        `json:"smtp_password"`
+	SmtpFromEmail                                     pgtype.Text        `json:"smtp_from_email"`
+	SmtpFromName                                      pgtype.Text        `json:"smtp_from_name"`
+	CreatedAt                                         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                                         pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetOrganizationSettings(ctx context.Context, organizationID pgtype.UUID) (GetOrganizationSettingsRow, error) {
@@ -528,6 +542,13 @@ func (q *Queries) GetOrganizationSettings(ctx context.Context, organizationID pg
 		&i.AiCouncilConsensusMode,
 		&i.CatalogGapThreshold,
 		&i.CatalogGapLookbackDays,
+		&i.PhotoAnalysisPreprocessingEnabled,
+		&i.PhotoAnalysisOcrAssistEnabled,
+		&i.PhotoAnalysisOcrAssistServiceTypes,
+		&i.PhotoAnalysisLensCorrectionEnabled,
+		&i.PhotoAnalysisLensCorrectionServiceTypes,
+		&i.PhotoAnalysisPerspectiveNormalizationEnabled,
+		&i.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&i.NotificationEmail,
 		&i.WhatsappDeviceID,
 		&i.WhatsappWelcomeDelayMinutes,
@@ -1038,6 +1059,13 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
   ai_council_consensus_mode,
   catalog_gap_threshold, catalog_gap_lookback_days,
+  photo_analysis_preprocessing_enabled,
+  photo_analysis_ocr_assist_enabled,
+  photo_analysis_ocr_assist_service_types,
+  photo_analysis_lens_correction_enabled,
+  photo_analysis_lens_correction_service_types,
+  photo_analysis_perspective_normalization_enabled,
+  photo_analysis_perspective_normalization_service_types,
   notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at
@@ -1054,30 +1082,37 @@ type UpsertOrganizationSMTPParams struct {
 }
 
 type UpsertOrganizationSMTPRow struct {
-	OrganizationID              pgtype.UUID        `json:"organization_id"`
-	QuotePaymentDays            int32              `json:"quote_payment_days"`
-	QuoteValidDays              int32              `json:"quote_valid_days"`
-	AiAutoDisqualifyJunk        bool               `json:"ai_auto_disqualify_junk"`
-	AiAutoDispatch              bool               `json:"ai_auto_dispatch"`
-	AiAutoEstimate              bool               `json:"ai_auto_estimate"`
-	AiConfidenceGateEnabled     bool               `json:"ai_confidence_gate_enabled"`
-	AiAdaptiveReasoningEnabled  bool               `json:"ai_adaptive_reasoning_enabled"`
-	AiExperienceMemoryEnabled   bool               `json:"ai_experience_memory_enabled"`
-	AiCouncilEnabled            bool               `json:"ai_council_enabled"`
-	AiCouncilConsensusMode      string             `json:"ai_council_consensus_mode"`
-	CatalogGapThreshold         int32              `json:"catalog_gap_threshold"`
-	CatalogGapLookbackDays      int32              `json:"catalog_gap_lookback_days"`
-	NotificationEmail           pgtype.Text        `json:"notification_email"`
-	WhatsappDeviceID            pgtype.Text        `json:"whatsapp_device_id"`
-	WhatsappWelcomeDelayMinutes int32              `json:"whatsapp_welcome_delay_minutes"`
-	SmtpHost                    pgtype.Text        `json:"smtp_host"`
-	SmtpPort                    pgtype.Int4        `json:"smtp_port"`
-	SmtpUsername                pgtype.Text        `json:"smtp_username"`
-	SmtpPassword                pgtype.Text        `json:"smtp_password"`
-	SmtpFromEmail               pgtype.Text        `json:"smtp_from_email"`
-	SmtpFromName                pgtype.Text        `json:"smtp_from_name"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID                                    pgtype.UUID        `json:"organization_id"`
+	QuotePaymentDays                                  int32              `json:"quote_payment_days"`
+	QuoteValidDays                                    int32              `json:"quote_valid_days"`
+	AiAutoDisqualifyJunk                              bool               `json:"ai_auto_disqualify_junk"`
+	AiAutoDispatch                                    bool               `json:"ai_auto_dispatch"`
+	AiAutoEstimate                                    bool               `json:"ai_auto_estimate"`
+	AiConfidenceGateEnabled                           bool               `json:"ai_confidence_gate_enabled"`
+	AiAdaptiveReasoningEnabled                        bool               `json:"ai_adaptive_reasoning_enabled"`
+	AiExperienceMemoryEnabled                         bool               `json:"ai_experience_memory_enabled"`
+	AiCouncilEnabled                                  bool               `json:"ai_council_enabled"`
+	AiCouncilConsensusMode                            string             `json:"ai_council_consensus_mode"`
+	CatalogGapThreshold                               int32              `json:"catalog_gap_threshold"`
+	CatalogGapLookbackDays                            int32              `json:"catalog_gap_lookback_days"`
+	PhotoAnalysisPreprocessingEnabled                 bool               `json:"photo_analysis_preprocessing_enabled"`
+	PhotoAnalysisOcrAssistEnabled                     bool               `json:"photo_analysis_ocr_assist_enabled"`
+	PhotoAnalysisOcrAssistServiceTypes                []string           `json:"photo_analysis_ocr_assist_service_types"`
+	PhotoAnalysisLensCorrectionEnabled                bool               `json:"photo_analysis_lens_correction_enabled"`
+	PhotoAnalysisLensCorrectionServiceTypes           []string           `json:"photo_analysis_lens_correction_service_types"`
+	PhotoAnalysisPerspectiveNormalizationEnabled      bool               `json:"photo_analysis_perspective_normalization_enabled"`
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
+	NotificationEmail                                 pgtype.Text        `json:"notification_email"`
+	WhatsappDeviceID                                  pgtype.Text        `json:"whatsapp_device_id"`
+	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
+	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
+	SmtpPort                                          pgtype.Int4        `json:"smtp_port"`
+	SmtpUsername                                      pgtype.Text        `json:"smtp_username"`
+	SmtpPassword                                      pgtype.Text        `json:"smtp_password"`
+	SmtpFromEmail                                     pgtype.Text        `json:"smtp_from_email"`
+	SmtpFromName                                      pgtype.Text        `json:"smtp_from_name"`
+	CreatedAt                                         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                                         pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpsertOrganizationSMTP(ctx context.Context, arg UpsertOrganizationSMTPParams) (UpsertOrganizationSMTPRow, error) {
@@ -1105,6 +1140,13 @@ func (q *Queries) UpsertOrganizationSMTP(ctx context.Context, arg UpsertOrganiza
 		&i.AiCouncilConsensusMode,
 		&i.CatalogGapThreshold,
 		&i.CatalogGapLookbackDays,
+		&i.PhotoAnalysisPreprocessingEnabled,
+		&i.PhotoAnalysisOcrAssistEnabled,
+		&i.PhotoAnalysisOcrAssistServiceTypes,
+		&i.PhotoAnalysisLensCorrectionEnabled,
+		&i.PhotoAnalysisLensCorrectionServiceTypes,
+		&i.PhotoAnalysisPerspectiveNormalizationEnabled,
+		&i.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&i.NotificationEmail,
 		&i.WhatsappDeviceID,
 		&i.WhatsappWelcomeDelayMinutes,
@@ -1135,6 +1177,13 @@ INSERT INTO RAC_organization_settings (
   ai_council_consensus_mode,
   catalog_gap_threshold,
   catalog_gap_lookback_days,
+  photo_analysis_preprocessing_enabled,
+  photo_analysis_ocr_assist_enabled,
+  photo_analysis_ocr_assist_service_types,
+  photo_analysis_lens_correction_enabled,
+  photo_analysis_lens_correction_service_types,
+  photo_analysis_perspective_normalization_enabled,
+  photo_analysis_perspective_normalization_service_types,
   notification_email,
   whatsapp_device_id,
   whatsapp_welcome_delay_minutes
@@ -1153,9 +1202,16 @@ VALUES (
   COALESCE(NULLIF($11::text, ''), 'weighted'),
   COALESCE($12::int, 3),
   COALESCE($13::int, 30),
-  NULLIF($14::text, ''),
-  NULLIF($15::text, ''),
-  COALESCE($16::int, 2)
+  COALESCE($14::boolean, true),
+  COALESCE($15::boolean, false),
+  COALESCE($16::text[], '{}'::text[]),
+  COALESCE($17::boolean, false),
+  COALESCE($18::text[], '{}'::text[]),
+  COALESCE($19::boolean, false),
+  COALESCE($20::text[], '{}'::text[]),
+  NULLIF($21::text, ''),
+  NULLIF($22::text, ''),
+  COALESCE($23::int, 2)
 )
 ON CONFLICT (organization_id) DO UPDATE SET
   quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
@@ -1170,64 +1226,92 @@ ON CONFLICT (organization_id) DO UPDATE SET
   ai_council_consensus_mode = COALESCE(NULLIF($11::text, ''), RAC_organization_settings.ai_council_consensus_mode),
   catalog_gap_threshold = COALESCE($12::int, RAC_organization_settings.catalog_gap_threshold),
   catalog_gap_lookback_days = COALESCE($13::int, RAC_organization_settings.catalog_gap_lookback_days),
-  notification_email = CASE WHEN $14::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($14::text, '') END,
-  whatsapp_device_id = CASE WHEN $15::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($15::text, '') END,
-  whatsapp_welcome_delay_minutes = COALESCE($16::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+  photo_analysis_preprocessing_enabled = COALESCE($14::boolean, RAC_organization_settings.photo_analysis_preprocessing_enabled),
+  photo_analysis_ocr_assist_enabled = COALESCE($15::boolean, RAC_organization_settings.photo_analysis_ocr_assist_enabled),
+  photo_analysis_ocr_assist_service_types = COALESCE($16::text[], RAC_organization_settings.photo_analysis_ocr_assist_service_types),
+  photo_analysis_lens_correction_enabled = COALESCE($17::boolean, RAC_organization_settings.photo_analysis_lens_correction_enabled),
+  photo_analysis_lens_correction_service_types = COALESCE($18::text[], RAC_organization_settings.photo_analysis_lens_correction_service_types),
+  photo_analysis_perspective_normalization_enabled = COALESCE($19::boolean, RAC_organization_settings.photo_analysis_perspective_normalization_enabled),
+  photo_analysis_perspective_normalization_service_types = COALESCE($20::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
+  notification_email = CASE WHEN $21::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($21::text, '') END,
+  whatsapp_device_id = CASE WHEN $22::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($22::text, '') END,
+  whatsapp_welcome_delay_minutes = COALESCE($23::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
   updated_at = now()
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
   ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
   ai_council_consensus_mode,
   catalog_gap_threshold, catalog_gap_lookback_days,
+  photo_analysis_preprocessing_enabled,
+  photo_analysis_ocr_assist_enabled,
+  photo_analysis_ocr_assist_service_types,
+  photo_analysis_lens_correction_enabled,
+  photo_analysis_lens_correction_service_types,
+  photo_analysis_perspective_normalization_enabled,
+  photo_analysis_perspective_normalization_service_types,
   notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at
 `
 
 type UpsertOrganizationSettingsParams struct {
-	OrganizationID              pgtype.UUID `json:"organization_id"`
-	QuotePaymentDays            pgtype.Int4 `json:"quote_payment_days"`
-	QuoteValidDays              pgtype.Int4 `json:"quote_valid_days"`
-	AiAutoDisqualifyJunk        pgtype.Bool `json:"ai_auto_disqualify_junk"`
-	AiAutoDispatch              pgtype.Bool `json:"ai_auto_dispatch"`
-	AiAutoEstimate              pgtype.Bool `json:"ai_auto_estimate"`
-	AiConfidenceGateEnabled     pgtype.Bool `json:"ai_confidence_gate_enabled"`
-	AiAdaptiveReasoningEnabled  pgtype.Bool `json:"ai_adaptive_reasoning_enabled"`
-	AiExperienceMemoryEnabled   pgtype.Bool `json:"ai_experience_memory_enabled"`
-	AiCouncilEnabled            pgtype.Bool `json:"ai_council_enabled"`
-	AiCouncilConsensusMode      pgtype.Text `json:"ai_council_consensus_mode"`
-	CatalogGapThreshold         pgtype.Int4 `json:"catalog_gap_threshold"`
-	CatalogGapLookbackDays      pgtype.Int4 `json:"catalog_gap_lookback_days"`
-	NotificationEmail           pgtype.Text `json:"notification_email"`
-	WhatsappDeviceID            pgtype.Text `json:"whatsapp_device_id"`
-	WhatsappWelcomeDelayMinutes pgtype.Int4 `json:"whatsapp_welcome_delay_minutes"`
+	OrganizationID                                    pgtype.UUID `json:"organization_id"`
+	QuotePaymentDays                                  pgtype.Int4 `json:"quote_payment_days"`
+	QuoteValidDays                                    pgtype.Int4 `json:"quote_valid_days"`
+	AiAutoDisqualifyJunk                              pgtype.Bool `json:"ai_auto_disqualify_junk"`
+	AiAutoDispatch                                    pgtype.Bool `json:"ai_auto_dispatch"`
+	AiAutoEstimate                                    pgtype.Bool `json:"ai_auto_estimate"`
+	AiConfidenceGateEnabled                           pgtype.Bool `json:"ai_confidence_gate_enabled"`
+	AiAdaptiveReasoningEnabled                        pgtype.Bool `json:"ai_adaptive_reasoning_enabled"`
+	AiExperienceMemoryEnabled                         pgtype.Bool `json:"ai_experience_memory_enabled"`
+	AiCouncilEnabled                                  pgtype.Bool `json:"ai_council_enabled"`
+	AiCouncilConsensusMode                            pgtype.Text `json:"ai_council_consensus_mode"`
+	CatalogGapThreshold                               pgtype.Int4 `json:"catalog_gap_threshold"`
+	CatalogGapLookbackDays                            pgtype.Int4 `json:"catalog_gap_lookback_days"`
+	PhotoAnalysisPreprocessingEnabled                 pgtype.Bool `json:"photo_analysis_preprocessing_enabled"`
+	PhotoAnalysisOcrAssistEnabled                     pgtype.Bool `json:"photo_analysis_ocr_assist_enabled"`
+	PhotoAnalysisOcrAssistServiceTypes                []string    `json:"photo_analysis_ocr_assist_service_types"`
+	PhotoAnalysisLensCorrectionEnabled                pgtype.Bool `json:"photo_analysis_lens_correction_enabled"`
+	PhotoAnalysisLensCorrectionServiceTypes           []string    `json:"photo_analysis_lens_correction_service_types"`
+	PhotoAnalysisPerspectiveNormalizationEnabled      pgtype.Bool `json:"photo_analysis_perspective_normalization_enabled"`
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string    `json:"photo_analysis_perspective_normalization_service_types"`
+	NotificationEmail                                 pgtype.Text `json:"notification_email"`
+	WhatsappDeviceID                                  pgtype.Text `json:"whatsapp_device_id"`
+	WhatsappWelcomeDelayMinutes                       pgtype.Int4 `json:"whatsapp_welcome_delay_minutes"`
 }
 
 type UpsertOrganizationSettingsRow struct {
-	OrganizationID              pgtype.UUID        `json:"organization_id"`
-	QuotePaymentDays            int32              `json:"quote_payment_days"`
-	QuoteValidDays              int32              `json:"quote_valid_days"`
-	AiAutoDisqualifyJunk        bool               `json:"ai_auto_disqualify_junk"`
-	AiAutoDispatch              bool               `json:"ai_auto_dispatch"`
-	AiAutoEstimate              bool               `json:"ai_auto_estimate"`
-	AiConfidenceGateEnabled     bool               `json:"ai_confidence_gate_enabled"`
-	AiAdaptiveReasoningEnabled  bool               `json:"ai_adaptive_reasoning_enabled"`
-	AiExperienceMemoryEnabled   bool               `json:"ai_experience_memory_enabled"`
-	AiCouncilEnabled            bool               `json:"ai_council_enabled"`
-	AiCouncilConsensusMode      string             `json:"ai_council_consensus_mode"`
-	CatalogGapThreshold         int32              `json:"catalog_gap_threshold"`
-	CatalogGapLookbackDays      int32              `json:"catalog_gap_lookback_days"`
-	NotificationEmail           pgtype.Text        `json:"notification_email"`
-	WhatsappDeviceID            pgtype.Text        `json:"whatsapp_device_id"`
-	WhatsappWelcomeDelayMinutes int32              `json:"whatsapp_welcome_delay_minutes"`
-	SmtpHost                    pgtype.Text        `json:"smtp_host"`
-	SmtpPort                    pgtype.Int4        `json:"smtp_port"`
-	SmtpUsername                pgtype.Text        `json:"smtp_username"`
-	SmtpPassword                pgtype.Text        `json:"smtp_password"`
-	SmtpFromEmail               pgtype.Text        `json:"smtp_from_email"`
-	SmtpFromName                pgtype.Text        `json:"smtp_from_name"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID                                    pgtype.UUID        `json:"organization_id"`
+	QuotePaymentDays                                  int32              `json:"quote_payment_days"`
+	QuoteValidDays                                    int32              `json:"quote_valid_days"`
+	AiAutoDisqualifyJunk                              bool               `json:"ai_auto_disqualify_junk"`
+	AiAutoDispatch                                    bool               `json:"ai_auto_dispatch"`
+	AiAutoEstimate                                    bool               `json:"ai_auto_estimate"`
+	AiConfidenceGateEnabled                           bool               `json:"ai_confidence_gate_enabled"`
+	AiAdaptiveReasoningEnabled                        bool               `json:"ai_adaptive_reasoning_enabled"`
+	AiExperienceMemoryEnabled                         bool               `json:"ai_experience_memory_enabled"`
+	AiCouncilEnabled                                  bool               `json:"ai_council_enabled"`
+	AiCouncilConsensusMode                            string             `json:"ai_council_consensus_mode"`
+	CatalogGapThreshold                               int32              `json:"catalog_gap_threshold"`
+	CatalogGapLookbackDays                            int32              `json:"catalog_gap_lookback_days"`
+	PhotoAnalysisPreprocessingEnabled                 bool               `json:"photo_analysis_preprocessing_enabled"`
+	PhotoAnalysisOcrAssistEnabled                     bool               `json:"photo_analysis_ocr_assist_enabled"`
+	PhotoAnalysisOcrAssistServiceTypes                []string           `json:"photo_analysis_ocr_assist_service_types"`
+	PhotoAnalysisLensCorrectionEnabled                bool               `json:"photo_analysis_lens_correction_enabled"`
+	PhotoAnalysisLensCorrectionServiceTypes           []string           `json:"photo_analysis_lens_correction_service_types"`
+	PhotoAnalysisPerspectiveNormalizationEnabled      bool               `json:"photo_analysis_perspective_normalization_enabled"`
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
+	NotificationEmail                                 pgtype.Text        `json:"notification_email"`
+	WhatsappDeviceID                                  pgtype.Text        `json:"whatsapp_device_id"`
+	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
+	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
+	SmtpPort                                          pgtype.Int4        `json:"smtp_port"`
+	SmtpUsername                                      pgtype.Text        `json:"smtp_username"`
+	SmtpPassword                                      pgtype.Text        `json:"smtp_password"`
+	SmtpFromEmail                                     pgtype.Text        `json:"smtp_from_email"`
+	SmtpFromName                                      pgtype.Text        `json:"smtp_from_name"`
+	CreatedAt                                         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                                         pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrganizationSettingsParams) (UpsertOrganizationSettingsRow, error) {
@@ -1245,6 +1329,13 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		arg.AiCouncilConsensusMode,
 		arg.CatalogGapThreshold,
 		arg.CatalogGapLookbackDays,
+		arg.PhotoAnalysisPreprocessingEnabled,
+		arg.PhotoAnalysisOcrAssistEnabled,
+		arg.PhotoAnalysisOcrAssistServiceTypes,
+		arg.PhotoAnalysisLensCorrectionEnabled,
+		arg.PhotoAnalysisLensCorrectionServiceTypes,
+		arg.PhotoAnalysisPerspectiveNormalizationEnabled,
+		arg.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		arg.NotificationEmail,
 		arg.WhatsappDeviceID,
 		arg.WhatsappWelcomeDelayMinutes,
@@ -1264,6 +1355,13 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		&i.AiCouncilConsensusMode,
 		&i.CatalogGapThreshold,
 		&i.CatalogGapLookbackDays,
+		&i.PhotoAnalysisPreprocessingEnabled,
+		&i.PhotoAnalysisOcrAssistEnabled,
+		&i.PhotoAnalysisOcrAssistServiceTypes,
+		&i.PhotoAnalysisLensCorrectionEnabled,
+		&i.PhotoAnalysisLensCorrectionServiceTypes,
+		&i.PhotoAnalysisPerspectiveNormalizationEnabled,
+		&i.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&i.NotificationEmail,
 		&i.WhatsappDeviceID,
 		&i.WhatsappWelcomeDelayMinutes,

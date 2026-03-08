@@ -47,3 +47,20 @@ func TestBuildGatekeeperPhotoSummaryIncludesDetailsWhenIrrelevant(t *testing.T) 
 		t.Fatalf("expected discrepancy details to be included")
 	}
 }
+
+func TestBuildPhotoSummaryContentAddsMeasurementGuardrail(t *testing.T) {
+	analysis := &repository.PhotoAnalysis{
+		Summary:                "Foto toont kozijn en glaslatten.",
+		ConfidenceLevel:        "Medium",
+		Measurements:           []repository.Measurement{{Description: "breedte kozijn", Value: 1.2, Unit: "m", Type: "dimension", Confidence: "Low"}},
+		NeedsOnsiteMeasurement: []string{"Exacte dagmaat niet verifieerbaar door perspectief"},
+	}
+
+	result := buildPhotoSummaryContent(analysis)
+	if !strings.Contains(result, "Measurement guardrail: Treat photo-derived dimensions as advisory only unless they are explicitly visible, labeled, or OCR-backed.") {
+		t.Fatalf("expected measurement guardrail in photo summary")
+	}
+	if !strings.Contains(result, "Needs on-site measurement: Exacte dagmaat niet verifieerbaar door perspectief") {
+		t.Fatalf("expected on-site measurement reason in photo summary")
+	}
+}

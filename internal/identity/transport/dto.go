@@ -94,39 +94,53 @@ type OrgLogoDownloadResponse struct {
 
 // OrganizationSettingsResponse returns the organization's quote defaults.
 type OrganizationSettingsResponse struct {
-	QuotePaymentDays            int     `json:"quotePaymentDays"`
-	QuoteValidDays              int     `json:"quoteValidDays"`
-	AIAutoDisqualifyJunk        bool    `json:"aiAutoDisqualifyJunk"`
-	AIAutoDispatch              bool    `json:"aiAutoDispatch"`
-	AIAutoEstimate              bool    `json:"aiAutoEstimate"`
-	AIConfidenceGateEnabled     bool    `json:"aiConfidenceGateEnabled"`
-	AIAdaptiveReasoningEnabled  bool    `json:"aiAdaptiveReasoningEnabled"`
-	AIExperienceMemoryEnabled   bool    `json:"aiExperienceMemoryEnabled"`
-	AICouncilEnabled            bool    `json:"aiCouncilEnabled"`
-	AICouncilConsensusMode      string  `json:"aiCouncilConsensusMode"`
-	CatalogGapThreshold         int     `json:"catalogGapThreshold"`
-	CatalogGapLookbackDays      int     `json:"catalogGapLookbackDays"`
-	NotificationEmail           *string `json:"notificationEmail,omitempty"`
-	WhatsAppDeviceID            *string `json:"whatsAppDeviceId,omitempty"`
-	WhatsAppWelcomeDelayMinutes int     `json:"whatsAppWelcomeDelayMinutes"`
-	SMTPConfigured              bool    `json:"smtpConfigured"`
+	QuotePaymentDays                                  int      `json:"quotePaymentDays"`
+	QuoteValidDays                                    int      `json:"quoteValidDays"`
+	AIAutoDisqualifyJunk                              bool     `json:"aiAutoDisqualifyJunk"`
+	AIAutoDispatch                                    bool     `json:"aiAutoDispatch"`
+	AIAutoEstimate                                    bool     `json:"aiAutoEstimate"`
+	AIConfidenceGateEnabled                           bool     `json:"aiConfidenceGateEnabled"`
+	AIAdaptiveReasoningEnabled                        bool     `json:"aiAdaptiveReasoningEnabled"`
+	AIExperienceMemoryEnabled                         bool     `json:"aiExperienceMemoryEnabled"`
+	AICouncilEnabled                                  bool     `json:"aiCouncilEnabled"`
+	AICouncilConsensusMode                            string   `json:"aiCouncilConsensusMode"`
+	CatalogGapThreshold                               int      `json:"catalogGapThreshold"`
+	CatalogGapLookbackDays                            int      `json:"catalogGapLookbackDays"`
+	PhotoAnalysisPreprocessingEnabled                 bool     `json:"photoAnalysisPreprocessingEnabled"`
+	PhotoAnalysisOCRAssistEnabled                     bool     `json:"photoAnalysisOcrAssistEnabled"`
+	PhotoAnalysisOCRAssistServiceTypes                []string `json:"photoAnalysisOcrAssistServiceTypes"`
+	PhotoAnalysisLensCorrectionEnabled                bool     `json:"photoAnalysisLensCorrectionEnabled"`
+	PhotoAnalysisLensCorrectionServiceTypes           []string `json:"photoAnalysisLensCorrectionServiceTypes"`
+	PhotoAnalysisPerspectiveNormalizationEnabled      bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
+	PhotoAnalysisPerspectiveNormalizationServiceTypes []string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
+	NotificationEmail                                 *string  `json:"notificationEmail,omitempty"`
+	WhatsAppDeviceID                                  *string  `json:"whatsAppDeviceId,omitempty"`
+	WhatsAppWelcomeDelayMinutes                       int      `json:"whatsAppWelcomeDelayMinutes"`
+	SMTPConfigured                                    bool     `json:"smtpConfigured"`
 }
 
 // UpdateOrganizationSettingsRequest updates quote default settings.
 type UpdateOrganizationSettingsRequest struct {
-	QuotePaymentDays           *int    `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
-	QuoteValidDays             *int    `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
-	NotificationEmail          *string `json:"notificationEmail" validate:"omitempty,email,max=255"`
-	AIAutoDisqualifyJunk       *bool   `json:"aiAutoDisqualifyJunk"`
-	AIAutoDispatch             *bool   `json:"aiAutoDispatch"`
-	AIAutoEstimate             *bool   `json:"aiAutoEstimate"`
-	AIConfidenceGateEnabled    *bool   `json:"aiConfidenceGateEnabled"`
-	AIAdaptiveReasoningEnabled *bool   `json:"aiAdaptiveReasoningEnabled"`
-	AIExperienceMemoryEnabled  *bool   `json:"aiExperienceMemoryEnabled"`
-	AICouncilEnabled           *bool   `json:"aiCouncilEnabled"`
-	AICouncilConsensusMode     *string `json:"aiCouncilConsensusMode" validate:"omitempty,oneof=weighted majority estimator_final"`
-	CatalogGapThreshold        *int    `json:"catalogGapThreshold" validate:"omitempty,min=1,max=1000"`
-	CatalogGapLookbackDays     *int    `json:"catalogGapLookbackDays" validate:"omitempty,min=1,max=365"`
+	QuotePaymentDays                                  *int      `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
+	QuoteValidDays                                    *int      `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
+	NotificationEmail                                 *string   `json:"notificationEmail" validate:"omitempty,email,max=255"`
+	AIAutoDisqualifyJunk                              *bool     `json:"aiAutoDisqualifyJunk"`
+	AIAutoDispatch                                    *bool     `json:"aiAutoDispatch"`
+	AIAutoEstimate                                    *bool     `json:"aiAutoEstimate"`
+	AIConfidenceGateEnabled                           *bool     `json:"aiConfidenceGateEnabled"`
+	AIAdaptiveReasoningEnabled                        *bool     `json:"aiAdaptiveReasoningEnabled"`
+	AIExperienceMemoryEnabled                         *bool     `json:"aiExperienceMemoryEnabled"`
+	AICouncilEnabled                                  *bool     `json:"aiCouncilEnabled"`
+	AICouncilConsensusMode                            *string   `json:"aiCouncilConsensusMode" validate:"omitempty,oneof=weighted majority estimator_final"`
+	CatalogGapThreshold                               *int      `json:"catalogGapThreshold" validate:"omitempty,min=1,max=1000"`
+	CatalogGapLookbackDays                            *int      `json:"catalogGapLookbackDays" validate:"omitempty,min=1,max=365"`
+	PhotoAnalysisPreprocessingEnabled                 *bool     `json:"photoAnalysisPreprocessingEnabled"`
+	PhotoAnalysisOCRAssistEnabled                     *bool     `json:"photoAnalysisOcrAssistEnabled"`
+	PhotoAnalysisOCRAssistServiceTypes                *[]string `json:"photoAnalysisOcrAssistServiceTypes"`
+	PhotoAnalysisLensCorrectionEnabled                *bool     `json:"photoAnalysisLensCorrectionEnabled"`
+	PhotoAnalysisLensCorrectionServiceTypes           *[]string `json:"photoAnalysisLensCorrectionServiceTypes"`
+	PhotoAnalysisPerspectiveNormalizationEnabled      *bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
+	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	// 0 = send immediately, otherwise delay before sending the automated WhatsApp welcome.
 	WhatsAppWelcomeDelayMinutes *int `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
 }
