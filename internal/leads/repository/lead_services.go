@@ -17,17 +17,19 @@ var ErrServiceNotFound = errors.New("lead service not found")
 var ErrServiceTypeNotFound = errors.New("service type not found")
 
 type LeadService struct {
-	ID                  uuid.UUID
-	LeadID              uuid.UUID
-	OrganizationID      uuid.UUID
-	ServiceType         string
-	Status              string
-	PipelineStage       string
-	ConsumerNote        *string
-	Source              *string
-	CustomerPreferences json.RawMessage
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                                 uuid.UUID
+	LeadID                             uuid.UUID
+	OrganizationID                     uuid.UUID
+	ServiceType                        string
+	Status                             string
+	PipelineStage                      string
+	ConsumerNote                       *string
+	Source                             *string
+	CustomerPreferences                json.RawMessage
+	GatekeeperNurturingLoopCount       int
+	GatekeeperNurturingLoopFingerprint *string
+	CreatedAt                          time.Time
+	UpdatedAt                          time.Time
 }
 
 type CreateLeadServiceParams struct {
@@ -39,17 +41,19 @@ type CreateLeadServiceParams struct {
 }
 
 type leadServiceFields struct {
-	ID                  pgtype.UUID
-	LeadID              pgtype.UUID
-	OrganizationID      pgtype.UUID
-	ServiceType         string
-	Status              string
-	PipelineStage       string
-	ConsumerNote        pgtype.Text
-	Source              pgtype.Text
-	CustomerPreferences []byte
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                                 pgtype.UUID
+	LeadID                             pgtype.UUID
+	OrganizationID                     pgtype.UUID
+	ServiceType                        string
+	Status                             string
+	PipelineStage                      string
+	ConsumerNote                       pgtype.Text
+	Source                             pgtype.Text
+	CustomerPreferences                []byte
+	GatekeeperNurturingLoopCount       int32
+	GatekeeperNurturingLoopFingerprint pgtype.Text
+	CreatedAt                          pgtype.Timestamptz
+	UpdatedAt                          pgtype.Timestamptz
 }
 
 func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadServiceParams) (LeadService, error) {
@@ -66,7 +70,7 @@ func (r *Repository) CreateLeadService(ctx context.Context, params CreateLeadSer
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (LeadService, error) {
@@ -77,7 +81,7 @@ func (r *Repository) GetLeadServiceByID(ctx context.Context, id uuid.UUID, organ
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadService, error) {
@@ -88,7 +92,7 @@ func (r *Repository) ListLeadServices(ctx context.Context, leadID uuid.UUID, org
 
 	services := make([]LeadService, 0, len(rows))
 	for _, row := range rows {
-		services = append(services, leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}))
+		services = append(services, leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}))
 	}
 	return services, nil
 }
@@ -105,12 +109,12 @@ func (r *Repository) GetCurrentLeadService(ctx context.Context, leadID uuid.UUID
 		if fallbackErr != nil {
 			return LeadService{}, fallbackErr
 		}
-		return leadServiceFromRow(leadServiceFields{ID: fallback.ID, LeadID: fallback.LeadID, OrganizationID: fallback.OrganizationID, ServiceType: fallback.ServiceType, Status: fallback.Status, PipelineStage: string(fallback.PipelineStage), ConsumerNote: fallback.ConsumerNote, Source: fallback.Source, CustomerPreferences: fallback.CustomerPreferences, CreatedAt: fallback.CreatedAt, UpdatedAt: fallback.UpdatedAt}), nil
+		return leadServiceFromRow(leadServiceFields{ID: fallback.ID, LeadID: fallback.LeadID, OrganizationID: fallback.OrganizationID, ServiceType: fallback.ServiceType, Status: fallback.Status, PipelineStage: string(fallback.PipelineStage), ConsumerNote: fallback.ConsumerNote, Source: fallback.Source, CustomerPreferences: fallback.CustomerPreferences, GatekeeperNurturingLoopCount: fallback.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: fallback.GatekeeperNurturingLoopFingerprint, CreatedAt: fallback.CreatedAt, UpdatedAt: fallback.UpdatedAt}), nil
 	}
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error) {
@@ -121,7 +125,7 @@ func (r *Repository) UpdateServiceStatusAndPipelineStage(ctx context.Context, id
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 // UpdateLeadServiceType updates the service type for a lead service using an active service type name/slug.
@@ -133,7 +137,7 @@ func (r *Repository) UpdateLeadServiceType(ctx context.Context, id uuid.UUID, or
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error) {
@@ -144,7 +148,23 @@ func (r *Repository) UpdateServiceStatus(ctx context.Context, id uuid.UUID, orga
 	if err != nil {
 		return LeadService{}, err
 	}
-	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+}
+
+func (r *Repository) SetGatekeeperNurturingLoopState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, count int, fingerprint string) error {
+	return r.queries.SetGatekeeperNurturingLoopState(ctx, leadsdb.SetGatekeeperNurturingLoopStateParams{
+		ID:                                 toPgUUID(id),
+		OrganizationID:                     toPgUUID(organizationID),
+		GatekeeperNurturingLoopCount:       int32(count),
+		GatekeeperNurturingLoopFingerprint: toPgTextValue(fingerprint),
+	})
+}
+
+func (r *Repository) ResetGatekeeperNurturingLoopState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
+	return r.queries.ResetGatekeeperNurturingLoopState(ctx, leadsdb.ResetGatekeeperNurturingLoopStateParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 }
 
 func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error) {
@@ -196,16 +216,18 @@ func (r *Repository) InsertLeadServiceEvent(ctx context.Context, params InsertSe
 
 func leadServiceFromRow(fields leadServiceFields) LeadService {
 	return LeadService{
-		ID:                  fields.ID.Bytes,
-		LeadID:              fields.LeadID.Bytes,
-		OrganizationID:      fields.OrganizationID.Bytes,
-		ServiceType:         fields.ServiceType,
-		Status:              fields.Status,
-		PipelineStage:       fields.PipelineStage,
-		ConsumerNote:        optionalString(fields.ConsumerNote),
-		Source:              optionalString(fields.Source),
-		CustomerPreferences: fields.CustomerPreferences,
-		CreatedAt:           fields.CreatedAt.Time,
-		UpdatedAt:           fields.UpdatedAt.Time,
+		ID:                                 fields.ID.Bytes,
+		LeadID:                             fields.LeadID.Bytes,
+		OrganizationID:                     fields.OrganizationID.Bytes,
+		ServiceType:                        fields.ServiceType,
+		Status:                             fields.Status,
+		PipelineStage:                      fields.PipelineStage,
+		ConsumerNote:                       optionalString(fields.ConsumerNote),
+		Source:                             optionalString(fields.Source),
+		CustomerPreferences:                fields.CustomerPreferences,
+		GatekeeperNurturingLoopCount:       int(fields.GatekeeperNurturingLoopCount),
+		GatekeeperNurturingLoopFingerprint: optionalString(fields.GatekeeperNurturingLoopFingerprint),
+		CreatedAt:                          fields.CreatedAt.Time,
+		UpdatedAt:                          fields.UpdatedAt.Time,
 	}
 }

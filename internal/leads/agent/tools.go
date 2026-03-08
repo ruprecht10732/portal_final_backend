@@ -30,23 +30,27 @@ import (
 )
 
 const (
-	invalidLeadIDMessage        = "Invalid lead ID"
-	invalidLeadServiceIDMessage = "Invalid lead service ID"
-	missingTenantContextMessage = "Missing tenant context"
-	missingLeadContextMessage   = "Missing lead context"
-	missingLeadContextError     = "missing lead context"
-	leadNotFoundMessage         = "Lead not found"
-	leadServiceNotFoundMessage  = "Lead service not found"
-	invalidFieldFormat          = "invalid %s"
-	recentEquivalentAnalysisTTL = 2 * time.Minute
-	divisionByZeroMessage       = "division by zero"
+	invalidLeadIDMessage             = "Invalid lead ID"
+	invalidLeadServiceIDMessage      = "Invalid lead service ID"
+	missingTenantContextMessage      = "Missing tenant context"
+	missingLeadContextMessage        = "Missing lead context"
+	missingLeadContextError          = "missing lead context"
+	leadNotFoundMessage              = "Lead not found"
+	leadServiceNotFoundMessage       = "Lead service not found"
+	invalidFieldFormat               = "invalid %s"
+	recentEquivalentAnalysisTTL      = 2 * time.Minute
+	divisionByZeroMessage            = "division by zero"
+	gatekeeperNurturingLoopThreshold = 3
 )
 
 const highConfidenceScoreThreshold = 0.45
 const catalogEarlyReturnScoreThreshold = 0.55
 const (
-	defaultHouthandelCollection = "houthandel_products"
-	defaultBouwmaatCollection   = "bouwmaat_products"
+	defaultHouthandelCollection   = "houthandel_products"
+	defaultBouwmaatCollection     = "bouwmaat_products"
+	gatekeeperLoopDetectedTrigger = "ai_loop_detected"
+	gatekeeperLoopReasonCode      = "nurturing_loop_threshold"
+	gatekeeperLoopDetectedSummary = "Systeem: AI zat in een lus. Menselijke controle vereist."
 )
 
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
@@ -1299,7 +1303,7 @@ func createUpdateLeadDetailsTool(_ *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
-func validateProposalQuoteGuard(ctx tool.Context, deps *ToolDependencies, stage string, serviceID, tenantID uuid.UUID) (UpdatePipelineStageOutput, error) {
+func validateProposalQuoteGuard(ctx context.Context, deps *ToolDependencies, stage string, serviceID, tenantID uuid.UUID) (UpdatePipelineStageOutput, error) {
 	if stage != domain.PipelineStageProposal {
 		return UpdatePipelineStageOutput{}, nil
 	}
@@ -1336,7 +1340,7 @@ func validateActorSequence(stage string, serviceID uuid.UUID, deps *ToolDependen
 	return UpdatePipelineStageOutput{}, nil
 }
 
-func validateEstimationInvariant(ctx tool.Context, deps *ToolDependencies, stage string, serviceID, tenantID uuid.UUID) (UpdatePipelineStageOutput, error) {
+func validateEstimationInvariant(ctx context.Context, deps *ToolDependencies, stage string, serviceID, tenantID uuid.UUID) (UpdatePipelineStageOutput, error) {
 	if stage != domain.PipelineStageEstimation {
 		return UpdatePipelineStageOutput{}, nil
 	}
@@ -1349,7 +1353,7 @@ func validateEstimationInvariant(ctx tool.Context, deps *ToolDependencies, stage
 	return UpdatePipelineStageOutput{}, nil
 }
 
-func evaluateCouncilForStageUpdate(ctx tool.Context, deps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, targetStage string) (CouncilEvaluation, error) {
+func evaluateCouncilForStageUpdate(ctx context.Context, deps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, targetStage string) (CouncilEvaluation, error) {
 	settings := deps.GetOrganizationAISettingsOrDefault()
 	if !settings.AICouncilMode || deps.CouncilService == nil {
 		deps.SetCouncilMetadata(nil)
@@ -1381,7 +1385,11 @@ func evaluateCouncilForStageUpdate(ctx tool.Context, deps *ToolDependencies, lea
 }
 
 func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-	state, out, done, err := prepareStageUpdate(ctx, deps, input)
+	return applyPipelineStageUpdate(ctx, deps, input)
+}
+
+func applyPipelineStageUpdate(ctx context.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+	state, loopResult, out, done, err := prepareStageUpdate(ctx, deps, &input)
 	if done || err != nil {
 		return out, err
 	}
@@ -1400,14 +1408,24 @@ func handleUpdatePipelineStage(ctx tool.Context, deps *ToolDependencies, input U
 	if err != nil {
 		return UpdatePipelineStageOutput{Success: false, Message: "Failed to update pipeline stage"}, err
 	}
+	if shouldResetGatekeeperNurturingLoopState(state.service, input.Stage, loopResult.Trigger) {
+		if resetErr := deps.Repo.ResetGatekeeperNurturingLoopState(ctx, state.serviceID, state.tenantID); resetErr != nil {
+			log.Printf("gatekeeper nurturing loop reset failed for service=%s tenant=%s: %v", state.serviceID, state.tenantID, resetErr)
+		}
+	}
 
 	recordPipelineStageChange(ctx, deps, stageChangeParams{
-		leadID:    state.leadID,
-		serviceID: state.serviceID,
-		tenantID:  state.tenantID,
-		oldStage:  state.oldStage,
-		newStage:  input.Stage,
-		reason:    input.Reason,
+		leadID:             state.leadID,
+		serviceID:          state.serviceID,
+		tenantID:           state.tenantID,
+		oldStage:           state.oldStage,
+		newStage:           input.Stage,
+		reason:             input.Reason,
+		trigger:            loopResult.Trigger,
+		reasonCode:         loopResult.ReasonCode,
+		loopAttemptCount:   loopResult.AttemptCount,
+		blockerFingerprint: loopResult.BlockerFingerprint,
+		missingInformation: loopResult.MissingInformation,
 	})
 	deps.MarkStageUpdateCalled(input.Stage)
 	log.Printf("agent stage transition committed (run=%s actor=%s/%s lead=%s service=%s from=%s to=%s)",
@@ -1420,28 +1438,37 @@ type stageUpdateState struct {
 	leadID    uuid.UUID
 	serviceID uuid.UUID
 	oldStage  string
+	service   repository.LeadService
 	actorType string
 	actorName string
 	runID     string
 }
 
-func prepareStageUpdate(ctx tool.Context, deps *ToolDependencies, input UpdatePipelineStageInput) (stageUpdateState, UpdatePipelineStageOutput, bool, error) {
+type gatekeeperNurturingLoopResult struct {
+	Trigger            string
+	ReasonCode         string
+	AttemptCount       int
+	BlockerFingerprint string
+	MissingInformation []string
+}
+
+func prepareStageUpdate(ctx context.Context, deps *ToolDependencies, input *UpdatePipelineStageInput) (stageUpdateState, gatekeeperNurturingLoopResult, UpdatePipelineStageOutput, bool, error) {
 	if !domain.IsKnownPipelineStage(input.Stage) {
-		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, true, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
+		return stageUpdateState{}, gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{Success: false, Message: "Invalid pipeline stage"}, true, fmt.Errorf("invalid pipeline stage: %s", input.Stage)
 	}
 
 	tenantID, err := getTenantID(deps)
 	if err != nil {
-		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: missingTenantContextMessage}, true, err
+		return stageUpdateState{}, gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{Success: false, Message: missingTenantContextMessage}, true, err
 	}
 	leadID, serviceID, err := getLeadContext(deps)
 	if err != nil {
-		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: missingLeadContextMessage}, true, err
+		return stageUpdateState{}, gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{Success: false, Message: missingLeadContextMessage}, true, err
 	}
 
 	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
-		return stageUpdateState{}, UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, true, err
+		return stageUpdateState{}, gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{Success: false, Message: leadServiceNotFoundMessage}, true, err
 	}
 	actorType, actorName := deps.GetActor()
 	state := stageUpdateState{
@@ -1449,38 +1476,132 @@ func prepareStageUpdate(ctx tool.Context, deps *ToolDependencies, input UpdatePi
 		leadID:    leadID,
 		serviceID: serviceID,
 		oldStage:  svc.PipelineStage,
+		service:   svc,
 		actorType: actorType,
 		actorName: actorName,
 		runID:     deps.GetRunID(),
 	}
 
-	if state.oldStage == input.Stage {
-		log.Printf("agent stage transition skipped (run=%s actor=%s/%s lead=%s service=%s stage=%s): no change",
-			state.runID, state.actorType, state.actorName, state.leadID, state.serviceID, input.Stage)
-		return state, UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage unchanged"}, true, nil
-	}
 	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
 		log.Printf("handleUpdatePipelineStage: REJECTED - service %s is in terminal state (status=%s, stage=%s)", state.serviceID, svc.Status, svc.PipelineStage)
-		return state, UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, true, fmt.Errorf("service %s is terminal", state.serviceID)
+		return state, gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{Success: false, Message: "Cannot update pipeline stage for a service in terminal state"}, true, fmt.Errorf("service %s is terminal", state.serviceID)
 	}
 	if out, err := validateProposalQuoteGuard(ctx, deps, input.Stage, state.serviceID, state.tenantID); err != nil {
-		return state, out, true, err
+		return state, gatekeeperNurturingLoopResult{}, out, true, err
 	}
 	if reason := domain.ValidateStateCombination(svc.Status, input.Stage); reason != "" {
 		log.Printf("handleUpdatePipelineStage: invalid state combination: status=%s, newStage=%s - %s", svc.Status, input.Stage, reason)
-		return state, UpdatePipelineStageOutput{Success: false, Message: reason}, true, fmt.Errorf("invalid state combination: %s", reason)
+		return state, gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{Success: false, Message: reason}, true, fmt.Errorf("invalid state combination: %s", reason)
 	}
 	if out, err := validateActorSequence(input.Stage, state.serviceID, deps, state.actorType, state.actorName); err != nil {
-		return state, out, true, err
+		return state, gatekeeperNurturingLoopResult{}, out, true, err
 	}
 	if out, err := validateEstimationInvariant(ctx, deps, input.Stage, state.serviceID, state.tenantID); err != nil {
-		return state, out, true, err
+		return state, gatekeeperNurturingLoopResult{}, out, true, err
 	}
 
-	return state, UpdatePipelineStageOutput{}, false, nil
+	loopResult, out, done, err := applyGatekeeperNurturingLoopPolicy(ctx, deps, state, input)
+	if done || err != nil {
+		return state, loopResult, out, done, err
+	}
+
+	if state.oldStage == input.Stage {
+		deps.MarkStageUpdateCalled(input.Stage)
+		log.Printf("agent stage transition skipped (run=%s actor=%s/%s lead=%s service=%s stage=%s): no change",
+			state.runID, state.actorType, state.actorName, state.leadID, state.serviceID, input.Stage)
+		return state, loopResult, UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage unchanged"}, true, nil
+	}
+
+	return state, loopResult, UpdatePipelineStageOutput{}, false, nil
 }
 
-func applyCouncilDecision(ctx tool.Context, deps *ToolDependencies, eval CouncilEvaluation, state stageUpdateState, input *UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+func applyGatekeeperNurturingLoopPolicy(ctx context.Context, deps *ToolDependencies, state stageUpdateState, input *UpdatePipelineStageInput) (gatekeeperNurturingLoopResult, UpdatePipelineStageOutput, bool, error) {
+	if !shouldTrackGatekeeperNurturingLoop(state.actorName, input.Stage) {
+		return gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{}, false, nil
+	}
+
+	fingerprint, missingInformation := resolveGatekeeperLoopFingerprint(ctx, deps, state.serviceID, state.tenantID, input.Reason)
+	if fingerprint == "" {
+		return gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{}, false, nil
+	}
+
+	attemptCount := 1
+	if state.service.GatekeeperNurturingLoopFingerprint != nil && *state.service.GatekeeperNurturingLoopFingerprint == fingerprint {
+		attemptCount = state.service.GatekeeperNurturingLoopCount + 1
+	}
+	if attemptCount < 1 {
+		attemptCount = 1
+	}
+	if err := deps.Repo.SetGatekeeperNurturingLoopState(ctx, state.serviceID, state.tenantID, attemptCount, fingerprint); err != nil {
+		return gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{Success: false, Message: "Failed to update nurturing loop state"}, true, err
+	}
+
+	result := gatekeeperNurturingLoopResult{
+		AttemptCount:       attemptCount,
+		BlockerFingerprint: fingerprint,
+		MissingInformation: missingInformation,
+	}
+	if attemptCount >= gatekeeperNurturingLoopThreshold {
+		input.Stage = domain.PipelineStageManualIntervention
+		input.Reason = gatekeeperLoopDetectedSummary
+		result.Trigger = gatekeeperLoopDetectedTrigger
+		result.ReasonCode = gatekeeperLoopReasonCode
+	}
+
+	return result, UpdatePipelineStageOutput{}, false, nil
+}
+
+func shouldTrackGatekeeperNurturingLoop(actorName, targetStage string) bool {
+	return actorName == repository.ActorNameGatekeeper && targetStage == domain.PipelineStageNurturing
+}
+
+func shouldResetGatekeeperNurturingLoopState(service repository.LeadService, targetStage, trigger string) bool {
+	if service.GatekeeperNurturingLoopCount == 0 && service.GatekeeperNurturingLoopFingerprint == nil {
+		return false
+	}
+	if targetStage == domain.PipelineStageNurturing {
+		return false
+	}
+	if targetStage == domain.PipelineStageManualIntervention && trigger == gatekeeperLoopDetectedTrigger {
+		return false
+	}
+	return true
+}
+
+func resolveGatekeeperLoopFingerprint(ctx context.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID, fallbackReason string) (string, []string) {
+	_, missingInformation := latestAnalysisInvariantInputs(ctx, deps, serviceID, tenantID)
+	normalizedMissingInformation := normalizeGatekeeperLoopItems(missingInformation)
+	if len(normalizedMissingInformation) > 0 {
+		return strings.Join(normalizedMissingInformation, " | "), normalizedMissingInformation
+	}
+
+	fallbackParts := normalizeGatekeeperLoopItems([]string{fallbackReason})
+	if len(fallbackParts) > 0 {
+		return "reason:" + strings.Join(fallbackParts, " | "), nil
+	}
+
+	return "", nil
+}
+
+func normalizeGatekeeperLoopItems(values []string) []string {
+	set := make(map[string]struct{}, len(values))
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := set[trimmed]; exists {
+			continue
+		}
+		set[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	sort.Strings(normalized)
+	return normalized
+}
+
+func applyCouncilDecision(ctx context.Context, deps *ToolDependencies, eval CouncilEvaluation, state stageUpdateState, input *UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
 	if eval.Decision == CouncilDecisionRequireManualReview {
 		summary := strings.TrimSpace(eval.Summary)
 		if summary == "" {
@@ -1525,15 +1646,20 @@ func applyCouncilDecision(ctx tool.Context, deps *ToolDependencies, eval Council
 
 // stageChangeParams groups parameters for recording a pipeline stage change.
 type stageChangeParams struct {
-	leadID    uuid.UUID
-	serviceID uuid.UUID
-	tenantID  uuid.UUID
-	oldStage  string
-	newStage  string
-	reason    string
+	leadID             uuid.UUID
+	serviceID          uuid.UUID
+	tenantID           uuid.UUID
+	oldStage           string
+	newStage           string
+	reason             string
+	trigger            string
+	reasonCode         string
+	loopAttemptCount   int
+	blockerFingerprint string
+	missingInformation []string
 }
 
-func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stageChangeParams) {
+func recordPipelineStageChange(ctx context.Context, deps *ToolDependencies, p stageChangeParams) {
 	actorType, actorName := deps.GetActor()
 	reasonText := strings.TrimSpace(p.reason)
 	var summary *string
@@ -1561,6 +1687,16 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 			"itemCount":   draftResult.ItemCount,
 		}
 	}
+	if p.trigger == gatekeeperLoopDetectedTrigger {
+		stageMetadata["loopDetected"] = repository.LoopDetectedMetadata{
+			Trigger:            p.trigger,
+			ReasonCode:         p.reasonCode,
+			AttemptCount:       p.loopAttemptCount,
+			Threshold:          gatekeeperNurturingLoopThreshold,
+			BlockerFingerprint: p.blockerFingerprint,
+			MissingInformation: p.missingInformation,
+		}.ToMap()
+	}
 
 	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         p.leadID,
@@ -1582,6 +1718,10 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 			TenantID:      p.tenantID,
 			OldStage:      p.oldStage,
 			NewStage:      p.newStage,
+			Reason:        reasonText,
+			Trigger:       p.trigger,
+			ActorType:     actorType,
+			ActorName:     actorName,
 		})
 	}
 

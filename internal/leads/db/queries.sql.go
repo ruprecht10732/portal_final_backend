@@ -733,14 +733,15 @@ WITH resolved_service_type AS (
 	SELECT $1, $2, id, 'New', $4, $5
 	FROM resolved_service_type
 	WHERE id IS NOT NULL
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint
 ), event AS (
 	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
 	SELECT i.organization_id, i.lead_id, i.id, 'service_created', i.status, i.pipeline_stage, i.created_at
 	FROM inserted i
 )
 SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
-	i.customer_preferences, i.created_at, i.updated_at
+	i.customer_preferences, i.gatekeeper_nurturing_loop_count, i.gatekeeper_nurturing_loop_fingerprint,
+	i.created_at, i.updated_at
 FROM inserted i
 JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = i.organization_id
 `
@@ -754,17 +755,19 @@ type CreateLeadServiceParams struct {
 }
 
 type CreateLeadServiceRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) CreateLeadService(ctx context.Context, arg CreateLeadServiceParams) (CreateLeadServiceRow, error) {
@@ -786,6 +789,8 @@ func (q *Queries) CreateLeadService(ctx context.Context, arg CreateLeadServicePa
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1384,7 +1389,8 @@ func (q *Queries) GetAttachmentByID(ctx context.Context, arg GetAttachmentByIDPa
 
 const getCurrentActiveLeadService = `-- name: GetCurrentActiveLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-	ls.customer_preferences, ls.created_at, ls.updated_at
+	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 WHERE ls.lead_id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage NOT IN ('Completed', 'Lost')
@@ -1398,17 +1404,19 @@ type GetCurrentActiveLeadServiceParams struct {
 }
 
 type GetCurrentActiveLeadServiceRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetCurrentActiveLeadService(ctx context.Context, arg GetCurrentActiveLeadServiceParams) (GetCurrentActiveLeadServiceRow, error) {
@@ -1424,6 +1432,8 @@ func (q *Queries) GetCurrentActiveLeadService(ctx context.Context, arg GetCurren
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1632,7 +1642,8 @@ func (q *Queries) GetLatestDraftQuoteID(ctx context.Context, arg GetLatestDraftQ
 
 const getLatestLeadService = `-- name: GetLatestLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-	ls.customer_preferences, ls.created_at, ls.updated_at
+	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 WHERE ls.lead_id = $1 AND ls.organization_id = $2
@@ -1646,17 +1657,19 @@ type GetLatestLeadServiceParams struct {
 }
 
 type GetLatestLeadServiceRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetLatestLeadService(ctx context.Context, arg GetLatestLeadServiceParams) (GetLatestLeadServiceRow, error) {
@@ -1672,6 +1685,8 @@ func (q *Queries) GetLatestLeadService(ctx context.Context, arg GetLatestLeadSer
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -2163,7 +2178,8 @@ func (q *Queries) GetLeadMetricsSummary(ctx context.Context, organizationID pgty
 
 const getLeadServiceByID = `-- name: GetLeadServiceByID :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-	ls.customer_preferences, ls.created_at, ls.updated_at
+	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 WHERE ls.id = $1 AND ls.organization_id = $2
@@ -2175,17 +2191,19 @@ type GetLeadServiceByIDParams struct {
 }
 
 type GetLeadServiceByIDRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetLeadServiceByID(ctx context.Context, arg GetLeadServiceByIDParams) (GetLeadServiceByIDRow, error) {
@@ -2201,6 +2219,8 @@ func (q *Queries) GetLeadServiceByID(ctx context.Context, arg GetLeadServiceByID
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -3343,7 +3363,8 @@ func (q *Queries) ListLeadOrgMembers(ctx context.Context, organizationID pgtype.
 
 const listLeadServices = `-- name: ListLeadServices :many
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
-	ls.customer_preferences, ls.created_at, ls.updated_at
+	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
 WHERE ls.lead_id = $1 AND ls.organization_id = $2
@@ -3356,17 +3377,19 @@ type ListLeadServicesParams struct {
 }
 
 type ListLeadServicesRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListLeadServices(ctx context.Context, arg ListLeadServicesParams) ([]ListLeadServicesRow, error) {
@@ -3388,6 +3411,8 @@ func (q *Queries) ListLeadServices(ctx context.Context, arg ListLeadServicesPara
 			&i.ConsumerNote,
 			&i.Source,
 			&i.CustomerPreferences,
+			&i.GatekeeperNurturingLoopCount,
+			&i.GatekeeperNurturingLoopFingerprint,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -4679,6 +4704,50 @@ func (q *Queries) MarkHumanFeedbackApplied(ctx context.Context, arg MarkHumanFee
 	return i, err
 }
 
+const resetGatekeeperNurturingLoopState = `-- name: ResetGatekeeperNurturingLoopState :exec
+UPDATE RAC_lead_services
+SET gatekeeper_nurturing_loop_count = 0,
+	gatekeeper_nurturing_loop_fingerprint = NULL,
+	updated_at = now()
+WHERE id = $1 AND organization_id = $2
+	AND (gatekeeper_nurturing_loop_count <> 0 OR gatekeeper_nurturing_loop_fingerprint IS NOT NULL)
+`
+
+type ResetGatekeeperNurturingLoopStateParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) ResetGatekeeperNurturingLoopState(ctx context.Context, arg ResetGatekeeperNurturingLoopStateParams) error {
+	_, err := q.db.Exec(ctx, resetGatekeeperNurturingLoopState, arg.ID, arg.OrganizationID)
+	return err
+}
+
+const setGatekeeperNurturingLoopState = `-- name: SetGatekeeperNurturingLoopState :exec
+UPDATE RAC_lead_services
+SET gatekeeper_nurturing_loop_count = $3,
+	gatekeeper_nurturing_loop_fingerprint = $4,
+	updated_at = now()
+WHERE id = $1 AND organization_id = $2
+`
+
+type SetGatekeeperNurturingLoopStateParams struct {
+	ID                                 pgtype.UUID `json:"id"`
+	OrganizationID                     pgtype.UUID `json:"organization_id"`
+	GatekeeperNurturingLoopCount       int32       `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text `json:"gatekeeper_nurturing_loop_fingerprint"`
+}
+
+func (q *Queries) SetGatekeeperNurturingLoopState(ctx context.Context, arg SetGatekeeperNurturingLoopStateParams) error {
+	_, err := q.db.Exec(ctx, setGatekeeperNurturingLoopState,
+		arg.ID,
+		arg.OrganizationID,
+		arg.GatekeeperNurturingLoopCount,
+		arg.GatekeeperNurturingLoopFingerprint,
+	)
+	return err
+}
+
 const setLeadPublicToken = `-- name: SetLeadPublicToken :exec
 UPDATE RAC_leads
 SET public_token = $3, public_token_expires_at = $4, updated_at = now()
@@ -5055,10 +5124,11 @@ WITH target AS (
 	UPDATE RAC_lead_services ls
 	SET service_type_id = (SELECT target.id FROM target), updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND EXISTS (SELECT 1 FROM target)
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-	u.customer_preferences, u.created_at, u.updated_at
+	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.created_at, u.updated_at
 FROM updated u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 `
@@ -5070,17 +5140,19 @@ type UpdateLeadServiceTypeParams struct {
 }
 
 type UpdateLeadServiceTypeRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdateLeadServiceType(ctx context.Context, arg UpdateLeadServiceTypeParams) (UpdateLeadServiceTypeRow, error) {
@@ -5096,6 +5168,8 @@ func (q *Queries) UpdateLeadServiceType(ctx context.Context, arg UpdateLeadServi
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -5106,11 +5180,11 @@ const updatePipelineStage = `-- name: UpdatePipelineStage :one
 WITH updated AS (
 	UPDATE RAC_lead_services ls SET pipeline_stage = $3, updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage IS DISTINCT FROM $3
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint
 ), selected AS (
-	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences FROM updated
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint FROM updated
 	UNION ALL
-	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint
 	FROM RAC_lead_services ls
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 ), event AS (
@@ -5119,7 +5193,8 @@ WITH updated AS (
 	FROM updated u
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-	u.customer_preferences, u.created_at, u.updated_at
+	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.created_at, u.updated_at
 FROM selected u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 `
@@ -5131,17 +5206,19 @@ type UpdatePipelineStageParams struct {
 }
 
 type UpdatePipelineStageRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdatePipelineStage(ctx context.Context, arg UpdatePipelineStageParams) (UpdatePipelineStageRow, error) {
@@ -5157,6 +5234,8 @@ func (q *Queries) UpdatePipelineStage(ctx context.Context, arg UpdatePipelineSta
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -5204,11 +5283,11 @@ const updateServiceStatus = `-- name: UpdateServiceStatus :one
 WITH updated AS (
 	UPDATE RAC_lead_services ls SET status = $3, updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND ls.status IS DISTINCT FROM $3
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint
 ), selected AS (
-	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences FROM updated
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint FROM updated
 	UNION ALL
-	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint
 	FROM RAC_lead_services ls
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 ), event AS (
@@ -5217,7 +5296,8 @@ WITH updated AS (
 	FROM updated u
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-	u.customer_preferences, u.created_at, u.updated_at
+	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.created_at, u.updated_at
 FROM selected u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 `
@@ -5229,17 +5309,19 @@ type UpdateServiceStatusParams struct {
 }
 
 type UpdateServiceStatusRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdateServiceStatus(ctx context.Context, arg UpdateServiceStatusParams) (UpdateServiceStatusRow, error) {
@@ -5255,6 +5337,8 @@ func (q *Queries) UpdateServiceStatus(ctx context.Context, arg UpdateServiceStat
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -5271,11 +5355,11 @@ WITH current AS (
 	SET status = $3, pipeline_stage = $4, updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2
 		AND (status IS DISTINCT FROM $3 OR pipeline_stage IS DISTINCT FROM $4)
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint
 ), selected AS (
-	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences FROM updated
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint FROM updated
 	UNION ALL
-	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint
 	FROM RAC_lead_services ls
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 ), status_event AS (
@@ -5290,7 +5374,8 @@ WITH current AS (
 	WHERE (SELECT old_stage FROM current) IS DISTINCT FROM $4
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
-	u.customer_preferences, u.created_at, u.updated_at
+	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.created_at, u.updated_at
 FROM selected u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id
 `
@@ -5303,17 +5388,19 @@ type UpdateServiceStatusAndPipelineStageParams struct {
 }
 
 type UpdateServiceStatusAndPipelineStageRow struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	ServiceType         string             `json:"service_type"`
-	Status              string             `json:"status"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	ServiceType                        string             `json:"service_type"`
+	Status                             string             `json:"status"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdateServiceStatusAndPipelineStage(ctx context.Context, arg UpdateServiceStatusAndPipelineStageParams) (UpdateServiceStatusAndPipelineStageRow, error) {
@@ -5334,6 +5421,8 @@ func (q *Queries) UpdateServiceStatusAndPipelineStage(ctx context.Context, arg U
 		&i.ConsumerNote,
 		&i.Source,
 		&i.CustomerPreferences,
+		&i.GatekeeperNurturingLoopCount,
+		&i.GatekeeperNurturingLoopFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

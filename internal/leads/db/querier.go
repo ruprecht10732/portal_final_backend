@@ -98,6 +98,8 @@ type Querier interface {
 	ListTimelineEventsByService(ctx context.Context, arg ListTimelineEventsByServiceParams) ([]ListTimelineEventsByServiceRow, error)
 	ListUpcomingAppointments(ctx context.Context, arg ListUpcomingAppointmentsParams) ([]ListUpcomingAppointmentsRow, error)
 	MarkHumanFeedbackApplied(ctx context.Context, arg MarkHumanFeedbackAppliedParams) (RacHumanFeedback, error)
+	ResetGatekeeperNurturingLoopState(ctx context.Context, arg ResetGatekeeperNurturingLoopStateParams) error
+	SetGatekeeperNurturingLoopState(ctx context.Context, arg SetGatekeeperNurturingLoopStateParams) error
 	SetLeadPublicToken(ctx context.Context, arg SetLeadPublicTokenParams) error
 	SetLeadViewedBy(ctx context.Context, arg SetLeadViewedByParams) error
 	UpdateEnergyLabel(ctx context.Context, arg UpdateEnergyLabelParams) (int64, error)

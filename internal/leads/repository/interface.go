@@ -75,6 +75,8 @@ type LeadServiceWriter interface {
 	UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error)
 	UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error)
 	UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error)
+	SetGatekeeperNurturingLoopState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, count int, fingerprint string) error
+	ResetGatekeeperNurturingLoopState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
 	InsertLeadServiceEvent(ctx context.Context, params InsertServiceEventParams) error
 	UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error
 	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error

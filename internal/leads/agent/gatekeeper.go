@@ -207,25 +207,13 @@ func (g *Gatekeeper) applyFallbackNurturingStage(ctx context.Context, leadID, se
 		log.Printf("gatekeeper: skipping fallback stage update (already Nurturing) runID=%s lead=%s service=%s", runID, leadID, serviceID)
 		return
 	}
-	if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageNurturing); err != nil {
+	if out, err := applyPipelineStageUpdate(ctx, GetDependencies(ctx), UpdatePipelineStageInput{Stage: domain.PipelineStageNurturing, Reason: reason}); err != nil {
 		log.Printf("gatekeeper: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
 		return
+	} else if !out.Success {
+		log.Printf("gatekeeper: fallback stage update rejected (runID=%s lead=%s service=%s): %s", runID, leadID, serviceID, out.Message)
+		return
 	}
-
-	_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
-		LeadID:         leadID,
-		ServiceID:      &serviceID,
-		OrganizationID: tenantID,
-		ActorType:      repository.ActorTypeSystem,
-		ActorName:      repository.ActorNameGatekeeper,
-		EventType:      repository.EventTypeStageChange,
-		Title:          repository.EventTitleStageUpdated,
-		Summary:        &reason,
-		Metadata: repository.StageChangeMetadata{
-			OldStage: currentService.PipelineStage,
-			NewStage: domain.PipelineStageNurturing,
-		}.ToMap(),
-	})
 	log.Printf("gatekeeper: applied fallback stage update to Nurturing (runID=%s lead=%s service=%s)", runID, leadID, serviceID)
 }
 
@@ -408,6 +396,9 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 		Fallback:                true,
 	}
 	analysisMetadata := fallbackMeta.ToMap()
+	deps := GetDependencies(ctx)
+	deps.SetLastAnalysisMetadata(analysisMetadata)
+	deps.MarkSaveAnalysisCalled()
 	_, _ = g.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
 		LeadID:         leadID,
 		ServiceID:      &serviceID,

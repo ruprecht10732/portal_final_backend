@@ -101,12 +101,27 @@ func (m AutoDisqualifyMetadata) ToMap() map[string]any { return toMap(m) }
 
 // ManualInterventionMetadata is the typed metadata for manual-intervention alert events.
 type ManualInterventionMetadata struct {
-	PreviousStage string         `json:"previous_stage"`
-	Trigger       string         `json:"trigger"`
-	Drafts        map[string]any `json:"drafts"`
+	PreviousStage      string         `json:"previous_stage"`
+	Trigger            string         `json:"trigger"`
+	ReasonCode         string         `json:"reasonCode,omitempty"`
+	AttemptCount       int            `json:"attemptCount,omitempty"`
+	BlockerFingerprint string         `json:"blockerFingerprint,omitempty"`
+	Drafts             map[string]any `json:"drafts"`
 }
 
 func (m ManualInterventionMetadata) ToMap() map[string]any { return toMap(m) }
+
+// LoopDetectedMetadata is the typed metadata for AI-loop alert events.
+type LoopDetectedMetadata struct {
+	Trigger            string   `json:"trigger"`
+	ReasonCode         string   `json:"reasonCode,omitempty"`
+	AttemptCount       int      `json:"attemptCount"`
+	Threshold          int      `json:"threshold"`
+	BlockerFingerprint string   `json:"blockerFingerprint,omitempty"`
+	MissingInformation []string `json:"missingInformation,omitempty"`
+}
+
+func (m LoopDetectedMetadata) ToMap() map[string]any { return toMap(m) }
 
 // StateReconciledMetadata is the typed metadata for EventTypeStateReconciled events.
 type StateReconciledMetadata struct {

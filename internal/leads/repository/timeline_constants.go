@@ -16,6 +16,7 @@ const (
 	ActorNameDispatcher      = "Dispatcher"
 	ActorNameEstimator       = "Estimator"
 	ActorNameStateReconciler = "StateReconciler"
+	ActorNameLoopDetector    = "LoopDetector"
 	ActorNameKlant           = "Klant"              // Customer self-service via public portal
 	ActorNamePhotoAnalysis   = "Foto-analyse Agent" // Photo analysis AI agent
 )
@@ -50,6 +51,7 @@ const (
 	EventTitleDispatcherFailed       = "Partner matching mislukt"
 	EventTitlePhotoAnalysisFailed    = "Foto-analyse mislukt"
 	EventTitleManualIntervention     = "Handmatige interventie vereist"
+	EventTitleAILoopDetected         = "AI-lus gedetecteerd"
 	EventTitleQuoteAccepted          = "Offerte Geaccepteerd"
 	EventTitleQuoteRejected          = "Offerte Afgewezen"
 	EventTitleStateReconciled        = "Status automatisch gecorrigeerd"

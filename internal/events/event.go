@@ -160,6 +160,8 @@ type PipelineStageChanged struct {
 	TenantID      uuid.UUID `json:"tenantId"`
 	OldStage      string    `json:"oldStage"`
 	NewStage      string    `json:"newStage"`
+	Reason        string    `json:"reason,omitempty"`
+	Trigger       string    `json:"trigger,omitempty"`
 	ActorType     string    `json:"actorType,omitempty"`
 	ActorName     string    `json:"actorName,omitempty"`
 }

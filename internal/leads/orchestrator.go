@@ -767,22 +767,40 @@ func (o *Orchestrator) handleFulfillmentStage(evt events.PipelineStageChanged) {
 
 func (o *Orchestrator) handleManualInterventionStage(evt events.PipelineStageChanged) {
 	o.log.Warn("orchestrator: manual intervention required", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
+	summary := "Geautomatiseerde verwerking vereist menselijke beoordeling"
+	title := repository.EventTitleManualIntervention
+	actorName := repository.ActorNameOrchestrator
+	metadata := repository.ManualInterventionMetadata{
+		PreviousStage: evt.OldStage,
+		Trigger:       "pipeline_stage_change",
+		Drafts:        buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID),
+	}
+	if strings.TrimSpace(evt.Reason) != "" {
+		summary = strings.TrimSpace(evt.Reason)
+	}
+	if evt.Trigger == "ai_loop_detected" {
+		title = repository.EventTitleAILoopDetected
+		actorName = repository.ActorNameLoopDetector
+		metadata.Trigger = evt.Trigger
+		metadata.ReasonCode = "nurturing_loop_threshold"
+		if svc, err := o.repo.GetLeadServiceByID(context.Background(), evt.LeadServiceID, evt.TenantID); err == nil {
+			metadata.AttemptCount = svc.GatekeeperNurturingLoopCount
+			if svc.GatekeeperNurturingLoopFingerprint != nil {
+				metadata.BlockerFingerprint = *svc.GatekeeperNurturingLoopFingerprint
+			}
+		}
+	}
 	// Record timeline event for audit trail
-	drafts := buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID)
 	_, _ = o.repo.CreateTimelineEvent(context.Background(), repository.CreateTimelineEventParams{
 		LeadID:         evt.LeadID,
 		ServiceID:      &evt.LeadServiceID,
 		OrganizationID: evt.TenantID,
 		ActorType:      repository.ActorTypeSystem,
-		ActorName:      repository.ActorNameOrchestrator,
+		ActorName:      actorName,
 		EventType:      repository.EventTypeAlert,
-		Title:          repository.EventTitleManualIntervention,
-		Summary:        stringPtr("Geautomatiseerde verwerking vereist menselijke beoordeling"),
-		Metadata: repository.ManualInterventionMetadata{
-			PreviousStage: evt.OldStage,
-			Trigger:       "pipeline_stage_change",
-			Drafts:        drafts,
-		}.ToMap(),
+		Title:          title,
+		Summary:        &summary,
+		Metadata:       metadata.ToMap(),
 	})
 
 	// Push real-time notification to all org members via SSE
@@ -790,9 +808,10 @@ func (o *Orchestrator) handleManualInterventionStage(evt events.PipelineStageCha
 		Type:      sse.EventManualIntervention,
 		LeadID:    evt.LeadID,
 		ServiceID: evt.LeadServiceID,
-		Message:   "Geautomatiseerde verwerking vereist menselijke beoordeling",
+		Message:   summary,
 		Data: map[string]any{
 			"previousStage": evt.OldStage,
+			"trigger":       metadata.Trigger,
 		},
 	})
 
@@ -802,7 +821,7 @@ func (o *Orchestrator) handleManualInterventionStage(evt events.PipelineStageCha
 		LeadID:        evt.LeadID,
 		LeadServiceID: evt.LeadServiceID,
 		TenantID:      evt.TenantID,
-		Reason:        "pipeline_stage_change",
+		Reason:        metadata.Trigger,
 		Context:       "Transitioned from " + evt.OldStage,
 	})
 }

@@ -732,17 +732,19 @@ type RacLeadPhotoAnalysis struct {
 }
 
 type RacLeadService struct {
-	ID                  pgtype.UUID        `json:"id"`
-	LeadID              pgtype.UUID        `json:"lead_id"`
-	Status              string             `json:"status"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-	ServiceTypeID       pgtype.UUID        `json:"service_type_id"`
-	ConsumerNote        pgtype.Text        `json:"consumer_note"`
-	Source              pgtype.Text        `json:"source"`
-	OrganizationID      pgtype.UUID        `json:"organization_id"`
-	PipelineStage       PipelineStage      `json:"pipeline_stage"`
-	CustomerPreferences []byte             `json:"customer_preferences"`
+	ID                                 pgtype.UUID        `json:"id"`
+	LeadID                             pgtype.UUID        `json:"lead_id"`
+	Status                             string             `json:"status"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
+	ServiceTypeID                      pgtype.UUID        `json:"service_type_id"`
+	ConsumerNote                       pgtype.Text        `json:"consumer_note"`
+	Source                             pgtype.Text        `json:"source"`
+	OrganizationID                     pgtype.UUID        `json:"organization_id"`
+	PipelineStage                      PipelineStage      `json:"pipeline_stage"`
+	CustomerPreferences                []byte             `json:"customer_preferences"`
+	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
+	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
 }
 
 // Stores metadata for files uploaded to MinIO for lead services
