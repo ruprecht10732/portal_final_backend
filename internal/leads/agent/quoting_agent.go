@@ -779,7 +779,10 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 	}
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	for event := range activeRunner.Run(ctx, userID, sessionID, userMessage, runConfig) {
+	for event, err := range activeRunner.Run(ctx, userID, sessionID, userMessage, runConfig) {
+		if err != nil {
+			return fmt.Errorf("quoting agent run failed: %w", err)
+		}
 		_ = event
 	}
 
