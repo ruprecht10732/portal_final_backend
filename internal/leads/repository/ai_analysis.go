@@ -81,7 +81,24 @@ func (r *Repository) CreateAIAnalysis(ctx context.Context, params CreateAIAnalys
 	if err != nil {
 		return AIAnalysis{}, err
 	}
-	return aiAnalysisFromRow(row.ID, row.LeadID, row.OrganizationID, row.LeadServiceID, row.UrgencyLevel, row.UrgencyReason, row.LeadQuality, row.RecommendedAction, row.MissingInformation, row.CompositeConfidence, row.ConfidenceBreakdown, row.RiskFlags, row.PreferredContactChannel, row.SuggestedContactMessage, row.Summary, row.CreatedAt), nil
+	return aiAnalysisSnapshot{
+		id:                      row.ID,
+		leadID:                  row.LeadID,
+		organizationID:          row.OrganizationID,
+		leadServiceID:           row.LeadServiceID,
+		urgencyLevel:            row.UrgencyLevel,
+		urgencyReason:           row.UrgencyReason,
+		leadQuality:             row.LeadQuality,
+		recommendedAction:       row.RecommendedAction,
+		missingInformation:      row.MissingInformation,
+		compositeConfidence:     row.CompositeConfidence,
+		confidenceBreakdown:     row.ConfidenceBreakdown,
+		riskFlags:               row.RiskFlags,
+		preferredContactChannel: row.PreferredContactChannel,
+		suggestedContactMessage: row.SuggestedContactMessage,
+		summary:                 row.Summary,
+		createdAt:               row.CreatedAt,
+	}.toModel(), nil
 }
 
 // GetLatestAIAnalysis returns the most recent AI analysis for a service.
@@ -93,7 +110,24 @@ func (r *Repository) GetLatestAIAnalysis(ctx context.Context, serviceID uuid.UUI
 	if err != nil {
 		return AIAnalysis{}, err
 	}
-	return aiAnalysisFromRow(row.ID, row.LeadID, row.OrganizationID, row.LeadServiceID, row.UrgencyLevel, row.UrgencyReason, row.LeadQuality, row.RecommendedAction, row.MissingInformation, row.CompositeConfidence, row.ConfidenceBreakdown, row.RiskFlags, row.PreferredContactChannel, row.SuggestedContactMessage, row.Summary, row.CreatedAt), nil
+	return aiAnalysisSnapshot{
+		id:                      row.ID,
+		leadID:                  row.LeadID,
+		organizationID:          row.OrganizationID,
+		leadServiceID:           row.LeadServiceID,
+		urgencyLevel:            row.UrgencyLevel,
+		urgencyReason:           row.UrgencyReason,
+		leadQuality:             row.LeadQuality,
+		recommendedAction:       row.RecommendedAction,
+		missingInformation:      row.MissingInformation,
+		compositeConfidence:     row.CompositeConfidence,
+		confidenceBreakdown:     row.ConfidenceBreakdown,
+		riskFlags:               row.RiskFlags,
+		preferredContactChannel: row.PreferredContactChannel,
+		suggestedContactMessage: row.SuggestedContactMessage,
+		summary:                 row.Summary,
+		createdAt:               row.CreatedAt,
+	}.toModel(), nil
 }
 
 // ListAIAnalyses returns all AI analyses for a service, ordered by most recent first.
@@ -105,30 +139,66 @@ func (r *Repository) ListAIAnalyses(ctx context.Context, serviceID uuid.UUID, or
 
 	analyses := make([]AIAnalysis, 0, len(rows))
 	for _, row := range rows {
-		analyses = append(analyses, aiAnalysisFromRow(row.ID, row.LeadID, row.OrganizationID, row.LeadServiceID, row.UrgencyLevel, row.UrgencyReason, row.LeadQuality, row.RecommendedAction, row.MissingInformation, row.CompositeConfidence, row.ConfidenceBreakdown, row.RiskFlags, row.PreferredContactChannel, row.SuggestedContactMessage, row.Summary, row.CreatedAt))
+		analyses = append(analyses, aiAnalysisSnapshot{
+			id:                      row.ID,
+			leadID:                  row.LeadID,
+			organizationID:          row.OrganizationID,
+			leadServiceID:           row.LeadServiceID,
+			urgencyLevel:            row.UrgencyLevel,
+			urgencyReason:           row.UrgencyReason,
+			leadQuality:             row.LeadQuality,
+			recommendedAction:       row.RecommendedAction,
+			missingInformation:      row.MissingInformation,
+			compositeConfidence:     row.CompositeConfidence,
+			confidenceBreakdown:     row.ConfidenceBreakdown,
+			riskFlags:               row.RiskFlags,
+			preferredContactChannel: row.PreferredContactChannel,
+			suggestedContactMessage: row.SuggestedContactMessage,
+			summary:                 row.Summary,
+			createdAt:               row.CreatedAt,
+		}.toModel())
 	}
 	return analyses, nil
 }
 
-func aiAnalysisFromRow(id, leadID, organizationID, leadServiceID pgtype.UUID, urgencyLevel string, urgencyReason pgtype.Text, leadQuality, recommendedAction string, missingInformation []byte, compositeConfidence pgtype.Float8, confidenceBreakdown, riskFlags []byte, preferredContactChannel, suggestedContactMessage, summary string, createdAt pgtype.Timestamptz) AIAnalysis {
+type aiAnalysisSnapshot struct {
+	id                      pgtype.UUID
+	leadID                  pgtype.UUID
+	organizationID          pgtype.UUID
+	leadServiceID           pgtype.UUID
+	urgencyLevel            string
+	urgencyReason           pgtype.Text
+	leadQuality             string
+	recommendedAction       string
+	missingInformation      []byte
+	compositeConfidence     pgtype.Float8
+	confidenceBreakdown     []byte
+	riskFlags               []byte
+	preferredContactChannel string
+	suggestedContactMessage string
+	summary                 string
+	createdAt               pgtype.Timestamptz
+}
+
+func (snapshot aiAnalysisSnapshot) toModel() AIAnalysis {
 	analysis := AIAnalysis{
-		ID:                      id.Bytes,
-		LeadID:                  leadID.Bytes,
-		OrganizationID:          organizationID.Bytes,
-		LeadServiceID:           leadServiceID.Bytes,
-		UrgencyLevel:            urgencyLevel,
-		UrgencyReason:           optionalString(urgencyReason),
-		LeadQuality:             leadQuality,
-		RecommendedAction:       recommendedAction,
-		CompositeConfidence:     optionalFloat64(compositeConfidence),
-		PreferredContactChannel: preferredContactChannel,
-		SuggestedContactMessage: suggestedContactMessage,
-		Summary:                 summary,
-		CreatedAt:               createdAt.Time,
+		ID:                      snapshot.id.Bytes,
+		LeadID:                  snapshot.leadID.Bytes,
+		OrganizationID:          snapshot.organizationID.Bytes,
+		LeadServiceID:           snapshot.leadServiceID.Bytes,
+		UrgencyLevel:            snapshot.urgencyLevel,
+		UrgencyReason:           optionalString(snapshot.urgencyReason),
+		LeadQuality:             snapshot.leadQuality,
+		RecommendedAction:       snapshot.recommendedAction,
+		CompositeConfidence:     optionalFloat64(snapshot.compositeConfidence),
+		PreferredContactChannel: snapshot.preferredContactChannel,
+		SuggestedContactMessage: snapshot.suggestedContactMessage,
+		Summary:                 snapshot.summary,
+		CreatedAt:               snapshot.createdAt.Time,
 	}
-	_ = json.Unmarshal(missingInformation, &analysis.MissingInformation)
-	_ = json.Unmarshal(confidenceBreakdown, &analysis.ConfidenceBreakdown)
-	_ = json.Unmarshal(riskFlags, &analysis.RiskFlags)
+	_ = json.Unmarshal(snapshot.missingInformation, &analysis.MissingInformation)
+	_ = json.Unmarshal(snapshot.confidenceBreakdown, &analysis.ConfidenceBreakdown)
+	_ = json.Unmarshal(snapshot.riskFlags, &analysis.RiskFlags)
 	if analysis.ConfidenceBreakdown == nil {
 		analysis.ConfidenceBreakdown = map[string]float64{}
 	}
@@ -155,12 +225,4 @@ func marshalJSONMap(values map[string]float64) []byte {
 	}
 	data, _ := json.Marshal(values)
 	return data
-}
-
-func requiredAIAnalysisColumns() []string {
-	return []string{
-		"composite_confidence",
-		"confidence_breakdown",
-		"risk_flags",
-	}
 }

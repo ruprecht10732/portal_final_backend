@@ -377,12 +377,6 @@ Respond ONLY with tool calls.
 	)
 }
 
-// buildEstimatorPrompt is kept as a compatibility wrapper while callers migrate
-// to the explicit quote-builder naming.
-func buildEstimatorPrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis, estimationContext string) string {
-	return buildQuoteBuilderPrompt(lead, service, notes, photoAnalysis, estimationContext, nil)
-}
-
 func buildInvestigativePrompt(lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photoAnalysis *repository.PhotoAnalysis, missingItems []string, estimationContext string) string {
 	notesSection := buildNotesSection(notes, maxEstimatorNotesChars)
 	serviceNote := getValue(service.ConsumerNote)

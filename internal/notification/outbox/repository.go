@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"time"
 
+	notificationdb "portal_final_backend/internal/notification/db"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,11 +51,50 @@ type InsertParams struct {
 }
 
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *notificationdb.Queries
 }
 
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	if pool == nil {
+		return &Repository{}
+	}
+	return &Repository{pool: pool, queries: notificationdb.New(pool)}
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return toPgUUID(*id)
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func toPgTimestamp(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func recordFromModel(model notificationdb.RacNotificationOutbox) Record {
+	return Record{
+		ID:       uuid.UUID(model.ID.Bytes),
+		TenantID: uuid.UUID(model.TenantID.Bytes),
+		Kind:     model.Kind,
+		Template: model.Template,
+		Payload:  json.RawMessage(model.Payload),
+		RunAt:    model.RunAt.Time,
+		Status:   Status(model.Status),
+		Attempts: int(model.Attempts),
+	}
 }
 
 func (r *Repository) Insert(ctx context.Context, p InsertParams) (uuid.UUID, error) {
@@ -81,17 +123,21 @@ func (r *Repository) Insert(ctx context.Context, p InsertParams) (uuid.UUID, err
 		return uuid.Nil, fmt.Errorf("marshal payload: %w", err)
 	}
 
-	var id uuid.UUID
-	err = r.pool.QueryRow(ctx,
-		`INSERT INTO RAC_notification_outbox (tenant_id, lead_id, service_id, kind, template, payload, run_at, status, last_error)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 RETURNING id`,
-		p.TenantID, p.LeadID, p.ServiceID, p.Kind, p.Template, payloadBytes, p.RunAt, string(status), p.LastError,
-	).Scan(&id)
+	id, err := r.queries.InsertNotificationOutbox(ctx, notificationdb.InsertNotificationOutboxParams{
+		TenantID:  toPgUUID(p.TenantID),
+		LeadID:    toPgUUIDPtr(p.LeadID),
+		ServiceID: toPgUUIDPtr(p.ServiceID),
+		Kind:      p.Kind,
+		Template:  p.Template,
+		Payload:   payloadBytes,
+		RunAt:     toPgTimestamp(p.RunAt),
+		Status:    string(status),
+		LastError: toPgText(p.LastError),
+	})
 	if err != nil {
 		return uuid.Nil, err
 	}
-	return id, nil
+	return uuid.UUID(id.Bytes), nil
 }
 
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Record, error) {
@@ -99,19 +145,11 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (Record, error) 
 		return Record{}, errors.New(errRepoNotConfigured)
 	}
 
-	var rec Record
-	var status string
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, kind, template, payload, run_at, status, attempts
-		 FROM RAC_notification_outbox
-		 WHERE id = $1`,
-		id,
-	).Scan(&rec.ID, &rec.TenantID, &rec.Kind, &rec.Template, &rec.Payload, &rec.RunAt, &status, &rec.Attempts)
+	model, err := r.queries.GetNotificationOutboxByID(ctx, toPgUUID(id))
 	if err != nil {
 		return Record{}, err
 	}
-	rec.Status = Status(status)
-	return rec, nil
+	return recordFromModel(model), nil
 }
 
 func (r *Repository) ClaimPending(ctx context.Context, limit int) ([]Record, error) {
@@ -128,36 +166,15 @@ func (r *Repository) ClaimPending(ctx context.Context, limit int) ([]Record, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	rows, err := tx.Query(ctx, `WITH cte AS (
-		SELECT id
-		FROM RAC_notification_outbox
-		WHERE status = 'pending'
-		ORDER BY run_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED
-	)
-	UPDATE RAC_notification_outbox o
-	SET status = 'enqueued', updated_at = now()
-	FROM cte
-	WHERE o.id = cte.id
-	RETURNING o.id, o.tenant_id, o.kind, o.template, o.payload, o.run_at, o.status, o.attempts`, limit)
+	queries := r.queries.WithTx(tx)
+	models, err := queries.ClaimPendingNotificationOutbox(ctx, int32(limit))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var results []Record
-	for rows.Next() {
-		var rec Record
-		var status string
-		if err := rows.Scan(&rec.ID, &rec.TenantID, &rec.Kind, &rec.Template, &rec.Payload, &rec.RunAt, &status, &rec.Attempts); err != nil {
-			return nil, err
-		}
-		rec.Status = Status(status)
-		results = append(results, rec)
-	}
-	if rows.Err() != nil {
-		return nil, rows.Err()
+	results := make([]Record, 0, len(models))
+	for _, model := range models {
+		results = append(results, recordFromModel(model))
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -170,13 +187,10 @@ func (r *Repository) MarkPending(ctx context.Context, id uuid.UUID, lastError *s
 	if r == nil || r.pool == nil {
 		return errors.New(errRepoNotConfigured)
 	}
-	_, err := r.pool.Exec(ctx,
-		`UPDATE RAC_notification_outbox
-		 SET status = 'pending', last_error = $2, updated_at = now()
-		 WHERE id = $1`,
-		id, lastError,
-	)
-	return err
+	return r.queries.MarkNotificationOutboxPending(ctx, notificationdb.MarkNotificationOutboxPendingParams{
+		LastError: toPgText(lastError),
+		ID:        toPgUUID(id),
+	})
 }
 
 func (r *Repository) ScheduleRetry(ctx context.Context, id uuid.UUID, runAt time.Time, lastError string) error {
@@ -186,52 +200,35 @@ func (r *Repository) ScheduleRetry(ctx context.Context, id uuid.UUID, runAt time
 	if runAt.IsZero() {
 		runAt = time.Now().UTC()
 	}
-	_, err := r.pool.Exec(ctx,
-		`UPDATE RAC_notification_outbox
-		 SET status = 'pending', run_at = $2, last_error = $3, updated_at = now()
-		 WHERE id = $1`,
-		id, runAt, lastError,
-	)
-	return err
+	return r.queries.ScheduleNotificationOutboxRetry(ctx, notificationdb.ScheduleNotificationOutboxRetryParams{
+		RunAt:     toPgTimestamp(runAt),
+		LastError: lastError,
+		ID:        toPgUUID(id),
+	})
 }
 
 func (r *Repository) MarkProcessing(ctx context.Context, id uuid.UUID) error {
 	if r == nil || r.pool == nil {
 		return errors.New(errRepoNotConfigured)
 	}
-	_, err := r.pool.Exec(ctx,
-		`UPDATE RAC_notification_outbox
-		 SET status = 'processing', attempts = attempts + 1, updated_at = now()
-		 WHERE id = $1`,
-		id,
-	)
-	return err
+	return r.queries.MarkNotificationOutboxProcessing(ctx, toPgUUID(id))
 }
 
 func (r *Repository) MarkSucceeded(ctx context.Context, id uuid.UUID) error {
 	if r == nil || r.pool == nil {
 		return errors.New(errRepoNotConfigured)
 	}
-	_, err := r.pool.Exec(ctx,
-		`UPDATE RAC_notification_outbox
-		 SET status = 'succeeded', last_error = NULL, updated_at = now()
-		 WHERE id = $1`,
-		id,
-	)
-	return err
+	return r.queries.MarkNotificationOutboxSucceeded(ctx, toPgUUID(id))
 }
 
 func (r *Repository) MarkFailed(ctx context.Context, id uuid.UUID, lastError string) error {
 	if r == nil || r.pool == nil {
 		return errors.New(errRepoNotConfigured)
 	}
-	_, err := r.pool.Exec(ctx,
-		`UPDATE RAC_notification_outbox
-		 SET status = 'failed', last_error = $2, updated_at = now()
-		 WHERE id = $1`,
-		id, lastError,
-	)
-	return err
+	return r.queries.MarkNotificationOutboxFailed(ctx, notificationdb.MarkNotificationOutboxFailedParams{
+		LastError: lastError,
+		ID:        toPgUUID(id),
+	})
 }
 
 func (r *Repository) CancelPendingForLead(ctx context.Context, tenantID, leadID uuid.UUID) (int64, error) {
@@ -245,15 +242,15 @@ func (r *Repository) CancelPendingForLead(ctx context.Context, tenantID, leadID 
 		return 0, fmt.Errorf("leadId is required")
 	}
 
-	result, err := r.pool.Exec(ctx,
-		`UPDATE RAC_notification_outbox
-		 SET status = $3, updated_at = now()
-		 WHERE tenant_id = $1 AND lead_id = $2 AND status = $4`,
-		tenantID, leadID, string(StatusCancelled), string(StatusPending),
-	)
+	result, err := r.queries.CancelPendingNotificationOutboxForLead(ctx, notificationdb.CancelPendingNotificationOutboxForLeadParams{
+		CancelledStatus: string(StatusCancelled),
+		TenantID:        toPgUUID(tenantID),
+		LeadID:          toPgUUID(leadID),
+		PendingStatus:   string(StatusPending),
+	})
 	if err != nil {
 		return 0, err
 	}
 
-	return result.RowsAffected(), nil
+	return result, nil
 }

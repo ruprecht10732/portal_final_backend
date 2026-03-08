@@ -12,7 +12,7 @@ import (
 )
 
 const countProducts = `-- name: CountProducts :one
-SELECT COUNT(*)
+SELECT COUNT(*) AS countValue
 FROM RAC_catalog_products
 WHERE organization_id = $1
   AND ($2::text IS NULL OR (title ILIKE $2::text OR reference ILIKE $2::text))
@@ -55,13 +55,13 @@ func (q *Queries) CountProducts(ctx context.Context, arg CountProductsParams) (i
 		arg.Updatedatfrom,
 		arg.Updatedatto,
 	)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var countvalue int64
+	err := row.Scan(&countvalue)
+	return countvalue, err
 }
 
 const countVatRates = `-- name: CountVatRates :one
-SELECT COUNT(*)
+SELECT COUNT(*) AS countValue
 FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
   AND ($2::text IS NULL OR name ILIKE $2::text)
@@ -74,9 +74,9 @@ type CountVatRatesParams struct {
 
 func (q *Queries) CountVatRates(ctx context.Context, arg CountVatRatesParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countVatRates, arg.Organizationid, arg.Searchpattern)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var countvalue int64
+	err := row.Scan(&countvalue)
+	return countvalue, err
 }
 
 const createProduct = `-- name: CreateProduct :one
@@ -304,14 +304,14 @@ INSERT INTO RAC_catalog_product_counters (organization_id, last_number)
 VALUES ($1, 1)
 ON CONFLICT (organization_id) DO UPDATE
 SET last_number = RAC_catalog_product_counters.last_number + 1
-RETURNING last_number
+RETURNING last_number AS lastNumberValue
 `
 
 func (q *Queries) GetNextProductCounter(ctx context.Context, organizationID pgtype.UUID) (int32, error) {
 	row := q.db.QueryRow(ctx, getNextProductCounter, organizationID)
-	var last_number int32
-	err := row.Scan(&last_number)
-	return last_number, err
+	var lastnumbervalue int32
+	err := row.Scan(&lastnumbervalue)
+	return lastnumbervalue, err
 }
 
 const getProductAssetByID = `-- name: GetProductAssetByID :one

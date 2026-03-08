@@ -7,31 +7,30 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	identitydb "portal_final_backend/internal/identity/db"
 )
 
 var ErrNotFound = errors.New("not found")
 
-type DBTX interface {
-	Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
-}
+type DBTX = identitydb.DBTX
 
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *identitydb.Queries
 }
 
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, queries: identitydb.New(pool)}
 }
 
-func (r *Repository) getDB(q DBTX) DBTX {
+func (r *Repository) queriesFor(q DBTX) *identitydb.Queries {
 	if q != nil {
-		return q
+		return identitydb.New(q)
 	}
-	return r.pool
+	return r.queries
 }
 
 type Organization struct {
@@ -95,7 +94,7 @@ type OrganizationSettings struct {
 	SMTPHost                    *string
 	SMTPPort                    *int
 	SMTPUsername                *string
-	SMTPPassword                *string // AES-256-GCM encrypted
+	SMTPPassword                *string
 	SMTPFromEmail               *string
 	SMTPFromName                *string
 	CreatedAt                   time.Time
@@ -120,12 +119,11 @@ type OrganizationSettingsUpdate struct {
 	WhatsAppWelcomeDelayMinutes *int
 }
 
-// OrganizationSMTPUpdate holds encrypted SMTP configuration fields.
 type OrganizationSMTPUpdate struct {
 	SMTPHost      string
 	SMTPPort      int
 	SMTPUsername  string
-	SMTPPassword  string // already encrypted
+	SMTPPassword  string
 	SMTPFromEmail string
 	SMTPFromName  string
 }
@@ -142,228 +140,225 @@ type Invite struct {
 	UsedBy         *uuid.UUID
 }
 
+type organizationSnapshot struct {
+	ID              pgtype.UUID
+	Name            string
+	Email           pgtype.Text
+	Phone           pgtype.Text
+	VatNumber       pgtype.Text
+	KvkNumber       pgtype.Text
+	AddressLine1    pgtype.Text
+	AddressLine2    pgtype.Text
+	PostalCode      pgtype.Text
+	City            pgtype.Text
+	Country         pgtype.Text
+	LogoFileKey     pgtype.Text
+	LogoFileName    pgtype.Text
+	LogoContentType pgtype.Text
+	LogoSizeBytes   pgtype.Int8
+	CreatedBy       pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type settingsSnapshot struct {
+	OrganizationID              pgtype.UUID
+	QuotePaymentDays            int32
+	QuoteValidDays              int32
+	AIAutoDisqualifyJunk        bool
+	AIAutoDispatch              bool
+	AIAutoEstimate              bool
+	AIConfidenceGateEnabled     bool
+	AIAdaptiveReasoningEnabled  bool
+	AIExperienceMemoryEnabled   bool
+	AICouncilEnabled            bool
+	AICouncilConsensusMode      string
+	CatalogGapThreshold         int32
+	CatalogGapLookbackDays      int32
+	NotificationEmail           pgtype.Text
+	WhatsAppDeviceID            pgtype.Text
+	WhatsAppWelcomeDelayMinutes int32
+	SMTPHost                    pgtype.Text
+	SMTPPort                    pgtype.Int4
+	SMTPUsername                pgtype.Text
+	SMTPPassword                pgtype.Text
+	SMTPFromEmail               pgtype.Text
+	SMTPFromName                pgtype.Text
+	CreatedAt                   pgtype.Timestamptz
+	UpdatedAt                   pgtype.Timestamptz
+}
+
 func (r *Repository) CreateOrganization(ctx context.Context, q DBTX, name string, createdBy uuid.UUID) (Organization, error) {
-	var org Organization
-	err := r.getDB(q).QueryRow(ctx, `
-    INSERT INTO RAC_organizations (name, created_by)
-    VALUES ($1, $2)
-    RETURNING id, name, created_by, created_at, updated_at
-  `, name, createdBy).Scan(&org.ID, &org.Name, &org.CreatedBy, &org.CreatedAt, &org.UpdatedAt)
-	return org, err
+	row, err := r.queriesFor(q).CreateOrganization(ctx, identitydb.CreateOrganizationParams{
+		Name:      name,
+		CreatedBy: toPgUUID(createdBy),
+	})
+	if err != nil {
+		return Organization{}, err
+	}
+	return organizationFromSnapshot(organizationSnapshot{
+		ID:              row.ID,
+		Name:            row.Name,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		VatNumber:       row.VatNumber,
+		KvkNumber:       row.KvkNumber,
+		AddressLine1:    row.AddressLine1,
+		AddressLine2:    row.AddressLine2,
+		PostalCode:      row.PostalCode,
+		City:            row.City,
+		Country:         row.Country,
+		LogoFileKey:     row.LogoFileKey,
+		LogoFileName:    row.LogoFileName,
+		LogoContentType: row.LogoContentType,
+		LogoSizeBytes:   row.LogoSizeBytes,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) GetOrganization(ctx context.Context, organizationID uuid.UUID) (Organization, error) {
-	var org Organization
-	err := r.pool.QueryRow(ctx, `
-    SELECT id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
-      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-      created_by, created_at, updated_at
-    FROM RAC_organizations
-    WHERE id = $1
-  `, organizationID).Scan(
-		&org.ID,
-		&org.Name,
-		&org.Email,
-		&org.Phone,
-		&org.VatNumber,
-		&org.KvkNumber,
-		&org.AddressLine1,
-		&org.AddressLine2,
-		&org.PostalCode,
-		&org.City,
-		&org.Country,
-		&org.LogoFileKey,
-		&org.LogoFileName,
-		&org.LogoContentType,
-		&org.LogoSizeBytes,
-		&org.CreatedBy,
-		&org.CreatedAt,
-		&org.UpdatedAt,
-	)
+	row, err := r.queries.GetOrganization(ctx, toPgUUID(organizationID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Organization{}, ErrNotFound
 	}
-	return org, err
+	if err != nil {
+		return Organization{}, err
+	}
+	return organizationFromSnapshot(organizationSnapshot{
+		ID:              row.ID,
+		Name:            row.Name,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		VatNumber:       row.VatNumber,
+		KvkNumber:       row.KvkNumber,
+		AddressLine1:    row.AddressLine1,
+		AddressLine2:    row.AddressLine2,
+		PostalCode:      row.PostalCode,
+		City:            row.City,
+		Country:         row.Country,
+		LogoFileKey:     row.LogoFileKey,
+		LogoFileName:    row.LogoFileName,
+		LogoContentType: row.LogoContentType,
+		LogoSizeBytes:   row.LogoSizeBytes,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}), nil
 }
 
-func (r *Repository) UpdateOrganizationProfile(
-	ctx context.Context,
-	organizationID uuid.UUID,
-	update OrganizationProfileUpdate,
-) (Organization, error) {
-	var org Organization
-	err := r.pool.QueryRow(ctx, `
-    UPDATE RAC_organizations
-    SET
-      name = COALESCE($2, name),
-      email = COALESCE($3, email),
-      phone = COALESCE($4, phone),
-      vat_number = COALESCE($5, vat_number),
-      kvk_number = COALESCE($6, kvk_number),
-      address_line1 = COALESCE($7, address_line1),
-      address_line2 = COALESCE($8, address_line2),
-      postal_code = COALESCE($9, postal_code),
-      city = COALESCE($10, city),
-      country = COALESCE($11, country),
-      updated_at = now()
-    WHERE id = $1
-    RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
-      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-      created_by, created_at, updated_at
-	`, organizationID, update.Name, update.Email, update.Phone, update.VatNumber, update.KvkNumber, update.AddressLine1, update.AddressLine2, update.PostalCode, update.City, update.Country).Scan(
-		&org.ID,
-		&org.Name,
-		&org.Email,
-		&org.Phone,
-		&org.VatNumber,
-		&org.KvkNumber,
-		&org.AddressLine1,
-		&org.AddressLine2,
-		&org.PostalCode,
-		&org.City,
-		&org.Country,
-		&org.LogoFileKey,
-		&org.LogoFileName,
-		&org.LogoContentType,
-		&org.LogoSizeBytes,
-		&org.CreatedBy,
-		&org.CreatedAt,
-		&org.UpdatedAt,
-	)
+func (r *Repository) UpdateOrganizationProfile(ctx context.Context, organizationID uuid.UUID, update OrganizationProfileUpdate) (Organization, error) {
+	row, err := r.queries.UpdateOrganizationProfile(ctx, identitydb.UpdateOrganizationProfileParams{
+		ID:           toPgUUID(organizationID),
+		Name:         toPgTextPtr(update.Name),
+		Email:        toPgTextPtr(update.Email),
+		Phone:        toPgTextPtr(update.Phone),
+		VatNumber:    toPgTextPtr(update.VatNumber),
+		KvkNumber:    toPgTextPtr(update.KvkNumber),
+		AddressLine1: toPgTextPtr(update.AddressLine1),
+		AddressLine2: toPgTextPtr(update.AddressLine2),
+		PostalCode:   toPgTextPtr(update.PostalCode),
+		City:         toPgTextPtr(update.City),
+		Country:      toPgTextPtr(update.Country),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Organization{}, ErrNotFound
 	}
-	return org, err
+	if err != nil {
+		return Organization{}, err
+	}
+	return organizationFromSnapshot(organizationSnapshot{
+		ID:              row.ID,
+		Name:            row.Name,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		VatNumber:       row.VatNumber,
+		KvkNumber:       row.KvkNumber,
+		AddressLine1:    row.AddressLine1,
+		AddressLine2:    row.AddressLine2,
+		PostalCode:      row.PostalCode,
+		City:            row.City,
+		Country:         row.Country,
+		LogoFileKey:     row.LogoFileKey,
+		LogoFileName:    row.LogoFileName,
+		LogoContentType: row.LogoContentType,
+		LogoSizeBytes:   row.LogoSizeBytes,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}), nil
 }
 
-func (r *Repository) UpdateOrganizationLogo(
-	ctx context.Context,
-	organizationID uuid.UUID,
-	logo OrganizationLogo,
-) (Organization, error) {
-	var org Organization
-	err := r.pool.QueryRow(ctx, `
-    UPDATE RAC_organizations
-    SET
-      logo_file_key = $2,
-      logo_file_name = $3,
-      logo_content_type = $4,
-      logo_size_bytes = $5,
-      updated_at = now()
-    WHERE id = $1
-    RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
-      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-      created_by, created_at, updated_at
-	`, organizationID, logo.FileKey, logo.FileName, logo.ContentType, logo.SizeBytes).Scan(
-		&org.ID,
-		&org.Name,
-		&org.Email,
-		&org.Phone,
-		&org.VatNumber,
-		&org.KvkNumber,
-		&org.AddressLine1,
-		&org.AddressLine2,
-		&org.PostalCode,
-		&org.City,
-		&org.Country,
-		&org.LogoFileKey,
-		&org.LogoFileName,
-		&org.LogoContentType,
-		&org.LogoSizeBytes,
-		&org.CreatedBy,
-		&org.CreatedAt,
-		&org.UpdatedAt,
-	)
+func (r *Repository) UpdateOrganizationLogo(ctx context.Context, organizationID uuid.UUID, logo OrganizationLogo) (Organization, error) {
+	row, err := r.queries.UpdateOrganizationLogo(ctx, identitydb.UpdateOrganizationLogoParams{
+		ID:              toPgUUID(organizationID),
+		LogoFileKey:     toPgTextValue(logo.FileKey),
+		LogoFileName:    toPgTextValue(logo.FileName),
+		LogoContentType: toPgTextValue(logo.ContentType),
+		LogoSizeBytes:   toPgInt8Value(logo.SizeBytes),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Organization{}, ErrNotFound
 	}
-	return org, err
+	if err != nil {
+		return Organization{}, err
+	}
+	return organizationFromSnapshot(organizationSnapshot{
+		ID:              row.ID,
+		Name:            row.Name,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		VatNumber:       row.VatNumber,
+		KvkNumber:       row.KvkNumber,
+		AddressLine1:    row.AddressLine1,
+		AddressLine2:    row.AddressLine2,
+		PostalCode:      row.PostalCode,
+		City:            row.City,
+		Country:         row.Country,
+		LogoFileKey:     row.LogoFileKey,
+		LogoFileName:    row.LogoFileName,
+		LogoContentType: row.LogoContentType,
+		LogoSizeBytes:   row.LogoSizeBytes,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}), nil
 }
 
-func (r *Repository) ClearOrganizationLogo(
-	ctx context.Context,
-	organizationID uuid.UUID,
-) (Organization, error) {
-	var org Organization
-	err := r.pool.QueryRow(ctx, `
-    UPDATE RAC_organizations
-    SET
-      logo_file_key = NULL,
-      logo_file_name = NULL,
-      logo_content_type = NULL,
-      logo_size_bytes = NULL,
-      updated_at = now()
-    WHERE id = $1
-    RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address_line2, postal_code, city, country,
-      logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-      created_by, created_at, updated_at
-	`, organizationID).Scan(
-		&org.ID,
-		&org.Name,
-		&org.Email,
-		&org.Phone,
-		&org.VatNumber,
-		&org.KvkNumber,
-		&org.AddressLine1,
-		&org.AddressLine2,
-		&org.PostalCode,
-		&org.City,
-		&org.Country,
-		&org.LogoFileKey,
-		&org.LogoFileName,
-		&org.LogoContentType,
-		&org.LogoSizeBytes,
-		&org.CreatedBy,
-		&org.CreatedAt,
-		&org.UpdatedAt,
-	)
+func (r *Repository) ClearOrganizationLogo(ctx context.Context, organizationID uuid.UUID) (Organization, error) {
+	row, err := r.queries.ClearOrganizationLogo(ctx, toPgUUID(organizationID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Organization{}, ErrNotFound
 	}
-	return org, err
+	if err != nil {
+		return Organization{}, err
+	}
+	return organizationFromSnapshot(organizationSnapshot{
+		ID:              row.ID,
+		Name:            row.Name,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		VatNumber:       row.VatNumber,
+		KvkNumber:       row.KvkNumber,
+		AddressLine1:    row.AddressLine1,
+		AddressLine2:    row.AddressLine2,
+		PostalCode:      row.PostalCode,
+		City:            row.City,
+		Country:         row.Country,
+		LogoFileKey:     row.LogoFileKey,
+		LogoFileName:    row.LogoFileName,
+		LogoContentType: row.LogoContentType,
+		LogoSizeBytes:   row.LogoSizeBytes,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
-	var s OrganizationSettings
-	err := r.pool.QueryRow(ctx, `
-	SELECT organization_id, quote_payment_days, quote_valid_days,
-	       ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
-	       ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-	       ai_council_consensus_mode,
-	       catalog_gap_threshold, catalog_gap_lookback_days,
-	       notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
-           smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
-           created_at, updated_at
-    FROM RAC_organization_settings
-    WHERE organization_id = $1
-  `, organizationID).Scan(
-		&s.OrganizationID,
-		&s.QuotePaymentDays,
-		&s.QuoteValidDays,
-		&s.AIAutoDisqualifyJunk,
-		&s.AIAutoDispatch,
-		&s.AIAutoEstimate,
-		&s.AIConfidenceGateEnabled,
-		&s.AIAdaptiveReasoningEnabled,
-		&s.AIExperienceMemoryEnabled,
-		&s.AICouncilEnabled,
-		&s.AICouncilConsensusMode,
-		&s.CatalogGapThreshold,
-		&s.CatalogGapLookbackDays,
-		&s.NotificationEmail,
-		&s.WhatsAppDeviceID,
-		&s.WhatsAppWelcomeDelayMinutes,
-		&s.SMTPHost,
-		&s.SMTPPort,
-		&s.SMTPUsername,
-		&s.SMTPPassword,
-		&s.SMTPFromEmail,
-		&s.SMTPFromName,
-		&s.CreatedAt,
-		&s.UpdatedAt,
-	)
+	row, err := r.queries.GetOrganizationSettings(ctx, toPgUUID(organizationID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Return defaults if no row exists yet
 		return OrganizationSettings{
 			OrganizationID:              organizationID,
 			QuotePaymentDays:            7,
@@ -382,358 +377,402 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			WhatsAppWelcomeDelayMinutes: 2,
 		}, nil
 	}
-	return s, err
+	if err != nil {
+		return OrganizationSettings{}, err
+	}
+	return organizationSettingsFromSnapshot(settingsSnapshot{
+		OrganizationID:              row.OrganizationID,
+		QuotePaymentDays:            row.QuotePaymentDays,
+		QuoteValidDays:              row.QuoteValidDays,
+		AIAutoDisqualifyJunk:        row.AiAutoDisqualifyJunk,
+		AIAutoDispatch:              row.AiAutoDispatch,
+		AIAutoEstimate:              row.AiAutoEstimate,
+		AIConfidenceGateEnabled:     row.AiConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:  row.AiAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:   row.AiExperienceMemoryEnabled,
+		AICouncilEnabled:            row.AiCouncilEnabled,
+		AICouncilConsensusMode:      row.AiCouncilConsensusMode,
+		CatalogGapThreshold:         row.CatalogGapThreshold,
+		CatalogGapLookbackDays:      row.CatalogGapLookbackDays,
+		NotificationEmail:           row.NotificationEmail,
+		WhatsAppDeviceID:            row.WhatsappDeviceID,
+		WhatsAppWelcomeDelayMinutes: row.WhatsappWelcomeDelayMinutes,
+		SMTPHost:                    row.SmtpHost,
+		SMTPPort:                    row.SmtpPort,
+		SMTPUsername:                row.SmtpUsername,
+		SMTPPassword:                row.SmtpPassword,
+		SMTPFromEmail:               row.SmtpFromEmail,
+		SMTPFromName:                row.SmtpFromName,
+		CreatedAt:                   row.CreatedAt,
+		UpdatedAt:                   row.UpdatedAt,
+	}), nil
 }
 
-func (r *Repository) UpsertOrganizationSettings(
-	ctx context.Context,
-	organizationID uuid.UUID,
-	update OrganizationSettingsUpdate,
-) (OrganizationSettings, error) {
-	var s OrganizationSettings
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_organization_settings (
-			organization_id,
-			quote_payment_days,
-			quote_valid_days,
-			ai_auto_disqualify_junk,
-			ai_auto_dispatch,
-			ai_auto_estimate,
-			ai_confidence_gate_enabled,
-			ai_adaptive_reasoning_enabled,
-			ai_experience_memory_enabled,
-			ai_council_enabled,
-			ai_council_consensus_mode,
-			catalog_gap_threshold,
-			catalog_gap_lookback_days,
-			notification_email,
-			whatsapp_device_id,
-			whatsapp_welcome_delay_minutes
-		)
-		VALUES (
-			$1,
-			COALESCE($2, 7),
-			COALESCE($3, 14),
-			COALESCE($4, true),
-			COALESCE($5, false),
-			COALESCE($6, true),
-			COALESCE($7, false),
-			COALESCE($8, true),
-			COALESCE($9, true),
-			COALESCE($10, true),
-			COALESCE(NULLIF($11, ''), 'weighted'),
-			COALESCE($12, 3),
-			COALESCE($13, 30),
-			NULLIF($14, ''),
-			NULLIF($15, ''),
-			COALESCE($16, 2)
-		)
-		ON CONFLICT (organization_id) DO UPDATE SET
-			quote_payment_days = COALESCE($2, RAC_organization_settings.quote_payment_days),
-			quote_valid_days   = COALESCE($3, RAC_organization_settings.quote_valid_days),
-			ai_auto_disqualify_junk = COALESCE($4, RAC_organization_settings.ai_auto_disqualify_junk),
-			ai_auto_dispatch        = COALESCE($5, RAC_organization_settings.ai_auto_dispatch),
-			ai_auto_estimate        = COALESCE($6, RAC_organization_settings.ai_auto_estimate),
-			ai_confidence_gate_enabled = COALESCE($7, RAC_organization_settings.ai_confidence_gate_enabled),
-			ai_adaptive_reasoning_enabled = COALESCE($8, RAC_organization_settings.ai_adaptive_reasoning_enabled),
-			ai_experience_memory_enabled = COALESCE($9, RAC_organization_settings.ai_experience_memory_enabled),
-			ai_council_enabled = COALESCE($10, RAC_organization_settings.ai_council_enabled),
-			ai_council_consensus_mode = COALESCE(NULLIF($11, ''), RAC_organization_settings.ai_council_consensus_mode),
-			catalog_gap_threshold   = COALESCE($12, RAC_organization_settings.catalog_gap_threshold),
-			catalog_gap_lookback_days = COALESCE($13, RAC_organization_settings.catalog_gap_lookback_days),
-			notification_email = CASE WHEN $14 IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($14, '') END,
-			whatsapp_device_id = CASE WHEN $15 IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($15, '') END,
-			whatsapp_welcome_delay_minutes = COALESCE($16, RAC_organization_settings.whatsapp_welcome_delay_minutes),
-			updated_at         = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days,
-		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
-		          ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-		          ai_council_consensus_mode,
-		          catalog_gap_threshold, catalog_gap_lookback_days,
-		          notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
-		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
-		          created_at, updated_at
-	`, organizationID,
-		update.QuotePaymentDays,
-		update.QuoteValidDays,
-		update.AIAutoDisqualifyJunk,
-		update.AIAutoDispatch,
-		update.AIAutoEstimate,
-		update.AIConfidenceGateEnabled,
-		update.AIAdaptiveReasoningEnabled,
-		update.AIExperienceMemoryEnabled,
-		update.AICouncilEnabled,
-		update.AICouncilConsensusMode,
-		update.CatalogGapThreshold,
-		update.CatalogGapLookbackDays,
-		update.NotificationEmail,
-		update.WhatsAppDeviceID,
-		update.WhatsAppWelcomeDelayMinutes,
-	).Scan(
-		&s.OrganizationID,
-		&s.QuotePaymentDays,
-		&s.QuoteValidDays,
-		&s.AIAutoDisqualifyJunk,
-		&s.AIAutoDispatch,
-		&s.AIAutoEstimate,
-		&s.AIConfidenceGateEnabled,
-		&s.AIAdaptiveReasoningEnabled,
-		&s.AIExperienceMemoryEnabled,
-		&s.AICouncilEnabled,
-		&s.AICouncilConsensusMode,
-		&s.CatalogGapThreshold,
-		&s.CatalogGapLookbackDays,
-		&s.NotificationEmail,
-		&s.WhatsAppDeviceID,
-		&s.WhatsAppWelcomeDelayMinutes,
-		&s.SMTPHost,
-		&s.SMTPPort,
-		&s.SMTPUsername,
-		&s.SMTPPassword,
-		&s.SMTPFromEmail,
-		&s.SMTPFromName,
-		&s.CreatedAt,
-		&s.UpdatedAt,
-	)
+func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizationID uuid.UUID, update OrganizationSettingsUpdate) (OrganizationSettings, error) {
+	row, err := r.queries.UpsertOrganizationSettings(ctx, identitydb.UpsertOrganizationSettingsParams{
+		OrganizationID:              toPgUUID(organizationID),
+		QuotePaymentDays:            toPgInt4Ptr(update.QuotePaymentDays),
+		QuoteValidDays:              toPgInt4Ptr(update.QuoteValidDays),
+		AiAutoDisqualifyJunk:        toPgBoolPtr(update.AIAutoDisqualifyJunk),
+		AiAutoDispatch:              toPgBoolPtr(update.AIAutoDispatch),
+		AiAutoEstimate:              toPgBoolPtr(update.AIAutoEstimate),
+		AiConfidenceGateEnabled:     toPgBoolPtr(update.AIConfidenceGateEnabled),
+		AiAdaptiveReasoningEnabled:  toPgBoolPtr(update.AIAdaptiveReasoningEnabled),
+		AiExperienceMemoryEnabled:   toPgBoolPtr(update.AIExperienceMemoryEnabled),
+		AiCouncilEnabled:            toPgBoolPtr(update.AICouncilEnabled),
+		AiCouncilConsensusMode:      toPgTextPtr(update.AICouncilConsensusMode),
+		CatalogGapThreshold:         toPgInt4Ptr(update.CatalogGapThreshold),
+		CatalogGapLookbackDays:      toPgInt4Ptr(update.CatalogGapLookbackDays),
+		NotificationEmail:           toPgTextPtr(update.NotificationEmail),
+		WhatsappDeviceID:            toPgTextPtr(update.WhatsAppDeviceID),
+		WhatsappWelcomeDelayMinutes: toPgInt4Ptr(update.WhatsAppWelcomeDelayMinutes),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrganizationSettings{}, ErrNotFound
 	}
-	return s, err
+	if err != nil {
+		return OrganizationSettings{}, err
+	}
+	return organizationSettingsFromSnapshot(settingsSnapshot{
+		OrganizationID:              row.OrganizationID,
+		QuotePaymentDays:            row.QuotePaymentDays,
+		QuoteValidDays:              row.QuoteValidDays,
+		AIAutoDisqualifyJunk:        row.AiAutoDisqualifyJunk,
+		AIAutoDispatch:              row.AiAutoDispatch,
+		AIAutoEstimate:              row.AiAutoEstimate,
+		AIConfidenceGateEnabled:     row.AiConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:  row.AiAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:   row.AiExperienceMemoryEnabled,
+		AICouncilEnabled:            row.AiCouncilEnabled,
+		AICouncilConsensusMode:      row.AiCouncilConsensusMode,
+		CatalogGapThreshold:         row.CatalogGapThreshold,
+		CatalogGapLookbackDays:      row.CatalogGapLookbackDays,
+		NotificationEmail:           row.NotificationEmail,
+		WhatsAppDeviceID:            row.WhatsappDeviceID,
+		WhatsAppWelcomeDelayMinutes: row.WhatsappWelcomeDelayMinutes,
+		SMTPHost:                    row.SmtpHost,
+		SMTPPort:                    row.SmtpPort,
+		SMTPUsername:                row.SmtpUsername,
+		SMTPPassword:                row.SmtpPassword,
+		SMTPFromEmail:               row.SmtpFromEmail,
+		SMTPFromName:                row.SmtpFromName,
+		CreatedAt:                   row.CreatedAt,
+		UpdatedAt:                   row.UpdatedAt,
+	}), nil
 }
 
-// UpsertOrganizationSMTP stores encrypted SMTP settings for an organization.
-func (r *Repository) UpsertOrganizationSMTP(
-	ctx context.Context,
-	organizationID uuid.UUID,
-	update OrganizationSMTPUpdate,
-) (OrganizationSettings, error) {
-	var s OrganizationSettings
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_organization_settings (organization_id, smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (organization_id) DO UPDATE SET
-			smtp_host       = $2,
-			smtp_port       = $3,
-			smtp_username   = $4,
-			smtp_password   = $5,
-			smtp_from_email = $6,
-			smtp_from_name  = $7,
-			updated_at      = now()
-		RETURNING organization_id, quote_payment_days, quote_valid_days,
-		          ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
-		          ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-		          ai_council_consensus_mode,
-		          catalog_gap_threshold, catalog_gap_lookback_days,
-		          notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
-		          smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
-		          created_at, updated_at
-	`, organizationID, update.SMTPHost, update.SMTPPort, update.SMTPUsername, update.SMTPPassword, update.SMTPFromEmail, update.SMTPFromName).Scan(
-		&s.OrganizationID,
-		&s.QuotePaymentDays,
-		&s.QuoteValidDays,
-		&s.AIAutoDisqualifyJunk,
-		&s.AIAutoDispatch,
-		&s.AIAutoEstimate,
-		&s.AIConfidenceGateEnabled,
-		&s.AIAdaptiveReasoningEnabled,
-		&s.AIExperienceMemoryEnabled,
-		&s.AICouncilEnabled,
-		&s.AICouncilConsensusMode,
-		&s.CatalogGapThreshold,
-		&s.CatalogGapLookbackDays,
-		&s.NotificationEmail,
-		&s.WhatsAppDeviceID,
-		&s.WhatsAppWelcomeDelayMinutes,
-		&s.SMTPHost,
-		&s.SMTPPort,
-		&s.SMTPUsername,
-		&s.SMTPPassword,
-		&s.SMTPFromEmail,
-		&s.SMTPFromName,
-		&s.CreatedAt,
-		&s.UpdatedAt,
-	)
+func (r *Repository) UpsertOrganizationSMTP(ctx context.Context, organizationID uuid.UUID, update OrganizationSMTPUpdate) (OrganizationSettings, error) {
+	row, err := r.queries.UpsertOrganizationSMTP(ctx, identitydb.UpsertOrganizationSMTPParams{
+		OrganizationID: toPgUUID(organizationID),
+		SmtpHost:       toPgTextValue(update.SMTPHost),
+		SmtpPort:       toPgInt4Value(update.SMTPPort),
+		SmtpUsername:   toPgTextValue(update.SMTPUsername),
+		SmtpPassword:   toPgTextValue(update.SMTPPassword),
+		SmtpFromEmail:  toPgTextValue(update.SMTPFromEmail),
+		SmtpFromName:   toPgTextValue(update.SMTPFromName),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrganizationSettings{}, ErrNotFound
 	}
-	return s, err
+	if err != nil {
+		return OrganizationSettings{}, err
+	}
+	return organizationSettingsFromSnapshot(settingsSnapshot{
+		OrganizationID:              row.OrganizationID,
+		QuotePaymentDays:            row.QuotePaymentDays,
+		QuoteValidDays:              row.QuoteValidDays,
+		AIAutoDisqualifyJunk:        row.AiAutoDisqualifyJunk,
+		AIAutoDispatch:              row.AiAutoDispatch,
+		AIAutoEstimate:              row.AiAutoEstimate,
+		AIConfidenceGateEnabled:     row.AiConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:  row.AiAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:   row.AiExperienceMemoryEnabled,
+		AICouncilEnabled:            row.AiCouncilEnabled,
+		AICouncilConsensusMode:      row.AiCouncilConsensusMode,
+		CatalogGapThreshold:         row.CatalogGapThreshold,
+		CatalogGapLookbackDays:      row.CatalogGapLookbackDays,
+		NotificationEmail:           row.NotificationEmail,
+		WhatsAppDeviceID:            row.WhatsappDeviceID,
+		WhatsAppWelcomeDelayMinutes: row.WhatsappWelcomeDelayMinutes,
+		SMTPHost:                    row.SmtpHost,
+		SMTPPort:                    row.SmtpPort,
+		SMTPUsername:                row.SmtpUsername,
+		SMTPPassword:                row.SmtpPassword,
+		SMTPFromEmail:               row.SmtpFromEmail,
+		SMTPFromName:                row.SmtpFromName,
+		CreatedAt:                   row.CreatedAt,
+		UpdatedAt:                   row.UpdatedAt,
+	}), nil
 }
 
-// ClearOrganizationSMTP removes SMTP configuration for an organization.
 func (r *Repository) ClearOrganizationSMTP(ctx context.Context, organizationID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_organization_settings
-		SET smtp_host = NULL, smtp_port = NULL, smtp_username = NULL, smtp_password = NULL,
-		    smtp_from_email = NULL, smtp_from_name = NULL, updated_at = now()
-		WHERE organization_id = $1
-	`, organizationID)
-	return err
+	return r.queries.ClearOrganizationSMTP(ctx, toPgUUID(organizationID))
 }
 
 func (r *Repository) AddMember(ctx context.Context, q DBTX, organizationID, userID uuid.UUID) error {
-	_, err := r.getDB(q).Exec(ctx, `
-    INSERT INTO RAC_organization_members (organization_id, user_id)
-    VALUES ($1, $2)
-  `, organizationID, userID)
-	return err
+	return r.queriesFor(q).AddMember(ctx, identitydb.AddMemberParams{
+		OrganizationID: toPgUUID(organizationID),
+		UserID:         toPgUUID(userID),
+	})
 }
 
 func (r *Repository) GetUserOrganizationID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
-	var orgID uuid.UUID
-	err := r.pool.QueryRow(ctx, `
-    SELECT organization_id
-    FROM RAC_organization_members
-    WHERE user_id = $1
-  `, userID).Scan(&orgID)
+	orgID, err := r.queries.GetUserOrganizationID(ctx, toPgUUID(userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.UUID{}, ErrNotFound
 	}
-	return orgID, err
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	return uuidFromPg(orgID), nil
 }
 
 func (r *Repository) CreateInvite(ctx context.Context, organizationID uuid.UUID, email, tokenHash string, expiresAt time.Time, createdBy uuid.UUID) (Invite, error) {
-	var invite Invite
-	err := r.pool.QueryRow(ctx, `
-    INSERT INTO RAC_organization_invites (organization_id, email, token_hash, expires_at, created_by)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
-  `, organizationID, email, tokenHash, expiresAt, createdBy).Scan(
-		&invite.ID,
-		&invite.OrganizationID,
-		&invite.Email,
-		&invite.TokenHash,
-		&invite.ExpiresAt,
-		&invite.CreatedBy,
-		&invite.CreatedAt,
-		&invite.UsedAt,
-		&invite.UsedBy,
-	)
-	return invite, err
+	row, err := r.queries.CreateInvite(ctx, identitydb.CreateInviteParams{
+		OrganizationID: toPgUUID(organizationID),
+		Email:          email,
+		TokenHash:      tokenHash,
+		ExpiresAt:      toPgTimestamp(expiresAt),
+		CreatedBy:      toPgUUID(createdBy),
+	})
+	if err != nil {
+		return Invite{}, err
+	}
+	return inviteFromModel(row), nil
 }
 
 func (r *Repository) GetInviteByToken(ctx context.Context, tokenHash string) (Invite, error) {
-	var invite Invite
-	err := r.pool.QueryRow(ctx, `
-    SELECT id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
-    FROM RAC_organization_invites
-    WHERE token_hash = $1
-  `, tokenHash).Scan(
-		&invite.ID,
-		&invite.OrganizationID,
-		&invite.Email,
-		&invite.TokenHash,
-		&invite.ExpiresAt,
-		&invite.CreatedBy,
-		&invite.CreatedAt,
-		&invite.UsedAt,
-		&invite.UsedBy,
-	)
+	row, err := r.queries.GetInviteByToken(ctx, tokenHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Invite{}, ErrNotFound
 	}
-	return invite, err
+	if err != nil {
+		return Invite{}, err
+	}
+	return inviteFromModel(row), nil
 }
 
 func (r *Repository) UseInvite(ctx context.Context, q DBTX, inviteID, usedBy uuid.UUID) error {
-	_, err := r.getDB(q).Exec(ctx, `
-    UPDATE RAC_organization_invites
-    SET used_at = now(), used_by = $2
-    WHERE id = $1 AND used_at IS NULL
-  `, inviteID, usedBy)
-	return err
+	return r.queriesFor(q).UseInvite(ctx, identitydb.UseInviteParams{
+		ID:     toPgUUID(inviteID),
+		UsedBy: toPgUUID(usedBy),
+	})
 }
 
 func (r *Repository) ListInvites(ctx context.Context, organizationID uuid.UUID) ([]Invite, error) {
-	rows, err := r.pool.Query(ctx, `
-    SELECT id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
-    FROM RAC_organization_invites
-    WHERE organization_id = $1
-    ORDER BY created_at DESC
-  `, organizationID)
+	rows, err := r.queries.ListInvites(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var invites []Invite
-	for rows.Next() {
-		var invite Invite
-		if err := rows.Scan(
-			&invite.ID,
-			&invite.OrganizationID,
-			&invite.Email,
-			&invite.TokenHash,
-			&invite.ExpiresAt,
-			&invite.CreatedBy,
-			&invite.CreatedAt,
-			&invite.UsedAt,
-			&invite.UsedBy,
-		); err != nil {
-			return nil, err
-		}
-		invites = append(invites, invite)
+	invites := make([]Invite, 0, len(rows))
+	for _, row := range rows {
+		invites = append(invites, inviteFromModel(row))
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
 	return invites, nil
 }
 
-func (r *Repository) UpdateInvite(
-	ctx context.Context,
-	organizationID uuid.UUID,
-	inviteID uuid.UUID,
-	email *string,
-	tokenHash *string,
-	expiresAt *time.Time,
-) (Invite, error) {
-	var invite Invite
-	err := r.pool.QueryRow(ctx, `
-    UPDATE RAC_organization_invites
-    SET
-      email = COALESCE($3, email),
-      token_hash = COALESCE($4, token_hash),
-      expires_at = COALESCE($5, expires_at)
-    WHERE id = $1 AND organization_id = $2 AND used_at IS NULL
-    RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
-  `, inviteID, organizationID, email, tokenHash, expiresAt).Scan(
-		&invite.ID,
-		&invite.OrganizationID,
-		&invite.Email,
-		&invite.TokenHash,
-		&invite.ExpiresAt,
-		&invite.CreatedBy,
-		&invite.CreatedAt,
-		&invite.UsedAt,
-		&invite.UsedBy,
-	)
+func (r *Repository) UpdateInvite(ctx context.Context, organizationID uuid.UUID, inviteID uuid.UUID, email *string, tokenHash *string, expiresAt *time.Time) (Invite, error) {
+	row, err := r.queries.UpdateInvite(ctx, identitydb.UpdateInviteParams{
+		ID:             toPgUUID(inviteID),
+		OrganizationID: toPgUUID(organizationID),
+		Email:          toPgTextPtr(email),
+		TokenHash:      toPgTextPtr(tokenHash),
+		ExpiresAt:      toPgTimestampPtr(expiresAt),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Invite{}, ErrNotFound
 	}
-	return invite, err
+	if err != nil {
+		return Invite{}, err
+	}
+	return inviteFromModel(row), nil
 }
 
 func (r *Repository) RevokeInvite(ctx context.Context, organizationID, inviteID uuid.UUID) (Invite, error) {
-	var invite Invite
-	err := r.pool.QueryRow(ctx, `
-    UPDATE RAC_organization_invites
-    SET expires_at = now()
-    WHERE id = $1 AND organization_id = $2 AND used_at IS NULL
-    RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by
-  `, inviteID, organizationID).Scan(
-		&invite.ID,
-		&invite.OrganizationID,
-		&invite.Email,
-		&invite.TokenHash,
-		&invite.ExpiresAt,
-		&invite.CreatedBy,
-		&invite.CreatedAt,
-		&invite.UsedAt,
-		&invite.UsedBy,
-	)
+	row, err := r.queries.RevokeInvite(ctx, identitydb.RevokeInviteParams{
+		ID:             toPgUUID(inviteID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Invite{}, ErrNotFound
 	}
-	return invite, err
+	if err != nil {
+		return Invite{}, err
+	}
+	return inviteFromModel(row), nil
+}
+
+func organizationFromSnapshot(snapshot organizationSnapshot) Organization {
+	return Organization{
+		ID:              uuidFromPg(snapshot.ID),
+		Name:            snapshot.Name,
+		Email:           optionalString(snapshot.Email),
+		Phone:           optionalString(snapshot.Phone),
+		VatNumber:       optionalString(snapshot.VatNumber),
+		KvkNumber:       optionalString(snapshot.KvkNumber),
+		AddressLine1:    optionalString(snapshot.AddressLine1),
+		AddressLine2:    optionalString(snapshot.AddressLine2),
+		PostalCode:      optionalString(snapshot.PostalCode),
+		City:            optionalString(snapshot.City),
+		Country:         optionalString(snapshot.Country),
+		LogoFileKey:     optionalString(snapshot.LogoFileKey),
+		LogoFileName:    optionalString(snapshot.LogoFileName),
+		LogoContentType: optionalString(snapshot.LogoContentType),
+		LogoSizeBytes:   optionalInt64(snapshot.LogoSizeBytes),
+		CreatedBy:       uuidFromPg(snapshot.CreatedBy),
+		CreatedAt:       timeFromPg(snapshot.CreatedAt),
+		UpdatedAt:       timeFromPg(snapshot.UpdatedAt),
+	}
+}
+
+func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSettings {
+	return OrganizationSettings{
+		OrganizationID:              uuidFromPg(snapshot.OrganizationID),
+		QuotePaymentDays:            int(snapshot.QuotePaymentDays),
+		QuoteValidDays:              int(snapshot.QuoteValidDays),
+		AIAutoDisqualifyJunk:        snapshot.AIAutoDisqualifyJunk,
+		AIAutoDispatch:              snapshot.AIAutoDispatch,
+		AIAutoEstimate:              snapshot.AIAutoEstimate,
+		AIConfidenceGateEnabled:     snapshot.AIConfidenceGateEnabled,
+		AIAdaptiveReasoningEnabled:  snapshot.AIAdaptiveReasoningEnabled,
+		AIExperienceMemoryEnabled:   snapshot.AIExperienceMemoryEnabled,
+		AICouncilEnabled:            snapshot.AICouncilEnabled,
+		AICouncilConsensusMode:      snapshot.AICouncilConsensusMode,
+		CatalogGapThreshold:         int(snapshot.CatalogGapThreshold),
+		CatalogGapLookbackDays:      int(snapshot.CatalogGapLookbackDays),
+		NotificationEmail:           optionalString(snapshot.NotificationEmail),
+		WhatsAppDeviceID:            optionalString(snapshot.WhatsAppDeviceID),
+		WhatsAppWelcomeDelayMinutes: int(snapshot.WhatsAppWelcomeDelayMinutes),
+		SMTPHost:                    optionalString(snapshot.SMTPHost),
+		SMTPPort:                    optionalInt(snapshot.SMTPPort),
+		SMTPUsername:                optionalString(snapshot.SMTPUsername),
+		SMTPPassword:                optionalString(snapshot.SMTPPassword),
+		SMTPFromEmail:               optionalString(snapshot.SMTPFromEmail),
+		SMTPFromName:                optionalString(snapshot.SMTPFromName),
+		CreatedAt:                   timeFromPg(snapshot.CreatedAt),
+		UpdatedAt:                   timeFromPg(snapshot.UpdatedAt),
+	}
+}
+
+func inviteFromModel(row identitydb.RacOrganizationInvite) Invite {
+	return Invite{
+		ID:             uuidFromPg(row.ID),
+		OrganizationID: uuidFromPg(row.OrganizationID),
+		Email:          row.Email,
+		TokenHash:      row.TokenHash,
+		ExpiresAt:      timeFromPg(row.ExpiresAt),
+		CreatedBy:      uuidFromPg(row.CreatedBy),
+		CreatedAt:      timeFromPg(row.CreatedAt),
+		UsedAt:         optionalTime(row.UsedAt),
+		UsedBy:         optionalUUID(row.UsedBy),
+	}
+}
+
+func toPgUUID(value uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: value, Valid: value != uuid.Nil}
+}
+
+func toPgUUIDPtr(value *uuid.UUID) pgtype.UUID {
+	if value == nil || *value == uuid.Nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *value, Valid: true}
+}
+
+func toPgTextValue(value string) pgtype.Text {
+	return pgtype.Text{String: value, Valid: true}
+}
+
+func toPgTextPtr(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func toPgInt4Value(value int) pgtype.Int4 {
+	return pgtype.Int4{Int32: int32(value), Valid: true}
+}
+
+func toPgInt4Ptr(value *int) pgtype.Int4 {
+	if value == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: int32(*value), Valid: true}
+}
+
+func toPgInt8Value(value int64) pgtype.Int8 {
+	return pgtype.Int8{Int64: value, Valid: true}
+}
+
+func toPgBoolPtr(value *bool) pgtype.Bool {
+	if value == nil {
+		return pgtype.Bool{}
+	}
+	return pgtype.Bool{Bool: *value, Valid: true}
+}
+
+func toPgTimestamp(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func toPgTimestampPtr(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *value, Valid: true}
+}
+
+func uuidFromPg(value pgtype.UUID) uuid.UUID {
+	if !value.Valid {
+		return uuid.Nil
+	}
+	return uuid.UUID(value.Bytes)
+}
+
+func optionalUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	v := uuid.UUID(value.Bytes)
+	return &v
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	v := value.String
+	return &v
+}
+
+func optionalInt(value pgtype.Int4) *int {
+	if !value.Valid {
+		return nil
+	}
+	v := int(value.Int32)
+	return &v
+}
+
+func optionalInt64(value pgtype.Int8) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	v := value.Int64
+	return &v
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	v := value.Time
+	return &v
+}
+
+func timeFromPg(value pgtype.Timestamptz) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
+	return value.Time
 }

@@ -8,6 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	identitydb "portal_final_backend/internal/identity/db"
 )
 
 type Workflow struct {
@@ -115,16 +118,34 @@ type LeadWorkflowOverrideUpsert struct {
 }
 
 func (r *Repository) ListWorkflows(ctx context.Context, organizationID uuid.UUID) ([]Workflow, error) {
-	workflows, workflowByID, err := r.fetchWorkflows(ctx, organizationID)
+	workflowRows, err := r.queries.ListWorkflows(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return nil, err
+	}
+
+	workflows := make([]Workflow, 0, len(workflowRows))
+	workflowByID := make(map[uuid.UUID]int, len(workflowRows))
+	for _, row := range workflowRows {
+		workflow := workflowFromModel(row)
+		workflowByID[workflow.ID] = len(workflows)
+		workflows = append(workflows, workflow)
 	}
 	if len(workflows) == 0 {
 		return workflows, nil
 	}
 
-	if err := r.attachWorkflowSteps(ctx, organizationID, workflows, workflowByID); err != nil {
+	stepRows, err := r.queries.ListWorkflowSteps(ctx, toPgUUID(organizationID))
+	if err != nil {
 		return nil, err
+	}
+	for _, row := range stepRows {
+		step, err := workflowStepFromModel(row)
+		if err != nil {
+			return nil, err
+		}
+		if idx, ok := workflowByID[step.WorkflowID]; ok {
+			workflows[idx].Steps = append(workflows[idx].Steps, step)
+		}
 	}
 
 	return workflows, nil
@@ -137,258 +158,97 @@ func (r *Repository) ReplaceWorkflows(ctx context.Context, organizationID uuid.U
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := r.replaceWorkflowsTx(ctx, tx, organizationID, workflows); err != nil {
-		return nil, err
+	queries := r.queries.WithTx(tx)
+	keptWorkflowIDs := make([]uuid.UUID, 0, len(workflows))
+	for _, workflow := range workflows {
+		workflowID, err := upsertWorkflowTx(ctx, queries, organizationID, workflow)
+		if err != nil {
+			return nil, err
+		}
+		keptWorkflowIDs = append(keptWorkflowIDs, workflowID)
+
+		if err := upsertWorkflowStepsTx(ctx, queries, organizationID, workflowID, workflow.Steps); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(keptWorkflowIDs) == 0 {
+		if err := queries.DeleteWorkflowsByOrganization(ctx, toPgUUID(organizationID)); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := queries.DeleteWorkflowsNotInList(ctx, identitydb.DeleteWorkflowsNotInListParams{
+			OrganizationID: toPgUUID(organizationID),
+			Column2:        toPgUUIDSlice(keptWorkflowIDs),
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-
 	return r.ListWorkflows(ctx, organizationID)
 }
 
-func (r *Repository) EnsureDefaultWorkflowSeed(
-	ctx context.Context,
-	organizationID uuid.UUID,
-	workflow WorkflowUpsert,
-	defaultRuleName string,
-	defaultPriority int,
-) error {
+func (r *Repository) EnsureDefaultWorkflowSeed(ctx context.Context, organizationID uuid.UUID, workflow WorkflowUpsert, defaultRuleName string, defaultPriority int) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	workflowID, err := upsertWorkflowTx(ctx, tx, organizationID, workflow)
+	queries := r.queries.WithTx(tx)
+	workflowID, err := upsertWorkflowTx(ctx, queries, organizationID, workflow)
 	if err != nil {
 		return err
 	}
-
-	if err := upsertWorkflowStepsTx(ctx, tx, organizationID, workflowID, workflow.Steps); err != nil {
+	if err := upsertWorkflowStepsTx(ctx, queries, organizationID, workflowID, workflow.Steps); err != nil {
 		return err
 	}
 
-	var defaultRuleExists bool
-	err = tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM RAC_workflow_assignment_rules
-			WHERE organization_id = $1
-			  AND lead_source IS NULL
-			  AND lead_service_type IS NULL
-			  AND pipeline_stage IS NULL
-		)
-	`, organizationID).Scan(&defaultRuleExists)
+	defaultRuleExists, err := queries.DefaultWorkflowAssignmentRuleExists(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return err
 	}
-
 	if !defaultRuleExists {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO RAC_workflow_assignment_rules (
-				organization_id,
-				workflow_id,
-				name,
-				enabled,
-				priority,
-				lead_source,
-				lead_service_type,
-				pipeline_stage
-			)
-			VALUES ($1, $2, $3, TRUE, $4, NULL, NULL, NULL)
-		`, organizationID, workflowID, defaultRuleName, defaultPriority); err != nil {
+		if err := queries.CreateDefaultWorkflowAssignmentRule(ctx, identitydb.CreateDefaultWorkflowAssignmentRuleParams{
+			OrganizationID: toPgUUID(organizationID),
+			WorkflowID:     toPgUUID(workflowID),
+			Name:           defaultRuleName,
+			Priority:       int32(defaultPriority),
+		}); err != nil {
 			return err
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	return nil
+	return tx.Commit(ctx)
 }
 
-func (r *Repository) fetchWorkflows(ctx context.Context, organizationID uuid.UUID) ([]Workflow, map[uuid.UUID]int, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, organization_id, workflow_key, name, description, enabled,
-		       quote_valid_days_override, quote_payment_days_override, created_at, updated_at
-		FROM RAC_workflows
-		WHERE organization_id = $1
-		ORDER BY workflow_key ASC
-	`, organizationID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-
-	result := make([]Workflow, 0)
-	workflowByID := make(map[uuid.UUID]int)
-	for rows.Next() {
-		var workflow Workflow
-		if err := rows.Scan(
-			&workflow.ID,
-			&workflow.OrganizationID,
-			&workflow.WorkflowKey,
-			&workflow.Name,
-			&workflow.Description,
-			&workflow.Enabled,
-			&workflow.QuoteValidDaysOverride,
-			&workflow.QuotePaymentDaysOverride,
-			&workflow.CreatedAt,
-			&workflow.UpdatedAt,
-		); err != nil {
-			return nil, nil, err
-		}
-		workflowByID[workflow.ID] = len(result)
-		result = append(result, workflow)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, nil, err
-	}
-
-	return result, workflowByID, nil
-}
-
-func (r *Repository) attachWorkflowSteps(ctx context.Context, organizationID uuid.UUID, workflows []Workflow, workflowByID map[uuid.UUID]int) error {
-	stepRows, err := r.pool.Query(ctx, `
-		SELECT id, organization_id, workflow_id, trigger, channel, audience, action,
-		       step_order, delay_minutes, enabled, recipient_config, template_subject,
-		       template_body, stop_on_reply, created_at, updated_at
-		FROM RAC_workflow_steps
-		WHERE organization_id = $1
-		ORDER BY workflow_id ASC, trigger ASC, channel ASC, step_order ASC
-	`, organizationID)
-	if err != nil {
-		return err
-	}
-	defer stepRows.Close()
-
-	for stepRows.Next() {
-		step, err := scanWorkflowStep(stepRows)
-		if err != nil {
-			return err
-		}
-		if idx, ok := workflowByID[step.WorkflowID]; ok {
-			workflows[idx].Steps = append(workflows[idx].Steps, step)
-		}
-	}
-
-	return stepRows.Err()
-}
-
-func scanWorkflowStep(rows pgx.Rows) (WorkflowStep, error) {
-	var step WorkflowStep
-	var rawRecipientConfig []byte
-	if err := rows.Scan(
-		&step.ID,
-		&step.OrganizationID,
-		&step.WorkflowID,
-		&step.Trigger,
-		&step.Channel,
-		&step.Audience,
-		&step.Action,
-		&step.StepOrder,
-		&step.DelayMinutes,
-		&step.Enabled,
-		&rawRecipientConfig,
-		&step.TemplateSubject,
-		&step.TemplateBody,
-		&step.StopOnReply,
-		&step.CreatedAt,
-		&step.UpdatedAt,
-	); err != nil {
-		return WorkflowStep{}, err
-	}
-
-	if len(rawRecipientConfig) > 0 {
-		if err := json.Unmarshal(rawRecipientConfig, &step.RecipientConfig); err != nil {
-			return WorkflowStep{}, err
-		}
-	}
-	if step.RecipientConfig == nil {
-		step.RecipientConfig = map[string]any{}
-	}
-
-	return step, nil
-}
-
-func (r *Repository) replaceWorkflowsTx(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, workflows []WorkflowUpsert) error {
-	keptWorkflowIDs := make([]uuid.UUID, 0, len(workflows))
-
-	for _, workflow := range workflows {
-		workflowID, err := upsertWorkflowTx(ctx, tx, organizationID, workflow)
-		if err != nil {
-			return err
-		}
-		keptWorkflowIDs = append(keptWorkflowIDs, workflowID)
-
-		if err := upsertWorkflowStepsTx(ctx, tx, organizationID, workflowID, workflow.Steps); err != nil {
-			return err
-		}
-	}
-
-	if len(keptWorkflowIDs) == 0 {
-		if _, err := tx.Exec(ctx, `DELETE FROM RAC_workflows WHERE organization_id = $1`, organizationID); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM RAC_workflows
-		WHERE organization_id = $1
-		  AND NOT (id = ANY($2::uuid[]))
-	`, organizationID, keptWorkflowIDs); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func upsertWorkflowTx(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, workflow WorkflowUpsert) (uuid.UUID, error) {
+func upsertWorkflowTx(ctx context.Context, queries *identitydb.Queries, organizationID uuid.UUID, workflow WorkflowUpsert) (uuid.UUID, error) {
 	workflowID := uuid.New()
 	if workflow.ID != nil && *workflow.ID != uuid.Nil {
 		workflowID = *workflow.ID
 	}
 
-	err := tx.QueryRow(ctx, `
-		INSERT INTO RAC_workflows (
-			id, organization_id, workflow_key, name, description, enabled,
-			quote_valid_days_override, quote_payment_days_override
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (organization_id, workflow_key) DO UPDATE
-		SET
-			name = EXCLUDED.name,
-			description = EXCLUDED.description,
-			enabled = EXCLUDED.enabled,
-			quote_valid_days_override = EXCLUDED.quote_valid_days_override,
-			quote_payment_days_override = EXCLUDED.quote_payment_days_override,
-			updated_at = now()
-		RETURNING id
-	`,
-		workflowID,
-		organizationID,
-		workflow.WorkflowKey,
-		workflow.Name,
-		workflow.Description,
-		workflow.Enabled,
-		workflow.QuoteValidDaysOverride,
-		workflow.QuotePaymentDaysOverride,
-	).Scan(&workflowID)
+	result, err := queries.UpsertWorkflow(ctx, identitydb.UpsertWorkflowParams{
+		ID:                       toPgUUID(workflowID),
+		OrganizationID:           toPgUUID(organizationID),
+		WorkflowKey:              workflow.WorkflowKey,
+		Name:                     workflow.Name,
+		Description:              toPgTextPtr(workflow.Description),
+		Enabled:                  workflow.Enabled,
+		QuoteValidDaysOverride:   toPgInt4Ptr(workflow.QuoteValidDaysOverride),
+		QuotePaymentDaysOverride: toPgInt4Ptr(workflow.QuotePaymentDaysOverride),
+	})
 	if err != nil {
 		return uuid.Nil, err
 	}
-
-	return workflowID, nil
+	return uuidFromPg(result), nil
 }
 
-func upsertWorkflowStepsTx(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, workflowID uuid.UUID, steps []WorkflowStepUpsert) error {
+func upsertWorkflowStepsTx(ctx context.Context, queries *identitydb.Queries, organizationID uuid.UUID, workflowID uuid.UUID, steps []WorkflowStepUpsert) error {
 	keptStepIDs := make([]uuid.UUID, 0, len(steps))
-
 	for _, step := range steps {
 		stepID := uuid.New()
 		if step.ID != nil && *step.ID != uuid.Nil {
@@ -400,63 +260,40 @@ func upsertWorkflowStepsTx(ctx context.Context, tx pgx.Tx, organizationID uuid.U
 			return err
 		}
 
-		err = tx.QueryRow(ctx, `
-			INSERT INTO RAC_workflow_steps (
-				id, organization_id, workflow_id, trigger, channel, audience, action,
-				step_order, delay_minutes, enabled, recipient_config, template_subject,
-				template_body, stop_on_reply
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
-			ON CONFLICT (workflow_id, trigger, channel, step_order) DO UPDATE
-			SET
-				audience = EXCLUDED.audience,
-				action = EXCLUDED.action,
-				delay_minutes = EXCLUDED.delay_minutes,
-				enabled = EXCLUDED.enabled,
-				recipient_config = EXCLUDED.recipient_config,
-				template_subject = EXCLUDED.template_subject,
-				template_body = EXCLUDED.template_body,
-				stop_on_reply = EXCLUDED.stop_on_reply,
-				updated_at = now()
-			RETURNING id
-		`,
-			stepID,
-			organizationID,
-			workflowID,
-			step.Trigger,
-			step.Channel,
-			step.Audience,
-			step.Action,
-			step.StepOrder,
-			step.DelayMinutes,
-			step.Enabled,
-			recipientConfigJSON,
-			step.TemplateSubject,
-			step.TemplateBody,
-			step.StopOnReply,
-		).Scan(&stepID)
+		result, err := queries.UpsertWorkflowStep(ctx, identitydb.UpsertWorkflowStepParams{
+			ID:              toPgUUID(stepID),
+			OrganizationID:  toPgUUID(organizationID),
+			WorkflowID:      toPgUUID(workflowID),
+			Trigger:         step.Trigger,
+			Channel:         step.Channel,
+			Audience:        step.Audience,
+			Action:          step.Action,
+			StepOrder:       int32(step.StepOrder),
+			DelayMinutes:    int32(step.DelayMinutes),
+			Enabled:         step.Enabled,
+			Column11:        recipientConfigJSON,
+			TemplateSubject: toPgTextPtr(step.TemplateSubject),
+			TemplateBody:    toPgTextPtr(step.TemplateBody),
+			StopOnReply:     step.StopOnReply,
+		})
 		if err != nil {
 			return err
 		}
-		keptStepIDs = append(keptStepIDs, stepID)
+		keptStepIDs = append(keptStepIDs, uuidFromPg(result))
 	}
 
 	if len(keptStepIDs) == 0 {
-		_, err := tx.Exec(ctx, `DELETE FROM RAC_workflow_steps WHERE organization_id = $1 AND workflow_id = $2`, organizationID, workflowID)
-		return err
+		return queries.DeleteWorkflowStepsByWorkflow(ctx, identitydb.DeleteWorkflowStepsByWorkflowParams{
+			OrganizationID: toPgUUID(organizationID),
+			WorkflowID:     toPgUUID(workflowID),
+		})
 	}
 
-	_, err := tx.Exec(ctx, `
-		DELETE FROM RAC_workflow_steps
-		WHERE organization_id = $1
-		  AND workflow_id = $2
-		  AND NOT (id = ANY($3::uuid[]))
-	`, organizationID, workflowID, keptStepIDs)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return queries.DeleteWorkflowStepsNotInList(ctx, identitydb.DeleteWorkflowStepsNotInListParams{
+		OrganizationID: toPgUUID(organizationID),
+		WorkflowID:     toPgUUID(workflowID),
+		Column3:        toPgUUIDSlice(keptStepIDs),
+	})
 }
 
 func marshalRecipientConfig(config map[string]any) ([]byte, error) {
@@ -467,40 +304,15 @@ func marshalRecipientConfig(config map[string]any) ([]byte, error) {
 }
 
 func (r *Repository) ListWorkflowAssignmentRules(ctx context.Context, organizationID uuid.UUID) ([]WorkflowAssignmentRule, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, organization_id, workflow_id, name, enabled, priority,
-		       lead_source, lead_service_type, pipeline_stage, created_at, updated_at
-		FROM RAC_workflow_assignment_rules
-		WHERE organization_id = $1
-		ORDER BY priority ASC, created_at ASC
-	`, organizationID)
+	rows, err := r.queries.ListWorkflowAssignmentRules(ctx, toPgUUID(organizationID))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	result := make([]WorkflowAssignmentRule, 0)
-	for rows.Next() {
-		var rule WorkflowAssignmentRule
-		if err := rows.Scan(
-			&rule.ID,
-			&rule.OrganizationID,
-			&rule.WorkflowID,
-			&rule.Name,
-			&rule.Enabled,
-			&rule.Priority,
-			&rule.LeadSource,
-			&rule.LeadServiceType,
-			&rule.PipelineStage,
-			&rule.CreatedAt,
-			&rule.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		result = append(result, rule)
+	result := make([]WorkflowAssignmentRule, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, workflowAssignmentRuleFromModel(row))
 	}
-
-	return result, rows.Err()
+	return result, nil
 }
 
 func (r *Repository) ReplaceWorkflowAssignmentRules(ctx context.Context, organizationID uuid.UUID, rules []WorkflowAssignmentRuleUpsert) ([]WorkflowAssignmentRule, error) {
@@ -510,7 +322,8 @@ func (r *Repository) ReplaceWorkflowAssignmentRules(ctx context.Context, organiz
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `DELETE FROM RAC_workflow_assignment_rules WHERE organization_id = $1`, organizationID); err != nil {
+	queries := r.queries.WithTx(tx)
+	if err := queries.DeleteWorkflowAssignmentRulesByOrganization(ctx, toPgUUID(organizationID)); err != nil {
 		return nil, err
 	}
 
@@ -519,24 +332,17 @@ func (r *Repository) ReplaceWorkflowAssignmentRules(ctx context.Context, organiz
 		if rule.ID != nil && *rule.ID != uuid.Nil {
 			ruleID = *rule.ID
 		}
-
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO RAC_workflow_assignment_rules (
-				id, organization_id, workflow_id, name, enabled, priority,
-				lead_source, lead_service_type, pipeline_stage
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		`,
-			ruleID,
-			organizationID,
-			rule.WorkflowID,
-			rule.Name,
-			rule.Enabled,
-			rule.Priority,
-			rule.LeadSource,
-			rule.LeadServiceType,
-			rule.PipelineStage,
-		); err != nil {
+		if err := queries.CreateWorkflowAssignmentRule(ctx, identitydb.CreateWorkflowAssignmentRuleParams{
+			ID:              toPgUUID(ruleID),
+			OrganizationID:  toPgUUID(organizationID),
+			WorkflowID:      toPgUUID(rule.WorkflowID),
+			Name:            rule.Name,
+			Enabled:         rule.Enabled,
+			Priority:        int32(rule.Priority),
+			LeadSource:      toPgTextPtr(rule.LeadSource),
+			LeadServiceType: toPgTextPtr(rule.LeadServiceType),
+			PipelineStage:   toPgTextPtr(rule.PipelineStage),
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -544,93 +350,136 @@ func (r *Repository) ReplaceWorkflowAssignmentRules(ctx context.Context, organiz
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-
 	return r.ListWorkflowAssignmentRules(ctx, organizationID)
 }
 
 func (r *Repository) GetLeadWorkflowOverride(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadWorkflowOverride, error) {
-	var result LeadWorkflowOverride
-	err := r.pool.QueryRow(ctx, `
-		SELECT lead_id, organization_id, workflow_id, override_mode, reason, assigned_by, created_at, updated_at
-		FROM RAC_lead_workflow_overrides
-		WHERE lead_id = $1 AND organization_id = $2
-	`, leadID, organizationID).Scan(
-		&result.LeadID,
-		&result.OrganizationID,
-		&result.WorkflowID,
-		&result.OverrideMode,
-		&result.Reason,
-		&result.AssignedBy,
-		&result.CreatedAt,
-		&result.UpdatedAt,
-	)
+	row, err := r.queries.GetLeadWorkflowOverride(ctx, identitydb.GetLeadWorkflowOverrideParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadWorkflowOverride{}, ErrNotFound
 	}
-	return result, err
+	if err != nil {
+		return LeadWorkflowOverride{}, err
+	}
+	return leadWorkflowOverrideFromModel(row), nil
 }
 
 func (r *Repository) UpsertLeadWorkflowOverride(ctx context.Context, upsert LeadWorkflowOverrideUpsert) (LeadWorkflowOverride, error) {
-	var result LeadWorkflowOverride
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_lead_workflow_overrides (
-			lead_id, organization_id, workflow_id, override_mode, reason, assigned_by
-		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (lead_id) DO UPDATE SET
-			workflow_id = EXCLUDED.workflow_id,
-			override_mode = EXCLUDED.override_mode,
-			reason = EXCLUDED.reason,
-			assigned_by = EXCLUDED.assigned_by,
-			updated_at = now()
-		RETURNING lead_id, organization_id, workflow_id, override_mode, reason, assigned_by, created_at, updated_at
-	`, upsert.LeadID, upsert.OrganizationID, upsert.WorkflowID, upsert.OverrideMode, upsert.Reason, upsert.AssignedBy).Scan(
-		&result.LeadID,
-		&result.OrganizationID,
-		&result.WorkflowID,
-		&result.OverrideMode,
-		&result.Reason,
-		&result.AssignedBy,
-		&result.CreatedAt,
-		&result.UpdatedAt,
-	)
-	return result, err
+	row, err := r.queries.UpsertLeadWorkflowOverride(ctx, identitydb.UpsertLeadWorkflowOverrideParams{
+		LeadID:         toPgUUID(upsert.LeadID),
+		OrganizationID: toPgUUID(upsert.OrganizationID),
+		WorkflowID:     toPgUUIDPtr(upsert.WorkflowID),
+		OverrideMode:   upsert.OverrideMode,
+		Reason:         toPgTextPtr(upsert.Reason),
+		AssignedBy:     toPgUUIDPtr(upsert.AssignedBy),
+	})
+	if err != nil {
+		return LeadWorkflowOverride{}, err
+	}
+	return leadWorkflowOverrideFromModel(row), nil
 }
 
 func (r *Repository) DeleteLeadWorkflowOverride(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_lead_workflow_overrides
-		WHERE lead_id = $1 AND organization_id = $2
-	`, leadID, organizationID)
-	return err
+	return r.queries.DeleteLeadWorkflowOverride(ctx, identitydb.DeleteLeadWorkflowOverrideParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 }
 
 func (r *Repository) LeadExistsInOrganization(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (bool, error) {
-	var exists bool
-	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM RAC_leads
-			WHERE id = $1 AND organization_id = $2
-		)
-	`, leadID, organizationID).Scan(&exists)
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
+	return r.queries.LeadExistsInOrganization(ctx, identitydb.LeadExistsInOrganizationParams{
+		ID:             toPgUUID(leadID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 }
 
 func (r *Repository) WorkflowExistsInOrganization(ctx context.Context, workflowID uuid.UUID, organizationID uuid.UUID) (bool, error) {
-	var exists bool
-	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM RAC_workflows
-			WHERE id = $1 AND organization_id = $2
-		)
-	`, workflowID, organizationID).Scan(&exists)
-	if err != nil {
-		return false, err
+	return r.queries.WorkflowExistsInOrganization(ctx, identitydb.WorkflowExistsInOrganizationParams{
+		ID:             toPgUUID(workflowID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+}
+
+func workflowFromModel(row identitydb.RacWorkflow) Workflow {
+	return Workflow{
+		ID:                       uuidFromPg(row.ID),
+		OrganizationID:           uuidFromPg(row.OrganizationID),
+		WorkflowKey:              row.WorkflowKey,
+		Name:                     row.Name,
+		Description:              optionalString(row.Description),
+		Enabled:                  row.Enabled,
+		QuoteValidDaysOverride:   optionalInt(row.QuoteValidDaysOverride),
+		QuotePaymentDaysOverride: optionalInt(row.QuotePaymentDaysOverride),
+		CreatedAt:                timeFromPg(row.CreatedAt),
+		UpdatedAt:                timeFromPg(row.UpdatedAt),
 	}
-	return exists, nil
+}
+
+func workflowStepFromModel(row identitydb.RacWorkflowStep) (WorkflowStep, error) {
+	step := WorkflowStep{
+		ID:              uuidFromPg(row.ID),
+		OrganizationID:  uuidFromPg(row.OrganizationID),
+		WorkflowID:      uuidFromPg(row.WorkflowID),
+		Trigger:         row.Trigger,
+		Channel:         row.Channel,
+		Audience:        row.Audience,
+		Action:          row.Action,
+		StepOrder:       int(row.StepOrder),
+		DelayMinutes:    int(row.DelayMinutes),
+		Enabled:         row.Enabled,
+		TemplateSubject: optionalString(row.TemplateSubject),
+		TemplateBody:    optionalString(row.TemplateBody),
+		StopOnReply:     row.StopOnReply,
+		CreatedAt:       timeFromPg(row.CreatedAt),
+		UpdatedAt:       timeFromPg(row.UpdatedAt),
+	}
+	if len(row.RecipientConfig) > 0 {
+		if err := json.Unmarshal(row.RecipientConfig, &step.RecipientConfig); err != nil {
+			return WorkflowStep{}, err
+		}
+	}
+	if step.RecipientConfig == nil {
+		step.RecipientConfig = map[string]any{}
+	}
+	return step, nil
+}
+
+func workflowAssignmentRuleFromModel(row identitydb.RacWorkflowAssignmentRule) WorkflowAssignmentRule {
+	return WorkflowAssignmentRule{
+		ID:              uuidFromPg(row.ID),
+		OrganizationID:  uuidFromPg(row.OrganizationID),
+		WorkflowID:      uuidFromPg(row.WorkflowID),
+		Name:            row.Name,
+		Enabled:         row.Enabled,
+		Priority:        int(row.Priority),
+		LeadSource:      optionalString(row.LeadSource),
+		LeadServiceType: optionalString(row.LeadServiceType),
+		PipelineStage:   optionalString(row.PipelineStage),
+		CreatedAt:       timeFromPg(row.CreatedAt),
+		UpdatedAt:       timeFromPg(row.UpdatedAt),
+	}
+}
+
+func leadWorkflowOverrideFromModel(row identitydb.RacLeadWorkflowOverride) LeadWorkflowOverride {
+	return LeadWorkflowOverride{
+		LeadID:         uuidFromPg(row.LeadID),
+		OrganizationID: uuidFromPg(row.OrganizationID),
+		WorkflowID:     optionalUUID(row.WorkflowID),
+		OverrideMode:   row.OverrideMode,
+		Reason:         optionalString(row.Reason),
+		AssignedBy:     optionalUUID(row.AssignedBy),
+		CreatedAt:      timeFromPg(row.CreatedAt),
+		UpdatedAt:      timeFromPg(row.UpdatedAt),
+	}
+}
+
+func toPgUUIDSlice(values []uuid.UUID) []pgtype.UUID {
+	result := make([]pgtype.UUID, 0, len(values))
+	for _, value := range values {
+		result = append(result, toPgUUID(value))
+	}
+	return result
 }

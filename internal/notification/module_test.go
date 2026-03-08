@@ -111,7 +111,7 @@ func (s *testSender) SendCustomEmail(_ context.Context, _ string, _ string, _ st
 	return nil
 }
 
-func TestNormalizeWhatsAppMessage_StripsHTMLAndEntities(t *testing.T) {
+func TestNormalizeWhatsAppMessageStripsHTMLAndEntities(t *testing.T) {
 	input := "<p>Hallo&nbsp;Robin Oost,&nbsp;welkom&nbsp;bij&nbsp;ons team.&nbsp;We&nbsp;hebben&nbsp;je&nbsp;aanvraag&nbsp;ontvangen.</p><p></p><p>https://example.com/track/abc</p>"
 	expected := "Hallo Robin Oost, welkom bij ons team. We hebben je aanvraag ontvangen.\n\nhttps://example.com/track/abc"
 
@@ -310,8 +310,14 @@ func TestRenderWorkflowTemplateSubjectAndBodyFromRule(t *testing.T) {
 		"links": map[string]any{"track": "https://app.example.com/track/abc"},
 	}
 
-	subject := renderWorkflowTemplateSubject(rule, vars)
-	body := renderWorkflowTemplateText(rule, vars)
+	subject, err := renderWorkflowTemplateSubjectWithError(rule, vars)
+	if err != nil {
+		t.Fatalf("unexpected subject render error: %v", err)
+	}
+	body, err := renderWorkflowTemplateTextWithError(rule, vars)
+	if err != nil {
+		t.Fatalf("unexpected body render error: %v", err)
+	}
 
 	if subject != "Offerte OFF-2026-0042 voor Robin" {
 		t.Fatalf("unexpected rendered subject: %q", subject)
@@ -333,7 +339,10 @@ func TestRenderWorkflowTemplateTextConvertsEscapedLineBreaks(t *testing.T) {
 		"quote": map[string]any{"number": "OFF-2026-0010"},
 	}
 
-	body := renderWorkflowTemplateText(rule, vars)
+	body, err := renderWorkflowTemplateTextWithError(rule, vars)
+	if err != nil {
+		t.Fatalf("unexpected body render error: %v", err)
+	}
 
 	if strings.Contains(body, "\\n") {
 		t.Fatalf("expected escaped line breaks to be normalized, got: %q", body)

@@ -25,6 +25,7 @@ import (
 	identityservice "portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/identity/smtpcrypto"
 	leadrepo "portal_final_backend/internal/leads/repository"
+	notificationdb "portal_final_backend/internal/notification/db"
 	notifhandler "portal_final_backend/internal/notification/handler"
 	"portal_final_backend/internal/notification/inapp"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
@@ -36,6 +37,7 @@ import (
 	"portal_final_backend/platform/phone"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	htmlnode "golang.org/x/net/html"
 )
@@ -168,21 +170,38 @@ type Module struct {
 	senderCache         sync.Map // map[uuid.UUID]cachedSender
 	orgNameCache        sync.Map // map[uuid.UUID]cachedOrgName
 	quoteViewedDebounce sync.Map // map[uuid.UUID]time.Time
+	queries             *notificationdb.Queries
 }
 
 // New creates a new notification module.
 func New(pool *pgxpool.Pool, sender email.Sender, cfg config.NotificationConfig, log *logger.Logger) *Module {
 	inAppRepo := inapp.NewRepository(pool)
 	inAppSvc := inapp.NewService(inAppRepo, log)
+	var queries *notificationdb.Queries
+	if pool != nil {
+		queries = notificationdb.New(pool)
+	}
 
 	return &Module{
 		pool:         pool,
 		sender:       sender,
 		cfg:          cfg,
 		log:          log,
+		queries:      queries,
 		inAppService: inAppSvc,
 		inAppHandler: notifhandler.NewHTTPHandler(inAppSvc),
 	}
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func optionalTextValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 func (m *Module) resolveOrganizationName(ctx context.Context, orgID uuid.UUID) string {
@@ -196,11 +215,11 @@ func (m *Module) resolveOrganizationName(ctx context.Context, orgID uuid.UUID) s
 		}
 		m.orgNameCache.Delete(orgID)
 	}
-	if m.pool == nil {
+	if m.queries == nil {
 		return ""
 	}
-	var name string
-	if err := m.pool.QueryRow(ctx, `SELECT name FROM rac_organizations WHERE id = $1`, orgID).Scan(&name); err != nil {
+	name, err := m.queries.GetNotificationOrganizationName(ctx, toPgUUID(orgID))
+	if err != nil {
 		return ""
 	}
 	name = strings.TrimSpace(name)
@@ -226,21 +245,27 @@ type leadDetails struct {
 
 // resolveLeadDetails fetches first/last name, address and service type for a lead.
 func (m *Module) resolveLeadDetails(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) *leadDetails {
-	if m.pool == nil || leadID == uuid.Nil {
+	if m.queries == nil || leadID == uuid.Nil {
 		return nil
 	}
-	var d leadDetails
-	err := m.pool.QueryRow(ctx,
-		`SELECT consumer_first_name, consumer_last_name, consumer_phone, consumer_email,
-		        address_street, address_house_number, address_zip_code, address_city, service_type
-		   FROM rac_leads WHERE id = $1 AND organization_id = $2`,
-		leadID, orgID,
-	).Scan(&d.FirstName, &d.LastName, &d.Phone, &d.Email,
-		&d.Street, &d.HouseNumber, &d.ZipCode, &d.City, &d.ServiceType)
+	row, err := m.queries.GetNotificationLeadDetails(ctx, notificationdb.GetNotificationLeadDetailsParams{
+		ID:             toPgUUID(leadID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil
 	}
-	return &d
+	return &leadDetails{
+		FirstName:   row.ConsumerFirstName,
+		LastName:    row.ConsumerLastName,
+		Phone:       row.ConsumerPhone,
+		Email:       optionalTextValue(row.ConsumerEmail),
+		Street:      row.AddressStreet,
+		HouseNumber: row.AddressHouseNumber,
+		ZipCode:     row.AddressZipCode,
+		City:        row.AddressCity,
+		ServiceType: row.ServiceType,
+	}
 }
 
 // enrichLeadVars adds first name, last name, address, city, zip code and service type
@@ -1060,37 +1085,11 @@ func normalizeEscapedLineBreaks(value string) string {
 	return replacer.Replace(value)
 }
 
-func renderWorkflowTemplateText(rule *workflowRule, vars map[string]any) string {
-	if rule == nil || rule.TemplateText == nil {
-		return ""
-	}
-
-	rendered, err := renderStepTemplate(rule.TemplateText, vars)
-	if err != nil {
-		return ""
-	}
-
-	return rendered
-}
-
 func renderWorkflowTemplateTextWithError(rule *workflowRule, vars map[string]any) (string, error) {
 	if rule == nil || rule.TemplateText == nil {
 		return "", nil
 	}
 	return renderStepTemplate(rule.TemplateText, vars)
-}
-
-func renderWorkflowTemplateSubject(rule *workflowRule, vars map[string]any) string {
-	if rule == nil || rule.TemplateSubject == nil {
-		return ""
-	}
-
-	rendered, err := renderStepTemplate(rule.TemplateSubject, vars)
-	if err != nil {
-		return ""
-	}
-
-	return rendered
 }
 
 func renderWorkflowTemplateSubjectWithError(rule *workflowRule, vars map[string]any) (string, error) {

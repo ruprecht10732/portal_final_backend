@@ -1,0 +1,5 @@
+{
+  "sonarlint.analysisExcludesStandalone": [
+    "**/internal/*/db/*.go"
+  ]
+}

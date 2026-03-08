@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	imapdb "portal_final_backend/internal/imap/db"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,11 +22,129 @@ const (
 )
 
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *imapdb.Queries
 }
 
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	if pool == nil {
+		return &Repository{}
+	}
+	return &Repository{pool: pool, queries: imapdb.New(pool)}
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func toPgInt4Ptr(value *int) pgtype.Int4 {
+	if value == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: int32(*value), Valid: true}
+}
+
+func toPgBoolPtr(value *bool) pgtype.Bool {
+	if value == nil {
+		return pgtype.Bool{}
+	}
+	return pgtype.Bool{Bool: *value, Valid: true}
+}
+
+func toPgTimestamp(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func toPgTimestampPtr(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return toPgTimestamp(*value)
+}
+
+func toPgInterval(value time.Duration) pgtype.Interval {
+	return pgtype.Interval{Microseconds: value.Microseconds(), Valid: true}
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
+func optionalInt(value pgtype.Int4) *int {
+	if !value.Valid {
+		return nil
+	}
+	n := int(value.Int32)
+	return &n
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	timestamp := value.Time
+	return &timestamp
+}
+
+func accountFromModel(model imapdb.RacUserImapAccount) Account {
+	return Account{
+		ID:                    uuid.UUID(model.ID.Bytes),
+		UserID:                uuid.UUID(model.UserID.Bytes),
+		EmailAddress:          model.EmailAddress,
+		IMAPHost:              model.ImapHost,
+		IMAPPort:              int(model.ImapPort),
+		IMAPUsername:          model.ImapUsername,
+		IMAPPasswordEncrypted: model.ImapPasswordEncrypted,
+		SMTPHost:              optionalString(model.SmtpHost),
+		SMTPPort:              optionalInt(model.SmtpPort),
+		SMTPUsername:          optionalString(model.SmtpUsername),
+		SMTPPasswordEncrypted: optionalString(model.SmtpPasswordEncrypted),
+		SMTPFromEmail:         optionalString(model.SmtpFromEmail),
+		SMTPFromName:          optionalString(model.SmtpFromName),
+		FolderName:            model.FolderName,
+		Enabled:               model.Enabled,
+		LastSyncAt:            optionalTime(model.LastSyncAt),
+		LastError:             optionalString(model.LastError),
+		LastErrorAt:           optionalTime(model.LastErrorAt),
+		CreatedAt:             model.CreatedAt.Time,
+		UpdatedAt:             model.UpdatedAt.Time,
+	}
+}
+
+func messageFromModel(model imapdb.RacUserImapMessage) Message {
+	return Message{
+		ID:             uuid.UUID(model.ID.Bytes),
+		AccountID:      uuid.UUID(model.AccountID.Bytes),
+		FolderName:     model.FolderName,
+		UID:            model.Uid,
+		MessageID:      optionalString(model.MessageID),
+		FromName:       optionalString(model.FromName),
+		FromAddress:    optionalString(model.FromAddress),
+		Subject:        model.Subject,
+		SentAt:         optionalTime(model.SentAt),
+		ReceivedAt:     optionalTime(model.ReceivedAt),
+		Snippet:        optionalString(model.Snippet),
+		SizeBytes:      model.SizeBytes,
+		Seen:           model.Seen,
+		Flagged:        model.Flagged,
+		Answered:       model.Answered,
+		Deleted:        model.Deleted,
+		HasAttachments: model.HasAttachments,
+		SyncedAt:       model.SyncedAt.Time,
+		CreatedAt:      model.CreatedAt.Time,
+		UpdatedAt:      model.UpdatedAt.Time,
+	}
 }
 
 type Account struct {
@@ -142,197 +262,91 @@ type ListMessagesResult struct {
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, input CreateAccountInput) (Account, error) {
-	var account Account
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_user_imap_accounts (
-			user_id, email_address, imap_host, imap_port, imap_username, imap_password_encrypted,
-			smtp_host, smtp_port, smtp_username, smtp_password_encrypted, smtp_from_email, smtp_from_name,
-			folder_name, enabled
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		RETURNING
-			id, user_id, email_address, imap_host, imap_port, imap_username, imap_password_encrypted,
-			smtp_host, smtp_port, smtp_username, smtp_password_encrypted, smtp_from_email, smtp_from_name,
-			folder_name, enabled, last_sync_at, last_error, last_error_at, created_at, updated_at
-	`, input.UserID, input.EmailAddress, input.IMAPHost, input.IMAPPort, input.IMAPUsername, input.IMAPPasswordEncrypted,
-		input.SMTPHost, input.SMTPPort, input.SMTPUsername, input.SMTPPasswordEncrypted, input.SMTPFromEmail, input.SMTPFromName,
-		input.FolderName, input.Enabled).Scan(
-		&account.ID,
-		&account.UserID,
-		&account.EmailAddress,
-		&account.IMAPHost,
-		&account.IMAPPort,
-		&account.IMAPUsername,
-		&account.IMAPPasswordEncrypted,
-		&account.SMTPHost,
-		&account.SMTPPort,
-		&account.SMTPUsername,
-		&account.SMTPPasswordEncrypted,
-		&account.SMTPFromEmail,
-		&account.SMTPFromName,
-		&account.FolderName,
-		&account.Enabled,
-		&account.LastSyncAt,
-		&account.LastError,
-		&account.LastErrorAt,
-		&account.CreatedAt,
-		&account.UpdatedAt,
-	)
+	model, err := r.queries.CreateImapAccount(ctx, imapdb.CreateImapAccountParams{
+		UserID:                toPgUUID(input.UserID),
+		EmailAddress:          input.EmailAddress,
+		ImapHost:              input.IMAPHost,
+		ImapPort:              int32(input.IMAPPort),
+		ImapUsername:          input.IMAPUsername,
+		ImapPasswordEncrypted: input.IMAPPasswordEncrypted,
+		SmtpHost:              toPgText(input.SMTPHost),
+		SmtpPort:              toPgInt4Ptr(input.SMTPPort),
+		SmtpUsername:          toPgText(input.SMTPUsername),
+		SmtpPasswordEncrypted: toPgText(input.SMTPPasswordEncrypted),
+		SmtpFromEmail:         toPgText(input.SMTPFromEmail),
+		SmtpFromName:          toPgText(input.SMTPFromName),
+		FolderName:            input.FolderName,
+		Enabled:               input.Enabled,
+	})
 	if err != nil {
 		return Account{}, fmt.Errorf("create imap account: %w", err)
 	}
-	return account, nil
+	return accountFromModel(model), nil
 }
 
 func (r *Repository) ListAccountsByUser(ctx context.Context, userID uuid.UUID) ([]Account, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT
-			id, user_id, email_address, imap_host, imap_port, imap_username, imap_password_encrypted,
-			smtp_host, smtp_port, smtp_username, smtp_password_encrypted, smtp_from_email, smtp_from_name,
-			folder_name, enabled, last_sync_at, last_error, last_error_at, created_at, updated_at
-		FROM RAC_user_imap_accounts
-		WHERE user_id = $1
-		ORDER BY created_at DESC
-	`, userID)
+	rows, err := r.queries.ListImapAccountsByUser(ctx, toPgUUID(userID))
 	if err != nil {
 		return nil, fmt.Errorf("list imap accounts: %w", err)
 	}
-	defer rows.Close()
 
 	items := make([]Account, 0)
-	for rows.Next() {
-		var account Account
-		if err := rows.Scan(
-			&account.ID,
-			&account.UserID,
-			&account.EmailAddress,
-			&account.IMAPHost,
-			&account.IMAPPort,
-			&account.IMAPUsername,
-			&account.IMAPPasswordEncrypted,
-			&account.SMTPHost,
-			&account.SMTPPort,
-			&account.SMTPUsername,
-			&account.SMTPPasswordEncrypted,
-			&account.SMTPFromEmail,
-			&account.SMTPFromName,
-			&account.FolderName,
-			&account.Enabled,
-			&account.LastSyncAt,
-			&account.LastError,
-			&account.LastErrorAt,
-			&account.CreatedAt,
-			&account.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan imap account: %w", err)
-		}
-		items = append(items, account)
+	for _, row := range rows {
+		items = append(items, accountFromModel(row))
 	}
-	return items, rows.Err()
+	return items, nil
 }
 
 func (r *Repository) GetAccountByUser(ctx context.Context, accountID, userID uuid.UUID) (Account, error) {
-	var account Account
-	err := r.pool.QueryRow(ctx, `
-		SELECT
-			id, user_id, email_address, imap_host, imap_port, imap_username, imap_password_encrypted,
-			smtp_host, smtp_port, smtp_username, smtp_password_encrypted, smtp_from_email, smtp_from_name,
-			folder_name, enabled, last_sync_at, last_error, last_error_at, created_at, updated_at
-		FROM RAC_user_imap_accounts
-		WHERE id = $1 AND user_id = $2
-	`, accountID, userID).Scan(
-		&account.ID,
-		&account.UserID,
-		&account.EmailAddress,
-		&account.IMAPHost,
-		&account.IMAPPort,
-		&account.IMAPUsername,
-		&account.IMAPPasswordEncrypted,
-		&account.SMTPHost,
-		&account.SMTPPort,
-		&account.SMTPUsername,
-		&account.SMTPPasswordEncrypted,
-		&account.SMTPFromEmail,
-		&account.SMTPFromName,
-		&account.FolderName,
-		&account.Enabled,
-		&account.LastSyncAt,
-		&account.LastError,
-		&account.LastErrorAt,
-		&account.CreatedAt,
-		&account.UpdatedAt,
-	)
+	model, err := r.queries.GetImapAccountByUser(ctx, imapdb.GetImapAccountByUserParams{
+		AccountID: toPgUUID(accountID),
+		UserID:    toPgUUID(userID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, apperr.NotFound(errIMAPAccountNotFound)
 	}
 	if err != nil {
 		return Account{}, fmt.Errorf("get imap account: %w", err)
 	}
-	return account, nil
+	return accountFromModel(model), nil
 }
 
 func (r *Repository) UpdateAccountByUser(ctx context.Context, accountID, userID uuid.UUID, input UpdateAccountInput) (Account, error) {
-	var account Account
-	err := r.pool.QueryRow(ctx, `
-		UPDATE RAC_user_imap_accounts
-		SET
-			email_address = COALESCE($3, email_address),
-			imap_host = COALESCE($4, imap_host),
-			imap_port = COALESCE($5, imap_port),
-			imap_username = COALESCE($6, imap_username),
-			imap_password_encrypted = COALESCE($7, imap_password_encrypted),
-			smtp_host = COALESCE($8, smtp_host),
-			smtp_port = COALESCE($9, smtp_port),
-			smtp_username = COALESCE($10, smtp_username),
-			smtp_password_encrypted = COALESCE($11, smtp_password_encrypted),
-			smtp_from_email = COALESCE($12, smtp_from_email),
-			smtp_from_name = COALESCE($13, smtp_from_name),
-			folder_name = COALESCE($14, folder_name),
-			enabled = COALESCE($15, enabled),
-			updated_at = now()
-		WHERE id = $1 AND user_id = $2
-		RETURNING
-			id, user_id, email_address, imap_host, imap_port, imap_username, imap_password_encrypted,
-			smtp_host, smtp_port, smtp_username, smtp_password_encrypted, smtp_from_email, smtp_from_name,
-			folder_name, enabled, last_sync_at, last_error, last_error_at, created_at, updated_at
-	`, accountID, userID, input.EmailAddress, input.IMAPHost, input.IMAPPort, input.IMAPUsername, input.IMAPPasswordEncrypted,
-		input.SMTPHost, input.SMTPPort, input.SMTPUsername, input.SMTPPasswordEncrypted, input.SMTPFromEmail, input.SMTPFromName,
-		input.FolderName, input.Enabled).Scan(
-		&account.ID,
-		&account.UserID,
-		&account.EmailAddress,
-		&account.IMAPHost,
-		&account.IMAPPort,
-		&account.IMAPUsername,
-		&account.IMAPPasswordEncrypted,
-		&account.SMTPHost,
-		&account.SMTPPort,
-		&account.SMTPUsername,
-		&account.SMTPPasswordEncrypted,
-		&account.SMTPFromEmail,
-		&account.SMTPFromName,
-		&account.FolderName,
-		&account.Enabled,
-		&account.LastSyncAt,
-		&account.LastError,
-		&account.LastErrorAt,
-		&account.CreatedAt,
-		&account.UpdatedAt,
-	)
+	model, err := r.queries.UpdateImapAccountByUser(ctx, imapdb.UpdateImapAccountByUserParams{
+		EmailAddress:          toPgText(input.EmailAddress),
+		ImapHost:              toPgText(input.IMAPHost),
+		ImapPort:              toPgInt4Ptr(input.IMAPPort),
+		ImapUsername:          toPgText(input.IMAPUsername),
+		ImapPasswordEncrypted: toPgText(input.IMAPPasswordEncrypted),
+		SmtpHost:              toPgText(input.SMTPHost),
+		SmtpPort:              toPgInt4Ptr(input.SMTPPort),
+		SmtpUsername:          toPgText(input.SMTPUsername),
+		SmtpPasswordEncrypted: toPgText(input.SMTPPasswordEncrypted),
+		SmtpFromEmail:         toPgText(input.SMTPFromEmail),
+		SmtpFromName:          toPgText(input.SMTPFromName),
+		FolderName:            toPgText(input.FolderName),
+		Enabled:               toPgBoolPtr(input.Enabled),
+		AccountID:             toPgUUID(accountID),
+		UserID:                toPgUUID(userID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, apperr.NotFound(errIMAPAccountNotFound)
 	}
 	if err != nil {
 		return Account{}, fmt.Errorf("update imap account: %w", err)
 	}
-	return account, nil
+	return accountFromModel(model), nil
 }
 
 func (r *Repository) DeleteAccountByUser(ctx context.Context, accountID, userID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM RAC_user_imap_accounts WHERE id = $1 AND user_id = $2`, accountID, userID)
+	tag, err := r.queries.DeleteImapAccountByUser(ctx, imapdb.DeleteImapAccountByUserParams{
+		AccountID: toPgUUID(accountID),
+		UserID:    toPgUUID(userID),
+	})
 	if err != nil {
 		return fmt.Errorf("delete imap account: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if tag == 0 {
 		return apperr.NotFound(errIMAPAccountNotFound)
 	}
 	return nil
@@ -352,43 +366,33 @@ func (r *Repository) UpsertMessages(ctx context.Context, inputs []UpsertMessageI
 		}
 	}()
 
+	queries := r.queries.WithTx(tx)
 	for _, input := range inputs {
-		_, execErr := tx.Exec(ctx, `
-			INSERT INTO RAC_user_imap_messages (
-				account_id, folder_name, uid, message_id, from_name, from_address, subject, sent_at, received_at,
-				snippet, size_bytes, seen, flagged, answered, deleted, has_attachments, synced_at
-			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9,
-				$10, $11, $12, $13, $14, $15, $16, $17
-			)
-			ON CONFLICT (account_id, folder_name, uid)
-			DO UPDATE SET
-				message_id = EXCLUDED.message_id,
-				from_name = EXCLUDED.from_name,
-				from_address = EXCLUDED.from_address,
-				subject = EXCLUDED.subject,
-				sent_at = EXCLUDED.sent_at,
-				received_at = EXCLUDED.received_at,
-				snippet = EXCLUDED.snippet,
-				size_bytes = EXCLUDED.size_bytes,
-				seen = EXCLUDED.seen,
-				flagged = EXCLUDED.flagged,
-				answered = EXCLUDED.answered,
-				deleted = EXCLUDED.deleted,
-				has_attachments = EXCLUDED.has_attachments,
-				synced_at = EXCLUDED.synced_at,
-				updated_at = now()
-		`, input.AccountID, input.FolderName, input.UID, input.MessageID, input.FromName, input.FromAddress, input.Subject, input.SentAt, input.ReceivedAt, input.Snippet, input.SizeBytes, input.Seen, input.Flagged, input.Answered, input.Deleted, input.HasAttachments, input.SyncedAt)
+		execErr := queries.UpsertImapMessage(ctx, imapdb.UpsertImapMessageParams{
+			AccountID:      toPgUUID(input.AccountID),
+			FolderName:     input.FolderName,
+			Uid:            input.UID,
+			MessageID:      toPgText(input.MessageID),
+			FromName:       toPgText(input.FromName),
+			FromAddress:    toPgText(input.FromAddress),
+			Subject:        input.Subject,
+			SentAt:         toPgTimestampPtr(input.SentAt),
+			ReceivedAt:     toPgTimestampPtr(input.ReceivedAt),
+			Snippet:        toPgText(input.Snippet),
+			SizeBytes:      input.SizeBytes,
+			Seen:           input.Seen,
+			Flagged:        input.Flagged,
+			Answered:       input.Answered,
+			Deleted:        input.Deleted,
+			HasAttachments: input.HasAttachments,
+			SyncedAt:       toPgTimestamp(input.SyncedAt),
+		})
 		if execErr != nil {
 			return fmt.Errorf("upsert message: %w", execErr)
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		UPDATE RAC_user_imap_accounts
-		SET last_sync_at = now(), last_error = NULL, last_error_at = NULL, updated_at = now()
-		WHERE id = $1
-	`, inputs[0].AccountID); err != nil {
+	if err := queries.MarkImapAccountMessagesSynced(ctx, toPgUUID(inputs[0].AccountID)); err != nil {
 		return fmt.Errorf("update account sync state: %w", err)
 	}
 
@@ -400,11 +404,10 @@ func (r *Repository) UpsertMessages(ctx context.Context, inputs []UpsertMessageI
 }
 
 func (r *Repository) SetAccountSyncError(ctx context.Context, accountID uuid.UUID, errMsg string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_user_imap_accounts
-		SET last_error = $2, last_error_at = now(), updated_at = now()
-		WHERE id = $1
-	`, accountID, errMsg)
+	err := r.queries.SetImapAccountSyncError(ctx, imapdb.SetImapAccountSyncErrorParams{
+		ErrorMessage: errMsg,
+		AccountID:    toPgUUID(accountID),
+	})
 	if err != nil {
 		return fmt.Errorf("set account sync error: %w", err)
 	}
@@ -412,11 +415,10 @@ func (r *Repository) SetAccountSyncError(ctx context.Context, accountID uuid.UUI
 }
 
 func (r *Repository) MarkAccountSynced(ctx context.Context, accountID uuid.UUID, at time.Time) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_user_imap_accounts
-		SET last_sync_at = $2, last_error = NULL, last_error_at = NULL, updated_at = now()
-		WHERE id = $1
-	`, accountID, at)
+	err := r.queries.MarkImapAccountSynced(ctx, imapdb.MarkImapAccountSyncedParams{
+		SyncAt:    toPgTimestamp(at),
+		AccountID: toPgUUID(accountID),
+	})
 	if err != nil {
 		return fmt.Errorf("mark account synced: %w", err)
 	}
@@ -424,11 +426,7 @@ func (r *Repository) MarkAccountSynced(ctx context.Context, accountID uuid.UUID,
 }
 
 func (r *Repository) ClearAccountSyncError(ctx context.Context, accountID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_user_imap_accounts
-		SET last_error = NULL, last_error_at = NULL, updated_at = now()
-		WHERE id = $1
-	`, accountID)
+	err := r.queries.ClearImapAccountSyncError(ctx, toPgUUID(accountID))
 	if err != nil {
 		return fmt.Errorf("clear account sync error: %w", err)
 	}
@@ -445,81 +443,58 @@ func (r *Repository) ListMessagesByUser(ctx context.Context, params ListMessages
 		pageSize = defaultListPageSize
 	}
 
-	var total int
-	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(m.id)
-		FROM RAC_user_imap_messages m
-		JOIN RAC_user_imap_accounts a ON a.id = m.account_id
-		WHERE m.account_id = $1 AND a.user_id = $2
-	`, params.AccountID, params.UserID).Scan(&total); err != nil {
+	total, err := r.queries.CountImapMessagesByUserAndAccount(ctx, imapdb.CountImapMessagesByUserAndAccountParams{
+		AccountID: toPgUUID(params.AccountID),
+		UserID:    toPgUUID(params.UserID),
+	})
+	if err != nil {
 		return ListMessagesResult{}, fmt.Errorf("count imap messages: %w", err)
 	}
 
 	offset := (page - 1) * pageSize
-	rows, err := r.pool.Query(ctx, `
-		SELECT
-			m.id, m.account_id, m.folder_name, m.uid, m.message_id, m.from_name, m.from_address, m.subject,
-			m.sent_at, m.received_at, m.snippet, m.size_bytes, m.seen, m.flagged, m.answered, m.deleted,
-			m.has_attachments, m.synced_at, m.created_at, m.updated_at
-		FROM RAC_user_imap_messages m
-		JOIN RAC_user_imap_accounts a ON a.id = m.account_id
-		WHERE m.account_id = $1 AND a.user_id = $2
-		ORDER BY COALESCE(m.sent_at, m.received_at, m.created_at) DESC
-		LIMIT $3 OFFSET $4
-	`, params.AccountID, params.UserID, pageSize, offset)
+	rows, err := r.queries.ListImapMessagesByUser(ctx, imapdb.ListImapMessagesByUserParams{
+		AccountID:   toPgUUID(params.AccountID),
+		UserID:      toPgUUID(params.UserID),
+		OffsetCount: int32(offset),
+		LimitCount:  int32(pageSize),
+	})
 	if err != nil {
 		return ListMessagesResult{}, fmt.Errorf("list imap messages: %w", err)
 	}
-	defer rows.Close()
 
 	items := make([]Message, 0)
-	for rows.Next() {
-		var item Message
-		if err := rows.Scan(
-			&item.ID, &item.AccountID, &item.FolderName, &item.UID, &item.MessageID, &item.FromName, &item.FromAddress, &item.Subject,
-			&item.SentAt, &item.ReceivedAt, &item.Snippet, &item.SizeBytes, &item.Seen, &item.Flagged, &item.Answered, &item.Deleted,
-			&item.HasAttachments, &item.SyncedAt, &item.CreatedAt, &item.UpdatedAt,
-		); err != nil {
-			return ListMessagesResult{}, fmt.Errorf("scan imap message: %w", err)
-		}
-		items = append(items, item)
+	for _, row := range rows {
+		items = append(items, messageFromModel(row))
 	}
 
 	totalPages := 0
 	if total > 0 {
-		totalPages = (total + pageSize - 1) / pageSize
+		totalPages = (int(total) + pageSize - 1) / pageSize
 	}
 
 	return ListMessagesResult{
 		Items:      items,
-		Total:      total,
+		Total:      int(total),
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
-	}, rows.Err()
+	}, nil
 }
 
 // CountUnreadMessagesByUser returns the exact unread IMAP message count across all accounts for a user.
 func (r *Repository) CountUnreadMessagesByUser(ctx context.Context, userID uuid.UUID) (int, error) {
-	var count int
-	err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(m.id)
-		FROM RAC_user_imap_messages m
-		JOIN RAC_user_imap_accounts a ON a.id = m.account_id
-		WHERE a.user_id = $1
-		  AND m.seen = false
-	`, userID).Scan(&count)
+	count, err := r.queries.CountUnreadImapMessagesByUser(ctx, toPgUUID(userID))
 	if err != nil {
 		return 0, fmt.Errorf("count unread imap messages: %w", err)
 	}
-	return count, nil
+	return int(count), nil
 }
 
 func (r *Repository) DeleteMessageMetadataByUID(ctx context.Context, accountID uuid.UUID, uid int64) error {
-	_, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_user_imap_messages
-		WHERE account_id = $1 AND uid = $2
-	`, accountID, uid)
+	err := r.queries.DeleteImapMessageMetadataByUID(ctx, imapdb.DeleteImapMessageMetadataByUIDParams{
+		AccountID: toPgUUID(accountID),
+		Uid:       uid,
+	})
 	if err != nil {
 		return fmt.Errorf("delete message metadata: %w", err)
 	}
@@ -527,11 +502,11 @@ func (r *Repository) DeleteMessageMetadataByUID(ctx context.Context, accountID u
 }
 
 func (r *Repository) UpdateMessageSeenByUID(ctx context.Context, accountID uuid.UUID, uid int64, seen bool) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_user_imap_messages
-		SET seen = $3, updated_at = now()
-		WHERE account_id = $1 AND uid = $2
-	`, accountID, uid, seen)
+	err := r.queries.UpdateImapMessageSeenByUID(ctx, imapdb.UpdateImapMessageSeenByUIDParams{
+		Seen:      seen,
+		AccountID: toPgUUID(accountID),
+		Uid:       uid,
+	})
 	if err != nil {
 		return fmt.Errorf("update message seen metadata: %w", err)
 	}
@@ -539,11 +514,11 @@ func (r *Repository) UpdateMessageSeenByUID(ctx context.Context, accountID uuid.
 }
 
 func (r *Repository) UpdateMessageAnsweredByUID(ctx context.Context, accountID uuid.UUID, uid int64, answered bool) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_user_imap_messages
-		SET answered = $3, updated_at = now()
-		WHERE account_id = $1 AND uid = $2
-	`, accountID, uid, answered)
+	err := r.queries.UpdateImapMessageAnsweredByUID(ctx, imapdb.UpdateImapMessageAnsweredByUIDParams{
+		Answered:  answered,
+		AccountID: toPgUUID(accountID),
+		Uid:       uid,
+	})
 	if err != nil {
 		return fmt.Errorf("update message answered metadata: %w", err)
 	}
@@ -551,13 +526,10 @@ func (r *Repository) UpdateMessageAnsweredByUID(ctx context.Context, accountID u
 }
 
 func (r *Repository) GetMessageSizeByUID(ctx context.Context, accountID uuid.UUID, uid int64) (int64, error) {
-	var sizeBytes int64
-	err := r.pool.QueryRow(ctx, `
-		SELECT size_bytes
-		FROM RAC_user_imap_messages
-		WHERE account_id = $1 AND uid = $2
-		LIMIT 1
-	`, accountID, uid).Scan(&sizeBytes)
+	sizeBytes, err := r.queries.GetImapMessageSizeByUID(ctx, imapdb.GetImapMessageSizeByUIDParams{
+		AccountID: toPgUUID(accountID),
+		Uid:       uid,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, nil
@@ -569,69 +541,31 @@ func (r *Repository) GetMessageSizeByUID(ctx context.Context, accountID uuid.UUI
 
 // GetMaxUID returns the highest UID currently synced for a given account and folder.
 func (r *Repository) GetMaxUID(ctx context.Context, accountID uuid.UUID, folderName string) (int64, error) {
-	var maxUID *int64
-	err := r.pool.QueryRow(ctx, `
-		SELECT MAX(uid)
-		FROM RAC_user_imap_messages
-		WHERE account_id = $1 AND folder_name = $2
-	`, accountID, folderName).Scan(&maxUID)
+	maxUID, err := r.queries.GetImapMaxUID(ctx, imapdb.GetImapMaxUIDParams{
+		AccountID:  toPgUUID(accountID),
+		FolderName: folderName,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("get max imap uid: %w", err)
 	}
-	if maxUID == nil {
-		return 0, nil
-	}
-	return *maxUID, nil
+	return maxUID, nil
 }
 
 func (r *Repository) ListAccountsNeedingSync(ctx context.Context, maxAge time.Duration, limit int) ([]Account, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT
-			id, user_id, email_address, imap_host, imap_port, imap_username, imap_password_encrypted,
-			smtp_host, smtp_port, smtp_username, smtp_password_encrypted, smtp_from_email, smtp_from_name,
-			folder_name, enabled, last_sync_at, last_error, last_error_at, created_at, updated_at
-		FROM RAC_user_imap_accounts
-		WHERE enabled = true
-		  AND (last_sync_at IS NULL OR last_sync_at <= now() - $1::interval)
-		ORDER BY COALESCE(last_sync_at, created_at) ASC
-		LIMIT $2
-	`, fmt.Sprintf("%f seconds", maxAge.Seconds()), limit)
+	rows, err := r.queries.ListImapAccountsNeedingSync(ctx, imapdb.ListImapAccountsNeedingSyncParams{
+		SyncAge:    toPgInterval(maxAge),
+		LimitCount: int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list accounts needing sync: %w", err)
 	}
-	defer rows.Close()
 
 	items := make([]Account, 0)
-	for rows.Next() {
-		var account Account
-		if err := rows.Scan(
-			&account.ID,
-			&account.UserID,
-			&account.EmailAddress,
-			&account.IMAPHost,
-			&account.IMAPPort,
-			&account.IMAPUsername,
-			&account.IMAPPasswordEncrypted,
-			&account.SMTPHost,
-			&account.SMTPPort,
-			&account.SMTPUsername,
-			&account.SMTPPasswordEncrypted,
-			&account.SMTPFromEmail,
-			&account.SMTPFromName,
-			&account.FolderName,
-			&account.Enabled,
-			&account.LastSyncAt,
-			&account.LastError,
-			&account.LastErrorAt,
-			&account.CreatedAt,
-			&account.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan account needing sync: %w", err)
-		}
-		items = append(items, account)
+	for _, row := range rows {
+		items = append(items, accountFromModel(row))
 	}
-	return items, rows.Err()
+	return items, nil
 }

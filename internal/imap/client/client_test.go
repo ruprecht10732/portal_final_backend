@@ -60,10 +60,14 @@ func TestWaitForRetryReturnsContextErrorWhenCanceled(t *testing.T) {
 	}
 }
 
+func testNilContext() context.Context {
+	return nil
+}
+
 func TestContextErrorAllowsNilContext(t *testing.T) {
 	t.Parallel()
 
-	if err := contextError(nil); err != nil {
+	if err := contextError(testNilContext()); err != nil {
 		t.Fatalf("expected nil context to be allowed, got %v", err)
 	}
 }

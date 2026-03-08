@@ -105,7 +105,7 @@ func TestBuildGatekeeperPromptIncludesVisitReportEvidence(t *testing.T) {
 
 func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 	lead, service, notes, _, _, photo := testPromptFixtures()
-	prompt := buildEstimatorPrompt(lead, service, notes, photo, "Gebruik standaard afwerking")
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, "Gebruik standaard afwerking", nil)
 
 	checks := []string{
 		"=== EXECUTION PRIORITY ===",

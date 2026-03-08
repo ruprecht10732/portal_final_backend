@@ -525,7 +525,7 @@ WHERE id = $1
 	AND org_id = $3;
 
 -- name: ListCommentCountsByEvents :many
-SELECT event_id, COUNT(*)::int
+SELECT event_id, COUNT(*)::int AS comment_count
 FROM RAC_feed_comments
 WHERE event_id = ANY($1::text[])
 	AND org_id = $2
@@ -535,7 +535,7 @@ GROUP BY event_id;
 SELECT m.comment_id, m.mentioned_user_id, u.email
 FROM RAC_feed_comment_mentions m
 JOIN RAC_users u ON u.id = m.mentioned_user_id
-WHERE m.comment_id = ANY($1::uuid[])
+WHERE m.comment_id = ANY(sqlc.arg(commentIDs)::uuid[])
 ORDER BY m.created_at;
 
 -- name: ListLeadOrgMembers :many
@@ -637,7 +637,7 @@ WITH weeks AS (
 		INTERVAL '1 week'
 	) AS week_start
 )
-SELECT COALESCE(COUNT(DISTINCT CASE WHEN ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified' THEN l.id END), 0)::int AS active_leads
+SELECT COALESCE(COUNT(DISTINCT CASE WHEN ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified' THEN l.id END), 0)::int AS activeLeadsCount
 FROM weeks w
 LEFT JOIN RAC_leads l
 	ON l.organization_id = $1
@@ -675,7 +675,7 @@ WITH weeks AS (
 		INTERVAL '1 week'
 	) AS week_start
 )
-SELECT COALESCE(SUM(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents ELSE 0 END), 0)::bigint AS quote_pipeline_cents
+SELECT COALESCE(SUM(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents ELSE 0 END), 0)::bigint AS quotePipelineCentsValue
 FROM weeks w
 LEFT JOIN RAC_quotes q
 	ON q.organization_id = $1
@@ -692,7 +692,7 @@ WITH weeks AS (
 		INTERVAL '1 week'
 	) AS week_start
 )
-SELECT COALESCE(AVG(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents END)::bigint, 0)::bigint AS avg_quote_value_cents
+SELECT COALESCE(AVG(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents END)::bigint, 0)::bigint AS avgQuoteValueCentsValue
 FROM weeks w
 LEFT JOIN RAC_quotes q
 	ON q.organization_id = $1
@@ -728,7 +728,7 @@ WHERE organization_id = $1
 GROUP BY partner_id;
 
 -- name: GetLeadCity :one
-SELECT address_city
+SELECT address_city AS cityValue
 FROM RAC_leads
 WHERE organization_id = $1
 	AND id = $2
@@ -771,7 +771,7 @@ WHERE organization_id = $1
 LIMIT 1;
 
 -- name: ListInvitedPartnerIDs :many
-SELECT partner_id
+SELECT partner_id AS partnerIDValue
 FROM RAC_partner_offers
 WHERE lead_service_id = $1
 	AND status IN ('rejected', 'expired', 'sent', 'pending');
@@ -818,7 +818,7 @@ ORDER BY created_at DESC
 LIMIT 1;
 
 -- name: GetLeadWhatsAppOptIn :one
-SELECT whatsapp_opted_in
+SELECT whatsapp_opted_in AS whatsappOptInValue
 FROM RAC_leads
 WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL;
 

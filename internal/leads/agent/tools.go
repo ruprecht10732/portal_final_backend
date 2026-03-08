@@ -1567,16 +1567,6 @@ func createUpdatePipelineStageTool(_ *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
-func hasNonEmptyMissingInformation(value any) bool {
-	switch typed := value.(type) {
-	case []string:
-		return domain.HasNonEmptyMissingInformation(typed)
-	case []any:
-		return domain.HasNonEmptyMissingInformation(stringifyAnySlice(typed))
-	}
-	return false
-}
-
 func latestAnalysisInvariantInputs(ctx context.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (string, []string) {
 	if analysis, err := deps.Repo.GetLatestAIAnalysis(ctx, serviceID, tenantID); err == nil {
 		return analysis.RecommendedAction, analysis.MissingInformation

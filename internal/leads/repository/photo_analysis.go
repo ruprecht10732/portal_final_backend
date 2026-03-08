@@ -91,7 +91,27 @@ func (r *Repository) CreatePhotoAnalysis(ctx context.Context, params CreatePhoto
 	if err != nil {
 		return PhotoAnalysis{}, err
 	}
-	return photoAnalysisFromRow(row.ID, row.LeadID, row.ServiceID, row.OrgID, row.Summary, row.Observations, row.ScopeAssessment, row.CostIndicators, row.SafetyConcerns, row.AdditionalInfo, row.ConfidenceLevel, row.PhotoCount, row.Measurements, row.NeedsOnsiteMeasurement, row.Discrepancies, row.ExtractedText, row.SuggestedSearchTerms, row.CreatedAt, row.UpdatedAt), nil
+	return photoAnalysisSnapshot{
+		id:                     row.ID,
+		leadID:                 row.LeadID,
+		serviceID:              row.ServiceID,
+		organizationID:         row.OrgID,
+		summary:                row.Summary,
+		observations:           row.Observations,
+		scopeAssessment:        row.ScopeAssessment,
+		costIndicators:         row.CostIndicators,
+		safetyConcerns:         row.SafetyConcerns,
+		additionalInfo:         row.AdditionalInfo,
+		confidenceLevel:        row.ConfidenceLevel,
+		photoCount:             row.PhotoCount,
+		measurements:           row.Measurements,
+		needsOnsiteMeasurement: row.NeedsOnsiteMeasurement,
+		discrepancies:          row.Discrepancies,
+		extractedText:          row.ExtractedText,
+		suggestedSearchTerms:   row.SuggestedSearchTerms,
+		createdAt:              row.CreatedAt,
+		updatedAt:              row.UpdatedAt,
+	}.toModel(), nil
 }
 
 // GetPhotoAnalysisByID retrieves a photo analysis by ID, scoped to organization.
@@ -103,7 +123,27 @@ func (r *Repository) GetPhotoAnalysisByID(ctx context.Context, id uuid.UUID, org
 	if err != nil {
 		return PhotoAnalysis{}, err
 	}
-	return photoAnalysisFromRow(row.ID, row.LeadID, row.ServiceID, row.OrgID, row.Summary, row.Observations, row.ScopeAssessment, row.CostIndicators, row.SafetyConcerns, row.AdditionalInfo, row.ConfidenceLevel, row.PhotoCount, row.Measurements, row.NeedsOnsiteMeasurement, row.Discrepancies, row.ExtractedText, row.SuggestedSearchTerms, row.CreatedAt, row.UpdatedAt), nil
+	return photoAnalysisSnapshot{
+		id:                     row.ID,
+		leadID:                 row.LeadID,
+		serviceID:              row.ServiceID,
+		organizationID:         row.OrgID,
+		summary:                row.Summary,
+		observations:           row.Observations,
+		scopeAssessment:        row.ScopeAssessment,
+		costIndicators:         row.CostIndicators,
+		safetyConcerns:         row.SafetyConcerns,
+		additionalInfo:         row.AdditionalInfo,
+		confidenceLevel:        row.ConfidenceLevel,
+		photoCount:             row.PhotoCount,
+		measurements:           row.Measurements,
+		needsOnsiteMeasurement: row.NeedsOnsiteMeasurement,
+		discrepancies:          row.Discrepancies,
+		extractedText:          row.ExtractedText,
+		suggestedSearchTerms:   row.SuggestedSearchTerms,
+		createdAt:              row.CreatedAt,
+		updatedAt:              row.UpdatedAt,
+	}.toModel(), nil
 }
 
 // GetLatestPhotoAnalysis retrieves the most recent photo analysis for a service.
@@ -115,7 +155,27 @@ func (r *Repository) GetLatestPhotoAnalysis(ctx context.Context, serviceID uuid.
 	if err != nil {
 		return PhotoAnalysis{}, err
 	}
-	return photoAnalysisFromRow(row.ID, row.LeadID, row.ServiceID, row.OrgID, row.Summary, row.Observations, row.ScopeAssessment, row.CostIndicators, row.SafetyConcerns, row.AdditionalInfo, row.ConfidenceLevel, row.PhotoCount, row.Measurements, row.NeedsOnsiteMeasurement, row.Discrepancies, row.ExtractedText, row.SuggestedSearchTerms, row.CreatedAt, row.UpdatedAt), nil
+	return photoAnalysisSnapshot{
+		id:                     row.ID,
+		leadID:                 row.LeadID,
+		serviceID:              row.ServiceID,
+		organizationID:         row.OrgID,
+		summary:                row.Summary,
+		observations:           row.Observations,
+		scopeAssessment:        row.ScopeAssessment,
+		costIndicators:         row.CostIndicators,
+		safetyConcerns:         row.SafetyConcerns,
+		additionalInfo:         row.AdditionalInfo,
+		confidenceLevel:        row.ConfidenceLevel,
+		photoCount:             row.PhotoCount,
+		measurements:           row.Measurements,
+		needsOnsiteMeasurement: row.NeedsOnsiteMeasurement,
+		discrepancies:          row.Discrepancies,
+		extractedText:          row.ExtractedText,
+		suggestedSearchTerms:   row.SuggestedSearchTerms,
+		createdAt:              row.CreatedAt,
+		updatedAt:              row.UpdatedAt,
+	}.toModel(), nil
 }
 
 // ListPhotoAnalysesByService retrieves all photo analyses for a service.
@@ -127,7 +187,27 @@ func (r *Repository) ListPhotoAnalysesByService(ctx context.Context, serviceID u
 
 	analyses := make([]PhotoAnalysis, 0, len(rows))
 	for _, row := range rows {
-		analyses = append(analyses, photoAnalysisFromRow(row.ID, row.LeadID, row.ServiceID, row.OrgID, row.Summary, row.Observations, row.ScopeAssessment, row.CostIndicators, row.SafetyConcerns, row.AdditionalInfo, row.ConfidenceLevel, row.PhotoCount, row.Measurements, row.NeedsOnsiteMeasurement, row.Discrepancies, row.ExtractedText, row.SuggestedSearchTerms, row.CreatedAt, row.UpdatedAt))
+		analyses = append(analyses, photoAnalysisSnapshot{
+			id:                     row.ID,
+			leadID:                 row.LeadID,
+			serviceID:              row.ServiceID,
+			organizationID:         row.OrgID,
+			summary:                row.Summary,
+			observations:           row.Observations,
+			scopeAssessment:        row.ScopeAssessment,
+			costIndicators:         row.CostIndicators,
+			safetyConcerns:         row.SafetyConcerns,
+			additionalInfo:         row.AdditionalInfo,
+			confidenceLevel:        row.ConfidenceLevel,
+			photoCount:             row.PhotoCount,
+			measurements:           row.Measurements,
+			needsOnsiteMeasurement: row.NeedsOnsiteMeasurement,
+			discrepancies:          row.Discrepancies,
+			extractedText:          row.ExtractedText,
+			suggestedSearchTerms:   row.SuggestedSearchTerms,
+			createdAt:              row.CreatedAt,
+			updatedAt:              row.UpdatedAt,
+		}.toModel())
 	}
 	return analyses, nil
 }
@@ -141,35 +221,77 @@ func (r *Repository) ListPhotoAnalysesByLead(ctx context.Context, leadID uuid.UU
 
 	analyses := make([]PhotoAnalysis, 0, len(rows))
 	for _, row := range rows {
-		analyses = append(analyses, photoAnalysisFromRow(row.ID, row.LeadID, row.ServiceID, row.OrgID, row.Summary, row.Observations, row.ScopeAssessment, row.CostIndicators, row.SafetyConcerns, row.AdditionalInfo, row.ConfidenceLevel, row.PhotoCount, row.Measurements, row.NeedsOnsiteMeasurement, row.Discrepancies, row.ExtractedText, row.SuggestedSearchTerms, row.CreatedAt, row.UpdatedAt))
+		analyses = append(analyses, photoAnalysisSnapshot{
+			id:                     row.ID,
+			leadID:                 row.LeadID,
+			serviceID:              row.ServiceID,
+			organizationID:         row.OrgID,
+			summary:                row.Summary,
+			observations:           row.Observations,
+			scopeAssessment:        row.ScopeAssessment,
+			costIndicators:         row.CostIndicators,
+			safetyConcerns:         row.SafetyConcerns,
+			additionalInfo:         row.AdditionalInfo,
+			confidenceLevel:        row.ConfidenceLevel,
+			photoCount:             row.PhotoCount,
+			measurements:           row.Measurements,
+			needsOnsiteMeasurement: row.NeedsOnsiteMeasurement,
+			discrepancies:          row.Discrepancies,
+			extractedText:          row.ExtractedText,
+			suggestedSearchTerms:   row.SuggestedSearchTerms,
+			createdAt:              row.CreatedAt,
+			updatedAt:              row.UpdatedAt,
+		}.toModel())
 	}
 	return analyses, nil
 }
 
-func photoAnalysisFromRow(id, leadID, serviceID, organizationID pgtype.UUID, summary string, observations []byte, scopeAssessment string, costIndicators pgtype.Text, safetyConcerns, additionalInfo []byte, confidenceLevel string, photoCount int32, measurements, needsOnsiteMeasurement, discrepancies, extractedText, suggestedSearchTerms []byte, createdAt, updatedAt pgtype.Timestamptz) PhotoAnalysis {
+type photoAnalysisSnapshot struct {
+	id                     pgtype.UUID
+	leadID                 pgtype.UUID
+	serviceID              pgtype.UUID
+	organizationID         pgtype.UUID
+	summary                string
+	observations           []byte
+	scopeAssessment        string
+	costIndicators         pgtype.Text
+	safetyConcerns         []byte
+	additionalInfo         []byte
+	confidenceLevel        string
+	photoCount             int32
+	measurements           []byte
+	needsOnsiteMeasurement []byte
+	discrepancies          []byte
+	extractedText          []byte
+	suggestedSearchTerms   []byte
+	createdAt              pgtype.Timestamptz
+	updatedAt              pgtype.Timestamptz
+}
+
+func (snapshot photoAnalysisSnapshot) toModel() PhotoAnalysis {
 	analysis := PhotoAnalysis{
-		ID:              id.Bytes,
-		LeadID:          leadID.Bytes,
-		ServiceID:       serviceID.Bytes,
-		OrganizationID:  organizationID.Bytes,
-		Summary:         summary,
-		ScopeAssessment: scopeAssessment,
-		ConfidenceLevel: confidenceLevel,
-		PhotoCount:      int(photoCount),
-		CreatedAt:       createdAt.Time,
-		UpdatedAt:       updatedAt.Time,
+		ID:              snapshot.id.Bytes,
+		LeadID:          snapshot.leadID.Bytes,
+		ServiceID:       snapshot.serviceID.Bytes,
+		OrganizationID:  snapshot.organizationID.Bytes,
+		Summary:         snapshot.summary,
+		ScopeAssessment: snapshot.scopeAssessment,
+		ConfidenceLevel: snapshot.confidenceLevel,
+		PhotoCount:      int(snapshot.photoCount),
+		CreatedAt:       snapshot.createdAt.Time,
+		UpdatedAt:       snapshot.updatedAt.Time,
 	}
-	if value := optionalString(costIndicators); value != nil {
+	if value := optionalString(snapshot.costIndicators); value != nil {
 		analysis.CostIndicators = *value
 	}
-	_ = json.Unmarshal(observations, &analysis.Observations)
-	_ = json.Unmarshal(safetyConcerns, &analysis.SafetyConcerns)
-	_ = json.Unmarshal(additionalInfo, &analysis.AdditionalInfo)
-	_ = json.Unmarshal(measurements, &analysis.Measurements)
-	_ = json.Unmarshal(needsOnsiteMeasurement, &analysis.NeedsOnsiteMeasurement)
-	_ = json.Unmarshal(discrepancies, &analysis.Discrepancies)
-	_ = json.Unmarshal(extractedText, &analysis.ExtractedText)
-	_ = json.Unmarshal(suggestedSearchTerms, &analysis.SuggestedSearchTerms)
+	_ = json.Unmarshal(snapshot.observations, &analysis.Observations)
+	_ = json.Unmarshal(snapshot.safetyConcerns, &analysis.SafetyConcerns)
+	_ = json.Unmarshal(snapshot.additionalInfo, &analysis.AdditionalInfo)
+	_ = json.Unmarshal(snapshot.measurements, &analysis.Measurements)
+	_ = json.Unmarshal(snapshot.needsOnsiteMeasurement, &analysis.NeedsOnsiteMeasurement)
+	_ = json.Unmarshal(snapshot.discrepancies, &analysis.Discrepancies)
+	_ = json.Unmarshal(snapshot.extractedText, &analysis.ExtractedText)
+	_ = json.Unmarshal(snapshot.suggestedSearchTerms, &analysis.SuggestedSearchTerms)
 	return analysis
 }
 

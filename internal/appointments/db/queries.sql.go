@@ -12,7 +12,7 @@ import (
 )
 
 const countAppointments = `-- name: CountAppointments :one
-SELECT COUNT(*)::int
+SELECT COUNT(*)::int AS countValue
 FROM RAC_appointments
 WHERE organization_id = $1
 	AND ($2::uuid IS NULL OR user_id = $2::uuid)
@@ -46,9 +46,9 @@ func (q *Queries) CountAppointments(ctx context.Context, arg CountAppointmentsPa
 		arg.StartTo,
 		arg.Search,
 	)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
+	var countvalue int32
+	err := row.Scan(&countvalue)
+	return countvalue, err
 }
 
 const createAppointment = `-- name: CreateAppointment :exec
@@ -439,7 +439,7 @@ func (q *Queries) GetAppointmentByLeadServiceID(ctx context.Context, arg GetAppo
 }
 
 const getAppointmentLeadEmail = `-- name: GetAppointmentLeadEmail :one
-SELECT COALESCE(consumer_email, '')
+SELECT COALESCE(consumer_email, '') AS consumerEmailValue
 FROM RAC_leads
 WHERE id = $1 AND organization_id = $2
 `
@@ -451,9 +451,9 @@ type GetAppointmentLeadEmailParams struct {
 
 func (q *Queries) GetAppointmentLeadEmail(ctx context.Context, arg GetAppointmentLeadEmailParams) (string, error) {
 	row := q.db.QueryRow(ctx, getAppointmentLeadEmail, arg.ID, arg.OrganizationID)
-	var consumer_email string
-	err := row.Scan(&consumer_email)
-	return consumer_email, err
+	var consumeremailvalue string
+	err := row.Scan(&consumeremailvalue)
+	return consumeremailvalue, err
 }
 
 const getAppointmentLeadInfo = `-- name: GetAppointmentLeadInfo :one
@@ -1149,7 +1149,7 @@ func (q *Queries) ListAvailabilityOverrides(ctx context.Context, arg ListAvailab
 }
 
 const listAvailabilityRuleUserIDs = `-- name: ListAvailabilityRuleUserIDs :many
-SELECT DISTINCT user_id
+SELECT DISTINCT user_id AS userIDValue
 FROM RAC_appointment_availability_rules
 WHERE organization_id = $1
 `
@@ -1162,11 +1162,11 @@ func (q *Queries) ListAvailabilityRuleUserIDs(ctx context.Context, organizationI
 	defer rows.Close()
 	var items []pgtype.UUID
 	for rows.Next() {
-		var user_id pgtype.UUID
-		if err := rows.Scan(&user_id); err != nil {
+		var useridvalue pgtype.UUID
+		if err := rows.Scan(&useridvalue); err != nil {
 			return nil, err
 		}
-		items = append(items, user_id)
+		items = append(items, useridvalue)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

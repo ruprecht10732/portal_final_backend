@@ -11,8 +11,11 @@ import (
 	"strings"
 	"time"
 
+	webhookdb "portal_final_backend/internal/webhook/db"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,7 +38,8 @@ type APIKey struct {
 
 // Repository provides data access for webhook API keys.
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *webhookdb.Queries
 }
 
 type createTimelineEventParams struct {
@@ -52,7 +56,67 @@ type createTimelineEventParams struct {
 
 // NewRepository creates a new webhook repository.
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, queries: webhookdb.New(pool)}
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return toPgUUID(*id)
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func toPgTextValue(value string) pgtype.Text {
+	return pgtype.Text{String: value, Valid: true}
+}
+
+func toPgInt8Value(value int64) pgtype.Int8 {
+	return pgtype.Int8{Int64: value, Valid: true}
+}
+
+func apiKeyFromModel(model webhookdb.RacWebhookApiKey) APIKey {
+	return APIKey{
+		ID:             uuid.UUID(model.ID.Bytes),
+		OrganizationID: uuid.UUID(model.OrganizationID.Bytes),
+		Name:           model.Name,
+		KeyHash:        model.KeyHash,
+		KeyPrefix:      model.KeyPrefix,
+		AllowedDomains: model.AllowedDomains,
+		IsActive:       model.IsActive,
+		CreatedAt:      model.CreatedAt.Time,
+		UpdatedAt:      model.UpdatedAt.Time,
+	}
+}
+
+func googleWebhookConfigFromModel(model webhookdb.RacGoogleWebhookConfig) GoogleWebhookConfig {
+	config := GoogleWebhookConfig{
+		ID:              uuid.UUID(model.ID.Bytes),
+		OrganizationID:  uuid.UUID(model.OrganizationID.Bytes),
+		Name:            model.Name,
+		GoogleKeyHash:   model.GoogleKeyHash,
+		GoogleKeyPrefix: model.GoogleKeyPrefix,
+		IsActive:        model.IsActive,
+		CreatedAt:       model.CreatedAt.Time,
+		UpdatedAt:       model.UpdatedAt.Time,
+	}
+	if len(model.CampaignMappings) > 0 {
+		var mappings map[string]string
+		if err := json.Unmarshal(model.CampaignMappings, &mappings); err == nil {
+			config.CampaignMappings = mappings
+		}
+	}
+	return config
 }
 
 func (r *Repository) CreateTimelineEvent(ctx context.Context, params createTimelineEventParams) error {
@@ -61,20 +125,17 @@ func (r *Repository) CreateTimelineEvent(ctx context.Context, params createTimel
 		return err
 	}
 
-	_, err = r.pool.Exec(ctx, `
-		INSERT INTO lead_timeline_events (
-			lead_id,
-			service_id,
-			organization_id,
-			actor_type,
-			actor_name,
-			event_type,
-			title,
-			summary,
-			metadata
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, params.LeadID, params.ServiceID, params.OrganizationID, params.ActorType, params.ActorName, params.EventType, params.Title, params.Summary, metadataJSON)
+	err = r.queries.CreateWebhookTimelineEvent(ctx, webhookdb.CreateWebhookTimelineEventParams{
+		LeadID:         toPgUUID(params.LeadID),
+		ServiceID:      toPgUUIDPtr(params.ServiceID),
+		OrganizationID: toPgUUID(params.OrganizationID),
+		ActorType:      params.ActorType,
+		ActorName:      params.ActorName,
+		EventType:      params.EventType,
+		Title:          params.Title,
+		Summary:        toPgText(params.Summary),
+		Metadata:       metadataJSON,
+	})
 	return err
 }
 
@@ -101,71 +162,52 @@ func HashKey(plaintext string) string {
 // Create creates a new API key record.
 func (r *Repository) Create(ctx context.Context, orgID uuid.UUID, name string, keyHash string, keyPrefix string, allowedDomains []string) (APIKey, error) {
 	var key APIKey
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_webhook_api_keys (organization_id, name, key_hash, key_prefix, allowed_domains)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, organization_id, name, key_hash, key_prefix, allowed_domains, is_active, created_at, updated_at
-	`, orgID, name, keyHash, keyPrefix, allowedDomains).Scan(
-		&key.ID, &key.OrganizationID, &key.Name, &key.KeyHash, &key.KeyPrefix,
-		&key.AllowedDomains, &key.IsActive, &key.CreatedAt, &key.UpdatedAt,
-	)
-	return key, err
+	row, err := r.queries.CreateWebhookAPIKey(ctx, webhookdb.CreateWebhookAPIKeyParams{
+		OrganizationID: toPgUUID(orgID),
+		Name:           name,
+		KeyHash:        keyHash,
+		KeyPrefix:      keyPrefix,
+		AllowedDomains: allowedDomains,
+	})
+	if err != nil {
+		return key, err
+	}
+	return apiKeyFromModel(row), nil
 }
 
 // GetByHash retrieves an active API key by its hash.
 func (r *Repository) GetByHash(ctx context.Context, keyHash string) (APIKey, error) {
-	var key APIKey
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, name, key_hash, key_prefix, allowed_domains, is_active, created_at, updated_at
-		FROM RAC_webhook_api_keys
-		WHERE key_hash = $1 AND is_active = true
-	`, keyHash).Scan(
-		&key.ID, &key.OrganizationID, &key.Name, &key.KeyHash, &key.KeyPrefix,
-		&key.AllowedDomains, &key.IsActive, &key.CreatedAt, &key.UpdatedAt,
-	)
+	row, err := r.queries.GetWebhookAPIKeyByHash(ctx, keyHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIKey{}, ErrAPIKeyNotFound
 	}
-	return key, err
+	if err != nil {
+		return APIKey{}, err
+	}
+	return apiKeyFromModel(row), nil
 }
 
 // ListByOrganization returns all API keys for an organization.
 func (r *Repository) ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]APIKey, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, organization_id, name, key_hash, key_prefix, allowed_domains, is_active, created_at, updated_at
-		FROM RAC_webhook_api_keys
-		WHERE organization_id = $1
-		ORDER BY created_at DESC
-	`, orgID)
+	rows, err := r.queries.ListWebhookAPIKeysByOrganization(ctx, toPgUUID(orgID))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var keys []APIKey
-	for rows.Next() {
-		var key APIKey
-		if err := rows.Scan(
-			&key.ID, &key.OrganizationID, &key.Name, &key.KeyHash, &key.KeyPrefix,
-			&key.AllowedDomains, &key.IsActive, &key.CreatedAt, &key.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
+	keys := make([]APIKey, 0, len(rows))
+	for _, row := range rows {
+		keys = append(keys, apiKeyFromModel(row))
 	}
-	return keys, rows.Err()
+	return keys, nil
 }
 
 // Revoke deactivates an API key.
 func (r *Repository) Revoke(ctx context.Context, keyID uuid.UUID, orgID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE RAC_webhook_api_keys SET is_active = false, updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, keyID, orgID)
+	tag, err := r.queries.RevokeWebhookAPIKey(ctx, webhookdb.RevokeWebhookAPIKeyParams{ID: toPgUUID(keyID), OrganizationID: toPgUUID(orgID)})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if tag == 0 {
 		return ErrAPIKeyNotFound
 	}
 	return nil
@@ -173,12 +215,13 @@ func (r *Repository) Revoke(ctx context.Context, keyID uuid.UUID, orgID uuid.UUI
 
 // UpdateWebhookLeadData sets webhook-specific columns on a lead (raw_form_data, source domain, is_incomplete).
 func (r *Repository) UpdateWebhookLeadData(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID, rawFormData []byte, sourceDomain string, isIncomplete bool) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_leads
-		SET raw_form_data = $3, webhook_source_domain = $4, is_incomplete = $5, updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, leadID, orgID, rawFormData, sourceDomain, isIncomplete)
-	return err
+	return r.queries.UpdateWebhookLeadData(ctx, webhookdb.UpdateWebhookLeadDataParams{
+		ID:                  toPgUUID(leadID),
+		OrganizationID:      toPgUUID(orgID),
+		RawFormData:         rawFormData,
+		WebhookSourceDomain: toPgTextValue(sourceDomain),
+		IsIncomplete:        isIncomplete,
+	})
 }
 
 // FindRecentDuplicateLead checks if a lead with the same email and phone was created recently.
@@ -187,24 +230,19 @@ func (r *Repository) FindRecentDuplicateLead(ctx context.Context, orgID uuid.UUI
 		return nil, nil
 	}
 
-	var leadID uuid.UUID
-	err := r.pool.QueryRow(ctx, `
-		SELECT id
-		FROM RAC_leads
-		WHERE organization_id = $1
-		  AND created_at >= now() - $2::interval
-		  AND ($3 = '' OR consumer_email = $3)
-		  AND ($4 = '' OR consumer_phone = $4)
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, orgID, window, email, phone).Scan(&leadID)
-
+	row, err := r.queries.FindRecentDuplicateLead(ctx, webhookdb.FindRecentDuplicateLeadParams{
+		OrganizationID: toPgUUID(orgID),
+		Secs:           window.Seconds(),
+		Column3:        email,
+		Column4:        phone,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	leadID := uuid.UUID(row.Bytes)
 	return &leadID, nil
 }
 
@@ -226,116 +264,72 @@ func GenerateGoogleKey() (plaintext string, hash string, prefix string, err erro
 
 // CreateGoogleConfig creates a new Google webhook configuration.
 func (r *Repository) CreateGoogleConfig(ctx context.Context, orgID uuid.UUID, name string, googleKeyHash string, googleKeyPrefix string) (uuid.UUID, error) {
-	var id uuid.UUID
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_google_webhook_configs (organization_id, name, google_key_hash, google_key_prefix, campaign_mappings)
-		VALUES ($1, $2, $3, $4, '{}'::jsonb)
-		RETURNING id
-	`, orgID, name, googleKeyHash, googleKeyPrefix).Scan(&id)
-	return id, err
+	id, err := r.queries.CreateGoogleWebhookConfig(ctx, webhookdb.CreateGoogleWebhookConfigParams{
+		OrganizationID:  toPgUUID(orgID),
+		Name:            name,
+		GoogleKeyHash:   googleKeyHash,
+		GoogleKeyPrefix: googleKeyPrefix,
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return uuid.UUID(id.Bytes), nil
 }
 
 // GetGoogleConfigByKey looks up a Google webhook config by its hashed key.
 func (r *Repository) GetGoogleConfigByKey(ctx context.Context, googleKeyHash string) (GoogleWebhookConfig, error) {
-	var cfg GoogleWebhookConfig
-	var mappingsJSON []byte
-
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, organization_id, name, google_key_hash, google_key_prefix, campaign_mappings, is_active, created_at, updated_at
-		FROM RAC_google_webhook_configs
-		WHERE google_key_hash = $1 AND is_active = true
-	`, googleKeyHash).Scan(
-		&cfg.ID, &cfg.OrganizationID, &cfg.Name, &cfg.GoogleKeyHash, &cfg.GoogleKeyPrefix, &mappingsJSON, &cfg.IsActive, &cfg.CreatedAt, &cfg.UpdatedAt,
-	)
+	row, err := r.queries.GetGoogleWebhookConfigByHash(ctx, googleKeyHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return GoogleWebhookConfig{}, ErrGoogleConfigNotFound
 	}
 	if err != nil {
 		return GoogleWebhookConfig{}, err
 	}
-
-	// Parse campaign mappings from JSONB
-	if len(mappingsJSON) > 0 {
-		var mappings map[string]string
-		if err := json.Unmarshal(mappingsJSON, &mappings); err == nil {
-			cfg.CampaignMappings = mappings
-		}
-	}
-
-	return cfg, nil
+	return googleWebhookConfigFromModel(row), nil
 }
 
 // ListGoogleConfigs returns all Google webhook configs for an organization.
 func (r *Repository) ListGoogleConfigs(ctx context.Context, orgID uuid.UUID) ([]GoogleWebhookConfig, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, organization_id, name, google_key_hash, google_key_prefix, campaign_mappings, is_active, created_at, updated_at
-		FROM RAC_google_webhook_configs
-		WHERE organization_id = $1
-		ORDER BY created_at DESC
-	`, orgID)
+	rows, err := r.queries.ListGoogleWebhookConfigs(ctx, toPgUUID(orgID))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var configs []GoogleWebhookConfig
-	for rows.Next() {
-		var cfg GoogleWebhookConfig
-		var mappingsJSON []byte
-
-		if err := rows.Scan(
-			&cfg.ID, &cfg.OrganizationID, &cfg.Name, &cfg.GoogleKeyHash, &cfg.GoogleKeyPrefix, &mappingsJSON, &cfg.IsActive, &cfg.CreatedAt, &cfg.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-
-		// Parse campaign mappings
-		if len(mappingsJSON) > 0 {
-			var mappings map[string]string
-			if err := json.Unmarshal(mappingsJSON, &mappings); err == nil {
-				cfg.CampaignMappings = mappings
-			}
-		}
-
-		configs = append(configs, cfg)
+	configs := make([]GoogleWebhookConfig, 0, len(rows))
+	for _, row := range rows {
+		configs = append(configs, googleWebhookConfigFromModel(row))
 	}
-	return configs, rows.Err()
+	return configs, nil
 }
 
 // UpdateGoogleCampaignMapping adds or updates a campaign → service mapping.
 func (r *Repository) UpdateGoogleCampaignMapping(ctx context.Context, configID uuid.UUID, orgID uuid.UUID, campaignID int64, serviceType string) error {
 	campaignKey := strconv.FormatInt(campaignID, 10)
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_google_webhook_configs
-		SET campaign_mappings = jsonb_set(campaign_mappings, ARRAY[$3], to_jsonb($4::text), true),
-		updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, configID, orgID, campaignKey, serviceType)
-	return err
+	return r.queries.UpsertGoogleCampaignMapping(ctx, webhookdb.UpsertGoogleCampaignMappingParams{
+		ID:             toPgUUID(configID),
+		OrganizationID: toPgUUID(orgID),
+		Column3:        campaignKey,
+		Column4:        serviceType,
+	})
 }
 
 // DeleteGoogleCampaignMapping removes a campaign mapping from a config.
 func (r *Repository) DeleteGoogleCampaignMapping(ctx context.Context, configID uuid.UUID, orgID uuid.UUID, campaignID int64) error {
 	campaignKey := strconv.FormatInt(campaignID, 10)
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_google_webhook_configs
-		SET campaign_mappings = campaign_mappings - $3,
-		updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-	`, configID, orgID, campaignKey)
-	return err
+	return r.queries.DeleteGoogleCampaignMapping(ctx, webhookdb.DeleteGoogleCampaignMappingParams{
+		ID:             toPgUUID(configID),
+		OrganizationID: toPgUUID(orgID),
+		Column3:        campaignKey,
+	})
 }
 
 // DeleteGoogleConfig deletes a Google webhook configuration.
 func (r *Repository) DeleteGoogleConfig(ctx context.Context, configID uuid.UUID, orgID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_google_webhook_configs
-		WHERE id = $1 AND organization_id = $2
-	`, configID, orgID)
+	tag, err := r.queries.DeleteGoogleWebhookConfig(ctx, webhookdb.DeleteGoogleWebhookConfigParams{ID: toPgUUID(configID), OrganizationID: toPgUUID(orgID)})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if tag == 0 {
 		return ErrGoogleConfigNotFound
 	}
 	return nil
@@ -343,50 +337,42 @@ func (r *Repository) DeleteGoogleConfig(ctx context.Context, configID uuid.UUID,
 
 // CheckGoogleLeadIDExists checks if a Google lead ID has already been processed.
 func (r *Repository) CheckGoogleLeadIDExists(ctx context.Context, leadID string) (bool, error) {
-	var exists bool
-	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM RAC_google_lead_ids WHERE lead_id = $1)
-	`, leadID).Scan(&exists)
-	return exists, err
+	return r.queries.GoogleLeadIDExists(ctx, leadID)
 }
 
 // StoreGoogleLeadID stores a Google lead ID to prevent duplicate processing.
 func (r *Repository) StoreGoogleLeadID(ctx context.Context, leadID string, orgID uuid.UUID, leadUUID *uuid.UUID, isTest bool) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO RAC_google_lead_ids (lead_id, organization_id, lead_uuid, is_test)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (lead_id) DO NOTHING
-	`, leadID, orgID, leadUUID, isTest)
-	return err
+	return r.queries.StoreGoogleLeadID(ctx, webhookdb.StoreGoogleLeadIDParams{
+		LeadID:         leadID,
+		OrganizationID: toPgUUID(orgID),
+		LeadUuid:       toPgUUIDPtr(leadUUID),
+		IsTest:         isTest,
+	})
 }
 
 // UpdateGoogleLeadMetadata sets Google-specific metadata on a lead.
 func (r *Repository) UpdateGoogleLeadMetadata(ctx context.Context, leadID uuid.UUID, campaignID, creativeID, adGroupID, formID int64) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_leads
-		SET google_campaign_id = $2, google_creative_id = $3, google_adgroup_id = $4, google_form_id = $5, updated_at = now()
-		WHERE id = $1
-	`, leadID, campaignID, creativeID, adGroupID, formID)
-	return err
+	return r.queries.UpdateGoogleLeadMetadata(ctx, webhookdb.UpdateGoogleLeadMetadataParams{
+		ID:               toPgUUID(leadID),
+		GoogleCampaignID: toPgInt8Value(campaignID),
+		GoogleCreativeID: toPgInt8Value(creativeID),
+		GoogleAdgroupID:  toPgInt8Value(adGroupID),
+		GoogleFormID:     toPgInt8Value(formID),
+	})
 }
 
 // ---- GTM Config (Webhook SDK) ----
 
 // GetGTMContainerID returns the GTM container ID for an organization (or nil if not set).
 func (r *Repository) GetGTMContainerID(ctx context.Context, orgID uuid.UUID) (*string, error) {
-	var containerID *string
-	err := r.pool.QueryRow(ctx, `
-		SELECT gtm_container_id
-		FROM RAC_organizations
-		WHERE id = $1
-	`, orgID).Scan(&containerID)
+	containerID, err := r.queries.GetOrganizationGTMContainerID(ctx, toPgUUID(orgID))
 	if err != nil {
 		return nil, err
 	}
-	if containerID == nil {
+	if !containerID.Valid {
 		return nil, nil
 	}
-	trimmed := strings.TrimSpace(*containerID)
+	trimmed := strings.TrimSpace(containerID.String)
 	if trimmed == "" {
 		return nil, nil
 	}
@@ -395,20 +381,13 @@ func (r *Repository) GetGTMContainerID(ctx context.Context, orgID uuid.UUID) (*s
 
 // SetGTMContainerID sets the GTM container ID for an organization.
 func (r *Repository) SetGTMContainerID(ctx context.Context, orgID uuid.UUID, containerID string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_organizations
-		SET gtm_container_id = $2, updated_at = now()
-		WHERE id = $1
-	`, orgID, containerID)
-	return err
+	return r.queries.SetOrganizationGTMContainerID(ctx, webhookdb.SetOrganizationGTMContainerIDParams{
+		ID:             toPgUUID(orgID),
+		GtmContainerID: toPgTextValue(containerID),
+	})
 }
 
 // ClearGTMContainerID clears the GTM container ID for an organization.
 func (r *Repository) ClearGTMContainerID(ctx context.Context, orgID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_organizations
-		SET gtm_container_id = NULL, updated_at = now()
-		WHERE id = $1
-	`, orgID)
-	return err
+	return r.queries.ClearOrganizationGTMContainerID(ctx, toPgUUID(orgID))
 }

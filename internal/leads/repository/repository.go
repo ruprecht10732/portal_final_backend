@@ -138,13 +138,6 @@ func toPgTextValue(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: true}
 }
 
-func toPgInt8Ptr(value *int64) pgtype.Int8 {
-	if value == nil {
-		return pgtype.Int8{}
-	}
-	return pgtype.Int8{Int64: *value, Valid: true}
-}
-
 func toPgInt8Value(value int64) pgtype.Int8 {
 	return pgtype.Int8{Int64: value, Valid: true}
 }
@@ -648,13 +641,6 @@ type UpdateLeadScoreParams struct {
 	ScoreFactors   []byte
 	ScoreVersion   *string
 	ScoreUpdatedAt time.Time
-}
-
-func nullable[T any](value *T) interface{} {
-	if value == nil {
-		return nil
-	}
-	return *value
 }
 
 func boolValue(value *bool) bool {

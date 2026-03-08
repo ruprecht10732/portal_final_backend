@@ -21,7 +21,7 @@ WHERE organization_id = $1 AND is_active = true
 ORDER BY name ASC;
 
 -- name: CountServiceTypes :one
-SELECT COUNT(*)::int
+SELECT COUNT(*)::int AS countValue
 FROM RAC_service_types
 WHERE organization_id = sqlc.arg('organization_id')
   AND (sqlc.narg('search')::text IS NULL OR name ILIKE sqlc.narg('search')::text OR slug ILIKE sqlc.narg('search')::text)

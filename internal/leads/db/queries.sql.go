@@ -2020,7 +2020,7 @@ func (q *Queries) GetLeadByPublicToken(ctx context.Context, publicToken pgtype.T
 }
 
 const getLeadCity = `-- name: GetLeadCity :one
-SELECT address_city
+SELECT address_city AS cityValue
 FROM RAC_leads
 WHERE organization_id = $1
 	AND id = $2
@@ -2034,9 +2034,9 @@ type GetLeadCityParams struct {
 
 func (q *Queries) GetLeadCity(ctx context.Context, arg GetLeadCityParams) (string, error) {
 	row := q.db.QueryRow(ctx, getLeadCity, arg.OrganizationID, arg.ID)
-	var address_city string
-	err := row.Scan(&address_city)
-	return address_city, err
+	var cityvalue string
+	err := row.Scan(&cityvalue)
+	return cityvalue, err
 }
 
 const getLeadCoordinates = `-- name: GetLeadCoordinates :one
@@ -2242,7 +2242,7 @@ func (q *Queries) GetLeadSummaryByPhoneOrEmail(ctx context.Context, arg GetLeadS
 }
 
 const getLeadWhatsAppOptIn = `-- name: GetLeadWhatsAppOptIn :one
-SELECT whatsapp_opted_in
+SELECT whatsapp_opted_in AS whatsappOptInValue
 FROM RAC_leads
 WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
 `
@@ -2254,9 +2254,9 @@ type GetLeadWhatsAppOptInParams struct {
 
 func (q *Queries) GetLeadWhatsAppOptIn(ctx context.Context, arg GetLeadWhatsAppOptInParams) (bool, error) {
 	row := q.db.QueryRow(ctx, getLeadWhatsAppOptIn, arg.ID, arg.OrganizationID)
-	var whatsapp_opted_in bool
-	err := row.Scan(&whatsapp_opted_in)
-	return whatsapp_opted_in, err
+	var whatsappoptinvalue bool
+	err := row.Scan(&whatsappoptinvalue)
+	return whatsappoptinvalue, err
 }
 
 const getPartnerOfferStatsSince = `-- name: GetPartnerOfferStatsSince :many
@@ -2748,7 +2748,7 @@ WITH weeks AS (
 		INTERVAL '1 week'
 	) AS week_start
 )
-SELECT COALESCE(COUNT(DISTINCT CASE WHEN ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified' THEN l.id END), 0)::int AS active_leads
+SELECT COALESCE(COUNT(DISTINCT CASE WHEN ls.pipeline_stage NOT IN ('Completed', 'Lost') AND ls.status != 'Disqualified' THEN l.id END), 0)::int AS activeLeadsCount
 FROM weeks w
 LEFT JOIN RAC_leads l
 	ON l.organization_id = $1
@@ -2773,11 +2773,11 @@ func (q *Queries) ListActiveLeadsTrend(ctx context.Context, arg ListActiveLeadsT
 	defer rows.Close()
 	var items []int32
 	for rows.Next() {
-		var active_leads int32
-		if err := rows.Scan(&active_leads); err != nil {
+		var activeleadscount int32
+		if err := rows.Scan(&activeleadscount); err != nil {
 			return nil, err
 		}
-		items = append(items, active_leads)
+		items = append(items, activeleadscount)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2874,7 +2874,7 @@ WITH weeks AS (
 		INTERVAL '1 week'
 	) AS week_start
 )
-SELECT COALESCE(AVG(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents END)::bigint, 0)::bigint AS avg_quote_value_cents
+SELECT COALESCE(AVG(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents END)::bigint, 0)::bigint AS avgQuoteValueCentsValue
 FROM weeks w
 LEFT JOIN RAC_quotes q
 	ON q.organization_id = $1
@@ -2897,11 +2897,11 @@ func (q *Queries) ListAvgQuoteValueTrend(ctx context.Context, arg ListAvgQuoteVa
 	defer rows.Close()
 	var items []int64
 	for rows.Next() {
-		var avg_quote_value_cents int64
-		if err := rows.Scan(&avg_quote_value_cents); err != nil {
+		var avgquotevaluecentsvalue int64
+		if err := rows.Scan(&avgquotevaluecentsvalue); err != nil {
 			return nil, err
 		}
-		items = append(items, avg_quote_value_cents)
+		items = append(items, avgquotevaluecentsvalue)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2910,7 +2910,7 @@ func (q *Queries) ListAvgQuoteValueTrend(ctx context.Context, arg ListAvgQuoteVa
 }
 
 const listCommentCountsByEvents = `-- name: ListCommentCountsByEvents :many
-SELECT event_id, COUNT(*)::int
+SELECT event_id, COUNT(*)::int AS comment_count
 FROM RAC_feed_comments
 WHERE event_id = ANY($1::text[])
 	AND org_id = $2
@@ -2923,8 +2923,8 @@ type ListCommentCountsByEventsParams struct {
 }
 
 type ListCommentCountsByEventsRow struct {
-	EventID string `json:"event_id"`
-	Column2 int32  `json:"column_2"`
+	EventID      string `json:"event_id"`
+	CommentCount int32  `json:"comment_count"`
 }
 
 func (q *Queries) ListCommentCountsByEvents(ctx context.Context, arg ListCommentCountsByEventsParams) ([]ListCommentCountsByEventsRow, error) {
@@ -2936,7 +2936,7 @@ func (q *Queries) ListCommentCountsByEvents(ctx context.Context, arg ListComment
 	var items []ListCommentCountsByEventsRow
 	for rows.Next() {
 		var i ListCommentCountsByEventsRow
-		if err := rows.Scan(&i.EventID, &i.Column2); err != nil {
+		if err := rows.Scan(&i.EventID, &i.CommentCount); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -3180,7 +3180,7 @@ func (q *Queries) ListHeatmapPoints(ctx context.Context, arg ListHeatmapPointsPa
 }
 
 const listInvitedPartnerIDs = `-- name: ListInvitedPartnerIDs :many
-SELECT partner_id
+SELECT partner_id AS partnerIDValue
 FROM RAC_partner_offers
 WHERE lead_service_id = $1
 	AND status IN ('rejected', 'expired', 'sent', 'pending')
@@ -3194,11 +3194,11 @@ func (q *Queries) ListInvitedPartnerIDs(ctx context.Context, leadServiceID pgtyp
 	defer rows.Close()
 	var items []pgtype.UUID
 	for rows.Next() {
-		var partner_id pgtype.UUID
-		if err := rows.Scan(&partner_id); err != nil {
+		var partneridvalue pgtype.UUID
+		if err := rows.Scan(&partneridvalue); err != nil {
 			return nil, err
 		}
-		items = append(items, partner_id)
+		items = append(items, partneridvalue)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -3573,8 +3573,8 @@ type ListMentionsByCommentsRow struct {
 	Email           string      `json:"email"`
 }
 
-func (q *Queries) ListMentionsByComments(ctx context.Context, dollar_1 []pgtype.UUID) ([]ListMentionsByCommentsRow, error) {
-	rows, err := q.db.Query(ctx, listMentionsByComments, dollar_1)
+func (q *Queries) ListMentionsByComments(ctx context.Context, commentids []pgtype.UUID) ([]ListMentionsByCommentsRow, error) {
+	rows, err := q.db.Query(ctx, listMentionsByComments, commentids)
 	if err != nil {
 		return nil, err
 	}
@@ -3863,7 +3863,7 @@ WITH weeks AS (
 		INTERVAL '1 week'
 	) AS week_start
 )
-SELECT COALESCE(SUM(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents ELSE 0 END), 0)::bigint AS quote_pipeline_cents
+SELECT COALESCE(SUM(CASE WHEN q.status::text IN ('Sent', 'Accepted', 'Quote_Sent', 'Quote_Accepted') THEN q.total_cents ELSE 0 END), 0)::bigint AS quotePipelineCentsValue
 FROM weeks w
 LEFT JOIN RAC_quotes q
 	ON q.organization_id = $1
@@ -3886,11 +3886,11 @@ func (q *Queries) ListQuotePipelineTrend(ctx context.Context, arg ListQuotePipel
 	defer rows.Close()
 	var items []int64
 	for rows.Next() {
-		var quote_pipeline_cents int64
-		if err := rows.Scan(&quote_pipeline_cents); err != nil {
+		var quotepipelinecentsvalue int64
+		if err := rows.Scan(&quotepipelinecentsvalue); err != nil {
 			return nil, err
 		}
-		items = append(items, quote_pipeline_cents)
+		items = append(items, quotepipelinecentsvalue)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

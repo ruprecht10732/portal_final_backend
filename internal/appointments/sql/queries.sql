@@ -90,7 +90,7 @@ DELETE FROM RAC_appointments
 WHERE id = $1 AND organization_id = $2;
 
 -- name: CountAppointments :one
-SELECT COUNT(*)::int
+SELECT COUNT(*)::int AS countValue
 FROM RAC_appointments
 WHERE organization_id = sqlc.arg(organization_id)
 	AND (sqlc.narg(user_id)::uuid IS NULL OR user_id = sqlc.narg(user_id)::uuid)
@@ -135,7 +135,7 @@ FROM RAC_leads
 WHERE id = $1 AND organization_id = $2;
 
 -- name: GetAppointmentLeadEmail :one
-SELECT COALESCE(consumer_email, '')
+SELECT COALESCE(consumer_email, '') AS consumerEmailValue
 FROM RAC_leads
 WHERE id = $1 AND organization_id = $2;
 
@@ -167,7 +167,7 @@ WHERE organization_id = $1 AND user_id = $2
 ORDER BY weekday, start_time;
 
 -- name: ListAvailabilityRuleUserIDs :many
-SELECT DISTINCT user_id
+SELECT DISTINCT user_id AS userIDValue
 FROM RAC_appointment_availability_rules
 WHERE organization_id = $1;
 

@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	notificationdb "portal_final_backend/internal/notification/db"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -49,11 +51,63 @@ type CreateParams struct {
 }
 
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *notificationdb.Queries
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	if pool == nil {
+		return &Repository{}
+	}
+	return &Repository{pool: pool, queries: notificationdb.New(pool)}
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return toPgUUID(*id)
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
+func notificationFromModel(model notificationdb.RacInAppNotification) Notification {
+	return Notification{
+		ID:           uuid.UUID(model.ID.Bytes),
+		UserID:       uuid.UUID(model.UserID.Bytes),
+		Title:        model.Title,
+		Content:      model.Content,
+		ResourceID:   optionalUUID(model.ResourceID),
+		ResourceType: optionalString(model.ResourceType),
+		Category:     model.Category,
+		IsRead:       model.IsRead,
+		CreatedAt:    model.CreatedAt.Time,
+	}
+}
+
+func optionalUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id := uuid.UUID(value.Bytes)
+	return &id
 }
 
 func (r *Repository) Create(ctx context.Context, p CreateParams) (Notification, error) {
@@ -72,15 +126,15 @@ func (r *Repository) Create(ctx context.Context, p CreateParams) (Notification, 
 		category = "info"
 	}
 
-	var n Notification
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_in_app_notifications 
-		(organization_id, user_id, title, content, resource_id, resource_type, category)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, user_id, title, content, resource_id, resource_type, category, is_read, created_at
-	`, p.OrganizationID, p.UserID, p.Title, p.Content, p.ResourceID, p.ResourceType, category).Scan(
-		&n.ID, &n.UserID, &n.Title, &n.Content, &n.ResourceID, &n.ResourceType, &n.Category, &n.IsRead, &n.CreatedAt,
-	)
+	model, err := r.queries.CreateInAppNotification(ctx, notificationdb.CreateInAppNotificationParams{
+		OrganizationID: toPgUUID(p.OrganizationID),
+		UserID:         toPgUUID(p.UserID),
+		Title:          p.Title,
+		Content:        p.Content,
+		ResourceID:     toPgUUIDPtr(p.ResourceID),
+		ResourceType:   toPgText(p.ResourceType),
+		Category:       category,
+	})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
@@ -89,7 +143,7 @@ func (r *Repository) Create(ctx context.Context, p CreateParams) (Notification, 
 		return Notification{}, apperr.Internal(fmt.Sprintf("create in-app notification failed: %v", err)).WithOp(opCreate)
 	}
 
-	return n, nil
+	return notificationFromModel(model), nil
 }
 
 func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Notification, int, error) {
@@ -100,37 +154,26 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit, offset i
 		return nil, 0, apperr.Validation(errUserIDRequired).WithOp(opList)
 	}
 
-	var total int
-	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM RAC_in_app_notifications WHERE user_id = $1`, userID).Scan(&total)
+	total, err := r.queries.CountInAppNotifications(ctx, toPgUUID(userID))
 	if err != nil {
 		return nil, 0, apperr.Internal(fmt.Sprintf("count notifications failed: %v", err)).WithOp(opList)
 	}
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, user_id, title, content, resource_id, resource_type, category, is_read, created_at
-		FROM RAC_in_app_notifications
-		WHERE user_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`, userID, limit, offset)
+	rows, err := r.queries.ListInAppNotifications(ctx, notificationdb.ListInAppNotificationsParams{
+		UserID:      toPgUUID(userID),
+		OffsetCount: int32(offset),
+		LimitCount:  int32(limit),
+	})
 	if err != nil {
 		return nil, 0, apperr.Internal(fmt.Sprintf("list notifications query failed: %v", err)).WithOp(opList)
 	}
-	defer rows.Close()
 
 	items := make([]Notification, 0, limit)
-	for rows.Next() {
-		var n Notification
-		if scanErr := rows.Scan(&n.ID, &n.UserID, &n.Title, &n.Content, &n.ResourceID, &n.ResourceType, &n.Category, &n.IsRead, &n.CreatedAt); scanErr != nil {
-			return nil, 0, apperr.Internal(fmt.Sprintf("scan notifications failed: %v", scanErr)).WithOp(opList)
-		}
-		items = append(items, n)
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return nil, 0, apperr.Internal(fmt.Sprintf("iterate notifications failed: %v", rowsErr)).WithOp(opList)
+	for _, row := range rows {
+		items = append(items, notificationFromModel(row))
 	}
 
-	return items, total, nil
+	return items, int(total), nil
 }
 
 func (r *Repository) CountUnread(ctx context.Context, userID uuid.UUID) (int, error) {
@@ -141,16 +184,12 @@ func (r *Repository) CountUnread(ctx context.Context, userID uuid.UUID) (int, er
 		return 0, apperr.Validation(errUserIDRequired).WithOp(opCountUnread)
 	}
 
-	var count int
-	err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM RAC_in_app_notifications 
-		WHERE user_id = $1 AND is_read = FALSE
-	`, userID).Scan(&count)
+	count, err := r.queries.CountUnreadInAppNotifications(ctx, toPgUUID(userID))
 	if err != nil {
 		return 0, apperr.Internal(fmt.Sprintf("count unread notifications failed: %v", err)).WithOp(opCountUnread)
 	}
 
-	return count, nil
+	return int(count), nil
 }
 
 func (r *Repository) CountUnreadByResourceTypes(ctx context.Context, userID uuid.UUID, resourceTypes []string) (int, error) {
@@ -164,16 +203,15 @@ func (r *Repository) CountUnreadByResourceTypes(ctx context.Context, userID uuid
 		return r.CountUnread(ctx, userID)
 	}
 
-	var count int
-	err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM RAC_in_app_notifications
-		WHERE user_id = $1 AND is_read = FALSE AND resource_type = ANY($2)
-	`, userID, resourceTypes).Scan(&count)
+	count, err := r.queries.CountUnreadInAppNotificationsByResourceTypes(ctx, notificationdb.CountUnreadInAppNotificationsByResourceTypesParams{
+		UserID:        toPgUUID(userID),
+		ResourceTypes: resourceTypes,
+	})
 	if err != nil {
 		return 0, apperr.Internal(fmt.Sprintf("count unread notifications by resource failed: %v", err)).WithOp(opCountUnreadByResource)
 	}
 
-	return count, nil
+	return int(count), nil
 }
 
 func (r *Repository) MarkRead(ctx context.Context, userID, notificationID uuid.UUID) error {
@@ -184,11 +222,10 @@ func (r *Repository) MarkRead(ctx context.Context, userID, notificationID uuid.U
 		return apperr.Validation("userId and notificationId are required").WithOp(opMarkRead)
 	}
 
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_in_app_notifications 
-		SET is_read = TRUE, read_at = now() 
-		WHERE id = $1 AND user_id = $2
-	`, notificationID, userID)
+	err := r.queries.MarkInAppNotificationRead(ctx, notificationdb.MarkInAppNotificationReadParams{
+		NotificationID: toPgUUID(notificationID),
+		UserID:         toPgUUID(userID),
+	})
 	if err != nil {
 		return apperr.Internal(fmt.Sprintf("mark notification read failed: %v", err)).WithOp(opMarkRead)
 	}
@@ -204,11 +241,7 @@ func (r *Repository) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 		return apperr.Validation(errUserIDRequired).WithOp(opMarkAllRead)
 	}
 
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_in_app_notifications 
-		SET is_read = TRUE, read_at = now() 
-		WHERE user_id = $1 AND is_read = FALSE
-	`, userID)
+	err := r.queries.MarkAllInAppNotificationsRead(ctx, toPgUUID(userID))
 	if err != nil {
 		return apperr.Internal(fmt.Sprintf("mark all notifications read failed: %v", err)).WithOp(opMarkAllRead)
 	}
@@ -224,10 +257,10 @@ func (r *Repository) Delete(ctx context.Context, userID, notificationID uuid.UUI
 		return apperr.Validation("userId and notificationId are required").WithOp(opDelete)
 	}
 
-	_, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_in_app_notifications
-		WHERE id = $1 AND user_id = $2
-	`, notificationID, userID)
+	err := r.queries.DeleteInAppNotification(ctx, notificationdb.DeleteInAppNotificationParams{
+		NotificationID: toPgUUID(notificationID),
+		UserID:         toPgUUID(userID),
+	})
 	if err != nil {
 		return apperr.Internal(fmt.Sprintf("delete notification failed: %v", err)).WithOp(opDelete)
 	}

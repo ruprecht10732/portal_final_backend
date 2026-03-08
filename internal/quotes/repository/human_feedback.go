@@ -2,12 +2,13 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
 	"time"
+
+	quotesdb "portal_final_backend/internal/quotes/db"
 
 	"github.com/google/uuid"
 )
@@ -57,49 +58,39 @@ func (r *Repository) CreateHumanFeedback(ctx context.Context, params CreateHuman
 	humanValueJSON, _ := json.Marshal(params.HumanValue)
 	delta := calculateFeedbackDelta(params.AIValue, params.HumanValue)
 
-	var out HumanFeedback
-	var aiRaw []byte
-	var humanRaw []byte
-	var deltaNullable sql.NullFloat64
-	var embeddingNullable sql.NullString
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO RAC_human_feedback (
-			organization_id, quote_id, lead_service_id,
-			field_changed, ai_value, human_value, delta_percentage
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, organization_id, quote_id, lead_service_id,
-		          field_changed, ai_value, human_value, delta_percentage,
-		          context_embedding_id, applied_to_memory, created_at
-	`, params.OrganizationID, params.QuoteID, params.LeadServiceID, params.FieldChanged, aiValueJSON, humanValueJSON, delta).Scan(
-		&out.ID,
-		&out.OrganizationID,
-		&out.QuoteID,
-		&out.LeadServiceID,
-		&out.FieldChanged,
-		&aiRaw,
-		&humanRaw,
-		&deltaNullable,
-		&embeddingNullable,
-		&out.AppliedToMemory,
-		&out.CreatedAt,
-	)
+	row, err := r.queries.CreateHumanFeedback(ctx, quotesdb.CreateHumanFeedbackParams{
+		OrganizationID:  toPgUUID(params.OrganizationID),
+		QuoteID:         toPgUUID(params.QuoteID),
+		LeadServiceID:   toPgUUIDPtr(params.LeadServiceID),
+		FieldChanged:    params.FieldChanged,
+		AiValue:         aiValueJSON,
+		HumanValue:      humanValueJSON,
+		DeltaPercentage: toPgFloat8Ptr(delta),
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	_ = json.Unmarshal(aiRaw, &out.AIValue)
-	_ = json.Unmarshal(humanRaw, &out.HumanValue)
-	if deltaNullable.Valid {
-		d := deltaNullable.Float64
-		out.DeltaPercentage = &d
+	out := &HumanFeedback{
+		ID:               uuid.UUID(row.ID.Bytes),
+		OrganizationID:   uuid.UUID(row.OrganizationID.Bytes),
+		QuoteID:          uuid.UUID(row.QuoteID.Bytes),
+		LeadServiceID:    optionalUUID(row.LeadServiceID),
+		FieldChanged:     row.FieldChanged,
+		DeltaPercentage:  optionalFloat(row.DeltaPercentage),
+		ContextEmbedding: optionalString(row.ContextEmbeddingID),
+		AppliedToMemory:  row.AppliedToMemory,
+		CreatedAt:        timeFromPg(row.CreatedAt),
 	}
-	if embeddingNullable.Valid {
-		e := embeddingNullable.String
-		out.ContextEmbedding = &e
+	_ = json.Unmarshal(row.AiValue, &out.AIValue)
+	_ = json.Unmarshal(row.HumanValue, &out.HumanValue)
+	if out.AIValue == nil {
+		out.AIValue = map[string]any{}
 	}
-
-	return &out, nil
+	if out.HumanValue == nil {
+		out.HumanValue = map[string]any{}
+	}
+	return out, nil
 }
 
 func calculateFeedbackDelta(aiValue map[string]any, humanValue map[string]any) *float64 {

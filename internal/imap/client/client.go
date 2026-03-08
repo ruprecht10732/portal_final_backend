@@ -93,10 +93,6 @@ func (c *Client) Close() error {
 	return c.dialer.Close()
 }
 
-func (c *Client) TestConnection() error {
-	return c.TestConnectionContext(context.Background())
-}
-
 func (c *Client) TestConnectionContext(ctx context.Context) error {
 	if c == nil || c.dialer == nil {
 		return fmt.Errorf(errClientNotInitialized)
@@ -119,10 +115,6 @@ func (c *Client) TestConnectionContext(ctx context.Context) error {
 		}
 	}
 	return lastErr
-}
-
-func (c *Client) SyncFolderMetadata(folder string, maxMessages int) ([]MessageMetadata, error) {
-	return c.SyncFolderMetadataContext(context.Background(), folder, maxMessages)
 }
 
 func (c *Client) SyncFolderMetadataContext(ctx context.Context, folder string, maxMessages int) ([]MessageMetadata, error) {
@@ -221,10 +213,6 @@ func (c *Client) SetAnswered(folder string, uid int64, answered bool) error {
 	return err
 }
 
-func (c *Client) GetMessageContent(folder string, uid int64) (MessageContent, error) {
-	return c.GetMessageContentContext(context.Background(), folder, uid)
-}
-
 func (c *Client) GetMessageContentContext(ctx context.Context, folder string, uid int64) (MessageContent, error) {
 	if c == nil || c.dialer == nil {
 		return MessageContent{}, fmt.Errorf(errClientNotInitialized)
@@ -249,10 +237,6 @@ func (c *Client) GetMessageContentContext(ctx context.Context, folder string, ui
 		HTML:        optionalString(email.HTML),
 		Text:        optionalString(email.Text),
 	}, nil
-}
-
-func (c *Client) fetchEmailWithRetry(folder string, uid int64) (*goimap.Email, error) {
-	return c.fetchEmailWithRetryContext(context.Background(), folder, uid)
 }
 
 func (c *Client) fetchEmailWithRetryContext(ctx context.Context, folder string, uid int64) (*goimap.Email, error) {

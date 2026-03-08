@@ -168,7 +168,7 @@ func (r *Repository) ListCommentCountsByEvents(ctx context.Context, eventIDs []s
 
 	out := make(map[string]int)
 	for _, row := range rows {
-		out[row.EventID] = int(row.Column2)
+		out[row.EventID] = int(row.CommentCount)
 	}
 	return out, nil
 }

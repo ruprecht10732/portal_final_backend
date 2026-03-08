@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"time"
 
+	quotesdb "portal_final_backend/internal/quotes/db"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// ── Domain Models ─────────────────────────────────────────────────────────────
 
 // Quote is the database model for a quote header
 type Quote struct {
@@ -139,34 +139,6 @@ type PendingApprovalsResult struct {
 	TotalPages int
 }
 
-type quoteListFilters struct {
-	leadID         interface{}
-	status         interface{}
-	search         interface{}
-	createdAtFrom  interface{}
-	createdAtTo    interface{}
-	validUntilFrom interface{}
-	validUntilTo   interface{}
-	totalFrom      interface{}
-	totalTo        interface{}
-}
-
-func buildQuoteListFilters(params ListParams) quoteListFilters {
-	return quoteListFilters{
-		leadID:         nullable(params.LeadID),
-		status:         nullable(params.Status),
-		search:         optionalSearchParam(params.Search),
-		createdAtFrom:  nullable(params.CreatedAtFrom),
-		createdAtTo:    nullable(params.CreatedAtTo),
-		validUntilFrom: nullable(params.ValidUntilFrom),
-		validUntilTo:   nullable(params.ValidUntilTo),
-		totalFrom:      nullable(params.TotalFrom),
-		totalTo:        nullable(params.TotalTo),
-	}
-}
-
-// ── Repository ────────────────────────────────────────────────────────────────
-
 const (
 	quoteNotFoundMsg            = "quote not found"
 	quoteGenerateJobNotFoundMsg = "quote generate job not found"
@@ -175,24 +147,19 @@ const (
 
 // Repository provides database operations for quotes
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *quotesdb.Queries
 }
 
 // New creates a new quotes repository
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, queries: quotesdb.New(pool)}
 }
 
 // NextQuoteNumber atomically generates the next quote number for an organization
 func (r *Repository) NextQuoteNumber(ctx context.Context, orgID uuid.UUID) (string, error) {
-	var nextNum int
-	query := `
-		INSERT INTO RAC_quote_counters (organization_id, last_number)
-		VALUES ($1, 1)
-		ON CONFLICT (organization_id) DO UPDATE SET last_number = RAC_quote_counters.last_number + 1
-		RETURNING last_number`
-
-	if err := r.pool.QueryRow(ctx, query, orgID).Scan(&nextNum); err != nil {
+	nextNum, err := r.queries.NextQuoteNumber(ctx, toPgUUID(orgID))
+	if err != nil {
 		return "", fmt.Errorf("failed to generate quote number: %w", err)
 	}
 
@@ -208,26 +175,36 @@ func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	quoteQuery := `
-		INSERT INTO RAC_quotes (
-			id, organization_id, lead_id, lead_service_id, created_by_id, quote_number, status,
-			pricing_mode, discount_type, discount_value,
-			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, financing_disclaimer, created_at, updated_at,
-			public_token, public_token_expires_at, preview_token, preview_token_expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`
-
-	if _, err := tx.Exec(ctx, quoteQuery,
-		quote.ID, quote.OrganizationID, quote.LeadID, quote.LeadServiceID, quote.CreatedByID,
-		quote.QuoteNumber, quote.Status, quote.PricingMode, quote.DiscountType, quote.DiscountValue,
-		quote.SubtotalCents, quote.DiscountAmountCents, quote.TaxTotalCents, quote.TotalCents,
-		quote.ValidUntil, quote.Notes, quote.FinancingDisclaimer, quote.CreatedAt, quote.UpdatedAt,
-		quote.PublicToken, quote.PublicTokenExpAt, quote.PreviewToken, quote.PreviewTokenExpAt,
-	); err != nil {
+	qtx := r.queries.WithTx(tx)
+	if err := qtx.CreateQuote(ctx, quotesdb.CreateQuoteParams{
+		ID:                    toPgUUID(quote.ID),
+		OrganizationID:        toPgUUID(quote.OrganizationID),
+		LeadID:                toPgUUID(quote.LeadID),
+		LeadServiceID:         toPgUUIDPtr(quote.LeadServiceID),
+		CreatedByID:           toPgUUIDPtr(quote.CreatedByID),
+		QuoteNumber:           quote.QuoteNumber,
+		Status:                quotesdb.QuoteStatus(quote.Status),
+		PricingMode:           quote.PricingMode,
+		DiscountType:          quote.DiscountType,
+		DiscountValue:         quote.DiscountValue,
+		SubtotalCents:         quote.SubtotalCents,
+		DiscountAmountCents:   quote.DiscountAmountCents,
+		TaxTotalCents:         quote.TaxTotalCents,
+		TotalCents:            quote.TotalCents,
+		ValidUntil:            toPgTimestampPtr(quote.ValidUntil),
+		Notes:                 toPgTextPtr(quote.Notes),
+		FinancingDisclaimer:   quote.FinancingDisclaimer,
+		CreatedAt:             toPgTimestamp(quote.CreatedAt),
+		UpdatedAt:             toPgTimestamp(quote.UpdatedAt),
+		PublicToken:           toPgTextPtr(quote.PublicToken),
+		PublicTokenExpiresAt:  toPgTimestampPtr(quote.PublicTokenExpAt),
+		PreviewToken:          toPgTextPtr(quote.PreviewToken),
+		PreviewTokenExpiresAt: toPgTimestampPtr(quote.PreviewTokenExpAt),
+	}); err != nil {
 		return fmt.Errorf("failed to insert quote: %w", err)
 	}
 
-	if err := r.insertItems(ctx, tx, items); err != nil {
+	if err := r.insertItems(ctx, qtx, items); err != nil {
 		return err
 	}
 
@@ -242,31 +219,37 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	updateQuery := `
-		UPDATE RAC_quotes SET
-			pricing_mode = $2, discount_type = $3, discount_value = $4,
-			subtotal_cents = $5, discount_amount_cents = $6, tax_total_cents = $7, total_cents = $8,
-			valid_until = $9, notes = $10, financing_disclaimer = $11, updated_at = $12
-		WHERE id = $1 AND organization_id = $13`
-
-	result, err := tx.Exec(ctx, updateQuery,
-		quote.ID, quote.PricingMode, quote.DiscountType, quote.DiscountValue,
-		quote.SubtotalCents, quote.DiscountAmountCents, quote.TaxTotalCents, quote.TotalCents,
-		quote.ValidUntil, quote.Notes, quote.FinancingDisclaimer, quote.UpdatedAt, quote.OrganizationID,
-	)
+	qtx := r.queries.WithTx(tx)
+	rowsAffected, err := qtx.UpdateQuoteWithItems(ctx, quotesdb.UpdateQuoteWithItemsParams{
+		ID:                  toPgUUID(quote.ID),
+		PricingMode:         quote.PricingMode,
+		DiscountType:        quote.DiscountType,
+		DiscountValue:       quote.DiscountValue,
+		SubtotalCents:       quote.SubtotalCents,
+		DiscountAmountCents: quote.DiscountAmountCents,
+		TaxTotalCents:       quote.TaxTotalCents,
+		TotalCents:          quote.TotalCents,
+		ValidUntil:          toPgTimestampPtr(quote.ValidUntil),
+		Notes:               toPgTextPtr(quote.Notes),
+		FinancingDisclaimer: quote.FinancingDisclaimer,
+		UpdatedAt:           toPgTimestamp(quote.UpdatedAt),
+		OrganizationID:      toPgUUID(quote.OrganizationID),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update quote: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(quoteNotFoundMsg)
 	}
 
 	if replaceItems {
-		// Delete existing items and insert new ones
-		if _, err := tx.Exec(ctx, `DELETE FROM RAC_quote_items WHERE quote_id = $1 AND organization_id = $2`, quote.ID, quote.OrganizationID); err != nil {
+		if err := qtx.DeleteQuoteItemsByQuote(ctx, quotesdb.DeleteQuoteItemsByQuoteParams{
+			QuoteID:        toPgUUID(quote.ID),
+			OrganizationID: toPgUUID(quote.OrganizationID),
+		}); err != nil {
 			return fmt.Errorf("failed to delete old quote items: %w", err)
 		}
-		if err := r.insertItems(ctx, tx, items); err != nil {
+		if err := r.insertItems(ctx, qtx, items); err != nil {
 			return err
 		}
 	}
@@ -274,19 +257,24 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 	return tx.Commit(ctx)
 }
 
-func (r *Repository) insertItems(ctx context.Context, tx pgx.Tx, items []QuoteItem) error {
-	itemQuery := `
-		INSERT INTO RAC_quote_items (
-			id, quote_id, organization_id, title, description, quantity, quantity_numeric,
-			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
-
+func (r *Repository) insertItems(ctx context.Context, queries *quotesdb.Queries, items []QuoteItem) error {
 	for _, item := range items {
-		if _, err := tx.Exec(ctx, itemQuery,
-			item.ID, item.QuoteID, item.OrganizationID,
-			item.Title, item.Description, item.Quantity, item.QuantityNumeric,
-			item.UnitPriceCents, item.TaxRateBps, item.IsOptional, item.IsSelected, item.SortOrder, item.CatalogProductID, item.CreatedAt,
-		); err != nil {
+		if err := queries.CreateQuoteItem(ctx, quotesdb.CreateQuoteItemParams{
+			ID:               toPgUUID(item.ID),
+			QuoteID:          toPgUUID(item.QuoteID),
+			OrganizationID:   toPgUUID(item.OrganizationID),
+			Title:            item.Title,
+			Description:      item.Description,
+			Quantity:         item.Quantity,
+			QuantityNumeric:  toPgNumericValue(item.QuantityNumeric),
+			UnitPriceCents:   item.UnitPriceCents,
+			TaxRate:          int32(item.TaxRateBps),
+			IsOptional:       item.IsOptional,
+			IsSelected:       item.IsSelected,
+			SortOrder:        int32(item.SortOrder),
+			CatalogProductID: toPgUUIDPtr(item.CatalogProductID),
+			CreatedAt:        toPgTimestamp(item.CreatedAt),
+		}); err != nil {
 			return fmt.Errorf("failed to insert quote item: %w", err)
 		}
 	}
@@ -295,99 +283,50 @@ func (r *Repository) insertItems(ctx context.Context, tx pgx.Tx, items []QuoteIt
 
 // GetByID retrieves a quote by its ID scoped to organization
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*Quote, error) {
-	var q Quote
-	query := `
-		SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id, q.created_by_id,
-			u.first_name, u.last_name, u.email,
-			l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
-			l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
-			q.quote_number, q.status,
-			pricing_mode, discount_type, discount_value,
-			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, q.created_at, q.updated_at,
-			q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
-			q.viewed_at, q.accepted_at, q.rejected_at,
-			q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
-			q.financing_disclaimer
-		FROM RAC_quotes q
-		LEFT JOIN RAC_users u ON u.id = q.created_by_id
-		LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
-		WHERE q.id = $1 AND q.organization_id = $2`
-
-	err := r.pool.QueryRow(ctx, query, id, orgID).Scan(
-		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.CreatedByID,
-		&q.CreatedByFirstName, &q.CreatedByLastName, &q.CreatedByEmail,
-		&q.CustomerFirstName, &q.CustomerLastName, &q.CustomerPhone, &q.CustomerEmail,
-		&q.CustomerAddressStreet, &q.CustomerAddressHouseNumber, &q.CustomerAddressZipCode, &q.CustomerAddressCity,
-		&q.QuoteNumber, &q.Status,
-		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
-		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
-		&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
-		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
-		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
-		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
-		&q.FinancingDisclaimer,
-	)
+	row, err := r.queries.GetQuoteByID(ctx, quotesdb.GetQuoteByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(orgID)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound(quoteNotFoundMsg)
 		}
 		return nil, fmt.Errorf("failed to get quote: %w", err)
 	}
-	return &q, nil
+	quote := quoteFromGetByIDRow(row)
+	return &quote, nil
 }
 
 // GetLatestNonDraftByLead returns the most recent non-draft quote for a lead.
 func (r *Repository) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) (*Quote, error) {
-	var q Quote
-	query := `
-		SELECT id, organization_id, lead_id, lead_service_id, quote_number, status, total_cents, public_token, pdf_file_key
-		FROM RAC_quotes
-		WHERE lead_id = $1 AND organization_id = $2 AND status != 'Draft'
-		ORDER BY created_at DESC
-		LIMIT 1
-	`
-
-	err := r.pool.QueryRow(ctx, query, leadID, orgID).Scan(
-		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.QuoteNumber, &q.Status, &q.TotalCents, &q.PublicToken, &q.PDFFileKey,
-	)
+	row, err := r.queries.GetLatestNonDraftByLead(ctx, quotesdb.GetLatestNonDraftByLeadParams{
+		LeadID:         toPgUUID(leadID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get latest non-draft quote: %w", err)
 	}
-	return &q, nil
+	quote := quoteFromLatestNonDraftRow(row)
+	return &quote, nil
 }
 
 // GetItemsByQuoteID retrieves all items for a quote
 func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]QuoteItem, error) {
-	query := `
-		SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
-			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
-		FROM RAC_quote_items WHERE quote_id = $1 AND organization_id = $2
-		ORDER BY sort_order ASC`
-
-	rows, err := r.pool.Query(ctx, query, quoteID, orgID)
+	rows, err := r.queries.ListQuoteItemsByQuoteID(ctx, quotesdb.ListQuoteItemsByQuoteIDParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query quote items: %w", err)
 	}
-	defer rows.Close()
 
-	var items []QuoteItem
-	for rows.Next() {
-		var it QuoteItem
-		if err := rows.Scan(
-			&it.ID, &it.QuoteID, &it.OrganizationID,
-			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
-			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf(errScanQuoteItemFmt, err)
+	items := make([]QuoteItem, 0, len(rows))
+	for _, row := range rows {
+		item, mapErr := quoteItemFromListRow(row)
+		if mapErr != nil {
+			return nil, fmt.Errorf(errScanQuoteItemFmt, mapErr)
 		}
-		items = append(items, it)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate quote items: %w", err)
+		items = append(items, item)
 	}
 	return items, nil
 }
@@ -400,32 +339,20 @@ func (r *Repository) GetItemsByQuoteIDs(ctx context.Context, orgID uuid.UUID, qu
 		return result, nil
 	}
 
-	query := `
-		SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
-			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
-		FROM RAC_quote_items
-		WHERE organization_id = $1 AND quote_id = ANY($2)
-		ORDER BY quote_id, sort_order ASC`
-
-	rows, err := r.pool.Query(ctx, query, orgID, quoteIDs)
+	rows, err := r.queries.ListQuoteItemsByQuoteIDs(ctx, quotesdb.ListQuoteItemsByQuoteIDsParams{
+		OrganizationID: toPgUUID(orgID),
+		QuoteIds:       toPgUUIDSlice(quoteIDs),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query quote items by quote ids: %w", err)
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var it QuoteItem
-		if err := rows.Scan(
-			&it.ID, &it.QuoteID, &it.OrganizationID,
-			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
-			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf(errScanQuoteItemFmt, err)
+	for _, row := range rows {
+		item, mapErr := quoteItemFromListIDsRow(row)
+		if mapErr != nil {
+			return nil, fmt.Errorf(errScanQuoteItemFmt, mapErr)
 		}
-		result[it.QuoteID] = append(result[it.QuoteID], it)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate quote items by quote ids: %w", err)
+		result[item.QuoteID] = append(result[item.QuoteID], item)
 	}
 
 	return result, nil
@@ -433,12 +360,16 @@ func (r *Repository) GetItemsByQuoteIDs(ctx context.Context, orgID uuid.UUID, qu
 
 // UpdateStatus updates the status of a quote
 func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, orgID uuid.UUID, status string) error {
-	query := `UPDATE RAC_quotes SET status = $3, updated_at = $4 WHERE id = $1 AND organization_id = $2`
-	result, err := r.pool.Exec(ctx, query, id, orgID, status, time.Now())
+	rowsAffected, err := r.queries.UpdateQuoteStatus(ctx, quotesdb.UpdateQuoteStatusParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(orgID),
+		Status:         quotesdb.QuoteStatus(status),
+		UpdatedAt:      toPgTimestamp(time.Now()),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update quote status: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(quoteNotFoundMsg)
 	}
 	return nil
@@ -446,27 +377,17 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uuid.UUID, orgID uuid.
 
 // SetLeadServiceID sets the lead_service_id for a quote, but only if the provided lead service
 // belongs to the same lead as the quote (and same tenant).
-//
-// Note: the service layer should already have verified the quote exists; a 0-row update here
-// indicates an invalid leadServiceId for this quote.
 func (r *Repository) SetLeadServiceID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID, leadServiceID uuid.UUID) error {
-	query := `
-		UPDATE RAC_quotes q
-		SET lead_service_id = $3,
-			updated_at = $4
-		FROM RAC_lead_services ls
-		WHERE q.id = $1
-			AND q.organization_id = $2
-			AND ls.id = $3
-			AND ls.organization_id = $2
-			AND ls.lead_id = q.lead_id
-	`
-
-	result, err := r.pool.Exec(ctx, query, quoteID, orgID, leadServiceID, time.Now())
+	rowsAffected, err := r.queries.SetQuoteLeadServiceID(ctx, quotesdb.SetQuoteLeadServiceIDParams{
+		ID:             toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+		LeadServiceID:  toPgUUID(leadServiceID),
+		UpdatedAt:      toPgTimestamp(time.Now()),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set quote lead service: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.Validation("leadServiceId does not belong to this quote")
 	}
 	return nil
@@ -475,35 +396,27 @@ func (r *Repository) SetLeadServiceID(ctx context.Context, quoteID uuid.UUID, or
 // ValidateLeadServiceID checks whether the provided lead service belongs to the
 // same lead and organization as the target quote.
 func (r *Repository) ValidateLeadServiceID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID, leadServiceID uuid.UUID) error {
-	query := `
-		SELECT 1
-		FROM RAC_quotes q
-		JOIN RAC_lead_services ls
-		  ON ls.id = $3
-		 AND ls.organization_id = q.organization_id
-		 AND ls.lead_id = q.lead_id
-		WHERE q.id = $1 AND q.organization_id = $2
-	`
-
-	var exists int
-	if err := r.pool.QueryRow(ctx, query, quoteID, orgID, leadServiceID).Scan(&exists); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return apperr.Validation("leadServiceId does not belong to this quote")
-		}
+	exists, err := r.queries.ValidateQuoteLeadServiceID(ctx, quotesdb.ValidateQuoteLeadServiceIDParams{
+		ID:             toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+		ID_2:           toPgUUID(leadServiceID),
+	})
+	if err != nil {
 		return fmt.Errorf("failed to validate quote lead service: %w", err)
 	}
-
+	if !exists {
+		return apperr.Validation("leadServiceId does not belong to this quote")
+	}
 	return nil
 }
 
 // Delete removes a quote (cascade deletes items)
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error {
-	query := `DELETE FROM RAC_quotes WHERE id = $1 AND organization_id = $2`
-	result, err := r.pool.Exec(ctx, query, id, orgID)
+	rowsAffected, err := r.queries.DeleteQuote(ctx, quotesdb.DeleteQuoteParams{ID: toPgUUID(id), OrganizationID: toPgUUID(orgID)})
 	if err != nil {
 		return fmt.Errorf("failed to delete quote: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(quoteNotFoundMsg)
 	}
 	return nil
@@ -520,129 +433,59 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		return nil, err
 	}
 
-	filters := buildQuoteListFilters(params)
-
-	baseQuery := `
-		FROM RAC_quotes q
-		LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
-		LEFT JOIN RAC_users u ON u.id = q.created_by_id
-		WHERE q.organization_id = $1
-			AND ($2::uuid IS NULL OR q.lead_id = $2)
-			AND ($3::text IS NULL OR q.status::text = $3)
-			AND ($4::text IS NULL OR (
-				q.quote_number ILIKE $4 OR q.notes ILIKE $4
-				OR l.consumer_first_name ILIKE $4 OR l.consumer_last_name ILIKE $4
-				OR l.consumer_phone ILIKE $4 OR l.consumer_email ILIKE $4
-				OR l.address_street ILIKE $4 OR l.address_house_number ILIKE $4
-				OR l.address_zip_code ILIKE $4 OR l.address_city ILIKE $4
-				OR u.first_name ILIKE $4 OR u.last_name ILIKE $4 OR u.email ILIKE $4
-				OR EXISTS (
-					SELECT 1
-					FROM RAC_quote_items qi
-					WHERE qi.quote_id = q.id AND qi.organization_id = q.organization_id
-						AND qi.description ILIKE $4
-				)
-			))
-			AND ($5::timestamptz IS NULL OR q.created_at >= $5)
-			AND ($6::timestamptz IS NULL OR q.created_at < $6)
-			AND ($7::timestamptz IS NULL OR q.valid_until >= $7)
-			AND ($8::timestamptz IS NULL OR q.valid_until < $8)
-			AND ($9::bigint IS NULL OR q.total_cents >= $9)
-			AND ($10::bigint IS NULL OR q.total_cents <= $10)
-	`
-	args := []interface{}{
-		params.OrganizationID,
-		filters.leadID,
-		filters.status,
-		filters.search,
-		filters.createdAtFrom,
-		filters.createdAtTo,
-		filters.validUntilFrom,
-		filters.validUntilTo,
-		filters.totalFrom,
-		filters.totalTo,
+	countParams := quotesdb.CountQuotesParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		LeadID:         toPgUUIDPtr(params.LeadID),
+		Status:         toPgTextPtr(params.Status),
+		Search:         searchText(params.Search),
+		CreatedAtFrom:  toPgTimestampPtr(params.CreatedAtFrom),
+		CreatedAtTo:    toPgTimestampPtr(params.CreatedAtTo),
+		ValidUntilFrom: toPgTimestampPtr(params.ValidUntilFrom),
+		ValidUntilTo:   toPgTimestampPtr(params.ValidUntilTo),
+		TotalFrom:      toPgInt8Ptr(params.TotalFrom),
+		TotalTo:        toPgInt8Ptr(params.TotalTo),
 	}
 
-	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(DISTINCT q.id) "+baseQuery, args...).Scan(&total); err != nil {
+	total, err := r.queries.CountQuotes(ctx, countParams)
+	if err != nil {
 		return nil, fmt.Errorf("failed to count quotes: %w", err)
 	}
 
-	totalPages := (total + params.PageSize - 1) / params.PageSize
+	totalCount := int(total)
+	totalPages := 0
+	if params.PageSize > 0 {
+		totalPages = (totalCount + params.PageSize - 1) / params.PageSize
+	}
 	offset := (params.Page - 1) * params.PageSize
 
-	selectQuery := `
-		SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id,
-			q.created_by_id, u.first_name, u.last_name, u.email,
-			l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
-			l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
-			q.quote_number, q.status, q.pricing_mode, q.discount_type, q.discount_value,
-			q.subtotal_cents, q.discount_amount_cents, q.tax_total_cents, q.total_cents,
-			q.valid_until, q.notes, q.created_at, q.updated_at,
-			q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
-			q.viewed_at, q.accepted_at, q.rejected_at,
-			q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
-			q.financing_disclaimer
-		` + baseQuery + `
-		ORDER BY
-			CASE WHEN $11 = 'quoteNumber' AND $12 = 'asc' THEN q.quote_number END ASC,
-			CASE WHEN $11 = 'quoteNumber' AND $12 = 'desc' THEN q.quote_number END DESC,
-			CASE WHEN $11 = 'status' AND $12 = 'asc' THEN q.status::text END ASC,
-			CASE WHEN $11 = 'status' AND $12 = 'desc' THEN q.status::text END DESC,
-			CASE WHEN $11 = 'total' AND $12 = 'asc' THEN q.total_cents END ASC,
-			CASE WHEN $11 = 'total' AND $12 = 'desc' THEN q.total_cents END DESC,
-			CASE WHEN $11 = 'validUntil' AND $12 = 'asc' THEN q.valid_until END ASC,
-			CASE WHEN $11 = 'validUntil' AND $12 = 'desc' THEN q.valid_until END DESC,
-			CASE WHEN $11 = 'customerName' AND $12 = 'asc' THEN l.consumer_last_name END ASC,
-			CASE WHEN $11 = 'customerName' AND $12 = 'desc' THEN l.consumer_last_name END DESC,
-			CASE WHEN $11 = 'customerPhone' AND $12 = 'asc' THEN l.consumer_phone END ASC,
-			CASE WHEN $11 = 'customerPhone' AND $12 = 'desc' THEN l.consumer_phone END DESC,
-			CASE WHEN $11 = 'customerAddress' AND $12 = 'asc' THEN l.address_city END ASC,
-			CASE WHEN $11 = 'customerAddress' AND $12 = 'desc' THEN l.address_city END DESC,
-			CASE WHEN $11 = 'createdBy' AND $12 = 'asc' THEN u.last_name END ASC,
-			CASE WHEN $11 = 'createdBy' AND $12 = 'desc' THEN u.last_name END DESC,
-			CASE WHEN $11 = 'createdAt' AND $12 = 'asc' THEN q.created_at END ASC,
-			CASE WHEN $11 = 'createdAt' AND $12 = 'desc' THEN q.created_at END DESC,
-			CASE WHEN $11 = 'updatedAt' AND $12 = 'asc' THEN q.updated_at END ASC,
-			CASE WHEN $11 = 'updatedAt' AND $12 = 'desc' THEN q.updated_at END DESC,
-			q.created_at DESC
-		LIMIT $13 OFFSET $14`
-
-	args = append(args, sortBy, sortOrder, params.PageSize, offset)
-
-	rows, err := r.pool.Query(ctx, selectQuery, args...)
+	rows, err := r.queries.ListQuotes(ctx, quotesdb.ListQuotesParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		LeadID:         toPgUUIDPtr(params.LeadID),
+		Status:         toPgTextPtr(params.Status),
+		Search:         searchText(params.Search),
+		CreatedAtFrom:  toPgTimestampPtr(params.CreatedAtFrom),
+		CreatedAtTo:    toPgTimestampPtr(params.CreatedAtTo),
+		ValidUntilFrom: toPgTimestampPtr(params.ValidUntilFrom),
+		ValidUntilTo:   toPgTimestampPtr(params.ValidUntilTo),
+		TotalFrom:      toPgInt8Ptr(params.TotalFrom),
+		TotalTo:        toPgInt8Ptr(params.TotalTo),
+		SortBy:         sortBy,
+		SortOrder:      sortOrder,
+		OffsetCount:    int32(offset),
+		LimitCount:     int32(params.PageSize),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list quotes: %w", err)
 	}
-	defer rows.Close()
 
-	var items []Quote
-	for rows.Next() {
-		var q Quote
-		if err := rows.Scan(
-			&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID,
-			&q.CreatedByID, &q.CreatedByFirstName, &q.CreatedByLastName, &q.CreatedByEmail,
-			&q.CustomerFirstName, &q.CustomerLastName, &q.CustomerPhone, &q.CustomerEmail,
-			&q.CustomerAddressStreet, &q.CustomerAddressHouseNumber, &q.CustomerAddressZipCode, &q.CustomerAddressCity,
-			&q.QuoteNumber, &q.Status, &q.PricingMode, &q.DiscountType, &q.DiscountValue,
-			&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
-			&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
-			&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
-			&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
-			&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
-			&q.FinancingDisclaimer,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan quote: %w", err)
-		}
-		items = append(items, q)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate quotes: %w", err)
+	items := make([]Quote, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, quoteFromListRow(row))
 	}
 
 	return &ListResult{
 		Items:      items,
-		Total:      total,
+		Total:      totalCount,
 		Page:       params.Page,
 		PageSize:   params.PageSize,
 		TotalPages: totalPages,
@@ -651,110 +494,48 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 
 // ListPendingApprovals lists draft quotes for dashboard review queue.
 func (r *Repository) ListPendingApprovals(ctx context.Context, orgID uuid.UUID, page int, pageSize int) (*PendingApprovalsResult, error) {
-	var total int
-	countQuery := `
-		SELECT COUNT(q.id)
-		FROM RAC_quotes q
-		WHERE q.organization_id = $1
-			AND q.status = 'Draft'`
-
-	if err := r.pool.QueryRow(ctx, countQuery, orgID).Scan(&total); err != nil {
+	total, err := r.queries.CountPendingApprovals(ctx, toPgUUID(orgID))
+	if err != nil {
 		return nil, fmt.Errorf("failed to count pending approvals: %w", err)
 	}
 
+	totalCount := int(total)
 	totalPages := 0
-	if total > 0 {
-		totalPages = (total + pageSize - 1) / pageSize
+	if totalCount > 0 {
+		totalPages = (totalCount + pageSize - 1) / pageSize
 	}
 	offset := (page - 1) * pageSize
 
-	query := `
-		SELECT
-			q.id,
-			q.lead_id,
-			q.quote_number,
-			l.consumer_first_name,
-			l.consumer_last_name,
-			q.total_cents,
-			l.lead_score,
-			q.created_at
-		FROM RAC_quotes q
-		LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
-		WHERE q.organization_id = $1
-			AND q.status = 'Draft'
-		ORDER BY q.updated_at DESC, q.created_at DESC
-		LIMIT $2 OFFSET $3`
-
-	rows, err := r.pool.Query(ctx, query, orgID, pageSize, offset)
+	rows, err := r.queries.ListPendingApprovals(ctx, quotesdb.ListPendingApprovalsParams{
+		OrganizationID: toPgUUID(orgID),
+		Limit:          int32(pageSize),
+		Offset:         int32(offset),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pending approvals: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]PendingApprovalItem, 0, pageSize)
-	for rows.Next() {
-		var item PendingApprovalItem
-		if err := rows.Scan(
-			&item.QuoteID,
-			&item.LeadID,
-			&item.QuoteNumber,
-			&item.ConsumerFirstName,
-			&item.ConsumerLastName,
-			&item.TotalCents,
-			&item.LeadScore,
-			&item.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan pending approval: %w", err)
-		}
-		items = append(items, item)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate pending approvals: %w", err)
+	items := make([]PendingApprovalItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, PendingApprovalItem{
+			QuoteID:           uuid.UUID(row.ID.Bytes),
+			LeadID:            uuid.UUID(row.LeadID.Bytes),
+			QuoteNumber:       row.QuoteNumber,
+			ConsumerFirstName: optionalString(row.ConsumerFirstName),
+			ConsumerLastName:  optionalString(row.ConsumerLastName),
+			TotalCents:        row.TotalCents,
+			LeadScore:         optionalInt(row.LeadScore),
+			CreatedAt:         timeFromPg(row.CreatedAt),
+		})
 	}
 
 	return &PendingApprovalsResult{
 		Items:      items,
-		Total:      total,
+		Total:      totalCount,
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
 	}, nil
-}
-
-// ── Public Access Methods ─────────────────────────────────────────────────────
-
-// GetByPublicToken retrieves a quote by its public token (no org scoping needed).
-func (r *Repository) GetByPublicToken(ctx context.Context, token string) (*Quote, error) {
-	var q Quote
-	query := `
-		SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
-			pricing_mode, discount_type, discount_value,
-			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, created_at, updated_at,
-			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
-			viewed_at, accepted_at, rejected_at,
-			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
-			financing_disclaimer
-		FROM RAC_quotes WHERE public_token = $1`
-
-	err := r.pool.QueryRow(ctx, query, token).Scan(
-		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.QuoteNumber, &q.Status,
-		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
-		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
-		&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
-		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
-		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
-		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
-		&q.FinancingDisclaimer,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.NotFound(quoteNotFoundMsg)
-		}
-		return nil, fmt.Errorf("failed to get quote by token: %w", err)
-	}
-	return &q, nil
 }
 
 // TokenKind describes which token matched a quote lookup.
@@ -765,34 +546,22 @@ const (
 	TokenKindPreview TokenKind = "preview"
 )
 
+// GetByPublicToken retrieves a quote by its public token (no org scoping needed).
+func (r *Repository) GetByPublicToken(ctx context.Context, token string) (*Quote, error) {
+	row, err := r.queries.GetQuoteByPublicToken(ctx, pgtype.Text{String: token, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound(quoteNotFoundMsg)
+		}
+		return nil, fmt.Errorf("failed to get quote by token: %w", err)
+	}
+	quote := quoteFromPublicTokenRow(row)
+	return &quote, nil
+}
+
 // GetByToken retrieves a quote by either public or preview token.
 func (r *Repository) GetByToken(ctx context.Context, token string) (*Quote, TokenKind, error) {
-	var q Quote
-	var kind string
-	query := `
-		SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
-			pricing_mode, discount_type, discount_value,
-			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, created_at, updated_at,
-			public_token, public_token_expires_at, preview_token, preview_token_expires_at,
-			viewed_at, accepted_at, rejected_at,
-			rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
-			financing_disclaimer,
-			CASE WHEN public_token = $1 THEN 'public' ELSE 'preview' END AS token_kind
-		FROM RAC_quotes
-		WHERE public_token = $1 OR preview_token = $1`
-
-	err := r.pool.QueryRow(ctx, query, token).Scan(
-		&q.ID, &q.OrganizationID, &q.LeadID, &q.LeadServiceID, &q.QuoteNumber, &q.Status,
-		&q.PricingMode, &q.DiscountType, &q.DiscountValue,
-		&q.SubtotalCents, &q.DiscountAmountCents, &q.TaxTotalCents, &q.TotalCents,
-		&q.ValidUntil, &q.Notes, &q.CreatedAt, &q.UpdatedAt,
-		&q.PublicToken, &q.PublicTokenExpAt, &q.PreviewToken, &q.PreviewTokenExpAt,
-		&q.ViewedAt, &q.AcceptedAt, &q.RejectedAt,
-		&q.RejectionReason, &q.SignatureName, &q.SignatureData, &q.SignatureIP, &q.PDFFileKey,
-		&q.FinancingDisclaimer,
-		&kind,
-	)
+	row, err := r.queries.GetQuoteByToken(ctx, pgtype.Text{String: token, Valid: true})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", apperr.NotFound(quoteNotFoundMsg)
@@ -800,21 +569,26 @@ func (r *Repository) GetByToken(ctx context.Context, token string) (*Quote, Toke
 		return nil, "", fmt.Errorf("failed to get quote by token: %w", err)
 	}
 
-	if kind == string(TokenKindPublic) {
-		return &q, TokenKindPublic, nil
+	quote := quoteFromTokenRow(row)
+	if row.TokenKind == string(TokenKindPublic) {
+		return &quote, TokenKindPublic, nil
 	}
-	return &q, TokenKindPreview, nil
+	return &quote, TokenKindPreview, nil
 }
 
 // SetPublicToken sets the public access token and expiry on a quote.
 func (r *Repository) SetPublicToken(ctx context.Context, quoteID, orgID uuid.UUID, token string, expiresAt time.Time) error {
-	query := `UPDATE RAC_quotes SET public_token = $3, public_token_expires_at = $4, updated_at = $5
-		WHERE id = $1 AND organization_id = $2`
-	result, err := r.pool.Exec(ctx, query, quoteID, orgID, token, expiresAt, time.Now())
+	rowsAffected, err := r.queries.SetQuotePublicToken(ctx, quotesdb.SetQuotePublicTokenParams{
+		ID:                   toPgUUID(quoteID),
+		OrganizationID:       toPgUUID(orgID),
+		PublicToken:          pgtype.Text{String: token, Valid: true},
+		PublicTokenExpiresAt: toPgTimestamp(expiresAt),
+		UpdatedAt:            toPgTimestamp(time.Now()),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set public token: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(quoteNotFoundMsg)
 	}
 	return nil
@@ -822,13 +596,17 @@ func (r *Repository) SetPublicToken(ctx context.Context, quoteID, orgID uuid.UUI
 
 // SetPreviewToken sets the read-only preview token and expiry on a quote.
 func (r *Repository) SetPreviewToken(ctx context.Context, quoteID, orgID uuid.UUID, token string, expiresAt time.Time) error {
-	query := `UPDATE RAC_quotes SET preview_token = $3, preview_token_expires_at = $4, updated_at = $5
-		WHERE id = $1 AND organization_id = $2`
-	result, err := r.pool.Exec(ctx, query, quoteID, orgID, token, expiresAt, time.Now())
+	rowsAffected, err := r.queries.SetQuotePreviewToken(ctx, quotesdb.SetQuotePreviewTokenParams{
+		ID:                    toPgUUID(quoteID),
+		OrganizationID:        toPgUUID(orgID),
+		PreviewToken:          pgtype.Text{String: token, Valid: true},
+		PreviewTokenExpiresAt: toPgTimestamp(expiresAt),
+		UpdatedAt:             toPgTimestamp(time.Now()),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set preview token: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(quoteNotFoundMsg)
 	}
 	return nil
@@ -836,9 +614,10 @@ func (r *Repository) SetPreviewToken(ctx context.Context, quoteID, orgID uuid.UU
 
 // SetViewedAt sets the viewed_at timestamp if it's currently NULL (first view).
 func (r *Repository) SetViewedAt(ctx context.Context, quoteID uuid.UUID) error {
-	query := `UPDATE RAC_quotes SET viewed_at = $2 WHERE id = $1 AND viewed_at IS NULL`
-	_, err := r.pool.Exec(ctx, query, quoteID, time.Now())
-	if err != nil {
+	if err := r.queries.SetQuoteViewedAt(ctx, quotesdb.SetQuoteViewedAtParams{
+		ID:       toPgUUID(quoteID),
+		ViewedAt: toPgTimestamp(time.Now()),
+	}); err != nil {
 		return fmt.Errorf("failed to set viewed_at: %w", err)
 	}
 	return nil
@@ -846,12 +625,15 @@ func (r *Repository) SetViewedAt(ctx context.Context, quoteID uuid.UUID) error {
 
 // UpdateItemSelection updates the is_selected flag on a quote item.
 func (r *Repository) UpdateItemSelection(ctx context.Context, itemID, quoteID uuid.UUID, isSelected bool) error {
-	query := `UPDATE RAC_quote_items SET is_selected = $3 WHERE id = $1 AND quote_id = $2`
-	result, err := r.pool.Exec(ctx, query, itemID, quoteID, isSelected)
+	rowsAffected, err := r.queries.UpdateQuoteItemSelection(ctx, quotesdb.UpdateQuoteItemSelectionParams{
+		ID:         toPgUUID(itemID),
+		QuoteID:    toPgUUID(quoteID),
+		IsSelected: isSelected,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update item selection: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound("quote item not found")
 	}
 	return nil
@@ -859,10 +641,14 @@ func (r *Repository) UpdateItemSelection(ctx context.Context, itemID, quoteID uu
 
 // UpdateQuoteTotals updates only the calculated totals on a quote.
 func (r *Repository) UpdateQuoteTotals(ctx context.Context, quoteID uuid.UUID, subtotal, discount, tax, total int64) error {
-	query := `UPDATE RAC_quotes SET subtotal_cents = $2, discount_amount_cents = $3, tax_total_cents = $4, total_cents = $5, updated_at = $6
-		WHERE id = $1`
-	_, err := r.pool.Exec(ctx, query, quoteID, subtotal, discount, tax, total, time.Now())
-	if err != nil {
+	if err := r.queries.UpdateQuoteTotals(ctx, quotesdb.UpdateQuoteTotalsParams{
+		ID:                  toPgUUID(quoteID),
+		SubtotalCents:       subtotal,
+		DiscountAmountCents: discount,
+		TaxTotalCents:       tax,
+		TotalCents:          total,
+		UpdatedAt:           toPgTimestamp(time.Now()),
+	}); err != nil {
 		return fmt.Errorf("failed to update quote totals: %w", err)
 	}
 	return nil
@@ -871,13 +657,17 @@ func (r *Repository) UpdateQuoteTotals(ctx context.Context, quoteID uuid.UUID, s
 // AcceptQuote sets the quote to Accepted status with signature data.
 func (r *Repository) AcceptQuote(ctx context.Context, quoteID uuid.UUID, signatureName, signatureData, signatureIP string) error {
 	now := time.Now()
-	query := `UPDATE RAC_quotes SET status = 'Accepted', accepted_at = $2, signature_name = $3, signature_data = $4, signature_ip = $5, updated_at = $2
-		WHERE id = $1 AND status = 'Sent'`
-	result, err := r.pool.Exec(ctx, query, quoteID, now, signatureName, signatureData, signatureIP)
+	rowsAffected, err := r.queries.AcceptQuote(ctx, quotesdb.AcceptQuoteParams{
+		ID:            toPgUUID(quoteID),
+		AcceptedAt:    toPgTimestamp(now),
+		SignatureName: pgtype.Text{String: signatureName, Valid: true},
+		SignatureData: pgtype.Text{String: signatureData, Valid: true},
+		SignatureIp:   pgtype.Text{String: signatureIP, Valid: true},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to accept quote: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.Conflict("quote cannot be accepted in its current state")
 	}
 	return nil
@@ -886,13 +676,15 @@ func (r *Repository) AcceptQuote(ctx context.Context, quoteID uuid.UUID, signatu
 // RejectQuote sets the quote to Rejected status with an optional reason.
 func (r *Repository) RejectQuote(ctx context.Context, quoteID uuid.UUID, reason *string) error {
 	now := time.Now()
-	query := `UPDATE RAC_quotes SET status = 'Rejected', rejected_at = $2, rejection_reason = $3, updated_at = $2
-		WHERE id = $1 AND status = 'Sent'`
-	result, err := r.pool.Exec(ctx, query, quoteID, now, reason)
+	rowsAffected, err := r.queries.RejectQuote(ctx, quotesdb.RejectQuoteParams{
+		ID:              toPgUUID(quoteID),
+		RejectedAt:      toPgTimestamp(now),
+		RejectionReason: toPgTextPtr(reason),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to reject quote: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.Conflict("quote cannot be rejected in its current state")
 	}
 	return nil
@@ -900,9 +692,11 @@ func (r *Repository) RejectQuote(ctx context.Context, quoteID uuid.UUID, reason 
 
 // SetPDFFileKey stores the MinIO reference for the generated PDF.
 func (r *Repository) SetPDFFileKey(ctx context.Context, quoteID uuid.UUID, fileKey string) error {
-	query := `UPDATE RAC_quotes SET pdf_file_key = $2, updated_at = $3 WHERE id = $1`
-	_, err := r.pool.Exec(ctx, query, quoteID, fileKey, time.Now())
-	if err != nil {
+	if err := r.queries.SetQuotePDFFileKey(ctx, quotesdb.SetQuotePDFFileKeyParams{
+		ID:         toPgUUID(quoteID),
+		PdfFileKey: pgtype.Text{String: fileKey, Valid: true},
+		UpdatedAt:  toPgTimestamp(time.Now()),
+	}); err != nil {
 		return fmt.Errorf("failed to set PDF file key: %w", err)
 	}
 	return nil
@@ -910,60 +704,50 @@ func (r *Repository) SetPDFFileKey(ctx context.Context, quoteID uuid.UUID, fileK
 
 // GetItemByID retrieves a single quote item by its ID and quote ID.
 func (r *Repository) GetItemByID(ctx context.Context, itemID, quoteID uuid.UUID) (*QuoteItem, error) {
-	var it QuoteItem
-	query := `
-		SELECT id, quote_id, organization_id, description, quantity, quantity_numeric,
-			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
-		FROM RAC_quote_items WHERE id = $1 AND quote_id = $2`
-	err := r.pool.QueryRow(ctx, query, itemID, quoteID).Scan(
-		&it.ID, &it.QuoteID, &it.OrganizationID,
-		&it.Description, &it.Quantity, &it.QuantityNumeric,
-		&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
-	)
+	row, err := r.queries.GetQuoteItemByID(ctx, quotesdb.GetQuoteItemByIDParams{ID: toPgUUID(itemID), QuoteID: toPgUUID(quoteID)})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound("quote item not found")
 		}
 		return nil, fmt.Errorf("failed to get quote item: %w", err)
 	}
-	return &it, nil
+	item, mapErr := quoteItemFromGetRow(row)
+	if mapErr != nil {
+		return nil, fmt.Errorf("failed to get quote item: %w", mapErr)
+	}
+	return &item, nil
 }
 
 // GetItemsByQuoteIDNoOrg retrieves all items for a quote without org scoping (for public access).
 func (r *Repository) GetItemsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UUID) ([]QuoteItem, error) {
-	query := `
-		SELECT id, quote_id, organization_id, title, description, quantity, quantity_numeric,
-			unit_price_cents, tax_rate, is_optional, is_selected, sort_order, catalog_product_id, created_at
-		FROM RAC_quote_items WHERE quote_id = $1
-		ORDER BY sort_order ASC`
-	rows, err := r.pool.Query(ctx, query, quoteID)
+	rows, err := r.queries.ListQuoteItemsByQuoteIDNoOrg(ctx, toPgUUID(quoteID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query quote items: %w", err)
 	}
-	defer rows.Close()
-	var items []QuoteItem
-	for rows.Next() {
-		var it QuoteItem
-		if err := rows.Scan(
-			&it.ID, &it.QuoteID, &it.OrganizationID,
-			&it.Title, &it.Description, &it.Quantity, &it.QuantityNumeric,
-			&it.UnitPriceCents, &it.TaxRateBps, &it.IsOptional, &it.IsSelected, &it.SortOrder, &it.CatalogProductID, &it.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf(errScanQuoteItemFmt, err)
-		}
-		items = append(items, it)
-	}
-	return items, rows.Err()
-}
 
-// ── Annotation Methods ────────────────────────────────────────────────────────
+	items := make([]QuoteItem, 0, len(rows))
+	for _, row := range rows {
+		item, mapErr := quoteItemFromNoOrgRow(row)
+		if mapErr != nil {
+			return nil, fmt.Errorf(errScanQuoteItemFmt, mapErr)
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
 
 // CreateAnnotation inserts a new annotation on a quote item.
 func (r *Repository) CreateAnnotation(ctx context.Context, a *QuoteAnnotation) error {
-	query := `INSERT INTO RAC_quote_annotations (id, quote_item_id, organization_id, author_type, author_id, text, is_resolved, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := r.pool.Exec(ctx, query, a.ID, a.QuoteItemID, a.OrganizationID, a.AuthorType, a.AuthorID, a.Text, a.IsResolved, a.CreatedAt)
-	if err != nil {
+	if err := r.queries.CreateQuoteAnnotation(ctx, quotesdb.CreateQuoteAnnotationParams{
+		ID:             toPgUUID(a.ID),
+		QuoteItemID:    toPgUUID(a.QuoteItemID),
+		OrganizationID: toPgUUID(a.OrganizationID),
+		AuthorType:     a.AuthorType,
+		AuthorID:       toPgUUIDPtr(a.AuthorID),
+		Text:           a.Text,
+		IsResolved:     a.IsResolved,
+		CreatedAt:      toPgTimestamp(a.CreatedAt),
+	}); err != nil {
 		return fmt.Errorf("failed to create annotation: %w", err)
 	}
 	return nil
@@ -971,62 +755,51 @@ func (r *Repository) CreateAnnotation(ctx context.Context, a *QuoteAnnotation) e
 
 // ListAnnotationsByQuoteID retrieves all annotations for items belonging to a quote.
 func (r *Repository) ListAnnotationsByQuoteID(ctx context.Context, quoteID uuid.UUID) ([]QuoteAnnotation, error) {
-	query := `
-		SELECT a.id, a.quote_item_id, a.organization_id, a.author_type, a.author_id, a.text, a.is_resolved, a.created_at
-		FROM RAC_quote_annotations a
-		JOIN RAC_quote_items qi ON qi.id = a.quote_item_id
-		WHERE qi.quote_id = $1
-		ORDER BY a.created_at ASC`
-	rows, err := r.pool.Query(ctx, query, quoteID)
+	rows, err := r.queries.ListQuoteAnnotationsByQuoteID(ctx, toPgUUID(quoteID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list annotations: %w", err)
 	}
-	defer rows.Close()
-	var annotations []QuoteAnnotation
-	for rows.Next() {
-		var a QuoteAnnotation
-		if err := rows.Scan(&a.ID, &a.QuoteItemID, &a.OrganizationID, &a.AuthorType, &a.AuthorID, &a.Text, &a.IsResolved, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan annotation: %w", err)
-		}
-		annotations = append(annotations, a)
+
+	annotations := make([]QuoteAnnotation, 0, len(rows))
+	for _, row := range rows {
+		annotations = append(annotations, quoteAnnotationFromModel(row))
 	}
-	return annotations, rows.Err()
+	return annotations, nil
 }
 
 // UpdateAnnotationText updates the text for a single annotation (scoped to item and author type).
 func (r *Repository) UpdateAnnotationText(ctx context.Context, annotationID, itemID uuid.UUID, authorType, text string) (*QuoteAnnotation, error) {
-	query := `
-		UPDATE RAC_quote_annotations
-		SET text = $1
-		WHERE id = $2 AND quote_item_id = $3 AND author_type = $4
-		RETURNING id, quote_item_id, organization_id, author_type, author_id, text, is_resolved, created_at`
-
-	var a QuoteAnnotation
-	if err := r.pool.QueryRow(ctx, query, text, annotationID, itemID, authorType).Scan(
-		&a.ID, &a.QuoteItemID, &a.OrganizationID, &a.AuthorType, &a.AuthorID, &a.Text, &a.IsResolved, &a.CreatedAt,
-	); err != nil {
+	row, err := r.queries.UpdateQuoteAnnotationText(ctx, quotesdb.UpdateQuoteAnnotationTextParams{
+		Text:        text,
+		ID:          toPgUUID(annotationID),
+		QuoteItemID: toPgUUID(itemID),
+		AuthorType:  authorType,
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound("annotation not found")
 		}
 		return nil, fmt.Errorf("failed to update annotation: %w", err)
 	}
-	return &a, nil
+	annotation := quoteAnnotationFromModel(row)
+	return &annotation, nil
 }
 
 // DeleteAnnotation removes an annotation scoped to item and author type.
 func (r *Repository) DeleteAnnotation(ctx context.Context, annotationID, itemID uuid.UUID, authorType string) error {
-	query := `DELETE FROM RAC_quote_annotations WHERE id = $1 AND quote_item_id = $2 AND author_type = $3`
-	result, err := r.pool.Exec(ctx, query, annotationID, itemID, authorType)
+	rowsAffected, err := r.queries.DeleteQuoteAnnotation(ctx, quotesdb.DeleteQuoteAnnotationParams{
+		ID:          toPgUUID(annotationID),
+		QuoteItemID: toPgUUID(itemID),
+		AuthorType:  authorType,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to delete annotation: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound("annotation not found")
 	}
 	return nil
 }
-
-// ── Activity Methods ──────────────────────────────────────────────────────────
 
 // QuoteActivity is the database model for a quote activity log entry
 type QuoteActivity struct {
@@ -1041,10 +814,15 @@ type QuoteActivity struct {
 
 // CreateActivity inserts a new activity log entry for a quote.
 func (r *Repository) CreateActivity(ctx context.Context, a *QuoteActivity) error {
-	query := `INSERT INTO RAC_quote_activity (id, quote_id, organization_id, event_type, message, metadata, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err := r.pool.Exec(ctx, query, a.ID, a.QuoteID, a.OrganizationID, a.EventType, a.Message, a.Metadata, a.CreatedAt)
-	if err != nil {
+	if err := r.queries.CreateQuoteActivity(ctx, quotesdb.CreateQuoteActivityParams{
+		ID:             toPgUUID(a.ID),
+		QuoteID:        toPgUUID(a.QuoteID),
+		OrganizationID: toPgUUID(a.OrganizationID),
+		EventType:      a.EventType,
+		Message:        a.Message,
+		Metadata:       a.Metadata,
+		CreatedAt:      toPgTimestamp(a.CreatedAt),
+	}); err != nil {
 		return fmt.Errorf("failed to create quote activity: %w", err)
 	}
 	return nil
@@ -1052,28 +830,20 @@ func (r *Repository) CreateActivity(ctx context.Context, a *QuoteActivity) error
 
 // ListActivities retrieves all activity log entries for a quote, newest first.
 func (r *Repository) ListActivities(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]QuoteActivity, error) {
-	query := `
-		SELECT id, quote_id, organization_id, event_type, message, metadata, created_at
-		FROM RAC_quote_activity
-		WHERE quote_id = $1 AND organization_id = $2
-		ORDER BY created_at DESC`
-	rows, err := r.pool.Query(ctx, query, quoteID, orgID)
+	rows, err := r.queries.ListQuoteActivities(ctx, quotesdb.ListQuoteActivitiesParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list quote activities: %w", err)
 	}
-	defer rows.Close()
-	var activities []QuoteActivity
-	for rows.Next() {
-		var a QuoteActivity
-		if err := rows.Scan(&a.ID, &a.QuoteID, &a.OrganizationID, &a.EventType, &a.Message, &a.Metadata, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan quote activity: %w", err)
-		}
-		activities = append(activities, a)
-	}
-	return activities, rows.Err()
-}
 
-// ── Attachment & URL Methods ──────────────────────────────────────────────────
+	activities := make([]QuoteActivity, 0, len(rows))
+	for _, row := range rows {
+		activities = append(activities, quoteActivityFromModel(row))
+	}
+	return activities, nil
+}
 
 // QuoteAttachment is the database model for a quote document attachment.
 type QuoteAttachment struct {
@@ -1122,76 +892,42 @@ type GenerateQuoteJob struct {
 
 // CreateGenerateQuoteJob inserts a new async quote generation job row.
 func (r *Repository) CreateGenerateQuoteJob(ctx context.Context, job *GenerateQuoteJob) error {
-	query := `
-		INSERT INTO RAC_ai_quote_jobs (
-			id, organization_id, user_id, lead_id, lead_service_id,
-			status, step, progress_percent, error,
-			quote_id, quote_number, item_count,
-			started_at, updated_at, finished_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
-
-	_, err := r.pool.Exec(
-		ctx,
-		query,
-		job.ID,
-		job.OrganizationID,
-		job.UserID,
-		job.LeadID,
-		job.LeadServiceID,
-		job.Status,
-		job.Step,
-		job.ProgressPercent,
-		job.Error,
-		job.QuoteID,
-		job.QuoteNumber,
-		job.ItemCount,
-		job.StartedAt,
-		job.UpdatedAt,
-		job.FinishedAt,
-	)
-	if err != nil {
+	if err := r.queries.CreateGenerateQuoteJob(ctx, quotesdb.CreateGenerateQuoteJobParams{
+		ID:              toPgUUID(job.ID),
+		OrganizationID:  toPgUUID(job.OrganizationID),
+		UserID:          toPgUUID(job.UserID),
+		LeadID:          toPgUUID(job.LeadID),
+		LeadServiceID:   toPgUUID(job.LeadServiceID),
+		Status:          job.Status,
+		Step:            job.Step,
+		ProgressPercent: int32(job.ProgressPercent),
+		Error:           toPgTextPtr(job.Error),
+		QuoteID:         toPgUUIDPtr(job.QuoteID),
+		QuoteNumber:     toPgTextPtr(job.QuoteNumber),
+		ItemCount:       toPgInt4Ptr(job.ItemCount),
+		StartedAt:       toPgTimestamp(job.StartedAt),
+		UpdatedAt:       toPgTimestamp(job.UpdatedAt),
+		FinishedAt:      toPgTimestampPtr(job.FinishedAt),
+	}); err != nil {
 		return fmt.Errorf("create generate quote job: %w", err)
 	}
-
 	return nil
 }
 
 // GetGenerateQuoteJob retrieves a job for a specific tenant + user.
 func (r *Repository) GetGenerateQuoteJob(ctx context.Context, orgID, userID, jobID uuid.UUID) (*GenerateQuoteJob, error) {
-	query := `
-		SELECT id, organization_id, user_id, lead_id, lead_service_id,
-			status, step, progress_percent, error,
-			quote_id, quote_number, item_count,
-			started_at, updated_at, finished_at
-		FROM RAC_ai_quote_jobs
-		WHERE id = $1 AND organization_id = $2 AND user_id = $3`
-
-	var job GenerateQuoteJob
-	err := r.pool.QueryRow(ctx, query, jobID, orgID, userID).Scan(
-		&job.ID,
-		&job.OrganizationID,
-		&job.UserID,
-		&job.LeadID,
-		&job.LeadServiceID,
-		&job.Status,
-		&job.Step,
-		&job.ProgressPercent,
-		&job.Error,
-		&job.QuoteID,
-		&job.QuoteNumber,
-		&job.ItemCount,
-		&job.StartedAt,
-		&job.UpdatedAt,
-		&job.FinishedAt,
-	)
+	row, err := r.queries.GetGenerateQuoteJob(ctx, quotesdb.GetGenerateQuoteJobParams{
+		ID:             toPgUUID(jobID),
+		OrganizationID: toPgUUID(orgID),
+		UserID:         toPgUUID(userID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
 		}
 		return nil, fmt.Errorf("get generate quote job: %w", err)
 	}
-
+	job := generateQuoteJobFromModel(row)
 	return &job, nil
 }
 
@@ -1201,59 +937,30 @@ func (r *Repository) ListGenerateQuoteJobs(ctx context.Context, orgID, userID uu
 		return nil, 0, apperr.Validation("organizationId and userId are required")
 	}
 
-	var total int
-	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM RAC_ai_quote_jobs
-		WHERE organization_id = $1 AND user_id = $2
-	`, orgID, userID).Scan(&total); err != nil {
+	total, err := r.queries.CountGenerateQuoteJobs(ctx, quotesdb.CountGenerateQuoteJobsParams{
+		OrganizationID: toPgUUID(orgID),
+		UserID:         toPgUUID(userID),
+	})
+	if err != nil {
 		return nil, 0, fmt.Errorf("count generate quote jobs: %w", err)
 	}
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, organization_id, user_id, lead_id, lead_service_id,
-			status, step, progress_percent, error,
-			quote_id, quote_number, item_count,
-			started_at, updated_at, finished_at
-		FROM RAC_ai_quote_jobs
-		WHERE organization_id = $1 AND user_id = $2
-		ORDER BY updated_at DESC
-		LIMIT $3 OFFSET $4
-	`, orgID, userID, limit, offset)
+	rows, err := r.queries.ListGenerateQuoteJobs(ctx, quotesdb.ListGenerateQuoteJobsParams{
+		OrganizationID: toPgUUID(orgID),
+		UserID:         toPgUUID(userID),
+		Limit:          int32(limit),
+		Offset:         int32(offset),
+	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("list generate quote jobs: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]GenerateQuoteJob, 0, limit)
-	for rows.Next() {
-		var job GenerateQuoteJob
-		if scanErr := rows.Scan(
-			&job.ID,
-			&job.OrganizationID,
-			&job.UserID,
-			&job.LeadID,
-			&job.LeadServiceID,
-			&job.Status,
-			&job.Step,
-			&job.ProgressPercent,
-			&job.Error,
-			&job.QuoteID,
-			&job.QuoteNumber,
-			&job.ItemCount,
-			&job.StartedAt,
-			&job.UpdatedAt,
-			&job.FinishedAt,
-		); scanErr != nil {
-			return nil, 0, fmt.Errorf("scan generate quote job: %w", scanErr)
-		}
-		items = append(items, job)
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return nil, 0, fmt.Errorf("iterate generate quote jobs: %w", rowsErr)
+	items := make([]GenerateQuoteJob, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, generateQuoteJobFromModel(row))
 	}
 
-	return items, total, nil
+	return items, int(total), nil
 }
 
 // DeleteGenerateQuoteJob deletes a finished job (completed/failed/cancelled) for a tenant + user.
@@ -1262,15 +969,15 @@ func (r *Repository) DeleteGenerateQuoteJob(ctx context.Context, orgID, userID, 
 		return apperr.Validation("organizationId, userId and jobId are required")
 	}
 
-	result, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_ai_quote_jobs
-		WHERE id = $1 AND organization_id = $2 AND user_id = $3
-			AND status IN ('completed','failed','cancelled')
-	`, jobID, orgID, userID)
+	rowsAffected, err := r.queries.DeleteGenerateQuoteJob(ctx, quotesdb.DeleteGenerateQuoteJobParams{
+		ID:             toPgUUID(jobID),
+		OrganizationID: toPgUUID(orgID),
+		UserID:         toPgUUID(userID),
+	})
 	if err != nil {
 		return fmt.Errorf("delete generate quote job: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(quoteGenerateJobNotFoundMsg)
 	}
 	return nil
@@ -1282,46 +989,20 @@ func (r *Repository) CancelGenerateQuoteJob(ctx context.Context, orgID, userID, 
 		return nil, apperr.Validation("organizationId, userId and jobId are required")
 	}
 
-	query := `
-		UPDATE RAC_ai_quote_jobs
-		SET status = 'cancelled',
-			step = 'cancelled',
-			progress_percent = CASE WHEN progress_percent > 100 THEN 100 ELSE progress_percent END,
-			error = NULL,
-			updated_at = $4,
-			finished_at = $5
-		WHERE id = $1 AND organization_id = $2 AND user_id = $3
-			AND status IN ('pending', 'running')
-		RETURNING id, organization_id, user_id, lead_id, lead_service_id,
-			status, step, progress_percent, error,
-			quote_id, quote_number, item_count,
-			started_at, updated_at, finished_at`
-
-	var job GenerateQuoteJob
-	err := r.pool.QueryRow(ctx, query, jobID, orgID, userID, updatedAt, finishedAt).Scan(
-		&job.ID,
-		&job.OrganizationID,
-		&job.UserID,
-		&job.LeadID,
-		&job.LeadServiceID,
-		&job.Status,
-		&job.Step,
-		&job.ProgressPercent,
-		&job.Error,
-		&job.QuoteID,
-		&job.QuoteNumber,
-		&job.ItemCount,
-		&job.StartedAt,
-		&job.UpdatedAt,
-		&job.FinishedAt,
-	)
+	row, err := r.queries.CancelGenerateQuoteJob(ctx, quotesdb.CancelGenerateQuoteJobParams{
+		ID:             toPgUUID(jobID),
+		OrganizationID: toPgUUID(orgID),
+		UserID:         toPgUUID(userID),
+		UpdatedAt:      toPgTimestamp(updatedAt),
+		FinishedAt:     toPgTimestamp(finishedAt),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
 		}
 		return nil, fmt.Errorf("cancel generate quote job: %w", err)
 	}
-
+	job := generateQuoteJobFromModel(row)
 	return &job, nil
 }
 
@@ -1331,151 +1012,81 @@ func (r *Repository) DeleteCompletedGenerateQuoteJobs(ctx context.Context, orgID
 		return 0, apperr.Validation("organizationId and userId are required")
 	}
 
-	result, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_ai_quote_jobs
-		WHERE organization_id = $1 AND user_id = $2 AND status = 'completed'
-	`, orgID, userID)
+	rowsAffected, err := r.queries.DeleteCompletedGenerateQuoteJobs(ctx, quotesdb.DeleteCompletedGenerateQuoteJobsParams{
+		OrganizationID: toPgUUID(orgID),
+		UserID:         toPgUUID(userID),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("delete completed generate quote jobs: %w", err)
 	}
-	return result.RowsAffected(), nil
+	return rowsAffected, nil
 }
 
 // GetGenerateQuoteJobByID retrieves a job by id without user scoping (worker use).
 func (r *Repository) GetGenerateQuoteJobByID(ctx context.Context, jobID uuid.UUID) (*GenerateQuoteJob, error) {
-	query := `
-		SELECT id, organization_id, user_id, lead_id, lead_service_id,
-			status, step, progress_percent, error,
-			quote_id, quote_number, item_count,
-			started_at, updated_at, finished_at
-		FROM RAC_ai_quote_jobs
-		WHERE id = $1`
-
-	var job GenerateQuoteJob
-	err := r.pool.QueryRow(ctx, query, jobID).Scan(
-		&job.ID,
-		&job.OrganizationID,
-		&job.UserID,
-		&job.LeadID,
-		&job.LeadServiceID,
-		&job.Status,
-		&job.Step,
-		&job.ProgressPercent,
-		&job.Error,
-		&job.QuoteID,
-		&job.QuoteNumber,
-		&job.ItemCount,
-		&job.StartedAt,
-		&job.UpdatedAt,
-		&job.FinishedAt,
-	)
+	row, err := r.queries.GetGenerateQuoteJobByID(ctx, toPgUUID(jobID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
 		}
 		return nil, fmt.Errorf("get generate quote job by id: %w", err)
 	}
-
+	job := generateQuoteJobFromModel(row)
 	return &job, nil
 }
 
 // ClaimGenerateQuoteJob atomically transitions a pending job to running.
 // Returns nil,nil when the job cannot be claimed (already claimed/finished).
 func (r *Repository) ClaimGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, step string, progressPercent int, updatedAt time.Time) (*GenerateQuoteJob, error) {
-	query := `
-		UPDATE RAC_ai_quote_jobs
-		SET status = 'running',
-			step = $2,
-			progress_percent = $3,
-			updated_at = $4
-		WHERE id = $1 AND status = 'pending'
-		RETURNING id, organization_id, user_id, lead_id, lead_service_id,
-			status, step, progress_percent, error,
-			quote_id, quote_number, item_count,
-			started_at, updated_at, finished_at`
-
-	var job GenerateQuoteJob
-	err := r.pool.QueryRow(ctx, query, jobID, step, progressPercent, updatedAt).Scan(
-		&job.ID,
-		&job.OrganizationID,
-		&job.UserID,
-		&job.LeadID,
-		&job.LeadServiceID,
-		&job.Status,
-		&job.Step,
-		&job.ProgressPercent,
-		&job.Error,
-		&job.QuoteID,
-		&job.QuoteNumber,
-		&job.ItemCount,
-		&job.StartedAt,
-		&job.UpdatedAt,
-		&job.FinishedAt,
-	)
+	row, err := r.queries.ClaimGenerateQuoteJob(ctx, quotesdb.ClaimGenerateQuoteJobParams{
+		ID:              toPgUUID(jobID),
+		Step:            step,
+		ProgressPercent: int32(progressPercent),
+		UpdatedAt:       toPgTimestamp(updatedAt),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("claim generate quote job: %w", err)
 	}
-
+	job := generateQuoteJobFromModel(row)
 	return &job, nil
 }
 
 // UpdateGenerateQuoteJob updates mutable job fields.
 func (r *Repository) UpdateGenerateQuoteJob(ctx context.Context, job *GenerateQuoteJob) error {
-	query := `
-		UPDATE RAC_ai_quote_jobs
-		SET status = $2,
-			step = $3,
-			progress_percent = $4,
-			error = $5,
-			quote_id = $6,
-			quote_number = $7,
-			item_count = $8,
-			updated_at = $9,
-			finished_at = $10
-		WHERE id = $1`
-
-	result, err := r.pool.Exec(
-		ctx,
-		query,
-		job.ID,
-		job.Status,
-		job.Step,
-		job.ProgressPercent,
-		job.Error,
-		job.QuoteID,
-		job.QuoteNumber,
-		job.ItemCount,
-		job.UpdatedAt,
-		job.FinishedAt,
-	)
+	rowsAffected, err := r.queries.UpdateGenerateQuoteJob(ctx, quotesdb.UpdateGenerateQuoteJobParams{
+		ID:              toPgUUID(job.ID),
+		Status:          job.Status,
+		Step:            job.Step,
+		ProgressPercent: int32(job.ProgressPercent),
+		Error:           toPgTextPtr(job.Error),
+		QuoteID:         toPgUUIDPtr(job.QuoteID),
+		QuoteNumber:     toPgTextPtr(job.QuoteNumber),
+		ItemCount:       toPgInt4Ptr(job.ItemCount),
+		UpdatedAt:       toPgTimestamp(job.UpdatedAt),
+		FinishedAt:      toPgTimestampPtr(job.FinishedAt),
+	})
 	if err != nil {
 		return fmt.Errorf("update generate quote job: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(quoteGenerateJobNotFoundMsg)
 	}
-
 	return nil
 }
 
 // DeleteFinishedGenerateQuoteJobsBefore deletes completed/failed jobs older than retention cutoffs.
 func (r *Repository) DeleteFinishedGenerateQuoteJobsBefore(ctx context.Context, completedBefore, failedBefore time.Time) (int64, error) {
-	query := `
-		DELETE FROM RAC_ai_quote_jobs
-		WHERE
-			(status = 'completed' AND finished_at IS NOT NULL AND finished_at < $1)
-			OR
-			(status = 'failed' AND finished_at IS NOT NULL AND finished_at < $2)`
-
-	result, err := r.pool.Exec(ctx, query, completedBefore, failedBefore)
+	rowsAffected, err := r.queries.DeleteFinishedGenerateQuoteJobsBefore(ctx, quotesdb.DeleteFinishedGenerateQuoteJobsBeforeParams{
+		FinishedAt:   toPgTimestamp(completedBefore),
+		FinishedAt_2: toPgTimestamp(failedBefore),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("delete finished generate quote jobs: %w", err)
 	}
-
-	return result.RowsAffected(), nil
+	return rowsAffected, nil
 }
 
 // ReplaceAttachments atomically replaces all attachments for a quote (delete + insert).
@@ -1486,22 +1097,27 @@ func (r *Repository) ReplaceAttachments(ctx context.Context, quoteID, orgID uuid
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM RAC_quote_attachments WHERE quote_id = $1 AND organization_id = $2`,
-		quoteID, orgID,
-	); err != nil {
+	qtx := r.queries.WithTx(tx)
+	if err := qtx.DeleteQuoteAttachmentsByQuote(ctx, quotesdb.DeleteQuoteAttachmentsByQuoteParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	}); err != nil {
 		return fmt.Errorf("delete old attachments: %w", err)
 	}
 
-	query := `INSERT INTO RAC_quote_attachments
-		(id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-
-	for _, a := range attachments {
-		if _, err := tx.Exec(ctx, query,
-			a.ID, a.QuoteID, a.OrganizationID, a.Filename, a.FileKey,
-			a.Source, a.CatalogProductID, a.Enabled, a.SortOrder, a.CreatedAt,
-		); err != nil {
+	for _, attachment := range attachments {
+		if err := qtx.CreateQuoteAttachment(ctx, quotesdb.CreateQuoteAttachmentParams{
+			ID:               toPgUUID(attachment.ID),
+			QuoteID:          toPgUUID(attachment.QuoteID),
+			OrganizationID:   toPgUUID(attachment.OrganizationID),
+			Filename:         attachment.Filename,
+			FileKey:          attachment.FileKey,
+			Source:           quotesdb.RacQuoteAttachmentSource(attachment.Source),
+			CatalogProductID: toPgUUIDPtr(attachment.CatalogProductID),
+			Enabled:          attachment.Enabled,
+			SortOrder:        int32(attachment.SortOrder),
+			CreatedAt:        toPgTimestamp(attachment.CreatedAt),
+		}); err != nil {
 			return fmt.Errorf("insert attachment: %w", err)
 		}
 	}
@@ -1517,22 +1133,25 @@ func (r *Repository) ReplaceURLs(ctx context.Context, quoteID, orgID uuid.UUID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM RAC_quote_urls WHERE quote_id = $1 AND organization_id = $2`,
-		quoteID, orgID,
-	); err != nil {
+	qtx := r.queries.WithTx(tx)
+	if err := qtx.DeleteQuoteURLsByQuote(ctx, quotesdb.DeleteQuoteURLsByQuoteParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	}); err != nil {
 		return fmt.Errorf("delete old urls: %w", err)
 	}
 
-	query := `INSERT INTO RAC_quote_urls
-		(id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-
-	for _, u := range urls {
-		if _, err := tx.Exec(ctx, query,
-			u.ID, u.QuoteID, u.OrganizationID, u.Label, u.Href,
-			u.Accepted, u.CatalogProductID, u.CreatedAt,
-		); err != nil {
+	for _, quoteURL := range urls {
+		if err := qtx.CreateQuoteURL(ctx, quotesdb.CreateQuoteURLParams{
+			ID:               toPgUUID(quoteURL.ID),
+			QuoteID:          toPgUUID(quoteURL.QuoteID),
+			OrganizationID:   toPgUUID(quoteURL.OrganizationID),
+			Label:            quoteURL.Label,
+			Href:             quoteURL.Href,
+			Accepted:         quoteURL.Accepted,
+			CatalogProductID: toPgUUIDPtr(quoteURL.CatalogProductID),
+			CreatedAt:        toPgTimestamp(quoteURL.CreatedAt),
+		}); err != nil {
 			return fmt.Errorf("insert url: %w", err)
 		}
 	}
@@ -1542,104 +1161,82 @@ func (r *Repository) ReplaceURLs(ctx context.Context, quoteID, orgID uuid.UUID, 
 
 // GetAttachmentsByQuoteID retrieves all attachments for a quote ordered by sort_order.
 func (r *Repository) GetAttachmentsByQuoteID(ctx context.Context, quoteID, orgID uuid.UUID) ([]QuoteAttachment, error) {
-	query := `SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
-		FROM RAC_quote_attachments WHERE quote_id = $1 AND organization_id = $2 ORDER BY sort_order ASC`
-	rows, err := r.pool.Query(ctx, query, quoteID, orgID)
+	rows, err := r.queries.ListQuoteAttachmentsByQuoteID(ctx, quotesdb.ListQuoteAttachmentsByQuoteIDParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query attachments: %w", err)
 	}
-	defer rows.Close()
-	var result []QuoteAttachment
-	for rows.Next() {
-		var a QuoteAttachment
-		if err := rows.Scan(&a.ID, &a.QuoteID, &a.OrganizationID, &a.Filename, &a.FileKey, &a.Source, &a.CatalogProductID, &a.Enabled, &a.SortOrder, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan attachment: %w", err)
-		}
-		result = append(result, a)
+
+	result := make([]QuoteAttachment, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, quoteAttachmentFromModel(row))
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetURLsByQuoteID retrieves all URLs for a quote.
 func (r *Repository) GetURLsByQuoteID(ctx context.Context, quoteID, orgID uuid.UUID) ([]QuoteURL, error) {
-	query := `SELECT id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at
-		FROM RAC_quote_urls WHERE quote_id = $1 AND organization_id = $2 ORDER BY created_at ASC`
-	rows, err := r.pool.Query(ctx, query, quoteID, orgID)
+	rows, err := r.queries.ListQuoteURLsByQuoteID(ctx, quotesdb.ListQuoteURLsByQuoteIDParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query urls: %w", err)
 	}
-	defer rows.Close()
-	var result []QuoteURL
-	for rows.Next() {
-		var u QuoteURL
-		if err := rows.Scan(&u.ID, &u.QuoteID, &u.OrganizationID, &u.Label, &u.Href, &u.Accepted, &u.CatalogProductID, &u.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan url: %w", err)
-		}
-		result = append(result, u)
+
+	result := make([]QuoteURL, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, quoteURLFromModel(row))
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetAttachmentsByQuoteIDNoOrg retrieves all attachments for a quote without org scoping (for public/PDF access).
 func (r *Repository) GetAttachmentsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UUID) ([]QuoteAttachment, error) {
-	query := `SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
-		FROM RAC_quote_attachments WHERE quote_id = $1 ORDER BY sort_order ASC`
-	rows, err := r.pool.Query(ctx, query, quoteID)
+	rows, err := r.queries.ListQuoteAttachmentsByQuoteIDNoOrg(ctx, toPgUUID(quoteID))
 	if err != nil {
 		return nil, fmt.Errorf("query attachments: %w", err)
 	}
-	defer rows.Close()
-	var result []QuoteAttachment
-	for rows.Next() {
-		var a QuoteAttachment
-		if err := rows.Scan(&a.ID, &a.QuoteID, &a.OrganizationID, &a.Filename, &a.FileKey, &a.Source, &a.CatalogProductID, &a.Enabled, &a.SortOrder, &a.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan attachment: %w", err)
-		}
-		result = append(result, a)
+
+	result := make([]QuoteAttachment, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, quoteAttachmentFromModel(row))
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetURLsByQuoteIDNoOrg retrieves all URLs for a quote without org scoping (for public access).
 func (r *Repository) GetURLsByQuoteIDNoOrg(ctx context.Context, quoteID uuid.UUID) ([]QuoteURL, error) {
-	query := `SELECT id, quote_id, organization_id, label, href, accepted, catalog_product_id, created_at
-		FROM RAC_quote_urls WHERE quote_id = $1 ORDER BY created_at ASC`
-	rows, err := r.pool.Query(ctx, query, quoteID)
+	rows, err := r.queries.ListQuoteURLsByQuoteIDNoOrg(ctx, toPgUUID(quoteID))
 	if err != nil {
 		return nil, fmt.Errorf("query urls: %w", err)
 	}
-	defer rows.Close()
-	var result []QuoteURL
-	for rows.Next() {
-		var u QuoteURL
-		if err := rows.Scan(&u.ID, &u.QuoteID, &u.OrganizationID, &u.Label, &u.Href, &u.Accepted, &u.CatalogProductID, &u.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan url: %w", err)
-		}
-		result = append(result, u)
+
+	result := make([]QuoteURL, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, quoteURLFromModel(row))
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetAttachmentByID returns a single attachment by ID, scoped to quote + org.
 func (r *Repository) GetAttachmentByID(ctx context.Context, attachmentID, quoteID, orgID uuid.UUID) (*QuoteAttachment, error) {
-	query := `SELECT id, quote_id, organization_id, filename, file_key, source, catalog_product_id, enabled, sort_order, created_at
-		FROM "RAC_quote_attachments" WHERE id = $1 AND quote_id = $2 AND organization_id = $3`
-
-	var a QuoteAttachment
-	err := r.pool.QueryRow(ctx, query, attachmentID, quoteID, orgID).Scan(
-		&a.ID, &a.QuoteID, &a.OrganizationID, &a.Filename, &a.FileKey,
-		&a.Source, &a.CatalogProductID, &a.Enabled, &a.SortOrder, &a.CreatedAt,
-	)
+	row, err := r.queries.GetQuoteAttachmentByID(ctx, quotesdb.GetQuoteAttachmentByIDParams{
+		ID:             toPgUUID(attachmentID),
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound("attachment not found")
 		}
 		return nil, fmt.Errorf("get attachment by id: %w", err)
 	}
-	return &a, nil
+	attachment := quoteAttachmentFromModel(row)
+	return &attachment, nil
 }
-
-// ── Sorting Helpers ───────────────────────────────────────────────────────────
 
 func resolveSortBy(sortBy string) (string, error) {
 	if sortBy == "" {
@@ -1665,16 +1262,429 @@ func resolveSortOrder(sortOrder string) (string, error) {
 	}
 }
 
-func nullable[T any](value *T) interface{} {
-	if value == nil {
-		return nil
+func searchText(value string) pgtype.Text {
+	if value == "" {
+		return pgtype.Text{}
 	}
-	return *value
+	return pgtype.Text{String: "%" + value + "%", Valid: true}
 }
 
-func optionalSearchParam(value string) interface{} {
-	if value == "" {
+func quoteFromGetByIDRow(row quotesdb.GetQuoteByIDRow) Quote {
+	return Quote{
+		ID:                         uuid.UUID(row.ID.Bytes),
+		OrganizationID:             uuid.UUID(row.OrganizationID.Bytes),
+		LeadID:                     uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:              optionalUUID(row.LeadServiceID),
+		CreatedByID:                optionalUUID(row.CreatedByID),
+		CreatedByFirstName:         optionalString(row.FirstName),
+		CreatedByLastName:          optionalString(row.LastName),
+		CreatedByEmail:             optionalString(row.Email),
+		CustomerFirstName:          optionalString(row.ConsumerFirstName),
+		CustomerLastName:           optionalString(row.ConsumerLastName),
+		CustomerPhone:              optionalString(row.ConsumerPhone),
+		CustomerEmail:              optionalString(row.ConsumerEmail),
+		CustomerAddressStreet:      optionalString(row.AddressStreet),
+		CustomerAddressHouseNumber: optionalString(row.AddressHouseNumber),
+		CustomerAddressZipCode:     optionalString(row.AddressZipCode),
+		CustomerAddressCity:        optionalString(row.AddressCity),
+		QuoteNumber:                row.QuoteNumber,
+		Status:                     string(row.Status),
+		PricingMode:                row.PricingMode,
+		DiscountType:               row.DiscountType,
+		DiscountValue:              row.DiscountValue,
+		SubtotalCents:              row.SubtotalCents,
+		DiscountAmountCents:        row.DiscountAmountCents,
+		TaxTotalCents:              row.TaxTotalCents,
+		TotalCents:                 row.TotalCents,
+		ValidUntil:                 optionalTime(row.ValidUntil),
+		Notes:                      optionalString(row.Notes),
+		PublicToken:                optionalString(row.PublicToken),
+		PublicTokenExpAt:           optionalTime(row.PublicTokenExpiresAt),
+		PreviewToken:               optionalString(row.PreviewToken),
+		PreviewTokenExpAt:          optionalTime(row.PreviewTokenExpiresAt),
+		ViewedAt:                   optionalTime(row.ViewedAt),
+		AcceptedAt:                 optionalTime(row.AcceptedAt),
+		RejectedAt:                 optionalTime(row.RejectedAt),
+		RejectionReason:            optionalString(row.RejectionReason),
+		SignatureName:              optionalString(row.SignatureName),
+		SignatureData:              optionalString(row.SignatureData),
+		SignatureIP:                optionalString(row.SignatureIp),
+		PDFFileKey:                 optionalString(row.PdfFileKey),
+		FinancingDisclaimer:        row.FinancingDisclaimer,
+		CreatedAt:                  timeFromPg(row.CreatedAt),
+		UpdatedAt:                  timeFromPg(row.UpdatedAt),
+	}
+}
+
+func quoteFromLatestNonDraftRow(row quotesdb.GetLatestNonDraftByLeadRow) Quote {
+	return Quote{
+		ID:             uuid.UUID(row.ID.Bytes),
+		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+		LeadID:         uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:  optionalUUID(row.LeadServiceID),
+		QuoteNumber:    row.QuoteNumber,
+		Status:         string(row.Status),
+		TotalCents:     row.TotalCents,
+		PublicToken:    optionalString(row.PublicToken),
+		PDFFileKey:     optionalString(row.PdfFileKey),
+	}
+}
+
+func quoteFromPublicTokenRow(row quotesdb.GetQuoteByPublicTokenRow) Quote {
+	return Quote{
+		ID:                  uuid.UUID(row.ID.Bytes),
+		OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
+		LeadID:              uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:       optionalUUID(row.LeadServiceID),
+		QuoteNumber:         row.QuoteNumber,
+		Status:              string(row.Status),
+		PricingMode:         row.PricingMode,
+		DiscountType:        row.DiscountType,
+		DiscountValue:       row.DiscountValue,
+		SubtotalCents:       row.SubtotalCents,
+		DiscountAmountCents: row.DiscountAmountCents,
+		TaxTotalCents:       row.TaxTotalCents,
+		TotalCents:          row.TotalCents,
+		ValidUntil:          optionalTime(row.ValidUntil),
+		Notes:               optionalString(row.Notes),
+		PublicToken:         optionalString(row.PublicToken),
+		PublicTokenExpAt:    optionalTime(row.PublicTokenExpiresAt),
+		PreviewToken:        optionalString(row.PreviewToken),
+		PreviewTokenExpAt:   optionalTime(row.PreviewTokenExpiresAt),
+		ViewedAt:            optionalTime(row.ViewedAt),
+		AcceptedAt:          optionalTime(row.AcceptedAt),
+		RejectedAt:          optionalTime(row.RejectedAt),
+		RejectionReason:     optionalString(row.RejectionReason),
+		SignatureName:       optionalString(row.SignatureName),
+		SignatureData:       optionalString(row.SignatureData),
+		SignatureIP:         optionalString(row.SignatureIp),
+		PDFFileKey:          optionalString(row.PdfFileKey),
+		FinancingDisclaimer: row.FinancingDisclaimer,
+		CreatedAt:           timeFromPg(row.CreatedAt),
+		UpdatedAt:           timeFromPg(row.UpdatedAt),
+	}
+}
+
+func quoteFromTokenRow(row quotesdb.GetQuoteByTokenRow) Quote {
+	return Quote{
+		ID:                  uuid.UUID(row.ID.Bytes),
+		OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
+		LeadID:              uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:       optionalUUID(row.LeadServiceID),
+		QuoteNumber:         row.QuoteNumber,
+		Status:              string(row.Status),
+		PricingMode:         row.PricingMode,
+		DiscountType:        row.DiscountType,
+		DiscountValue:       row.DiscountValue,
+		SubtotalCents:       row.SubtotalCents,
+		DiscountAmountCents: row.DiscountAmountCents,
+		TaxTotalCents:       row.TaxTotalCents,
+		TotalCents:          row.TotalCents,
+		ValidUntil:          optionalTime(row.ValidUntil),
+		Notes:               optionalString(row.Notes),
+		PublicToken:         optionalString(row.PublicToken),
+		PublicTokenExpAt:    optionalTime(row.PublicTokenExpiresAt),
+		PreviewToken:        optionalString(row.PreviewToken),
+		PreviewTokenExpAt:   optionalTime(row.PreviewTokenExpiresAt),
+		ViewedAt:            optionalTime(row.ViewedAt),
+		AcceptedAt:          optionalTime(row.AcceptedAt),
+		RejectedAt:          optionalTime(row.RejectedAt),
+		RejectionReason:     optionalString(row.RejectionReason),
+		SignatureName:       optionalString(row.SignatureName),
+		SignatureData:       optionalString(row.SignatureData),
+		SignatureIP:         optionalString(row.SignatureIp),
+		PDFFileKey:          optionalString(row.PdfFileKey),
+		FinancingDisclaimer: row.FinancingDisclaimer,
+		CreatedAt:           timeFromPg(row.CreatedAt),
+		UpdatedAt:           timeFromPg(row.UpdatedAt),
+	}
+}
+
+func quoteFromListRow(row quotesdb.ListQuotesRow) Quote {
+	return Quote{
+		ID:                         uuid.UUID(row.ID.Bytes),
+		OrganizationID:             uuid.UUID(row.OrganizationID.Bytes),
+		LeadID:                     uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:              optionalUUID(row.LeadServiceID),
+		CreatedByID:                optionalUUID(row.CreatedByID),
+		CreatedByFirstName:         optionalString(row.FirstName),
+		CreatedByLastName:          optionalString(row.LastName),
+		CreatedByEmail:             optionalString(row.Email),
+		CustomerFirstName:          optionalString(row.ConsumerFirstName),
+		CustomerLastName:           optionalString(row.ConsumerLastName),
+		CustomerPhone:              optionalString(row.ConsumerPhone),
+		CustomerEmail:              optionalString(row.ConsumerEmail),
+		CustomerAddressStreet:      optionalString(row.AddressStreet),
+		CustomerAddressHouseNumber: optionalString(row.AddressHouseNumber),
+		CustomerAddressZipCode:     optionalString(row.AddressZipCode),
+		CustomerAddressCity:        optionalString(row.AddressCity),
+		QuoteNumber:                row.QuoteNumber,
+		Status:                     string(row.Status),
+		PricingMode:                row.PricingMode,
+		DiscountType:               row.DiscountType,
+		DiscountValue:              row.DiscountValue,
+		SubtotalCents:              row.SubtotalCents,
+		DiscountAmountCents:        row.DiscountAmountCents,
+		TaxTotalCents:              row.TaxTotalCents,
+		TotalCents:                 row.TotalCents,
+		ValidUntil:                 optionalTime(row.ValidUntil),
+		Notes:                      optionalString(row.Notes),
+		PublicToken:                optionalString(row.PublicToken),
+		PublicTokenExpAt:           optionalTime(row.PublicTokenExpiresAt),
+		PreviewToken:               optionalString(row.PreviewToken),
+		PreviewTokenExpAt:          optionalTime(row.PreviewTokenExpiresAt),
+		ViewedAt:                   optionalTime(row.ViewedAt),
+		AcceptedAt:                 optionalTime(row.AcceptedAt),
+		RejectedAt:                 optionalTime(row.RejectedAt),
+		RejectionReason:            optionalString(row.RejectionReason),
+		SignatureName:              optionalString(row.SignatureName),
+		SignatureData:              optionalString(row.SignatureData),
+		SignatureIP:                optionalString(row.SignatureIp),
+		PDFFileKey:                 optionalString(row.PdfFileKey),
+		FinancingDisclaimer:        row.FinancingDisclaimer,
+		CreatedAt:                  timeFromPg(row.CreatedAt),
+		UpdatedAt:                  timeFromPg(row.UpdatedAt),
+	}
+}
+
+func quoteItemFromListRow(row quotesdb.ListQuoteItemsByQuoteIDRow) (QuoteItem, error) {
+	return quoteItemSnapshot{
+		id:               row.ID,
+		quoteID:          row.QuoteID,
+		organizationID:   row.OrganizationID,
+		title:            row.Title,
+		description:      row.Description,
+		quantity:         row.Quantity,
+		quantityNumeric:  row.QuantityNumeric,
+		unitPriceCents:   row.UnitPriceCents,
+		taxRate:          row.TaxRate,
+		isOptional:       row.IsOptional,
+		isSelected:       row.IsSelected,
+		sortOrder:        row.SortOrder,
+		catalogProductID: row.CatalogProductID,
+		createdAt:        row.CreatedAt,
+	}.toModel()
+}
+
+func quoteItemFromListIDsRow(row quotesdb.ListQuoteItemsByQuoteIDsRow) (QuoteItem, error) {
+	return quoteItemSnapshot{
+		id:               row.ID,
+		quoteID:          row.QuoteID,
+		organizationID:   row.OrganizationID,
+		title:            row.Title,
+		description:      row.Description,
+		quantity:         row.Quantity,
+		quantityNumeric:  row.QuantityNumeric,
+		unitPriceCents:   row.UnitPriceCents,
+		taxRate:          row.TaxRate,
+		isOptional:       row.IsOptional,
+		isSelected:       row.IsSelected,
+		sortOrder:        row.SortOrder,
+		catalogProductID: row.CatalogProductID,
+		createdAt:        row.CreatedAt,
+	}.toModel()
+}
+
+func quoteItemFromGetRow(row quotesdb.GetQuoteItemByIDRow) (QuoteItem, error) {
+	return quoteItemSnapshot{
+		id:               row.ID,
+		quoteID:          row.QuoteID,
+		organizationID:   row.OrganizationID,
+		title:            row.Title,
+		description:      row.Description,
+		quantity:         row.Quantity,
+		quantityNumeric:  row.QuantityNumeric,
+		unitPriceCents:   row.UnitPriceCents,
+		taxRate:          row.TaxRate,
+		isOptional:       row.IsOptional,
+		isSelected:       row.IsSelected,
+		sortOrder:        row.SortOrder,
+		catalogProductID: row.CatalogProductID,
+		createdAt:        row.CreatedAt,
+	}.toModel()
+}
+
+func quoteItemFromNoOrgRow(row quotesdb.ListQuoteItemsByQuoteIDNoOrgRow) (QuoteItem, error) {
+	return quoteItemSnapshot{
+		id:               row.ID,
+		quoteID:          row.QuoteID,
+		organizationID:   row.OrganizationID,
+		title:            row.Title,
+		description:      row.Description,
+		quantity:         row.Quantity,
+		quantityNumeric:  row.QuantityNumeric,
+		unitPriceCents:   row.UnitPriceCents,
+		taxRate:          row.TaxRate,
+		isOptional:       row.IsOptional,
+		isSelected:       row.IsSelected,
+		sortOrder:        row.SortOrder,
+		catalogProductID: row.CatalogProductID,
+		createdAt:        row.CreatedAt,
+	}.toModel()
+}
+
+type quoteItemSnapshot struct {
+	id               pgtype.UUID
+	quoteID          pgtype.UUID
+	organizationID   pgtype.UUID
+	title            string
+	description      string
+	quantity         string
+	quantityNumeric  pgtype.Numeric
+	unitPriceCents   int64
+	taxRate          int32
+	isOptional       bool
+	isSelected       bool
+	sortOrder        int32
+	catalogProductID pgtype.UUID
+	createdAt        pgtype.Timestamptz
+}
+
+func (snapshot quoteItemSnapshot) toModel() (QuoteItem, error) {
+	quantityValue, err := numericFloat64(snapshot.quantityNumeric)
+	if err != nil {
+		return QuoteItem{}, err
+	}
+
+	return QuoteItem{
+		ID:               uuid.UUID(snapshot.id.Bytes),
+		QuoteID:          uuid.UUID(snapshot.quoteID.Bytes),
+		OrganizationID:   uuid.UUID(snapshot.organizationID.Bytes),
+		Title:            snapshot.title,
+		Description:      snapshot.description,
+		Quantity:         snapshot.quantity,
+		QuantityNumeric:  quantityValue,
+		UnitPriceCents:   snapshot.unitPriceCents,
+		TaxRateBps:       int(snapshot.taxRate),
+		IsOptional:       snapshot.isOptional,
+		IsSelected:       snapshot.isSelected,
+		SortOrder:        int(snapshot.sortOrder),
+		CatalogProductID: optionalUUID(snapshot.catalogProductID),
+		CreatedAt:        timeFromPg(snapshot.createdAt),
+	}, nil
+}
+
+func quoteAnnotationFromModel(row quotesdb.RacQuoteAnnotation) QuoteAnnotation {
+	return QuoteAnnotation{
+		ID:             uuid.UUID(row.ID.Bytes),
+		QuoteItemID:    uuid.UUID(row.QuoteItemID.Bytes),
+		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+		AuthorType:     row.AuthorType,
+		AuthorID:       optionalUUID(row.AuthorID),
+		Text:           row.Text,
+		IsResolved:     row.IsResolved,
+		CreatedAt:      timeFromPg(row.CreatedAt),
+	}
+}
+
+func quoteActivityFromModel(row quotesdb.RacQuoteActivity) QuoteActivity {
+	return QuoteActivity{
+		ID:             uuid.UUID(row.ID.Bytes),
+		QuoteID:        uuid.UUID(row.QuoteID.Bytes),
+		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+		EventType:      row.EventType,
+		Message:        row.Message,
+		Metadata:       row.Metadata,
+		CreatedAt:      timeFromPg(row.CreatedAt),
+	}
+}
+
+func quoteAttachmentFromModel(row quotesdb.RacQuoteAttachment) QuoteAttachment {
+	return QuoteAttachment{
+		ID:               uuid.UUID(row.ID.Bytes),
+		QuoteID:          uuid.UUID(row.QuoteID.Bytes),
+		OrganizationID:   uuid.UUID(row.OrganizationID.Bytes),
+		Filename:         row.Filename,
+		FileKey:          row.FileKey,
+		Source:           string(row.Source),
+		CatalogProductID: optionalUUID(row.CatalogProductID),
+		Enabled:          row.Enabled,
+		SortOrder:        int(row.SortOrder),
+		CreatedAt:        timeFromPg(row.CreatedAt),
+	}
+}
+
+func quoteURLFromModel(row quotesdb.RacQuoteUrl) QuoteURL {
+	return QuoteURL{
+		ID:               uuid.UUID(row.ID.Bytes),
+		QuoteID:          uuid.UUID(row.QuoteID.Bytes),
+		OrganizationID:   uuid.UUID(row.OrganizationID.Bytes),
+		Label:            row.Label,
+		Href:             row.Href,
+		Accepted:         row.Accepted,
+		CatalogProductID: optionalUUID(row.CatalogProductID),
+		CreatedAt:        timeFromPg(row.CreatedAt),
+	}
+}
+
+func generateQuoteJobFromModel(row quotesdb.RacAiQuoteJob) GenerateQuoteJob {
+	return GenerateQuoteJob{
+		ID:              uuid.UUID(row.ID.Bytes),
+		OrganizationID:  uuid.UUID(row.OrganizationID.Bytes),
+		UserID:          uuid.UUID(row.UserID.Bytes),
+		LeadID:          uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:   uuid.UUID(row.LeadServiceID.Bytes),
+		Status:          row.Status,
+		Step:            row.Step,
+		ProgressPercent: int(row.ProgressPercent),
+		Error:           optionalString(row.Error),
+		QuoteID:         optionalUUID(row.QuoteID),
+		QuoteNumber:     optionalString(row.QuoteNumber),
+		ItemCount:       optionalInt(row.ItemCount),
+		StartedAt:       timeFromPg(row.StartedAt),
+		UpdatedAt:       timeFromPg(row.UpdatedAt),
+		FinishedAt:      optionalTime(row.FinishedAt),
+	}
+}
+
+func toPgUUIDSlice(values []uuid.UUID) []pgtype.UUID {
+	result := make([]pgtype.UUID, 0, len(values))
+	for _, value := range values {
+		result = append(result, toPgUUID(value))
+	}
+	return result
+}
+
+func toPgInt4Ptr(value *int) pgtype.Int4 {
+	if value == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: int32(*value), Valid: true}
+}
+
+func toPgInt8Ptr(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *value, Valid: true}
+}
+
+func toPgNumericValue(value float64) pgtype.Numeric {
+	var numeric pgtype.Numeric
+	if err := numeric.Scan(value); err != nil {
+		return pgtype.Numeric{}
+	}
+	return numeric
+}
+
+func optionalInt(value pgtype.Int4) *int {
+	if !value.Valid {
 		return nil
 	}
-	return "%" + value + "%"
+	number := int(value.Int32)
+	return &number
+}
+
+func numericFloat64(value pgtype.Numeric) (float64, error) {
+	if !value.Valid {
+		return 0, nil
+	}
+	floatValue, err := value.Float64Value()
+	if err != nil {
+		return 0, err
+	}
+	if !floatValue.Valid {
+		return 0, nil
+	}
+	return floatValue.Float64, nil
 }

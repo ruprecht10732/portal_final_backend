@@ -7,10 +7,12 @@ import (
 	"strings"
 	"time"
 
+	partnersdb "portal_final_backend/internal/partners/db"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // PartnerOffer represents a job offer to a vakman partner.
@@ -30,8 +32,8 @@ type PartnerOffer struct {
 	AcceptedAt             *time.Time
 	RejectedAt             *time.Time
 	RejectionReason        *string
-	InspectionAvailability []byte // Raw JSONB
-	JobAvailability        []byte // Raw JSONB
+	InspectionAvailability []byte
+	JobAvailability        []byte
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -78,80 +80,177 @@ const offerNotFoundMsg = "offer not found"
 
 var deletableOfferStatuses = []string{"pending", "sent", "expired"}
 
+func optionalInt(value pgtype.Int4) *int {
+	if !value.Valid {
+		return nil
+	}
+	n := int(value.Int32)
+	return &n
+}
+
+func optionalNonEmptyString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	text := value
+	return &text
+}
+
+func optionalUnknownString(value interface{}) *string {
+	switch typed := value.(type) {
+	case string:
+		return optionalNonEmptyString(typed)
+	case []byte:
+		return optionalNonEmptyString(string(typed))
+	default:
+		return nil
+	}
+}
+
+func optionalFilterText(value string) pgtype.Text {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: "%" + trimmed + "%", Valid: true}
+}
+
+func optionalExactText(value string) pgtype.Text {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: trimmed, Valid: true}
+}
+
+func optionalFilterUUID(value uuid.UUID) pgtype.UUID {
+	if value == uuid.Nil {
+		return pgtype.UUID{}
+	}
+	return toPgUUID(value)
+}
+
+type offerSnapshot struct {
+	ID                     pgtype.UUID
+	OrganizationID         pgtype.UUID
+	PartnerID              pgtype.UUID
+	LeadServiceID          pgtype.UUID
+	PublicToken            string
+	ExpiresAt              pgtype.Timestamptz
+	PricingSource          string
+	CustomerPriceCents     int64
+	VakmanPriceCents       int64
+	JobSummaryShort        pgtype.Text
+	BuilderSummary         pgtype.Text
+	Status                 string
+	AcceptedAt             pgtype.Timestamptz
+	RejectedAt             pgtype.Timestamptz
+	RejectionReason        pgtype.Text
+	InspectionAvailability []byte
+	JobAvailability        []byte
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
+func offerFromSnapshot(data offerSnapshot) PartnerOffer {
+	return PartnerOffer{
+		ID:                     uuid.UUID(data.ID.Bytes),
+		OrganizationID:         uuid.UUID(data.OrganizationID.Bytes),
+		PartnerID:              uuid.UUID(data.PartnerID.Bytes),
+		LeadServiceID:          uuid.UUID(data.LeadServiceID.Bytes),
+		PublicToken:            data.PublicToken,
+		ExpiresAt:              data.ExpiresAt.Time,
+		PricingSource:          data.PricingSource,
+		CustomerPriceCents:     data.CustomerPriceCents,
+		VakmanPriceCents:       data.VakmanPriceCents,
+		JobSummaryShort:        optionalString(data.JobSummaryShort),
+		BuilderSummary:         optionalString(data.BuilderSummary),
+		Status:                 data.Status,
+		AcceptedAt:             optionalTime(data.AcceptedAt),
+		RejectedAt:             optionalTime(data.RejectedAt),
+		RejectionReason:        optionalString(data.RejectionReason),
+		InspectionAvailability: data.InspectionAvailability,
+		JobAvailability:        data.JobAvailability,
+		CreatedAt:              data.CreatedAt.Time,
+		UpdatedAt:              data.UpdatedAt.Time,
+	}
+}
+
+type offerContext struct {
+	Offer              PartnerOffer
+	PartnerName        string
+	OrganizationName   string
+	LeadCity           string
+	ServiceType        string
+	ServiceTypeID      pgtype.UUID
+	LeadPostcode4      pgtype.Text
+	LeadBuurtcode      pgtype.Text
+	LeadEnergyBouwjaar pgtype.Int4
+	UrgencyLevel       interface{}
+}
+
+func offerWithContext(data offerContext) PartnerOfferWithContext {
+	result := PartnerOfferWithContext{
+		PartnerOffer:       data.Offer,
+		PartnerName:        data.PartnerName,
+		OrganizationName:   data.OrganizationName,
+		LeadCity:           data.LeadCity,
+		ServiceType:        data.ServiceType,
+		LeadPostcode4:      optionalString(data.LeadPostcode4),
+		LeadBuurtcode:      optionalString(data.LeadBuurtcode),
+		LeadEnergyBouwjaar: optionalInt(data.LeadEnergyBouwjaar),
+		UrgencyLevel:       optionalUnknownString(data.UrgencyLevel),
+	}
+	if data.ServiceTypeID.Valid {
+		result.ServiceTypeID = uuid.UUID(data.ServiceTypeID.Bytes)
+	}
+	return result
+}
+
 // CreateOffer inserts a new partner offer.
 func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (PartnerOffer, error) {
-	query := `
-		INSERT INTO RAC_partner_offers (
-			organization_id, partner_id, lead_service_id, public_token, expires_at,
-			pricing_source, customer_price_cents, vakman_price_cents, job_summary_short, builder_summary, status
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
-		RETURNING id, status, created_at, updated_at`
-
-	err := r.pool.QueryRow(ctx, query,
-		offer.OrganizationID, offer.PartnerID, offer.LeadServiceID,
-		offer.PublicToken, offer.ExpiresAt,
-		offer.PricingSource, offer.CustomerPriceCents, offer.VakmanPriceCents, offer.JobSummaryShort, offer.BuilderSummary,
-	).Scan(&offer.ID, &offer.Status, &offer.CreatedAt, &offer.UpdatedAt)
+	row, err := r.queries.CreatePartnerOffer(ctx, partnersdb.CreatePartnerOfferParams{
+		OrganizationID:     toPgUUID(offer.OrganizationID),
+		PartnerID:          toPgUUID(offer.PartnerID),
+		LeadServiceID:      toPgUUID(offer.LeadServiceID),
+		PublicToken:        offer.PublicToken,
+		ExpiresAt:          toPgTimestamp(offer.ExpiresAt),
+		PricingSource:      partnersdb.PricingSource(offer.PricingSource),
+		CustomerPriceCents: offer.CustomerPriceCents,
+		VakmanPriceCents:   offer.VakmanPriceCents,
+		JobSummaryShort:    toPgText(offer.JobSummaryShort),
+		BuilderSummary:     toPgText(offer.BuilderSummary),
+	})
 	if err != nil {
 		return PartnerOffer{}, fmt.Errorf("create partner offer: %w", err)
 	}
 
-	return offer, nil
+	return offerFromSnapshot(offerSnapshot{
+		ID:                     row.ID,
+		OrganizationID:         row.OrganizationID,
+		PartnerID:              row.PartnerID,
+		LeadServiceID:          row.LeadServiceID,
+		PublicToken:            row.PublicToken,
+		ExpiresAt:              row.ExpiresAt,
+		PricingSource:          row.PricingSource,
+		CustomerPriceCents:     row.CustomerPriceCents,
+		VakmanPriceCents:       row.VakmanPriceCents,
+		JobSummaryShort:        row.JobSummaryShort,
+		BuilderSummary:         row.BuilderSummary,
+		Status:                 row.Status,
+		AcceptedAt:             row.AcceptedAt,
+		RejectedAt:             row.RejectedAt,
+		RejectionReason:        row.RejectionReason,
+		InspectionAvailability: row.InspectionAvailability,
+		JobAvailability:        row.JobAvailability,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
+	}), nil
 }
 
 // GetOfferByToken retrieves an offer by its public token with context info.
 func (r *Repository) GetOfferByToken(ctx context.Context, token string) (PartnerOfferWithContext, error) {
-	query := `
-		SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
-		       o.public_token, o.expires_at,
-		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
-		       o.job_summary_short,
-		       o.builder_summary,
-		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
-		       o.inspection_availability, o.job_availability,
-		       o.created_at, o.updated_at,
-		       p.business_name,
-		       org.name,
-		       l.address_city,
-		       st.name AS service_type,
-		       l.lead_enrichment_postcode4,
-		       l.lead_enrichment_buurtcode,
-		       l.energy_bouwjaar,
-		       ai.urgency_level
-		FROM RAC_partner_offers o
-		JOIN RAC_partners p ON p.id = o.partner_id
-		JOIN RAC_organizations org ON org.id = o.organization_id
-		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
-		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		JOIN RAC_leads l ON l.id = ls.lead_id
-		LEFT JOIN LATERAL (
-			SELECT urgency_level
-			FROM RAC_lead_ai_analysis
-			WHERE lead_service_id = ls.id
-			ORDER BY created_at DESC
-			LIMIT 1
-		) ai ON true
-		WHERE o.public_token = $1`
-
-	var oc PartnerOfferWithContext
-	err := r.pool.QueryRow(ctx, query, token).Scan(
-		&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
-		&oc.PublicToken, &oc.ExpiresAt,
-		&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
-		&oc.JobSummaryShort,
-		&oc.BuilderSummary,
-		&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
-		&oc.InspectionAvailability, &oc.JobAvailability,
-		&oc.CreatedAt, &oc.UpdatedAt,
-		&oc.PartnerName,
-		&oc.OrganizationName,
-		&oc.LeadCity,
-		&oc.ServiceType,
-		&oc.LeadPostcode4,
-		&oc.LeadBuurtcode,
-		&oc.LeadEnergyBouwjaar,
-		&oc.UrgencyLevel,
-	)
+	row, err := r.queries.GetPartnerOfferByTokenWithContext(ctx, token)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
 	}
@@ -159,32 +258,17 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		return PartnerOfferWithContext{}, fmt.Errorf("get offer by token: %w", err)
 	}
 
-	return oc, nil
+	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+
+	return offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, LeadPostcode4: row.LeadEnrichmentPostcode4, LeadBuurtcode: row.LeadEnrichmentBuurtcode, LeadEnergyBouwjaar: row.EnergyBouwjaar, UrgencyLevel: row.UrgencyLevel}), nil
 }
 
 // GetOfferByID retrieves an offer by its ID within a tenant.
 func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organizationID uuid.UUID) (PartnerOffer, error) {
-	query := `
-		SELECT id, organization_id, partner_id, lead_service_id,
-		       public_token, expires_at,
-		       pricing_source, customer_price_cents, vakman_price_cents,
-		       job_summary_short,
-		       builder_summary,
-		       status, accepted_at, rejected_at, rejection_reason,
-		       created_at, updated_at
-		FROM RAC_partner_offers
-		WHERE id = $1 AND organization_id = $2`
-
-	var o PartnerOffer
-	err := r.pool.QueryRow(ctx, query, offerID, organizationID).Scan(
-		&o.ID, &o.OrganizationID, &o.PartnerID, &o.LeadServiceID,
-		&o.PublicToken, &o.ExpiresAt,
-		&o.PricingSource, &o.CustomerPriceCents, &o.VakmanPriceCents,
-		&o.JobSummaryShort,
-		&o.BuilderSummary,
-		&o.Status, &o.AcceptedAt, &o.RejectedAt, &o.RejectionReason,
-		&o.CreatedAt, &o.UpdatedAt,
-	)
+	row, err := r.queries.GetPartnerOfferByID(ctx, partnersdb.GetPartnerOfferByIDParams{
+		OfferID:        toPgUUID(offerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOffer{}, apperr.NotFound(offerNotFoundMsg)
 	}
@@ -192,24 +276,21 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 		return PartnerOffer{}, fmt.Errorf("get offer by id: %w", err)
 	}
 
-	return o, nil
+	return offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 // DeleteOffer deletes an offer within a tenant if it is still in a deletable state.
 // Accepted and rejected offers are intentionally not deletable.
 func (r *Repository) DeleteOffer(ctx context.Context, offerID uuid.UUID, organizationID uuid.UUID) error {
-	query := `
-		DELETE FROM RAC_partner_offers
-		WHERE id = $1
-		  AND organization_id = $2
-		  AND status = ANY($3::text[])`
-
-	cmd, err := r.pool.Exec(ctx, query, offerID, organizationID, deletableOfferStatuses)
+	rowsAffected, err := r.queries.DeletePartnerOffer(ctx, partnersdb.DeletePartnerOfferParams{
+		OfferID:        toPgUUID(offerID),
+		OrganizationID: toPgUUID(organizationID),
+		Statuses:       deletableOfferStatuses,
+	})
 	if err != nil {
 		return fmt.Errorf("delete offer: %w", err)
 	}
-	if cmd.RowsAffected() == 0 {
-		// Caller should have checked existence/status; this is a safety net for races.
+	if rowsAffected == 0 {
 		return apperr.Conflict("offer cannot be deleted")
 	}
 
@@ -218,85 +299,30 @@ func (r *Repository) DeleteOffer(ctx context.Context, offerID uuid.UUID, organiz
 
 // GetLeadServiceSummaryContext fetches non-PII data used to build offer summaries.
 func (r *Repository) GetLeadServiceSummaryContext(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (LeadServiceSummaryContext, error) {
-	query := `
-		SELECT ls.lead_id,
-		       st.name AS service_type,
-		       ai.urgency_level
-		FROM RAC_lead_services ls
-		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		LEFT JOIN LATERAL (
-			SELECT urgency_level
-			FROM RAC_lead_ai_analysis
-			WHERE lead_service_id = ls.id
-			ORDER BY created_at DESC
-			LIMIT 1
-		) ai ON true
-		WHERE ls.id = $1 AND ls.organization_id = $2`
-
-	var ctxData LeadServiceSummaryContext
-	if err := r.pool.QueryRow(ctx, query, leadServiceID, organizationID).Scan(&ctxData.LeadID, &ctxData.ServiceType, &ctxData.UrgencyLevel); err != nil {
+	row, err := r.queries.GetLeadServiceSummaryContext(ctx, partnersdb.GetLeadServiceSummaryContextParams{
+		LeadServiceID:  toPgUUID(leadServiceID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return LeadServiceSummaryContext{}, apperr.NotFound("lead service not found")
 		}
 		return LeadServiceSummaryContext{}, fmt.Errorf("get lead service summary context: %w", err)
 	}
 
-	return ctxData, nil
+	return LeadServiceSummaryContext{
+		LeadID:       uuid.UUID(row.LeadID.Bytes),
+		ServiceType:  row.ServiceType,
+		UrgencyLevel: optionalUnknownString(row.UrgencyLevel),
+	}, nil
 }
 
-// GetOfferByIDWithContext retrieves an offer by ID with display context (partner name, city, etc.).
+// GetOfferByIDWithContext retrieves an offer by ID with display context.
 func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.UUID, organizationID uuid.UUID) (PartnerOfferWithContext, error) {
-	query := `
-		SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
-		       o.public_token, o.expires_at,
-		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
-		       o.job_summary_short,
-		       o.builder_summary,
-		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
-		       o.inspection_availability, o.job_availability,
-		       o.created_at, o.updated_at,
-		       p.business_name,
-		       org.name,
-		       l.address_city,
-		       st.name AS service_type,
-		       l.lead_enrichment_postcode4,
-		       l.lead_enrichment_buurtcode,
-		       l.energy_bouwjaar,
-		       ai.urgency_level
-		FROM RAC_partner_offers o
-		JOIN RAC_partners p ON p.id = o.partner_id
-		JOIN RAC_organizations org ON org.id = o.organization_id
-		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
-		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		JOIN RAC_leads l ON l.id = ls.lead_id
-		LEFT JOIN LATERAL (
-			SELECT urgency_level
-			FROM RAC_lead_ai_analysis
-			WHERE lead_service_id = ls.id
-			ORDER BY created_at DESC
-			LIMIT 1
-		) ai ON true
-		WHERE o.id = $1 AND o.organization_id = $2`
-
-	var oc PartnerOfferWithContext
-	err := r.pool.QueryRow(ctx, query, offerID, organizationID).Scan(
-		&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
-		&oc.PublicToken, &oc.ExpiresAt,
-		&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
-		&oc.JobSummaryShort,
-		&oc.BuilderSummary,
-		&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
-		&oc.InspectionAvailability, &oc.JobAvailability,
-		&oc.CreatedAt, &oc.UpdatedAt,
-		&oc.PartnerName,
-		&oc.OrganizationName,
-		&oc.LeadCity,
-		&oc.ServiceType,
-		&oc.LeadPostcode4,
-		&oc.LeadBuurtcode,
-		&oc.LeadEnergyBouwjaar,
-		&oc.UrgencyLevel,
-	)
+	row, err := r.queries.GetPartnerOfferByIDWithContext(ctx, partnersdb.GetPartnerOfferByIDWithContextParams{
+		OfferID:        toPgUUID(offerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
 	}
@@ -304,62 +330,34 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		return PartnerOfferWithContext{}, fmt.Errorf("get offer by id with context: %w", err)
 	}
 
-	return oc, nil
+	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+
+	return offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, LeadPostcode4: row.LeadEnrichmentPostcode4, LeadBuurtcode: row.LeadEnrichmentBuurtcode, LeadEnergyBouwjaar: row.EnergyBouwjaar, UrgencyLevel: row.UrgencyLevel}), nil
 }
 
 // GetLatestQuoteItemsForService returns line items from the latest non-draft quote for a lead service.
 func (r *Repository) GetLatestQuoteItemsForService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]QuoteItemSummary, error) {
-	query := `
-		WITH latest_quote AS (
-			SELECT id
-			FROM RAC_quotes
-			WHERE lead_service_id = $1 AND organization_id = $2 AND status != 'Draft'
-			ORDER BY created_at DESC
-			LIMIT 1
-		)
-		SELECT qi.description, qi.quantity
-		FROM RAC_quote_items qi
-		JOIN latest_quote lq ON lq.id = qi.quote_id
-		WHERE qi.is_optional = false OR qi.is_selected = true
-		ORDER BY qi.sort_order ASC`
-
-	rows, err := r.pool.Query(ctx, query, leadServiceID, organizationID)
+	rows, err := r.queries.ListLatestQuoteItemsForService(ctx, partnersdb.ListLatestQuoteItemsForServiceParams{
+		LeadServiceID:  toPgUUID(leadServiceID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query quote items for service: %w", err)
 	}
-	defer rows.Close()
 
-	var items []QuoteItemSummary
-	for rows.Next() {
-		var it QuoteItemSummary
-		if err := rows.Scan(&it.Description, &it.Quantity); err != nil {
-			return nil, fmt.Errorf("scan quote item summary: %w", err)
-		}
-		items = append(items, it)
+	items := make([]QuoteItemSummary, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, QuoteItemSummary{Description: row.Description, Quantity: row.Quantity})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate quote item summaries: %w", err)
-	}
-
 	return items, nil
 }
 
 // GetQuoteForOffer retrieves the quote header needed for offer creation.
 func (r *Repository) GetQuoteForOffer(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID) (QuoteForOffer, error) {
-	query := `
-		SELECT id, organization_id, lead_id, lead_service_id, status, total_cents
-		FROM RAC_quotes
-		WHERE id = $1 AND organization_id = $2`
-
-	var q QuoteForOffer
-	err := r.pool.QueryRow(ctx, query, quoteID, organizationID).Scan(
-		&q.ID,
-		&q.OrganizationID,
-		&q.LeadID,
-		&q.LeadServiceID,
-		&q.Status,
-		&q.TotalCents,
-	)
+	row, err := r.queries.GetQuoteForPartnerOffer(ctx, partnersdb.GetQuoteForPartnerOfferParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return QuoteForOffer{}, apperr.NotFound("quote not found")
 	}
@@ -367,78 +365,47 @@ func (r *Repository) GetQuoteForOffer(ctx context.Context, quoteID uuid.UUID, or
 		return QuoteForOffer{}, fmt.Errorf("get quote for offer: %w", err)
 	}
 
-	return q, nil
+	return QuoteForOffer{
+		ID:             uuid.UUID(row.ID.Bytes),
+		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+		LeadID:         uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:  optionalUUID(row.LeadServiceID),
+		Status:         row.Status,
+		TotalCents:     row.TotalCents,
+	}, nil
 }
 
 // GetQuoteItemsForQuote returns selected/non-optional line items for a specific quote.
 func (r *Repository) GetQuoteItemsForQuote(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID) ([]QuoteItemSummary, error) {
-	query := `
-		SELECT qi.description, qi.quantity
-		FROM RAC_quote_items qi
-		WHERE qi.quote_id = $1 AND qi.organization_id = $2
-			AND (qi.is_optional = false OR qi.is_selected = true)
-		ORDER BY qi.sort_order ASC`
-
-	rows, err := r.pool.Query(ctx, query, quoteID, organizationID)
+	rows, err := r.queries.ListQuoteItemsForQuote(ctx, partnersdb.ListQuoteItemsForQuoteParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("query quote items for quote: %w", err)
 	}
-	defer rows.Close()
 
-	var items []QuoteItemSummary
-	for rows.Next() {
-		var it QuoteItemSummary
-		if err := rows.Scan(&it.Description, &it.Quantity); err != nil {
-			return nil, fmt.Errorf("scan quote item summary: %w", err)
-		}
-		items = append(items, it)
+	items := make([]QuoteItemSummary, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, QuoteItemSummary{Description: row.Description, Quantity: row.Quantity})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate quote item summaries: %w", err)
-	}
-
 	return items, nil
 }
 
 // ListOffersForService returns all offers for a given lead service.
 func (r *Repository) ListOffersForService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]PartnerOfferWithContext, error) {
-	query := `
-		SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
-		       o.public_token, o.expires_at,
-		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
-		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
-		       o.inspection_availability, o.job_availability,
-		       o.created_at, o.updated_at,
-		       p.business_name
-		FROM RAC_partner_offers o
-		JOIN RAC_partners p ON p.id = o.partner_id
-		WHERE o.lead_service_id = $1 AND o.organization_id = $2
-		ORDER BY o.created_at DESC`
-
-	rows, err := r.pool.Query(ctx, query, leadServiceID, organizationID)
+	rows, err := r.queries.ListPartnerOffersForService(ctx, partnersdb.ListPartnerOffersForServiceParams{
+		LeadServiceID:  toPgUUID(leadServiceID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list offers for service: %w", err)
 	}
-	defer rows.Close()
 
-	var offers []PartnerOfferWithContext
-	for rows.Next() {
-		var oc PartnerOfferWithContext
-		if err := rows.Scan(
-			&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
-			&oc.PublicToken, &oc.ExpiresAt,
-			&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
-			&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
-			&oc.InspectionAvailability, &oc.JobAvailability,
-			&oc.CreatedAt, &oc.UpdatedAt,
-			&oc.PartnerName,
-		); err != nil {
-			return nil, fmt.Errorf("scan offer: %w", err)
-		}
-		offers = append(offers, oc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate offers: %w", err)
+	offers := make([]PartnerOfferWithContext, 0, len(rows))
+	for _, row := range rows {
+		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+		offers = append(offers, PartnerOfferWithContext{PartnerOffer: offer, PartnerName: row.BusinessName})
 	}
 
 	return offers, nil
@@ -446,55 +413,18 @@ func (r *Repository) ListOffersForService(ctx context.Context, leadServiceID uui
 
 // ListOffersByPartner returns all offers for a given partner within a tenant.
 func (r *Repository) ListOffersByPartner(ctx context.Context, partnerID uuid.UUID, organizationID uuid.UUID) ([]PartnerOfferWithContext, error) {
-	query := `
-		SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
-		       o.public_token, o.expires_at,
-		       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
-		       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
-		       o.inspection_availability, o.job_availability,
-		       o.created_at, o.updated_at,
-		       p.business_name,
-		       org.name,
-		       l.address_city,
-		       st.name AS service_type,
-		       ls.service_type_id
-		FROM RAC_partner_offers o
-		JOIN RAC_partners p ON p.id = o.partner_id
-		JOIN RAC_organizations org ON org.id = o.organization_id
-		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
-		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-		JOIN RAC_leads l ON l.id = ls.lead_id
-		WHERE o.partner_id = $1 AND o.organization_id = $2
-		ORDER BY o.created_at DESC`
-
-	rows, err := r.pool.Query(ctx, query, partnerID, organizationID)
+	rows, err := r.queries.ListPartnerOffersByPartner(ctx, partnersdb.ListPartnerOffersByPartnerParams{
+		PartnerID:      toPgUUID(partnerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list offers by partner: %w", err)
 	}
-	defer rows.Close()
 
-	var offers []PartnerOfferWithContext
-	for rows.Next() {
-		var oc PartnerOfferWithContext
-		if err := rows.Scan(
-			&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
-			&oc.PublicToken, &oc.ExpiresAt,
-			&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
-			&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
-			&oc.InspectionAvailability, &oc.JobAvailability,
-			&oc.CreatedAt, &oc.UpdatedAt,
-			&oc.PartnerName,
-			&oc.OrganizationName,
-			&oc.LeadCity,
-			&oc.ServiceType,
-			&oc.ServiceTypeID,
-		); err != nil {
-			return nil, fmt.Errorf("scan partner offer: %w", err)
-		}
-		offers = append(offers, oc)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate partner offers: %w", err)
+	offers := make([]PartnerOfferWithContext, 0, len(rows))
+	for _, row := range rows {
+		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+		offers = append(offers, offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, ServiceTypeID: row.ServiceTypeID}))
 	}
 
 	return offers, nil
@@ -502,30 +432,20 @@ func (r *Repository) ListOffersByPartner(ctx context.Context, partnerID uuid.UUI
 
 // HasActiveOffer returns true if there is already a pending/sent offer for the lead service.
 func (r *Repository) HasActiveOffer(ctx context.Context, leadServiceID uuid.UUID) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS(
-		SELECT 1 FROM RAC_partner_offers
-		WHERE lead_service_id = $1 AND status IN ('pending', 'sent')
-	)`
-	if err := r.pool.QueryRow(ctx, query, leadServiceID).Scan(&exists); err != nil {
+	exists, err := r.queries.HasActivePartnerOffer(ctx, toPgUUID(leadServiceID))
+	if err != nil {
 		return false, fmt.Errorf("check active offer: %w", err)
 	}
 	return exists, nil
 }
 
 // AcceptOffer atomically accepts an offer and records availability.
-// The unique index idx_partner_offers_exclusive_acceptance prevents double-acceptance.
 func (r *Repository) AcceptOffer(ctx context.Context, offerID uuid.UUID, inspectionSlots []byte, jobSlots []byte) error {
-	query := `
-		UPDATE RAC_partner_offers
-		SET status = 'accepted',
-		    accepted_at = now(),
-		    inspection_availability = $2,
-		    job_availability = $3,
-		    updated_at = now()
-		WHERE id = $1 AND status IN ('pending', 'sent')`
-
-	tag, err := r.pool.Exec(ctx, query, offerID, inspectionSlots, jobSlots)
+	rowsAffected, err := r.queries.AcceptPartnerOffer(ctx, partnersdb.AcceptPartnerOfferParams{
+		InspectionSlots: inspectionSlots,
+		JobSlots:        jobSlots,
+		OfferID:         toPgUUID(offerID),
+	})
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "idx_partner_offers_exclusive_acceptance") {
@@ -533,7 +453,7 @@ func (r *Repository) AcceptOffer(ctx context.Context, offerID uuid.UUID, inspect
 		}
 		return fmt.Errorf("accept offer: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.Conflict("offer is not in a valid state to be accepted")
 	}
 
@@ -542,24 +462,14 @@ func (r *Repository) AcceptOffer(ctx context.Context, offerID uuid.UUID, inspect
 
 // RejectOffer marks an offer as rejected with an optional reason.
 func (r *Repository) RejectOffer(ctx context.Context, offerID uuid.UUID, reason string) error {
-	query := `
-		UPDATE RAC_partner_offers
-		SET status = 'rejected',
-		    rejected_at = now(),
-		    rejection_reason = $2,
-		    updated_at = now()
-		WHERE id = $1 AND status IN ('pending', 'sent')`
-
-	var reasonPtr *string
-	if reason != "" {
-		reasonPtr = &reason
-	}
-
-	tag, err := r.pool.Exec(ctx, query, offerID, reasonPtr)
+	rowsAffected, err := r.queries.RejectPartnerOffer(ctx, partnersdb.RejectPartnerOfferParams{
+		RejectionReason: optionalExactText(reason),
+		OfferID:         toPgUUID(offerID),
+	})
 	if err != nil {
 		return fmt.Errorf("reject offer: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.Conflict("offer is not in a valid state to be rejected")
 	}
 
@@ -567,38 +477,26 @@ func (r *Repository) RejectOffer(ctx context.Context, offerID uuid.UUID, reason 
 }
 
 // ExpireOffers marks all pending/sent offers past their expiry as expired.
-// Returns the expired offers for event publishing.
 func (r *Repository) ExpireOffers(ctx context.Context) ([]PartnerOffer, error) {
-	query := `
-		UPDATE RAC_partner_offers
-		SET status = 'expired', updated_at = now()
-		WHERE status IN ('pending', 'sent') AND expires_at < now()
-		RETURNING id, organization_id, partner_id, lead_service_id`
-
-	rows, err := r.pool.Query(ctx, query)
+	rows, err := r.queries.ExpirePartnerOffers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("expire offers: %w", err)
 	}
-	defer rows.Close()
 
-	var expired []PartnerOffer
-	for rows.Next() {
-		var o PartnerOffer
-		if err := rows.Scan(&o.ID, &o.OrganizationID, &o.PartnerID, &o.LeadServiceID); err != nil {
-			return nil, fmt.Errorf("scan expired offer: %w", err)
-		}
-		expired = append(expired, o)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate expired offers: %w", err)
+	expired := make([]PartnerOffer, 0, len(rows))
+	for _, row := range rows {
+		expired = append(expired, PartnerOffer{
+			ID:             uuid.UUID(row.ID.Bytes),
+			OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+			PartnerID:      uuid.UUID(row.PartnerID.Bytes),
+			LeadServiceID:  uuid.UUID(row.LeadServiceID.Bytes),
+		})
 	}
 
 	return expired, nil
 }
 
 // OfferListParams defines filters/sort/paging for the global offers overview.
-// NOTE: SortBy/SortOrder are validated at the transport layer, but we still
-// resolve them here to safe SQL fragments.
 type OfferListParams struct {
 	OrganizationID uuid.UUID
 	Search         string
@@ -640,41 +538,6 @@ func calcTotalPages(total int, pageSize int) int {
 	return (total + pageSize - 1) / pageSize
 }
 
-func buildOfferListWhere(params OfferListParams) (whereSQL string, args []interface{}, nextArg int) {
-	where := []string{"o.organization_id = $1"}
-	args = []interface{}{params.OrganizationID}
-	nextArg = 2
-
-	if strings.TrimSpace(params.Search) != "" {
-		search := "%" + strings.TrimSpace(params.Search) + "%"
-		where = append(where, fmt.Sprintf("(p.business_name ILIKE $%d OR st.name ILIKE $%d OR l.address_city ILIKE $%d)", nextArg, nextArg, nextArg))
-		args = append(args, search)
-		nextArg++
-	}
-	if strings.TrimSpace(params.Status) != "" {
-		where = append(where, fmt.Sprintf("o.status = $%d", nextArg))
-		args = append(args, strings.TrimSpace(params.Status))
-		nextArg++
-	}
-	if params.PartnerID != uuid.Nil {
-		where = append(where, fmt.Sprintf("o.partner_id = $%d", nextArg))
-		args = append(args, params.PartnerID)
-		nextArg++
-	}
-	if params.LeadServiceID != uuid.Nil {
-		where = append(where, fmt.Sprintf("o.lead_service_id = $%d", nextArg))
-		args = append(args, params.LeadServiceID)
-		nextArg++
-	}
-	if params.ServiceTypeID != uuid.Nil {
-		where = append(where, fmt.Sprintf("ls.service_type_id = $%d", nextArg))
-		args = append(args, params.ServiceTypeID)
-		nextArg++
-	}
-
-	return "WHERE " + strings.Join(where, " AND "), args, nextArg
-}
-
 // ListOffers returns a paginated list of offers across all partners in a tenant.
 func (r *Repository) ListOffers(ctx context.Context, params OfferListParams) (OfferListResult, error) {
 	sortCol, err := resolveOfferSortBy(params.SortBy)
@@ -688,74 +551,41 @@ func (r *Repository) ListOffers(ctx context.Context, params OfferListParams) (Of
 
 	page, pageSize, offset := normalizeOfferListPaging(params.Page, params.PageSize)
 
-	baseFrom := `
-FROM RAC_partner_offers o
-JOIN RAC_partners p ON p.id = o.partner_id
-JOIN RAC_organizations org ON org.id = o.organization_id
-JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
-JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
-JOIN RAC_leads l ON l.id = ls.lead_id
-`
-
-	whereSQL, args, argN := buildOfferListWhere(params)
-
-	var total int
-	countQuery := "SELECT COUNT(*) " + baseFrom + " " + whereSQL
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	count, err := r.queries.CountPartnerOffers(ctx, partnersdb.CountPartnerOffersParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Search:         optionalFilterText(params.Search),
+		Status:         optionalExactText(params.Status),
+		PartnerID:      optionalFilterUUID(params.PartnerID),
+		LeadServiceID:  optionalFilterUUID(params.LeadServiceID),
+		ServiceTypeID:  optionalFilterUUID(params.ServiceTypeID),
+	})
+	if err != nil {
 		return OfferListResult{}, fmt.Errorf("count offers: %w", err)
 	}
 
+	total := int(count)
 	totalPages := calcTotalPages(total, pageSize)
 
-	selectQuery := `
-SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
-       o.public_token, o.expires_at,
-       o.pricing_source, o.customer_price_cents, o.vakman_price_cents,
-       o.job_summary_short,
-       o.builder_summary,
-       o.status, o.accepted_at, o.rejected_at, o.rejection_reason,
-       o.inspection_availability, o.job_availability,
-       o.created_at, o.updated_at,
-       p.business_name,
-       org.name,
-       l.address_city,
-	st.name AS service_type,
-	ls.service_type_id
-` + baseFrom + " " + whereSQL + "\n" +
-		"ORDER BY " + sortCol + " " + orderBy + ", o.created_at DESC\n" +
-		fmt.Sprintf("LIMIT $%d OFFSET $%d", argN, argN+1)
-
-	args = append(args, pageSize, offset)
-	rows, err := r.pool.Query(ctx, selectQuery, args...)
+	rows, err := r.queries.ListPartnerOffers(ctx, partnersdb.ListPartnerOffersParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Search:         optionalFilterText(params.Search),
+		Status:         optionalExactText(params.Status),
+		PartnerID:      optionalFilterUUID(params.PartnerID),
+		LeadServiceID:  optionalFilterUUID(params.LeadServiceID),
+		ServiceTypeID:  optionalFilterUUID(params.ServiceTypeID),
+		SortBy:         sortCol,
+		SortOrder:      orderBy,
+		OffsetCount:    int32(offset),
+		LimitCount:     int32(pageSize),
+	})
 	if err != nil {
 		return OfferListResult{}, fmt.Errorf("list offers: %w", err)
 	}
-	defer rows.Close()
 
-	offers := make([]PartnerOfferWithContext, 0)
-	for rows.Next() {
-		var oc PartnerOfferWithContext
-		if err := rows.Scan(
-			&oc.ID, &oc.OrganizationID, &oc.PartnerID, &oc.LeadServiceID,
-			&oc.PublicToken, &oc.ExpiresAt,
-			&oc.PricingSource, &oc.CustomerPriceCents, &oc.VakmanPriceCents,
-			&oc.JobSummaryShort,
-			&oc.BuilderSummary,
-			&oc.Status, &oc.AcceptedAt, &oc.RejectedAt, &oc.RejectionReason,
-			&oc.InspectionAvailability, &oc.JobAvailability,
-			&oc.CreatedAt, &oc.UpdatedAt,
-			&oc.PartnerName,
-			&oc.OrganizationName,
-			&oc.LeadCity,
-			&oc.ServiceType,
-			&oc.ServiceTypeID,
-		); err != nil {
-			return OfferListResult{}, fmt.Errorf("scan offer: %w", err)
-		}
-		offers = append(offers, oc)
-	}
-	if err := rows.Err(); err != nil {
-		return OfferListResult{}, fmt.Errorf("iterate offers: %w", err)
+	offers := make([]PartnerOfferWithContext, 0, len(rows))
+	for _, row := range rows {
+		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+		offers = append(offers, offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, ServiceTypeID: row.ServiceTypeID}))
 	}
 
 	return OfferListResult{Items: offers, Total: total, Page: page, PageSize: pageSize, TotalPages: totalPages}, nil
@@ -763,23 +593,11 @@ SELECT o.id, o.organization_id, o.partner_id, o.lead_service_id,
 
 func resolveOfferSortBy(value string) (string, error) {
 	if value == "" {
-		return "o.created_at", nil
+		return "createdAt", nil
 	}
 	switch value {
-	case "createdAt":
-		return "o.created_at", nil
-	case "expiresAt":
-		return "o.expires_at", nil
-	case "status":
-		return "o.status", nil
-	case "partnerName":
-		return "p.business_name", nil
-	case "serviceType":
-		return "st.name", nil
-	case "vakmanPriceCents":
-		return "o.vakman_price_cents", nil
-	case "customerPriceCents":
-		return "o.customer_price_cents", nil
+	case "createdAt", "expiresAt", "status", "partnerName", "serviceType", "vakmanPriceCents", "customerPriceCents":
+		return value, nil
 	default:
 		return "", apperr.BadRequest("invalid sort field")
 	}

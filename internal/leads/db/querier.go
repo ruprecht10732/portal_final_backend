@@ -83,7 +83,7 @@ type Querier interface {
 	ListLeadOrgMembers(ctx context.Context, organizationID pgtype.UUID) ([]ListLeadOrgMembersRow, error)
 	ListLeadServices(ctx context.Context, arg ListLeadServicesParams) ([]ListLeadServicesRow, error)
 	ListLeads(ctx context.Context, arg ListLeadsParams) ([]RacLead, error)
-	ListMentionsByComments(ctx context.Context, dollar_1 []pgtype.UUID) ([]ListMentionsByCommentsRow, error)
+	ListMentionsByComments(ctx context.Context, commentids []pgtype.UUID) ([]ListMentionsByCommentsRow, error)
 	ListNotesByService(ctx context.Context, arg ListNotesByServiceParams) ([]ListNotesByServiceRow, error)
 	ListPhotoAnalysesByLead(ctx context.Context, arg ListPhotoAnalysesByLeadParams) ([]ListPhotoAnalysesByLeadRow, error)
 	ListPhotoAnalysesByService(ctx context.Context, arg ListPhotoAnalysesByServiceParams) ([]ListPhotoAnalysesByServiceRow, error)

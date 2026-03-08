@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	quotesdb "portal_final_backend/internal/quotes/db"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
@@ -39,26 +40,10 @@ type QuoteExport struct {
 }
 
 func (r *Repository) GetProviderIntegration(ctx context.Context, orgID uuid.UUID, provider string) (*ProviderIntegration, error) {
-	query := `
-		SELECT organization_id, provider, is_connected, access_token, refresh_token, token_expires_at,
-			administration_id, connected_by, disconnected_at, created_at, updated_at
-		FROM RAC_provider_integrations
-		WHERE organization_id = $1 AND provider = $2`
-
-	var integration ProviderIntegration
-	err := r.pool.QueryRow(ctx, query, orgID, provider).Scan(
-		&integration.OrganizationID,
-		&integration.Provider,
-		&integration.IsConnected,
-		&integration.AccessToken,
-		&integration.RefreshToken,
-		&integration.TokenExpiresAt,
-		&integration.AdministrationID,
-		&integration.ConnectedBy,
-		&integration.DisconnectedAt,
-		&integration.CreatedAt,
-		&integration.UpdatedAt,
-	)
+	row, err := r.queries.GetProviderIntegration(ctx, quotesdb.GetProviderIntegrationParams{
+		OrganizationID: toPgUUID(orgID),
+		Provider:       provider,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -66,87 +51,57 @@ func (r *Repository) GetProviderIntegration(ctx context.Context, orgID uuid.UUID
 		return nil, fmt.Errorf("get provider integration: %w", err)
 	}
 
-	return &integration, nil
+	integration := &ProviderIntegration{
+		OrganizationID:   orgID,
+		Provider:         row.Provider,
+		IsConnected:      row.IsConnected,
+		AccessToken:      optionalString(row.AccessToken),
+		RefreshToken:     optionalString(row.RefreshToken),
+		TokenExpiresAt:   optionalTime(row.TokenExpiresAt),
+		AdministrationID: optionalString(row.AdministrationID),
+		ConnectedBy:      optionalUUID(row.ConnectedBy),
+		DisconnectedAt:   optionalTime(row.DisconnectedAt),
+		CreatedAt:        timeFromPg(row.CreatedAt),
+		UpdatedAt:        timeFromPg(row.UpdatedAt),
+	}
+	return integration, nil
 }
 
 func (r *Repository) UpsertProviderIntegration(ctx context.Context, integration ProviderIntegration) error {
-	query := `
-		INSERT INTO RAC_provider_integrations (
-			organization_id, provider, is_connected, access_token, refresh_token, token_expires_at,
-			administration_id, connected_by, disconnected_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
-		ON CONFLICT (organization_id, provider)
-		DO UPDATE SET
-			is_connected = EXCLUDED.is_connected,
-			access_token = EXCLUDED.access_token,
-			refresh_token = EXCLUDED.refresh_token,
-			token_expires_at = EXCLUDED.token_expires_at,
-			administration_id = EXCLUDED.administration_id,
-			connected_by = EXCLUDED.connected_by,
-			disconnected_at = EXCLUDED.disconnected_at,
-			updated_at = now()`
-
-	_, err := r.pool.Exec(
-		ctx,
-		query,
-		integration.OrganizationID,
-		integration.Provider,
-		integration.IsConnected,
-		integration.AccessToken,
-		integration.RefreshToken,
-		integration.TokenExpiresAt,
-		integration.AdministrationID,
-		integration.ConnectedBy,
-		integration.DisconnectedAt,
-	)
+	err := r.queries.UpsertProviderIntegration(ctx, quotesdb.UpsertProviderIntegrationParams{
+		OrganizationID:   toPgUUID(integration.OrganizationID),
+		Provider:         integration.Provider,
+		IsConnected:      integration.IsConnected,
+		AccessToken:      toPgTextPtr(integration.AccessToken),
+		RefreshToken:     toPgTextPtr(integration.RefreshToken),
+		TokenExpiresAt:   toPgTimestampPtr(integration.TokenExpiresAt),
+		AdministrationID: toPgTextPtr(integration.AdministrationID),
+		ConnectedBy:      toPgUUIDPtr(integration.ConnectedBy),
+		DisconnectedAt:   toPgTimestampPtr(integration.DisconnectedAt),
+	})
 	if err != nil {
 		return fmt.Errorf("upsert provider integration: %w", err)
 	}
-
 	return nil
 }
 
 func (r *Repository) DisconnectProviderIntegration(ctx context.Context, orgID uuid.UUID, provider string) error {
-	query := `
-		UPDATE RAC_provider_integrations
-		SET is_connected = false,
-			access_token = NULL,
-			refresh_token = NULL,
-			token_expires_at = NULL,
-			administration_id = NULL,
-			disconnected_at = now(),
-			updated_at = now()
-		WHERE organization_id = $1 AND provider = $2`
-
-	result, err := r.pool.Exec(ctx, query, orgID, provider)
+	_, err := r.queries.DisconnectProviderIntegration(ctx, quotesdb.DisconnectProviderIntegrationParams{
+		OrganizationID: toPgUUID(orgID),
+		Provider:       provider,
+	})
 	if err != nil {
 		return fmt.Errorf("disconnect provider integration: %w", err)
 	}
-	if result.RowsAffected() == 0 {
-		return nil
-	}
-
 	return nil
 }
 
 func (r *Repository) GetQuoteExport(ctx context.Context, quoteID, orgID uuid.UUID, provider string) (*QuoteExport, error) {
-	query := `
-		SELECT id, quote_id, organization_id, provider, external_id, external_url, state, created_at, updated_at
-		FROM RAC_quote_exports
-		WHERE quote_id = $1 AND organization_id = $2 AND provider = $3`
-
-	var export QuoteExport
-	err := r.pool.QueryRow(ctx, query, quoteID, orgID, provider).Scan(
-		&export.ID,
-		&export.QuoteID,
-		&export.OrganizationID,
-		&export.Provider,
-		&export.ExternalID,
-		&export.ExternalURL,
-		&export.State,
-		&export.CreatedAt,
-		&export.UpdatedAt,
-	)
+	row, err := r.queries.GetQuoteExport(ctx, quotesdb.GetQuoteExportParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+		Provider:       provider,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -154,52 +109,51 @@ func (r *Repository) GetQuoteExport(ctx context.Context, quoteID, orgID uuid.UUI
 		return nil, fmt.Errorf("get quote export: %w", err)
 	}
 
-	return &export, nil
+	export := &QuoteExport{
+		ID:             uuid.UUID(row.ID.Bytes),
+		QuoteID:        uuid.UUID(row.QuoteID.Bytes),
+		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+		Provider:       row.Provider,
+		ExternalID:     row.ExternalID,
+		ExternalURL:    optionalString(row.ExternalUrl),
+		State:          row.State,
+		CreatedAt:      timeFromPg(row.CreatedAt),
+		UpdatedAt:      timeFromPg(row.UpdatedAt),
+	}
+	return export, nil
 }
 
 func (r *Repository) CreateQuoteExport(ctx context.Context, export QuoteExport) error {
-	query := `
-		INSERT INTO RAC_quote_exports (
-			id, quote_id, organization_id, provider, external_id, external_url, state, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-
-	_, err := r.pool.Exec(ctx, query,
-		export.ID,
-		export.QuoteID,
-		export.OrganizationID,
-		export.Provider,
-		export.ExternalID,
-		export.ExternalURL,
-		export.State,
-		export.CreatedAt,
-		export.UpdatedAt,
-	)
+	err := r.queries.CreateQuoteExport(ctx, quotesdb.CreateQuoteExportParams{
+		ID:             toPgUUID(export.ID),
+		QuoteID:        toPgUUID(export.QuoteID),
+		OrganizationID: toPgUUID(export.OrganizationID),
+		Provider:       export.Provider,
+		ExternalID:     export.ExternalID,
+		ExternalUrl:    toPgTextPtr(export.ExternalURL),
+		State:          export.State,
+		CreatedAt:      toPgTimestamp(export.CreatedAt),
+		UpdatedAt:      toPgTimestamp(export.UpdatedAt),
+	})
 	if err != nil {
 		return fmt.Errorf("create quote export: %w", err)
 	}
-
 	return nil
 }
 
 func (r *Repository) MustBeAcceptedQuote(ctx context.Context, quoteID, orgID uuid.UUID) error {
-	query := `
-		SELECT status
-		FROM RAC_quotes
-		WHERE id = $1 AND organization_id = $2`
-
-	var status string
-	err := r.pool.QueryRow(ctx, query, quoteID, orgID).Scan(&status)
+	status, err := r.queries.GetQuoteStatus(ctx, quotesdb.GetQuoteStatusParams{
+		ID:             toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound(quoteNotFoundMsg)
 		}
 		return fmt.Errorf("get quote status: %w", err)
 	}
-
-	if status != "Accepted" {
+	if status != quotesdb.QuoteStatusAccepted {
 		return apperr.BadRequest("quote must be Accepted before export")
 	}
-
 	return nil
 }

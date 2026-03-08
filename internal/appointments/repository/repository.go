@@ -86,10 +86,6 @@ func toPgText(value *string) pgtype.Text {
 	return pgtype.Text{String: *value, Valid: true}
 }
 
-func toPgTextValue(value string) pgtype.Text {
-	return pgtype.Text{String: value, Valid: true}
-}
-
 func toPgTimestamp(value time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: value, Valid: true}
 }

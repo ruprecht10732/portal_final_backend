@@ -12,7 +12,7 @@ import (
 )
 
 const countServiceTypes = `-- name: CountServiceTypes :one
-SELECT COUNT(*)::int
+SELECT COUNT(*)::int AS countValue
 FROM RAC_service_types
 WHERE organization_id = $1
   AND ($2::text IS NULL OR name ILIKE $2::text OR slug ILIKE $2::text)
@@ -27,9 +27,9 @@ type CountServiceTypesParams struct {
 
 func (q *Queries) CountServiceTypes(ctx context.Context, arg CountServiceTypesParams) (int32, error) {
 	row := q.db.QueryRow(ctx, countServiceTypes, arg.OrganizationID, arg.Search, arg.IsActive)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
+	var countvalue int32
+	err := row.Scan(&countvalue)
+	return countvalue, err
 }
 
 const createServiceType = `-- name: CreateServiceType :one

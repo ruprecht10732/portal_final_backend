@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	partnersdb "portal_final_backend/internal/partners/db"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,12 +21,16 @@ const replacePartnerServiceTypesErr = "replace partner service types: %w"
 
 // Repository provides database operations for partners.
 type Repository struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *partnersdb.Queries
 }
 
 // New creates a new partners repository.
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	if pool == nil {
+		return &Repository{}
+	}
+	return &Repository{pool: pool, queries: partnersdb.New(pool)}
 }
 
 type Partner struct {
@@ -122,87 +128,179 @@ type PartnerInvite struct {
 	LeadServiceID  *uuid.UUID
 }
 
-func (r *Repository) Create(ctx context.Context, partner Partner) (Partner, error) {
-	query := `
-		INSERT INTO RAC_partners (
-			id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, house_number, postal_code, city, country,
-			latitude, longitude,
-			contact_name, contact_email, contact_phone, whatsapp_opted_in, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9, $10, $11,
-			$12, $13,
-			$14, $15, $16, $17, $18, $19
-		)
-	`
+func toPgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
 
-	_, err := r.pool.Exec(ctx, query,
-		partner.ID,
-		partner.OrganizationID,
-		partner.BusinessName,
-		partner.KVKNumber,
-		partner.VATNumber,
-		partner.AddressLine1,
-		partner.AddressLine2,
-		partner.HouseNumber,
-		partner.PostalCode,
-		partner.City,
-		partner.Country,
-		partner.Latitude,
-		partner.Longitude,
-		partner.ContactName,
-		partner.ContactEmail,
-		partner.ContactPhone,
-		partner.WhatsAppOptedIn,
-		partner.CreatedAt,
-		partner.UpdatedAt,
-	)
+func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return toPgUUID(*id)
+}
+
+func toPgUUIDSlice(ids []uuid.UUID) []pgtype.UUID {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, toPgUUID(id))
+	}
+	return out
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func toPgFloat8Ptr(value *float64) pgtype.Float8 {
+	if value == nil {
+		return pgtype.Float8{}
+	}
+	return pgtype.Float8{Float64: *value, Valid: true}
+}
+
+func toPgBoolPtr(value *bool) pgtype.Bool {
+	if value == nil {
+		return pgtype.Bool{}
+	}
+	return pgtype.Bool{Bool: *value, Valid: true}
+}
+
+func toPgTimestamp(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func toPgTimestampPtr(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return toPgTimestamp(*value)
+}
+
+func optionalString(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	text := value.String
+	return &text
+}
+
+func optionalUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id := uuid.UUID(value.Bytes)
+	return &id
+}
+
+func optionalFloat64(value pgtype.Float8) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	n := value.Float64
+	return &n
+}
+
+func optionalInt64(value pgtype.Int8) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	n := value.Int64
+	return &n
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	timestamp := value.Time
+	return &timestamp
+}
+
+func partnerFromModel(model partnersdb.RacPartner) Partner {
+	return Partner{
+		ID:              uuid.UUID(model.ID.Bytes),
+		OrganizationID:  uuid.UUID(model.OrganizationID.Bytes),
+		BusinessName:    model.BusinessName,
+		KVKNumber:       optionalString(model.KvkNumber),
+		VATNumber:       optionalString(model.VatNumber),
+		AddressLine1:    model.AddressLine1,
+		AddressLine2:    optionalString(model.AddressLine2),
+		HouseNumber:     optionalString(model.HouseNumber),
+		PostalCode:      model.PostalCode,
+		City:            model.City,
+		Country:         model.Country,
+		Latitude:        optionalFloat64(model.Latitude),
+		Longitude:       optionalFloat64(model.Longitude),
+		ContactName:     model.ContactName,
+		ContactEmail:    model.ContactEmail,
+		ContactPhone:    model.ContactPhone,
+		WhatsAppOptedIn: model.WhatsappOptedIn,
+		LogoFileKey:     optionalString(model.LogoFileKey),
+		LogoFileName:    optionalString(model.LogoFileName),
+		LogoContentType: optionalString(model.LogoContentType),
+		LogoSizeBytes:   optionalInt64(model.LogoSizeBytes),
+		CreatedAt:       model.CreatedAt.Time,
+		UpdatedAt:       model.UpdatedAt.Time,
+	}
+}
+
+func inviteFromModel(model partnersdb.RacPartnerInvite) PartnerInvite {
+	return PartnerInvite{
+		ID:             uuid.UUID(model.ID.Bytes),
+		OrganizationID: uuid.UUID(model.OrganizationID.Bytes),
+		PartnerID:      uuid.UUID(model.PartnerID.Bytes),
+		Email:          model.Email,
+		TokenHash:      model.TokenHash,
+		ExpiresAt:      model.ExpiresAt.Time,
+		CreatedBy:      uuid.UUID(model.CreatedBy.Bytes),
+		CreatedAt:      model.CreatedAt.Time,
+		UsedAt:         optionalTime(model.UsedAt),
+		UsedBy:         optionalUUID(model.UsedBy),
+		LeadID:         optionalUUID(model.LeadID),
+		LeadServiceID:  optionalUUID(model.LeadServiceID),
+	}
+}
+
+func (r *Repository) Create(ctx context.Context, partner Partner) (Partner, error) {
+	model, err := r.queries.CreatePartner(ctx, partnersdb.CreatePartnerParams{
+		ID:              toPgUUID(partner.ID),
+		OrganizationID:  toPgUUID(partner.OrganizationID),
+		BusinessName:    partner.BusinessName,
+		KvkNumber:       toPgText(partner.KVKNumber),
+		VatNumber:       toPgText(partner.VATNumber),
+		AddressLine1:    partner.AddressLine1,
+		AddressLine2:    toPgText(partner.AddressLine2),
+		HouseNumber:     toPgText(partner.HouseNumber),
+		PostalCode:      partner.PostalCode,
+		City:            partner.City,
+		Country:         partner.Country,
+		Latitude:        toPgFloat8Ptr(partner.Latitude),
+		Longitude:       toPgFloat8Ptr(partner.Longitude),
+		ContactName:     partner.ContactName,
+		ContactEmail:    partner.ContactEmail,
+		ContactPhone:    partner.ContactPhone,
+		WhatsappOptedIn: partner.WhatsAppOptedIn,
+		CreatedAt:       toPgTimestamp(partner.CreatedAt),
+		UpdatedAt:       toPgTimestamp(partner.UpdatedAt),
+	})
 	if err != nil {
 		return Partner{}, fmt.Errorf("create partner: %w", err)
 	}
 
-	return partner, nil
+	return partnerFromModel(model), nil
 }
 
 func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Partner, error) {
-	query := `
-		SELECT id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, house_number, postal_code, city, country,
-			latitude, longitude,
-			contact_name, contact_email, contact_phone, whatsapp_opted_in,
-			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-			created_at, updated_at
-		FROM RAC_partners
-		WHERE id = $1 AND organization_id = $2
-	`
-
-	var partner Partner
-	err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(
-		&partner.ID,
-		&partner.OrganizationID,
-		&partner.BusinessName,
-		&partner.KVKNumber,
-		&partner.VATNumber,
-		&partner.AddressLine1,
-		&partner.AddressLine2,
-		&partner.HouseNumber,
-		&partner.PostalCode,
-		&partner.City,
-		&partner.Country,
-		&partner.Latitude,
-		&partner.Longitude,
-		&partner.ContactName,
-		&partner.ContactEmail,
-		&partner.ContactPhone,
-		&partner.WhatsAppOptedIn,
-		&partner.LogoFileKey,
-		&partner.LogoFileName,
-		&partner.LogoContentType,
-		&partner.LogoSizeBytes,
-		&partner.CreatedAt,
-		&partner.UpdatedAt,
-	)
+	model, err := r.queries.GetPartnerByID(ctx, partnersdb.GetPartnerByIDParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Partner{}, apperr.NotFound(partnerNotFoundMsg)
@@ -210,82 +308,29 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 		return Partner{}, fmt.Errorf("get partner: %w", err)
 	}
 
-	return partner, nil
+	return partnerFromModel(model), nil
 }
 
 func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner, error) {
-	query := `
-		UPDATE RAC_partners
-		SET
-			business_name = COALESCE($3, business_name),
-			kvk_number = CASE WHEN $4::text IS NULL THEN kvk_number ELSE NULLIF($4, '') END,
-			vat_number = CASE WHEN $5::text IS NULL THEN vat_number ELSE NULLIF($5, '') END,
-			address_line1 = COALESCE($6, address_line1),
-			address_line2 = COALESCE($7, address_line2),
-			house_number = COALESCE($8, house_number),
-			postal_code = COALESCE($9, postal_code),
-			city = COALESCE($10, city),
-			country = COALESCE($11, country),
-			latitude = COALESCE($12, latitude),
-			longitude = COALESCE($13, longitude),
-			contact_name = COALESCE($14, contact_name),
-			contact_email = COALESCE($15, contact_email),
-			contact_phone = COALESCE($16, contact_phone),
-			whatsapp_opted_in = COALESCE($17, whatsapp_opted_in),
-			updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-		RETURNING id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, house_number, postal_code, city, country,
-			latitude, longitude,
-			contact_name, contact_email, contact_phone, whatsapp_opted_in,
-			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-			created_at, updated_at
-	`
-
-	var partner Partner
-	err := r.pool.QueryRow(ctx, query,
-		update.ID,
-		update.OrganizationID,
-		update.BusinessName,
-		update.KVKNumber,
-		update.VATNumber,
-		update.AddressLine1,
-		update.AddressLine2,
-		update.HouseNumber,
-		update.PostalCode,
-		update.City,
-		update.Country,
-		update.Latitude,
-		update.Longitude,
-		update.ContactName,
-		update.ContactEmail,
-		update.ContactPhone,
-		update.WhatsAppOptedIn,
-	).Scan(
-		&partner.ID,
-		&partner.OrganizationID,
-		&partner.BusinessName,
-		&partner.KVKNumber,
-		&partner.VATNumber,
-		&partner.AddressLine1,
-		&partner.AddressLine2,
-		&partner.HouseNumber,
-		&partner.PostalCode,
-		&partner.City,
-		&partner.Country,
-		&partner.Latitude,
-		&partner.Longitude,
-		&partner.ContactName,
-		&partner.ContactEmail,
-		&partner.ContactPhone,
-		&partner.WhatsAppOptedIn,
-		&partner.LogoFileKey,
-		&partner.LogoFileName,
-		&partner.LogoContentType,
-		&partner.LogoSizeBytes,
-		&partner.CreatedAt,
-		&partner.UpdatedAt,
-	)
+	model, err := r.queries.UpdatePartner(ctx, partnersdb.UpdatePartnerParams{
+		BusinessName:    toPgText(update.BusinessName),
+		KvkNumber:       toPgText(update.KVKNumber),
+		VatNumber:       toPgText(update.VATNumber),
+		AddressLine1:    toPgText(update.AddressLine1),
+		AddressLine2:    toPgText(update.AddressLine2),
+		HouseNumber:     toPgText(update.HouseNumber),
+		PostalCode:      toPgText(update.PostalCode),
+		City:            toPgText(update.City),
+		Country:         toPgText(update.Country),
+		Latitude:        toPgFloat8Ptr(update.Latitude),
+		Longitude:       toPgFloat8Ptr(update.Longitude),
+		ContactName:     toPgText(update.ContactName),
+		ContactEmail:    toPgText(update.ContactEmail),
+		ContactPhone:    toPgText(update.ContactPhone),
+		WhatsappOptedIn: toPgBoolPtr(update.WhatsAppOptedIn),
+		ID:              toPgUUID(update.ID),
+		OrganizationID:  toPgUUID(update.OrganizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Partner{}, apperr.NotFound(partnerNotFoundMsg)
@@ -293,17 +338,18 @@ func (r *Repository) Update(ctx context.Context, update PartnerUpdate) (Partner,
 		return Partner{}, fmt.Errorf("update partner: %w", err)
 	}
 
-	return partner, nil
+	return partnerFromModel(model), nil
 }
 
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	query := `DELETE FROM RAC_partners WHERE id = $1 AND organization_id = $2`
-
-	result, err := r.pool.Exec(ctx, query, id, organizationID)
+	rowsAffected, err := r.queries.DeletePartner(ctx, partnersdb.DeletePartnerParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return fmt.Errorf("delete partner: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound(partnerNotFoundMsg)
 	}
 	return nil
@@ -321,16 +367,11 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 		return ListResult{}, err
 	}
 
-	baseQuery := `
-		FROM RAC_partners
-		WHERE organization_id = $1
-			AND ($2::text IS NULL OR business_name ILIKE $2 OR contact_name ILIKE $2 OR contact_email ILIKE $2 OR kvk_number ILIKE $2 OR vat_number ILIKE $2)
-	`
-	args := []interface{}{params.OrganizationID, searchParam}
-
-	var total int
-	countQuery := "SELECT COUNT(*) " + baseQuery
-	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	total, err := r.queries.CountPartners(ctx, partnersdb.CountPartnersParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Search:         searchParam,
+	})
+	if err != nil {
 		return ListResult{}, fmt.Errorf("count partners: %w", err)
 	}
 
@@ -346,100 +387,60 @@ func (r *Repository) List(ctx context.Context, params ListParams) (ListResult, e
 		pageSize = 100
 	}
 	offset := (page - 1) * pageSize
+	totalInt := int(total)
 	pageTotal := 0
 	if pageSize > 0 {
-		pageTotal = (total + pageSize - 1) / pageSize
+		pageTotal = (totalInt + pageSize - 1) / pageSize
 	}
 
-	selectQuery := `
-		SELECT id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, house_number, postal_code, city, country,
-			latitude, longitude,
-			contact_name, contact_email, contact_phone, whatsapp_opted_in,
-			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-			created_at, updated_at
-		` + baseQuery + `
-		ORDER BY
-			CASE WHEN $3 = 'businessName' AND $4 = 'asc' THEN business_name END ASC,
-			CASE WHEN $3 = 'businessName' AND $4 = 'desc' THEN business_name END DESC,
-			CASE WHEN $3 = 'contactName' AND $4 = 'asc' THEN contact_name END ASC,
-			CASE WHEN $3 = 'contactName' AND $4 = 'desc' THEN contact_name END DESC,
-			CASE WHEN $3 = 'createdAt' AND $4 = 'asc' THEN created_at END ASC,
-			CASE WHEN $3 = 'createdAt' AND $4 = 'desc' THEN created_at END DESC,
-			CASE WHEN $3 = 'updatedAt' AND $4 = 'asc' THEN updated_at END ASC,
-			CASE WHEN $3 = 'updatedAt' AND $4 = 'desc' THEN updated_at END DESC,
-			business_name ASC
-		LIMIT $5 OFFSET $6
-	`
-
-	args = append(args, sortBy, orderBy, pageSize, offset)
-	rows, err := r.pool.Query(ctx, selectQuery, args...)
+	models, err := r.queries.ListPartners(ctx, partnersdb.ListPartnersParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Search:         searchParam,
+		SortBy:         sortBy,
+		SortOrder:      orderBy,
+		OffsetCount:    int32(offset),
+		LimitCount:     int32(pageSize),
+	})
 	if err != nil {
 		return ListResult{}, fmt.Errorf("list partners: %w", err)
 	}
-	defer rows.Close()
 
-	items := make([]Partner, 0)
-	for rows.Next() {
-		var partner Partner
-		if err := rows.Scan(
-			&partner.ID,
-			&partner.OrganizationID,
-			&partner.BusinessName,
-			&partner.KVKNumber,
-			&partner.VATNumber,
-			&partner.AddressLine1,
-			&partner.AddressLine2,
-			&partner.HouseNumber,
-			&partner.PostalCode,
-			&partner.City,
-			&partner.Country,
-			&partner.Latitude,
-			&partner.Longitude,
-			&partner.ContactName,
-			&partner.ContactEmail,
-			&partner.ContactPhone,
-			&partner.WhatsAppOptedIn,
-			&partner.LogoFileKey,
-			&partner.LogoFileName,
-			&partner.LogoContentType,
-			&partner.LogoSizeBytes,
-			&partner.CreatedAt,
-			&partner.UpdatedAt,
-		); err != nil {
-			return ListResult{}, fmt.Errorf("scan partner: %w", err)
-		}
-		items = append(items, partner)
-	}
-	if err := rows.Err(); err != nil {
-		return ListResult{}, fmt.Errorf("iterate partners: %w", err)
+	items := make([]Partner, 0, len(models))
+	for _, model := range models {
+		items = append(items, partnerFromModel(model))
 	}
 
-	return ListResult{Items: items, Total: total, Page: page, PageSize: pageSize, TotalPages: pageTotal}, nil
+	return ListResult{Items: items, Total: totalInt, Page: page, PageSize: pageSize, TotalPages: pageTotal}, nil
 }
 
 func (r *Repository) Exists(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM RAC_partners WHERE id = $1 AND organization_id = $2)`
-	if err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists); err != nil {
+	exists, err := r.queries.PartnerExists(ctx, partnersdb.PartnerExistsParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
 		return false, fmt.Errorf("check partner exists: %w", err)
 	}
 	return exists, nil
 }
 
 func (r *Repository) LeadExists(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM RAC_leads WHERE id = $1 AND organization_id = $2)`
-	if err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists); err != nil {
+	exists, err := r.queries.LeadExists(ctx, partnersdb.LeadExistsParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
 		return false, fmt.Errorf("check lead exists: %w", err)
 	}
 	return exists, nil
 }
 
 func (r *Repository) LeadServiceExists(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM RAC_lead_services WHERE id = $1 AND organization_id = $2)`
-	if err := r.pool.QueryRow(ctx, query, id, organizationID).Scan(&exists); err != nil {
+	exists, err := r.queries.LeadServiceExists(ctx, partnersdb.LeadServiceExistsParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
 		return false, fmt.Errorf("check lead service exists: %w", err)
 	}
 	return exists, nil
@@ -447,183 +448,118 @@ func (r *Repository) LeadServiceExists(ctx context.Context, id uuid.UUID, organi
 
 // GetLeadIDForService resolves the parent lead_id for a lead-service row.
 func (r *Repository) GetLeadIDForService(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (uuid.UUID, error) {
-	var leadID uuid.UUID
-	query := `SELECT lead_id FROM RAC_lead_services WHERE id = $1 AND organization_id = $2`
-	if err := r.pool.QueryRow(ctx, query, serviceID, organizationID).Scan(&leadID); err != nil {
+	leadID, err := r.queries.GetLeadIDForService(ctx, partnersdb.GetLeadIDForServiceParams{
+		ServiceID:      toPgUUID(serviceID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return uuid.UUID{}, apperr.NotFound("lead service not found")
 		}
 		return uuid.UUID{}, fmt.Errorf("get lead id for service: %w", err)
 	}
-	return leadID, nil
+	return uuid.UUID(leadID.Bytes), nil
 }
 
 func (r *Repository) LinkLead(ctx context.Context, organizationID, partnerID, leadID uuid.UUID) error {
-	query := `
-		INSERT INTO RAC_partner_leads (organization_id, partner_id, lead_id)
-		VALUES ($1, $2, $3)
-		ON CONFLICT DO NOTHING
-	`
-	result, err := r.pool.Exec(ctx, query, organizationID, partnerID, leadID)
+	rowsAffected, err := r.queries.LinkPartnerLead(ctx, partnersdb.LinkPartnerLeadParams{
+		OrganizationID: toPgUUID(organizationID),
+		PartnerID:      toPgUUID(partnerID),
+		LeadID:         toPgUUID(leadID),
+	})
 	if err != nil {
 		return fmt.Errorf("link partner lead: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.Conflict("lead already linked to partner")
 	}
 	return nil
 }
 
 func (r *Repository) UnlinkLead(ctx context.Context, organizationID, partnerID, leadID uuid.UUID) error {
-	query := `DELETE FROM RAC_partner_leads WHERE organization_id = $1 AND partner_id = $2 AND lead_id = $3`
-	result, err := r.pool.Exec(ctx, query, organizationID, partnerID, leadID)
+	rowsAffected, err := r.queries.UnlinkPartnerLead(ctx, partnersdb.UnlinkPartnerLeadParams{
+		OrganizationID: toPgUUID(organizationID),
+		PartnerID:      toPgUUID(partnerID),
+		LeadID:         toPgUUID(leadID),
+	})
 	if err != nil {
 		return fmt.Errorf("unlink partner lead: %w", err)
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return apperr.NotFound("link not found")
 	}
 	return nil
 }
 
 func (r *Repository) ListLeads(ctx context.Context, organizationID, partnerID uuid.UUID) ([]PartnerLead, error) {
-	query := `
-		SELECT l.id, l.consumer_first_name, l.consumer_last_name, l.consumer_phone,
-			l.address_street, l.address_house_number, l.address_city
-		FROM RAC_partner_leads pl
-		JOIN RAC_leads l ON l.id = pl.lead_id
-		WHERE pl.organization_id = $1 AND pl.partner_id = $2
-		ORDER BY l.created_at DESC
-	`
-
-	rows, err := r.pool.Query(ctx, query, organizationID, partnerID)
+	rows, err := r.queries.ListPartnerLeads(ctx, partnersdb.ListPartnerLeadsParams{
+		OrganizationID: toPgUUID(organizationID),
+		PartnerID:      toPgUUID(partnerID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list partner leads: %w", err)
 	}
-	defer rows.Close()
 
-	leads := make([]PartnerLead, 0)
-	for rows.Next() {
-		var lead PartnerLead
-		if err := rows.Scan(
-			&lead.ID,
-			&lead.FirstName,
-			&lead.LastName,
-			&lead.Phone,
-			&lead.Street,
-			&lead.HouseNumber,
-			&lead.City,
-		); err != nil {
-			return nil, fmt.Errorf("scan partner lead: %w", err)
-		}
-		leads = append(leads, lead)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate partner leads: %w", err)
+	leads := make([]PartnerLead, 0, len(rows))
+	for _, row := range rows {
+		leads = append(leads, PartnerLead{
+			ID:          uuid.UUID(row.ID.Bytes),
+			FirstName:   row.ConsumerFirstName,
+			LastName:    row.ConsumerLastName,
+			Phone:       row.ConsumerPhone,
+			Street:      row.AddressStreet,
+			HouseNumber: row.HouseNumber,
+			City:        row.AddressCity,
+		})
 	}
 
 	return leads, nil
 }
 
 func (r *Repository) CreateInvite(ctx context.Context, invite PartnerInvite) (PartnerInvite, error) {
-	query := `
-		INSERT INTO RAC_partner_invites (
-			id, organization_id, partner_id, email, token_hash, expires_at, created_by,
-			created_at, used_at, used_by, lead_id, lead_service_id
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12
-		)
-	`
-
-	_, err := r.pool.Exec(ctx, query,
-		invite.ID,
-		invite.OrganizationID,
-		invite.PartnerID,
-		invite.Email,
-		invite.TokenHash,
-		invite.ExpiresAt,
-		invite.CreatedBy,
-		invite.CreatedAt,
-		invite.UsedAt,
-		invite.UsedBy,
-		invite.LeadID,
-		invite.LeadServiceID,
-	)
+	model, err := r.queries.CreatePartnerInvite(ctx, partnersdb.CreatePartnerInviteParams{
+		ID:             toPgUUID(invite.ID),
+		OrganizationID: toPgUUID(invite.OrganizationID),
+		PartnerID:      toPgUUID(invite.PartnerID),
+		Email:          invite.Email,
+		TokenHash:      invite.TokenHash,
+		ExpiresAt:      toPgTimestamp(invite.ExpiresAt),
+		CreatedBy:      toPgUUID(invite.CreatedBy),
+		CreatedAt:      toPgTimestamp(invite.CreatedAt),
+		UsedAt:         toPgTimestampPtr(invite.UsedAt),
+		UsedBy:         toPgUUIDPtr(invite.UsedBy),
+		LeadID:         toPgUUIDPtr(invite.LeadID),
+		LeadServiceID:  toPgUUIDPtr(invite.LeadServiceID),
+	})
 	if err != nil {
 		return PartnerInvite{}, fmt.Errorf("create partner invite: %w", err)
 	}
 
-	return invite, nil
+	return inviteFromModel(model), nil
 }
 
 func (r *Repository) ListInvites(ctx context.Context, organizationID, partnerID uuid.UUID) ([]PartnerInvite, error) {
-	query := `
-		SELECT id, organization_id, partner_id, email, token_hash, expires_at, created_by,
-			created_at, used_at, used_by, lead_id, lead_service_id
-		FROM RAC_partner_invites
-		WHERE organization_id = $1 AND partner_id = $2
-		ORDER BY created_at DESC
-	`
-
-	rows, err := r.pool.Query(ctx, query, organizationID, partnerID)
+	models, err := r.queries.ListPartnerInvites(ctx, partnersdb.ListPartnerInvitesParams{
+		OrganizationID: toPgUUID(organizationID),
+		PartnerID:      toPgUUID(partnerID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list partner invites: %w", err)
 	}
-	defer rows.Close()
 
-	invites := make([]PartnerInvite, 0)
-	for rows.Next() {
-		var invite PartnerInvite
-		if err := rows.Scan(
-			&invite.ID,
-			&invite.OrganizationID,
-			&invite.PartnerID,
-			&invite.Email,
-			&invite.TokenHash,
-			&invite.ExpiresAt,
-			&invite.CreatedBy,
-			&invite.CreatedAt,
-			&invite.UsedAt,
-			&invite.UsedBy,
-			&invite.LeadID,
-			&invite.LeadServiceID,
-		); err != nil {
-			return nil, fmt.Errorf("scan partner invite: %w", err)
-		}
-		invites = append(invites, invite)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate partner invites: %w", err)
+	invites := make([]PartnerInvite, 0, len(models))
+	for _, model := range models {
+		invites = append(invites, inviteFromModel(model))
 	}
 
 	return invites, nil
 }
 
 func (r *Repository) RevokeInvite(ctx context.Context, organizationID, inviteID uuid.UUID) (PartnerInvite, error) {
-	query := `
-		UPDATE RAC_partner_invites
-		SET expires_at = now()
-		WHERE id = $1 AND organization_id = $2 AND used_at IS NULL
-		RETURNING id, organization_id, partner_id, email, token_hash, expires_at, created_by,
-			created_at, used_at, used_by, lead_id, lead_service_id
-	`
-
-	var invite PartnerInvite
-	err := r.pool.QueryRow(ctx, query, inviteID, organizationID).Scan(
-		&invite.ID,
-		&invite.OrganizationID,
-		&invite.PartnerID,
-		&invite.Email,
-		&invite.TokenHash,
-		&invite.ExpiresAt,
-		&invite.CreatedBy,
-		&invite.CreatedAt,
-		&invite.UsedAt,
-		&invite.UsedBy,
-		&invite.LeadID,
-		&invite.LeadServiceID,
-	)
+	model, err := r.queries.RevokePartnerInvite(ctx, partnersdb.RevokePartnerInviteParams{
+		InviteID:       toPgUUID(inviteID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PartnerInvite{}, apperr.NotFound(partnerInviteNotFoundMsg)
@@ -631,59 +567,18 @@ func (r *Repository) RevokeInvite(ctx context.Context, organizationID, inviteID 
 		return PartnerInvite{}, fmt.Errorf("revoke partner invite: %w", err)
 	}
 
-	return invite, nil
+	return inviteFromModel(model), nil
 }
 
 func (r *Repository) UpdateLogo(ctx context.Context, organizationID, partnerID uuid.UUID, logo PartnerLogo) (Partner, error) {
-	query := `
-		UPDATE RAC_partners
-		SET logo_file_key = $3,
-			logo_file_name = $4,
-			logo_content_type = $5,
-			logo_size_bytes = $6,
-			updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-		RETURNING id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, house_number, postal_code, city, country,
-			latitude, longitude,
-			contact_name, contact_email, contact_phone, whatsapp_opted_in,
-			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-			created_at, updated_at
-	`
-
-	var partner Partner
-	err := r.pool.QueryRow(ctx, query,
-		partnerID,
-		organizationID,
-		logo.FileKey,
-		logo.FileName,
-		logo.ContentType,
-		logo.SizeBytes,
-	).Scan(
-		&partner.ID,
-		&partner.OrganizationID,
-		&partner.BusinessName,
-		&partner.KVKNumber,
-		&partner.VATNumber,
-		&partner.AddressLine1,
-		&partner.AddressLine2,
-		&partner.HouseNumber,
-		&partner.PostalCode,
-		&partner.City,
-		&partner.Country,
-		&partner.Latitude,
-		&partner.Longitude,
-		&partner.ContactName,
-		&partner.ContactEmail,
-		&partner.ContactPhone,
-		&partner.WhatsAppOptedIn,
-		&partner.LogoFileKey,
-		&partner.LogoFileName,
-		&partner.LogoContentType,
-		&partner.LogoSizeBytes,
-		&partner.CreatedAt,
-		&partner.UpdatedAt,
-	)
+	model, err := r.queries.UpdatePartnerLogo(ctx, partnersdb.UpdatePartnerLogoParams{
+		FileKey:        logo.FileKey,
+		FileName:       logo.FileName,
+		ContentType:    logo.ContentType,
+		SizeBytes:      logo.SizeBytes,
+		PartnerID:      toPgUUID(partnerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Partner{}, apperr.NotFound(partnerNotFoundMsg)
@@ -691,52 +586,14 @@ func (r *Repository) UpdateLogo(ctx context.Context, organizationID, partnerID u
 		return Partner{}, fmt.Errorf("update partner logo: %w", err)
 	}
 
-	return partner, nil
+	return partnerFromModel(model), nil
 }
 
 func (r *Repository) ClearLogo(ctx context.Context, organizationID, partnerID uuid.UUID) (Partner, error) {
-	query := `
-		UPDATE RAC_partners
-		SET logo_file_key = NULL,
-			logo_file_name = NULL,
-			logo_content_type = NULL,
-			logo_size_bytes = NULL,
-			updated_at = now()
-		WHERE id = $1 AND organization_id = $2
-		RETURNING id, organization_id, business_name, kvk_number, vat_number,
-			address_line1, address_line2, house_number, postal_code, city, country,
-			latitude, longitude,
-			contact_name, contact_email, contact_phone, whatsapp_opted_in,
-			logo_file_key, logo_file_name, logo_content_type, logo_size_bytes,
-			created_at, updated_at
-	`
-
-	var partner Partner
-	err := r.pool.QueryRow(ctx, query, partnerID, organizationID).Scan(
-		&partner.ID,
-		&partner.OrganizationID,
-		&partner.BusinessName,
-		&partner.KVKNumber,
-		&partner.VATNumber,
-		&partner.AddressLine1,
-		&partner.AddressLine2,
-		&partner.HouseNumber,
-		&partner.PostalCode,
-		&partner.City,
-		&partner.Country,
-		&partner.Latitude,
-		&partner.Longitude,
-		&partner.ContactName,
-		&partner.ContactEmail,
-		&partner.ContactPhone,
-		&partner.WhatsAppOptedIn,
-		&partner.LogoFileKey,
-		&partner.LogoFileName,
-		&partner.LogoContentType,
-		&partner.LogoSizeBytes,
-		&partner.CreatedAt,
-		&partner.UpdatedAt,
-	)
+	model, err := r.queries.ClearPartnerLogo(ctx, partnersdb.ClearPartnerLogoParams{
+		PartnerID:      toPgUUID(partnerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Partner{}, apperr.NotFound(partnerNotFoundMsg)
@@ -744,7 +601,7 @@ func (r *Repository) ClearLogo(ctx context.Context, organizationID, partnerID uu
 		return Partner{}, fmt.Errorf("clear partner logo: %w", err)
 	}
 
-	return partner, nil
+	return partnerFromModel(model), nil
 }
 
 func (r *Repository) ValidateServiceTypeIDs(ctx context.Context, organizationID uuid.UUID, ids []uuid.UUID) error {
@@ -762,21 +619,14 @@ func (r *Repository) ValidateServiceTypeIDs(ctx context.Context, organizationID 
 		uniqueIDs = append(uniqueIDs, id)
 	}
 
-	query := `SELECT id FROM RAC_service_types WHERE organization_id = $1 AND id = ANY($2)`
-	rows, err := r.pool.Query(ctx, query, organizationID, uniqueIDs)
+	count, err := r.queries.CountValidServiceTypes(ctx, partnersdb.CountValidServiceTypesParams{
+		OrganizationID: toPgUUID(organizationID),
+		ServiceTypeIds: toPgUUIDSlice(uniqueIDs),
+	})
 	if err != nil {
 		return fmt.Errorf("validate service types: %w", err)
 	}
-	defer rows.Close()
-
-	count := 0
-	for rows.Next() {
-		count++
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("validate service types: %w", err)
-	}
-	if count != len(uniqueIDs) {
+	if int(count) != len(uniqueIDs) {
 		return apperr.Validation("invalid service type id")
 	}
 
@@ -790,17 +640,16 @@ func (r *Repository) ReplaceServiceTypes(ctx context.Context, partnerID uuid.UUI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `DELETE FROM RAC_partner_service_types WHERE partner_id = $1`, partnerID); err != nil {
+	queries := r.queries.WithTx(tx)
+	if err := queries.DeletePartnerServiceTypes(ctx, toPgUUID(partnerID)); err != nil {
 		return fmt.Errorf(replacePartnerServiceTypesErr, err)
 	}
 
 	for _, id := range ids {
-		if _, err := tx.Exec(
-			ctx,
-			`INSERT INTO RAC_partner_service_types (partner_id, service_type_id) VALUES ($1, $2)`,
-			partnerID,
-			id,
-		); err != nil {
+		if err := queries.CreatePartnerServiceType(ctx, partnersdb.CreatePartnerServiceTypeParams{
+			PartnerID:     toPgUUID(partnerID),
+			ServiceTypeID: toPgUUID(id),
+		}); err != nil {
 			return fmt.Errorf(replacePartnerServiceTypesErr, err)
 		}
 	}
@@ -812,38 +661,25 @@ func (r *Repository) ReplaceServiceTypes(ctx context.Context, partnerID uuid.UUI
 }
 
 func (r *Repository) ListServiceTypeIDs(ctx context.Context, organizationID, partnerID uuid.UUID) ([]uuid.UUID, error) {
-	query := `
-		SELECT pst.service_type_id
-		FROM RAC_partner_service_types pst
-		JOIN RAC_service_types st ON st.id = pst.service_type_id
-		WHERE pst.partner_id = $1 AND st.organization_id = $2
-		ORDER BY st.name ASC
-	`
-	rows, err := r.pool.Query(ctx, query, partnerID, organizationID)
+	rows, err := r.queries.ListPartnerServiceTypeIDs(ctx, partnersdb.ListPartnerServiceTypeIDsParams{
+		PartnerID:      toPgUUID(partnerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list partner service types: %w", err)
 	}
-	defer rows.Close()
 
-	ids := make([]uuid.UUID, 0)
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan partner service type: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate partner service types: %w", err)
+	ids := make([]uuid.UUID, 0, len(rows))
+	for _, id := range rows {
+		ids = append(ids, uuid.UUID(id.Bytes))
 	}
 
 	return ids, nil
 }
 
 func (r *Repository) GetOrganizationName(ctx context.Context, organizationID uuid.UUID) (string, error) {
-	var name string
-	query := `SELECT name FROM RAC_organizations WHERE id = $1`
-	if err := r.pool.QueryRow(ctx, query, organizationID).Scan(&name); err != nil {
+	name, err := r.queries.GetOrganizationName(ctx, toPgUUID(organizationID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", apperr.NotFound("organization not found")
 		}
@@ -876,9 +712,9 @@ func resolveSortOrder(value string) (string, error) {
 	}
 }
 
-func optionalSearch(value string) interface{} {
+func optionalSearch(value string) pgtype.Text {
 	if value == "" {
-		return nil
+		return pgtype.Text{}
 	}
-	return "%" + value + "%"
+	return pgtype.Text{String: "%" + value + "%", Valid: true}
 }

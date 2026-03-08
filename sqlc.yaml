@@ -83,3 +83,101 @@ sql:
         emit_prepared_queries: false
         emit_interface: true
         emit_exact_table_names: false
+
+  # Search Domain – global full-text search
+  - schema: "migrations"
+    queries: "internal/search/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "searchdb"
+        out: "internal/search/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # Notification Domain – notification module lookup queries
+  - schema: "migrations"
+    queries: "internal/notification/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "notificationdb"
+        out: "internal/notification/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # Webhook Domain – webhook API keys, Google configs, lead metadata
+  - schema: "migrations"
+    queries: "internal/webhook/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "webhookdb"
+        out: "internal/webhook/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # IMAP Domain – user IMAP accounts and synced message metadata
+  - schema: "migrations"
+    queries: "internal/imap/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "imapdb"
+        out: "internal/imap/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # Partners Domain – partners, invites, service types, and offers
+  - schema: "migrations"
+    queries: "internal/partners/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "partnersdb"
+        out: "internal/partners/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # Identity Domain – organizations, settings, invites, and workflow engine
+  - schema: "migrations"
+    queries: "internal/identity/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "identitydb"
+        out: "internal/identity/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+
+  # Quotes Domain – quotes, exports, integrations, jobs, and feedback
+  - schema: "migrations"
+    queries: "internal/quotes/sql"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "quotesdb"
+        out: "internal/quotes/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false

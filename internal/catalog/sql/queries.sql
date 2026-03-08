@@ -30,7 +30,7 @@ ORDER BY
 LIMIT sqlc.arg(limitCount) OFFSET sqlc.arg(offsetCount);
 
 -- name: CountVatRates :one
-SELECT COUNT(*)
+SELECT COUNT(*) AS countValue
 FROM RAC_catalog_vat_rates
 WHERE organization_id = sqlc.arg(organizationID)
   AND (sqlc.narg(searchPattern)::text IS NULL OR name ILIKE sqlc.narg(searchPattern)::text);
@@ -71,7 +71,7 @@ INSERT INTO RAC_catalog_product_counters (organization_id, last_number)
 VALUES ($1, 1)
 ON CONFLICT (organization_id) DO UPDATE
 SET last_number = RAC_catalog_product_counters.last_number + 1
-RETURNING last_number;
+RETURNING last_number AS lastNumberValue;
 
 -- name: UpdateProduct :one
 UPDATE RAC_catalog_products
@@ -148,7 +148,7 @@ ORDER BY
 LIMIT sqlc.arg(limitCount) OFFSET sqlc.arg(offsetCount);
 
 -- name: CountProducts :one
-SELECT COUNT(*)
+SELECT COUNT(*) AS countValue
 FROM RAC_catalog_products
 WHERE organization_id = sqlc.arg(organizationID)
   AND (sqlc.narg(searchPattern)::text IS NULL OR (title ILIKE sqlc.narg(searchPattern)::text OR reference ILIKE sqlc.narg(searchPattern)::text))

@@ -342,14 +342,6 @@ func (s *Service) ensureOfferAvailable(ctx context.Context, leadServiceID uuid.U
 	return nil
 }
 
-func (s *Service) fetchOfferItems(ctx context.Context, leadServiceID, tenantID uuid.UUID) []repository.QuoteItemSummary {
-	items, err := s.repo.GetLatestQuoteItemsForService(ctx, leadServiceID, tenantID)
-	if err != nil {
-		return nil
-	}
-	return items
-}
-
 func (s *Service) resolveBuilderSummary(ctx context.Context, tenantID uuid.UUID, items []repository.QuoteItemSummary, scopeAssessment *string, serviceCtx repository.LeadServiceSummaryContext, leadServiceID uuid.UUID) *string {
 	if s.summaryGenerator != nil && len(items) > 0 {
 		inputItems := make([]OfferSummaryItem, 0, len(items))
