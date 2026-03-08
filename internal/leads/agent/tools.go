@@ -137,41 +137,42 @@ func normalizeConsumerRole(role string) (string, error) {
 
 // ToolDependencies contains the dependencies needed by tools
 type ToolDependencies struct {
-	Repo                 repository.LeadsRepository
-	Scorer               *scoring.Service
-	EventBus             events.Bus
-	EmbeddingClient      *embeddings.Client
-	QdrantClient         *qdrant.Client
-	BouwmaatQdrantClient *qdrant.Client
-	CatalogQdrantClient  *qdrant.Client
-	CatalogReader        ports.CatalogReader // optional: hydrate search results from DB
-	QuoteDrafter         ports.QuoteDrafter  // optional: draft quotes from agent
-	OfferCreator         ports.PartnerOfferCreator
-	CouncilService       MultiAgentCouncil
-	OrgSettingsReader    ports.OrganizationAISettingsReader
-	mu                   sync.RWMutex
-	tenantID             *uuid.UUID
-	leadID               *uuid.UUID
-	serviceID            *uuid.UUID
-	actorType            string
-	actorName            string
-	orgSettings          *ports.OrganizationAISettings
-	existingQuoteID      *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
-	lastAnalysisMetadata map[string]any          // Populated by SaveAnalysis for use in stage_change events
-	lastCouncilMetadata  map[string]any          // Populated by council evaluation for stage/quote governance events
-	saveAnalysisCalled   bool                    // Track if SaveAnalysis was called
-	saveEstimationCalled bool                    // Track if SaveEstimation was called
-	stageUpdateCalled    bool                    // Track if UpdatePipelineStage was called
-	lastStageUpdated     string                  // Track last pipeline stage written
-	draftQuoteCalled     bool                    // Track if DraftQuote was called
-	offerCreated         bool                    // Track if CreatePartnerOffer was called
-	lastDraftResult      *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
-	scopeArtifact        *ScopeArtifact          // Produced by Scope Analyzer and consumed by Quote Builder
-	clarificationAsked   bool                    // Track if AskCustomerClarification was called in investigative mode
-	runID                string                  // Correlates all tool calls within one agent run
-	forceDraftQuote      bool                    // Allows manual runs to bypass draft governance (intake + council)
-	searchCache          map[string]SearchProductMaterialsOutput
-	emittedAlertKeys     map[string]struct{} // Dedupe identical alerts within a single agent run
+	Repo                   repository.LeadsRepository
+	Scorer                 *scoring.Service
+	EventBus               events.Bus
+	EmbeddingClient        *embeddings.Client
+	QdrantClient           *qdrant.Client
+	BouwmaatQdrantClient   *qdrant.Client
+	CatalogQdrantClient    *qdrant.Client
+	CatalogReader          ports.CatalogReader // optional: hydrate search results from DB
+	QuoteDrafter           ports.QuoteDrafter  // optional: draft quotes from agent
+	OfferCreator           ports.PartnerOfferCreator
+	CouncilService         MultiAgentCouncil
+	OrgSettingsReader      ports.OrganizationAISettingsReader
+	mu                     sync.RWMutex
+	tenantID               *uuid.UUID
+	leadID                 *uuid.UUID
+	serviceID              *uuid.UUID
+	actorType              string
+	actorName              string
+	orgSettings            *ports.OrganizationAISettings
+	existingQuoteID        *uuid.UUID              // If set, DraftQuote updates this quote instead of creating new
+	lastAnalysisMetadata   map[string]any          // Populated by SaveAnalysis for use in stage_change events
+	lastEstimationMetadata map[string]any          // Populated by SaveEstimation for use in stage_change events
+	lastCouncilMetadata    map[string]any          // Populated by council evaluation for stage/quote governance events
+	saveAnalysisCalled     bool                    // Track if SaveAnalysis was called
+	saveEstimationCalled   bool                    // Track if SaveEstimation was called
+	stageUpdateCalled      bool                    // Track if UpdatePipelineStage was called
+	lastStageUpdated       string                  // Track last pipeline stage written
+	draftQuoteCalled       bool                    // Track if DraftQuote was called
+	offerCreated           bool                    // Track if CreatePartnerOffer was called
+	lastDraftResult        *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
+	scopeArtifact          *ScopeArtifact          // Produced by Scope Analyzer and consumed by Quote Builder
+	clarificationAsked     bool                    // Track if AskCustomerClarification was called in investigative mode
+	runID                  string                  // Correlates all tool calls within one agent run
+	forceDraftQuote        bool                    // Allows manual runs to bypass draft governance (intake + council)
+	searchCache            map[string]SearchProductMaterialsOutput
+	emittedAlertKeys       map[string]struct{} // Dedupe identical alerts within a single agent run
 }
 
 // NewRequestDeps creates a request-scoped ToolDependencies that shares the
@@ -357,6 +358,12 @@ func (d *ToolDependencies) SetLastAnalysisMetadata(metadata map[string]any) {
 	d.lastAnalysisMetadata = metadata
 }
 
+func (d *ToolDependencies) SetLastEstimationMetadata(metadata map[string]any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastEstimationMetadata = metadata
+}
+
 // GetLastAnalysisMetadata retrieves a shallow copy of the analysis metadata saved by SaveAnalysis.
 func (d *ToolDependencies) GetLastAnalysisMetadata() map[string]any {
 	d.mu.RLock()
@@ -366,6 +373,19 @@ func (d *ToolDependencies) GetLastAnalysisMetadata() map[string]any {
 	}
 	cp := make(map[string]any, len(d.lastAnalysisMetadata))
 	for k, v := range d.lastAnalysisMetadata {
+		cp[k] = v
+	}
+	return cp
+}
+
+func (d *ToolDependencies) GetLastEstimationMetadata() map[string]any {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.lastEstimationMetadata == nil {
+		return nil
+	}
+	cp := make(map[string]any, len(d.lastEstimationMetadata))
+	for k, v := range d.lastEstimationMetadata {
 		cp[k] = v
 	}
 	return cp
@@ -495,6 +515,7 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.draftQuoteCalled = false
 	d.offerCreated = false
 	d.lastAnalysisMetadata = nil
+	d.lastEstimationMetadata = nil
 	d.lastCouncilMetadata = nil
 	d.lastDraftResult = nil
 	d.scopeArtifact = nil
@@ -1523,8 +1544,18 @@ func recordPipelineStageChange(ctx tool.Context, deps *ToolDependencies, p stage
 	if analysisMeta := deps.GetLastAnalysisMetadata(); analysisMeta != nil {
 		stageMetadata["analysis"] = analysisMeta
 	}
+	if estimationMeta := deps.GetLastEstimationMetadata(); estimationMeta != nil {
+		stageMetadata["estimation"] = estimationMeta
+	}
 	if councilMeta := deps.GetLastCouncilMetadata(); councilMeta != nil {
 		stageMetadata["council"] = councilMeta
+	}
+	if draftResult := deps.GetLastDraftResult(); draftResult != nil {
+		stageMetadata["draftQuote"] = map[string]any{
+			"quoteId":     draftResult.QuoteID,
+			"quoteNumber": draftResult.QuoteNumber,
+			"itemCount":   draftResult.ItemCount,
+		}
 	}
 
 	_, _ = deps.Repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
@@ -1811,6 +1842,11 @@ func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
 			return SaveEstimationOutput{Success: false, Message: "Failed to save estimation"}, err
 		}
 
+		deps.SetLastEstimationMetadata(repository.EstimationMetadata{
+			Scope:      input.Scope,
+			PriceRange: input.PriceRange,
+			Notes:      input.Notes,
+		}.ToMap())
 		deps.MarkSaveEstimationCalled()
 
 		return SaveEstimationOutput{Success: true, Message: "Estimation saved"}, nil

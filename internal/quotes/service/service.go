@@ -48,6 +48,7 @@ type TimelineEventParams struct {
 	Title          string
 	Summary        *string
 	Metadata       map[string]any
+	Visibility     string
 }
 
 // QuoteContactData holds the consumer/organization/agent info needed for quote emails.

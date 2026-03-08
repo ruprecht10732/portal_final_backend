@@ -245,6 +245,7 @@ type LeadTimelineEvent struct {
 	Summary        pgtype.Text        `json:"summary"`
 	Metadata       []byte             `json:"metadata"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	Visibility     string             `json:"visibility"`
 }
 
 type PartnerInvite struct {

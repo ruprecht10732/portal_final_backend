@@ -900,10 +900,11 @@ INSERT INTO lead_timeline_events (
 	event_type,
 	title,
 	summary,
-	metadata
+	metadata,
+	visibility
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 `
 
 type CreateTimelineEventParams struct {
@@ -916,9 +917,25 @@ type CreateTimelineEventParams struct {
 	Title          string      `json:"title"`
 	Summary        pgtype.Text `json:"summary"`
 	Metadata       []byte      `json:"metadata"`
+	Visibility     string      `json:"visibility"`
 }
 
-func (q *Queries) CreateTimelineEvent(ctx context.Context, arg CreateTimelineEventParams) (LeadTimelineEvent, error) {
+type CreateTimelineEventRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorName      string             `json:"actor_name"`
+	EventType      string             `json:"event_type"`
+	Title          string             `json:"title"`
+	Summary        pgtype.Text        `json:"summary"`
+	Metadata       []byte             `json:"metadata"`
+	Visibility     string             `json:"visibility"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateTimelineEvent(ctx context.Context, arg CreateTimelineEventParams) (CreateTimelineEventRow, error) {
 	row := q.db.QueryRow(ctx, createTimelineEvent,
 		arg.LeadID,
 		arg.ServiceID,
@@ -929,8 +946,9 @@ func (q *Queries) CreateTimelineEvent(ctx context.Context, arg CreateTimelineEve
 		arg.Title,
 		arg.Summary,
 		arg.Metadata,
+		arg.Visibility,
 	)
-	var i LeadTimelineEvent
+	var i CreateTimelineEventRow
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -942,6 +960,7 @@ func (q *Queries) CreateTimelineEvent(ctx context.Context, arg CreateTimelineEve
 		&i.Title,
 		&i.Summary,
 		&i.Metadata,
+		&i.Visibility,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1212,7 +1231,7 @@ func (q *Queries) FindPartnersByServiceTypeAndCity(ctx context.Context, arg Find
 }
 
 const findRecentDuplicateTimelineEvent = `-- name: FindRecentDuplicateTimelineEvent :one
-SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
 WHERE lead_id = $1
 	AND organization_id = $2
@@ -1222,11 +1241,12 @@ WHERE lead_id = $1
 	AND event_type = $6
 	AND title = $7
 	AND (($8 = '' AND summary IS NULL) OR ($8 <> '' AND summary = $8))
-	AND created_at >= now() - make_interval(secs => $9)
+	AND visibility = $9
+	AND created_at >= now() - make_interval(secs => $10)
 	AND (
-		$6 <> $10 OR (
-			COALESCE(metadata->>'oldStage', '') = CAST($11 AS text)
-			AND COALESCE(metadata->>'newStage', '') = CAST($12 AS text)
+		$6 <> $11 OR (
+			COALESCE(metadata->>'oldStage', '') = CAST($12 AS text)
+			AND COALESCE(metadata->>'newStage', '') = CAST($13 AS text)
 		)
 	)
 ORDER BY created_at DESC
@@ -1242,13 +1262,29 @@ type FindRecentDuplicateTimelineEventParams struct {
 	EventType      string      `json:"event_type"`
 	Title          string      `json:"title"`
 	Column8        interface{} `json:"column_8"`
+	Visibility     string      `json:"visibility"`
 	Secs           float64     `json:"secs"`
-	Column10       interface{} `json:"column_10"`
-	Column11       string      `json:"column_11"`
+	Column11       interface{} `json:"column_11"`
 	Column12       string      `json:"column_12"`
+	Column13       string      `json:"column_13"`
 }
 
-func (q *Queries) FindRecentDuplicateTimelineEvent(ctx context.Context, arg FindRecentDuplicateTimelineEventParams) (LeadTimelineEvent, error) {
+type FindRecentDuplicateTimelineEventRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorName      string             `json:"actor_name"`
+	EventType      string             `json:"event_type"`
+	Title          string             `json:"title"`
+	Summary        pgtype.Text        `json:"summary"`
+	Metadata       []byte             `json:"metadata"`
+	Visibility     string             `json:"visibility"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) FindRecentDuplicateTimelineEvent(ctx context.Context, arg FindRecentDuplicateTimelineEventParams) (FindRecentDuplicateTimelineEventRow, error) {
 	row := q.db.QueryRow(ctx, findRecentDuplicateTimelineEvent,
 		arg.LeadID,
 		arg.OrganizationID,
@@ -1258,12 +1294,13 @@ func (q *Queries) FindRecentDuplicateTimelineEvent(ctx context.Context, arg Find
 		arg.EventType,
 		arg.Title,
 		arg.Column8,
+		arg.Visibility,
 		arg.Secs,
-		arg.Column10,
 		arg.Column11,
 		arg.Column12,
+		arg.Column13,
 	)
-	var i LeadTimelineEvent
+	var i FindRecentDuplicateTimelineEventRow
 	err := row.Scan(
 		&i.ID,
 		&i.LeadID,
@@ -1275,6 +1312,7 @@ func (q *Queries) FindRecentDuplicateTimelineEvent(ctx context.Context, arg Find
 		&i.Title,
 		&i.Summary,
 		&i.Metadata,
+		&i.Visibility,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -4199,6 +4237,7 @@ WITH unified AS (
 		LIMIT 1
 	) svc ON true
 	WHERE te.organization_id = $1
+		AND te.visibility <> 'debug'
 		AND te.event_type IN ('ai', 'photo_analysis_completed')
 ),
 with_gap AS (
@@ -4374,7 +4413,7 @@ func (q *Queries) ListRecentAppliedHumanFeedbackByServiceType(ctx context.Contex
 }
 
 const listTimelineEvents = `-- name: ListTimelineEvents :many
-SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
 WHERE lead_id = $1 AND organization_id = $2
 ORDER BY created_at DESC
@@ -4385,15 +4424,30 @@ type ListTimelineEventsParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 }
 
-func (q *Queries) ListTimelineEvents(ctx context.Context, arg ListTimelineEventsParams) ([]LeadTimelineEvent, error) {
+type ListTimelineEventsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorName      string             `json:"actor_name"`
+	EventType      string             `json:"event_type"`
+	Title          string             `json:"title"`
+	Summary        pgtype.Text        `json:"summary"`
+	Metadata       []byte             `json:"metadata"`
+	Visibility     string             `json:"visibility"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListTimelineEvents(ctx context.Context, arg ListTimelineEventsParams) ([]ListTimelineEventsRow, error) {
 	rows, err := q.db.Query(ctx, listTimelineEvents, arg.LeadID, arg.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LeadTimelineEvent
+	var items []ListTimelineEventsRow
 	for rows.Next() {
-		var i LeadTimelineEvent
+		var i ListTimelineEventsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.LeadID,
@@ -4405,6 +4459,7 @@ func (q *Queries) ListTimelineEvents(ctx context.Context, arg ListTimelineEvents
 			&i.Title,
 			&i.Summary,
 			&i.Metadata,
+			&i.Visibility,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -4418,7 +4473,7 @@ func (q *Queries) ListTimelineEvents(ctx context.Context, arg ListTimelineEvents
 }
 
 const listTimelineEventsByService = `-- name: ListTimelineEventsByService :many
-SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
 WHERE lead_id = $1 AND organization_id = $2 AND service_id = $3
 ORDER BY created_at DESC
@@ -4430,15 +4485,30 @@ type ListTimelineEventsByServiceParams struct {
 	ServiceID      pgtype.UUID `json:"service_id"`
 }
 
-func (q *Queries) ListTimelineEventsByService(ctx context.Context, arg ListTimelineEventsByServiceParams) ([]LeadTimelineEvent, error) {
+type ListTimelineEventsByServiceRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorName      string             `json:"actor_name"`
+	EventType      string             `json:"event_type"`
+	Title          string             `json:"title"`
+	Summary        pgtype.Text        `json:"summary"`
+	Metadata       []byte             `json:"metadata"`
+	Visibility     string             `json:"visibility"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListTimelineEventsByService(ctx context.Context, arg ListTimelineEventsByServiceParams) ([]ListTimelineEventsByServiceRow, error) {
 	rows, err := q.db.Query(ctx, listTimelineEventsByService, arg.LeadID, arg.OrganizationID, arg.ServiceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LeadTimelineEvent
+	var items []ListTimelineEventsByServiceRow
 	for rows.Next() {
-		var i LeadTimelineEvent
+		var i ListTimelineEventsByServiceRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.LeadID,
@@ -4450,6 +4520,7 @@ func (q *Queries) ListTimelineEventsByService(ctx context.Context, arg ListTimel
 			&i.Title,
 			&i.Summary,
 			&i.Metadata,
+			&i.Visibility,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

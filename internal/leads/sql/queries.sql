@@ -431,13 +431,14 @@ INSERT INTO lead_timeline_events (
 	event_type,
 	title,
 	summary,
-	metadata
+	metadata,
+	visibility
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at;
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at;
 
 -- name: FindRecentDuplicateTimelineEvent :one
-SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
 WHERE lead_id = $1
 	AND organization_id = $2
@@ -447,24 +448,25 @@ WHERE lead_id = $1
 	AND event_type = $6
 	AND title = $7
 	AND (($8 = '' AND summary IS NULL) OR ($8 <> '' AND summary = $8))
-	AND created_at >= now() - make_interval(secs => $9)
+	AND visibility = $9
+	AND created_at >= now() - make_interval(secs => $10)
 	AND (
-		$6 <> $10 OR (
-			COALESCE(metadata->>'oldStage', '') = CAST($11 AS text)
-			AND COALESCE(metadata->>'newStage', '') = CAST($12 AS text)
+		$6 <> $11 OR (
+			COALESCE(metadata->>'oldStage', '') = CAST($12 AS text)
+			AND COALESCE(metadata->>'newStage', '') = CAST($13 AS text)
 		)
 	)
 ORDER BY created_at DESC
 LIMIT 1;
 
 -- name: ListTimelineEvents :many
-SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
 WHERE lead_id = $1 AND organization_id = $2
 ORDER BY created_at DESC;
 
 -- name: ListTimelineEventsByService :many
-SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, created_at
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
 WHERE lead_id = $1 AND organization_id = $2 AND service_id = $3
 ORDER BY created_at DESC;
@@ -1257,6 +1259,7 @@ WITH unified AS (
 		LIMIT 1
 	) svc ON true
 	WHERE te.organization_id = $1
+		AND te.visibility <> 'debug'
 		AND te.event_type IN ('ai', 'photo_analysis_completed')
 ),
 with_gap AS (

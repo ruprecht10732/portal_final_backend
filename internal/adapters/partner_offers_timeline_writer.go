@@ -29,6 +29,7 @@ func (a *PartnerOffersTimelineWriter) WriteOfferEvent(ctx context.Context, p not
 		Title:          p.Title,
 		Summary:        p.Summary,
 		Metadata:       p.Metadata,
+		Visibility:     p.Visibility,
 	})
 	return err
 }

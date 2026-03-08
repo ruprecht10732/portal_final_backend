@@ -355,14 +355,15 @@ type LeadMetricsResponse struct {
 
 // TimelineItem represents an entry in the lead timeline feed.
 type TimelineItem struct {
-	ID        uuid.UUID      `json:"id"`
-	ServiceID *uuid.UUID     `json:"serviceId,omitempty"`
-	Type      string         `json:"type"` // 'ai', 'user', 'stage', 'system'
-	Title     string         `json:"title"`
-	Summary   string         `json:"summary"`
-	Timestamp time.Time      `json:"timestamp"`
-	Actor     string         `json:"actor"`
-	Metadata  map[string]any `json:"metadata"`
+	ID         uuid.UUID      `json:"id"`
+	ServiceID  *uuid.UUID     `json:"serviceId,omitempty"`
+	Type       string         `json:"type"` // 'ai', 'user', 'stage', 'system'
+	Title      string         `json:"title"`
+	Summary    string         `json:"summary"`
+	Timestamp  time.Time      `json:"timestamp"`
+	Actor      string         `json:"actor"`
+	Metadata   map[string]any `json:"metadata"`
+	Visibility string         `json:"visibility,omitempty"`
 }
 
 // LogCallRequest is the request body for processing a post-call summary

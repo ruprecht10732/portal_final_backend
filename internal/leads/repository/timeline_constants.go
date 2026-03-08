@@ -66,3 +66,10 @@ const (
 	EventTitleAppointmentRequested   = "Inspectie aangevraagd"
 	EventTitlePhotoAnalysisCompleted = "Foto-analyse voltooid"
 )
+
+// TimelineVisibility constants control whether an event is shown in the default timeline.
+const (
+	TimelineVisibilityPublic   = "public"
+	TimelineVisibilityInternal = "internal"
+	TimelineVisibilityDebug    = "debug"
+)

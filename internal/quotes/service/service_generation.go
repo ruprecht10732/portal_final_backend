@@ -494,5 +494,6 @@ func (s *Service) emitDraftTimelineEvent(ctx context.Context, quote repository.Q
 		Title:          fmt.Sprintf("Draft quote %s created", quote.QuoteNumber),
 		Summary:        toPtr(fmt.Sprintf("Total: €%.2f (%d items, %d from catalog, %d estimated)", float64(quote.TotalCents)/100, itemCount, catalogCount, adHocCount)),
 		Metadata:       map[string]any{"quoteId": quote.ID, "quoteNumber": quote.QuoteNumber, "itemCount": itemCount, "catalogItems": catalogCount, "adHocItems": adHocCount, "status": quote.Status},
+		Visibility:     "debug",
 	})
 }

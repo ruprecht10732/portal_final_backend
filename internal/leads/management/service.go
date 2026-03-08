@@ -1116,30 +1116,108 @@ func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uu
 		return nil, err
 	}
 
-	items := make([]transport.TimelineItem, len(events))
-	for i, event := range events {
-		timelineType := "user"
-		if event.EventType == "stage_change" {
-			timelineType = "stage"
-		} else if event.EventType == repository.EventTypeAlert || event.ActorType == repository.ActorTypeSystem {
-			timelineType = "system"
-		} else if event.ActorType == "AI" {
-			timelineType = "ai"
-		}
+	return buildTimelineItems(events), nil
+}
 
-		items[i] = transport.TimelineItem{
-			ID:        event.ID,
-			ServiceID: event.ServiceID,
-			Type:      timelineType,
-			Title:     event.Title,
-			Summary:   summaryValue(event.Summary),
-			Timestamp: event.CreatedAt,
-			Actor:     event.ActorName,
-			Metadata:  event.Metadata,
+const timelineStageMergeWindow = 5 * time.Minute
+
+type timelineStageContext struct {
+	serviceID     string
+	actorName     string
+	createdAt     time.Time
+	hasAnalysis   bool
+	hasEstimation bool
+	hasDraftQuote bool
+}
+
+func buildTimelineItems(events []repository.TimelineEvent) []transport.TimelineItem {
+	stageContexts := make([]timelineStageContext, 0, len(events))
+	items := make([]transport.TimelineItem, 0, len(events))
+	for _, event := range events {
+		if shouldSkipTimelineEvent(event, stageContexts) {
+			continue
+		}
+		items = append(items, transportTimelineItem(event))
+		if context, ok := buildTimelineStageContext(event); ok {
+			stageContexts = append(stageContexts, context)
 		}
 	}
+	return items
+}
 
-	return items, nil
+func shouldSkipTimelineEvent(event repository.TimelineEvent, contexts []timelineStageContext) bool {
+	if event.Visibility == repository.TimelineVisibilityDebug {
+		return true
+	}
+	return matchesTimelineStageContext(event, contexts)
+}
+
+func matchesTimelineStageContext(event repository.TimelineEvent, contexts []timelineStageContext) bool {
+	if event.ServiceID == nil {
+		return false
+	}
+	serviceKey := event.ServiceID.String()
+	for _, context := range contexts {
+		if context.serviceID != serviceKey || context.actorName != event.ActorName {
+			continue
+		}
+		if context.createdAt.Before(event.CreatedAt) || context.createdAt.Sub(event.CreatedAt) > timelineStageMergeWindow {
+			continue
+		}
+		switch {
+		case event.EventType == repository.EventTypeAI && context.hasAnalysis:
+			return true
+		case event.EventType == repository.EventTypeAnalysis && event.Title == repository.EventTitleEstimationSaved && context.hasEstimation:
+			return true
+		case event.EventType == "quote_drafted" && context.hasDraftQuote:
+			return true
+		}
+	}
+	return false
+}
+
+func buildTimelineStageContext(event repository.TimelineEvent) (timelineStageContext, bool) {
+	if event.EventType != repository.EventTypeStageChange {
+		return timelineStageContext{}, false
+	}
+	context := timelineStageContext{
+		actorName:     event.ActorName,
+		createdAt:     event.CreatedAt,
+		hasAnalysis:   event.Metadata != nil && event.Metadata["analysis"] != nil,
+		hasEstimation: event.Metadata != nil && event.Metadata["estimation"] != nil,
+		hasDraftQuote: event.Metadata != nil && event.Metadata["draftQuote"] != nil,
+	}
+	if event.ServiceID != nil {
+		context.serviceID = event.ServiceID.String()
+	}
+	return context, true
+}
+
+func transportTimelineItem(event repository.TimelineEvent) transport.TimelineItem {
+	return transport.TimelineItem{
+		ID:         event.ID,
+		ServiceID:  event.ServiceID,
+		Type:       timelineTypeForEvent(event),
+		Title:      event.Title,
+		Summary:    summaryValue(event.Summary),
+		Timestamp:  event.CreatedAt,
+		Actor:      event.ActorName,
+		Metadata:   event.Metadata,
+		Visibility: event.Visibility,
+	}
+}
+
+func timelineTypeForEvent(event repository.TimelineEvent) string {
+	if event.EventType == repository.EventTypeStageChange {
+		return "stage"
+	}
+	if event.EventType == repository.EventTypeAlert || event.ActorType == repository.ActorTypeSystem {
+		return "system"
+	}
+	if event.ActorType == repository.ActorTypeAI {
+		return "ai"
+	}
+	return "user"
 }
 
 func summaryValue(value *string) string {

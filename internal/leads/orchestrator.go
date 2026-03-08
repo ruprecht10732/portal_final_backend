@@ -1343,6 +1343,7 @@ func (o *Orchestrator) maybeWriteReconcileTimeline(ctx context.Context, p maybeW
 			NewStatus:  p.NewStatus,
 			Evidence:   buildReconcileEvidence(p.Aggregates),
 		}.ToMap(),
+		Visibility: repository.TimelineVisibilityDebug,
 	})
 }
 

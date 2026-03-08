@@ -63,15 +63,16 @@ type QuotePDFFileStorage interface {
 // PartnerOfferTimelineEventParams describes the payload for a partner-offer timeline event.
 // Kept as a struct to avoid long parameter lists at call sites.
 type PartnerOfferTimelineEventParams struct {
-	LeadID    uuid.UUID
-	ServiceID *uuid.UUID
-	OrgID     uuid.UUID
-	ActorType string
-	ActorName string
-	EventType string
-	Title     string
-	Summary   *string
-	Metadata  map[string]any
+	LeadID     uuid.UUID
+	ServiceID  *uuid.UUID
+	OrgID      uuid.UUID
+	ActorType  string
+	ActorName  string
+	EventType  string
+	Title      string
+	Summary    *string
+	Metadata   map[string]any
+	Visibility string
 }
 
 // PartnerOfferTimelineWriter writes partner-offer events into the leads timeline.
@@ -115,15 +116,16 @@ type LeadAssigneeReader interface {
 
 // LeadTimelineEventParams describes a lead timeline event payload.
 type LeadTimelineEventParams struct {
-	LeadID    uuid.UUID
-	ServiceID *uuid.UUID
-	OrgID     uuid.UUID
-	ActorType string
-	ActorName string
-	EventType string
-	Title     string
-	Summary   *string
-	Metadata  map[string]any
+	LeadID     uuid.UUID
+	ServiceID  *uuid.UUID
+	OrgID      uuid.UUID
+	ActorType  string
+	ActorName  string
+	EventType  string
+	Title      string
+	Summary    *string
+	Metadata   map[string]any
+	Visibility string
 }
 
 // LeadTimelineWriter persists lead timeline events.
@@ -3231,6 +3233,7 @@ func (m *Module) writeWhatsAppFailureEvent(ctx context.Context, leadID uuid.UUID
 		Metadata: map[string]any{
 			"raw_error": errorMsg,
 		},
+		Visibility: "internal",
 	})
 }
 
@@ -3263,15 +3266,16 @@ func (m *Module) writeWhatsAppSentEventWithMetadata(params whatsAppSentEventWith
 	}
 
 	if err := m.leadTimeline.CreateTimelineEvent(params.Ctx, LeadTimelineEventParams{
-		LeadID:    params.LeadID,
-		ServiceID: params.ServiceID,
-		OrgID:     params.OrgID,
-		ActorType: params.ActorType,
-		ActorName: params.ActorName,
-		EventType: "whatsapp_sent",
-		Title:     "WhatsApp verstuurd",
-		Summary:   &params.Summary,
-		Metadata:  params.Metadata,
+		LeadID:     params.LeadID,
+		ServiceID:  params.ServiceID,
+		OrgID:      params.OrgID,
+		ActorType:  params.ActorType,
+		ActorName:  params.ActorName,
+		EventType:  "whatsapp_sent",
+		Title:      "WhatsApp verstuurd",
+		Summary:    &params.Summary,
+		Metadata:   params.Metadata,
+		Visibility: "internal",
 	}); err != nil {
 		m.log.Error("failed to write whatsapp timeline event", "error", err, "leadId", params.LeadID)
 	}

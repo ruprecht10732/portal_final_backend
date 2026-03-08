@@ -30,6 +30,7 @@ func (a *QuotesTimelineWriter) CreateTimelineEvent(ctx context.Context, params q
 		Title:          params.Title,
 		Summary:        params.Summary,
 		Metadata:       params.Metadata,
+		Visibility:     params.Visibility,
 	})
 	return err
 }

@@ -43,6 +43,7 @@ type TimelineEvent struct {
 	Title          string
 	Summary        *string
 	Metadata       map[string]any
+	Visibility     string
 	CreatedAt      time.Time
 }
 
@@ -56,9 +57,22 @@ type CreateTimelineEventParams struct {
 	Title          string
 	Summary        *string
 	Metadata       map[string]any
+	Visibility     string
+}
+
+func normalizeTimelineVisibility(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case TimelineVisibilityInternal:
+		return TimelineVisibilityInternal
+	case TimelineVisibilityDebug:
+		return TimelineVisibilityDebug
+	default:
+		return TimelineVisibilityPublic
+	}
 }
 
 func (r *Repository) CreateTimelineEvent(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, error) {
+	params.Visibility = normalizeTimelineVisibility(params.Visibility)
 	if shouldAttemptTimelineDedup(params) {
 		if existing, found, dedupeErr := r.findRecentDuplicateTimelineEvent(ctx, params); dedupeErr == nil && found {
 			return existing, nil
@@ -80,12 +94,13 @@ func (r *Repository) CreateTimelineEvent(ctx context.Context, params CreateTimel
 		Title:          params.Title,
 		Summary:        toPgText(params.Summary),
 		Metadata:       metadataJSON,
+		Visibility:     params.Visibility,
 	})
 	if err != nil {
 		return TimelineEvent{}, err
 	}
 
-	event := timelineEventFromDB(row)
+	event := timelineEventFromCreateRow(row)
 	// Preserve the original Go map and avoid a needless JSON roundtrip on insert.
 	event.Metadata = params.Metadata
 	return event, nil
@@ -128,10 +143,11 @@ func (r *Repository) findRecentDuplicateTimelineEvent(ctx context.Context, param
 		EventType:      params.EventType,
 		Title:          params.Title,
 		Column8:        params.Summary,
+		Visibility:     params.Visibility,
 		Secs:           float64(windowSeconds),
-		Column10:       EventTypeStageChange,
-		Column11:       oldStage,
-		Column12:       newStage,
+		Column11:       EventTypeStageChange,
+		Column12:       oldStage,
+		Column13:       newStage,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TimelineEvent{}, false, nil
@@ -139,7 +155,7 @@ func (r *Repository) findRecentDuplicateTimelineEvent(ctx context.Context, param
 	if err != nil {
 		return TimelineEvent{}, false, err
 	}
-	return timelineEventFromDB(row), true, nil
+	return timelineEventFromDuplicateRow(row), true, nil
 }
 
 // ListTimelineEvents returns all timeline events for a lead, ordered newest first.
@@ -154,7 +170,7 @@ func (r *Repository) ListTimelineEvents(ctx context.Context, leadID uuid.UUID, o
 	}
 	items := make([]TimelineEvent, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, timelineEventFromDB(row))
+		items = append(items, timelineEventFromListRow(row))
 	}
 	return items, nil
 }
@@ -177,12 +193,12 @@ func (r *Repository) ListTimelineEventsByService(ctx context.Context, leadID uui
 	}
 	items := make([]TimelineEvent, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, timelineEventFromDB(row))
+		items = append(items, timelineEventFromListByServiceRow(row))
 	}
 	return items, nil
 }
 
-func timelineEventFromDB(row leadsdb.LeadTimelineEvent) TimelineEvent {
+func timelineEventFromCreateRow(row leadsdb.CreateTimelineEventRow) TimelineEvent {
 	event := TimelineEvent{
 		ID:             row.ID.Bytes,
 		LeadID:         row.LeadID.Bytes,
@@ -193,6 +209,67 @@ func timelineEventFromDB(row leadsdb.LeadTimelineEvent) TimelineEvent {
 		EventType:      row.EventType,
 		Title:          row.Title,
 		Summary:        optionalString(row.Summary),
+		Visibility:     normalizeTimelineVisibility(row.Visibility),
+		CreatedAt:      row.CreatedAt.Time,
+	}
+	if len(row.Metadata) > 0 {
+		_ = json.Unmarshal(row.Metadata, &event.Metadata)
+	}
+	return event
+}
+
+func timelineEventFromDuplicateRow(row leadsdb.FindRecentDuplicateTimelineEventRow) TimelineEvent {
+	event := TimelineEvent{
+		ID:             row.ID.Bytes,
+		LeadID:         row.LeadID.Bytes,
+		ServiceID:      optionalUUID(row.ServiceID),
+		OrganizationID: row.OrganizationID.Bytes,
+		ActorType:      row.ActorType,
+		ActorName:      row.ActorName,
+		EventType:      row.EventType,
+		Title:          row.Title,
+		Summary:        optionalString(row.Summary),
+		Visibility:     normalizeTimelineVisibility(row.Visibility),
+		CreatedAt:      row.CreatedAt.Time,
+	}
+	if len(row.Metadata) > 0 {
+		_ = json.Unmarshal(row.Metadata, &event.Metadata)
+	}
+	return event
+}
+
+func timelineEventFromListRow(row leadsdb.ListTimelineEventsRow) TimelineEvent {
+	event := TimelineEvent{
+		ID:             row.ID.Bytes,
+		LeadID:         row.LeadID.Bytes,
+		ServiceID:      optionalUUID(row.ServiceID),
+		OrganizationID: row.OrganizationID.Bytes,
+		ActorType:      row.ActorType,
+		ActorName:      row.ActorName,
+		EventType:      row.EventType,
+		Title:          row.Title,
+		Summary:        optionalString(row.Summary),
+		Visibility:     normalizeTimelineVisibility(row.Visibility),
+		CreatedAt:      row.CreatedAt.Time,
+	}
+	if len(row.Metadata) > 0 {
+		_ = json.Unmarshal(row.Metadata, &event.Metadata)
+	}
+	return event
+}
+
+func timelineEventFromListByServiceRow(row leadsdb.ListTimelineEventsByServiceRow) TimelineEvent {
+	event := TimelineEvent{
+		ID:             row.ID.Bytes,
+		LeadID:         row.LeadID.Bytes,
+		ServiceID:      optionalUUID(row.ServiceID),
+		OrganizationID: row.OrganizationID.Bytes,
+		ActorType:      row.ActorType,
+		ActorName:      row.ActorName,
+		EventType:      row.EventType,
+		Title:          row.Title,
+		Summary:        optionalString(row.Summary),
+		Visibility:     normalizeTimelineVisibility(row.Visibility),
 		CreatedAt:      row.CreatedAt.Time,
 	}
 	if len(row.Metadata) > 0 {

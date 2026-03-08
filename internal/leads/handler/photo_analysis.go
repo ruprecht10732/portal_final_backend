@@ -428,6 +428,7 @@ func (h *PhotoAnalysisHandler) writePhotoAnalysisTimeline(ctx context.Context, l
 		Title:          repository.EventTitlePhotoAnalysisCompleted,
 		Summary:        &summary,
 		Metadata:       metadata,
+		Visibility:     repository.TimelineVisibilityDebug,
 	})
 }
 

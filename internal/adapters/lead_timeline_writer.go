@@ -29,6 +29,7 @@ func (a *LeadTimelineWriter) CreateTimelineEvent(ctx context.Context, params not
 		Title:          params.Title,
 		Summary:        params.Summary,
 		Metadata:       params.Metadata,
+		Visibility:     params.Visibility,
 	})
 	return err
 }
