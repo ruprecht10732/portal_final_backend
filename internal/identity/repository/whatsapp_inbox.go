@@ -649,6 +649,33 @@ func (r *Repository) CountUnreadWhatsAppConversations(ctx context.Context, organ
 	return count, nil
 }
 
+func (r *Repository) GetWhatsAppMessageByExternalID(ctx context.Context, organizationID uuid.UUID, externalMessageID string) (WhatsAppMessage, WhatsAppConversation, error) {
+	targetID := strings.TrimSpace(externalMessageID)
+	if targetID == "" {
+		return WhatsAppMessage{}, WhatsAppConversation{}, ErrNotFound
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return WhatsAppMessage{}, WhatsAppConversation{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	message, conversation, err := r.getWhatsAppMessageByExternalID(ctx, tx, organizationID, targetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppMessage{}, WhatsAppConversation{}, ErrNotFound
+	}
+	if err != nil {
+		return WhatsAppMessage{}, WhatsAppConversation{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return WhatsAppMessage{}, WhatsAppConversation{}, err
+	}
+	return message, conversation, nil
+}
+
 func (r *Repository) ApplyWhatsAppMessageReceipt(ctx context.Context, organizationID uuid.UUID, externalMessageIDs []string, status string, receiptAt *time.Time) ([]WhatsAppConversation, []WhatsAppMessage, error) {
 	ids := normalizeReceiptIDs(externalMessageIDs)
 	if len(ids) == 0 {

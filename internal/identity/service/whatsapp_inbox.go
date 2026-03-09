@@ -20,6 +20,7 @@ import (
 
 const conversationNotFoundMsg = "conversation not found"
 const whatsappDeviceNotLinkedMsg = "er is geen verbonden WhatsApp-apparaat voor deze organisatie"
+const whatsappMessageNotFoundMsg = "message not found"
 
 type SendWhatsAppConversationAttachmentInput struct {
 	Filename   string
@@ -45,6 +46,11 @@ type SendWhatsAppConversationMessageInput struct {
 	Options         []string
 	MaxAnswer       int
 	DurationSeconds *int
+}
+
+type WhatsAppConversationActionResult struct {
+	Conversation *repository.WhatsAppConversation
+	Message      *repository.WhatsAppMessage
 }
 
 func (s *Service) SetSSE(sseService *sse.Service) {
@@ -225,6 +231,127 @@ func (s *Service) SendWhatsAppChatPresence(ctx context.Context, organizationID, 
 		return apperr.Internal("WhatsApp typing-indicator kon niet worden verstuurd")
 	}
 	return nil
+}
+
+func (s *Service) ReactWhatsAppMessage(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string, emoji string) (WhatsAppConversationActionResult, error) {
+	message, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+
+	reaction := strings.TrimSpace(emoji)
+	if reaction == "" {
+		return WhatsAppConversationActionResult{}, apperr.Validation("emoji is verplicht")
+	}
+	if err := s.whatsapp.ReactMessage(ctx, deviceID, externalMessageID, whatsapp.ReactMessageInput{PhoneNumber: conversation.PhoneNumber, Emoji: reaction}); err != nil {
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-reactie kon niet worden verstuurd")
+	}
+
+	updatedConversation, updatedMessage, err := s.applyLocalWhatsAppMutation(ctx, organizationID, message, conversation, "message.reaction", nil, &reaction)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	return WhatsAppConversationActionResult{Conversation: &updatedConversation, Message: &updatedMessage}, nil
+}
+
+func (s *Service) EditWhatsAppMessage(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string, body string) (WhatsAppConversationActionResult, error) {
+	message, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	if err := requireOutboundWhatsAppMessage(message, "bewerken"); err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+
+	updatedBody := strings.TrimSpace(body)
+	if updatedBody == "" {
+		return WhatsAppConversationActionResult{}, apperr.Validation("WhatsApp-bericht is leeg")
+	}
+	if err := s.whatsapp.UpdateMessage(ctx, deviceID, externalMessageID, whatsapp.UpdateMessageInput{PhoneNumber: conversation.PhoneNumber, Message: updatedBody}); err != nil {
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-bericht kon niet worden bijgewerkt")
+	}
+
+	updatedConversation, updatedMessage, err := s.applyLocalWhatsAppMutation(ctx, organizationID, message, conversation, "message.edited", &updatedBody, nil)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	return WhatsAppConversationActionResult{Conversation: &updatedConversation, Message: &updatedMessage}, nil
+}
+
+func (s *Service) DeleteWhatsAppMessage(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string) (WhatsAppConversationActionResult, error) {
+	message, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	if err := requireOutboundWhatsAppMessage(message, "verwijderen"); err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+
+	if err := s.whatsapp.DeleteMessage(ctx, deviceID, externalMessageID, whatsapp.MessageTargetInput{PhoneNumber: conversation.PhoneNumber}); err != nil {
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-bericht kon niet worden verwijderd")
+	}
+
+	updatedConversation, updatedMessage, err := s.applyLocalWhatsAppMutation(ctx, organizationID, message, conversation, "message.deleted", nil, nil)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	return WhatsAppConversationActionResult{Conversation: &updatedConversation, Message: &updatedMessage}, nil
+}
+
+func (s *Service) RevokeWhatsAppMessage(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string) (WhatsAppConversationActionResult, error) {
+	message, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	if err := requireOutboundWhatsAppMessage(message, "intrekken"); err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+
+	if err := s.whatsapp.RevokeMessage(ctx, deviceID, externalMessageID, whatsapp.MessageTargetInput{PhoneNumber: conversation.PhoneNumber}); err != nil {
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-bericht kon niet worden ingetrokken")
+	}
+
+	updatedConversation, updatedMessage, err := s.applyLocalWhatsAppMutation(ctx, organizationID, message, conversation, "message.revoked", nil, nil)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	return WhatsAppConversationActionResult{Conversation: &updatedConversation, Message: &updatedMessage}, nil
+}
+
+func (s *Service) ArchiveWhatsAppConversation(ctx context.Context, organizationID, conversationID uuid.UUID, value bool) (WhatsAppConversationActionResult, error) {
+	conversation, deviceID, err := s.getWhatsAppConversationActionContext(ctx, organizationID, conversationID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	if err := s.whatsapp.ArchiveChat(ctx, deviceID, conversation.PhoneNumber, value); err != nil {
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-gesprek kon niet worden gearchiveerd")
+	}
+	return WhatsAppConversationActionResult{Conversation: &conversation}, nil
+}
+
+func (s *Service) PinWhatsAppConversation(ctx context.Context, organizationID, conversationID uuid.UUID, value bool) (WhatsAppConversationActionResult, error) {
+	conversation, deviceID, err := s.getWhatsAppConversationActionContext(ctx, organizationID, conversationID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	if err := s.whatsapp.PinChat(ctx, deviceID, conversation.PhoneNumber, value); err != nil {
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-gesprek kon niet worden vastgezet")
+	}
+	return WhatsAppConversationActionResult{Conversation: &conversation}, nil
+}
+
+func (s *Service) SetWhatsAppDisappearingTimer(ctx context.Context, organizationID, conversationID uuid.UUID, timerSeconds int) (WhatsAppConversationActionResult, error) {
+	conversation, deviceID, err := s.getWhatsAppConversationActionContext(ctx, organizationID, conversationID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+	if timerSeconds < 0 {
+		return WhatsAppConversationActionResult{}, apperr.Validation("timerSeconds moet 0 of hoger zijn")
+	}
+	if err := s.whatsapp.SetDisappearingTimer(ctx, deviceID, conversation.PhoneNumber, timerSeconds); err != nil {
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp disappearing timer kon niet worden ingesteld")
+	}
+	return WhatsAppConversationActionResult{Conversation: &conversation}, nil
 }
 
 func (s *Service) PersistOutgoingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, body string, externalMessageID *string) error {
@@ -792,6 +919,85 @@ func addOutgoingAttachmentMetadata(portal map[string]any, attachmentInput *SendW
 	if len(attachment) > 0 {
 		portal["attachment"] = attachment
 	}
+}
+
+func (s *Service) getWhatsAppConversationActionContext(ctx context.Context, organizationID, conversationID uuid.UUID) (repository.WhatsAppConversation, string, error) {
+	conversation, err := s.repo.GetWhatsAppConversation(ctx, organizationID, conversationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.WhatsAppConversation{}, "", apperr.NotFound(conversationNotFoundMsg)
+		}
+		return repository.WhatsAppConversation{}, "", err
+	}
+
+	deviceID, err := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
+	if err != nil {
+		return repository.WhatsAppConversation{}, "", err
+	}
+	return conversation, deviceID, nil
+}
+
+func (s *Service) getWhatsAppMessageActionContext(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string) (repository.WhatsAppMessage, repository.WhatsAppConversation, string, error) {
+	conversation, deviceID, err := s.getWhatsAppConversationActionContext(ctx, organizationID, conversationID)
+	if err != nil {
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, "", err
+	}
+
+	message, messageConversation, err := s.repo.GetWhatsAppMessageByExternalID(ctx, organizationID, externalMessageID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, "", apperr.NotFound(whatsappMessageNotFoundMsg)
+		}
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, "", err
+	}
+	if messageConversation.ID != conversation.ID {
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, "", apperr.NotFound(whatsappMessageNotFoundMsg)
+	}
+	return message, conversation, deviceID, nil
+}
+
+func requireOutboundWhatsAppMessage(message repository.WhatsAppMessage, action string) error {
+	if message.Direction != "outbound" {
+		return apperr.Validation(fmt.Sprintf("alleen uitgaande berichten kunnen worden %s", action))
+	}
+	return nil
+}
+
+func (s *Service) applyLocalWhatsAppMutation(ctx context.Context, organizationID uuid.UUID, message repository.WhatsAppMessage, conversation repository.WhatsAppConversation, eventType string, body *string, reaction *string) (repository.WhatsAppConversation, repository.WhatsAppMessage, error) {
+	now := time.Now().UTC()
+	isFromMe := true
+	applied, err := s.ApplyWhatsAppMessageMutation(ctx, webhookinbox.WhatsAppMessageMutation{
+		OrganizationID:          organizationID,
+		EventType:               eventType,
+		TargetExternalMessageID: strings.TrimSpace(valueOrEmpty(message.ExternalMessageID)),
+		PhoneNumber:             conversation.PhoneNumber,
+		Body:                    body,
+		Reaction:                reaction,
+		OccurredAt:              &now,
+		IsFromMe:                &isFromMe,
+	})
+	if err != nil {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
+	}
+	if !applied {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.NotFound(whatsappMessageNotFoundMsg)
+	}
+
+	updatedMessage, updatedConversation, err := s.repo.GetWhatsAppMessageByExternalID(ctx, organizationID, strings.TrimSpace(valueOrEmpty(message.ExternalMessageID)))
+	if err != nil {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
+	}
+	if updatedConversation.ID != conversation.ID {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.NotFound(whatsappMessageNotFoundMsg)
+	}
+	return updatedConversation, updatedMessage, nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (s *Service) sendWhatsAppConversationMessageByType(ctx context.Context, deviceID string, phoneNumber string, message outgoingWhatsAppMessage) (whatsapp.SendResult, error) {

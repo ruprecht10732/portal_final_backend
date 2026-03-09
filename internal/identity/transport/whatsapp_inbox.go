@@ -80,10 +80,32 @@ type SendWhatsAppChatPresenceRequest struct {
 	Action string `json:"action" validate:"required,oneof=start stop"`
 }
 
+type ReactWhatsAppMessageRequest struct {
+	Emoji string `json:"emoji" validate:"required,max=16"`
+}
+
+type EditWhatsAppMessageRequest struct {
+	Body string `json:"body" validate:"required,max=4000"`
+}
+
+type ToggleWhatsAppConversationStateRequest struct {
+	Value bool `json:"value"`
+}
+
+type SetWhatsAppDisappearingTimerRequest struct {
+	TimerSeconds int `json:"timerSeconds" validate:"min=0,max=31536000"`
+}
+
 type SendWhatsAppConversationMessageResponse struct {
 	Status       string                       `json:"status"`
 	Conversation WhatsAppConversationResponse `json:"conversation"`
 	Message      WhatsAppMessageResponse      `json:"message"`
+}
+
+type WhatsAppConversationActionResponse struct {
+	Status       string                        `json:"status"`
+	Conversation *WhatsAppConversationResponse `json:"conversation,omitempty"`
+	Message      *WhatsAppMessageResponse      `json:"message,omitempty"`
 }
 
 type MarkWhatsAppConversationReadResponse struct {
