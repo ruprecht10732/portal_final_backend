@@ -262,6 +262,7 @@ type WhatsAppStatus struct {
 	Message     string `json:"message"`
 	CanSend     bool   `json:"canSend"`
 	NeedsReauth bool   `json:"needsReauth"`
+	Presence    string `json:"presence"`
 }
 
 func (s *Service) RegisterWhatsAppDevice(ctx context.Context, organizationID uuid.UUID) (string, error) {
@@ -275,6 +276,7 @@ func (s *Service) RegisterWhatsAppDevice(ctx context.Context, organizationID uui
 
 	update := repository.OrganizationSettingsUpdate{
 		WhatsAppDeviceID: &deviceID,
+		WhatsAppPresence: stringPointer("available"),
 	}
 	if _, err := s.repo.UpsertOrganizationSettings(ctx, organizationID, update); err != nil {
 		return "", err
@@ -311,6 +313,7 @@ func (s *Service) DisconnectWhatsAppDevice(ctx context.Context, organizationID u
 	clear := ""
 	update := repository.OrganizationSettingsUpdate{
 		WhatsAppDeviceID: &clear,
+		WhatsAppPresence: stringPointer("available"),
 	}
 	_, err = s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
 	return err
@@ -322,7 +325,7 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 		return WhatsAppStatus{}, err
 	}
 	if settings.WhatsAppDeviceID == nil || *settings.WhatsAppDeviceID == "" {
-		return WhatsAppStatus{State: "UNREGISTERED", Message: "No device linked", CanSend: false}, nil
+		return WhatsAppStatus{State: "UNREGISTERED", Message: "No device linked", CanSend: false, Presence: normalizeWhatsAppPresence(settings.WhatsAppPresence)}, nil
 	}
 	if s.whatsapp == nil {
 		return WhatsAppStatus{}, apperr.Internal(whatsappNotConfiguredMsg)
@@ -336,13 +339,14 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 				Message:     "Device configuration lost upstream. Please register again.",
 				CanSend:     false,
 				NeedsReauth: true,
+				Presence:    normalizeWhatsAppPresence(settings.WhatsAppPresence),
 			}, nil
 		}
 		return WhatsAppStatus{}, err
 	}
 
 	if upstreamStatus.IsLoggedIn {
-		return WhatsAppStatus{State: "CONNECTED", Message: "Online", CanSend: true}, nil
+		return WhatsAppStatus{State: "CONNECTED", Message: "Online", CanSend: true, Presence: normalizeWhatsAppPresence(settings.WhatsAppPresence)}, nil
 	}
 
 	msg := "Waiting for authentication"
@@ -355,7 +359,20 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 		Message:     msg,
 		CanSend:     false,
 		NeedsReauth: true,
+		Presence:    normalizeWhatsAppPresence(settings.WhatsAppPresence),
 	}, nil
+}
+
+func normalizeWhatsAppPresence(value string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "unavailable" {
+		return "unavailable"
+	}
+	return "available"
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func (s *Service) AttemptReconnect(ctx context.Context, organizationID uuid.UUID) error {

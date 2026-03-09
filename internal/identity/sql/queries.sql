@@ -72,7 +72,7 @@ SELECT organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_lens_correction_service_types,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
-       notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+      notification_email, whatsapp_device_id, whatsapp_presence, whatsapp_welcome_delay_minutes,
        smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
        created_at, updated_at
 FROM RAC_organization_settings
@@ -102,6 +102,7 @@ INSERT INTO RAC_organization_settings (
   photo_analysis_perspective_normalization_service_types,
   notification_email,
   whatsapp_device_id,
+  whatsapp_presence,
   whatsapp_welcome_delay_minutes
 )
 VALUES (
@@ -127,6 +128,7 @@ VALUES (
   COALESCE(sqlc.narg('photo_analysis_perspective_normalization_service_types')::text[], '{}'::text[]),
   NULLIF(sqlc.narg('notification_email')::text, ''),
   NULLIF(sqlc.narg('whatsapp_device_id')::text, ''),
+  COALESCE(NULLIF(sqlc.narg('whatsapp_presence')::text, ''), 'available'),
   COALESCE(sqlc.narg('whatsapp_welcome_delay_minutes')::int, 2)
 )
 ON CONFLICT (organization_id) DO UPDATE SET
@@ -151,6 +153,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
   photo_analysis_perspective_normalization_service_types = COALESCE(sqlc.narg('photo_analysis_perspective_normalization_service_types')::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
   notification_email = CASE WHEN sqlc.narg('notification_email')::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF(sqlc.narg('notification_email')::text, '') END,
   whatsapp_device_id = CASE WHEN sqlc.narg('whatsapp_device_id')::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF(sqlc.narg('whatsapp_device_id')::text, '') END,
+  whatsapp_presence = COALESCE(NULLIF(sqlc.narg('whatsapp_presence')::text, ''), RAC_organization_settings.whatsapp_presence),
   whatsapp_welcome_delay_minutes = COALESCE(sqlc.narg('whatsapp_welcome_delay_minutes')::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
   updated_at = now()
 RETURNING organization_id, quote_payment_days, quote_valid_days,
@@ -165,7 +168,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_lens_correction_service_types,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
-  notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+  notification_email, whatsapp_device_id, whatsapp_presence, whatsapp_welcome_delay_minutes,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at;
 
@@ -192,7 +195,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_lens_correction_service_types,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
-  notification_email, whatsapp_device_id, whatsapp_welcome_delay_minutes,
+  notification_email, whatsapp_device_id, whatsapp_presence, whatsapp_welcome_delay_minutes,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at;
 

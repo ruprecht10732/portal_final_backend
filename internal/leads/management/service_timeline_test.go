@@ -9,7 +9,7 @@ import (
 	"portal_final_backend/internal/leads/repository"
 )
 
-func TestBuildTimelineItems_HidesDebugEvents(t *testing.T) {
+func TestBuildTimelineItemsHidesDebugEvents(t *testing.T) {
 	serviceID := uuid.New()
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 
@@ -44,7 +44,7 @@ func TestBuildTimelineItems_HidesDebugEvents(t *testing.T) {
 	}
 }
 
-func TestBuildTimelineItems_SuppressesStandaloneAnalysisWhenStageCarriesContext(t *testing.T) {
+func TestBuildTimelineItemsSuppressesStandaloneAnalysisWhenStageCarriesContext(t *testing.T) {
 	serviceID := uuid.New()
 	now := time.Date(2026, time.March, 8, 13, 0, 0, 0, time.UTC)
 
@@ -84,7 +84,7 @@ func TestBuildTimelineItems_SuppressesStandaloneAnalysisWhenStageCarriesContext(
 	}
 }
 
-func TestBuildTimelineItems_SuppressesEstimatorArtifactsWhenStageCarriesContext(t *testing.T) {
+func TestBuildTimelineItemsSuppressesEstimatorArtifactsWhenStageCarriesContext(t *testing.T) {
 	serviceID := uuid.New()
 	now := time.Date(2026, time.March, 8, 14, 0, 0, 0, time.UTC)
 

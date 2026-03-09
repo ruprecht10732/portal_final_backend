@@ -353,6 +353,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 settings.NotificationEmail,
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
+		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
@@ -414,6 +415,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		PhotoAnalysisPerspectiveNormalizationEnabled:      req.PhotoAnalysisPerspectiveNormalizationEnabled,
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: req.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 req.NotificationEmail,
+		WhatsAppPresence:                                  req.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       req.WhatsAppWelcomeDelayMinutes,
 	})
 	if httpkit.HandleError(c, err) {
@@ -442,6 +444,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 settings.NotificationEmail,
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
+		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
@@ -509,6 +512,7 @@ func (h *Handler) GetWhatsAppStatus(c *gin.Context) {
 		Message:     status.Message,
 		CanSend:     status.CanSend,
 		NeedsReauth: status.NeedsReauth,
+		Presence:    status.Presence,
 	})
 }
 

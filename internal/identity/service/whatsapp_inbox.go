@@ -171,6 +171,11 @@ func (s *Service) SendWhatsAppPresence(ctx context.Context, organizationID uuid.
 	if err := s.whatsapp.SendPresence(ctx, deviceID, trimmedType); err != nil {
 		return apperr.Internal("WhatsApp presence kon niet worden verstuurd")
 	}
+	if _, err := s.repo.UpsertOrganizationSettings(ctx, organizationID, repository.OrganizationSettingsUpdate{
+		WhatsAppPresence: &trimmedType,
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 

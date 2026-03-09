@@ -115,6 +115,7 @@ type OrganizationSettingsResponse struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	NotificationEmail                                 *string  `json:"notificationEmail,omitempty"`
 	WhatsAppDeviceID                                  *string  `json:"whatsAppDeviceId,omitempty"`
+	WhatsAppPresence                                  string   `json:"whatsAppPresence"`
 	WhatsAppWelcomeDelayMinutes                       int      `json:"whatsAppWelcomeDelayMinutes"`
 	SMTPConfigured                                    bool     `json:"smtpConfigured"`
 }
@@ -142,7 +143,8 @@ type UpdateOrganizationSettingsRequest struct {
 	PhotoAnalysisPerspectiveNormalizationEnabled      *bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
 	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	// 0 = send immediately, otherwise delay before sending the automated WhatsApp welcome.
-	WhatsAppWelcomeDelayMinutes *int `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
+	WhatsAppWelcomeDelayMinutes *int    `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
+	WhatsAppPresence            *string `json:"whatsAppPresence" validate:"omitempty,oneof=available unavailable"`
 }
 
 // WhatsAppStatusResponse describes the current WhatsApp device state for an organization.
@@ -151,6 +153,7 @@ type WhatsAppStatusResponse struct {
 	Message     string `json:"message"`
 	CanSend     bool   `json:"canSend"`
 	NeedsReauth bool   `json:"needsReauth"`
+	Presence    string `json:"presence"`
 }
 
 type WhatsAppTestResponse struct {
