@@ -484,7 +484,7 @@ SELECT organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_lens_correction_service_types,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
-      notification_email, whatsapp_device_id, whatsapp_presence, whatsapp_welcome_delay_minutes,
+      notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
        smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
        created_at, updated_at
 FROM RAC_organization_settings
@@ -514,6 +514,7 @@ type GetOrganizationSettingsRow struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
 	NotificationEmail                                 pgtype.Text        `json:"notification_email"`
 	WhatsappDeviceID                                  pgtype.Text        `json:"whatsapp_device_id"`
+	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
 	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
@@ -552,6 +553,7 @@ func (q *Queries) GetOrganizationSettings(ctx context.Context, organizationID pg
 		&i.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&i.NotificationEmail,
 		&i.WhatsappDeviceID,
+		&i.WhatsappAccountJid,
 		&i.WhatsappPresence,
 		&i.WhatsappWelcomeDelayMinutes,
 		&i.SmtpHost,
@@ -1068,7 +1070,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_lens_correction_service_types,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
-  notification_email, whatsapp_device_id, whatsapp_presence, whatsapp_welcome_delay_minutes,
+  notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at
 `
@@ -1106,6 +1108,7 @@ type UpsertOrganizationSMTPRow struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
 	NotificationEmail                                 pgtype.Text        `json:"notification_email"`
 	WhatsappDeviceID                                  pgtype.Text        `json:"whatsapp_device_id"`
+	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
 	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
@@ -1152,6 +1155,7 @@ func (q *Queries) UpsertOrganizationSMTP(ctx context.Context, arg UpsertOrganiza
 		&i.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&i.NotificationEmail,
 		&i.WhatsappDeviceID,
+		&i.WhatsappAccountJid,
 		&i.WhatsappPresence,
 		&i.WhatsappWelcomeDelayMinutes,
 		&i.SmtpHost,
@@ -1190,6 +1194,7 @@ INSERT INTO RAC_organization_settings (
   photo_analysis_perspective_normalization_service_types,
   notification_email,
   whatsapp_device_id,
+  whatsapp_account_jid,
   whatsapp_presence,
   whatsapp_welcome_delay_minutes
 )
@@ -1216,8 +1221,9 @@ VALUES (
   COALESCE($20::text[], '{}'::text[]),
   NULLIF($21::text, ''),
   NULLIF($22::text, ''),
-  COALESCE(NULLIF($23::text, ''), 'available'),
-  COALESCE($24::int, 2)
+  NULLIF($23::text, ''),
+  COALESCE(NULLIF($24::text, ''), 'available'),
+  COALESCE($25::int, 2)
 )
 ON CONFLICT (organization_id) DO UPDATE SET
   quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
@@ -1241,8 +1247,9 @@ ON CONFLICT (organization_id) DO UPDATE SET
   photo_analysis_perspective_normalization_service_types = COALESCE($20::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
   notification_email = CASE WHEN $21::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($21::text, '') END,
   whatsapp_device_id = CASE WHEN $22::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($22::text, '') END,
-  whatsapp_presence = COALESCE(NULLIF($23::text, ''), RAC_organization_settings.whatsapp_presence),
-  whatsapp_welcome_delay_minutes = COALESCE($24::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+  whatsapp_account_jid = CASE WHEN $23::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($23::text, '') END,
+  whatsapp_presence = COALESCE(NULLIF($24::text, ''), RAC_organization_settings.whatsapp_presence),
+  whatsapp_welcome_delay_minutes = COALESCE($25::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
   updated_at = now()
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
@@ -1256,7 +1263,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_lens_correction_service_types,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
-  notification_email, whatsapp_device_id, whatsapp_presence, whatsapp_welcome_delay_minutes,
+  notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at
 `
@@ -1284,6 +1291,7 @@ type UpsertOrganizationSettingsParams struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string    `json:"photo_analysis_perspective_normalization_service_types"`
 	NotificationEmail                                 pgtype.Text `json:"notification_email"`
 	WhatsappDeviceID                                  pgtype.Text `json:"whatsapp_device_id"`
+	WhatsappAccountJid                                pgtype.Text `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  pgtype.Text `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       pgtype.Int4 `json:"whatsapp_welcome_delay_minutes"`
 }
@@ -1311,6 +1319,7 @@ type UpsertOrganizationSettingsRow struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
 	NotificationEmail                                 pgtype.Text        `json:"notification_email"`
 	WhatsappDeviceID                                  pgtype.Text        `json:"whatsapp_device_id"`
+	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
 	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
@@ -1347,6 +1356,7 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		arg.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		arg.NotificationEmail,
 		arg.WhatsappDeviceID,
+		arg.WhatsappAccountJid,
 		arg.WhatsappPresence,
 		arg.WhatsappWelcomeDelayMinutes,
 	)
@@ -1374,6 +1384,7 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		&i.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		&i.NotificationEmail,
 		&i.WhatsappDeviceID,
+		&i.WhatsappAccountJid,
 		&i.WhatsappPresence,
 		&i.WhatsappWelcomeDelayMinutes,
 		&i.SmtpHost,
