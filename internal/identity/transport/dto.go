@@ -115,6 +115,7 @@ type OrganizationSettingsResponse struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	NotificationEmail                                 *string  `json:"notificationEmail,omitempty"`
 	WhatsAppDeviceID                                  *string  `json:"whatsAppDeviceId,omitempty"`
+	WhatsAppAccountJID                                *string  `json:"whatsAppAccountJid,omitempty"`
 	WhatsAppPresence                                  string   `json:"whatsAppPresence"`
 	WhatsAppWelcomeDelayMinutes                       int      `json:"whatsAppWelcomeDelayMinutes"`
 	SMTPConfigured                                    bool     `json:"smtpConfigured"`
@@ -154,6 +155,8 @@ type WhatsAppStatusResponse struct {
 	CanSend     bool   `json:"canSend"`
 	NeedsReauth bool   `json:"needsReauth"`
 	Presence    string `json:"presence"`
+	DeviceID    string `json:"deviceId,omitempty"`
+	AccountJID  string `json:"accountJid,omitempty"`
 }
 
 type WhatsAppTestResponse struct {

@@ -198,6 +198,7 @@ func (r *Repository) GetOrganizationIDByWhatsAppDeviceID(ctx context.Context, de
 		SELECT organization_id
 		FROM RAC_organization_settings
 		WHERE whatsapp_device_id = $1
+		   OR whatsapp_account_jid = $1
 		LIMIT 1`
 
 	var organizationID uuid.UUID

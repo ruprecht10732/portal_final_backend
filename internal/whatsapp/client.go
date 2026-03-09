@@ -62,11 +62,34 @@ type gowaStatusResponse struct {
 	} `json:"results"`
 }
 
+type gowaDeviceInfoResponse struct {
+	Code    string `json:"code"`
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Results struct {
+		ID          string `json:"id"`
+		DeviceID    string `json:"device_id"`
+		Device      string `json:"device"`
+		DisplayName string `json:"display_name"`
+		PhoneNumber string `json:"phone_number"`
+		State       string `json:"state"`
+		JID         string `json:"jid"`
+	} `json:"results"`
+}
+
 // DeviceStatusResponse is the normalised device status exposed to callers.
 type DeviceStatusResponse struct {
 	DeviceID    string
 	IsConnected bool
 	IsLoggedIn  bool
+}
+
+type DeviceInfoResponse struct {
+	DeviceID    string
+	DisplayName string
+	PhoneNumber string
+	State       string
+	JID         string
 }
 
 type SendResult struct {
@@ -90,6 +113,9 @@ type providerActionResponse struct {
 }
 
 var ErrNoDevice = errors.New("no whatsapp device configured")
+
+const errWhatsAppClientNotInitialized = "whatsapp client not initialized"
+const errProviderDeviceNotFound = "device not found in provider"
 
 func NewClient(cfg config.WhatsAppConfig, log *logger.Logger) *Client {
 	if cfg.GetWhatsAppURL() == "" {
@@ -272,7 +298,7 @@ func (c *Client) CreateDevice(ctx context.Context, deviceID string) error {
 
 func (c *Client) GetLoginQR(ctx context.Context, deviceID string) ([]byte, error) {
 	if c == nil {
-		return nil, fmt.Errorf("whatsapp client not initialized")
+		return nil, fmt.Errorf(errWhatsAppClientNotInitialized)
 	}
 
 	// Use a generous timeout for QR generation (WhatsApp handshake can be slow).
@@ -519,7 +545,7 @@ func (c *Client) SendChatPresence(ctx context.Context, deviceID string, phoneNum
 
 func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceStatusResponse, error) {
 	if c == nil {
-		return nil, fmt.Errorf("whatsapp client not initialized")
+		return nil, fmt.Errorf(errWhatsAppClientNotInitialized)
 	}
 
 	url := fmt.Sprintf("%s/devices/%s/status", c.baseURL, deviceID)
@@ -539,7 +565,7 @@ func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceS
 	}()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, apperr.NotFound("device not found in provider")
+		return nil, apperr.NotFound(errProviderDeviceNotFound)
 	}
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
@@ -547,7 +573,7 @@ func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceS
 		if resp.StatusCode >= http.StatusInternalServerError {
 			msgLower := strings.ToLower(body)
 			if strings.Contains(msgLower, "device") && strings.Contains(msgLower, "not found") {
-				return nil, apperr.NotFound("device not found in provider")
+				return nil, apperr.NotFound(errProviderDeviceNotFound)
 			}
 		}
 		return nil, fmt.Errorf("provider error: %d: %s", resp.StatusCode, body)
@@ -562,6 +588,54 @@ func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceS
 		DeviceID:    raw.Results.DeviceID,
 		IsConnected: raw.Results.IsConnected,
 		IsLoggedIn:  raw.Results.IsLoggedIn,
+	}, nil
+}
+
+func (c *Client) GetDeviceInfo(ctx context.Context, deviceID string) (*DeviceInfoResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf(errWhatsAppClientNotInitialized)
+	}
+
+	endpoint := fmt.Sprintf("%s/devices/%s", c.baseURL, url.PathEscape(deviceID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	c.addHeaders(req, deviceID)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, apperr.NotFound(errProviderDeviceNotFound)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("provider error: %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+
+	var raw gowaDeviceInfoResponse
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	return &DeviceInfoResponse{
+		DeviceID:    firstNonEmpty(raw.Results.ID, raw.Results.DeviceID, raw.Results.Device, deviceID),
+		DisplayName: strings.TrimSpace(raw.Results.DisplayName),
+		PhoneNumber: strings.TrimSpace(raw.Results.PhoneNumber),
+		State:       strings.TrimSpace(raw.Results.State),
+		JID:         strings.TrimSpace(raw.Results.JID),
 	}, nil
 }
 
@@ -664,4 +738,14 @@ func formatAuthHeader(apiKey string) string {
 
 	encoded := base64.StdEncoding.EncodeToString([]byte(apiKey))
 	return "Basic " + encoded
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

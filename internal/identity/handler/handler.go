@@ -353,6 +353,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 settings.NotificationEmail,
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
+		WhatsAppAccountJID:                                settings.WhatsAppAccountJID,
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
@@ -444,6 +445,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 settings.NotificationEmail,
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
+		WhatsAppAccountJID:                                settings.WhatsAppAccountJID,
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
@@ -513,6 +515,8 @@ func (h *Handler) GetWhatsAppStatus(c *gin.Context) {
 		CanSend:     status.CanSend,
 		NeedsReauth: status.NeedsReauth,
 		Presence:    status.Presence,
+		DeviceID:    status.DeviceID,
+		AccountJID:  status.AccountJID,
 	})
 }
 

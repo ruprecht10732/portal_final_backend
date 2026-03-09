@@ -263,6 +263,8 @@ type WhatsAppStatus struct {
 	CanSend     bool   `json:"canSend"`
 	NeedsReauth bool   `json:"needsReauth"`
 	Presence    string `json:"presence"`
+	DeviceID    string `json:"deviceId,omitempty"`
+	AccountJID  string `json:"accountJid,omitempty"`
 }
 
 func (s *Service) RegisterWhatsAppDevice(ctx context.Context, organizationID uuid.UUID) (string, error) {
@@ -275,8 +277,9 @@ func (s *Service) RegisterWhatsAppDevice(ctx context.Context, organizationID uui
 	}
 
 	update := repository.OrganizationSettingsUpdate{
-		WhatsAppDeviceID: &deviceID,
-		WhatsAppPresence: stringPointer("available"),
+		WhatsAppDeviceID:   &deviceID,
+		WhatsAppAccountJID: stringPointer(""),
+		WhatsAppPresence:   stringPointer("available"),
 	}
 	if _, err := s.repo.UpsertOrganizationSettings(ctx, organizationID, update); err != nil {
 		return "", err
@@ -312,8 +315,9 @@ func (s *Service) DisconnectWhatsAppDevice(ctx context.Context, organizationID u
 
 	clear := ""
 	update := repository.OrganizationSettingsUpdate{
-		WhatsAppDeviceID: &clear,
-		WhatsAppPresence: stringPointer("available"),
+		WhatsAppDeviceID:   &clear,
+		WhatsAppAccountJID: &clear,
+		WhatsAppPresence:   stringPointer("available"),
 	}
 	_, err = s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
 	return err
@@ -324,6 +328,8 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 	if err != nil {
 		return WhatsAppStatus{}, err
 	}
+	deviceID := strings.TrimSpace(pointerStringValue(settings.WhatsAppDeviceID))
+	accountJID := strings.TrimSpace(pointerStringValue(settings.WhatsAppAccountJID))
 	if settings.WhatsAppDeviceID == nil || *settings.WhatsAppDeviceID == "" {
 		return WhatsAppStatus{State: "UNREGISTERED", Message: "No device linked", CanSend: false, Presence: normalizeWhatsAppPresence(settings.WhatsAppPresence)}, nil
 	}
@@ -331,7 +337,7 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 		return WhatsAppStatus{}, apperr.Internal(whatsappNotConfiguredMsg)
 	}
 
-	upstreamStatus, err := s.whatsapp.GetDeviceStatus(ctx, *settings.WhatsAppDeviceID)
+	upstreamStatus, err := s.whatsapp.GetDeviceStatus(ctx, deviceID)
 	if err != nil {
 		if apperr.Is(err, apperr.KindNotFound) {
 			return WhatsAppStatus{
@@ -340,13 +346,16 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 				CanSend:     false,
 				NeedsReauth: true,
 				Presence:    normalizeWhatsAppPresence(settings.WhatsAppPresence),
+				DeviceID:    deviceID,
+				AccountJID:  accountJID,
 			}, nil
 		}
 		return WhatsAppStatus{}, err
 	}
 
 	if upstreamStatus.IsLoggedIn {
-		return WhatsAppStatus{State: "CONNECTED", Message: "Online", CanSend: true, Presence: normalizeWhatsAppPresence(settings.WhatsAppPresence)}, nil
+		accountJID = s.refreshWhatsAppAccountJID(ctx, organizationID, deviceID, accountJID)
+		return WhatsAppStatus{State: "CONNECTED", Message: "Online", CanSend: true, Presence: normalizeWhatsAppPresence(settings.WhatsAppPresence), DeviceID: deviceID, AccountJID: accountJID}, nil
 	}
 
 	msg := "Waiting for authentication"
@@ -360,7 +369,31 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 		CanSend:     false,
 		NeedsReauth: true,
 		Presence:    normalizeWhatsAppPresence(settings.WhatsAppPresence),
+		DeviceID:    deviceID,
+		AccountJID:  accountJID,
 	}, nil
+}
+
+func (s *Service) refreshWhatsAppAccountJID(ctx context.Context, organizationID uuid.UUID, deviceID string, currentJID string) string {
+	if s.whatsapp == nil || strings.TrimSpace(deviceID) == "" {
+		return currentJID
+	}
+
+	info, err := s.whatsapp.GetDeviceInfo(ctx, deviceID)
+	if err != nil {
+		return currentJID
+	}
+
+	resolvedJID := strings.TrimSpace(info.JID)
+	if resolvedJID == "" || resolvedJID == currentJID {
+		return currentJID
+	}
+
+	if _, err := s.repo.UpsertOrganizationSettings(ctx, organizationID, repository.OrganizationSettingsUpdate{WhatsAppAccountJID: &resolvedJID}); err != nil {
+		return currentJID
+	}
+
+	return resolvedJID
 }
 
 func normalizeWhatsAppPresence(value string) string {
@@ -373,6 +406,13 @@ func normalizeWhatsAppPresence(value string) string {
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func pointerStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (s *Service) AttemptReconnect(ctx context.Context, organizationID uuid.UUID) error {

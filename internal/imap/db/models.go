@@ -886,6 +886,7 @@ type RacOrganizationSetting struct {
 	PhotoAnalysisPerspectiveNormalizationEnabled      bool               `json:"photo_analysis_perspective_normalization_enabled"`
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
+	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 }
 
 type RacPartner struct {

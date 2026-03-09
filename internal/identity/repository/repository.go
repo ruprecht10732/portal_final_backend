@@ -98,6 +98,7 @@ type OrganizationSettings struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
 	NotificationEmail                                 *string
 	WhatsAppDeviceID                                  *string
+	WhatsAppAccountJID                                *string
 	WhatsAppPresence                                  string
 	WhatsAppWelcomeDelayMinutes                       int
 	SMTPHost                                          *string
@@ -132,6 +133,7 @@ type OrganizationSettingsUpdate struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string
 	NotificationEmail                                 *string
 	WhatsAppDeviceID                                  *string
+	WhatsAppAccountJID                                *string
 	WhatsAppPresence                                  *string
 	WhatsAppWelcomeDelayMinutes                       *int
 }
@@ -201,6 +203,7 @@ type settingsSnapshot struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
 	NotificationEmail                                 pgtype.Text
 	WhatsAppDeviceID                                  pgtype.Text
+	WhatsAppAccountJID                                pgtype.Text
 	WhatsAppPresence                                  string
 	WhatsAppWelcomeDelayMinutes                       int32
 	SMTPHost                                          pgtype.Text
@@ -406,6 +409,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			PhotoAnalysisPerspectiveNormalizationEnabled:      false,
 			PhotoAnalysisPerspectiveNormalizationServiceTypes: []string{},
 			WhatsAppDeviceID:                                  nil,
+			WhatsAppAccountJID:                                nil,
 			WhatsAppPresence:                                  "available",
 			WhatsAppWelcomeDelayMinutes:                       2,
 		}, nil
@@ -436,6 +440,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 row.NotificationEmail,
 		WhatsAppDeviceID:                                  row.WhatsappDeviceID,
+		WhatsAppAccountJID:                                row.WhatsappAccountJid,
 		WhatsAppPresence:                                  row.WhatsappPresence,
 		WhatsAppWelcomeDelayMinutes:                       row.WhatsappWelcomeDelayMinutes,
 		SMTPHost:                                          row.SmtpHost,
@@ -473,6 +478,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: toStringSlice(update.PhotoAnalysisPerspectiveNormalizationServiceTypes),
 		NotificationEmail:                                 toPgTextPtr(update.NotificationEmail),
 		WhatsappDeviceID:                                  toPgTextPtr(update.WhatsAppDeviceID),
+		WhatsappAccountJid:                                toPgTextPtr(update.WhatsAppAccountJID),
 		WhatsappPresence:                                  toPgTextPtr(update.WhatsAppPresence),
 		WhatsappWelcomeDelayMinutes:                       toPgInt4Ptr(update.WhatsAppWelcomeDelayMinutes),
 	})
@@ -505,6 +511,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 row.NotificationEmail,
 		WhatsAppDeviceID:                                  row.WhatsappDeviceID,
+		WhatsAppAccountJID:                                row.WhatsappAccountJid,
 		WhatsAppPresence:                                  row.WhatsappPresence,
 		WhatsAppWelcomeDelayMinutes:                       row.WhatsappWelcomeDelayMinutes,
 		SMTPHost:                                          row.SmtpHost,
@@ -557,6 +564,7 @@ func (r *Repository) UpsertOrganizationSMTP(ctx context.Context, organizationID 
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: row.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 row.NotificationEmail,
 		WhatsAppDeviceID:                                  row.WhatsappDeviceID,
+		WhatsAppAccountJID:                                row.WhatsappAccountJid,
 		WhatsAppPresence:                                  row.WhatsappPresence,
 		WhatsAppWelcomeDelayMinutes:                       row.WhatsappWelcomeDelayMinutes,
 		SMTPHost:                                          row.SmtpHost,
@@ -714,6 +722,7 @@ func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSet
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: cloneStrings(snapshot.PhotoAnalysisPerspectiveNormalizationServiceTypes),
 		NotificationEmail:                                 optionalString(snapshot.NotificationEmail),
 		WhatsAppDeviceID:                                  optionalString(snapshot.WhatsAppDeviceID),
+		WhatsAppAccountJID:                                optionalString(snapshot.WhatsAppAccountJID),
 		WhatsAppPresence:                                  normalizePresenceSnapshot(snapshot.WhatsAppPresence),
 		WhatsAppWelcomeDelayMinutes:                       int(snapshot.WhatsAppWelcomeDelayMinutes),
 		SMTPHost:                                          optionalString(snapshot.SMTPHost),
