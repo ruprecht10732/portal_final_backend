@@ -46,6 +46,11 @@ const (
 
 	// AI job progress events
 	EventAIJobProgress EventType = "ai_job_progress"
+
+	// WhatsApp inbox events
+	EventWhatsAppConversationUpdated EventType = "whatsapp_conversation_updated"
+	EventWhatsAppMessageReceived     EventType = "whatsapp_message_received"
+	EventWhatsAppMessageSent         EventType = "whatsapp_message_sent"
 )
 
 // Event represents an SSE event payload

@@ -256,6 +256,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	notificationModule.SetOrganizationSettingsReader(identityModule.Service())
 	notificationModule.SetUserTenancyReader(identityModule.Service())
 	notificationModule.SetWorkflowResolver(identityModule.Service())
+	notificationModule.SetWhatsAppInboxWriter(identityModule.Service())
 
 	wireSMTPEncryptionKey(cfg, log, identityModule.Service(), notificationModule)
 	imapModule := imap.NewModule(pool, val, eventBus, log)
@@ -278,6 +279,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	}
 	leadsModule.ManagementService().SetWorkflowOverrideWriter(identityModule.Service())
 	leadsModule.ManagementService().SetInAppNotificationService(notificationModule.InAppService())
+	identityModule.Service().SetSSE(leadsModule.SSE())
 	leadsModule.ManagementService().SetTimelineWhatsAppSender(leadsmgmt.TimelineWhatsAppSenderFunc(func(ctx context.Context, params leadsmgmt.TimelineWhatsAppSendParams) error {
 		return notificationModule.SendLeadWhatsApp(ctx, notification.SendLeadWhatsAppParams{
 			OrgID:       params.OrgID,
@@ -396,6 +398,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	quotesModule.Service().SetQuotePromptGenerator(adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent()))
 
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
+	webhookModule.SetWhatsAppInboxIngester(identityModule.Service())
 	exportsModule := exports.NewModule(pool, val)
 	wireExportsEncryptionKey(cfg, log, exportsModule)
 

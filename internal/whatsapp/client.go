@@ -69,6 +69,10 @@ type DeviceStatusResponse struct {
 	IsLoggedIn  bool
 }
 
+type SendResult struct {
+	MessageID string
+}
+
 var ErrNoDevice = errors.New("no whatsapp device configured")
 
 func NewClient(cfg config.WhatsAppConfig, log *logger.Logger) *Client {
@@ -86,14 +90,14 @@ func NewClient(cfg config.WhatsAppConfig, log *logger.Logger) *Client {
 	}
 }
 
-func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber string, message string) error {
+func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber string, message string) (SendResult, error) {
 	if c == nil {
-		return nil
+		return SendResult{}, nil
 	}
 
 	targetDevice := strings.TrimSpace(deviceID)
 	if targetDevice == "" {
-		return ErrNoDevice
+		return SendResult{}, ErrNoDevice
 	}
 
 	normalized := strings.TrimPrefix(phone.NormalizeE164(phoneNumber), "+")
@@ -104,7 +108,7 @@ func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber s
 
 	c.log.Info("whatsapp send attempt", "deviceId", targetDevice, "providerHost", c.baseHost, "apiKeyFp", c.apiKeyFingerprint, "phone", normalized)
 
-	err := c.doSendMessage(ctx, targetDevice, payload)
+	result, err := c.doSendMessage(ctx, targetDevice, payload)
 	if err != nil && isConnectionError(err) {
 		c.log.Warn("whatsapp connection lost, attempting reconnect", "deviceId", targetDevice)
 		if reconErr := c.ReconnectDevice(ctx, targetDevice); reconErr == nil {
@@ -118,9 +122,9 @@ func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber s
 	}
 
 	if err == nil {
-		c.log.Info("whatsapp sent via gowa", "phone", normalized, "deviceId", targetDevice)
+		c.log.Info("whatsapp sent via gowa", "phone", normalized, "deviceId", targetDevice, "messageId", result.MessageID)
 	}
-	return err
+	return result, err
 }
 
 func hostFromURL(raw string) string {
@@ -144,34 +148,71 @@ func fingerprintKey(value string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-func (c *Client) doSendMessage(ctx context.Context, deviceID string, payload gowaRequest) error {
+func (c *Client) doSendMessage(ctx context.Context, deviceID string, payload gowaRequest) (SendResult, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal whatsapp payload: %w", err)
+		return SendResult{}, fmt.Errorf("marshal whatsapp payload: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/send/message", c.baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return SendResult{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	c.addHeaders(req, deviceID)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("whatsapp request failed: %w", err)
+		return SendResult{}, fmt.Errorf("whatsapp request failed: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
-	if resp.StatusCode >= http.StatusBadRequest {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-		return fmt.Errorf("whatsapp service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if readErr != nil {
+		return SendResult{}, fmt.Errorf("read whatsapp response: %w", readErr)
 	}
 
-	return nil
+	if resp.StatusCode >= http.StatusBadRequest {
+		return SendResult{}, fmt.Errorf("whatsapp service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+
+	return SendResult{MessageID: parseSendMessageID(data)}, nil
+}
+
+func parseSendMessageID(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+
+	for _, candidate := range []any{
+		payload["message_id"],
+		payload["id"],
+		nestedMapValue(payload["results"], "message_id"),
+		nestedMapValue(payload["results"], "id"),
+		nestedMapValue(nestedMapValue(payload["results"], "message"), "id"),
+	} {
+		if id, ok := candidate.(string); ok && strings.TrimSpace(id) != "" {
+			return strings.TrimSpace(id)
+		}
+	}
+
+	return ""
+}
+
+func nestedMapValue(value any, key string) any {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return obj[key]
 }
 
 func (c *Client) CreateDevice(ctx context.Context, deviceID string) error {

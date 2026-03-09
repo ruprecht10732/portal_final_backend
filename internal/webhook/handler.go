@@ -26,14 +26,15 @@ var gtmContainerIDRegex = regexp.MustCompile(`^GTM-[A-Z0-9]+$`)
 
 // Handler handles webhook HTTP requests.
 type Handler struct {
-	service *Service
-	repo    *Repository
-	val     *validator.Validator
+	service       *Service
+	repo          *Repository
+	val           *validator.Validator
+	whatsappInbox WhatsAppInboxIngester
 }
 
 // NewHandler creates a new webhook handler.
-func NewHandler(service *Service, repo *Repository, val *validator.Validator) *Handler {
-	return &Handler{service: service, repo: repo, val: val}
+func NewHandler(service *Service, repo *Repository, val *validator.Validator, whatsappInbox WhatsAppInboxIngester) *Handler {
+	return &Handler{service: service, repo: repo, val: val, whatsappInbox: whatsappInbox}
 }
 
 // ---- GTM Config (Webhook SDK) ----

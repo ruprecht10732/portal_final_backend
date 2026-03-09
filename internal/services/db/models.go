@@ -1299,6 +1299,38 @@ type RacWebhookApiKey struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RacWhatsappConversation struct {
+	ID                   pgtype.UUID        `json:"id"`
+	OrganizationID       pgtype.UUID        `json:"organization_id"`
+	LeadID               pgtype.UUID        `json:"lead_id"`
+	PhoneNumber          string             `json:"phone_number"`
+	DisplayName          string             `json:"display_name"`
+	LastMessagePreview   string             `json:"last_message_preview"`
+	LastMessageAt        pgtype.Timestamptz `json:"last_message_at"`
+	LastMessageDirection string             `json:"last_message_direction"`
+	LastMessageStatus    string             `json:"last_message_status"`
+	UnreadCount          int32              `json:"unread_count"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacWhatsappMessage struct {
+	ID                pgtype.UUID        `json:"id"`
+	OrganizationID    pgtype.UUID        `json:"organization_id"`
+	ConversationID    pgtype.UUID        `json:"conversation_id"`
+	LeadID            pgtype.UUID        `json:"lead_id"`
+	ExternalMessageID pgtype.Text        `json:"external_message_id"`
+	Direction         string             `json:"direction"`
+	Status            string             `json:"status"`
+	PhoneNumber       string             `json:"phone_number"`
+	Body              string             `json:"body"`
+	Metadata          []byte             `json:"metadata"`
+	SentAt            pgtype.Timestamptz `json:"sent_at"`
+	ReadAt            pgtype.Timestamptz `json:"read_at"`
+	FailedAt          pgtype.Timestamptz `json:"failed_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacWorkflow struct {
 	ID                       pgtype.UUID        `json:"id"`
 	OrganizationID           pgtype.UUID        `json:"organization_id"`

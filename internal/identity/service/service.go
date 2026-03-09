@@ -12,6 +12,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/transport"
+	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/apperr"
 
@@ -32,6 +33,7 @@ type Service struct {
 	storage           storage.StorageService
 	logoBucket        string
 	whatsapp          *whatsapp.Client
+	sse               *sse.Service
 	smtpEncryptionKey []byte
 }
 
@@ -400,7 +402,7 @@ func (s *Service) SendWhatsAppTestMessage(ctx context.Context, organizationID uu
 	}
 
 	message := fmt.Sprintf("Testbericht vanaf Portal op %s", time.Now().Format(time.RFC3339))
-	if err := s.whatsapp.SendMessage(ctx, *settings.WhatsAppDeviceID, phoneNumber, message); err != nil {
+	if _, err := s.whatsapp.SendMessage(ctx, *settings.WhatsAppDeviceID, phoneNumber, message); err != nil {
 		return "", apperr.Internal("failed to send WhatsApp test message: " + err.Error())
 	}
 

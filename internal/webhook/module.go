@@ -22,11 +22,17 @@ type Module struct {
 func NewModule(pool *pgxpool.Pool, leadCreator LeadCreator, storageSvc storage.StorageService, storageBucket string, eventBus events.Bus, val *validator.Validator, log *logger.Logger) *Module {
 	repo := NewRepository(pool)
 	service := NewService(repo, leadCreator, storageSvc, storageBucket, eventBus, log)
-	handler := NewHandler(service, repo, val)
+	handler := NewHandler(service, repo, val, nil)
 
 	return &Module{
 		handler: handler,
 		repo:    repo,
+	}
+}
+
+func (m *Module) SetWhatsAppInboxIngester(whatsappInbox WhatsAppInboxIngester) {
+	if m.handler != nil {
+		m.handler.whatsappInbox = whatsappInbox
 	}
 }
 
@@ -42,6 +48,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	webhookGroup.Use(APIKeyAuthMiddleware(m.repo))
 	webhookGroup.POST("/forms", m.handler.HandleFormSubmission)
 	webhookGroup.GET("/config", m.handler.HandleGetWebhookConfig)
+	webhookGroup.POST("/whatsapp", m.handler.HandleWhatsAppWebhook)
 
 	// Public Google Lead Form webhook (payload auth)
 	ctx.V1.POST("/webhook/google-leads", m.handler.HandleGoogleLeadWebhook)

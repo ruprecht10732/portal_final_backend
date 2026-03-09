@@ -83,7 +83,7 @@ type PartnerOfferTimelineWriter interface {
 
 // WhatsAppSender sends WhatsApp messages.
 type WhatsAppSender interface {
-	SendMessage(ctx context.Context, deviceID string, phoneNumber string, message string) error
+	SendMessage(ctx context.Context, deviceID string, phoneNumber string, message string) (whatsapp.SendResult, error)
 }
 
 // OrganizationSettingsReader provides org-level settings for notifications.
@@ -134,6 +134,10 @@ type LeadTimelineWriter interface {
 	CreateTimelineEvent(ctx context.Context, params LeadTimelineEventParams) error
 }
 
+type WhatsAppInboxWriter interface {
+	PersistOutgoingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, body string, externalMessageID *string) error
+}
+
 // cachedSender holds a resolved email.Sender with a TTL for cache expiry.
 type cachedSender struct {
 	sender    email.Sender
@@ -173,6 +177,7 @@ type Module struct {
 	quotePDFBucket      string
 	quotePDFScheduler   QuoteAcceptedPDFScheduler
 	whatsapp            WhatsAppSender
+	whatsAppInboxWriter WhatsAppInboxWriter
 	leadTimeline        LeadTimelineWriter
 	settingsReader      OrganizationSettingsReader
 	tenancyReader       UserTenancyReader
@@ -341,6 +346,9 @@ func (m *Module) SetOfferTimelineWriter(w PartnerOfferTimelineWriter) {
 // SetWhatsAppSender injects the WhatsApp sender.
 func (m *Module) SetWhatsAppSender(sender WhatsAppSender) { m.whatsapp = sender }
 
+// SetWhatsAppInboxWriter injects a persistence hook for sent WhatsApp messages.
+func (m *Module) SetWhatsAppInboxWriter(writer WhatsAppInboxWriter) { m.whatsAppInboxWriter = writer }
+
 // SetOrganizationSettingsReader injects org settings reader for WhatsApp device resolution.
 func (m *Module) SetOrganizationSettingsReader(reader OrganizationSettingsReader) {
 	m.settingsReader = reader
@@ -405,7 +413,7 @@ func (m *Module) SendLeadWhatsApp(ctx context.Context, params SendLeadWhatsAppPa
 		return apperr.Validation("er is geen verbonden WhatsApp-apparaat voor deze organisatie")
 	}
 
-	err := m.whatsapp.SendMessage(ctx, deviceID, phoneNumber, message)
+	result, err := m.whatsapp.SendMessage(ctx, deviceID, phoneNumber, message)
 	if err != nil {
 		m.log.Warn("failed to send explicit timeline whatsapp", "error", err, "orgId", params.OrgID, "leadId", params.LeadID)
 		if params.LeadID != uuid.Nil {
@@ -428,8 +436,20 @@ func (m *Module) SendLeadWhatsApp(ctx context.Context, params SendLeadWhatsAppPa
 		Summary:   params.Summary,
 		Metadata:  metadata,
 	})
+	if m.whatsAppInboxWriter != nil {
+		if persistErr := m.whatsAppInboxWriter.PersistOutgoingWhatsAppMessage(ctx, params.OrgID, nilIfUUIDNil(params.LeadID), phoneNumber, message, nilIfEmptyString(result.MessageID)); persistErr != nil {
+			m.log.Warn("failed to persist whatsapp inbox message", "error", persistErr, "orgId", params.OrgID, "leadId", params.LeadID)
+		}
+	}
 
 	return nil
+}
+
+func nilIfUUIDNil(value uuid.UUID) *uuid.UUID {
+	if value == uuid.Nil {
+		return nil
+	}
+	return &value
 }
 
 // SetSMTPEncryptionKey sets the AES key used to decrypt SMTP passwords from org settings.
@@ -3204,7 +3224,7 @@ func (m *Module) sendWhatsAppBestEffort(params whatsAppBestEffortParams) error {
 	}
 
 	deviceID := m.resolveWhatsAppDeviceID(params.Ctx, params.OrgID)
-	err := m.whatsapp.SendMessage(params.Ctx, deviceID, params.PhoneNumber, params.Message)
+	result, err := m.whatsapp.SendMessage(params.Ctx, deviceID, params.PhoneNumber, params.Message)
 	if err != nil {
 		if errors.Is(err, whatsapp.ErrNoDevice) {
 			m.log.Debug("whatsapp skipped: no device configured", "orgId", params.OrgID)
@@ -3237,8 +3257,21 @@ func (m *Module) sendWhatsAppBestEffort(params whatsAppBestEffortParams) error {
 		Summary:   params.Summary,
 		Metadata:  metadata,
 	})
+	if m.whatsAppInboxWriter != nil {
+		if persistErr := m.whatsAppInboxWriter.PersistOutgoingWhatsAppMessage(params.Ctx, params.OrgID, params.LeadID, params.PhoneNumber, params.Message, nilIfEmptyString(result.MessageID)); persistErr != nil {
+			m.log.Warn("failed to persist workflow whatsapp inbox message", "error", persistErr, "orgId", params.OrgID, "leadId", params.LeadID)
+		}
+	}
 
 	return nil
+}
+
+func nilIfEmptyString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func (m *Module) isLeadWhatsAppOptedIn(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) bool {

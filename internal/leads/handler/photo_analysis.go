@@ -75,6 +75,7 @@ type PhotoAnalysisRequest struct {
 const (
 	errTenantContextRequired = "tenant context required"
 	errInvalidServiceID      = "invalid service id"
+	errPhotoImageLoadFailed  = "Failed to load images for analysis"
 	maxPhotosPerAnalysis     = 20
 	maxPhotoFailureMsgChars  = 500
 )
@@ -224,10 +225,15 @@ func (h *PhotoAnalysisHandler) ProcessPhotoAnalysisJob(ctx context.Context, lead
 // runPhotoAnalysis performs the photo analysis in the background and sends SSE notification when done.
 func (h *PhotoAnalysisHandler) runPhotoAnalysis(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, attachments []repository.Attachment, contextInfo string) {
 	serviceType, intakeRequirements := h.getServiceAnalysisContext(ctx, serviceID, tenantID)
-	images := h.loadImages(ctx, attachments)
+	images, loadErr := h.loadImages(ctx, attachments)
+	if loadErr != nil {
+		h.publishPhotoAnalysisFailedEvent(ctx, leadID, serviceID, tenantID, "image_load_failed", loadErr.Error())
+		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, errPhotoImageLoadFailed, "image_load_failed")
+		return
+	}
 	if len(images) == 0 {
-		h.publishPhotoAnalysisFailedEvent(ctx, leadID, serviceID, tenantID, "no_valid_images", "Failed to load images for analysis")
-		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, "Failed to load images for analysis", "no_valid_images")
+		h.publishPhotoAnalysisFailedEvent(ctx, leadID, serviceID, tenantID, "no_valid_images", errPhotoImageLoadFailed)
+		h.publishPhotoAnalysisFailure(userID, leadID, serviceID, errPhotoImageLoadFailed, "no_valid_images")
 		return
 	}
 
@@ -305,7 +311,14 @@ func (h *PhotoAnalysisHandler) getServiceAnalysisContext(ctx context.Context, se
 	return serviceType, intakeRequirements
 }
 
-func (h *PhotoAnalysisHandler) loadImages(ctx context.Context, attachments []repository.Attachment) []agent.ImageData {
+func (h *PhotoAnalysisHandler) loadImages(ctx context.Context, attachments []repository.Attachment) ([]agent.ImageData, error) {
+	if h.storage == nil {
+		return nil, fmt.Errorf("photo analysis storage is not configured")
+	}
+	if strings.TrimSpace(h.bucket) == "" {
+		return nil, fmt.Errorf("photo analysis bucket is not configured")
+	}
+
 	images := make([]agent.ImageData, 0, len(attachments))
 	var imagesMu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
@@ -317,6 +330,10 @@ func (h *PhotoAnalysisHandler) loadImages(ctx context.Context, attachments []rep
 			data, err := h.storage.DownloadFile(gctx, h.bucket, att.FileKey)
 			if err != nil {
 				log.Printf("photo analysis: download failed for file=%s key=%s: %v", att.FileName, att.FileKey, err)
+				return nil
+			}
+			if data == nil {
+				log.Printf("photo analysis: download returned nil reader for file=%s key=%s", att.FileName, att.FileKey)
 				return nil
 			}
 			imgData, readErr := readAllAndClose(data)
@@ -343,7 +360,7 @@ func (h *PhotoAnalysisHandler) loadImages(ctx context.Context, attachments []rep
 
 	_ = g.Wait()
 
-	return images
+	return images, nil
 }
 
 func readAllAndClose(data io.ReadCloser) ([]byte, error) {

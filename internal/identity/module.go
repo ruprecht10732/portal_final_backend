@@ -39,6 +39,7 @@ func (m *Module) Service() *service.Service {
 
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	m.handler.RegisterRoutes(ctx.Admin)
+	m.handler.RegisterProtectedRoutes(ctx.Protected)
 }
 
 func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
