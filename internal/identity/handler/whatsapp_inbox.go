@@ -19,6 +19,7 @@ func (h *Handler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/whatsapp/conversations/unread-count", h.GetWhatsAppUnreadConversationCount)
 	rg.GET("/whatsapp/conversations/:conversationID/messages", h.ListWhatsAppMessages)
 	rg.POST("/whatsapp/conversations/:conversationID/messages", h.SendWhatsAppConversationMessage)
+	rg.POST("/whatsapp/conversations/:conversationID/suggest-reply", h.SuggestWhatsAppReply)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/reaction", h.ReactWhatsAppMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/edit", h.EditWhatsAppMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/delete", h.DeleteWhatsAppMessage)
@@ -190,6 +191,31 @@ func (h *Handler) SendWhatsAppConversationMessage(c *gin.Context) {
 		Conversation: transport.ToWhatsAppConversationResponse(conversation),
 		Message:      transport.ToWhatsAppMessageResponse(message),
 	})
+}
+
+func (h *Handler) SuggestWhatsAppReply(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.svc.SuggestWhatsAppReply(c.Request.Context(), *tenantID, conversationID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.SuggestWhatsAppReplyResponse{Suggestion: result.Suggestion})
 }
 
 func (h *Handler) MarkWhatsAppConversationRead(c *gin.Context) {

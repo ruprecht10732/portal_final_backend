@@ -19,6 +19,25 @@ import (
 	"github.com/google/uuid"
 )
 
+type SuggestWhatsAppReplyMessage struct {
+	Direction string
+	Body      string
+	CreatedAt time.Time
+}
+
+type SuggestWhatsAppReplyInput struct {
+	OrganizationID uuid.UUID
+	LeadID         uuid.UUID
+	ConversationID uuid.UUID
+	PhoneNumber    string
+	DisplayName    string
+	Messages       []SuggestWhatsAppReplyMessage
+}
+
+type WhatsAppReplySuggester interface {
+	SuggestReply(ctx context.Context, input SuggestWhatsAppReplyInput) (string, error)
+}
+
 const (
 	inviteTokenBytes         = 32
 	inviteTTL                = 72 * time.Hour
@@ -35,10 +54,15 @@ type Service struct {
 	whatsapp          *whatsapp.Client
 	sse               *sse.Service
 	smtpEncryptionKey []byte
+	whatsappReplyer   WhatsAppReplySuggester
 }
 
 func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, whatsappClient *whatsapp.Client) *Service {
 	return &Service{repo: repo, eventBus: eventBus, storage: storageSvc, logoBucket: logoBucket, whatsapp: whatsappClient}
+}
+
+func (s *Service) SetWhatsAppReplySuggester(replyer WhatsAppReplySuggester) {
+	s.whatsappReplyer = replyer
 }
 
 func (s *Service) GetUserOrganizationID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {

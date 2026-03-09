@@ -53,6 +53,10 @@ type WhatsAppConversationActionResult struct {
 	Message      *repository.WhatsAppMessage
 }
 
+type WhatsAppReplySuggestionResult struct {
+	Suggestion string
+}
+
 func (s *Service) SetSSE(sseService *sse.Service) {
 	s.sse = sseService
 }
@@ -76,6 +80,46 @@ func (s *Service) GetWhatsAppConversationMessages(ctx context.Context, organizat
 	}
 
 	return conversation, messages, nil
+}
+
+func (s *Service) SuggestWhatsAppReply(ctx context.Context, organizationID, conversationID uuid.UUID) (WhatsAppReplySuggestionResult, error) {
+	if s.whatsappReplyer == nil {
+		return WhatsAppReplySuggestionResult{}, apperr.Internal("WhatsApp reply agent is not configured")
+	}
+
+	conversation, messages, err := s.GetWhatsAppConversationMessages(ctx, organizationID, conversationID, 30)
+	if err != nil {
+		return WhatsAppReplySuggestionResult{}, err
+	}
+	if conversation.LeadID == nil {
+		return WhatsAppReplySuggestionResult{}, apperr.Validation("suggest reply is alleen beschikbaar voor gesprekken met een gekoppelde lead")
+	}
+
+	input := SuggestWhatsAppReplyInput{
+		OrganizationID: organizationID,
+		LeadID:         *conversation.LeadID,
+		ConversationID: conversation.ID,
+		PhoneNumber:    conversation.PhoneNumber,
+		DisplayName:    conversation.DisplayName,
+		Messages:       make([]SuggestWhatsAppReplyMessage, 0, len(messages)),
+	}
+	for _, message := range messages {
+		input.Messages = append(input.Messages, SuggestWhatsAppReplyMessage{
+			Direction: message.Direction,
+			Body:      message.Body,
+			CreatedAt: message.CreatedAt,
+		})
+	}
+
+	suggestion, err := s.whatsappReplyer.SuggestReply(ctx, input)
+	if err != nil {
+		return WhatsAppReplySuggestionResult{}, apperr.Internal("WhatsApp reply kon niet worden gegenereerd")
+	}
+	if strings.TrimSpace(suggestion) == "" {
+		return WhatsAppReplySuggestionResult{}, apperr.Internal("WhatsApp reply agent returned an empty suggestion")
+	}
+
+	return WhatsAppReplySuggestionResult{Suggestion: strings.TrimSpace(suggestion)}, nil
 }
 
 func (s *Service) MarkWhatsAppConversationRead(ctx context.Context, organizationID, conversationID uuid.UUID) (bool, error) {

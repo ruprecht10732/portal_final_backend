@@ -280,6 +280,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	leadsModule.ManagementService().SetWorkflowOverrideWriter(identityModule.Service())
 	leadsModule.ManagementService().SetInAppNotificationService(notificationModule.InAppService())
 	identityModule.Service().SetSSE(leadsModule.SSE())
+	identityModule.Service().SetWhatsAppReplySuggester(adapters.NewWhatsAppReplySuggesterAdapter(leadsModule.WhatsAppReplyGenerator()))
 	leadsModule.ManagementService().SetTimelineWhatsAppSender(leadsmgmt.TimelineWhatsAppSenderFunc(func(ctx context.Context, params leadsmgmt.TimelineWhatsAppSendParams) error {
 		return notificationModule.SendLeadWhatsApp(ctx, notification.SendLeadWhatsAppParams{
 			OrgID:       params.OrgID,

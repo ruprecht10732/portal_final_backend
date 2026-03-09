@@ -27,6 +27,7 @@ const (
 	LLMModelAgentDispatcher            = "dispatcher"
 	LLMModelAgentQuoteGenerator        = "quote_generator"
 	LLMModelAgentOfferSummaryGenerator = "offer_summary_generator"
+	LLMModelAgentWhatsAppReply         = "whatsapp_reply"
 )
 
 // =============================================================================
@@ -192,6 +193,7 @@ type Config struct {
 	LLMModelDispatcher                string
 	LLMModelQuoteGenerator            string
 	LLMModelOfferSummaryGenerator     string
+	LLMModelWhatsAppReply             string
 	EPOnlineAPIKey                    string
 	MinIOEndpoint                     string
 	MinIOAccessKey                    string
@@ -377,6 +379,8 @@ func (c *Config) llmModelOverride(agentName string) string {
 		return c.LLMModelQuoteGenerator
 	case LLMModelAgentOfferSummaryGenerator:
 		return c.LLMModelOfferSummaryGenerator
+	case LLMModelAgentWhatsAppReply:
+		return c.LLMModelWhatsAppReply
 	default:
 		return ""
 	}
@@ -464,6 +468,7 @@ func Load() (*Config, error) {
 		LLMModelDispatcher:                getEnv("LLM_MODEL_DISPATCHER", ""),
 		LLMModelQuoteGenerator:            getEnv("LLM_MODEL_QUOTE_GENERATOR", ""),
 		LLMModelOfferSummaryGenerator:     getEnv("LLM_MODEL_OFFER_SUMMARY_GENERATOR", ""),
+		LLMModelWhatsAppReply:             getEnv("LLM_MODEL_WHATSAPP_REPLY", ""),
 		EPOnlineAPIKey:                    getEnv("EP_ONLINE_API_KEY", ""),
 		MinIOEndpoint:                     getEnv("MINIO_ENDPOINT", ""),
 		MinIOAccessKey:                    getEnv("MINIO_ACCESS_KEY", ""),

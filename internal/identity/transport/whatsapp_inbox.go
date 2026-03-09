@@ -102,6 +102,10 @@ type SendWhatsAppConversationMessageResponse struct {
 	Message      WhatsAppMessageResponse      `json:"message"`
 }
 
+type SuggestWhatsAppReplyResponse struct {
+	Suggestion string `json:"suggestion"`
+}
+
 type WhatsAppConversationActionResponse struct {
 	Status       string                        `json:"status"`
 	Conversation *WhatsAppConversationResponse `json:"conversation,omitempty"`
