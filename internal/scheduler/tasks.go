@@ -81,6 +81,7 @@ type GatekeeperRunPayload struct {
 	TenantID      string `json:"tenantId"`
 	LeadID        string `json:"leadId"`
 	LeadServiceID string `json:"leadServiceId"`
+	Fingerprint   string `json:"fingerprint,omitempty"`
 }
 
 type EstimatorRunPayload struct {
@@ -88,12 +89,14 @@ type EstimatorRunPayload struct {
 	LeadID        string `json:"leadId"`
 	LeadServiceID string `json:"leadServiceId"`
 	Force         bool   `json:"force,omitempty"`
+	Fingerprint   string `json:"fingerprint,omitempty"`
 }
 
 type DispatcherRunPayload struct {
 	TenantID      string `json:"tenantId"`
 	LeadID        string `json:"leadId"`
 	LeadServiceID string `json:"leadServiceId"`
+	Fingerprint   string `json:"fingerprint,omitempty"`
 }
 
 type PhotoAnalysisPayload struct {

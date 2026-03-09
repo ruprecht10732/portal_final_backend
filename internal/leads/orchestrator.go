@@ -38,6 +38,9 @@ type Orchestrator struct {
 	orgSettingsMu     sync.Mutex
 	orgSettingsCache  map[uuid.UUID]cachedOrgAISettings
 	runLocker         orchestratorRunLocker
+	gatekeeperDeduper gatekeeperTriggerDeduper
+	estimatorDeduper  triggerFingerprintDeduper
+	dispatcherDeduper triggerFingerprintDeduper
 
 	reconciliationEnabled bool
 
@@ -432,14 +435,18 @@ func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadServic
 		o.log.Error("orchestrator: automation queue not configured for gatekeeper", "serviceId", evt.LeadServiceID)
 		return
 	}
-	o.log.Info("orchestrator: data changed, queueing gatekeeper", "leadId", evt.LeadID, "stage", svc.PipelineStage)
-	if err := o.automationQueue.EnqueueGatekeeperRun(context.Background(), scheduler.GatekeeperRunPayload{
-		TenantID:      evt.TenantID.String(),
-		LeadID:        evt.LeadID.String(),
-		LeadServiceID: evt.LeadServiceID.String(),
-	}); err != nil {
-		o.log.Error("orchestrator: failed to enqueue gatekeeper", "error", err, "serviceId", evt.LeadServiceID)
-	}
+	o.log.Info("orchestrator: data changed, evaluating gatekeeper trigger", "leadId", evt.LeadID, "stage", svc.PipelineStage, "source", evt.Source)
+	_ = maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
+		ctx:       context.Background(),
+		repo:      o.repo,
+		deduper:   o.gatekeeperDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.TenantID,
+		source:    evt.Source,
+	})
 }
 
 func (o *Orchestrator) serviceHasImageAttachments(ctx context.Context, serviceID, tenantID uuid.UUID) bool {
@@ -465,14 +472,18 @@ func (o *Orchestrator) OnPhotoAnalysisCompleted(ctx context.Context, evt events.
 		o.log.Error("orchestrator: automation queue not configured after photo analysis", "serviceId", evt.LeadServiceID)
 		return
 	}
-	o.log.Info("orchestrator: photo analysis complete, queueing gatekeeper", "leadId", evt.LeadID, "summary", evt.Summary)
-	if err := o.automationQueue.EnqueueGatekeeperRun(ctx, scheduler.GatekeeperRunPayload{
-		TenantID:      evt.TenantID.String(),
-		LeadID:        evt.LeadID.String(),
-		LeadServiceID: evt.LeadServiceID.String(),
-	}); err != nil {
-		o.log.Error("orchestrator: failed to enqueue gatekeeper after photo analysis", "error", err, "serviceId", evt.LeadServiceID)
-	}
+	o.log.Info("orchestrator: photo analysis complete, evaluating gatekeeper trigger", "leadId", evt.LeadID, "summary", evt.Summary)
+	_ = maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
+		ctx:       ctx,
+		repo:      o.repo,
+		deduper:   o.gatekeeperDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.TenantID,
+		source:    "photo_analysis_complete",
+	})
 }
 
 // OnPhotoAnalysisFailed records failure context and wakes gatekeeper explicitly when useful.
@@ -516,14 +527,18 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 		o.log.Error("orchestrator: automation queue not configured after photo analysis failure", "serviceId", evt.LeadServiceID)
 		return
 	}
-	o.log.Info("orchestrator: photo analysis failed, queueing gatekeeper", "leadId", evt.LeadID, "errorCode", evt.ErrorCode)
-	if err := o.automationQueue.EnqueueGatekeeperRun(ctx, scheduler.GatekeeperRunPayload{
-		TenantID:      evt.TenantID.String(),
-		LeadID:        evt.LeadID.String(),
-		LeadServiceID: evt.LeadServiceID.String(),
-	}); err != nil {
-		o.log.Error("orchestrator: failed to enqueue gatekeeper after photo analysis failure", "error", err, "serviceId", evt.LeadServiceID)
-	}
+	o.log.Info("orchestrator: photo analysis failed, evaluating gatekeeper trigger", "leadId", evt.LeadID, "errorCode", evt.ErrorCode)
+	_ = maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
+		ctx:       ctx,
+		repo:      o.repo,
+		deduper:   o.gatekeeperDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.TenantID,
+		source:    "photo_analysis_failed",
+	})
 }
 
 // OnStageChange triggers downstream agents based on pipeline transitions.
@@ -565,13 +580,19 @@ func (o *Orchestrator) handleEstimationStage(evt events.PipelineStageChanged) {
 		o.log.Error("orchestrator: automation queue not configured for estimator", "serviceId", evt.LeadServiceID)
 		return
 	}
-	if err := o.automationQueue.EnqueueEstimatorRun(context.Background(), scheduler.EstimatorRunPayload{
-		TenantID:      evt.TenantID.String(),
-		LeadID:        evt.LeadID.String(),
-		LeadServiceID: evt.LeadServiceID.String(),
-		Force:         false,
-	}); err != nil {
-		o.log.Error("orchestrator: estimator failed to enqueue", "error", err)
+	if !maybeEnqueueEstimatorRun(estimatorEnqueueRequest{
+		ctx:       context.Background(),
+		repo:      o.repo,
+		deduper:   o.estimatorDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.TenantID,
+		force:     false,
+		source:    "pipeline_stage_change",
+	}) {
+		o.log.Error("orchestrator: estimator failed to enqueue", "serviceId", evt.LeadServiceID)
 	}
 }
 
@@ -591,12 +612,18 @@ func (o *Orchestrator) handleFulfillmentStage(evt events.PipelineStageChanged) {
 		o.log.Error("orchestrator: automation queue not configured for dispatcher", "serviceId", evt.LeadServiceID)
 		return
 	}
-	if err := o.automationQueue.EnqueueDispatcherRun(context.Background(), scheduler.DispatcherRunPayload{
-		TenantID:      evt.TenantID.String(),
-		LeadID:        evt.LeadID.String(),
-		LeadServiceID: evt.LeadServiceID.String(),
-	}); err != nil {
-		o.log.Error("orchestrator: dispatcher failed to enqueue", "error", err)
+	if !maybeEnqueueDispatcherRun(dispatcherEnqueueRequest{
+		ctx:       context.Background(),
+		repo:      o.repo,
+		deduper:   o.dispatcherDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.TenantID,
+		source:    "pipeline_stage_change",
+	}) {
+		o.log.Error("orchestrator: dispatcher failed to enqueue", "serviceId", evt.LeadServiceID)
 	}
 }
 
@@ -824,12 +851,18 @@ func (o *Orchestrator) OnPartnerOfferRejected(ctx context.Context, evt events.Pa
 		o.log.Error("orchestrator: automation queue not configured after partner rejection", "serviceId", evt.LeadServiceID)
 		return
 	}
-	if err := o.automationQueue.EnqueueDispatcherRun(ctx, scheduler.DispatcherRunPayload{
-		TenantID:      evt.OrganizationID.String(),
-		LeadID:        evt.LeadID.String(),
-		LeadServiceID: evt.LeadServiceID.String(),
-	}); err != nil {
-		o.log.Error("orchestrator: failed to enqueue dispatcher after rejection", "error", err, "serviceId", evt.LeadServiceID)
+	if !maybeEnqueueDispatcherRun(dispatcherEnqueueRequest{
+		ctx:       ctx,
+		repo:      o.repo,
+		deduper:   o.dispatcherDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.OrganizationID,
+		source:    "partner_offer_rejected",
+	}) {
+		o.log.Error("orchestrator: failed to enqueue dispatcher after rejection", "serviceId", evt.LeadServiceID)
 	}
 }
 
@@ -841,12 +874,18 @@ func (o *Orchestrator) OnPartnerOfferExpired(ctx context.Context, evt events.Par
 		o.log.Error("orchestrator: automation queue not configured after partner offer expiry", "serviceId", evt.LeadServiceID)
 		return
 	}
-	if err := o.automationQueue.EnqueueDispatcherRun(ctx, scheduler.DispatcherRunPayload{
-		TenantID:      evt.OrganizationID.String(),
-		LeadID:        evt.LeadID.String(),
-		LeadServiceID: evt.LeadServiceID.String(),
-	}); err != nil {
-		o.log.Error("orchestrator: failed to enqueue dispatcher after expiry", "error", err, "serviceId", evt.LeadServiceID)
+	if !maybeEnqueueDispatcherRun(dispatcherEnqueueRequest{
+		ctx:       ctx,
+		repo:      o.repo,
+		deduper:   o.dispatcherDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.OrganizationID,
+		source:    "partner_offer_expired",
+	}) {
+		o.log.Error("orchestrator: failed to enqueue dispatcher after expiry", "serviceId", evt.LeadServiceID)
 	}
 }
 

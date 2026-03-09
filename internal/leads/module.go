@@ -61,6 +61,9 @@ type Module struct {
 	log                   *logger.Logger
 	scorer                *scoring.Service
 	automationQueue       AutomationScheduler
+	gatekeeperDeduper     gatekeeperTriggerDeduper
+	estimatorDeduper      triggerFingerprintDeduper
+	dispatcherDeduper     triggerFingerprintDeduper
 }
 
 type AutomationScheduler interface {
@@ -139,12 +142,18 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	// Create orchestrator and event listeners
 	outboxRepo := notificationoutbox.New(pool)
 	runLocker := newOrchestratorRunLocker(orchestratorLockRedis, log)
+	gatekeeperDeduper := newGatekeeperTriggerDeduper(orchestratorLockRedis, gatekeeperTriggerFingerprintTTL, log)
+	estimatorDeduper := newTriggerFingerprintDeduper(orchestratorLockRedis, gatekeeperTriggerFingerprintTTL, estimatorTriggerFingerprintPrefix, log)
+	dispatcherDeduper := newTriggerFingerprintDeduper(orchestratorLockRedis, gatekeeperTriggerFingerprintTTL, dispatcherTriggerFingerprintPrefix, log)
 	orchestrator := NewOrchestrator(OrchestratorAgents{
 		Gatekeeper: gatekeeper,
 		Estimator:  estimator,
 		Dispatcher: dispatcher,
 		Auditor:    auditor,
 	}, repo, outboxRepo, eventBus, sseService, log, runLocker)
+	orchestrator.gatekeeperDeduper = gatekeeperDeduper
+	orchestrator.estimatorDeduper = estimatorDeduper
+	orchestrator.dispatcherDeduper = dispatcherDeduper
 	orchestrator.SetReconciliationEnabled(cfg.IsLeadsReconciliationEnabled())
 	if ctx == nil {
 		ctx = context.Background()
@@ -194,6 +203,9 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		attachmentsBucket:     cfg.GetMinioBucketLeadServiceAttachments(),
 		log:                   log,
 		scorer:                scorer,
+		gatekeeperDeduper:     gatekeeperDeduper,
+		estimatorDeduper:      estimatorDeduper,
+		dispatcherDeduper:     dispatcherDeduper,
 	}
 
 	subscribeLeadCreated(eventBus, repo, module, log)
@@ -357,7 +369,7 @@ func runInitialGatekeeper(ctx context.Context, repo repository.LeadsRepository, 
 	if shouldSkipInitialGatekeeper(ctx, repo, log, trigger) {
 		return
 	}
-	if enqueueGatekeeperRun(ctx, module, log, trigger.LeadID, trigger.ServiceID, trigger.TenantID) {
+	if enqueueGatekeeperRun(ctx, repo, module, log, trigger) {
 		return
 	}
 	if log != nil {
@@ -386,18 +398,21 @@ func shouldSkipInitialGatekeeper(ctx context.Context, repo repository.LeadsRepos
 	return false
 }
 
-func enqueueGatekeeperRun(ctx context.Context, module *Module, log *logger.Logger, leadID, serviceID, tenantID uuid.UUID) bool {
-	if module == nil || module.automationQueue == nil {
+func enqueueGatekeeperRun(ctx context.Context, repo repository.LeadsRepository, module *Module, log *logger.Logger, trigger initialGatekeeperTrigger) bool {
+	if module == nil {
 		return false
 	}
-	if err := module.automationQueue.EnqueueGatekeeperRun(ctx, scheduler.GatekeeperRunPayload{
-		TenantID:      tenantID.String(),
-		LeadID:        leadID.String(),
-		LeadServiceID: serviceID.String(),
-	}); err != nil {
-		log.Error("gatekeeper queue enqueue failed", "error", err, "leadId", leadID, "serviceId", serviceID)
-	}
-	return true
+	return maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
+		ctx:       ctx,
+		repo:      repo,
+		deduper:   module.gatekeeperDeduper,
+		queue:     module.automationQueue,
+		log:       log,
+		leadID:    trigger.LeadID,
+		serviceID: trigger.ServiceID,
+		tenantID:  trigger.TenantID,
+		source:    trigger.Source,
+	})
 }
 
 func hasImageAttachments(items []repository.Attachment) bool {
