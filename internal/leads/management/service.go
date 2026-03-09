@@ -60,6 +60,8 @@ type Service struct {
 	eventBus               events.Bus
 	maps                   *maps.Service
 	inAppService           *inapp.Service
+	timelineWhatsAppSender TimelineWhatsAppSender
+	partnerPhoneResolver   PartnerPhoneResolver
 	energyEnricher         ports.EnergyLabelEnricher
 	leadEnricher           ports.LeadEnricher
 	scorer                 *scoring.Service
@@ -68,6 +70,40 @@ type Service struct {
 
 type LeadWorkflowOverrideWriter interface {
 	UpsertLeadWorkflowOverride(ctx context.Context, upsert identityrepo.LeadWorkflowOverrideUpsert) (identityrepo.LeadWorkflowOverride, error)
+}
+
+type TimelineWhatsAppSendParams struct {
+	OrgID       uuid.UUID
+	LeadID      uuid.UUID
+	ServiceID   *uuid.UUID
+	PhoneNumber string
+	Message     string
+	Category    string
+	Audience    string
+	Summary     string
+	ActorType   string
+	ActorName   string
+	Metadata    map[string]any
+}
+
+type TimelineWhatsAppSender interface {
+	SendLeadWhatsApp(ctx context.Context, params TimelineWhatsAppSendParams) error
+}
+
+type TimelineWhatsAppSenderFunc func(ctx context.Context, params TimelineWhatsAppSendParams) error
+
+func (f TimelineWhatsAppSenderFunc) SendLeadWhatsApp(ctx context.Context, params TimelineWhatsAppSendParams) error {
+	return f(ctx, params)
+}
+
+type PartnerPhoneResolver interface {
+	ResolvePartnerPhone(ctx context.Context, organizationID uuid.UUID, partnerID uuid.UUID) (string, error)
+}
+
+type PartnerPhoneResolverFunc func(ctx context.Context, organizationID uuid.UUID, partnerID uuid.UUID) (string, error)
+
+func (f PartnerPhoneResolverFunc) ResolvePartnerPhone(ctx context.Context, organizationID uuid.UUID, partnerID uuid.UUID) (string, error) {
+	return f(ctx, organizationID, partnerID)
 }
 
 // New creates a new lead management service.
@@ -98,6 +134,14 @@ func (s *Service) SetWorkflowOverrideWriter(writer LeadWorkflowOverrideWriter) {
 // SetInAppNotificationService injects the in-app notification service.
 func (s *Service) SetInAppNotificationService(svc *inapp.Service) {
 	s.inAppService = svc
+}
+
+func (s *Service) SetTimelineWhatsAppSender(sender TimelineWhatsAppSender) {
+	s.timelineWhatsAppSender = sender
+}
+
+func (s *Service) SetPartnerPhoneResolver(resolver PartnerPhoneResolver) {
+	s.partnerPhoneResolver = resolver
 }
 
 // Create creates a new lead.
@@ -1119,6 +1163,38 @@ func (s *Service) GetTimeline(ctx context.Context, leadID uuid.UUID, tenantID uu
 	return buildTimelineItems(events), nil
 }
 
+func (s *Service) SendTimelineWhatsAppDraft(ctx context.Context, leadID uuid.UUID, eventID uuid.UUID, tenantID uuid.UUID) error {
+	lead, err := s.repo.GetByID(ctx, leadID, tenantID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return apperr.NotFound(leadNotFoundMsg)
+		}
+		return err
+	}
+	if s.timelineWhatsAppSender == nil {
+		return apperr.Internal("WhatsApp is niet geconfigureerd")
+	}
+
+	events, err := s.repo.ListTimelineEvents(ctx, leadID, tenantID)
+	if err != nil {
+		return err
+	}
+
+	event, found := findTimelineEventByID(events, eventID)
+	if !found {
+		return apperr.NotFound("tijdlijnitem niet gevonden")
+	}
+	if hasSentTimelineWhatsAppEvent(events, eventID) {
+		return apperr.Conflict("dit WhatsApp-concept is al verstuurd")
+	}
+
+	params, err := s.buildTimelineWhatsAppSendParams(ctx, event, tenantID, lead.ConsumerPhone)
+	if err != nil {
+		return err
+	}
+	return s.timelineWhatsAppSender.SendLeadWhatsApp(ctx, params)
+}
+
 const timelineStageMergeWindow = 5 * time.Minute
 
 type timelineStageContext struct {
@@ -1143,6 +1219,214 @@ func buildTimelineItems(events []repository.TimelineEvent) []transport.TimelineI
 		}
 	}
 	return items
+}
+
+func findTimelineEventByID(events []repository.TimelineEvent, eventID uuid.UUID) (repository.TimelineEvent, bool) {
+	for _, event := range events {
+		if event.ID == eventID {
+			return event, true
+		}
+	}
+	return repository.TimelineEvent{}, false
+}
+
+func hasSentTimelineWhatsAppEvent(events []repository.TimelineEvent, sourceEventID uuid.UUID) bool {
+	sourceID := sourceEventID.String()
+	for _, event := range events {
+		metadata := event.Metadata
+		if readTimelineStringValue(metadata["sourceTimelineEventId"]) != sourceID {
+			continue
+		}
+		if readTimelineStringValue(metadata["status"]) == "sent" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) buildTimelineWhatsAppSendParams(ctx context.Context, event repository.TimelineEvent, tenantID uuid.UUID, leadPhone string) (TimelineWhatsAppSendParams, error) {
+	metadata := event.Metadata
+	if metadata == nil {
+		return TimelineWhatsAppSendParams{}, apperr.Validation("tijdlijnitem bevat geen verstuurbaar WhatsApp-concept")
+	}
+
+	draft := resolveTimelineWhatsAppDraft(metadata)
+	if strings.EqualFold(draft.audience, "internal") {
+		return TimelineWhatsAppSendParams{}, apperr.Validation("dit WhatsApp-concept is alleen intern en kan niet rechtstreeks worden verstuurd")
+	}
+	if strings.EqualFold(draft.status, "sent") {
+		return TimelineWhatsAppSendParams{}, apperr.Conflict("dit WhatsApp-concept is al verstuurd")
+	}
+	if strings.TrimSpace(draft.message) == "" {
+		return TimelineWhatsAppSendParams{}, apperr.Validation("tijdlijnitem bevat geen verstuurbaar WhatsApp-concept")
+	}
+
+	phoneNumber, err := s.resolveTimelineWhatsAppPhoneNumber(ctx, metadata, tenantID, leadPhone, draft.audience)
+	if err != nil {
+		return TimelineWhatsAppSendParams{}, err
+	}
+
+	if draft.category == "" {
+		draft.category = event.EventType
+	}
+	if draft.language == "" {
+		draft.language = "nl"
+	}
+
+	return TimelineWhatsAppSendParams{
+		OrgID:       tenantID,
+		LeadID:      event.LeadID,
+		ServiceID:   event.ServiceID,
+		PhoneNumber: phoneNumber,
+		Message:     draft.message,
+		Category:    draft.category,
+		Audience:    draft.audience,
+		Summary:     buildTimelineWhatsAppSummary(event),
+		ActorType:   "System",
+		ActorName:   "WhatsApp",
+		Metadata:    buildTimelineWhatsAppSentMetadata(event, draft.category, draft.audience, draft.language),
+	}, nil
+}
+
+type timelineWhatsAppDraft struct {
+	message  string
+	category string
+	audience string
+	language string
+	status   string
+}
+
+func (s *Service) resolveTimelineWhatsAppPhoneNumber(ctx context.Context, metadata map[string]any, tenantID uuid.UUID, leadPhone string, audience string) (string, error) {
+	phoneNumber := readTimelineStringValue(metadata["phoneNumber"])
+	if phoneNumber == "" {
+		phoneNumber = extractPhoneFromTimelineWhatsAppURL(readTimelineStringValue(metadata["whatsappUrl"]))
+	}
+	if phoneNumber == "" {
+		phoneNumber = s.resolveLegacyTimelinePartnerPhone(ctx, metadata, tenantID)
+	}
+	if phoneNumber == "" {
+		phoneNumber = resolveTimelineLeadPhone(audience, leadPhone)
+	}
+	if phoneNumber == "" {
+		return "", apperr.Validation("tijdlijnitem bevat geen telefoonnummer voor WhatsApp")
+	}
+	return phoneNumber, nil
+}
+
+func (s *Service) resolveLegacyTimelinePartnerPhone(ctx context.Context, metadata map[string]any, tenantID uuid.UUID) string {
+	if s.partnerPhoneResolver == nil {
+		return ""
+	}
+	partnerIDText := readTimelineStringValue(metadata["partnerId"])
+	if partnerIDText == "" {
+		return ""
+	}
+	partnerID, err := uuid.Parse(partnerIDText)
+	if err != nil {
+		return ""
+	}
+	phoneNumber, err := s.partnerPhoneResolver.ResolvePartnerPhone(ctx, tenantID, partnerID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(phone.NormalizeE164(phoneNumber))
+}
+
+func resolveTimelineLeadPhone(audience string, leadPhone string) string {
+	normalizedLeadPhone := strings.TrimSpace(phone.NormalizeE164(leadPhone))
+	if normalizedLeadPhone == "" {
+		return ""
+	}
+	audience = strings.TrimSpace(strings.ToLower(audience))
+	if audience == "partner" || audience == "internal" {
+		return ""
+	}
+	return normalizedLeadPhone
+}
+
+func resolveTimelineWhatsAppDraft(metadata map[string]any) timelineWhatsAppDraft {
+	draft := timelineWhatsAppDraft{
+		category: readTimelineStringValue(metadata["messageCategory"]),
+		audience: readTimelineStringValue(metadata["messageAudience"]),
+		language: readTimelineStringValue(metadata["messageLanguage"]),
+		status:   readTimelineStringValue(metadata["status"]),
+	}
+
+	if drafts := readTimelineMapValue(metadata["drafts"]); drafts != nil {
+		draft.message = readTimelineStringValue(drafts["whatsappMessage"])
+		draft.category = fallbackTimelineString(draft.category, drafts["messageCategory"])
+		draft.audience = fallbackTimelineString(draft.audience, drafts["messageAudience"])
+		draft.language = fallbackTimelineString(draft.language, drafts["messageLanguage"])
+		draft.status = fallbackTimelineString(draft.status, drafts["status"])
+		return draft
+	}
+
+	if readTimelineStringValue(metadata["preferredContactChannel"]) == "WhatsApp" {
+		draft.message = readTimelineStringValue(metadata["suggestedContactMessage"])
+	}
+
+	return draft
+}
+
+func fallbackTimelineString(current string, candidate any) string {
+	if current != "" {
+		return current
+	}
+	return readTimelineStringValue(candidate)
+}
+
+func buildTimelineWhatsAppSummary(event repository.TimelineEvent) string {
+	if event.Summary != nil && strings.TrimSpace(*event.Summary) != "" {
+		return fmt.Sprintf("WhatsApp verstuurd: %s", strings.TrimSpace(*event.Summary))
+	}
+	return "WhatsApp verstuurd"
+}
+
+func buildTimelineWhatsAppSentMetadata(event repository.TimelineEvent, category, audience, language string) map[string]any {
+	sentMetadata := map[string]any{
+		"sourceTimelineEventId":    event.ID.String(),
+		"sourceTimelineEventType":  event.EventType,
+		"sourceTimelineEventTitle": event.Title,
+		"messageCategory":          category,
+		"messageAudience":          audience,
+		"messageLanguage":          language,
+	}
+	for _, key := range []string{"offerId", "partnerId", "partnerName", "acceptanceUrl", "publicToken"} {
+		if value, ok := event.Metadata[key]; ok {
+			sentMetadata[key] = value
+		}
+	}
+	return sentMetadata
+}
+
+func readTimelineStringValue(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func readTimelineMapValue(value any) map[string]any {
+	result, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return result
+}
+
+func extractPhoneFromTimelineWhatsAppURL(value string) string {
+	if value == "" {
+		return ""
+	}
+	const marker = "wa.me/"
+	markerIndex := strings.Index(value, marker)
+	if markerIndex == -1 {
+		return ""
+	}
+	afterMarker := value[markerIndex+len(marker):]
+	phonePart := strings.SplitN(afterMarker, "?", 2)[0]
+	return strings.TrimSpace(phone.NormalizeE164(phonePart))
 }
 
 func shouldSkipTimelineEvent(event repository.TimelineEvent, contexts []timelineStageContext) bool {

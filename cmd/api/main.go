@@ -26,6 +26,7 @@ import (
 	"portal_final_backend/internal/imap"
 	"portal_final_backend/internal/leadenrichment"
 	"portal_final_backend/internal/leads"
+	leadsmgmt "portal_final_backend/internal/leads/management"
 	leadsports "portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
@@ -277,6 +278,21 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	}
 	leadsModule.ManagementService().SetWorkflowOverrideWriter(identityModule.Service())
 	leadsModule.ManagementService().SetInAppNotificationService(notificationModule.InAppService())
+	leadsModule.ManagementService().SetTimelineWhatsAppSender(leadsmgmt.TimelineWhatsAppSenderFunc(func(ctx context.Context, params leadsmgmt.TimelineWhatsAppSendParams) error {
+		return notificationModule.SendLeadWhatsApp(ctx, notification.SendLeadWhatsAppParams{
+			OrgID:       params.OrgID,
+			LeadID:      params.LeadID,
+			ServiceID:   params.ServiceID,
+			PhoneNumber: params.PhoneNumber,
+			Message:     params.Message,
+			Category:    params.Category,
+			Audience:    params.Audience,
+			Summary:     params.Summary,
+			ActorType:   params.ActorType,
+			ActorName:   params.ActorName,
+			Metadata:    params.Metadata,
+		})
+	}))
 	leadsModule.SetOrganizationAISettingsReader(func(ctx context.Context, organizationID uuid.UUID) (leadsports.OrganizationAISettings, error) {
 		settings, err := identityModule.Service().GetOrganizationSettings(ctx, organizationID)
 		if err != nil {
@@ -330,6 +346,13 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
 	catalogModule.RegisterHandlers(eventBus)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
+	leadsModule.ManagementService().SetPartnerPhoneResolver(leadsmgmt.PartnerPhoneResolverFunc(func(ctx context.Context, organizationID uuid.UUID, partnerID uuid.UUID) (string, error) {
+		partner, err := partnersModule.Service().GetByID(ctx, organizationID, partnerID)
+		if err != nil {
+			return "", err
+		}
+		return partner.ContactPhone, nil
+	}))
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 	searchModule := search.NewModule(pool, val)
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)

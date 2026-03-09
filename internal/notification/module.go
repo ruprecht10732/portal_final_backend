@@ -32,6 +32,7 @@ import (
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
+	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/phone"
@@ -142,6 +143,20 @@ type cachedSender struct {
 type cachedOrgName struct {
 	name      string
 	expiresAt time.Time
+}
+
+type SendLeadWhatsAppParams struct {
+	OrgID       uuid.UUID
+	LeadID      uuid.UUID
+	ServiceID   *uuid.UUID
+	PhoneNumber string
+	Message     string
+	Category    string
+	Audience    string
+	Summary     string
+	ActorType   string
+	ActorName   string
+	Metadata    map[string]any
 }
 
 // Module handles all notification-related event subscriptions.
@@ -368,6 +383,53 @@ func (m *Module) SetQuotePDFStorage(storage QuotePDFFileStorage, bucket string) 
 // SetQuoteAcceptedPDFScheduler injects async PDF task enqueueing for accepted quotes.
 func (m *Module) SetQuoteAcceptedPDFScheduler(scheduler QuoteAcceptedPDFScheduler) {
 	m.quotePDFScheduler = scheduler
+}
+
+func (m *Module) SendLeadWhatsApp(ctx context.Context, params SendLeadWhatsAppParams) error {
+	if m.whatsapp == nil {
+		return apperr.Internal("WhatsApp is niet geconfigureerd")
+	}
+
+	phoneNumber := strings.TrimSpace(phone.NormalizeE164(params.PhoneNumber))
+	if phoneNumber == "" {
+		return apperr.Validation("telefoonnummer voor WhatsApp ontbreekt")
+	}
+
+	message := strings.TrimSpace(params.Message)
+	if message == "" {
+		return apperr.Validation("WhatsApp-bericht is leeg")
+	}
+
+	deviceID := strings.TrimSpace(m.resolveWhatsAppDeviceID(ctx, params.OrgID))
+	if deviceID == "" {
+		return apperr.Validation("er is geen verbonden WhatsApp-apparaat voor deze organisatie")
+	}
+
+	err := m.whatsapp.SendMessage(ctx, deviceID, phoneNumber, message)
+	if err != nil {
+		m.log.Warn("failed to send explicit timeline whatsapp", "error", err, "orgId", params.OrgID, "leadId", params.LeadID)
+		if params.LeadID != uuid.Nil {
+			m.writeWhatsAppFailureEvent(ctx, params.LeadID, params.ServiceID, params.OrgID, err.Error())
+		}
+		if errors.Is(err, whatsapp.ErrNoDevice) {
+			return apperr.Validation("er is geen verbonden WhatsApp-apparaat voor deze organisatie")
+		}
+		return apperr.Internal("WhatsApp-bericht kon niet worden verstuurd")
+	}
+
+	metadata := buildMergedWhatsAppSentMetadata(params.Metadata, params.Category, params.Audience, phoneNumber, message)
+	m.writeWhatsAppSentEventWithMetadata(whatsAppSentEventWithMetadataParams{
+		Ctx:       ctx,
+		LeadID:    params.LeadID,
+		ServiceID: params.ServiceID,
+		OrgID:     params.OrgID,
+		ActorType: params.ActorType,
+		ActorName: params.ActorName,
+		Summary:   params.Summary,
+		Metadata:  metadata,
+	})
+
+	return nil
 }
 
 // SetSMTPEncryptionKey sets the AES key used to decrypt SMTP passwords from org settings.
@@ -1299,6 +1361,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 				"offerId":          e.OfferID.String(),
 				"partnerId":        e.PartnerID.String(),
 				"partnerName":      e.PartnerName,
+				"phoneNumber":      phone.NormalizeE164(e.PartnerPhone),
 				"vakmanPriceCents": e.VakmanPriceCents,
 				"publicToken":      e.PublicToken,
 				"acceptanceUrl":    acceptURL,
@@ -3247,6 +3310,18 @@ func buildWhatsAppSentMetadata(category, audience, phoneNumber, message string) 
 		"messageContent":  message,
 		"sentAt":          time.Now().UTC().Format(time.RFC3339),
 	}
+}
+
+func buildMergedWhatsAppSentMetadata(base map[string]any, category, audience, phoneNumber, message string) map[string]any {
+	merged := make(map[string]any, len(base)+8)
+	for key, value := range base {
+		merged[key] = value
+	}
+	defaults := buildWhatsAppSentMetadata(category, audience, phoneNumber, message)
+	for key, value := range defaults {
+		merged[key] = value
+	}
+	return merged
 }
 
 type whatsAppSentEventWithMetadataParams struct {

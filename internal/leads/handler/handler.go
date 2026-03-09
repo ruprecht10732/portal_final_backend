@@ -109,6 +109,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/check-returning-customer", h.CheckReturningCustomer)
 	rg.GET("/:id", h.GetByID)
 	rg.GET("/:id/timeline", h.GetTimeline)
+	rg.POST("/:id/timeline/:eventId/send-whatsapp", h.SendTimelineWhatsApp)
 	rg.PUT("/:id", h.Update)
 	rg.DELETE("/:id", h.Delete)
 	rg.POST("/bulk-delete", h.BulkDelete)
@@ -331,6 +332,37 @@ func (h *Handler) GetTimeline(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"items": items})
+}
+
+func (h *Handler) SendTimelineWhatsApp(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	eventID, err := uuid.Parse(c.Param("eventId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	err = h.mgmt.SendTimelineWhatsAppDraft(c.Request.Context(), leadID, eventID, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	h.publishLeadUpdate(tenantID, &leadID, "timeline_whatsapp_sent")
+	httpkit.OK(c, gin.H{"status": "sent", "eventId": eventID.String()})
 }
 
 func (h *Handler) Update(c *gin.Context) {
