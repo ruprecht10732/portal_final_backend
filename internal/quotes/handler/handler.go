@@ -75,6 +75,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/generate-jobs/completed", h.ClearCompletedGenerateJobs)
 	rg.GET("/generate-jobs/:id", h.GetGenerateJob)
 	rg.POST("/generate-jobs/:id/cancel", h.CancelGenerateJob)
+	rg.POST("/generate-jobs/:id/feedback", h.SubmitGenerateJobFeedback)
+	rg.POST("/generate-jobs/:id/viewed", h.MarkGenerateJobViewed)
 	rg.DELETE("/generate-jobs/:id", h.DeleteGenerateJob)
 	rg.POST("/export/:provider/bulk", h.BulkExportToProvider)
 	rg.DELETE("/integrations/:provider", h.DisconnectProvider)
@@ -108,26 +110,79 @@ func (h *Handler) CancelGenerateJob(c *gin.Context) {
 	}
 
 	identity := httpkit.MustGetIdentity(c)
-	job, err := h.svc.CancelGenerateQuoteJob(c.Request.Context(), tenantID, identity.UserID(), jobID)
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+			return
+		}
+	}
+	job, err := h.svc.CancelGenerateQuoteJobWithReason(c.Request.Context(), tenantID, identity.UserID(), jobID, normalizeOptionalString(req.Reason))
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	httpkit.OK(c, transport.GenerateQuoteJobResponse{
-		JobID:           job.JobID,
-		Status:          string(job.Status),
-		Step:            job.Step,
-		ProgressPercent: job.ProgressPercent,
-		Error:           job.Error,
-		QuoteID:         job.QuoteID,
-		QuoteNumber:     job.QuoteNumber,
-		ItemCount:       job.ItemCount,
-		LeadID:          job.LeadID,
-		LeadServiceID:   job.LeadServiceID,
-		StartedAt:       job.StartedAt,
-		UpdatedAt:       job.UpdatedAt,
-		FinishedAt:      job.FinishedAt,
-	})
+	httpkit.OK(c, toGenerateQuoteJobResponse(job))
+}
+
+// SubmitGenerateJobFeedback handles POST /api/v1/quotes/generate-jobs/:id/feedback.
+func (h *Handler) SubmitGenerateJobFeedback(c *gin.Context) {
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.GenerateQuoteJobFeedbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+	if req.Rating != -1 && req.Rating != 1 {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, "rating must be -1 or 1")
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	job, err := h.svc.SubmitGenerateQuoteJobFeedback(c.Request.Context(), tenantID, identity.UserID(), jobID, req.Rating, req.Comment)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, toGenerateQuoteJobResponse(job))
+}
+
+// MarkGenerateJobViewed handles POST /api/v1/quotes/generate-jobs/:id/viewed.
+func (h *Handler) MarkGenerateJobViewed(c *gin.Context) {
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	job, err := h.svc.MarkGenerateQuoteJobViewed(c.Request.Context(), tenantID, identity.UserID(), jobID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, toGenerateQuoteJobResponse(job))
 }
 
 // SubmitHumanFeedback handles POST /api/v1/quotes/:id/feedback
@@ -192,21 +247,7 @@ func (h *Handler) ListGenerateJobs(c *gin.Context) {
 
 	respItems := make([]transport.GenerateQuoteJobResponse, 0, len(items))
 	for _, job := range items {
-		respItems = append(respItems, transport.GenerateQuoteJobResponse{
-			JobID:           job.JobID,
-			Status:          string(job.Status),
-			Step:            job.Step,
-			ProgressPercent: job.ProgressPercent,
-			Error:           job.Error,
-			QuoteID:         job.QuoteID,
-			QuoteNumber:     job.QuoteNumber,
-			ItemCount:       job.ItemCount,
-			LeadID:          job.LeadID,
-			LeadServiceID:   job.LeadServiceID,
-			StartedAt:       job.StartedAt,
-			UpdatedAt:       job.UpdatedAt,
-			FinishedAt:      job.FinishedAt,
-		})
+		respItems = append(respItems, toGenerateQuoteJobResponse(&job))
 	}
 
 	httpkit.OK(c, transport.GenerateQuoteJobsListResponse{
@@ -527,20 +568,56 @@ func (h *Handler) GetGenerateJob(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.GenerateQuoteJobResponse{
-		JobID:           job.JobID,
-		Status:          string(job.Status),
-		Step:            job.Step,
-		ProgressPercent: job.ProgressPercent,
-		Error:           job.Error,
-		QuoteID:         job.QuoteID,
-		QuoteNumber:     job.QuoteNumber,
-		ItemCount:       job.ItemCount,
-		LeadID:          job.LeadID,
-		LeadServiceID:   job.LeadServiceID,
-		StartedAt:       job.StartedAt,
-		UpdatedAt:       job.UpdatedAt,
-		FinishedAt:      job.FinishedAt,
+		JobID:              job.JobID,
+		Status:             string(job.Status),
+		Step:               job.Step,
+		ProgressPercent:    job.ProgressPercent,
+		Error:              job.Error,
+		QuoteID:            job.QuoteID,
+		QuoteNumber:        job.QuoteNumber,
+		ItemCount:          job.ItemCount,
+		FeedbackRating:     job.FeedbackRating,
+		FeedbackComment:    job.FeedbackComment,
+		FeedbackAt:         job.FeedbackAt,
+		CancellationReason: job.CancellationReason,
+		ViewedAt:           job.ViewedAt,
+		LeadID:             job.LeadID,
+		LeadServiceID:      job.LeadServiceID,
+		StartedAt:          job.StartedAt,
+		UpdatedAt:          job.UpdatedAt,
+		FinishedAt:         job.FinishedAt,
 	})
+}
+
+func toGenerateQuoteJobResponse(job *service.GenerateQuoteJob) transport.GenerateQuoteJobResponse {
+	return transport.GenerateQuoteJobResponse{
+		JobID:              job.JobID,
+		Status:             string(job.Status),
+		Step:               job.Step,
+		ProgressPercent:    job.ProgressPercent,
+		Error:              job.Error,
+		QuoteID:            job.QuoteID,
+		QuoteNumber:        job.QuoteNumber,
+		ItemCount:          job.ItemCount,
+		FeedbackRating:     job.FeedbackRating,
+		FeedbackComment:    job.FeedbackComment,
+		FeedbackAt:         job.FeedbackAt,
+		CancellationReason: job.CancellationReason,
+		ViewedAt:           job.ViewedAt,
+		LeadID:             job.LeadID,
+		LeadServiceID:      job.LeadServiceID,
+		StartedAt:          job.StartedAt,
+		UpdatedAt:          job.UpdatedAt,
+		FinishedAt:         job.FinishedAt,
+	}
+}
+
+func normalizeOptionalString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 // GetByID handles GET /api/v1/quotes/:id

@@ -44,6 +44,7 @@ SET status = 'cancelled',
   step = 'cancelled',
   progress_percent = CASE WHEN progress_percent > 100 THEN 100 ELSE progress_percent END,
   error = NULL,
+  cancellation_reason = $6,
   updated_at = $4,
   finished_at = $5
 WHERE id = $1 AND organization_id = $2 AND user_id = $3
@@ -51,15 +52,17 @@ WHERE id = $1 AND organization_id = $2 AND user_id = $3
 RETURNING id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 `
 
 type CancelGenerateQuoteJobParams struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrganizationID pgtype.UUID        `json:"organization_id"`
-	UserID         pgtype.UUID        `json:"user_id"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	OrganizationID     pgtype.UUID        `json:"organization_id"`
+	UserID             pgtype.UUID        `json:"user_id"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	CancellationReason pgtype.Text        `json:"cancellation_reason"`
 }
 
 func (q *Queries) CancelGenerateQuoteJob(ctx context.Context, arg CancelGenerateQuoteJobParams) (RacAiQuoteJob, error) {
@@ -69,6 +72,7 @@ func (q *Queries) CancelGenerateQuoteJob(ctx context.Context, arg CancelGenerate
 		arg.UserID,
 		arg.UpdatedAt,
 		arg.FinishedAt,
+		arg.CancellationReason,
 	)
 	var i RacAiQuoteJob
 	err := row.Scan(
@@ -87,6 +91,11 @@ func (q *Queries) CancelGenerateQuoteJob(ctx context.Context, arg CancelGenerate
 		&i.StartedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.FeedbackRating,
+		&i.FeedbackComment,
+		&i.FeedbackSubmittedAt,
+		&i.CancellationReason,
+		&i.ViewedAt,
 	)
 	return i, err
 }
@@ -101,7 +110,8 @@ WHERE id = $1 AND status = 'pending'
 RETURNING id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 `
 
 type ClaimGenerateQuoteJobParams struct {
@@ -135,6 +145,11 @@ func (q *Queries) ClaimGenerateQuoteJob(ctx context.Context, arg ClaimGenerateQu
 		&i.StartedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.FeedbackRating,
+		&i.FeedbackComment,
+		&i.FeedbackSubmittedAt,
+		&i.CancellationReason,
+		&i.ViewedAt,
 	)
 	return i, err
 }
@@ -245,27 +260,33 @@ INSERT INTO RAC_ai_quote_jobs (
   id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 `
 
 type CreateGenerateQuoteJobParams struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrganizationID  pgtype.UUID        `json:"organization_id"`
-	UserID          pgtype.UUID        `json:"user_id"`
-	LeadID          pgtype.UUID        `json:"lead_id"`
-	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
-	Status          string             `json:"status"`
-	Step            string             `json:"step"`
-	ProgressPercent int32              `json:"progress_percent"`
-	Error           pgtype.Text        `json:"error"`
-	QuoteID         pgtype.UUID        `json:"quote_id"`
-	QuoteNumber     pgtype.Text        `json:"quote_number"`
-	ItemCount       pgtype.Int4        `json:"item_count"`
-	StartedAt       pgtype.Timestamptz `json:"started_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	LeadServiceID       pgtype.UUID        `json:"lead_service_id"`
+	Status              string             `json:"status"`
+	Step                string             `json:"step"`
+	ProgressPercent     int32              `json:"progress_percent"`
+	Error               pgtype.Text        `json:"error"`
+	QuoteID             pgtype.UUID        `json:"quote_id"`
+	QuoteNumber         pgtype.Text        `json:"quote_number"`
+	ItemCount           pgtype.Int4        `json:"item_count"`
+	StartedAt           pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt          pgtype.Timestamptz `json:"finished_at"`
+	FeedbackRating      pgtype.Int4        `json:"feedback_rating"`
+	FeedbackComment     pgtype.Text        `json:"feedback_comment"`
+	FeedbackSubmittedAt pgtype.Timestamptz `json:"feedback_submitted_at"`
+	CancellationReason  pgtype.Text        `json:"cancellation_reason"`
+	ViewedAt            pgtype.Timestamptz `json:"viewed_at"`
 }
 
 func (q *Queries) CreateGenerateQuoteJob(ctx context.Context, arg CreateGenerateQuoteJobParams) error {
@@ -285,6 +306,11 @@ func (q *Queries) CreateGenerateQuoteJob(ctx context.Context, arg CreateGenerate
 		arg.StartedAt,
 		arg.UpdatedAt,
 		arg.FinishedAt,
+		arg.FeedbackRating,
+		arg.FeedbackComment,
+		arg.FeedbackSubmittedAt,
+		arg.CancellationReason,
+		arg.ViewedAt,
 	)
 	return err
 }
@@ -635,16 +661,16 @@ const createQuotePricingCorrection = `-- name: CreateQuotePricingCorrection :one
 INSERT INTO RAC_quote_pricing_corrections (
   id, quote_id, snapshot_id, organization_id, quote_item_id,
   field_name, ai_value, human_value, delta_cents, delta_percentage,
-  reason, ai_finding_code, created_by_user_id, created_at
+  reason, ai_finding_code, estimator_run_id, created_by_user_id, created_at
 )
 VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8, $9, $10,
-  $11, $12, $13, $14
+  $11, $12, $13, $14, $15
 )
 RETURNING id, quote_id, snapshot_id, organization_id, quote_item_id,
   field_name, ai_value, human_value, delta_cents, delta_percentage,
-  reason, ai_finding_code, created_by_user_id, created_at
+  reason, ai_finding_code, estimator_run_id, created_by_user_id, created_at
 `
 
 type CreateQuotePricingCorrectionParams struct {
@@ -660,11 +686,30 @@ type CreateQuotePricingCorrectionParams struct {
 	DeltaPercentage pgtype.Float8      `json:"delta_percentage"`
 	Reason          pgtype.Text        `json:"reason"`
 	AiFindingCode   pgtype.Text        `json:"ai_finding_code"`
+	EstimatorRunID  pgtype.Text        `json:"estimator_run_id"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
-func (q *Queries) CreateQuotePricingCorrection(ctx context.Context, arg CreateQuotePricingCorrectionParams) (RacQuotePricingCorrection, error) {
+type CreateQuotePricingCorrectionRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	QuoteID         pgtype.UUID        `json:"quote_id"`
+	SnapshotID      pgtype.UUID        `json:"snapshot_id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	QuoteItemID     pgtype.UUID        `json:"quote_item_id"`
+	FieldName       string             `json:"field_name"`
+	AiValue         []byte             `json:"ai_value"`
+	HumanValue      []byte             `json:"human_value"`
+	DeltaCents      pgtype.Int8        `json:"delta_cents"`
+	DeltaPercentage pgtype.Float8      `json:"delta_percentage"`
+	Reason          pgtype.Text        `json:"reason"`
+	AiFindingCode   pgtype.Text        `json:"ai_finding_code"`
+	EstimatorRunID  pgtype.Text        `json:"estimator_run_id"`
+	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateQuotePricingCorrection(ctx context.Context, arg CreateQuotePricingCorrectionParams) (CreateQuotePricingCorrectionRow, error) {
 	row := q.db.QueryRow(ctx, createQuotePricingCorrection,
 		arg.ID,
 		arg.QuoteID,
@@ -678,10 +723,11 @@ func (q *Queries) CreateQuotePricingCorrection(ctx context.Context, arg CreateQu
 		arg.DeltaPercentage,
 		arg.Reason,
 		arg.AiFindingCode,
+		arg.EstimatorRunID,
 		arg.CreatedByUserID,
 		arg.CreatedAt,
 	)
-	var i RacQuotePricingCorrection
+	var i CreateQuotePricingCorrectionRow
 	err := row.Scan(
 		&i.ID,
 		&i.QuoteID,
@@ -695,6 +741,7 @@ func (q *Queries) CreateQuotePricingCorrection(ctx context.Context, arg CreateQu
 		&i.DeltaPercentage,
 		&i.Reason,
 		&i.AiFindingCode,
+		&i.EstimatorRunID,
 		&i.CreatedByUserID,
 		&i.CreatedAt,
 	)
@@ -704,16 +751,16 @@ func (q *Queries) CreateQuotePricingCorrection(ctx context.Context, arg CreateQu
 const createQuotePricingOutcome = `-- name: CreateQuotePricingOutcome :one
 INSERT INTO RAC_quote_pricing_outcomes (
   id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
-  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents, estimator_run_id,
   outcome_at, metadata, created_at
 )
 VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10,
-  $11, $12, $13
+  $7, $8, $9, $10, $11,
+  $12, $13, $14
 )
 RETURNING id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
-  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents, estimator_run_id,
   outcome_at, metadata, created_at
 `
 
@@ -728,12 +775,30 @@ type CreateQuotePricingOutcomeParams struct {
 	RejectionReason    pgtype.Text        `json:"rejection_reason"`
 	AcceptedTotalCents pgtype.Int8        `json:"accepted_total_cents"`
 	FinalTotalCents    pgtype.Int8        `json:"final_total_cents"`
+	EstimatorRunID     pgtype.Text        `json:"estimator_run_id"`
 	OutcomeAt          pgtype.Timestamptz `json:"outcome_at"`
 	Metadata           []byte             `json:"metadata"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
-func (q *Queries) CreateQuotePricingOutcome(ctx context.Context, arg CreateQuotePricingOutcomeParams) (RacQuotePricingOutcome, error) {
+type CreateQuotePricingOutcomeRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	QuoteID            pgtype.UUID        `json:"quote_id"`
+	SnapshotID         pgtype.UUID        `json:"snapshot_id"`
+	OrganizationID     pgtype.UUID        `json:"organization_id"`
+	LeadID             pgtype.UUID        `json:"lead_id"`
+	LeadServiceID      pgtype.UUID        `json:"lead_service_id"`
+	OutcomeType        string             `json:"outcome_type"`
+	RejectionReason    pgtype.Text        `json:"rejection_reason"`
+	AcceptedTotalCents pgtype.Int8        `json:"accepted_total_cents"`
+	FinalTotalCents    pgtype.Int8        `json:"final_total_cents"`
+	EstimatorRunID     pgtype.Text        `json:"estimator_run_id"`
+	OutcomeAt          pgtype.Timestamptz `json:"outcome_at"`
+	Metadata           []byte             `json:"metadata"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateQuotePricingOutcome(ctx context.Context, arg CreateQuotePricingOutcomeParams) (CreateQuotePricingOutcomeRow, error) {
 	row := q.db.QueryRow(ctx, createQuotePricingOutcome,
 		arg.ID,
 		arg.QuoteID,
@@ -745,11 +810,12 @@ func (q *Queries) CreateQuotePricingOutcome(ctx context.Context, arg CreateQuote
 		arg.RejectionReason,
 		arg.AcceptedTotalCents,
 		arg.FinalTotalCents,
+		arg.EstimatorRunID,
 		arg.OutcomeAt,
 		arg.Metadata,
 		arg.CreatedAt,
 	)
-	var i RacQuotePricingOutcome
+	var i CreateQuotePricingOutcomeRow
 	err := row.Scan(
 		&i.ID,
 		&i.QuoteID,
@@ -761,6 +827,7 @@ func (q *Queries) CreateQuotePricingOutcome(ctx context.Context, arg CreateQuote
 		&i.RejectionReason,
 		&i.AcceptedTotalCents,
 		&i.FinalTotalCents,
+		&i.EstimatorRunID,
 		&i.OutcomeAt,
 		&i.Metadata,
 		&i.CreatedAt,
@@ -1109,7 +1176,8 @@ const getGenerateQuoteJob = `-- name: GetGenerateQuoteJob :one
 SELECT id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 FROM RAC_ai_quote_jobs
 WHERE id = $1 AND organization_id = $2 AND user_id = $3
 `
@@ -1139,6 +1207,11 @@ func (q *Queries) GetGenerateQuoteJob(ctx context.Context, arg GetGenerateQuoteJ
 		&i.StartedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.FeedbackRating,
+		&i.FeedbackComment,
+		&i.FeedbackSubmittedAt,
+		&i.CancellationReason,
+		&i.ViewedAt,
 	)
 	return i, err
 }
@@ -1147,7 +1220,8 @@ const getGenerateQuoteJobByID = `-- name: GetGenerateQuoteJobByID :one
 SELECT id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 FROM RAC_ai_quote_jobs
 WHERE id = $1
 `
@@ -1171,6 +1245,11 @@ func (q *Queries) GetGenerateQuoteJobByID(ctx context.Context, id pgtype.UUID) (
 		&i.StartedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.FeedbackRating,
+		&i.FeedbackComment,
+		&i.FeedbackSubmittedAt,
+		&i.CancellationReason,
+		&i.ViewedAt,
 	)
 	return i, err
 }
@@ -1828,7 +1907,8 @@ const listGenerateQuoteJobs = `-- name: ListGenerateQuoteJobs :many
 SELECT id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 FROM RAC_ai_quote_jobs
 WHERE organization_id = $1 AND user_id = $2
 ORDER BY updated_at DESC
@@ -1872,6 +1952,11 @@ func (q *Queries) ListGenerateQuoteJobs(ctx context.Context, arg ListGenerateQuo
 			&i.StartedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.FeedbackRating,
+			&i.FeedbackComment,
+			&i.FeedbackSubmittedAt,
+			&i.CancellationReason,
+			&i.ViewedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2672,6 +2757,7 @@ SELECT
   c.delta_percentage,
   c.reason,
   c.ai_finding_code,
+  c.estimator_run_id,
   c.created_at
 FROM RAC_quote_pricing_corrections c
 JOIN RAC_quote_pricing_snapshots s ON s.id = c.snapshot_id
@@ -2699,6 +2785,7 @@ type ListRecentPricingCorrectionsRow struct {
 	DeltaPercentage pgtype.Float8      `json:"delta_percentage"`
 	Reason          pgtype.Text        `json:"reason"`
 	AiFindingCode   pgtype.Text        `json:"ai_finding_code"`
+	EstimatorRunID  pgtype.Text        `json:"estimator_run_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -2725,6 +2812,7 @@ func (q *Queries) ListRecentPricingCorrections(ctx context.Context, arg ListRece
 			&i.DeltaPercentage,
 			&i.Reason,
 			&i.AiFindingCode,
+			&i.EstimatorRunID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -2750,6 +2838,7 @@ SELECT
   END AS price_band,
   o.outcome_type,
   o.final_total_cents,
+  o.estimator_run_id,
   o.rejection_reason,
   o.created_at
 FROM RAC_quote_pricing_outcomes o
@@ -2775,6 +2864,7 @@ type ListRecentPricingOutcomesRow struct {
 	PriceBand       string             `json:"price_band"`
 	OutcomeType     string             `json:"outcome_type"`
 	FinalTotalCents pgtype.Int8        `json:"final_total_cents"`
+	EstimatorRunID  pgtype.Text        `json:"estimator_run_id"`
 	RejectionReason pgtype.Text        `json:"rejection_reason"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
@@ -2799,6 +2889,7 @@ func (q *Queries) ListRecentPricingOutcomes(ctx context.Context, arg ListRecentP
 			&i.PriceBand,
 			&i.OutcomeType,
 			&i.FinalTotalCents,
+			&i.EstimatorRunID,
 			&i.RejectionReason,
 			&i.CreatedAt,
 		); err != nil {
@@ -2884,6 +2975,57 @@ func (q *Queries) ListRecentPricingSnapshots(ctx context.Context, arg ListRecent
 		return nil, err
 	}
 	return items, nil
+}
+
+const markGenerateQuoteJobViewed = `-- name: MarkGenerateQuoteJobViewed :one
+UPDATE RAC_ai_quote_jobs
+SET viewed_at = COALESCE(viewed_at, $4)
+WHERE id = $1 AND organization_id = $2 AND user_id = $3
+RETURNING id, organization_id, user_id, lead_id, lead_service_id,
+  status, step, progress_percent, error,
+  quote_id, quote_number, item_count,
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
+`
+
+type MarkGenerateQuoteJobViewedParams struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	ViewedAt       pgtype.Timestamptz `json:"viewed_at"`
+}
+
+func (q *Queries) MarkGenerateQuoteJobViewed(ctx context.Context, arg MarkGenerateQuoteJobViewedParams) (RacAiQuoteJob, error) {
+	row := q.db.QueryRow(ctx, markGenerateQuoteJobViewed,
+		arg.ID,
+		arg.OrganizationID,
+		arg.UserID,
+		arg.ViewedAt,
+	)
+	var i RacAiQuoteJob
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.Status,
+		&i.Step,
+		&i.ProgressPercent,
+		&i.Error,
+		&i.QuoteID,
+		&i.QuoteNumber,
+		&i.ItemCount,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.FeedbackRating,
+		&i.FeedbackComment,
+		&i.FeedbackSubmittedAt,
+		&i.CancellationReason,
+		&i.ViewedAt,
+	)
+	return i, err
 }
 
 const nextQuoteNumber = `-- name: NextQuoteNumber :one
@@ -3034,6 +3176,64 @@ type SetQuoteViewedAtParams struct {
 func (q *Queries) SetQuoteViewedAt(ctx context.Context, arg SetQuoteViewedAtParams) error {
 	_, err := q.db.Exec(ctx, setQuoteViewedAt, arg.ID, arg.ViewedAt)
 	return err
+}
+
+const submitGenerateQuoteJobFeedback = `-- name: SubmitGenerateQuoteJobFeedback :one
+UPDATE RAC_ai_quote_jobs
+SET feedback_rating = $4,
+  feedback_comment = $5,
+  feedback_submitted_at = $6
+WHERE id = $1 AND organization_id = $2 AND user_id = $3
+  AND status IN ('completed', 'failed', 'cancelled')
+RETURNING id, organization_id, user_id, lead_id, lead_service_id,
+  status, step, progress_percent, error,
+  quote_id, quote_number, item_count,
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
+`
+
+type SubmitGenerateQuoteJobFeedbackParams struct {
+	ID                  pgtype.UUID        `json:"id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	FeedbackRating      pgtype.Int4        `json:"feedback_rating"`
+	FeedbackComment     pgtype.Text        `json:"feedback_comment"`
+	FeedbackSubmittedAt pgtype.Timestamptz `json:"feedback_submitted_at"`
+}
+
+func (q *Queries) SubmitGenerateQuoteJobFeedback(ctx context.Context, arg SubmitGenerateQuoteJobFeedbackParams) (RacAiQuoteJob, error) {
+	row := q.db.QueryRow(ctx, submitGenerateQuoteJobFeedback,
+		arg.ID,
+		arg.OrganizationID,
+		arg.UserID,
+		arg.FeedbackRating,
+		arg.FeedbackComment,
+		arg.FeedbackSubmittedAt,
+	)
+	var i RacAiQuoteJob
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.Status,
+		&i.Step,
+		&i.ProgressPercent,
+		&i.Error,
+		&i.QuoteID,
+		&i.QuoteNumber,
+		&i.ItemCount,
+		&i.StartedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.FeedbackRating,
+		&i.FeedbackComment,
+		&i.FeedbackSubmittedAt,
+		&i.CancellationReason,
+		&i.ViewedAt,
+	)
+	return i, err
 }
 
 const updateGenerateQuoteJob = `-- name: UpdateGenerateQuoteJob :execrows

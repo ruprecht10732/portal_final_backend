@@ -51,12 +51,14 @@ func (m CallOutcomeMetadata) ToMap() map[string]any { return toMap(m) }
 type StageChangeMetadata struct {
 	OldStage string `json:"oldStage"`
 	NewStage string `json:"newStage"`
+	RunID    string `json:"runId,omitempty"`
 }
 
 func (m StageChangeMetadata) ToMap() map[string]any { return toMap(m) }
 
 // AIAnalysisMetadata is the typed metadata for EventTypeAI (gatekeeper analysis) events.
 type AIAnalysisMetadata struct {
+	RunID                   string             `json:"runId,omitempty"`
 	UrgencyLevel            string             `json:"urgencyLevel"`
 	RecommendedAction       string             `json:"recommendedAction"`
 	LeadQuality             string             `json:"leadQuality"`
@@ -75,6 +77,7 @@ func (m AIAnalysisMetadata) ToMap() map[string]any { return toMap(m) }
 
 // LeadScoreMetadata is the typed metadata for EventTypeAnalysis (score update) events.
 type LeadScoreMetadata struct {
+	RunID            string `json:"runId,omitempty"`
 	LeadScore        int    `json:"leadScore"`
 	LeadScorePreAI   int    `json:"leadScorePreAI"`
 	LeadScoreVersion string `json:"leadScoreVersion"`
@@ -93,6 +96,7 @@ func (m AlertMetadata) ToMap() map[string]any { return toMap(m) }
 
 // AutoDisqualifyMetadata is the typed metadata for auto-disqualification stage_change events.
 type AutoDisqualifyMetadata struct {
+	RunID             string    `json:"runId,omitempty"`
 	LeadQuality       string    `json:"leadQuality"`
 	RecommendedAction string    `json:"recommendedAction"`
 	AnalysisID        uuid.UUID `json:"analysisId"`
@@ -103,6 +107,7 @@ func (m AutoDisqualifyMetadata) ToMap() map[string]any { return toMap(m) }
 
 // ManualInterventionMetadata is the typed metadata for manual-intervention alert events.
 type ManualInterventionMetadata struct {
+	RunID              string         `json:"runId,omitempty"`
 	PreviousStage      string         `json:"previous_stage"`
 	Trigger            string         `json:"trigger"`
 	ReasonCategory     string         `json:"reasonCategory,omitempty"`
@@ -142,6 +147,7 @@ func (m StateReconciledMetadata) ToMap() map[string]any { return toMap(m) }
 
 // QuoteEventMetadata is the typed metadata for quote-related stage_change events.
 type QuoteEventMetadata struct {
+	RunID   string    `json:"runId,omitempty"`
 	QuoteID uuid.UUID `json:"quoteId"`
 	Reason  string    `json:"reason,omitempty"`
 }

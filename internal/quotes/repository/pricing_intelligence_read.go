@@ -38,6 +38,7 @@ type PricingOutcomeRecord struct {
 	PriceBand       string
 	OutcomeType     string
 	FinalTotalCents *int64
+	EstimatorRunID  *string
 	Reason          *string
 	CreatedAt       time.Time
 }
@@ -51,6 +52,7 @@ type PricingCorrectionRecord struct {
 	DeltaPercentage *float64
 	Reason          *string
 	AIFindingCode   *string
+	EstimatorRunID  *string
 	CreatedAt       time.Time
 }
 
@@ -178,6 +180,7 @@ func (r *Repository) ListRecentPricingOutcomes(ctx context.Context, organization
 			PriceBand:       row.PriceBand,
 			OutcomeType:     row.OutcomeType,
 			FinalTotalCents: optionalInt64(row.FinalTotalCents),
+			EstimatorRunID:  optionalString(row.EstimatorRunID),
 			Reason:          optionalString(row.RejectionReason),
 			CreatedAt:       timeFromPg(row.CreatedAt),
 		})
@@ -209,6 +212,7 @@ func (r *Repository) ListRecentPricingCorrections(ctx context.Context, organizat
 			DeltaPercentage: optionalFloat(row.DeltaPercentage),
 			Reason:          optionalString(row.Reason),
 			AIFindingCode:   optionalString(row.AiFindingCode),
+			EstimatorRunID:  optionalString(row.EstimatorRunID),
 			CreatedAt:       timeFromPg(row.CreatedAt),
 		})
 	}

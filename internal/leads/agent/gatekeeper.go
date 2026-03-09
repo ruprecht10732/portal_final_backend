@@ -346,6 +346,7 @@ func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, servic
 		Title:          repository.EventTitleAutoDisqualified,
 		Summary:        &summary,
 		Metadata: repository.AutoDisqualifyMetadata{
+			RunID:             reqDeps.GetRunID(),
 			LeadQuality:       analysis.LeadQuality,
 			RecommendedAction: analysis.RecommendedAction,
 			AnalysisID:        analysis.ID,
@@ -398,6 +399,7 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 	// Create timeline event for the fallback
 	summary := "AI analyse kon niet worden voltooid. Handmatige beoordeling vereist."
 	fallbackMeta := repository.AIAnalysisMetadata{
+		RunID:                   deps.GetRunID(),
 		UrgencyLevel:            "Medium",
 		RecommendedAction:       "RequestInfo",
 		LeadQuality:             "Potential",

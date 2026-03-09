@@ -67,6 +67,7 @@ func (r *Repository) insertPricingCorrections(ctx context.Context, qtx *quotesdb
 			DeltaPercentage: toPgFloat8Ptr(correction.DeltaPercentage),
 			Reason:          toPgTextPtr(correction.Reason),
 			AiFindingCode:   toPgTextPtr(correction.AIFindingCode),
+			EstimatorRunID:  previousSnapshot.EstimatorRunID,
 			CreatedByUserID: toPgUUIDPtr(pricingSnapshot.CreatedByUserID),
 			CreatedAt:       toPgTimestamp(createdAt),
 		})

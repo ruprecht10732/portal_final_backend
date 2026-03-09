@@ -275,21 +275,26 @@ type RacAiDecisionMemory struct {
 }
 
 type RacAiQuoteJob struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrganizationID  pgtype.UUID        `json:"organization_id"`
-	UserID          pgtype.UUID        `json:"user_id"`
-	LeadID          pgtype.UUID        `json:"lead_id"`
-	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
-	Status          string             `json:"status"`
-	Step            string             `json:"step"`
-	ProgressPercent int32              `json:"progress_percent"`
-	Error           pgtype.Text        `json:"error"`
-	QuoteID         pgtype.UUID        `json:"quote_id"`
-	QuoteNumber     pgtype.Text        `json:"quote_number"`
-	ItemCount       pgtype.Int4        `json:"item_count"`
-	StartedAt       pgtype.Timestamptz `json:"started_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	LeadID              pgtype.UUID        `json:"lead_id"`
+	LeadServiceID       pgtype.UUID        `json:"lead_service_id"`
+	Status              string             `json:"status"`
+	Step                string             `json:"step"`
+	ProgressPercent     int32              `json:"progress_percent"`
+	Error               pgtype.Text        `json:"error"`
+	QuoteID             pgtype.UUID        `json:"quote_id"`
+	QuoteNumber         pgtype.Text        `json:"quote_number"`
+	ItemCount           pgtype.Int4        `json:"item_count"`
+	StartedAt           pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt          pgtype.Timestamptz `json:"finished_at"`
+	FeedbackRating      pgtype.Int4        `json:"feedback_rating"`
+	FeedbackComment     pgtype.Text        `json:"feedback_comment"`
+	FeedbackSubmittedAt pgtype.Timestamptz `json:"feedback_submitted_at"`
+	CancellationReason  pgtype.Text        `json:"cancellation_reason"`
+	ViewedAt            pgtype.Timestamptz `json:"viewed_at"`
 }
 
 type RacAppointment struct {
@@ -416,6 +421,9 @@ type RacCatalogSearchLog struct {
 	ResultCount    int32              `json:"result_count"`
 	TopScore       pgtype.Float8      `json:"top_score"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	RunID          pgtype.Text        `json:"run_id"`
+	ToolName       pgtype.Text        `json:"tool_name"`
+	AgentName      pgtype.Text        `json:"agent_name"`
 }
 
 type RacCatalogVatRate struct {
@@ -1102,6 +1110,7 @@ type RacQuotePricingCorrection struct {
 	AiFindingCode   pgtype.Text        `json:"ai_finding_code"`
 	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	EstimatorRunID  pgtype.Text        `json:"estimator_run_id"`
 }
 
 type RacQuotePricingOutcome struct {
@@ -1118,6 +1127,7 @@ type RacQuotePricingOutcome struct {
 	OutcomeAt          pgtype.Timestamptz `json:"outcome_at"`
 	Metadata           []byte             `json:"metadata"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EstimatorRunID     pgtype.Text        `json:"estimator_run_id"`
 }
 
 type RacQuotePricingSnapshot struct {

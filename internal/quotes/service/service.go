@@ -127,34 +127,39 @@ const (
 
 // GenerateQuoteJob stores progress and result data for an async generation run.
 type GenerateQuoteJob struct {
-	JobID           uuid.UUID
-	TenantID        uuid.UUID
-	UserID          uuid.UUID
-	LeadID          uuid.UUID
-	LeadServiceID   uuid.UUID
-	Status          GenerateQuoteJobStatus
-	Step            string
-	ProgressPercent int
-	Error           *string
-	QuoteID         *uuid.UUID
-	QuoteNumber     *string
-	ItemCount       *int
-	StartedAt       time.Time
-	UpdatedAt       time.Time
-	FinishedAt      *time.Time
+	JobID              uuid.UUID
+	TenantID           uuid.UUID
+	UserID             uuid.UUID
+	LeadID             uuid.UUID
+	LeadServiceID      uuid.UUID
+	Status             GenerateQuoteJobStatus
+	Step               string
+	ProgressPercent    int
+	Error              *string
+	QuoteID            *uuid.UUID
+	QuoteNumber        *string
+	ItemCount          *int
+	FeedbackRating     *int
+	FeedbackComment    *string
+	FeedbackAt         *time.Time
+	CancellationReason *string
+	ViewedAt           *time.Time
+	StartedAt          time.Time
+	UpdatedAt          time.Time
+	FinishedAt         *time.Time
 }
 
 // DraftQuoteParams contains the data needed to create or update an AI-drafted quote.
 type DraftQuoteParams struct {
-	QuoteID        *uuid.UUID
-	LeadID         uuid.UUID
-	LeadServiceID  uuid.UUID
-	OrganizationID uuid.UUID
-	CreatedByID    uuid.UUID
-	Notes          string
-	Items          []DraftQuoteItemParams
-	Attachments    []DraftQuoteAttachmentParams
-	URLs           []DraftQuoteURLParams
+	QuoteID         *uuid.UUID
+	LeadID          uuid.UUID
+	LeadServiceID   uuid.UUID
+	OrganizationID  uuid.UUID
+	CreatedByID     uuid.UUID
+	Notes           string
+	Items           []DraftQuoteItemParams
+	Attachments     []DraftQuoteAttachmentParams
+	URLs            []DraftQuoteURLParams
 	PricingSnapshot *QuotePricingSnapshotParams
 }
 

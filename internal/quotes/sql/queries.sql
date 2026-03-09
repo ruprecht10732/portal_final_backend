@@ -315,32 +315,32 @@ WHERE l.id = sqlc.arg(lead_id) AND l.organization_id = sqlc.arg(organization_id)
 -- name: CreateQuotePricingOutcome :one
 INSERT INTO RAC_quote_pricing_outcomes (
   id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
-  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents, estimator_run_id,
   outcome_at, metadata, created_at
 )
 VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8, $9, $10,
-  $11, $12, $13
+  $7, $8, $9, $10, $11,
+  $12, $13, $14
 )
 RETURNING id, quote_id, snapshot_id, organization_id, lead_id, lead_service_id,
-  outcome_type, rejection_reason, accepted_total_cents, final_total_cents,
+  outcome_type, rejection_reason, accepted_total_cents, final_total_cents, estimator_run_id,
   outcome_at, metadata, created_at;
 
 -- name: CreateQuotePricingCorrection :one
 INSERT INTO RAC_quote_pricing_corrections (
   id, quote_id, snapshot_id, organization_id, quote_item_id,
   field_name, ai_value, human_value, delta_cents, delta_percentage,
-  reason, ai_finding_code, created_by_user_id, created_at
+  reason, ai_finding_code, estimator_run_id, created_by_user_id, created_at
 )
 VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8, $9, $10,
-  $11, $12, $13, $14
+  $11, $12, $13, $14, $15
 )
 RETURNING id, quote_id, snapshot_id, organization_id, quote_item_id,
   field_name, ai_value, human_value, delta_cents, delta_percentage,
-  reason, ai_finding_code, created_by_user_id, created_at;
+  reason, ai_finding_code, estimator_run_id, created_by_user_id, created_at;
 
 -- name: ListPricingIntelligenceAggregates :many
 SELECT
@@ -414,6 +414,7 @@ SELECT
   END AS price_band,
   o.outcome_type,
   o.final_total_cents,
+  o.estimator_run_id,
   o.rejection_reason,
   o.created_at
 FROM RAC_quote_pricing_outcomes o
@@ -441,6 +442,7 @@ SELECT
   c.delta_percentage,
   c.reason,
   c.ai_finding_code,
+  c.estimator_run_id,
   c.created_at
 FROM RAC_quote_pricing_corrections c
 JOIN RAC_quote_pricing_snapshots s ON s.id = c.snapshot_id
@@ -549,15 +551,17 @@ INSERT INTO RAC_ai_quote_jobs (
   id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15);
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20);
 
 -- name: GetGenerateQuoteJob :one
 SELECT id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 FROM RAC_ai_quote_jobs
 WHERE id = $1 AND organization_id = $2 AND user_id = $3;
 
@@ -570,7 +574,8 @@ WHERE organization_id = $1 AND user_id = $2;
 SELECT id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 FROM RAC_ai_quote_jobs
 WHERE organization_id = $1 AND user_id = $2
 ORDER BY updated_at DESC
@@ -587,6 +592,7 @@ SET status = 'cancelled',
   step = 'cancelled',
   progress_percent = CASE WHEN progress_percent > 100 THEN 100 ELSE progress_percent END,
   error = NULL,
+  cancellation_reason = $6,
   updated_at = $4,
   finished_at = $5
 WHERE id = $1 AND organization_id = $2 AND user_id = $3
@@ -594,7 +600,8 @@ WHERE id = $1 AND organization_id = $2 AND user_id = $3
 RETURNING id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at;
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at;
 
 -- name: DeleteCompletedGenerateQuoteJobs :execrows
 DELETE FROM RAC_ai_quote_jobs
@@ -604,7 +611,8 @@ WHERE organization_id = $1 AND user_id = $2 AND status = 'completed';
 SELECT id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at
 FROM RAC_ai_quote_jobs
 WHERE id = $1;
 
@@ -618,7 +626,8 @@ WHERE id = $1 AND status = 'pending'
 RETURNING id, organization_id, user_id, lead_id, lead_service_id,
   status, step, progress_percent, error,
   quote_id, quote_number, item_count,
-  started_at, updated_at, finished_at;
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at;
 
 -- name: UpdateGenerateQuoteJob :execrows
 UPDATE RAC_ai_quote_jobs
@@ -632,6 +641,29 @@ SET status = $2,
   updated_at = $9,
   finished_at = $10
 WHERE id = $1;
+
+-- name: SubmitGenerateQuoteJobFeedback :one
+UPDATE RAC_ai_quote_jobs
+SET feedback_rating = $4,
+  feedback_comment = $5,
+  feedback_submitted_at = $6
+WHERE id = $1 AND organization_id = $2 AND user_id = $3
+  AND status IN ('completed', 'failed', 'cancelled')
+RETURNING id, organization_id, user_id, lead_id, lead_service_id,
+  status, step, progress_percent, error,
+  quote_id, quote_number, item_count,
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at;
+
+-- name: MarkGenerateQuoteJobViewed :one
+UPDATE RAC_ai_quote_jobs
+SET viewed_at = COALESCE(viewed_at, $4)
+WHERE id = $1 AND organization_id = $2 AND user_id = $3
+RETURNING id, organization_id, user_id, lead_id, lead_service_id,
+  status, step, progress_percent, error,
+  quote_id, quote_number, item_count,
+  started_at, updated_at, finished_at,
+  feedback_rating, feedback_comment, feedback_submitted_at, cancellation_reason, viewed_at;
 
 -- name: DeleteFinishedGenerateQuoteJobsBefore :execrows
 DELETE FROM RAC_ai_quote_jobs

@@ -26,8 +26,8 @@ type Querier interface {
 	CreateQuoteAttachment(ctx context.Context, arg CreateQuoteAttachmentParams) error
 	CreateQuoteExport(ctx context.Context, arg CreateQuoteExportParams) error
 	CreateQuoteItem(ctx context.Context, arg CreateQuoteItemParams) error
-	CreateQuotePricingCorrection(ctx context.Context, arg CreateQuotePricingCorrectionParams) (RacQuotePricingCorrection, error)
-	CreateQuotePricingOutcome(ctx context.Context, arg CreateQuotePricingOutcomeParams) (RacQuotePricingOutcome, error)
+	CreateQuotePricingCorrection(ctx context.Context, arg CreateQuotePricingCorrectionParams) (CreateQuotePricingCorrectionRow, error)
+	CreateQuotePricingOutcome(ctx context.Context, arg CreateQuotePricingOutcomeParams) (CreateQuotePricingOutcomeRow, error)
 	CreateQuotePricingSnapshot(ctx context.Context, arg CreateQuotePricingSnapshotParams) (RacQuotePricingSnapshot, error)
 	CreateQuoteURL(ctx context.Context, arg CreateQuoteURLParams) error
 	DeleteCompletedGenerateQuoteJobs(ctx context.Context, arg DeleteCompletedGenerateQuoteJobsParams) (int64, error)
@@ -70,6 +70,7 @@ type Querier interface {
 	ListRecentPricingCorrections(ctx context.Context, arg ListRecentPricingCorrectionsParams) ([]ListRecentPricingCorrectionsRow, error)
 	ListRecentPricingOutcomes(ctx context.Context, arg ListRecentPricingOutcomesParams) ([]ListRecentPricingOutcomesRow, error)
 	ListRecentPricingSnapshots(ctx context.Context, arg ListRecentPricingSnapshotsParams) ([]ListRecentPricingSnapshotsRow, error)
+	MarkGenerateQuoteJobViewed(ctx context.Context, arg MarkGenerateQuoteJobViewedParams) (RacAiQuoteJob, error)
 	// Quotes Domain SQL Queries
 	NextQuoteNumber(ctx context.Context, organizationID pgtype.UUID) (int32, error)
 	RejectQuote(ctx context.Context, arg RejectQuoteParams) (int64, error)
@@ -78,6 +79,7 @@ type Querier interface {
 	SetQuotePreviewToken(ctx context.Context, arg SetQuotePreviewTokenParams) (int64, error)
 	SetQuotePublicToken(ctx context.Context, arg SetQuotePublicTokenParams) (int64, error)
 	SetQuoteViewedAt(ctx context.Context, arg SetQuoteViewedAtParams) error
+	SubmitGenerateQuoteJobFeedback(ctx context.Context, arg SubmitGenerateQuoteJobFeedbackParams) (RacAiQuoteJob, error)
 	UpdateGenerateQuoteJob(ctx context.Context, arg UpdateGenerateQuoteJobParams) (int64, error)
 	UpdateQuoteAnnotationText(ctx context.Context, arg UpdateQuoteAnnotationTextParams) (RacQuoteAnnotation, error)
 	UpdateQuoteItemSelection(ctx context.Context, arg UpdateQuoteItemSelectionParams) (int64, error)

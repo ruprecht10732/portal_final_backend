@@ -104,6 +104,11 @@ type CreateHumanFeedbackRequest struct {
 	HumanValue    map[string]any `json:"humanValue" validate:"required"`
 }
 
+type GenerateQuoteJobFeedbackRequest struct {
+	Rating  int    `json:"rating" validate:"required"`
+	Comment string `json:"comment,omitempty" validate:"max=2000"`
+}
+
 // ListQuotesRequest defines the query parameters for listing quotes
 type ListQuotesRequest struct {
 	LeadID         string `form:"leadId"`
@@ -272,14 +277,14 @@ type HumanFeedbackResponse struct {
 }
 
 type PricingIntelligenceAggregateResponse struct {
-	RegionPrefix       string `json:"regionPrefix"`
-	PriceBand          string `json:"priceBand"`
-	SampleCount        int    `json:"sampleCount"`
-	AcceptedCount      int    `json:"acceptedCount"`
-	RejectedCount      int    `json:"rejectedCount"`
-	ConversionRate     float64 `json:"conversionRate"`
-	AverageQuotedCents int64  `json:"averageQuotedCents"`
-	AverageOutcomeCents *int64 `json:"averageOutcomeCents,omitempty"`
+	RegionPrefix        string  `json:"regionPrefix"`
+	PriceBand           string  `json:"priceBand"`
+	SampleCount         int     `json:"sampleCount"`
+	AcceptedCount       int     `json:"acceptedCount"`
+	RejectedCount       int     `json:"rejectedCount"`
+	ConversionRate      float64 `json:"conversionRate"`
+	AverageQuotedCents  int64   `json:"averageQuotedCents"`
+	AverageOutcomeCents *int64  `json:"averageOutcomeCents,omitempty"`
 }
 
 type PricingIntelligenceSnapshotResponse struct {
@@ -298,6 +303,7 @@ type PricingIntelligenceOutcomeResponse struct {
 	PriceBand       string    `json:"priceBand"`
 	OutcomeType     string    `json:"outcomeType"`
 	FinalTotalCents *int64    `json:"finalTotalCents,omitempty"`
+	EstimatorRunID  *string   `json:"estimatorRunId,omitempty"`
 	Reason          *string   `json:"reason,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
 }
@@ -311,21 +317,22 @@ type PricingIntelligenceCorrectionResponse struct {
 	DeltaPercentage *float64  `json:"deltaPercentage,omitempty"`
 	Reason          *string   `json:"reason,omitempty"`
 	AIFindingCode   *string   `json:"aiFindingCode,omitempty"`
+	EstimatorRunID  *string   `json:"estimatorRunId,omitempty"`
 	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type PricingIntelligenceSummaryResponse struct {
-	ServiceType  string                               `json:"serviceType"`
-	RegionPrefix string                               `json:"regionPrefix"`
+	ServiceType  string                                 `json:"serviceType"`
+	RegionPrefix string                                 `json:"regionPrefix"`
 	Aggregates   []PricingIntelligenceAggregateResponse `json:"aggregates"`
 }
 
 type PricingIntelligenceRecordsResponse struct {
-	ServiceType       string                                 `json:"serviceType"`
-	RegionPrefix      string                                 `json:"regionPrefix"`
-	Snapshots         []PricingIntelligenceSnapshotResponse   `json:"snapshots"`
-	Outcomes          []PricingIntelligenceOutcomeResponse    `json:"outcomes"`
-	Corrections       []PricingIntelligenceCorrectionResponse `json:"corrections"`
+	ServiceType  string                                  `json:"serviceType"`
+	RegionPrefix string                                  `json:"regionPrefix"`
+	Snapshots    []PricingIntelligenceSnapshotResponse   `json:"snapshots"`
+	Outcomes     []PricingIntelligenceOutcomeResponse    `json:"outcomes"`
+	Corrections  []PricingIntelligenceCorrectionResponse `json:"corrections"`
 }
 
 // QuotePreviewLinkResponse is the response for a read-only preview link.
@@ -476,19 +483,24 @@ type GenerateQuoteAcceptedResponse struct {
 
 // GenerateQuoteJobResponse returns current job state for async generation.
 type GenerateQuoteJobResponse struct {
-	JobID           uuid.UUID  `json:"jobId"`
-	Status          string     `json:"status"`
-	Step            string     `json:"step"`
-	ProgressPercent int        `json:"progressPercent"`
-	Error           *string    `json:"error,omitempty"`
-	QuoteID         *uuid.UUID `json:"quoteId,omitempty"`
-	QuoteNumber     *string    `json:"quoteNumber,omitempty"`
-	ItemCount       *int       `json:"itemCount,omitempty"`
-	LeadID          uuid.UUID  `json:"leadId"`
-	LeadServiceID   uuid.UUID  `json:"leadServiceId"`
-	StartedAt       time.Time  `json:"startedAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
-	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
+	JobID              uuid.UUID  `json:"jobId"`
+	Status             string     `json:"status"`
+	Step               string     `json:"step"`
+	ProgressPercent    int        `json:"progressPercent"`
+	Error              *string    `json:"error,omitempty"`
+	QuoteID            *uuid.UUID `json:"quoteId,omitempty"`
+	QuoteNumber        *string    `json:"quoteNumber,omitempty"`
+	ItemCount          *int       `json:"itemCount,omitempty"`
+	FeedbackRating     *int       `json:"feedbackRating,omitempty"`
+	FeedbackComment    *string    `json:"feedbackComment,omitempty"`
+	FeedbackAt         *time.Time `json:"feedbackAt,omitempty"`
+	CancellationReason *string    `json:"cancellationReason,omitempty"`
+	ViewedAt           *time.Time `json:"viewedAt,omitempty"`
+	LeadID             uuid.UUID  `json:"leadId"`
+	LeadServiceID      uuid.UUID  `json:"leadServiceId"`
+	StartedAt          time.Time  `json:"startedAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+	FinishedAt         *time.Time `json:"finishedAt,omitempty"`
 }
 
 // GenerateQuoteJobsListResponse returns a paginated list of async generation jobs.

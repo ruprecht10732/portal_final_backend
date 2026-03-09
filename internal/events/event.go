@@ -161,9 +161,11 @@ type PipelineStageChanged struct {
 	OldStage      string    `json:"oldStage"`
 	NewStage      string    `json:"newStage"`
 	Reason        string    `json:"reason,omitempty"`
+	ReasonCode    string    `json:"reasonCode,omitempty"`
 	Trigger       string    `json:"trigger,omitempty"`
 	ActorType     string    `json:"actorType,omitempty"`
 	ActorName     string    `json:"actorName,omitempty"`
+	RunID         string    `json:"runId,omitempty"`
 }
 
 func (e PipelineStageChanged) EventName() string { return "leads.pipeline.changed" }
@@ -175,8 +177,10 @@ type ManualInterventionRequired struct {
 	LeadID        uuid.UUID `json:"leadId"`
 	LeadServiceID uuid.UUID `json:"leadServiceId"`
 	TenantID      uuid.UUID `json:"tenantId"`
-	Reason        string    `json:"reason"` // "no_partners_found", "estimation_ambiguous", "special_requirements"
+	Reason        string    `json:"reason"` // human-readable or legacy reason label
+	ReasonCode    string    `json:"reasonCode,omitempty"`
 	Context       string    `json:"context,omitempty"`
+	RunID         string    `json:"runId,omitempty"`
 }
 
 func (e ManualInterventionRequired) EventName() string { return "leads.manual_intervention.required" }

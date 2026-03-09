@@ -1230,6 +1230,7 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 	}
 
 	meta := repository.AIAnalysisMetadata{
+		RunID:             deps.GetRunID(),
 		UrgencyLevel:      urgencyLevel,
 		RecommendedAction: recommendedAction,
 		LeadQuality:       leadQuality,
@@ -1397,6 +1398,7 @@ func recalculateAndRecordScore(ctx tool.Context, deps *ToolDependencies, leadID,
 		Title:          repository.EventTitleLeadScoreUpdated,
 		Summary:        &summary,
 		Metadata: repository.LeadScoreMetadata{
+			RunID:            deps.GetRunID(),
 			LeadScore:        scoreResult.Score,
 			LeadScorePreAI:   scoreResult.ScorePreAI,
 			LeadScoreVersion: scoreResult.Version,
@@ -2069,6 +2071,7 @@ func recordPipelineStageChange(ctx context.Context, deps *ToolDependencies, p st
 	stageMetadata := repository.StageChangeMetadata{
 		OldStage: p.oldStage,
 		NewStage: p.newStage,
+		RunID:    deps.GetRunID(),
 	}.ToMap()
 	if analysisMeta := deps.GetLastAnalysisMetadata(); analysisMeta != nil {
 		stageMetadata["analysis"] = analysisMeta
@@ -2118,9 +2121,11 @@ func recordPipelineStageChange(ctx context.Context, deps *ToolDependencies, p st
 			OldStage:      p.oldStage,
 			NewStage:      p.newStage,
 			Reason:        reasonText,
+			ReasonCode:    p.reasonCode,
 			Trigger:       p.trigger,
 			ActorType:     actorType,
 			ActorName:     actorName,
+			RunID:         deps.GetRunID(),
 		})
 	}
 
@@ -2856,9 +2861,24 @@ func recordCatalogSearch(ctx context.Context, deps *ToolDependencies, query stri
 	if deps.Repo == nil {
 		return
 	}
+	runID := strings.TrimSpace(deps.GetRunID())
+	var runIDPtr *string
+	if runID != "" {
+		runIDPtr = &runID
+	}
+	_, actorName := deps.GetActor()
+	actorName = strings.TrimSpace(actorName)
+	var agentNamePtr *string
+	if actorName != "" {
+		agentNamePtr = &actorName
+	}
+	toolName := "SearchProductMaterials"
 	if err := deps.Repo.CreateCatalogSearchLog(ctx, repository.CreateCatalogSearchLogParams{
 		OrganizationID: *tenantID,
 		LeadServiceID:  servicePtr,
+		RunID:          runIDPtr,
+		ToolName:       &toolName,
+		AgentName:      agentNamePtr,
 		Query:          query,
 		Collection:     collection,
 		ResultCount:    resultCount,

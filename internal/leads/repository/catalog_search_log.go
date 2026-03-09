@@ -14,6 +14,9 @@ import (
 type CreateCatalogSearchLogParams struct {
 	OrganizationID uuid.UUID
 	LeadServiceID  *uuid.UUID
+	RunID          *string
+	ToolName       *string
+	AgentName      *string
 	Query          string
 	Collection     string
 	ResultCount    int
@@ -51,6 +54,9 @@ func (r *Repository) CreateCatalogSearchLog(ctx context.Context, params CreateCa
 	return r.queries.CreateCatalogSearchLog(ctx, leadsdb.CreateCatalogSearchLogParams{
 		OrganizationID: toPgUUID(params.OrganizationID),
 		LeadServiceID:  toPgUUIDPtr(params.LeadServiceID),
+		RunID:          toPgText(params.RunID),
+		ToolName:       toPgText(params.ToolName),
+		AgentName:      toPgText(params.AgentName),
 		Query:          params.Query,
 		Collection:     params.Collection,
 		ResultCount:    int32(params.ResultCount),

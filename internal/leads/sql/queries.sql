@@ -1427,7 +1427,7 @@ LIMIT $4;
 
 -- name: CreateCatalogSearchLog :exec
 INSERT INTO RAC_catalog_search_log (
-	organization_id, lead_service_id, query, collection, result_count, top_score, created_at
+	organization_id, lead_service_id, run_id, tool_name, agent_name, query, collection, result_count, top_score, created_at
 )
 VALUES (
 	$1,
@@ -1436,6 +1436,9 @@ VALUES (
 	$4,
 	$5,
 	$6,
+	$7,
+	$8,
+	$9,
 	COALESCE(sqlc.narg(created_at)::timestamptz, NOW())
 );
 

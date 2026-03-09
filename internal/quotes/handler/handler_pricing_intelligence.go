@@ -36,13 +36,13 @@ func (h *Handler) GetPricingIntelligenceSummary(c *gin.Context) {
 	}
 	for _, aggregate := range report.Aggregates {
 		response.Aggregates = append(response.Aggregates, transport.PricingIntelligenceAggregateResponse{
-			RegionPrefix:       aggregate.RegionPrefix,
-			PriceBand:          aggregate.PriceBand,
-			SampleCount:        aggregate.SampleCount,
-			AcceptedCount:      aggregate.AcceptedCount,
-			RejectedCount:      aggregate.RejectedCount,
-			ConversionRate:     aggregate.ConversionRate,
-			AverageQuotedCents: aggregate.AverageQuotedCents,
+			RegionPrefix:        aggregate.RegionPrefix,
+			PriceBand:           aggregate.PriceBand,
+			SampleCount:         aggregate.SampleCount,
+			AcceptedCount:       aggregate.AcceptedCount,
+			RejectedCount:       aggregate.RejectedCount,
+			ConversionRate:      aggregate.ConversionRate,
+			AverageQuotedCents:  aggregate.AverageQuotedCents,
 			AverageOutcomeCents: aggregate.AverageOutcomeCents,
 		})
 	}
@@ -92,6 +92,7 @@ func (h *Handler) GetPricingIntelligenceRecords(c *gin.Context) {
 			PriceBand:       outcome.PriceBand,
 			OutcomeType:     outcome.OutcomeType,
 			FinalTotalCents: outcome.FinalTotalCents,
+			EstimatorRunID:  outcome.EstimatorRunID,
 			Reason:          outcome.Reason,
 			CreatedAt:       outcome.CreatedAt,
 		})
@@ -106,6 +107,7 @@ func (h *Handler) GetPricingIntelligenceRecords(c *gin.Context) {
 			DeltaPercentage: correction.DeltaPercentage,
 			Reason:          correction.Reason,
 			AIFindingCode:   correction.AIFindingCode,
+			EstimatorRunID:  correction.EstimatorRunID,
 			CreatedAt:       correction.CreatedAt,
 		})
 	}

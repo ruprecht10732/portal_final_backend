@@ -926,41 +926,51 @@ type QuoteURL struct {
 
 // GenerateQuoteJob is the database model for async quote generation jobs.
 type GenerateQuoteJob struct {
-	ID              uuid.UUID  `db:"id"`
-	OrganizationID  uuid.UUID  `db:"organization_id"`
-	UserID          uuid.UUID  `db:"user_id"`
-	LeadID          uuid.UUID  `db:"lead_id"`
-	LeadServiceID   uuid.UUID  `db:"lead_service_id"`
-	Status          string     `db:"status"`
-	Step            string     `db:"step"`
-	ProgressPercent int        `db:"progress_percent"`
-	Error           *string    `db:"error"`
-	QuoteID         *uuid.UUID `db:"quote_id"`
-	QuoteNumber     *string    `db:"quote_number"`
-	ItemCount       *int       `db:"item_count"`
-	StartedAt       time.Time  `db:"started_at"`
-	UpdatedAt       time.Time  `db:"updated_at"`
-	FinishedAt      *time.Time `db:"finished_at"`
+	ID                  uuid.UUID  `db:"id"`
+	OrganizationID      uuid.UUID  `db:"organization_id"`
+	UserID              uuid.UUID  `db:"user_id"`
+	LeadID              uuid.UUID  `db:"lead_id"`
+	LeadServiceID       uuid.UUID  `db:"lead_service_id"`
+	Status              string     `db:"status"`
+	Step                string     `db:"step"`
+	ProgressPercent     int        `db:"progress_percent"`
+	Error               *string    `db:"error"`
+	QuoteID             *uuid.UUID `db:"quote_id"`
+	QuoteNumber         *string    `db:"quote_number"`
+	ItemCount           *int       `db:"item_count"`
+	FeedbackRating      *int       `db:"feedback_rating"`
+	FeedbackComment     *string    `db:"feedback_comment"`
+	FeedbackSubmittedAt *time.Time `db:"feedback_submitted_at"`
+	CancellationReason  *string    `db:"cancellation_reason"`
+	ViewedAt            *time.Time `db:"viewed_at"`
+	StartedAt           time.Time  `db:"started_at"`
+	UpdatedAt           time.Time  `db:"updated_at"`
+	FinishedAt          *time.Time `db:"finished_at"`
 }
 
 // CreateGenerateQuoteJob inserts a new async quote generation job row.
 func (r *Repository) CreateGenerateQuoteJob(ctx context.Context, job *GenerateQuoteJob) error {
 	if err := r.queries.CreateGenerateQuoteJob(ctx, quotesdb.CreateGenerateQuoteJobParams{
-		ID:              toPgUUID(job.ID),
-		OrganizationID:  toPgUUID(job.OrganizationID),
-		UserID:          toPgUUID(job.UserID),
-		LeadID:          toPgUUID(job.LeadID),
-		LeadServiceID:   toPgUUID(job.LeadServiceID),
-		Status:          job.Status,
-		Step:            job.Step,
-		ProgressPercent: int32(job.ProgressPercent),
-		Error:           toPgTextPtr(job.Error),
-		QuoteID:         toPgUUIDPtr(job.QuoteID),
-		QuoteNumber:     toPgTextPtr(job.QuoteNumber),
-		ItemCount:       toPgInt4Ptr(job.ItemCount),
-		StartedAt:       toPgTimestamp(job.StartedAt),
-		UpdatedAt:       toPgTimestamp(job.UpdatedAt),
-		FinishedAt:      toPgTimestampPtr(job.FinishedAt),
+		ID:                  toPgUUID(job.ID),
+		OrganizationID:      toPgUUID(job.OrganizationID),
+		UserID:              toPgUUID(job.UserID),
+		LeadID:              toPgUUID(job.LeadID),
+		LeadServiceID:       toPgUUID(job.LeadServiceID),
+		Status:              job.Status,
+		Step:                job.Step,
+		ProgressPercent:     int32(job.ProgressPercent),
+		Error:               toPgTextPtr(job.Error),
+		QuoteID:             toPgUUIDPtr(job.QuoteID),
+		QuoteNumber:         toPgTextPtr(job.QuoteNumber),
+		ItemCount:           toPgInt4Ptr(job.ItemCount),
+		StartedAt:           toPgTimestamp(job.StartedAt),
+		UpdatedAt:           toPgTimestamp(job.UpdatedAt),
+		FinishedAt:          toPgTimestampPtr(job.FinishedAt),
+		FeedbackRating:      toPgInt4Ptr(job.FeedbackRating),
+		FeedbackComment:     toPgTextPtr(job.FeedbackComment),
+		FeedbackSubmittedAt: toPgTimestampPtr(job.FeedbackSubmittedAt),
+		CancellationReason:  toPgTextPtr(job.CancellationReason),
+		ViewedAt:            toPgTimestampPtr(job.ViewedAt),
 	}); err != nil {
 		return fmt.Errorf("create generate quote job: %w", err)
 	}
@@ -1037,23 +1047,61 @@ func (r *Repository) DeleteGenerateQuoteJob(ctx context.Context, orgID, userID, 
 }
 
 // CancelGenerateQuoteJob transitions an active job to cancelled for a tenant + user.
-func (r *Repository) CancelGenerateQuoteJob(ctx context.Context, orgID, userID, jobID uuid.UUID, updatedAt time.Time, finishedAt time.Time) (*GenerateQuoteJob, error) {
+func (r *Repository) CancelGenerateQuoteJob(ctx context.Context, orgID, userID, jobID uuid.UUID, updatedAt time.Time, finishedAt time.Time, cancellationReason *string) (*GenerateQuoteJob, error) {
 	if orgID == uuid.Nil || userID == uuid.Nil || jobID == uuid.Nil {
 		return nil, apperr.Validation("organizationId, userId and jobId are required")
 	}
 
 	row, err := r.queries.CancelGenerateQuoteJob(ctx, quotesdb.CancelGenerateQuoteJobParams{
-		ID:             toPgUUID(jobID),
-		OrganizationID: toPgUUID(orgID),
-		UserID:         toPgUUID(userID),
-		UpdatedAt:      toPgTimestamp(updatedAt),
-		FinishedAt:     toPgTimestamp(finishedAt),
+		ID:                 toPgUUID(jobID),
+		OrganizationID:     toPgUUID(orgID),
+		UserID:             toPgUUID(userID),
+		UpdatedAt:          toPgTimestamp(updatedAt),
+		FinishedAt:         toPgTimestamp(finishedAt),
+		CancellationReason: toPgTextPtr(cancellationReason),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
 		}
 		return nil, fmt.Errorf("cancel generate quote job: %w", err)
+	}
+	job := generateQuoteJobFromModel(row)
+	return &job, nil
+}
+
+func (r *Repository) SubmitGenerateQuoteJobFeedback(ctx context.Context, orgID, userID, jobID uuid.UUID, rating int, comment *string, submittedAt time.Time) (*GenerateQuoteJob, error) {
+	ratingValue := rating
+	row, err := r.queries.SubmitGenerateQuoteJobFeedback(ctx, quotesdb.SubmitGenerateQuoteJobFeedbackParams{
+		ID:                  toPgUUID(jobID),
+		OrganizationID:      toPgUUID(orgID),
+		UserID:              toPgUUID(userID),
+		FeedbackRating:      toPgInt4Ptr(&ratingValue),
+		FeedbackComment:     toPgTextPtr(comment),
+		FeedbackSubmittedAt: toPgTimestamp(submittedAt),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
+		}
+		return nil, fmt.Errorf("submit generate quote job feedback: %w", err)
+	}
+	job := generateQuoteJobFromModel(row)
+	return &job, nil
+}
+
+func (r *Repository) MarkGenerateQuoteJobViewed(ctx context.Context, orgID, userID, jobID uuid.UUID, viewedAt time.Time) (*GenerateQuoteJob, error) {
+	row, err := r.queries.MarkGenerateQuoteJobViewed(ctx, quotesdb.MarkGenerateQuoteJobViewedParams{
+		ID:             toPgUUID(jobID),
+		OrganizationID: toPgUUID(orgID),
+		UserID:         toPgUUID(userID),
+		ViewedAt:       toPgTimestamp(viewedAt),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound(quoteGenerateJobNotFoundMsg)
+		}
+		return nil, fmt.Errorf("mark generate quote job viewed: %w", err)
 	}
 	job := generateQuoteJobFromModel(row)
 	return &job, nil
@@ -1672,21 +1720,26 @@ func quoteURLFromModel(row quotesdb.RacQuoteUrl) QuoteURL {
 
 func generateQuoteJobFromModel(row quotesdb.RacAiQuoteJob) GenerateQuoteJob {
 	return GenerateQuoteJob{
-		ID:              uuid.UUID(row.ID.Bytes),
-		OrganizationID:  uuid.UUID(row.OrganizationID.Bytes),
-		UserID:          uuid.UUID(row.UserID.Bytes),
-		LeadID:          uuid.UUID(row.LeadID.Bytes),
-		LeadServiceID:   uuid.UUID(row.LeadServiceID.Bytes),
-		Status:          row.Status,
-		Step:            row.Step,
-		ProgressPercent: int(row.ProgressPercent),
-		Error:           optionalString(row.Error),
-		QuoteID:         optionalUUID(row.QuoteID),
-		QuoteNumber:     optionalString(row.QuoteNumber),
-		ItemCount:       optionalInt(row.ItemCount),
-		StartedAt:       timeFromPg(row.StartedAt),
-		UpdatedAt:       timeFromPg(row.UpdatedAt),
-		FinishedAt:      optionalTime(row.FinishedAt),
+		ID:                  uuid.UUID(row.ID.Bytes),
+		OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
+		UserID:              uuid.UUID(row.UserID.Bytes),
+		LeadID:              uuid.UUID(row.LeadID.Bytes),
+		LeadServiceID:       uuid.UUID(row.LeadServiceID.Bytes),
+		Status:              row.Status,
+		Step:                row.Step,
+		ProgressPercent:     int(row.ProgressPercent),
+		Error:               optionalString(row.Error),
+		QuoteID:             optionalUUID(row.QuoteID),
+		QuoteNumber:         optionalString(row.QuoteNumber),
+		ItemCount:           optionalInt(row.ItemCount),
+		FeedbackRating:      optionalInt(row.FeedbackRating),
+		FeedbackComment:     optionalString(row.FeedbackComment),
+		FeedbackSubmittedAt: optionalTime(row.FeedbackSubmittedAt),
+		CancellationReason:  optionalString(row.CancellationReason),
+		ViewedAt:            optionalTime(row.ViewedAt),
+		StartedAt:           timeFromPg(row.StartedAt),
+		UpdatedAt:           timeFromPg(row.UpdatedAt),
+		FinishedAt:          optionalTime(row.FinishedAt),
 	}
 }
 

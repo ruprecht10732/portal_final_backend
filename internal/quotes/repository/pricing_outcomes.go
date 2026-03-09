@@ -47,6 +47,7 @@ func (r *Repository) insertPricingOutcome(ctx context.Context, qtx *quotesdb.Que
 		RejectionReason:    toPgTextPtr(params.RejectionReason),
 		AcceptedTotalCents: toPgInt8Ptr(params.AcceptedTotalCents),
 		FinalTotalCents:    toPgInt8Ptr(params.FinalTotalCents),
+		EstimatorRunID:     latestSnapshot.EstimatorRunID,
 		OutcomeAt:          toPgTimestamp(params.OutcomeAt),
 		Metadata:           marshalJSON(params.Metadata),
 		CreatedAt:          toPgTimestamp(params.OutcomeAt),

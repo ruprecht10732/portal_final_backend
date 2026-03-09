@@ -733,6 +733,7 @@ func (q *QuotingAgent) maybeApplyNurturingFallback(ctx context.Context, reqDeps 
 		Metadata: repository.StageChangeMetadata{
 			OldStage: currentService.PipelineStage,
 			NewStage: domain.PipelineStageNurturing,
+			RunID:    fallback.RunID,
 		}.ToMap(),
 	})
 	log.Printf("quoting-agent: applied fallback stage update to Nurturing (runID=%s lead=%s service=%s reason=%s)", fallback.RunID, fallback.LeadID, fallback.ServiceID, fallback.InsufficientReason)

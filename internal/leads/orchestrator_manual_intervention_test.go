@@ -73,7 +73,9 @@ func TestHandleManualInterventionStageUsesLoopDetectionAlertMetadata(t *testing.
 		OldStage:      "Nurturing",
 		NewStage:      "Manual_Intervention",
 		Reason:        "Systeem: AI zat in een lus. Menselijke controle vereist.",
+		ReasonCode:    "nurturing_loop_threshold",
 		Trigger:       "ai_loop_detected",
+		RunID:         "svc-run-123",
 	})
 
 	if len(repo.timelineEvents) != 1 {
@@ -97,5 +99,11 @@ func TestHandleManualInterventionStageUsesLoopDetectionAlertMetadata(t *testing.
 	}
 	if got := event.Metadata["trigger"]; got != "ai_loop_detected" {
 		t.Fatalf("expected loop trigger metadata, got %#v", got)
+	}
+	if got := event.Metadata["reasonCode"]; got != "nurturing_loop_threshold" {
+		t.Fatalf("expected reasonCode metadata, got %#v", got)
+	}
+	if got := event.Metadata["runId"]; got != "svc-run-123" {
+		t.Fatalf("expected runId metadata, got %#v", got)
 	}
 }

@@ -599,10 +599,19 @@ func (o *Orchestrator) handleManualInterventionStage(evt events.PipelineStageCha
 	summary := "Geautomatiseerde verwerking vereist menselijke beoordeling"
 	title := repository.EventTitleManualIntervention
 	actorName := repository.ActorNameOrchestrator
+	reasonCode := strings.TrimSpace(evt.ReasonCode)
+	if reasonCode == "" {
+		reasonCode = strings.TrimSpace(evt.Trigger)
+	}
+	if reasonCode == "" {
+		reasonCode = "manual_intervention_required"
+	}
 	metadata := repository.ManualInterventionMetadata{
+		RunID:          evt.RunID,
 		PreviousStage:  evt.OldStage,
 		Trigger:        "pipeline_stage_change",
 		ReasonCategory: evt.Trigger,
+		ReasonCode:     reasonCode,
 		Drafts:         buildManualInterventionDrafts(evt.LeadID, evt.LeadServiceID),
 	}
 	if strings.TrimSpace(evt.Reason) != "" {
@@ -653,8 +662,10 @@ func (o *Orchestrator) handleManualInterventionStage(evt events.PipelineStageCha
 		LeadID:        evt.LeadID,
 		LeadServiceID: evt.LeadServiceID,
 		TenantID:      evt.TenantID,
-		Reason:        metadata.Trigger,
+		Reason:        summary,
+		ReasonCode:    metadata.ReasonCode,
 		Context:       "Transitioned from " + evt.OldStage,
+		RunID:         evt.RunID,
 	})
 }
 
