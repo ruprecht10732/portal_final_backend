@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"portal_final_backend/platform/logger"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -19,6 +21,11 @@ const (
 	jsonContentType     = "application/json"
 	contentTypeHeader   = "Content-Type"
 	testWebhookSecret   = "super-secret"
+	testDeviceID        = "device-123"
+	signatureHeader     = "X-Hub-Signature-256"
+	sharedSecretHeader  = "X-Webhook-Secret"
+	expected200Format   = "expected 200, got %d: %s"
+	expected401Format   = "expected 401, got %d: %s"
 )
 
 type fakeWebhookAuthRepository struct {
@@ -42,11 +49,11 @@ func (f *fakeWebhookAuthRepository) GetOrganizationIDByWhatsAppDeviceID(_ contex
 
 func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhook(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{"device-123": uuid.New()}}
+	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{testDeviceID: uuid.New()}}
 	body := []byte(`{"device_id":"device-123","event":"message","payload":{"id":"MSG-1"}}`)
 
 	engine := gin.New()
-	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret), func(c *gin.Context) {
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
 		orgID := c.MustGet("webhookOrgID").(uuid.UUID)
 		c.JSON(http.StatusOK, gin.H{"organization_id": orgID.String()})
 	})
@@ -54,11 +61,11 @@ func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhook(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath, bytes.NewReader(body))
 	req.Header.Set(contentTypeHeader, jsonContentType)
-	req.Header.Set("X-Hub-Signature-256", signedWebhookHeader(testWebhookSecret, body))
+	req.Header.Set(signatureHeader, signedWebhookHeader(testWebhookSecret, body))
 	engine.ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
 	}
 	if recorder.Body.String() == "" {
 		t.Fatal("expected response body")
@@ -67,22 +74,22 @@ func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhook(t *testing.T) {
 
 func TestWhatsAppAPIKeyAuthMiddlewareRejectsInvalidSignature(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{"device-123": uuid.New()}}
+	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{testDeviceID: uuid.New()}}
 	body := []byte(`{"device_id":"device-123","event":"message"}`)
 
 	engine := gin.New()
-	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret), func(c *gin.Context) {
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath, bytes.NewReader(body))
 	req.Header.Set(contentTypeHeader, jsonContentType)
-	req.Header.Set("X-Hub-Signature-256", signedWebhookHeader("wrong-secret", body))
+	req.Header.Set(signatureHeader, signedWebhookHeader("wrong-secret", body))
 	engine.ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d: %s", recorder.Code, recorder.Body.String())
+		t.Fatalf(expected401Format, recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -100,7 +107,7 @@ func TestWhatsAppAPIKeyAuthMiddlewareKeepsAPIKeyFlow(t *testing.T) {
 	}
 
 	engine := gin.New()
-	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret), func(c *gin.Context) {
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
 		resolved := c.MustGet("webhookOrgID").(uuid.UUID)
 		if resolved != orgID {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "wrong organization"})
@@ -115,7 +122,89 @@ func TestWhatsAppAPIKeyAuthMiddlewareKeepsAPIKeyFlow(t *testing.T) {
 	engine.ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWhatsAppAPIKeyAuthMiddlewareRejectsMissingSignature(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{testDeviceID: uuid.New()}}
+	body := []byte(`{"device_id":"device-123","event":"message"}`)
+
+	engine := gin.New()
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath, bytes.NewReader(body))
+	req.Header.Set(contentTypeHeader, jsonContentType)
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf(expected401Format, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWhatsAppAPIKeyAuthMiddlewareRejectsUnknownDeviceForSignedWebhook(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{"other-device": uuid.New()}}
+	body := []byte(`{"device_id":"device-123","event":"message","payload":{"id":"MSG-1"}}`)
+
+	engine := gin.New()
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath, bytes.NewReader(body))
+	req.Header.Set(contentTypeHeader, jsonContentType)
+	req.Header.Set(signatureHeader, signedWebhookHeader(testWebhookSecret, body))
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf(expected401Format, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSharedSecretHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{testDeviceID: uuid.New()}}
+	body := []byte(`{"device_id":"device-123","event":"message","payload":{"id":"MSG-1"}}`)
+
+	engine := gin.New()
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath, bytes.NewReader(body))
+	req.Header.Set(contentTypeHeader, jsonContentType)
+	req.Header.Set(sharedSecretHeader, testWebhookSecret)
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSharedSecretQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{testDeviceID: uuid.New()}}
+	body := []byte(`{"device_id":"device-123","event":"message","payload":{"id":"MSG-1"}}`)
+
+	engine := gin.New()
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath+"?webhook_secret="+testWebhookSecret, bytes.NewReader(body))
+	req.Header.Set(contentTypeHeader, jsonContentType)
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
 	}
 }
 

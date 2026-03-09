@@ -16,6 +16,7 @@ import (
 type Module struct {
 	handler               *Handler
 	repo                  *Repository
+	log                   *logger.Logger
 	whatsAppWebhookSecret string
 }
 
@@ -28,6 +29,7 @@ func NewModule(pool *pgxpool.Pool, leadCreator LeadCreator, storageSvc storage.S
 	return &Module{
 		handler: handler,
 		repo:    repo,
+		log:     log,
 	}
 }
 
@@ -53,7 +55,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	webhookGroup.Use(APIKeyAuthMiddleware(m.repo))
 	webhookGroup.POST("/forms", m.handler.HandleFormSubmission)
 	webhookGroup.GET("/config", m.handler.HandleGetWebhookConfig)
-	ctx.V1.POST("/webhook/whatsapp", WhatsAppAPIKeyAuthMiddleware(m.repo, m.whatsAppWebhookSecret), m.handler.HandleWhatsAppWebhook)
+	ctx.V1.POST("/webhook/whatsapp", WhatsAppAPIKeyAuthMiddleware(m.repo, m.whatsAppWebhookSecret, m.log), m.handler.HandleWhatsAppWebhook)
 
 	// Public Google Lead Form webhook (payload auth)
 	ctx.V1.POST("/webhook/google-leads", m.handler.HandleGoogleLeadWebhook)

@@ -5,12 +5,16 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"portal_final_backend/platform/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,13 +33,15 @@ func APIKeyAuthMiddleware(repo webhookAuthRepository) gin.HandlerFunc {
 
 // WhatsAppAPIKeyAuthMiddleware validates the WhatsApp webhook API key.
 // It supports a query-string API key so upstream providers that can only
-// configure a URL can still authenticate requests.
-func WhatsAppAPIKeyAuthMiddleware(repo webhookAuthRepository, webhookSecret string) gin.HandlerFunc {
+// configure a URL can still authenticate requests. When a webhook secret is
+// configured, signed requests are preferred and a shared-secret fallback is
+// available for providers that cannot produce HMAC signatures.
+func WhatsAppAPIKeyAuthMiddleware(repo webhookAuthRepository, webhookSecret string, log *logger.Logger) gin.HandlerFunc {
 	trimmedSecret := strings.TrimSpace(webhookSecret)
 
 	return func(c *gin.Context) {
 		if apiKey := webhookAPIKeyFromRequest(c, true); apiKey != "" {
-			key, ok := lookupWebhookAPIKey(c, repo, apiKey)
+			key, ok := lookupWebhookAPIKey(c, repo, apiKey, log)
 			if !ok {
 				return
 			}
@@ -47,7 +53,7 @@ func WhatsAppAPIKeyAuthMiddleware(repo webhookAuthRepository, webhookSecret stri
 		}
 
 		if trimmedSecret != "" {
-			organizationID, ok := authenticateSignedWhatsAppWebhook(c, repo, trimmedSecret)
+			organizationID, ok := authenticateSecretBackedWhatsAppWebhook(c, repo, trimmedSecret, log)
 			if !ok {
 				return
 			}
@@ -57,7 +63,7 @@ func WhatsAppAPIKeyAuthMiddleware(repo webhookAuthRepository, webhookSecret stri
 			return
 		}
 
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing webhook authentication"})
+		abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "missing webhook authentication", "missing_authentication")
 	}
 }
 
@@ -87,52 +93,95 @@ func authenticateWebhookAPIKey(c *gin.Context, repo webhookAuthRepository, allow
 		return APIKey{}, false
 	}
 
-	return lookupWebhookAPIKey(c, repo, apiKey)
+	return lookupWebhookAPIKey(c, repo, apiKey, nil)
 }
 
-func lookupWebhookAPIKey(c *gin.Context, repo webhookAuthRepository, apiKey string) (APIKey, bool) {
+func lookupWebhookAPIKey(c *gin.Context, repo webhookAuthRepository, apiKey string, log *logger.Logger) (APIKey, bool) {
 	keyHash := HashKey(apiKey)
 	key, err := repo.GetByHash(c.Request.Context(), keyHash)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid API key"})
+		abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "invalid API key", "invalid_api_key")
 		return APIKey{}, false
 	}
 
 	return key, true
 }
 
-func authenticateSignedWhatsAppWebhook(c *gin.Context, repo webhookAuthRepository, webhookSecret string) (uuid.UUID, bool) {
-	signature := strings.TrimSpace(c.GetHeader("X-Hub-Signature-256"))
-	if signature == "" {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing webhook signature"})
-		return uuid.UUID{}, false
-	}
-
+func authenticateSecretBackedWhatsAppWebhook(c *gin.Context, repo webhookAuthRepository, webhookSecret string, log *logger.Logger) (uuid.UUID, bool) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		abortWhatsAppWebhookAuth(c, log, http.StatusBadRequest, "invalid request body", "invalid_body")
 		return uuid.UUID{}, false
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 
-	if !isValidWhatsAppWebhookSignature(signature, body, webhookSecret) {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid webhook signature"})
+	signature := strings.TrimSpace(c.GetHeader("X-Hub-Signature-256"))
+	sharedSecret := whatsAppWebhookSecretFromRequest(c)
+	if signature != "" {
+		if !isValidWhatsAppWebhookSignature(signature, body, webhookSecret) {
+			abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "invalid webhook signature", "invalid_signature", slog.Bool("device_id_present", hasWhatsAppWebhookDeviceID(body)))
+			return uuid.UUID{}, false
+		}
+	} else if sharedSecret != "" {
+		if !isValidWhatsAppWebhookSecret(sharedSecret, webhookSecret) {
+			abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "invalid webhook secret", "invalid_shared_secret")
+			return uuid.UUID{}, false
+		}
+	} else {
+		abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "missing webhook authentication", "missing_signature_or_shared_secret")
 		return uuid.UUID{}, false
 	}
 
 	deviceID, err := extractWhatsAppWebhookDeviceID(body)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing whatsapp device_id"})
+		abortWhatsAppWebhookAuth(c, log, http.StatusBadRequest, "missing whatsapp device_id", "missing_device_id")
 		return uuid.UUID{}, false
 	}
 
 	organizationID, err := repo.GetOrganizationIDByWhatsAppDeviceID(c.Request.Context(), deviceID)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unknown whatsapp device"})
+		abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "unknown whatsapp device", "unknown_device", slog.String("device_id", deviceID))
 		return uuid.UUID{}, false
 	}
 
 	return organizationID, true
+}
+
+func abortWhatsAppWebhookAuth(c *gin.Context, log *logger.Logger, status int, message string, reason string, attrs ...slog.Attr) {
+	if log != nil {
+		fields := []any{
+			slog.String("path", c.FullPath()),
+			slog.String("method", c.Request.Method),
+			slog.Int("status", status),
+			slog.String("reason", reason),
+			slog.String("client_ip", c.ClientIP()),
+			slog.Bool("has_api_key", webhookAPIKeyFromRequest(c, true) != ""),
+			slog.Bool("has_signature", strings.TrimSpace(c.GetHeader("X-Hub-Signature-256")) != ""),
+			slog.Bool("has_shared_secret", whatsAppWebhookSecretFromRequest(c) != ""),
+		}
+		for _, attr := range attrs {
+			fields = append(fields, attr)
+		}
+		log.WithContext(c.Request.Context()).Warn("whatsapp webhook authentication failed", fields...)
+	}
+
+	c.AbortWithStatusJSON(status, gin.H{"error": message})
+}
+
+func hasWhatsAppWebhookDeviceID(body []byte) bool {
+	_, err := extractWhatsAppWebhookDeviceID(body)
+	return err == nil
+}
+
+func whatsAppWebhookSecretFromRequest(c *gin.Context) string {
+	if secret := strings.TrimSpace(c.GetHeader("X-Webhook-Secret")); secret != "" {
+		return secret
+	}
+	return strings.TrimSpace(c.Query("webhook_secret"))
+}
+
+func isValidWhatsAppWebhookSecret(providedSecret string, webhookSecret string) bool {
+	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(providedSecret)), []byte(strings.TrimSpace(webhookSecret))) == 1
 }
 
 func isValidWhatsAppWebhookSignature(signatureHeader string, body []byte, webhookSecret string) bool {
