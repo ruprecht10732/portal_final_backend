@@ -378,7 +378,7 @@ Task:
 2. ALWAYS save a clean, professional Dutch call note using SaveNote (required).
 	- No raw input block, no invented facts, use 24-hour time (09:00).
 	- Prefer structure: Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen.
-3. If the summary contains corrected lead details such as name, phone, email, street, house number, zip code, city, consumer role, or WhatsApp preference, use UpdateLeadDetails before writing follow-up status changes.
+3. If the summary contains corrected lead details such as name, phone, email, street, house number, zip code, city, latitude, longitude, assignee, consumer role, or WhatsApp preference, use UpdateLeadDetails before writing follow-up status changes.
 4. If an appointment was scheduled (e.g., "booked next tuesday at 9", "scheduled for friday 2pm"):
    - Calculate the exact date based on Current Time
    - Use 'ScheduleVisit' to book the appointment
@@ -537,7 +537,7 @@ IMPORTANT RULES:
 1. Draft a clean professional Dutch note, then ALWAYS call SaveNote.
 	- No raw input text and no invented details.
 	- Structure when possible (Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen).
-2. If the caller corrects lead details such as name, phone, email, street, house number, zip code, city, consumer role, or WhatsApp preference, use UpdateLeadDetails.
+2. If the caller corrects lead details such as name, phone, email, street, house number, zip code, city, latitude, longitude, assignee, consumer role, or WhatsApp preference, use UpdateLeadDetails.
 3. Parse dates relative to the Current Time provided in the context:
    - "next Tuesday" = the coming Tuesday from Current Time
    - "tomorrow" = Current Time + 1 day
@@ -564,7 +564,7 @@ IMPORTANT RULES:
 
 Available tools:
 - SaveNote: Saves the call note (ALWAYS use this; it will normalize/clean the body)
-- UpdateLeadDetails: Updates lead profile fields like address, phone, email, consumer role, or WhatsApp preference
+- UpdateLeadDetails: Updates lead profile fields like address, coordinates, phone, email, assignee, consumer role, or WhatsApp preference
 - SetCallOutcome: Stores a short outcome label for the call
 - UpdateStatus: Updates the lead service status
 - UpdatePipelineStage: Updates the pipeline stage when explicitly indicated
@@ -768,54 +768,112 @@ func normalizeCallNoteBody(body string) string {
 	return strings.TrimSpace(strings.Join(cleaned, "\n"))
 }
 
+func applyLeadUpdateString(fieldName string, value *string, target **string, updatedFields *[]string) {
+	if value == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return
+	}
+	*target = &trimmed
+	*updatedFields = append(*updatedFields, fieldName)
+}
+
+func applyLeadUpdatePhone(value *string, req *transport.UpdateLeadRequest, updatedFields *[]string) error {
+	if value == nil {
+		return nil
+	}
+	normalizedPhone := phone.NormalizeE164(strings.TrimSpace(*value))
+	if normalizedPhone == "" {
+		return errors.New("invalid phone")
+	}
+	req.Phone = &normalizedPhone
+	*updatedFields = append(*updatedFields, "phone")
+	return nil
+}
+
+func applyLeadUpdateConsumerRole(value *string, req *transport.UpdateLeadRequest, updatedFields *[]string) error {
+	if value == nil {
+		return nil
+	}
+	normalizedRole, err := normalizeConsumerRole(*value)
+	if err != nil {
+		return err
+	}
+	role := transport.ConsumerRole(normalizedRole)
+	req.ConsumerRole = &role
+	*updatedFields = append(*updatedFields, "consumerRole")
+	return nil
+}
+
+func applyLeadUpdateAssignee(value *string, req *transport.UpdateLeadRequest, updatedFields *[]string) error {
+	if value == nil {
+		return nil
+	}
+	trimmedAssigneeID := strings.TrimSpace(*value)
+	if trimmedAssigneeID == "" {
+		return errors.New("invalid assigneeId")
+	}
+	parsedAssigneeID, err := uuid.Parse(trimmedAssigneeID)
+	if err != nil {
+		return errors.New("invalid assigneeId")
+	}
+	req.AssigneeID = transport.OptionalUUID{Value: &parsedAssigneeID, Set: true}
+	*updatedFields = append(*updatedFields, "assigneeId")
+	return nil
+}
+
+func applyLeadUpdateCoordinate(fieldName string, value *float64, min float64, max float64, target **float64, updatedFields *[]string) error {
+	if value == nil {
+		return nil
+	}
+	if *value < min || *value > max {
+		return fmt.Errorf("invalid %s", fieldName)
+	}
+	coordinate := *value
+	*target = &coordinate
+	*updatedFields = append(*updatedFields, fieldName)
+	return nil
+}
+
+func applyLeadUpdateWhatsAppOptIn(value *bool, req *transport.UpdateLeadRequest, updatedFields *[]string) {
+	if value == nil {
+		return
+	}
+	whatsAppOptedIn := *value
+	req.WhatsAppOptedIn = &whatsAppOptedIn
+	*updatedFields = append(*updatedFields, "whatsAppOptedIn")
+}
+
 func buildLeadUpdateRequest(input UpdateLeadDetailsInput) (transport.UpdateLeadRequest, []string, error) {
 	req := transport.UpdateLeadRequest{}
 	updatedFields := make([]string, 0, 10)
 
-	assignString := func(fieldName string, value *string, target **string) {
-		if value == nil {
-			return
-		}
-		trimmed := strings.TrimSpace(*value)
-		if trimmed == "" {
-			return
-		}
-		*target = &trimmed
-		updatedFields = append(updatedFields, fieldName)
-	}
+	applyLeadUpdateString("firstName", input.FirstName, &req.FirstName, &updatedFields)
+	applyLeadUpdateString("lastName", input.LastName, &req.LastName, &updatedFields)
+	applyLeadUpdateString("email", input.Email, &req.Email, &updatedFields)
+	applyLeadUpdateString("street", input.Street, &req.Street, &updatedFields)
+	applyLeadUpdateString("houseNumber", input.HouseNumber, &req.HouseNumber, &updatedFields)
+	applyLeadUpdateString("zipCode", input.ZipCode, &req.ZipCode, &updatedFields)
+	applyLeadUpdateString("city", input.City, &req.City, &updatedFields)
 
-	assignString("firstName", input.FirstName, &req.FirstName)
-	assignString("lastName", input.LastName, &req.LastName)
-	assignString("email", input.Email, &req.Email)
-	assignString("street", input.Street, &req.Street)
-	assignString("houseNumber", input.HouseNumber, &req.HouseNumber)
-	assignString("zipCode", input.ZipCode, &req.ZipCode)
-	assignString("city", input.City, &req.City)
-
-	if input.Phone != nil {
-		normalizedPhone := phone.NormalizeE164(strings.TrimSpace(*input.Phone))
-		if normalizedPhone == "" {
-			return transport.UpdateLeadRequest{}, nil, errors.New("invalid phone")
-		}
-		req.Phone = &normalizedPhone
-		updatedFields = append(updatedFields, "phone")
+	if err := applyLeadUpdatePhone(input.Phone, &req, &updatedFields); err != nil {
+		return transport.UpdateLeadRequest{}, nil, err
 	}
-
-	if input.ConsumerRole != nil {
-		normalizedRole, err := normalizeConsumerRole(*input.ConsumerRole)
-		if err != nil {
-			return transport.UpdateLeadRequest{}, nil, err
-		}
-		role := transport.ConsumerRole(normalizedRole)
-		req.ConsumerRole = &role
-		updatedFields = append(updatedFields, "consumerRole")
+	if err := applyLeadUpdateConsumerRole(input.ConsumerRole, &req, &updatedFields); err != nil {
+		return transport.UpdateLeadRequest{}, nil, err
 	}
-
-	if input.WhatsAppOptedIn != nil {
-		whatsAppOptedIn := *input.WhatsAppOptedIn
-		req.WhatsAppOptedIn = &whatsAppOptedIn
-		updatedFields = append(updatedFields, "whatsAppOptedIn")
+	if err := applyLeadUpdateAssignee(input.AssigneeID, &req, &updatedFields); err != nil {
+		return transport.UpdateLeadRequest{}, nil, err
 	}
+	if err := applyLeadUpdateCoordinate("latitude", input.Latitude, -90, 90, &req.Latitude, &updatedFields); err != nil {
+		return transport.UpdateLeadRequest{}, nil, err
+	}
+	if err := applyLeadUpdateCoordinate("longitude", input.Longitude, -180, 180, &req.Longitude, &updatedFields); err != nil {
+		return transport.UpdateLeadRequest{}, nil, err
+	}
+	applyLeadUpdateWhatsAppOptIn(input.WhatsAppOptedIn, &req, &updatedFields)
 
 	if len(updatedFields) == 0 {
 		return transport.UpdateLeadRequest{}, nil, errors.New("no lead fields provided")

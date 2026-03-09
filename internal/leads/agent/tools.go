@@ -1557,6 +1557,26 @@ func (b *leadDetailsBuilder) setConsumerRole(input *string, current string) erro
 	return nil
 }
 
+func (b *leadDetailsBuilder) setAssignee(input *string, current *uuid.UUID) error {
+	if input == nil {
+		return nil
+	}
+	value := strings.TrimSpace(*input)
+	if value == "" {
+		return fmt.Errorf("invalid assigneeId")
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return fmt.Errorf("invalid assigneeId")
+	}
+	b.params.AssignedAgentID = &parsed
+	b.params.AssignedAgentIDSet = true
+	if current == nil || *current != parsed {
+		b.updatedFields = append(b.updatedFields, "assigneeId")
+	}
+	return nil
+}
+
 func (b *leadDetailsBuilder) setCoordinate(input *float64, current *float64, fieldName string, min, max float64, setter func(*float64)) error {
 	if input == nil {
 		return nil
@@ -1593,6 +1613,9 @@ func (b *leadDetailsBuilder) buildFromInput(input UpdateLeadDetailsInput, curren
 		return err
 	}
 	if err := b.setOptionalStringField(input.Email, current.ConsumerEmail, "email", func(v *string) { b.params.ConsumerEmail = v }); err != nil {
+		return err
+	}
+	if err := b.setAssignee(input.AssigneeID, current.AssignedAgentID); err != nil {
 		return err
 	}
 	if err := b.setConsumerRole(input.ConsumerRole, current.ConsumerRole); err != nil {

@@ -49,6 +49,7 @@ type UpdateLeadDetailsInput struct {
 	LastName        *string  `json:"lastName,omitempty"`
 	Phone           *string  `json:"phone,omitempty"`
 	Email           *string  `json:"email,omitempty"`
+	AssigneeID      *string  `json:"assigneeId,omitempty"`
 	ConsumerRole    *string  `json:"consumerRole,omitempty"`
 	Street          *string  `json:"street,omitempty"`
 	HouseNumber     *string  `json:"houseNumber,omitempty"`
