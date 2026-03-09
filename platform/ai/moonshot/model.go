@@ -56,11 +56,12 @@ func (m *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 // openAIMessage represents a message in OpenAI/Kimi API format
 // Content can be either a string (text-only) or array of content parts (multimodal)
 type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    interface{}      `json:"content,omitempty"` // string or []contentPart for multimodal
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	Name       string           `json:"name,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Role             string           `json:"role"`
+	Content          interface{}      `json:"content,omitempty"` // string or []contentPart for multimodal
+	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
+	Name             string           `json:"name,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
 }
 
 // contentPart represents a part of multimodal content (text or image)
@@ -99,13 +100,16 @@ type openAIToolDefFunc struct {
 
 type openAIResponse struct {
 	Choices []struct {
-		Message struct {
-			Role      string           `json:"role"`
-			Content   string           `json:"content"`
-			ToolCalls []openAIToolCall `json:"tool_calls"`
-		} `json:"message"`
+		Message openAIChoiceMessage `json:"message"`
 	} `json:"choices"`
 	Error interface{} `json:"error"`
+}
+
+type openAIChoiceMessage struct {
+	Role             string           `json:"role"`
+	Content          string           `json:"content"`
+	ToolCalls        []openAIToolCall `json:"tool_calls"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
 }
 
 func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
@@ -187,12 +191,11 @@ func decodeResponse(resp *http.Response) (*openAIResponse, error) {
 	return &result, nil
 }
 
-func buildResponseParts(choice struct {
-	Role      string           `json:"role"`
-	Content   string           `json:"content"`
-	ToolCalls []openAIToolCall `json:"tool_calls"`
-}) []*genai.Part {
-	parts := make([]*genai.Part, 0, 1+len(choice.ToolCalls))
+func buildResponseParts(choice openAIChoiceMessage) []*genai.Part {
+	parts := make([]*genai.Part, 0, 2+len(choice.ToolCalls))
+	if strings.TrimSpace(choice.ReasoningContent) != "" {
+		parts = append(parts, &genai.Part{Text: choice.ReasoningContent, Thought: true})
+	}
 	if strings.TrimSpace(choice.Content) != "" {
 		parts = append(parts, genai.NewPartFromText(choice.Content))
 	}
@@ -226,23 +229,24 @@ func (m *KimiModel) convertMessages(contents []*genai.Content) []openAIMessage {
 		}
 
 		role := roleForContent(content.Role)
-		contentBody, toolCalls, toolMessages := extractContentMessages(content)
+		contentBody, reasoningContent, toolCalls, toolMessages := extractContentMessages(content)
 		messages = append(messages, toolMessages...)
 
 		// Check if we have content to add
-		hasContent := false
+		hasMessageBody := strings.TrimSpace(reasoningContent) != ""
 		switch v := contentBody.(type) {
 		case string:
-			hasContent = v != ""
+			hasMessageBody = hasMessageBody || v != ""
 		case []contentPart:
-			hasContent = len(v) > 0
+			hasMessageBody = hasMessageBody || len(v) > 0
 		}
 
-		if hasContent || len(toolCalls) > 0 {
+		if hasMessageBody || len(toolCalls) > 0 {
 			messages = append(messages, openAIMessage{
-				Role:      role,
-				Content:   contentBody,
-				ToolCalls: toolCalls,
+				Role:             role,
+				Content:          contentBody,
+				ToolCalls:        toolCalls,
+				ReasoningContent: reasoningContent,
 			})
 		}
 	}
@@ -256,10 +260,11 @@ func roleForContent(role string) string {
 	return "user"
 }
 
-func extractContentMessages(content *genai.Content) (interface{}, []openAIToolCall, []openAIMessage) {
+func extractContentMessages(content *genai.Content) (interface{}, string, []openAIToolCall, []openAIMessage) {
 	var toolCalls []openAIToolCall
 	var toolMessages []openAIMessage
 	var textBuilder strings.Builder
+	var reasoningBuilder strings.Builder
 	var imageParts []contentPart
 	hasImages := false
 
@@ -273,6 +278,10 @@ func extractContentMessages(content *genai.Content) (interface{}, []openAIToolCa
 		}
 		if call, ok := buildToolCall(part); ok {
 			toolCalls = append(toolCalls, call)
+			continue
+		}
+		if part.Thought {
+			appendText(&reasoningBuilder, part.Text)
 			continue
 		}
 		// Check for inline image data (multimodal)
@@ -291,6 +300,7 @@ func extractContentMessages(content *genai.Content) (interface{}, []openAIToolCa
 	}
 
 	text := strings.TrimSpace(textBuilder.String())
+	reasoning := strings.TrimSpace(reasoningBuilder.String())
 
 	// If we have images, return multimodal content array
 	if hasImages {
@@ -304,11 +314,11 @@ func extractContentMessages(content *genai.Content) (interface{}, []openAIToolCa
 				Text: text,
 			})
 		}
-		return parts, toolCalls, toolMessages
+		return parts, reasoning, toolCalls, toolMessages
 	}
 
 	// Text-only: return string
-	return text, toolCalls, toolMessages
+	return text, reasoning, toolCalls, toolMessages
 }
 
 func buildToolResponseMessage(part *genai.Part) (openAIMessage, bool) {
