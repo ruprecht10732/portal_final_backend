@@ -242,7 +242,7 @@ func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
 
 // NewCallLogger creates a new CallLogger agent
 func NewCallLogger(apiKey string, modelName string, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
-	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
+	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
 
 	logger := &CallLogger{
 		repo:           repo,
@@ -363,17 +363,27 @@ func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, user
 	reqDeps.SetAppointmentAvailable(hasExistingAppointment)
 
 	// Construct the prompt with context
-	promptText := fmt.Sprintf(`Analysis Context:
-- Current Time: %s
+	analysisContext := wrapReferenceBlock(fmt.Sprintf(`- Current Time: %s
 - Lead ID: %s
 - Service ID: %s
 - Agent User ID: %s
-- Existing Appointment: %s
+- Existing Appointment: %s`,
+		time.Now().Format(time.RFC3339),
+		leadID.String(),
+		serviceID.String(),
+		userID.String(),
+		existingAppointment,
+	))
+	summaryBlock := wrapReferenceBlock(sanitizeUserInput(summary, maxNoteLength))
 
-The agent provided this post-call summary:
-"%s"
+	promptText := fmt.Sprintf(`Analysis Context (reference data):
+%s
+
+The agent provided this post-call summary (reference data):
+%s
 
 Task:
+0. You may reason step-by-step internally, but your final output must contain only the required tool calls.
 1. Analyze the summary to determine outcome and appointment changes.
 2. ALWAYS save a clean, professional Dutch call note using SaveNote (required).
 	- No raw input block, no invented facts, use 24-hour time (09:00).
@@ -396,13 +406,9 @@ Task:
 	- "needs to reschedule", "postponed" → Needs_Rescheduling
 9. Update the pipeline stage with 'UpdatePipelineStage' if the summary explicitly indicates a stage change.
 
-Execute the appropriate tools now.`,
-		time.Now().Format(time.RFC3339),
-		leadID.String(),
-		serviceID.String(),
-		userID.String(),
-		existingAppointment,
-		summary,
+	Execute the appropriate tools now. Respond ONLY with tool calls.`,
+		analysisContext,
+		summaryBlock,
 	)
 
 	sessionID := uuid.New().String()
@@ -531,6 +537,8 @@ func getCallLoggerSystemPrompt() string {
 	return `You are a Post-Call Processing Assistant for a home services sales team.
 
 Your job is to read a rough summary of a sales/qualification call and execute the necessary database updates using the available tools.
+
+You may reason step-by-step internally, but your final output must contain only the required tool calls.
 
 IMPORTANT RULES:
 

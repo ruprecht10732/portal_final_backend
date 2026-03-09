@@ -200,9 +200,9 @@ func (m quotingAgentMode) profile() quotingAgentProfile {
 		return quotingAgentProfile{
 			name:        "QuoteGenerator",
 			description: "Generates draft quotes from a user prompt using catalog search.",
-			instruction: "You are a Quote Generator. Search for products and create draft quotes.",
+			instruction: "You are a Quote Generator. You may reason step-by-step internally, but your final output must contain only the required tool calls. Search for products and create draft quotes.",
 			appName:     "quote-generator",
-			reasoning:   false,
+			reasoning:   true,
 		}
 	}
 }

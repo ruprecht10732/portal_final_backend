@@ -13,6 +13,9 @@ import (
 const toolOrderMandatoryHeader = "=== TOOL ORDER (MANDATORY) ==="
 const gatekeeperIntakeRequirement = "Meetgegevens vereist"
 const expectedGatekeeperPromptContainsFmt = "expected gatekeeper prompt to contain %q"
+const expectedDispatcherPromptContainsFmt = "expected dispatcher prompt to contain %q"
+const expectedQuotePromptContainsFmt = "expected quote generator prompt to contain %q"
+const expectedAuditPromptContainsFmt = "expected audit prompt to contain %q"
 const estimatorPromptInstruction = "Gebruik standaard afwerking"
 const quoteGeneratorPromptRequest = "Vervang voordeur inclusief scharnieren"
 const quoteGeneratorPromptEstimation = "Let op isolatie"
@@ -258,6 +261,61 @@ func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurem
 	}
 }
 
+func TestBuildDispatcherPromptUsesQuotedReferenceDataAndToolOnlyContract(t *testing.T) {
+	lead, service, _, _, _, _ := testPromptFixtures()
+	prompt := buildDispatcherPrompt(lead, service, 25, []uuid.UUID{uuid.New()})
+
+	checks := []string{
+		"You may reason step-by-step internally before choosing tools, but your final output must contain only tool calls.",
+		"=== DATA CONTEXT ===\n\"\"\"",
+		"Respond ONLY with tool calls.",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedDispatcherPromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildQuoteGeneratePromptUsesQuotedReferenceDataAndToolOnlyContract(t *testing.T) {
+	lead, service, notes, _, _, _ := testPromptFixtures()
+	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
+
+	checks := []string{
+		"You may reason step-by-step internally before choosing tools, but your final output must contain only tool calls.",
+		"=== DATA CONTEXT ===\n\"\"\"",
+		quoteGeneratorPromptRequest,
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedQuotePromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildAuditPromptsUseQuotedReferenceDataAndToolOnlyContract(t *testing.T) {
+	_, service, notes, visitReport, _, _ := testPromptFixtures()
+	intakeContext := gatekeeperIntakeRequirement
+
+	visitPrompt := buildVisitReportAuditPrompt(service.ServiceType, intakeContext, visitReport, notes)
+	callPrompt := buildCallLogAuditPrompt(service.ServiceType, intakeContext, notes)
+
+	for _, prompt := range []string{visitPrompt, callPrompt} {
+		checks := []string{
+			"You may reason step-by-step internally, but your final output must contain only the required tool calls.",
+			"\"\"\"",
+			"Final output must contain only the SubmitAuditResult tool call.",
+		}
+		for _, token := range checks {
+			if !strings.Contains(prompt, token) {
+				t.Fatalf(expectedAuditPromptContainsFmt, token)
+			}
+		}
+	}
+}
+
 func TestBuildGatekeeperPromptFlagsDocumentReviewAttachments(t *testing.T) {
 	lead, service, notes, visitReport, attachments, photo := testPromptFixtures()
 	prompt := buildGatekeeperPrompt(gatekeeperPromptInput{
@@ -408,7 +466,7 @@ func TestBuildQuoteGeneratePromptUsesToolScopeAndSharedRules(t *testing.T) {
 
 	for _, token := range checks {
 		if !strings.Contains(prompt, token) {
-			t.Fatalf("expected quote generator prompt to contain %q", token)
+			t.Fatalf(expectedQuotePromptContainsFmt, token)
 		}
 	}
 }
@@ -425,7 +483,7 @@ func TestBuildQuoteGeneratePromptIncludesSingleExpressionMathExamples(t *testing
 
 	for _, token := range checks {
 		if !strings.Contains(prompt, token) {
-			t.Fatalf("expected quote generator prompt to contain %q", token)
+			t.Fatalf(expectedQuotePromptContainsFmt, token)
 		}
 	}
 }

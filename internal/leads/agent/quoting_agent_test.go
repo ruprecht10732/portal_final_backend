@@ -50,8 +50,8 @@ func TestNewQuoteGeneratorAgentUsesQuoteGeneratorProfile(t *testing.T) {
 	if agent.modelConfig.Model != "kimi-test-quote" {
 		t.Fatalf("expected quote-generator model config to use configured model, got %q", agent.modelConfig.Model)
 	}
-	if !agent.modelConfig.DisableThinking {
-		t.Fatal("expected quote-generator to keep Moonshot thinking disabled")
+	if agent.modelConfig.DisableThinking {
+		t.Fatal("expected quote-generator to keep Moonshot thinking enabled")
 	}
 }
 

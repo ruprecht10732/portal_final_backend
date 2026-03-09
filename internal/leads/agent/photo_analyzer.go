@@ -121,7 +121,7 @@ type PhotoAnalyzer struct {
 
 // NewPhotoAnalyzer creates a new photo analyzer agent
 func NewPhotoAnalyzer(apiKey string, modelName string, repo repository.LeadsRepository) (*PhotoAnalyzer, error) {
-	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
+	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
 
 	deps := &PhotoAnalyzerDeps{
 		Repo: repo,
@@ -545,7 +545,7 @@ Service ID: %s
 		prompt += fmt.Sprintf(`
 ## PREPROCESSING CONTEXT
 %s
-`, preprocessingSummary)
+`, wrapReferenceBlock(preprocessingSummary))
 	}
 
 	if serviceType != "" {
@@ -568,7 +568,7 @@ Controleer voor elk van deze eisen of ze zichtbaar zijn op de foto's:
 
 Noteer in je observaties welke eisen je kunt bevestigen of weerleggen op basis van de foto's.
 Voeg tegenstrijdigheden toe aan discrepancies als claims niet overeenkomen met wat je ziet.
-`, intakeRequirements)
+`, wrapReferenceBlock(intakeRequirements))
 	}
 
 	if contextInfo != "" {
@@ -578,7 +578,7 @@ Voeg tegenstrijdigheden toe aan discrepancies als claims niet overeenkomen met w
 
 BELANGRIJK: Vergelijk deze claims kritisch met wat je daadwerkelijk op de foto's ziet.
 Als een claim niet klopt met de visuele bewijzen, voeg het toe aan discrepancies.
-`, contextInfo)
+`, wrapReferenceBlock(contextInfo))
 	}
 
 	prompt += `
@@ -622,6 +622,7 @@ Stel zoektermen voor die de Schatter kan gebruiken om materialen te vinden:
 - Merken en modellen als zichtbaar
 
 ## VERPLICHT
+- Je mag intern stap voor stap redeneren, maar je uiteindelijke output moet alleen de vereiste tool calls bevatten.
 Na je analyse MOET je SavePhotoAnalysis aanroepen met alle bevindingen.
 Gebruik Calculator voor berekeningen en FlagOnsiteMeasurement voor metingen die ter plaatse nodig zijn.`
 
@@ -678,6 +679,8 @@ func appendPreparedImageOCRCandidates(sb *strings.Builder, candidates []OCRCandi
 
 func getPhotoAnalyzerPrompt() string {
 	return `Je bent een forensisch foto-analist voor een Nederlandse thuisdiensten-marktplaats.
+
+Je mag intern stap voor stap redeneren, maar je uiteindelijke output moet alleen de vereiste tool calls bevatten.
 
 Doel:
 - Haal uit foto's alles wat relevant is voor prijsschatting en kwaliteitsbeoordeling.

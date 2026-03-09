@@ -723,6 +723,19 @@ func buildDispatcherPrompt(lead repository.Lead, service repository.LeadService,
 	if len(excludeIDs) > 0 {
 		exclusionTxt = fmt.Sprintf("\nCONTEXT: The following Partner IDs have already been contacted or rejected: %v. You MUST include these in the 'excludePartnerIds' field when calling FindMatchingPartners.", excludeIDs)
 	}
+	referenceData := wrapReferenceBlock(fmt.Sprintf(`Lead:
+- Lead ID: %s
+- Service ID: %s
+- Service Type: %s
+- Pipeline Stage: %s
+- Zip Code: %s%s`,
+		lead.ID,
+		service.ID,
+		service.ServiceType,
+		service.PipelineStage,
+		lead.AddressZipCode,
+		exclusionTxt,
+	))
 
 	return fmt.Sprintf(`Role: Fulfillment Manager.
 
@@ -730,6 +743,7 @@ func buildDispatcherPrompt(lead repository.Lead, service repository.LeadService,
 
 === OBJECTIVE ===
 [MANDATORY] Find partner matches and create offer dispatch outcome.
+[MANDATORY] You may reason step-by-step internally before choosing tools, but your final output must contain only tool calls.
 
 === TOOL ORDER (MANDATORY) ===
 1. FindMatchingPartners
@@ -750,14 +764,8 @@ func buildDispatcherPrompt(lead repository.Lead, service repository.LeadService,
 [MANDATORY] If a match exists, CreatePartnerOffer was called before UpdatePipelineStage.
 [MANDATORY] jobSummaryShort is Dutch, <=120 chars, and contains no personal data.
 
-=== DATA CONTEXT ===%s
-
-Lead:
-- Lead ID: %s
-- Service ID: %s
-- Service Type: %s
-- Pipeline Stage: %s
-- Zip Code: %s
+=== DATA CONTEXT ===
+%s
 
 Instruction:
 1) Call FindMatchingPartners with serviceType="%s", zipCode="%s", radiusKm=%d and include excludePartnerIds.
@@ -767,12 +775,7 @@ Instruction:
 Respond ONLY with tool calls.
 `,
 		sharedExecutionContract,
-		exclusionTxt,
-		lead.ID,
-		service.ID,
-		service.ServiceType,
-		service.PipelineStage,
-		lead.AddressZipCode,
+		referenceData,
 		service.ServiceType,
 		lead.AddressZipCode,
 		radiusKm,
@@ -1043,6 +1046,42 @@ func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadServi
 	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
 	consumerSummary := buildPromptConsumerSection(lead)
 	locationSummary := buildPromptLocationLine(lead)
+	referenceData := wrapReferenceBlock(fmt.Sprintf(`Lead:
+- Lead ID: %s
+- Service ID: %s
+- Service Type: %s
+
+Consumer:
+%s
+
+Address:
+%s
+
+Service Note (raw):
+%s
+
+Notes:
+%s
+
+Preferences (from customer portal):
+%s
+
+Estimation Guidelines:
+%s
+
+User Prompt:
+%s`,
+		lead.ID,
+		service.ID,
+		service.ServiceType,
+		consumerSummary,
+		locationSummary,
+		serviceNoteSummary,
+		notesSection,
+		preferencesSummary,
+		estimationContextSummary,
+		userPromptSummary,
+	))
 
 	return fmt.Sprintf(`Role: Quote Generator.
 
@@ -1053,6 +1092,7 @@ You MAY call only: SearchProductMaterials, Calculator, DraftQuote.
 
 === OBJECTIVE ===
 [MANDATORY] Convert user prompt into a draft quote with catalog-first product lines.
+[MANDATORY] You may reason step-by-step internally before choosing tools, but your final output must contain only tool calls.
 [MANDATORY] Use Calculator for all arithmetic (quantity/unit math).
 [MANDATORY] Prefer one Calculator expression when you need subtotal + VAT + markup in a single step.
 
@@ -1081,46 +1121,12 @@ You MAY call only: SearchProductMaterials, Calculator, DraftQuote.
 [MANDATORY] DraftQuote notes are Dutch.
 
 === DATA CONTEXT ===
-
-Lead:
-- Lead ID: %s
-- Service ID: %s
-- Service Type: %s
-
-Consumer:
-%s
-
-Address:
-%s
-
-Service Note (raw):
-%s
-
-Notes:
-%s
-
-Preferences (from customer portal):
-%s
-
-Estimation Guidelines:
-%s
-
-User Prompt:
 %s
 Respond ONLY with tool calls.
 `,
 		sharedExecutionContract,
 		sharedProductSelectionRules,
-		lead.ID,
-		service.ID,
-		service.ServiceType,
-		consumerSummary,
-		locationSummary,
-		serviceNoteSummary,
-		notesSection,
-		preferencesSummary,
-		estimationContextSummary,
-		userPromptSummary,
+		referenceData,
 	)
 }
 

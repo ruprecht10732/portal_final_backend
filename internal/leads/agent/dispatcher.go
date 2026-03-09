@@ -31,7 +31,7 @@ type Dispatcher struct {
 
 // NewDispatcher creates a Dispatcher agent.
 func NewDispatcher(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus) (*Dispatcher, error) {
-	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
+	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
 
 	deps := &ToolDependencies{
 		Repo:           repo,
@@ -58,7 +58,7 @@ func NewDispatcher(apiKey string, modelName string, repo repository.LeadsReposit
 		Name:        "Dispatcher",
 		Model:       kimi,
 		Description: "Fulfillment manager that finds partner matches and advances the pipeline.",
-		Instruction: "You are the Fulfillment Manager.",
+		Instruction: "You are the Fulfillment Manager. You may reason step-by-step internally, but your final output must contain only the required tool calls.",
 		Tools:       []tool.Tool{findPartnersTool, createOfferTool, updateStageTool},
 	})
 	if err != nil {

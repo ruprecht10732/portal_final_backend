@@ -13,6 +13,7 @@ const (
 	maxConsumerNote  = 1000
 	userDataBegin    = "<user_input>"
 	userDataEnd      = "</user_input>"
+	referenceBlock   = "\"\"\""
 	dateTimeLayout   = "02-01-2006 15:04"
 	dateLayout       = "02-01-2006"
 	bulletLine       = "- %s\n"
@@ -53,6 +54,14 @@ func escapeXMLText(s string) string {
 func wrapUserData(content string) string {
 	// Escape so the user cannot inject closing tags like </user_input>.
 	return fmt.Sprintf("%s\n%s\n%s", userDataBegin, escapeXMLText(content), userDataEnd)
+}
+
+func wrapReferenceBlock(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return fmt.Sprintf("%s\n%s", referenceBlock, referenceBlock)
+	}
+	return fmt.Sprintf("%s\n%s\n%s", referenceBlock, trimmed, referenceBlock)
 }
 
 func getValue(s *string) string {

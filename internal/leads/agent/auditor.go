@@ -139,7 +139,7 @@ func (d *AuditorToolDeps) handleSubmitAuditResult(ctx tool.Context, input Submit
 }
 
 func NewAuditor(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus) (*Auditor, error) {
-	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
+	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
 
 	deps := &AuditorToolDeps{Repo: repo, EventBus: eventBus}
 
@@ -157,7 +157,7 @@ func NewAuditor(apiKey string, modelName string, repo repository.LeadsRepository
 		Name:        "AuditAgent",
 		Model:       kimi,
 		Description: "Internal reviewer that validates VisitReports and CallLogs against intake guidelines.",
-		Instruction: "You audit submitted visit reports and call logs. Compare them against the intake requirements. If required information is missing, call SubmitAuditResult with passed=false and list missing items.",
+		Instruction: "You audit submitted visit reports and call logs. Compare them against the intake requirements. You may reason step-by-step internally, but your final output must contain only the required tool calls. If required information is missing, call SubmitAuditResult with passed=false and list missing items.",
 		Tools:       []tool.Tool{submitTool},
 	})
 	if err != nil {
@@ -287,17 +287,20 @@ func buildIntakeContext(ctx context.Context, repo repository.LeadsRepository, te
 func buildVisitReportAuditPrompt(serviceType string, intakeContext string, report *repository.AppointmentVisitReport, notes []repository.LeadNote) string {
 	var sb strings.Builder
 	sb.WriteString("You are the Audit Agent (internal reviewer).\n")
+	sb.WriteString("You may reason step-by-step internally, but your final output must contain only the required tool calls.\n")
 	sb.WriteString("Compare the submitted visit report against the intake requirements.\n")
 	sb.WriteString("If anything required is missing or too thin (e.g., 'looks fine' without details), list what is missing.\n")
 	sb.WriteString("Then call SubmitAuditResult.\n\n")
 
-	sb.WriteString("SERVICE TYPE:\n" + serviceType + "\n\n")
-	sb.WriteString("INTAKE GUIDELINES:\n" + intakeContext + "\n\n")
+	sb.WriteString("SERVICE TYPE:\n" + wrapReferenceBlock(serviceType) + "\n\n")
+	sb.WriteString("INTAKE GUIDELINES:\n" + wrapReferenceBlock(intakeContext) + "\n\n")
 
 	sb.WriteString("VISIT REPORT:\n")
-	sb.WriteString("- Measurements: " + getValue(report.Measurements) + "\n")
-	sb.WriteString("- Access difficulty: " + getValue(report.AccessDifficulty) + "\n")
-	sb.WriteString("- Notes: " + getValue(report.Notes) + "\n\n")
+	sb.WriteString(wrapReferenceBlock(strings.Join([]string{
+		"- Measurements: " + getValue(report.Measurements),
+		"- Access difficulty: " + getValue(report.AccessDifficulty),
+		"- Notes: " + getValue(report.Notes),
+	}, "\n")) + "\n\n")
 
 	// Include a small note context window.
 	if len(notes) > 0 {
@@ -305,15 +308,18 @@ func buildVisitReportAuditPrompt(serviceType string, intakeContext string, repor
 		if len(notes) < max {
 			max = len(notes)
 		}
-		sb.WriteString("RECENT NOTES (context):\n")
+		recentNotes := make([]string, 0, max)
 		for i := 0; i < max; i++ {
 			n := notes[i]
-			sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", n.Type, n.AuthorEmail, sanitizeUserInput(n.Body, 300)))
+			recentNotes = append(recentNotes, fmt.Sprintf("- [%s] %s: %s", n.Type, n.AuthorEmail, sanitizeUserInput(n.Body, 300)))
 		}
+		sb.WriteString("RECENT NOTES (context):\n")
+		sb.WriteString(wrapReferenceBlock(strings.Join(recentNotes, "\n")) + "\n")
 		sb.WriteString("\n")
 	}
 
 	sb.WriteString("OUTPUT RULES:\n")
+	sb.WriteString("- Final output must contain only the SubmitAuditResult tool call.\n")
 	sb.WriteString("- If missing required info: SubmitAuditResult(passed=false, missing=[...], summary=short Dutch explanation).\n")
 	sb.WriteString("- If sufficient: SubmitAuditResult(passed=true, missing=[], summary=short confirmation).\n")
 	return sb.String()
@@ -322,24 +328,27 @@ func buildVisitReportAuditPrompt(serviceType string, intakeContext string, repor
 func buildCallLogAuditPrompt(serviceType string, intakeContext string, notes []repository.LeadNote) string {
 	var sb strings.Builder
 	sb.WriteString("You are the Audit Agent (internal reviewer).\n")
+	sb.WriteString("You may reason step-by-step internally, but your final output must contain only the required tool calls.\n")
 	sb.WriteString("Audit the latest call log / notes against the intake requirements.\n")
 	sb.WriteString("Then call SubmitAuditResult.\n\n")
 
-	sb.WriteString("SERVICE TYPE:\n" + serviceType + "\n\n")
-	sb.WriteString("INTAKE GUIDELINES:\n" + intakeContext + "\n\n")
+	sb.WriteString("SERVICE TYPE:\n" + wrapReferenceBlock(serviceType) + "\n\n")
+	sb.WriteString("INTAKE GUIDELINES:\n" + wrapReferenceBlock(intakeContext) + "\n\n")
 
 	max := 10
 	if len(notes) < max {
 		max = len(notes)
 	}
 	sb.WriteString("RECENT NOTES:\n")
+	recentNotes := make([]string, 0, max)
 	for i := 0; i < max; i++ {
 		n := notes[i]
-		sb.WriteString(fmt.Sprintf("- [%s] %s: %s\n", n.Type, n.AuthorEmail, sanitizeUserInput(n.Body, 400)))
+		recentNotes = append(recentNotes, fmt.Sprintf("- [%s] %s: %s", n.Type, n.AuthorEmail, sanitizeUserInput(n.Body, 400)))
 	}
-	sb.WriteString("\n")
+	sb.WriteString(wrapReferenceBlock(strings.Join(recentNotes, "\n")) + "\n\n")
 
 	sb.WriteString("OUTPUT RULES:\n")
+	sb.WriteString("- Final output must contain only the SubmitAuditResult tool call.\n")
 	sb.WriteString("- If missing required info: SubmitAuditResult(passed=false, missing=[...], summary=short Dutch explanation).\n")
 	sb.WriteString("- If sufficient: SubmitAuditResult(passed=true, missing=[], summary=short confirmation).\n")
 	return sb.String()
