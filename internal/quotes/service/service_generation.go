@@ -394,9 +394,10 @@ func (s *Service) updateDraftQuote(ctx context.Context, params DraftQuoteParams)
 func buildDraftCalcItems(items []DraftQuoteItemParams) []transport.QuoteItemRequest {
 	calcItems := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
+		quantity := normalizeQuantityString(it.Quantity)
 		calcItems[i] = transport.QuoteItemRequest{
 			Description:      it.Description,
-			Quantity:         it.Quantity,
+			Quantity:         quantity,
 			UnitPriceCents:   it.UnitPriceCents,
 			TaxRateBps:       it.TaxRateBps,
 			IsOptional:       it.IsOptional,
@@ -411,13 +412,14 @@ func buildDraftRepoItems(quoteID, orgID uuid.UUID, items []DraftQuoteItemParams,
 	repoItems := make([]repository.QuoteItem, len(items))
 	catalogCount := 0
 	for i, it := range items {
+		quantity := normalizeQuantityString(it.Quantity)
 		repoItems[i] = repository.QuoteItem{
 			ID:               uuid.New(),
 			QuoteID:          quoteID,
 			OrganizationID:   orgID,
 			Description:      it.Description,
-			Quantity:         it.Quantity,
-			QuantityNumeric:  parseQuantityNumber(it.Quantity),
+			Quantity:         quantity,
+			QuantityNumeric:  parseQuantityNumber(quantity),
 			UnitPriceCents:   it.UnitPriceCents,
 			TaxRateBps:       it.TaxRateBps,
 			IsOptional:       it.IsOptional,

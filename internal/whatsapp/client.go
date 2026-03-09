@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -96,6 +97,115 @@ type SendResult struct {
 	MessageID string
 }
 
+const headerContentType = "Content-Type"
+
+type MediaAttachment struct {
+	Filename string
+	Data     []byte
+}
+
+type SendImageInput struct {
+	PhoneNumber     string
+	Caption         string
+	ViewOnce        bool
+	Compress        bool
+	IsForwarded     bool
+	DurationSeconds *int
+	Attachment      *MediaAttachment
+	RemoteURL       string
+}
+
+type SendVideoInput struct {
+	PhoneNumber     string
+	Caption         string
+	ViewOnce        bool
+	Compress        bool
+	IsForwarded     bool
+	DurationSeconds *int
+	Attachment      *MediaAttachment
+	RemoteURL       string
+}
+
+type SendAudioInput struct {
+	PhoneNumber     string
+	IsForwarded     bool
+	PTT             bool
+	DurationSeconds *int
+	Attachment      *MediaAttachment
+	RemoteURL       string
+}
+
+type SendFileInput struct {
+	PhoneNumber     string
+	Caption         string
+	IsForwarded     bool
+	DurationSeconds *int
+	Attachment      *MediaAttachment
+	RemoteURL       string
+}
+
+type SendStickerInput struct {
+	PhoneNumber     string
+	IsForwarded     bool
+	DurationSeconds *int
+	Attachment      *MediaAttachment
+	RemoteURL       string
+}
+
+type SendContactInput struct {
+	PhoneNumber     string `json:"phone"`
+	ContactName     string `json:"contact_name"`
+	ContactPhone    string `json:"contact_phone"`
+	IsForwarded     bool   `json:"is_forwarded,omitempty"`
+	DurationSeconds *int   `json:"duration,omitempty"`
+}
+
+type SendLinkInput struct {
+	PhoneNumber     string `json:"phone"`
+	Link            string `json:"link"`
+	Caption         string `json:"caption,omitempty"`
+	IsForwarded     bool   `json:"is_forwarded,omitempty"`
+	DurationSeconds *int   `json:"duration,omitempty"`
+}
+
+type SendLocationInput struct {
+	PhoneNumber     string `json:"phone"`
+	Latitude        string `json:"latitude"`
+	Longitude       string `json:"longitude"`
+	IsForwarded     bool   `json:"is_forwarded,omitempty"`
+	DurationSeconds *int   `json:"duration,omitempty"`
+}
+
+type SendPollInput struct {
+	PhoneNumber     string   `json:"phone"`
+	Question        string   `json:"question"`
+	Options         []string `json:"options"`
+	MaxAnswer       int      `json:"max_answer"`
+	DurationSeconds *int     `json:"duration,omitempty"`
+}
+
+type ReactMessageInput struct {
+	PhoneNumber string `json:"phone"`
+	Emoji       string `json:"emoji"`
+}
+
+type UpdateMessageInput struct {
+	PhoneNumber string `json:"phone"`
+	Message     string `json:"message"`
+}
+
+type MessageTargetInput struct {
+	PhoneNumber string `json:"phone"`
+}
+
+type ToggleChatInput struct {
+	Value bool
+}
+
+type SetDisappearingTimerInput struct {
+	TimerSeconds int
+}
+
 type actionRequest struct {
 	Type   string `json:"type,omitempty"`
 	Phone  string `json:"phone,omitempty"`
@@ -167,6 +277,120 @@ func (c *Client) SendMessage(ctx context.Context, deviceID string, phoneNumber s
 		c.log.Info("whatsapp sent via gowa", "phone", normalized, "deviceId", targetDevice, "messageId", result.MessageID)
 	}
 	return result, err
+}
+
+func (c *Client) SendImage(ctx context.Context, deviceID string, input SendImageInput) (SendResult, error) {
+	fields := buildMediaFields(input.PhoneNumber)
+	fields["caption"] = strings.TrimSpace(input.Caption)
+	fields["view_once"] = boolString(input.ViewOnce)
+	fields["compress"] = boolString(input.Compress)
+	fields["is_forwarded"] = boolString(input.IsForwarded)
+	addOptionalIntField(fields, "duration", input.DurationSeconds)
+	addOptionalStringField(fields, "image_url", input.RemoteURL)
+	return c.sendMultipartMedia(ctx, deviceID, "/send/image", fields, "image", input.Attachment)
+}
+
+func (c *Client) SendVideo(ctx context.Context, deviceID string, input SendVideoInput) (SendResult, error) {
+	fields := buildMediaFields(input.PhoneNumber)
+	fields["caption"] = strings.TrimSpace(input.Caption)
+	fields["view_once"] = boolString(input.ViewOnce)
+	fields["compress"] = boolString(input.Compress)
+	fields["is_forwarded"] = boolString(input.IsForwarded)
+	addOptionalIntField(fields, "duration", input.DurationSeconds)
+	addOptionalStringField(fields, "video_url", input.RemoteURL)
+	return c.sendMultipartMedia(ctx, deviceID, "/send/video", fields, "video", input.Attachment)
+}
+
+func (c *Client) SendAudio(ctx context.Context, deviceID string, input SendAudioInput) (SendResult, error) {
+	fields := buildMediaFields(input.PhoneNumber)
+	fields["is_forwarded"] = boolString(input.IsForwarded)
+	fields["ptt"] = boolString(input.PTT)
+	addOptionalIntField(fields, "duration", input.DurationSeconds)
+	addOptionalStringField(fields, "audio_url", input.RemoteURL)
+	return c.sendMultipartMedia(ctx, deviceID, "/send/audio", fields, "audio", input.Attachment)
+}
+
+func (c *Client) SendFile(ctx context.Context, deviceID string, input SendFileInput) (SendResult, error) {
+	fields := buildMediaFields(input.PhoneNumber)
+	fields["caption"] = strings.TrimSpace(input.Caption)
+	fields["is_forwarded"] = boolString(input.IsForwarded)
+	addOptionalIntField(fields, "duration", input.DurationSeconds)
+	addOptionalStringField(fields, "file_url", input.RemoteURL)
+	return c.sendMultipartMedia(ctx, deviceID, "/send/file", fields, "file", input.Attachment)
+}
+
+func (c *Client) SendSticker(ctx context.Context, deviceID string, input SendStickerInput) (SendResult, error) {
+	fields := buildMediaFields(input.PhoneNumber)
+	fields["is_forwarded"] = boolString(input.IsForwarded)
+	addOptionalIntField(fields, "duration", input.DurationSeconds)
+	addOptionalStringField(fields, "sticker_url", input.RemoteURL)
+	return c.sendMultipartMedia(ctx, deviceID, "/send/sticker", fields, "sticker", input.Attachment)
+}
+
+func (c *Client) SendContact(ctx context.Context, deviceID string, input SendContactInput) (SendResult, error) {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	input.ContactPhone = normalizeRecipient(input.ContactPhone)
+	return c.sendJSONMessage(ctx, deviceID, "/send/contact", input)
+}
+
+func (c *Client) SendLink(ctx context.Context, deviceID string, input SendLinkInput) (SendResult, error) {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	return c.sendJSONMessage(ctx, deviceID, "/send/link", input)
+}
+
+func (c *Client) SendLocation(ctx context.Context, deviceID string, input SendLocationInput) (SendResult, error) {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	return c.sendJSONMessage(ctx, deviceID, "/send/location", input)
+}
+
+func (c *Client) SendPoll(ctx context.Context, deviceID string, input SendPollInput) (SendResult, error) {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	return c.sendJSONMessage(ctx, deviceID, "/send/poll", input)
+}
+
+func (c *Client) ReactMessage(ctx context.Context, deviceID string, messageID string, input ReactMessageInput) error {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/message/%s/reaction", c.baseURL, url.PathEscape(strings.TrimSpace(messageID))), deviceID, map[string]any{
+		"phone": input.PhoneNumber,
+		"emoji": strings.TrimSpace(input.Emoji),
+	})
+	return err
+}
+
+func (c *Client) UpdateMessage(ctx context.Context, deviceID string, messageID string, input UpdateMessageInput) error {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/message/%s/update", c.baseURL, url.PathEscape(strings.TrimSpace(messageID))), deviceID, map[string]any{
+		"phone":   input.PhoneNumber,
+		"message": strings.TrimSpace(input.Message),
+	})
+	return err
+}
+
+func (c *Client) DeleteMessage(ctx context.Context, deviceID string, messageID string, input MessageTargetInput) error {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/message/%s/delete", c.baseURL, url.PathEscape(strings.TrimSpace(messageID))), deviceID, input)
+	return err
+}
+
+func (c *Client) RevokeMessage(ctx context.Context, deviceID string, messageID string, input MessageTargetInput) error {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/message/%s/revoke", c.baseURL, url.PathEscape(strings.TrimSpace(messageID))), deviceID, input)
+	return err
+}
+
+func (c *Client) ArchiveChat(ctx context.Context, deviceID string, chatJID string, archived bool) error {
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/chat/%s/archive", c.baseURL, url.PathEscape(strings.TrimSpace(chatJID))), deviceID, map[string]any{"archived": archived})
+	return err
+}
+
+func (c *Client) PinChat(ctx context.Context, deviceID string, chatJID string, pinned bool) error {
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/chat/%s/pin", c.baseURL, url.PathEscape(strings.TrimSpace(chatJID))), deviceID, map[string]any{"pinned": pinned})
+	return err
+}
+
+func (c *Client) SetDisappearingTimer(ctx context.Context, deviceID string, chatJID string, timerSeconds int) error {
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/chat/%s/disappearing", c.baseURL, url.PathEscape(strings.TrimSpace(chatJID))), deviceID, map[string]any{"timer_seconds": timerSeconds})
+	return err
 }
 
 func hostFromURL(raw string) string {
@@ -373,7 +597,7 @@ func (c *Client) fetchLoginQR(ctx context.Context, url string, deviceID string) 
 	}
 
 	// If GoWA returned JSON instead of an image, extract the QR URL and fetch it.
-	ct := resp.Header.Get("Content-Type")
+	ct := resp.Header.Get(headerContentType)
 	if strings.Contains(ct, "application/json") || (len(qrBytes) > 0 && qrBytes[0] == '{') {
 		if img, err := c.extractQRFromJSON(ctx, qrBytes); err == nil && img != nil {
 			return img, false, nil
@@ -669,33 +893,9 @@ func (c *Client) ReconnectDevice(ctx context.Context, deviceID string) error {
 }
 
 func (c *Client) postJSONAction(ctx context.Context, endpoint string, deviceID string, payload any) (string, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal whatsapp action payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(body))
+	data, err := c.doJSONRequest(ctx, http.MethodPost, endpoint, deviceID, payload)
 	if err != nil {
 		return "", err
-	}
-
-	c.addHeaders(req, deviceID)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		return "", fmt.Errorf("whatsapp service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
 	var parsed providerActionResponse
@@ -711,13 +911,188 @@ func (c *Client) postJSONAction(ctx context.Context, endpoint string, deviceID s
 	return "", nil
 }
 
+func (c *Client) sendJSONMessage(ctx context.Context, deviceID string, path string, payload any) (SendResult, error) {
+	if c == nil {
+		return SendResult{}, nil
+	}
+	data, err := c.doJSONRequest(ctx, http.MethodPost, c.baseURL+path, deviceID, payload)
+	if err != nil {
+		return SendResult{}, err
+	}
+	return SendResult{MessageID: parseSendMessageID(data)}, nil
+}
+
+func (c *Client) sendMultipartMedia(ctx context.Context, deviceID string, path string, fields map[string]string, fileField string, attachment *MediaAttachment) (SendResult, error) {
+	if c == nil {
+		return SendResult{}, nil
+	}
+	data, err := c.doMultipartRequest(ctx, c.baseURL+path, deviceID, fields, fileField, attachment)
+	if err != nil {
+		return SendResult{}, err
+	}
+	return SendResult{MessageID: parseSendMessageID(data)}, nil
+}
+
+func (c *Client) doJSONRequest(ctx context.Context, method string, endpoint string, deviceID string, payload any) ([]byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal whatsapp payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+
+	c.addHeaders(req, deviceID)
+	return c.doRequest(req)
+}
+
+func (c *Client) doMultipartRequest(ctx context.Context, endpoint string, deviceID string, fields map[string]string, fileField string, attachment *MediaAttachment) ([]byte, error) {
+	if attachment == nil && strings.TrimSpace(fields[fileURLFieldName(fileField)]) == "" {
+		return nil, fmt.Errorf("attachment or remote url is required")
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writeMultipartFields(writer, fields); err != nil {
+		return nil, err
+	}
+	if err := writeMultipartAttachment(writer, fileField, attachment); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
+	if err != nil {
+		return nil, err
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", formatAuthHeader(c.apiKey))
+	}
+	if deviceID != "" {
+		req.Header.Set("X-Device-Id", deviceID)
+	}
+	req.Header.Set(headerContentType, writer.FormDataContentType())
+	return c.doRequest(req)
+}
+
+func (c *Client) doRequest(req *http.Request) ([]byte, error) {
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("whatsapp service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return data, nil
+}
+
 func normalizeActionPhone(value string) string {
-	normalized := strings.TrimPrefix(phone.NormalizeE164(value), "+")
-	return strings.TrimSpace(normalized)
+	return normalizeRecipient(value)
+}
+
+func normalizeRecipient(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "@") {
+		return trimmed
+	}
+	return strings.TrimPrefix(phone.NormalizeE164(trimmed), "+")
+}
+
+func buildMediaFields(phoneNumber string) map[string]string {
+	return map[string]string{"phone": normalizeRecipient(phoneNumber)}
+}
+
+func addOptionalIntField(fields map[string]string, key string, value *int) {
+	if value == nil {
+		return
+	}
+	fields[key] = fmt.Sprintf("%d", *value)
+}
+
+func addOptionalStringField(fields map[string]string, key string, value string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return
+	}
+	fields[key] = trimmed
+}
+
+func boolString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
+func attachmentFilename(attachment *MediaAttachment, fallback string) string {
+	if attachment == nil {
+		return fallback
+	}
+	trimmed := strings.TrimSpace(attachment.Filename)
+	if trimmed != "" {
+		return trimmed
+	}
+	return fallback
+}
+
+func fileURLFieldName(fileField string) string {
+	switch fileField {
+	case "image":
+		return "image_url"
+	case "video":
+		return "video_url"
+	case "audio":
+		return "audio_url"
+	case "sticker":
+		return "sticker_url"
+	default:
+		return fileField + "_url"
+	}
+}
+
+func writeMultipartFields(writer *multipart.Writer, fields map[string]string) error {
+	for key, value := range fields {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if err := writer.WriteField(key, value); err != nil {
+			return fmt.Errorf("write multipart field %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func writeMultipartAttachment(writer *multipart.Writer, fileField string, attachment *MediaAttachment) error {
+	if attachment == nil {
+		return nil
+	}
+	part, err := writer.CreateFormFile(fileField, attachmentFilename(attachment, fileField))
+	if err != nil {
+		return fmt.Errorf("create multipart file %s: %w", fileField, err)
+	}
+	if _, err := part.Write(attachment.Data); err != nil {
+		return fmt.Errorf("write multipart file %s: %w", fileField, err)
+	}
+	return nil
 }
 
 func (c *Client) addHeaders(req *http.Request, deviceID string) {
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(headerContentType, "application/json")
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", formatAuthHeader(c.apiKey))
 	}

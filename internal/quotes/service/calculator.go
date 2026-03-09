@@ -12,10 +12,19 @@ import (
 
 var quantityRegex = regexp.MustCompile(`^([\d.,]+)`)
 
+func normalizeQuantityString(quantity string) string {
+	trimmed := strings.TrimSpace(quantity)
+	if trimmed == "" {
+		return "1"
+	}
+	return trimmed
+}
+
 // parseQuantityNumber extracts numeric value from free-form quantity string.
 // Examples: "5 x" -> 5.0, "10 m²" -> 10.0, "3.5 uur" -> 3.5
 func parseQuantityNumber(quantity string) float64 {
-	matches := quantityRegex.FindStringSubmatch(strings.TrimSpace(quantity))
+	normalized := normalizeQuantityString(quantity)
+	matches := quantityRegex.FindStringSubmatch(normalized)
 	if len(matches) < 2 {
 		return 1.0
 	}

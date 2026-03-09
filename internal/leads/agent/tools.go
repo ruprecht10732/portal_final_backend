@@ -4050,13 +4050,22 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		return DraftQuoteOutput{Success: false, Message: "At least one item is required"}, fmt.Errorf("empty items")
 	}
 
-	deps.SetLastDraftInput(input)
+	normalizedInput, quantityCorrections := normalizeDraftQuoteInput(input)
+	for _, correction := range quantityCorrections {
+		log.Printf("DraftQuote: defaulted missing quantity to 1 run=%s service=%s itemIndex=%d description=%q", deps.GetRunID(), serviceID, correction.Index, correction.Description)
+	}
+	if invalidQuantity, invalid := findInvalidDraftQuoteQuantity(normalizedInput.Items); invalid {
+		log.Printf("DraftQuote: rejected vague quantity run=%s service=%s itemIndex=%d quantity=%q description=%q", deps.GetRunID(), serviceID, invalidQuantity.Index, invalidQuantity.Quantity, invalidQuantity.Description)
+		return DraftQuoteOutput{Success: false, Message: "Conceptofferte vereist concrete hoeveelheden per regel"}, fmt.Errorf("draft quote invalid quantity at item %d: %q", invalidQuantity.Index, invalidQuantity.Quantity)
+	}
 
-	if blockedOutput, blockedErr := validateDraftQuoteGovernance(ctx, deps, leadID, serviceID, *tenantID, len(input.Items)); blockedErr != nil {
+	deps.SetLastDraftInput(normalizedInput)
+
+	if blockedOutput, blockedErr := validateDraftQuoteGovernance(ctx, deps, leadID, serviceID, *tenantID, len(normalizedInput.Items)); blockedErr != nil {
 		return blockedOutput, blockedErr
 	}
 
-	portItems := convertDraftItems(input.Items)
+	portItems := convertDraftItems(normalizedInput.Items)
 	portItems, err := enforceCatalogUnitPrices(ctx, deps, *tenantID, portItems)
 	if err != nil {
 		return DraftQuoteOutput{Success: false, Message: err.Error()}, err
@@ -4073,7 +4082,7 @@ func handleDraftQuote(ctx tool.Context, deps *ToolDependencies, input DraftQuote
 		LeadServiceID:   serviceID,
 		OrganizationID:  *tenantID,
 		CreatedByID:     uuid.Nil,
-		Notes:           input.Notes,
+		Notes:           normalizedInput.Notes,
 		Items:           portItems,
 		Attachments:     portAttachments,
 		URLs:            portURLs,
@@ -4423,6 +4432,76 @@ func logCatalogNormalizationSummary(priceAdjusted int, vatAdjusted int, unresolv
 	}
 }
 
+type draftQuoteQuantityCorrection struct {
+	Index       int
+	Description string
+}
+
+type invalidDraftQuoteQuantity struct {
+	Index       int
+	Description string
+	Quantity    string
+}
+
+func normalizeDraftQuoteInput(input DraftQuoteInput) (DraftQuoteInput, []draftQuoteQuantityCorrection) {
+	normalized := input
+	normalized.Notes = strings.TrimSpace(input.Notes)
+	normalized.Items = make([]DraftQuoteItem, len(input.Items))
+	corrections := make([]draftQuoteQuantityCorrection, 0)
+	for i, item := range input.Items {
+		normalizedItem, corrected := normalizeDraftQuoteItem(item)
+		normalized.Items[i] = normalizedItem
+		if corrected {
+			corrections = append(corrections, draftQuoteQuantityCorrection{
+				Index:       i,
+				Description: normalizedItem.Description,
+			})
+		}
+	}
+	return normalized, corrections
+}
+
+func normalizeDraftQuoteItem(item DraftQuoteItem) (DraftQuoteItem, bool) {
+	item.Description = strings.TrimSpace(item.Description)
+	item.Quantity = strings.TrimSpace(item.Quantity)
+	if item.Quantity != "" {
+		return item, false
+	}
+	item.Quantity = "1"
+	return item, true
+}
+
+func findInvalidDraftQuoteQuantity(items []DraftQuoteItem) (invalidDraftQuoteQuantity, bool) {
+	for i, item := range items {
+		if isVagueDraftQuoteQuantity(item.Quantity) {
+			return invalidDraftQuoteQuantity{
+				Index:       i,
+				Description: item.Description,
+				Quantity:    item.Quantity,
+			}, true
+		}
+	}
+	return invalidDraftQuoteQuantity{}, false
+}
+
+func isVagueDraftQuoteQuantity(quantity string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(quantity))
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(normalized, "?") {
+		return true
+	}
+	replacer := strings.NewReplacer(".", "", "-", " ", "_", " ", "/", " ")
+	normalized = strings.Join(strings.Fields(replacer.Replace(normalized)), " ")
+	switch normalized {
+	case "nader te bepalen", "nog te bepalen", "onbekend", "unknown", "tbd", "ntb", "nvt":
+		return true
+	default:
+		return false
+	}
+}
+
 // convertDraftItems converts tool-level DraftQuoteItems to port-level items.
 func convertDraftItems(items []DraftQuoteItem) []ports.DraftQuoteItem {
 	portItems := make([]ports.DraftQuoteItem, len(items))
@@ -4467,6 +4546,10 @@ func createDraftQuoteTool(_ *ToolDependencies) (tool.Tool, error) {
 		Description: `Creates a draft quote for the current lead based on estimation results.
 Use this AFTER searching the catalog and calculating estimates.
 For each item, provide description, quantity, unitPriceCents (in euro-cents), taxRateBps.
+Quantity is mandatory on every line item and must be concrete and unit-aware, for example "2 stuks", "6 meter", "1 set", or "3 uur".
+Never leave quantity blank or implied by the description; if quantity must be derived, calculate it first with Calculator.
+Placeholder quantities like "?", "nader te bepalen", or "tbd" are rejected.
+If you cannot justify a quantity from the intake or scope, do not draft the quote yet.
 IMPORTANT: If a suitable product is found, set unitPriceCents to the product's "priceCents" value from SearchProductMaterials (already in cents).
 Only estimate unitPriceCents when no suitable product was found.
 If the item came from SearchProductMaterials, include its catalogProductId.

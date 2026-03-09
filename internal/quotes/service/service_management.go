@@ -73,13 +73,14 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		if it.IsOptional {
 			selected = it.IsSelected
 		}
+		quantity := normalizeQuantityString(it.Quantity)
 		items[i] = repository.QuoteItem{
 			ID:               uuid.New(),
 			QuoteID:          quote.ID,
 			OrganizationID:   tenantID,
 			Description:      it.Description,
-			Quantity:         it.Quantity,
-			QuantityNumeric:  parseQuantityNumber(it.Quantity),
+			Quantity:         quantity,
+			QuantityNumeric:  parseQuantityNumber(quantity),
 			UnitPriceCents:   it.UnitPriceCents,
 			TaxRateBps:       it.TaxRateBps,
 			IsOptional:       it.IsOptional,
@@ -171,7 +172,8 @@ func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteI
 		if it.IsOptional {
 			selected = it.IsSelected
 		}
-		result[i] = repository.QuoteItem{ID: uuid.New(), QuoteID: quoteID, OrganizationID: tenantID, Title: it.Title, Description: it.Description, Quantity: it.Quantity, QuantityNumeric: parseQuantityNumber(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: selected, SortOrder: i, CatalogProductID: it.CatalogProductID, CreatedAt: now}
+		quantity := normalizeQuantityString(it.Quantity)
+		result[i] = repository.QuoteItem{ID: uuid.New(), QuoteID: quoteID, OrganizationID: tenantID, Title: it.Title, Description: it.Description, Quantity: quantity, QuantityNumeric: parseQuantityNumber(quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: selected, SortOrder: i, CatalogProductID: it.CatalogProductID, CreatedAt: now}
 	}
 	return result
 }
@@ -179,7 +181,7 @@ func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteI
 func toItemRequests(items []repository.QuoteItem) []transport.QuoteItemRequest {
 	reqs := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
-		reqs[i] = transport.QuoteItemRequest{Title: it.Title, Description: it.Description, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
+		reqs[i] = transport.QuoteItemRequest{Title: it.Title, Description: it.Description, Quantity: normalizeQuantityString(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
 	}
 	return reqs
 }

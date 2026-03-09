@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/identity/transport"
 	"portal_final_backend/platform/httpkit"
 
@@ -144,7 +145,33 @@ func (h *Handler) SendWhatsAppConversationMessage(c *gin.Context) {
 		return
 	}
 
-	conversation, message, err := h.svc.SendWhatsAppConversationMessage(c.Request.Context(), *tenantID, conversationID, req.Body)
+	messageInput := service.SendWhatsAppConversationMessageInput{
+		Type:            req.Type,
+		Body:            req.Body,
+		Caption:         req.Caption,
+		ViewOnce:        req.ViewOnce,
+		Compress:        req.Compress,
+		IsForwarded:     req.IsForwarded,
+		PushToTalk:      req.PushToTalk,
+		ContactName:     req.ContactName,
+		ContactPhone:    req.ContactPhone,
+		Link:            req.Link,
+		Latitude:        req.Latitude,
+		Longitude:       req.Longitude,
+		Question:        req.Question,
+		Options:         req.Options,
+		MaxAnswer:       req.MaxAnswer,
+		DurationSeconds: req.DurationSeconds,
+	}
+	if req.Attachment != nil {
+		messageInput.Attachment = &service.SendWhatsAppConversationAttachmentInput{
+			Filename:   req.Attachment.Filename,
+			Base64Data: req.Attachment.Base64Data,
+			RemoteURL:  req.Attachment.RemoteURL,
+		}
+	}
+
+	conversation, message, err := h.svc.SendWhatsAppConversationMessage(c.Request.Context(), *tenantID, conversationID, messageInput)
 	if httpkit.HandleError(c, err) {
 		return
 	}

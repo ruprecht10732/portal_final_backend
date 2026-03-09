@@ -46,8 +46,30 @@ type ListWhatsAppMessagesResponse struct {
 	Messages     []WhatsAppMessageResponse    `json:"messages"`
 }
 
+type SendWhatsAppConversationAttachmentRequest struct {
+	Filename   string `json:"filename" validate:"max=255"`
+	Base64Data string `json:"base64Data"`
+	RemoteURL  string `json:"remoteUrl" validate:"max=2048"`
+}
+
 type SendWhatsAppConversationMessageRequest struct {
-	Body string `json:"body" validate:"required,max=4000"`
+	Type            string                                     `json:"type" validate:"omitempty,oneof=text image video audio file sticker contact link location poll"`
+	Body            string                                     `json:"body" validate:"max=4000"`
+	Caption         string                                     `json:"caption" validate:"max=4000"`
+	ViewOnce        bool                                       `json:"viewOnce"`
+	Compress        bool                                       `json:"compress"`
+	IsForwarded     bool                                       `json:"isForwarded"`
+	PushToTalk      bool                                       `json:"pushToTalk"`
+	Attachment      *SendWhatsAppConversationAttachmentRequest `json:"attachment,omitempty"`
+	ContactName     string                                     `json:"contactName" validate:"max=255"`
+	ContactPhone    string                                     `json:"contactPhone" validate:"max=64"`
+	Link            string                                     `json:"link" validate:"max=2048"`
+	Latitude        string                                     `json:"latitude" validate:"max=64"`
+	Longitude       string                                     `json:"longitude" validate:"max=64"`
+	Question        string                                     `json:"question" validate:"max=1000"`
+	Options         []string                                   `json:"options,omitempty"`
+	MaxAnswer       int                                        `json:"maxAnswer"`
+	DurationSeconds *int                                       `json:"durationSeconds,omitempty"`
 }
 
 type SendWhatsAppPresenceRequest struct {

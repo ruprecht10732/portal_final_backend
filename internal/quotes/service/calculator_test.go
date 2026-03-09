@@ -6,6 +6,37 @@ import (
 	"portal_final_backend/internal/quotes/transport"
 )
 
+func TestParseQuantityNumberDefaultsToOneForBlankOrMalformedInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		quantity string
+		want     float64
+	}{
+		{name: "blank", quantity: "", want: 1},
+		{name: "whitespace", quantity: "   ", want: 1},
+		{name: "malformed", quantity: "abc", want: 1},
+		{name: "decimal comma", quantity: "1,5 uur", want: 1.5},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := parseQuantityNumber(test.quantity)
+			if got != test.want {
+				t.Fatalf("expected %v, got %v", test.want, got)
+			}
+		})
+	}
+}
+
+func TestNormalizeQuantityStringDefaultsBlankToOne(t *testing.T) {
+	if got := normalizeQuantityString(""); got != "1" {
+		t.Fatalf("expected blank quantity to normalize to 1, got %q", got)
+	}
+	if got := normalizeQuantityString(" 2 stuks "); got != "2 stuks" {
+		t.Fatalf("expected trimmed quantity, got %q", got)
+	}
+}
+
 func TestCalculateQuoteDiscountDoesNotReduceVATExclusivePricing(t *testing.T) {
 	req := transport.QuoteCalculationRequest{
 		PricingMode:   "exclusive",

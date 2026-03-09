@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
+	"strconv"
 	"time"
 
 	quotesdb "portal_final_backend/internal/quotes/db"
@@ -1766,11 +1769,15 @@ func toPgInt8Ptr(value *int64) pgtype.Int8 {
 }
 
 func toPgNumericValue(value float64) pgtype.Numeric {
-	var numeric pgtype.Numeric
-	if err := numeric.Scan(value); err != nil {
-		return pgtype.Numeric{}
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		value = 1
 	}
-	return numeric
+	formatted := strconv.FormatFloat(value, 'f', -1, 64)
+	var numeric pgtype.Numeric
+	if err := numeric.Scan(formatted); err == nil && numeric.Valid {
+		return numeric
+	}
+	return pgtype.Numeric{Int: big.NewInt(1), Exp: 0, Valid: true}
 }
 
 func optionalInt(value pgtype.Int4) *int {

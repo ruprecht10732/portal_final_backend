@@ -14,6 +14,7 @@ const toolOrderMandatoryHeader = "=== TOOL ORDER (MANDATORY) ==="
 const gatekeeperIntakeRequirement = "Meetgegevens vereist"
 const expectedGatekeeperPromptContainsFmt = "expected gatekeeper prompt to contain %q"
 const expectedDispatcherPromptContainsFmt = "expected dispatcher prompt to contain %q"
+const expectedEstimatorPromptContainsFmt = "expected estimator prompt to contain %q"
 const expectedQuotePromptContainsFmt = "expected quote generator prompt to contain %q"
 const expectedAuditPromptContainsFmt = "expected audit prompt to contain %q"
 const estimatorPromptInstruction = "Gebruik standaard afwerking"
@@ -379,7 +380,7 @@ func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 
 	for _, token := range checks {
 		if !strings.Contains(prompt, token) {
-			t.Fatalf("expected estimator prompt to contain %q", token)
+			t.Fatalf(expectedEstimatorPromptContainsFmt, token)
 		}
 	}
 }
@@ -396,7 +397,24 @@ func TestBuildEstimatorPromptIncludesSingleExpressionMathExamples(t *testing.T) 
 
 	for _, token := range checks {
 		if !strings.Contains(prompt, token) {
-			t.Fatalf("expected estimator prompt to contain %q", token)
+			t.Fatalf(expectedEstimatorPromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildEstimatorPromptRequiresConcreteQuantities(t *testing.T) {
+	lead, service, notes, _, _, photo := testPromptFixtures()
+	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
+
+	checks := []string{
+		"[MANDATORY] Every DraftQuote line must include a concrete non-empty quantity string that matches the commercial unit, for example \"2 stuks\", \"6 meter\", \"1 set\", or \"3 uur\".",
+		"[MANDATORY] Never leave quantity blank, vague, or only implied by the description; derive it explicitly with Calculator when needed.",
+		"[MANDATORY] If you cannot justify a quantity from intake, scope, or catalog unit semantics, do NOT call DraftQuote.",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedEstimatorPromptContainsFmt, token)
 		}
 	}
 }
@@ -479,6 +497,23 @@ func TestBuildQuoteGeneratePromptIncludesSingleExpressionMathExamples(t *testing
 		"[MANDATORY] Prefer one Calculator expression when you need subtotal + VAT + markup in a single step.",
 		"[EXAMPLE] VAT-inclusive subtotal: Calculator(expression=\"((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21\").",
 		"[EXAMPLE] VAT-inclusive subtotal plus markup: Calculator(expression=\"(((unit_price_1 * qty_1) + (unit_price_2 * qty_2)) * 1.21) * 1.10\").",
+	}
+
+	for _, token := range checks {
+		if !strings.Contains(prompt, token) {
+			t.Fatalf(expectedQuotePromptContainsFmt, token)
+		}
+	}
+}
+
+func TestBuildQuoteGeneratePromptRequiresConcreteQuantities(t *testing.T) {
+	lead, service, notes, _, _, _ := testPromptFixtures()
+	prompt := buildQuoteGeneratePrompt(lead, service, notes, quoteGeneratorPromptRequest, quoteGeneratorPromptEstimation)
+
+	checks := []string{
+		"[MANDATORY] Every DraftQuote line must include a concrete non-empty quantity string that matches the commercial unit, for example \"2 stuks\", \"6 meter\", \"1 set\", or \"3 uur\".",
+		"[MANDATORY] Never leave quantity blank, vague, or only implied by the description; derive it explicitly with Calculator when needed.",
+		"[MANDATORY] If you cannot justify a quantity from intake, scope, or catalog unit semantics, do NOT call DraftQuote.",
 	}
 
 	for _, token := range checks {
