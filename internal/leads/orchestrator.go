@@ -104,6 +104,12 @@ func (o *Orchestrator) SetOrganizationAISettingsReader(reader ports.Organization
 }
 
 func (o *Orchestrator) SetAutomationScheduler(queue AutomationScheduler) {
+	if queue == nil {
+		if o.log != nil {
+			o.log.Error("orchestrator: SetAutomationScheduler called with nil queue")
+		}
+		panic("orchestrator: automation scheduler is required")
+	}
 	o.automationQueue = queue
 }
 

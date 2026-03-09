@@ -22,14 +22,18 @@ import (
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/ai/moonshot"
 	"portal_final_backend/platform/apperr"
+	"portal_final_backend/platform/phone"
 )
 
 // Error messages
 const (
 	errMsgMissingContext       = "Missing context"
 	errMsgBookingNotConfigured = "Appointment booking not configured"
+	errMsgAppointmentRequired  = "Appointment must be booked or confirmed before setting Appointment_Scheduled"
+	errMsgLeadUpdaterMissing   = "Lead update not configured"
 	errBookerNotConfigured     = "booker not configured"
 )
 
@@ -46,6 +50,7 @@ type CallLogResult struct {
 	NoteCreated                   bool       `json:"noteCreated"`
 	NoteBody                      string     `json:"noteBody,omitempty"`
 	AuthorEmail                   string     `json:"authorEmail,omitempty"`
+	LeadUpdatedFields             []string   `json:"leadUpdatedFields,omitempty"`
 	CallOutcome                   *string    `json:"callOutcome,omitempty"`
 	StatusUpdated                 *string    `json:"statusUpdated,omitempty"`
 	PipelineStageUpdated          *string    `json:"pipelineStageUpdated,omitempty"`
@@ -53,7 +58,12 @@ type CallLogResult struct {
 	AppointmentRescheduled        *time.Time `json:"appointmentRescheduled,omitempty"`
 	AppointmentRescheduleFallback bool       `json:"appointmentRescheduleFallback,omitempty"`
 	AppointmentCancelled          bool       `json:"appointmentCancelled,omitempty"`
+	Warning                       string     `json:"warning,omitempty"`
 	Message                       string     `json:"message"`
+}
+
+type CallLoggerLeadUpdater interface {
+	Update(ctx context.Context, id uuid.UUID, req transport.UpdateLeadRequest, actorID uuid.UUID, tenantID uuid.UUID, actorRoles []string) (transport.LeadResponse, error)
 }
 
 // CallLogger processes post-call summaries into structured actions
@@ -64,6 +74,7 @@ type CallLogger struct {
 	appName        string
 	repo           repository.LeadsRepository
 	booker         ports.AppointmentBooker
+	leadUpdater    CallLoggerLeadUpdater
 	toolDeps       *CallLoggerToolDeps
 }
 
@@ -74,18 +85,26 @@ func (c *CallLogger) SetAppointmentBooker(booker ports.AppointmentBooker) {
 	c.toolDeps.Booker = booker
 }
 
+func (c *CallLogger) SetLeadUpdater(updater CallLoggerLeadUpdater) {
+	c.leadUpdater = updater
+	c.toolDeps.LeadUpdater = updater
+}
+
 // CallLoggerToolDeps contains the dependencies needed by CallLogger tools
 type CallLoggerToolDeps struct {
-	Repo     repository.LeadsRepository
-	Booker   ports.AppointmentBooker
-	EventBus events.Bus
-	mu       sync.RWMutex
+	Repo        repository.LeadsRepository
+	Booker      ports.AppointmentBooker
+	LeadUpdater CallLoggerLeadUpdater
+	EventBus    events.Bus
+	mu          sync.RWMutex
 
 	// Context for the current run
 	tenantID  *uuid.UUID
 	userID    *uuid.UUID
 	leadID    *uuid.UUID
 	serviceID *uuid.UUID
+
+	appointmentAvailable bool
 
 	// Track results during the run
 	result CallLogResult
@@ -102,6 +121,7 @@ func (d *CallLoggerToolDeps) SetContext(tenantID, userID, leadID, serviceID uuid
 	d.userID = &userID
 	d.leadID = &leadID
 	d.serviceID = &serviceID
+	d.appointmentAvailable = false
 	d.result = CallLogResult{} // Reset result
 	d.noteDraftBody = ""
 	d.noteDrafted = false
@@ -142,6 +162,12 @@ func (d *CallLoggerToolDeps) SetNoteDetails(body, authorEmail string) {
 	d.result.AuthorEmail = authorEmail
 }
 
+func (d *CallLoggerToolDeps) MarkLeadUpdated(fields []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.result.LeadUpdatedFields = append([]string(nil), fields...)
+}
+
 func (d *CallLoggerToolDeps) MarkStatusUpdated(status string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -151,12 +177,14 @@ func (d *CallLoggerToolDeps) MarkStatusUpdated(status string) {
 func (d *CallLoggerToolDeps) MarkAppointmentBooked(startTime time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.appointmentAvailable = true
 	d.result.AppointmentBooked = &startTime
 }
 
 func (d *CallLoggerToolDeps) MarkAppointmentRescheduled(startTime time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.appointmentAvailable = true
 	d.result.AppointmentRescheduled = &startTime
 }
 
@@ -169,7 +197,20 @@ func (d *CallLoggerToolDeps) MarkRescheduleFallback() {
 func (d *CallLoggerToolDeps) MarkAppointmentCancelled() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.appointmentAvailable = false
 	d.result.AppointmentCancelled = true
+}
+
+func (d *CallLoggerToolDeps) SetAppointmentAvailable(available bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.appointmentAvailable = available
+}
+
+func (d *CallLoggerToolDeps) HasAppointmentAvailable() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.appointmentAvailable
 }
 
 func (d *CallLoggerToolDeps) SetCallOutcome(outcome string) {
@@ -192,9 +233,10 @@ func (d *CallLoggerToolDeps) GetResult() CallLogResult {
 
 func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
 	return &CallLoggerToolDeps{
-		Repo:     d.Repo,
-		Booker:   d.Booker,
-		EventBus: d.EventBus,
+		Repo:        d.Repo,
+		Booker:      d.Booker,
+		LeadUpdater: d.LeadUpdater,
+		EventBus:    d.EventBus,
 	}
 }
 
@@ -250,19 +292,19 @@ func NewCallLogger(apiKey string, modelName string, repo repository.LeadsReposit
 
 // resolveExistingAppointment checks whether the lead already has a booked visit
 // and returns a human-readable timestamp or "None".
-func (c *CallLogger) resolveExistingAppointment(ctx context.Context, tenantID, serviceID, userID uuid.UUID) string {
+func (c *CallLogger) resolveExistingAppointment(ctx context.Context, tenantID, serviceID, userID uuid.UUID) (string, bool) {
 	if c.booker == nil {
-		return "None"
+		return "None", false
 	}
 
 	visit, err := c.booker.GetLeadVisitByService(ctx, tenantID, serviceID, userID)
 	if err == nil && visit != nil {
-		return visit.StartTime.Format(dateTimeShortLayout)
+		return visit.StartTime.Format(dateTimeShortLayout), true
 	}
 	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
 		log.Printf("CallLogger warning: failed to check existing appointment: %v", err)
 	}
-	return "None"
+	return "None", false
 }
 
 // executeAgentRun creates an ephemeral session, runs the agent, and returns the
@@ -317,7 +359,8 @@ func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, user
 	reqDeps.SetContext(tenantID, userID, leadID, serviceID)
 	ctx = WithCallLoggerDeps(ctx, reqDeps)
 
-	existingAppointment := c.resolveExistingAppointment(ctx, tenantID, serviceID, userID)
+	existingAppointment, hasExistingAppointment := c.resolveExistingAppointment(ctx, tenantID, serviceID, userID)
+	reqDeps.SetAppointmentAvailable(hasExistingAppointment)
 
 	// Construct the prompt with context
 	promptText := fmt.Sprintf(`Analysis Context:
@@ -335,22 +378,23 @@ Task:
 2. ALWAYS save a clean, professional Dutch call note using SaveNote (required).
 	- No raw input block, no invented facts, use 24-hour time (09:00).
 	- Prefer structure: Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen.
-3. If an appointment was scheduled (e.g., "booked next tuesday at 9", "scheduled for friday 2pm"):
+3. If the summary contains corrected lead details such as name, phone, email, street, house number, zip code, city, consumer role, or WhatsApp preference, use UpdateLeadDetails before writing follow-up status changes.
+4. If an appointment was scheduled (e.g., "booked next tuesday at 9", "scheduled for friday 2pm"):
    - Calculate the exact date based on Current Time
    - Use 'ScheduleVisit' to book the appointment
    - Assume 1 hour duration unless specified otherwise
-4. If an existing appointment must be rescheduled and a new time is provided:
+5. If an existing appointment must be rescheduled and a new time is provided:
    - Use 'RescheduleVisit' with the new start/end time
 	- Only reschedule if Existing Appointment is not "None"; otherwise schedule a new appointment and write "Nieuwe afspraak ingepland"
-5. If the appointment is cancelled:
+6. If the appointment is cancelled:
    - Use 'CancelVisit'
-6. Set a call outcome using 'SetCallOutcome' (short label, e.g., Appointment_Scheduled, Attempted_Contact, Disqualified, Needs_Rescheduling).
-7. Update the status using 'UpdateStatus' if the outcome implies a status change:
-	- "booked", "scheduled", "appointment set" → Appointment_Scheduled
+7. Set a call outcome using 'SetCallOutcome' (short label, e.g., Appointment_Scheduled, Attempted_Contact, Disqualified, Needs_Rescheduling).
+8. Update the status using 'UpdateStatus' if the outcome implies a status change:
+	- "booked", "scheduled", "appointment set" → Appointment_Scheduled, but ONLY after ScheduleVisit or RescheduleVisit succeeds, or when Existing Appointment is not "None"
 	- "not interested", "no need", "declined" → Disqualified
    - "voicemail", "no answer", "callback" → Attempted_Contact
 	- "needs to reschedule", "postponed" → Needs_Rescheduling
-8. Update the pipeline stage with 'UpdatePipelineStage' if the summary explicitly indicates a stage change.
+9. Update the pipeline stage with 'UpdatePipelineStage' if the summary explicitly indicates a stage change.
 
 Execute the appropriate tools now.`,
 		time.Now().Format(time.RFC3339),
@@ -377,6 +421,7 @@ Execute the appropriate tools now.`,
 
 	// Get the result and build message
 	result := GetCallLoggerDeps(ctx).GetResult()
+	result = enforceAppointmentSchedulingConsistency(result, reqDeps.HasAppointmentAvailable())
 	result.Message = buildResultMessage(result)
 
 	// Write the call-log timeline event here so the HTTP handler stays
@@ -455,6 +500,9 @@ func buildResultMessage(result CallLogResult) string {
 	if result.CallOutcome != nil {
 		messages = append(messages, fmt.Sprintf("Call outcome set to %s", *result.CallOutcome))
 	}
+	if len(result.LeadUpdatedFields) > 0 {
+		messages = append(messages, fmt.Sprintf("Lead details updated: %s", strings.Join(result.LeadUpdatedFields, ", ")))
+	}
 	if result.StatusUpdated != nil {
 		messages = append(messages, fmt.Sprintf("Status updated to %s", *result.StatusUpdated))
 	}
@@ -469,6 +517,9 @@ func buildResultMessage(result CallLogResult) string {
 	}
 	if result.AppointmentCancelled {
 		messages = append(messages, "Appointment cancelled")
+	}
+	if warning := strings.TrimSpace(result.Warning); warning != "" {
+		messages = append(messages, warning)
 	}
 	if len(messages) == 0 {
 		return "No actions taken"
@@ -486,6 +537,7 @@ IMPORTANT RULES:
 1. Draft a clean professional Dutch note, then ALWAYS call SaveNote.
 	- No raw input text and no invented details.
 	- Structure when possible (Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen).
+2. If the caller corrects lead details such as name, phone, email, street, house number, zip code, city, consumer role, or WhatsApp preference, use UpdateLeadDetails.
 3. Parse dates relative to the Current Time provided in the context:
    - "next Tuesday" = the coming Tuesday from Current Time
    - "tomorrow" = Current Time + 1 day
@@ -495,14 +547,15 @@ IMPORTANT RULES:
 5. Set a call outcome using SetCallOutcome (short label like Appointment_Scheduled, Attempted_Contact, Disqualified, Needs_Rescheduling).
 6. If the context says Existing Appointment is None, do NOT say "verplaatst". Schedule a new appointment and write "Nieuwe afspraak ingepland" in the note.
 7. Status mapping:
-	- Appointment scheduled/booked → "Appointment_Scheduled"
+	- Appointment scheduled/booked → "Appointment_Scheduled" ONLY after ScheduleVisit or RescheduleVisit succeeds, or when Existing Appointment is not None
    - No answer/voicemail/try again → "Attempted_Contact"  
 	- Not interested/declined/bad fit → "Disqualified"
    - Needs to reschedule/postponed → "Needs_Rescheduling"
-8. When booking RAC_appointments, also update status to "Appointment_Scheduled".
-9. Use 24-hour time format (e.g., 09:00, 14:30).
-10. Only act on explicitly stated information.
-11. Email confirmation behavior for RAC_appointments:
+8. Never call SetCallOutcome("Appointment_Scheduled") or UpdateStatus("Appointment_Scheduled") before an appointment is actually available.
+9. When booking RAC_appointments, also update status to "Appointment_Scheduled".
+10. Use 24-hour time format (e.g., 09:00, 14:30).
+11. Only act on explicitly stated information.
+12. Email confirmation behavior for RAC_appointments:
    - By default, sendConfirmationEmail should be TRUE (send email)
    - Only set sendConfirmationEmail to FALSE if the call notes explicitly mention:
      - "no email", "don't send email", "skip email", "no confirmation email"
@@ -511,6 +564,7 @@ IMPORTANT RULES:
 
 Available tools:
 - SaveNote: Saves the call note (ALWAYS use this; it will normalize/clean the body)
+- UpdateLeadDetails: Updates lead profile fields like address, phone, email, consumer role, or WhatsApp preference
 - SetCallOutcome: Stores a short outcome label for the call
 - UpdateStatus: Updates the lead service status
 - UpdatePipelineStage: Updates the pipeline stage when explicitly indicated
@@ -589,6 +643,11 @@ func buildCallLoggerTools() ([]tool.Tool, error) {
 		return nil, err
 	}
 
+	updateLeadDetailsTool, err := buildUpdateLeadDetailsTool()
+	if err != nil {
+		return nil, err
+	}
+
 	setCallOutcomeTool, err := buildSetCallOutcomeTool()
 	if err != nil {
 		return nil, err
@@ -621,6 +680,7 @@ func buildCallLoggerTools() ([]tool.Tool, error) {
 
 	return []tool.Tool{
 		saveNoteTool,
+		updateLeadDetailsTool,
 		setCallOutcomeTool,
 		updateStatusTool,
 		updatePipelineStageTool,
@@ -642,6 +702,39 @@ func buildSaveNoteTool() (tool.Tool, error) {
 
 		deps.SetNoteDraft(normalizeCallNoteBody(input.Body))
 		return SaveNoteOutput{Success: true, Message: "Note drafted"}, nil
+	})
+}
+
+func buildUpdateLeadDetailsTool() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "UpdateLeadDetails",
+		Description: "Updates lead profile fields such as name, phone, email, address, consumer role, and WhatsApp preference when the caller provides corrections.",
+	}, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
+		deps := GetCallLoggerDeps(ctx)
+		tenantID, userID, leadID, _, ok := deps.GetContext()
+		if !ok {
+			return UpdateLeadDetailsOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
+		}
+		if deps.LeadUpdater == nil {
+			return UpdateLeadDetailsOutput{Success: false, Message: errMsgLeadUpdaterMissing}, errors.New(errMsgLeadUpdaterMissing)
+		}
+
+		req, updatedFields, err := buildLeadUpdateRequest(input)
+		if err != nil {
+			return UpdateLeadDetailsOutput{Success: false, Message: err.Error()}, err
+		}
+
+		_, err = deps.LeadUpdater.Update(ctx, leadID, req, userID, tenantID, nil)
+		if err != nil {
+			return UpdateLeadDetailsOutput{Success: false, Message: err.Error()}, err
+		}
+
+		deps.MarkLeadUpdated(updatedFields)
+		return UpdateLeadDetailsOutput{
+			Success:       true,
+			Message:       fmt.Sprintf("Lead details updated: %s", strings.Join(updatedFields, ", ")),
+			UpdatedFields: updatedFields,
+		}, nil
 	})
 }
 
@@ -675,6 +768,62 @@ func normalizeCallNoteBody(body string) string {
 	return strings.TrimSpace(strings.Join(cleaned, "\n"))
 }
 
+func buildLeadUpdateRequest(input UpdateLeadDetailsInput) (transport.UpdateLeadRequest, []string, error) {
+	req := transport.UpdateLeadRequest{}
+	updatedFields := make([]string, 0, 10)
+
+	assignString := func(fieldName string, value *string, target **string) {
+		if value == nil {
+			return
+		}
+		trimmed := strings.TrimSpace(*value)
+		if trimmed == "" {
+			return
+		}
+		*target = &trimmed
+		updatedFields = append(updatedFields, fieldName)
+	}
+
+	assignString("firstName", input.FirstName, &req.FirstName)
+	assignString("lastName", input.LastName, &req.LastName)
+	assignString("email", input.Email, &req.Email)
+	assignString("street", input.Street, &req.Street)
+	assignString("houseNumber", input.HouseNumber, &req.HouseNumber)
+	assignString("zipCode", input.ZipCode, &req.ZipCode)
+	assignString("city", input.City, &req.City)
+
+	if input.Phone != nil {
+		normalizedPhone := phone.NormalizeE164(strings.TrimSpace(*input.Phone))
+		if normalizedPhone == "" {
+			return transport.UpdateLeadRequest{}, nil, errors.New("invalid phone")
+		}
+		req.Phone = &normalizedPhone
+		updatedFields = append(updatedFields, "phone")
+	}
+
+	if input.ConsumerRole != nil {
+		normalizedRole, err := normalizeConsumerRole(*input.ConsumerRole)
+		if err != nil {
+			return transport.UpdateLeadRequest{}, nil, err
+		}
+		role := transport.ConsumerRole(normalizedRole)
+		req.ConsumerRole = &role
+		updatedFields = append(updatedFields, "consumerRole")
+	}
+
+	if input.WhatsAppOptedIn != nil {
+		whatsAppOptedIn := *input.WhatsAppOptedIn
+		req.WhatsAppOptedIn = &whatsAppOptedIn
+		updatedFields = append(updatedFields, "whatsAppOptedIn")
+	}
+
+	if len(updatedFields) == 0 {
+		return transport.UpdateLeadRequest{}, nil, errors.New("no lead fields provided")
+	}
+
+	return req, updatedFields, nil
+}
+
 func appendRescheduleFallbackNote(body string, startTime time.Time) string {
 	lower := strings.ToLower(body)
 	if strings.Contains(lower, "geen bestaande afspraak") || strings.Contains(lower, "nieuwe afspraak") {
@@ -687,6 +836,39 @@ func appendRescheduleFallbackNote(body string, startTime time.Time) string {
 		return correction
 	}
 	return strings.TrimRight(body, "\n") + "\n\n" + correction
+}
+
+func requiresAppointmentAvailability(value string) bool {
+	return strings.TrimSpace(value) == domain.LeadStatusAppointmentScheduled
+}
+
+func validateAppointmentAvailability(value string, appointmentAvailable bool) error {
+	if !requiresAppointmentAvailability(value) || appointmentAvailable {
+		return nil
+	}
+	return errors.New(errMsgAppointmentRequired)
+}
+
+func enforceAppointmentSchedulingConsistency(result CallLogResult, appointmentAvailable bool) CallLogResult {
+	if appointmentAvailable {
+		return result
+	}
+
+	var normalized bool
+	if result.CallOutcome != nil && requiresAppointmentAvailability(*result.CallOutcome) {
+		result.CallOutcome = nil
+		normalized = true
+	}
+	if result.StatusUpdated != nil && requiresAppointmentAvailability(*result.StatusUpdated) {
+		result.StatusUpdated = nil
+		normalized = true
+	}
+	if !normalized {
+		return result
+	}
+
+	result.Warning = "Appointment could not be confirmed automatically; manual follow-up required"
+	return result
 }
 
 func buildSetCallOutcomeTool() (tool.Tool, error) {
@@ -703,6 +885,9 @@ func buildSetCallOutcomeTool() (tool.Tool, error) {
 		outcome := strings.TrimSpace(input.Outcome)
 		if outcome == "" {
 			return SetCallOutcomeOutput{Success: false, Message: "Missing outcome"}, fmt.Errorf("missing outcome")
+		}
+		if err := validateAppointmentAvailability(outcome, deps.HasAppointmentAvailable()); err != nil {
+			return SetCallOutcomeOutput{Success: false, Message: err.Error()}, err
 		}
 
 		actorName := userID.String()
@@ -755,6 +940,9 @@ func buildUpdateStatusTool() (tool.Tool, error) {
 
 		if !validLeadStatuses[input.Status] {
 			return UpdateStatusOutput{Success: false, Message: "Invalid status"}, fmt.Errorf("invalid status: %s", input.Status)
+		}
+		if err := validateAppointmentAvailability(input.Status, deps.HasAppointmentAvailable()); err != nil {
+			return UpdateStatusOutput{Success: false, Message: err.Error()}, err
 		}
 
 		svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)

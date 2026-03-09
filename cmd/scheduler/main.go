@@ -13,6 +13,7 @@ import (
 
 	"portal_final_backend/internal/adapters"
 	"portal_final_backend/internal/adapters/storage"
+	"portal_final_backend/internal/appointments"
 	"portal_final_backend/internal/catalog"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
@@ -41,6 +42,10 @@ import (
 
 func noOpRedisCloser() {
 	// Intentionally empty: used when no Redis client was initialized.
+}
+
+func noOpSchedulerCloser() {
+	// Intentionally empty: used when no scheduler client was initialized.
 }
 
 func main() {
@@ -72,6 +77,8 @@ func main() {
 	eventBus := events.NewInMemoryBus(log)
 	orchestratorLockRedis, closeOrchestratorLockRedis := initOrchestratorLockRedis(cfg, log)
 	defer closeOrchestratorLockRedis()
+	reminderScheduler, closeReminderScheduler := initReminderSchedulerWithCloser(cfg, log)
+	defer closeReminderScheduler()
 
 	sender, err := email.NewSender(cfg)
 	if err != nil {
@@ -113,6 +120,14 @@ func main() {
 	quotesDrafter := adapters.NewQuotesDraftWriter(quotesModule.Service())
 	leadsModule.SetQuoteDrafter(quotesDrafter)
 	leadsModule.SetPricingIntelligenceReader(adapters.NewQuotePricingIntelligenceReader(quotesModule.Repository()))
+
+	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
+	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender, eventBus, reminderScheduler)
+	appointmentsModule.SetSSE(leadsModule.SSE())
+	appointmentBooker := adapters.NewAppointmentsAdapter(appointmentsModule.Service)
+	leadsModule.SetAppointmentBooker(appointmentBooker)
+	leadsModule.SetCallLogScheduler(reminderScheduler)
+	leadsModule.SetAutomationScheduler(reminderScheduler)
 
 	quoteGenAdapter := adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent())
 	quotesModule.Service().SetQuotePromptGenerator(quoteGenAdapter)
@@ -178,6 +193,23 @@ func initOrchestratorLockRedis(cfg *config.Config, log *logger.Logger) (*redis.C
 	}
 
 	return redisClient, func() { _ = redisClient.Close() }
+}
+
+func initReminderSchedulerWithCloser(cfg *config.Config, log *logger.Logger) (*scheduler.Client, func()) {
+	if cfg.GetRedisURL() == "" {
+		log.Error("REDIS_URL not configured; async scheduler is required")
+		panic("REDIS_URL not configured: async scheduler is required")
+	}
+
+	reminderClient, err := scheduler.NewClient(cfg)
+	if err != nil {
+		log.Error("failed to initialize reminder scheduler client", "error", err)
+		panic("failed to initialize reminder scheduler client: " + err.Error())
+	}
+
+	return reminderClient, func() {
+		_ = reminderClient.Close()
+	}
 }
 
 type gapOrgSettings struct {

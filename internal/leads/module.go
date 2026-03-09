@@ -134,6 +134,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	mgmtSvc := management.New(repo, eventBus, mapsSvc)
 	mgmtSvc.SetLeadScorer(scorer)
 	notesSvc := notes.New(repo)
+	callLogger.SetLeadUpdater(mgmtSvc)
 
 	// Create orchestrator and event listeners
 	outboxRepo := notificationoutbox.New(pool)
@@ -557,6 +558,15 @@ func (m *Module) Repository() repository.LeadsRepository {
 // SetAppointmentBooker sets the appointment booker on the CallLogger.
 // This is called after module initialization to break circular dependencies.
 func (m *Module) SetAppointmentBooker(booker ports.AppointmentBooker) {
+	if m == nil {
+		return
+	}
+	if booker == nil {
+		if m.log != nil {
+			m.log.Error("leads module: SetAppointmentBooker called with nil booker")
+		}
+		panic("leads module: appointment booker is required")
+	}
 	m.callLogger.SetAppointmentBooker(booker)
 }
 
@@ -571,6 +581,12 @@ func (m *Module) SetCallLogScheduler(queue scheduler.CallLogScheduler) {
 func (m *Module) SetAutomationScheduler(queue AutomationScheduler) {
 	if m == nil {
 		return
+	}
+	if queue == nil {
+		if m.log != nil {
+			m.log.Error("leads module: SetAutomationScheduler called with nil queue")
+		}
+		panic("leads module: automation scheduler is required")
 	}
 	m.automationQueue = queue
 	if m.handler != nil {

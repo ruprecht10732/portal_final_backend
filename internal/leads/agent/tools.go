@@ -1571,6 +1571,17 @@ func (b *leadDetailsBuilder) setCoordinate(input *float64, current *float64, fie
 	return nil
 }
 
+func (b *leadDetailsBuilder) setWhatsAppOptedIn(input *bool, current bool) {
+	if input == nil {
+		return
+	}
+	b.params.WhatsAppOptedIn = input
+	b.params.WhatsAppOptedInSet = true
+	if *input != current {
+		b.updatedFields = append(b.updatedFields, "whatsAppOptedIn")
+	}
+}
+
 func (b *leadDetailsBuilder) buildFromInput(input UpdateLeadDetailsInput, current repository.Lead) error {
 	if err := b.setStringField(input.FirstName, current.ConsumerFirstName, "firstName", func(v *string) { b.params.ConsumerFirstName = v }); err != nil {
 		return err
@@ -1605,6 +1616,7 @@ func (b *leadDetailsBuilder) buildFromInput(input UpdateLeadDetailsInput, curren
 	if err := b.setCoordinate(input.Longitude, current.Longitude, "longitude", -180, 180, func(v *float64) { b.params.Longitude = v }); err != nil {
 		return err
 	}
+	b.setWhatsAppOptedIn(input.WhatsAppOptedIn, current.WhatsAppOptedIn)
 	return nil
 }
 

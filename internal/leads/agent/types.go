@@ -44,20 +44,21 @@ type UpdateLeadServiceTypeOutput struct {
 
 // UpdateLeadDetailsInput allows the agent to correct lead details with high confidence.
 type UpdateLeadDetailsInput struct {
-	LeadID       string   `json:"leadId"`
-	FirstName    *string  `json:"firstName,omitempty"`
-	LastName     *string  `json:"lastName,omitempty"`
-	Phone        *string  `json:"phone,omitempty"`
-	Email        *string  `json:"email,omitempty"`
-	ConsumerRole *string  `json:"consumerRole,omitempty"`
-	Street       *string  `json:"street,omitempty"`
-	HouseNumber  *string  `json:"houseNumber,omitempty"`
-	ZipCode      *string  `json:"zipCode,omitempty"`
-	City         *string  `json:"city,omitempty"`
-	Latitude     *float64 `json:"latitude,omitempty"`
-	Longitude    *float64 `json:"longitude,omitempty"`
-	Reason       string   `json:"reason,omitempty"`
-	Confidence   *float64 `json:"confidence,omitempty"`
+	LeadID          string   `json:"leadId"`
+	FirstName       *string  `json:"firstName,omitempty"`
+	LastName        *string  `json:"lastName,omitempty"`
+	Phone           *string  `json:"phone,omitempty"`
+	Email           *string  `json:"email,omitempty"`
+	ConsumerRole    *string  `json:"consumerRole,omitempty"`
+	Street          *string  `json:"street,omitempty"`
+	HouseNumber     *string  `json:"houseNumber,omitempty"`
+	ZipCode         *string  `json:"zipCode,omitempty"`
+	City            *string  `json:"city,omitempty"`
+	Latitude        *float64 `json:"latitude,omitempty"`
+	Longitude       *float64 `json:"longitude,omitempty"`
+	WhatsAppOptedIn *bool    `json:"whatsAppOptedIn,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
+	Confidence      *float64 `json:"confidence,omitempty"`
 }
 
 type UpdateLeadDetailsOutput struct {
