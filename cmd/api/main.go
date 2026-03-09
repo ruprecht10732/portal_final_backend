@@ -398,6 +398,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	quotesModule.Service().SetQuotePromptGenerator(adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent()))
 
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
+	webhookModule.SetWhatsAppWebhookSecret(cfg.GetWhatsAppWebhookSecret())
 	webhookModule.SetWhatsAppInboxIngester(identityModule.Service())
 	exportsModule := exports.NewModule(pool, val)
 	wireExportsEncryptionKey(cfg, log, exportsModule)

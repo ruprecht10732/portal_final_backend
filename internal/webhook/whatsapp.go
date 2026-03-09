@@ -16,6 +16,7 @@ import (
 
 type WhatsAppInboxIngester interface {
 	ReceiveIncomingWhatsAppMessage(ctx context.Context, message IncomingWhatsAppMessage) (bool, error)
+	SyncOutgoingWhatsAppMessage(ctx context.Context, message OutgoingWhatsAppMessage) (bool, error)
 	ApplyWhatsAppMessageReceipt(ctx context.Context, organizationID uuid.UUID, externalMessageIDs []string, receiptType string, receiptAt *time.Time) (bool, error)
 }
 
@@ -27,6 +28,16 @@ type IncomingWhatsAppMessage struct {
 	Body              string
 	Metadata          json.RawMessage
 	ReceivedAt        *time.Time
+}
+
+type OutgoingWhatsAppMessage struct {
+	OrganizationID    uuid.UUID
+	PhoneNumber       string
+	DisplayName       string
+	ExternalMessageID *string
+	Body              string
+	Metadata          json.RawMessage
+	SentAt            *time.Time
 }
 
 type WhatsAppWebhookEnvelope struct {
@@ -92,7 +103,7 @@ func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		return
 	}
 	if payload.IsFromMe {
-		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "outbound echo"})
+		h.handleOutgoingWhatsAppMessage(c, orgID, request, payload)
 		return
 	}
 
@@ -125,6 +136,48 @@ func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		Body:              body,
 		Metadata:          metadata,
 		ReceivedAt:        parseWhatsAppWebhookTimestamp(payload.Timestamp, request.Timestamp),
+	})
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	if !created {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "duplicate"})
+		return
+	}
+
+	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})
+}
+
+func (h *Handler) handleOutgoingWhatsAppMessage(c *gin.Context, orgID uuid.UUID, request WhatsAppWebhookEnvelope, payload whatsAppWebhookPayload) {
+	messageAddress := strings.TrimSpace(payload.ChatID)
+	if messageAddress == "" {
+		messageAddress = strings.TrimSpace(payload.From)
+	}
+	if isNonDirectWhatsAppAddress(messageAddress) || isNonDirectWhatsAppAddress(payload.ChatID) {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "group or non-direct chat"})
+		return
+	}
+
+	body := extractWhatsAppMessageBody(request.Payload, payload.Body)
+	if body == "" {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty message body"})
+		return
+	}
+
+	metadata, err := json.Marshal(request)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to encode metadata", nil)
+		return
+	}
+
+	created, err := h.whatsappInbox.SyncOutgoingWhatsAppMessage(c.Request.Context(), OutgoingWhatsAppMessage{
+		OrganizationID:    orgID,
+		PhoneNumber:       messageAddress,
+		DisplayName:       payload.FromName,
+		ExternalMessageID: optionalTrimmedString(payload.ID),
+		Body:              body,
+		Metadata:          metadata,
+		SentAt:            parseWhatsAppWebhookTimestamp(payload.Timestamp, request.Timestamp),
 	})
 	if httpkit.HandleError(c, err) {
 		return

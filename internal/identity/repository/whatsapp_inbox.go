@@ -53,6 +53,8 @@ type WhatsAppOutgoingMessageParams struct {
 	PhoneNumber       string
 	Body              string
 	ExternalMessageID *string
+	Metadata          json.RawMessage
+	SentAt            *time.Time
 }
 
 type WhatsAppIncomingMessageParams struct {
@@ -83,6 +85,15 @@ type incomingConversationUpdateParams struct {
 	displayName    string
 	body           string
 	receivedAt     time.Time
+}
+
+type outgoingConversationUpdateParams struct {
+	organizationID uuid.UUID
+	conversationID uuid.UUID
+	leadID         *uuid.UUID
+	displayName    string
+	body           string
+	sentAt         time.Time
 }
 
 func (r *Repository) ListWhatsAppConversations(ctx context.Context, organizationID uuid.UUID, limit, offset int) ([]WhatsAppConversation, error) {
@@ -213,18 +224,23 @@ func (r *Repository) MarkWhatsAppConversationRead(ctx context.Context, organizat
 }
 
 func (r *Repository) RecordSentWhatsAppMessage(ctx context.Context, params WhatsAppOutgoingMessageParams) (WhatsAppConversation, WhatsAppMessage, error) {
-	phoneNumber := strings.TrimSpace(phone.NormalizeE164(params.PhoneNumber))
-	if phoneNumber == "" {
-		return WhatsAppConversation{}, WhatsAppMessage{}, fmt.Errorf("phone number is required")
-	}
-	body := strings.TrimSpace(params.Body)
-	if body == "" {
-		return WhatsAppConversation{}, WhatsAppMessage{}, fmt.Errorf("message body is required")
+	conversation, message, _, err := r.recordSentWhatsAppMessage(ctx, params)
+	return conversation, message, err
+}
+
+func (r *Repository) SyncSentWhatsAppMessage(ctx context.Context, params WhatsAppOutgoingMessageParams) (WhatsAppConversation, WhatsAppMessage, bool, error) {
+	return r.recordSentWhatsAppMessage(ctx, params)
+}
+
+func (r *Repository) recordSentWhatsAppMessage(ctx context.Context, params WhatsAppOutgoingMessageParams) (WhatsAppConversation, WhatsAppMessage, bool, error) {
+	phoneNumber, body, metadata, sentAt, err := prepareOutgoingWhatsAppMessage(params)
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
 	}
 
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return WhatsAppConversation{}, WhatsAppMessage{}, err
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
@@ -232,15 +248,94 @@ func (r *Repository) RecordSentWhatsAppMessage(ctx context.Context, params Whats
 
 	leadID, displayName, err := r.resolveConversationLead(ctx, tx, params.OrganizationID, params.LeadID, phoneNumber)
 	if err != nil {
-		return WhatsAppConversation{}, WhatsAppMessage{}, err
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
 	}
 
-	const upsertConversation = `
+	conversation, err := r.upsertOutgoingConversation(ctx, tx, params.OrganizationID, leadID, phoneNumber, displayName)
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	message, created, err := r.insertOutgoingWhatsAppMessage(ctx, tx, outgoingMessageInsertParams{
+		organizationID:    params.OrganizationID,
+		conversationID:    conversation.ID,
+		leadID:            leadID,
+		externalMessageID: params.ExternalMessageID,
+		phoneNumber:       phoneNumber,
+		body:              body,
+		metadata:          metadata,
+		sentAt:            sentAt,
+	})
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+	if !created {
+		message, conversation, err = r.loadDuplicateOutgoingMessage(ctx, tx, params.OrganizationID, params.ExternalMessageID)
+		if err != nil {
+			return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+		}
+		return conversation, message, false, nil
+	}
+
+	conversation, err = r.finalizeOutgoingConversation(ctx, tx, outgoingConversationUpdateParams{
+		organizationID: params.OrganizationID,
+		conversationID: conversation.ID,
+		leadID:         leadID,
+		displayName:    displayName,
+		body:           body,
+		sentAt:         sentAt,
+	})
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	return conversation, message, true, nil
+}
+
+func prepareOutgoingWhatsAppMessage(params WhatsAppOutgoingMessageParams) (string, string, json.RawMessage, time.Time, error) {
+	phoneNumber := strings.TrimSpace(phone.NormalizeE164(params.PhoneNumber))
+	if phoneNumber == "" {
+		return "", "", nil, time.Time{}, fmt.Errorf("phone number is required")
+	}
+	body := strings.TrimSpace(params.Body)
+	if body == "" {
+		return "", "", nil, time.Time{}, fmt.Errorf("message body is required")
+	}
+	metadata := params.Metadata
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
+	sentAt := time.Now().UTC()
+	if params.SentAt != nil {
+		sentAt = params.SentAt.UTC()
+	}
+	return phoneNumber, body, metadata, sentAt, nil
+}
+
+type outgoingMessageInsertParams struct {
+	organizationID    uuid.UUID
+	conversationID    uuid.UUID
+	leadID            *uuid.UUID
+	externalMessageID *string
+	phoneNumber       string
+	body              string
+	metadata          json.RawMessage
+	sentAt            time.Time
+}
+
+func (r *Repository) upsertOutgoingConversation(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, displayName string) (WhatsAppConversation, error) {
+	const query = `
 		INSERT INTO RAC_whatsapp_conversations (
 			organization_id, lead_id, phone_number, display_name,
-			last_message_preview, last_message_at, last_message_direction,
-			last_message_status, unread_count, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, now(), 'outbound', 'sent', 0, now(), now())
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, now(), now())
 		ON CONFLICT (organization_id, phone_number)
 		DO UPDATE SET
 			lead_id = COALESCE(EXCLUDED.lead_id, RAC_whatsapp_conversations.lead_id),
@@ -248,56 +343,83 @@ func (r *Repository) RecordSentWhatsAppMessage(ctx context.Context, params Whats
 				WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
 				ELSE RAC_whatsapp_conversations.display_name
 			END,
-			last_message_preview = EXCLUDED.last_message_preview,
-			last_message_at = EXCLUDED.last_message_at,
-			last_message_direction = EXCLUDED.last_message_direction,
-			last_message_status = EXCLUDED.last_message_status,
 			updated_at = now()
 		RETURNING id, organization_id, lead_id, phone_number, display_name,
 		          last_message_preview, last_message_at, last_message_direction,
 		          last_message_status, unread_count, created_at, updated_at`
 
-	conversation, err := scanWhatsAppConversationRow(tx.QueryRow(
-		ctx,
-		upsertConversation,
-		params.OrganizationID,
-		toNullableUUID(leadID),
-		phoneNumber,
-		displayName,
-		truncateWhatsAppPreview(body),
-	))
-	if err != nil {
-		return WhatsAppConversation{}, WhatsAppMessage{}, err
-	}
+	return scanWhatsAppConversationRow(tx.QueryRow(ctx, query, organizationID, toNullableUUID(leadID), phoneNumber, displayName))
+}
 
-	const insertMessage = `
+func (r *Repository) insertOutgoingWhatsAppMessage(
+	ctx context.Context,
+	tx pgx.Tx,
+	params outgoingMessageInsertParams,
+) (WhatsAppMessage, bool, error) {
+	const query = `
 		INSERT INTO RAC_whatsapp_messages (
 			organization_id, conversation_id, lead_id, external_message_id, direction, status,
 			phone_number, body, metadata, sent_at, created_at
-		) VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, $6, '{}'::jsonb, now(), now())
+		) VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, $6, $7, $8, $8)
+		ON CONFLICT (organization_id, external_message_id) WHERE external_message_id IS NOT NULL
+		DO NOTHING
 		RETURNING id, organization_id, conversation_id, lead_id, external_message_id,
 		          direction, status, phone_number, body, metadata,
 		          sent_at, read_at, failed_at, created_at`
 
 	message, err := scanWhatsAppMessageRow(tx.QueryRow(
 		ctx,
-		insertMessage,
-		params.OrganizationID,
-		conversation.ID,
-		toNullableUUID(leadID),
-		params.ExternalMessageID,
-		phoneNumber,
-		body,
+		query,
+		params.organizationID,
+		params.conversationID,
+		toNullableUUID(params.leadID),
+		params.externalMessageID,
+		params.phoneNumber,
+		params.body,
+		params.metadata,
+		params.sentAt,
 	))
-	if err != nil {
-		return WhatsAppConversation{}, WhatsAppMessage{}, err
+	if err == nil {
+		return message, true, nil
 	}
-
-	if err = tx.Commit(ctx); err != nil {
-		return WhatsAppConversation{}, WhatsAppMessage{}, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppMessage{}, false, nil
 	}
+	return WhatsAppMessage{}, false, err
+}
 
-	return conversation, message, nil
+func (r *Repository) loadDuplicateOutgoingMessage(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, externalMessageID *string) (WhatsAppMessage, WhatsAppConversation, error) {
+	if externalMessageID == nil || strings.TrimSpace(*externalMessageID) == "" {
+		return WhatsAppMessage{}, WhatsAppConversation{}, fmt.Errorf("failed to persist outbound message")
+	}
+	return r.getWhatsAppMessageByExternalID(ctx, tx, organizationID, *externalMessageID)
+}
+
+func (r *Repository) finalizeOutgoingConversation(ctx context.Context, tx pgx.Tx, params outgoingConversationUpdateParams) (WhatsAppConversation, error) {
+	const query = `
+		UPDATE RAC_whatsapp_conversations
+		SET lead_id = COALESCE($3, lead_id),
+		    display_name = CASE WHEN $4 <> '' THEN $4 ELSE display_name END,
+		    last_message_preview = $5,
+		    last_message_at = $6,
+		    last_message_direction = 'outbound',
+		    last_message_status = 'sent',
+		    updated_at = now()
+		WHERE organization_id = $1 AND id = $2
+		RETURNING id, organization_id, lead_id, phone_number, display_name,
+		          last_message_preview, last_message_at, last_message_direction,
+		          last_message_status, unread_count, created_at, updated_at`
+
+	return scanWhatsAppConversationRow(tx.QueryRow(
+		ctx,
+		query,
+		params.organizationID,
+		params.conversationID,
+		toNullableUUID(params.leadID),
+		params.displayName,
+		truncateWhatsAppPreview(params.body),
+		params.sentAt,
+	))
 }
 
 func (r *Repository) RecordIncomingWhatsAppMessage(ctx context.Context, params WhatsAppIncomingMessageParams) (WhatsAppConversation, WhatsAppMessage, bool, error) {

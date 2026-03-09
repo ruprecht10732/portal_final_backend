@@ -81,6 +81,7 @@ type WhatsAppConfig interface {
 	GetWhatsAppURL() string
 	GetWhatsAppKey() string
 	GetWhatsAppDeviceID() string
+	GetWhatsAppWebhookSecret() string
 }
 
 // SchedulerConfig provides settings for the background scheduler.
@@ -218,6 +219,7 @@ type Config struct {
 	WhatsAppURL                       string
 	WhatsAppKey                       string
 	WhatsAppDeviceID                  string
+	WhatsAppWebhookSecret             string
 	RedisURL                          string
 	RedisTLSInsecure                  bool
 	AsynqQueueName                    string
@@ -272,6 +274,9 @@ func (c *Config) GetPublicBaseURL() string {
 func (c *Config) GetWhatsAppURL() string      { return c.WhatsAppURL }
 func (c *Config) GetWhatsAppKey() string      { return c.WhatsAppKey }
 func (c *Config) GetWhatsAppDeviceID() string { return c.WhatsAppDeviceID }
+func (c *Config) GetWhatsAppWebhookSecret() string {
+	return c.WhatsAppWebhookSecret
+}
 
 // SMTPConfig getter
 func (c *Config) GetSMTPEncryptionKey() string { return c.SMTPEncryptionKey }
@@ -486,6 +491,7 @@ func Load() (*Config, error) {
 		WhatsAppURL:                       getEnv("WHATSAPP_SERVICE_URL", ""),
 		WhatsAppKey:                       getEnv("WHATSAPP_API_KEY", ""),
 		WhatsAppDeviceID:                  getEnv("WHATSAPP_DEVICE_ID", ""),
+		WhatsAppWebhookSecret:             getEnv("WHATSAPP_WEBHOOK_SECRET", ""),
 		RedisURL:                          getEnv("REDIS_URL", ""),
 		RedisTLSInsecure:                  strings.EqualFold(getEnv("REDIS_TLS_INSECURE", "false"), "true"),
 		AsynqQueueName:                    getEnv("ASYNQ_QUEUE_NAME", "default"),

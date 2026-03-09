@@ -14,8 +14,9 @@ import (
 
 // Module is the webhook bounded context module implementing http.Module.
 type Module struct {
-	handler *Handler
-	repo    *Repository
+	handler               *Handler
+	repo                  *Repository
+	whatsAppWebhookSecret string
 }
 
 // NewModule creates and initializes the webhook module with all its dependencies.
@@ -36,6 +37,10 @@ func (m *Module) SetWhatsAppInboxIngester(whatsappInbox WhatsAppInboxIngester) {
 	}
 }
 
+func (m *Module) SetWhatsAppWebhookSecret(secret string) {
+	m.whatsAppWebhookSecret = secret
+}
+
 // Name returns the module identifier.
 func (m *Module) Name() string {
 	return "webhook"
@@ -48,7 +53,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	webhookGroup.Use(APIKeyAuthMiddleware(m.repo))
 	webhookGroup.POST("/forms", m.handler.HandleFormSubmission)
 	webhookGroup.GET("/config", m.handler.HandleGetWebhookConfig)
-	webhookGroup.POST("/whatsapp", m.handler.HandleWhatsAppWebhook)
+	ctx.V1.POST("/webhook/whatsapp", WhatsAppAPIKeyAuthMiddleware(m.repo, m.whatsAppWebhookSecret), m.handler.HandleWhatsAppWebhook)
 
 	// Public Google Lead Form webhook (payload auth)
 	ctx.V1.POST("/webhook/google-leads", m.handler.HandleGoogleLeadWebhook)

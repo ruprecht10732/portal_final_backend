@@ -22,6 +22,7 @@ import (
 var ErrAPIKeyNotFound = errors.New("webhook API key not found")
 var ErrGoogleConfigNotFound = errors.New("google webhook config not found")
 var ErrDuplicateGoogleLeadID = errors.New("google lead ID already processed")
+var ErrWhatsAppDeviceNotFound = errors.New("whatsapp device not found")
 
 // APIKey represents a webhook API key stored in the database.
 type APIKey struct {
@@ -185,6 +186,28 @@ func (r *Repository) GetByHash(ctx context.Context, keyHash string) (APIKey, err
 		return APIKey{}, err
 	}
 	return apiKeyFromModel(row), nil
+}
+
+func (r *Repository) GetOrganizationIDByWhatsAppDeviceID(ctx context.Context, deviceID string) (uuid.UUID, error) {
+	trimmed := strings.TrimSpace(deviceID)
+	if trimmed == "" {
+		return uuid.UUID{}, ErrWhatsAppDeviceNotFound
+	}
+
+	const query = `
+		SELECT organization_id
+		FROM RAC_organization_settings
+		WHERE whatsapp_device_id = $1
+		LIMIT 1`
+
+	var organizationID uuid.UUID
+	if err := r.pool.QueryRow(ctx, query, trimmed).Scan(&organizationID); errors.Is(err, pgx.ErrNoRows) {
+		return uuid.UUID{}, ErrWhatsAppDeviceNotFound
+	} else if err != nil {
+		return uuid.UUID{}, err
+	}
+
+	return organizationID, nil
 }
 
 // ListByOrganization returns all API keys for an organization.

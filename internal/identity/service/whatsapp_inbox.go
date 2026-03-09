@@ -117,6 +117,27 @@ func (s *Service) ReceiveIncomingWhatsAppMessage(ctx context.Context, input webh
 	return true, nil
 }
 
+func (s *Service) SyncOutgoingWhatsAppMessage(ctx context.Context, input webhookinbox.OutgoingWhatsAppMessage) (bool, error) {
+	conversation, message, created, err := s.repo.SyncSentWhatsAppMessage(ctx, repository.WhatsAppOutgoingMessageParams{
+		OrganizationID:    input.OrganizationID,
+		PhoneNumber:       input.PhoneNumber,
+		Body:              input.Body,
+		ExternalMessageID: input.ExternalMessageID,
+		Metadata:          input.Metadata,
+		SentAt:            input.SentAt,
+	})
+	if err != nil {
+		return false, err
+	}
+	if !created {
+		return false, nil
+	}
+
+	s.publishWhatsAppMessageSent(input.OrganizationID, conversation, message)
+	s.publishWhatsAppConversationUpdated(input.OrganizationID, conversation)
+	return true, nil
+}
+
 func (s *Service) CountUnreadWhatsAppConversations(ctx context.Context, organizationID uuid.UUID) (int, error) {
 	return s.repo.CountUnreadWhatsAppConversations(ctx, organizationID)
 }

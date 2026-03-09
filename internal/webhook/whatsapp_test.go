@@ -16,6 +16,8 @@ import (
 type fakeWhatsAppInbox struct {
 	seenIDs      map[string]struct{}
 	unreadCount  int
+	outgoingCount int
+	lastOutgoing *OutgoingWhatsAppMessage
 	receiptTypes map[string]string
 }
 
@@ -30,6 +32,22 @@ func (f *fakeWhatsAppInbox) ReceiveIncomingWhatsAppMessage(_ context.Context, me
 		f.seenIDs[*message.ExternalMessageID] = struct{}{}
 	}
 	f.unreadCount++
+	return true, nil
+}
+
+func (f *fakeWhatsAppInbox) SyncOutgoingWhatsAppMessage(_ context.Context, message OutgoingWhatsAppMessage) (bool, error) {
+	if f.seenIDs == nil {
+		f.seenIDs = map[string]struct{}{}
+	}
+	if message.ExternalMessageID != nil {
+		if _, exists := f.seenIDs[*message.ExternalMessageID]; exists {
+			return false, nil
+		}
+		f.seenIDs[*message.ExternalMessageID] = struct{}{}
+	}
+	f.outgoingCount++
+	copy := message
+	f.lastOutgoing = &copy
 	return true, nil
 }
 
@@ -78,6 +96,41 @@ func TestHandleWhatsAppWebhookDedupesIncomingMessages(t *testing.T) {
 	assertWebhookStatus(t, second.Body.Bytes(), "duplicate")
 	if ingester.unreadCount != 1 {
 		t.Fatalf("expected duplicate webhook to keep unread count at 1, got %d", ingester.unreadCount)
+	}
+}
+
+func TestHandleWhatsAppWebhookSyncsOutgoingDeviceMessages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingester := &fakeWhatsAppInbox{}
+	handler := NewHandler(nil, nil, nil, ingester)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"timestamp": "2026-03-09T10:05:00Z",
+		"payload": map[string]any{
+			"id":         "MSG-OUT-1",
+			"from":       "31699999999@s.whatsapp.net",
+			"chat_id":    "31612345678@s.whatsapp.net",
+			"from_name":  "Robin",
+			"is_from_me": true,
+			"body":       "Follow-up vanaf telefoon",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequest(t, handler, orgID, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for outgoing device webhook, got %d", response.Code)
+	}
+	assertWebhookStatus(t, response.Body.Bytes(), "processed")
+	if ingester.outgoingCount != 1 {
+		t.Fatalf("expected 1 synced outgoing message, got %d", ingester.outgoingCount)
+	}
+	if ingester.lastOutgoing == nil {
+		t.Fatal("expected outgoing payload to be captured")
+	}
+	if ingester.lastOutgoing.PhoneNumber != "31612345678@s.whatsapp.net" {
+		t.Fatalf("expected outgoing sync to target chat_id, got %q", ingester.lastOutgoing.PhoneNumber)
 	}
 }
 
