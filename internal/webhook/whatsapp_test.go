@@ -169,6 +169,32 @@ func TestHandleWhatsAppWebhookAppliesReadReceipt(t *testing.T) {
 	}
 }
 
+func TestHandleWhatsAppWebhookNormalizesReadSelfReceipt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingester := &fakeWhatsAppInbox{}
+	handler := NewHandler(nil, nil, nil, ingester)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message.ack",
+		"timestamp": "2026-03-10T09:00:00Z",
+		"payload": map[string]any{
+			"id":           "OUT-SELF-1",
+			"receipt_type": "read-self",
+			"timestamp":    "2026-03-10T09:00:00Z",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequest(t, handler, orgID, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for read-self receipt webhook, got %d", response.Code)
+	}
+	assertWebhookStatus(t, response.Body.Bytes(), "processed")
+	if ingester.receiptTypes["OUT-SELF-1"] != "read" {
+		t.Fatalf("expected read-self receipt to normalize to read, got %#v", ingester.receiptTypes)
+	}
+}
+
 func TestHandleWhatsAppWebhookAppliesEditedMutation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ingester := &fakeWhatsAppInbox{}

@@ -75,6 +75,8 @@ type whatsAppWebhookPayload struct {
 
 type whatsAppAckPayload struct {
 	IDs         []string `json:"ids"`
+	ID          string   `json:"id"`
+	MessageID   string   `json:"message_id"`
 	ChatID      string   `json:"chat_id"`
 	From        string   `json:"from"`
 	ReceiptType string   `json:"receipt_type"`
@@ -264,12 +266,14 @@ func (h *Handler) handleWhatsAppReceipt(c *gin.Context, orgID uuid.UUID, request
 		httpkit.Error(c, http.StatusBadRequest, "invalid receipt payload", err.Error())
 		return
 	}
-	if strings.TrimSpace(payload.ReceiptType) == "" || len(payload.IDs) == 0 {
+	receiptType, ok := normalizeWhatsAppReceiptType(payload.ReceiptType)
+	messageIDs := payload.messageIDs()
+	if !ok || len(messageIDs) == 0 {
 		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty receipt payload"})
 		return
 	}
 
-	applied, err := h.whatsappInbox.ApplyWhatsAppMessageReceipt(c.Request.Context(), orgID, payload.IDs, payload.ReceiptType, parseWhatsAppWebhookTimestamp(payload.Timestamp, request.Timestamp))
+	applied, err := h.whatsappInbox.ApplyWhatsAppMessageReceipt(c.Request.Context(), orgID, messageIDs, receiptType, parseWhatsAppWebhookTimestamp(payload.Timestamp, request.Timestamp))
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -279,6 +283,47 @@ func (h *Handler) handleWhatsAppReceipt(c *gin.Context, orgID uuid.UUID, request
 	}
 
 	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})
+}
+
+func (p whatsAppAckPayload) messageIDs() []string {
+	values := make([]string, 0, len(p.IDs)+2)
+	values = append(values, p.IDs...)
+	if trimmed := strings.TrimSpace(p.ID); trimmed != "" {
+		values = append(values, trimmed)
+	}
+	if trimmed := strings.TrimSpace(p.MessageID); trimmed != "" {
+		values = append(values, trimmed)
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+
+	return result
+}
+
+func normalizeWhatsAppReceiptType(value string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+
+	switch normalized {
+	case "delivered":
+		return "delivered", true
+	case "read", "read_self":
+		return "read", true
+	default:
+		return "", false
+	}
 }
 
 func (h *Handler) handleWhatsAppMessageMutation(c *gin.Context, orgID uuid.UUID, request WhatsAppWebhookEnvelope) {
