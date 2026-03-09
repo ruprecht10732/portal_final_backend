@@ -50,6 +50,14 @@ type SendWhatsAppConversationMessageRequest struct {
 	Body string `json:"body" validate:"required,max=4000"`
 }
 
+type SendWhatsAppPresenceRequest struct {
+	Type string `json:"type" validate:"required,oneof=available unavailable"`
+}
+
+type SendWhatsAppChatPresenceRequest struct {
+	Action string `json:"action" validate:"required,oneof=start stop"`
+}
+
 type SendWhatsAppConversationMessageResponse struct {
 	Status       string                       `json:"status"`
 	Conversation WhatsAppConversationResponse `json:"conversation"`
@@ -57,6 +65,15 @@ type SendWhatsAppConversationMessageResponse struct {
 }
 
 type MarkWhatsAppConversationReadResponse struct {
+	Status         string `json:"status"`
+	ProviderSynced bool   `json:"providerSynced"`
+}
+
+type SendWhatsAppPresenceResponse struct {
+	Status string `json:"status"`
+}
+
+type SendWhatsAppChatPresenceResponse struct {
 	Status string `json:"status"`
 }
 

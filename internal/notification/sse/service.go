@@ -51,6 +51,7 @@ const (
 	EventWhatsAppConversationUpdated EventType = "whatsapp_conversation_updated"
 	EventWhatsAppMessageReceived     EventType = "whatsapp_message_received"
 	EventWhatsAppMessageSent         EventType = "whatsapp_message_sent"
+	EventWhatsAppMessageUpdated      EventType = "whatsapp_message_updated"
 )
 
 // Event represents an SSE event payload

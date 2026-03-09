@@ -47,6 +47,26 @@ type WhatsAppMessage struct {
 	CreatedAt         time.Time
 }
 
+type WhatsAppReadSyncTarget struct {
+	PhoneNumber       string
+	ExternalMessageID string
+}
+
+type WhatsAppMessageMutationParams struct {
+	OrganizationID          uuid.UUID
+	EventType               string
+	TargetExternalMessageID string
+	PhoneNumber             string
+	ActorJID                string
+	ActorName               string
+	EventMessageID          *string
+	Body                    *string
+	Reaction                *string
+	Metadata                json.RawMessage
+	OccurredAt              *time.Time
+	IsFromMe                *bool
+}
+
 type WhatsAppOutgoingMessageParams struct {
 	OrganizationID    uuid.UUID
 	LeadID            *uuid.UUID
@@ -186,6 +206,29 @@ func (r *Repository) ListWhatsAppMessages(ctx context.Context, organizationID, c
 	}
 
 	return items, rows.Err()
+}
+
+func (r *Repository) GetLatestUnreadWhatsAppReadSyncTarget(ctx context.Context, organizationID, conversationID uuid.UUID) (*WhatsAppReadSyncTarget, error) {
+	const query = `
+		SELECT phone_number, external_message_id
+		FROM RAC_whatsapp_messages
+		WHERE organization_id = $1
+		  AND conversation_id = $2
+		  AND direction = 'inbound'
+		  AND read_at IS NULL
+		  AND external_message_id IS NOT NULL
+		ORDER BY created_at DESC
+		LIMIT 1`
+
+	var target WhatsAppReadSyncTarget
+	err := r.pool.QueryRow(ctx, query, organizationID, conversationID).Scan(&target.PhoneNumber, &target.ExternalMessageID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &target, nil
 }
 
 func (r *Repository) MarkWhatsAppConversationRead(ctx context.Context, organizationID, conversationID uuid.UUID) error {
@@ -331,6 +374,10 @@ type outgoingMessageInsertParams struct {
 }
 
 func (r *Repository) upsertOutgoingConversation(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, displayName string) (WhatsAppConversation, error) {
+	return r.upsertWhatsAppConversation(ctx, tx, organizationID, leadID, phoneNumber, displayName)
+}
+
+func (r *Repository) upsertWhatsAppConversation(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, displayName string) (WhatsAppConversation, error) {
 	const query = `
 		INSERT INTO RAC_whatsapp_conversations (
 			organization_id, lead_id, phone_number, display_name,
@@ -514,24 +561,7 @@ func prepareIncomingWhatsAppMessage(params WhatsAppIncomingMessageParams) (strin
 }
 
 func (r *Repository) upsertIncomingConversation(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, displayName string) (WhatsAppConversation, error) {
-	const query = `
-		INSERT INTO RAC_whatsapp_conversations (
-			organization_id, lead_id, phone_number, display_name,
-			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, now(), now())
-		ON CONFLICT (organization_id, phone_number)
-		DO UPDATE SET
-			lead_id = COALESCE(EXCLUDED.lead_id, RAC_whatsapp_conversations.lead_id),
-			display_name = CASE
-				WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
-				ELSE RAC_whatsapp_conversations.display_name
-			END,
-			updated_at = now()
-		RETURNING id, organization_id, lead_id, phone_number, display_name,
-		          last_message_preview, last_message_at, last_message_direction,
-		          last_message_status, unread_count, created_at, updated_at`
-
-	return scanWhatsAppConversationRow(tx.QueryRow(ctx, query, organizationID, toNullableUUID(leadID), phoneNumber, displayName))
+	return r.upsertWhatsAppConversation(ctx, tx, organizationID, leadID, phoneNumber, displayName)
 }
 
 func (r *Repository) insertIncomingWhatsAppMessage(
@@ -664,6 +694,50 @@ func (r *Repository) ApplyWhatsAppMessageReceipt(ctx context.Context, organizati
 	return conversations, messages, nil
 }
 
+func (r *Repository) ApplyWhatsAppMessageMutation(ctx context.Context, params WhatsAppMessageMutationParams) (WhatsAppConversation, WhatsAppMessage, bool, error) {
+	targetID := strings.TrimSpace(params.TargetExternalMessageID)
+	if targetID == "" {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, nil
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	message, conversation, err := r.getWhatsAppMessageByExternalID(ctx, tx, params.OrganizationID, targetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, nil
+	}
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	updatedBody, updatedMetadata, err := applyWhatsAppMessageMutationData(message, params)
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	message, err = r.updateWhatsAppMessageMutation(ctx, tx, message.ID, updatedBody, updatedMetadata)
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	conversation, err = r.updateConversationForMessageMutation(ctx, tx, conversation, message)
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, false, err
+	}
+
+	return conversation, message, true, nil
+}
+
 type leadLookup struct {
 	ID        uuid.UUID
 	FirstName string
@@ -756,6 +830,153 @@ func resolveReceiptStatus(value string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func applyWhatsAppMessageMutationData(message WhatsAppMessage, params WhatsAppMessageMutationParams) (string, json.RawMessage, error) {
+	updatedBody := message.Body
+	if params.Body != nil {
+		updatedBody = strings.TrimSpace(*params.Body)
+	}
+
+	metadataMap := make(map[string]any)
+	if len(message.Metadata) > 0 {
+		if err := json.Unmarshal(message.Metadata, &metadataMap); err != nil {
+			metadataMap = make(map[string]any)
+		}
+	}
+
+	portalData, _ := metadataMap["portal"].(map[string]any)
+	if portalData == nil {
+		portalData = make(map[string]any)
+	}
+	if _, exists := portalData["originalBody"]; !exists && strings.TrimSpace(message.Body) != "" && strings.TrimSpace(message.Body) != updatedBody {
+		portalData["originalBody"] = message.Body
+	}
+
+	switch params.EventType {
+	case "message.edited":
+		portalData["edited"] = buildMutationAuditPayload(params)
+	case "message.deleted":
+		portalData["deleted"] = buildMutationAuditPayload(params)
+	case "message.revoked":
+		portalData["revoked"] = buildMutationAuditPayload(params)
+	case "message.reaction":
+		portalData["reactions"] = mergeReactionMetadata(portalData["reactions"], params)
+	}
+
+	metadataMap["portal"] = portalData
+	metadataMap["lastMutationEvent"] = params.EventType
+	if len(params.Metadata) > 0 {
+		var mutationPayload any
+		if err := json.Unmarshal(params.Metadata, &mutationPayload); err == nil {
+			metadataMap["lastMutationPayload"] = mutationPayload
+		}
+	}
+
+	encoded, err := json.Marshal(metadataMap)
+	if err != nil {
+		return "", nil, err
+	}
+	return updatedBody, encoded, nil
+}
+
+func buildMutationAuditPayload(params WhatsAppMessageMutationParams) map[string]any {
+	payload := map[string]any{}
+	if params.ActorJID != "" {
+		payload["actorJid"] = params.ActorJID
+	}
+	if params.ActorName != "" {
+		payload["actorName"] = params.ActorName
+	}
+	if params.EventMessageID != nil {
+		payload["eventMessageId"] = *params.EventMessageID
+	}
+	if params.OccurredAt != nil {
+		payload["occurredAt"] = params.OccurredAt.Format(time.RFC3339)
+	}
+	if params.IsFromMe != nil {
+		payload["isFromMe"] = *params.IsFromMe
+	}
+	return payload
+}
+
+func mergeReactionMetadata(current any, params WhatsAppMessageMutationParams) []map[string]any {
+	reactions := make([]map[string]any, 0)
+	switch typed := current.(type) {
+	case []any:
+		for _, entry := range typed {
+			reaction, ok := entry.(map[string]any)
+			if ok {
+				reactions = append(reactions, reaction)
+			}
+		}
+	case []map[string]any:
+		reactions = append(reactions, typed...)
+	}
+
+	actorKey := strings.TrimSpace(params.ActorJID)
+	filtered := reactions[:0]
+	for _, reaction := range reactions {
+		if actor, _ := reaction["actorJid"].(string); actor == actorKey && actorKey != "" {
+			continue
+		}
+		filtered = append(filtered, reaction)
+	}
+	reactions = filtered
+
+	if params.Reaction != nil && strings.TrimSpace(*params.Reaction) != "" {
+		reactionEntry := buildMutationAuditPayload(params)
+		reactionEntry["reaction"] = strings.TrimSpace(*params.Reaction)
+		reactions = append(reactions, reactionEntry)
+	}
+
+	return reactions
+}
+
+func (r *Repository) updateWhatsAppMessageMutation(ctx context.Context, tx pgx.Tx, messageID uuid.UUID, body string, metadata json.RawMessage) (WhatsAppMessage, error) {
+	const query = `
+		UPDATE RAC_whatsapp_messages
+		SET body = $2,
+		    metadata = $3
+		WHERE id = $1
+		RETURNING id, organization_id, conversation_id, lead_id, external_message_id,
+		          direction, status, phone_number, body, metadata,
+		          sent_at, read_at, failed_at, created_at`
+
+	return scanWhatsAppMessageRow(tx.QueryRow(ctx, query, messageID, body, metadata))
+}
+
+func (r *Repository) updateConversationForMessageMutation(ctx context.Context, tx pgx.Tx, conversation WhatsAppConversation, message WhatsAppMessage) (WhatsAppConversation, error) {
+	const latestQuery = `
+		SELECT NOT EXISTS (
+			SELECT 1
+			FROM RAC_whatsapp_messages newer
+			WHERE newer.organization_id = $1
+			  AND newer.conversation_id = $2
+			  AND (
+			    newer.created_at > $3
+			    OR (newer.created_at = $3 AND newer.id <> $4)
+			  )
+		)`
+
+	var isLatest bool
+	if err := tx.QueryRow(ctx, latestQuery, conversation.OrganizationID, conversation.ID, message.CreatedAt, message.ID).Scan(&isLatest); err != nil {
+		return WhatsAppConversation{}, err
+	}
+	if !isLatest {
+		return conversation, nil
+	}
+
+	const updateConversation = `
+		UPDATE RAC_whatsapp_conversations
+		SET last_message_preview = $3,
+		    updated_at = now()
+		WHERE organization_id = $1 AND id = $2
+		RETURNING id, organization_id, lead_id, phone_number, display_name,
+		          last_message_preview, last_message_at, last_message_direction,
+		          last_message_status, unread_count, created_at, updated_at`
+
+	return scanWhatsAppConversationRow(tx.QueryRow(ctx, updateConversation, conversation.OrganizationID, conversation.ID, truncateWhatsAppPreview(message.Body)))
 }
 
 func toNullableUUID(value *uuid.UUID) interface{} {

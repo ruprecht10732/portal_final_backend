@@ -16,6 +16,7 @@ import (
 )
 
 const conversationNotFoundMsg = "conversation not found"
+const whatsappDeviceNotLinkedMsg = "er is geen verbonden WhatsApp-apparaat voor deze organisatie"
 
 func (s *Service) SetSSE(sseService *sse.Service) {
 	s.sse = sseService
@@ -42,13 +43,27 @@ func (s *Service) GetWhatsAppConversationMessages(ctx context.Context, organizat
 	return conversation, messages, nil
 }
 
-func (s *Service) MarkWhatsAppConversationRead(ctx context.Context, organizationID, conversationID uuid.UUID) error {
-	err := s.repo.MarkWhatsAppConversationRead(ctx, organizationID, conversationID)
+func (s *Service) MarkWhatsAppConversationRead(ctx context.Context, organizationID, conversationID uuid.UUID) (bool, error) {
+	providerSynced := false
+	readTarget, err := s.repo.GetLatestUnreadWhatsAppReadSyncTarget(ctx, organizationID, conversationID)
+	if err != nil {
+		return false, err
+	}
+	if readTarget != nil {
+		deviceID, deviceErr := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
+		if deviceErr == nil {
+			if providerErr := s.whatsapp.MarkMessageRead(ctx, deviceID, readTarget.PhoneNumber, readTarget.ExternalMessageID); providerErr == nil {
+				providerSynced = true
+			}
+		}
+	}
+
+	err = s.repo.MarkWhatsAppConversationRead(ctx, organizationID, conversationID)
 	if err == repository.ErrNotFound {
-		return apperr.NotFound(conversationNotFoundMsg)
+		return false, apperr.NotFound(conversationNotFoundMsg)
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	conversation, convErr := s.repo.GetWhatsAppConversation(ctx, organizationID, conversationID)
@@ -56,7 +71,7 @@ func (s *Service) MarkWhatsAppConversationRead(ctx context.Context, organization
 		s.publishWhatsAppConversationUpdated(organizationID, conversation)
 	}
 
-	return nil
+	return providerSynced, nil
 }
 
 func (s *Service) SendWhatsAppConversationMessage(ctx context.Context, organizationID, conversationID uuid.UUID, body string) (repository.WhatsAppConversation, repository.WhatsAppMessage, error) {
@@ -81,13 +96,13 @@ func (s *Service) SendWhatsAppConversationMessage(ctx context.Context, organizat
 		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
 	}
 	if settings.WhatsAppDeviceID == nil || strings.TrimSpace(*settings.WhatsAppDeviceID) == "" {
-		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Validation("er is geen verbonden WhatsApp-apparaat voor deze organisatie")
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Validation(whatsappDeviceNotLinkedMsg)
 	}
 
 	result, err := s.whatsapp.SendMessage(ctx, strings.TrimSpace(*settings.WhatsAppDeviceID), conversation.PhoneNumber, messageBody)
 	if err != nil {
 		if errors.Is(err, whatsapp.ErrNoDevice) {
-			return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Validation("er is geen verbonden WhatsApp-apparaat voor deze organisatie")
+			return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Validation(whatsappDeviceNotLinkedMsg)
 		}
 		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Internal("WhatsApp-bericht kon niet worden verstuurd")
 	}
@@ -142,6 +157,48 @@ func (s *Service) CountUnreadWhatsAppConversations(ctx context.Context, organiza
 	return s.repo.CountUnreadWhatsAppConversations(ctx, organizationID)
 }
 
+func (s *Service) SendWhatsAppPresence(ctx context.Context, organizationID uuid.UUID, presenceType string) error {
+	deviceID, err := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
+	if err != nil {
+		return err
+	}
+
+	trimmedType := strings.ToLower(strings.TrimSpace(presenceType))
+	if trimmedType != "available" && trimmedType != "unavailable" {
+		return apperr.Validation("ongeldig presence-type")
+	}
+
+	if err := s.whatsapp.SendPresence(ctx, deviceID, trimmedType); err != nil {
+		return apperr.Internal("WhatsApp presence kon niet worden verstuurd")
+	}
+	return nil
+}
+
+func (s *Service) SendWhatsAppChatPresence(ctx context.Context, organizationID, conversationID uuid.UUID, action string) error {
+	conversation, err := s.repo.GetWhatsAppConversation(ctx, organizationID, conversationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return apperr.NotFound(conversationNotFoundMsg)
+		}
+		return err
+	}
+
+	deviceID, err := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
+	if err != nil {
+		return err
+	}
+
+	trimmedAction := strings.ToLower(strings.TrimSpace(action))
+	if trimmedAction != "start" && trimmedAction != "stop" {
+		return apperr.Validation("ongeldige chat presence-actie")
+	}
+
+	if err := s.whatsapp.SendChatPresence(ctx, deviceID, conversation.PhoneNumber, trimmedAction); err != nil {
+		return apperr.Internal("WhatsApp typing-indicator kon niet worden verstuurd")
+	}
+	return nil
+}
+
 func (s *Service) PersistOutgoingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, body string, externalMessageID *string) error {
 	_, _, err := s.persistOutgoingWhatsAppMessage(ctx, organizationID, leadID, phoneNumber, body, externalMessageID)
 	return err
@@ -192,6 +249,33 @@ func (s *Service) ApplyWhatsAppMessageReceipt(ctx context.Context, organizationI
 		s.publishWhatsAppConversationUpdated(organizationID, conversation)
 	}
 
+	return true, nil
+}
+
+func (s *Service) ApplyWhatsAppMessageMutation(ctx context.Context, input webhookinbox.WhatsAppMessageMutation) (bool, error) {
+	conversation, message, applied, err := s.repo.ApplyWhatsAppMessageMutation(ctx, repository.WhatsAppMessageMutationParams{
+		OrganizationID:          input.OrganizationID,
+		EventType:               input.EventType,
+		TargetExternalMessageID: input.TargetExternalMessageID,
+		PhoneNumber:             input.PhoneNumber,
+		ActorJID:                input.ActorJID,
+		ActorName:               input.ActorName,
+		EventMessageID:          input.EventMessageID,
+		Body:                    input.Body,
+		Reaction:                input.Reaction,
+		Metadata:                input.Metadata,
+		OccurredAt:              input.OccurredAt,
+		IsFromMe:                input.IsFromMe,
+	})
+	if err != nil {
+		return false, err
+	}
+	if !applied {
+		return false, nil
+	}
+
+	s.publishWhatsAppMessageUpdated(input.OrganizationID, conversation, message)
+	s.publishWhatsAppConversationUpdated(input.OrganizationID, conversation)
 	return true, nil
 }
 
@@ -306,6 +390,50 @@ func (s *Service) publishWhatsAppConversationUpdated(organizationID uuid.UUID, c
 	s.sse.PublishToOrganization(organizationID, event)
 }
 
+func (s *Service) publishWhatsAppMessageUpdated(organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) {
+	if s.sse == nil {
+		return
+	}
+
+	event := sse.Event{
+		Type:    sse.EventWhatsAppMessageUpdated,
+		Message: "WhatsApp message updated",
+		Data: map[string]any{
+			"conversation": map[string]any{
+				"id":                   conversation.ID.String(),
+				"leadId":               optionalUUIDString(conversation.LeadID),
+				"phoneNumber":          conversation.PhoneNumber,
+				"displayName":          conversation.DisplayName,
+				"lastMessagePreview":   conversation.LastMessagePreview,
+				"lastMessageAt":        conversation.LastMessageAt,
+				"lastMessageDirection": conversation.LastMessageDirection,
+				"lastMessageStatus":    conversation.LastMessageStatus,
+				"unreadCount":          conversation.UnreadCount,
+			},
+			"message": map[string]any{
+				"id":                message.ID.String(),
+				"conversationId":    message.ConversationID.String(),
+				"leadId":            optionalUUIDString(message.LeadID),
+				"externalMessageId": message.ExternalMessageID,
+				"direction":         message.Direction,
+				"status":            message.Status,
+				"phoneNumber":       message.PhoneNumber,
+				"body":              message.Body,
+				"metadata":          message.Metadata,
+				"createdAt":         message.CreatedAt,
+				"sentAt":            message.SentAt,
+				"readAt":            message.ReadAt,
+				"failedAt":          message.FailedAt,
+			},
+		},
+	}
+	if conversation.LeadID != nil {
+		event.LeadID = *conversation.LeadID
+	}
+
+	s.sse.PublishToOrganization(organizationID, event)
+}
+
 func optionalUUIDString(value *uuid.UUID) any {
 	if value == nil {
 		return nil
@@ -319,4 +447,20 @@ func nilIfEmptyString(value string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func (s *Service) getRequiredWhatsAppDeviceID(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	if s.whatsapp == nil {
+		return "", apperr.Internal(whatsappNotConfiguredMsg)
+	}
+
+	settings, err := s.repo.GetOrganizationSettings(ctx, organizationID)
+	if err != nil {
+		return "", err
+	}
+	if settings.WhatsAppDeviceID == nil || strings.TrimSpace(*settings.WhatsAppDeviceID) == "" {
+		return "", apperr.Validation(whatsappDeviceNotLinkedMsg)
+	}
+
+	return strings.TrimSpace(*settings.WhatsAppDeviceID), nil
 }

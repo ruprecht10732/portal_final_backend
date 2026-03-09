@@ -73,6 +73,22 @@ type SendResult struct {
 	MessageID string
 }
 
+type actionRequest struct {
+	Type   string `json:"type,omitempty"`
+	Phone  string `json:"phone,omitempty"`
+	Action string `json:"action,omitempty"`
+}
+
+type providerActionResponse struct {
+	Code    string `json:"code"`
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Results struct {
+		MessageID string `json:"message_id"`
+		Status    string `json:"status"`
+	} `json:"results"`
+}
+
 var ErrNoDevice = errors.New("no whatsapp device configured")
 
 func NewClient(cfg config.WhatsAppConfig, log *logger.Logger) *Client {
@@ -447,6 +463,60 @@ func (c *Client) DeleteDevice(ctx context.Context, deviceID string) error {
 	return nil
 }
 
+func (c *Client) MarkMessageRead(ctx context.Context, deviceID string, phoneNumber string, messageID string) error {
+	if c == nil {
+		return nil
+	}
+
+	normalizedMessageID := strings.TrimSpace(messageID)
+	if normalizedMessageID == "" {
+		return fmt.Errorf("message id is required")
+	}
+
+	payload := actionRequest{Phone: normalizeActionPhone(phoneNumber)}
+	if payload.Phone == "" {
+		return fmt.Errorf("phone number is required")
+	}
+
+	url := fmt.Sprintf("%s/message/%s/read", c.baseURL, url.PathEscape(normalizedMessageID))
+	_, err := c.postJSONAction(ctx, url, deviceID, payload)
+	return err
+}
+
+func (c *Client) SendPresence(ctx context.Context, deviceID string, presenceType string) error {
+	if c == nil {
+		return nil
+	}
+
+	payload := actionRequest{Type: strings.ToLower(strings.TrimSpace(presenceType))}
+	if payload.Type == "" {
+		return fmt.Errorf("presence type is required")
+	}
+
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/send/presence", c.baseURL), deviceID, payload)
+	return err
+}
+
+func (c *Client) SendChatPresence(ctx context.Context, deviceID string, phoneNumber string, action string) error {
+	if c == nil {
+		return nil
+	}
+
+	payload := actionRequest{
+		Phone:  normalizeActionPhone(phoneNumber),
+		Action: strings.ToLower(strings.TrimSpace(action)),
+	}
+	if payload.Phone == "" {
+		return fmt.Errorf("phone number is required")
+	}
+	if payload.Action == "" {
+		return fmt.Errorf("action is required")
+	}
+
+	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/send/chat-presence", c.baseURL), deviceID, payload)
+	return err
+}
+
 func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceStatusResponse, error) {
 	if c == nil {
 		return nil, fmt.Errorf("whatsapp client not initialized")
@@ -522,6 +592,54 @@ func (c *Client) ReconnectDevice(ctx context.Context, deviceID string) error {
 	}
 
 	return nil
+}
+
+func (c *Client) postJSONAction(ctx context.Context, endpoint string, deviceID string, payload any) (string, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal whatsapp action payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return "", err
+	}
+
+	c.addHeaders(req, deviceID)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", fmt.Errorf("whatsapp service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+
+	var parsed providerActionResponse
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return "", nil
+	}
+	if strings.TrimSpace(parsed.Message) != "" {
+		return strings.TrimSpace(parsed.Message), nil
+	}
+	if strings.TrimSpace(parsed.Results.Status) != "" {
+		return strings.TrimSpace(parsed.Results.Status), nil
+	}
+	return "", nil
+}
+
+func normalizeActionPhone(value string) string {
+	normalized := strings.TrimPrefix(phone.NormalizeE164(value), "+")
+	return strings.TrimSpace(normalized)
 }
 
 func (c *Client) addHeaders(req *http.Request, deviceID string) {

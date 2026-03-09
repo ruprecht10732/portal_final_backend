@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,12 +14,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const directChatJID = "31612345678@s.whatsapp.net"
+
 type fakeWhatsAppInbox struct {
-	seenIDs      map[string]struct{}
-	unreadCount  int
+	seenIDs       map[string]struct{}
+	unreadCount   int
 	outgoingCount int
-	lastOutgoing *OutgoingWhatsAppMessage
-	receiptTypes map[string]string
+	lastOutgoing  *OutgoingWhatsAppMessage
+	receiptTypes  map[string]string
+	mutations     []WhatsAppMessageMutation
 }
 
 func (f *fakeWhatsAppInbox) ReceiveIncomingWhatsAppMessage(_ context.Context, message IncomingWhatsAppMessage) (bool, error) {
@@ -64,6 +68,11 @@ func (f *fakeWhatsAppInbox) ApplyWhatsAppMessageReceipt(_ context.Context, _ uui
 	return receiptType == "delivered" || receiptType == "read", nil
 }
 
+func (f *fakeWhatsAppInbox) ApplyWhatsAppMessageMutation(_ context.Context, message WhatsAppMessageMutation) (bool, error) {
+	f.mutations = append(f.mutations, message)
+	return strings.TrimSpace(message.TargetExternalMessageID) != "", nil
+}
+
 func TestHandleWhatsAppWebhookDedupesIncomingMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ingester := &fakeWhatsAppInbox{}
@@ -75,8 +84,8 @@ func TestHandleWhatsAppWebhookDedupesIncomingMessages(t *testing.T) {
 		"timestamp": "2026-03-09T10:00:00Z",
 		"payload": map[string]any{
 			"id":         "MSG-1",
-			"from":       "31612345678@s.whatsapp.net",
-			"chat_id":    "31612345678@s.whatsapp.net",
+			"from":       directChatJID,
+			"chat_id":    directChatJID,
 			"from_name":  "Robin",
 			"is_from_me": false,
 			"body":       "Hallo",
@@ -111,7 +120,7 @@ func TestHandleWhatsAppWebhookSyncsOutgoingDeviceMessages(t *testing.T) {
 		"payload": map[string]any{
 			"id":         "MSG-OUT-1",
 			"from":       "31699999999@s.whatsapp.net",
-			"chat_id":    "31612345678@s.whatsapp.net",
+			"chat_id":    directChatJID,
 			"from_name":  "Robin",
 			"is_from_me": true,
 			"body":       "Follow-up vanaf telefoon",
@@ -129,7 +138,7 @@ func TestHandleWhatsAppWebhookSyncsOutgoingDeviceMessages(t *testing.T) {
 	if ingester.lastOutgoing == nil {
 		t.Fatal("expected outgoing payload to be captured")
 	}
-	if ingester.lastOutgoing.PhoneNumber != "31612345678@s.whatsapp.net" {
+	if ingester.lastOutgoing.PhoneNumber != directChatJID {
 		t.Fatalf("expected outgoing sync to target chat_id, got %q", ingester.lastOutgoing.PhoneNumber)
 	}
 }
@@ -157,6 +166,80 @@ func TestHandleWhatsAppWebhookAppliesReadReceipt(t *testing.T) {
 	assertWebhookStatus(t, response.Body.Bytes(), "processed")
 	if ingester.receiptTypes["OUT-1"] != "read" || ingester.receiptTypes["OUT-2"] != "read" {
 		t.Fatalf("expected receipt type to be recorded for all message ids, got %#v", ingester.receiptTypes)
+	}
+}
+
+func TestHandleWhatsAppWebhookAppliesEditedMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingester := &fakeWhatsAppInbox{}
+	handler := NewHandler(nil, nil, nil, ingester)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message.edited",
+		"timestamp": "2026-03-09T11:05:00Z",
+		"payload": map[string]any{
+			"id":                  "EDIT-EVT-1",
+			"chat_id":             directChatJID,
+			"from":                directChatJID,
+			"from_name":           "Robin",
+			"timestamp":           "2026-03-09T11:05:00Z",
+			"is_from_me":          false,
+			"original_message_id": "MSG-1",
+			"body":                "Bijgewerkte tekst",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequest(t, handler, orgID, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for edited webhook, got %d", response.Code)
+	}
+	assertWebhookStatus(t, response.Body.Bytes(), "processed")
+	if len(ingester.mutations) != 1 {
+		t.Fatalf("expected exactly one mutation, got %d", len(ingester.mutations))
+	}
+	if ingester.mutations[0].TargetExternalMessageID != "MSG-1" {
+		t.Fatalf("expected original message id to be targeted, got %q", ingester.mutations[0].TargetExternalMessageID)
+	}
+	if ingester.mutations[0].Body == nil || *ingester.mutations[0].Body != "Bijgewerkte tekst" {
+		t.Fatalf("expected updated body to be forwarded, got %#v", ingester.mutations[0].Body)
+	}
+}
+
+func TestHandleWhatsAppWebhookAppliesReactionMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingester := &fakeWhatsAppInbox{}
+	handler := NewHandler(nil, nil, nil, ingester)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message.reaction",
+		"timestamp": "2026-03-09T11:10:00Z",
+		"payload": map[string]any{
+			"id":                 "REACTION-1",
+			"chat_id":            directChatJID,
+			"from":               directChatJID,
+			"from_name":          "Robin",
+			"timestamp":          "2026-03-09T11:10:00Z",
+			"is_from_me":         false,
+			"reaction":           "👍",
+			"reacted_message_id": "MSG-1",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequest(t, handler, orgID, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for reaction webhook, got %d", response.Code)
+	}
+	assertWebhookStatus(t, response.Body.Bytes(), "processed")
+	if len(ingester.mutations) != 1 {
+		t.Fatalf("expected exactly one mutation, got %d", len(ingester.mutations))
+	}
+	if ingester.mutations[0].Reaction == nil || *ingester.mutations[0].Reaction != "👍" {
+		t.Fatalf("expected reaction to be forwarded, got %#v", ingester.mutations[0].Reaction)
+	}
+	if ingester.mutations[0].TargetExternalMessageID != "MSG-1" {
+		t.Fatalf("expected reacted message id to be targeted, got %q", ingester.mutations[0].TargetExternalMessageID)
 	}
 }
 

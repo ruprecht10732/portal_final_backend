@@ -16,7 +16,9 @@ func (h *Handler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/whatsapp/conversations/unread-count", h.GetWhatsAppUnreadConversationCount)
 	rg.GET("/whatsapp/conversations/:conversationID/messages", h.ListWhatsAppMessages)
 	rg.POST("/whatsapp/conversations/:conversationID/messages", h.SendWhatsAppConversationMessage)
+	rg.POST("/whatsapp/conversations/:conversationID/chat-presence", h.SendWhatsAppChatPresence)
 	rg.POST("/whatsapp/conversations/:conversationID/read", h.MarkWhatsAppConversationRead)
+	rg.POST("/whatsapp/presence", h.SendWhatsAppPresence)
 }
 
 func (h *Handler) GetWhatsAppUnreadConversationCount(c *gin.Context) {
@@ -171,10 +173,74 @@ func (h *Handler) MarkWhatsAppConversationRead(c *gin.Context) {
 		return
 	}
 
-	err = h.svc.MarkWhatsAppConversationRead(c.Request.Context(), *tenantID, conversationID)
+	providerSynced, err := h.svc.MarkWhatsAppConversationRead(c.Request.Context(), *tenantID, conversationID)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	httpkit.OK(c, transport.MarkWhatsAppConversationReadResponse{Status: "ok"})
+	httpkit.OK(c, transport.MarkWhatsAppConversationReadResponse{Status: "ok", ProviderSynced: providerSynced})
+}
+
+func (h *Handler) SendWhatsAppPresence(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	var req transport.SendWhatsAppPresenceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	err := h.svc.SendWhatsAppPresence(c.Request.Context(), *tenantID, req.Type)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.SendWhatsAppPresenceResponse{Status: "ok"})
+}
+
+func (h *Handler) SendWhatsAppChatPresence(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.SendWhatsAppChatPresenceRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err = h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	err = h.svc.SendWhatsAppChatPresence(c.Request.Context(), *tenantID, conversationID, req.Action)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.SendWhatsAppChatPresenceResponse{Status: "ok"})
 }
