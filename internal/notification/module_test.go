@@ -12,6 +12,7 @@ import (
 	"portal_final_backend/internal/events"
 	identityrepo "portal_final_backend/internal/identity/repository"
 	identityservice "portal_final_backend/internal/identity/service"
+	"portal_final_backend/internal/identity/smtpcrypto"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/platform/logger"
 
@@ -29,6 +30,15 @@ type testWorkflowResolver struct {
 
 func (r testWorkflowResolver) ResolveLeadWorkflow(_ context.Context, _ identityservice.ResolveLeadWorkflowInput) (identityservice.ResolveLeadWorkflowResult, error) {
 	return r.result, nil
+}
+
+type testOrganizationSettingsReader struct {
+	settings identityrepo.OrganizationSettings
+	err      error
+}
+
+func (r testOrganizationSettingsReader) GetOrganizationSettings(_ context.Context, _ uuid.UUID) (identityrepo.OrganizationSettings, error) {
+	return r.settings, r.err
 }
 
 type testSender struct {
@@ -70,6 +80,7 @@ func (s *testQuotePDFStorage) DownloadFile(_ context.Context, _ string, _ string
 
 const testLeadEmail = "lead@example.com"
 const testOrgName = "Vakman Portal"
+const testSMTPFromEmail = "mailer@example.com"
 const errUnexpectedRenderedText = "unexpected rendered text: %q"
 const generatedPDFContent = "generated-pdf"
 
@@ -159,6 +170,65 @@ func TestHandleQuoteSentDoesNotUseLegacySenderWithoutOutbox(t *testing.T) {
 	}
 	if sender.quoteProposalCalls != 0 {
 		t.Fatalf("expected strict workflow mode to avoid legacy quote proposal sender, got %d calls", sender.quoteProposalCalls)
+	}
+}
+
+func TestResolveSenderUsesTenantSMTPWhenConfigured(t *testing.T) {
+	defaultSender := &testSender{}
+	host := "smtp.example.com"
+	port := 587
+	username := testSMTPFromEmail
+	fromEmail := testSMTPFromEmail
+	fromName := "Example Mailer"
+	encryptionKey := []byte("12345678901234567890123456789012")
+	encryptedPassword, err := smtpcrypto.Encrypt("super-secret", encryptionKey)
+	if err != nil {
+		t.Fatalf("encrypt smtp password: %v", err)
+	}
+
+	m := New(nil, defaultSender, testNotificationConfig{}, logger.New("development"))
+	m.SetOrganizationSettingsReader(testOrganizationSettingsReader{settings: identityrepo.OrganizationSettings{
+		SMTPHost:      &host,
+		SMTPPort:      &port,
+		SMTPUsername:  &username,
+		SMTPPassword:  &encryptedPassword,
+		SMTPFromEmail: &fromEmail,
+		SMTPFromName:  &fromName,
+	}})
+	m.SetSMTPEncryptionKey(encryptionKey)
+
+	resolved := m.resolveSender(context.Background(), uuid.New())
+	if _, ok := resolved.(*email.SMTPSender); !ok {
+		t.Fatalf("expected tenant smtp sender, got %T", resolved)
+	}
+}
+
+func TestResolveSenderFallsBackToDefaultSenderWithoutSMTPKey(t *testing.T) {
+	defaultSender := &testSender{}
+	host := "smtp.example.com"
+	port := 587
+	username := testSMTPFromEmail
+	fromEmail := testSMTPFromEmail
+	fromName := "Example Mailer"
+	encryptionKey := []byte("12345678901234567890123456789012")
+	encryptedPassword, err := smtpcrypto.Encrypt("super-secret", encryptionKey)
+	if err != nil {
+		t.Fatalf("encrypt smtp password: %v", err)
+	}
+
+	m := New(nil, defaultSender, testNotificationConfig{}, logger.New("development"))
+	m.SetOrganizationSettingsReader(testOrganizationSettingsReader{settings: identityrepo.OrganizationSettings{
+		SMTPHost:      &host,
+		SMTPPort:      &port,
+		SMTPUsername:  &username,
+		SMTPPassword:  &encryptedPassword,
+		SMTPFromEmail: &fromEmail,
+		SMTPFromName:  &fromName,
+	}})
+
+	resolved := m.resolveSender(context.Background(), uuid.New())
+	if resolved != defaultSender {
+		t.Fatalf("expected default sender fallback without smtp key, got %T", resolved)
 	}
 }
 

@@ -97,6 +97,7 @@ func main() {
 	notificationModule.SetOrganizationSettingsReader(identityReader)
 	notificationModule.SetUserTenancyReader(identitySvc)
 	notificationModule.SetWorkflowResolver(identitySvc)
+	wireSchedulerSMTPEncryptionKey(cfg, log, identitySvc, notificationModule)
 
 	val := validator.New()
 
@@ -372,4 +373,25 @@ func wireSchedulerIMAPEncryptionKey(cfg *config.Config, log *logger.Logger, imap
 	}
 	imapSvc.SetEncryptionKey(key)
 	log.Info("scheduler imap encryption key configured")
+}
+
+func wireSchedulerSMTPEncryptionKey(cfg *config.Config, log *logger.Logger, identitySvc interface{ SetSMTPEncryptionKey([]byte) }, notificationMod interface{ SetSMTPEncryptionKey([]byte) }) {
+	keyHex := cfg.GetSMTPEncryptionKey()
+	if strings.TrimSpace(keyHex) == "" {
+		return
+	}
+
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		log.Error("invalid SMTP_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+		panic("invalid SMTP_ENCRYPTION_KEY: " + err.Error())
+	}
+	if len(key) != 32 {
+		log.Error("SMTP_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(key))
+		panic("SMTP_ENCRYPTION_KEY must be 32 bytes")
+	}
+
+	identitySvc.SetSMTPEncryptionKey(key)
+	notificationMod.SetSMTPEncryptionKey(key)
+	log.Info("scheduler smtp encryption key configured")
 }
