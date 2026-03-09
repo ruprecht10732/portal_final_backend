@@ -20,6 +20,7 @@ type fakeWhatsAppInbox struct {
 	seenIDs       map[string]struct{}
 	unreadCount   int
 	outgoingCount int
+	lastIncoming  *IncomingWhatsAppMessage
 	lastOutgoing  *OutgoingWhatsAppMessage
 	receiptTypes  map[string]string
 	mutations     []WhatsAppMessageMutation
@@ -36,6 +37,8 @@ func (f *fakeWhatsAppInbox) ReceiveIncomingWhatsAppMessage(_ context.Context, me
 		f.seenIDs[*message.ExternalMessageID] = struct{}{}
 	}
 	f.unreadCount++
+	copy := message
+	f.lastIncoming = &copy
 	return true, nil
 }
 
@@ -266,6 +269,121 @@ func TestHandleWhatsAppWebhookAppliesReactionMutation(t *testing.T) {
 	}
 	if ingester.mutations[0].TargetExternalMessageID != "MSG-1" {
 		t.Fatalf("expected reacted message id to be targeted, got %q", ingester.mutations[0].TargetExternalMessageID)
+	}
+}
+
+func TestHandleWhatsAppWebhookBuildsMediaPortalMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingester := &fakeWhatsAppInbox{}
+	handler := NewHandler(nil, nil, nil, ingester)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"timestamp": "2026-03-10T10:00:00Z",
+		"payload": map[string]any{
+			"id":            "MEDIA-1",
+			"from":          directChatJID,
+			"chat_id":       directChatJID,
+			"from_name":     "Robin",
+			"is_from_me":    false,
+			"replied_to_id": "MSG-ROOT",
+			"quoted_body":   "Origineel bericht",
+			"view_once":     true,
+			"image": map[string]any{
+				"path":    "statics/media/example.jpeg",
+				"caption": "Kijk hiernaar",
+			},
+		},
+	}
+
+	response := executeWhatsAppWebhookRequest(t, handler, orgID, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for media webhook, got %d", response.Code)
+	}
+	assertWebhookStatus(t, response.Body.Bytes(), "processed")
+	if ingester.lastIncoming == nil {
+		t.Fatal("expected incoming payload to be captured")
+	}
+	if ingester.lastIncoming.Body != "Kijk hiernaar" {
+		t.Fatalf("expected caption to become body preview, got %q", ingester.lastIncoming.Body)
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(ingester.lastIncoming.Metadata, &metadata); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	portal, ok := metadata["portal"].(map[string]any)
+	if !ok {
+		t.Fatal("expected portal metadata to be present")
+	}
+	if portal["messageType"] != "image" {
+		t.Fatalf("expected image portal type, got %#v", portal["messageType"])
+	}
+	attachment, ok := portal["attachment"].(map[string]any)
+	if !ok || attachment["path"] != "statics/media/example.jpeg" {
+		t.Fatalf("expected image attachment path, got %#v", portal["attachment"])
+	}
+	reply, ok := portal["reply"].(map[string]any)
+	if !ok || reply["body"] != "Origineel bericht" {
+		t.Fatalf("expected reply metadata, got %#v", portal["reply"])
+	}
+	if portal["viewOnce"] != true {
+		t.Fatalf("expected viewOnce flag, got %#v", portal["viewOnce"])
+	}
+}
+
+func TestHandleWhatsAppWebhookBuildsContactsArrayPreview(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingester := &fakeWhatsAppInbox{}
+	handler := NewHandler(nil, nil, nil, ingester)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"timestamp": "2026-03-10T11:00:00Z",
+		"payload": map[string]any{
+			"id":         "CONTACTS-1",
+			"from":       directChatJID,
+			"chat_id":    directChatJID,
+			"from_name":  "Robin",
+			"is_from_me": false,
+			"contacts_array": []any{
+				map[string]any{
+					"displayName": "Alice",
+					"vcard":       "BEGIN:VCARD\nVERSION:3.0\nFN:Alice\nTEL;type=Mobile:+31 6 11111111\nEND:VCARD",
+				},
+				map[string]any{
+					"displayName": "Bob",
+					"vcard":       "BEGIN:VCARD\nVERSION:3.0\nFN:Bob\nTEL;type=Mobile:+31 6 22222222\nEND:VCARD",
+				},
+			},
+		},
+	}
+
+	response := executeWhatsAppWebhookRequest(t, handler, orgID, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for contacts webhook, got %d", response.Code)
+	}
+	assertWebhookStatus(t, response.Body.Bytes(), "processed")
+	if ingester.lastIncoming == nil {
+		t.Fatal("expected incoming payload to be captured")
+	}
+	if ingester.lastIncoming.Body != "[Contacten] Alice, Bob" {
+		t.Fatalf("expected contacts preview body, got %q", ingester.lastIncoming.Body)
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(ingester.lastIncoming.Metadata, &metadata); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	portal, ok := metadata["portal"].(map[string]any)
+	if !ok {
+		t.Fatal("expected portal metadata to be present")
+	}
+	contacts, ok := portal["contacts"].([]any)
+	if !ok || len(contacts) != 2 {
+		t.Fatalf("expected 2 contacts in portal metadata, got %#v", portal["contacts"])
 	}
 }
 

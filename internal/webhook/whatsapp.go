@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -129,7 +130,9 @@ type whatsAppDeletedPayload struct {
 }
 
 const (
+	whatsAppInvalidMessagePayload = "invalid message payload"
 	whatsAppDeletedPlaceholder = "[Bericht verwijderd]"
+	whatsAppPollPrefix         = "[Poll] "
 	whatsAppRevokedPlaceholder = "[Bericht verwijderd voor iedereen]"
 )
 
@@ -169,7 +172,7 @@ func (h *Handler) HandleWhatsAppWebhook(c *gin.Context) {
 func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID, request WhatsAppWebhookEnvelope) {
 	var payload whatsAppWebhookPayload
 	if err := json.Unmarshal(request.Payload, &payload); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid message payload", err.Error())
+		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
 		return
 	}
 	if payload.IsFromMe {
@@ -186,15 +189,13 @@ func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		return
 	}
 
-	body := extractWhatsAppMessageBody(request.Payload, payload.Body)
-	if body == "" {
-		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty message body"})
+	body, metadata, err := buildWhatsAppWebhookMessageData(request, payload.Body)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
 		return
 	}
-
-	metadata, err := json.Marshal(request)
-	if err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to encode metadata", nil)
+	if body == "" {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty message body"})
 		return
 	}
 
@@ -228,15 +229,13 @@ func (h *Handler) handleOutgoingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		return
 	}
 
-	body := extractWhatsAppMessageBody(request.Payload, payload.Body)
-	if body == "" {
-		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty message body"})
+	body, metadata, err := buildWhatsAppWebhookMessageData(request, payload.Body)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
 		return
 	}
-
-	metadata, err := json.Marshal(request)
-	if err != nil {
-		httpkit.Error(c, http.StatusInternalServerError, "failed to encode metadata", nil)
+	if body == "" {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty message body"})
 		return
 	}
 
@@ -521,64 +520,471 @@ func optionalTrimmedString(value string) *string {
 	return &trimmed
 }
 
-func extractWhatsAppMessageBody(rawPayload json.RawMessage, fallbackBody string) string {
-	if trimmed := strings.TrimSpace(fallbackBody); trimmed != "" {
-		return trimmed
+func buildWhatsAppWebhookMessageData(request WhatsAppWebhookEnvelope, fallbackBody string) (string, json.RawMessage, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(request.Payload, &payload); err != nil {
+		return "", nil, err
 	}
 
-	var payload map[string]any
-	if err := json.Unmarshal(rawPayload, &payload); err != nil {
-		return ""
+	summary := summarizeWhatsAppPayload(payload, fallbackBody)
+	envelope := map[string]any{
+		"event":   request.Event,
+		"payload": payload,
+	}
+	if trimmed := strings.TrimSpace(request.DeviceID); trimmed != "" {
+		envelope["device_id"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(request.Timestamp); trimmed != "" {
+		envelope["timestamp"] = trimmed
+	}
+	if len(summary.Portal) > 0 {
+		envelope["portal"] = summary.Portal
+	}
+
+	metadata, err := json.Marshal(envelope)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return summary.Body, metadata, nil
+}
+
+type whatsAppPayloadSummary struct {
+	Body   string
+	Portal map[string]any
+}
+
+func summarizeWhatsAppPayload(payload map[string]any, fallbackBody string) whatsAppPayloadSummary {
+	summary := whatsAppPayloadSummary{
+		Body:   strings.TrimSpace(fallbackBody),
+		Portal: map[string]any{},
+	}
+
+	if reply := buildWhatsAppReplyPortal(payload); len(reply) > 0 {
+		summary.Portal["reply"] = reply
+	}
+	if viewOnce, ok := boolValue(payload["view_once"]); ok {
+		summary.Portal["viewOnce"] = viewOnce
+	}
+	if forwarded, ok := boolValue(payload["forwarded"]); ok {
+		summary.Portal["isForwarded"] = forwarded
+	}
+
+	if summary.Body == "" {
+		summary.Body = buildWhatsAppStructuredBody(payload, summary.Portal)
+	} else {
+		buildWhatsAppStructuredBody(payload, summary.Portal)
+	}
+
+	if summary.Body != "" && summary.Portal["text"] == nil {
+		summary.Portal["text"] = summary.Body
+	}
+	if summary.Portal["messageType"] == nil {
+		summary.Portal["messageType"] = "text"
+	}
+
+	return summary
+}
+
+func buildWhatsAppReplyPortal(payload map[string]any) map[string]any {
+	reply := map[string]any{}
+	if repliedToID := strings.TrimSpace(stringValue(payload["replied_to_id"])); repliedToID != "" {
+		reply["messageId"] = repliedToID
+	}
+	if quotedBody := strings.TrimSpace(stringValue(payload["quoted_body"])); quotedBody != "" {
+		reply["body"] = quotedBody
+	}
+	return reply
+}
+
+func buildWhatsAppStructuredBody(payload map[string]any, portal map[string]any) string {
+	if body := buildWhatsAppPollPortal(payload, portal); body != "" {
+		return body
 	}
 
 	structuredFields := []struct {
-		key   string
-		label string
+		key         string
+		messageType string
+		label       string
 	}{
-		{key: "image", label: "[Image]"},
-		{key: "video", label: "[Video]"},
-		{key: "audio", label: "[Audio]"},
-		{key: "document", label: "[Document]"},
-		{key: "sticker", label: "[Sticker]"},
-		{key: "video_note", label: "[Video note]"},
-		{key: "location", label: "[Location]"},
-		{key: "contact", label: "[Contact]"},
+		{key: "image", messageType: "image", label: "[Afbeelding]"},
+		{key: "video", messageType: "video", label: "[Video]"},
+		{key: "audio", messageType: "audio", label: "[Audio]"},
+		{key: "document", messageType: "file", label: "[Bestand]"},
+		{key: "sticker", messageType: "sticker", label: "[Sticker]"},
+		{key: "video_note", messageType: "video_note", label: "[Videonotitie]"},
 	}
-
 	for _, field := range structuredFields {
-		if body := messageBodyFromStructuredField(payload, field.key, field.label); body != "" {
+		if body := buildWhatsAppMediaPortal(payload, portal, field.key, field.messageType, field.label); body != "" {
 			return body
 		}
 	}
-
+	if body := buildWhatsAppLocationPortal(payload, portal); body != "" {
+		return body
+	}
+	if body := buildWhatsAppContactPortal(payload, portal); body != "" {
+		return body
+	}
 	return ""
 }
 
-func messageBodyFromStructuredField(payload map[string]any, key string, label string) string {
+func buildWhatsAppMediaPortal(payload map[string]any, portal map[string]any, key string, messageType string, label string) string {
 	value, ok := payload[key]
 	if !ok || value == nil {
 		return ""
 	}
 
+	portal["messageType"] = messageType
+	attachment := map[string]any{"mediaType": messageType}
+
 	switch typed := value.(type) {
 	case string:
-		if strings.TrimSpace(typed) == "" {
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
 			return ""
 		}
-		return label
+		attachment["path"] = trimmed
 	case map[string]any:
-		return messageBodyFromStructuredObject(typed, label)
+		if path := strings.TrimSpace(stringValue(typed["path"])); path != "" {
+			attachment["path"] = path
+		}
+		if remoteURL := strings.TrimSpace(stringValue(typed["url"])); remoteURL != "" {
+			attachment["remoteUrl"] = remoteURL
+		}
+		if filename := strings.TrimSpace(stringValue(typed["filename"])); filename != "" {
+			attachment["filename"] = filename
+		}
+		if caption := strings.TrimSpace(stringValue(typed["caption"])); caption != "" {
+			portal["caption"] = caption
+		}
 	default:
 		return label
 	}
-}
 
-func messageBodyFromStructuredObject(value map[string]any, label string) string {
-	if caption, ok := value["caption"].(string); ok && strings.TrimSpace(caption) != "" {
-		return strings.TrimSpace(caption)
+	portal["attachment"] = attachment
+	if caption := strings.TrimSpace(stringValue(portal["caption"])); caption != "" {
+		return caption
 	}
-	if filename, ok := value["filename"].(string); ok && strings.TrimSpace(filename) != "" {
-		return fmt.Sprintf("%s %s", label, strings.TrimSpace(filename))
+	if filename := strings.TrimSpace(stringValue(attachment["filename"])); filename != "" {
+		return fmt.Sprintf("%s %s", label, filename)
 	}
 	return label
+}
+
+func buildWhatsAppContactPortal(payload map[string]any, portal map[string]any) string {
+	if body := buildWhatsAppContactsArrayPortal(payload, portal); body != "" {
+		return body
+	}
+
+	value, ok := payload["contact"]
+	if !ok || value == nil {
+		return ""
+	}
+	contactMap, ok := value.(map[string]any)
+	if !ok {
+		portal["messageType"] = "contact"
+		return "[Contact]"
+	}
+
+	contact := normalizeWhatsAppContact(contactMap)
+	portal["messageType"] = "contact"
+	if len(contact) > 0 {
+		portal["contact"] = contact
+	}
+	if name := strings.TrimSpace(stringValue(contact["name"])); name != "" {
+		return "[Contact] " + name
+	}
+	return "[Contact]"
+}
+
+func buildWhatsAppContactsArrayPortal(payload map[string]any, portal map[string]any) string {
+	value, ok := payload["contacts_array"]
+	if !ok || value == nil {
+		return ""
+	}
+	items, ok := value.([]any)
+	if !ok || len(items) == 0 {
+		portal["messageType"] = "contact"
+		return "[Contacten]"
+	}
+
+	contacts := make([]map[string]any, 0, len(items))
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		contactMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		contact := normalizeWhatsAppContact(contactMap)
+		if len(contact) == 0 {
+			continue
+		}
+		contacts = append(contacts, contact)
+		if name := strings.TrimSpace(stringValue(contact["name"])); name != "" {
+			names = append(names, name)
+		}
+	}
+	portal["messageType"] = "contact"
+	if len(contacts) > 0 {
+		portal["contacts"] = contacts
+	}
+	if len(contacts) == 1 {
+		portal["contact"] = contacts[0]
+	}
+	if len(names) > 0 {
+		return "[Contacten] " + strings.Join(names, ", ")
+	}
+	return "[Contacten]"
+}
+
+func normalizeWhatsAppContact(value map[string]any) map[string]any {
+	contact := map[string]any{}
+	if name := strings.TrimSpace(stringValue(value["displayName"])); name != "" {
+		contact["name"] = name
+	}
+	vcard := strings.TrimSpace(stringValue(value["vcard"]))
+	if phoneNumber := extractWhatsAppPhoneFromVCard(vcard); phoneNumber != "" {
+		contact["phone"] = phoneNumber
+	}
+	return contact
+}
+
+func extractWhatsAppPhoneFromVCard(vcard string) string {
+	if strings.TrimSpace(vcard) == "" {
+		return ""
+	}
+	for _, line := range strings.Split(vcard, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToUpper(trimmed), "TEL") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		return strings.TrimSpace(parts[1])
+	}
+	return ""
+}
+
+func buildWhatsAppLocationPortal(payload map[string]any, portal map[string]any) string {
+	for _, key := range []string{"location", "live_location"} {
+		location, preview, ok := normalizeWhatsAppLocationPayload(payload[key], key == "live_location")
+		if !ok {
+			continue
+		}
+		portal["messageType"] = "location"
+		if len(location) > 0 {
+			portal["location"] = location
+		}
+		return preview
+	}
+	return ""
+}
+
+func buildWhatsAppPollPortal(payload map[string]any, portal map[string]any) string {
+	candidates := collectWhatsAppPollCandidates(payload)
+	question := firstWhatsAppCandidateString(candidates, []string{"question", "name", "title"})
+	options := firstWhatsAppCandidateStringSlice(candidates, []string{"options", "option_names", "optionNames"})
+	selectedOptions := firstWhatsAppCandidateStringSlice(candidates, []string{"selected_options", "selectedOptions", "selected_option_names", "selectedOptionNames", "votes", "vote"})
+	maxAnswer := firstWhatsAppCandidateString(candidates, []string{"max_answer", "maxAnswer"})
+
+	if question == "" && len(options) == 0 && len(selectedOptions) == 0 && maxAnswer == "" {
+		return ""
+	}
+
+	poll := map[string]any{}
+	if question != "" {
+		poll["question"] = question
+	}
+	if len(options) > 0 {
+		poll["options"] = options
+	}
+	if len(selectedOptions) > 0 {
+		poll["selectedOptions"] = selectedOptions
+	}
+	if maxAnswer != "" {
+		poll["maxAnswer"] = maxAnswer
+	}
+	portal["messageType"] = "poll"
+	portal["poll"] = poll
+
+	return buildWhatsAppPollPreview(question, options, selectedOptions)
+}
+
+func stringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 32)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case int32:
+		return strconv.FormatInt(int64(typed), 10)
+	case bool:
+		if typed {
+			return "true"
+		}
+		return "false"
+	default:
+		return ""
+	}
+}
+
+func boolValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		trimmed := strings.TrimSpace(strings.ToLower(typed))
+		if trimmed == "true" {
+			return true, true
+		}
+		if trimmed == "false" {
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func stringSliceValue(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return compactStringSlice(typed)
+	case []any:
+		return normalizeAnyStringSlice(typed)
+	default:
+		trimmed := strings.TrimSpace(stringValue(value))
+		if trimmed == "" {
+			return nil
+		}
+		return []string{trimmed}
+	}
+}
+
+func normalizeWhatsAppLocationPayload(value any, live bool) (map[string]any, string, bool) {
+	locationMap, ok := value.(map[string]any)
+	if !ok {
+		if value == nil {
+			return nil, "", false
+		}
+		return nil, "[Locatie]", true
+	}
+
+	location := map[string]any{}
+	copyLocationValue(location, "latitude", locationMap["degreesLatitude"])
+	copyLocationValue(location, "longitude", locationMap["degreesLongitude"])
+	copyLocationValue(location, "name", locationMap["name"])
+	copyLocationValue(location, "address", locationMap["address"])
+	if live {
+		location["live"] = true
+	}
+
+	return location, buildWhatsAppLocationPreview(location), true
+}
+
+func copyLocationValue(target map[string]any, key string, source any) {
+	if value := strings.TrimSpace(stringValue(source)); value != "" {
+		target[key] = value
+	}
+}
+
+func buildWhatsAppLocationPreview(location map[string]any) string {
+	if name := strings.TrimSpace(stringValue(location["name"])); name != "" {
+		return "[Locatie] " + name
+	}
+	if address := strings.TrimSpace(stringValue(location["address"])); address != "" {
+		return "[Locatie] " + address
+	}
+	return "[Locatie]"
+}
+
+func collectWhatsAppPollCandidates(payload map[string]any) []map[string]any {
+	candidates := []map[string]any{payload}
+	for _, key := range []string{"poll", "poll_update", "pollUpdate"} {
+		if nested, ok := payload[key].(map[string]any); ok {
+			candidates = append(candidates, nested)
+		}
+	}
+	return candidates
+}
+
+func firstWhatsAppCandidateString(candidates []map[string]any, keys []string) string {
+	for _, candidate := range candidates {
+		for _, key := range keys {
+			if value := strings.TrimSpace(stringValue(candidate[key])); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func firstWhatsAppCandidateStringSlice(candidates []map[string]any, keys []string) []string {
+	for _, candidate := range candidates {
+		for _, key := range keys {
+			if values := stringSliceValue(candidate[key]); len(values) > 0 {
+				return values
+			}
+		}
+	}
+	return nil
+}
+
+func buildWhatsAppPollPreview(question string, options []string, selectedOptions []string) string {
+	if len(selectedOptions) > 0 {
+		return whatsAppPollPrefix + strings.Join(selectedOptions, ", ")
+	}
+	if question != "" {
+		return whatsAppPollPrefix + question
+	}
+	if len(options) > 0 {
+		return whatsAppPollPrefix + strings.Join(options, ", ")
+	}
+	return strings.TrimSpace(whatsAppPollPrefix)
+}
+
+func compactStringSlice(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, item := range values {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func normalizeAnyStringSlice(values []any) []string {
+	result := make([]string, 0, len(values))
+	for _, item := range values {
+		if normalized := normalizeAnyStringValue(item); normalized != "" {
+			result = append(result, normalized)
+		}
+	}
+	return result
+}
+
+func normalizeAnyStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		return firstRecordString(typed, []string{"name", "label", "title", "option", "value"})
+	default:
+		return ""
+	}
+}
+
+func firstRecordString(record map[string]any, keys []string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(stringValue(record[key])); value != "" {
+			return value
+		}
+	}
+	return ""
 }

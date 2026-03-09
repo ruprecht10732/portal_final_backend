@@ -550,6 +550,7 @@ func (s *Service) publishWhatsAppMessageReceived(organizationID uuid.UUID, conve
 				"status":            message.Status,
 				"phoneNumber":       message.PhoneNumber,
 				"body":              message.Body,
+				"metadata":          message.Metadata,
 				"createdAt":         message.CreatedAt,
 				"sentAt":            message.SentAt,
 				"readAt":            message.ReadAt,
