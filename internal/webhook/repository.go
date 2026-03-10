@@ -237,6 +237,68 @@ func (r *Repository) Revoke(ctx context.Context, keyID uuid.UUID, orgID uuid.UUI
 	return nil
 }
 
+func (r *Repository) Rotate(ctx context.Context, keyID uuid.UUID, orgID uuid.UUID, name string, keyHash string, keyPrefix string, allowedDomains []string) (APIKey, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return APIKey{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	const selectExisting = `
+		SELECT id, organization_id, name, key_hash, key_prefix, allowed_domains, is_active, created_at, updated_at
+		FROM RAC_webhook_api_keys
+		WHERE id = $1 AND organization_id = $2
+		FOR UPDATE`
+
+	var current APIKey
+	if err := tx.QueryRow(ctx, selectExisting, keyID, orgID).Scan(
+		&current.ID,
+		&current.OrganizationID,
+		&current.Name,
+		&current.KeyHash,
+		&current.KeyPrefix,
+		&current.AllowedDomains,
+		&current.IsActive,
+		&current.CreatedAt,
+		&current.UpdatedAt,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return APIKey{}, ErrAPIKeyNotFound
+	} else if err != nil {
+		return APIKey{}, err
+	}
+	if !current.IsActive {
+		return APIKey{}, ErrAPIKeyNotFound
+	}
+
+	queries := webhookdb.New(tx)
+	created, err := queries.CreateWebhookAPIKey(ctx, webhookdb.CreateWebhookAPIKeyParams{
+		OrganizationID: toPgUUID(orgID),
+		Name:           name,
+		KeyHash:        keyHash,
+		KeyPrefix:      keyPrefix,
+		AllowedDomains: allowedDomains,
+	})
+	if err != nil {
+		return APIKey{}, err
+	}
+
+	tag, err := queries.RevokeWebhookAPIKey(ctx, webhookdb.RevokeWebhookAPIKeyParams{ID: toPgUUID(keyID), OrganizationID: toPgUUID(orgID)})
+	if err != nil {
+		return APIKey{}, err
+	}
+	if tag == 0 {
+		return APIKey{}, ErrAPIKeyNotFound
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return APIKey{}, err
+	}
+
+	return apiKeyFromModel(created), nil
+}
+
 // UpdateWebhookLeadData sets webhook-specific columns on a lead (raw_form_data, source domain, is_incomplete).
 func (r *Repository) UpdateWebhookLeadData(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID, rawFormData []byte, sourceDomain string, isIncomplete bool) error {
 	return r.queries.UpdateWebhookLeadData(ctx, webhookdb.UpdateWebhookLeadDataParams{

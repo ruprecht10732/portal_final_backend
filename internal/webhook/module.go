@@ -64,6 +64,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup := ctx.Admin.Group("/webhook/keys")
 	adminGroup.POST("", m.handler.HandleCreateAPIKey)
 	adminGroup.GET("", m.handler.HandleListAPIKeys)
+	adminGroup.POST("/:keyId/rotate", m.handler.HandleRotateAPIKey)
 	adminGroup.DELETE("/:keyId", m.handler.HandleRevokeAPIKey)
 
 	// Admin GTM config management (JWT auth + admin role)

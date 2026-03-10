@@ -116,6 +116,7 @@ type OrganizationSettingsResponse struct {
 	NotificationEmail                                 *string  `json:"notificationEmail,omitempty"`
 	WhatsAppDeviceID                                  *string  `json:"whatsAppDeviceId,omitempty"`
 	WhatsAppAccountJID                                *string  `json:"whatsAppAccountJid,omitempty"`
+	WhatsAppToneOfVoice                               string   `json:"whatsAppToneOfVoice"`
 	WhatsAppPresence                                  string   `json:"whatsAppPresence"`
 	WhatsAppWelcomeDelayMinutes                       int      `json:"whatsAppWelcomeDelayMinutes"`
 	SMTPConfigured                                    bool     `json:"smtpConfigured"`
@@ -143,6 +144,7 @@ type UpdateOrganizationSettingsRequest struct {
 	PhotoAnalysisLensCorrectionServiceTypes           *[]string `json:"photoAnalysisLensCorrectionServiceTypes"`
 	PhotoAnalysisPerspectiveNormalizationEnabled      *bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
 	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
+	WhatsAppToneOfVoice                               *string   `json:"whatsAppToneOfVoice" validate:"omitempty,min=3,max=255"`
 	// 0 = send immediately, otherwise delay before sending the automated WhatsApp welcome.
 	WhatsAppWelcomeDelayMinutes *int    `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
 	WhatsAppPresence            *string `json:"whatsAppPresence" validate:"omitempty,oneof=available unavailable"`

@@ -46,6 +46,7 @@ type SendWhatsAppConversationMessageInput struct {
 	Options         []string
 	MaxAnswer       int
 	DurationSeconds *int
+	AISuggestion    string
 }
 
 type WhatsAppConversationActionResult struct {
@@ -102,6 +103,26 @@ func (s *Service) SuggestWhatsAppReply(ctx context.Context, organizationID, conv
 		PhoneNumber:    conversation.PhoneNumber,
 		DisplayName:    conversation.DisplayName,
 		Messages:       make([]SuggestWhatsAppReplyMessage, 0, len(messages)),
+	}
+	if feedbackItems, feedbackErr := s.repo.ListRecentAppliedWhatsAppReplyFeedback(ctx, organizationID, conversation.LeadID, conversation.ID, 4); feedbackErr == nil {
+		input.Feedback = make([]SuggestWhatsAppReplyFeedback, 0, len(feedbackItems))
+		for _, item := range feedbackItems {
+			input.Feedback = append(input.Feedback, SuggestWhatsAppReplyFeedback{
+				AIReply:    item.AIReply,
+				HumanReply: item.HumanReply,
+				CreatedAt:  item.CreatedAt,
+			})
+		}
+	}
+	if examples, examplesErr := s.repo.ListRecentWhatsAppReplyExamples(ctx, organizationID, conversation.LeadID, conversation.ID, 4); examplesErr == nil {
+		input.Examples = make([]SuggestWhatsAppReplyExample, 0, len(examples))
+		for _, example := range examples {
+			input.Examples = append(input.Examples, SuggestWhatsAppReplyExample{
+				CustomerMessage: example.CustomerMessage,
+				Reply:           example.Reply,
+				CreatedAt:       example.CreatedAt,
+			})
+		}
 	}
 	for _, message := range messages {
 		input.Messages = append(input.Messages, SuggestWhatsAppReplyMessage{
@@ -180,7 +201,44 @@ func (s *Service) SendWhatsAppConversationMessage(ctx context.Context, organizat
 		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Internal("WhatsApp-bericht kon niet worden verstuurd")
 	}
 
-	return s.persistOutgoingWhatsAppMessage(ctx, organizationID, conversation.LeadID, conversation.PhoneNumber, outgoing.Preview, nilIfEmptyString(result.MessageID), outgoing.Metadata)
+	updatedConversation, message, err := s.persistOutgoingWhatsAppMessage(ctx, organizationID, conversation.LeadID, conversation.PhoneNumber, outgoing.Preview, nilIfEmptyString(result.MessageID), outgoing.Metadata)
+	if err != nil {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
+	}
+
+	s.captureWhatsAppReplyFeedback(ctx, conversation, input)
+
+	return updatedConversation, message, nil
+}
+
+func (s *Service) captureWhatsAppReplyFeedback(ctx context.Context, conversation repository.WhatsAppConversation, input SendWhatsAppConversationMessageInput) {
+	params, ok := buildWhatsAppReplyFeedbackParams(conversation, input)
+	if !ok {
+		return
+	}
+	_, _ = s.repo.CreateWhatsAppReplyFeedback(ctx, params)
+}
+
+func buildWhatsAppReplyFeedbackParams(conversation repository.WhatsAppConversation, input SendWhatsAppConversationMessageInput) (repository.CreateWhatsAppReplyFeedbackParams, bool) {
+	if conversation.LeadID == nil {
+		return repository.CreateWhatsAppReplyFeedbackParams{}, false
+	}
+	if input.Type != "" && input.Type != "text" {
+		return repository.CreateWhatsAppReplyFeedbackParams{}, false
+	}
+	aiReply := strings.TrimSpace(input.AISuggestion)
+	humanReply := strings.TrimSpace(input.Body)
+	if aiReply == "" || humanReply == "" || aiReply == humanReply {
+		return repository.CreateWhatsAppReplyFeedbackParams{}, false
+	}
+
+	return repository.CreateWhatsAppReplyFeedbackParams{
+		OrganizationID: conversation.OrganizationID,
+		ConversationID: conversation.ID,
+		LeadID:         *conversation.LeadID,
+		AIReply:        aiReply,
+		HumanReply:     humanReply,
+	}, true
 }
 
 func (s *Service) ReceiveIncomingWhatsAppMessage(ctx context.Context, input webhookinbox.IncomingWhatsAppMessage) (bool, error) {

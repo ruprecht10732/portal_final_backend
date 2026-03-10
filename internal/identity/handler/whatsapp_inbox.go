@@ -158,6 +158,7 @@ func (h *Handler) SendWhatsAppConversationMessage(c *gin.Context) {
 	messageInput := service.SendWhatsAppConversationMessageInput{
 		Type:            req.Type,
 		Body:            req.Body,
+		AISuggestion:    req.AISuggestion,
 		Caption:         req.Caption,
 		ViewOnce:        req.ViewOnce,
 		Compress:        req.Compress,

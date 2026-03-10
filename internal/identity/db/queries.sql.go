@@ -229,6 +229,63 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 	return i, err
 }
 
+const createWhatsAppReplyFeedback = `-- name: CreateWhatsAppReplyFeedback :one
+WITH current_service AS (
+  SELECT ls.id AS lead_service_id
+  FROM RAC_lead_services ls
+  WHERE ls.organization_id = $1
+    AND ls.lead_id = $3
+  ORDER BY
+    CASE WHEN ls.pipeline_stage::text NOT IN ('Completed', 'Lost') THEN 0 ELSE 1 END,
+    ls.updated_at DESC,
+    ls.created_at DESC
+  LIMIT 1
+)
+INSERT INTO RAC_whatsapp_reply_feedback (
+  organization_id,
+  conversation_id,
+  lead_id,
+  lead_service_id,
+  ai_reply,
+  human_reply
+)
+SELECT $1, $2, $3, current_service.lead_service_id, $4, $5
+FROM current_service
+RETURNING id, organization_id, conversation_id, lead_id, lead_service_id,
+  ai_reply, human_reply, applied_to_memory, created_at
+`
+
+type CreateWhatsAppReplyFeedbackParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	LeadID         pgtype.UUID `json:"lead_id"`
+	AiReply        string      `json:"ai_reply"`
+	HumanReply     string      `json:"human_reply"`
+}
+
+func (q *Queries) CreateWhatsAppReplyFeedback(ctx context.Context, arg CreateWhatsAppReplyFeedbackParams) (RacWhatsappReplyFeedback, error) {
+	row := q.db.QueryRow(ctx, createWhatsAppReplyFeedback,
+		arg.OrganizationID,
+		arg.ConversationID,
+		arg.LeadID,
+		arg.AiReply,
+		arg.HumanReply,
+	)
+	var i RacWhatsappReplyFeedback
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.ConversationID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.AiReply,
+		&i.HumanReply,
+		&i.AppliedToMemory,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createWorkflowAssignmentRule = `-- name: CreateWorkflowAssignmentRule :exec
 INSERT INTO RAC_workflow_assignment_rules (
   id, organization_id, workflow_id, name, enabled, priority,
@@ -475,7 +532,7 @@ const getOrganizationSettings = `-- name: GetOrganizationSettings :one
 SELECT organization_id, quote_payment_days, quote_valid_days,
        ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
        ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-       ai_council_consensus_mode,
+  ai_council_consensus_mode, whatsapp_tone_of_voice,
        catalog_gap_threshold, catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
   photo_analysis_ocr_assist_enabled,
@@ -503,6 +560,7 @@ type GetOrganizationSettingsRow struct {
 	AiExperienceMemoryEnabled                         bool               `json:"ai_experience_memory_enabled"`
 	AiCouncilEnabled                                  bool               `json:"ai_council_enabled"`
 	AiCouncilConsensusMode                            string             `json:"ai_council_consensus_mode"`
+	WhatsappToneOfVoice                               string             `json:"whatsapp_tone_of_voice"`
 	CatalogGapThreshold                               int32              `json:"catalog_gap_threshold"`
 	CatalogGapLookbackDays                            int32              `json:"catalog_gap_lookback_days"`
 	PhotoAnalysisPreprocessingEnabled                 bool               `json:"photo_analysis_preprocessing_enabled"`
@@ -542,6 +600,7 @@ func (q *Queries) GetOrganizationSettings(ctx context.Context, organizationID pg
 		&i.AiExperienceMemoryEnabled,
 		&i.AiCouncilEnabled,
 		&i.AiCouncilConsensusMode,
+		&i.WhatsappToneOfVoice,
 		&i.CatalogGapThreshold,
 		&i.CatalogGapLookbackDays,
 		&i.PhotoAnalysisPreprocessingEnabled,
@@ -627,6 +686,93 @@ func (q *Queries) ListInvites(ctx context.Context, organizationID pgtype.UUID) (
 			&i.CreatedAt,
 			&i.UsedAt,
 			&i.UsedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentAppliedWhatsAppReplyFeedback = `-- name: ListRecentAppliedWhatsAppReplyFeedback :many
+WITH reference_service AS (
+  SELECT
+    st.name AS service_type,
+    ls.pipeline_stage::text AS pipeline_stage
+  FROM RAC_lead_services ls
+  JOIN RAC_service_types st
+    ON st.id = ls.service_type_id
+   AND st.organization_id = ls.organization_id
+  WHERE ls.organization_id = $1
+    AND ls.lead_id = $2
+  ORDER BY
+    CASE WHEN ls.pipeline_stage::text NOT IN ('Completed', 'Lost') THEN 0 ELSE 1 END,
+    ls.updated_at DESC,
+    ls.created_at DESC
+  LIMIT 1
+)
+SELECT f.id, f.organization_id, f.conversation_id, f.lead_id, f.lead_service_id,
+  f.ai_reply, f.human_reply, f.applied_to_memory, f.created_at
+FROM RAC_whatsapp_reply_feedback f
+JOIN RAC_lead_services ls
+  ON ls.id = f.lead_service_id
+  AND ls.organization_id = f.organization_id
+JOIN RAC_service_types st
+  ON st.id = ls.service_type_id
+  AND st.organization_id = ls.organization_id
+LEFT JOIN reference_service rs ON TRUE
+WHERE f.organization_id = $1
+  AND f.applied_to_memory = true
+  AND f.conversation_id <> $3
+ORDER BY
+  CASE
+    WHEN rs.service_type IS NOT NULL AND st.name = rs.service_type THEN 0
+    WHEN rs.service_type IS NOT NULL THEN 1
+    ELSE 2
+  END ASC,
+  CASE
+    WHEN rs.pipeline_stage IS NOT NULL AND ls.pipeline_stage::text = rs.pipeline_stage THEN 0
+    WHEN rs.pipeline_stage IS NOT NULL THEN 1
+    ELSE 2
+  END ASC,
+  f.created_at DESC
+LIMIT $4
+`
+
+type ListRecentAppliedWhatsAppReplyFeedbackParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	LeadID         pgtype.UUID `json:"lead_id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	Limit          int32       `json:"limit"`
+}
+
+func (q *Queries) ListRecentAppliedWhatsAppReplyFeedback(ctx context.Context, arg ListRecentAppliedWhatsAppReplyFeedbackParams) ([]RacWhatsappReplyFeedback, error) {
+	rows, err := q.db.Query(ctx, listRecentAppliedWhatsAppReplyFeedback,
+		arg.OrganizationID,
+		arg.LeadID,
+		arg.ConversationID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacWhatsappReplyFeedback
+	for rows.Next() {
+		var i RacWhatsappReplyFeedback
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.ConversationID,
+			&i.LeadID,
+			&i.LeadServiceID,
+			&i.AiReply,
+			&i.HumanReply,
+			&i.AppliedToMemory,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1061,7 +1207,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
   ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-  ai_council_consensus_mode,
+  ai_council_consensus_mode, whatsapp_tone_of_voice,
   catalog_gap_threshold, catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
   photo_analysis_ocr_assist_enabled,
@@ -1097,6 +1243,7 @@ type UpsertOrganizationSMTPRow struct {
 	AiExperienceMemoryEnabled                         bool               `json:"ai_experience_memory_enabled"`
 	AiCouncilEnabled                                  bool               `json:"ai_council_enabled"`
 	AiCouncilConsensusMode                            string             `json:"ai_council_consensus_mode"`
+	WhatsappToneOfVoice                               string             `json:"whatsapp_tone_of_voice"`
 	CatalogGapThreshold                               int32              `json:"catalog_gap_threshold"`
 	CatalogGapLookbackDays                            int32              `json:"catalog_gap_lookback_days"`
 	PhotoAnalysisPreprocessingEnabled                 bool               `json:"photo_analysis_preprocessing_enabled"`
@@ -1144,6 +1291,7 @@ func (q *Queries) UpsertOrganizationSMTP(ctx context.Context, arg UpsertOrganiza
 		&i.AiExperienceMemoryEnabled,
 		&i.AiCouncilEnabled,
 		&i.AiCouncilConsensusMode,
+		&i.WhatsappToneOfVoice,
 		&i.CatalogGapThreshold,
 		&i.CatalogGapLookbackDays,
 		&i.PhotoAnalysisPreprocessingEnabled,
@@ -1183,6 +1331,7 @@ INSERT INTO RAC_organization_settings (
   ai_experience_memory_enabled,
   ai_council_enabled,
   ai_council_consensus_mode,
+  whatsapp_tone_of_voice,
   catalog_gap_threshold,
   catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
@@ -1210,20 +1359,21 @@ VALUES (
   COALESCE($9::boolean, true),
   COALESCE($10::boolean, true),
   COALESCE(NULLIF($11::text, ''), 'weighted'),
-  COALESCE($12::int, 3),
-  COALESCE($13::int, 30),
-  COALESCE($14::boolean, true),
-  COALESCE($15::boolean, false),
-  COALESCE($16::text[], '{}'::text[]),
-  COALESCE($17::boolean, false),
-  COALESCE($18::text[], '{}'::text[]),
-  COALESCE($19::boolean, false),
-  COALESCE($20::text[], '{}'::text[]),
-  NULLIF($21::text, ''),
+  COALESCE(NULLIF($12::text, ''), 'warm, practical, and professional'),
+  COALESCE($13::int, 3),
+  COALESCE($14::int, 30),
+  COALESCE($15::boolean, true),
+  COALESCE($16::boolean, false),
+  COALESCE($17::text[], '{}'::text[]),
+  COALESCE($18::boolean, false),
+  COALESCE($19::text[], '{}'::text[]),
+  COALESCE($20::boolean, false),
+  COALESCE($21::text[], '{}'::text[]),
   NULLIF($22::text, ''),
   NULLIF($23::text, ''),
-  COALESCE(NULLIF($24::text, ''), 'available'),
-  COALESCE($25::int, 2)
+  NULLIF($24::text, ''),
+  COALESCE(NULLIF($25::text, ''), 'available'),
+  COALESCE($26::int, 2)
 )
 ON CONFLICT (organization_id) DO UPDATE SET
   quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
@@ -1236,25 +1386,26 @@ ON CONFLICT (organization_id) DO UPDATE SET
   ai_experience_memory_enabled = COALESCE($9::boolean, RAC_organization_settings.ai_experience_memory_enabled),
   ai_council_enabled = COALESCE($10::boolean, RAC_organization_settings.ai_council_enabled),
   ai_council_consensus_mode = COALESCE(NULLIF($11::text, ''), RAC_organization_settings.ai_council_consensus_mode),
-  catalog_gap_threshold = COALESCE($12::int, RAC_organization_settings.catalog_gap_threshold),
-  catalog_gap_lookback_days = COALESCE($13::int, RAC_organization_settings.catalog_gap_lookback_days),
-  photo_analysis_preprocessing_enabled = COALESCE($14::boolean, RAC_organization_settings.photo_analysis_preprocessing_enabled),
-  photo_analysis_ocr_assist_enabled = COALESCE($15::boolean, RAC_organization_settings.photo_analysis_ocr_assist_enabled),
-  photo_analysis_ocr_assist_service_types = COALESCE($16::text[], RAC_organization_settings.photo_analysis_ocr_assist_service_types),
-  photo_analysis_lens_correction_enabled = COALESCE($17::boolean, RAC_organization_settings.photo_analysis_lens_correction_enabled),
-  photo_analysis_lens_correction_service_types = COALESCE($18::text[], RAC_organization_settings.photo_analysis_lens_correction_service_types),
-  photo_analysis_perspective_normalization_enabled = COALESCE($19::boolean, RAC_organization_settings.photo_analysis_perspective_normalization_enabled),
-  photo_analysis_perspective_normalization_service_types = COALESCE($20::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
-  notification_email = CASE WHEN $21::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($21::text, '') END,
-  whatsapp_device_id = CASE WHEN $22::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($22::text, '') END,
-  whatsapp_account_jid = CASE WHEN $23::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($23::text, '') END,
-  whatsapp_presence = COALESCE(NULLIF($24::text, ''), RAC_organization_settings.whatsapp_presence),
-  whatsapp_welcome_delay_minutes = COALESCE($25::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+  whatsapp_tone_of_voice = COALESCE(NULLIF($12::text, ''), RAC_organization_settings.whatsapp_tone_of_voice),
+  catalog_gap_threshold = COALESCE($13::int, RAC_organization_settings.catalog_gap_threshold),
+  catalog_gap_lookback_days = COALESCE($14::int, RAC_organization_settings.catalog_gap_lookback_days),
+  photo_analysis_preprocessing_enabled = COALESCE($15::boolean, RAC_organization_settings.photo_analysis_preprocessing_enabled),
+  photo_analysis_ocr_assist_enabled = COALESCE($16::boolean, RAC_organization_settings.photo_analysis_ocr_assist_enabled),
+  photo_analysis_ocr_assist_service_types = COALESCE($17::text[], RAC_organization_settings.photo_analysis_ocr_assist_service_types),
+  photo_analysis_lens_correction_enabled = COALESCE($18::boolean, RAC_organization_settings.photo_analysis_lens_correction_enabled),
+  photo_analysis_lens_correction_service_types = COALESCE($19::text[], RAC_organization_settings.photo_analysis_lens_correction_service_types),
+  photo_analysis_perspective_normalization_enabled = COALESCE($20::boolean, RAC_organization_settings.photo_analysis_perspective_normalization_enabled),
+  photo_analysis_perspective_normalization_service_types = COALESCE($21::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
+  notification_email = CASE WHEN $22::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($22::text, '') END,
+  whatsapp_device_id = CASE WHEN $23::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($23::text, '') END,
+  whatsapp_account_jid = CASE WHEN $24::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($24::text, '') END,
+  whatsapp_presence = COALESCE(NULLIF($25::text, ''), RAC_organization_settings.whatsapp_presence),
+  whatsapp_welcome_delay_minutes = COALESCE($26::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
   updated_at = now()
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
   ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-  ai_council_consensus_mode,
+  ai_council_consensus_mode, whatsapp_tone_of_voice,
   catalog_gap_threshold, catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
   photo_analysis_ocr_assist_enabled,
@@ -1280,6 +1431,7 @@ type UpsertOrganizationSettingsParams struct {
 	AiExperienceMemoryEnabled                         pgtype.Bool `json:"ai_experience_memory_enabled"`
 	AiCouncilEnabled                                  pgtype.Bool `json:"ai_council_enabled"`
 	AiCouncilConsensusMode                            pgtype.Text `json:"ai_council_consensus_mode"`
+	WhatsappToneOfVoice                               pgtype.Text `json:"whatsapp_tone_of_voice"`
 	CatalogGapThreshold                               pgtype.Int4 `json:"catalog_gap_threshold"`
 	CatalogGapLookbackDays                            pgtype.Int4 `json:"catalog_gap_lookback_days"`
 	PhotoAnalysisPreprocessingEnabled                 pgtype.Bool `json:"photo_analysis_preprocessing_enabled"`
@@ -1308,6 +1460,7 @@ type UpsertOrganizationSettingsRow struct {
 	AiExperienceMemoryEnabled                         bool               `json:"ai_experience_memory_enabled"`
 	AiCouncilEnabled                                  bool               `json:"ai_council_enabled"`
 	AiCouncilConsensusMode                            string             `json:"ai_council_consensus_mode"`
+	WhatsappToneOfVoice                               string             `json:"whatsapp_tone_of_voice"`
 	CatalogGapThreshold                               int32              `json:"catalog_gap_threshold"`
 	CatalogGapLookbackDays                            int32              `json:"catalog_gap_lookback_days"`
 	PhotoAnalysisPreprocessingEnabled                 bool               `json:"photo_analysis_preprocessing_enabled"`
@@ -1345,6 +1498,7 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		arg.AiExperienceMemoryEnabled,
 		arg.AiCouncilEnabled,
 		arg.AiCouncilConsensusMode,
+		arg.WhatsappToneOfVoice,
 		arg.CatalogGapThreshold,
 		arg.CatalogGapLookbackDays,
 		arg.PhotoAnalysisPreprocessingEnabled,
@@ -1373,6 +1527,7 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		&i.AiExperienceMemoryEnabled,
 		&i.AiCouncilEnabled,
 		&i.AiCouncilConsensusMode,
+		&i.WhatsappToneOfVoice,
 		&i.CatalogGapThreshold,
 		&i.CatalogGapLookbackDays,
 		&i.PhotoAnalysisPreprocessingEnabled,

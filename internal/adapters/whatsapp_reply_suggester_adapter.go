@@ -27,6 +27,8 @@ func (a *WhatsAppReplySuggesterAdapter) SuggestReply(ctx context.Context, input 
 		PhoneNumber:    input.PhoneNumber,
 		DisplayName:    input.DisplayName,
 		Messages:       make([]ports.WhatsAppReplyMessage, 0, len(input.Messages)),
+		Examples:       make([]ports.WhatsAppReplyExample, 0, len(input.Examples)),
+		Feedback:       make([]ports.WhatsAppReplyFeedback, 0, len(input.Feedback)),
 	}
 
 	for _, message := range input.Messages {
@@ -34,6 +36,20 @@ func (a *WhatsAppReplySuggesterAdapter) SuggestReply(ctx context.Context, input 
 			Direction: message.Direction,
 			Body:      message.Body,
 			CreatedAt: message.CreatedAt,
+		})
+	}
+	for _, example := range input.Examples {
+		mapped.Examples = append(mapped.Examples, ports.WhatsAppReplyExample{
+			CustomerMessage: example.CustomerMessage,
+			Reply:           example.Reply,
+			CreatedAt:       example.CreatedAt,
+		})
+	}
+	for _, feedback := range input.Feedback {
+		mapped.Feedback = append(mapped.Feedback, ports.WhatsAppReplyFeedback{
+			AIReply:    feedback.AIReply,
+			HumanReply: feedback.HumanReply,
+			CreatedAt:  feedback.CreatedAt,
 		})
 	}
 

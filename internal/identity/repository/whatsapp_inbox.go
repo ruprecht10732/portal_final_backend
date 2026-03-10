@@ -52,6 +52,12 @@ type WhatsAppReadSyncTarget struct {
 	ExternalMessageID string
 }
 
+type WhatsAppReplyExample struct {
+	CustomerMessage string
+	Reply           string
+	CreatedAt       time.Time
+}
+
 type WhatsAppMessageMutationParams struct {
 	OrganizationID          uuid.UUID
 	EventType               string
@@ -647,6 +653,120 @@ func (r *Repository) CountUnreadWhatsAppConversations(ctx context.Context, organ
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *Repository) ListRecentWhatsAppReplyExamples(ctx context.Context, organizationID uuid.UUID, referenceLeadID *uuid.UUID, excludeConversationID uuid.UUID, limit int) ([]WhatsAppReplyExample, error) {
+	if limit <= 0 {
+		limit = 4
+	}
+
+	const query = `
+		WITH reference_service AS (
+			SELECT
+				st.name AS service_type,
+				ls.pipeline_stage::text AS pipeline_stage
+			FROM RAC_lead_services ls
+			JOIN RAC_service_types st
+			  ON st.id = ls.service_type_id
+			 AND st.organization_id = ls.organization_id
+			WHERE ls.organization_id = $1
+			  AND ls.lead_id = $2
+			ORDER BY
+				CASE WHEN ls.pipeline_stage::text NOT IN ('Completed', 'Lost') THEN 0 ELSE 1 END,
+				ls.updated_at DESC,
+				ls.created_at DESC
+			LIMIT 1
+		),
+		WITH ranked_examples AS (
+			SELECT
+				outgoing.conversation_id,
+				outgoing.body AS reply,
+				outgoing.created_at,
+				(
+					SELECT inbound.body
+					FROM RAC_whatsapp_messages inbound
+					WHERE inbound.organization_id = outgoing.organization_id
+					  AND inbound.conversation_id = outgoing.conversation_id
+					  AND inbound.direction = 'inbound'
+					  AND inbound.created_at <= outgoing.created_at
+					  AND NULLIF(BTRIM(inbound.body), '') IS NOT NULL
+					ORDER BY inbound.created_at DESC
+					LIMIT 1
+				) AS customer_message,
+				svc.service_type,
+				svc.pipeline_stage,
+				ROW_NUMBER() OVER (
+					PARTITION BY outgoing.conversation_id
+					ORDER BY outgoing.created_at DESC
+				) AS conversation_rank
+			FROM RAC_whatsapp_messages outgoing
+			JOIN RAC_whatsapp_conversations conversations
+			  ON conversations.organization_id = outgoing.organization_id
+			 AND conversations.id = outgoing.conversation_id
+			LEFT JOIN LATERAL (
+				SELECT
+					st.name AS service_type,
+					ls.pipeline_stage::text AS pipeline_stage
+				FROM RAC_lead_services ls
+				JOIN RAC_service_types st
+				  ON st.id = ls.service_type_id
+				 AND st.organization_id = ls.organization_id
+				WHERE conversations.lead_id IS NOT NULL
+				  AND ls.organization_id = conversations.organization_id
+				  AND ls.lead_id = conversations.lead_id
+				ORDER BY
+					CASE WHEN ls.pipeline_stage::text NOT IN ('Completed', 'Lost') THEN 0 ELSE 1 END,
+					ls.updated_at DESC,
+					ls.created_at DESC
+				LIMIT 1
+			) svc ON TRUE
+			WHERE outgoing.organization_id = $1
+			  AND outgoing.conversation_id <> $3
+			  AND outgoing.direction = 'outbound'
+			  AND outgoing.status IN ('sent', 'delivered', 'read')
+			  AND NULLIF(BTRIM(outgoing.body), '') IS NOT NULL
+		),
+		scored_examples AS (
+			SELECT
+				ranked_examples.customer_message,
+				ranked_examples.reply,
+				ranked_examples.created_at,
+				CASE
+					WHEN reference_service.service_type IS NOT NULL AND ranked_examples.service_type = reference_service.service_type THEN 0
+					WHEN reference_service.service_type IS NOT NULL THEN 1
+					ELSE 2
+				END AS service_rank,
+				CASE
+					WHEN reference_service.pipeline_stage IS NOT NULL AND ranked_examples.pipeline_stage = reference_service.pipeline_stage THEN 0
+					WHEN reference_service.pipeline_stage IS NOT NULL THEN 1
+					ELSE 2
+				END AS stage_rank
+			FROM ranked_examples
+			LEFT JOIN reference_service ON TRUE
+			WHERE ranked_examples.conversation_rank = 1
+			  AND ranked_examples.customer_message IS NOT NULL
+		)
+		SELECT customer_message, reply, created_at
+		FROM scored_examples
+		ORDER BY service_rank ASC, stage_rank ASC, created_at DESC
+		LIMIT $4`
+
+	rows, err := r.pool.Query(ctx, query, organizationID, toNullableUUID(referenceLeadID), excludeConversationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	examples := make([]WhatsAppReplyExample, 0, limit)
+	for rows.Next() {
+		var item WhatsAppReplyExample
+		if err := rows.Scan(&item.CustomerMessage, &item.Reply, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		examples = append(examples, item)
+	}
+
+	return examples, rows.Err()
 }
 
 func (r *Repository) GetWhatsAppMessageByExternalID(ctx context.Context, organizationID uuid.UUID, externalMessageID string) (WhatsAppMessage, WhatsAppConversation, error) {

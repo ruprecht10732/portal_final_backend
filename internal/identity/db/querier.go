@@ -18,6 +18,7 @@ type Querier interface {
 	CreateInvite(ctx context.Context, arg CreateInviteParams) (RacOrganizationInvite, error)
 	// Identity Domain SQL Queries
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (CreateOrganizationRow, error)
+	CreateWhatsAppReplyFeedback(ctx context.Context, arg CreateWhatsAppReplyFeedbackParams) (RacWhatsappReplyFeedback, error)
 	CreateWorkflowAssignmentRule(ctx context.Context, arg CreateWorkflowAssignmentRuleParams) error
 	DefaultWorkflowAssignmentRuleExists(ctx context.Context, organizationID pgtype.UUID) (bool, error)
 	DeleteLeadWorkflowOverride(ctx context.Context, arg DeleteLeadWorkflowOverrideParams) error
@@ -33,6 +34,7 @@ type Querier interface {
 	GetUserOrganizationID(ctx context.Context, userID pgtype.UUID) (pgtype.UUID, error)
 	LeadExistsInOrganization(ctx context.Context, arg LeadExistsInOrganizationParams) (bool, error)
 	ListInvites(ctx context.Context, organizationID pgtype.UUID) ([]RacOrganizationInvite, error)
+	ListRecentAppliedWhatsAppReplyFeedback(ctx context.Context, arg ListRecentAppliedWhatsAppReplyFeedbackParams) ([]RacWhatsappReplyFeedback, error)
 	ListWorkflowAssignmentRules(ctx context.Context, organizationID pgtype.UUID) ([]RacWorkflowAssignmentRule, error)
 	ListWorkflowSteps(ctx context.Context, organizationID pgtype.UUID) ([]RacWorkflowStep, error)
 	ListWorkflows(ctx context.Context, organizationID pgtype.UUID) ([]RacWorkflow, error)

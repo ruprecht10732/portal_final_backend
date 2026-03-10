@@ -144,6 +144,9 @@ func TestHandleWhatsAppWebhookSyncsOutgoingDeviceMessages(t *testing.T) {
 	if ingester.lastOutgoing.PhoneNumber != directChatJID {
 		t.Fatalf("expected outgoing sync to target chat_id, got %q", ingester.lastOutgoing.PhoneNumber)
 	}
+	if ingester.unreadCount != 0 {
+		t.Fatalf("expected outgoing sync not to change unread count, got %d", ingester.unreadCount)
+	}
 }
 
 func TestHandleWhatsAppWebhookAppliesReadReceipt(t *testing.T) {
@@ -169,6 +172,9 @@ func TestHandleWhatsAppWebhookAppliesReadReceipt(t *testing.T) {
 	assertWebhookStatus(t, response.Body.Bytes(), "processed")
 	if ingester.receiptTypes["OUT-1"] != "read" || ingester.receiptTypes["OUT-2"] != "read" {
 		t.Fatalf("expected receipt type to be recorded for all message ids, got %#v", ingester.receiptTypes)
+	}
+	if ingester.unreadCount != 0 {
+		t.Fatalf("expected receipts not to affect unread count, got %d", ingester.unreadCount)
 	}
 }
 

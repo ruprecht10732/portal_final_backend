@@ -310,6 +310,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 			AIExperienceMemory:                                settings.AIExperienceMemoryEnabled,
 			AICouncilMode:                                     settings.AICouncilEnabled,
 			AICouncilConsensusMode:                            settings.AICouncilConsensusMode,
+			WhatsAppToneOfVoice:                               settings.WhatsAppToneOfVoice,
 			CatalogGapThreshold:                               settings.CatalogGapThreshold,
 			CatalogGapLookbackDays:                            settings.CatalogGapLookbackDays,
 			PhotoAnalysisPreprocessingEnabled:                 settings.PhotoAnalysisPreprocessingEnabled,

@@ -87,6 +87,7 @@ type OrganizationSettings struct {
 	AIExperienceMemoryEnabled                         bool
 	AICouncilEnabled                                  bool
 	AICouncilConsensusMode                            string
+	WhatsAppToneOfVoice                               string
 	CatalogGapThreshold                               int
 	CatalogGapLookbackDays                            int
 	PhotoAnalysisPreprocessingEnabled                 bool
@@ -122,6 +123,7 @@ type OrganizationSettingsUpdate struct {
 	AIExperienceMemoryEnabled                         *bool
 	AICouncilEnabled                                  *bool
 	AICouncilConsensusMode                            *string
+	WhatsAppToneOfVoice                               *string
 	CatalogGapThreshold                               *int
 	CatalogGapLookbackDays                            *int
 	PhotoAnalysisPreprocessingEnabled                 *bool
@@ -192,6 +194,7 @@ type settingsSnapshot struct {
 	AIExperienceMemoryEnabled                         bool
 	AICouncilEnabled                                  bool
 	AICouncilConsensusMode                            string
+	WhatsAppToneOfVoice                               string
 	CatalogGapThreshold                               int32
 	CatalogGapLookbackDays                            int32
 	PhotoAnalysisPreprocessingEnabled                 bool
@@ -399,6 +402,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			AIExperienceMemoryEnabled:                         true,
 			AICouncilEnabled:                                  true,
 			AICouncilConsensusMode:                            "weighted",
+			WhatsAppToneOfVoice:                               "warm, practical, and professional",
 			CatalogGapThreshold:                               3,
 			CatalogGapLookbackDays:                            30,
 			PhotoAnalysisPreprocessingEnabled:                 true,
@@ -429,6 +433,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		AIExperienceMemoryEnabled:                         row.AiExperienceMemoryEnabled,
 		AICouncilEnabled:                                  row.AiCouncilEnabled,
 		AICouncilConsensusMode:                            row.AiCouncilConsensusMode,
+		WhatsAppToneOfVoice:                               row.WhatsappToneOfVoice,
 		CatalogGapThreshold:                               row.CatalogGapThreshold,
 		CatalogGapLookbackDays:                            row.CatalogGapLookbackDays,
 		PhotoAnalysisPreprocessingEnabled:                 row.PhotoAnalysisPreprocessingEnabled,
@@ -467,6 +472,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		AiExperienceMemoryEnabled:                         toPgBoolPtr(update.AIExperienceMemoryEnabled),
 		AiCouncilEnabled:                                  toPgBoolPtr(update.AICouncilEnabled),
 		AiCouncilConsensusMode:                            toPgTextPtr(update.AICouncilConsensusMode),
+		WhatsappToneOfVoice:                               toPgTextPtr(update.WhatsAppToneOfVoice),
 		CatalogGapThreshold:                               toPgInt4Ptr(update.CatalogGapThreshold),
 		CatalogGapLookbackDays:                            toPgInt4Ptr(update.CatalogGapLookbackDays),
 		PhotoAnalysisPreprocessingEnabled:                 toPgBoolPtr(update.PhotoAnalysisPreprocessingEnabled),
@@ -500,6 +506,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		AIExperienceMemoryEnabled:                         row.AiExperienceMemoryEnabled,
 		AICouncilEnabled:                                  row.AiCouncilEnabled,
 		AICouncilConsensusMode:                            row.AiCouncilConsensusMode,
+		WhatsAppToneOfVoice:                               row.WhatsappToneOfVoice,
 		CatalogGapThreshold:                               row.CatalogGapThreshold,
 		CatalogGapLookbackDays:                            row.CatalogGapLookbackDays,
 		PhotoAnalysisPreprocessingEnabled:                 row.PhotoAnalysisPreprocessingEnabled,
@@ -553,6 +560,7 @@ func (r *Repository) UpsertOrganizationSMTP(ctx context.Context, organizationID 
 		AIExperienceMemoryEnabled:                         row.AiExperienceMemoryEnabled,
 		AICouncilEnabled:                                  row.AiCouncilEnabled,
 		AICouncilConsensusMode:                            row.AiCouncilConsensusMode,
+		WhatsAppToneOfVoice:                               row.WhatsappToneOfVoice,
 		CatalogGapThreshold:                               row.CatalogGapThreshold,
 		CatalogGapLookbackDays:                            row.CatalogGapLookbackDays,
 		PhotoAnalysisPreprocessingEnabled:                 row.PhotoAnalysisPreprocessingEnabled,
@@ -711,6 +719,7 @@ func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSet
 		AIExperienceMemoryEnabled:                         snapshot.AIExperienceMemoryEnabled,
 		AICouncilEnabled:                                  snapshot.AICouncilEnabled,
 		AICouncilConsensusMode:                            snapshot.AICouncilConsensusMode,
+		WhatsAppToneOfVoice:                               snapshot.WhatsAppToneOfVoice,
 		CatalogGapThreshold:                               int(snapshot.CatalogGapThreshold),
 		CatalogGapLookbackDays:                            int(snapshot.CatalogGapLookbackDays),
 		PhotoAnalysisPreprocessingEnabled:                 snapshot.PhotoAnalysisPreprocessingEnabled,

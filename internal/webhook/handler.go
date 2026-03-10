@@ -202,6 +202,11 @@ type CreateAPIKeyResponse struct {
 	Key string `json:"key"` // plaintext, shown only once
 }
 
+type RotateAPIKeyRequest struct {
+	Name           string   `json:"name" validate:"required,min=1,max=100"`
+	AllowedDomains []string `json:"allowedDomains" validate:"max=20,dive,max=200"`
+}
+
 // HandleCreateAPIKey creates a new webhook API key.
 // POST /api/v1/admin/webhook/keys
 func (h *Handler) HandleCreateAPIKey(c *gin.Context) {
@@ -282,6 +287,52 @@ func (h *Handler) HandleRevokeAPIKey(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "API key revoked"})
+}
+
+// HandleRotateAPIKey atomically creates a replacement key and revokes the previous key.
+// POST /api/v1/admin/webhook/keys/:keyId/rotate
+func (h *Handler) HandleRotateAPIKey(c *gin.Context) {
+	tenantID, ok := h.getTenantID(c)
+	if !ok {
+		return
+	}
+
+	keyID, err := uuid.Parse(c.Param("keyId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid key ID", nil)
+		return
+	}
+
+	var req RotateAPIKeyRequest
+	if !h.bindAndValidate(c, &req) {
+		return
+	}
+
+	plaintext, hash, prefix, err := GenerateAPIKey()
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to generate API key", nil)
+		return
+	}
+
+	domains := req.AllowedDomains
+	if domains == nil {
+		domains = []string{}
+	}
+
+	key, err := h.repo.Rotate(c.Request.Context(), keyID, tenantID, req.Name, hash, prefix, domains)
+	if err != nil {
+		if err == ErrAPIKeyNotFound {
+			httpkit.Error(c, http.StatusNotFound, "API key not found", nil)
+			return
+		}
+		httpkit.HandleError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, CreateAPIKeyResponse{
+		APIKeyResponse: toAPIKeyResponse(key),
+		Key:            plaintext,
+	})
 }
 
 func toAPIKeyResponse(key APIKey) APIKeyResponse {

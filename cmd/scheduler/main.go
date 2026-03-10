@@ -40,12 +40,50 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const schedulerStorageBucketEnsureErrPrefix = "failed to ensure storage bucket exists: "
+const schedulerStorageBucketEnsureErrMsg = "failed to ensure storage bucket exists"
+
 func noOpRedisCloser() {
 	// Intentionally empty: used when no Redis client was initialized.
 }
 
 func noOpSchedulerCloser() {
 	// Intentionally empty: used when no scheduler client was initialized.
+}
+
+func ensureBucket(ctx context.Context, log *logger.Logger, storageSvc storage.StorageService, name, bucket string) {
+	if err := withRetry(ctx, log, "ensure "+name+" bucket", 5, 2*time.Second, func() error {
+		return storageSvc.EnsureBucketExists(ctx, bucket)
+	}); err != nil {
+		log.Error(schedulerStorageBucketEnsureErrMsg, "error", err, "bucket", bucket)
+		panic(schedulerStorageBucketEnsureErrPrefix + err.Error())
+	}
+}
+
+func initStorageOrPanic(ctx context.Context, cfg *config.Config, log *logger.Logger) storage.StorageService {
+	storageSvc, err := storage.NewMinIOService(cfg)
+	if err != nil {
+		log.Error("failed to initialize storage service", "error", err)
+		panic("failed to initialize storage service: " + err.Error())
+	}
+
+	ensureBucket(ctx, log, storageSvc, "lead-service-attachments", cfg.GetMinioBucketLeadServiceAttachments())
+	ensureBucket(ctx, log, storageSvc, "catalog-assets", cfg.GetMinioBucketCatalogAssets())
+	ensureBucket(ctx, log, storageSvc, "partner-logos", cfg.GetMinioBucketPartnerLogos())
+	ensureBucket(ctx, log, storageSvc, "organization-logos", cfg.GetMinioBucketOrganizationLogos())
+	ensureBucket(ctx, log, storageSvc, "quote-pdfs", cfg.GetMinioBucketQuotePDFs())
+	ensureBucket(ctx, log, storageSvc, "quote-attachments", cfg.GetMinioBucketQuoteAttachments())
+	log.Info(
+		"storage service initialized",
+		"leadAttachmentsBucket", cfg.GetMinioBucketLeadServiceAttachments(),
+		"catalogAssetsBucket", cfg.GetMinioBucketCatalogAssets(),
+		"partnerLogosBucket", cfg.GetMinioBucketPartnerLogos(),
+		"organizationLogosBucket", cfg.GetMinioBucketOrganizationLogos(),
+		"quotePDFsBucket", cfg.GetMinioBucketQuotePDFs(),
+		"quoteAttachmentsBucket", cfg.GetMinioBucketQuoteAttachments(),
+	)
+
+	return storageSvc
 }
 
 func main() {
@@ -98,12 +136,13 @@ func main() {
 	notificationModule.SetUserTenancyReader(identitySvc)
 	notificationModule.SetWorkflowResolver(identitySvc)
 	wireSchedulerSMTPEncryptionKey(cfg, log, identitySvc, notificationModule)
+	storageSvc := initStorageOrPanic(ctx, cfg, log)
 
 	val := validator.New()
 
 	// Worker-side quote generation wiring (no HTTP handlers required).
-	catalogModule := catalog.NewModule(pool, nil, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
-	leadsModule, err := leads.NewModule(ctx, pool, eventBus, nil, val, leads.ModuleDeps{
+	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
+	leadsModule, err := leads.NewModule(ctx, pool, eventBus, storageSvc, val, leads.ModuleDeps{
 		Config:                cfg,
 		Log:                   log,
 		OrchestratorLockRedis: orchestratorLockRedis,
@@ -112,7 +151,7 @@ func main() {
 		log.Error("failed to initialize leads module", "error", err)
 		panic("failed to initialize leads module: " + err.Error())
 	}
-	partnersModule := partners.NewModule(pool, eventBus, nil, "", val)
+	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 
 	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
@@ -168,16 +207,11 @@ func main() {
 	worker.SetIMAPSyncProcessor(imapModule.Service())
 	wireSchedulerIMAPEncryptionKey(cfg, log, imapModule.Service())
 
-	storageSvc, storageErr := storage.NewMinIOService(cfg)
-	if storageErr != nil {
-		log.Warn("failed to initialize storage service for accepted quote PDF tasks", "error", storageErr)
-	} else {
-		notificationModule.SetQuotePDFStorage(storageSvc, cfg.GetMinioBucketQuotePDFs())
-		quoteTermsResolver := adapters.NewQuoteTermsResolverAdapter(identitySvc, identitySvc, leadsModule.Repository())
-		quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identitySvc, nil, storageSvc, cfg, quoteTermsResolver)
-		notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
-		worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
-	}
+	notificationModule.SetQuotePDFStorage(storageSvc, cfg.GetMinioBucketQuotePDFs())
+	quoteTermsResolver := adapters.NewQuoteTermsResolverAdapter(identitySvc, identitySvc, leadsModule.Repository())
+	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identitySvc, nil, storageSvc, cfg, quoteTermsResolver)
+	notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
+	worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
 
 	worker.Run(ctx)
 }

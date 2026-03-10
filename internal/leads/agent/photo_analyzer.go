@@ -535,98 +535,58 @@ func normalizeMeasurementType(t string) string {
 }
 
 func buildPhotoAnalysisPrompt(leadID, serviceID uuid.UUID, photoCount int, contextInfo string, serviceType string, intakeRequirements string, preparedImages []PreparedImage) string {
-	prompt := fmt.Sprintf(`Analyseer de %d foto('s) voor deze thuisdienst aanvraag.
-
-Lead ID: %s
-Service ID: %s
-`, photoCount, leadID.String(), serviceID.String())
-
+	preprocessingSection := ""
 	if preprocessingSummary := buildPreprocessingPromptSection(preparedImages); preprocessingSummary != "" {
-		prompt += fmt.Sprintf(`
-## PREPROCESSING CONTEXT
-%s
-`, wrapReferenceBlock(preprocessingSummary))
+		preprocessingSection = wrapReferenceBlock(preprocessingSummary)
 	}
 
+	serviceTypeSection := ""
 	if serviceType != "" {
-		prompt += fmt.Sprintf(`
-## DIENSTTYPE: %s
+		serviceTypeSection = fmt.Sprintf(`## DIENSTTYPE: %s
 Pas je analyse aan voor dit specifieke vakgebied. Gebruik je vakkennis over '%s' om:
 - Specifieke materialen, componenten en systemen te herkennen
 - Relevante Nederlandse bouwstandaarden en -normen toe te passen (NEN, KOMO, BRL, etc.)
 - Standaard componenten en configuraties te herkennen zonder speculatieve absolute maatinschattingen
 - Productzoektermen te suggereren die de Schatter kan gebruiken om materialen te vinden
-- Controleer eerst of de foto's inhoudelijk matchen met dit diensttype. Bij mismatch: zet confidence op Low, benoem de mismatch expliciet in summary én discrepancies, en vermijd speculatieve aannames.
-`, serviceType, serviceType)
+- Controleer eerst of de foto's inhoudelijk matchen met dit diensttype. Bij mismatch: zet confidence op Low, benoem de mismatch expliciet in summary én discrepancies, en vermijd speculatieve aannames.`, serviceType, serviceType)
 	}
 
+	intakeRequirementsSection := ""
 	if intakeRequirements != "" {
-		prompt += fmt.Sprintf(`
-## INTAKE-EISEN (HARDE EISEN)
+		intakeRequirementsSection = fmt.Sprintf(`## INTAKE-EISEN (HARDE EISEN)
 Controleer voor elk van deze eisen of ze zichtbaar zijn op de foto's:
 %s
 
 Noteer in je observaties welke eisen je kunt bevestigen of weerleggen op basis van de foto's.
-Voeg tegenstrijdigheden toe aan discrepancies als claims niet overeenkomen met wat je ziet.
-`, wrapReferenceBlock(intakeRequirements))
+Voeg tegenstrijdigheden toe aan discrepancies als claims niet overeenkomen met wat je ziet.`, wrapReferenceBlock(intakeRequirements))
 	}
 
+	contextInfoSection := ""
 	if contextInfo != "" {
-		prompt += fmt.Sprintf(`
-## Context van de aanvraag (CLAIMS VAN CONSUMENT):
+		contextInfoSection = fmt.Sprintf(`## Context van de aanvraag (CLAIMS VAN CONSUMENT):
 %s
 
 BELANGRIJK: Vergelijk deze claims kritisch met wat je daadwerkelijk op de foto's ziet.
-Als een claim niet klopt met de visuele bewijzen, voeg het toe aan discrepancies.
-`, wrapReferenceBlock(contextInfo))
+Als een claim niet klopt met de visuele bewijzen, voeg het toe aan discrepancies.`, wrapReferenceBlock(contextInfo))
 	}
 
-	prompt += `
-## Analyseer elke foto zorgvuldig en voer uit:
-
-### 1. VISUELE OBSERVATIES
-- Welk specifiek probleem of situatie wordt getoond
-- De geschatte omvang en complexiteit van het benodigde werk
-- Factoren die prijs of tijdlijn kunnen beïnvloeden
-- Veiligheidszorgen die aangepakt moeten worden
-
-### 2. METINGEN (CRUCIAAL)
-Gebruik foto's NIET als betrouwbare bron voor absolute meters, vierkante meters of volumes wanneer die niet expliciet zichtbaar of gelabeld zijn:
-- Identificeer standaard componenten of configuraties, bijvoorbeeld enkel deurblad, dubbel glas, radiatorpaneel, groepenkast met meerdere groepen.
-- Tel alleen aantallen die visueel ondubbelzinnig zichtbaar zijn.
-- Leg alleen metingen vast als de waarde direct zichtbaar is op het product, op verpakking, via OCR, of anders expliciet in beeld staat.
-- Gebruik Calculator alleen voor afgeleide berekeningen op basis van expliciet zichtbare of gelabelde waarden, niet op basis van gegokte referentie-objecten.
-- Noteer elke meting met type (dimension/area/count/volume), waarde, eenheid en confidence.
-- ANTIFOUT-REGEL: Het is beter om FlagOnsiteMeasurement aan te roepen dan een onjuiste meting te geven.
-- Als exacte maatvoering nodig is voor prijsbepaling of je confidence niet "High" kan zijn (door hoek, perspectief, lensvervorming, onscherpte of ontbrekende schaal), roep FlagOnsiteMeasurement aan met de reden.
-- Gebruik geen speculatieve referentie-objecten zoals deuren, stopcontacten of tegels om absolute afmetingen af te leiden.
-
-### 3. TEKST EXTRACTIE (OCR)
-Lees alle zichtbare tekst op foto's:
-- Gebruik eventuele OCR assist candidates uit preprocessing als machine-read startpunt en verifieer ze tegen het beeld.
-- Merknamen, modelnummers, serienummers
-- Energielabels, typeplaten, CE-markeringen
-- Afmetingen op verpakkingen of producten
-- Waarschuwingsteksten
-
-### 4. FEITCONTROLE (DISCREPANCIES)
-Als er context/claims van de consument zijn meegegeven:
-- Vergelijk elke claim met visuele bewijzen
-- Noteer tegenstrijdigheden (bijv. "consument meldt lekkage maar geen vochtsporen zichtbaar")
-- Dit helpt de Gatekeeper claims te valideren
-
-### 5. PRODUCTZOEKTERMEN
-Stel zoektermen voor die de Schatter kan gebruiken om materialen te vinden:
-- Specifieke productnamen, materiaalsoorten
-- Nederlandse en Engelse termen
-- Merken en modellen als zichtbaar
-
-## VERPLICHT
-- Je mag intern stap voor stap redeneren, maar je uiteindelijke output moet alleen de vereiste tool calls bevatten.
-Na je analyse MOET je SavePhotoAnalysis aanroepen met alle bevindingen.
-Gebruik Calculator voor berekeningen en FlagOnsiteMeasurement voor metingen die ter plaatse nodig zijn.`
-
-	return prompt
+	return renderPromptTemplate(photoAnalysisPromptTemplate, struct {
+		PhotoCount                int
+		LeadID                    string
+		ServiceID                 string
+		PreprocessingSection      string
+		ServiceTypeSection        string
+		IntakeRequirementsSection string
+		ContextInfoSection        string
+	}{
+		PhotoCount:                photoCount,
+		LeadID:                    leadID.String(),
+		ServiceID:                 serviceID.String(),
+		PreprocessingSection:      preprocessingSection,
+		ServiceTypeSection:        serviceTypeSection,
+		IntakeRequirementsSection: intakeRequirementsSection,
+		ContextInfoSection:        contextInfoSection,
+	})
 }
 
 func buildPreprocessingPromptSection(preparedImages []PreparedImage) string {
@@ -678,31 +638,5 @@ func appendPreparedImageOCRCandidates(sb *strings.Builder, candidates []OCRCandi
 }
 
 func getPhotoAnalyzerPrompt() string {
-	return `Je bent een forensisch foto-analist voor een Nederlandse thuisdiensten-marktplaats.
-
-Je mag intern stap voor stap redeneren, maar je uiteindelijke output moet alleen de vereiste tool calls bevatten.
-
-Doel:
-- Haal uit foto's alles wat relevant is voor prijsschatting en kwaliteitsbeoordeling.
-
-Kernregels:
-- Gebruik foto's primair voor componentherkenning, zichtbare aantallen, OCR en discrepantiecontrole.
-- Gebruik OCR assist candidates uit preprocessing als extra machine-read bewijs, maar verifieer ze altijd tegen het beeld.
-- Behandel normale 2D foto's NIET als betrouwbare bron voor absolute maatvoering; perspectief, lensvervorming en camerahoek maken dat onbetrouwbaar.
-- Leg alleen metingen vast als de waarde expliciet zichtbaar, gelabeld of via OCR verifieerbaar is.
-- Gebruik Calculator alleen voor berekeningen op basis van expliciete, visueel verifieerbare waarden.
-- Lees zichtbare tekst (OCR): merken, modellen, typeplaten, labels, CE-markeringen.
-- Vergelijk claims met visueel bewijs en rapporteer tegenstrijdigheden.
-- Identificeer materialen/componenten en voorstelbare productzoektermen.
-- Geef confidence: High / Medium / Low.
-- Als foto's niet bij het diensttype passen: confidence = Low, noem dit expliciet in summary en discrepancies.
-- ANTIFOUT-REGEL: liever FlagOnsiteMeasurement dan gokken.
-- Als exacte maatvoering nodig is of een meting niet betrouwbaar uit de foto kan of confidence niet "High" is: roep FlagOnsiteMeasurement aan met uitleg.
-
-Veiligheid:
-- Markeer elektrische gevaren, water+elektra risico, constructieve schade, schimmel/waterschade, gasrisico's en mogelijke asbest-era materialen.
-
-Verplichte actie:
-- Na analyse MOET je SavePhotoAnalysis aanroepen met je gestructureerde bevindingen.
-- Gebruik Calculator voor berekeningen en FlagOnsiteMeasurement waar nodig.`
+	return renderPromptTemplate(photoAnalyzerSystemPromptTemplate, struct{}{})
 }

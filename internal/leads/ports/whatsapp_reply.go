@@ -13,6 +13,18 @@ type WhatsAppReplyMessage struct {
 	CreatedAt time.Time
 }
 
+type WhatsAppReplyExample struct {
+	CustomerMessage string
+	Reply           string
+	CreatedAt       time.Time
+}
+
+type WhatsAppReplyFeedback struct {
+	AIReply    string
+	HumanReply string
+	CreatedAt  time.Time
+}
+
 type WhatsAppReplyInput struct {
 	OrganizationID uuid.UUID
 	LeadID         uuid.UUID
@@ -20,6 +32,8 @@ type WhatsAppReplyInput struct {
 	PhoneNumber    string
 	DisplayName    string
 	Messages       []WhatsAppReplyMessage
+	Examples       []WhatsAppReplyExample
+	Feedback       []WhatsAppReplyFeedback
 }
 
 type WhatsAppReplyGenerator interface {

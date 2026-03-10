@@ -887,6 +887,7 @@ type RacOrganizationSetting struct {
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string           `json:"photo_analysis_perspective_normalization_service_types"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
+	WhatsappToneOfVoice                               string             `json:"whatsapp_tone_of_voice"`
 }
 
 type RacPartner struct {
@@ -1331,6 +1332,18 @@ type RacWhatsappMessage struct {
 	ReadAt            pgtype.Timestamptz `json:"read_at"`
 	FailedAt          pgtype.Timestamptz `json:"failed_at"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacWhatsappReplyFeedback struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	ConversationID  pgtype.UUID        `json:"conversation_id"`
+	LeadID          pgtype.UUID        `json:"lead_id"`
+	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
+	AiReply         string             `json:"ai_reply"`
+	HumanReply      string             `json:"human_reply"`
+	AppliedToMemory bool               `json:"applied_to_memory"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type RacWorkflow struct {

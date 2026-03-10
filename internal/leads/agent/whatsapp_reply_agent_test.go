@@ -1,0 +1,97 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"portal_final_backend/internal/leads/ports"
+)
+
+func TestWhatsAppReplySystemPromptUsesConfiguredTone(t *testing.T) {
+	tone := "calm, precise, and reassuring"
+	prompt := whatsappReplySystemPrompt(tone)
+
+	if !strings.Contains(prompt, tone) {
+		t.Fatalf("expected prompt to include configured tone %q, got %q", tone, prompt)
+	}
+}
+
+func TestWhatsAppReplySystemPromptFallsBackToDefaultTone(t *testing.T) {
+	defaultTone := ports.DefaultOrganizationAISettings().WhatsAppToneOfVoice
+	prompt := whatsappReplySystemPrompt("   ")
+
+	if !strings.Contains(prompt, defaultTone) {
+		t.Fatalf("expected prompt to include default tone %q, got %q", defaultTone, prompt)
+	}
+}
+
+func TestFormatWhatsAppTranscriptLimitsRecentMessages(t *testing.T) {
+	base := time.Date(2026, time.March, 10, 9, 0, 0, 0, time.UTC)
+	messages := make([]ports.WhatsAppReplyMessage, 0, 8)
+	for i := 0; i < 8; i++ {
+		messages = append(messages, ports.WhatsAppReplyMessage{
+			Direction: "inbound",
+			Body:      "bericht " + string(rune('0'+i)),
+			CreatedAt: base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	formatted := formatWhatsAppTranscript(messages)
+
+	if strings.Contains(formatted, "bericht 0") || strings.Contains(formatted, "bericht 1") {
+		t.Fatalf("expected transcript to exclude older messages, got %q", formatted)
+	}
+	if !strings.Contains(formatted, "bericht 7") {
+		t.Fatalf("expected transcript to include newest message, got %q", formatted)
+	}
+	if count := strings.Count(formatted, "Klant:"); count != maxWhatsAppTranscriptItems {
+		t.Fatalf("expected %d transcript lines, got %d in %q", maxWhatsAppTranscriptItems, count, formatted)
+	}
+}
+
+func TestFormatWhatsAppExamplesLimitsRecentExamples(t *testing.T) {
+	base := time.Date(2026, time.March, 10, 9, 0, 0, 0, time.UTC)
+	examples := make([]ports.WhatsAppReplyExample, 0, 6)
+	for i := 0; i < 6; i++ {
+		examples = append(examples, ports.WhatsAppReplyExample{
+			CustomerMessage: "vraag " + string(rune('0'+i)),
+			Reply:           "antwoord " + string(rune('0'+i)),
+			CreatedAt:       base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	formatted := formatWhatsAppExamples(examples)
+
+	if strings.Contains(formatted, "vraag 4") || strings.Contains(formatted, "antwoord 4") {
+		t.Fatalf("expected example output to only include the first %d examples, got %q", maxWhatsAppExampleItems, formatted)
+	}
+	if !strings.Contains(formatted, "vraag 0") || !strings.Contains(formatted, "antwoord 3") {
+		t.Fatalf("expected example output to include the earliest retained examples, got %q", formatted)
+	}
+	if count := strings.Count(formatted, "Klant:"); count != maxWhatsAppExampleItems {
+		t.Fatalf("expected %d example customer lines, got %d in %q", maxWhatsAppExampleItems, count, formatted)
+	}
+}
+
+func TestFormatWhatsAppFeedbackMemoryLimitsRecentCorrections(t *testing.T) {
+	feedbackItems := make([]ports.WhatsAppReplyFeedback, 0, 6)
+	for i := 0; i < 6; i++ {
+		feedbackItems = append(feedbackItems, ports.WhatsAppReplyFeedback{
+			AIReply:    "ai voorstel " + string(rune('0'+i)),
+			HumanReply: "mens correctie " + string(rune('0'+i)),
+		})
+	}
+
+	formatted := formatWhatsAppFeedbackMemory(feedbackItems)
+
+	if strings.Contains(formatted, "ai voorstel 4") || strings.Contains(formatted, "mens correctie 4") {
+		t.Fatalf("expected feedback output to only include the first %d corrections, got %q", maxWhatsAppExampleItems, formatted)
+	}
+	if !strings.Contains(formatted, "ai voorstel 0") || !strings.Contains(formatted, "mens correctie 3") {
+		t.Fatalf("expected feedback output to include retained corrections, got %q", formatted)
+	}
+	if count := strings.Count(formatted, "AI-draft:"); count != maxWhatsAppExampleItems {
+		t.Fatalf("expected %d feedback items, got %d in %q", maxWhatsAppExampleItems, count, formatted)
+	}
+}

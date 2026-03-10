@@ -55,6 +55,7 @@ type SendWhatsAppConversationAttachmentRequest struct {
 type SendWhatsAppConversationMessageRequest struct {
 	Type            string                                     `json:"type" validate:"omitempty,oneof=text image video audio file sticker contact link location poll"`
 	Body            string                                     `json:"body" validate:"max=4000"`
+	AISuggestion    string                                     `json:"aiSuggestion" validate:"max=4000"`
 	Caption         string                                     `json:"caption" validate:"max=4000"`
 	ViewOnce        bool                                       `json:"viewOnce"`
 	Compress        bool                                       `json:"compress"`

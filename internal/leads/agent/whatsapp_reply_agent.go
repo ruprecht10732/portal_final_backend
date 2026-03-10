@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -22,15 +23,16 @@ import (
 
 const (
 	whatsAppReplyAppName        = "whatsapp-reply-generator"
-	maxWhatsAppTranscriptItems  = 12
+	maxWhatsAppExampleItems     = 4
+	maxWhatsAppTranscriptItems  = 6
 	maxWhatsAppMessageBodyChars = 750
 )
 
 type WhatsAppReplyAgent struct {
-	repo           repository.LeadsRepository
-	runner         *runner.Runner
-	sessionService session.Service
-	appName        string
+	repo                         repository.LeadsRepository
+	modelConfig                  moonshot.Config
+	appName                      string
+	organizationAISettingsReader ports.OrganizationAISettingsReader
 }
 
 type whatsAppReplyContext struct {
@@ -43,34 +45,16 @@ type whatsAppReplyContext struct {
 }
 
 func NewWhatsAppReplyAgent(apiKey string, modelName string, repo repository.LeadsRepository) (*WhatsAppReplyAgent, error) {
-	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
-
-	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "WhatsAppReplyAgent",
-		Model:       kimi,
-		Description: "Suggests a single WhatsApp reply draft grounded in lead and conversation context.",
-		Instruction: whatsappReplySystemPrompt(),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create whatsapp reply agent: %w", err)
-	}
-
-	sessionService := session.InMemoryService()
-	r, err := runner.New(runner.Config{
-		AppName:        whatsAppReplyAppName,
-		Agent:          adkAgent,
-		SessionService: sessionService,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create whatsapp reply runner: %w", err)
-	}
-
 	return &WhatsAppReplyAgent{
-		repo:           repo,
-		runner:         r,
-		sessionService: sessionService,
-		appName:        whatsAppReplyAppName,
+		repo:        repo,
+		modelConfig: newMoonshotModelConfig(apiKey, modelName),
+		appName:     whatsAppReplyAppName,
 	}, nil
+}
+
+// SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
+func (a *WhatsAppReplyAgent) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+	a.organizationAISettingsReader = reader
 }
 
 func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input ports.WhatsAppReplyInput) (string, error) {
@@ -78,12 +62,17 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 	if err != nil {
 		return "", err
 	}
+	settings := a.loadOrganizationAISettings(ctx, input.OrganizationID)
+	r, sessionService, err := a.newRunner(settings.WhatsAppToneOfVoice)
+	if err != nil {
+		return "", err
+	}
 
-	promptText := buildWhatsAppReplyPrompt(input, replyContext.lead, replyContext.service, replyContext.notes, replyContext.analysis, replyContext.visitReport, replyContext.photoAnalysis)
+	promptText := buildWhatsAppReplyPrompt(input, replyContext, settings.WhatsAppToneOfVoice)
 	sessionID := input.ConversationID.String()
 	userID := "whatsapp-reply-" + input.LeadID.String()
 
-	_, err = a.sessionService.Create(ctx, &session.CreateRequest{
+	_, err = sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   a.appName,
 		UserID:    userID,
 		SessionID: sessionID,
@@ -92,7 +81,7 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 		return "", fmt.Errorf("whatsapp reply: create session: %w", err)
 	}
 	defer func() {
-		_ = a.sessionService.Delete(ctx, &session.DeleteRequest{
+		_ = sessionService.Delete(ctx, &session.DeleteRequest{
 			AppName:   a.appName,
 			UserID:    userID,
 			SessionID: sessionID,
@@ -106,7 +95,7 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var outputText strings.Builder
-	if err := consumeRunEvents(a.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "whatsapp reply: run failed", func(event *session.Event) {
+	if err := consumeRunEvents(r.Run(ctx, userID, sessionID, userMessage, runConfig), "whatsapp reply: run failed", func(event *session.Event) {
 		if event.Content == nil {
 			return
 		}
@@ -118,6 +107,48 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 	}
 
 	return strings.TrimSpace(outputText.String()), nil
+}
+
+func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
+	kimi := moonshot.NewModel(a.modelConfig)
+	adkAgent, err := llmagent.New(llmagent.Config{
+		Name:        "WhatsAppReplyAgent",
+		Model:       kimi,
+		Description: "Suggests a single WhatsApp reply draft grounded in lead and conversation context.",
+		Instruction: whatsappReplySystemPrompt(toneOfVoice),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create whatsapp reply agent: %w", err)
+	}
+
+	sessionService := session.InMemoryService()
+	r, err := runner.New(runner.Config{
+		AppName:        a.appName,
+		Agent:          adkAgent,
+		SessionService: sessionService,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create whatsapp reply runner: %w", err)
+	}
+
+	return r, sessionService, nil
+}
+
+func (a *WhatsAppReplyAgent) loadOrganizationAISettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {
+	settings := ports.DefaultOrganizationAISettings()
+	if a == nil || a.organizationAISettingsReader == nil {
+		return settings
+	}
+
+	loadedSettings, err := a.organizationAISettingsReader(ctx, organizationID)
+	if err != nil {
+		log.Printf("whatsapp reply: failed to load organization AI settings for %s: %v", organizationID, err)
+		return settings
+	}
+	if strings.TrimSpace(loadedSettings.WhatsAppToneOfVoice) == "" {
+		loadedSettings.WhatsAppToneOfVoice = settings.WhatsAppToneOfVoice
+	}
+	return loadedSettings
 }
 
 func (a *WhatsAppReplyAgent) loadReplyContext(ctx context.Context, input ports.WhatsAppReplyInput) (whatsAppReplyContext, error) {
@@ -194,18 +225,12 @@ func (a *WhatsAppReplyAgent) loadLatestPhotoAnalysis(ctx context.Context, servic
 
 func buildWhatsAppReplyPrompt(
 	input ports.WhatsAppReplyInput,
-	lead repository.Lead,
-	service repository.LeadService,
-	notes []repository.LeadNote,
-	analysis *repository.AIAnalysis,
-	visitReport *repository.AppointmentVisitReport,
-	photoAnalysis *repository.PhotoAnalysis,
+	replyContext whatsAppReplyContext,
+	toneOfVoice string,
 ) string {
 	return fmt.Sprintf(`Lead context
 - Lead ID: %s
 - Naam: %s
-- Telefoon: %s
-- E-mail: %s
 - Adres: %s
 - Wooncontext: %s
 - WhatsApp display name: %s
@@ -217,6 +242,9 @@ Service context
 - Pipeline stage: %s
 - Consumer note: %s
 - Preferences: %s
+
+Reply style
+- Tone of voice: %s
 
 Latest AI analysis
 %s
@@ -230,52 +258,97 @@ Latest photo analysis
 Lead notes
 %s
 
+Recent human corrections from this tenant
+%s
+
+Recent real examples from this tenant
+%s
+
 Recent WhatsApp transcript
 %s
 
 Task
 - Draft one WhatsApp reply in Dutch for the company to send to this customer.
-- Use the lead and service context to make the reply specific and useful.
+- Prioritize the latest customer message and the most recent conversation turns.
+- Use the real examples as style guidance when they fit, but adapt to the current customer and never copy them literally.
+- Use older notes or analysis only when they clearly improve the answer.
 - Keep the message ready to paste into WhatsApp.
 - If something important is missing, ask at most 2 concrete questions.
 - Do not mention internal systems, AI analysis, or that this is a draft.
 - Do not invent prices, promises, or technical facts that are not in the context.
 - Output only the reply text.
 `,
-		lead.ID,
-		buildLeadName(lead),
-		sanitizePromptField(lead.ConsumerPhone, 64),
-		optionalPromptString(lead.ConsumerEmail, 120),
-		buildLeadAddress(lead),
-		buildLeadHousingContext(lead),
+		replyContext.lead.ID,
+		buildLeadName(replyContext.lead),
+		buildLeadAddress(replyContext.lead),
+		buildLeadHousingContext(replyContext.lead),
 		sanitizePromptField(input.DisplayName, 120),
-		service.ID,
-		sanitizePromptField(service.ServiceType, 120),
-		sanitizePromptField(service.Status, 80),
-		sanitizePromptField(service.PipelineStage, 80),
-		optionalPromptString(service.ConsumerNote, 800),
-		formatJSONBlock(service.CustomerPreferences),
-		formatAIAnalysisBlock(analysis),
-		formatVisitReportBlock(visitReport),
-		formatPhotoAnalysisBlock(photoAnalysis),
-		formatLeadNotesBlock(notes),
+		replyContext.service.ID,
+		sanitizePromptField(replyContext.service.ServiceType, 120),
+		sanitizePromptField(replyContext.service.Status, 80),
+		sanitizePromptField(replyContext.service.PipelineStage, 80),
+		optionalPromptString(replyContext.service.ConsumerNote, 800),
+		formatJSONBlock(replyContext.service.CustomerPreferences),
+		sanitizePromptField(toneOfVoice, 200),
+		formatAIAnalysisBlock(replyContext.analysis),
+		formatVisitReportBlock(replyContext.visitReport),
+		formatPhotoAnalysisBlock(replyContext.photoAnalysis),
+		formatLeadNotesBlock(replyContext.notes),
+		formatWhatsAppFeedbackMemory(input.Feedback),
+		formatWhatsAppExamples(input.Examples),
 		formatWhatsAppTranscript(input.Messages),
 	)
 }
 
-func whatsappReplySystemPrompt() string {
-	return strings.TrimSpace(`You write customer-ready WhatsApp replies for a Dutch home-services company.
+func whatsappReplySystemPrompt(toneOfVoice string) string {
+	if strings.TrimSpace(toneOfVoice) == "" {
+		toneOfVoice = ports.DefaultOrganizationAISettings().WhatsAppToneOfVoice
+	}
+	return strings.TrimSpace(fmt.Sprintf(`You write customer-ready WhatsApp replies for a Dutch home-services company.
 
 Rules:
 - Return exactly one draft reply in Dutch.
-- Keep it concise, warm, and practical.
+- Keep it concise and customer-ready.
+- Match this tenant tone of voice: %s.
 - Prefer short paragraphs suitable for WhatsApp.
 - Ground the reply in the provided lead, service, and conversation context.
+- Prioritize the latest inbound message and the most recent conversation turns over older notes.
 - If the latest customer message asks a direct question, answer it directly when the context supports it.
 - If details are still needed, ask at most two clear questions and explain briefly why.
 - Never expose internal reasoning, raw analysis data, or uncertainty labels.
 - Never fabricate pricing, availability, measurements, or policy details.
-- Output only the message text, with no title or surrounding quotes.`)
+- Output only the message text, with no title or surrounding quotes.`, sanitizePromptField(toneOfVoice, 200)))
+}
+
+func formatWhatsAppFeedbackMemory(items []ports.WhatsAppReplyFeedback) string {
+	if len(items) == 0 {
+		return valueNotProvided
+	}
+
+	var sb strings.Builder
+	count := 0
+	for _, item := range items {
+		if count >= maxWhatsAppExampleItems {
+			break
+		}
+		aiReply := sanitizePromptField(item.AIReply, maxWhatsAppMessageBodyChars)
+		humanReply := sanitizePromptField(item.HumanReply, maxWhatsAppMessageBodyChars)
+		if aiReply == valueNotProvided || humanReply == valueNotProvided {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString("AI-draft: ")
+		sb.WriteString(aiReply)
+		sb.WriteString("\nMenselijke correctie: ")
+		sb.WriteString(humanReply)
+		count++
+	}
+	if sb.Len() == 0 {
+		return valueNotProvided
+	}
+	return sb.String()
 }
 
 func buildLeadName(lead repository.Lead) string {
@@ -333,15 +406,14 @@ func formatAIAnalysisBlock(analysis *repository.AIAnalysis) string {
 	}
 
 	parts := []string{
-		fmt.Sprintf("- Samenvatting: %s", sanitizePromptField(analysis.Summary, 800)),
+		fmt.Sprintf("- Samenvatting: %s", sanitizePromptField(analysis.Summary, 500)),
 		fmt.Sprintf("- Aanbevolen actie: %s", sanitizePromptField(analysis.RecommendedAction, 80)),
-		fmt.Sprintf("- Voorkeurskanaal: %s", sanitizePromptField(analysis.PreferredContactChannel, 32)),
 	}
 	if len(analysis.MissingInformation) > 0 {
-		parts = append(parts, fmt.Sprintf("- Ontbrekende info: %s", sanitizeUserInput(strings.Join(analysis.MissingInformation, "; "), 600)))
+		parts = append(parts, fmt.Sprintf("- Actief ontbrekend: %s", sanitizeUserInput(strings.Join(limitPromptList(analysis.MissingInformation, 3), "; "), 300)))
 	}
 	if len(analysis.ResolvedInformation) > 0 {
-		parts = append(parts, fmt.Sprintf("- Reeds bevestigd: %s", sanitizeUserInput(strings.Join(analysis.ResolvedInformation, "; "), 600)))
+		parts = append(parts, fmt.Sprintf("- Reeds bevestigd: %s", sanitizeUserInput(strings.Join(limitPromptList(analysis.ResolvedInformation, 3), "; "), 300)))
 	}
 	return strings.Join(parts, "\n")
 }
@@ -398,12 +470,12 @@ func formatLeadNotesBlock(notes []repository.LeadNote) string {
 	}
 
 	start := 0
-	if len(notes) > 4 {
-		start = len(notes) - 4
+	if len(notes) > 2 {
+		start = len(notes) - 2
 	}
 	lines := make([]string, 0, len(notes)-start)
 	for _, note := range notes[start:] {
-		body := sanitizePromptField(note.Body, maxNoteLength)
+		body := sanitizePromptField(note.Body, 500)
 		lines = append(lines, fmt.Sprintf("- %s (%s)", body, note.CreatedAt.Format(dateTimeLayout)))
 	}
 	return strings.Join(lines, "\n")
@@ -427,4 +499,29 @@ func formatWhatsAppTranscript(messages []ports.WhatsAppReplyMessage) string {
 		lines = append(lines, fmt.Sprintf("- [%s] %s: %s", message.CreatedAt.Format(dateTimeLayout), role, body))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatWhatsAppExamples(examples []ports.WhatsAppReplyExample) string {
+	if len(examples) == 0 {
+		return valueNotProvided
+	}
+	limit := len(examples)
+	if limit > maxWhatsAppExampleItems {
+		limit = maxWhatsAppExampleItems
+	}
+	lines := make([]string, 0, limit*3)
+	for _, example := range examples[:limit] {
+		lines = append(lines,
+			fmt.Sprintf("- [%s] Klant: %s", example.CreatedAt.Format(dateTimeLayout), sanitizePromptField(example.CustomerMessage, 280)),
+			fmt.Sprintf("  Bedrijf: %s", sanitizePromptField(example.Reply, 280)),
+		)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func limitPromptList(values []string, limit int) []string {
+	if len(values) <= limit {
+		return values
+	}
+	return values[:limit]
 }

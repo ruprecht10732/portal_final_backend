@@ -37,7 +37,7 @@ func TestBuildGatekeeperPhotoSummaryIncludesDetailsWhenIrrelevant(t *testing.T) 
 	}
 
 	result := buildGatekeeperPhotoSummary(analysis, "Deur plaatsen")
-	if !strings.Contains(result, "Photo relevance: low for service type &apos;Deur plaatsen&apos;") {
+	if !strings.Contains(result, "Photo relevance: low for service type 'Deur plaatsen'") {
 		t.Fatalf("expected mismatch warning in summary")
 	}
 	if !strings.Contains(result, "Summary: Foto toont plafond, niet trapopening.") {

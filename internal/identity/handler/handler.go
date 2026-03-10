@@ -354,6 +354,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 		NotificationEmail:                                 settings.NotificationEmail,
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
 		WhatsAppAccountJID:                                settings.WhatsAppAccountJID,
+		WhatsAppToneOfVoice:                               settings.WhatsAppToneOfVoice,
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
@@ -416,6 +417,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		PhotoAnalysisPerspectiveNormalizationEnabled:      req.PhotoAnalysisPerspectiveNormalizationEnabled,
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: req.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 req.NotificationEmail,
+		WhatsAppToneOfVoice:                               req.WhatsAppToneOfVoice,
 		WhatsAppPresence:                                  req.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       req.WhatsAppWelcomeDelayMinutes,
 	})
@@ -446,6 +448,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		NotificationEmail:                                 settings.NotificationEmail,
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
 		WhatsAppAccountJID:                                settings.WhatsAppAccountJID,
+		WhatsAppToneOfVoice:                               settings.WhatsAppToneOfVoice,
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",

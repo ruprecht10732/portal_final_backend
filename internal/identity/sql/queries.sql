@@ -63,7 +63,7 @@ RETURNING id, name, email, phone, vat_number, kvk_number, address_line1, address
 SELECT organization_id, quote_payment_days, quote_valid_days,
        ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
        ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-       ai_council_consensus_mode,
+  ai_council_consensus_mode, whatsapp_tone_of_voice,
        catalog_gap_threshold, catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
   photo_analysis_ocr_assist_enabled,
@@ -91,6 +91,7 @@ INSERT INTO RAC_organization_settings (
   ai_experience_memory_enabled,
   ai_council_enabled,
   ai_council_consensus_mode,
+  whatsapp_tone_of_voice,
   catalog_gap_threshold,
   catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
@@ -118,6 +119,7 @@ VALUES (
   COALESCE(sqlc.narg('ai_experience_memory_enabled')::boolean, true),
   COALESCE(sqlc.narg('ai_council_enabled')::boolean, true),
   COALESCE(NULLIF(sqlc.narg('ai_council_consensus_mode')::text, ''), 'weighted'),
+  COALESCE(NULLIF(sqlc.narg('whatsapp_tone_of_voice')::text, ''), 'warm, practical, and professional'),
   COALESCE(sqlc.narg('catalog_gap_threshold')::int, 3),
   COALESCE(sqlc.narg('catalog_gap_lookback_days')::int, 30),
   COALESCE(sqlc.narg('photo_analysis_preprocessing_enabled')::boolean, true),
@@ -144,6 +146,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
   ai_experience_memory_enabled = COALESCE(sqlc.narg('ai_experience_memory_enabled')::boolean, RAC_organization_settings.ai_experience_memory_enabled),
   ai_council_enabled = COALESCE(sqlc.narg('ai_council_enabled')::boolean, RAC_organization_settings.ai_council_enabled),
   ai_council_consensus_mode = COALESCE(NULLIF(sqlc.narg('ai_council_consensus_mode')::text, ''), RAC_organization_settings.ai_council_consensus_mode),
+  whatsapp_tone_of_voice = COALESCE(NULLIF(sqlc.narg('whatsapp_tone_of_voice')::text, ''), RAC_organization_settings.whatsapp_tone_of_voice),
   catalog_gap_threshold = COALESCE(sqlc.narg('catalog_gap_threshold')::int, RAC_organization_settings.catalog_gap_threshold),
   catalog_gap_lookback_days = COALESCE(sqlc.narg('catalog_gap_lookback_days')::int, RAC_organization_settings.catalog_gap_lookback_days),
   photo_analysis_preprocessing_enabled = COALESCE(sqlc.narg('photo_analysis_preprocessing_enabled')::boolean, RAC_organization_settings.photo_analysis_preprocessing_enabled),
@@ -162,7 +165,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
   ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-  ai_council_consensus_mode,
+  ai_council_consensus_mode, whatsapp_tone_of_voice,
   catalog_gap_threshold, catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
   photo_analysis_ocr_assist_enabled,
@@ -189,7 +192,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
   ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
-  ai_council_consensus_mode,
+  ai_council_consensus_mode, whatsapp_tone_of_voice,
   catalog_gap_threshold, catalog_gap_lookback_days,
   photo_analysis_preprocessing_enabled,
   photo_analysis_ocr_assist_enabled,
@@ -252,6 +255,75 @@ UPDATE RAC_organization_invites
 SET expires_at = now()
 WHERE id = $1 AND organization_id = $2 AND used_at IS NULL
 RETURNING id, organization_id, email, token_hash, expires_at, created_by, created_at, used_at, used_by;
+
+-- name: CreateWhatsAppReplyFeedback :one
+WITH current_service AS (
+  SELECT ls.id AS lead_service_id
+  FROM RAC_lead_services ls
+  WHERE ls.organization_id = $1
+    AND ls.lead_id = $3
+  ORDER BY
+    CASE WHEN ls.pipeline_stage::text NOT IN ('Completed', 'Lost') THEN 0 ELSE 1 END,
+    ls.updated_at DESC,
+    ls.created_at DESC
+  LIMIT 1
+)
+INSERT INTO RAC_whatsapp_reply_feedback (
+  organization_id,
+  conversation_id,
+  lead_id,
+  lead_service_id,
+  ai_reply,
+  human_reply
+)
+SELECT $1, $2, $3, current_service.lead_service_id, $4, $5
+FROM current_service
+RETURNING id, organization_id, conversation_id, lead_id, lead_service_id,
+  ai_reply, human_reply, applied_to_memory, created_at;
+
+-- name: ListRecentAppliedWhatsAppReplyFeedback :many
+WITH reference_service AS (
+  SELECT
+    st.name AS service_type,
+    ls.pipeline_stage::text AS pipeline_stage
+  FROM RAC_lead_services ls
+  JOIN RAC_service_types st
+    ON st.id = ls.service_type_id
+   AND st.organization_id = ls.organization_id
+  WHERE ls.organization_id = $1
+    AND ls.lead_id = $2
+  ORDER BY
+    CASE WHEN ls.pipeline_stage::text NOT IN ('Completed', 'Lost') THEN 0 ELSE 1 END,
+    ls.updated_at DESC,
+    ls.created_at DESC
+  LIMIT 1
+)
+SELECT f.id, f.organization_id, f.conversation_id, f.lead_id, f.lead_service_id,
+  f.ai_reply, f.human_reply, f.applied_to_memory, f.created_at
+FROM RAC_whatsapp_reply_feedback f
+JOIN RAC_lead_services ls
+  ON ls.id = f.lead_service_id
+  AND ls.organization_id = f.organization_id
+JOIN RAC_service_types st
+  ON st.id = ls.service_type_id
+  AND st.organization_id = ls.organization_id
+LEFT JOIN reference_service rs ON TRUE
+WHERE f.organization_id = $1
+  AND f.applied_to_memory = true
+  AND f.conversation_id <> $3
+ORDER BY
+  CASE
+    WHEN rs.service_type IS NOT NULL AND st.name = rs.service_type THEN 0
+    WHEN rs.service_type IS NOT NULL THEN 1
+    ELSE 2
+  END ASC,
+  CASE
+    WHEN rs.pipeline_stage IS NOT NULL AND ls.pipeline_stage::text = rs.pipeline_stage THEN 0
+    WHEN rs.pipeline_stage IS NOT NULL THEN 1
+    ELSE 2
+  END ASC,
+  f.created_at DESC
+LIMIT $4;
 
 -- name: ListWorkflows :many
 SELECT id, organization_id, workflow_key, name, description, enabled,

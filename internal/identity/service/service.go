@@ -25,6 +25,18 @@ type SuggestWhatsAppReplyMessage struct {
 	CreatedAt time.Time
 }
 
+type SuggestWhatsAppReplyExample struct {
+	CustomerMessage string
+	Reply           string
+	CreatedAt       time.Time
+}
+
+type SuggestWhatsAppReplyFeedback struct {
+	AIReply    string
+	HumanReply string
+	CreatedAt  time.Time
+}
+
 type SuggestWhatsAppReplyInput struct {
 	OrganizationID uuid.UUID
 	LeadID         uuid.UUID
@@ -32,6 +44,8 @@ type SuggestWhatsAppReplyInput struct {
 	PhoneNumber    string
 	DisplayName    string
 	Messages       []SuggestWhatsAppReplyMessage
+	Examples       []SuggestWhatsAppReplyExample
+	Feedback       []SuggestWhatsAppReplyFeedback
 }
 
 type WhatsAppReplySuggester interface {

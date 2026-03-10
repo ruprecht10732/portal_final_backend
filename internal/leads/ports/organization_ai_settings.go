@@ -20,6 +20,7 @@ type OrganizationAISettings struct {
 	AIExperienceMemory                                bool
 	AICouncilMode                                     bool
 	AICouncilConsensusMode                            string
+	WhatsAppToneOfVoice                               string
 	CatalogGapThreshold                               int
 	CatalogGapLookbackDays                            int
 	PhotoAnalysisPreprocessingEnabled                 bool
@@ -42,6 +43,7 @@ func DefaultOrganizationAISettings() OrganizationAISettings {
 		AIExperienceMemory:                                true,
 		AICouncilMode:                                     true,
 		AICouncilConsensusMode:                            "weighted",
+		WhatsAppToneOfVoice:                               "warm, practical, and professional",
 		CatalogGapThreshold:                               3,
 		CatalogGapLookbackDays:                            30,
 		PhotoAnalysisPreprocessingEnabled:                 true,
