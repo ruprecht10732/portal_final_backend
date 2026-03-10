@@ -83,6 +83,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:id", h.GetByID)
 	rg.GET("/:id/export/:provider/status", h.GetQuoteExportStatus)
 	rg.POST("/:id/export/:provider", h.ExportToProvider)
+	rg.POST("/:id/duplicate", h.Duplicate)
+	rg.POST("/:id/version", h.CreateVersion)
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.PATCH("/:id/lead-service", h.SetLeadService)
@@ -675,6 +677,50 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+// Duplicate handles POST /api/v1/quotes/:id/duplicate.
+func (h *Handler) Duplicate(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	result, err := h.svc.Duplicate(c.Request.Context(), id, tenantID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// CreateVersion handles POST /api/v1/quotes/:id/version.
+func (h *Handler) CreateVersion(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	result, err := h.svc.CreateVersion(c.Request.Context(), id, tenantID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusCreated, result)
 }
 
 // UpdateStatus handles PATCH /api/v1/quotes/:id/status

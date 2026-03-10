@@ -7,10 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/appointments/repository"
 	"portal_final_backend/internal/appointments/transport"
 	"portal_final_backend/internal/email"
 	"portal_final_backend/internal/events"
+	leadsrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
@@ -40,16 +42,33 @@ type Service struct {
 	sseService        *sse.Service
 	eventBus          events.Bus
 	reminderScheduler scheduler.ReminderScheduler
+	storage           storage.StorageService
+	attachmentBucket  string
+	timelineRecorder  leadsrepo.TimelineEventStore
+}
+
+type Dependencies struct {
+	Repo              *repository.Repository
+	LeadAssigner      LeadAssigner
+	EmailSender       email.Sender
+	EventBus          events.Bus
+	ReminderScheduler scheduler.ReminderScheduler
+	Storage           storage.StorageService
+	AttachmentBucket  string
+	TimelineRecorder  leadsrepo.TimelineEventStore
 }
 
 // New creates a new appointments service
-func New(repo *repository.Repository, leadAssigner LeadAssigner, emailSender email.Sender, eventBus events.Bus, reminderScheduler scheduler.ReminderScheduler) *Service {
+func New(deps Dependencies) *Service {
 	return &Service{
-		repo:              repo,
-		leadAssigner:      leadAssigner,
-		emailSender:       emailSender,
-		eventBus:          eventBus,
-		reminderScheduler: reminderScheduler,
+		repo:              deps.Repo,
+		leadAssigner:      deps.LeadAssigner,
+		emailSender:       deps.EmailSender,
+		eventBus:          deps.EventBus,
+		reminderScheduler: deps.ReminderScheduler,
+		storage:           deps.Storage,
+		attachmentBucket:  deps.AttachmentBucket,
+		timelineRecorder:  deps.TimelineRecorder,
 	}
 }
 
@@ -136,6 +155,8 @@ func (s *Service) publishScheduledAppointment(ctx context.Context, tenantID uuid
 		Message: fmt.Sprintf("Nieuwe afspraak: %s", appt.Title),
 		Data: map[string]interface{}{
 			"appointmentId": appt.ID,
+			"leadId":        appt.LeadID,
+			"leadServiceId": appt.LeadServiceID,
 			"title":         appt.Title,
 			"type":          appt.Type,
 			"startTime":     appt.StartTime,
@@ -148,6 +169,8 @@ func (s *Service) publishScheduledAppointment(ctx context.Context, tenantID uuid
 		Type: sse.EventAppointmentCreated,
 		Data: map[string]interface{}{
 			"appointmentId": appt.ID,
+			"leadId":        appt.LeadID,
+			"leadServiceId": appt.LeadServiceID,
 			"status":        string(appt.Status),
 			"startTime":     appt.StartTime,
 			"endTime":       appt.EndTime,
@@ -351,6 +374,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 		Message: fmt.Sprintf("Afspraak bijgewerkt: %s", appt.Title),
 		Data: map[string]interface{}{
 			"appointmentId": appt.ID,
+			"leadId":        appt.LeadID,
+			"leadServiceId": appt.LeadServiceID,
 			"title":         appt.Title,
 			"type":          appt.Type,
 			"startTime":     appt.StartTime,
@@ -364,6 +389,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, userID uuid.UUID, is
 		Type: sse.EventAppointmentUpdated,
 		Data: map[string]interface{}{
 			"appointmentId": appt.ID,
+			"leadId":        appt.LeadID,
+			"leadServiceId": appt.LeadServiceID,
 			"status":        string(appt.Status),
 			"startTime":     appt.StartTime,
 			"endTime":       appt.EndTime,
@@ -440,6 +467,8 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 		Message: fmt.Sprintf("Afspraak status: %s → %s", appt.Title, req.Status),
 		Data: map[string]interface{}{
 			"appointmentId": appt.ID,
+			"leadId":        appt.LeadID,
+			"leadServiceId": appt.LeadServiceID,
 			"title":         appt.Title,
 			"type":          appt.Type,
 			"status":        string(req.Status),
@@ -454,6 +483,8 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 		Type: sse.EventAppointmentStatusChanged,
 		Data: map[string]interface{}{
 			"appointmentId": appt.ID,
+			"leadId":        appt.LeadID,
+			"leadServiceId": appt.LeadServiceID,
 			"status":        string(req.Status),
 			"startTime":     appt.StartTime,
 			"endTime":       appt.EndTime,
@@ -727,8 +758,36 @@ func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID
 }
 
 // Attachments
-func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAppointmentAttachmentRequest) (*transport.AppointmentAttachmentResponse, error) {
+func (s *Service) PresignAttachmentUpload(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.PresignedUploadRequest) (*transport.PresignedUploadResponse, error) {
 	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID); err != nil {
+		return nil, err
+	}
+	if s.storage == nil || strings.TrimSpace(s.attachmentBucket) == "" {
+		return nil, apperr.Internal("appointment attachment storage is not configured")
+	}
+	if err := s.storage.ValidateContentType(req.ContentType); err != nil {
+		return nil, apperr.BadRequest(err.Error())
+	}
+	if err := s.storage.ValidateFileSize(req.SizeBytes); err != nil {
+		return nil, apperr.BadRequest(err.Error())
+	}
+
+	folder := fmt.Sprintf("%s/appointments/%s", tenantID.String(), appointmentID.String())
+	presigned, err := s.storage.GenerateUploadURL(ctx, s.attachmentBucket, folder, req.FileName, req.ContentType, req.SizeBytes)
+	if err != nil {
+		return nil, apperr.Internal("failed to generate appointment attachment upload URL")
+	}
+
+	return &transport.PresignedUploadResponse{
+		UploadURL: presigned.URL,
+		FileKey:   presigned.FileKey,
+		ExpiresAt: presigned.ExpiresAt.Unix(),
+	}, nil
+}
+
+func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, req transport.CreateAppointmentAttachmentRequest) (*transport.AppointmentAttachmentResponse, error) {
+	appt, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -746,6 +805,47 @@ func (s *Service) CreateAttachment(ctx context.Context, appointmentID uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
+
+	if s.timelineRecorder != nil && appt.LeadID != nil {
+		_, _ = s.timelineRecorder.CreateTimelineEvent(ctx, leadsrepo.CreateTimelineEventParams{
+			LeadID:         *appt.LeadID,
+			ServiceID:      appt.LeadServiceID,
+			OrganizationID: tenantID,
+			ActorType:      leadsrepo.ActorTypeUser,
+			ActorName:      "Afspraken",
+			EventType:      leadsrepo.EventTypeInfoAdded,
+			Title:          "Afspraakbijlage geupload",
+			Summary:        leadsrepo.TruncateSummary(fmt.Sprintf("%s toegevoegd aan afspraak %s", saved.FileName, appt.Title), leadsrepo.TimelineSummaryMaxLen),
+			Metadata: map[string]any{
+				"appointmentId":    appointmentID.String(),
+				"attachmentId":     saved.ID.String(),
+				"fileName":         saved.FileName,
+				"fileKey":          saved.FileKey,
+				"contentType":      saved.ContentType,
+				"sizeBytes":        saved.SizeBytes,
+				"timelineKind":     "appointment_attachment",
+				"appointmentTitle": appt.Title,
+			},
+		})
+	}
+
+	eventData := map[string]interface{}{
+		"appointmentId": appointmentID,
+		"leadId":        appt.LeadID,
+		"leadServiceId": appt.LeadServiceID,
+		"attachmentId":  saved.ID,
+		"fileName":      saved.FileName,
+		"action":        "attachment_uploaded",
+	}
+	s.publishSSE(tenantID, sse.Event{
+		Type:    sse.EventAppointmentUpdated,
+		Message: fmt.Sprintf("Bijlage toegevoegd aan afspraak: %s", appt.Title),
+		Data:    eventData,
+	})
+	s.publishLeadSSE(appt.LeadID, sse.Event{
+		Type: sse.EventAppointmentUpdated,
+		Data: eventData,
+	})
 
 	return &transport.AppointmentAttachmentResponse{
 		ID:            saved.ID,
@@ -782,6 +882,41 @@ func (s *Service) ListAttachments(ctx context.Context, appointmentID uuid.UUID, 
 	}
 
 	return resp, nil
+}
+
+func (s *Service) GetAttachmentDownloadURL(ctx context.Context, appointmentID uuid.UUID, attachmentID uuid.UUID, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID) (*transport.PresignedDownloadResponse, error) {
+	if _, err := s.ensureAccess(ctx, appointmentID, userID, isAdmin, tenantID); err != nil {
+		return nil, err
+	}
+	if s.storage == nil || strings.TrimSpace(s.attachmentBucket) == "" {
+		return nil, apperr.Internal("appointment attachment storage is not configured")
+	}
+
+	attachments, err := s.repo.ListAttachments(ctx, appointmentID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	var match *repository.AppointmentAttachment
+	for i := range attachments {
+		if attachments[i].ID == attachmentID {
+			match = &attachments[i]
+			break
+		}
+	}
+	if match == nil {
+		return nil, apperr.NotFound("appointment attachment not found")
+	}
+
+	presigned, err := s.storage.GenerateDownloadURL(ctx, s.attachmentBucket, match.FileKey)
+	if err != nil {
+		return nil, apperr.Internal("failed to generate appointment attachment download URL")
+	}
+
+	return &transport.PresignedDownloadResponse{
+		DownloadURL: presigned.URL,
+		ExpiresAt:   presigned.ExpiresAt.Unix(),
+	}, nil
 }
 
 // GetAvailableSlots computes available time slots for a user within a date range

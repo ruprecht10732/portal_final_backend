@@ -50,8 +50,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.GET("/:id/visit-report", h.GetVisitReport)
 	rg.PUT("/:id/visit-report", h.UpsertVisitReport)
+	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
 	rg.GET("/:id/attachments", h.ListAttachments)
 	rg.POST("/:id/attachments", h.CreateAttachment)
+	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 
 	rg.GET("/availability/rules", h.ListAvailabilityRules)
 	rg.POST("/availability/rules", h.CreateAvailabilityRule)
@@ -64,6 +66,42 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/availability/overrides/:id", h.DeleteAvailabilityOverride)
 
 	rg.GET("/availability/slots", h.GetAvailableSlots)
+}
+
+// PresignAttachmentUpload handles POST /api/appointments/:id/attachments/presign
+func (h *Handler) PresignAttachmentUpload(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.PresignedUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.PresignAttachmentUpload(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // List handles GET /api/RAC_appointments
@@ -369,6 +407,38 @@ func (h *Handler) ListAttachments(c *gin.Context) {
 
 	isAdmin := containsRole(identity.Roles(), "admin")
 	result, err := h.svc.ListAttachments(c.Request.Context(), id, identity.UserID(), isAdmin, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+// GetAttachmentDownloadURL handles GET /api/appointments/:id/attachments/:attachmentId/download
+func (h *Handler) GetAttachmentDownloadURL(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	isAdmin := containsRole(identity.Roles(), "admin")
+	result, err := h.svc.GetAttachmentDownloadURL(c.Request.Context(), id, attachmentID, identity.UserID(), isAdmin, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

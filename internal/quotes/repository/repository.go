@@ -24,6 +24,10 @@ type Quote struct {
 	OrganizationID             uuid.UUID  `db:"organization_id"`
 	LeadID                     uuid.UUID  `db:"lead_id"`
 	LeadServiceID              *uuid.UUID `db:"lead_service_id"`
+	DuplicatedFromQuoteID      *uuid.UUID `db:"duplicated_from_quote_id"`
+	PreviousVersionQuoteID     *uuid.UUID `db:"previous_version_quote_id"`
+	VersionRootQuoteID         *uuid.UUID `db:"version_root_quote_id"`
+	VersionNumber              int        `db:"version_number"`
 	CreatedByID                *uuid.UUID `db:"created_by_id"`
 	CreatedByFirstName         *string    `db:"created_by_first_name"`
 	CreatedByLastName          *string    `db:"created_by_last_name"`
@@ -180,31 +184,7 @@ func (r *Repository) CreateWithItems(ctx context.Context, quote *Quote, items []
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := r.queries.WithTx(tx)
-	if err := qtx.CreateQuote(ctx, quotesdb.CreateQuoteParams{
-		ID:                    toPgUUID(quote.ID),
-		OrganizationID:        toPgUUID(quote.OrganizationID),
-		LeadID:                toPgUUID(quote.LeadID),
-		LeadServiceID:         toPgUUIDPtr(quote.LeadServiceID),
-		CreatedByID:           toPgUUIDPtr(quote.CreatedByID),
-		QuoteNumber:           quote.QuoteNumber,
-		Status:                quotesdb.QuoteStatus(quote.Status),
-		PricingMode:           quote.PricingMode,
-		DiscountType:          quote.DiscountType,
-		DiscountValue:         quote.DiscountValue,
-		SubtotalCents:         quote.SubtotalCents,
-		DiscountAmountCents:   quote.DiscountAmountCents,
-		TaxTotalCents:         quote.TaxTotalCents,
-		TotalCents:            quote.TotalCents,
-		ValidUntil:            toPgTimestampPtr(quote.ValidUntil),
-		Notes:                 toPgTextPtr(quote.Notes),
-		FinancingDisclaimer:   quote.FinancingDisclaimer,
-		CreatedAt:             toPgTimestamp(quote.CreatedAt),
-		UpdatedAt:             toPgTimestamp(quote.UpdatedAt),
-		PublicToken:           toPgTextPtr(quote.PublicToken),
-		PublicTokenExpiresAt:  toPgTimestampPtr(quote.PublicTokenExpAt),
-		PreviewToken:          toPgTextPtr(quote.PreviewToken),
-		PreviewTokenExpiresAt: toPgTimestampPtr(quote.PreviewTokenExpAt),
-	}); err != nil {
+	if err := r.insertQuote(ctx, tx, quote); err != nil {
 		return fmt.Errorf("failed to insert quote: %w", err)
 	}
 
@@ -308,7 +288,40 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID)
 		return nil, fmt.Errorf("failed to get quote: %w", err)
 	}
 	quote := quoteFromGetByIDRow(row)
+	if err := r.loadQuoteLineage(ctx, &quote); err != nil {
+		return nil, err
+	}
 	return &quote, nil
+}
+
+func (r *Repository) GetQuoteNumberByID(ctx context.Context, id, orgID uuid.UUID) (*string, error) {
+	var quoteNumber string
+	err := r.pool.QueryRow(ctx, `
+		SELECT quote_number
+		FROM RAC_quotes
+		WHERE id = $1 AND organization_id = $2
+	`, id, orgID).Scan(&quoteNumber)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get quote number: %w", err)
+	}
+	return &quoteNumber, nil
+}
+
+func (r *Repository) NextQuoteVersionNumber(ctx context.Context, orgID, rootQuoteID uuid.UUID) (int, error) {
+	var nextVersion int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(MAX(version_number), 1) + 1
+		FROM RAC_quotes
+		WHERE organization_id = $1
+		  AND (id = $2 OR version_root_quote_id = $2)
+	`, orgID, rootQuoteID).Scan(&nextVersion)
+	if err != nil {
+		return 0, fmt.Errorf("failed to compute next quote version number: %w", err)
+	}
+	return nextVersion, nil
 }
 
 // GetLatestNonDraftByLead returns the most recent non-draft quote for a lead.
@@ -1229,6 +1242,83 @@ func (r *Repository) ReplaceAttachments(ctx context.Context, quoteID, orgID uuid
 	return tx.Commit(ctx)
 }
 
+func (r *Repository) insertQuote(ctx context.Context, tx pgx.Tx, quote *Quote) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO RAC_quotes (
+			id, organization_id, lead_id, lead_service_id, duplicated_from_quote_id,
+			previous_version_quote_id, version_root_quote_id, version_number,
+			created_by_id, quote_number, status, pricing_mode, discount_type, discount_value,
+			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
+			valid_until, notes, financing_disclaimer, created_at, updated_at,
+			public_token, public_token_expires_at, preview_token, preview_token_expires_at
+		) VALUES (
+			$1, $2, $3, $4, $5,
+			$6, $7, $8,
+			$9, $10, $11, $12, $13, $14,
+			$15, $16, $17, $18,
+			$19, $20, $21, $22, $23,
+			$24, $25, $26, $27
+		)
+	`,
+		toPgUUID(quote.ID),
+		toPgUUID(quote.OrganizationID),
+		toPgUUID(quote.LeadID),
+		toPgUUIDPtr(quote.LeadServiceID),
+		toPgUUIDPtr(quote.DuplicatedFromQuoteID),
+		toPgUUIDPtr(quote.PreviousVersionQuoteID),
+		toPgUUIDPtr(quote.VersionRootQuoteID),
+		quote.VersionNumber,
+		toPgUUIDPtr(quote.CreatedByID),
+		quote.QuoteNumber,
+		quote.Status,
+		quote.PricingMode,
+		quote.DiscountType,
+		quote.DiscountValue,
+		quote.SubtotalCents,
+		quote.DiscountAmountCents,
+		quote.TaxTotalCents,
+		quote.TotalCents,
+		toPgTimestampPtr(quote.ValidUntil),
+		toPgTextPtr(quote.Notes),
+		quote.FinancingDisclaimer,
+		toPgTimestamp(quote.CreatedAt),
+		toPgTimestamp(quote.UpdatedAt),
+		toPgTextPtr(quote.PublicToken),
+		toPgTimestampPtr(quote.PublicTokenExpAt),
+		toPgTextPtr(quote.PreviewToken),
+		toPgTimestampPtr(quote.PreviewTokenExpAt),
+	)
+	return err
+}
+
+func (r *Repository) loadQuoteLineage(ctx context.Context, quote *Quote) error {
+	var duplicatedFrom pgtype.UUID
+	var previousVersion pgtype.UUID
+	var versionRoot pgtype.UUID
+	var versionNumber int32
+
+	err := r.pool.QueryRow(ctx, `
+		SELECT duplicated_from_quote_id, previous_version_quote_id, version_root_quote_id, version_number
+		FROM RAC_quotes
+		WHERE id = $1
+	`, quote.ID).Scan(&duplicatedFrom, &previousVersion, &versionRoot, &versionNumber)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.NotFound(quoteNotFoundMsg)
+		}
+		return fmt.Errorf("failed to load quote lineage: %w", err)
+	}
+
+	quote.DuplicatedFromQuoteID = optionalUUID(duplicatedFrom)
+	quote.PreviousVersionQuoteID = optionalUUID(previousVersion)
+	quote.VersionRootQuoteID = optionalUUID(versionRoot)
+	quote.VersionNumber = int(versionNumber)
+	if quote.VersionNumber < 1 {
+		quote.VersionNumber = 1
+	}
+	return nil
+}
+
 // ReplaceURLs atomically replaces all URLs for a quote (delete + insert).
 func (r *Repository) ReplaceURLs(ctx context.Context, quoteID, orgID uuid.UUID, urls []QuoteURL) error {
 	tx, err := r.pool.Begin(ctx)
@@ -1379,6 +1469,7 @@ func quoteFromGetByIDRow(row quotesdb.GetQuoteByIDRow) Quote {
 		OrganizationID:             uuid.UUID(row.OrganizationID.Bytes),
 		LeadID:                     uuid.UUID(row.LeadID.Bytes),
 		LeadServiceID:              optionalUUID(row.LeadServiceID),
+		VersionNumber:              1,
 		CreatedByID:                optionalUUID(row.CreatedByID),
 		CreatedByFirstName:         optionalString(row.FirstName),
 		CreatedByLastName:          optionalString(row.LastName),
@@ -1426,6 +1517,7 @@ func quoteFromLatestNonDraftRow(row quotesdb.GetLatestNonDraftByLeadRow) Quote {
 		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
 		LeadID:         uuid.UUID(row.LeadID.Bytes),
 		LeadServiceID:  optionalUUID(row.LeadServiceID),
+		VersionNumber:  1,
 		QuoteNumber:    row.QuoteNumber,
 		Status:         string(row.Status),
 		TotalCents:     row.TotalCents,
@@ -1440,6 +1532,7 @@ func quoteFromPublicTokenRow(row quotesdb.GetQuoteByPublicTokenRow) Quote {
 		OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
 		LeadID:              uuid.UUID(row.LeadID.Bytes),
 		LeadServiceID:       optionalUUID(row.LeadServiceID),
+		VersionNumber:       1,
 		QuoteNumber:         row.QuoteNumber,
 		Status:              string(row.Status),
 		PricingMode:         row.PricingMode,
@@ -1475,6 +1568,7 @@ func quoteFromTokenRow(row quotesdb.GetQuoteByTokenRow) Quote {
 		OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
 		LeadID:              uuid.UUID(row.LeadID.Bytes),
 		LeadServiceID:       optionalUUID(row.LeadServiceID),
+		VersionNumber:       1,
 		QuoteNumber:         row.QuoteNumber,
 		Status:              string(row.Status),
 		PricingMode:         row.PricingMode,
@@ -1510,6 +1604,7 @@ func quoteFromListRow(row quotesdb.ListQuotesRow) Quote {
 		OrganizationID:             uuid.UUID(row.OrganizationID.Bytes),
 		LeadID:                     uuid.UUID(row.LeadID.Bytes),
 		LeadServiceID:              optionalUUID(row.LeadServiceID),
+		VersionNumber:              1,
 		CreatedByID:                optionalUUID(row.CreatedByID),
 		CreatedByFirstName:         optionalString(row.FirstName),
 		CreatedByLastName:          optionalString(row.LastName),

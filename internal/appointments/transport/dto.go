@@ -48,7 +48,7 @@ type CreateAppointmentRequest struct {
 	EndTime               time.Time         `json:"endTime" validate:"required,gtfield=StartTime"`
 	AllDay                bool              `json:"allDay"`
 	SendConfirmationEmail *bool             `json:"sendConfirmationEmail,omitempty"` // If true, sends confirmation email to lead
-	InitialStatus         AppointmentStatus `json:"-"`                              // Internal-only: override default "scheduled" status
+	InitialStatus         AppointmentStatus `json:"-"`                               // Internal-only: override default "scheduled" status
 }
 
 // UpdateAppointmentRequest is the request body for updating an appointment
@@ -138,6 +138,23 @@ type AppointmentVisitReportResponse struct {
 }
 
 // Attachment DTOs
+type PresignedUploadRequest struct {
+	FileName    string `json:"fileName" validate:"required,min=1,max=255"`
+	ContentType string `json:"contentType" validate:"required,min=1,max=200"`
+	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1,max=104857600"`
+}
+
+type PresignedUploadResponse struct {
+	UploadURL string `json:"uploadUrl"`
+	FileKey   string `json:"fileKey"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
+
+type PresignedDownloadResponse struct {
+	DownloadURL string `json:"downloadUrl"`
+	ExpiresAt   int64  `json:"expiresAt"`
+}
+
 type CreateAppointmentAttachmentRequest struct {
 	FileKey     string  `json:"fileKey" validate:"required,min=1,max=500"`
 	FileName    string  `json:"fileName" validate:"required,min=1,max=255"`

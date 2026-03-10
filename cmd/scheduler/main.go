@@ -162,7 +162,17 @@ func main() {
 	leadsModule.SetPricingIntelligenceReader(adapters.NewQuotePricingIntelligenceReader(quotesModule.Repository()))
 
 	leadAssigner := adapters.NewAppointmentsLeadAssigner(leadsModule.ManagementService())
-	appointmentsModule := appointments.NewModule(pool, val, leadAssigner, sender, eventBus, reminderScheduler)
+	appointmentsModule := appointments.NewModule(appointments.Dependencies{
+		Pool:              pool,
+		Validator:         val,
+		LeadAssigner:      leadAssigner,
+		EmailSender:       sender,
+		EventBus:          eventBus,
+		ReminderScheduler: reminderScheduler,
+		Storage:           storageSvc,
+		AttachmentBucket:  cfg.GetMinioBucketLeadServiceAttachments(),
+		TimelineRecorder:  leadsModule.Repository(),
+	})
 	appointmentsModule.SetSSE(leadsModule.SSE())
 	appointmentBooker := adapters.NewAppointmentsAdapter(appointmentsModule.Service)
 	leadsModule.SetAppointmentBooker(appointmentBooker)

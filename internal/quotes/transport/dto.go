@@ -201,6 +201,12 @@ type PresignedDownloadResponse struct {
 type QuoteResponse struct {
 	ID                         uuid.UUID                 `json:"id"`
 	QuoteNumber                string                    `json:"quoteNumber"`
+	DuplicatedFromQuoteID      *uuid.UUID                `json:"duplicatedFromQuoteId,omitempty"`
+	DuplicatedFromQuoteNumber  *string                   `json:"duplicatedFromQuoteNumber,omitempty"`
+	PreviousVersionQuoteID     *uuid.UUID                `json:"previousVersionQuoteId,omitempty"`
+	PreviousVersionQuoteNumber *string                   `json:"previousVersionQuoteNumber,omitempty"`
+	VersionRootQuoteID         *uuid.UUID                `json:"versionRootQuoteId,omitempty"`
+	VersionNumber              int                       `json:"versionNumber"`
 	LeadID                     uuid.UUID                 `json:"leadId"`
 	LeadServiceID              *uuid.UUID                `json:"leadServiceId,omitempty"`
 	CreatedByID                *uuid.UUID                `json:"createdById,omitempty"`
