@@ -150,6 +150,8 @@ var gatekeeperPromptTemplate = mustParsePromptTemplate("gatekeeper", `Role: Gate
 [DECISION RULE] Required info clearly present in trusted context -> not missing.
 [DECISION RULE] Photo analysis marked low relevance/mismatch -> treat as mismatch signal only, NOT proof of completeness.
 [DECISION RULE] Photo-derived measurements are advisory only unless explicitly visible/labeled in the image context; on-site measurement flags override them.
+[DECISION RULE] For repair, adjustment, diagnosis, or inspection work, measurements needed only for final on-site verification or exact replacement-part selection are not automatically critical blockers when trusted context already supports a bounded preliminary estimate.
+[DECISION RULE] In those repair cases, do not set RecommendedAction=RequestInfo solely for confirmatory measurements; keep them out of missingInformation unless they block even a bounded preliminary estimate.
 [DECISION RULE] Ambiguous service intent -> keep current service type and move to Nurturing.
 [DECISION RULE] Missing info alone is NEVER a reason to switch service type.
 [DECISION RULE] If the Estimator previously blocked this lead for missing information, you MUST NOT move to Estimation until that exact information is explicitly present in trusted context.

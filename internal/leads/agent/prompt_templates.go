@@ -36,6 +36,8 @@ var scopeAnalyzerPromptTemplate = mustParsePromptTemplate("scope-analyzer", `Rol
 [MANDATORY] Include every missing critical dimension in missingDimensions[].
 [MANDATORY] Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.
 [MANDATORY] If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension.
+[DECISION RULE] For repair, adjustment, diagnosis, or inspection work, measurements needed only for final on-site verification or exact replacement-part selection are NOT automatically critical when trusted context already supports a bounded preliminary estimate.
+[DECISION RULE] In those repair cases, keep the scope complete enough for a preliminary estimate, record the assumptions in confidenceReasons, and reserve missingDimensions only for blockers that prevent even a bounded price range.
 [MANDATORY] confidenceReasons should explain why the scope is complete/incomplete.
 
 === DATA CONTEXT ===
@@ -106,6 +108,8 @@ LEVEL 3 [STYLE]
 === INTAKE COMPLETENESS GATE ===
 [MANDATORY] If critical measurements/quantities are missing, do NOT call DraftQuote.
 [MANDATORY] Photo-only dimensions are insufficient when they are not explicitly visible/labeled or when photo analysis requests on-site verification.
+[DECISION RULE] For repair, adjustment, diagnosis, or inspection work, missing exact measurements are not critical blockers when the quote can be framed as a bounded preliminary estimate with clear assumptions and on-site confirmation notes.
+[DECISION RULE] In that repair scenario, prefer a preliminary estimate with explicit Dutch notes about the assumptions over moving the lead back to Nurturing for confirmatory measurements only.
 [MANDATORY] In that case: call SaveEstimation with scope="Onbekend" and priceRange="Onvoldoende gegevens", then UpdatePipelineStage(stage="Nurturing") with Dutch reason requesting missing measurements.
 
 {{ .SharedProductSelectionRules }}
