@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestToWhatsAppConversationResponse_AllowsNilLeadID(t *testing.T) {
+func TestToWhatsAppConversationResponseAllowsNilLeadID(t *testing.T) {
 	timestamp := time.Date(2026, time.March, 10, 17, 16, 21, 0, time.UTC)
 	conversation := repository.WhatsAppConversation{
 		ID:                   uuid.New(),
@@ -32,7 +32,7 @@ func TestToWhatsAppConversationResponse_AllowsNilLeadID(t *testing.T) {
 	}
 }
 
-func TestToWhatsAppMessageResponse_MapsLeadID(t *testing.T) {
+func TestToWhatsAppMessageResponseMapsLeadID(t *testing.T) {
 	timestamp := time.Date(2026, time.March, 10, 17, 16, 21, 0, time.UTC)
 	leadID := uuid.New()
 	message := repository.WhatsAppMessage{
