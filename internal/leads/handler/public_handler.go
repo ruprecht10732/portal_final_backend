@@ -495,7 +495,9 @@ func (h *PublicHandler) ConfirmUpload(c *gin.Context) {
 		TenantID:      lead.OrganizationID,
 		AttachmentID:  att.ID,
 		FileName:      req.FileName,
+		FileKey:       req.FileKey,
 		ContentType:   req.ContentType,
+		SizeBytes:     req.SizeBytes,
 	})
 
 	httpkit.OK(c, gin.H{"status": "ok"})

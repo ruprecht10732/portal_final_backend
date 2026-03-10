@@ -4,6 +4,8 @@ package leads
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -455,19 +457,8 @@ func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepos
 			return nil
 		}
 
-		// 1. Persist attachment record to database
-		_, err := repo.CreateAttachment(ctx, repository.CreateAttachmentParams{
-			LeadServiceID:  e.LeadServiceID,
-			OrganizationID: e.TenantID,
-			FileKey:        e.FileKey,
-			FileName:       e.FileName,
-			ContentType:    e.ContentType,
-			SizeBytes:      e.SizeBytes,
-			UploadedBy:     nil, // webhook uploads are system/anonymous
-		})
-		if err != nil {
-			log.Error("failed to persist attachment record", "error", err, "leadServiceId", e.LeadServiceID)
-			// Don't return error - continue with photo analysis
+		if shouldContinue := ensureAttachmentUploadedRecord(ctx, repo, log, e); !shouldContinue {
+			return nil
 		}
 
 		// 2. Trigger photo analysis for images
@@ -493,6 +484,47 @@ func subscribeAttachmentUploaded(eventBus events.Bus, repo repository.LeadsRepos
 		queueOrRunPhotoAnalysis(ctx, module, log, e.LeadID, e.LeadServiceID, e.TenantID)
 		return nil
 	}))
+}
+
+func ensureAttachmentUploadedRecord(ctx context.Context, repo repository.LeadsRepository, log *logger.Logger, e events.AttachmentUploaded) bool {
+	if attachmentRecordExists(ctx, repo, log, e) {
+		return true
+	}
+	if strings.TrimSpace(e.FileKey) == "" {
+		log.Warn("attachment uploaded event missing file key; skipping persistence", "attachmentId", e.AttachmentID, "leadServiceId", e.LeadServiceID, "fileName", e.FileName)
+		return false
+	}
+	if err := createAttachmentFromEvent(ctx, repo, e); err != nil {
+		log.Error("failed to persist attachment record", "error", err, "leadServiceId", e.LeadServiceID, "fileKey", e.FileKey)
+	}
+	return true
+}
+
+func attachmentRecordExists(ctx context.Context, repo repository.LeadsRepository, log *logger.Logger, e events.AttachmentUploaded) bool {
+	if e.AttachmentID == uuid.Nil {
+		return false
+	}
+	_, err := repo.GetAttachmentByID(ctx, e.AttachmentID, e.TenantID)
+	if err == nil {
+		return true
+	}
+	if !errors.Is(err, repository.ErrAttachmentNotFound) {
+		log.Error("failed to load attachment record", "error", err, "attachmentId", e.AttachmentID, "leadServiceId", e.LeadServiceID)
+	}
+	return false
+}
+
+func createAttachmentFromEvent(ctx context.Context, repo repository.LeadsRepository, e events.AttachmentUploaded) error {
+	_, err := repo.CreateAttachment(ctx, repository.CreateAttachmentParams{
+		LeadServiceID:  e.LeadServiceID,
+		OrganizationID: e.TenantID,
+		FileKey:        e.FileKey,
+		FileName:       e.FileName,
+		ContentType:    e.ContentType,
+		SizeBytes:      e.SizeBytes,
+		UploadedBy:     nil, // webhook uploads are system/anonymous
+	})
+	return err
 }
 
 func queueOrRunPhotoAnalysis(ctx context.Context, module *Module, log *logger.Logger, leadID, serviceID, tenantID uuid.UUID) {

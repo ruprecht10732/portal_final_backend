@@ -153,7 +153,9 @@ func (h *AttachmentsHandler) CreateAttachment(c *gin.Context) {
 				TenantID:      tenantID,
 				AttachmentID:  att.ID,
 				FileName:      req.FileName,
+				FileKey:       req.FileKey,
 				ContentType:   req.ContentType,
+				SizeBytes:     req.SizeBytes,
 			})
 		}
 	}
