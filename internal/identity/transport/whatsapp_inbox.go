@@ -95,6 +95,10 @@ type ToggleWhatsAppConversationStateRequest struct {
 	Value bool `json:"value"`
 }
 
+type ToggleWhatsAppMessageStateRequest struct {
+	Value bool `json:"value"`
+}
+
 type SetWhatsAppDisappearingTimerRequest struct {
 	TimerSeconds int `json:"timerSeconds" validate:"min=0,max=31536000"`
 }
@@ -126,6 +130,16 @@ type SendWhatsAppPresenceResponse struct {
 
 type SendWhatsAppChatPresenceResponse struct {
 	Status string `json:"status"`
+}
+
+type WhatsAppMediaDownloadResponse struct {
+	Status     string `json:"status"`
+	MessageID  string `json:"messageId"`
+	MediaType  string `json:"mediaType"`
+	Filename   string `json:"filename"`
+	FilePath   string `json:"filePath"`
+	FileSize   int64  `json:"fileSize"`
+	DownloadURL string `json:"downloadUrl,omitempty"`
 }
 
 type WhatsAppUnreadConversationCountResponse struct {

@@ -24,6 +24,8 @@ func (h *Handler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/edit", h.EditWhatsAppMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/delete", h.DeleteWhatsAppMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/revoke", h.RevokeWhatsAppMessage)
+	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/star", h.StarWhatsAppMessage)
+	rg.GET("/whatsapp/conversations/:conversationID/messages/:messageID/download", h.DownloadWhatsAppMessageMedia)
 	rg.POST("/whatsapp/conversations/:conversationID/chat-presence", h.SendWhatsAppChatPresence)
 	rg.POST("/whatsapp/conversations/:conversationID/archive", h.ArchiveWhatsAppConversation)
 	rg.POST("/whatsapp/conversations/:conversationID/pin", h.PinWhatsAppConversation)
@@ -350,6 +352,51 @@ func (h *Handler) RevokeWhatsAppMessage(c *gin.Context) {
 	})
 }
 
+func (h *Handler) StarWhatsAppMessage(c *gin.Context) {
+	h.handleWhatsAppMessageToggleAction(c, func(ctx context.Context, tenantID, conversationID uuid.UUID, messageID string, value bool) (transport.WhatsAppConversationActionResponse, error) {
+		result, err := h.svc.StarWhatsAppMessage(ctx, tenantID, conversationID, messageID, value)
+		return toWhatsAppActionResponse("ok", result), err
+	})
+}
+
+func (h *Handler) DownloadWhatsAppMessageMedia(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	messageID := c.Param("messageID")
+	if messageID == "" {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.svc.DownloadWhatsAppMessageMedia(c.Request.Context(), *tenantID, conversationID, messageID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.WhatsAppMediaDownloadResponse{
+		Status:      "ok",
+		MessageID:   result.MessageID,
+		MediaType:   result.MediaType,
+		Filename:    result.Filename,
+		FilePath:    result.FilePath,
+		FileSize:    result.FileSize,
+		DownloadURL: result.DownloadURL,
+	})
+}
+
 func (h *Handler) ArchiveWhatsAppConversation(c *gin.Context) {
 	h.handleWhatsAppConversationToggleAction(c, func(ctx context.Context, tenantID, conversationID uuid.UUID, value bool) (transport.WhatsAppConversationActionResponse, error) {
 		result, err := h.svc.ArchiveWhatsAppConversation(ctx, tenantID, conversationID, value)
@@ -452,6 +499,41 @@ func (h *Handler) handleWhatsAppConversationToggleAction(c *gin.Context, action 
 	}
 
 	response, err := action(c.Request.Context(), *tenantID, conversationID, req.Value)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	httpkit.OK(c, response)
+}
+
+func (h *Handler) handleWhatsAppMessageToggleAction(c *gin.Context, action func(ctx context.Context, tenantID, conversationID uuid.UUID, messageID string, value bool) (transport.WhatsAppConversationActionResponse, error)) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	messageID := c.Param("messageID")
+	if messageID == "" {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.ToggleWhatsAppMessageStateRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	response, err := action(c.Request.Context(), *tenantID, conversationID, messageID, req.Value)
 	if httpkit.HandleError(c, err) {
 		return
 	}

@@ -98,6 +98,7 @@ type SendResult struct {
 }
 
 const headerContentType = "Content-Type"
+const errPhoneNumberRequired = "phone number is required"
 
 type MediaAttachment struct {
 	Filename string
@@ -198,6 +199,11 @@ type MessageTargetInput struct {
 	PhoneNumber string `json:"phone"`
 }
 
+type MessageStarInput struct {
+	PhoneNumber string `json:"phone"`
+	Value       bool
+}
+
 type ToggleChatInput struct {
 	Value bool
 }
@@ -220,6 +226,29 @@ type providerActionResponse struct {
 		MessageID string `json:"message_id"`
 		Status    string `json:"status"`
 	} `json:"results"`
+}
+
+type providerDownloadMediaResponse struct {
+	Code    string `json:"code"`
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Results struct {
+		MessageID string `json:"message_id"`
+		Status    string `json:"status"`
+		MediaType string `json:"media_type"`
+		Filename  string `json:"filename"`
+		FilePath  string `json:"file_path"`
+		FileSize  int64  `json:"file_size"`
+	} `json:"results"`
+}
+
+type DownloadMediaResult struct {
+	MessageID   string
+	MediaType   string
+	Filename    string
+	FilePath    string
+	FileSize    int64
+	DownloadURL string
 }
 
 var ErrNoDevice = errors.New("no whatsapp device configured")
@@ -376,6 +405,50 @@ func (c *Client) RevokeMessage(ctx context.Context, deviceID string, messageID s
 	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
 	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/message/%s/revoke", c.baseURL, url.PathEscape(strings.TrimSpace(messageID))), deviceID, input)
 	return err
+}
+
+func (c *Client) StarMessage(ctx context.Context, deviceID string, messageID string, input MessageStarInput) error {
+	input.PhoneNumber = normalizeRecipient(input.PhoneNumber)
+	endpoint := "%s/message/%s/star"
+	if !input.Value {
+		endpoint = "%s/message/%s/unstar"
+	}
+	_, err := c.postJSONAction(ctx, fmt.Sprintf(endpoint, c.baseURL, url.PathEscape(strings.TrimSpace(messageID))), deviceID, map[string]any{
+		"phone": input.PhoneNumber,
+	})
+	return err
+}
+
+func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaResult, error) {
+	phone := normalizeRecipient(phoneNumber)
+	if phone == "" {
+		return DownloadMediaResult{}, fmt.Errorf(errPhoneNumberRequired)
+	}
+
+	endpoint := fmt.Sprintf("%s/message/%s/download?phone=%s", c.baseURL, url.PathEscape(strings.TrimSpace(messageID)), url.QueryEscape(phone))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return DownloadMediaResult{}, err
+	}
+	c.addHeaders(req, deviceID)
+	data, err := c.doRequest(req)
+	if err != nil {
+		return DownloadMediaResult{}, err
+	}
+
+	var parsed providerDownloadMediaResponse
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return DownloadMediaResult{}, fmt.Errorf("parse download media response: %w", err)
+	}
+
+	return DownloadMediaResult{
+		MessageID:   strings.TrimSpace(parsed.Results.MessageID),
+		MediaType:   strings.TrimSpace(parsed.Results.MediaType),
+		Filename:    strings.TrimSpace(parsed.Results.Filename),
+		FilePath:    strings.TrimSpace(parsed.Results.FilePath),
+		FileSize:    parsed.Results.FileSize,
+		DownloadURL: c.resolveProviderAssetURL(strings.TrimSpace(parsed.Results.FilePath)),
+	}, nil
 }
 
 func (c *Client) ArchiveChat(ctx context.Context, deviceID string, chatJID string, archived bool) error {
@@ -659,6 +732,22 @@ func (c *Client) resolveGoWAURL(rawURL string) string {
 	return parsed.String()
 }
 
+func (c *Client) resolveProviderAssetURL(rawPath string) string {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+		return c.resolveGoWAURL(trimmed)
+	}
+	baseParsed, err := url.Parse(c.baseURL)
+	if err != nil {
+		return trimmed
+	}
+	resolved := baseParsed.ResolveReference(&url.URL{Path: "/" + strings.TrimLeft(trimmed, "/")})
+	return resolved.String()
+}
+
 // fetchImageFromURL downloads an image from the given URL with auth headers.
 func (c *Client) fetchImageFromURL(ctx context.Context, imageURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
@@ -725,7 +814,7 @@ func (c *Client) MarkMessageRead(ctx context.Context, deviceID string, phoneNumb
 
 	payload := actionRequest{Phone: normalizeActionPhone(phoneNumber)}
 	if payload.Phone == "" {
-		return fmt.Errorf("phone number is required")
+		return fmt.Errorf(errPhoneNumberRequired)
 	}
 
 	url := fmt.Sprintf("%s/message/%s/read", c.baseURL, url.PathEscape(normalizedMessageID))
@@ -757,7 +846,7 @@ func (c *Client) SendChatPresence(ctx context.Context, deviceID string, phoneNum
 		Action: strings.ToLower(strings.TrimSpace(action)),
 	}
 	if payload.Phone == "" {
-		return fmt.Errorf("phone number is required")
+		return fmt.Errorf(errPhoneNumberRequired)
 	}
 	if payload.Action == "" {
 		return fmt.Errorf("action is required")

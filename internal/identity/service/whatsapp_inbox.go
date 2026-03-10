@@ -54,6 +54,15 @@ type WhatsAppConversationActionResult struct {
 	Message      *repository.WhatsAppMessage
 }
 
+type WhatsAppMediaDownloadResult struct {
+	MessageID   string
+	MediaType   string
+	Filename    string
+	FilePath    string
+	FileSize    int64
+	DownloadURL string
+}
+
 type WhatsAppReplySuggestionResult struct {
 	Suggestion string
 }
@@ -418,6 +427,43 @@ func (s *Service) RevokeWhatsAppMessage(ctx context.Context, organizationID, con
 		return WhatsAppConversationActionResult{}, err
 	}
 	return WhatsAppConversationActionResult{Conversation: &updatedConversation, Message: &updatedMessage}, nil
+}
+
+func (s *Service) StarWhatsAppMessage(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string, value bool) (WhatsAppConversationActionResult, error) {
+	message, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
+	if err != nil {
+		return WhatsAppConversationActionResult{}, err
+	}
+
+	if err := s.whatsapp.StarMessage(ctx, deviceID, externalMessageID, whatsapp.MessageStarInput{PhoneNumber: conversation.PhoneNumber, Value: value}); err != nil {
+		if value {
+			return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-bericht kon niet worden gemarkeerd")
+		}
+		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-bericht kon niet worden gedemarkeerd")
+	}
+
+	return WhatsAppConversationActionResult{Conversation: &conversation, Message: &message}, nil
+}
+
+func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string) (WhatsAppMediaDownloadResult, error) {
+	_, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
+	if err != nil {
+		return WhatsAppMediaDownloadResult{}, err
+	}
+
+	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, conversation.PhoneNumber)
+	if err != nil {
+		return WhatsAppMediaDownloadResult{}, apperr.Internal("WhatsApp-media kon niet worden gedownload")
+	}
+
+	return WhatsAppMediaDownloadResult{
+		MessageID:   result.MessageID,
+		MediaType:   result.MediaType,
+		Filename:    result.Filename,
+		FilePath:    result.FilePath,
+		FileSize:    result.FileSize,
+		DownloadURL: result.DownloadURL,
+	}, nil
 }
 
 func (s *Service) ArchiveWhatsAppConversation(ctx context.Context, organizationID, conversationID uuid.UUID, value bool) (WhatsAppConversationActionResult, error) {

@@ -330,29 +330,7 @@ func (s *Service) createDraftQuote(ctx context.Context, params DraftQuoteParams)
 	calc := CalculateQuote(transport.QuoteCalculationRequest{Items: buildDraftCalcItems(params.Items), PricingMode: "exclusive"})
 	now := time.Now()
 	validUntil := s.resolveValidUntil(ctx, params.OrganizationID, params.LeadID, &params.LeadServiceID, now)
-	createdBy := nilIfZeroUUID(params.CreatedByID)
-	serviceID := &params.LeadServiceID
-
-	quote := repository.Quote{
-		ID:                  uuid.New(),
-		OrganizationID:      params.OrganizationID,
-		LeadID:              params.LeadID,
-		LeadServiceID:       serviceID,
-		CreatedByID:         createdBy,
-		QuoteNumber:         quoteNumber,
-		Status:              string(transport.QuoteStatusDraft),
-		PricingMode:         "exclusive",
-		DiscountType:        "percentage",
-		DiscountValue:       0,
-		SubtotalCents:       calc.SubtotalCents,
-		DiscountAmountCents: calc.DiscountAmountCents,
-		TaxTotalCents:       calc.VatTotalCents,
-		TotalCents:          calc.TotalCents,
-		ValidUntil:          validUntil,
-		Notes:               nilIfEmpty(params.Notes),
-		CreatedAt:           now,
-		UpdatedAt:           now,
-	}
+	quote := buildDraftQuoteRepositoryModel(params, quoteNumber, calc, now, validUntil)
 
 	items, catalogCount := buildDraftRepoItems(quote.ID, params.OrganizationID, params.Items, now)
 	if err := s.repo.CreateWithItems(ctx, &quote, items, buildRepositoryPricingSnapshot(quote, params.PricingSnapshot, len(items), catalogCount)); err != nil {
@@ -389,6 +367,33 @@ func (s *Service) updateDraftQuote(ctx context.Context, params DraftQuoteParams)
 		return nil, err
 	}
 	return &DraftQuoteResult{QuoteID: quoteID, QuoteNumber: quote.QuoteNumber, ItemCount: len(items)}, nil
+}
+
+func buildDraftQuoteRepositoryModel(params DraftQuoteParams, quoteNumber string, calc transport.QuoteCalculationResponse, now time.Time, validUntil *time.Time) repository.Quote {
+	createdBy := nilIfZeroUUID(params.CreatedByID)
+	serviceID := &params.LeadServiceID
+
+	return repository.Quote{
+		ID:                  uuid.New(),
+		OrganizationID:      params.OrganizationID,
+		LeadID:              params.LeadID,
+		LeadServiceID:       serviceID,
+		VersionNumber:       1,
+		CreatedByID:         createdBy,
+		QuoteNumber:         quoteNumber,
+		Status:              string(transport.QuoteStatusDraft),
+		PricingMode:         "exclusive",
+		DiscountType:        "percentage",
+		DiscountValue:       0,
+		SubtotalCents:       calc.SubtotalCents,
+		DiscountAmountCents: calc.DiscountAmountCents,
+		TaxTotalCents:       calc.VatTotalCents,
+		TotalCents:          calc.TotalCents,
+		ValidUntil:          validUntil,
+		Notes:               nilIfEmpty(params.Notes),
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
 }
 
 func buildDraftCalcItems(items []DraftQuoteItemParams) []transport.QuoteItemRequest {
