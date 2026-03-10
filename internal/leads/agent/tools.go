@@ -94,7 +94,9 @@ func normalizeLeadQuality(quality string) string {
 	}
 }
 
-// normalizeRecommendedAction converts various action formats to valid values: Reject, RequestInfo, ScheduleSurvey, CallImmediately
+// normalizeRecommendedAction converts various action formats to valid values: Reject, RequestInfo, ScheduleSurvey, CallImmediately.
+// Estimation-ready aliases map to ScheduleSurvey because that is the existing
+// canonical non-RequestInfo action stored in the analysis table.
 func normalizeRecommendedAction(action string) string {
 	normalized := strings.ToLower(strings.TrimSpace(action))
 
@@ -104,6 +106,10 @@ func normalizeRecommendedAction(action string) string {
 		return "Reject"
 	case "requestinfo", "request_info", "request info":
 		return "RequestInfo"
+	case "movetoestimation", "move_to_estimation", "move to estimation",
+		"proceedtoestimation", "proceed_to_estimation", "proceed to estimation",
+		"estimate", "estimateready", "estimate_ready", "estimate ready":
+		return "ScheduleSurvey"
 	case "schedulesurvey", "schedule_survey", "schedule survey", "survey", "opname", "inmeten":
 		return "ScheduleSurvey"
 	case "callimmediately", "call_immediately", "call immediately", "call", "bellen":
@@ -116,6 +122,9 @@ func normalizeRecommendedAction(action string) string {
 	}
 	if strings.Contains(normalized, "call") || strings.Contains(normalized, "bel") || strings.Contains(normalized, "phone") {
 		return "CallImmediately"
+	}
+	if strings.Contains(normalized, "estimat") || strings.Contains(normalized, "proceed") || strings.Contains(normalized, "move to estimation") {
+		return "ScheduleSurvey"
 	}
 	if strings.Contains(normalized, "survey") || strings.Contains(normalized, "opname") || strings.Contains(normalized, "inmeten") || strings.Contains(normalized, "schedule") {
 		return "ScheduleSurvey"

@@ -337,3 +337,43 @@ func TestHandleSaveAnalysisDoesNotSkipDuplicateWhenTrustedFactsChange(t *testing
 		t.Fatalf("expected current service_type to override stale prior fact, got %#v", repo.lastCreateParams.ExtractedFacts)
 	}
 }
+
+func TestNormalizeAnalysisInputMapsEstimationReadyAliases(t *testing.T) {
+	tenantID := uuid.New()
+	leadID := uuid.New()
+	serviceID := uuid.New()
+	repo := &analysisToolRepoStub{
+		lead: repository.Lead{
+			ID:            leadID,
+			ConsumerPhone: analysisTestPhone,
+			CreatedAt:     time.Now(),
+		},
+		service: repository.LeadService{
+			ID:             serviceID,
+			LeadID:         leadID,
+			OrganizationID: tenantID,
+			Status:         domain.LeadStatusNew,
+			PipelineStage:  domain.PipelineStageTriage,
+			ServiceType:    analysisTestServiceType,
+		},
+	}
+	deps := newAnalysisToolDeps(repo, tenantID)
+
+	testCases := []string{"MoveToEstimation", "ProceedToEstimation", "Estimate"}
+	for _, action := range testCases {
+		normalized, err := normalizeAnalysisInput(fakeToolContext{Context: context.Background()}, deps, SaveAnalysisInput{
+			LeadID:                  leadID.String(),
+			LeadServiceID:           serviceID.String(),
+			UrgencyLevel:            "Low",
+			LeadQuality:             "Potential",
+			RecommendedAction:       action,
+			PreferredContactChannel: "WhatsApp",
+		}, repo.lead, tenantID, serviceID)
+		if err != nil {
+			t.Fatalf("action %q: expected no error, got %v", action, err)
+		}
+		if normalized.RecommendedAction != "ScheduleSurvey" {
+			t.Fatalf("action %q: expected RecommendedAction to normalize to ScheduleSurvey, got %q", action, normalized.RecommendedAction)
+		}
+	}
+}
