@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"portal_final_backend/internal/identity/repository"
+
+	"github.com/google/uuid"
 )
 
 type WhatsAppConversationResponse struct {
@@ -164,7 +166,7 @@ func ToWhatsAppMessageResponse(item repository.WhatsAppMessage) WhatsAppMessageR
 	}
 }
 
-func optionalUUID(value interface{ String() string }) *string {
+func optionalUUID(value *uuid.UUID) *string {
 	if value == nil {
 		return nil
 	}
