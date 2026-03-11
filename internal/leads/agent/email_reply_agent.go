@@ -16,6 +16,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
 )
@@ -32,6 +33,9 @@ type EmailReplyAgent struct {
 	modelConfig                  moonshot.Config
 	appName                      string
 	organizationAISettingsReader ports.OrganizationAISettingsReader
+	quoteReader                  ports.ReplyQuoteReader
+	appointmentViewer            ports.AppointmentPublicViewer
+	userReader                   ports.ReplyUserReader
 }
 
 type emailReplyContext struct {
@@ -41,6 +45,10 @@ type emailReplyContext struct {
 	analysis      *repository.AIAnalysis
 	visitReport   *repository.AppointmentVisitReport
 	photoAnalysis *repository.PhotoAnalysis
+	acceptedQuote *ports.PublicQuoteSummary
+	upcomingVisit *ports.PublicAppointmentSummary
+	pendingVisit  *ports.PublicAppointmentSummary
+	requester     *ports.ReplyUserProfile
 }
 
 func NewEmailReplyAgent(apiKey string, modelName string, repo repository.LeadsRepository) (*EmailReplyAgent, error) {
@@ -53,6 +61,12 @@ func NewEmailReplyAgent(apiKey string, modelName string, repo repository.LeadsRe
 
 func (a *EmailReplyAgent) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
 	a.organizationAISettingsReader = reader
+}
+
+func (a *EmailReplyAgent) SetContextReaders(quoteReader ports.ReplyQuoteReader, appointmentViewer ports.AppointmentPublicViewer, userReader ports.ReplyUserReader) {
+	a.quoteReader = quoteReader
+	a.appointmentViewer = appointmentViewer
+	a.userReader = userReader
 }
 
 func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.EmailReplyInput) (string, error) {
@@ -160,13 +174,9 @@ func (a *EmailReplyAgent) loadReplyContext(ctx context.Context, input ports.Emai
 		return emailReplyContext{}, err
 	}
 
-	if lead == nil && service != nil && service.LeadID != uuid.Nil {
-		loadedLead, loadErr := a.repo.GetByID(ctx, service.LeadID, input.OrganizationID)
-		if loadErr == nil {
-			lead = &loadedLead
-		} else if !errors.Is(loadErr, repository.ErrNotFound) {
-			return emailReplyContext{}, fmt.Errorf("email reply: load lead from service: %w", loadErr)
-		}
+	lead, err = a.hydrateLeadFromService(ctx, input.OrganizationID, lead, service)
+	if err != nil {
+		return emailReplyContext{}, err
 	}
 
 	contextData := emailReplyContext{
@@ -174,38 +184,153 @@ func (a *EmailReplyAgent) loadReplyContext(ctx context.Context, input ports.Emai
 		service: service,
 		notes:   nil,
 	}
+	if err := a.applySharedReplyContext(ctx, input, &contextData); err != nil {
+		return emailReplyContext{}, err
+	}
+
 	if service == nil {
+		if err := a.loadLeadOnlyNotes(ctx, input.OrganizationID, &contextData); err != nil {
+			return emailReplyContext{}, err
+		}
 		return contextData, nil
 	}
 
-	leadID := service.LeadID
-	if lead != nil && lead.ID != uuid.Nil {
-		leadID = lead.ID
+	if err := a.loadServiceReplyContext(ctx, input.OrganizationID, &contextData); err != nil {
+		return emailReplyContext{}, err
+	}
+	return contextData, nil
+}
+
+func (a *EmailReplyAgent) hydrateLeadFromService(ctx context.Context, organizationID uuid.UUID, lead *repository.Lead, service *repository.LeadService) (*repository.Lead, error) {
+	if lead != nil || service == nil || service.LeadID == uuid.Nil {
+		return lead, nil
 	}
 
-	notes, err := a.repo.ListNotesByService(ctx, leadID, service.ID, input.OrganizationID)
+	loadedLead, err := a.repo.GetByID(ctx, service.LeadID, organizationID)
+	if err == nil {
+		return &loadedLead, nil
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("email reply: load lead from service: %w", err)
+}
+
+func (a *EmailReplyAgent) applySharedReplyContext(ctx context.Context, input ports.EmailReplyInput, contextData *emailReplyContext) error {
+	requester, err := a.loadRequester(ctx, input.RequesterUserID)
 	if err != nil {
-		return emailReplyContext{}, fmt.Errorf("email reply: load notes: %w", err)
+		return err
+	}
+	contextData.requester = requester
+
+	if contextData.lead == nil {
+		return nil
+	}
+
+	upcomingVisit, pendingVisit, err := a.loadAgenda(ctx, contextData.lead.ID, input.OrganizationID)
+	if err != nil {
+		return err
+	}
+	contextData.upcomingVisit = upcomingVisit
+	contextData.pendingVisit = pendingVisit
+	return nil
+}
+
+func (a *EmailReplyAgent) loadLeadOnlyNotes(ctx context.Context, organizationID uuid.UUID, contextData *emailReplyContext) error {
+	if contextData.lead == nil {
+		return nil
+	}
+	notes, err := a.repo.ListLeadNotes(ctx, contextData.lead.ID, organizationID)
+	if err != nil {
+		return fmt.Errorf("email reply: load lead notes: %w", err)
+	}
+	contextData.notes = notes
+	return nil
+}
+
+func (a *EmailReplyAgent) loadServiceReplyContext(ctx context.Context, organizationID uuid.UUID, contextData *emailReplyContext) error {
+	service := contextData.service
+	if service == nil {
+		return nil
+	}
+
+	leadID := service.LeadID
+	if contextData.lead != nil && contextData.lead.ID != uuid.Nil {
+		leadID = contextData.lead.ID
+	}
+
+	notes, err := a.repo.ListNotesByService(ctx, leadID, service.ID, organizationID)
+	if err != nil {
+		return fmt.Errorf("email reply: load notes: %w", err)
 	}
 	contextData.notes = notes
 
-	analysis, err := a.loadLatestAIAnalysis(ctx, service.ID, input.OrganizationID)
+	acceptedQuote, err := a.loadAcceptedQuote(ctx, service.ID, organizationID)
 	if err != nil {
-		return emailReplyContext{}, err
+		return err
 	}
-	visitReport, err := a.loadLatestVisitReport(ctx, service.ID, input.OrganizationID)
+	contextData.acceptedQuote = acceptedQuote
+
+	analysis, err := a.loadLatestAIAnalysis(ctx, service.ID, organizationID)
 	if err != nil {
-		return emailReplyContext{}, err
+		return err
 	}
-	photoAnalysis, err := a.loadLatestPhotoAnalysis(ctx, service.ID, input.OrganizationID)
+	visitReport, err := a.loadLatestVisitReport(ctx, service.ID, organizationID)
 	if err != nil {
-		return emailReplyContext{}, err
+		return err
+	}
+	photoAnalysis, err := a.loadLatestPhotoAnalysis(ctx, service.ID, organizationID)
+	if err != nil {
+		return err
 	}
 
 	contextData.analysis = analysis
 	contextData.visitReport = visitReport
 	contextData.photoAnalysis = photoAnalysis
-	return contextData, nil
+	return nil
+}
+
+func (a *EmailReplyAgent) loadAcceptedQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (*ports.PublicQuoteSummary, error) {
+	if a == nil || a.quoteReader == nil {
+		return nil, nil
+	}
+	quote, err := a.quoteReader.GetAcceptedQuote(ctx, serviceID, organizationID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load accepted quote: %w", err)
+	}
+	return quote, nil
+}
+
+func (a *EmailReplyAgent) loadAgenda(ctx context.Context, leadID, organizationID uuid.UUID) (*ports.PublicAppointmentSummary, *ports.PublicAppointmentSummary, error) {
+	if a == nil || a.appointmentViewer == nil {
+		return nil, nil, nil
+	}
+	upcomingVisit, err := a.appointmentViewer.GetUpcomingVisit(ctx, leadID, organizationID)
+	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
+		return nil, nil, fmt.Errorf("email reply: load upcoming visit: %w", err)
+	}
+	pendingVisit, err := a.appointmentViewer.GetPendingVisit(ctx, leadID, organizationID)
+	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
+		return nil, nil, fmt.Errorf("email reply: load pending visit: %w", err)
+	}
+	return upcomingVisit, pendingVisit, nil
+}
+
+func (a *EmailReplyAgent) loadRequester(ctx context.Context, requesterUserID uuid.UUID) (*ports.ReplyUserProfile, error) {
+	if a == nil || a.userReader == nil || requesterUserID == uuid.Nil {
+		return nil, nil
+	}
+	requester, err := a.userReader.GetUserProfile(ctx, requesterUserID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load requester: %w", err)
+	}
+	return requester, nil
 }
 
 func (a *EmailReplyAgent) loadReplyLead(ctx context.Context, input ports.EmailReplyInput) (*repository.Lead, error) {
@@ -318,6 +443,15 @@ Service context
 Reply style
 - Tone of voice: %s
 
+Requesting colleague
+%s
+
+Accepted quote overview
+%s
+
+Agenda overview
+%s
+
 Latest AI analysis
 %s
 
@@ -365,6 +499,9 @@ Task
 		formatEmailReplyConsumerNote(replyContext.service),
 		formatEmailReplyCustomerPreferences(replyContext.service),
 		sanitizePromptField(toneOfVoice, 200),
+		formatRequesterBlock(replyContext.requester),
+		formatQuoteOverviewBlock(replyContext.acceptedQuote),
+		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
 		formatPhotoAnalysisBlock(replyContext.photoAnalysis),

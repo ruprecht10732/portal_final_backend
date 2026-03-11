@@ -379,10 +379,17 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	}
 	wireMoneybirdConfig(cfg, log, quotesModule.Service())
 
+	quoteViewer := adapters.NewQuotePublicAdapter(quotesModule.Service(), leadsModule.Repository(), quotesModule.Repository())
+	appointmentViewer := adapters.NewAppointmentPublicAdapter(appointmentsModule.Service)
 	leadsModule.SetPublicViewers(
-		adapters.NewQuotePublicAdapter(quotesModule.Service()),
-		adapters.NewAppointmentPublicAdapter(appointmentsModule.Service),
+		quoteViewer,
+		appointmentViewer,
 		adapters.NewAppointmentSlotAdapter(appointmentsModule.Service),
+	)
+	leadsModule.SetReplyContextReaders(
+		quoteViewer,
+		appointmentViewer,
+		adapters.NewReplyUserReaderAdapter(authModule.Service()),
 	)
 	leadsModule.SetPublicOrgViewer(adapters.NewOrganizationPublicAdapter(identityModule.Service()))
 	leadsModule.SetPartnerOfferCreator(adapters.NewPartnerOfferAdapter(partnersModule.Service()))

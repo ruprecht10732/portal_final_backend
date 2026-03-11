@@ -23,15 +23,16 @@ func (a *EmailReplySuggesterAdapter) SuggestReply(ctx context.Context, input ima
 	}
 
 	mapped := ports.EmailReplyInput{
-		OrganizationID: input.OrganizationID,
-		LeadID:         input.LeadID,
-		LeadServiceID:  input.LeadServiceID,
-		CustomerEmail:  input.CustomerEmail,
-		CustomerName:   input.CustomerName,
-		Subject:        input.Subject,
-		MessageBody:    input.MessageBody,
-		Feedback:       make([]ports.EmailReplyFeedback, 0, len(input.Feedback)),
-		Examples:       make([]ports.EmailReplyExample, 0, len(input.Examples)),
+		OrganizationID:  input.OrganizationID,
+		RequesterUserID: input.RequesterUserID,
+		LeadID:          input.LeadID,
+		LeadServiceID:   input.LeadServiceID,
+		CustomerEmail:   input.CustomerEmail,
+		CustomerName:    input.CustomerName,
+		Subject:         input.Subject,
+		MessageBody:     input.MessageBody,
+		Feedback:        make([]ports.EmailReplyFeedback, 0, len(input.Feedback)),
+		Examples:        make([]ports.EmailReplyExample, 0, len(input.Examples)),
 	}
 
 	for _, feedback := range input.Feedback {

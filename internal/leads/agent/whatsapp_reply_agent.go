@@ -19,6 +19,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/apperr"
 )
 
 const (
@@ -26,6 +27,7 @@ const (
 	maxWhatsAppExampleItems     = 4
 	maxWhatsAppTranscriptItems  = 6
 	maxWhatsAppMessageBodyChars = 750
+	maxLeadNoteItems            = 5
 )
 
 type WhatsAppReplyAgent struct {
@@ -33,6 +35,9 @@ type WhatsAppReplyAgent struct {
 	modelConfig                  moonshot.Config
 	appName                      string
 	organizationAISettingsReader ports.OrganizationAISettingsReader
+	quoteReader                  ports.ReplyQuoteReader
+	appointmentViewer            ports.AppointmentPublicViewer
+	userReader                   ports.ReplyUserReader
 }
 
 type whatsAppReplyContext struct {
@@ -42,6 +47,10 @@ type whatsAppReplyContext struct {
 	analysis      *repository.AIAnalysis
 	visitReport   *repository.AppointmentVisitReport
 	photoAnalysis *repository.PhotoAnalysis
+	acceptedQuote *ports.PublicQuoteSummary
+	upcomingVisit *ports.PublicAppointmentSummary
+	pendingVisit  *ports.PublicAppointmentSummary
+	requester     *ports.ReplyUserProfile
 }
 
 func NewWhatsAppReplyAgent(apiKey string, modelName string, repo repository.LeadsRepository) (*WhatsAppReplyAgent, error) {
@@ -55,6 +64,12 @@ func NewWhatsAppReplyAgent(apiKey string, modelName string, repo repository.Lead
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
 func (a *WhatsAppReplyAgent) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
 	a.organizationAISettingsReader = reader
+}
+
+func (a *WhatsAppReplyAgent) SetContextReaders(quoteReader ports.ReplyQuoteReader, appointmentViewer ports.AppointmentPublicViewer, userReader ports.ReplyUserReader) {
+	a.quoteReader = quoteReader
+	a.appointmentViewer = appointmentViewer
+	a.userReader = userReader
 }
 
 func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input ports.WhatsAppReplyInput) (string, error) {
@@ -179,6 +194,18 @@ func (a *WhatsAppReplyAgent) loadReplyContext(ctx context.Context, input ports.W
 	if err != nil {
 		return whatsAppReplyContext{}, err
 	}
+	acceptedQuote, err := a.loadAcceptedQuote(ctx, service.ID, input.OrganizationID)
+	if err != nil {
+		return whatsAppReplyContext{}, err
+	}
+	upcomingVisit, pendingVisit, err := a.loadAgenda(ctx, lead.ID, input.OrganizationID)
+	if err != nil {
+		return whatsAppReplyContext{}, err
+	}
+	requester, err := a.loadRequester(ctx, input.RequesterUserID)
+	if err != nil {
+		return whatsAppReplyContext{}, err
+	}
 
 	return whatsAppReplyContext{
 		lead:          lead,
@@ -187,7 +214,54 @@ func (a *WhatsAppReplyAgent) loadReplyContext(ctx context.Context, input ports.W
 		analysis:      analysis,
 		visitReport:   visitReport,
 		photoAnalysis: photoAnalysis,
+		acceptedQuote: acceptedQuote,
+		upcomingVisit: upcomingVisit,
+		pendingVisit:  pendingVisit,
+		requester:     requester,
 	}, nil
+}
+
+func (a *WhatsAppReplyAgent) loadAcceptedQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (*ports.PublicQuoteSummary, error) {
+	if a == nil || a.quoteReader == nil {
+		return nil, nil
+	}
+	quote, err := a.quoteReader.GetAcceptedQuote(ctx, serviceID, organizationID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("whatsapp reply: load accepted quote: %w", err)
+	}
+	return quote, nil
+}
+
+func (a *WhatsAppReplyAgent) loadAgenda(ctx context.Context, leadID, organizationID uuid.UUID) (*ports.PublicAppointmentSummary, *ports.PublicAppointmentSummary, error) {
+	if a == nil || a.appointmentViewer == nil {
+		return nil, nil, nil
+	}
+	upcomingVisit, err := a.appointmentViewer.GetUpcomingVisit(ctx, leadID, organizationID)
+	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
+		return nil, nil, fmt.Errorf("whatsapp reply: load upcoming visit: %w", err)
+	}
+	pendingVisit, err := a.appointmentViewer.GetPendingVisit(ctx, leadID, organizationID)
+	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
+		return nil, nil, fmt.Errorf("whatsapp reply: load pending visit: %w", err)
+	}
+	return upcomingVisit, pendingVisit, nil
+}
+
+func (a *WhatsAppReplyAgent) loadRequester(ctx context.Context, requesterUserID uuid.UUID) (*ports.ReplyUserProfile, error) {
+	if a == nil || a.userReader == nil || requesterUserID == uuid.Nil {
+		return nil, nil
+	}
+	requester, err := a.userReader.GetUserProfile(ctx, requesterUserID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("whatsapp reply: load requester: %w", err)
+	}
+	return requester, nil
 }
 
 func (a *WhatsAppReplyAgent) loadLatestAIAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.AIAnalysis, error) {
@@ -246,6 +320,15 @@ Service context
 Reply style
 - Tone of voice: %s
 
+Requesting colleague
+%s
+
+Accepted quote overview
+%s
+
+Agenda overview
+%s
+
 Latest AI analysis
 %s
 
@@ -290,6 +373,9 @@ Task
 		optionalPromptString(replyContext.service.ConsumerNote, 800),
 		formatJSONBlock(replyContext.service.CustomerPreferences),
 		sanitizePromptField(toneOfVoice, 200),
+		formatRequesterBlock(replyContext.requester),
+		formatQuoteOverviewBlock(replyContext.acceptedQuote),
+		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
 		formatPhotoAnalysisBlock(replyContext.photoAnalysis),
@@ -470,15 +556,79 @@ func formatLeadNotesBlock(notes []repository.LeadNote) string {
 	}
 
 	start := 0
-	if len(notes) > 2 {
-		start = len(notes) - 2
+	if len(notes) > maxLeadNoteItems {
+		start = len(notes) - maxLeadNoteItems
 	}
 	lines := make([]string, 0, len(notes)-start)
 	for _, note := range notes[start:] {
 		body := sanitizePromptField(note.Body, 500)
-		lines = append(lines, fmt.Sprintf("- %s (%s)", body, note.CreatedAt.Format(dateTimeLayout)))
+		label := sanitizePromptField(note.Type, 40)
+		if label == valueNotProvided {
+			label = "notitie"
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] %s (%s)", label, body, note.CreatedAt.Format(dateTimeLayout)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatRequesterBlock(requester *ports.ReplyUserProfile) string {
+	if requester == nil {
+		return valueNotProvided
+	}
+	name := joinPromptFields(
+		optionalPromptString(requester.FirstName, 80),
+		optionalPromptString(requester.LastName, 80),
+	)
+	lines := []string{}
+	if name != valueNotProvided {
+		lines = append(lines, "- Naam: "+name)
+	}
+	if email := sanitizePromptField(requester.Email, 160); email != valueNotProvided {
+		lines = append(lines, "- E-mailadres: "+email)
+	}
+	if len(lines) == 0 {
+		return valueNotProvided
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatQuoteOverviewBlock(quote *ports.PublicQuoteSummary) string {
+	if quote == nil {
+		return valueNotProvided
+	}
+	lines := []string{
+		"- Offertenummer: " + sanitizePromptField(quote.QuoteNumber, 80),
+		"- Status: " + sanitizePromptField(quote.Status, 40),
+		fmt.Sprintf("- Totaal: %s", formatCurrencyCents(quote.TotalCents)),
+	}
+	if quote.AcceptedAt != nil {
+		lines = append(lines, "- Geaccepteerd op: "+quote.AcceptedAt.Format(dateTimeLayout))
+	}
+	if quote.ValidUntil != nil {
+		lines = append(lines, "- Geldig tot: "+quote.ValidUntil.Format(dateTimeLayout))
+	}
+	if quote.Notes != nil && strings.TrimSpace(*quote.Notes) != "" {
+		lines = append(lines, "- Offertenotities: "+sanitizePromptField(*quote.Notes, 400))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatAgendaOverviewBlock(upcomingVisit, pendingVisit *ports.PublicAppointmentSummary) string {
+	if upcomingVisit == nil && pendingVisit == nil {
+		return valueNotProvided
+	}
+	lines := []string{}
+	if upcomingVisit != nil {
+		lines = append(lines, fmt.Sprintf("- Geplande afspraak: %s tot %s, %s (%s)", upcomingVisit.StartTime.Format(dateTimeLayout), upcomingVisit.EndTime.Format(dateTimeLayout), sanitizePromptField(upcomingVisit.Title, 120), sanitizePromptField(upcomingVisit.Status, 40)))
+	}
+	if pendingVisit != nil {
+		lines = append(lines, fmt.Sprintf("- Open afspraakverzoek: %s tot %s, %s (%s)", pendingVisit.StartTime.Format(dateTimeLayout), pendingVisit.EndTime.Format(dateTimeLayout), sanitizePromptField(pendingVisit.Title, 120), sanitizePromptField(pendingVisit.Status, 40)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatCurrencyCents(totalCents int64) string {
+	return fmt.Sprintf("EUR %.2f", float64(totalCents)/100)
 }
 
 func formatWhatsAppTranscript(messages []ports.WhatsAppReplyMessage) string {

@@ -366,7 +366,7 @@ func (h *Handler) SuggestWhatsAppReply(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.SuggestWhatsAppReply(c.Request.Context(), *tenantID, conversationID)
+	result, err := h.svc.SuggestWhatsAppReply(c.Request.Context(), identity.UserID(), *tenantID, conversationID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

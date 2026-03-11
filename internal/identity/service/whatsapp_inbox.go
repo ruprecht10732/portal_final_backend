@@ -322,7 +322,7 @@ func leadTimelineSummary(value string) *string {
 	return &trimmed
 }
 
-func (s *Service) SuggestWhatsAppReply(ctx context.Context, organizationID, conversationID uuid.UUID) (WhatsAppReplySuggestionResult, error) {
+func (s *Service) SuggestWhatsAppReply(ctx context.Context, requesterUserID, organizationID, conversationID uuid.UUID) (WhatsAppReplySuggestionResult, error) {
 	if s.whatsappReplyer == nil {
 		return WhatsAppReplySuggestionResult{}, apperr.Internal("WhatsApp reply agent is not configured")
 	}
@@ -336,12 +336,13 @@ func (s *Service) SuggestWhatsAppReply(ctx context.Context, organizationID, conv
 	}
 
 	input := SuggestWhatsAppReplyInput{
-		OrganizationID: organizationID,
-		LeadID:         *conversation.LeadID,
-		ConversationID: conversation.ID,
-		PhoneNumber:    conversation.PhoneNumber,
-		DisplayName:    conversation.DisplayName,
-		Messages:       make([]SuggestWhatsAppReplyMessage, 0, len(messages)),
+		OrganizationID:  organizationID,
+		RequesterUserID: requesterUserID,
+		LeadID:          *conversation.LeadID,
+		ConversationID:  conversation.ID,
+		PhoneNumber:     conversation.PhoneNumber,
+		DisplayName:     conversation.DisplayName,
+		Messages:        make([]SuggestWhatsAppReplyMessage, 0, len(messages)),
 	}
 	if feedbackItems, feedbackErr := s.repo.ListRecentAppliedWhatsAppReplyFeedback(ctx, organizationID, conversation.LeadID, conversation.ID, 4); feedbackErr == nil {
 		input.Feedback = make([]SuggestWhatsAppReplyFeedback, 0, len(feedbackItems))

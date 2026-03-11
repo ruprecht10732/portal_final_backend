@@ -23,15 +23,16 @@ type EmailReplyExample struct {
 }
 
 type EmailReplyInput struct {
-	OrganizationID uuid.UUID
-	LeadID         *uuid.UUID
-	LeadServiceID  *uuid.UUID
-	CustomerEmail  string
-	CustomerName   string
-	Subject        string
-	MessageBody    string
-	Feedback       []EmailReplyFeedback
-	Examples       []EmailReplyExample
+	OrganizationID  uuid.UUID
+	RequesterUserID uuid.UUID
+	LeadID          *uuid.UUID
+	LeadServiceID   *uuid.UUID
+	CustomerEmail   string
+	CustomerName    string
+	Subject         string
+	MessageBody     string
+	Feedback        []EmailReplyFeedback
+	Examples        []EmailReplyExample
 }
 
 type EmailReplyGenerator interface {

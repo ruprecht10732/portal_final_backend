@@ -26,21 +26,23 @@ func (s *stubEmailReplyGenerator) SuggestEmailReply(_ context.Context, input por
 func TestEmailReplySuggesterAdapterMapsInput(t *testing.T) {
 	now := time.Now().UTC()
 	organizationID := uuid.New()
+	requesterUserID := uuid.New()
 	leadID := uuid.New()
 	serviceID := uuid.New()
 	generator := &stubEmailReplyGenerator{result: "voorstel"}
 	adapter := NewEmailReplySuggesterAdapter(generator)
 
 	result, err := adapter.SuggestReply(context.Background(), imapsvc.SuggestEmailReplyInput{
-		OrganizationID: organizationID,
-		AccountID:      uuid.New(),
-		MessageUID:     12,
-		LeadID:         &leadID,
-		LeadServiceID:  &serviceID,
-		CustomerEmail:  "customer@example.com",
-		CustomerName:   "Robin",
-		Subject:        "Planning",
-		MessageBody:    "Kunnen jullie vrijdag?",
+		OrganizationID:  organizationID,
+		RequesterUserID: requesterUserID,
+		AccountID:       uuid.New(),
+		MessageUID:      12,
+		LeadID:          &leadID,
+		LeadServiceID:   &serviceID,
+		CustomerEmail:   "customer@example.com",
+		CustomerName:    "Robin",
+		Subject:         "Planning",
+		MessageBody:     "Kunnen jullie vrijdag?",
 		Feedback: []imapsvc.SuggestEmailReplyFeedback{{
 			AIReply:    "AI tekst",
 			HumanReply: "Mens tekst",
@@ -60,6 +62,9 @@ func TestEmailReplySuggesterAdapterMapsInput(t *testing.T) {
 	}
 	if generator.lastInput.OrganizationID != organizationID {
 		t.Fatalf("expected organization id to be mapped")
+	}
+	if generator.lastInput.RequesterUserID != requesterUserID {
+		t.Fatalf("expected requester user id to be mapped")
 	}
 	if generator.lastInput.LeadID == nil || *generator.lastInput.LeadID != leadID {
 		t.Fatalf("expected lead id to be mapped, got %+v", generator.lastInput.LeadID)

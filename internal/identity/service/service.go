@@ -41,14 +41,15 @@ type SuggestWhatsAppReplyFeedback struct {
 }
 
 type SuggestWhatsAppReplyInput struct {
-	OrganizationID uuid.UUID
-	LeadID         uuid.UUID
-	ConversationID uuid.UUID
-	PhoneNumber    string
-	DisplayName    string
-	Messages       []SuggestWhatsAppReplyMessage
-	Examples       []SuggestWhatsAppReplyExample
-	Feedback       []SuggestWhatsAppReplyFeedback
+	OrganizationID  uuid.UUID
+	RequesterUserID uuid.UUID
+	LeadID          uuid.UUID
+	ConversationID  uuid.UUID
+	PhoneNumber     string
+	DisplayName     string
+	Messages        []SuggestWhatsAppReplyMessage
+	Examples        []SuggestWhatsAppReplyExample
+	Feedback        []SuggestWhatsAppReplyFeedback
 }
 
 type WhatsAppReplySuggester interface {

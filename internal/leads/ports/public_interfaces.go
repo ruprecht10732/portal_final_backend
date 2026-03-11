@@ -15,6 +15,9 @@ type PublicQuoteSummary struct {
 	PublicToken string
 	TotalCents  int64
 	PDFFileKey  *string
+	AcceptedAt  *time.Time
+	ValidUntil  *time.Time
+	Notes       *string
 }
 
 // PublicAppointmentSummary represents what the lead portal needs to know about a visit.

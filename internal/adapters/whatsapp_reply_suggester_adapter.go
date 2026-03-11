@@ -21,14 +21,15 @@ func (a *WhatsAppReplySuggesterAdapter) SuggestReply(ctx context.Context, input 
 	}
 
 	mapped := ports.WhatsAppReplyInput{
-		OrganizationID: input.OrganizationID,
-		LeadID:         input.LeadID,
-		ConversationID: input.ConversationID,
-		PhoneNumber:    input.PhoneNumber,
-		DisplayName:    input.DisplayName,
-		Messages:       make([]ports.WhatsAppReplyMessage, 0, len(input.Messages)),
-		Examples:       make([]ports.WhatsAppReplyExample, 0, len(input.Examples)),
-		Feedback:       make([]ports.WhatsAppReplyFeedback, 0, len(input.Feedback)),
+		OrganizationID:  input.OrganizationID,
+		RequesterUserID: input.RequesterUserID,
+		LeadID:          input.LeadID,
+		ConversationID:  input.ConversationID,
+		PhoneNumber:     input.PhoneNumber,
+		DisplayName:     input.DisplayName,
+		Messages:        make([]ports.WhatsAppReplyMessage, 0, len(input.Messages)),
+		Examples:        make([]ports.WhatsAppReplyExample, 0, len(input.Examples)),
+		Feedback:        make([]ports.WhatsAppReplyFeedback, 0, len(input.Feedback)),
 	}
 
 	for _, message := range input.Messages {

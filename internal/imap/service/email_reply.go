@@ -28,17 +28,18 @@ type SuggestEmailReplyExample struct {
 }
 
 type SuggestEmailReplyInput struct {
-	OrganizationID uuid.UUID
-	AccountID      uuid.UUID
-	MessageUID     int64
-	LeadID         *uuid.UUID
-	LeadServiceID  *uuid.UUID
-	CustomerEmail  string
-	CustomerName   string
-	Subject        string
-	MessageBody    string
-	Feedback       []SuggestEmailReplyFeedback
-	Examples       []SuggestEmailReplyExample
+	OrganizationID  uuid.UUID
+	RequesterUserID uuid.UUID
+	AccountID       uuid.UUID
+	MessageUID      int64
+	LeadID          *uuid.UUID
+	LeadServiceID   *uuid.UUID
+	CustomerEmail   string
+	CustomerName    string
+	Subject         string
+	MessageBody     string
+	Feedback        []SuggestEmailReplyFeedback
+	Examples        []SuggestEmailReplyExample
 }
 
 type EmailReplySuggester interface {
@@ -77,6 +78,7 @@ func (s *Service) SuggestEmailReply(ctx context.Context, userID, accountID uuid.
 	}
 
 	input := s.buildSuggestEmailReplyInput(organizationID, account.ID, uid, content, customerEmail, customerName)
+	input.RequesterUserID = userID
 	input.LeadID, input.LeadServiceID = s.resolveEmailReplyReferenceContext(ctx, userID, account.ID, uid, customerEmail)
 	s.appendEmailReplyFeedback(ctx, &input)
 	s.appendEmailReplyExamples(ctx, &input)

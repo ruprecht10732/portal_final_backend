@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"portal_final_backend/internal/leads/ports"
+	"portal_final_backend/internal/leads/repository"
+
+	"github.com/google/uuid"
 )
 
 func TestBuildEmailReplyPromptWithoutLeadOrServiceContext(t *testing.T) {
@@ -21,6 +24,39 @@ func TestBuildEmailReplyPromptWithoutLeadOrServiceContext(t *testing.T) {
 		"Naam: Robin",
 		"Onderwerp: Vraag over planning",
 		"Bericht: Kunnen jullie volgende week langskomen?",
+	}
+	for _, expected := range checks {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("expected prompt to contain %q, got %s", expected, prompt)
+		}
+	}
+}
+
+func TestBuildEmailReplyPromptIncludesOverviewContext(t *testing.T) {
+	firstName := "Robin"
+	lastName := "Bos"
+	note := "Klant wil graag snel duidelijkheid over de planning."
+	prompt := buildEmailReplyPrompt(ports.EmailReplyInput{
+		RequesterUserID: uuid.New(),
+		CustomerEmail:   "customer@example.com",
+		CustomerName:    "Robin",
+		Subject:         "Vraag over offerte",
+		MessageBody:     "Welke offerte hebben we geaccepteerd?",
+	}, emailReplyContext{
+		requester:     &ports.ReplyUserProfile{Email: "robin@example.com", FirstName: &firstName, LastName: &lastName},
+		acceptedQuote: &ports.PublicQuoteSummary{QuoteNumber: "OFF-2026-0001", Status: "Accepted", TotalCents: 123450},
+		upcomingVisit: &ports.PublicAppointmentSummary{Title: "Inmeting", Status: "scheduled"},
+		notes:         []repository.LeadNote{{Type: "important", Body: note}},
+	}, "Behulpzaam en direct")
+
+	checks := []string{
+		"Requesting colleague",
+		"Naam: Robin Bos",
+		"Accepted quote overview",
+		"Offertenummer: OFF-2026-0001",
+		"Agenda overview",
+		"Geplande afspraak:",
+		"[important] " + note,
 	}
 	for _, expected := range checks {
 		if !strings.Contains(prompt, expected) {

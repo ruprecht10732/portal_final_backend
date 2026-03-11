@@ -767,6 +767,18 @@ func (m *Module) SetPublicViewers(quoteViewer ports.QuotePublicViewer, apptViewe
 	m.publicHandler.SetPublicViewers(quoteViewer, apptViewer, slotViewer)
 }
 
+func (m *Module) SetReplyContextReaders(quoteReader ports.ReplyQuoteReader, apptViewer ports.AppointmentPublicViewer, userReader ports.ReplyUserReader) {
+	if m == nil {
+		return
+	}
+	if m.whatsAppReplyAgent != nil {
+		m.whatsAppReplyAgent.SetContextReaders(quoteReader, apptViewer, userReader)
+	}
+	if m.emailReplyAgent != nil {
+		m.emailReplyAgent.SetContextReaders(quoteReader, apptViewer, userReader)
+	}
+}
+
 // SetPublicOrgViewer injects organization contact info for the public portal.
 func (m *Module) SetPublicOrgViewer(orgViewer ports.OrganizationPublicViewer) {
 	if m.publicHandler == nil {

@@ -26,14 +26,15 @@ type WhatsAppReplyFeedback struct {
 }
 
 type WhatsAppReplyInput struct {
-	OrganizationID uuid.UUID
-	LeadID         uuid.UUID
-	ConversationID uuid.UUID
-	PhoneNumber    string
-	DisplayName    string
-	Messages       []WhatsAppReplyMessage
-	Examples       []WhatsAppReplyExample
-	Feedback       []WhatsAppReplyFeedback
+	OrganizationID  uuid.UUID
+	RequesterUserID uuid.UUID
+	LeadID          uuid.UUID
+	ConversationID  uuid.UUID
+	PhoneNumber     string
+	DisplayName     string
+	Messages        []WhatsAppReplyMessage
+	Examples        []WhatsAppReplyExample
+	Feedback        []WhatsAppReplyFeedback
 }
 
 type WhatsAppReplyGenerator interface {
