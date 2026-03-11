@@ -25,6 +25,7 @@ func (h *Handler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.POST("/whatsapp/conversations/:conversationID/create-lead", h.CreateLeadFromWhatsAppConversation)
 	rg.DELETE("/whatsapp/conversations/:conversationID/lead", h.UnlinkWhatsAppConversationLead)
 	rg.POST("/whatsapp/conversations/:conversationID/messages", h.SendWhatsAppConversationMessage)
+	rg.POST("/whatsapp/conversations/start", h.StartWhatsAppConversationMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/suggest-reply", h.SuggestWhatsAppReply)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/reaction", h.ReactWhatsAppMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/edit", h.EditWhatsAppMessage)
@@ -315,6 +316,7 @@ func (h *Handler) SendWhatsAppConversationMessage(c *gin.Context) {
 	messageInput := service.SendWhatsAppConversationMessageInput{
 		Type:            req.Type,
 		Body:            req.Body,
+		Scenario:        req.Scenario,
 		AISuggestion:    req.AISuggestion,
 		Caption:         req.Caption,
 		ViewOnce:        req.ViewOnce,
@@ -340,6 +342,76 @@ func (h *Handler) SendWhatsAppConversationMessage(c *gin.Context) {
 	}
 
 	conversation, message, err := h.svc.SendWhatsAppConversationMessage(c.Request.Context(), *tenantID, conversationID, messageInput)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.SendWhatsAppConversationMessageResponse{
+		Status:       "sent",
+		Conversation: transport.ToWhatsAppConversationResponse(conversation),
+		Message:      transport.ToWhatsAppMessageResponse(message),
+	})
+}
+
+func (h *Handler) StartWhatsAppConversationMessage(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	var req transport.StartWhatsAppConversationMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	var leadID *uuid.UUID
+	if req.LeadID != "" {
+		parsedLeadID, err := uuid.Parse(req.LeadID)
+		if err != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+			return
+		}
+		leadID = &parsedLeadID
+	}
+
+	messageInput := service.SendWhatsAppConversationMessageInput{
+		Type:            req.Type,
+		Body:            req.Body,
+		AISuggestion:    req.AISuggestion,
+		Caption:         req.Caption,
+		ViewOnce:        req.ViewOnce,
+		Compress:        req.Compress,
+		IsForwarded:     req.IsForwarded,
+		PushToTalk:      req.PushToTalk,
+		ContactName:     req.ContactName,
+		ContactPhone:    req.ContactPhone,
+		Link:            req.Link,
+		Latitude:        req.Latitude,
+		Longitude:       req.Longitude,
+		Question:        req.Question,
+		Options:         req.Options,
+		MaxAnswer:       req.MaxAnswer,
+		DurationSeconds: req.DurationSeconds,
+	}
+	if req.Attachment != nil {
+		messageInput.Attachment = &service.SendWhatsAppConversationAttachmentInput{
+			Filename:   req.Attachment.Filename,
+			Base64Data: req.Attachment.Base64Data,
+			RemoteURL:  req.Attachment.RemoteURL,
+		}
+	}
+
+	conversation, message, err := h.svc.StartWhatsAppConversationMessage(c.Request.Context(), *tenantID, leadID, req.PhoneNumber, messageInput)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -383,7 +455,7 @@ func (h *Handler) SuggestWhatsAppReply(c *gin.Context) {
 		return
 	}
 
-	httpkit.OK(c, transport.SuggestWhatsAppReplyResponse{Suggestion: result.Suggestion})
+	httpkit.OK(c, transport.SuggestWhatsAppReplyResponse{Suggestion: result.Suggestion, EffectiveScenario: result.EffectiveScenario})
 }
 
 func (h *Handler) MarkWhatsAppConversationRead(c *gin.Context) {

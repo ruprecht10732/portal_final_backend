@@ -13,6 +13,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/transport"
+	leadports "portal_final_backend/internal/leads/ports"
 	leadsrepo "portal_final_backend/internal/leads/repository"
 	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
@@ -55,7 +56,7 @@ type SuggestWhatsAppReplyInput struct {
 }
 
 type WhatsAppReplySuggester interface {
-	SuggestReply(ctx context.Context, input SuggestWhatsAppReplyInput) (string, error)
+	SuggestReply(ctx context.Context, input SuggestWhatsAppReplyInput) (leadports.ReplySuggestionDraft, error)
 }
 
 type WhatsAppLeadActions interface {
@@ -211,6 +212,10 @@ func (s *Service) UpdateOrganizationSettings(
 	update repository.OrganizationSettingsUpdate,
 ) (repository.OrganizationSettings, error) {
 	return s.repo.UpsertOrganizationSettings(ctx, organizationID, update)
+}
+
+func (s *Service) ListWhatsAppReplyScenarioAnalytics(ctx context.Context, organizationID uuid.UUID) ([]repository.ReplyScenarioAnalyticsItem, error) {
+	return s.repo.ListWhatsAppReplyScenarioAnalytics(ctx, organizationID)
 }
 
 type ResolveLeadWorkflowInput struct {

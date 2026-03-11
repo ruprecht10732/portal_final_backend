@@ -145,6 +145,7 @@ type SendMessageRequest struct {
 type ReplyRequest struct {
 	Body         string  `json:"body" validate:"required,max=200000"`
 	IsHTML       *bool   `json:"isHtml,omitempty"`
+	Scenario     *string `json:"scenario,omitempty" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
 	AISuggestion *string `json:"aiSuggestion,omitempty" validate:"omitempty,max=200000"`
 }
 
@@ -154,7 +155,20 @@ type SuggestReplyRequest struct {
 }
 
 type SuggestReplyResponse struct {
-	Suggestion string `json:"suggestion"`
+	Suggestion        string `json:"suggestion"`
+	EffectiveScenario string `json:"effectiveScenario"`
+}
+
+type ReplyScenarioAnalyticsItemResponse struct {
+	Scenario    string  `json:"scenario"`
+	SentCount   int     `json:"sentCount"`
+	EditedCount int     `json:"editedCount"`
+	EditRate    float64 `json:"editRate"`
+	LastUsedAt  *string `json:"lastUsedAt,omitempty"`
+}
+
+type ReplyScenarioAnalyticsResponse struct {
+	Items []ReplyScenarioAnalyticsItemResponse `json:"items"`
 }
 
 type ListMessagesResponse struct {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/service"
@@ -35,6 +36,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PATCH("/organizations/me", h.UpdateOrganization)
 	rg.GET("/organizations/me/settings", h.GetOrganizationSettings)
 	rg.PATCH("/organizations/me/settings", h.UpdateOrganizationSettings)
+	rg.GET("/organizations/me/whatsapp/reply-scenario-analytics", h.ListWhatsAppReplyScenarioAnalytics)
 	rg.GET("/organizations/me/workflow-engine/workflows", h.ListWorkflows)
 	rg.PUT("/organizations/me/workflow-engine/workflows", h.ReplaceWorkflows)
 	rg.GET("/organizations/me/workflow-engine/assignment-rules", h.ListWorkflowAssignmentRules)
@@ -355,6 +357,10 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
 		WhatsAppAccountJID:                                settings.WhatsAppAccountJID,
 		WhatsAppToneOfVoice:                               settings.WhatsAppToneOfVoice,
+		WhatsAppDefaultReplyScenario:                      settings.WhatsAppDefaultReplyScenario,
+		EmailDefaultReplyScenario:                         settings.EmailDefaultReplyScenario,
+		QuoteRelatedReplyScenario:                         settings.QuoteRelatedReplyScenario,
+		AppointmentRelatedReplyScenario:                   settings.AppointmentRelatedReplyScenario,
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
@@ -418,6 +424,10 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: req.PhotoAnalysisPerspectiveNormalizationServiceTypes,
 		NotificationEmail:                                 req.NotificationEmail,
 		WhatsAppToneOfVoice:                               req.WhatsAppToneOfVoice,
+		WhatsAppDefaultReplyScenario:                      req.WhatsAppDefaultReplyScenario,
+		EmailDefaultReplyScenario:                         req.EmailDefaultReplyScenario,
+		QuoteRelatedReplyScenario:                         req.QuoteRelatedReplyScenario,
+		AppointmentRelatedReplyScenario:                   req.AppointmentRelatedReplyScenario,
 		WhatsAppPresence:                                  req.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       req.WhatsAppWelcomeDelayMinutes,
 	})
@@ -449,10 +459,54 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		WhatsAppDeviceID:                                  settings.WhatsAppDeviceID,
 		WhatsAppAccountJID:                                settings.WhatsAppAccountJID,
 		WhatsAppToneOfVoice:                               settings.WhatsAppToneOfVoice,
+		WhatsAppDefaultReplyScenario:                      settings.WhatsAppDefaultReplyScenario,
+		EmailDefaultReplyScenario:                         settings.EmailDefaultReplyScenario,
+		QuoteRelatedReplyScenario:                         settings.QuoteRelatedReplyScenario,
+		AppointmentRelatedReplyScenario:                   settings.AppointmentRelatedReplyScenario,
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
+}
+
+func (h *Handler) ListWhatsAppReplyScenarioAnalytics(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	items, err := h.svc.ListWhatsAppReplyScenarioAnalytics(c.Request.Context(), *tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	response := make([]transport.ReplyScenarioAnalyticsItemResponse, 0, len(items))
+	for _, item := range items {
+		var lastUsedAt *string
+		if item.LastUsedAt != nil {
+			value := item.LastUsedAt.UTC().Format(time.RFC3339)
+			lastUsedAt = &value
+		}
+		editRate := 0.0
+		if item.SentCount > 0 {
+			editRate = float64(item.EditedCount) / float64(item.SentCount)
+		}
+		response = append(response, transport.ReplyScenarioAnalyticsItemResponse{
+			Scenario:    item.Scenario,
+			SentCount:   item.SentCount,
+			EditedCount: item.EditedCount,
+			EditRate:    editRate,
+			LastUsedAt:  lastUsedAt,
+		})
+	}
+
+	httpkit.OK(c, transport.ReplyScenarioAnalyticsResponse{Items: response})
 }
 
 func (h *Handler) RegisterWhatsApp(c *gin.Context) {

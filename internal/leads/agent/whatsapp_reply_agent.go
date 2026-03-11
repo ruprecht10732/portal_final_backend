@@ -74,18 +74,27 @@ func (a *WhatsAppReplyAgent) SetContextReaders(quoteReader ports.ReplyQuoteReade
 	a.userReader = userReader
 }
 
-func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input ports.WhatsAppReplyInput) (string, error) {
+func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input ports.WhatsAppReplyInput) (ports.ReplySuggestionDraft, error) {
 	replyContext, err := a.loadReplyContext(ctx, input)
 	if err != nil {
-		return "", err
+		return ports.ReplySuggestionDraft{}, err
 	}
 	settings := a.loadOrganizationAISettings(ctx, input.OrganizationID)
+	resolvedInput := input
+	resolvedInput.Scenario = resolveEffectiveReplyScenario(
+		input.Scenario,
+		settings.WhatsAppDefaultReplyScenario,
+		settings.QuoteRelatedReplyScenario,
+		settings.AppointmentRelatedReplyScenario,
+		replyContext.acceptedQuote != nil,
+		replyContext.upcomingVisit != nil || replyContext.pendingVisit != nil,
+	)
 	r, sessionService, err := a.newRunner(settings.WhatsAppToneOfVoice)
 	if err != nil {
-		return "", err
+		return ports.ReplySuggestionDraft{}, err
 	}
 
-	promptText := buildWhatsAppReplyPrompt(input, replyContext, settings.WhatsAppToneOfVoice)
+	promptText := buildWhatsAppReplyPrompt(resolvedInput, replyContext, settings.WhatsAppToneOfVoice)
 	sessionID := input.ConversationID.String()
 	userID := "whatsapp-reply-" + input.LeadID.String()
 
@@ -95,7 +104,7 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return "", fmt.Errorf("whatsapp reply: create session: %w", err)
+		return ports.ReplySuggestionDraft{}, fmt.Errorf("whatsapp reply: create session: %w", err)
 	}
 	defer func() {
 		_ = sessionService.Delete(ctx, &session.DeleteRequest{
@@ -120,10 +129,15 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 			outputText.WriteString(part.Text)
 		}
 	}); err != nil {
-		return "", err
+		return ports.ReplySuggestionDraft{}, err
 	}
 
-	return strings.TrimSpace(outputText.String()), nil
+	response := strings.TrimSpace(outputText.String())
+	if response == "" {
+		return ports.ReplySuggestionDraft{}, apperr.Internal("whatsapp reply: empty model response")
+	}
+
+	return ports.ReplySuggestionDraft{Text: response, EffectiveScenario: resolvedInput.Scenario}, nil
 }
 
 func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
@@ -135,14 +149,14 @@ func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, sess
 		Instruction: whatsappReplySystemPrompt(toneOfVoice),
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create whatsapp reply agent: %w", err)
+		return nil, nil, err
 	}
 
 	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        a.appName,
-		Agent:          adkAgent,
 		SessionService: sessionService,
+		Agent:          adkAgent,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create whatsapp reply runner: %w", err)

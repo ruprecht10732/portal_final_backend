@@ -69,6 +69,30 @@ type SendWhatsAppConversationAttachmentRequest struct {
 type SendWhatsAppConversationMessageRequest struct {
 	Type            string                                     `json:"type" validate:"omitempty,oneof=text image video audio file sticker contact link location poll"`
 	Body            string                                     `json:"body" validate:"max=4000"`
+	Scenario        string                                     `json:"scenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
+	AISuggestion    string                                     `json:"aiSuggestion" validate:"max=4000"`
+	Caption         string                                     `json:"caption" validate:"max=4000"`
+	ViewOnce        bool                                       `json:"viewOnce"`
+	Compress        bool                                       `json:"compress"`
+	IsForwarded     bool                                       `json:"isForwarded"`
+	PushToTalk      bool                                       `json:"pushToTalk"`
+	Attachment      *SendWhatsAppConversationAttachmentRequest `json:"attachment,omitempty"`
+	ContactName     string                                     `json:"contactName" validate:"max=255"`
+	ContactPhone    string                                     `json:"contactPhone" validate:"max=64"`
+	Link            string                                     `json:"link" validate:"max=2048"`
+	Latitude        string                                     `json:"latitude" validate:"max=64"`
+	Longitude       string                                     `json:"longitude" validate:"max=64"`
+	Question        string                                     `json:"question" validate:"max=1000"`
+	Options         []string                                   `json:"options,omitempty"`
+	MaxAnswer       int                                        `json:"maxAnswer"`
+	DurationSeconds *int                                       `json:"durationSeconds,omitempty"`
+}
+
+type StartWhatsAppConversationMessageRequest struct {
+	PhoneNumber     string                                     `json:"phoneNumber" validate:"required,max=64"`
+	LeadID          string                                     `json:"leadId" validate:"omitempty,uuid4"`
+	Type            string                                     `json:"type" validate:"omitempty,oneof=text image video audio file sticker contact link location poll"`
+	Body            string                                     `json:"body" validate:"max=4000"`
 	AISuggestion    string                                     `json:"aiSuggestion" validate:"max=4000"`
 	Caption         string                                     `json:"caption" validate:"max=4000"`
 	ViewOnce        bool                                       `json:"viewOnce"`
@@ -140,7 +164,8 @@ type SuggestWhatsAppReplyRequest struct {
 }
 
 type SuggestWhatsAppReplyResponse struct {
-	Suggestion string `json:"suggestion"`
+	Suggestion        string `json:"suggestion"`
+	EffectiveScenario string `json:"effectiveScenario"`
 }
 
 type WhatsAppConversationActionResponse struct {

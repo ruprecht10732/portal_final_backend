@@ -14,11 +14,11 @@ import (
 
 type stubEmailReplyGenerator struct {
 	lastInput ports.EmailReplyInput
-	result    string
+	result    ports.ReplySuggestionDraft
 	err       error
 }
 
-func (s *stubEmailReplyGenerator) SuggestEmailReply(_ context.Context, input ports.EmailReplyInput) (string, error) {
+func (s *stubEmailReplyGenerator) SuggestEmailReply(_ context.Context, input ports.EmailReplyInput) (ports.ReplySuggestionDraft, error) {
 	s.lastInput = input
 	return s.result, s.err
 }
@@ -29,7 +29,7 @@ func TestEmailReplySuggesterAdapterMapsInput(t *testing.T) {
 	requesterUserID := uuid.New()
 	leadID := uuid.New()
 	serviceID := uuid.New()
-	generator := &stubEmailReplyGenerator{result: "voorstel"}
+	generator := &stubEmailReplyGenerator{result: ports.ReplySuggestionDraft{Text: "voorstel", EffectiveScenario: ports.ReplySuggestionScenarioQuoteReminder}}
 	adapter := NewEmailReplySuggesterAdapter(generator)
 
 	result, err := adapter.SuggestReply(context.Background(), imapsvc.SuggestEmailReplyInput{
@@ -59,8 +59,11 @@ func TestEmailReplySuggesterAdapterMapsInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "voorstel" {
-		t.Fatalf("expected mapped result, got %q", result)
+	if result.Text != "voorstel" {
+		t.Fatalf("expected mapped result, got %+v", result)
+	}
+	if result.EffectiveScenario != ports.ReplySuggestionScenarioQuoteReminder {
+		t.Fatalf("expected effective scenario to be preserved, got %+v", result)
 	}
 	if generator.lastInput.OrganizationID != organizationID {
 		t.Fatalf("expected organization id to be mapped")

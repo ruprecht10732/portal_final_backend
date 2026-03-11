@@ -13,11 +13,11 @@ import (
 
 type stubWhatsAppReplyGenerator struct {
 	lastInput ports.WhatsAppReplyInput
-	result    string
+	result    ports.ReplySuggestionDraft
 	err       error
 }
 
-func (s *stubWhatsAppReplyGenerator) SuggestWhatsAppReply(_ context.Context, input ports.WhatsAppReplyInput) (string, error) {
+func (s *stubWhatsAppReplyGenerator) SuggestWhatsAppReply(_ context.Context, input ports.WhatsAppReplyInput) (ports.ReplySuggestionDraft, error) {
 	s.lastInput = input
 	return s.result, s.err
 }
@@ -28,7 +28,7 @@ func TestWhatsAppReplySuggesterAdapterMapsInput(t *testing.T) {
 	requesterUserID := uuid.New()
 	leadID := uuid.New()
 	conversationID := uuid.New()
-	generator := &stubWhatsAppReplyGenerator{result: "voorstel"}
+	generator := &stubWhatsAppReplyGenerator{result: ports.ReplySuggestionDraft{Text: "voorstel", EffectiveScenario: ports.ReplySuggestionScenarioAppointmentReminder}}
 	adapter := NewWhatsAppReplySuggesterAdapter(generator)
 
 	result, err := adapter.SuggestReply(context.Background(), identitysvc.SuggestWhatsAppReplyInput{
@@ -59,8 +59,11 @@ func TestWhatsAppReplySuggesterAdapterMapsInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "voorstel" {
-		t.Fatalf("expected mapped result, got %q", result)
+	if result.Text != "voorstel" {
+		t.Fatalf("expected mapped result, got %+v", result)
+	}
+	if result.EffectiveScenario != ports.ReplySuggestionScenarioAppointmentReminder {
+		t.Fatalf("expected effective scenario to be preserved, got %+v", result)
 	}
 	if generator.lastInput.OrganizationID != organizationID {
 		t.Fatalf("expected organization id to be mapped")

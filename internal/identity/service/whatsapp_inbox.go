@@ -35,6 +35,7 @@ type SendWhatsAppConversationAttachmentInput struct {
 type SendWhatsAppConversationMessageInput struct {
 	Type            string
 	Body            string
+	Scenario        string
 	Caption         string
 	ViewOnce        bool
 	Compress        bool
@@ -68,7 +69,8 @@ type WhatsAppMediaDownloadResult struct {
 }
 
 type WhatsAppReplySuggestionResult struct {
-	Suggestion string
+	Suggestion        string
+	EffectiveScenario string
 }
 
 type AttachWhatsAppMessageToLeadResult struct {
@@ -374,15 +376,18 @@ func (s *Service) SuggestWhatsAppReply(ctx context.Context, requesterUserID, org
 		})
 	}
 
-	suggestion, err := s.whatsappReplyer.SuggestReply(ctx, input)
+	draft, err := s.whatsappReplyer.SuggestReply(ctx, input)
 	if err != nil {
 		return WhatsAppReplySuggestionResult{}, apperr.Internal("WhatsApp reply kon niet worden gegenereerd")
 	}
-	if strings.TrimSpace(suggestion) == "" {
+	if strings.TrimSpace(draft.Text) == "" {
 		return WhatsAppReplySuggestionResult{}, apperr.Internal("WhatsApp reply agent returned an empty suggestion")
 	}
 
-	return WhatsAppReplySuggestionResult{Suggestion: strings.TrimSpace(suggestion)}, nil
+	return WhatsAppReplySuggestionResult{
+		Suggestion:        strings.TrimSpace(draft.Text),
+		EffectiveScenario: string(draft.EffectiveScenario),
+	}, nil
 }
 
 func (s *Service) MarkWhatsAppConversationRead(ctx context.Context, organizationID, conversationID uuid.UUID) (bool, error) {
@@ -453,6 +458,39 @@ func (s *Service) SendWhatsAppConversationMessage(ctx context.Context, organizat
 	return updatedConversation, message, nil
 }
 
+func (s *Service) StartWhatsAppConversationMessage(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, input SendWhatsAppConversationMessageInput) (repository.WhatsAppConversation, repository.WhatsAppMessage, error) {
+	if leadID != nil {
+		if _, err := s.getLeadSummaryByID(ctx, organizationID, leadID); err != nil {
+			return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
+		}
+	}
+
+	deviceID, err := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
+	if err != nil {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
+	}
+
+	outgoing, err := buildOutgoingWhatsAppMessage(input)
+	if err != nil {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
+	}
+
+	result, err := s.sendWhatsAppConversationMessageByType(ctx, deviceID, phoneNumber, outgoing)
+	if err != nil {
+		if errors.Is(err, whatsapp.ErrNoDevice) {
+			return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Validation(whatsappDeviceNotLinkedMsg)
+		}
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, apperr.Internal("WhatsApp-bericht kon niet worden verstuurd")
+	}
+
+	updatedConversation, message, err := s.persistOutgoingWhatsAppMessage(ctx, organizationID, leadID, phoneNumber, outgoing.Preview, nilIfEmptyString(result.MessageID), outgoing.Metadata)
+	if err != nil {
+		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
+	}
+
+	return updatedConversation, message, nil
+}
+
 func (s *Service) captureWhatsAppReplyFeedback(ctx context.Context, conversation repository.WhatsAppConversation, input SendWhatsAppConversationMessageInput) {
 	params, ok := buildWhatsAppReplyFeedbackParams(conversation, input)
 	if !ok {
@@ -470,7 +508,7 @@ func buildWhatsAppReplyFeedbackParams(conversation repository.WhatsAppConversati
 	}
 	aiReply := strings.TrimSpace(input.AISuggestion)
 	humanReply := strings.TrimSpace(input.Body)
-	if aiReply == "" || humanReply == "" || aiReply == humanReply {
+	if aiReply == "" || humanReply == "" {
 		return repository.CreateWhatsAppReplyFeedbackParams{}, false
 	}
 
@@ -478,8 +516,10 @@ func buildWhatsAppReplyFeedbackParams(conversation repository.WhatsAppConversati
 		OrganizationID: conversation.OrganizationID,
 		ConversationID: conversation.ID,
 		LeadID:         *conversation.LeadID,
+		Scenario:       strings.TrimSpace(input.Scenario),
 		AIReply:        aiReply,
 		HumanReply:     humanReply,
+		WasEdited:      aiReply != humanReply,
 	}, true
 }
 

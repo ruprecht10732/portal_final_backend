@@ -10,6 +10,8 @@ import (
 	"portal_final_backend/internal/imap/transport"
 )
 
+const unchangedAISuggestion = "Ja, we hebben donderdag nog ruimte."
+
 func TestBuildEmailReplyFeedbackParamsCapturesEditedAISuggestion(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -55,7 +57,7 @@ func TestBuildEmailReplyFeedbackParamsCapturesEditedAISuggestion(t *testing.T) {
 	}
 }
 
-func TestBuildEmailReplyFeedbackParamsSkipsFeedbackWhenSuggestionUnchanged(t *testing.T) {
+func TestBuildEmailReplyFeedbackParamsCapturesUnchangedSuggestionAsUneditedSend(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
 	fromAddress := "customer@example.com"
@@ -72,16 +74,19 @@ func TestBuildEmailReplyFeedbackParamsSkipsFeedbackWhenSuggestionUnchanged(t *te
 			Text:        &bodyText,
 		},
 		transport.ReplyRequest{
-			Body:         "Ja, we hebben donderdag nog ruimte.",
-			AISuggestion: strPtr("Ja, we hebben donderdag nog ruimte."),
+			Body:         unchangedAISuggestion,
+			AISuggestion: strPtr(unchangedAISuggestion),
 		},
 	)
 
 	if !ok {
 		t.Fatal("expected example row to still be captured")
 	}
-	if params.AIReply != nil {
-		t.Fatalf("expected unchanged AI suggestion to be omitted from feedback memory, got %+v", params.AIReply)
+	if params.AIReply == nil || *params.AIReply != unchangedAISuggestion {
+		t.Fatalf("expected unchanged AI suggestion to be retained for analytics, got %+v", params.AIReply)
+	}
+	if params.WasEdited {
+		t.Fatalf("expected unchanged AI suggestion to be marked as not edited, got %+v", params)
 	}
 }
 

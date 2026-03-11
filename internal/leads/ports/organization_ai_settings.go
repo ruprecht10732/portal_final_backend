@@ -21,6 +21,10 @@ type OrganizationAISettings struct {
 	AICouncilMode                                     bool
 	AICouncilConsensusMode                            string
 	WhatsAppToneOfVoice                               string
+	WhatsAppDefaultReplyScenario                      ReplySuggestionScenario
+	EmailDefaultReplyScenario                         ReplySuggestionScenario
+	QuoteRelatedReplyScenario                         ReplySuggestionScenario
+	AppointmentRelatedReplyScenario                   ReplySuggestionScenario
 	CatalogGapThreshold                               int
 	CatalogGapLookbackDays                            int
 	PhotoAnalysisPreprocessingEnabled                 bool
@@ -44,6 +48,10 @@ func DefaultOrganizationAISettings() OrganizationAISettings {
 		AICouncilMode:                                     true,
 		AICouncilConsensusMode:                            "weighted",
 		WhatsAppToneOfVoice:                               "warm, practical, and professional",
+		WhatsAppDefaultReplyScenario:                      ReplySuggestionScenarioGeneric,
+		EmailDefaultReplyScenario:                         ReplySuggestionScenarioGeneric,
+		QuoteRelatedReplyScenario:                         ReplySuggestionScenarioQuoteReminder,
+		AppointmentRelatedReplyScenario:                   ReplySuggestionScenarioAppointmentReminder,
 		CatalogGapThreshold:                               3,
 		CatalogGapLookbackDays:                            30,
 		PhotoAnalysisPreprocessingEnabled:                 true,

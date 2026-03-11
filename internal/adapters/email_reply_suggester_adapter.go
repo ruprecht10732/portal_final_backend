@@ -17,9 +17,9 @@ func NewEmailReplySuggesterAdapter(generator ports.EmailReplyGenerator) *EmailRe
 	return &EmailReplySuggesterAdapter{generator: generator}
 }
 
-func (a *EmailReplySuggesterAdapter) SuggestReply(ctx context.Context, input imapsvc.SuggestEmailReplyInput) (string, error) {
+func (a *EmailReplySuggesterAdapter) SuggestReply(ctx context.Context, input imapsvc.SuggestEmailReplyInput) (ports.ReplySuggestionDraft, error) {
 	if a == nil || a.generator == nil {
-		return "", nil
+		return ports.ReplySuggestionDraft{}, nil
 	}
 
 	mapped := ports.EmailReplyInput{
@@ -55,9 +55,9 @@ func (a *EmailReplySuggesterAdapter) SuggestReply(ctx context.Context, input ima
 	result, err := a.generator.SuggestEmailReply(ctx, mapped)
 	if err != nil {
 		if errors.Is(err, ports.ErrEmailReplyLeadContextUnavailable) {
-			return "", apperr.Validation("suggest reply is alleen beschikbaar voor e-mails met een gekoppelde lead en actieve dienst")
+			return ports.ReplySuggestionDraft{}, apperr.Validation("suggest reply is alleen beschikbaar voor e-mails met een gekoppelde lead en actieve dienst")
 		}
-		return "", err
+		return ports.ReplySuggestionDraft{}, err
 	}
 	return result, nil
 }

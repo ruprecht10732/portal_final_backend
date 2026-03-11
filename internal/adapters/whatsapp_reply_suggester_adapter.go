@@ -15,9 +15,9 @@ func NewWhatsAppReplySuggesterAdapter(generator ports.WhatsAppReplyGenerator) *W
 	return &WhatsAppReplySuggesterAdapter{generator: generator}
 }
 
-func (a *WhatsAppReplySuggesterAdapter) SuggestReply(ctx context.Context, input identitysvc.SuggestWhatsAppReplyInput) (string, error) {
+func (a *WhatsAppReplySuggesterAdapter) SuggestReply(ctx context.Context, input identitysvc.SuggestWhatsAppReplyInput) (ports.ReplySuggestionDraft, error) {
 	if a == nil || a.generator == nil {
-		return "", nil
+		return ports.ReplySuggestionDraft{}, nil
 	}
 
 	mapped := ports.WhatsAppReplyInput{

@@ -117,6 +117,10 @@ type OrganizationSettingsResponse struct {
 	WhatsAppDeviceID                                  *string  `json:"whatsAppDeviceId,omitempty"`
 	WhatsAppAccountJID                                *string  `json:"whatsAppAccountJid,omitempty"`
 	WhatsAppToneOfVoice                               string   `json:"whatsAppToneOfVoice"`
+	WhatsAppDefaultReplyScenario                      string   `json:"whatsAppDefaultReplyScenario"`
+	EmailDefaultReplyScenario                         string   `json:"emailDefaultReplyScenario"`
+	QuoteRelatedReplyScenario                         string   `json:"quoteRelatedReplyScenario"`
+	AppointmentRelatedReplyScenario                   string   `json:"appointmentRelatedReplyScenario"`
 	WhatsAppPresence                                  string   `json:"whatsAppPresence"`
 	WhatsAppWelcomeDelayMinutes                       int      `json:"whatsAppWelcomeDelayMinutes"`
 	SMTPConfigured                                    bool     `json:"smtpConfigured"`
@@ -145,9 +149,25 @@ type UpdateOrganizationSettingsRequest struct {
 	PhotoAnalysisPerspectiveNormalizationEnabled      *bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
 	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	WhatsAppToneOfVoice                               *string   `json:"whatsAppToneOfVoice" validate:"omitempty,min=3,max=255"`
+	WhatsAppDefaultReplyScenario                      *string   `json:"whatsAppDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
+	EmailDefaultReplyScenario                         *string   `json:"emailDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
+	QuoteRelatedReplyScenario                         *string   `json:"quoteRelatedReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
+	AppointmentRelatedReplyScenario                   *string   `json:"appointmentRelatedReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
 	// 0 = send immediately, otherwise delay before sending the automated WhatsApp welcome.
 	WhatsAppWelcomeDelayMinutes *int    `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
 	WhatsAppPresence            *string `json:"whatsAppPresence" validate:"omitempty,oneof=available unavailable"`
+}
+
+type ReplyScenarioAnalyticsItemResponse struct {
+	Scenario    string  `json:"scenario"`
+	SentCount   int     `json:"sentCount"`
+	EditedCount int     `json:"editedCount"`
+	EditRate    float64 `json:"editRate"`
+	LastUsedAt  *string `json:"lastUsedAt,omitempty"`
+}
+
+type ReplyScenarioAnalyticsResponse struct {
+	Items []ReplyScenarioAnalyticsItemResponse `json:"items"`
 }
 
 // WhatsAppStatusResponse describes the current WhatsApp device state for an organization.

@@ -263,7 +263,19 @@ type CreateWhatsAppReplyFeedbackParams struct {
 	HumanReply     string      `json:"human_reply"`
 }
 
-func (q *Queries) CreateWhatsAppReplyFeedback(ctx context.Context, arg CreateWhatsAppReplyFeedbackParams) (RacWhatsappReplyFeedback, error) {
+type CreateWhatsAppReplyFeedbackRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	ConversationID  pgtype.UUID        `json:"conversation_id"`
+	LeadID          pgtype.UUID        `json:"lead_id"`
+	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
+	AiReply         string             `json:"ai_reply"`
+	HumanReply      string             `json:"human_reply"`
+	AppliedToMemory bool               `json:"applied_to_memory"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateWhatsAppReplyFeedback(ctx context.Context, arg CreateWhatsAppReplyFeedbackParams) (CreateWhatsAppReplyFeedbackRow, error) {
 	row := q.db.QueryRow(ctx, createWhatsAppReplyFeedback,
 		arg.OrganizationID,
 		arg.ConversationID,
@@ -271,7 +283,7 @@ func (q *Queries) CreateWhatsAppReplyFeedback(ctx context.Context, arg CreateWha
 		arg.AiReply,
 		arg.HumanReply,
 	)
-	var i RacWhatsappReplyFeedback
+	var i CreateWhatsAppReplyFeedbackRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrganizationID,
@@ -749,7 +761,19 @@ type ListRecentAppliedWhatsAppReplyFeedbackParams struct {
 	Limit          int32       `json:"limit"`
 }
 
-func (q *Queries) ListRecentAppliedWhatsAppReplyFeedback(ctx context.Context, arg ListRecentAppliedWhatsAppReplyFeedbackParams) ([]RacWhatsappReplyFeedback, error) {
+type ListRecentAppliedWhatsAppReplyFeedbackRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	ConversationID  pgtype.UUID        `json:"conversation_id"`
+	LeadID          pgtype.UUID        `json:"lead_id"`
+	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
+	AiReply         string             `json:"ai_reply"`
+	HumanReply      string             `json:"human_reply"`
+	AppliedToMemory bool               `json:"applied_to_memory"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListRecentAppliedWhatsAppReplyFeedback(ctx context.Context, arg ListRecentAppliedWhatsAppReplyFeedbackParams) ([]ListRecentAppliedWhatsAppReplyFeedbackRow, error) {
 	rows, err := q.db.Query(ctx, listRecentAppliedWhatsAppReplyFeedback,
 		arg.OrganizationID,
 		arg.LeadID,
@@ -760,9 +784,9 @@ func (q *Queries) ListRecentAppliedWhatsAppReplyFeedback(ctx context.Context, ar
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RacWhatsappReplyFeedback
+	var items []ListRecentAppliedWhatsAppReplyFeedbackRow
 	for rows.Next() {
-		var i RacWhatsappReplyFeedback
+		var i ListRecentAppliedWhatsAppReplyFeedbackRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrganizationID,

@@ -34,7 +34,7 @@ func TestBuildWhatsAppReplyFeedbackParamsCapturesEditedAISuggestion(t *testing.T
 	}
 }
 
-func TestBuildWhatsAppReplyFeedbackParamsSkipsUnchangedOrUnsupportedMessages(t *testing.T) {
+func TestBuildWhatsAppReplyFeedbackParamsSkipsUnsupportedMessagesOrMissingAI(t *testing.T) {
 	leadID := uuid.New()
 	conversation := repository.WhatsAppConversation{
 		OrganizationID: uuid.New(),
@@ -43,7 +43,6 @@ func TestBuildWhatsAppReplyFeedbackParamsSkipsUnchangedOrUnsupportedMessages(t *
 	}
 
 	testCases := []SendWhatsAppConversationMessageInput{
-		{Type: "text", Body: "Zelfde tekst", AISuggestion: "Zelfde tekst"},
 		{Type: "image", Body: "Bijschrift", AISuggestion: "AI tekst"},
 		{Type: "text", Body: "Menselijke tekst", AISuggestion: "   "},
 	}
@@ -52,5 +51,26 @@ func TestBuildWhatsAppReplyFeedbackParamsSkipsUnchangedOrUnsupportedMessages(t *
 		if _, ok := buildWhatsAppReplyFeedbackParams(conversation, input); ok {
 			t.Fatalf("expected no feedback params for input %+v", input)
 		}
+	}
+}
+
+func TestBuildWhatsAppReplyFeedbackParamsCapturesUnchangedAISuggestionAsUneditedSend(t *testing.T) {
+	leadID := uuid.New()
+	conversation := repository.WhatsAppConversation{OrganizationID: uuid.New(), ID: uuid.New(), LeadID: &leadID}
+
+	params, ok := buildWhatsAppReplyFeedbackParams(conversation, SendWhatsAppConversationMessageInput{
+		Type:         "text",
+		Body:         "Zelfde tekst",
+		AISuggestion: "Zelfde tekst",
+		Scenario:     "quote_reminder",
+	})
+	if !ok {
+		t.Fatal("expected unchanged AI draft to still be captured for analytics")
+	}
+	if params.WasEdited {
+		t.Fatalf("expected unchanged AI draft to be marked as not edited, got %+v", params)
+	}
+	if params.Scenario != "quote_reminder" {
+		t.Fatalf("expected scenario to be preserved, got %+v", params)
 	}
 }

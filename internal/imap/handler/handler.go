@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"portal_final_backend/internal/imap/repository"
 	"portal_final_backend/internal/imap/service"
@@ -34,6 +35,7 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.ListAccounts)
 	rg.GET("/unread-count", h.GetUnreadCount)
+	rg.GET("/reply-scenario-analytics", h.ListReplyScenarioAnalytics)
 	rg.POST("", h.CreateAccount)
 	rg.POST("/detect", h.DetectAccount)
 	rg.PATCH("/:id", h.UpdateAccount)
@@ -66,6 +68,40 @@ func (h *Handler) GetUnreadCount(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.UnreadCountResponse{Count: count})
+}
+
+func (h *Handler) ListReplyScenarioAnalytics(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	items, err := h.svc.ListEmailReplyScenarioAnalytics(c.Request.Context(), identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	response := make([]transport.ReplyScenarioAnalyticsItemResponse, 0, len(items))
+	for _, item := range items {
+		var lastUsedAt *string
+		if item.LastUsedAt != nil {
+			value := item.LastUsedAt.UTC().Format(time.RFC3339)
+			lastUsedAt = &value
+		}
+		editRate := 0.0
+		if item.SentCount > 0 {
+			editRate = float64(item.EditedCount) / float64(item.SentCount)
+		}
+		response = append(response, transport.ReplyScenarioAnalyticsItemResponse{
+			Scenario:    item.Scenario,
+			SentCount:   item.SentCount,
+			EditedCount: item.EditedCount,
+			EditRate:    editRate,
+			LastUsedAt:  lastUsedAt,
+		})
+	}
+
+	httpkit.OK(c, transport.ReplyScenarioAnalyticsResponse{Items: response})
 }
 
 func (h *Handler) DetectAccount(c *gin.Context) {
@@ -358,7 +394,7 @@ func (h *Handler) SuggestReply(c *gin.Context) {
 		return
 	}
 
-	httpkit.OK(c, transport.SuggestReplyResponse{Suggestion: result.Suggestion})
+	httpkit.OK(c, transport.SuggestReplyResponse{Suggestion: result.Suggestion, EffectiveScenario: result.EffectiveScenario})
 }
 
 func (h *Handler) MarkMessageSeen(c *gin.Context) {

@@ -38,5 +38,5 @@ type EmailReplyInput struct {
 }
 
 type EmailReplyGenerator interface {
-	SuggestEmailReply(ctx context.Context, input EmailReplyInput) (string, error)
+	SuggestEmailReply(ctx context.Context, input EmailReplyInput) (ReplySuggestionDraft, error)
 }

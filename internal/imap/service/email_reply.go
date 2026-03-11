@@ -8,6 +8,7 @@ import (
 	"portal_final_backend/internal/imap/client"
 	"portal_final_backend/internal/imap/repository"
 	"portal_final_backend/internal/imap/transport"
+	leadports "portal_final_backend/internal/leads/ports"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
@@ -45,11 +46,12 @@ type SuggestEmailReplyInput struct {
 }
 
 type EmailReplySuggester interface {
-	SuggestReply(ctx context.Context, input SuggestEmailReplyInput) (string, error)
+	SuggestReply(ctx context.Context, input SuggestEmailReplyInput) (leadports.ReplySuggestionDraft, error)
 }
 
 type EmailReplySuggestionResult struct {
-	Suggestion string
+	Suggestion        string
+	EffectiveScenario string
 }
 
 func (s *Service) SetEmailReplySuggester(replyer EmailReplySuggester) {
@@ -87,17 +89,17 @@ func (s *Service) SuggestEmailReply(ctx context.Context, userID, accountID uuid.
 	s.appendEmailReplyFeedback(ctx, &input)
 	s.appendEmailReplyExamples(ctx, &input)
 
-	suggestion, err := s.emailReplyer.SuggestReply(ctx, input)
+	draft, err := s.emailReplyer.SuggestReply(ctx, input)
 	if err != nil {
 		return EmailReplySuggestionResult{}, mapSuggestEmailReplyError(err)
 	}
 
-	trimmed := strings.TrimSpace(suggestion)
+	trimmed := strings.TrimSpace(draft.Text)
 	if trimmed == "" {
 		return EmailReplySuggestionResult{}, apperr.Internal("email reply agent returned an empty suggestion")
 	}
 
-	return EmailReplySuggestionResult{Suggestion: trimmed}, nil
+	return EmailReplySuggestionResult{Suggestion: trimmed, EffectiveScenario: string(draft.EffectiveScenario)}, nil
 }
 
 func (s *Service) buildSuggestEmailReplyInput(organizationID, accountID uuid.UUID, uid int64, content client.MessageContent, customerEmail, customerName string) SuggestEmailReplyInput {
@@ -229,11 +231,18 @@ func buildEmailReplyFeedbackParams(
 	}
 
 	var aiReply *string
+	wasEdited := false
 	if req.AISuggestion != nil {
 		trimmed := strings.TrimSpace(*req.AISuggestion)
-		if trimmed != "" && trimmed != humanReply {
+		if trimmed != "" {
 			aiReply = &trimmed
+			wasEdited = trimmed != humanReply
 		}
+	}
+
+	scenario := ""
+	if req.Scenario != nil {
+		scenario = strings.TrimSpace(*req.Scenario)
 	}
 
 	return repository.CreateEmailReplyFeedbackParams{
@@ -244,8 +253,10 @@ func buildEmailReplyFeedbackParams(
 		CustomerName:    emptyStringPtr(customerName),
 		Subject:         emptyStringPtr(strings.TrimSpace(content.Subject)),
 		CustomerMessage: customerMessage,
+		Scenario:        scenario,
 		AIReply:         aiReply,
 		HumanReply:      humanReply,
+		WasEdited:       wasEdited,
 		ReplyAll:        replyAll,
 	}, true
 }

@@ -40,5 +40,5 @@ type WhatsAppReplyInput struct {
 }
 
 type WhatsAppReplyGenerator interface {
-	SuggestWhatsAppReply(ctx context.Context, input WhatsAppReplyInput) (string, error)
+	SuggestWhatsAppReply(ctx context.Context, input WhatsAppReplyInput) (ReplySuggestionDraft, error)
 }

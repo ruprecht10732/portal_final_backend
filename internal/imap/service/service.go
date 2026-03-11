@@ -64,6 +64,14 @@ func New(repo *repository.Repository, identityRepo *identityrepo.Repository, lea
 	return &Service{repo: repo, identityRepo: identityRepo, leadsRepo: leadsRepo, eventBus: bus, log: log}
 }
 
+func (s *Service) ListEmailReplyScenarioAnalytics(ctx context.Context, userID uuid.UUID) ([]repository.ReplyScenarioAnalyticsItem, error) {
+	organizationID, err := s.identityRepo.GetUserOrganizationID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListEmailReplyScenarioAnalytics(ctx, organizationID)
+}
+
 type LeadInboxSummary struct {
 	ID       uuid.UUID
 	FullName string

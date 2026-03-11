@@ -451,6 +451,8 @@ type RacEmailReplyFeedback struct {
 	LeadServiceID    pgtype.UUID        `json:"lead_service_id"`
 	AppliedToMemory  bool               `json:"applied_to_memory"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	Scenario         string             `json:"scenario"`
+	WasEdited        bool               `json:"was_edited"`
 }
 
 type RacFeedComment struct {
@@ -906,6 +908,10 @@ type RacOrganizationSetting struct {
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 	WhatsappToneOfVoice                               string             `json:"whatsapp_tone_of_voice"`
+	WhatsappDefaultReplyScenario                      string             `json:"whatsapp_default_reply_scenario"`
+	EmailDefaultReplyScenario                         string             `json:"email_default_reply_scenario"`
+	QuoteRelatedReplyScenario                         string             `json:"quote_related_reply_scenario"`
+	AppointmentRelatedReplyScenario                   string             `json:"appointment_related_reply_scenario"`
 }
 
 type RacPartner struct {
@@ -1379,6 +1385,8 @@ type RacWhatsappReplyFeedback struct {
 	HumanReply      string             `json:"human_reply"`
 	AppliedToMemory bool               `json:"applied_to_memory"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	Scenario        string             `json:"scenario"`
+	WasEdited       bool               `json:"was_edited"`
 }
 
 type RacWorkflow struct {

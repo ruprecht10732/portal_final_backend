@@ -70,18 +70,27 @@ func (a *EmailReplyAgent) SetContextReaders(quoteReader ports.ReplyQuoteReader, 
 	a.userReader = userReader
 }
 
-func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.EmailReplyInput) (string, error) {
+func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.EmailReplyInput) (ports.ReplySuggestionDraft, error) {
 	replyContext, err := a.loadReplyContext(ctx, input)
 	if err != nil {
-		return "", err
+		return ports.ReplySuggestionDraft{}, err
 	}
 	settings := a.loadOrganizationAISettings(ctx, input.OrganizationID)
+	resolvedInput := input
+	resolvedInput.Scenario = resolveEffectiveReplyScenario(
+		input.Scenario,
+		settings.EmailDefaultReplyScenario,
+		settings.QuoteRelatedReplyScenario,
+		settings.AppointmentRelatedReplyScenario,
+		replyContext.acceptedQuote != nil,
+		replyContext.upcomingVisit != nil || replyContext.pendingVisit != nil,
+	)
 	r, sessionService, err := a.newRunner(settings.WhatsAppToneOfVoice)
 	if err != nil {
-		return "", err
+		return ports.ReplySuggestionDraft{}, err
 	}
 
-	promptText := buildEmailReplyPrompt(input, replyContext, settings.WhatsAppToneOfVoice)
+	promptText := buildEmailReplyPrompt(resolvedInput, replyContext, settings.WhatsAppToneOfVoice)
 	sessionID := uuid.NewString()
 	userID := "email-reply-" + input.OrganizationID.String() + ":" + sanitizeUserInput(strings.ToLower(strings.TrimSpace(input.CustomerEmail)), 120)
 
@@ -91,7 +100,7 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return "", fmt.Errorf("email reply: create session: %w", err)
+		return ports.ReplySuggestionDraft{}, fmt.Errorf("email reply: create session: %w", err)
 	}
 	defer func() {
 		_ = sessionService.Delete(ctx, &session.DeleteRequest{
@@ -116,10 +125,15 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 			outputText.WriteString(part.Text)
 		}
 	}); err != nil {
-		return "", err
+		return ports.ReplySuggestionDraft{}, err
 	}
 
-	return strings.TrimSpace(outputText.String()), nil
+	response := strings.TrimSpace(outputText.String())
+	if response == "" {
+		return ports.ReplySuggestionDraft{}, apperr.Internal("email reply: empty model response")
+	}
+
+	return ports.ReplySuggestionDraft{Text: response, EffectiveScenario: resolvedInput.Scenario}, nil
 }
 
 func (a *EmailReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
@@ -131,14 +145,14 @@ func (a *EmailReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session
 		Instruction: emailReplySystemPrompt(toneOfVoice),
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create email reply agent: %w", err)
+		return nil, nil, err
 	}
 
 	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        a.appName,
-		Agent:          adkAgent,
 		SessionService: sessionService,
+		Agent:          adkAgent,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create email reply runner: %w", err)

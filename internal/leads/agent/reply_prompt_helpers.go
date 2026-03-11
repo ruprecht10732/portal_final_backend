@@ -470,6 +470,41 @@ func formatReplyScenarioBlock(scenario ports.ReplySuggestionScenario, notes stri
 	return strings.Join(lines, "\n")
 }
 
+func resolveEffectiveReplyScenario(
+	requested ports.ReplySuggestionScenario,
+	channelDefault ports.ReplySuggestionScenario,
+	quoteDefault ports.ReplySuggestionScenario,
+	appointmentDefault ports.ReplySuggestionScenario,
+	hasQuoteContext bool,
+	hasAppointmentContext bool,
+) ports.ReplySuggestionScenario {
+	normalizedRequested := ports.NormalizeReplySuggestionScenario(string(requested))
+	if !normalizedRequested.IsGeneric() {
+		return normalizedRequested
+	}
+
+	if hasQuoteContext {
+		resolved := ports.NormalizeReplySuggestionScenario(string(quoteDefault))
+		if !resolved.IsGeneric() {
+			return resolved
+		}
+	}
+
+	if hasAppointmentContext {
+		resolved := ports.NormalizeReplySuggestionScenario(string(appointmentDefault))
+		if !resolved.IsGeneric() {
+			return resolved
+		}
+	}
+
+	resolved := ports.NormalizeReplySuggestionScenario(string(channelDefault))
+	if !resolved.IsGeneric() {
+		return resolved
+	}
+
+	return ports.ReplySuggestionScenarioGeneric
+}
+
 func replyScenarioLabel(scenario ports.ReplySuggestionScenario) string {
 	switch scenario {
 	case ports.ReplySuggestionScenarioFollowUp:

@@ -2,6 +2,11 @@ package ports
 
 type ReplySuggestionScenario string
 
+type ReplySuggestionDraft struct {
+	Text              string
+	EffectiveScenario ReplySuggestionScenario
+}
+
 const (
 	ReplySuggestionScenarioGeneric             ReplySuggestionScenario = "generic"
 	ReplySuggestionScenarioFollowUp            ReplySuggestionScenario = "follow_up"

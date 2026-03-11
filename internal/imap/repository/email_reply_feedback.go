@@ -13,8 +13,10 @@ import (
 const errOrganizationIDRequired = "organization_id is required"
 
 type EmailReplyFeedback struct {
+	Scenario   string
 	AIReply    string
 	HumanReply string
+	WasEdited  bool
 	CreatedAt  time.Time
 }
 
@@ -22,6 +24,13 @@ type EmailReplyExample struct {
 	CustomerMessage string
 	Reply           string
 	CreatedAt       time.Time
+}
+
+type ReplyScenarioAnalyticsItem struct {
+	Scenario    string
+	SentCount   int
+	EditedCount int
+	LastUsedAt  *time.Time
 }
 
 type EmailReplyReference struct {
@@ -37,8 +46,10 @@ type CreateEmailReplyFeedbackParams struct {
 	CustomerName    *string
 	Subject         *string
 	CustomerMessage string
+	Scenario        string
 	AIReply         *string
 	HumanReply      string
+	WasEdited       bool
 	ReplyAll        bool
 }
 
@@ -55,12 +66,16 @@ func (r *Repository) CreateEmailReplyFeedback(ctx context.Context, params Create
 	params.CustomerEmail = strings.ToLower(strings.TrimSpace(params.CustomerEmail))
 	params.CustomerMessage = strings.TrimSpace(params.CustomerMessage)
 	params.HumanReply = strings.TrimSpace(params.HumanReply)
+	params.Scenario = strings.TrimSpace(params.Scenario)
 	if params.CustomerEmail == "" || params.CustomerMessage == "" || params.HumanReply == "" {
 		return nil, nil
 	}
+	if params.Scenario == "" {
+		params.Scenario = "generic"
+	}
 	if params.AIReply != nil {
 		trimmed := strings.TrimSpace(*params.AIReply)
-		if trimmed == "" || trimmed == params.HumanReply {
+		if trimmed == "" {
 			params.AIReply = nil
 		} else {
 			params.AIReply = &trimmed
@@ -95,8 +110,10 @@ func (r *Repository) CreateEmailReplyFeedback(ctx context.Context, params Create
 			customer_name,
 			subject,
 			customer_message,
+			scenario,
 			ai_reply,
 			human_reply,
+			was_edited,
 			reply_all,
 			lead_id,
 			lead_service_id
@@ -111,13 +128,16 @@ func (r *Repository) CreateEmailReplyFeedback(ctx context.Context, params Create
 			NULLIF(BTRIM($8), ''),
 			$9,
 			$10,
+			$11,
 			(SELECT id FROM matched_lead),
 			(SELECT id FROM matched_service)
 		)
-		RETURNING ai_reply, human_reply, created_at`
+		RETURNING scenario, ai_reply, human_reply, was_edited, created_at`
 
 	var aiReply pgtype.Text
+	var scenario string
 	var humanReply string
+	var wasEdited bool
 	var createdAt time.Time
 	err := r.pool.QueryRow(
 		ctx,
@@ -129,15 +149,17 @@ func (r *Repository) CreateEmailReplyFeedback(ctx context.Context, params Create
 		nullableStringValue(params.CustomerName),
 		nullableStringValue(params.Subject),
 		params.CustomerMessage,
+		params.Scenario,
 		nullableStringValue(params.AIReply),
 		params.HumanReply,
+		params.WasEdited,
 		params.ReplyAll,
-	).Scan(&aiReply, &humanReply, &createdAt)
+	).Scan(&scenario, &aiReply, &humanReply, &wasEdited, &createdAt)
 	if err != nil {
 		return nil, err
 	}
 
-	item := &EmailReplyFeedback{HumanReply: humanReply, CreatedAt: createdAt}
+	item := &EmailReplyFeedback{Scenario: scenario, HumanReply: humanReply, WasEdited: wasEdited, CreatedAt: createdAt}
 	if aiReply.Valid {
 		item.AIReply = aiReply.String
 	}
@@ -160,7 +182,7 @@ func (r *Repository) ListRecentAppliedEmailReplyFeedback(ctx context.Context, or
 	}
 
 	const query = `
-		SELECT ai_reply, human_reply, created_at
+		SELECT scenario, ai_reply, human_reply, was_edited, created_at
 		FROM RAC_email_reply_feedback
 		WHERE organization_id = $1
 		  AND (
@@ -192,7 +214,7 @@ func (r *Repository) ListRecentAppliedEmailReplyFeedback(ctx context.Context, or
 	items := make([]EmailReplyFeedback, 0, limit)
 	for rows.Next() {
 		var item EmailReplyFeedback
-		if err := rows.Scan(&item.AIReply, &item.HumanReply, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.Scenario, &item.AIReply, &item.HumanReply, &item.WasEdited, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -201,6 +223,37 @@ func (r *Repository) ListRecentAppliedEmailReplyFeedback(ctx context.Context, or
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *Repository) ListEmailReplyScenarioAnalytics(ctx context.Context, organizationID uuid.UUID) ([]ReplyScenarioAnalyticsItem, error) {
+	const query = `
+		SELECT scenario, COUNT(*)::int AS sent_count,
+		       COUNT(*) FILTER (WHERE was_edited)::int AS edited_count,
+		       MAX(created_at) AS last_used_at
+		FROM RAC_email_reply_feedback
+		WHERE organization_id = $1
+		  AND ai_reply IS NOT NULL
+		  AND BTRIM(ai_reply) <> ''
+		GROUP BY scenario
+		ORDER BY sent_count DESC, scenario ASC`
+
+	rows, err := r.pool.Query(ctx, query, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]ReplyScenarioAnalyticsItem, 0)
+	for rows.Next() {
+		var item ReplyScenarioAnalyticsItem
+		var lastUsedAt time.Time
+		if err := rows.Scan(&item.Scenario, &item.SentCount, &item.EditedCount, &lastUsedAt); err != nil {
+			return nil, err
+		}
+		item.LastUsedAt = &lastUsedAt
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) ListRecentEmailReplyExamples(ctx context.Context, organizationID uuid.UUID, reference EmailReplyReference, customerEmail string, excludeAccountID uuid.UUID, excludeUID int64, limit int) ([]EmailReplyExample, error) {
