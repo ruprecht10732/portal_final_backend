@@ -13,7 +13,9 @@ import (
 	identityrepo "portal_final_backend/internal/identity/repository"
 	identityservice "portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/identity/smtpcrypto"
+	leadrepo "portal_final_backend/internal/leads/repository"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
+	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
@@ -83,6 +85,9 @@ const testOrgName = "Vakman Portal"
 const testSMTPFromEmail = "mailer@example.com"
 const errUnexpectedRenderedText = "unexpected rendered text: %q"
 const generatedPDFContent = "generated-pdf"
+const errMarshalPayloadFmt = "marshal payload: %v"
+const expectedLeadOptInLookupFmt = "expected one lead opt-in lookup, got %d"
+const testWhatsAppPhoneNumber = "+31612345678"
 
 func (s *testSender) SendVerificationEmail(context.Context, string, string) error  { return nil }
 func (s *testSender) SendPasswordResetEmail(context.Context, string, string) error { return nil }
@@ -120,6 +125,27 @@ func (s *testSender) SendCustomEmail(_ context.Context, _ string, _ string, _ st
 	s.customEmailCalls++
 	s.lastCustomAttachments = append([]email.Attachment(nil), attachments...)
 	return nil
+}
+
+type testLeadWhatsAppReader struct {
+	optedIn bool
+	err     error
+	calls   int
+}
+
+func (r *testLeadWhatsAppReader) IsWhatsAppOptedIn(_ context.Context, _ uuid.UUID, _ uuid.UUID) (bool, error) {
+	r.calls++
+	return r.optedIn, r.err
+}
+
+type testWhatsAppSender struct {
+	calls int
+	err   error
+}
+
+func (s *testWhatsAppSender) SendMessage(_ context.Context, _ string, _ string, _ string) (whatsapp.SendResult, error) {
+	s.calls++
+	return whatsapp.SendResult{}, s.err
 }
 
 func TestNormalizeWhatsAppMessageStripsHTMLAndEntities(t *testing.T) {
@@ -447,7 +473,7 @@ func TestProcessGenericEmailOutboxAttachesQuotePDFFromStorage(t *testing.T) {
 		}},
 	})
 	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
+		t.Fatalf(errMarshalPayloadFmt, err)
 	}
 
 	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
@@ -490,7 +516,7 @@ func TestProcessGenericEmailOutboxRegeneratesQuotePDFAfterStorageFailure(t *test
 		}},
 	})
 	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
+		t.Fatalf(errMarshalPayloadFmt, err)
 	}
 
 	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
@@ -573,5 +599,120 @@ func TestBuildEmailAttachmentSpecsIncludesQuoteSentPDF(t *testing.T) {
 	}
 	if attachments[0].MIMEType != "application/pdf" {
 		t.Fatalf("expected application/pdf mime type, got %q", attachments[0].MIMEType)
+	}
+}
+
+func TestProcessGenericWhatsAppOutboxMissingLeadReturnsNilAndDoesNotSend(t *testing.T) {
+	leadID := uuid.New()
+	orgID := uuid.New()
+	leadIDValue := leadID.String()
+	reader := &testLeadWhatsAppReader{err: leadrepo.ErrNotFound}
+	sender := &testWhatsAppSender{}
+
+	payloadBytes, err := json.Marshal(whatsAppSendOutboxPayload{
+		LeadID:      &leadIDValue,
+		OrgID:       orgID.String(),
+		PhoneNumber: testWhatsAppPhoneNumber,
+		Message:     "Testbericht",
+		Category:    "workflow",
+	})
+	if err != nil {
+		t.Fatalf(errMarshalPayloadFmt, err)
+	}
+
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	m.SetLeadWhatsAppReader(reader)
+	m.SetWhatsAppSender(sender)
+	m.SetNotificationOutbox(&notificationoutbox.Repository{})
+
+	err = m.processGenericWhatsAppOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{
+		ID:      uuid.New(),
+		Payload: payloadBytes,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for missing lead, got %v", err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf(expectedLeadOptInLookupFmt, reader.calls)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("expected no whatsapp send for missing lead, got %d calls", sender.calls)
+	}
+}
+
+func TestProcessGenericWhatsAppOutboxOptedOutLeadReturnsNilAndDoesNotSend(t *testing.T) {
+	leadID := uuid.New()
+	orgID := uuid.New()
+	leadIDValue := leadID.String()
+	reader := &testLeadWhatsAppReader{optedIn: false}
+	sender := &testWhatsAppSender{}
+
+	payloadBytes, err := json.Marshal(whatsAppSendOutboxPayload{
+		LeadID:      &leadIDValue,
+		OrgID:       orgID.String(),
+		PhoneNumber: testWhatsAppPhoneNumber,
+		Message:     "Testbericht",
+		Category:    "workflow",
+	})
+	if err != nil {
+		t.Fatalf(errMarshalPayloadFmt, err)
+	}
+
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	m.SetLeadWhatsAppReader(reader)
+	m.SetWhatsAppSender(sender)
+	m.SetNotificationOutbox(&notificationoutbox.Repository{})
+
+	err = m.processGenericWhatsAppOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{
+		ID:      uuid.New(),
+		Payload: payloadBytes,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for opted-out lead, got %v", err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf(expectedLeadOptInLookupFmt, reader.calls)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("expected no whatsapp send for opted-out lead, got %d calls", sender.calls)
+	}
+}
+
+func TestProcessGenericWhatsAppOutboxTransientReaderErrorIsRetryable(t *testing.T) {
+	leadID := uuid.New()
+	orgID := uuid.New()
+	leadIDValue := leadID.String()
+	transientErr := errors.New("temporary lookup failure")
+	reader := &testLeadWhatsAppReader{err: transientErr}
+	sender := &testWhatsAppSender{}
+
+	payloadBytes, err := json.Marshal(whatsAppSendOutboxPayload{
+		LeadID:      &leadIDValue,
+		OrgID:       orgID.String(),
+		PhoneNumber: testWhatsAppPhoneNumber,
+		Message:     "Testbericht",
+		Category:    "workflow",
+	})
+	if err != nil {
+		t.Fatalf(errMarshalPayloadFmt, err)
+	}
+
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	m.SetLeadWhatsAppReader(reader)
+	m.SetWhatsAppSender(sender)
+	m.SetNotificationOutbox(&notificationoutbox.Repository{})
+
+	err = m.processGenericWhatsAppOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{
+		ID:      uuid.New(),
+		Payload: payloadBytes,
+	})
+	if !errors.Is(err, transientErr) {
+		t.Fatalf("expected transient error to be returned, got %v", err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf(expectedLeadOptInLookupFmt, reader.calls)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("expected no whatsapp send when reader fails, got %d calls", sender.calls)
 	}
 }

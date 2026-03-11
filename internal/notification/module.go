@@ -2034,14 +2034,7 @@ func (m *Module) processGenericWhatsAppOutbox(ctx context.Context, e events.Noti
 		}
 		optedIn, err := m.leadWhatsAppReader.IsWhatsAppOptedIn(ctx, *leadID, orgID)
 		if err != nil {
-			m.log.Warn(
-				"failed to resolve lead whatsapp opt-in for outbox; will retry",
-				"outboxId", rec.ID.String(),
-				"leadId", *leadID,
-				"orgId", orgID,
-				"error", err,
-			)
-			return err
+			return m.handleWhatsAppOutboxLeadLookupError(ctx, rec, *leadID, orgID, err)
 		}
 		if !optedIn {
 			m.log.Info("lead opted out; skipping whatsapp outbox send", "outboxId", rec.ID.String(), "leadId", *leadID, "orgId", orgID)
@@ -2071,6 +2064,28 @@ func (m *Module) processGenericWhatsAppOutbox(ctx context.Context, e events.Noti
 	_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
 	m.log.Info("whatsapp outbox delivered", "outboxId", rec.ID.String(), "orgId", orgID, "phone", payload.PhoneNumber, "category", payload.Category)
 	return nil
+}
+
+func (m *Module) handleWhatsAppOutboxLeadLookupError(ctx context.Context, rec notificationoutbox.Record, leadID, orgID uuid.UUID, err error) error {
+	if errors.Is(err, leadrepo.ErrNotFound) {
+		m.log.Info(
+			"lead not found for whatsapp outbox; marking succeeded",
+			"outboxId", rec.ID.String(),
+			"leadId", leadID,
+			"orgId", orgID,
+		)
+		_ = m.notificationOutbox.MarkSucceeded(ctx, rec.ID)
+		return nil
+	}
+
+	m.log.Warn(
+		"failed to resolve lead whatsapp opt-in for outbox; will retry",
+		"outboxId", rec.ID.String(),
+		"leadId", leadID,
+		"orgId", orgID,
+		"error", err,
+	)
+	return err
 }
 
 func (m *Module) processGenericEmailOutbox(ctx context.Context, e events.NotificationOutboxDue, rec notificationoutbox.Record) error {
