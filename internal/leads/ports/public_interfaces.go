@@ -8,6 +8,15 @@ import (
 )
 
 // PublicQuoteSummary represents what the lead portal needs to know about a quote.
+type PublicQuoteLineItemSummary struct {
+	Title          string
+	Description    string
+	Quantity       string
+	LineTotalCents int64
+	IsOptional     bool
+	IsSelected     bool
+}
+
 type PublicQuoteSummary struct {
 	ID          uuid.UUID
 	QuoteNumber string
@@ -18,15 +27,24 @@ type PublicQuoteSummary struct {
 	AcceptedAt  *time.Time
 	ValidUntil  *time.Time
 	Notes       *string
+	CreatedAt   *time.Time
+	ScopeItems  []string
+	LineItems   []PublicQuoteLineItemSummary
 }
 
 // PublicAppointmentSummary represents what the lead portal needs to know about a visit.
 type PublicAppointmentSummary struct {
-	ID        uuid.UUID `json:"id"`
-	StartTime time.Time `json:"startTime"`
-	EndTime   time.Time `json:"endTime"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
+	ID               uuid.UUID  `json:"id"`
+	StartTime        time.Time  `json:"startTime"`
+	EndTime          time.Time  `json:"endTime"`
+	Title            string     `json:"title"`
+	Status           string     `json:"status"`
+	Type             string     `json:"type"`
+	Description      *string    `json:"description,omitempty"`
+	Location         *string    `json:"location,omitempty"`
+	MeetingLink      *string    `json:"meetingLink,omitempty"`
+	AssignedUserID   *uuid.UUID `json:"assignedUserId,omitempty"`
+	AssignedUserName *string    `json:"assignedUserName,omitempty"`
 }
 
 // OrganizationPublicViewer allows the lead portal to fetch organization contact info.

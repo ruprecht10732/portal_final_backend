@@ -42,16 +42,17 @@ type WhatsAppReplyAgent struct {
 }
 
 type whatsAppReplyContext struct {
-	lead          repository.Lead
-	service       repository.LeadService
-	notes         []repository.LeadNote
-	analysis      *repository.AIAnalysis
-	visitReport   *repository.AppointmentVisitReport
-	photoAnalysis *repository.PhotoAnalysis
-	acceptedQuote *ports.PublicQuoteSummary
-	upcomingVisit *ports.PublicAppointmentSummary
-	pendingVisit  *ports.PublicAppointmentSummary
-	requester     *ports.ReplyUserProfile
+	lead           repository.Lead
+	service        repository.LeadService
+	notes          []repository.LeadNote
+	recentTimeline []repository.TimelineEvent
+	analysis       *repository.AIAnalysis
+	visitReport    *repository.AppointmentVisitReport
+	photoAnalysis  *repository.PhotoAnalysis
+	acceptedQuote  *ports.PublicQuoteSummary
+	upcomingVisit  *ports.PublicAppointmentSummary
+	pendingVisit   *ports.PublicAppointmentSummary
+	requester      *ports.ReplyUserProfile
 }
 
 func NewWhatsAppReplyAgent(apiKey string, modelName string, repo repository.LeadsRepository) (*WhatsAppReplyAgent, error) {
@@ -203,22 +204,30 @@ func (a *WhatsAppReplyAgent) loadReplyContext(ctx context.Context, input ports.W
 	if err != nil {
 		return whatsAppReplyContext{}, err
 	}
+	if err := attachAppointmentAssigneeNames(ctx, a.userReader, upcomingVisit, pendingVisit); err != nil {
+		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: enrich appointment assignee: %w", err)
+	}
 	requester, err := a.loadRequester(ctx, input.RequesterUserID)
 	if err != nil {
 		return whatsAppReplyContext{}, err
 	}
+	recentTimeline, err := loadRecentTimelineEvents(ctx, a.repo, lead.ID, &service.ID, input.OrganizationID)
+	if err != nil {
+		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load timeline: %w", err)
+	}
 
 	return whatsAppReplyContext{
-		lead:          lead,
-		service:       service,
-		notes:         notes,
-		analysis:      analysis,
-		visitReport:   visitReport,
-		photoAnalysis: photoAnalysis,
-		acceptedQuote: acceptedQuote,
-		upcomingVisit: upcomingVisit,
-		pendingVisit:  pendingVisit,
-		requester:     requester,
+		lead:           lead,
+		service:        service,
+		notes:          notes,
+		recentTimeline: recentTimeline,
+		analysis:       analysis,
+		visitReport:    visitReport,
+		photoAnalysis:  photoAnalysis,
+		acceptedQuote:  acceptedQuote,
+		upcomingVisit:  upcomingVisit,
+		pendingVisit:   pendingVisit,
+		requester:      requester,
 	}, nil
 }
 
@@ -324,6 +333,12 @@ Reply style
 Current date and time
 %s
 
+Conversation intent hints
+%s
+
+Communication style hints
+%s
+
 Requesting colleague
 %s
 
@@ -331,6 +346,12 @@ Accepted quote overview
 %s
 
 Agenda overview
+%s
+
+Unknowns or missing context
+%s
+
+Recent timeline
 %s
 
 Latest AI analysis
@@ -357,8 +378,11 @@ Recent WhatsApp transcript
 Task
 - Draft one WhatsApp reply in Dutch for the company to send to this customer.
 - Prioritize the latest customer message and the most recent conversation turns.
+- Use the timing context to distinguish clearly between past and future appointments, deadlines, and updates.
+- Use the intent hints and communication style hints as steering context when they fit the latest customer message.
 - Use the real examples as style guidance when they fit, but adapt to the current customer and never copy them literally.
 - Use older notes or analysis only when they clearly improve the answer.
+- If the CRM context is incomplete, do not guess missing history, planning details, or accepted scope.
 - Keep the message ready to paste into WhatsApp.
 - If something important is missing, ask at most 2 concrete questions.
 - Do not mention internal systems, AI analysis, or that this is a draft.
@@ -378,9 +402,13 @@ Task
 		formatJSONBlock(replyContext.service.CustomerPreferences),
 		sanitizePromptField(toneOfVoice, 200),
 		formatCurrentDateTimeBlock(),
+		formatWhatsAppIntentBlock(input),
+		formatWhatsAppStyleSummary(input),
 		formatRequesterBlock(replyContext.requester),
 		formatQuoteOverviewBlock(replyContext.acceptedQuote),
 		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),
+		formatUnknownsBlock(&replyContext.service, replyContext.analysis, replyContext.acceptedQuote, replyContext.upcomingVisit, replyContext.pendingVisit, true),
+		formatTimelineBlock(replyContext.recentTimeline),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
 		formatPhotoAnalysisBlock(replyContext.photoAnalysis),
@@ -404,6 +432,7 @@ Rules:
 - Prefer short paragraphs suitable for WhatsApp.
 - Ground the reply in the provided lead, service, and conversation context.
 - Prioritize the latest inbound message and the most recent conversation turns over older notes.
+- Use the provided current date/time and agenda context to reason correctly about past versus future events.
 - If the latest customer message asks a direct question, answer it directly when the context supports it.
 - If details are still needed, ask at most two clear questions and explain briefly why.
 - Never expose internal reasoning, raw analysis data, or uncertainty labels.
@@ -497,6 +526,7 @@ func formatAIAnalysisBlock(analysis *repository.AIAnalysis) string {
 	}
 
 	parts := []string{
+		fmt.Sprintf(freshnessLineFormat, formatFreshness(analysis.CreatedAt)),
 		fmt.Sprintf("- Samenvatting: %s", sanitizePromptField(analysis.Summary, 500)),
 		fmt.Sprintf("- Aanbevolen actie: %s", sanitizePromptField(analysis.RecommendedAction, 80)),
 	}
@@ -513,7 +543,7 @@ func formatVisitReportBlock(report *repository.AppointmentVisitReport) string {
 	if report == nil {
 		return valueNotProvided
 	}
-	parts := make([]string, 0, 3)
+	parts := []string{fmt.Sprintf(freshnessLineFormat, formatFreshness(report.CreatedAt))}
 	if report.Measurements != nil && strings.TrimSpace(*report.Measurements) != "" {
 		parts = append(parts, "- Metingen: "+sanitizePromptField(*report.Measurements, 800))
 	}
@@ -533,7 +563,7 @@ func formatPhotoAnalysisBlock(analysis *repository.PhotoAnalysis) string {
 	if analysis == nil {
 		return valueNotProvided
 	}
-	parts := []string{}
+	parts := []string{fmt.Sprintf(freshnessLineFormat, formatFreshness(analysis.CreatedAt))}
 	if summary := strings.TrimSpace(analysis.Summary); summary != "" {
 		parts = append(parts, "- Samenvatting: "+sanitizePromptField(summary, 800))
 	}
@@ -560,20 +590,42 @@ func formatLeadNotesBlock(notes []repository.LeadNote) string {
 		return valueNotProvided
 	}
 
+	grouped := map[string][]string{
+		noteGroupImportant:   {},
+		noteGroupPreferences: {},
+		noteGroupAccess:      {},
+		noteGroupOther:       {},
+	}
 	start := 0
 	if len(notes) > maxLeadNoteItems {
 		start = len(notes) - maxLeadNoteItems
 	}
-	lines := make([]string, 0, len(notes)-start)
 	for _, note := range notes[start:] {
 		body := sanitizePromptField(note.Body, 500)
-		label := sanitizePromptField(note.Type, 40)
-		if label == valueNotProvided {
-			label = "notitie"
+		label := strings.ToLower(strings.TrimSpace(note.Type))
+		entry := fmt.Sprintf("- %s [%s]", body, formatFreshness(note.CreatedAt))
+		switch {
+		case strings.Contains(label, "important"), strings.Contains(label, "urgent"), strings.Contains(label, "block"):
+			grouped[noteGroupImportant] = append(grouped[noteGroupImportant], entry)
+		case strings.Contains(label, "pref"), strings.Contains(label, "customer"):
+			grouped[noteGroupPreferences] = append(grouped[noteGroupPreferences], entry)
+		case strings.Contains(label, "access"), strings.Contains(label, "planning"), strings.Contains(label, "schedule"):
+			grouped[noteGroupAccess] = append(grouped[noteGroupAccess], entry)
+		default:
+			grouped[noteGroupOther] = append(grouped[noteGroupOther], entry)
 		}
-		lines = append(lines, fmt.Sprintf("- [%s] %s (%s)", label, body, note.CreatedAt.Format(dateTimeLayout)))
 	}
-	return strings.Join(lines, "\n")
+	sections := []string{}
+	for _, heading := range []string{noteGroupImportant, noteGroupPreferences, noteGroupAccess, noteGroupOther} {
+		if len(grouped[heading]) == 0 {
+			continue
+		}
+		sections = append(sections, heading+"\n"+strings.Join(grouped[heading], "\n"))
+	}
+	if len(sections) == 0 {
+		return valueNotProvided
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 func formatRequesterBlock(requester *ports.ReplyUserProfile) string {
@@ -597,20 +649,12 @@ func formatRequesterBlock(requester *ports.ReplyUserProfile) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatCurrentDateTimeBlock() string {
-	now := time.Now()
-	return strings.Join([]string{
-		"- Nu: " + now.Format(time.RFC3339),
-		"- Tijdzone: " + now.Format("MST"),
-		"- Gebruik dit om te bepalen of afspraken, deadlines en gebeurtenissen in het verleden of de toekomst liggen.",
-	}, "\n")
-}
-
 func formatQuoteOverviewBlock(quote *ports.PublicQuoteSummary) string {
 	if quote == nil {
 		return valueNotProvided
 	}
 	lines := []string{
+		fmt.Sprintf("- Actualiteit: %s", formatFreshness(valueOrNow(quote.CreatedAt))),
 		"- Offertenummer: " + sanitizePromptField(quote.QuoteNumber, 80),
 		"- Status: " + sanitizePromptField(quote.Status, 40),
 		fmt.Sprintf("- Totaal: %s", formatCurrencyCents(quote.TotalCents)),
@@ -624,6 +668,16 @@ func formatQuoteOverviewBlock(quote *ports.PublicQuoteSummary) string {
 	if quote.Notes != nil && strings.TrimSpace(*quote.Notes) != "" {
 		lines = append(lines, "- Offertenotities: "+sanitizePromptField(*quote.Notes, 400))
 	}
+	if len(quote.ScopeItems) > 0 {
+		lines = append(lines, "- Scope-hoofdpunten: "+sanitizeUserInput(strings.Join(limitPromptList(quote.ScopeItems, maxQuoteScopeItems), "; "), 500))
+	}
+	if len(quote.LineItems) > 0 {
+		itemLines := make([]string, 0, len(quote.LineItems))
+		for _, item := range quote.LineItems {
+			itemLines = append(itemLines, formatQuoteLineItem(item))
+		}
+		lines = append(lines, "- Inhoud:\n"+strings.Join(itemLines, "\n"))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -633,16 +687,59 @@ func formatAgendaOverviewBlock(upcomingVisit, pendingVisit *ports.PublicAppointm
 	}
 	lines := []string{}
 	if upcomingVisit != nil {
-		lines = append(lines, fmt.Sprintf("- Geplande afspraak: %s tot %s, %s (%s)", upcomingVisit.StartTime.Format(dateTimeLayout), upcomingVisit.EndTime.Format(dateTimeLayout), sanitizePromptField(upcomingVisit.Title, 120), sanitizePromptField(upcomingVisit.Status, 40)))
+		lines = append(lines, formatAppointmentLine("Geplande afspraak", upcomingVisit))
 	}
 	if pendingVisit != nil {
-		lines = append(lines, fmt.Sprintf("- Open afspraakverzoek: %s tot %s, %s (%s)", pendingVisit.StartTime.Format(dateTimeLayout), pendingVisit.EndTime.Format(dateTimeLayout), sanitizePromptField(pendingVisit.Title, 120), sanitizePromptField(pendingVisit.Status, 40)))
+		lines = append(lines, formatAppointmentLine("Open afspraakverzoek", pendingVisit))
 	}
 	return strings.Join(lines, "\n")
 }
 
+func valueOrNow(ts *time.Time) time.Time {
+	if ts == nil {
+		return replyLocalNow()
+	}
+	return *ts
+}
+
+func formatAppointmentLine(label string, appointment *ports.PublicAppointmentSummary) string {
+	parts := []string{fmt.Sprintf("- %s: %s tot %s, %s (%s)", label, appointment.StartTime.Format(dateTimeLayout), appointment.EndTime.Format(dateTimeLayout), sanitizePromptField(appointment.Title, 120), sanitizePromptField(appointment.Status, 40))}
+	parts = append(parts, fmt.Sprintf("  Timing: %s", formatFreshness(appointment.StartTime)))
+	if appointment.Type != "" {
+		parts = append(parts, "  Type: "+sanitizePromptField(appointment.Type, 80))
+	}
+	if appointment.AssignedUserName != nil {
+		parts = append(parts, "  Ingepland bij: "+sanitizePromptField(*appointment.AssignedUserName, 120))
+	}
+	if appointment.Location != nil && strings.TrimSpace(*appointment.Location) != "" {
+		parts = append(parts, "  Locatie: "+sanitizePromptField(*appointment.Location, 160))
+	}
+	if appointment.Description != nil && strings.TrimSpace(*appointment.Description) != "" {
+		parts = append(parts, "  Omschrijving: "+sanitizePromptField(*appointment.Description, 220))
+	}
+	if appointment.MeetingLink != nil && strings.TrimSpace(*appointment.MeetingLink) != "" {
+		parts = append(parts, "  Meeting link bekend")
+	}
+	return strings.Join(parts, "\n")
+}
+
 func formatCurrencyCents(totalCents int64) string {
 	return fmt.Sprintf("EUR %.2f", float64(totalCents)/100)
+}
+
+func formatQuoteLineItem(item ports.PublicQuoteLineItemSummary) string {
+	parts := []string{sanitizePromptField(item.Title, 100)}
+	if item.Description != "" {
+		parts = append(parts, sanitizePromptField(item.Description, 160))
+	}
+	if item.Quantity != "" {
+		parts = append(parts, "aantal "+sanitizePromptField(item.Quantity, 32))
+	}
+	parts = append(parts, formatCurrencyCents(item.LineTotalCents))
+	if item.IsOptional && !item.IsSelected {
+		parts = append(parts, "optioneel niet geselecteerd")
+	}
+	return "  - " + strings.Join(parts, " | ")
 }
 
 func formatWhatsAppTranscript(messages []ports.WhatsAppReplyMessage) string {

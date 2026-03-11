@@ -44,7 +44,7 @@ func TestBuildEmailReplyPromptIncludesOverviewContext(t *testing.T) {
 		MessageBody:     "Welke offerte hebben we geaccepteerd?",
 	}, emailReplyContext{
 		requester:     &ports.ReplyUserProfile{Email: "robin@example.com", FirstName: &firstName, LastName: &lastName},
-		acceptedQuote: &ports.PublicQuoteSummary{QuoteNumber: "OFF-2026-0001", Status: "Accepted", TotalCents: 123450},
+		acceptedQuote: &ports.PublicQuoteSummary{QuoteNumber: "OFF-2026-0001", Status: "Accepted", TotalCents: 123450, LineItems: []ports.PublicQuoteLineItemSummary{{Title: "Warmtepomp", Description: "Inclusief installatie", Quantity: "1", LineTotalCents: 123450}}},
 		upcomingVisit: &ports.PublicAppointmentSummary{Title: "Inmeting", Status: "scheduled"},
 		notes:         []repository.LeadNote{{Type: "important", Body: note}},
 	}, "Behulpzaam en direct")
@@ -53,12 +53,18 @@ func TestBuildEmailReplyPromptIncludesOverviewContext(t *testing.T) {
 		"Requesting colleague",
 		"Current date and time",
 		"Gebruik dit om te bepalen of afspraken, deadlines en gebeurtenissen in het verleden of de toekomst liggen.",
+		"Conversation intent hints",
+		"Communication style hints",
+		"Unknowns or missing context",
 		"Naam: Robin Bos",
 		"Accepted quote overview",
 		"Offertenummer: OFF-2026-0001",
+		"Inhoud:",
+		"Warmtepomp",
 		"Agenda overview",
 		"Geplande afspraak:",
-		"[important] " + note,
+		"Belangrijk",
+		note,
 	}
 	for _, expected := range checks {
 		if !strings.Contains(prompt, expected) {

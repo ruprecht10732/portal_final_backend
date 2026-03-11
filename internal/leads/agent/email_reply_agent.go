@@ -39,16 +39,17 @@ type EmailReplyAgent struct {
 }
 
 type emailReplyContext struct {
-	lead          *repository.Lead
-	service       *repository.LeadService
-	notes         []repository.LeadNote
-	analysis      *repository.AIAnalysis
-	visitReport   *repository.AppointmentVisitReport
-	photoAnalysis *repository.PhotoAnalysis
-	acceptedQuote *ports.PublicQuoteSummary
-	upcomingVisit *ports.PublicAppointmentSummary
-	pendingVisit  *ports.PublicAppointmentSummary
-	requester     *ports.ReplyUserProfile
+	lead           *repository.Lead
+	service        *repository.LeadService
+	notes          []repository.LeadNote
+	recentTimeline []repository.TimelineEvent
+	analysis       *repository.AIAnalysis
+	visitReport    *repository.AppointmentVisitReport
+	photoAnalysis  *repository.PhotoAnalysis
+	acceptedQuote  *ports.PublicQuoteSummary
+	upcomingVisit  *ports.PublicAppointmentSummary
+	pendingVisit   *ports.PublicAppointmentSummary
+	requester      *ports.ReplyUserProfile
 }
 
 func NewEmailReplyAgent(apiKey string, modelName string, repo repository.LeadsRepository) (*EmailReplyAgent, error) {
@@ -231,8 +232,21 @@ func (a *EmailReplyAgent) applySharedReplyContext(ctx context.Context, input por
 	if err != nil {
 		return err
 	}
+	if err := attachAppointmentAssigneeNames(ctx, a.userReader, upcomingVisit, pendingVisit); err != nil {
+		return fmt.Errorf("email reply: enrich appointment assignee: %w", err)
+	}
 	contextData.upcomingVisit = upcomingVisit
 	contextData.pendingVisit = pendingVisit
+
+	var serviceID *uuid.UUID
+	if contextData.service != nil {
+		serviceID = &contextData.service.ID
+	}
+	recentTimeline, err := loadRecentTimelineEvents(ctx, a.repo, contextData.lead.ID, serviceID, input.OrganizationID)
+	if err != nil {
+		return fmt.Errorf("email reply: load timeline: %w", err)
+	}
+	contextData.recentTimeline = recentTimeline
 	return nil
 }
 
@@ -446,6 +460,12 @@ Reply style
 Current date and time
 %s
 
+Conversation intent hints
+%s
+
+Communication style hints
+%s
+
 Requesting colleague
 %s
 
@@ -453,6 +473,12 @@ Accepted quote overview
 %s
 
 Agenda overview
+%s
+
+Unknowns or missing context
+%s
+
+Recent timeline
 %s
 
 Latest AI analysis
@@ -483,8 +509,11 @@ Task
 - Keep the reply customer-ready and suitable to paste into an email composer.
 - Use a natural greeting when a name is available.
 - Do not add a subject line.
+- Use the timing context to distinguish clearly between past and future appointments, deadlines, and updates.
+- Use the intent hints and communication style hints as steering context when they fit the email.
 - Use the real examples as style guidance when they fit, but never copy them literally.
 - Use older notes or analysis only when they clearly improve the answer.
+- If lead or service context is missing, rely only on the current email and ask a minimal clarifying question instead of assuming CRM history.
 - If something important is missing, ask at most 2 concrete questions.
 - Do not mention internal systems, AI analysis, or that this is a draft.
 - Do not invent prices, promises, schedules, or technical facts that are not in the context.
@@ -503,9 +532,13 @@ Task
 		formatEmailReplyCustomerPreferences(replyContext.service),
 		sanitizePromptField(toneOfVoice, 200),
 		formatCurrentDateTimeBlock(),
+		formatEmailIntentBlock(input),
+		formatEmailStyleSummary(input),
 		formatRequesterBlock(replyContext.requester),
 		formatQuoteOverviewBlock(replyContext.acceptedQuote),
 		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),
+		formatUnknownsBlock(replyContext.service, replyContext.analysis, replyContext.acceptedQuote, replyContext.upcomingVisit, replyContext.pendingVisit, replyContext.lead != nil),
+		formatTimelineBlock(replyContext.recentTimeline),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
 		formatPhotoAnalysisBlock(replyContext.photoAnalysis),
@@ -532,6 +565,8 @@ Rules:
 - Include a natural salutation when the customer name is available.
 - Do not include a subject line.
 - Ground the reply in the provided lead, service, and email context.
+- If lead/service context is missing, explicitly avoid assumptions and rely on the current email only.
+- Use the provided current date/time and agenda context to reason correctly about past versus future events.
 - If the customer asks a direct question, answer it directly when the context supports it.
 - If details are still needed, ask at most two clear questions and explain briefly why.
 - Never expose internal reasoning, raw analysis data, or uncertainty labels.

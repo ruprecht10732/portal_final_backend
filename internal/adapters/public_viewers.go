@@ -2,6 +2,9 @@ package adapters
 
 import (
 	"context"
+	"math"
+	"strings"
+	"time"
 
 	authsvc "portal_final_backend/internal/auth/service"
 	leadsrepo "portal_final_backend/internal/leads/repository"
@@ -16,11 +19,18 @@ import (
 	"github.com/google/uuid"
 )
 
+const maxQuoteScopeHighlights = 5
+
 // QuotePublicAdapter exposes quote data for the public lead portal.
 type QuotePublicAdapter struct {
 	svc                   *quotesvc.Service
 	acceptedQuoteIDReader leadsrepo.QuotePriceReader
 	quotesRepo            *quotesrepo.Repository
+}
+
+type quoteContentSummary struct {
+	scopeItems []string
+	lineItems  []ports.PublicQuoteLineItemSummary
 }
 
 func NewQuotePublicAdapter(svc *quotesvc.Service, acceptedQuoteIDReader leadsrepo.QuotePriceReader, quotesRepo *quotesrepo.Repository) *QuotePublicAdapter {
@@ -35,7 +45,7 @@ func (a *QuotePublicAdapter) GetActiveQuote(ctx context.Context, leadID, orgID u
 	if err != nil || quote == nil {
 		return nil, err
 	}
-	return buildPublicQuoteSummary(quote), nil
+	return a.buildPublicQuoteSummary(ctx, quote), nil
 }
 
 func (a *QuotePublicAdapter) GetAcceptedQuote(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) (*ports.PublicQuoteSummary, error) {
@@ -62,14 +72,18 @@ func (a *QuotePublicAdapter) GetAcceptedQuote(ctx context.Context, leadServiceID
 		return nil, nil
 	}
 
-	return buildPublicQuoteSummary(quote), nil
+	return a.buildPublicQuoteSummary(ctx, quote), nil
 }
 
-func buildPublicQuoteSummary(quote *quotesrepo.Quote) *ports.PublicQuoteSummary {
+func (a *QuotePublicAdapter) buildPublicQuoteSummary(ctx context.Context, quote *quotesrepo.Quote) *ports.PublicQuoteSummary {
 	publicToken := ""
 	if quote.PublicToken != nil {
 		publicToken = *quote.PublicToken
 	}
+	var createdAt *time.Time
+	createdAt = &quote.CreatedAt
+
+	content := a.buildQuoteContentSummary(ctx, quote)
 
 	return &ports.PublicQuoteSummary{
 		ID:          quote.ID,
@@ -81,7 +95,134 @@ func buildPublicQuoteSummary(quote *quotesrepo.Quote) *ports.PublicQuoteSummary 
 		AcceptedAt:  quote.AcceptedAt,
 		ValidUntil:  quote.ValidUntil,
 		Notes:       quote.Notes,
+		CreatedAt:   createdAt,
+		ScopeItems:  content.scopeItems,
+		LineItems:   content.lineItems,
 	}
+}
+
+func (a *QuotePublicAdapter) buildQuoteContentSummary(ctx context.Context, quote *quotesrepo.Quote) quoteContentSummary {
+	if a == nil || a.quotesRepo == nil || quote == nil {
+		return quoteContentSummary{}
+	}
+	items, err := a.quotesRepo.GetItemsByQuoteID(ctx, quote.ID, quote.OrganizationID)
+	if err != nil {
+		return quoteContentSummary{}
+	}
+	highlights := make([]string, 0, maxQuoteScopeHighlights)
+	highlights = appendPreferredQuoteHighlights(highlights, items)
+	if len(highlights) < maxQuoteScopeHighlights {
+		highlights = appendFallbackQuoteHighlights(highlights, items)
+	}
+	return quoteContentSummary{
+		scopeItems: highlights,
+		lineItems:  buildQuoteLineItemSummaries(items),
+	}
+}
+
+func buildQuoteLineItemSummaries(items []quotesrepo.QuoteItem) []ports.PublicQuoteLineItemSummary {
+	selected := make([]ports.PublicQuoteLineItemSummary, 0, maxQuoteScopeHighlights)
+	fallback := make([]ports.PublicQuoteLineItemSummary, 0, maxQuoteScopeHighlights)
+	for _, item := range items {
+		summary, ok := toQuoteLineItemSummary(item)
+		if !ok {
+			continue
+		}
+		fallback = append(fallback, summary)
+		if !item.IsOptional || item.IsSelected {
+			selected = append(selected, summary)
+		}
+	}
+	if len(selected) > maxQuoteScopeHighlights {
+		return selected[:maxQuoteScopeHighlights]
+	}
+	if len(selected) > 0 {
+		return selected
+	}
+	if len(fallback) > maxQuoteScopeHighlights {
+		return fallback[:maxQuoteScopeHighlights]
+	}
+	return fallback
+}
+
+func toQuoteLineItemSummary(item quotesrepo.QuoteItem) (ports.PublicQuoteLineItemSummary, bool) {
+	title := sanitizeReplySummary(item.Title, 100)
+	description := sanitizeReplySummary(item.Description, 160)
+	quantity := sanitizeReplySummary(item.Quantity, 32)
+	if title == "" && description == "" {
+		return ports.PublicQuoteLineItemSummary{}, false
+	}
+	return ports.PublicQuoteLineItemSummary{
+		Title:          title,
+		Description:    description,
+		Quantity:       quantity,
+		LineTotalCents: deriveQuoteLineTotalCents(item),
+		IsOptional:     item.IsOptional,
+		IsSelected:     item.IsSelected,
+	}, true
+}
+
+func deriveQuoteLineTotalCents(item quotesrepo.QuoteItem) int64 {
+	quantity := item.QuantityNumeric
+	if quantity <= 0 {
+		quantity = 1
+	}
+	return int64(math.Round(quantity * float64(item.UnitPriceCents)))
+}
+
+func appendPreferredQuoteHighlights(highlights []string, items []quotesrepo.QuoteItem) []string {
+	for _, item := range items {
+		if item.IsOptional && !item.IsSelected {
+			continue
+		}
+		highlights = appendQuoteHighlight(highlights, item)
+		if len(highlights) >= maxQuoteScopeHighlights {
+			return highlights
+		}
+	}
+	return highlights
+}
+
+func appendFallbackQuoteHighlights(highlights []string, items []quotesrepo.QuoteItem) []string {
+	for _, item := range items {
+		highlights = appendQuoteHighlight(highlights, item)
+		if len(highlights) >= maxQuoteScopeHighlights {
+			return highlights
+		}
+	}
+	return highlights
+}
+
+func appendQuoteHighlight(highlights []string, item quotesrepo.QuoteItem) []string {
+	title := sanitizeReplySummary(item.Title, 100)
+	if title == "" || containsString(highlights, title) {
+		return highlights
+	}
+	description := sanitizeReplySummary(item.Description, 120)
+	if description != "" && description != title {
+		title += ": " + description
+	}
+	return append(highlights, title)
+}
+
+func containsString(items []string, needle string) bool {
+	for _, item := range items {
+		if item == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeReplySummary(value string, maxLen int) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if len(trimmed) > maxLen {
+		return trimmed[:maxLen] + "..."
+	}
+	return trimmed
 }
 
 // AppointmentPublicAdapter exposes appointment data for the public lead portal.
@@ -100,11 +241,16 @@ func (a *AppointmentPublicAdapter) GetUpcomingVisit(ctx context.Context, leadID,
 	}
 
 	return &ports.PublicAppointmentSummary{
-		ID:        appt.ID,
-		StartTime: appt.StartTime,
-		EndTime:   appt.EndTime,
-		Title:     appt.Title,
-		Status:    appt.Status,
+		ID:             appt.ID,
+		StartTime:      appt.StartTime,
+		EndTime:        appt.EndTime,
+		Title:          appt.Title,
+		Status:         appt.Status,
+		Type:           appt.Type,
+		Description:    appt.Description,
+		Location:       appt.Location,
+		MeetingLink:    appt.MeetingLink,
+		AssignedUserID: userIDPtr(appt.UserID),
 	}, nil
 }
 
@@ -115,11 +261,16 @@ func (a *AppointmentPublicAdapter) GetPendingVisit(ctx context.Context, leadID, 
 	}
 
 	return &ports.PublicAppointmentSummary{
-		ID:        appt.ID,
-		StartTime: appt.StartTime,
-		EndTime:   appt.EndTime,
-		Title:     appt.Title,
-		Status:    appt.Status,
+		ID:             appt.ID,
+		StartTime:      appt.StartTime,
+		EndTime:        appt.EndTime,
+		Title:          appt.Title,
+		Status:         appt.Status,
+		Type:           appt.Type,
+		Description:    appt.Description,
+		Location:       appt.Location,
+		MeetingLink:    appt.MeetingLink,
+		AssignedUserID: userIDPtr(appt.UserID),
 	}, nil
 }
 
@@ -135,15 +286,28 @@ func (a *AppointmentPublicAdapter) ListVisits(ctx context.Context, leadID, orgID
 	items := make([]ports.PublicAppointmentSummary, 0, len(visits))
 	for _, appt := range visits {
 		items = append(items, ports.PublicAppointmentSummary{
-			ID:        appt.ID,
-			StartTime: appt.StartTime,
-			EndTime:   appt.EndTime,
-			Title:     appt.Title,
-			Status:    appt.Status,
+			ID:             appt.ID,
+			StartTime:      appt.StartTime,
+			EndTime:        appt.EndTime,
+			Title:          appt.Title,
+			Status:         appt.Status,
+			Type:           appt.Type,
+			Description:    appt.Description,
+			Location:       appt.Location,
+			MeetingLink:    appt.MeetingLink,
+			AssignedUserID: userIDPtr(appt.UserID),
 		})
 	}
 
 	return items, nil
+}
+
+func userIDPtr(userID uuid.UUID) *uuid.UUID {
+	if userID == uuid.Nil {
+		return nil
+	}
+	value := userID
+	return &value
 }
 
 type ReplyUserReaderAdapter struct {
