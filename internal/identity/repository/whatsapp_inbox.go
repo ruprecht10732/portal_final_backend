@@ -230,7 +230,7 @@ func (r *Repository) GetLatestUnreadWhatsAppReadSyncTarget(ctx context.Context, 
 		  AND messages.read_at IS NULL
 		  AND messages.external_message_id IS NOT NULL
 		  AND conversations.deleted_at IS NULL
-		ORDER BY created_at DESC
+		ORDER BY messages.created_at DESC
 		LIMIT 1`
 
 	var target WhatsAppReadSyncTarget
