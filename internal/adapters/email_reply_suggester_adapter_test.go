@@ -39,6 +39,8 @@ func TestEmailReplySuggesterAdapterMapsInput(t *testing.T) {
 		MessageUID:      12,
 		LeadID:          &leadID,
 		LeadServiceID:   &serviceID,
+		Scenario:        "quote_reminder",
+		ScenarioNotes:   "Benadruk dat we beschikbaar zijn voor vragen.",
 		CustomerEmail:   "customer@example.com",
 		CustomerName:    "Robin",
 		Subject:         "Planning",
@@ -71,6 +73,12 @@ func TestEmailReplySuggesterAdapterMapsInput(t *testing.T) {
 	}
 	if generator.lastInput.LeadServiceID == nil || *generator.lastInput.LeadServiceID != serviceID {
 		t.Fatalf("expected lead service id to be mapped, got %+v", generator.lastInput.LeadServiceID)
+	}
+	if generator.lastInput.Scenario != ports.ReplySuggestionScenarioQuoteReminder {
+		t.Fatalf("expected scenario to be normalized, got %q", generator.lastInput.Scenario)
+	}
+	if generator.lastInput.ScenarioNotes != "Benadruk dat we beschikbaar zijn voor vragen." {
+		t.Fatalf("expected scenario notes to be mapped, got %q", generator.lastInput.ScenarioNotes)
 	}
 	if len(generator.lastInput.Feedback) != 1 || generator.lastInput.Feedback[0].AIReply != "AI tekst" {
 		t.Fatalf("expected feedback to be mapped, got %+v", generator.lastInput.Feedback)

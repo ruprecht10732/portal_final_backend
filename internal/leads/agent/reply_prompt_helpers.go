@@ -458,6 +458,80 @@ func latestInboundWhatsAppText(messages []ports.WhatsAppReplyMessage) string {
 	return strings.TrimSpace(messages[len(messages)-1].Body)
 }
 
+func formatReplyScenarioBlock(scenario ports.ReplySuggestionScenario, notes string) string {
+	normalized := ports.NormalizeReplySuggestionScenario(string(scenario))
+	lines := []string{"- Geselecteerd scenario: " + replyScenarioLabel(normalized)}
+	if noteSummary := sanitizePromptField(notes, 500); noteSummary != valueNotProvided {
+		lines = append(lines, "- Extra operatorinstructie: "+noteSummary)
+	}
+	if guidance := replyScenarioGuidance(normalized); guidance != valueNotProvided {
+		lines = append(lines, guidance)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func replyScenarioLabel(scenario ports.ReplySuggestionScenario) string {
+	switch scenario {
+	case ports.ReplySuggestionScenarioFollowUp:
+		return "follow-up zonder reactie"
+	case ports.ReplySuggestionScenarioAppointmentReminder:
+		return "afspraakherinnering"
+	case ports.ReplySuggestionScenarioAppointmentConfirm:
+		return "afspraakbevestiging"
+	case ports.ReplySuggestionScenarioRescheduleRequest:
+		return "afspraak verzetten"
+	case ports.ReplySuggestionScenarioQuoteReminder:
+		return "offerte opvolgen"
+	case ports.ReplySuggestionScenarioQuoteExpiry:
+		return "offerte verloopt bijna"
+	case ports.ReplySuggestionScenarioMissingInformation:
+		return "ontbrekende informatie opvragen"
+	case ports.ReplySuggestionScenarioPhotosOrDocuments:
+		return "foto's of documenten opvragen"
+	case ports.ReplySuggestionScenarioPostVisitFollowUp:
+		return "opvolging na bezoek"
+	case ports.ReplySuggestionScenarioAcceptedQuoteNext:
+		return "vervolgstappen na akkoord"
+	case ports.ReplySuggestionScenarioDelayUpdate:
+		return "vertraging of statusupdate"
+	case ports.ReplySuggestionScenarioComplaintRecovery:
+		return "klacht of herstelreactie"
+	default:
+		return "algemene reply"
+	}
+}
+
+func replyScenarioGuidance(scenario ports.ReplySuggestionScenario) string {
+	switch scenario {
+	case ports.ReplySuggestionScenarioFollowUp:
+		return "- Scenario-richting: wees kort, laagdrempelig en vraag om een kleine concrete reactie of volgende stap."
+	case ports.ReplySuggestionScenarioAppointmentReminder:
+		return "- Scenario-richting: herinner aan datum, tijd en praktische details zonder nieuwe onzekerheid toe te voegen."
+	case ports.ReplySuggestionScenarioAppointmentConfirm:
+		return "- Scenario-richting: bevestig de afspraak duidelijk en benoem alleen de relevante logistiek."
+	case ports.ReplySuggestionScenarioRescheduleRequest:
+		return "- Scenario-richting: leg kort uit dat verzetten nodig is en stuur op nieuwe opties of beschikbaarheid."
+	case ports.ReplySuggestionScenarioQuoteReminder:
+		return "- Scenario-richting: verwijs naar de offerte, houd de toon behulpzaam en vermijd druk zetten."
+	case ports.ReplySuggestionScenarioQuoteExpiry:
+		return "- Scenario-richting: benoem de geldigheid en nodig uit tot vragen of een besluit zonder hard sales-taal."
+	case ports.ReplySuggestionScenarioMissingInformation:
+		return "- Scenario-richting: vraag alleen de minimale set ontbrekende gegevens die nodig is om verder te kunnen."
+	case ports.ReplySuggestionScenarioPhotosOrDocuments:
+		return "- Scenario-richting: vraag expliciet welke foto's of documenten nodig zijn en waarom."
+	case ports.ReplySuggestionScenarioPostVisitFollowUp:
+		return "- Scenario-richting: sluit aan op het recente bezoek en stuur op de eerstvolgende logische stap."
+	case ports.ReplySuggestionScenarioAcceptedQuoteNext:
+		return "- Scenario-richting: bevestig dat er akkoord is en leg praktisch uit wat hierna gebeurt."
+	case ports.ReplySuggestionScenarioDelayUpdate:
+		return "- Scenario-richting: wees transparant over de vertraging, bied context en manage verwachtingen."
+	case ports.ReplySuggestionScenarioComplaintRecovery:
+		return "- Scenario-richting: erken het probleem eerst, vermijd defensieve taal en bied een oplossingsroute."
+	default:
+		return valueNotProvided
+	}
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a

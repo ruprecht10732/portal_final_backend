@@ -322,7 +322,7 @@ func leadTimelineSummary(value string) *string {
 	return &trimmed
 }
 
-func (s *Service) SuggestWhatsAppReply(ctx context.Context, requesterUserID, organizationID, conversationID uuid.UUID) (WhatsAppReplySuggestionResult, error) {
+func (s *Service) SuggestWhatsAppReply(ctx context.Context, requesterUserID, organizationID, conversationID uuid.UUID, scenario, scenarioNotes string) (WhatsAppReplySuggestionResult, error) {
 	if s.whatsappReplyer == nil {
 		return WhatsAppReplySuggestionResult{}, apperr.Internal("WhatsApp reply agent is not configured")
 	}
@@ -340,6 +340,8 @@ func (s *Service) SuggestWhatsAppReply(ctx context.Context, requesterUserID, org
 		RequesterUserID: requesterUserID,
 		LeadID:          *conversation.LeadID,
 		ConversationID:  conversation.ID,
+		Scenario:        scenario,
+		ScenarioNotes:   strings.TrimSpace(scenarioNotes),
 		PhoneNumber:     conversation.PhoneNumber,
 		DisplayName:     conversation.DisplayName,
 		Messages:        make([]SuggestWhatsAppReplyMessage, 0, len(messages)),

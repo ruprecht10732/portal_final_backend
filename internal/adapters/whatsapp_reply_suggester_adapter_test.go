@@ -36,6 +36,8 @@ func TestWhatsAppReplySuggesterAdapterMapsInput(t *testing.T) {
 		RequesterUserID: requesterUserID,
 		LeadID:          leadID,
 		ConversationID:  conversationID,
+		Scenario:        "appointment_reminder",
+		ScenarioNotes:   "Noem ook dat de klant ons kan appen bij vragen.",
 		PhoneNumber:     "+31612345678",
 		DisplayName:     "Robin",
 		Messages: []identitysvc.SuggestWhatsAppReplyMessage{{
@@ -71,6 +73,12 @@ func TestWhatsAppReplySuggesterAdapterMapsInput(t *testing.T) {
 	}
 	if generator.lastInput.ConversationID != conversationID {
 		t.Fatalf("expected conversation id to be mapped")
+	}
+	if generator.lastInput.Scenario != ports.ReplySuggestionScenarioAppointmentReminder {
+		t.Fatalf("expected scenario to be normalized, got %q", generator.lastInput.Scenario)
+	}
+	if generator.lastInput.ScenarioNotes != "Noem ook dat de klant ons kan appen bij vragen." {
+		t.Fatalf("expected scenario notes to be mapped, got %q", generator.lastInput.ScenarioNotes)
 	}
 	if len(generator.lastInput.Messages) != 1 || generator.lastInput.Messages[0].Body != "Kunnen jullie morgen bellen?" {
 		t.Fatalf("expected messages to be mapped, got %+v", generator.lastInput.Messages)

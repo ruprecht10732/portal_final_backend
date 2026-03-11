@@ -333,6 +333,9 @@ Reply style
 Current date and time
 %s
 
+Selected reply scenario
+%s
+
 Conversation intent hints
 %s
 
@@ -378,6 +381,7 @@ Recent WhatsApp transcript
 Task
 - Draft one WhatsApp reply in Dutch for the company to send to this customer.
 - Prioritize the latest customer message and the most recent conversation turns.
+- If a non-generic reply scenario is selected, treat that scenario as the primary drafting goal.
 - Use the timing context to distinguish clearly between past and future appointments, deadlines, and updates.
 - Use the intent hints and communication style hints as steering context when they fit the latest customer message.
 - Use the real examples as style guidance when they fit, but adapt to the current customer and never copy them literally.
@@ -402,6 +406,7 @@ Task
 		formatJSONBlock(replyContext.service.CustomerPreferences),
 		sanitizePromptField(toneOfVoice, 200),
 		formatCurrentDateTimeBlock(),
+		formatReplyScenarioBlock(input.Scenario, input.ScenarioNotes),
 		formatWhatsAppIntentBlock(input),
 		formatWhatsAppStyleSummary(input),
 		formatRequesterBlock(replyContext.requester),
@@ -432,6 +437,7 @@ Rules:
 - Prefer short paragraphs suitable for WhatsApp.
 - Ground the reply in the provided lead, service, and conversation context.
 - Prioritize the latest inbound message and the most recent conversation turns over older notes.
+- If a non-generic reply scenario is provided, follow that scenario unless it directly conflicts with the factual context.
 - Use the provided current date/time and agenda context to reason correctly about past versus future events.
 - If the latest customer message asks a direct question, answer it directly when the context supports it.
 - If details are still needed, ask at most two clear questions and explain briefly why.

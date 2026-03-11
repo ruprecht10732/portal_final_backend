@@ -134,6 +134,11 @@ type SendWhatsAppConversationMessageResponse struct {
 	Message      WhatsAppMessageResponse      `json:"message"`
 }
 
+type SuggestWhatsAppReplyRequest struct {
+	Scenario      string `json:"scenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
+	ScenarioNotes string `json:"scenarioNotes" validate:"omitempty,max=1000"`
+}
+
 type SuggestWhatsAppReplyResponse struct {
 	Suggestion string `json:"suggestion"`
 }

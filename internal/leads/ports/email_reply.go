@@ -27,6 +27,8 @@ type EmailReplyInput struct {
 	RequesterUserID uuid.UUID
 	LeadID          *uuid.UUID
 	LeadServiceID   *uuid.UUID
+	Scenario        ReplySuggestionScenario
+	ScenarioNotes   string
 	CustomerEmail   string
 	CustomerName    string
 	Subject         string

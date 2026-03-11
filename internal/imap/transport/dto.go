@@ -98,21 +98,21 @@ type MessageResponse struct {
 }
 
 type MessageContentResponse struct {
-	AccountID     string                   `json:"accountId"`
-	UID           int64                    `json:"uid"`
-	MessageID     *string                  `json:"messageId,omitempty"`
+	AccountID     string                    `json:"accountId"`
+	UID           int64                     `json:"uid"`
+	MessageID     *string                   `json:"messageId,omitempty"`
 	LinkedLead    *LeadInboxSummaryResponse `json:"linkedLead,omitempty"`
 	SuggestedLead *LeadInboxSummaryResponse `json:"suggestedLead,omitempty"`
-	Subject       string                   `json:"subject"`
-	FromName      *string                  `json:"fromName,omitempty"`
-	FromAddress   *string                  `json:"fromAddress,omitempty"`
-	ReplyTo       []string                 `json:"replyTo,omitempty"`
-	To            []string                 `json:"to,omitempty"`
-	CC            []string                 `json:"cc,omitempty"`
-	SentAt        *time.Time               `json:"sentAt,omitempty"`
-	ReceivedAt    *time.Time               `json:"receivedAt,omitempty"`
-	BodyHTML      *string                  `json:"bodyHtml,omitempty"`
-	BodyText      *string                  `json:"bodyText,omitempty"`
+	Subject       string                    `json:"subject"`
+	FromName      *string                   `json:"fromName,omitempty"`
+	FromAddress   *string                   `json:"fromAddress,omitempty"`
+	ReplyTo       []string                  `json:"replyTo,omitempty"`
+	To            []string                  `json:"to,omitempty"`
+	CC            []string                  `json:"cc,omitempty"`
+	SentAt        *time.Time                `json:"sentAt,omitempty"`
+	ReceivedAt    *time.Time                `json:"receivedAt,omitempty"`
+	BodyHTML      *string                   `json:"bodyHtml,omitempty"`
+	BodyText      *string                   `json:"bodyText,omitempty"`
 }
 
 type LeadInboxSummaryResponse struct {
@@ -146,6 +146,11 @@ type ReplyRequest struct {
 	Body         string  `json:"body" validate:"required,max=200000"`
 	IsHTML       *bool   `json:"isHtml,omitempty"`
 	AISuggestion *string `json:"aiSuggestion,omitempty" validate:"omitempty,max=200000"`
+}
+
+type SuggestReplyRequest struct {
+	Scenario      string `json:"scenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
+	ScenarioNotes string `json:"scenarioNotes" validate:"omitempty,max=1000"`
 }
 
 type SuggestReplyResponse struct {

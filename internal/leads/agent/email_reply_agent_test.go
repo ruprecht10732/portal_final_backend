@@ -38,6 +38,8 @@ func TestBuildEmailReplyPromptIncludesOverviewContext(t *testing.T) {
 	note := "Klant wil graag snel duidelijkheid over de planning."
 	prompt := buildEmailReplyPrompt(ports.EmailReplyInput{
 		RequesterUserID: uuid.New(),
+		Scenario:        ports.ReplySuggestionScenarioQuoteReminder,
+		ScenarioNotes:   "Houd de toon ontspannen.",
 		CustomerEmail:   "customer@example.com",
 		CustomerName:    "Robin",
 		Subject:         "Vraag over offerte",
@@ -52,6 +54,9 @@ func TestBuildEmailReplyPromptIncludesOverviewContext(t *testing.T) {
 	checks := []string{
 		"Requesting colleague",
 		"Current date and time",
+		"Selected reply scenario",
+		"offerte opvolgen",
+		"Houd de toon ontspannen.",
 		"Gebruik dit om te bepalen of afspraken, deadlines en gebeurtenissen in het verleden of de toekomst liggen.",
 		"Conversation intent hints",
 		"Communication style hints",

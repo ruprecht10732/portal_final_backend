@@ -27,6 +27,8 @@ func (a *EmailReplySuggesterAdapter) SuggestReply(ctx context.Context, input ima
 		RequesterUserID: input.RequesterUserID,
 		LeadID:          input.LeadID,
 		LeadServiceID:   input.LeadServiceID,
+		Scenario:        ports.NormalizeReplySuggestionScenario(input.Scenario),
+		ScenarioNotes:   input.ScenarioNotes,
 		CustomerEmail:   input.CustomerEmail,
 		CustomerName:    input.CustomerName,
 		Subject:         input.Subject,

@@ -34,6 +34,8 @@ type SuggestEmailReplyInput struct {
 	MessageUID      int64
 	LeadID          *uuid.UUID
 	LeadServiceID   *uuid.UUID
+	Scenario        string
+	ScenarioNotes   string
 	CustomerEmail   string
 	CustomerName    string
 	Subject         string
@@ -54,7 +56,7 @@ func (s *Service) SetEmailReplySuggester(replyer EmailReplySuggester) {
 	s.emailReplyer = replyer
 }
 
-func (s *Service) SuggestEmailReply(ctx context.Context, userID, accountID uuid.UUID, uid int64) (EmailReplySuggestionResult, error) {
+func (s *Service) SuggestEmailReply(ctx context.Context, userID, accountID uuid.UUID, uid int64, scenario, scenarioNotes string) (EmailReplySuggestionResult, error) {
 	if s.emailReplyer == nil {
 		return EmailReplySuggestionResult{}, apperr.Internal(errEmailReplyNotConfigured)
 	}
@@ -79,6 +81,8 @@ func (s *Service) SuggestEmailReply(ctx context.Context, userID, accountID uuid.
 
 	input := s.buildSuggestEmailReplyInput(organizationID, account.ID, uid, content, customerEmail, customerName)
 	input.RequesterUserID = userID
+	input.Scenario = scenario
+	input.ScenarioNotes = strings.TrimSpace(scenarioNotes)
 	input.LeadID, input.LeadServiceID = s.resolveEmailReplyReferenceContext(ctx, userID, account.ID, uid, customerEmail)
 	s.appendEmailReplyFeedback(ctx, &input)
 	s.appendEmailReplyExamples(ctx, &input)

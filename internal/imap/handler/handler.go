@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -341,7 +343,17 @@ func (h *Handler) SuggestReply(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.SuggestEmailReply(c.Request.Context(), identity.UserID(), accountID, uid)
+	var req transport.SuggestReplyRequest
+	if err = c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err = h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.svc.SuggestEmailReply(c.Request.Context(), identity.UserID(), accountID, uid, req.Scenario, req.ScenarioNotes)
 	if httpkit.HandleError(c, err) {
 		return
 	}

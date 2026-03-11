@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -366,7 +368,17 @@ func (h *Handler) SuggestWhatsAppReply(c *gin.Context) {
 		return
 	}
 
-	result, err := h.svc.SuggestWhatsAppReply(c.Request.Context(), identity.UserID(), *tenantID, conversationID)
+	var req transport.SuggestWhatsAppReplyRequest
+	if err = c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err = h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.svc.SuggestWhatsAppReply(c.Request.Context(), identity.UserID(), *tenantID, conversationID, req.Scenario, req.ScenarioNotes)
 	if httpkit.HandleError(c, err) {
 		return
 	}

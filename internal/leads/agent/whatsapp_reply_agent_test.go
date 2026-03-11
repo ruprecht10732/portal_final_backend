@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"portal_final_backend/internal/leads/ports"
+
+	"github.com/google/uuid"
 )
 
 func TestWhatsAppReplySystemPromptUsesConfiguredTone(t *testing.T) {
@@ -23,6 +25,27 @@ func TestWhatsAppReplySystemPromptFallsBackToDefaultTone(t *testing.T) {
 
 	if !strings.Contains(prompt, defaultTone) {
 		t.Fatalf("expected prompt to include default tone %q, got %q", defaultTone, prompt)
+	}
+}
+
+func TestBuildWhatsAppReplyPromptIncludesSelectedScenario(t *testing.T) {
+	prompt := buildWhatsAppReplyPrompt(ports.WhatsAppReplyInput{
+		LeadID:         uuid.New(),
+		ConversationID: uuid.New(),
+		Scenario:       ports.ReplySuggestionScenarioAppointmentReminder,
+		ScenarioNotes:  "Noem de geplande tijd nogmaals.",
+		Messages: []ports.WhatsAppReplyMessage{{
+			Direction: "inbound",
+			Body:      "Top, tot morgen",
+			CreatedAt: time.Now().UTC(),
+		}},
+	}, whatsAppReplyContext{}, "Behulpzaam en direct")
+
+	checks := []string{"Selected reply scenario", "afspraakherinnering", "Noem de geplande tijd nogmaals."}
+	for _, expected := range checks {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("expected prompt to contain %q, got %q", expected, prompt)
+		}
 	}
 }
 

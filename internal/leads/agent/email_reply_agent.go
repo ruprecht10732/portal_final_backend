@@ -460,6 +460,9 @@ Reply style
 Current date and time
 %s
 
+Selected reply scenario
+%s
+
 Conversation intent hints
 %s
 
@@ -509,6 +512,7 @@ Task
 - Keep the reply customer-ready and suitable to paste into an email composer.
 - Use a natural greeting when a name is available.
 - Do not add a subject line.
+- If a non-generic reply scenario is selected, treat that scenario as the primary drafting goal.
 - Use the timing context to distinguish clearly between past and future appointments, deadlines, and updates.
 - Use the intent hints and communication style hints as steering context when they fit the email.
 - Use the real examples as style guidance when they fit, but never copy them literally.
@@ -532,6 +536,7 @@ Task
 		formatEmailReplyCustomerPreferences(replyContext.service),
 		sanitizePromptField(toneOfVoice, 200),
 		formatCurrentDateTimeBlock(),
+		formatReplyScenarioBlock(input.Scenario, input.ScenarioNotes),
 		formatEmailIntentBlock(input),
 		formatEmailStyleSummary(input),
 		formatRequesterBlock(replyContext.requester),
@@ -565,6 +570,7 @@ Rules:
 - Include a natural salutation when the customer name is available.
 - Do not include a subject line.
 - Ground the reply in the provided lead, service, and email context.
+- If a non-generic reply scenario is provided, follow that scenario unless it directly conflicts with the factual context.
 - If lead/service context is missing, explicitly avoid assumptions and rely on the current email only.
 - Use the provided current date/time and agenda context to reason correctly about past versus future events.
 - If the customer asks a direct question, answer it directly when the context supports it.

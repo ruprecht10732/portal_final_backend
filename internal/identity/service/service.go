@@ -45,6 +45,8 @@ type SuggestWhatsAppReplyInput struct {
 	RequesterUserID uuid.UUID
 	LeadID          uuid.UUID
 	ConversationID  uuid.UUID
+	Scenario        string
+	ScenarioNotes   string
 	PhoneNumber     string
 	DisplayName     string
 	Messages        []SuggestWhatsAppReplyMessage

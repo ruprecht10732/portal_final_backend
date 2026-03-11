@@ -25,6 +25,8 @@ func (a *WhatsAppReplySuggesterAdapter) SuggestReply(ctx context.Context, input 
 		RequesterUserID: input.RequesterUserID,
 		LeadID:          input.LeadID,
 		ConversationID:  input.ConversationID,
+		Scenario:        ports.NormalizeReplySuggestionScenario(input.Scenario),
+		ScenarioNotes:   input.ScenarioNotes,
 		PhoneNumber:     input.PhoneNumber,
 		DisplayName:     input.DisplayName,
 		Messages:        make([]ports.WhatsAppReplyMessage, 0, len(input.Messages)),
