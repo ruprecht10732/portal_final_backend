@@ -7,6 +7,28 @@ import (
 	"portal_final_backend/internal/leads/ports"
 )
 
+func TestBuildEmailReplyPromptWithoutLeadOrServiceContext(t *testing.T) {
+	prompt := buildEmailReplyPrompt(ports.EmailReplyInput{
+		CustomerEmail: "customer@example.com",
+		CustomerName:  "Robin",
+		Subject:       "Vraag over planning",
+		MessageBody:   "Kunnen jullie volgende week langskomen?",
+	}, emailReplyContext{}, "Behulpzaam en direct")
+
+	checks := []string{
+		"Lead ID: Niet opgegeven",
+		"Service ID: Niet opgegeven",
+		"Naam: Robin",
+		"Onderwerp: Vraag over planning",
+		"Bericht: Kunnen jullie volgende week langskomen?",
+	}
+	for _, expected := range checks {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("expected prompt to contain %q, got %s", expected, prompt)
+		}
+	}
+}
+
 func TestEmailReplySystemPromptUsesConfiguredTone(t *testing.T) {
 	tone := "calm, practical, and reassuring"
 	prompt := emailReplySystemPrompt(tone)

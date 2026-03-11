@@ -35,8 +35,8 @@ type EmailReplyAgent struct {
 }
 
 type emailReplyContext struct {
-	lead          repository.Lead
-	service       repository.LeadService
+	lead          *repository.Lead
+	service       *repository.LeadService
 	notes         []repository.LeadNote
 	analysis      *repository.AIAnalysis
 	visitReport   *repository.AppointmentVisitReport
@@ -150,31 +150,44 @@ func (a *EmailReplyAgent) loadOrganizationAISettings(ctx context.Context, organi
 }
 
 func (a *EmailReplyAgent) loadReplyContext(ctx context.Context, input ports.EmailReplyInput) (emailReplyContext, error) {
-	summary, _, err := a.repo.GetByPhoneOrEmail(ctx, "", input.CustomerEmail, input.OrganizationID)
+	lead, err := a.loadReplyLead(ctx, input)
 	if err != nil {
-		return emailReplyContext{}, fmt.Errorf("email reply: load lead by email: %w", err)
-	}
-	if summary == nil {
-		return emailReplyContext{}, fmt.Errorf("%w: no lead found for customer email", ports.ErrEmailReplyLeadContextUnavailable)
+		return emailReplyContext{}, err
 	}
 
-	lead, err := a.repo.GetByID(ctx, summary.ID, input.OrganizationID)
+	service, err := a.loadReplyService(ctx, input, lead)
 	if err != nil {
-		return emailReplyContext{}, fmt.Errorf("email reply: load lead: %w", err)
+		return emailReplyContext{}, err
 	}
 
-	service, err := a.repo.GetCurrentLeadService(ctx, summary.ID, input.OrganizationID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return emailReplyContext{}, fmt.Errorf("%w: no current service for lead", ports.ErrEmailReplyLeadContextUnavailable)
+	if lead == nil && service != nil && service.LeadID != uuid.Nil {
+		loadedLead, loadErr := a.repo.GetByID(ctx, service.LeadID, input.OrganizationID)
+		if loadErr == nil {
+			lead = &loadedLead
+		} else if !errors.Is(loadErr, repository.ErrNotFound) {
+			return emailReplyContext{}, fmt.Errorf("email reply: load lead from service: %w", loadErr)
 		}
-		return emailReplyContext{}, fmt.Errorf("email reply: load current lead service: %w", err)
 	}
 
-	notes, err := a.repo.ListNotesByService(ctx, summary.ID, service.ID, input.OrganizationID)
+	contextData := emailReplyContext{
+		lead:    lead,
+		service: service,
+		notes:   nil,
+	}
+	if service == nil {
+		return contextData, nil
+	}
+
+	leadID := service.LeadID
+	if lead != nil && lead.ID != uuid.Nil {
+		leadID = lead.ID
+	}
+
+	notes, err := a.repo.ListNotesByService(ctx, leadID, service.ID, input.OrganizationID)
 	if err != nil {
 		return emailReplyContext{}, fmt.Errorf("email reply: load notes: %w", err)
 	}
+	contextData.notes = notes
 
 	analysis, err := a.loadLatestAIAnalysis(ctx, service.ID, input.OrganizationID)
 	if err != nil {
@@ -189,14 +202,68 @@ func (a *EmailReplyAgent) loadReplyContext(ctx context.Context, input ports.Emai
 		return emailReplyContext{}, err
 	}
 
-	return emailReplyContext{
-		lead:          lead,
-		service:       service,
-		notes:         notes,
-		analysis:      analysis,
-		visitReport:   visitReport,
-		photoAnalysis: photoAnalysis,
-	}, nil
+	contextData.analysis = analysis
+	contextData.visitReport = visitReport
+	contextData.photoAnalysis = photoAnalysis
+	return contextData, nil
+}
+
+func (a *EmailReplyAgent) loadReplyLead(ctx context.Context, input ports.EmailReplyInput) (*repository.Lead, error) {
+	if input.LeadID != nil && *input.LeadID != uuid.Nil {
+		lead, err := a.repo.GetByID(ctx, *input.LeadID, input.OrganizationID)
+		if err == nil {
+			return &lead, nil
+		}
+		if !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("email reply: load lead: %w", err)
+		}
+	}
+
+	if strings.TrimSpace(input.CustomerEmail) == "" {
+		return nil, nil
+	}
+
+	summary, _, err := a.repo.GetByPhoneOrEmail(ctx, "", input.CustomerEmail, input.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("email reply: load lead by email: %w", err)
+	}
+	if summary == nil || summary.ID == uuid.Nil {
+		return nil, nil
+	}
+
+	lead, err := a.repo.GetByID(ctx, summary.ID, input.OrganizationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load lead: %w", err)
+	}
+	return &lead, nil
+}
+
+func (a *EmailReplyAgent) loadReplyService(ctx context.Context, input ports.EmailReplyInput, lead *repository.Lead) (*repository.LeadService, error) {
+	if input.LeadServiceID != nil && *input.LeadServiceID != uuid.Nil {
+		service, err := a.repo.GetLeadServiceByID(ctx, *input.LeadServiceID, input.OrganizationID)
+		if err == nil {
+			return &service, nil
+		}
+		if !errors.Is(err, repository.ErrServiceNotFound) && !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("email reply: load lead service: %w", err)
+		}
+	}
+
+	if lead == nil || lead.ID == uuid.Nil {
+		return nil, nil
+	}
+
+	service, err := a.repo.GetCurrentLeadService(ctx, lead.ID, input.OrganizationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrServiceNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load current lead service: %w", err)
+	}
+	return &service, nil
 }
 
 func (a *EmailReplyAgent) loadLatestAIAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.AIAnalysis, error) {
@@ -286,17 +353,17 @@ Task
 - Do not invent prices, promises, schedules, or technical facts that are not in the context.
 - Output only the email body text.
 `,
-		replyContext.lead.ID,
-		buildLeadName(replyContext.lead),
-		buildLeadAddress(replyContext.lead),
-		buildLeadHousingContext(replyContext.lead),
+		formatEmailReplyLeadID(replyContext.lead),
+		formatEmailReplyLeadName(replyContext.lead),
+		formatEmailReplyLeadAddress(replyContext.lead),
+		formatEmailReplyHousingContext(replyContext.lead),
 		sanitizePromptField(input.CustomerEmail, 160),
-		replyContext.service.ID,
-		sanitizePromptField(replyContext.service.ServiceType, 120),
-		sanitizePromptField(replyContext.service.Status, 80),
-		sanitizePromptField(replyContext.service.PipelineStage, 80),
-		optionalPromptString(replyContext.service.ConsumerNote, 800),
-		formatJSONBlock(replyContext.service.CustomerPreferences),
+		formatEmailReplyServiceID(replyContext.service),
+		formatEmailReplyServiceType(replyContext.service),
+		formatEmailReplyServiceStatus(replyContext.service),
+		formatEmailReplyServicePipelineStage(replyContext.service),
+		formatEmailReplyConsumerNote(replyContext.service),
+		formatEmailReplyCustomerPreferences(replyContext.service),
 		sanitizePromptField(toneOfVoice, 200),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
@@ -356,6 +423,76 @@ func formatEmailFeedbackMemory(items []ports.EmailReplyFeedback) string {
 		return valueNotProvided
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatEmailReplyLeadID(lead *repository.Lead) string {
+	if lead == nil || lead.ID == uuid.Nil {
+		return valueNotProvided
+	}
+	return lead.ID.String()
+}
+
+func formatEmailReplyLeadName(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadName(*lead)
+}
+
+func formatEmailReplyLeadAddress(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadAddress(*lead)
+}
+
+func formatEmailReplyHousingContext(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadHousingContext(*lead)
+}
+
+func formatEmailReplyServiceID(service *repository.LeadService) string {
+	if service == nil || service.ID == uuid.Nil {
+		return valueNotProvided
+	}
+	return service.ID.String()
+}
+
+func formatEmailReplyServiceType(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.ServiceType, 120)
+}
+
+func formatEmailReplyServiceStatus(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.Status, 80)
+}
+
+func formatEmailReplyServicePipelineStage(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.PipelineStage, 80)
+}
+
+func formatEmailReplyConsumerNote(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return optionalPromptString(service.ConsumerNote, 800)
+}
+
+func formatEmailReplyCustomerPreferences(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return formatJSONBlock(service.CustomerPreferences)
 }
 
 func formatEmailExamples(examples []ports.EmailReplyExample) string {
