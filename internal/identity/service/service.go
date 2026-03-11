@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -439,7 +440,19 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 	}
 
 	if upstreamStatus.IsLoggedIn {
-		accountJID = s.refreshWhatsAppAccountJID(ctx, organizationID, deviceID, accountJID)
+		refreshedAccountJID, refreshErr := s.refreshWhatsAppAccountJID(ctx, organizationID, deviceID, accountJID)
+		if refreshErr != nil {
+			return WhatsAppStatus{
+				State:       "ERROR",
+				Message:     refreshErr.Error(),
+				CanSend:     false,
+				NeedsReauth: true,
+				Presence:    normalizeWhatsAppPresence(settings.WhatsAppPresence),
+				DeviceID:    deviceID,
+				AccountJID:  accountJID,
+			}, nil
+		}
+		accountJID = refreshedAccountJID
 		return WhatsAppStatus{State: "CONNECTED", Message: "Online", CanSend: true, Presence: normalizeWhatsAppPresence(settings.WhatsAppPresence), DeviceID: deviceID, AccountJID: accountJID}, nil
 	}
 
@@ -459,26 +472,34 @@ func (s *Service) GetWhatsAppStatus(ctx context.Context, organizationID uuid.UUI
 	}, nil
 }
 
-func (s *Service) refreshWhatsAppAccountJID(ctx context.Context, organizationID uuid.UUID, deviceID string, currentJID string) string {
+func (s *Service) refreshWhatsAppAccountJID(ctx context.Context, organizationID uuid.UUID, deviceID string, currentJID string) (string, error) {
 	if s.whatsapp == nil || strings.TrimSpace(deviceID) == "" {
-		return currentJID
+		return currentJID, nil
 	}
 
 	info, err := s.whatsapp.GetDeviceInfo(ctx, deviceID)
 	if err != nil {
-		return currentJID
+		return currentJID, nil
 	}
 
 	resolvedJID := strings.TrimSpace(info.JID)
 	if resolvedJID == "" || resolvedJID == currentJID {
-		return currentJID
+		return currentJID, nil
+	}
+
+	ownerOrganizationID, err := s.repo.GetOrganizationIDByWhatsAppAccountJID(ctx, resolvedJID)
+	if err == nil && ownerOrganizationID != organizationID {
+		return currentJID, apperr.Validation("this WhatsApp account is already linked to another organization")
+	}
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return currentJID, nil
 	}
 
 	if _, err := s.repo.UpsertOrganizationSettings(ctx, organizationID, repository.OrganizationSettingsUpdate{WhatsAppAccountJID: &resolvedJID}); err != nil {
-		return currentJID
+		return currentJID, err
 	}
 
-	return resolvedJID
+	return resolvedJID, nil
 }
 
 func normalizeWhatsAppPresence(value string) string {

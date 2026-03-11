@@ -8,13 +8,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	identitydb "portal_final_backend/internal/identity/db"
+	"portal_final_backend/platform/apperr"
 )
 
 var ErrNotFound = errors.New("not found")
+
+const whatsappAccountJIDUniqueIndex = "idx_rac_organization_settings_whatsapp_account_jid_unique"
 
 type DBTX = identitydb.DBTX
 
@@ -491,6 +495,9 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrganizationSettings{}, ErrNotFound
 	}
+	if isDuplicateWhatsAppAccountJID(err) {
+		return OrganizationSettings{}, apperr.Validation("this WhatsApp account is already linked to another organization")
+	}
 	if err != nil {
 		return OrganizationSettings{}, err
 	}
@@ -530,6 +537,39 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		CreatedAt:                                         row.CreatedAt,
 		UpdatedAt:                                         row.UpdatedAt,
 	}), nil
+}
+
+func (r *Repository) GetOrganizationIDByWhatsAppAccountJID(ctx context.Context, accountJID string) (uuid.UUID, error) {
+	trimmed := strings.TrimSpace(accountJID)
+	if trimmed == "" {
+		return uuid.UUID{}, ErrNotFound
+	}
+
+	const query = `
+		SELECT organization_id
+		FROM RAC_organization_settings
+		WHERE whatsapp_account_jid = $1
+		LIMIT 1`
+
+	var organizationID uuid.UUID
+	if err := r.pool.QueryRow(ctx, query, trimmed).Scan(&organizationID); errors.Is(err, pgx.ErrNoRows) {
+		return uuid.UUID{}, ErrNotFound
+	} else if err != nil {
+		return uuid.UUID{}, err
+	}
+
+	return organizationID, nil
+}
+
+func isDuplicateWhatsAppAccountJID(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	if pgErr.Code != "23505" {
+		return false
+	}
+	return pgErr.ConstraintName == whatsappAccountJIDUniqueIndex
 }
 
 func (r *Repository) UpsertOrganizationSMTP(ctx context.Context, organizationID uuid.UUID, update OrganizationSMTPUpdate) (OrganizationSettings, error) {
