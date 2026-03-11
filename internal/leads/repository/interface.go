@@ -66,6 +66,8 @@ type LeadServiceReader interface {
 	ListLeadServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LeadService, error)
 	GetCurrentLeadService(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (LeadService, error)
 	GetServiceStateAggregates(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID) (ServiceStateAggregates, error)
+	ListLinkedWhatsAppConversations(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LinkedWhatsAppConversation, error)
+	ListLinkedIMAPMessages(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) ([]LinkedIMAPMessage, error)
 }
 
 // LeadServiceWriter provides write operations for lead services.

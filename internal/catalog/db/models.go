@@ -435,6 +435,24 @@ type RacCatalogVatRate struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RacEmailReplyFeedback struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	AccountID        pgtype.UUID        `json:"account_id"`
+	SourceMessageUid int64              `json:"source_message_uid"`
+	CustomerEmail    string             `json:"customer_email"`
+	CustomerName     pgtype.Text        `json:"customer_name"`
+	Subject          pgtype.Text        `json:"subject"`
+	CustomerMessage  string             `json:"customer_message"`
+	AiReply          pgtype.Text        `json:"ai_reply"`
+	HumanReply       string             `json:"human_reply"`
+	ReplyAll         bool               `json:"reply_all"`
+	LeadID           pgtype.UUID        `json:"lead_id"`
+	LeadServiceID    pgtype.UUID        `json:"lead_service_id"`
+	AppliedToMemory  bool               `json:"applied_to_memory"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacFeedComment struct {
 	ID          pgtype.UUID        `json:"id"`
 	EventID     string             `json:"event_id"`
@@ -1271,6 +1289,17 @@ type RacUserImapMessage struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RacUserImapMessageLead struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	AccountID      pgtype.UUID        `json:"account_id"`
+	MessageUid     int64              `json:"message_uid"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacUserRole struct {
 	UserID    pgtype.UUID        `json:"user_id"`
 	RoleID    pgtype.UUID        `json:"role_id"`
@@ -1319,6 +1348,8 @@ type RacWhatsappConversation struct {
 	UnreadCount          int32              `json:"unread_count"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt           pgtype.Timestamptz `json:"archived_at"`
+	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type RacWhatsappMessage struct {

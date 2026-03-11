@@ -98,19 +98,39 @@ type MessageResponse struct {
 }
 
 type MessageContentResponse struct {
-	AccountID   string     `json:"accountId"`
-	UID         int64      `json:"uid"`
-	MessageID   *string    `json:"messageId,omitempty"`
-	Subject     string     `json:"subject"`
-	FromName    *string    `json:"fromName,omitempty"`
-	FromAddress *string    `json:"fromAddress,omitempty"`
-	ReplyTo     []string   `json:"replyTo,omitempty"`
-	To          []string   `json:"to,omitempty"`
-	CC          []string   `json:"cc,omitempty"`
-	SentAt      *time.Time `json:"sentAt,omitempty"`
-	ReceivedAt  *time.Time `json:"receivedAt,omitempty"`
-	BodyHTML    *string    `json:"bodyHtml,omitempty"`
-	BodyText    *string    `json:"bodyText,omitempty"`
+	AccountID     string                   `json:"accountId"`
+	UID           int64                    `json:"uid"`
+	MessageID     *string                  `json:"messageId,omitempty"`
+	LinkedLead    *LeadInboxSummaryResponse `json:"linkedLead,omitempty"`
+	SuggestedLead *LeadInboxSummaryResponse `json:"suggestedLead,omitempty"`
+	Subject       string                   `json:"subject"`
+	FromName      *string                  `json:"fromName,omitempty"`
+	FromAddress   *string                  `json:"fromAddress,omitempty"`
+	ReplyTo       []string                 `json:"replyTo,omitempty"`
+	To            []string                 `json:"to,omitempty"`
+	CC            []string                 `json:"cc,omitempty"`
+	SentAt        *time.Time               `json:"sentAt,omitempty"`
+	ReceivedAt    *time.Time               `json:"receivedAt,omitempty"`
+	BodyHTML      *string                  `json:"bodyHtml,omitempty"`
+	BodyText      *string                  `json:"bodyText,omitempty"`
+}
+
+type LeadInboxSummaryResponse struct {
+	ID       string  `json:"id"`
+	FullName string  `json:"fullName"`
+	Phone    string  `json:"phone"`
+	Email    *string `json:"email,omitempty"`
+	City     string  `json:"city,omitempty"`
+}
+
+type LinkMessageLeadRequest struct {
+	LeadID string `json:"leadId" validate:"required,uuid4"`
+}
+
+type MessageLeadLinkResponse struct {
+	Status        string                    `json:"status"`
+	LinkedLead    *LeadInboxSummaryResponse `json:"linkedLead,omitempty"`
+	SuggestedLead *LeadInboxSummaryResponse `json:"suggestedLead,omitempty"`
 }
 
 type SendMessageRequest struct {
@@ -123,8 +143,13 @@ type SendMessageRequest struct {
 }
 
 type ReplyRequest struct {
-	Body   string `json:"body" validate:"required,max=200000"`
-	IsHTML *bool  `json:"isHtml,omitempty"`
+	Body         string  `json:"body" validate:"required,max=200000"`
+	IsHTML       *bool   `json:"isHtml,omitempty"`
+	AISuggestion *string `json:"aiSuggestion,omitempty" validate:"omitempty,max=200000"`
+}
+
+type SuggestReplyResponse struct {
+	Suggestion string `json:"suggestion"`
 }
 
 type ListMessagesResponse struct {

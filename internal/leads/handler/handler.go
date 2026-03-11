@@ -108,6 +108,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/check-returning-customer", h.CheckReturningCustomer)
 	rg.GET("/:id", h.GetByID)
+	rg.GET("/:id/communications", h.GetInboxCommunications)
 	rg.GET("/:id/timeline", h.GetTimeline)
 	rg.POST("/:id/timeline/:eventId/send-whatsapp", h.SendTimelineWhatsApp)
 	rg.PUT("/:id", h.Update)
@@ -146,6 +147,29 @@ func (h *Handler) GetMetrics(c *gin.Context) {
 	}
 
 	httpkit.OK(c, metrics)
+}
+
+func (h *Handler) GetInboxCommunications(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	response, err := h.mgmt.GetInboxCommunications(c.Request.Context(), id, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	httpkit.OK(c, response)
 }
 
 func (h *Handler) GetHeatmap(c *gin.Context) {

@@ -226,6 +226,17 @@ type Message struct {
 	UpdatedAt      time.Time
 }
 
+type MessageLeadLink struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	AccountID      uuid.UUID
+	MessageUID     int64
+	LeadID         uuid.UUID
+	CreatedBy      uuid.UUID
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type UpsertMessageInput struct {
 	AccountID      uuid.UUID
 	FolderName     string
@@ -537,6 +548,112 @@ func (r *Repository) GetMessageSizeByUID(ctx context.Context, accountID uuid.UUI
 		return 0, fmt.Errorf("get imap message size by uid: %w", err)
 	}
 	return sizeBytes, nil
+}
+
+func (r *Repository) GetMessageByUIDByUser(ctx context.Context, userID, accountID uuid.UUID, uid int64) (Message, error) {
+	const query = `
+		SELECT m.id, m.account_id, m.folder_name, m.uid, m.message_id, m.from_name, m.from_address,
+		       m.subject, m.sent_at, m.received_at, m.snippet, m.size_bytes, m.seen, m.flagged,
+		       m.answered, m.deleted, m.has_attachments, m.synced_at, m.created_at, m.updated_at
+		FROM RAC_user_imap_messages m
+		JOIN RAC_user_imap_accounts a ON a.id = m.account_id
+		WHERE a.user_id = $1 AND m.account_id = $2 AND m.uid = $3
+		ORDER BY m.updated_at DESC, m.created_at DESC
+		LIMIT 1`
+
+	row := r.pool.QueryRow(ctx, query, userID, accountID, uid)
+	var item Message
+	var messageID pgtype.Text
+	var fromName pgtype.Text
+	var fromAddress pgtype.Text
+	var sentAt pgtype.Timestamptz
+	var receivedAt pgtype.Timestamptz
+	var snippet pgtype.Text
+	if err := row.Scan(
+		&item.ID,
+		&item.AccountID,
+		&item.FolderName,
+		&item.UID,
+		&messageID,
+		&fromName,
+		&fromAddress,
+		&item.Subject,
+		&sentAt,
+		&receivedAt,
+		&snippet,
+		&item.SizeBytes,
+		&item.Seen,
+		&item.Flagged,
+		&item.Answered,
+		&item.Deleted,
+		&item.HasAttachments,
+		&item.SyncedAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, apperr.NotFound("imap message not found")
+		}
+		return Message{}, fmt.Errorf("get imap message by uid: %w", err)
+	}
+	item.MessageID = optionalString(messageID)
+	item.FromName = optionalString(fromName)
+	item.FromAddress = optionalString(fromAddress)
+	item.SentAt = optionalTime(sentAt)
+	item.ReceivedAt = optionalTime(receivedAt)
+	item.Snippet = optionalString(snippet)
+	return item, nil
+}
+
+func (r *Repository) GetMessageLeadLinkByUser(ctx context.Context, userID, accountID uuid.UUID, uid int64) (*MessageLeadLink, error) {
+	const query = `
+		SELECT l.id, l.organization_id, l.account_id, l.message_uid, l.lead_id, l.created_by, l.created_at, l.updated_at
+		FROM RAC_user_imap_message_leads l
+		JOIN RAC_user_imap_accounts a ON a.id = l.account_id
+		WHERE a.user_id = $1 AND l.account_id = $2 AND l.message_uid = $3`
+
+	row := r.pool.QueryRow(ctx, query, userID, accountID, uid)
+	var item MessageLeadLink
+	if err := row.Scan(&item.ID, &item.OrganizationID, &item.AccountID, &item.MessageUID, &item.LeadID, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get imap message lead link: %w", err)
+	}
+	return &item, nil
+}
+
+func (r *Repository) UpsertMessageLeadLink(ctx context.Context, organizationID, createdBy, accountID, leadID uuid.UUID, uid int64) error {
+	const query = `
+		INSERT INTO RAC_user_imap_message_leads (
+			organization_id, account_id, message_uid, lead_id, created_by, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, now(), now())
+		ON CONFLICT (account_id, message_uid)
+		DO UPDATE SET
+			organization_id = EXCLUDED.organization_id,
+			lead_id = EXCLUDED.lead_id,
+			created_by = EXCLUDED.created_by,
+			updated_at = now()`
+
+	if _, err := r.pool.Exec(ctx, query, organizationID, accountID, uid, leadID, createdBy); err != nil {
+		return fmt.Errorf("upsert imap message lead link: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) DeleteMessageLeadLinkByUser(ctx context.Context, userID, accountID uuid.UUID, uid int64) error {
+	const query = `
+		DELETE FROM RAC_user_imap_message_leads l
+		USING RAC_user_imap_accounts a
+		WHERE a.id = l.account_id
+		  AND a.user_id = $1
+		  AND l.account_id = $2
+		  AND l.message_uid = $3`
+
+	if _, err := r.pool.Exec(ctx, query, userID, accountID, uid); err != nil {
+		return fmt.Errorf("delete imap message lead link: %w", err)
+	}
+	return nil
 }
 
 // GetMaxUID returns the highest UID currently synced for a given account and folder.

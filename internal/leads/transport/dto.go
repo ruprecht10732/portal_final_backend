@@ -288,6 +288,33 @@ type LeadResponse struct {
 	UpdatedAt       time.Time               `json:"updatedAt"`
 }
 
+type LinkedWhatsAppConversationResponse struct {
+	ConversationID        uuid.UUID  `json:"conversationId"`
+	PhoneNumber           string     `json:"phoneNumber"`
+	DisplayName           string     `json:"displayName"`
+	LastMessagePreview    string     `json:"lastMessagePreview"`
+	LastMessageAt         *time.Time `json:"lastMessageAt,omitempty"`
+	LastMessageDirection  string     `json:"lastMessageDirection"`
+	LastMessageStatus     string     `json:"lastMessageStatus"`
+	RelationshipUpdatedAt time.Time  `json:"relationshipUpdatedAt"`
+}
+
+type LinkedIMAPMessageResponse struct {
+	AccountID             uuid.UUID  `json:"accountId"`
+	MessageUID            int64      `json:"messageUid"`
+	Subject               string     `json:"subject"`
+	FromName              *string    `json:"fromName,omitempty"`
+	FromAddress           *string    `json:"fromAddress,omitempty"`
+	SentAt                *time.Time `json:"sentAt,omitempty"`
+	ReceivedAt            *time.Time `json:"receivedAt,omitempty"`
+	RelationshipUpdatedAt time.Time  `json:"relationshipUpdatedAt"`
+}
+
+type LeadInboxCommunicationsResponse struct {
+	WhatsAppConversations []LinkedWhatsAppConversationResponse `json:"whatsAppConversations"`
+	EmailMessages         []LinkedIMAPMessageResponse          `json:"emailMessages"`
+}
+
 type LeadHeatmapPointResponse struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`

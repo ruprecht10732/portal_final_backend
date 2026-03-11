@@ -256,6 +256,36 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 	return resp, nil
 }
 
+func (s *Service) GetInboxCommunications(ctx context.Context, leadID, tenantID uuid.UUID) (transport.LeadInboxCommunicationsResponse, error) {
+	if _, err := s.repo.GetByID(ctx, leadID, tenantID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadInboxCommunicationsResponse{}, apperr.NotFound(leadNotFoundMsg)
+		}
+		return transport.LeadInboxCommunicationsResponse{}, err
+	}
+
+	whatsAppItems, err := s.repo.ListLinkedWhatsAppConversations(ctx, leadID, tenantID)
+	if err != nil {
+		return transport.LeadInboxCommunicationsResponse{}, err
+	}
+	emailItems, err := s.repo.ListLinkedIMAPMessages(ctx, leadID, tenantID)
+	if err != nil {
+		return transport.LeadInboxCommunicationsResponse{}, err
+	}
+
+	response := transport.LeadInboxCommunicationsResponse{
+		WhatsAppConversations: make([]transport.LinkedWhatsAppConversationResponse, 0, len(whatsAppItems)),
+		EmailMessages:         make([]transport.LinkedIMAPMessageResponse, 0, len(emailItems)),
+	}
+	for _, item := range whatsAppItems {
+		response.WhatsAppConversations = append(response.WhatsAppConversations, ToLinkedWhatsAppConversationResponse(item))
+	}
+	for _, item := range emailItems {
+		response.EmailMessages = append(response.EmailMessages, ToLinkedIMAPMessageResponse(item))
+	}
+	return response, nil
+}
+
 // GetByID retrieves a lead by ID.
 func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (transport.LeadResponse, error) {
 	lead, services, err := s.repo.GetByIDWithServices(ctx, id, tenantID)

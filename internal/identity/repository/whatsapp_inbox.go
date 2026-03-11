@@ -26,6 +26,8 @@ type WhatsAppConversation struct {
 	LastMessageDirection string
 	LastMessageStatus    string
 	UnreadCount          int
+	ArchivedAt           *time.Time
+	DeletedAt            *time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
@@ -133,9 +135,10 @@ func (r *Repository) ListWhatsAppConversations(ctx context.Context, organization
 	const query = `
 		SELECT id, organization_id, lead_id, phone_number, display_name,
 		       last_message_preview, last_message_at, last_message_direction,
-		       last_message_status, unread_count, created_at, updated_at
+		       last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at
 		FROM RAC_whatsapp_conversations
 		WHERE organization_id = $1
+		  AND deleted_at IS NULL
 		ORDER BY last_message_at DESC, updated_at DESC
 		LIMIT $2 OFFSET $3`
 
@@ -161,9 +164,9 @@ func (r *Repository) GetWhatsAppConversation(ctx context.Context, organizationID
 	const query = `
 		SELECT id, organization_id, lead_id, phone_number, display_name,
 		       last_message_preview, last_message_at, last_message_direction,
-		       last_message_status, unread_count, created_at, updated_at
+		       last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at
 		FROM RAC_whatsapp_conversations
-		WHERE organization_id = $1 AND id = $2`
+		WHERE organization_id = $1 AND id = $2 AND deleted_at IS NULL`
 
 	row := r.pool.QueryRow(ctx, query, organizationID, conversationID)
 	item, err := scanWhatsAppConversationRow(row)
@@ -216,13 +219,17 @@ func (r *Repository) ListWhatsAppMessages(ctx context.Context, organizationID, c
 
 func (r *Repository) GetLatestUnreadWhatsAppReadSyncTarget(ctx context.Context, organizationID, conversationID uuid.UUID) (*WhatsAppReadSyncTarget, error) {
 	const query = `
-		SELECT phone_number, external_message_id
-		FROM RAC_whatsapp_messages
-		WHERE organization_id = $1
-		  AND conversation_id = $2
-		  AND direction = 'inbound'
-		  AND read_at IS NULL
-		  AND external_message_id IS NOT NULL
+		SELECT messages.phone_number, messages.external_message_id
+		FROM RAC_whatsapp_messages messages
+		JOIN RAC_whatsapp_conversations conversations
+		  ON conversations.organization_id = messages.organization_id
+		 AND conversations.id = messages.conversation_id
+		WHERE messages.organization_id = $1
+		  AND messages.conversation_id = $2
+		  AND messages.direction = 'inbound'
+		  AND messages.read_at IS NULL
+		  AND messages.external_message_id IS NOT NULL
+		  AND conversations.deleted_at IS NULL
 		ORDER BY created_at DESC
 		LIMIT 1`
 
@@ -249,7 +256,7 @@ func (r *Repository) MarkWhatsAppConversationRead(ctx context.Context, organizat
 	const updateConversation = `
 		UPDATE RAC_whatsapp_conversations
 		SET unread_count = 0, updated_at = now()
-		WHERE organization_id = $1 AND id = $2`
+		WHERE organization_id = $1 AND id = $2 AND deleted_at IS NULL`
 	result, err := tx.Exec(ctx, updateConversation, organizationID, conversationID)
 	if err != nil {
 		return err
@@ -270,6 +277,88 @@ func (r *Repository) MarkWhatsAppConversationRead(ctx context.Context, organizat
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *Repository) SetWhatsAppConversationArchived(ctx context.Context, organizationID, conversationID uuid.UUID, value bool) (WhatsAppConversation, error) {
+	const query = `
+		UPDATE RAC_whatsapp_conversations
+		SET archived_at = CASE WHEN $3 THEN now() ELSE NULL END,
+		    updated_at = now()
+		WHERE organization_id = $1 AND id = $2 AND deleted_at IS NULL
+		RETURNING id, organization_id, lead_id, phone_number, display_name,
+		          last_message_preview, last_message_at, last_message_direction,
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
+
+	conversation, err := scanWhatsAppConversationRow(r.pool.QueryRow(ctx, query, organizationID, conversationID, value))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppConversation{}, ErrNotFound
+	}
+	if err != nil {
+		return WhatsAppConversation{}, err
+	}
+	return conversation, nil
+}
+
+func (r *Repository) DeleteWhatsAppConversation(ctx context.Context, organizationID, conversationID uuid.UUID) (WhatsAppConversation, error) {
+	const query = `
+		UPDATE RAC_whatsapp_conversations
+		SET deleted_at = now(),
+		    unread_count = 0,
+		    updated_at = now()
+		WHERE organization_id = $1 AND id = $2 AND deleted_at IS NULL
+		RETURNING id, organization_id, lead_id, phone_number, display_name,
+		          last_message_preview, last_message_at, last_message_direction,
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
+
+	conversation, err := scanWhatsAppConversationRow(r.pool.QueryRow(ctx, query, organizationID, conversationID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppConversation{}, ErrNotFound
+	}
+	if err != nil {
+		return WhatsAppConversation{}, err
+	}
+	return conversation, nil
+}
+
+func (r *Repository) UpdateWhatsAppConversationLead(ctx context.Context, organizationID, conversationID uuid.UUID, leadID *uuid.UUID) (WhatsAppConversation, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return WhatsAppConversation{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	const updateConversation = `
+		UPDATE RAC_whatsapp_conversations
+		SET lead_id = $3,
+		    updated_at = now()
+		WHERE organization_id = $1 AND id = $2
+		RETURNING id, organization_id, lead_id, phone_number, display_name,
+		          last_message_preview, last_message_at, last_message_direction,
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
+
+	conversation, err := scanWhatsAppConversationRow(tx.QueryRow(ctx, updateConversation, organizationID, conversationID, toNullableUUID(leadID)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppConversation{}, ErrNotFound
+	}
+	if err != nil {
+		return WhatsAppConversation{}, err
+	}
+
+	const updateMessages = `
+		UPDATE RAC_whatsapp_messages
+		SET lead_id = $3
+		WHERE organization_id = $1 AND conversation_id = $2`
+	if _, err = tx.Exec(ctx, updateMessages, organizationID, conversationID, toNullableUUID(leadID)); err != nil {
+		return WhatsAppConversation{}, err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return WhatsAppConversation{}, err
+	}
+
+	return conversation, nil
 }
 
 func (r *Repository) RecordSentWhatsAppMessage(ctx context.Context, params WhatsAppOutgoingMessageParams) (WhatsAppConversation, WhatsAppMessage, error) {
@@ -396,10 +485,11 @@ func (r *Repository) upsertWhatsAppConversation(ctx context.Context, tx pgx.Tx, 
 				WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
 				ELSE RAC_whatsapp_conversations.display_name
 			END,
+			deleted_at = NULL,
 			updated_at = now()
 		RETURNING id, organization_id, lead_id, phone_number, display_name,
 		          last_message_preview, last_message_at, last_message_direction,
-		          last_message_status, unread_count, created_at, updated_at`
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
 
 	return scanWhatsAppConversationRow(tx.QueryRow(ctx, query, organizationID, toNullableUUID(leadID), phoneNumber, displayName))
 }
@@ -461,7 +551,7 @@ func (r *Repository) finalizeOutgoingConversation(ctx context.Context, tx pgx.Tx
 		WHERE organization_id = $1 AND id = $2
 		RETURNING id, organization_id, lead_id, phone_number, display_name,
 		          last_message_preview, last_message_at, last_message_direction,
-		          last_message_status, unread_count, created_at, updated_at`
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
 
 	return scanWhatsAppConversationRow(tx.QueryRow(
 		ctx,
@@ -628,7 +718,7 @@ func (r *Repository) finalizeIncomingConversation(ctx context.Context, tx pgx.Tx
 		WHERE organization_id = $1 AND id = $2
 		RETURNING id, organization_id, lead_id, phone_number, display_name,
 		          last_message_preview, last_message_at, last_message_direction,
-		          last_message_status, unread_count, created_at, updated_at`
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
 
 	return scanWhatsAppConversationRow(tx.QueryRow(
 		ctx,
@@ -646,7 +736,10 @@ func (r *Repository) CountUnreadWhatsAppConversations(ctx context.Context, organ
 	const query = `
 		SELECT COUNT(*)
 		FROM RAC_whatsapp_conversations
-		WHERE organization_id = $1 AND unread_count > 0`
+		WHERE organization_id = $1
+		  AND deleted_at IS NULL
+		  AND archived_at IS NULL
+		  AND unread_count > 0`
 
 	var count int
 	if err := r.pool.QueryRow(ctx, query, organizationID).Scan(&count); err != nil {
@@ -703,6 +796,7 @@ func (r *Repository) ListRecentWhatsAppReplyExamples(ctx context.Context, organi
 			JOIN RAC_whatsapp_conversations conversations
 			  ON conversations.organization_id = outgoing.organization_id
 			 AND conversations.id = outgoing.conversation_id
+			 AND conversations.deleted_at IS NULL
 			LEFT JOIN LATERAL (
 				SELECT
 					st.name AS service_type,
@@ -1121,7 +1215,7 @@ func (r *Repository) updateConversationForMessageMutation(ctx context.Context, t
 		WHERE organization_id = $1 AND id = $2
 		RETURNING id, organization_id, lead_id, phone_number, display_name,
 		          last_message_preview, last_message_at, last_message_direction,
-		          last_message_status, unread_count, created_at, updated_at`
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
 
 	return scanWhatsAppConversationRow(tx.QueryRow(ctx, updateConversation, conversation.OrganizationID, conversation.ID, truncateWhatsAppPreview(message.Body)))
 }
@@ -1155,6 +1249,8 @@ func scanWhatsAppConversationRow(scanner conversationScanner) (WhatsAppConversat
 		&item.LastMessageDirection,
 		&item.LastMessageStatus,
 		&item.UnreadCount,
+		&item.ArchivedAt,
+		&item.DeletedAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
@@ -1226,9 +1322,9 @@ func (r *Repository) getWhatsAppMessageByExternalID(ctx context.Context, tx pgx.
 	const conversationQuery = `
 		SELECT id, organization_id, lead_id, phone_number, display_name,
 		       last_message_preview, last_message_at, last_message_direction,
-		       last_message_status, unread_count, created_at, updated_at
+		       last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at
 		FROM RAC_whatsapp_conversations
-		WHERE organization_id = $1 AND id = $2`
+		WHERE organization_id = $1 AND id = $2 AND deleted_at IS NULL`
 
 	conversation, err := scanWhatsAppConversationRow(tx.QueryRow(ctx, conversationQuery, organizationID, message.ConversationID))
 	if err != nil {
@@ -1314,7 +1410,7 @@ func (r *Repository) updateReceiptConversationStatuses(ctx context.Context, tx p
 		  )
 		RETURNING id, organization_id, lead_id, phone_number, display_name,
 		          last_message_preview, last_message_at, last_message_direction,
-		          last_message_status, unread_count, created_at, updated_at`
+		          last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at`
 
 	rows, err := tx.Query(ctx, query, organizationID, conversationIDs, status, externalMessageIDs)
 	if err != nil {

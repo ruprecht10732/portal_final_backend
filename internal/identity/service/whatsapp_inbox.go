@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,10 +11,13 @@ import (
 	"time"
 
 	"portal_final_backend/internal/identity/repository"
+	leadsrepo "portal_final_backend/internal/leads/repository"
+	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
 	webhookinbox "portal_final_backend/internal/webhook"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/apperr"
+	"portal_final_backend/platform/phone"
 
 	"github.com/google/uuid"
 )
@@ -67,6 +71,27 @@ type WhatsAppReplySuggestionResult struct {
 	Suggestion string
 }
 
+type AttachWhatsAppMessageToLeadResult struct {
+	AttachmentID uuid.UUID
+	LeadID       uuid.UUID
+	ServiceID    uuid.UUID
+}
+
+type SaveWhatsAppMessagesToLeadResult struct {
+	NoteID     uuid.UUID
+	LeadID     uuid.UUID
+	ServiceID  *uuid.UUID
+	SavedCount int
+}
+
+type LeadInboxSummary struct {
+	ID       uuid.UUID
+	FullName string
+	Phone    string
+	Email    *string
+	City     string
+}
+
 func (s *Service) SetSSE(sseService *sse.Service) {
 	s.sse = sseService
 }
@@ -90,6 +115,211 @@ func (s *Service) GetWhatsAppConversationMessages(ctx context.Context, organizat
 	}
 
 	return conversation, messages, nil
+}
+
+func (s *Service) GetWhatsAppConversationLeadState(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation) (*LeadInboxSummary, *LeadInboxSummary, error) {
+	linkedLead, err := s.getLeadSummaryByID(ctx, organizationID, conversation.LeadID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if linkedLead != nil {
+		return linkedLead, nil, nil
+	}
+	if s.leadsRepo == nil {
+		return nil, nil, nil
+	}
+	summary, _, err := s.leadsRepo.GetByPhoneOrEmail(ctx, phone.NormalizeE164(conversation.PhoneNumber), "", organizationID)
+	if err != nil || summary == nil {
+		return nil, nil, err
+	}
+	return nil, &LeadInboxSummary{
+		ID:       summary.ID,
+		FullName: summary.ConsumerName,
+		Phone:    summary.ConsumerPhone,
+		Email:    summary.ConsumerEmail,
+		City:     summary.AddressCity,
+	}, nil
+}
+
+func (s *Service) LinkWhatsAppConversationLead(ctx context.Context, organizationID, conversationID, leadID uuid.UUID) (repository.WhatsAppConversation, error) {
+	if _, err := s.getLeadSummaryByID(ctx, organizationID, &leadID); err != nil {
+		return repository.WhatsAppConversation{}, err
+	}
+
+	conversation, err := s.repo.UpdateWhatsAppConversationLead(ctx, organizationID, conversationID, &leadID)
+	if err == repository.ErrNotFound {
+		return repository.WhatsAppConversation{}, apperr.NotFound(conversationNotFoundMsg)
+	}
+	if err != nil {
+		return repository.WhatsAppConversation{}, err
+	}
+	s.recordWhatsAppLeadTimeline(ctx, organizationID, leadID, "WhatsApp-gesprek gekoppeld", whatsappLinkSummary("gekoppeld", conversation.DisplayName, conversation.PhoneNumber), map[string]any{
+		"source":         "whatsapp_inbox",
+		"action":         "linked",
+		"conversationId": conversation.ID.String(),
+		"phoneNumber":    conversation.PhoneNumber,
+		"displayName":    strings.TrimSpace(conversation.DisplayName),
+	})
+
+	s.publishWhatsAppConversationUpdated(organizationID, conversation)
+	return conversation, nil
+}
+
+func (s *Service) UnlinkWhatsAppConversationLead(ctx context.Context, organizationID, conversationID uuid.UUID) (repository.WhatsAppConversation, error) {
+	existingConversation, err := s.repo.GetWhatsAppConversation(ctx, organizationID, conversationID)
+	if err == repository.ErrNotFound {
+		return repository.WhatsAppConversation{}, apperr.NotFound(conversationNotFoundMsg)
+	}
+	if err != nil {
+		return repository.WhatsAppConversation{}, err
+	}
+
+	conversation, err := s.repo.UpdateWhatsAppConversationLead(ctx, organizationID, conversationID, nil)
+	if err == repository.ErrNotFound {
+		return repository.WhatsAppConversation{}, apperr.NotFound(conversationNotFoundMsg)
+	}
+	if err != nil {
+		return repository.WhatsAppConversation{}, err
+	}
+	if existingConversation.LeadID != nil {
+		s.recordWhatsAppLeadTimeline(ctx, organizationID, *existingConversation.LeadID, "WhatsApp-gesprek ontkoppeld", whatsappLinkSummary("ontkoppeld", existingConversation.DisplayName, existingConversation.PhoneNumber), map[string]any{
+			"source":         "whatsapp_inbox",
+			"action":         "unlinked",
+			"conversationId": existingConversation.ID.String(),
+			"phoneNumber":    existingConversation.PhoneNumber,
+			"displayName":    strings.TrimSpace(existingConversation.DisplayName),
+		})
+	}
+
+	s.publishWhatsAppConversationUpdated(organizationID, conversation)
+	return conversation, nil
+}
+
+func (s *Service) CreateLeadFromWhatsAppConversation(ctx context.Context, organizationID, conversationID uuid.UUID, req leadstransport.CreateLeadRequest) (repository.WhatsAppConversation, *LeadInboxSummary, error) {
+	if s.leadActions == nil {
+		return repository.WhatsAppConversation{}, nil, apperr.Internal("lead actions are not configured")
+	}
+
+	conversation, err := s.repo.GetWhatsAppConversation(ctx, organizationID, conversationID)
+	if err == repository.ErrNotFound {
+		return repository.WhatsAppConversation{}, nil, apperr.NotFound(conversationNotFoundMsg)
+	}
+	if err != nil {
+		return repository.WhatsAppConversation{}, nil, err
+	}
+	if conversation.LeadID != nil {
+		return repository.WhatsAppConversation{}, nil, apperr.Validation("gesprek is al gekoppeld aan een lead")
+	}
+
+	req.Phone = conversation.PhoneNumber
+	req.Source = normalizeInboxLeadSource(req.Source, "whatsapp_inbox")
+	if req.WhatsAppOptedIn == nil {
+		whatsAppOptedIn := true
+		req.WhatsAppOptedIn = &whatsAppOptedIn
+	}
+
+	lead, err := s.leadActions.Create(ctx, req, organizationID)
+	if err != nil {
+		return repository.WhatsAppConversation{}, nil, err
+	}
+
+	conversation, err = s.repo.UpdateWhatsAppConversationLead(ctx, organizationID, conversationID, &lead.ID)
+	if err != nil {
+		return repository.WhatsAppConversation{}, nil, err
+	}
+	s.recordWhatsAppLeadTimeline(ctx, organizationID, lead.ID, "Lead aangemaakt vanuit WhatsApp inbox", whatsappLinkSummary("aangemaakt", conversation.DisplayName, conversation.PhoneNumber), map[string]any{
+		"source":         "whatsapp_inbox",
+		"action":         "created_and_linked",
+		"conversationId": conversation.ID.String(),
+		"phoneNumber":    conversation.PhoneNumber,
+		"displayName":    strings.TrimSpace(conversation.DisplayName),
+	})
+
+	s.publishWhatsAppConversationUpdated(organizationID, conversation)
+	linkedLead, err := s.getLeadSummaryByID(ctx, organizationID, &lead.ID)
+	if err != nil {
+		return repository.WhatsAppConversation{}, nil, err
+	}
+	return conversation, linkedLead, nil
+}
+
+func (s *Service) getLeadSummaryByID(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID) (*LeadInboxSummary, error) {
+	if leadID == nil || s.leadsRepo == nil {
+		return nil, nil
+	}
+	lead, err := s.leadsRepo.GetByID(ctx, *leadID, organizationID)
+	if err != nil {
+		if errors.Is(err, leadsrepo.ErrNotFound) {
+			return nil, apperr.NotFound("lead not found")
+		}
+		return nil, err
+	}
+	return &LeadInboxSummary{
+		ID:       lead.ID,
+		FullName: strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
+		Phone:    lead.ConsumerPhone,
+		Email:    lead.ConsumerEmail,
+		City:     lead.AddressCity,
+	}, nil
+}
+
+func (s *Service) recordWhatsAppLeadTimeline(ctx context.Context, organizationID, leadID uuid.UUID, title string, summary string, metadata map[string]any) {
+	if s.leadActions == nil {
+		return
+	}
+	_, _ = s.leadActions.CreateTimelineEvent(ctx, leadsrepo.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      s.currentLeadServiceID(ctx, leadID, organizationID),
+		OrganizationID: organizationID,
+		ActorType:      leadsrepo.ActorTypeSystem,
+		ActorName:      "WhatsApp inbox",
+		EventType:      leadsrepo.EventTypeLeadUpdate,
+		Title:          title,
+		Summary:        leadTimelineSummary(summary),
+		Metadata:       metadata,
+	})
+}
+
+func (s *Service) currentLeadServiceID(ctx context.Context, leadID, organizationID uuid.UUID) *uuid.UUID {
+	if s.leadsRepo == nil {
+		return nil
+	}
+	service, err := s.leadsRepo.GetCurrentLeadService(ctx, leadID, organizationID)
+	if err != nil {
+		return nil
+	}
+	serviceID := service.ID
+	return &serviceID
+}
+
+func whatsappLinkSummary(action string, displayName string, phoneNumber string) string {
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		name = strings.TrimSpace(phoneNumber)
+	}
+	if name == "" {
+		return "WhatsApp-inboxrelatie bijgewerkt"
+	}
+	return fmt.Sprintf("WhatsApp-gesprek met %s %s via de inbox", name, action)
+}
+
+func normalizeInboxLeadSource(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	return trimmed
+}
+
+func leadTimelineSummary(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) > leadsrepo.TimelineSummaryMaxLen {
+		trimmed = strings.TrimSpace(trimmed[:leadsrepo.TimelineSummaryMaxLen])
+	}
+	return &trimmed
 }
 
 func (s *Service) SuggestWhatsAppReply(ctx context.Context, organizationID, conversationID uuid.UUID) (WhatsAppReplySuggestionResult, error) {
@@ -466,6 +696,82 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 	}, nil
 }
 
+func (s *Service) AttachWhatsAppMessageToLead(ctx context.Context, organizationID, authorID, conversationID uuid.UUID, externalMessageID string, requestedServiceID *uuid.UUID) (AttachWhatsAppMessageToLeadResult, error) {
+	if s.leadActions == nil || s.storage == nil || s.whatsapp == nil || strings.TrimSpace(s.attachmentsBucket) == "" {
+		return AttachWhatsAppMessageToLeadResult{}, apperr.Internal("WhatsApp lead import is not configured")
+	}
+
+	message, conversation, err := s.getAttachableWhatsAppImage(ctx, organizationID, conversationID, externalMessageID)
+	if err != nil {
+		return AttachWhatsAppMessageToLeadResult{}, err
+	}
+
+	serviceID, err := s.leadActions.ResolveServiceID(ctx, *conversation.LeadID, organizationID, requestedServiceID)
+	if err != nil {
+		return AttachWhatsAppMessageToLeadResult{}, err
+	}
+
+	attachment, err := s.importWhatsAppImageAttachment(ctx, organizationID, authorID, serviceID, externalMessageID, message, conversation)
+	if err != nil {
+		return AttachWhatsAppMessageToLeadResult{}, err
+	}
+
+	return AttachWhatsAppMessageToLeadResult{AttachmentID: attachment.AttachmentID, LeadID: *conversation.LeadID, ServiceID: serviceID}, nil
+}
+
+func (s *Service) SaveWhatsAppMessagesToLead(ctx context.Context, organizationID, authorID, conversationID uuid.UUID, externalMessageIDs []string, requestedServiceID *uuid.UUID) (SaveWhatsAppMessagesToLeadResult, error) {
+	if s.leadActions == nil {
+		return SaveWhatsAppMessagesToLeadResult{}, apperr.Internal("WhatsApp lead capture is not configured")
+	}
+
+	conversation, err := s.repo.GetWhatsAppConversation(ctx, organizationID, conversationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return SaveWhatsAppMessagesToLeadResult{}, apperr.NotFound(conversationNotFoundMsg)
+		}
+		return SaveWhatsAppMessagesToLeadResult{}, err
+	}
+	if conversation.LeadID == nil {
+		return SaveWhatsAppMessagesToLeadResult{}, apperr.Validation("gesprek is nog niet gekoppeld aan een lead")
+	}
+
+	trimmedIDs := uniqueTrimmedStrings(externalMessageIDs)
+	if len(trimmedIDs) == 0 {
+		return SaveWhatsAppMessagesToLeadResult{}, apperr.Validation("selecteer minimaal één WhatsApp-bericht")
+	}
+
+	messages, err := s.loadWhatsAppMessagesForConversation(ctx, organizationID, conversationID, trimmedIDs)
+	if err != nil {
+		return SaveWhatsAppMessagesToLeadResult{}, err
+	}
+
+	noteBody := buildImportantWhatsAppMessagesNote(conversation, messages)
+	metadata := map[string]any{
+		"source":               "whatsapp",
+		"conversationId":       conversationID.String(),
+		"messageIds":           trimmedIDs,
+		"capturedMessageCount": len(messages),
+		"phoneNumber":          conversation.PhoneNumber,
+	}
+	if displayName := strings.TrimSpace(conversation.DisplayName); displayName != "" {
+		metadata["displayName"] = displayName
+	}
+
+	result, err := s.leadActions.CreateImportantNote(ctx, CreateImportantLeadNoteParams{
+		LeadID:         *conversation.LeadID,
+		ServiceID:      requestedServiceID,
+		OrganizationID: organizationID,
+		AuthorID:       authorID,
+		Body:           noteBody,
+		Metadata:       metadata,
+	})
+	if err != nil {
+		return SaveWhatsAppMessagesToLeadResult{}, err
+	}
+
+	return SaveWhatsAppMessagesToLeadResult{NoteID: result.NoteID, LeadID: *conversation.LeadID, ServiceID: result.ServiceID, SavedCount: len(messages)}, nil
+}
+
 func (s *Service) ArchiveWhatsAppConversation(ctx context.Context, organizationID, conversationID uuid.UUID, value bool) (WhatsAppConversationActionResult, error) {
 	conversation, deviceID, err := s.getWhatsAppConversationActionContext(ctx, organizationID, conversationID)
 	if err != nil {
@@ -474,6 +780,26 @@ func (s *Service) ArchiveWhatsAppConversation(ctx context.Context, organizationI
 	if err := s.whatsapp.ArchiveChat(ctx, deviceID, conversation.PhoneNumber, value); err != nil {
 		return WhatsAppConversationActionResult{}, apperr.Internal("WhatsApp-gesprek kon niet worden gearchiveerd")
 	}
+	updatedConversation, err := s.repo.SetWhatsAppConversationArchived(ctx, organizationID, conversationID, value)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return WhatsAppConversationActionResult{}, apperr.NotFound(conversationNotFoundMsg)
+		}
+		return WhatsAppConversationActionResult{}, err
+	}
+	s.publishWhatsAppConversationUpdated(organizationID, updatedConversation)
+	return WhatsAppConversationActionResult{Conversation: &updatedConversation}, nil
+}
+
+func (s *Service) DeleteWhatsAppConversation(ctx context.Context, organizationID, conversationID uuid.UUID) (WhatsAppConversationActionResult, error) {
+	conversation, err := s.repo.DeleteWhatsAppConversation(ctx, organizationID, conversationID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return WhatsAppConversationActionResult{}, apperr.NotFound(conversationNotFoundMsg)
+		}
+		return WhatsAppConversationActionResult{}, err
+	}
+	s.publishWhatsAppConversationUpdated(organizationID, conversation)
 	return WhatsAppConversationActionResult{Conversation: &conversation}, nil
 }
 
@@ -602,6 +928,8 @@ func (s *Service) publishWhatsAppMessageSent(organizationID uuid.UUID, conversat
 				"lastMessageDirection": conversation.LastMessageDirection,
 				"lastMessageStatus":    conversation.LastMessageStatus,
 				"unreadCount":          conversation.UnreadCount,
+				"archivedAt":           optionalTimeValue(conversation.ArchivedAt),
+				"deletedAt":            optionalTimeValue(conversation.DeletedAt),
 			},
 			"message": map[string]any{
 				"id":                message.ID.String(),
@@ -644,6 +972,8 @@ func (s *Service) publishWhatsAppMessageReceived(organizationID uuid.UUID, conve
 				"lastMessageDirection": conversation.LastMessageDirection,
 				"lastMessageStatus":    conversation.LastMessageStatus,
 				"unreadCount":          conversation.UnreadCount,
+				"archivedAt":           optionalTimeValue(conversation.ArchivedAt),
+				"deletedAt":            optionalTimeValue(conversation.DeletedAt),
 			},
 			"message": map[string]any{
 				"id":                message.ID.String(),
@@ -687,6 +1017,8 @@ func (s *Service) publishWhatsAppConversationUpdated(organizationID uuid.UUID, c
 				"lastMessageDirection": conversation.LastMessageDirection,
 				"lastMessageStatus":    conversation.LastMessageStatus,
 				"unreadCount":          conversation.UnreadCount,
+				"archivedAt":           optionalTimeValue(conversation.ArchivedAt),
+				"deletedAt":            optionalTimeValue(conversation.DeletedAt),
 			},
 		},
 	}
@@ -716,6 +1048,8 @@ func (s *Service) publishWhatsAppMessageUpdated(organizationID uuid.UUID, conver
 				"lastMessageDirection": conversation.LastMessageDirection,
 				"lastMessageStatus":    conversation.LastMessageStatus,
 				"unreadCount":          conversation.UnreadCount,
+				"archivedAt":           optionalTimeValue(conversation.ArchivedAt),
+				"deletedAt":            optionalTimeValue(conversation.DeletedAt),
 			},
 			"message": map[string]any{
 				"id":                message.ID.String(),
@@ -746,6 +1080,13 @@ func optionalUUIDString(value *uuid.UUID) any {
 		return nil
 	}
 	return value.String()
+}
+
+func optionalTimeValue(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.Format(time.RFC3339)
 }
 
 func nilIfEmptyString(value string) *string {
@@ -978,6 +1319,213 @@ func previewWithCaption(label string, caption string) string {
 		return label
 	}
 	return label + " " + strings.TrimSpace(caption)
+}
+
+type whatsappPortalMetadata struct {
+	MessageType string `json:"messageType"`
+	Caption     string `json:"caption,omitempty"`
+	Text        string `json:"text,omitempty"`
+	Attachment  *struct {
+		MediaType string `json:"mediaType,omitempty"`
+		Filename  string `json:"filename,omitempty"`
+		Path      string `json:"path,omitempty"`
+		RemoteURL string `json:"remoteUrl,omitempty"`
+	} `json:"attachment,omitempty"`
+}
+
+func parseWhatsAppPortalMetadata(raw json.RawMessage) whatsappPortalMetadata {
+	if len(raw) == 0 {
+		return whatsappPortalMetadata{}
+	}
+	var envelope struct {
+		Portal whatsappPortalMetadata `json:"portal"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err == nil {
+		if strings.TrimSpace(envelope.Portal.MessageType) != "" || envelope.Portal.Attachment != nil || strings.TrimSpace(envelope.Portal.Caption) != "" || strings.TrimSpace(envelope.Portal.Text) != "" {
+			return envelope.Portal
+		}
+	}
+	var metadata whatsappPortalMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return whatsappPortalMetadata{}
+	}
+	return metadata
+}
+
+func isWhatsAppImageMessage(message repository.WhatsAppMessage) bool {
+	metadata := parseWhatsAppPortalMetadata(message.Metadata)
+	if strings.EqualFold(strings.TrimSpace(metadata.MessageType), "image") {
+		return true
+	}
+	if metadata.Attachment != nil && strings.EqualFold(strings.TrimSpace(metadata.Attachment.MediaType), "image") {
+		return true
+	}
+	return false
+}
+
+func normalizeWhatsAppImportContentType(contentType string, mediaType string) string {
+	trimmed := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	if trimmed != "" {
+		return trimmed
+	}
+	if strings.EqualFold(strings.TrimSpace(mediaType), "image") {
+		return "image/jpeg"
+	}
+	return ""
+}
+
+func chooseWhatsAppImportFilename(fileResult whatsapp.DownloadMediaFileResult, message repository.WhatsAppMessage) string {
+	if trimmed := strings.TrimSpace(fileResult.Filename); trimmed != "" {
+		return trimmed
+	}
+	metadata := parseWhatsAppPortalMetadata(message.Metadata)
+	if metadata.Attachment != nil {
+		if trimmed := strings.TrimSpace(metadata.Attachment.Filename); trimmed != "" {
+			return trimmed
+		}
+	}
+	return fmt.Sprintf("whatsapp-image-%s.jpg", message.CreatedAt.UTC().Format("20060102-150405"))
+}
+
+func buildImportantWhatsAppMessagesNote(conversation repository.WhatsAppConversation, messages []repository.WhatsAppMessage) string {
+	lines := []string{"Belangrijke WhatsApp-berichten"}
+	if displayName := strings.TrimSpace(conversation.DisplayName); displayName != "" {
+		lines = append(lines, fmt.Sprintf("Contact: %s", displayName))
+	} else {
+		lines = append(lines, fmt.Sprintf("Telefoon: %s", conversation.PhoneNumber))
+	}
+	lines = append(lines, "")
+
+	for _, message := range messages {
+		body := strings.TrimSpace(message.Body)
+		if body == "" {
+			metadata := parseWhatsAppPortalMetadata(message.Metadata)
+			body = firstNonEmptyTrimmed(metadata.Caption, metadata.Text, fmt.Sprintf("[%s]", firstNonEmptyTrimmed(metadata.MessageType, "bericht")))
+		}
+		body = strings.ReplaceAll(body, "\n", " ")
+		lines = append(lines, fmt.Sprintf("[%s] %s: %s", message.CreatedAt.Local().Format("2006-01-02 15:04"), whatsappMessageActorLabel(message.Direction), body))
+	}
+
+	note := strings.TrimSpace(strings.Join(lines, "\n"))
+	if len(note) <= 2000 {
+		return note
+	}
+	return strings.TrimSpace(note[:1997]) + "..."
+}
+
+func whatsappMessageActorLabel(direction string) string {
+	if strings.EqualFold(strings.TrimSpace(direction), "outbound") {
+		return "Team"
+	}
+	return "Klant"
+}
+
+func uniqueTrimmedStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func (s *Service) getAttachableWhatsAppImage(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string) (repository.WhatsAppMessage, repository.WhatsAppConversation, error) {
+	message, conversation, err := s.repo.GetWhatsAppMessageByExternalID(ctx, organizationID, externalMessageID)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, apperr.NotFound(whatsappMessageNotFoundMsg)
+		}
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, err
+	}
+	if conversation.ID != conversationID {
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, apperr.NotFound(whatsappMessageNotFoundMsg)
+	}
+	if conversation.LeadID == nil {
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, apperr.Validation("gesprek is nog niet gekoppeld aan een lead")
+	}
+	if message.Direction != "inbound" {
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, apperr.Validation("alleen ontvangen WhatsApp-afbeeldingen kunnen aan een lead worden gekoppeld")
+	}
+	if !isWhatsAppImageMessage(message) {
+		return repository.WhatsAppMessage{}, repository.WhatsAppConversation{}, apperr.Validation("geselecteerd WhatsApp-bericht bevat geen afbeelding")
+	}
+	return message, conversation, nil
+}
+
+func (s *Service) importWhatsAppImageAttachment(ctx context.Context, organizationID, authorID, serviceID uuid.UUID, externalMessageID string, message repository.WhatsAppMessage, conversation repository.WhatsAppConversation) (CreateLeadAttachmentResult, error) {
+	deviceID, err := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
+	if err != nil {
+		return CreateLeadAttachmentResult{}, err
+	}
+
+	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, conversation.PhoneNumber)
+	if err != nil {
+		return CreateLeadAttachmentResult{}, apperr.Internal("WhatsApp-afbeelding kon niet worden opgehaald")
+	}
+	contentType := normalizeWhatsAppImportContentType(fileResult.ContentType, fileResult.MediaType)
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		return CreateLeadAttachmentResult{}, apperr.Validation("geselecteerd WhatsApp-bericht bevat geen ondersteunde afbeelding")
+	}
+	if err := s.storage.ValidateContentType(contentType); err != nil {
+		return CreateLeadAttachmentResult{}, apperr.Validation("afbeeldingstype wordt niet ondersteund")
+	}
+	sizeBytes := int64(len(fileResult.Data))
+	if err := s.storage.ValidateFileSize(sizeBytes); err != nil {
+		return CreateLeadAttachmentResult{}, apperr.Validation(err.Error())
+	}
+	fileName := chooseWhatsAppImportFilename(fileResult, message)
+	folder := fmt.Sprintf("%s/%s/%s", organizationID.String(), conversation.LeadID.String(), serviceID.String())
+	fileKey, err := s.storage.UploadFile(ctx, s.attachmentsBucket, folder, fileName, contentType, bytes.NewReader(fileResult.Data), sizeBytes)
+	if err != nil {
+		return CreateLeadAttachmentResult{}, apperr.Internal("WhatsApp-afbeelding kon niet worden opgeslagen")
+	}
+
+	return s.leadActions.CreateAttachment(ctx, CreateLeadAttachmentParams{
+		LeadID:         *conversation.LeadID,
+		ServiceID:      serviceID,
+		OrganizationID: organizationID,
+		AuthorID:       authorID,
+		FileKey:        fileKey,
+		FileName:       fileName,
+		ContentType:    contentType,
+		SizeBytes:      sizeBytes,
+	})
+}
+
+func (s *Service) loadWhatsAppMessagesForConversation(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageIDs []string) ([]repository.WhatsAppMessage, error) {
+	messages := make([]repository.WhatsAppMessage, 0, len(externalMessageIDs))
+	for _, messageID := range externalMessageIDs {
+		message, owningConversation, err := s.repo.GetWhatsAppMessageByExternalID(ctx, organizationID, messageID)
+		if err != nil {
+			if err == repository.ErrNotFound {
+				return nil, apperr.NotFound(whatsappMessageNotFoundMsg)
+			}
+			return nil, err
+		}
+		if owningConversation.ID != conversationID {
+			return nil, apperr.Validation("geselecteerde WhatsApp-berichten horen niet bij hetzelfde gesprek")
+		}
+		messages = append(messages, message)
+	}
+	return messages, nil
 }
 
 func marshalOutgoingWhatsAppMetadata(message outgoingWhatsAppMessage, attachmentInput *SendWhatsAppConversationAttachmentInput) (json.RawMessage, error) {

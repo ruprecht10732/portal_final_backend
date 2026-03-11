@@ -12,6 +12,8 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/transport"
+	leadsrepo "portal_final_backend/internal/leads/repository"
+	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/apperr"
@@ -52,6 +54,43 @@ type WhatsAppReplySuggester interface {
 	SuggestReply(ctx context.Context, input SuggestWhatsAppReplyInput) (string, error)
 }
 
+type WhatsAppLeadActions interface {
+	Create(ctx context.Context, req leadstransport.CreateLeadRequest, tenantID uuid.UUID) (leadstransport.LeadResponse, error)
+	ResolveServiceID(ctx context.Context, leadID, organizationID uuid.UUID, requestedServiceID *uuid.UUID) (uuid.UUID, error)
+	CreateAttachment(ctx context.Context, params CreateLeadAttachmentParams) (CreateLeadAttachmentResult, error)
+	CreateImportantNote(ctx context.Context, params CreateImportantLeadNoteParams) (CreateImportantLeadNoteResult, error)
+	CreateTimelineEvent(ctx context.Context, params leadsrepo.CreateTimelineEventParams) (leadsrepo.TimelineEvent, error)
+}
+
+type CreateLeadAttachmentParams struct {
+	LeadID         uuid.UUID
+	ServiceID      uuid.UUID
+	OrganizationID uuid.UUID
+	AuthorID       uuid.UUID
+	FileKey        string
+	FileName       string
+	ContentType    string
+	SizeBytes      int64
+}
+
+type CreateLeadAttachmentResult struct {
+	AttachmentID uuid.UUID
+}
+
+type CreateImportantLeadNoteParams struct {
+	LeadID         uuid.UUID
+	ServiceID      *uuid.UUID
+	OrganizationID uuid.UUID
+	AuthorID       uuid.UUID
+	Body           string
+	Metadata       map[string]any
+}
+
+type CreateImportantLeadNoteResult struct {
+	NoteID    uuid.UUID
+	ServiceID *uuid.UUID
+}
+
 const (
 	inviteTokenBytes         = 32
 	inviteTTL                = 72 * time.Hour
@@ -62,21 +101,29 @@ const (
 
 type Service struct {
 	repo              *repository.Repository
+	leadsRepo         *leadsrepo.Repository
 	eventBus          events.Bus
 	storage           storage.StorageService
 	logoBucket        string
+	attachmentsBucket string
 	whatsapp          *whatsapp.Client
 	sse               *sse.Service
 	smtpEncryptionKey []byte
 	whatsappReplyer   WhatsAppReplySuggester
+	leadActions       WhatsAppLeadActions
 }
 
-func New(repo *repository.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, whatsappClient *whatsapp.Client) *Service {
-	return &Service{repo: repo, eventBus: eventBus, storage: storageSvc, logoBucket: logoBucket, whatsapp: whatsappClient}
+func New(repo *repository.Repository, leadsRepo *leadsrepo.Repository, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, whatsappClient *whatsapp.Client) *Service {
+	return &Service{repo: repo, leadsRepo: leadsRepo, eventBus: eventBus, storage: storageSvc, logoBucket: logoBucket, whatsapp: whatsappClient}
 }
 
 func (s *Service) SetWhatsAppReplySuggester(replyer WhatsAppReplySuggester) {
 	s.whatsappReplyer = replyer
+}
+
+func (s *Service) SetWhatsAppLeadActions(actions WhatsAppLeadActions, attachmentsBucket string) {
+	s.leadActions = actions
+	s.attachmentsBucket = strings.TrimSpace(attachmentsBucket)
 }
 
 func (s *Service) GetUserOrganizationID(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {

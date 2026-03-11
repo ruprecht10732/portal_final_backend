@@ -281,6 +281,10 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	leadsModule.ManagementService().SetInAppNotificationService(notificationModule.InAppService())
 	identityModule.Service().SetSSE(leadsModule.SSE())
 	identityModule.Service().SetWhatsAppReplySuggester(adapters.NewWhatsAppReplySuggesterAdapter(leadsModule.WhatsAppReplyGenerator()))
+	imapModule.Service().SetEmailReplySuggester(adapters.NewEmailReplySuggesterAdapter(leadsModule.EmailReplyGenerator()))
+	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository())
+	identityModule.Service().SetWhatsAppLeadActions(inboxLeadActions, cfg.GetMinioBucketLeadServiceAttachments())
+	imapModule.Service().SetInboxLeadActions(inboxLeadActions)
 	leadsModule.ManagementService().SetTimelineWhatsAppSender(leadsmgmt.TimelineWhatsAppSenderFunc(func(ctx context.Context, params leadsmgmt.TimelineWhatsAppSendParams) error {
 		return notificationModule.SendLeadWhatsApp(ctx, notification.SendLeadWhatsAppParams{
 			OrgID:       params.OrgID,

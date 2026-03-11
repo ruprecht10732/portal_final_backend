@@ -126,17 +126,26 @@ func main() {
 
 	notificationModule := notification.New(pool, sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
-	notificationModule.SetWhatsAppSender(whatsapp.NewClient(cfg, log))
-	notificationModule.SetLeadWhatsAppReader(leadrepo.New(pool))
-	notificationModule.SetOrganizationMemberReader(leadrepo.New(pool))
+	whatsAppClient := whatsapp.NewClient(cfg, log)
+	leadReader := leadrepo.New(pool)
+	storageSvc := initStorageOrPanic(ctx, cfg, log)
+	notificationModule.SetWhatsAppSender(whatsAppClient)
+	notificationModule.SetLeadWhatsAppReader(leadReader)
+	notificationModule.SetOrganizationMemberReader(leadReader)
 	notificationModule.SetNotificationOutbox(outbox.New(pool))
 	identityReader := identityrepo.New(pool)
-	identitySvc := identityservice.New(identityReader, nil, nil, "", nil)
+	identitySvc := identityservice.New(
+		identityReader,
+		leadReader,
+		eventBus,
+		storageSvc,
+		cfg.GetMinioBucketOrganizationLogos(),
+		whatsAppClient,
+	)
 	notificationModule.SetOrganizationSettingsReader(identityReader)
 	notificationModule.SetUserTenancyReader(identitySvc)
 	notificationModule.SetWorkflowResolver(identitySvc)
 	wireSchedulerSMTPEncryptionKey(cfg, log, identitySvc, notificationModule)
-	storageSvc := initStorageOrPanic(ctx, cfg, log)
 
 	val := validator.New()
 

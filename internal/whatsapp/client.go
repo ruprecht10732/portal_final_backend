@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -251,6 +253,12 @@ type DownloadMediaResult struct {
 	DownloadURL string
 }
 
+type DownloadMediaFileResult struct {
+	DownloadMediaResult
+	ContentType string
+	Data        []byte
+}
+
 var ErrNoDevice = errors.New("no whatsapp device configured")
 
 const errWhatsAppClientNotInitialized = "whatsapp client not initialized"
@@ -448,6 +456,30 @@ func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID s
 		FilePath:    strings.TrimSpace(parsed.Results.FilePath),
 		FileSize:    parsed.Results.FileSize,
 		DownloadURL: c.resolveProviderAssetURL(strings.TrimSpace(parsed.Results.FilePath)),
+	}, nil
+}
+
+func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaFileResult, error) {
+	result, err := c.DownloadMedia(ctx, deviceID, messageID, phoneNumber)
+	if err != nil {
+		return DownloadMediaFileResult{}, err
+	}
+	if strings.TrimSpace(result.DownloadURL) == "" {
+		return DownloadMediaFileResult{}, fmt.Errorf("download url is missing for media message")
+	}
+
+	data, contentType, err := c.fetchBinaryFromURL(ctx, result.DownloadURL)
+	if err != nil {
+		return DownloadMediaFileResult{}, err
+	}
+	if contentType == "" {
+		contentType = inferContentType(result.Filename, result.FilePath, result.MediaType)
+	}
+
+	return DownloadMediaFileResult{
+		DownloadMediaResult: result,
+		ContentType:         contentType,
+		Data:                data,
 	}, nil
 }
 
@@ -750,28 +782,61 @@ func (c *Client) resolveProviderAssetURL(rawPath string) string {
 
 // fetchImageFromURL downloads an image from the given URL with auth headers.
 func (c *Client) fetchImageFromURL(ctx context.Context, imageURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	data, _, err := c.fetchBinaryFromURL(ctx, imageURL)
+	return data, err
+}
+
+func (c *Client) fetchBinaryFromURL(ctx context.Context, targetURL string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	req.Header.Set("Accept", "image/png, image/*")
+	req.Header.Set("Accept", "*/*")
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", formatAuthHeader(c.apiKey))
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch QR image: %w", err)
+		return nil, "", fmt.Errorf("failed to fetch provider asset: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("QR image fetch returned %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("provider asset fetch returned %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	contentType := strings.TrimSpace(strings.Split(resp.Header.Get(headerContentType), ";")[0])
+	return data, contentType, nil
+}
+
+func inferContentType(fileName string, filePath string, mediaType string) string {
+	for _, candidate := range []string{fileName, filePath} {
+		ext := strings.ToLower(strings.TrimSpace(path.Ext(candidate)))
+		if ext == "" {
+			continue
+		}
+		if contentType := strings.TrimSpace(mime.TypeByExtension(ext)); contentType != "" {
+			return contentType
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "image":
+		return "image/jpeg"
+	case "video":
+		return "video/mp4"
+	case "audio":
+		return "audio/mpeg"
+	default:
+		return ""
+	}
 }
 
 func (c *Client) DeleteDevice(ctx context.Context, deviceID string) error {

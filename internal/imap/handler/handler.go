@@ -7,6 +7,7 @@ import (
 	"portal_final_backend/internal/imap/repository"
 	"portal_final_backend/internal/imap/service"
 	"portal_final_backend/internal/imap/transport"
+	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -41,9 +42,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/messages/send", h.SendMessage)
 	rg.POST("/:id/messages/:uid/reply", h.ReplyMessage)
 	rg.POST("/:id/messages/:uid/reply-all", h.ReplyAllMessage)
+	rg.POST("/:id/messages/:uid/suggest-reply", h.SuggestReply)
 	rg.POST("/:id/messages/:uid/seen", h.MarkMessageSeen)
 	rg.POST("/:id/messages/:uid/unseen", h.MarkMessageUnseen)
 	rg.GET("/:id/messages/:uid/content", h.GetMessageContent)
+	rg.POST("/:id/messages/:uid/lead", h.LinkMessageLead)
+	rg.POST("/:id/messages/:uid/create-lead", h.CreateLeadFromMessage)
+	rg.DELETE("/:id/messages/:uid/lead", h.UnlinkMessageLead)
 	rg.POST("/:id/messages/:uid/delete", h.DeleteMessage)
 }
 
@@ -320,6 +325,30 @@ func (h *Handler) ReplyAllMessage(c *gin.Context) {
 	h.handleReply(c, true)
 }
 
+func (h *Handler) SuggestReply(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	accountID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	uid, err := strconv.ParseInt(c.Param("uid"), 10, 64)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.svc.SuggestEmailReply(c.Request.Context(), identity.UserID(), accountID, uid)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.SuggestReplyResponse{Suggestion: result.Suggestion})
+}
+
 func (h *Handler) MarkMessageSeen(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {
@@ -414,6 +443,94 @@ func (h *Handler) GetMessageContent(c *gin.Context) {
 	httpkit.OK(c, content)
 }
 
+func (h *Handler) LinkMessageLead(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	accountID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	uid, err := strconv.ParseInt(c.Param("uid"), 10, 64)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	var req transport.LinkMessageLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+	leadID, err := uuid.Parse(req.LeadID)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	linkedLead, err := h.svc.LinkMessageLead(c.Request.Context(), identity.UserID(), accountID, uid, leadID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	httpkit.OK(c, transport.MessageLeadLinkResponse{Status: "ok", LinkedLead: toLeadInboxSummary(linkedLead)})
+}
+
+func (h *Handler) UnlinkMessageLead(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	accountID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	uid, err := strconv.ParseInt(c.Param("uid"), 10, 64)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if httpkit.HandleError(c, h.svc.UnlinkMessageLead(c.Request.Context(), identity.UserID(), accountID, uid)) {
+		return
+	}
+	httpkit.OK(c, transport.MessageLeadLinkResponse{Status: "ok"})
+}
+
+func (h *Handler) CreateLeadFromMessage(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	accountID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	uid, err := strconv.ParseInt(c.Param("uid"), 10, 64)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	var req leadstransport.CreateLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+	linkedLead, err := h.svc.CreateLeadFromMessage(c.Request.Context(), identity.UserID(), accountID, uid, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	httpkit.OK(c, transport.MessageLeadLinkResponse{Status: "ok", LinkedLead: toLeadInboxSummary(linkedLead)})
+}
+
 func toAccountResponse(account repository.Account) transport.AccountResponse {
 	smtpConfigured := account.SMTPHost != nil &&
 		account.SMTPPort != nil &&
@@ -440,5 +557,18 @@ func toAccountResponse(account repository.Account) transport.AccountResponse {
 		LastErrorAt:    account.LastErrorAt,
 		CreatedAt:      account.CreatedAt,
 		UpdatedAt:      account.UpdatedAt,
+	}
+}
+
+func toLeadInboxSummary(summary *service.LeadInboxSummary) *transport.LeadInboxSummaryResponse {
+	if summary == nil {
+		return nil
+	}
+	return &transport.LeadInboxSummaryResponse{
+		ID:       summary.ID.String(),
+		FullName: summary.FullName,
+		Phone:    summary.Phone,
+		Email:    summary.Email,
+		City:     summary.City,
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/identity/handler"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/internal/identity/service"
+	leadsrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/validator"
 
@@ -23,7 +24,8 @@ type Module struct {
 
 func NewModule(pool *pgxpool.Pool, eventBus events.Bus, storageSvc storage.StorageService, logoBucket string, val *validator.Validator, whatsappClient *whatsapp.Client) *Module {
 	repo := repository.New(pool)
-	svc := service.New(repo, eventBus, storageSvc, logoBucket, whatsappClient)
+	leadRepo := leadsrepo.New(pool)
+	svc := service.New(repo, leadRepo, eventBus, storageSvc, logoBucket, whatsappClient)
 	h := handler.New(svc, val)
 
 	return &Module{handler: h, service: svc}

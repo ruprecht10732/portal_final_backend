@@ -7,6 +7,7 @@ import (
 
 	"portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/identity/transport"
+	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/httpkit"
 
@@ -18,6 +19,9 @@ func (h *Handler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/whatsapp/conversations", h.ListWhatsAppConversations)
 	rg.GET("/whatsapp/conversations/unread-count", h.GetWhatsAppUnreadConversationCount)
 	rg.GET("/whatsapp/conversations/:conversationID/messages", h.ListWhatsAppMessages)
+	rg.POST("/whatsapp/conversations/:conversationID/lead", h.LinkWhatsAppConversationLead)
+	rg.POST("/whatsapp/conversations/:conversationID/create-lead", h.CreateLeadFromWhatsAppConversation)
+	rg.DELETE("/whatsapp/conversations/:conversationID/lead", h.UnlinkWhatsAppConversationLead)
 	rg.POST("/whatsapp/conversations/:conversationID/messages", h.SendWhatsAppConversationMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/suggest-reply", h.SuggestWhatsAppReply)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/reaction", h.ReactWhatsAppMessage)
@@ -25,9 +29,12 @@ func (h *Handler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/delete", h.DeleteWhatsAppMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/revoke", h.RevokeWhatsAppMessage)
 	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/star", h.StarWhatsAppMessage)
+	rg.POST("/whatsapp/conversations/:conversationID/messages/:messageID/attach-to-lead", h.AttachWhatsAppMessageToLead)
+	rg.POST("/whatsapp/conversations/:conversationID/messages/save-to-lead", h.SaveWhatsAppMessagesToLead)
 	rg.GET("/whatsapp/conversations/:conversationID/messages/:messageID/download", h.DownloadWhatsAppMessageMedia)
 	rg.POST("/whatsapp/conversations/:conversationID/chat-presence", h.SendWhatsAppChatPresence)
 	rg.POST("/whatsapp/conversations/:conversationID/archive", h.ArchiveWhatsAppConversation)
+	rg.POST("/whatsapp/conversations/:conversationID/delete", h.DeleteWhatsAppConversation)
 	rg.POST("/whatsapp/conversations/:conversationID/pin", h.PinWhatsAppConversation)
 	rg.POST("/whatsapp/conversations/:conversationID/disappearing-timer", h.SetWhatsAppDisappearingTimer)
 	rg.POST("/whatsapp/conversations/:conversationID/read", h.MarkWhatsAppConversationRead)
@@ -81,7 +88,15 @@ func (h *Handler) ListWhatsAppConversations(c *gin.Context) {
 
 	response := make([]transport.WhatsAppConversationResponse, 0, len(items))
 	for _, item := range items {
-		response = append(response, transport.ToWhatsAppConversationResponse(item))
+		linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, item)
+		if httpkit.HandleError(c, err) {
+			return
+		}
+		response = append(response, transport.WithWhatsAppConversationLeadState(
+			transport.ToWhatsAppConversationResponse(item),
+			toLeadInboxSummaryResponse(linkedLead),
+			toLeadInboxSummaryResponse(suggestedLead),
+		))
 	}
 
 	httpkit.OK(c, transport.ListWhatsAppConversationsResponse{Conversations: response})
@@ -123,10 +138,148 @@ func (h *Handler) ListWhatsAppMessages(c *gin.Context) {
 	for _, item := range messages {
 		response = append(response, transport.ToWhatsAppMessageResponse(item))
 	}
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, conversation)
+	if httpkit.HandleError(c, err) {
+		return
+	}
 
 	httpkit.OK(c, transport.ListWhatsAppMessagesResponse{
-		Conversation: transport.ToWhatsAppConversationResponse(conversation),
-		Messages:     response,
+		Conversation: transport.WithWhatsAppConversationLeadState(
+			transport.ToWhatsAppConversationResponse(conversation),
+			toLeadInboxSummaryResponse(linkedLead),
+			toLeadInboxSummaryResponse(suggestedLead),
+		),
+		Messages: response,
+	})
+}
+
+func (h *Handler) LinkWhatsAppConversationLead(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.LinkWhatsAppConversationLeadRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err = h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	leadID, err := uuid.Parse(req.LeadID)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	conversation, err := h.svc.LinkWhatsAppConversationLead(c.Request.Context(), *tenantID, conversationID, leadID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, conversation)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.WhatsAppConversationLeadResponse{
+		Status: "ok",
+		Conversation: transport.WithWhatsAppConversationLeadState(
+			transport.ToWhatsAppConversationResponse(conversation),
+			toLeadInboxSummaryResponse(linkedLead),
+			toLeadInboxSummaryResponse(suggestedLead),
+		),
+	})
+}
+
+func (h *Handler) UnlinkWhatsAppConversationLead(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	conversation, err := h.svc.UnlinkWhatsAppConversationLead(c.Request.Context(), *tenantID, conversationID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, conversation)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.WhatsAppConversationLeadResponse{
+		Status: "ok",
+		Conversation: transport.WithWhatsAppConversationLeadState(
+			transport.ToWhatsAppConversationResponse(conversation),
+			toLeadInboxSummaryResponse(linkedLead),
+			toLeadInboxSummaryResponse(suggestedLead),
+		),
+	})
+}
+
+func (h *Handler) CreateLeadFromWhatsAppConversation(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req leadstransport.CreateLeadRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err = h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	conversation, linkedLead, err := h.svc.CreateLeadFromWhatsAppConversation(c.Request.Context(), *tenantID, conversationID, req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.WhatsAppConversationLeadResponse{
+		Status: "ok",
+		Conversation: transport.WithWhatsAppConversationLeadState(
+			transport.ToWhatsAppConversationResponse(conversation),
+			toLeadInboxSummaryResponse(linkedLead),
+			nil,
+		),
 	})
 }
 
@@ -397,11 +550,150 @@ func (h *Handler) DownloadWhatsAppMessageMedia(c *gin.Context) {
 	})
 }
 
+func (h *Handler) AttachWhatsAppMessageToLead(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	messageID := c.Param("messageID")
+	if messageID == "" {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.AttachWhatsAppMessageToLeadRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err = h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	var serviceID *uuid.UUID
+	if req.ServiceID != "" {
+		parsed, parseErr := uuid.Parse(req.ServiceID)
+		if parseErr != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+			return
+		}
+		serviceID = &parsed
+	}
+
+	result, err := h.svc.AttachWhatsAppMessageToLead(c.Request.Context(), *tenantID, identity.UserID(), conversationID, messageID, serviceID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.AttachWhatsAppMessageToLeadResponse{
+		Status:              "ok",
+		AttachmentID:        result.AttachmentID.String(),
+		LeadID:              result.LeadID.String(),
+		ServiceID:           result.ServiceID.String(),
+		PhotoAnalysisQueued: true,
+	})
+}
+
+func (h *Handler) SaveWhatsAppMessagesToLead(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.SaveWhatsAppMessagesToLeadRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err = h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	var serviceID *uuid.UUID
+	if req.ServiceID != "" {
+		parsed, parseErr := uuid.Parse(req.ServiceID)
+		if parseErr != nil {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+			return
+		}
+		serviceID = &parsed
+	}
+
+	result, err := h.svc.SaveWhatsAppMessagesToLead(c.Request.Context(), *tenantID, identity.UserID(), conversationID, req.MessageIDs, serviceID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	var responseServiceID *string
+	if result.ServiceID != nil {
+		value := result.ServiceID.String()
+		responseServiceID = &value
+	}
+
+	httpkit.OK(c, transport.SaveWhatsAppMessagesToLeadResponse{
+		Status:         "ok",
+		NoteID:         result.NoteID.String(),
+		LeadID:         result.LeadID.String(),
+		ServiceID:      responseServiceID,
+		SavedCount:     result.SavedCount,
+		ConversationID: conversationID.String(),
+	})
+}
+
 func (h *Handler) ArchiveWhatsAppConversation(c *gin.Context) {
 	h.handleWhatsAppConversationToggleAction(c, func(ctx context.Context, tenantID, conversationID uuid.UUID, value bool) (transport.WhatsAppConversationActionResponse, error) {
 		result, err := h.svc.ArchiveWhatsAppConversation(ctx, tenantID, conversationID, value)
 		return toWhatsAppActionResponse("ok", result), err
 	})
+}
+
+func (h *Handler) DeleteWhatsAppConversation(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	conversationID, err := uuid.Parse(c.Param("conversationID"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	result, err := h.svc.DeleteWhatsAppConversation(c.Request.Context(), *tenantID, conversationID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, toWhatsAppActionResponse("ok", result))
 }
 
 func (h *Handler) PinWhatsAppConversation(c *gin.Context) {
@@ -551,4 +843,17 @@ func toWhatsAppActionResponse(status string, result service.WhatsAppConversation
 		response.Message = &message
 	}
 	return response
+}
+
+func toLeadInboxSummaryResponse(summary *service.LeadInboxSummary) *transport.LeadInboxSummaryResponse {
+	if summary == nil {
+		return nil
+	}
+	return &transport.LeadInboxSummaryResponse{
+		ID:       summary.ID.String(),
+		FullName: summary.FullName,
+		Phone:    summary.Phone,
+		Email:    summary.Email,
+		City:     summary.City,
+	}
 }

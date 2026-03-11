@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"portal_final_backend/internal/imap/sanitize"
 	"portal_final_backend/internal/imap/transport"
 	"portal_final_backend/internal/imapcrypto"
+	leadsrepo "portal_final_backend/internal/leads/repository"
+	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/logger"
@@ -37,19 +40,36 @@ const (
 
 type Service struct {
 	repo          *repository.Repository
+	identityRepo  *identityrepo.Repository
+	leadsRepo     *leadsrepo.Repository
+	leadActions   InboxLeadActions
 	scheduler     IMAPSyncScheduler
 	encryptionKey []byte
 	lockMap       sync.Map
 	eventBus      events.Bus
 	log           *logger.Logger
+	emailReplyer  EmailReplySuggester
 }
 
 type IMAPSyncScheduler interface {
 	EnqueueIMAPSyncAccount(ctx context.Context, payload scheduler.IMAPSyncAccountPayload) error
 }
 
-func New(repo *repository.Repository, _ *identityrepo.Repository, bus events.Bus, log *logger.Logger) *Service {
-	return &Service{repo: repo, eventBus: bus, log: log}
+type InboxLeadActions interface {
+	Create(ctx context.Context, req leadstransport.CreateLeadRequest, tenantID uuid.UUID) (leadstransport.LeadResponse, error)
+	CreateTimelineEvent(ctx context.Context, params leadsrepo.CreateTimelineEventParams) (leadsrepo.TimelineEvent, error)
+}
+
+func New(repo *repository.Repository, identityRepo *identityrepo.Repository, leadsRepo *leadsrepo.Repository, bus events.Bus, log *logger.Logger) *Service {
+	return &Service{repo: repo, identityRepo: identityRepo, leadsRepo: leadsRepo, eventBus: bus, log: log}
+}
+
+type LeadInboxSummary struct {
+	ID       uuid.UUID
+	FullName string
+	Phone    string
+	Email    *string
+	City     string
 }
 
 func (s *Service) SetSMTPEncryptionKey(_ []byte) {
@@ -62,6 +82,10 @@ func (s *Service) SetEncryptionKey(key []byte) {
 
 func (s *Service) SetScheduler(scheduler IMAPSyncScheduler) {
 	s.scheduler = scheduler
+}
+
+func (s *Service) SetInboxLeadActions(actions InboxLeadActions) {
+	s.leadActions = actions
 }
 
 func (s *Service) CreateAccount(ctx context.Context, userID uuid.UUID, req transport.CreateAccountRequest) (repository.Account, error) {
@@ -320,18 +344,69 @@ func (s *Service) SetMessageSeen(ctx context.Context, userID, accountID uuid.UUI
 }
 
 func (s *Service) GetMessageContent(ctx context.Context, userID, accountID uuid.UUID, uid int64) (transport.MessageContentResponse, error) {
+	account, content, err := s.loadMessageContent(ctx, userID, accountID, uid)
+	if err != nil {
+		return transport.MessageContentResponse{}, err
+	}
+	linkedLead, suggestedLead, err := s.loadMessageLeadState(ctx, userID, accountID, uid, content.FromAddress)
+	if err != nil {
+		return transport.MessageContentResponse{}, err
+	}
+
+	return buildMessageContentResponse(account, uid, content, linkedLead, suggestedLead), nil
+}
+
+func (s *Service) loadMessageContent(ctx context.Context, userID, accountID uuid.UUID, uid int64) (repository.Account, client.MessageContent, error) {
 	account, err := s.repo.GetAccountByUser(ctx, accountID, userID)
 	if err != nil {
-		return transport.MessageContentResponse{}, err
+		return repository.Account{}, client.MessageContent{}, err
 	}
-	if sizeBytes, err := s.repo.GetMessageSizeByUID(ctx, accountID, uid); err == nil && sizeBytes > maxMessageContentBytes {
-		return transport.MessageContentResponse{}, apperr.BadRequest(errMessageTooLarge)
-	} else if err != nil {
-		return transport.MessageContentResponse{}, err
+	if err := s.ensureMessageContentAllowed(ctx, accountID, uid); err != nil {
+		return repository.Account{}, client.MessageContent{}, err
 	}
+	content, err := s.fetchMessageContent(ctx, account, uid)
+	if err != nil {
+		return repository.Account{}, client.MessageContent{}, err
+	}
+	return account, content, nil
+}
+
+func buildMessageContentResponse(account repository.Account, uid int64, content client.MessageContent, linkedLead, suggestedLead *LeadInboxSummary) transport.MessageContentResponse {
+	safeHTML, bodyText := sanitizeMessageBodies(content.HTML, content.Text)
+	return transport.MessageContentResponse{
+		AccountID:     account.ID.String(),
+		UID:           uid,
+		MessageID:     content.MessageID,
+		LinkedLead:    toLeadInboxSummaryResponse(linkedLead),
+		SuggestedLead: toLeadInboxSummaryResponse(suggestedLead),
+		Subject:       content.Subject,
+		FromName:      content.FromName,
+		FromAddress:   content.FromAddress,
+		ReplyTo:       addressesToStrings(content.ReplyTo),
+		To:            addressesToStrings(content.To),
+		CC:            addressesToStrings(content.CC),
+		SentAt:        content.SentAt,
+		ReceivedAt:    content.ReceivedAt,
+		BodyHTML:      safeHTML,
+		BodyText:      bodyText,
+	}
+}
+
+func (s *Service) ensureMessageContentAllowed(ctx context.Context, accountID uuid.UUID, uid int64) error {
+	sizeBytes, err := s.repo.GetMessageSizeByUID(ctx, accountID, uid)
+	if err != nil {
+		return err
+	}
+	if sizeBytes > maxMessageContentBytes {
+		return apperr.BadRequest(errMessageTooLarge)
+	}
+	return nil
+}
+
+func (s *Service) fetchMessageContent(ctx context.Context, account repository.Account, uid int64) (client.MessageContent, error) {
 	password, err := s.decryptPassword(account.IMAPPasswordEncrypted)
 	if err != nil {
-		return transport.MessageContentResponse{}, err
+		return client.MessageContent{}, err
 	}
 
 	imapClient, err := client.New(client.Config{
@@ -341,46 +416,264 @@ func (s *Service) GetMessageContent(ctx context.Context, userID, accountID uuid.
 		Port:     account.IMAPPort,
 	})
 	if err != nil {
-		return transport.MessageContentResponse{}, apperr.BadRequest(errConnectIMAPServer)
+		return client.MessageContent{}, apperr.BadRequest(errConnectIMAPServer)
 	}
 	defer func() { _ = imapClient.Close() }()
 
 	content, err := imapClient.GetMessageContentContext(ctx, account.FolderName, uid)
 	if err != nil {
 		if client.IsTransientError(err) {
-			return transport.MessageContentResponse{}, apperr.Internal("temporary imap server error; please retry")
+			return client.MessageContent{}, apperr.Internal("temporary imap server error; please retry")
 		}
-		return transport.MessageContentResponse{}, apperr.BadRequest("failed to fetch message content")
+		return client.MessageContent{}, apperr.BadRequest("failed to fetch message content")
 	}
+	return content, nil
+}
 
+func sanitizeMessageBodies(html, text *string) (*string, *string) {
 	var safeHTML *string
-	if content.HTML != nil && strings.TrimSpace(*content.HTML) != "" {
-		sanitized := sanitize.SanitizeHTML(*content.HTML)
+	if html != nil && strings.TrimSpace(*html) != "" {
+		sanitized := sanitize.SanitizeHTML(*html)
 		if strings.TrimSpace(sanitized) != "" {
 			safeHTML = &sanitized
 		}
 	}
-	bodyText := content.Text
+
+	bodyText := text
 	if bodyText != nil {
 		trimmed := strings.TrimSpace(*bodyText)
 		bodyText = &trimmed
 	}
 
-	return transport.MessageContentResponse{
-		AccountID:   account.ID.String(),
-		UID:         uid,
-		MessageID:   content.MessageID,
-		Subject:     content.Subject,
-		FromName:    content.FromName,
-		FromAddress: content.FromAddress,
-		ReplyTo:     addressesToStrings(content.ReplyTo),
-		To:          addressesToStrings(content.To),
-		CC:          addressesToStrings(content.CC),
-		SentAt:      content.SentAt,
-		ReceivedAt:  content.ReceivedAt,
-		BodyHTML:    safeHTML,
-		BodyText:    bodyText,
+	return safeHTML, bodyText
+}
+
+func (s *Service) loadMessageLeadState(ctx context.Context, userID, accountID uuid.UUID, uid int64, fromAddress *string) (*LeadInboxSummary, *LeadInboxSummary, error) {
+	organizationID, err := s.identityRepo.GetUserOrganizationID(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.GetMessageLeadState(ctx, userID, organizationID, accountID, uid, fromAddress)
+}
+
+func (s *Service) GetMessageLeadState(ctx context.Context, userID, organizationID, accountID uuid.UUID, uid int64, fromAddress *string) (*LeadInboxSummary, *LeadInboxSummary, error) {
+	linked, err := s.repo.GetMessageLeadLinkByUser(ctx, userID, accountID, uid)
+	if err != nil {
+		return nil, nil, err
+	}
+	if linked != nil {
+		summary, err := s.getLeadSummaryByID(ctx, organizationID, linked.LeadID)
+		return summary, nil, err
+	}
+	if fromAddress == nil || strings.TrimSpace(*fromAddress) == "" || s.leadsRepo == nil {
+		return nil, nil, nil
+	}
+	summary, _, err := s.leadsRepo.GetByPhoneOrEmail(ctx, "", strings.TrimSpace(*fromAddress), organizationID)
+	if err != nil || summary == nil {
+		return nil, nil, err
+	}
+	return nil, &LeadInboxSummary{
+		ID:       summary.ID,
+		FullName: summary.ConsumerName,
+		Phone:    summary.ConsumerPhone,
+		Email:    summary.ConsumerEmail,
+		City:     summary.AddressCity,
 	}, nil
+}
+
+func (s *Service) LinkMessageLead(ctx context.Context, userID, accountID uuid.UUID, uid int64, leadID uuid.UUID) (*LeadInboxSummary, error) {
+	organizationID, err := s.identityRepo.GetUserOrganizationID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	message, err := s.repo.GetMessageByUIDByUser(ctx, userID, accountID, uid)
+	if err != nil {
+		return nil, err
+	}
+	summary, err := s.getLeadSummaryByID(ctx, organizationID, leadID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpsertMessageLeadLink(ctx, organizationID, userID, accountID, leadID, uid); err != nil {
+		return nil, err
+	}
+	s.recordMessageLeadTimeline(ctx, organizationID, leadID, "E-mail gekoppeld vanuit inbox", imapLinkSummary("gekoppeld", message.Subject, message.FromAddress), map[string]any{
+		"source":      "email_inbox",
+		"action":      "linked",
+		"accountId":   accountID.String(),
+		"messageUid":  uid,
+		"subject":     message.Subject,
+		"fromAddress": valueOrEmpty(message.FromAddress),
+	})
+	return summary, nil
+}
+
+func (s *Service) UnlinkMessageLead(ctx context.Context, userID, accountID uuid.UUID, uid int64) error {
+	organizationID, err := s.identityRepo.GetUserOrganizationID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	message, err := s.repo.GetMessageByUIDByUser(ctx, userID, accountID, uid)
+	if err != nil {
+		return err
+	}
+	linked, err := s.repo.GetMessageLeadLinkByUser(ctx, userID, accountID, uid)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.DeleteMessageLeadLinkByUser(ctx, userID, accountID, uid); err != nil {
+		return err
+	}
+	if linked != nil {
+		s.recordMessageLeadTimeline(ctx, organizationID, linked.LeadID, "E-mail ontkoppeld vanuit inbox", imapLinkSummary("ontkoppeld", message.Subject, message.FromAddress), map[string]any{
+			"source":      "email_inbox",
+			"action":      "unlinked",
+			"accountId":   accountID.String(),
+			"messageUid":  uid,
+			"subject":     message.Subject,
+			"fromAddress": valueOrEmpty(message.FromAddress),
+		})
+	}
+	return nil
+}
+
+func (s *Service) CreateLeadFromMessage(ctx context.Context, userID, accountID uuid.UUID, uid int64, req leadstransport.CreateLeadRequest) (*LeadInboxSummary, error) {
+	if s.leadActions == nil {
+		return nil, apperr.Internal("lead actions are not configured")
+	}
+	organizationID, err := s.identityRepo.GetUserOrganizationID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	message, err := s.repo.GetMessageByUIDByUser(ctx, userID, accountID, uid)
+	if err != nil {
+		return nil, err
+	}
+	linked, err := s.repo.GetMessageLeadLinkByUser(ctx, userID, accountID, uid)
+	if err != nil {
+		return nil, err
+	}
+	if linked != nil {
+		return nil, apperr.Validation("e-mail is al gekoppeld aan een lead")
+	}
+
+	req.Email = valueOrEmpty(message.FromAddress)
+	req.Source = normalizeInboxLeadSource(req.Source, "email_inbox")
+	lead, err := s.leadActions.Create(ctx, req, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpsertMessageLeadLink(ctx, organizationID, userID, accountID, lead.ID, uid); err != nil {
+		return nil, err
+	}
+	s.recordMessageLeadTimeline(ctx, organizationID, lead.ID, "Lead aangemaakt vanuit e-mail inbox", imapLinkSummary("aangemaakt", message.Subject, message.FromAddress), map[string]any{
+		"source":      "email_inbox",
+		"action":      "created_and_linked",
+		"accountId":   accountID.String(),
+		"messageUid":  uid,
+		"subject":     message.Subject,
+		"fromAddress": valueOrEmpty(message.FromAddress),
+	})
+	return s.getLeadSummaryByID(ctx, organizationID, lead.ID)
+}
+
+func (s *Service) getLeadSummaryByID(ctx context.Context, organizationID, leadID uuid.UUID) (*LeadInboxSummary, error) {
+	if s.leadsRepo == nil {
+		return nil, nil
+	}
+	lead, err := s.leadsRepo.GetByID(ctx, leadID, organizationID)
+	if err != nil {
+		if errors.Is(err, leadsrepo.ErrNotFound) {
+			return nil, apperr.NotFound("lead not found")
+		}
+		return nil, err
+	}
+	return &LeadInboxSummary{
+		ID:       lead.ID,
+		FullName: strings.TrimSpace(lead.ConsumerFirstName + " " + lead.ConsumerLastName),
+		Phone:    lead.ConsumerPhone,
+		Email:    lead.ConsumerEmail,
+		City:     lead.AddressCity,
+	}, nil
+}
+
+func toLeadInboxSummaryResponse(summary *LeadInboxSummary) *transport.LeadInboxSummaryResponse {
+	if summary == nil {
+		return nil
+	}
+	return &transport.LeadInboxSummaryResponse{
+		ID:       summary.ID.String(),
+		FullName: summary.FullName,
+		Phone:    summary.Phone,
+		Email:    summary.Email,
+		City:     summary.City,
+	}
+}
+
+func (s *Service) recordMessageLeadTimeline(ctx context.Context, organizationID, leadID uuid.UUID, title string, summary string, metadata map[string]any) {
+	if s.leadActions == nil {
+		return
+	}
+	_, _ = s.leadActions.CreateTimelineEvent(ctx, leadsrepo.CreateTimelineEventParams{
+		LeadID:         leadID,
+		ServiceID:      s.currentLeadServiceID(ctx, leadID, organizationID),
+		OrganizationID: organizationID,
+		ActorType:      leadsrepo.ActorTypeSystem,
+		ActorName:      "E-mail inbox",
+		EventType:      leadsrepo.EventTypeLeadUpdate,
+		Title:          title,
+		Summary:        leadTimelineSummary(summary),
+		Metadata:       metadata,
+	})
+}
+
+func (s *Service) currentLeadServiceID(ctx context.Context, leadID, organizationID uuid.UUID) *uuid.UUID {
+	if s.leadsRepo == nil {
+		return nil
+	}
+	service, err := s.leadsRepo.GetCurrentLeadService(ctx, leadID, organizationID)
+	if err != nil {
+		return nil
+	}
+	serviceID := service.ID
+	return &serviceID
+}
+
+func imapLinkSummary(action string, subject string, fromAddress *string) string {
+	label := strings.TrimSpace(subject)
+	if label == "" {
+		label = strings.TrimSpace(valueOrEmpty(fromAddress))
+	}
+	if label == "" {
+		return "E-mail-inboxrelatie bijgewerkt"
+	}
+	return fmt.Sprintf("E-mail '%s' %s via de inbox", label, action)
+}
+
+func normalizeInboxLeadSource(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	return trimmed
+}
+
+func leadTimelineSummary(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) > leadsrepo.TimelineSummaryMaxLen {
+		trimmed = strings.TrimSpace(trimmed[:leadsrepo.TimelineSummaryMaxLen])
+	}
+	return &trimmed
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func (s *Service) SendMessage(ctx context.Context, userID, accountID uuid.UUID, req transport.SendMessageRequest) error {
@@ -424,6 +717,7 @@ func (s *Service) ReplyMessage(ctx context.Context, userID, accountID uuid.UUID,
 	}); err != nil {
 		return err
 	}
+	s.captureEmailReplyFeedback(ctx, userID, account, uid, includeAll, content, req)
 	return s.markAnswered(ctx, account, uid)
 }
 

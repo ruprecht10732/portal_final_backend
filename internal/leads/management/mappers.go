@@ -160,6 +160,32 @@ func ToLeadServiceResponse(svc repository.LeadService) transport.LeadServiceResp
 	return resp
 }
 
+func ToLinkedWhatsAppConversationResponse(item repository.LinkedWhatsAppConversation) transport.LinkedWhatsAppConversationResponse {
+	return transport.LinkedWhatsAppConversationResponse{
+		ConversationID:        item.ConversationID,
+		PhoneNumber:           item.PhoneNumber,
+		DisplayName:           item.DisplayName,
+		LastMessagePreview:    item.LastMessagePreview,
+		LastMessageAt:         item.LastMessageAt,
+		LastMessageDirection:  item.LastMessageDirection,
+		LastMessageStatus:     item.LastMessageStatus,
+		RelationshipUpdatedAt: item.RelationshipUpdatedAt,
+	}
+}
+
+func ToLinkedIMAPMessageResponse(item repository.LinkedIMAPMessage) transport.LinkedIMAPMessageResponse {
+	return transport.LinkedIMAPMessageResponse{
+		AccountID:             item.AccountID,
+		MessageUID:            item.MessageUID,
+		Subject:               item.Subject,
+		FromName:              item.FromName,
+		FromAddress:           item.FromAddress,
+		SentAt:                item.SentAt,
+		ReceivedAt:            item.ReceivedAt,
+		RelationshipUpdatedAt: item.RelationshipUpdatedAt,
+	}
+}
+
 func leadPreferencesFromService(svc repository.LeadService) *transport.LeadPreferencesResponse {
 	if len(svc.CustomerPreferences) == 0 {
 		return nil

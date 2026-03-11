@@ -10,17 +10,21 @@ import (
 )
 
 type WhatsAppConversationResponse struct {
-	ID                   string  `json:"id"`
-	LeadID               *string `json:"leadId,omitempty"`
-	PhoneNumber          string  `json:"phoneNumber"`
-	DisplayName          string  `json:"displayName"`
-	LastMessagePreview   string  `json:"lastMessagePreview"`
-	LastMessageAt        string  `json:"lastMessageAt"`
-	LastMessageDirection string  `json:"lastMessageDirection"`
-	LastMessageStatus    string  `json:"lastMessageStatus"`
-	UnreadCount          int     `json:"unreadCount"`
-	CreatedAt            string  `json:"createdAt"`
-	UpdatedAt            string  `json:"updatedAt"`
+	ID                   string                    `json:"id"`
+	LeadID               *string                   `json:"leadId,omitempty"`
+	LinkedLead           *LeadInboxSummaryResponse `json:"linkedLead,omitempty"`
+	SuggestedLead        *LeadInboxSummaryResponse `json:"suggestedLead,omitempty"`
+	PhoneNumber          string                    `json:"phoneNumber"`
+	DisplayName          string                    `json:"displayName"`
+	LastMessagePreview   string                    `json:"lastMessagePreview"`
+	LastMessageAt        string                    `json:"lastMessageAt"`
+	LastMessageDirection string                    `json:"lastMessageDirection"`
+	LastMessageStatus    string                    `json:"lastMessageStatus"`
+	UnreadCount          int                       `json:"unreadCount"`
+	ArchivedAt           *string                   `json:"archivedAt,omitempty"`
+	DeletedAt            *string                   `json:"deletedAt,omitempty"`
+	CreatedAt            string                    `json:"createdAt"`
+	UpdatedAt            string                    `json:"updatedAt"`
 }
 
 type WhatsAppMessageResponse struct {
@@ -37,6 +41,14 @@ type WhatsAppMessageResponse struct {
 	ReadAt            *string         `json:"readAt,omitempty"`
 	FailedAt          *string         `json:"failedAt,omitempty"`
 	CreatedAt         string          `json:"createdAt"`
+}
+
+type LeadInboxSummaryResponse struct {
+	ID       string  `json:"id"`
+	FullName string  `json:"fullName"`
+	Phone    string  `json:"phone"`
+	Email    *string `json:"email,omitempty"`
+	City     string  `json:"city,omitempty"`
 }
 
 type ListWhatsAppConversationsResponse struct {
@@ -95,8 +107,21 @@ type ToggleWhatsAppConversationStateRequest struct {
 	Value bool `json:"value"`
 }
 
+type LinkWhatsAppConversationLeadRequest struct {
+	LeadID string `json:"leadId" validate:"required,uuid4"`
+}
+
 type ToggleWhatsAppMessageStateRequest struct {
 	Value bool `json:"value"`
+}
+
+type AttachWhatsAppMessageToLeadRequest struct {
+	ServiceID string `json:"serviceId" validate:"omitempty,uuid4"`
+}
+
+type SaveWhatsAppMessagesToLeadRequest struct {
+	MessageIDs []string `json:"messageIds" validate:"required,min=1,dive,required"`
+	ServiceID  string   `json:"serviceId" validate:"omitempty,uuid4"`
 }
 
 type SetWhatsAppDisappearingTimerRequest struct {
@@ -133,17 +158,39 @@ type SendWhatsAppChatPresenceResponse struct {
 }
 
 type WhatsAppMediaDownloadResponse struct {
-	Status     string `json:"status"`
-	MessageID  string `json:"messageId"`
-	MediaType  string `json:"mediaType"`
-	Filename   string `json:"filename"`
-	FilePath   string `json:"filePath"`
-	FileSize   int64  `json:"fileSize"`
+	Status      string `json:"status"`
+	MessageID   string `json:"messageId"`
+	MediaType   string `json:"mediaType"`
+	Filename    string `json:"filename"`
+	FilePath    string `json:"filePath"`
+	FileSize    int64  `json:"fileSize"`
 	DownloadURL string `json:"downloadUrl,omitempty"`
+}
+
+type AttachWhatsAppMessageToLeadResponse struct {
+	Status              string `json:"status"`
+	AttachmentID        string `json:"attachmentId"`
+	LeadID              string `json:"leadId"`
+	ServiceID           string `json:"serviceId"`
+	PhotoAnalysisQueued bool   `json:"photoAnalysisQueued"`
+}
+
+type SaveWhatsAppMessagesToLeadResponse struct {
+	Status         string  `json:"status"`
+	NoteID         string  `json:"noteId"`
+	LeadID         string  `json:"leadId"`
+	ServiceID      *string `json:"serviceId,omitempty"`
+	SavedCount     int     `json:"savedCount"`
+	ConversationID string  `json:"conversationId"`
 }
 
 type WhatsAppUnreadConversationCountResponse struct {
 	Count int `json:"count"`
+}
+
+type WhatsAppConversationLeadResponse struct {
+	Status       string                       `json:"status"`
+	Conversation WhatsAppConversationResponse `json:"conversation"`
 }
 
 func ToWhatsAppConversationResponse(item repository.WhatsAppConversation) WhatsAppConversationResponse {
@@ -157,9 +204,17 @@ func ToWhatsAppConversationResponse(item repository.WhatsAppConversation) WhatsA
 		LastMessageDirection: item.LastMessageDirection,
 		LastMessageStatus:    item.LastMessageStatus,
 		UnreadCount:          item.UnreadCount,
+		ArchivedAt:           optionalTimeString(item.ArchivedAt),
+		DeletedAt:            optionalTimeString(item.DeletedAt),
 		CreatedAt:            item.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:            item.UpdatedAt.Format(time.RFC3339),
 	}
+}
+
+func WithWhatsAppConversationLeadState(item WhatsAppConversationResponse, linkedLead, suggestedLead *LeadInboxSummaryResponse) WhatsAppConversationResponse {
+	item.LinkedLead = linkedLead
+	item.SuggestedLead = suggestedLead
+	return item
 }
 
 func ToWhatsAppMessageResponse(item repository.WhatsAppMessage) WhatsAppMessageResponse {

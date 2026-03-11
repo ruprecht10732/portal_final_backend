@@ -56,6 +56,7 @@ type Module struct {
 	quoteGenerator        agent.QuoteGenerator
 	offerSummaryGenerator *agent.OfferSummaryGenerator
 	whatsAppReplyAgent    *agent.WhatsAppReplyAgent
+	emailReplyAgent       *agent.EmailReplyAgent
 	sse                   *sse.Service
 	eventBus              events.Bus
 	repo                  repository.LeadsRepository
@@ -108,6 +109,9 @@ func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISett
 	if m.whatsAppReplyAgent != nil {
 		m.whatsAppReplyAgent.SetOrganizationAISettingsReader(reader)
 	}
+	if m.emailReplyAgent != nil {
+		m.emailReplyAgent.SetOrganizationAISettingsReader(reader)
+	}
 	if m.photoAnalysisHandler != nil {
 		m.photoAnalysisHandler.SetOrganizationAISettingsReader(reader)
 	}
@@ -130,7 +134,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
-	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader)
+	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, emailReplyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +207,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		quoteGenerator:        quoteGenerator,
 		offerSummaryGenerator: offerSummaryGenerator,
 		whatsAppReplyAgent:    whatsAppReplyAgent,
+		emailReplyAgent:       emailReplyAgent,
 		sse:                   sseService,
 		eventBus:              eventBus,
 		repo:                  repo,
@@ -222,26 +227,26 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	return module, nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.WhatsAppReplyAgent, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
 	_ = storageSvc
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentPhotoAnalyzer), repo)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentCallLogger), repo, nil, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentGatekeeper), repo, eventBus, scorer)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	auditor, err := agent.NewAuditor(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentAuditor), repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	// Create embedding and qdrant clients if configured
@@ -293,12 +298,12 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogReader:        catalogReader,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentDispatcher), repo, eventBus)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
@@ -313,20 +318,34 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogReader:        catalogReader,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentOfferSummaryGenerator))
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
+	whatsAppReplyAgent, emailReplyAgent, err := buildReplyAgents(cfg, repo)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+	}
+
+	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, emailReplyAgent, nil
+}
+
+func buildReplyAgents(cfg *config.Config, repo repository.LeadsRepository) (*agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
 	whatsAppReplyAgent, err := agent.NewWhatsAppReplyAgent(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppReply), repo)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, nil
+	emailReplyAgent, err := agent.NewEmailReplyAgent(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppReply), repo)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return whatsAppReplyAgent, emailReplyAgent, nil
 }
 
 // OfferSummaryGenerator exposes the AI summary generator for partner offers.
@@ -336,6 +355,10 @@ func (m *Module) OfferSummaryGenerator() ports.OfferSummaryGenerator {
 
 func (m *Module) WhatsAppReplyGenerator() ports.WhatsAppReplyGenerator {
 	return m.whatsAppReplyAgent
+}
+
+func (m *Module) EmailReplyGenerator() ports.EmailReplyGenerator {
+	return m.emailReplyAgent
 }
 
 func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, module *Module, log *logger.Logger) {
