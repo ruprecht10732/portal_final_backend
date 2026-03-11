@@ -443,6 +443,9 @@ Service context
 Reply style
 - Tone of voice: %s
 
+Current date and time
+%s
+
 Requesting colleague
 %s
 
@@ -499,6 +502,7 @@ Task
 		formatEmailReplyConsumerNote(replyContext.service),
 		formatEmailReplyCustomerPreferences(replyContext.service),
 		sanitizePromptField(toneOfVoice, 200),
+		formatCurrentDateTimeBlock(),
 		formatRequesterBlock(replyContext.requester),
 		formatQuoteOverviewBlock(replyContext.acceptedQuote),
 		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),

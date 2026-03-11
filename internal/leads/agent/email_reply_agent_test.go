@@ -51,6 +51,8 @@ func TestBuildEmailReplyPromptIncludesOverviewContext(t *testing.T) {
 
 	checks := []string{
 		"Requesting colleague",
+		"Current date and time",
+		"Gebruik dit om te bepalen of afspraken, deadlines en gebeurtenissen in het verleden of de toekomst liggen.",
 		"Naam: Robin Bos",
 		"Accepted quote overview",
 		"Offertenummer: OFF-2026-0001",

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -320,6 +321,9 @@ Service context
 Reply style
 - Tone of voice: %s
 
+Current date and time
+%s
+
 Requesting colleague
 %s
 
@@ -373,6 +377,7 @@ Task
 		optionalPromptString(replyContext.service.ConsumerNote, 800),
 		formatJSONBlock(replyContext.service.CustomerPreferences),
 		sanitizePromptField(toneOfVoice, 200),
+		formatCurrentDateTimeBlock(),
 		formatRequesterBlock(replyContext.requester),
 		formatQuoteOverviewBlock(replyContext.acceptedQuote),
 		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),
@@ -590,6 +595,15 @@ func formatRequesterBlock(requester *ports.ReplyUserProfile) string {
 		return valueNotProvided
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatCurrentDateTimeBlock() string {
+	now := time.Now()
+	return strings.Join([]string{
+		"- Nu: " + now.Format(time.RFC3339),
+		"- Tijdzone: " + now.Format("MST"),
+		"- Gebruik dit om te bepalen of afspraken, deadlines en gebeurtenissen in het verleden of de toekomst liggen.",
+	}, "\n")
 }
 
 func formatQuoteOverviewBlock(quote *ports.PublicQuoteSummary) string {
