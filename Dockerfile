@@ -22,6 +22,8 @@ WORKDIR /app
 COPY --from=builder /app/bin/server /app/server
 COPY --from=builder /app/bin/scheduler /app/scheduler
 COPY --from=builder /app/migrations /app/migrations
+COPY --from=builder /app/AGENTS.md /app/AGENTS.md
+COPY --from=builder /app/agents /app/agents
 COPY start.sh /app/start.sh
 
 RUN chmod +x /app/start.sh
@@ -31,6 +33,7 @@ RUN chmod +x /app/healthcheck.sh
 
 ENV HTTP_ADDR=:8080
 ENV SERVICE_ROLE=api
+ENV AGENT_WORKSPACE_ROOT=/app
 EXPOSE 8080
 
 USER app
