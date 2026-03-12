@@ -131,9 +131,9 @@ type whatsAppDeletedPayload struct {
 
 const (
 	whatsAppInvalidMessagePayload = "invalid message payload"
-	whatsAppDeletedPlaceholder = "[Bericht verwijderd]"
-	whatsAppPollPrefix         = "[Poll] "
-	whatsAppRevokedPlaceholder = "[Bericht verwijderd voor iedereen]"
+	whatsAppDeletedPlaceholder    = "[Bericht verwijderd]"
+	whatsAppPollPrefix            = "[Poll] "
+	whatsAppRevokedPlaceholder    = "[Bericht verwijderd voor iedereen]"
 )
 
 type WhatsAppWebhookResponse struct {
