@@ -44,7 +44,7 @@ type SuggestWhatsAppReplyFeedback struct {
 type SuggestWhatsAppReplyInput struct {
 	OrganizationID  uuid.UUID
 	RequesterUserID uuid.UUID
-	LeadID          uuid.UUID
+	LeadID          *uuid.UUID
 	ConversationID  uuid.UUID
 	Scenario        string
 	ScenarioNotes   string

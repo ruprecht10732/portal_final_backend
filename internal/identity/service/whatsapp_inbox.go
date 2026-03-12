@@ -366,14 +366,11 @@ func (s *Service) SuggestWhatsAppReply(ctx context.Context, requesterUserID, org
 	if err != nil {
 		return WhatsAppReplySuggestionResult{}, err
 	}
-	if conversation.LeadID == nil {
-		return WhatsAppReplySuggestionResult{}, apperr.Validation("suggest reply is alleen beschikbaar voor gesprekken met een gekoppelde lead")
-	}
 
 	input := SuggestWhatsAppReplyInput{
 		OrganizationID:  organizationID,
 		RequesterUserID: requesterUserID,
-		LeadID:          *conversation.LeadID,
+		LeadID:          conversation.LeadID,
 		ConversationID:  conversation.ID,
 		Scenario:        scenario,
 		ScenarioNotes:   strings.TrimSpace(scenarioNotes),

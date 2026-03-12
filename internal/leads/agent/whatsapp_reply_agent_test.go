@@ -10,6 +10,30 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestBuildWhatsAppReplyPromptWithoutLeadOrServiceContext(t *testing.T) {
+	prompt := buildWhatsAppReplyPrompt(ports.WhatsAppReplyInput{
+		PhoneNumber: "+31612345678",
+		DisplayName: "Robin",
+		Messages: []ports.WhatsAppReplyMessage{{
+			Direction: "inbound",
+			Body:      "Kunnen jullie volgende week langskomen?",
+		}},
+	}, whatsAppReplyContext{}, "Behulpzaam en direct")
+
+	for _, expected := range []string{
+		"Lead ID: Niet opgegeven",
+		"Service ID: Niet opgegeven",
+		"WhatsApp display name: Robin",
+		"Geen gekoppelde leadcontext beschikbaar",
+		"Geen actieve dienstcontext beschikbaar",
+		"Kunnen jullie volgende week langskomen?",
+	} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("expected prompt to contain %q, got %s", expected, prompt)
+		}
+	}
+}
+
 func TestWhatsAppReplySystemPromptUsesConfiguredTone(t *testing.T) {
 	tone := "calm, precise, and reassuring"
 	prompt := whatsappReplySystemPrompt(tone)
@@ -32,8 +56,9 @@ func TestWhatsAppReplySystemPromptFallsBackToDefaultTone(t *testing.T) {
 }
 
 func TestBuildWhatsAppReplyPromptIncludesSelectedScenario(t *testing.T) {
+	leadID := uuid.New()
 	prompt := buildWhatsAppReplyPrompt(ports.WhatsAppReplyInput{
-		LeadID:         uuid.New(),
+		LeadID:         &leadID,
 		ConversationID: uuid.New(),
 		Scenario:       ports.ReplySuggestionScenarioAppointmentReminder,
 		ScenarioNotes:  "Noem de geplande tijd nogmaals.",

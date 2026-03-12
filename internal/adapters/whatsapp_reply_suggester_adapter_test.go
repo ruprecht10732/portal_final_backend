@@ -34,7 +34,7 @@ func TestWhatsAppReplySuggesterAdapterMapsInput(t *testing.T) {
 	result, err := adapter.SuggestReply(context.Background(), identitysvc.SuggestWhatsAppReplyInput{
 		OrganizationID:  organizationID,
 		RequesterUserID: requesterUserID,
-		LeadID:          leadID,
+		LeadID:          &leadID,
 		ConversationID:  conversationID,
 		Scenario:        "appointment_reminder",
 		ScenarioNotes:   "Noem ook dat de klant ons kan appen bij vragen.",
@@ -65,31 +65,37 @@ func TestWhatsAppReplySuggesterAdapterMapsInput(t *testing.T) {
 	if result.EffectiveScenario != ports.ReplySuggestionScenarioAppointmentReminder {
 		t.Fatalf("expected effective scenario to be preserved, got %+v", result)
 	}
-	if generator.lastInput.OrganizationID != organizationID {
+	assertMappedWhatsAppReplyInput(t, generator.lastInput, organizationID, requesterUserID, leadID, conversationID)
+}
+
+func assertMappedWhatsAppReplyInput(t *testing.T, input ports.WhatsAppReplyInput, organizationID, requesterUserID, leadID, conversationID uuid.UUID) {
+	t.Helper()
+
+	if input.OrganizationID != organizationID {
 		t.Fatalf("expected organization id to be mapped")
 	}
-	if generator.lastInput.RequesterUserID != requesterUserID {
+	if input.RequesterUserID != requesterUserID {
 		t.Fatalf("expected requester user id to be mapped")
 	}
-	if generator.lastInput.LeadID != leadID {
+	if input.LeadID == nil || *input.LeadID != leadID {
 		t.Fatalf("expected lead id to be mapped")
 	}
-	if generator.lastInput.ConversationID != conversationID {
+	if input.ConversationID != conversationID {
 		t.Fatalf("expected conversation id to be mapped")
 	}
-	if generator.lastInput.Scenario != ports.ReplySuggestionScenarioAppointmentReminder {
-		t.Fatalf("expected scenario to be normalized, got %q", generator.lastInput.Scenario)
+	if input.Scenario != ports.ReplySuggestionScenarioAppointmentReminder {
+		t.Fatalf("expected scenario to be normalized, got %q", input.Scenario)
 	}
-	if generator.lastInput.ScenarioNotes != "Noem ook dat de klant ons kan appen bij vragen." {
-		t.Fatalf("expected scenario notes to be mapped, got %q", generator.lastInput.ScenarioNotes)
+	if input.ScenarioNotes != "Noem ook dat de klant ons kan appen bij vragen." {
+		t.Fatalf("expected scenario notes to be mapped, got %q", input.ScenarioNotes)
 	}
-	if len(generator.lastInput.Messages) != 1 || generator.lastInput.Messages[0].Body != "Kunnen jullie morgen bellen?" {
-		t.Fatalf("expected messages to be mapped, got %+v", generator.lastInput.Messages)
+	if len(input.Messages) != 1 || input.Messages[0].Body != "Kunnen jullie morgen bellen?" {
+		t.Fatalf("expected messages to be mapped, got %+v", input.Messages)
 	}
-	if len(generator.lastInput.Examples) != 1 || generator.lastInput.Examples[0].Reply != "Antwoord" {
-		t.Fatalf("expected examples to be mapped, got %+v", generator.lastInput.Examples)
+	if len(input.Examples) != 1 || input.Examples[0].Reply != "Antwoord" {
+		t.Fatalf("expected examples to be mapped, got %+v", input.Examples)
 	}
-	if len(generator.lastInput.Feedback) != 1 || generator.lastInput.Feedback[0].HumanReply != "Mens tekst" {
-		t.Fatalf("expected feedback to be mapped, got %+v", generator.lastInput.Feedback)
+	if len(input.Feedback) != 1 || input.Feedback[0].HumanReply != "Mens tekst" {
+		t.Fatalf("expected feedback to be mapped, got %+v", input.Feedback)
 	}
 }

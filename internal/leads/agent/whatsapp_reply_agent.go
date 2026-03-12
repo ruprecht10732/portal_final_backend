@@ -43,8 +43,8 @@ type WhatsAppReplyAgent struct {
 }
 
 type whatsAppReplyContext struct {
-	lead           repository.Lead
-	service        repository.LeadService
+	lead           *repository.Lead
+	service        *repository.LeadService
 	notes          []repository.LeadNote
 	recentTimeline []repository.TimelineEvent
 	analysis       *repository.AIAnalysis
@@ -97,7 +97,10 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 
 	promptText := buildWhatsAppReplyPrompt(resolvedInput, replyContext, settings.WhatsAppToneOfVoice)
 	sessionID := input.ConversationID.String()
-	userID := "whatsapp-reply-" + input.LeadID.String()
+	userID := "whatsapp-reply-conversation-" + input.ConversationID.String()
+	if input.LeadID != nil && *input.LeadID != uuid.Nil {
+		userID = "whatsapp-reply-" + input.LeadID.String()
+	}
 
 	_, err = sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   a.appName,
@@ -191,21 +194,47 @@ func (a *WhatsAppReplyAgent) loadOrganizationAISettings(ctx context.Context, org
 }
 
 func (a *WhatsAppReplyAgent) loadReplyContext(ctx context.Context, input ports.WhatsAppReplyInput) (whatsAppReplyContext, error) {
-	lead, err := a.repo.GetByID(ctx, input.LeadID, input.OrganizationID)
+	replyContext, err := a.loadLeadLinkedReplyContext(ctx, input)
+	if err != nil {
+		return whatsAppReplyContext{}, err
+	}
+
+	requester, err := a.loadRequester(ctx, input.RequesterUserID)
+	if err != nil {
+		return whatsAppReplyContext{}, err
+	}
+	replyContext.requester = requester
+	if replyContext.lead != nil {
+		var serviceID *uuid.UUID
+		if replyContext.service != nil {
+			serviceID = &replyContext.service.ID
+		}
+		replyContext.recentTimeline, err = loadRecentTimelineEvents(ctx, a.repo, replyContext.lead.ID, serviceID, input.OrganizationID)
+		if err != nil {
+			return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load timeline: %w", err)
+		}
+	}
+
+	return replyContext, nil
+}
+
+func (a *WhatsAppReplyAgent) loadLeadLinkedReplyContext(ctx context.Context, input ports.WhatsAppReplyInput) (whatsAppReplyContext, error) {
+	if input.LeadID == nil || *input.LeadID == uuid.Nil {
+		return whatsAppReplyContext{}, nil
+	}
+
+	lead, err := a.repo.GetByID(ctx, *input.LeadID, input.OrganizationID)
 	if err != nil {
 		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load lead: %w", err)
 	}
-
-	service, err := a.repo.GetCurrentLeadService(ctx, input.LeadID, input.OrganizationID)
+	service, err := a.repo.GetCurrentLeadService(ctx, *input.LeadID, input.OrganizationID)
 	if err != nil {
 		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load current lead service: %w", err)
 	}
-
-	notes, err := a.repo.ListNotesByService(ctx, input.LeadID, service.ID, input.OrganizationID)
+	notes, err := a.repo.ListNotesByService(ctx, *input.LeadID, service.ID, input.OrganizationID)
 	if err != nil {
 		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load notes: %w", err)
 	}
-
 	analysis, err := a.loadLatestAIAnalysis(ctx, service.ID, input.OrganizationID)
 	if err != nil {
 		return whatsAppReplyContext{}, err
@@ -229,27 +258,17 @@ func (a *WhatsAppReplyAgent) loadReplyContext(ctx context.Context, input ports.W
 	if err := attachAppointmentAssigneeNames(ctx, a.userReader, upcomingVisit, pendingVisit); err != nil {
 		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: enrich appointment assignee: %w", err)
 	}
-	requester, err := a.loadRequester(ctx, input.RequesterUserID)
-	if err != nil {
-		return whatsAppReplyContext{}, err
-	}
-	recentTimeline, err := loadRecentTimelineEvents(ctx, a.repo, lead.ID, &service.ID, input.OrganizationID)
-	if err != nil {
-		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load timeline: %w", err)
-	}
 
 	return whatsAppReplyContext{
-		lead:           lead,
-		service:        service,
-		notes:          notes,
-		recentTimeline: recentTimeline,
-		analysis:       analysis,
-		visitReport:    visitReport,
-		photoAnalysis:  photoAnalysis,
-		acceptedQuote:  acceptedQuote,
-		upcomingVisit:  upcomingVisit,
-		pendingVisit:   pendingVisit,
-		requester:      requester,
+		lead:          &lead,
+		service:       &service,
+		notes:         notes,
+		analysis:      analysis,
+		visitReport:   visitReport,
+		photoAnalysis: photoAnalysis,
+		acceptedQuote: acceptedQuote,
+		upcomingVisit: upcomingVisit,
+		pendingVisit:  pendingVisit,
 	}, nil
 }
 
@@ -415,17 +434,17 @@ Task
 - Do not invent prices, promises, or technical facts that are not in the context.
 - Output only the reply text.
 `,
-		replyContext.lead.ID,
-		buildLeadName(replyContext.lead),
-		buildLeadAddress(replyContext.lead),
-		buildLeadHousingContext(replyContext.lead),
+		formatWhatsAppReplyLeadID(replyContext.lead),
+		formatWhatsAppReplyLeadName(replyContext.lead),
+		formatWhatsAppReplyLeadAddress(replyContext.lead),
+		formatWhatsAppReplyHousingContext(replyContext.lead),
 		sanitizePromptField(input.DisplayName, 120),
-		replyContext.service.ID,
-		sanitizePromptField(replyContext.service.ServiceType, 120),
-		sanitizePromptField(replyContext.service.Status, 80),
-		sanitizePromptField(replyContext.service.PipelineStage, 80),
-		optionalPromptString(replyContext.service.ConsumerNote, 800),
-		formatJSONBlock(replyContext.service.CustomerPreferences),
+		formatWhatsAppReplyServiceID(replyContext.service),
+		formatWhatsAppReplyServiceType(replyContext.service),
+		formatWhatsAppReplyServiceStatus(replyContext.service),
+		formatWhatsAppReplyServicePipelineStage(replyContext.service),
+		formatWhatsAppReplyConsumerNote(replyContext.service),
+		formatWhatsAppReplyCustomerPreferences(replyContext.service),
 		sanitizePromptField(toneOfVoice, 200),
 		formatCurrentDateTimeBlock(),
 		formatReplyScenarioBlock(input.Scenario, input.ScenarioNotes),
@@ -434,7 +453,7 @@ Task
 		formatRequesterBlock(replyContext.requester),
 		formatQuoteOverviewBlock(replyContext.acceptedQuote),
 		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),
-		formatUnknownsBlock(&replyContext.service, replyContext.analysis, replyContext.acceptedQuote, replyContext.upcomingVisit, replyContext.pendingVisit, true),
+		formatUnknownsBlock(replyContext.service, replyContext.analysis, replyContext.acceptedQuote, replyContext.upcomingVisit, replyContext.pendingVisit, replyContext.lead != nil),
 		formatTimelineBlock(replyContext.recentTimeline),
 		formatAIAnalysisBlock(replyContext.analysis),
 		formatVisitReportBlock(replyContext.visitReport),
@@ -492,6 +511,76 @@ func buildLeadName(lead repository.Lead) string {
 		return valueNotProvided
 	}
 	return sanitizePromptField(name, 120)
+}
+
+func formatWhatsAppReplyLeadID(lead *repository.Lead) string {
+	if lead == nil || lead.ID == uuid.Nil {
+		return valueNotProvided
+	}
+	return lead.ID.String()
+}
+
+func formatWhatsAppReplyLeadName(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadName(*lead)
+}
+
+func formatWhatsAppReplyLeadAddress(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadAddress(*lead)
+}
+
+func formatWhatsAppReplyHousingContext(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadHousingContext(*lead)
+}
+
+func formatWhatsAppReplyServiceID(service *repository.LeadService) string {
+	if service == nil || service.ID == uuid.Nil {
+		return valueNotProvided
+	}
+	return service.ID.String()
+}
+
+func formatWhatsAppReplyServiceType(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.ServiceType, 120)
+}
+
+func formatWhatsAppReplyServiceStatus(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.Status, 80)
+}
+
+func formatWhatsAppReplyServicePipelineStage(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.PipelineStage, 80)
+}
+
+func formatWhatsAppReplyConsumerNote(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return optionalPromptString(service.ConsumerNote, 800)
+}
+
+func formatWhatsAppReplyCustomerPreferences(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return formatJSONBlock(service.CustomerPreferences)
 }
 
 func buildLeadAddress(lead repository.Lead) string {
