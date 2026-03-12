@@ -17,6 +17,9 @@ func TestWhatsAppReplySystemPromptUsesConfiguredTone(t *testing.T) {
 	if !strings.Contains(prompt, tone) {
 		t.Fatalf("expected prompt to include configured tone %q, got %q", tone, prompt)
 	}
+	if !strings.Contains(prompt, "Tenant Tone Addendum") {
+		t.Fatalf("expected whatsapp tone addendum marker in prompt, got %q", prompt)
+	}
 }
 
 func TestWhatsAppReplySystemPromptFallsBackToDefaultTone(t *testing.T) {

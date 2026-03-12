@@ -13,6 +13,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/leads/ports"
+	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/moonshot"
 )
 
@@ -27,12 +28,16 @@ type OfferSummaryGenerator struct {
 // NewOfferSummaryGenerator creates a summary generator agent without tools.
 func NewOfferSummaryGenerator(apiKey string, modelName string) (*OfferSummaryGenerator, error) {
 	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
+	workspace, err := orchestration.LoadAgentWorkspace("offer-summary")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load offer summary workspace context: %w", err)
+	}
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "OfferSummaryGenerator",
 		Model:       kimi,
 		Description: "Generates concise, markdown summaries for partner offers.",
-		Instruction: getOfferSummarySystemPrompt(),
+		Instruction: workspace.Instruction,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create offer summary agent: %w", err)
@@ -90,14 +95,17 @@ func (g *OfferSummaryGenerator) GenerateOfferSummary(ctx context.Context, tenant
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 
 	var outputText strings.Builder
-	if err := consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "offer summary: run failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "offer summary: run failed", func(event *session.Event) {
 		if event.Content == nil {
 			return
 		}
 		for _, part := range event.Content.Parts {
 			outputText.WriteString(part.Text)
 		}
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace("offer-summary", userID, sessionID, toolTrace)
+	if err != nil {
 		return "", err
 	}
 
@@ -149,8 +157,4 @@ Rules:
 	2) One short sentence describing the job.
 	3) Numbered list of up to 3 main items.
 `, strings.TrimSpace(input.ServiceType), scope, urgency, strings.Join(lines, "\n"))
-}
-
-func getOfferSummarySystemPrompt() string {
-	return "You are a concise summary writer for home service work offers. Produce short, accurate markdown summaries without any personal data."
 }

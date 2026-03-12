@@ -19,6 +19,7 @@ import (
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/moonshot"
 	"portal_final_backend/platform/apperr"
 )
@@ -121,14 +122,17 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var outputText strings.Builder
-	if err := consumeRunEvents(r.Run(ctx, userID, sessionID, userMessage, runConfig), "whatsapp reply: run failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(r.Run(ctx, userID, sessionID, userMessage, runConfig), "whatsapp reply: run failed", func(event *session.Event) {
 		if event.Content == nil {
 			return
 		}
 		for _, part := range event.Content.Parts {
 			outputText.WriteString(part.Text)
 		}
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace("whatsapp-reply", userID, sessionID, toolTrace)
+	if err != nil {
 		return ports.ReplySuggestionDraft{}, err
 	}
 
@@ -142,11 +146,15 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 
 func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
 	kimi := moonshot.NewModel(a.modelConfig)
+	instruction, err := orchestration.BuildAgentInstruction("whatsapp-reply", whatsappReplySystemPrompt(toneOfVoice))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load whatsapp reply workspace context: %w", err)
+	}
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "WhatsAppReplyAgent",
 		Model:       kimi,
 		Description: "Suggests a single WhatsApp reply draft grounded in lead and conversation context.",
-		Instruction: whatsappReplySystemPrompt(toneOfVoice),
+		Instruction: instruction,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -442,22 +450,9 @@ func whatsappReplySystemPrompt(toneOfVoice string) string {
 	if strings.TrimSpace(toneOfVoice) == "" {
 		toneOfVoice = ports.DefaultOrganizationAISettings().WhatsAppToneOfVoice
 	}
-	return strings.TrimSpace(fmt.Sprintf(`You write customer-ready WhatsApp replies for a Dutch home-services company.
+	return strings.TrimSpace(fmt.Sprintf(`## Tenant Tone Addendum
 
-Rules:
-- Return exactly one draft reply in Dutch.
-- Keep it concise and customer-ready.
-- Match this tenant tone of voice: %s.
-- Prefer short paragraphs suitable for WhatsApp.
-- Ground the reply in the provided lead, service, and conversation context.
-- Prioritize the latest inbound message and the most recent conversation turns over older notes.
-- If a non-generic reply scenario is provided, follow that scenario unless it directly conflicts with the factual context.
-- Use the provided current date/time and agenda context to reason correctly about past versus future events.
-- If the latest customer message asks a direct question, answer it directly when the context supports it.
-- If details are still needed, ask at most two clear questions and explain briefly why.
-- Never expose internal reasoning, raw analysis data, or uncertainty labels.
-- Never fabricate pricing, availability, measurements, or policy details.
-- Output only the message text, with no title or surrounding quotes.`, sanitizePromptField(toneOfVoice, 200)))
+- Match this tenant tone of voice: %s.`, sanitizePromptField(toneOfVoice, 200)))
 }
 
 func formatWhatsAppFeedbackMemory(items []ports.WhatsAppReplyFeedback) string {

@@ -19,6 +19,7 @@ import (
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/ai/moonshot"
 	"portal_final_backend/platform/qdrant"
@@ -93,7 +94,7 @@ type quoteCriticContext struct {
 type quotingAgentProfile struct {
 	name        string
 	description string
-	instruction string
+	workspace   string
 	appName     string
 	reasoning   bool
 }
@@ -130,6 +131,10 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 		modelConfig = newMoonshotReasoningModelConfig(cfg.APIKey, cfg.Model)
 	}
 	kimi := moonshot.NewModel(modelConfig)
+	workspace, err := orchestration.LoadAgentWorkspace(profile.workspace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load %s workspace context: %w", profile.workspace, err)
+	}
 
 	deps := &ToolDependencies{
 		Repo:                 cfg.Repo,
@@ -148,13 +153,14 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 	if err != nil {
 		return nil, err
 	}
+	toolsets := orchestration.BuildWorkspaceToolsets(workspace, profile.appName+"_tools", tools)
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        profile.name,
 		Model:       kimi,
 		Description: profile.description,
-		Instruction: profile.instruction,
-		Tools:       tools,
+		Instruction: workspace.Instruction,
+		Toolsets:    toolsets,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create %s agent: %w", mode, err)
@@ -192,7 +198,7 @@ func (m quotingAgentMode) profile() quotingAgentProfile {
 		return quotingAgentProfile{
 			name:        "Estimator",
 			description: "Technical estimator that scopes work and suggests price ranges.",
-			instruction: "You are a Technical Estimator. You may reason step-by-step internally, but your final output must contain only the required tool calls.",
+			workspace:   "calculator",
 			appName:     "estimator",
 			reasoning:   true,
 		}
@@ -200,7 +206,7 @@ func (m quotingAgentMode) profile() quotingAgentProfile {
 		return quotingAgentProfile{
 			name:        "QuoteGenerator",
 			description: "Generates draft quotes from a user prompt using catalog search.",
-			instruction: "You are a Quote Generator. You may reason step-by-step internally, but your final output must contain only the required tool calls. Search for products and create draft quotes.",
+			workspace:   "calculator",
 			appName:     "quote-generator",
 			reasoning:   true,
 		}
@@ -1160,12 +1166,21 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 
 	if len(tools) > 0 {
 		kimi := moonshot.NewModel(q.modelConfig)
+		workspace, err := orchestration.LoadAgentWorkspace("calculator")
+		if err != nil {
+			return fmt.Errorf("failed to load calculator workspace context: %w", err)
+		}
+		instruction, err := orchestration.BuildAgentInstruction("calculator", "Follow prompt instructions and return tool calls only.")
+		if err != nil {
+			return fmt.Errorf("failed to load calculator workspace context: %w", err)
+		}
+		toolsets := orchestration.BuildWorkspaceToolsets(workspace, strings.ToLower(agentName)+"_tools", tools)
 		dynamicAgent, err := llmagent.New(llmagent.Config{
 			Name:        agentName,
 			Model:       kimi,
 			Description: description,
-			Instruction: "Follow prompt instructions and return tool calls only.",
-			Tools:       tools,
+			Instruction: instruction,
+			Toolsets:    toolsets,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create dynamic quoting agent: %w", err)
@@ -1207,9 +1222,12 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 	}
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	if err := consumeRunEvents(activeRunner.Run(ctx, userID, sessionID, userMessage, runConfig), "quoting agent run failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(activeRunner.Run(ctx, userID, sessionID, userMessage, runConfig), "quoting agent run failed", func(event *session.Event) {
 		_ = event
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace(strings.ToLower(agentName), userID, sessionID, toolTrace)
+	if err != nil {
 		return err
 	}
 

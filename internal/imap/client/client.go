@@ -95,7 +95,7 @@ func (c *Client) Close() error {
 
 func (c *Client) TestConnectionContext(ctx context.Context) error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf(errClientNotInitialized)
+		return errors.New(errClientNotInitialized)
 	}
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
@@ -119,7 +119,7 @@ func (c *Client) TestConnectionContext(ctx context.Context) error {
 
 func (c *Client) SyncFolderMetadataContext(ctx context.Context, folder string, maxMessages int) ([]MessageMetadata, error) {
 	if c == nil || c.dialer == nil {
-		return nil, fmt.Errorf(errClientNotInitialized)
+		return nil, errors.New(errClientNotInitialized)
 	}
 	return runWithContext(ctx, c.Close, func() ([]MessageMetadata, error) {
 		return c.syncFolderMetadata(folder, maxMessages)
@@ -174,7 +174,7 @@ func (c *Client) syncFolderMetadata(folder string, maxMessages int) ([]MessageMe
 
 func (c *Client) MoveToTrashAndDelete(folder string, uid int64) error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf(errClientNotInitialized)
+		return errors.New(errClientNotInitialized)
 	}
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return err
@@ -193,7 +193,7 @@ func (c *Client) MoveToTrashAndDelete(folder string, uid int64) error {
 
 func (c *Client) SetSeen(folder string, uid int64, seen bool) error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf(errClientNotInitialized)
+		return errors.New(errClientNotInitialized)
 	}
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return err
@@ -204,7 +204,7 @@ func (c *Client) SetSeen(folder string, uid int64, seen bool) error {
 
 func (c *Client) SetAnswered(folder string, uid int64, answered bool) error {
 	if c == nil || c.dialer == nil {
-		return fmt.Errorf(errClientNotInitialized)
+		return errors.New(errClientNotInitialized)
 	}
 	if err := c.dialer.SelectFolder(folder); err != nil {
 		return err
@@ -215,7 +215,7 @@ func (c *Client) SetAnswered(folder string, uid int64, answered bool) error {
 
 func (c *Client) GetMessageContentContext(ctx context.Context, folder string, uid int64) (MessageContent, error) {
 	if c == nil || c.dialer == nil {
-		return MessageContent{}, fmt.Errorf(errClientNotInitialized)
+		return MessageContent{}, errors.New(errClientNotInitialized)
 	}
 
 	email, err := c.fetchEmailWithRetryContext(ctx, folder, uid)
@@ -434,7 +434,7 @@ func isTransientIMAPError(err error) bool {
 		return true
 	}
 	var netErr net.Error
-	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))

@@ -58,6 +58,7 @@ const (
 	staleDraftDuration          = 30 * 24 * time.Hour
 	stageEventDedupWindow       = 5 * time.Second
 	minimumEstimationConfidence = 0.45
+	orchestratorAutomationLog   = "orchestrator: automation decision"
 )
 
 type OrchestratorAgents struct {
@@ -372,7 +373,10 @@ func (o *Orchestrator) recordDispatcherFailure(ctx context.Context, leadID, serv
 // Returns false if the service is in a terminal state.
 func (o *Orchestrator) ShouldRunAgent(service repository.LeadService) bool {
 	if domain.IsTerminal(service.Status, service.PipelineStage) {
-		o.log.Info("orchestrator: skipping agent run for terminal service",
+		o.log.Info(orchestratorAutomationLog,
+			"agent", "any",
+			"decision", "skip",
+			"reason", "terminal_service",
 			"serviceId", service.ID,
 			"status", service.Status,
 			"pipelineStage", service.PipelineStage)
@@ -383,6 +387,7 @@ func (o *Orchestrator) ShouldRunAgent(service repository.LeadService) bool {
 
 // OnDataChange handles human data changes and re-triggers agents when needed.
 func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChanged) {
+	o.log.Info("orchestrator: data change received", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID, "source", evt.Source, "tenantId", evt.TenantID)
 	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.TenantID, evt.EventName(), evt.OccurredAt(), false)
 
 	svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.TenantID)
@@ -404,6 +409,7 @@ func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
 	if o.auditor == nil || !strings.EqualFold(evt.Source, "call_log") {
 		return
 	}
+	o.log.Info(orchestratorAutomationLog, "agent", "auditor", "decision", "evaluate", "reason", "call_log_source", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID)
 	if o.automationQueue == nil {
 		o.log.Error("orchestrator: automation queue not configured for call log audit", "serviceId", evt.LeadServiceID)
 		return
@@ -419,15 +425,16 @@ func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
 
 func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadService, evt events.LeadDataChanged) {
 	if svc.PipelineStage == domain.PipelineStageManualIntervention {
-		o.log.Info("orchestrator: suppressing gatekeeper while manual intervention is active", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID)
+		o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "skip", "reason", "manual_intervention_active", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID)
 		return
 	}
 
 	if !domain.AllowsGatekeeperEvaluation(svc.PipelineStage) {
+		o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "skip", "reason", "stage_not_eligible", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID, "stage", svc.PipelineStage)
 		return
 	}
 	if strings.EqualFold(strings.TrimSpace(evt.Source), "customer_portal_upload") && o.serviceHasImageAttachments(context.Background(), evt.LeadServiceID, evt.TenantID) {
-		o.log.Info("orchestrator: deferring gatekeeper run until photo analysis concludes", "serviceId", evt.LeadServiceID, "source", evt.Source)
+		o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "defer", "reason", "photo_analysis_pending", "serviceId", evt.LeadServiceID, "leadId", evt.LeadID, "source", evt.Source)
 		return
 	}
 
@@ -435,7 +442,7 @@ func (o *Orchestrator) maybeRunGatekeeperForDataChange(svc repository.LeadServic
 		o.log.Error("orchestrator: automation queue not configured for gatekeeper", "serviceId", evt.LeadServiceID)
 		return
 	}
-	o.log.Info("orchestrator: data changed, evaluating gatekeeper trigger", "leadId", evt.LeadID, "stage", svc.PipelineStage, "source", evt.Source)
+	o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "enqueue", "reason", "data_change", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID, "stage", svc.PipelineStage, "source", evt.Source)
 	_ = maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
 		ctx:       context.Background(),
 		repo:      o.repo,
@@ -465,6 +472,7 @@ func (o *Orchestrator) serviceHasImageAttachments(ctx context.Context, serviceID
 // OnPhotoAnalysisCompleted triggers gatekeeper re-evaluation once visual data is available.
 func (o *Orchestrator) OnPhotoAnalysisCompleted(ctx context.Context, evt events.PhotoAnalysisCompleted) {
 	if !o.canRunGatekeeperForPhotoEvent(ctx, evt) {
+		o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "skip", "reason", "photo_event_not_eligible", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
 		return
 	}
 
@@ -472,7 +480,7 @@ func (o *Orchestrator) OnPhotoAnalysisCompleted(ctx context.Context, evt events.
 		o.log.Error("orchestrator: automation queue not configured after photo analysis", "serviceId", evt.LeadServiceID)
 		return
 	}
-	o.log.Info("orchestrator: photo analysis complete, evaluating gatekeeper trigger", "leadId", evt.LeadID, "summary", evt.Summary)
+	o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "enqueue", "reason", "photo_analysis_complete", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID, "summary", evt.Summary)
 	_ = maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
 		ctx:       ctx,
 		repo:      o.repo,
@@ -488,6 +496,7 @@ func (o *Orchestrator) OnPhotoAnalysisCompleted(ctx context.Context, evt events.
 
 // OnPhotoAnalysisFailed records failure context and wakes gatekeeper explicitly when useful.
 func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.PhotoAnalysisFailed) {
+	o.log.Warn("orchestrator: photo analysis failed", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID, "errorCode", evt.ErrorCode)
 	svc, err := o.repo.GetLeadServiceByID(ctx, evt.LeadServiceID, evt.TenantID)
 	if err != nil {
 		o.log.Error("orchestrator: failed to load lead service for photo analysis failure", "error", err)
@@ -520,6 +529,7 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 	})
 
 	if !domain.AllowsGatekeeperEvaluation(svc.PipelineStage) {
+		o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "skip", "reason", "photo_failure_stage_not_eligible", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID, "stage", svc.PipelineStage)
 		return
 	}
 
@@ -527,7 +537,7 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 		o.log.Error("orchestrator: automation queue not configured after photo analysis failure", "serviceId", evt.LeadServiceID)
 		return
 	}
-	o.log.Info("orchestrator: photo analysis failed, evaluating gatekeeper trigger", "leadId", evt.LeadID, "errorCode", evt.ErrorCode)
+	o.log.Info(orchestratorAutomationLog, "agent", "gatekeeper", "decision", "enqueue", "reason", "photo_analysis_failed", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID, "errorCode", evt.ErrorCode)
 	_ = maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
 		ctx:       ctx,
 		repo:      o.repo,
@@ -545,6 +555,7 @@ func (o *Orchestrator) OnPhotoAnalysisFailed(ctx context.Context, evt events.Pho
 func (o *Orchestrator) OnStageChange(ctx context.Context, evt events.PipelineStageChanged) {
 	// Terminal stages never trigger agents
 	if domain.IsTerminalPipelineStage(evt.NewStage) {
+		o.log.Info(orchestratorAutomationLog, "agent", "stage-router", "decision", "skip", "reason", "terminal_stage", "serviceId", evt.LeadServiceID, "newStage", evt.NewStage)
 		return
 	}
 	if o.shouldSkipDuplicateStageEvent(evt) {
@@ -571,11 +582,11 @@ func (o *Orchestrator) handleEstimationStage(evt events.PipelineStageChanged) {
 		return
 	}
 	if !settings.AIAutoEstimate {
-		o.log.Info("orchestrator: auto-estimate disabled; skipping estimator", "tenantId", evt.TenantID, "serviceId", evt.LeadServiceID)
+		o.log.Info(orchestratorAutomationLog, "agent", "calculator", "decision", "skip", "reason", "auto_estimate_disabled", "tenantId", evt.TenantID, "serviceId", evt.LeadServiceID)
 		return
 	}
 
-	o.log.Info("orchestrator: lead ready for estimation", "leadId", evt.LeadID)
+	o.log.Info(orchestratorAutomationLog, "agent", "calculator", "decision", "enqueue", "reason", "stage_estimation", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
 	if o.automationQueue == nil {
 		o.log.Error("orchestrator: automation queue not configured for estimator", "serviceId", evt.LeadServiceID)
 		return
@@ -603,11 +614,11 @@ func (o *Orchestrator) handleFulfillmentStage(evt events.PipelineStageChanged) {
 		return
 	}
 	if !settings.AIAutoDispatch {
-		o.log.Info("orchestrator: auto-dispatch disabled; skipping dispatcher", "tenantId", evt.TenantID, "serviceId", evt.LeadServiceID)
+		o.log.Info(orchestratorAutomationLog, "agent", "matchmaker", "decision", "skip", "reason", "auto_dispatch_disabled", "tenantId", evt.TenantID, "serviceId", evt.LeadServiceID)
 		return
 	}
 
-	o.log.Info("orchestrator: lead ready for dispatch", "leadId", evt.LeadID)
+	o.log.Info(orchestratorAutomationLog, "agent", "matchmaker", "decision", "enqueue", "reason", "stage_fulfillment", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID)
 	if o.automationQueue == nil {
 		o.log.Error("orchestrator: automation queue not configured for dispatcher", "serviceId", evt.LeadServiceID)
 		return
@@ -901,10 +912,6 @@ func (o *Orchestrator) OnPartnerOfferCreated(ctx context.Context, evt events.Par
 // OnPartnerOfferDeleted reconciles pipeline after an offer is removed.
 func (o *Orchestrator) OnPartnerOfferDeleted(ctx context.Context, evt events.PartnerOfferDeleted) {
 	o.reconcileServiceState(ctx, evt.LeadID, evt.LeadServiceID, evt.OrganizationID, evt.EventName(), evt.OccurredAt(), false)
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
 
 func buildManualInterventionDrafts(leadID, serviceID uuid.UUID) map[string]any {

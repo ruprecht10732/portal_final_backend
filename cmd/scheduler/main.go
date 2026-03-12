@@ -47,10 +47,6 @@ func noOpRedisCloser() {
 	// Intentionally empty: used when no Redis client was initialized.
 }
 
-func noOpSchedulerCloser() {
-	// Intentionally empty: used when no scheduler client was initialized.
-}
-
 func ensureBucket(ctx context.Context, log *logger.Logger, storageSvc storage.StorageService, name, bucket string) {
 	if err := withRetry(ctx, log, "ensure "+name+" bucket", 5, 2*time.Second, func() error {
 		return storageSvc.EnsureBucketExists(ctx, bucket)

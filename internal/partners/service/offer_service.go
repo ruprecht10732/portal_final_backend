@@ -342,34 +342,6 @@ func (s *Service) ensureOfferAvailable(ctx context.Context, leadServiceID uuid.U
 	return nil
 }
 
-func (s *Service) resolveBuilderSummary(ctx context.Context, tenantID uuid.UUID, items []repository.QuoteItemSummary, scopeAssessment *string, serviceCtx repository.LeadServiceSummaryContext, leadServiceID uuid.UUID) *string {
-	if s.summaryGenerator != nil && len(items) > 0 {
-		inputItems := make([]OfferSummaryItem, 0, len(items))
-		for _, it := range items {
-			inputItems = append(inputItems, OfferSummaryItem{
-				Description: it.Description,
-				Quantity:    it.Quantity,
-			})
-		}
-		summary, err := s.summaryGenerator.GenerateSummary(ctx, tenantID, OfferSummaryInput{
-			LeadID:        serviceCtx.LeadID,
-			LeadServiceID: leadServiceID,
-			ServiceType:   serviceCtx.ServiceType,
-			Scope:         scopeAssessment,
-			UrgencyLevel:  serviceCtx.UrgencyLevel,
-			Items:         inputItems,
-		})
-		if err == nil {
-			clean := strings.TrimSpace(sanitize.Text(summary))
-			if clean != "" {
-				return &clean
-			}
-		}
-	}
-
-	return buildBuilderSummary(items, scopeAssessment, serviceCtx.UrgencyLevel)
-}
-
 func (s *Service) buildOfferSummaryPayload(offerID, tenantID, leadServiceID uuid.UUID, serviceCtx repository.LeadServiceSummaryContext, scopeAssessment *string, items []repository.QuoteItemSummary) (scheduler.PartnerOfferSummaryPayload, bool) {
 	if s == nil || s.summaryQueue == nil || s.summaryGenerator == nil || len(items) == 0 {
 		return scheduler.PartnerOfferSummaryPayload{}, false

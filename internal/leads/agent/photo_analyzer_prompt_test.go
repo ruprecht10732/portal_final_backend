@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"portal_final_backend/internal/orchestration"
+
 	"github.com/google/uuid"
 )
 
@@ -35,7 +37,11 @@ func TestBuildPhotoAnalysisPromptAvoidsReferenceObjectMeasurements(t *testing.T)
 }
 
 func TestGetPhotoAnalyzerPromptRequiresOnsiteVerificationForUncertainDimensions(t *testing.T) {
-	prompt := getPhotoAnalyzerPrompt()
+	workspace, err := orchestration.LoadAgentWorkspace(photoAnalyzerWorkspaceName)
+	if err != nil {
+		t.Fatalf("LoadAgentWorkspace returned error: %v", err)
+	}
+	prompt := workspace.Instruction
 
 	checks := []string{
 		"Behandel normale 2D foto's NIET als betrouwbare bron voor absolute maatvoering",

@@ -54,7 +54,7 @@ func TestDeriveDesiredServiceStateTerminalResurrectsWhenTriggerAfterTerminalAt(t
 
 	desired, ok := deriveDesiredServiceState(current, aggs, true, now)
 	if !ok {
-		t.Fatalf(msgExpectedProceed)
+		t.Fatal(msgExpectedProceed)
 	}
 	if !desired.Resurrecting {
 		t.Fatalf("expected Resurrecting=true")
@@ -108,7 +108,7 @@ func TestDeriveDesiredServiceStateStaleDraftDecaysToNurturing(t *testing.T) {
 
 	desired, ok := deriveDesiredServiceState(current, aggs, false, now)
 	if !ok {
-		t.Fatalf(msgExpectedProceed)
+		t.Fatal(msgExpectedProceed)
 	}
 	if desired.Stage != domain.PipelineStageNurturing {
 		t.Fatalf(fmtExpectedStage, domain.PipelineStageNurturing, desired.Stage)
@@ -135,7 +135,7 @@ func TestDeriveDesiredServiceStateScheduledAppointmentSetsNurturingStage(t *test
 
 	desired, ok := deriveDesiredServiceState(current, aggs, false, now)
 	if !ok {
-		t.Fatalf(msgExpectedProceed)
+		t.Fatal(msgExpectedProceed)
 	}
 	if desired.Stage != domain.PipelineStageTriage {
 		t.Fatalf(fmtExpectedStage, domain.PipelineStageTriage, desired.Stage)

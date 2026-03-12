@@ -1,0 +1,28 @@
+package tools
+
+var domainToolNames = map[string]struct{}{
+	"AskCustomerClarification": {},
+	"CalculateEstimate":        {},
+	"Calculator":               {},
+	"CancelVisit":              {},
+	"CommitScopeArtifact":      {},
+	"CreatePartnerOffer":       {},
+	"DraftQuote":               {},
+	"FindMatchingPartners":     {},
+	"FlagOnsiteMeasurement":    {},
+	"ListCatalogGaps":          {},
+	"RescheduleVisit":          {},
+	"SaveAnalysis":             {},
+	"SaveEstimation":           {},
+	"SaveNote":                 {},
+	"SavePhotoAnalysis":        {},
+	"ScheduleVisit":            {},
+	"SearchProductMaterials":   {},
+	"SetCallOutcome":           {},
+	"SubmitAuditResult":        {},
+	"SubmitQuoteCritique":      {},
+	"UpdateLeadDetails":        {},
+	"UpdateLeadServiceType":    {},
+	"UpdatePipelineStage":      {},
+	"UpdateStatus":             {},
+}

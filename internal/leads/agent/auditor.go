@@ -13,12 +13,13 @@ import (
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/orchestration"
+	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/moonshot"
 )
 
@@ -140,25 +141,27 @@ func (d *AuditorToolDeps) handleSubmitAuditResult(ctx tool.Context, input Submit
 
 func NewAuditor(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus) (*Auditor, error) {
 	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+	workspace, err := orchestration.LoadAgentWorkspace("auditor")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load auditor workspace context: %w", err)
+	}
 
 	deps := &AuditorToolDeps{Repo: repo, EventBus: eventBus}
 
-	submitTool, err := functiontool.New(functiontool.Config{
-		Name:        "SubmitAuditResult",
-		Description: "Submit the audit result. If required info is missing, flag Manual_Intervention and explain what is missing.",
-	}, func(ctx tool.Context, input SubmitAuditResultInput) (SubmitAuditResultOutput, error) {
+	submitTool, err := apptools.NewSubmitAuditResultTool(func(ctx tool.Context, input SubmitAuditResultInput) (SubmitAuditResultOutput, error) {
 		return GetAuditorDeps(ctx).handleSubmitAuditResult(ctx, input)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SubmitAuditResult tool: %w", err)
 	}
+	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "auditor_tools", []tool.Tool{submitTool})
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "AuditAgent",
 		Model:       kimi,
 		Description: "Internal reviewer that validates VisitReports and CallLogs against intake guidelines.",
-		Instruction: "You audit submitted visit reports and call logs. Compare them against the intake requirements. You may reason step-by-step internally, but your final output must contain only the required tool calls. If required information is missing, call SubmitAuditResult with passed=false and list missing items.",
-		Tools:       []tool.Tool{submitTool},
+		Instruction: workspace.Instruction,
+		Toolsets:    toolsets,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create audit agent: %w", err)
@@ -249,9 +252,12 @@ func (a *Auditor) runWithPrompt(ctx context.Context, promptText string, leadID u
 
 	userMessage := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}}
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	if err := consumeRunEvents(a.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "auditor run failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(a.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "auditor run failed", func(event *session.Event) {
 		_ = event
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace("auditor", userID, sessionID, toolTrace)
+	if err != nil {
 		return err
 	}
 	return nil
@@ -268,7 +274,7 @@ func buildIntakeContext(ctx context.Context, repo repository.LeadsRepository, te
 		nameKey := strings.ToLower(strings.TrimSpace(svc.Name))
 		if nameKey == key || strings.ToLower(strings.TrimSpace(getSlugLike(svc.Name))) == key {
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("Selected service type: %s\n\n", currentServiceType))
+			_, _ = fmt.Fprintf(&sb, "Selected service type: %s\n\n", currentServiceType)
 			if svc.Description != nil && strings.TrimSpace(*svc.Description) != "" {
 				sb.WriteString("Description: " + strings.TrimSpace(*svc.Description) + "\n")
 			}

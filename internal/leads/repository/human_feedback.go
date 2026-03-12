@@ -43,7 +43,7 @@ type CreateHumanFeedbackParams struct {
 
 func (r *Repository) CreateHumanFeedback(ctx context.Context, params CreateHumanFeedbackParams) (HumanFeedback, error) {
 	if params.OrganizationID == uuid.Nil {
-		return HumanFeedback{}, fmt.Errorf(organizationIDRequiredMessage)
+		return HumanFeedback{}, errors.New(organizationIDRequiredMessage)
 	}
 	if params.QuoteID == uuid.Nil {
 		return HumanFeedback{}, fmt.Errorf("quote_id is required")
@@ -81,7 +81,7 @@ func (r *Repository) CreateHumanFeedback(ctx context.Context, params CreateHuman
 
 func (r *Repository) ListRecentAppliedHumanFeedbackByServiceType(ctx context.Context, organizationID uuid.UUID, serviceType string, limit int) ([]HumanFeedback, error) {
 	if organizationID == uuid.Nil {
-		return nil, fmt.Errorf(organizationIDRequiredMessage)
+		return nil, errors.New(organizationIDRequiredMessage)
 	}
 	serviceType = strings.TrimSpace(serviceType)
 	if serviceType == "" {
@@ -116,7 +116,7 @@ func (r *Repository) GetHumanFeedbackByID(ctx context.Context, id uuid.UUID, org
 		return HumanFeedback{}, fmt.Errorf("id is required")
 	}
 	if organizationID == uuid.Nil {
-		return HumanFeedback{}, fmt.Errorf(organizationIDRequiredMessage)
+		return HumanFeedback{}, errors.New(organizationIDRequiredMessage)
 	}
 
 	row, err := r.queries.GetHumanFeedbackByID(ctx, leadsdb.GetHumanFeedbackByIDParams{

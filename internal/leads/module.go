@@ -5,6 +5,7 @@ package leads
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"portal_final_backend/internal/maps"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/config"
@@ -138,6 +140,9 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	if err != nil {
 		return nil, err
 	}
+	if log != nil {
+		log.Info("leads module: agents constructed successfully", "components", "photo-analyzer,call-logger,gatekeeper,calculator,matchmaker,auditor,offer-summary,whatsapp-reply,email-reply")
+	}
 
 	// SSE service for real-time notifications
 	sseService := sse.New()
@@ -223,12 +228,50 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	subscribeLeadCreated(eventBus, repo, module, log)
 	subscribeLeadServiceAdded(eventBus, repo, module, log)
 	subscribeAttachmentUploaded(eventBus, repo, module, log)
+	if log != nil {
+		log.Info("leads module: event subscriptions registered", "subscriptions", "lead-created,lead-service-added,attachment-uploaded,orchestrator")
+	}
 
 	return module, nil
 }
 
+func (m *Module) VerifyWiring() error {
+	if m == nil {
+		return fmt.Errorf("leads module: module is nil")
+	}
+	if m.callLogger == nil {
+		return fmt.Errorf("leads module: call logger is not configured")
+	}
+	if !m.callLogger.HasLeadUpdater() {
+		return fmt.Errorf("leads module: call logger lead updater is not configured")
+	}
+	if !m.callLogger.HasAppointmentBooker() {
+		return fmt.Errorf("leads module: appointment booker is not configured")
+	}
+	if m.automationQueue == nil {
+		return fmt.Errorf("leads module: automation scheduler is not configured")
+	}
+	if m.handler == nil {
+		return fmt.Errorf("leads module: handler is not configured")
+	}
+	if m.photoAnalysisHandler == nil {
+		return fmt.Errorf("leads module: photo analysis handler is not configured")
+	}
+	if m.orchestrator == nil {
+		return fmt.Errorf("leads module: orchestrator is not configured")
+	}
+	if m.log != nil && m.handler != nil && m.automationQueue != nil {
+		m.log.Info("leads module: wiring verified", "automationQueue", true, "appointmentBooker", true, "leadUpdater", true)
+	}
+	return nil
+}
+
 func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
 	_ = storageSvc
+	if err := validateAgentConfiguration(); err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+	}
+
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentPhotoAnalyzer), repo)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
@@ -249,52 +292,17 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	// Create embedding and qdrant clients if configured
-	var embeddingClient *embeddings.Client
-	var qdrantClient *qdrant.Client
-	var catalogQdrantClient *qdrant.Client
-	var bouwmaatQdrantClient *qdrant.Client
-
-	if cfg.IsEmbeddingEnabled() {
-		embeddingClient = embeddings.NewClient(embeddings.Config{
-			BaseURL: cfg.GetEmbeddingAPIURL(),
-			APIKey:  cfg.GetEmbeddingAPIKey(),
-		})
-	}
-
-	if cfg.IsQdrantEnabled() {
-		qdrantClient = qdrant.NewClient(qdrant.Config{
-			BaseURL:    cfg.GetQdrantURL(),
-			APIKey:     cfg.GetQdrantAPIKey(),
-			Collection: cfg.GetQdrantCollection(),
-		})
-	}
-
-	if cfg.GetQdrantURL() != "" && cfg.GetCatalogEmbeddingCollection() != "" {
-		catalogQdrantClient = qdrant.NewClient(qdrant.Config{
-			BaseURL:    cfg.GetQdrantURL(),
-			APIKey:     cfg.GetQdrantAPIKey(),
-			Collection: cfg.GetCatalogEmbeddingCollection(),
-		})
-	}
-
-	if cfg.GetQdrantURL() != "" && cfg.GetBouwmaatEmbeddingCollection() != "" {
-		bouwmaatQdrantClient = qdrant.NewClient(qdrant.Config{
-			BaseURL:    cfg.GetQdrantURL(),
-			APIKey:     cfg.GetQdrantAPIKey(),
-			Collection: cfg.GetBouwmaatEmbeddingCollection(),
-		})
-	}
+	aiClients := buildAIClients(cfg)
 
 	estimator, err := agent.NewEstimatorAgent(agent.QuotingAgentConfig{
 		APIKey:               cfg.MoonshotAPIKey,
 		Model:                cfg.ResolveLLMModel(config.LLMModelAgentEstimator),
 		Repo:                 repo,
 		EventBus:             eventBus,
-		EmbeddingClient:      embeddingClient,
-		QdrantClient:         qdrantClient,
-		BouwmaatQdrantClient: bouwmaatQdrantClient,
-		CatalogQdrantClient:  catalogQdrantClient,
+		EmbeddingClient:      aiClients.embeddingClient,
+		QdrantClient:         aiClients.qdrantClient,
+		BouwmaatQdrantClient: aiClients.bouwmaatQdrantClient,
+		CatalogQdrantClient:  aiClients.catalogQdrantClient,
 		CatalogReader:        catalogReader,
 	})
 	if err != nil {
@@ -311,10 +319,10 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		Model:                cfg.ResolveLLMModel(config.LLMModelAgentQuoteGenerator),
 		Repo:                 repo,
 		EventBus:             eventBus,
-		EmbeddingClient:      embeddingClient,
-		QdrantClient:         qdrantClient,
-		BouwmaatQdrantClient: bouwmaatQdrantClient,
-		CatalogQdrantClient:  catalogQdrantClient,
+		EmbeddingClient:      aiClients.embeddingClient,
+		QdrantClient:         aiClients.qdrantClient,
+		BouwmaatQdrantClient: aiClients.bouwmaatQdrantClient,
+		CatalogQdrantClient:  aiClients.catalogQdrantClient,
 		CatalogReader:        catalogReader,
 	})
 	if err != nil {
@@ -332,6 +340,61 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 	}
 
 	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, emailReplyAgent, nil
+}
+
+type aiClients struct {
+	embeddingClient      *embeddings.Client
+	qdrantClient         *qdrant.Client
+	catalogQdrantClient  *qdrant.Client
+	bouwmaatQdrantClient *qdrant.Client
+}
+
+func validateAgentConfiguration() error {
+	if err := orchestration.ValidateAgentWorkspaces(); err != nil {
+		return err
+	}
+	return agent.ValidatePromptTemplates()
+}
+
+func buildAIClients(cfg *config.Config) aiClients {
+	return aiClients{
+		embeddingClient:      buildEmbeddingClient(cfg),
+		qdrantClient:         buildQdrantClient(cfg),
+		catalogQdrantClient:  buildScopedQdrantClient(cfg, cfg.GetCatalogEmbeddingCollection()),
+		bouwmaatQdrantClient: buildScopedQdrantClient(cfg, cfg.GetBouwmaatEmbeddingCollection()),
+	}
+}
+
+func buildEmbeddingClient(cfg *config.Config) *embeddings.Client {
+	if !cfg.IsEmbeddingEnabled() {
+		return nil
+	}
+	return embeddings.NewClient(embeddings.Config{
+		BaseURL: cfg.GetEmbeddingAPIURL(),
+		APIKey:  cfg.GetEmbeddingAPIKey(),
+	})
+}
+
+func buildQdrantClient(cfg *config.Config) *qdrant.Client {
+	if !cfg.IsQdrantEnabled() {
+		return nil
+	}
+	return qdrant.NewClient(qdrant.Config{
+		BaseURL:    cfg.GetQdrantURL(),
+		APIKey:     cfg.GetQdrantAPIKey(),
+		Collection: cfg.GetQdrantCollection(),
+	})
+}
+
+func buildScopedQdrantClient(cfg *config.Config, collection string) *qdrant.Client {
+	if cfg.GetQdrantURL() == "" || collection == "" {
+		return nil
+	}
+	return qdrant.NewClient(qdrant.Config{
+		BaseURL:    cfg.GetQdrantURL(),
+		APIKey:     cfg.GetQdrantAPIKey(),
+		Collection: collection,
+	})
 }
 
 func buildReplyAgents(cfg *config.Config, repo repository.LeadsRepository) (*agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {

@@ -113,9 +113,7 @@ func (r *Repository) listQuotePipelineTrend(ctx context.Context, organizationID 
 	}
 
 	trend := make([]int64, 0, dashboardTrendWeeks)
-	for _, value := range rows {
-		trend = append(trend, value)
-	}
+	trend = append(trend, rows...)
 
 	return padInt64Trend(trend), nil
 }
@@ -130,9 +128,7 @@ func (r *Repository) listAvgQuoteValueTrend(ctx context.Context, organizationID 
 	}
 
 	trend := make([]int64, 0, dashboardTrendWeeks)
-	for _, value := range rows {
-		trend = append(trend, value)
-	}
+	trend = append(trend, rows...)
 
 	return padInt64Trend(trend), nil
 }

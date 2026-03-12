@@ -85,8 +85,8 @@ func TestEmailReplySystemPromptUsesConfiguredTone(t *testing.T) {
 	if !strings.Contains(prompt, tone) {
 		t.Fatalf("expected prompt to include configured tone %q, got %q", tone, prompt)
 	}
-	if !strings.Contains(prompt, "Do not include a subject line") {
-		t.Fatalf("expected email-specific instruction in prompt, got %q", prompt)
+	if !strings.Contains(prompt, "Tenant Tone Addendum") {
+		t.Fatalf("expected email tone addendum marker in prompt, got %q", prompt)
 	}
 }
 

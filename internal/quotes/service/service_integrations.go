@@ -281,7 +281,9 @@ func (s *Service) moneybirdExchangeCode(ctx context.Context, code string) (*mone
 	if err != nil {
 		return nil, fmt.Errorf("oauth token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -317,7 +319,9 @@ func (s *Service) moneybirdRefreshToken(ctx context.Context, refreshToken string
 	if err != nil {
 		return nil, fmt.Errorf("refresh token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -351,7 +355,9 @@ func (s *Service) moneybirdResolveAdministrationID(ctx context.Context, accessTo
 	if err != nil {
 		return "", fmt.Errorf("administrations request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -757,7 +763,9 @@ func (s *Service) moneybirdFindContactIDByCustomerID(ctx context.Context, admini
 	if err != nil {
 		return "", nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return "", nil
@@ -811,7 +819,9 @@ func (s *Service) createMoneybirdInvoice(
 	if err != nil {
 		return "", "", fmt.Errorf("moneybird invoice request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -852,7 +862,9 @@ func (s *Service) moneybirdFindContactIDByEmail(ctx context.Context, administrat
 	if err != nil {
 		return "", nil
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", nil
@@ -932,7 +944,9 @@ func (s *Service) moneybirdCreateContact(
 	if err != nil {
 		return "", fmt.Errorf("moneybird create contact request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -991,7 +1005,9 @@ func (s *Service) moneybirdResolveTaxRateIDByBPS(ctx context.Context, administra
 	if err != nil {
 		return nil, fmt.Errorf("moneybird tax rates request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

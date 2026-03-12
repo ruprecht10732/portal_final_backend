@@ -74,8 +74,18 @@ func (r *Repository) ListAttachmentsByService(ctx context.Context, leadServiceID
 	}
 
 	attachments := make([]Attachment, 0, len(rows))
+	attachmentIndexByFileKey := make(map[string]int, len(rows))
 	for _, row := range rows {
-		attachments = append(attachments, attachmentFromRow(row))
+		attachment := attachmentFromRow(row)
+		if existingIndex, exists := attachmentIndexByFileKey[attachment.FileKey]; exists {
+			if preferAttachmentRecord(attachment, attachments[existingIndex]) {
+				attachments[existingIndex] = attachment
+			}
+			continue
+		}
+
+		attachmentIndexByFileKey[attachment.FileKey] = len(attachments)
+		attachments = append(attachments, attachment)
 	}
 	return attachments, nil
 }
@@ -104,4 +114,17 @@ func attachmentFromRow(row leadsdb.RacLeadServiceAttachment) Attachment {
 		UploadedBy:     optionalUUID(row.UploadedBy),
 		CreatedAt:      row.CreatedAt.Time,
 	}
+}
+
+func preferAttachmentRecord(candidate Attachment, existing Attachment) bool {
+	candidateHasSize := attachmentHasSize(candidate)
+	existingHasSize := attachmentHasSize(existing)
+	if candidateHasSize != existingHasSize {
+		return candidateHasSize
+	}
+	return candidate.CreatedAt.After(existing.CreatedAt)
+}
+
+func attachmentHasSize(att Attachment) bool {
+	return att.SizeBytes != nil && *att.SizeBytes > 0
 }

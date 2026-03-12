@@ -15,6 +15,7 @@ import (
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/moonshot"
 	"portal_final_backend/platform/apperr"
 
@@ -36,6 +37,13 @@ type EmailReplyAgent struct {
 	quoteReader                  ports.ReplyQuoteReader
 	appointmentViewer            ports.AppointmentPublicViewer
 	userReader                   ports.ReplyUserReader
+}
+
+type emailReplyLookupStore interface {
+	GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.Lead, error)
+	GetByPhoneOrEmail(ctx context.Context, phone string, email string, organizationID uuid.UUID) (*repository.LeadSummary, []repository.LeadService, error)
+	GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.LeadService, error)
+	GetCurrentLeadService(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (repository.LeadService, error)
 }
 
 type emailReplyContext struct {
@@ -117,14 +125,17 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var outputText strings.Builder
-	if err := consumeRunEvents(r.Run(ctx, userID, sessionID, userMessage, runConfig), "email reply: run failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(r.Run(ctx, userID, sessionID, userMessage, runConfig), "email reply: run failed", func(event *session.Event) {
 		if event.Content == nil {
 			return
 		}
 		for _, part := range event.Content.Parts {
 			outputText.WriteString(part.Text)
 		}
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace("email-reply", userID, sessionID, toolTrace)
+	if err != nil {
 		return ports.ReplySuggestionDraft{}, err
 	}
 
@@ -138,11 +149,15 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 
 func (a *EmailReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
 	kimi := moonshot.NewModel(a.modelConfig)
+	instruction, err := orchestration.BuildAgentInstruction("email-reply", emailReplySystemPrompt(toneOfVoice))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load email reply workspace context: %w", err)
+	}
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "EmailReplyAgent",
 		Model:       kimi,
 		Description: "Suggests a single email reply draft grounded in lead and service context.",
-		Instruction: emailReplySystemPrompt(toneOfVoice),
+		Instruction: instruction,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -179,17 +194,7 @@ func (a *EmailReplyAgent) loadOrganizationAISettings(ctx context.Context, organi
 }
 
 func (a *EmailReplyAgent) loadReplyContext(ctx context.Context, input ports.EmailReplyInput) (emailReplyContext, error) {
-	lead, err := a.loadReplyLead(ctx, input)
-	if err != nil {
-		return emailReplyContext{}, err
-	}
-
-	service, err := a.loadReplyService(ctx, input, lead)
-	if err != nil {
-		return emailReplyContext{}, err
-	}
-
-	lead, err = a.hydrateLeadFromService(ctx, input.OrganizationID, lead, service)
+	lead, service, err := resolveEmailReplyLeadAndService(ctx, a.repo, input)
 	if err != nil {
 		return emailReplyContext{}, err
 	}
@@ -216,12 +221,89 @@ func (a *EmailReplyAgent) loadReplyContext(ctx context.Context, input ports.Emai
 	return contextData, nil
 }
 
-func (a *EmailReplyAgent) hydrateLeadFromService(ctx context.Context, organizationID uuid.UUID, lead *repository.Lead, service *repository.LeadService) (*repository.Lead, error) {
+func resolveEmailReplyLeadAndService(ctx context.Context, store emailReplyLookupStore, input ports.EmailReplyInput) (*repository.Lead, *repository.LeadService, error) {
+	if store == nil {
+		return nil, nil, nil
+	}
+
+	service, err := loadEmailReplyServiceByID(ctx, store, input)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lead, err := loadEmailReplyLeadByIDOrEmail(ctx, store, input)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lead, err = hydrateEmailReplyLeadFromService(ctx, store, input.OrganizationID, lead, service)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if service == nil && lead != nil && lead.ID != uuid.Nil {
+		service, err = loadEmailReplyCurrentService(ctx, store, lead.ID, input.OrganizationID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return lead, service, nil
+}
+
+func loadEmailReplyServiceByID(ctx context.Context, store emailReplyLookupStore, input ports.EmailReplyInput) (*repository.LeadService, error) {
+	if input.LeadServiceID == nil || *input.LeadServiceID == uuid.Nil {
+		return nil, nil
+	}
+	service, err := store.GetLeadServiceByID(ctx, *input.LeadServiceID, input.OrganizationID)
+	if err == nil {
+		return &service, nil
+	}
+	if errors.Is(err, repository.ErrServiceNotFound) || errors.Is(err, repository.ErrNotFound) {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("email reply: load lead service: %w", err)
+}
+
+func loadEmailReplyLeadByIDOrEmail(ctx context.Context, store emailReplyLookupStore, input ports.EmailReplyInput) (*repository.Lead, error) {
+	if input.LeadID != nil && *input.LeadID != uuid.Nil {
+		lead, err := store.GetByID(ctx, *input.LeadID, input.OrganizationID)
+		if err == nil {
+			return &lead, nil
+		}
+		if !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("email reply: load lead: %w", err)
+		}
+	}
+
+	if strings.TrimSpace(input.CustomerEmail) == "" {
+		return nil, nil
+	}
+
+	summary, _, err := store.GetByPhoneOrEmail(ctx, "", input.CustomerEmail, input.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("email reply: load lead by email: %w", err)
+	}
+	if summary == nil || summary.ID == uuid.Nil {
+		return nil, nil
+	}
+
+	lead, err := store.GetByID(ctx, summary.ID, input.OrganizationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load lead: %w", err)
+	}
+	return &lead, nil
+}
+
+func hydrateEmailReplyLeadFromService(ctx context.Context, store emailReplyLookupStore, organizationID uuid.UUID, lead *repository.Lead, service *repository.LeadService) (*repository.Lead, error) {
 	if lead != nil || service == nil || service.LeadID == uuid.Nil {
 		return lead, nil
 	}
 
-	loadedLead, err := a.repo.GetByID(ctx, service.LeadID, organizationID)
+	loadedLead, err := store.GetByID(ctx, service.LeadID, organizationID)
 	if err == nil {
 		return &loadedLead, nil
 	}
@@ -229,6 +311,17 @@ func (a *EmailReplyAgent) hydrateLeadFromService(ctx context.Context, organizati
 		return nil, nil
 	}
 	return nil, fmt.Errorf("email reply: load lead from service: %w", err)
+}
+
+func loadEmailReplyCurrentService(ctx context.Context, store emailReplyLookupStore, leadID, organizationID uuid.UUID) (*repository.LeadService, error) {
+	service, err := store.GetCurrentLeadService(ctx, leadID, organizationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrServiceNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load current lead service: %w", err)
+	}
+	return &service, nil
 }
 
 func (a *EmailReplyAgent) applySharedReplyContext(ctx context.Context, input ports.EmailReplyInput, contextData *emailReplyContext) error {
@@ -359,64 +452,6 @@ func (a *EmailReplyAgent) loadRequester(ctx context.Context, requesterUserID uui
 		return nil, fmt.Errorf("email reply: load requester: %w", err)
 	}
 	return requester, nil
-}
-
-func (a *EmailReplyAgent) loadReplyLead(ctx context.Context, input ports.EmailReplyInput) (*repository.Lead, error) {
-	if input.LeadID != nil && *input.LeadID != uuid.Nil {
-		lead, err := a.repo.GetByID(ctx, *input.LeadID, input.OrganizationID)
-		if err == nil {
-			return &lead, nil
-		}
-		if !errors.Is(err, repository.ErrNotFound) {
-			return nil, fmt.Errorf("email reply: load lead: %w", err)
-		}
-	}
-
-	if strings.TrimSpace(input.CustomerEmail) == "" {
-		return nil, nil
-	}
-
-	summary, _, err := a.repo.GetByPhoneOrEmail(ctx, "", input.CustomerEmail, input.OrganizationID)
-	if err != nil {
-		return nil, fmt.Errorf("email reply: load lead by email: %w", err)
-	}
-	if summary == nil || summary.ID == uuid.Nil {
-		return nil, nil
-	}
-
-	lead, err := a.repo.GetByID(ctx, summary.ID, input.OrganizationID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("email reply: load lead: %w", err)
-	}
-	return &lead, nil
-}
-
-func (a *EmailReplyAgent) loadReplyService(ctx context.Context, input ports.EmailReplyInput, lead *repository.Lead) (*repository.LeadService, error) {
-	if input.LeadServiceID != nil && *input.LeadServiceID != uuid.Nil {
-		service, err := a.repo.GetLeadServiceByID(ctx, *input.LeadServiceID, input.OrganizationID)
-		if err == nil {
-			return &service, nil
-		}
-		if !errors.Is(err, repository.ErrServiceNotFound) && !errors.Is(err, repository.ErrNotFound) {
-			return nil, fmt.Errorf("email reply: load lead service: %w", err)
-		}
-	}
-
-	if lead == nil || lead.ID == uuid.Nil {
-		return nil, nil
-	}
-
-	service, err := a.repo.GetCurrentLeadService(ctx, lead.ID, input.OrganizationID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrServiceNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("email reply: load current lead service: %w", err)
-	}
-	return &service, nil
 }
 
 func (a *EmailReplyAgent) loadLatestAIAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.AIAnalysis, error) {
@@ -574,24 +609,9 @@ func emailReplySystemPrompt(toneOfVoice string) string {
 	if strings.TrimSpace(toneOfVoice) == "" {
 		toneOfVoice = ports.DefaultOrganizationAISettings().WhatsAppToneOfVoice
 	}
-	return strings.TrimSpace(fmt.Sprintf(`You write customer-ready email replies for a Dutch home-services company.
+	return strings.TrimSpace(fmt.Sprintf(`## Tenant Tone Addendum
 
-Rules:
-- Return exactly one draft reply in Dutch.
-- Keep it concise, professional, and ready to send.
-- Match this tenant tone of voice: %s.
-- Write in plain email body text only.
-- Include a natural salutation when the customer name is available.
-- Do not include a subject line.
-- Ground the reply in the provided lead, service, and email context.
-- If a non-generic reply scenario is provided, follow that scenario unless it directly conflicts with the factual context.
-- If lead/service context is missing, explicitly avoid assumptions and rely on the current email only.
-- Use the provided current date/time and agenda context to reason correctly about past versus future events.
-- If the customer asks a direct question, answer it directly when the context supports it.
-- If details are still needed, ask at most two clear questions and explain briefly why.
-- Never expose internal reasoning, raw analysis data, or uncertainty labels.
-- Never fabricate pricing, availability, measurements, or policy details.
-- Output only the reply text, with no title or surrounding quotes.`, sanitizePromptField(toneOfVoice, 200)))
+- Match this tenant tone of voice: %s.`, sanitizePromptField(toneOfVoice, 200)))
 }
 
 func formatEmailFeedbackMemory(items []ports.EmailReplyFeedback) string {

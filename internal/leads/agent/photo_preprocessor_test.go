@@ -76,25 +76,23 @@ func TestBuildPhotoAnalysisPromptIncludesOCRAssistCandidates(t *testing.T) {
 }
 
 func TestBasicImagePreprocessorServiceTypeGatesTransforms(t *testing.T) {
-	preprocessor := NewBasicImagePreprocessor()
 	settings := PhotoPreprocessingSettings{
-		Enabled:                              true,
 		LensCorrectionEnabled:                true,
 		LensCorrectionServiceTypes:           []string{"Dakinspectie"},
 		PerspectiveNormalizationEnabled:      true,
 		PerspectiveNormalizationServiceTypes: []string{"Traprenovatie"},
 	}
 
-	if preprocessor.shouldApplyLensCorrection(settings, testServiceTypeKozijn) {
+	if settings.LensCorrectionEnabled && serviceTypeAllowed(testServiceTypeKozijn, settings.LensCorrectionServiceTypes) {
 		t.Fatalf("expected lens correction to be disabled for non-allowed service type")
 	}
-	if preprocessor.shouldApplyPerspectiveNormalization(settings, testServiceTypeKozijn) {
+	if settings.PerspectiveNormalizationEnabled && serviceTypeAllowed(testServiceTypeKozijn, settings.PerspectiveNormalizationServiceTypes) {
 		t.Fatalf("expected perspective normalization to be disabled for non-allowed service type")
 	}
-	if !preprocessor.shouldApplyLensCorrection(settings, "Dakinspectie") {
+	if !settings.LensCorrectionEnabled || !serviceTypeAllowed("Dakinspectie", settings.LensCorrectionServiceTypes) {
 		t.Fatalf("expected lens correction to be enabled for allowed service type")
 	}
-	if !preprocessor.shouldApplyPerspectiveNormalization(settings, "Traprenovatie") {
+	if !settings.PerspectiveNormalizationEnabled || !serviceTypeAllowed("Traprenovatie", settings.PerspectiveNormalizationServiceTypes) {
 		t.Fatalf("expected perspective normalization to be enabled for allowed service type")
 	}
 }

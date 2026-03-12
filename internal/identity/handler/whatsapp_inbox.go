@@ -91,7 +91,7 @@ func (h *Handler) ListWhatsAppConversations(c *gin.Context) {
 
 	response := make([]transport.WhatsAppConversationResponse, 0, len(items))
 	for _, item := range items {
-		linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, item)
+		linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, &item)
 		if httpkit.HandleError(c, err) {
 			return
 		}
@@ -141,7 +141,7 @@ func (h *Handler) ListWhatsAppMessages(c *gin.Context) {
 	for _, item := range messages {
 		response = append(response, transport.ToWhatsAppMessageResponse(item))
 	}
-	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, conversation)
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, &conversation)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -193,7 +193,7 @@ func (h *Handler) LinkWhatsAppConversationLead(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, conversation)
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, &conversation)
 	if httpkit.HandleError(c, err) {
 		return
 	}
@@ -229,7 +229,7 @@ func (h *Handler) UnlinkWhatsAppConversationLead(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, conversation)
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, &conversation)
 	if httpkit.HandleError(c, err) {
 		return
 	}

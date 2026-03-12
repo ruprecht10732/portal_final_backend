@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -119,10 +120,18 @@ func (s *Service) GetWhatsAppConversationMessages(ctx context.Context, organizat
 	return conversation, messages, nil
 }
 
-func (s *Service) GetWhatsAppConversationLeadState(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation) (*LeadInboxSummary, *LeadInboxSummary, error) {
+func (s *Service) GetWhatsAppConversationLeadState(ctx context.Context, organizationID uuid.UUID, conversation *repository.WhatsAppConversation) (*LeadInboxSummary, *LeadInboxSummary, error) {
+	if conversation == nil {
+		return nil, nil, nil
+	}
+
 	linkedLead, err := s.getLeadSummaryByID(ctx, organizationID, conversation.LeadID)
 	if err != nil {
-		return nil, nil, err
+		if apperr.Is(err, apperr.KindNotFound) {
+			clearStaleWhatsAppConversationLead(ctx, organizationID, conversation, s.repo.UpdateWhatsAppConversationLead)
+		} else {
+			return nil, nil, err
+		}
 	}
 	if linkedLead != nil {
 		return linkedLead, nil, nil
@@ -243,6 +252,30 @@ func (s *Service) CreateLeadFromWhatsAppConversation(ctx context.Context, organi
 		return repository.WhatsAppConversation{}, nil, err
 	}
 	return conversation, linkedLead, nil
+}
+
+func clearStaleWhatsAppConversationLead(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	conversation *repository.WhatsAppConversation,
+	clear func(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID) (repository.WhatsAppConversation, error),
+) {
+	if conversation == nil || conversation.LeadID == nil {
+		return
+	}
+
+	staleLeadID := conversation.LeadID.String()
+	conversation.LeadID = nil
+	if clear == nil {
+		return
+	}
+
+	cleanedConversation, err := clear(ctx, organizationID, conversation.ID, nil)
+	if err != nil {
+		log.Printf("whatsapp inbox: failed to clear stale lead link conversation=%s organization=%s lead=%s err=%v", conversation.ID, organizationID, staleLeadID, err)
+		return
+	}
+	conversation.LeadID = cleanedConversation.LeadID
 }
 
 func (s *Service) getLeadSummaryByID(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID) (*LeadInboxSummary, error) {

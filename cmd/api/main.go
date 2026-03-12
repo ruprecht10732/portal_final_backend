@@ -352,6 +352,10 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	leadsModule.SetAppointmentBooker(appointmentBooker)
 	leadsModule.SetCallLogScheduler(reminderScheduler)
 	leadsModule.SetAutomationScheduler(reminderScheduler)
+	if err := leadsModule.VerifyWiring(); err != nil {
+		log.Error("failed to verify leads module wiring", "error", err)
+		panic("failed to verify leads module wiring: " + err.Error())
+	}
 
 	energyLabelModule := energylabel.NewModule(cfg, log)
 	if energyLabelModule.IsEnabled() {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -989,6 +990,7 @@ func (h *Handler) LogCall(c *gin.Context) {
 	}
 
 	// Backward-compatible fallback when scheduler is unavailable.
+	log.Printf("call logging: scheduler unavailable, falling back to sync execution for lead=%s service=%s", leadID, serviceID)
 	result, err := h.callLogger.ProcessSummary(c.Request.Context(), leadID, serviceID, identity.UserID(), tenantID, req.Summary)
 	if httpkit.HandleError(c, err) {
 		return

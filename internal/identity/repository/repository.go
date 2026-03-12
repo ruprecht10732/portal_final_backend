@@ -1020,13 +1020,6 @@ func toPgInt8Value(value int64) pgtype.Int8 {
 	return pgtype.Int8{Int64: value, Valid: true}
 }
 
-func toPgBoolPtr(value *bool) pgtype.Bool {
-	if value == nil {
-		return pgtype.Bool{}
-	}
-	return pgtype.Bool{Bool: *value, Valid: true}
-}
-
 func toPgTimestamp(value time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: value, Valid: true}
 }

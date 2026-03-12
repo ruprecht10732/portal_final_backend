@@ -430,7 +430,7 @@ func (c *Client) StarMessage(ctx context.Context, deviceID string, messageID str
 func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaResult, error) {
 	phone := normalizeRecipient(phoneNumber)
 	if phone == "" {
-		return DownloadMediaResult{}, fmt.Errorf(errPhoneNumberRequired)
+		return DownloadMediaResult{}, errors.New(errPhoneNumberRequired)
 	}
 
 	endpoint := fmt.Sprintf("%s/message/%s/download?phone=%s", c.baseURL, url.PathEscape(strings.TrimSpace(messageID)), url.QueryEscape(phone))
@@ -627,7 +627,7 @@ func (c *Client) CreateDevice(ctx context.Context, deviceID string) error {
 
 func (c *Client) GetLoginQR(ctx context.Context, deviceID string) ([]byte, error) {
 	if c == nil {
-		return nil, fmt.Errorf(errWhatsAppClientNotInitialized)
+		return nil, errors.New(errWhatsAppClientNotInitialized)
 	}
 
 	// Use a generous timeout for QR generation (WhatsApp handshake can be slow).
@@ -879,7 +879,7 @@ func (c *Client) MarkMessageRead(ctx context.Context, deviceID string, phoneNumb
 
 	payload := actionRequest{Phone: normalizeActionPhone(phoneNumber)}
 	if payload.Phone == "" {
-		return fmt.Errorf(errPhoneNumberRequired)
+		return errors.New(errPhoneNumberRequired)
 	}
 
 	url := fmt.Sprintf("%s/message/%s/read", c.baseURL, url.PathEscape(normalizedMessageID))
@@ -911,7 +911,7 @@ func (c *Client) SendChatPresence(ctx context.Context, deviceID string, phoneNum
 		Action: strings.ToLower(strings.TrimSpace(action)),
 	}
 	if payload.Phone == "" {
-		return fmt.Errorf(errPhoneNumberRequired)
+		return errors.New(errPhoneNumberRequired)
 	}
 	if payload.Action == "" {
 		return fmt.Errorf("action is required")
@@ -923,7 +923,7 @@ func (c *Client) SendChatPresence(ctx context.Context, deviceID string, phoneNum
 
 func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceStatusResponse, error) {
 	if c == nil {
-		return nil, fmt.Errorf(errWhatsAppClientNotInitialized)
+		return nil, errors.New(errWhatsAppClientNotInitialized)
 	}
 
 	url := fmt.Sprintf("%s/devices/%s/status", c.baseURL, deviceID)
@@ -971,7 +971,7 @@ func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceS
 
 func (c *Client) GetDeviceInfo(ctx context.Context, deviceID string) (*DeviceInfoResponse, error) {
 	if c == nil {
-		return nil, fmt.Errorf(errWhatsAppClientNotInitialized)
+		return nil, errors.New(errWhatsAppClientNotInitialized)
 	}
 
 	endpoint := fmt.Sprintf("%s/devices/%s", c.baseURL, url.PathEscape(deviceID))

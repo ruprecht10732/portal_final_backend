@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	apptools "portal_final_backend/internal/tools"
+
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/tool"
 )
@@ -80,7 +82,7 @@ func TestHandleCalculatorRejectsUnsupportedExpressionSyntax(t *testing.T) {
 }
 
 func TestCreateCalculatorToolProcessRequestIncludesExpressionSchema(t *testing.T) {
-	calculator, err := createCalculatorTool()
+	calculator, err := apptools.NewCalculatorTool("Performs exact arithmetic.", handleCalculator)
 	if err != nil {
 		t.Fatalf("expected calculator tool creation without error, got %v", err)
 	}

@@ -15,7 +15,6 @@ import (
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
@@ -23,6 +22,8 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
+	"portal_final_backend/internal/orchestration"
+	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/moonshot"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
@@ -82,12 +83,24 @@ type CallLogger struct {
 // This is needed to break circular dependencies during module initialization.
 func (c *CallLogger) SetAppointmentBooker(booker ports.AppointmentBooker) {
 	c.booker = booker
-	c.toolDeps.Booker = booker
+	if c.toolDeps != nil {
+		c.toolDeps.Booker = booker
+	}
 }
 
 func (c *CallLogger) SetLeadUpdater(updater CallLoggerLeadUpdater) {
 	c.leadUpdater = updater
-	c.toolDeps.LeadUpdater = updater
+	if c.toolDeps != nil {
+		c.toolDeps.LeadUpdater = updater
+	}
+}
+
+func (c *CallLogger) HasAppointmentBooker() bool {
+	return c != nil && c.booker != nil
+}
+
+func (c *CallLogger) HasLeadUpdater() bool {
+	return c != nil && c.leadUpdater != nil
 }
 
 // CallLoggerToolDeps contains the dependencies needed by CallLogger tools
@@ -243,6 +256,10 @@ func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
 // NewCallLogger creates a new CallLogger agent
 func NewCallLogger(apiKey string, modelName string, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
 	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+	workspace, err := orchestration.LoadAgentWorkspace("call-logger")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load call logger workspace context: %w", err)
+	}
 
 	logger := &CallLogger{
 		repo:           repo,
@@ -261,14 +278,15 @@ func NewCallLogger(apiKey string, modelName string, repo repository.LeadsReposit
 	if err != nil {
 		return nil, fmt.Errorf("failed to build call logger tools: %w", err)
 	}
+	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "call_logger_tools", tools)
 
 	// Create the ADK agent
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "CallLogger",
 		Model:       kimi,
 		Description: "Post-call processing assistant that converts natural language call summaries into structured database updates (Notes, Status changes, Appointments).",
-		Instruction: getCallLoggerSystemPrompt(),
-		Tools:       tools,
+		Instruction: workspace.Instruction,
+		Toolsets:    toolsets,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create call logger agent: %w", err)
@@ -340,13 +358,16 @@ func (c *CallLogger) executeAgentRun(ctx context.Context, userIDStr, sessionID, 
 	}
 
 	var outputText string
-	if err := consumeRunEvents(c.runner.Run(ctx, userIDStr, sessionID, userMessage, runConfig), "call logger run failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(c.runner.Run(ctx, userIDStr, sessionID, userMessage, runConfig), "call logger run failed", func(event *session.Event) {
 		if event.Content != nil {
 			for _, part := range event.Content.Parts {
 				outputText += part.Text
 			}
 		}
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace("call-logger", userIDStr, sessionID, toolTrace)
+	if err != nil {
 		return "", err
 	}
 
@@ -533,55 +554,6 @@ func buildResultMessage(result CallLogResult) string {
 	return strings.Join(messages, ". ")
 }
 
-func getCallLoggerSystemPrompt() string {
-	return `You are a Post-Call Processing Assistant for a home services sales team.
-
-Your job is to read a rough summary of a sales/qualification call and execute the necessary database updates using the available tools.
-
-You may reason step-by-step internally, but your final output must contain only the required tool calls.
-
-IMPORTANT RULES:
-
-1. Draft a clean professional Dutch note, then ALWAYS call SaveNote.
-	- No raw input text and no invented details.
-	- Structure when possible (Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen).
-2. If the caller corrects lead details such as name, phone, email, street, house number, zip code, city, latitude, longitude, assignee, consumer role, or WhatsApp preference, use UpdateLeadDetails.
-3. Parse dates relative to the Current Time provided in the context:
-   - "next Tuesday" = the coming Tuesday from Current Time
-   - "tomorrow" = Current Time + 1 day
-   - "this Friday" = the Friday of the current week
-   - "on the 15th" = the 15th of the current or next month
-4. Default appointment duration is 1 hour unless explicitly stated.
-5. Set a call outcome using SetCallOutcome (short label like Appointment_Scheduled, Attempted_Contact, Disqualified, Needs_Rescheduling).
-6. If the context says Existing Appointment is None, do NOT say "verplaatst". Schedule a new appointment and write "Nieuwe afspraak ingepland" in the note.
-7. Status mapping:
-	- Appointment scheduled/booked → "Appointment_Scheduled" ONLY after ScheduleVisit or RescheduleVisit succeeds, or when Existing Appointment is not None
-   - No answer/voicemail/try again → "Attempted_Contact"  
-	- Not interested/declined/bad fit → "Disqualified"
-   - Needs to reschedule/postponed → "Needs_Rescheduling"
-8. Never call SetCallOutcome("Appointment_Scheduled") or UpdateStatus("Appointment_Scheduled") before an appointment is actually available.
-9. When booking RAC_appointments, also update status to "Appointment_Scheduled".
-10. Use 24-hour time format (e.g., 09:00, 14:30).
-11. Only act on explicitly stated information.
-12. Email confirmation behavior for RAC_appointments:
-   - By default, sendConfirmationEmail should be TRUE (send email)
-   - Only set sendConfirmationEmail to FALSE if the call notes explicitly mention:
-     - "no email", "don't send email", "skip email", "no confirmation email"
-     - "they'll confirm differently", "will contact them separately"
-   - If unclear, default to TRUE to send confirmation
-
-Available tools:
-- SaveNote: Saves the call note (ALWAYS use this; it will normalize/clean the body)
-- UpdateLeadDetails: Updates lead profile fields like address, coordinates, phone, email, assignee, consumer role, or WhatsApp preference
-- SetCallOutcome: Stores a short outcome label for the call
-- UpdateStatus: Updates the lead service status
-- UpdatePipelineStage: Updates the pipeline stage when explicitly indicated
-- ScheduleVisit: Books an inspection/visit appointment (includes sendConfirmationEmail option)
-- RescheduleVisit: Reschedules an existing appointment
-- CancelVisit: Cancels the existing appointment
-`
-}
-
 // Tool input/output types for CallLogger
 
 type SaveNoteInput struct {
@@ -699,10 +671,7 @@ func buildCallLoggerTools() ([]tool.Tool, error) {
 }
 
 func buildSaveNoteTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "SaveNote",
-		Description: "Saves the call summary as a note on the lead. ALWAYS call this tool to record the call outcome. The body will be normalized/cleaned server-side.",
-	}, func(ctx tool.Context, input SaveNoteInput) (SaveNoteOutput, error) {
+	return apptools.NewSaveNoteTool(func(ctx tool.Context, input SaveNoteInput) (SaveNoteOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		if _, _, _, _, ok := deps.GetContext(); !ok {
 			return SaveNoteOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -714,17 +683,14 @@ func buildSaveNoteTool() (tool.Tool, error) {
 }
 
 func buildUpdateLeadDetailsTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "UpdateLeadDetails",
-		Description: "Updates lead profile fields such as name, phone, email, address, consumer role, and WhatsApp preference when the caller provides corrections.",
-	}, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
+	return apptools.NewUpdateLeadDetailsTool("Updates lead profile fields such as name, phone, email, address, consumer role, and WhatsApp preference when the caller provides corrections.", func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		tenantID, userID, leadID, _, ok := deps.GetContext()
 		if !ok {
 			return UpdateLeadDetailsOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
 		}
 		if deps.LeadUpdater == nil {
-			return UpdateLeadDetailsOutput{Success: false, Message: errMsgLeadUpdaterMissing}, errors.New(errMsgLeadUpdaterMissing)
+			return UpdateLeadDetailsOutput{Success: false, Message: errMsgLeadUpdaterMissing}, errors.New("lead update not configured")
 		}
 
 		req, updatedFields, err := buildLeadUpdateRequest(input)
@@ -912,7 +878,7 @@ func validateAppointmentAvailability(value string, appointmentAvailable bool) er
 	if !requiresAppointmentAvailability(value) || appointmentAvailable {
 		return nil
 	}
-	return errors.New(errMsgAppointmentRequired)
+	return errors.New(strings.ToLower(errMsgAppointmentRequired[:1]) + errMsgAppointmentRequired[1:])
 }
 
 func enforceAppointmentSchedulingConsistency(result CallLogResult, appointmentAvailable bool) CallLogResult {
@@ -938,10 +904,7 @@ func enforceAppointmentSchedulingConsistency(result CallLogResult, appointmentAv
 }
 
 func buildSetCallOutcomeTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "SetCallOutcome",
-		Description: "Stores a short call outcome label on the timeline.",
-	}, func(ctx tool.Context, input SetCallOutcomeInput) (SetCallOutcomeOutput, error) {
+	return apptools.NewSetCallOutcomeTool(func(ctx tool.Context, input SetCallOutcomeInput) (SetCallOutcomeOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		tenantID, userID, leadID, serviceID, ok := deps.GetContext()
 		if !ok {
@@ -994,10 +957,7 @@ var validLeadStatuses = map[string]bool{
 }
 
 func buildUpdateStatusTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "UpdateStatus",
-		Description: "Updates the status of the lead service. Valid statuses: New, Pending, In_Progress, Attempted_Contact, Appointment_Scheduled, Needs_Rescheduling, Disqualified",
-	}, func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
+	return apptools.NewUpdateStatusTool(func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		tenantID, _, _, serviceID, ok := deps.GetContext()
 		if !ok {
@@ -1035,30 +995,21 @@ func buildUpdateStatusTool() (tool.Tool, error) {
 }
 
 func buildScheduleVisitTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "ScheduleVisit",
-		Description: "Books an inspection/visit appointment for the lead. Provide start and end times in ISO 8601 format. Set sendConfirmationEmail to false if the call notes mention not sending email; otherwise it defaults to true.",
-	}, func(ctx tool.Context, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
+	return apptools.NewScheduleVisitTool(func(ctx tool.Context, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		return executeScheduleVisit(deps, input)
 	})
 }
 
 func buildRescheduleVisitTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "RescheduleVisit",
-		Description: "Reschedules an existing lead visit appointment. Provide start and end times in ISO 8601 format.",
-	}, func(ctx tool.Context, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
+	return apptools.NewRescheduleVisitTool(func(ctx tool.Context, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		return executeRescheduleVisit(deps, input)
 	})
 }
 
 func buildCancelVisitTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "CancelVisit",
-		Description: "Cancels the existing lead visit appointment.",
-	}, func(ctx tool.Context, input CancelVisitInput) (CancelVisitOutput, error) {
+	return apptools.NewCancelVisitTool(func(ctx tool.Context, input CancelVisitInput) (CancelVisitOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		return executeCancelVisit(deps, input)
 	})
@@ -1200,10 +1151,7 @@ func publishCallLoggerStageChanged(deps *CallLoggerToolDeps, ctx tool.Context, t
 }
 
 func buildCallLoggerUpdatePipelineStageTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "UpdatePipelineStage",
-		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
-	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+	return apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
 		deps := GetCallLoggerDeps(ctx)
 		return handleCallLoggerUpdatePipelineStage(ctx, deps, input)
 	})

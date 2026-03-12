@@ -2,7 +2,7 @@ package repository
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 	"time"
 
@@ -53,15 +53,18 @@ type CreateEmailReplyFeedbackParams struct {
 	ReplyAll        bool
 }
 
+const errAccountIDRequired = "account_id is required"
+const errSourceUIDRequired = "source_uid is required"
+
 func (r *Repository) CreateEmailReplyFeedback(ctx context.Context, params CreateEmailReplyFeedbackParams) (*EmailReplyFeedback, error) {
 	if params.OrganizationID == uuid.Nil {
-		return nil, fmt.Errorf(errOrganizationIDRequired)
+		return nil, errors.New(errOrganizationIDRequired)
 	}
 	if params.AccountID == uuid.Nil {
-		return nil, fmt.Errorf("account_id is required")
+		return nil, errors.New(errAccountIDRequired)
 	}
 	if params.SourceUID <= 0 {
-		return nil, fmt.Errorf("source_uid is required")
+		return nil, errors.New(errSourceUIDRequired)
 	}
 	params.CustomerEmail = strings.ToLower(strings.TrimSpace(params.CustomerEmail))
 	params.CustomerMessage = strings.TrimSpace(params.CustomerMessage)
@@ -168,7 +171,7 @@ func (r *Repository) CreateEmailReplyFeedback(ctx context.Context, params Create
 
 func (r *Repository) ListRecentAppliedEmailReplyFeedback(ctx context.Context, organizationID uuid.UUID, reference EmailReplyReference, customerEmail string, excludeAccountID uuid.UUID, excludeUID int64, limit int) ([]EmailReplyFeedback, error) {
 	if organizationID == uuid.Nil {
-		return nil, fmt.Errorf(errOrganizationIDRequired)
+		return nil, errors.New(errOrganizationIDRequired)
 	}
 	customerEmail = strings.ToLower(strings.TrimSpace(customerEmail))
 	if customerEmail == "" && reference.LeadID == nil && reference.LeadServiceID == nil {
@@ -258,7 +261,7 @@ func (r *Repository) ListEmailReplyScenarioAnalytics(ctx context.Context, organi
 
 func (r *Repository) ListRecentEmailReplyExamples(ctx context.Context, organizationID uuid.UUID, reference EmailReplyReference, customerEmail string, excludeAccountID uuid.UUID, excludeUID int64, limit int) ([]EmailReplyExample, error) {
 	if organizationID == uuid.Nil {
-		return nil, fmt.Errorf(errOrganizationIDRequired)
+		return nil, errors.New(errOrganizationIDRequired)
 	}
 	customerEmail = strings.ToLower(strings.TrimSpace(customerEmail))
 	if customerEmail == "" && reference.LeadID == nil && reference.LeadServiceID == nil {

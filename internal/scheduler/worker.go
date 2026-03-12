@@ -285,7 +285,7 @@ func buildHumanFeedbackMemoryDocument(feedback leadrepo.HumanFeedback) string {
 	sb.WriteString(feedback.FieldChanged)
 	sb.WriteString("\n")
 	if feedback.DeltaPercentage != nil {
-		sb.WriteString(fmt.Sprintf("delta_percentage: %.2f\n", *feedback.DeltaPercentage))
+		_, _ = fmt.Fprintf(&sb, "delta_percentage: %.2f\n", *feedback.DeltaPercentage)
 	}
 	sb.WriteString("ai_value: ")
 	sb.Write(aiJSON)
@@ -565,7 +565,7 @@ func (w *Worker) handlePartnerOfferSummary(ctx context.Context, task *asynq.Task
 
 func (w *Worker) handleGatekeeperRun(ctx context.Context, task *asynq.Task) error {
 	if w.leadsAI == nil {
-		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+		return errors.New(errLeadAutomationProcessorNotConfigured)
 	}
 
 	payload, err := ParseGatekeeperRunPayload(task)
@@ -583,7 +583,7 @@ func (w *Worker) handleGatekeeperRun(ctx context.Context, task *asynq.Task) erro
 
 func (w *Worker) handleEstimatorRun(ctx context.Context, task *asynq.Task) error {
 	if w.leadsAI == nil {
-		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+		return errors.New(errLeadAutomationProcessorNotConfigured)
 	}
 
 	payload, err := ParseEstimatorRunPayload(task)
@@ -601,7 +601,7 @@ func (w *Worker) handleEstimatorRun(ctx context.Context, task *asynq.Task) error
 
 func (w *Worker) handleDispatcherRun(ctx context.Context, task *asynq.Task) error {
 	if w.leadsAI == nil {
-		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+		return errors.New(errLeadAutomationProcessorNotConfigured)
 	}
 
 	payload, err := ParseDispatcherRunPayload(task)
@@ -619,7 +619,7 @@ func (w *Worker) handleDispatcherRun(ctx context.Context, task *asynq.Task) erro
 
 func (w *Worker) handlePhotoAnalysis(ctx context.Context, task *asynq.Task) error {
 	if w.leadsAI == nil {
-		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+		return errors.New(errLeadAutomationProcessorNotConfigured)
 	}
 
 	payload, err := ParsePhotoAnalysisPayload(task)
@@ -646,7 +646,7 @@ func (w *Worker) handlePhotoAnalysis(ctx context.Context, task *asynq.Task) erro
 
 func (w *Worker) handleAuditVisitReport(ctx context.Context, task *asynq.Task) error {
 	if w.leadsAI == nil {
-		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+		return errors.New(errLeadAutomationProcessorNotConfigured)
 	}
 
 	payload, err := ParseAuditVisitReportPayload(task)
@@ -669,7 +669,7 @@ func (w *Worker) handleAuditVisitReport(ctx context.Context, task *asynq.Task) e
 
 func (w *Worker) handleAuditCallLog(ctx context.Context, task *asynq.Task) error {
 	if w.leadsAI == nil {
-		return fmt.Errorf(errLeadAutomationProcessorNotConfigured)
+		return errors.New(errLeadAutomationProcessorNotConfigured)
 	}
 
 	payload, err := ParseAuditCallLogPayload(task)

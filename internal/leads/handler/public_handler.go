@@ -466,6 +466,18 @@ func (h *PublicHandler) ConfirmUpload(c *gin.Context) {
 		return
 	}
 
+	existingAttachments, err := h.repo.ListAttachmentsByService(c.Request.Context(), svc.ID, lead.OrganizationID)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "Failed to save attachment", nil)
+		return
+	}
+	for _, existing := range existingAttachments {
+		if existing.FileKey == req.FileKey {
+			httpkit.OK(c, gin.H{"status": "ok"})
+			return
+		}
+	}
+
 	att, err := h.repo.CreateAttachment(c.Request.Context(), repository.CreateAttachmentParams{
 		LeadServiceID:  svc.ID,
 		OrganizationID: lead.OrganizationID,

@@ -280,18 +280,6 @@ func (p *BasicImagePreprocessor) generateStructuralVariantFromImage(source image
 	}, ""
 }
 
-func (p *BasicImagePreprocessor) shouldRunOCRAssist(settings PhotoPreprocessingSettings, serviceType string) bool {
-	return settings.OCRAssistEnabled && serviceTypeAllowed(serviceType, settings.OCRAssistServiceTypes)
-}
-
-func (p *BasicImagePreprocessor) shouldApplyLensCorrection(settings PhotoPreprocessingSettings, serviceType string) bool {
-	return settings.LensCorrectionEnabled && serviceTypeAllowed(serviceType, settings.LensCorrectionServiceTypes)
-}
-
-func (p *BasicImagePreprocessor) shouldApplyPerspectiveNormalization(settings PhotoPreprocessingSettings, serviceType string) bool {
-	return settings.PerspectiveNormalizationEnabled && serviceTypeAllowed(serviceType, settings.PerspectiveNormalizationServiceTypes)
-}
-
 func serviceTypeAllowed(serviceType string, allowlist []string) bool {
 	if len(allowlist) == 0 {
 		return true
@@ -398,7 +386,9 @@ func (p *BasicImagePreprocessor) runOCRCommand(ctx context.Context, sourceKind s
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tempFile.Name())
+	defer func() {
+		_ = os.Remove(tempFile.Name())
+	}()
 	if _, err := tempFile.Write(data); err != nil {
 		_ = tempFile.Close()
 		return nil, err

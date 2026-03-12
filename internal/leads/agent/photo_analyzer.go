@@ -13,11 +13,18 @@ import (
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/orchestration"
+	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/moonshot"
+)
+
+const (
+	photoAnalyzerWorkspaceName   = "photo-analyzer"
+	photoAnalyzerTraceLabel      = photoAnalyzerWorkspaceName
+	photoAnalyzerRetryTraceLabel = "photo-analyzer-retry"
 )
 
 // Measurement represents a single measurement extracted from photo analysis
@@ -78,13 +85,13 @@ func (d *PhotoAnalyzerDeps) GetTenantID() (uuid.UUID, bool) {
 func (d *PhotoAnalyzerDeps) SetResult(r *PhotoAnalysis) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.result = r
+	d.result = clonePhotoAnalysis(r)
 }
 
 func (d *PhotoAnalyzerDeps) GetResult() *PhotoAnalysis {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return d.result
+	return clonePhotoAnalysis(d.result)
 }
 
 func (d *PhotoAnalyzerDeps) AddOnsiteFlag(reason string) {
@@ -96,7 +103,7 @@ func (d *PhotoAnalyzerDeps) AddOnsiteFlag(reason string) {
 func (d *PhotoAnalyzerDeps) GetOnsiteFlags() []string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return d.needsOnsiteMeasurements
+	return cloneStringSlice(d.needsOnsiteMeasurements)
 }
 
 func (d *PhotoAnalyzerDeps) ResetAccumulators() {
@@ -122,6 +129,10 @@ type PhotoAnalyzer struct {
 // NewPhotoAnalyzer creates a new photo analyzer agent
 func NewPhotoAnalyzer(apiKey string, modelName string, repo repository.LeadsRepository) (*PhotoAnalyzer, error) {
 	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+	workspace, err := orchestration.LoadAgentWorkspace(photoAnalyzerWorkspaceName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load photo analyzer workspace context: %w", err)
+	}
 
 	deps := &PhotoAnalyzerDeps{
 		Repo: repo,
@@ -136,13 +147,14 @@ func NewPhotoAnalyzer(apiKey string, modelName string, repo repository.LeadsRepo
 	if err != nil {
 		return nil, fmt.Errorf("failed to build photo analyzer tools: %w", err)
 	}
+	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "photo_analyzer_tools", tools)
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "PhotoAnalyzer",
 		Model:       kimi,
 		Description: "Expert AI agent specialized in analyzing photos of home repair and service situations",
-		Instruction: getPhotoAnalyzerPrompt(),
-		Tools:       tools,
+		Instruction: workspace.Instruction,
+		Toolsets:    toolsets,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create photo analyzer agent: %w", err)
@@ -251,7 +263,7 @@ func buildUserContent(req PhotoAnalysisRequest) *genai.Content {
 }
 
 func (pa *PhotoAnalyzer) createSession(ctx context.Context, leadID, serviceID uuid.UUID) (string, string, error) {
-	userID := fmt.Sprintf("photo-analyzer-%s-%s", leadID, serviceID)
+	userID := fmt.Sprintf("%s-%s-%s", photoAnalyzerTraceLabel, leadID, serviceID)
 	sessionID := uuid.New().String()
 
 	_, err := pa.sessionService.Create(ctx, &session.CreateRequest{
@@ -282,9 +294,12 @@ func (pa *PhotoAnalyzer) runAnalysis(ctx context.Context, userID, sessionID stri
 		StreamingMode: agent.StreamingModeNone,
 	}
 
-	if err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, userContent, runConfig), "photo analysis failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, userContent, runConfig), "photo analysis failed", func(event *session.Event) {
 		output += collectContentText(event.Content)
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace(photoAnalyzerTraceLabel, userID, sessionID, toolTrace)
+	if err != nil {
 		return "", err
 	}
 
@@ -324,9 +339,12 @@ func (pa *PhotoAnalyzer) retryForResult(ctx context.Context, userID, sessionID s
 		StreamingMode: agent.StreamingModeNone,
 	}
 
-	if err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, retryContent, runConfig), "photo analysis retry failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, retryContent, runConfig), "photo analysis retry failed", func(event *session.Event) {
 		output += collectContentText(event.Content)
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace(photoAnalyzerRetryTraceLabel, userID, sessionID, toolTrace)
+	if err != nil {
 		return output, err
 	}
 
@@ -351,6 +369,44 @@ func (pa *PhotoAnalyzer) mergeOnsiteFlags(ctx context.Context, result *PhotoAnal
 	if flags := reqDeps.GetOnsiteFlags(); len(flags) > 0 {
 		result.NeedsOnsiteMeasurement = append(result.NeedsOnsiteMeasurement, flags...)
 	}
+}
+
+func clonePhotoAnalysis(src *PhotoAnalysis) *PhotoAnalysis {
+	if src == nil {
+		return nil
+	}
+
+	clone := *src
+	clone.Observations = cloneStringSlice(src.Observations)
+	clone.SafetyConcerns = cloneStringSlice(src.SafetyConcerns)
+	clone.AdditionalInfo = cloneStringSlice(src.AdditionalInfo)
+	clone.Measurements = cloneMeasurements(src.Measurements)
+	clone.NeedsOnsiteMeasurement = cloneStringSlice(src.NeedsOnsiteMeasurement)
+	clone.Discrepancies = cloneStringSlice(src.Discrepancies)
+	clone.ExtractedText = cloneStringSlice(src.ExtractedText)
+	clone.SuggestedSearchTerms = cloneStringSlice(src.SuggestedSearchTerms)
+
+	return &clone
+}
+
+func cloneMeasurements(src []Measurement) []Measurement {
+	if len(src) == 0 {
+		return nil
+	}
+
+	clone := make([]Measurement, len(src))
+	copy(clone, src)
+	return clone
+}
+
+func cloneStringSlice(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+
+	clone := make([]string, len(src))
+	copy(clone, src)
+	return clone
 }
 
 // ImageData represents an image to analyze
@@ -400,10 +456,7 @@ type SavePhotoAnalysisOutput struct {
 }
 
 func buildPhotoAnalyzerTools() ([]tool.Tool, error) {
-	savePhotoAnalysis, err := functiontool.New(functiontool.Config{
-		Name:        "SavePhotoAnalysis",
-		Description: "Save the analysis of photos for a lead service. Call this after analyzing all photos. Include measurements, discrepancies, extracted text, and suggested search terms.",
-	}, func(ctx tool.Context, args SavePhotoAnalysisInput) (SavePhotoAnalysisOutput, error) {
+	savePhotoAnalysis, err := apptools.NewSavePhotoAnalysisTool(func(ctx tool.Context, args SavePhotoAnalysisInput) (SavePhotoAnalysisOutput, error) {
 		deps := GetPhotoAnalyzerDeps(ctx)
 		leadID, err := uuid.Parse(args.LeadID)
 		if err != nil {
@@ -472,10 +525,7 @@ func buildPhotoAnalyzerTools() ([]tool.Tool, error) {
 	}
 
 	// FlagOnsiteMeasurement accumulates reasons why on-site measurement is needed
-	flagOnsite, err := functiontool.New(functiontool.Config{
-		Name:        "FlagOnsiteMeasurement",
-		Description: "Flag that a specific measurement cannot be determined from photos alone and requires on-site measurement. Call this for EACH measurement that needs on-site verification.",
-	}, func(ctx tool.Context, args FlagOnsiteMeasurementInput) (map[string]any, error) {
+	flagOnsite, err := apptools.NewFlagOnsiteMeasurementTool(func(ctx tool.Context, args FlagOnsiteMeasurementInput) (map[string]any, error) {
 		deps := GetPhotoAnalyzerDeps(ctx)
 		if args.Reason == "" {
 			return map[string]any{"success": false, "message": "reason is required"}, nil
@@ -611,32 +661,28 @@ func appendPreparedImageMetadataLine(sb *strings.Builder, index int, metadata Pr
 	if strings.TrimSpace(filename) == "" {
 		filename = fmt.Sprintf("photo-%d", index+1)
 	}
-	sb.WriteString(fmt.Sprintf("- Foto %d (%s): %dx%d", index+1, filename, metadata.Width, metadata.Height))
+	_, _ = fmt.Fprintf(sb, "- Foto %d (%s): %dx%d", index+1, filename, metadata.Width, metadata.Height)
 	if metadata.CameraMake != "" || metadata.CameraModel != "" {
-		sb.WriteString(fmt.Sprintf(", camera=%s %s", metadata.CameraMake, metadata.CameraModel))
+		_, _ = fmt.Fprintf(sb, ", camera=%s %s", metadata.CameraMake, metadata.CameraModel)
 	}
 	if metadata.FocalLengthMM != "" {
-		sb.WriteString(fmt.Sprintf(", focal=%s", metadata.FocalLengthMM))
+		_, _ = fmt.Fprintf(sb, ", focal=%s", metadata.FocalLengthMM)
 	}
 	if len(metadata.AppliedTransforms) > 0 {
-		sb.WriteString(fmt.Sprintf(", transforms=%s", strings.Join(metadata.AppliedTransforms, ", ")))
+		_, _ = fmt.Fprintf(sb, ", transforms=%s", strings.Join(metadata.AppliedTransforms, ", "))
 	}
 	if len(metadata.SkippedTransforms) > 0 {
-		sb.WriteString(fmt.Sprintf(", skipped=%s", strings.Join(metadata.SkippedTransforms, ", ")))
+		_, _ = fmt.Fprintf(sb, ", skipped=%s", strings.Join(metadata.SkippedTransforms, ", "))
 	}
 	sb.WriteString("\n")
 }
 
 func appendPreparedImageOCRCandidates(sb *strings.Builder, candidates []OCRCandidate) {
 	for _, candidate := range candidates {
-		sb.WriteString(fmt.Sprintf("  OCR assist candidate: %s", candidate.Text))
+		_, _ = fmt.Fprintf(sb, "  OCR assist candidate: %s", candidate.Text)
 		if candidate.Source != "" {
-			sb.WriteString(fmt.Sprintf(" [source=%s]", candidate.Source))
+			_, _ = fmt.Fprintf(sb, " [source=%s]", candidate.Source)
 		}
 		sb.WriteString("\n")
 	}
-}
-
-func getPhotoAnalyzerPrompt() string {
-	return renderPromptTemplate(photoAnalyzerSystemPromptTemplate, struct{}{})
 }

@@ -1109,7 +1109,7 @@ WHERE l.organization_id = $1
 	AND (ai.urgency_level = 'High' OR l.created_at >= now() - ($2::int || ' days')::interval);
 
 -- name: ListActionItems :many
-SELECT l.id, l.consumer_first_name, l.consumer_last_name, ai.urgency_level, ai.urgency_reason, l.created_at
+SELECT l.id, l.consumer_first_name, l.consumer_last_name, COALESCE(ai.urgency_level, '') AS urgency_level, ai.urgency_reason, l.created_at
 FROM RAC_leads l
 LEFT JOIN (
 	SELECT DISTINCT ON (lead_id) lead_id, urgency_level, urgency_reason, created_at

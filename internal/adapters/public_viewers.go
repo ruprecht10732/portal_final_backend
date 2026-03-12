@@ -4,7 +4,6 @@ import (
 	"context"
 	"math"
 	"strings"
-	"time"
 
 	authsvc "portal_final_backend/internal/auth/service"
 	leadsrepo "portal_final_backend/internal/leads/repository"
@@ -80,8 +79,7 @@ func (a *QuotePublicAdapter) buildPublicQuoteSummary(ctx context.Context, quote 
 	if quote.PublicToken != nil {
 		publicToken = *quote.PublicToken
 	}
-	var createdAt *time.Time
-	createdAt = &quote.CreatedAt
+	createdAt := &quote.CreatedAt
 
 	content := a.buildQuoteContentSummary(ctx, quote)
 

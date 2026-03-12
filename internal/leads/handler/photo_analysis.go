@@ -126,6 +126,7 @@ func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
 		return
 	}
 
+	log.Printf("photo analysis: scheduler unavailable, falling back to sync execution for lead %s service %s", leadID, serviceID)
 	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, *tenantID, &userID, imageAttachments, contextInfo)
 
 	httpkit.OK(c, gin.H{

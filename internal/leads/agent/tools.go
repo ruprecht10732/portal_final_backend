@@ -18,13 +18,13 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/tool"
-	"google.golang.org/adk/tool/functiontool"
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
+	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/phone"
 	"portal_final_backend/platform/qdrant"
@@ -243,7 +243,7 @@ func (d *ToolDependencies) SetOrganizationAISettingsReader(reader ports.Organiza
 func (d *ToolDependencies) LoadOrganizationAISettings(ctx context.Context) (ports.OrganizationAISettings, error) {
 	tenantID, ok := d.GetTenantID()
 	if !ok || tenantID == nil {
-		return ports.OrganizationAISettings{}, errors.New(missingTenantContextMessage)
+		return ports.OrganizationAISettings{}, errors.New(strings.ToLower(missingTenantContextMessage[:1]) + missingTenantContextMessage[1:])
 	}
 
 	d.mu.RLock()
@@ -1221,7 +1221,7 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 
 	channel, err := resolvePreferredChannel(input.PreferredContactChannel, lead)
 	if err != nil {
-		return normalizedAnalysisInput{}, fmt.Errorf("Invalid preferred contact channel")
+		return normalizedAnalysisInput{}, fmt.Errorf("invalid preferred contact channel")
 	}
 
 	leadQuality := normalizeLeadQuality(input.LeadQuality)
@@ -1718,36 +1718,6 @@ func recordLeadDetailsUpdate(ctx tool.Context, deps *ToolDependencies, leadID, t
 
 	log.Printf("gatekeeper UpdateLeadDetails: leadId=%s fields=%v reason=%s", leadID, updatedFields, reasonText)
 }
-
-// createSaveAnalysisTool creates the SaveAnalysis tool
-func createSaveAnalysisTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "SaveAnalysis",
-		Description: "Saves the gatekeeper triage analysis to the database. Call this ONCE after completing your full analysis. Include urgency, lead quality, recommended action, missing information, resolved information, extracted facts, preferred contact channel, message, and summary.",
-	}, func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
-		return handleSaveAnalysis(ctx, GetDependencies(ctx), input)
-	})
-}
-
-// createUpdateLeadServiceTypeTool creates the UpdateLeadServiceType tool
-func createUpdateLeadServiceTypeTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "UpdateLeadServiceType",
-		Description: "Updates the service type for a lead service when there is a confident mismatch. The service type must match an active service type name or slug.",
-	}, func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
-		return handleUpdateLeadServiceType(ctx, GetDependencies(ctx), input)
-	})
-}
-
-func createUpdateLeadDetailsTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "UpdateLeadDetails",
-		Description: "Updates lead contact or address details when you are highly confident the current data is wrong.",
-	}, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
-		return handleUpdateLeadDetails(ctx, GetDependencies(ctx), input)
-	})
-}
-
 func validateProposalQuoteGuard(ctx context.Context, deps *ToolDependencies, stage string, serviceID, tenantID uuid.UUID) (UpdatePipelineStageOutput, error) {
 	if stage != domain.PipelineStageProposal {
 		return UpdatePipelineStageOutput{}, nil
@@ -2182,10 +2152,7 @@ func recordPipelineStageChange(ctx context.Context, deps *ToolDependencies, p st
 }
 
 func createUpdatePipelineStageTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "UpdatePipelineStage",
-		Description: "Updates the pipeline stage for the lead service and records a timeline event.",
-	}, func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+	return apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
 		return handleUpdatePipelineStage(ctx, GetDependencies(ctx), input)
 	})
 }
@@ -2220,16 +2187,6 @@ func stringifyAnySlice(items []any) []string {
 	}
 	return out
 }
-
-func createFindMatchingPartnersTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "FindMatchingPartners",
-		Description: "Finds partner matches by service type and distance radius. Allows excluding specific partner IDs.",
-	}, func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
-		return handleFindMatchingPartners(ctx, GetDependencies(ctx), input)
-	})
-}
-
 func handleFindMatchingPartners(ctx tool.Context, deps *ToolDependencies, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
 	tenantID, err := getTenantID(deps)
 	if err != nil {
@@ -2348,55 +2305,8 @@ func resolveOfferContext(deps *ToolDependencies, partnerIDRaw string, expiration
 
 	return tenantID, serviceID, partnerID, hours, "", nil
 }
-
-func createCreatePartnerOfferTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "CreatePartnerOffer",
-		Description: "Creates a formal job offer for a specific partner. This generates the unique link they use to accept the job.",
-	}, func(ctx tool.Context, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
-		deps := GetDependencies(ctx)
-		if deps.OfferCreator == nil {
-			return CreatePartnerOfferOutput{Success: false, Message: "Offer creation not configured"}, fmt.Errorf("offer creator not configured")
-		}
-
-		tenantID, serviceID, partnerID, hours, contextMessage, err := resolveOfferContext(deps, input.PartnerID, input.ExpirationHours)
-		if err != nil {
-			return CreatePartnerOfferOutput{Success: false, Message: contextMessage}, err
-		}
-
-		quoteID, err := deps.Repo.GetLatestAcceptedQuoteIDForService(ctx, serviceID, tenantID)
-		if err != nil {
-			return CreatePartnerOfferOutput{Success: false, Message: "Accepted quote not found for service"}, err
-		}
-
-		summary := truncateRunes(strings.TrimSpace(input.JobSummaryShort), 200)
-		result, err := deps.OfferCreator.CreateOfferFromQuote(ctx, tenantID, ports.CreateOfferFromQuoteParams{
-			PartnerID:       partnerID,
-			QuoteID:         quoteID,
-			ExpiresInHours:  hours,
-			JobSummaryShort: summary,
-		})
-		if err != nil {
-			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err
-		}
-
-		deps.MarkOfferCreated()
-		log.Printf("dispatcher CreatePartnerOffer: run=%s service=%s partner=%s offer=%s", deps.GetRunID(), serviceID, partnerID, result.OfferID)
-
-		return CreatePartnerOfferOutput{
-			Success:     true,
-			Message:     "Offer created",
-			OfferID:     result.OfferID.String(),
-			PublicToken: result.PublicToken,
-		}, nil
-	})
-}
-
 func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "SaveEstimation",
-		Description: "Saves estimation metadata (scope and price range) to the lead timeline.",
-	}, func(ctx tool.Context, input SaveEstimationInput) (SaveEstimationOutput, error) {
+	return apptools.NewSaveEstimationTool(func(ctx tool.Context, input SaveEstimationInput) (SaveEstimationOutput, error) {
 		deps := GetDependencies(ctx)
 		tenantID, err := getTenantID(deps)
 		if err != nil {
@@ -2446,10 +2356,7 @@ func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
 }
 
 func createCommitScopeArtifactTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "CommitScopeArtifact",
-		Description: "Commits structured scope analysis output for the quote builder phase.",
-	}, func(ctx tool.Context, input CommitScopeArtifactInput) (CommitScopeArtifactOutput, error) {
+	return apptools.NewCommitScopeArtifactTool(func(ctx tool.Context, input CommitScopeArtifactInput) (CommitScopeArtifactOutput, error) {
 		deps := GetDependencies(ctx)
 		artifact := input.Artifact
 		if len(artifact.MissingDimensions) > 0 {
@@ -2464,10 +2371,7 @@ func createCommitScopeArtifactTool(_ *ToolDependencies) (tool.Tool, error) {
 }
 
 func createAskCustomerClarificationTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "AskCustomerClarification",
-		Description: "Stores a Dutch clarification request for the customer when intake is incomplete.",
-	}, func(ctx tool.Context, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
+	return apptools.NewAskCustomerClarificationTool(func(ctx tool.Context, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
 		deps := GetDependencies(ctx)
 		tenantID, err := getTenantID(deps)
 		if err != nil {
@@ -2547,13 +2451,13 @@ func evaluateLegacyCalculatorOperation(input CalculatorInput) (CalculatorOutput,
 		expr = fmt.Sprintf("%g × %g = %g", input.A, input.B, result)
 	case "divide":
 		if input.B == 0 {
-			return CalculatorOutput{}, fmt.Errorf(divisionByZeroMessage)
+			return CalculatorOutput{}, errors.New(divisionByZeroMessage)
 		}
 		result = input.A / input.B
 		expr = fmt.Sprintf("%g ÷ %g = %g", input.A, input.B, result)
 	case "ceil_divide":
 		if input.B == 0 {
-			return CalculatorOutput{}, fmt.Errorf(divisionByZeroMessage)
+			return CalculatorOutput{}, errors.New(divisionByZeroMessage)
 		}
 		result = math.Ceil(input.A / input.B)
 		expr = fmt.Sprintf("⌈%g ÷ %g⌉ = %g", input.A, input.B, result)
@@ -2661,7 +2565,7 @@ func evaluateCalculatorBinary(node *ast.BinaryExpr) (float64, error) {
 		return left * right, nil
 	case token.QUO:
 		if right == 0 {
-			return 0, fmt.Errorf(divisionByZeroMessage)
+			return 0, errors.New(divisionByZeroMessage)
 		}
 		return left / right, nil
 	default:
@@ -2756,7 +2660,7 @@ func calculatorCeilDivide(args []float64) (float64, error) {
 		return 0, err
 	}
 	if args[1] == 0 {
-		return 0, fmt.Errorf(divisionByZeroMessage)
+		return 0, errors.New(divisionByZeroMessage)
 	}
 	return math.Ceil(args[0] / args[1]), nil
 }
@@ -2776,30 +2680,24 @@ func requireCalculatorArgCountRange(name string, args []float64, min int, max in
 }
 
 func createCalculatorTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name: "Calculator",
-		Description: `Performs exact arithmetic. You MUST use this for ANY calculation and never do math in your head.
+	return apptools.NewCalculatorTool(`Performs exact arithmetic. You MUST use this for ANY calculation and never do math in your head.
 Preferred input:
-  expression      -> one full arithmetic expression using +, -, *, /, parentheses,
-                    and helper functions ceil(...), floor(...), round(...), percentage(...), ceil_divide(...)
+	expression      -> one full arithmetic expression using +, -, *, /, parentheses,
+										and helper functions ceil(...), floor(...), round(...), percentage(...), ceil_divide(...)
 Legacy input remains supported:
-  operation + a/b -> add, subtract, multiply, divide, ceil_divide, ceil, floor, round, percentage
+	operation + a/b -> add, subtract, multiply, divide, ceil_divide, ceil, floor, round, percentage
 Examples:
-  Window area 2m x 1.5m: Calculator(expression="2 * 1.5") -> 3
-  Sheets needed: Calculator(expression="ceil_divide(4, 2.5)") -> 2
+	Window area 2m x 1.5m: Calculator(expression="2 * 1.5") -> 3
+	Sheets needed: Calculator(expression="ceil_divide(4, 2.5)") -> 2
 	Material subtotal plus VAT: Calculator(expression="((15.99 * 3) + (12.50 * 2)) * 1.21") -> 88.2937
-	Material subtotal plus VAT plus 10%% markup: Calculator(expression="(((15.99 * 3) + (12.50 * 2)) * 1.21) * 1.10") -> 97.12307`,
-	}, handleCalculator)
+	Material subtotal plus VAT plus 10%% markup: Calculator(expression="(((15.99 * 3) + (12.50 * 2)) * 1.21) * 1.10") -> 97.12307`, handleCalculator)
 }
 
 // MaxSafeUnitPrice is the ceiling for a single material item (€5M).
 const MaxSafeUnitPrice = 5_000_000.00
 
 func createCalculateEstimateTool() (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "CalculateEstimate",
-		Description: "Calculates material subtotal, labor subtotal range, and total range from raw structured inputs (unit prices, quantities, hour ranges, hourly rate ranges). Do NOT pre-calculate subtotals; this tool performs all multiplication.",
-	}, func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
+	return apptools.NewCalculateEstimateTool(func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
 		deps := GetDependencies(ctx)
 		if err := validateCalculateEstimateInput(input); err != nil {
 			return CalculateEstimateOutput{}, err
@@ -3065,10 +2963,7 @@ func handleListCatalogGaps(ctx tool.Context, deps *ToolDependencies, input ListC
 }
 
 func createListCatalogGapsTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name:        "ListCatalogGaps",
-		Description: "Lists frequent catalog search misses and frequently used ad-hoc quote line items for the current organization. Defaults use organization AI settings (catalogGapThreshold and catalogGapLookbackDays).",
-	}, func(ctx tool.Context, input ListCatalogGapsInput) (ListCatalogGapsOutput, error) {
+	return apptools.NewListCatalogGapsTool(func(ctx tool.Context, input ListCatalogGapsInput) (ListCatalogGapsOutput, error) {
 		return handleListCatalogGaps(ctx, GetDependencies(ctx), input)
 	})
 }
@@ -3669,7 +3564,7 @@ func logCatalogSelectionAudit(query string, products []ProductResult) {
 func tokenizeForMatch(value string) map[string]struct{} {
 	set := make(map[string]struct{})
 	for _, token := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
-		return !(r == '-' || r == '+' || r == '.' || r == '/' || r == 'x' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z'))
+		return r != '-' && r != '+' && r != '.' && r != '/' && r != 'x' && (r < '0' || r > '9') && (r < 'a' || r > 'z')
 	}) {
 		token = strings.TrimSpace(token)
 		if len(token) < 2 {
@@ -3683,7 +3578,7 @@ func tokenizeForMatch(value string) map[string]struct{} {
 func extractDimensionTokens(value string) map[string]struct{} {
 	tokens := make(map[string]struct{})
 	for _, token := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
-		return !(r == '-' || r == 'x' || r == '/' || r == '.' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z'))
+		return r != '-' && r != 'x' && r != '/' && r != '.' && (r < '0' || r > '9') && (r < 'a' || r > 'z')
 	}) {
 		token = strings.TrimSpace(token)
 		if isDimensionToken(token) {
@@ -3724,7 +3619,7 @@ var unitLookup = map[string]bool{
 func extractUnitTokens(value string) map[string]struct{} {
 	units := map[string]struct{}{}
 	tokens := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
 	for _, token := range tokens {
 		if unitLookup[token] {
@@ -3765,7 +3660,7 @@ func hasAnyUnitToken(text string, units map[string]struct{}) bool {
 		return false
 	}
 	tokens := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
 	for _, token := range tokens {
 		if _, ok := units[token]; ok {
@@ -3985,47 +3880,7 @@ func mergeOptionalString(dst *string, src string) {
 }
 
 func createSearchProductMaterialsTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name: "SearchProductMaterials",
-		Description: `Searches the product catalog for materials and their prices via semantic (vector) search.
-The query is embedded into a vector, so use descriptive, varied language for best recall.
-Only products with a relevance score >= 35% are returned. If no results are returned, it means the
-catalog does not contain a matching product — try a different query or add an ad-hoc item.
-
-Tips for effective queries:
-- Use generic product category names (e.g. "scharnier deur" instead of just "RVS scharnieren").
-- Include synonyms and alternative terms (e.g. "deurhanger deurbeslag scharnier").
-- Mix Dutch and English terms if the catalog may contain either.
-- Translate consumer wording into trade and DIY/store terms.
-- Example query expansion for "kantstukken": "dagkantafwerking", "deurlijst/chambranle", "aftimmerlat/afdeklat", "kozijnplint", "sponninglat".
-- Search for broader categories first, then refine with specific queries.
-- Call this tool multiple times with different queries to cover all needed materials.
-
-Each result includes a "score" field (0-1) indicating match quality.
-Products with score >= 0.45 are high-confidence matches and include highConfidence=true.
-For high-confidence matches, you can trust the found catalog price.
-Products with score 0.35-0.45 are lower-confidence candidates — verify variant/unit before using.
-
-Result fields:
-- name: product name
-- description: product description (may include brand)
-- type: product type — "service" or "digital_service" means price INCLUDES labor; "product" or "material" means price is material only.
-- priceEuros: price in euros (e.g. 7.93 = EUR 7.93). Use for CalculateEstimate unitPrice.
-- priceCents: price in euro-cents (e.g. 793). Use this directly as unitPriceCents in DraftQuote.
-
-Unit conversion tip:
-- If you need euros but you only have cents: convert with Calculator(expression="793 / 100") by substituting the numeric cents value.
-- unit: how the product is sold (e.g. "per m1", "per stuk", "per m2"). Use to compute correct quantities.
-- vatRateBps: VAT rate in basis points (2100 = 21%). Defaults to 2100 for reference products.
-- materials: included materials (e.g. ["Verzinkt staal"])
-- category: product category path (reference products only)
-- sourceUrl: reference URL (reference products only)
-- laborTime: estimated labor time text (if available)
-- score: similarity score (0-1)
-- highConfidence: true when score >= 0.45 (can trust found catalog price)
-- id: catalog product UUID (only for catalog items — use as catalogProductId in DraftQuote)
-SELECTION RULE: Always prefer a result WITH an "id" field (catalog item) over a result WITHOUT an "id" field (reference item) when both match the needed product — even if the reference item scores slightly higher. Only use reference items (ad-hoc, no catalogProductId) when no catalog item exists above the minimum score threshold.`,
-	}, func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
+	return apptools.NewSearchProductMaterialsTool(func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
 		return handleSearchProductMaterials(ctx, GetDependencies(ctx), input)
 	})
 }
@@ -4181,12 +4036,7 @@ func nilIfEmptyString(value string) *string {
 }
 
 func createSubmitQuoteCritiqueTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name: "SubmitQuoteCritique",
-		Description: `Persists the Quote Critic verdict for the latest drafted quote.
-Use approved=true only when the quote is coherent and safe for the normal human approval queue.
-Use approved=false when the draft still needs repair or manual attention. Provide concise Dutch findings.`,
-	}, func(ctx tool.Context, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
+	return apptools.NewSubmitQuoteCritiqueTool(func(ctx tool.Context, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
 		return handleSubmitQuoteCritique(ctx, GetDependencies(ctx), input)
 	})
 }
@@ -4550,21 +4400,7 @@ func collectCatalogAssetsForDraft(ctx context.Context, deps *ToolDependencies, t
 }
 
 func createDraftQuoteTool(_ *ToolDependencies) (tool.Tool, error) {
-	return functiontool.New(functiontool.Config{
-		Name: "DraftQuote",
-		Description: `Creates a draft quote for the current lead based on estimation results.
-Use this AFTER searching the catalog and calculating estimates.
-For each item, provide description, quantity, unitPriceCents (in euro-cents), taxRateBps.
-Quantity is mandatory on every line item and must be concrete and unit-aware, for example "2 stuks", "6 meter", "1 set", or "3 uur".
-Never leave quantity blank or implied by the description; if quantity must be derived, calculate it first with Calculator.
-Placeholder quantities like "?", "nader te bepalen", or "tbd" are rejected.
-If you cannot justify a quantity from the intake or scope, do not draft the quote yet.
-IMPORTANT: If a suitable product is found, set unitPriceCents to the product's "priceCents" value from SearchProductMaterials (already in cents).
-Only estimate unitPriceCents when no suitable product was found.
-If the item came from SearchProductMaterials, include its catalogProductId.
-When catalogProductId is present, backend catalog metadata is authoritative: unitPriceCents and taxRateBps are normalized to catalog values.
-Ad-hoc items (not found in catalog) should omit catalogProductId.`,
-	}, func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
+	return apptools.NewDraftQuoteTool(func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
 		return handleDraftQuote(ctx, GetDependencies(ctx), input)
 	})
 }

@@ -20,10 +20,10 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
+	"portal_final_backend/internal/orchestration"
+	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/moonshot"
 )
-
-const gatekeeperInstruction = "You validate intake requirements and may reason step-by-step internally, but your final output must contain only the required tool calls."
 
 // Gatekeeper validates intake requirements and advances pipeline stage.
 type Gatekeeper struct {
@@ -38,6 +38,10 @@ type Gatekeeper struct {
 // NewGatekeeper creates a Gatekeeper agent.
 func NewGatekeeper(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
 	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+	workspace, err := orchestration.LoadAgentWorkspace("gatekeeper")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load gatekeeper workspace context: %w", err)
+	}
 
 	deps := &ToolDependencies{
 		Repo:           repo,
@@ -46,29 +50,38 @@ func NewGatekeeper(apiKey string, modelName string, repo repository.LeadsReposit
 		CouncilService: NewDefaultMultiAgentCouncil(repo),
 	}
 
-	updateStageTool, err := createUpdatePipelineStageTool(deps)
+	updateStageTool, err := apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
+		return handleUpdatePipelineStage(ctx, GetDependencies(ctx), input)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
-	saveAnalysisTool, err := createSaveAnalysisTool(deps)
+	saveAnalysisTool, err := apptools.NewSaveAnalysisTool(func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
+		return handleSaveAnalysis(ctx, GetDependencies(ctx), input)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build SaveAnalysis tool: %w", err)
 	}
-	updateServiceTypeTool, err := createUpdateLeadServiceTypeTool(deps)
+	updateServiceTypeTool, err := apptools.NewUpdateLeadServiceTypeTool(func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
+		return handleUpdateLeadServiceType(ctx, GetDependencies(ctx), input)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdateLeadServiceType tool: %w", err)
 	}
-	updateLeadDetailsTool, err := createUpdateLeadDetailsTool(deps)
+	updateLeadDetailsTool, err := apptools.NewUpdateLeadDetailsTool("Updates lead contact or address details when you are highly confident the current data is wrong.", func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
+		return handleUpdateLeadDetails(ctx, GetDependencies(ctx), input)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdateLeadDetails tool: %w", err)
 	}
+	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "gatekeeper_tools", []tool.Tool{saveAnalysisTool, updateLeadDetailsTool, updateServiceTypeTool, updateStageTool})
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Gatekeeper",
 		Model:       kimi,
 		Description: "Validates intake requirements and advances the lead pipeline.",
-		Instruction: gatekeeperInstruction,
-		Tools:       []tool.Tool{saveAnalysisTool, updateLeadDetailsTool, updateServiceTypeTool, updateStageTool},
+		Instruction: workspace.Instruction,
+		Toolsets:    toolsets,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatekeeper agent: %w", err)
@@ -452,7 +465,7 @@ func (g *Gatekeeper) buildServiceContext(ctx context.Context, tenantID uuid.UUID
 
 	var sb strings.Builder
 	sb.WriteString("Active service types: " + strings.Join(activeNames, ", ") + "\n\n")
-	sb.WriteString(fmt.Sprintf("Selected service type (current): %s\n\n", currentServiceType))
+	_, _ = fmt.Fprintf(&sb, "Selected service type (current): %s\n\n", currentServiceType)
 
 	if selected == nil {
 		sb.WriteString("Intake Requirements for selected service type: Not found (service type may be inactive or renamed).\n")
@@ -508,9 +521,12 @@ func (g *Gatekeeper) runWithPrompt(ctx context.Context, promptText string, leadI
 	}
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	if err := consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "gatekeeper run failed", func(event *session.Event) {
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "gatekeeper run failed", func(event *session.Event) {
 		_ = event
-	}); err != nil {
+	}, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace("gatekeeper", userID, sessionID, toolTrace)
+	if err != nil {
 		return err
 	}
 

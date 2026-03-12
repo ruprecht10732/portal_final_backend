@@ -7,8 +7,8 @@ func TestQuoteGeneratorProfileEnablesReasoning(t *testing.T) {
 	if !profile.reasoning {
 		t.Fatalf("expected quote generator profile to enable reasoning")
 	}
-	if profile.instruction == "" {
-		t.Fatalf("expected quote generator instruction to be set")
+	if profile.workspace == "" {
+		t.Fatalf("expected quote generator workspace to be set")
 	}
 	if profile.name != "QuoteGenerator" {
 		t.Fatalf("unexpected profile name %q", profile.name)

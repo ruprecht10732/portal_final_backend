@@ -655,7 +655,7 @@ func TestBuildNotesSectionOrdersNewestNotesFirst(t *testing.T) {
 		t.Fatalf("expected all notes to be present, got %s", section)
 	}
 
-	if !(newestIndex < middleIndex && middleIndex < oldestIndex) {
+	if newestIndex >= middleIndex || middleIndex >= oldestIndex {
 		t.Fatalf("expected newest-first note order, got %s", section)
 	}
 }

@@ -41,9 +41,7 @@ type SearchResult struct {
 
 func (r *Repository) GlobalSearch(ctx context.Context, orgID uuid.UUID, query string, limit int, types []string) ([]SearchResult, error) {
 	typesArg := types
-	if len(types) > 0 {
-		typesArg = types
-	} else {
+	if len(types) == 0 {
 		typesArg = nil
 	}
 

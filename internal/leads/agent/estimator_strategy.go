@@ -68,13 +68,13 @@ func buildExperienceMemorySection(memories []repository.AIDecisionMemory) string
 		if m.Confidence != nil {
 			conf = fmt.Sprintf("%.2f", *m.Confidence)
 		}
-		sb.WriteString(fmt.Sprintf("- [%s/%s] confidence=%s | context=%s | action=%s\n",
+		_, _ = fmt.Fprintf(&sb, "- [%s/%s] confidence=%s | context=%s | action=%s\n",
 			compactText(m.DecisionType, 24),
 			compactText(m.Outcome, 24),
 			conf,
 			compactText(m.ContextSummary, 140),
 			compactText(m.ActionSummary, 140),
-		))
+		)
 	}
 	return strings.TrimSpace(sb.String())
 }
@@ -97,12 +97,12 @@ func buildHumanFeedbackMemorySection(feedbackItems []repository.HumanFeedback) s
 		aiJSON, _ := json.Marshal(item.AIValue)
 		humanJSON, _ := json.Marshal(item.HumanValue)
 
-		sb.WriteString(fmt.Sprintf("- field=%s | delta=%s | ai=%s | human=%s\n",
+		_, _ = fmt.Fprintf(&sb, "- field=%s | delta=%s | ai=%s | human=%s\n",
 			compactText(item.FieldChanged, 48),
 			delta,
 			compactText(string(aiJSON), 140),
 			compactText(string(humanJSON), 140),
-		))
+		)
 	}
 	return strings.TrimSpace(sb.String())
 }
@@ -118,7 +118,7 @@ func buildPricingIntelligenceSection(report *ports.PricingIntelligenceReport) st
 	var sb strings.Builder
 	sb.WriteString("=== PRICING INTELLIGENCE ===\n")
 	if strings.TrimSpace(report.RegionPrefix) != "" {
-		sb.WriteString(fmt.Sprintf("Filtered region: %s\n", report.RegionPrefix))
+		_, _ = fmt.Fprintf(&sb, "Filtered region: %s\n", report.RegionPrefix)
 	}
 	appendPricingAggregateLines(&sb, report.Aggregates)
 	appendPricingOutcomeLines(&sb, report.RecentOutcomes)
