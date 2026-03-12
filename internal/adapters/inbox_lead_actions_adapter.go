@@ -20,6 +20,11 @@ type InboxLeadActionsAdapter struct {
 	repo       leadrepo.LeadsRepository
 }
 
+const (
+	errLeadRepositoryNotConfigured = "lead repository is not configured"
+	errLeadServiceNotFound         = "lead service not found"
+)
+
 func NewInboxLeadActionsAdapter(management *leadmgmt.Service, repo leadrepo.LeadsRepository) *InboxLeadActionsAdapter {
 	return &InboxLeadActionsAdapter{management: management, repo: repo}
 }
@@ -33,13 +38,13 @@ func (a *InboxLeadActionsAdapter) Create(ctx context.Context, req leadstransport
 
 func (a *InboxLeadActionsAdapter) ResolveServiceID(ctx context.Context, leadID, organizationID uuid.UUID, requestedServiceID *uuid.UUID) (uuid.UUID, error) {
 	if a == nil || a.repo == nil {
-		return uuid.UUID{}, apperr.Internal("lead repository is not configured")
+		return uuid.UUID{}, apperr.Internal(errLeadRepositoryNotConfigured)
 	}
 	if requestedServiceID != nil {
 		service, err := a.repo.GetLeadServiceByID(ctx, *requestedServiceID, organizationID)
 		if err != nil {
 			if errors.Is(err, leadrepo.ErrServiceNotFound) {
-				return uuid.UUID{}, apperr.NotFound("lead service not found")
+				return uuid.UUID{}, apperr.NotFound(errLeadServiceNotFound)
 			}
 			return uuid.UUID{}, err
 		}
@@ -52,7 +57,7 @@ func (a *InboxLeadActionsAdapter) ResolveServiceID(ctx context.Context, leadID, 
 	service, err := a.repo.GetCurrentLeadService(ctx, leadID, organizationID)
 	if err != nil {
 		if errors.Is(err, leadrepo.ErrServiceNotFound) {
-			return uuid.UUID{}, apperr.NotFound("lead service not found")
+			return uuid.UUID{}, apperr.NotFound(errLeadServiceNotFound)
 		}
 		return uuid.UUID{}, err
 	}
@@ -61,12 +66,12 @@ func (a *InboxLeadActionsAdapter) ResolveServiceID(ctx context.Context, leadID, 
 
 func (a *InboxLeadActionsAdapter) CreateAttachment(ctx context.Context, params identityservice.CreateLeadAttachmentParams) (identityservice.CreateLeadAttachmentResult, error) {
 	if a == nil || a.repo == nil {
-		return identityservice.CreateLeadAttachmentResult{}, apperr.Internal("lead repository is not configured")
+		return identityservice.CreateLeadAttachmentResult{}, apperr.Internal(errLeadRepositoryNotConfigured)
 	}
 	service, err := a.repo.GetLeadServiceByID(ctx, params.ServiceID, params.OrganizationID)
 	if err != nil {
 		if errors.Is(err, leadrepo.ErrServiceNotFound) {
-			return identityservice.CreateLeadAttachmentResult{}, apperr.NotFound("lead service not found")
+			return identityservice.CreateLeadAttachmentResult{}, apperr.NotFound(errLeadServiceNotFound)
 		}
 		return identityservice.CreateLeadAttachmentResult{}, err
 	}
@@ -92,7 +97,7 @@ func (a *InboxLeadActionsAdapter) CreateAttachment(ctx context.Context, params i
 
 func (a *InboxLeadActionsAdapter) CreateImportantNote(ctx context.Context, params identityservice.CreateImportantLeadNoteParams) (identityservice.CreateImportantLeadNoteResult, error) {
 	if a == nil || a.repo == nil {
-		return identityservice.CreateImportantLeadNoteResult{}, apperr.Internal("lead repository is not configured")
+		return identityservice.CreateImportantLeadNoteResult{}, apperr.Internal(errLeadRepositoryNotConfigured)
 	}
 
 	serviceID := params.ServiceID
@@ -121,7 +126,7 @@ func (a *InboxLeadActionsAdapter) CreateImportantNote(ctx context.Context, param
 
 func (a *InboxLeadActionsAdapter) CreateTimelineEvent(ctx context.Context, params leadrepo.CreateTimelineEventParams) (leadrepo.TimelineEvent, error) {
 	if a == nil || a.repo == nil {
-		return leadrepo.TimelineEvent{}, apperr.Internal("lead repository is not configured")
+		return leadrepo.TimelineEvent{}, apperr.Internal(errLeadRepositoryNotConfigured)
 	}
 	return a.repo.CreateTimelineEvent(ctx, params)
 }
