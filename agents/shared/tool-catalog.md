@@ -4,6 +4,7 @@
 - `UpdateLeadDetails`: correct explicit lead contact or address facts.
 - `UpdateLeadServiceType`: update service type only when backend policy allows it.
 - `UpdatePipelineStage`: request a validated pipeline transition.
+- `CreateLead`: create a new lead when the required intake details are available.
 - `Calculator`: perform arithmetic and unit conversion.
 - `CalculateEstimate`: compute quote totals from structured inputs.
 - `SearchProductMaterials`: search the product catalog.

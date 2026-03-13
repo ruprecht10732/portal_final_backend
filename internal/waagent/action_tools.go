@@ -15,6 +15,64 @@ const (
 	errVisitMutationsNotConfigured = "visit mutations not configured"
 )
 
+type CreateLeadInput struct {
+	FirstName    *string `json:"first_name,omitempty"`
+	LastName     *string `json:"last_name,omitempty"`
+	Phone        *string `json:"phone,omitempty"`
+	Email        *string `json:"email,omitempty"`
+	ConsumerRole *string `json:"consumer_role,omitempty"`
+	Street       *string `json:"street,omitempty"`
+	HouseNumber  *string `json:"house_number,omitempty"`
+	ZipCode      *string `json:"zip_code,omitempty"`
+	City         *string `json:"city,omitempty"`
+	ServiceType  *string `json:"service_type,omitempty"`
+	ConsumerNote *string `json:"consumer_note,omitempty"`
+}
+
+type CreateLeadResult struct {
+	LeadID        string `json:"lead_id"`
+	LeadServiceID string `json:"lead_service_id,omitempty"`
+	CustomerName  string `json:"customer_name"`
+	ServiceType   string `json:"service_type,omitempty"`
+}
+
+type CreateLeadOutput struct {
+	Success       bool             `json:"success"`
+	Message       string           `json:"message"`
+	MissingFields []string         `json:"missing_fields,omitempty"`
+	Lead          *CreateLeadResult `json:"lead,omitempty"`
+}
+
+type SearchProductMaterialsInput struct {
+	Query      string   `json:"query"`
+	Limit      int      `json:"limit,omitempty"`
+	UseCatalog *bool    `json:"use_catalog,omitempty"`
+	MinScore   *float64 `json:"min_score,omitempty"`
+}
+
+type ProductResult struct {
+	ID               string   `json:"id,omitempty"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	Type             string   `json:"type"`
+	PriceEuros       float64  `json:"price_euros"`
+	PriceCents       int64    `json:"price_cents"`
+	Unit             string   `json:"unit,omitempty"`
+	LaborTime        string   `json:"labor_time,omitempty"`
+	VatRateBps       int      `json:"vat_rate_bps,omitempty"`
+	Materials        []string `json:"materials,omitempty"`
+	Category         string   `json:"category,omitempty"`
+	SourceURL        string   `json:"source_url,omitempty"`
+	SourceCollection string   `json:"source_collection,omitempty"`
+	Score            float64  `json:"score,omitempty"`
+	HighConfidence   bool     `json:"high_confidence"`
+}
+
+type SearchProductMaterialsOutput struct {
+	Products []ProductResult `json:"products"`
+	Message  string          `json:"message"`
+}
+
 type LeadSearchResult struct {
 	LeadID        string `json:"lead_id"`
 	LeadServiceID string `json:"lead_service_id,omitempty"`
@@ -224,6 +282,20 @@ func (h *ToolHandler) HandleGetNavigationLink(_ tool.Context, orgID uuid.UUID, i
 		return GetNavigationLinkOutput{Success: false, Message: err.Error()}, err
 	}
 	return GetNavigationLinkOutput{Success: true, Message: "Navigatielink gevonden", Link: link}, nil
+}
+
+func (h *ToolHandler) HandleCreateLead(_ tool.Context, orgID uuid.UUID, input CreateLeadInput) (CreateLeadOutput, error) {
+	if h.leadMutationWriter == nil {
+		return CreateLeadOutput{}, fmt.Errorf(errLeadMutationsNotConfigured)
+	}
+	return h.leadMutationWriter.CreateLead(context.Background(), orgID, input)
+}
+
+func (h *ToolHandler) HandleSearchProductMaterials(_ tool.Context, orgID uuid.UUID, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
+	if h.catalogSearchReader == nil {
+		return SearchProductMaterialsOutput{}, fmt.Errorf("catalog search not configured")
+	}
+	return h.catalogSearchReader.SearchProductMaterials(context.Background(), orgID, input)
 }
 
 func (h *ToolHandler) HandleUpdateLeadDetails(_ tool.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {

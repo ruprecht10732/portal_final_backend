@@ -24,6 +24,10 @@ func NewUpdateLeadDetailsTool[In any, Out any](description string, handler func(
 	return newDomainTool("UpdateLeadDetails", description, handler)
 }
 
+func NewCreateLeadTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("CreateLead", "Creates a new lead in the current organization after collecting the required customer and address details. If required fields are missing, it should return which fields are still needed. Do NOT provide a tenant or organization identifier.", handler)
+}
+
 func NewUpdatePipelineStageTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("UpdatePipelineStage", "Updates the pipeline stage for the lead service and records a timeline event.", handler)
 }

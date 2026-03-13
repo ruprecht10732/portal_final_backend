@@ -101,6 +101,16 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		return nil, err
 	}
 
+	createLeadTool, err := buildCreateLeadTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	searchProductMaterialsTool, err := buildSearchProductMaterialsTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
 	getQuotesTool, err := buildGetQuotesTool(toolHandler)
 	if err != nil {
 		return nil, err
@@ -148,6 +158,8 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 
 	return []tool.Tool{
 		searchLeadsTool,
+		createLeadTool,
+		searchProductMaterialsTool,
 		getAvailableVisitSlotsTool,
 		getNavigationLinkTool,
 		getQuotesTool,
@@ -160,6 +172,34 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		rescheduleVisitTool,
 		cancelVisitTool,
 	}, nil
+}
+
+func buildCreateLeadTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	createLeadTool, err := apptools.NewCreateLeadTool(func(ctx tool.Context, input CreateLeadInput) (CreateLeadOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return CreateLeadOutput{}, err
+		}
+		return toolHandler.HandleCreateLead(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build CreateLead tool: %w", err)
+	}
+	return createLeadTool, nil
+}
+
+func buildSearchProductMaterialsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	searchTool, err := apptools.NewSearchProductMaterialsTool(func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return SearchProductMaterialsOutput{}, err
+		}
+		return toolHandler.HandleSearchProductMaterials(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build SearchProductMaterials tool: %w", err)
+	}
+	return searchTool, nil
 }
 
 func buildGetNavigationLinkTool(toolHandler *ToolHandler) (tool.Tool, error) {

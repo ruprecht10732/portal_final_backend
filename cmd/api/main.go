@@ -424,7 +424,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	notificationModule.SetQuoteActivityWriter(adapters.NewQuoteActivityWriter(quotesModule.Repository()))
 	notificationModule.SetOfferTimelineWriter(adapters.NewPartnerOffersTimelineWriter(leadsModule.Repository()))
 	notificationModule.SetLeadTimelineWriter(adapters.NewLeadTimelineWriter(leadsModule.Repository()))
-	leadsModule.SetCatalogReader(adapters.NewCatalogProductReader(catalogModule.Repository()))
+	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
+	leadsModule.SetCatalogReader(catalogReader)
 	leadsModule.SetQuoteDrafter(adapters.NewQuotesDraftWriter(quotesModule.Service()))
 	leadsModule.SetPricingIntelligenceReader(adapters.NewQuotePricingIntelligenceReader(quotesModule.Repository()))
 	quotesModule.Service().SetQuotePromptGenerator(adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent()))
@@ -443,6 +444,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		AppointmentsReader: adapters.NewWAAgentAppointmentsAdapter(appointmentsModule.Service),
 		LeadSearchReader:   adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		NavigationLinkReader: adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		CatalogSearchReader: adapters.NewWAAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
 		LeadMutationWriter: adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		VisitSlotReader:    adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
 		VisitMutationWriter: adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),

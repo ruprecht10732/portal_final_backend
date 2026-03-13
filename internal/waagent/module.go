@@ -60,7 +60,12 @@ type NavigationLinkReader interface {
 	GetNavigationLink(ctx context.Context, orgID uuid.UUID, leadID string) (*NavigationLinkResult, error)
 }
 
+type CatalogSearchReader interface {
+	SearchProductMaterials(ctx context.Context, orgID uuid.UUID, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error)
+}
+
 type LeadMutationWriter interface {
+	CreateLead(ctx context.Context, orgID uuid.UUID, input CreateLeadInput) (CreateLeadOutput, error)
 	UpdateLeadDetails(ctx context.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) ([]string, error)
 	AskCustomerClarification(ctx context.Context, orgID uuid.UUID, input AskCustomerClarificationInput) error
 	SaveNote(ctx context.Context, orgID uuid.UUID, input SaveNoteInput) error
@@ -96,6 +101,7 @@ type ModuleDependencies struct {
 	AppointmentsReader AppointmentsReader
 	LeadSearchReader   LeadSearchReader
 	NavigationLinkReader NavigationLinkReader
+	CatalogSearchReader CatalogSearchReader
 	LeadMutationWriter LeadMutationWriter
 	VisitSlotReader    VisitSlotReader
 	VisitMutationWriter VisitMutationWriter
@@ -121,6 +127,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		appointmentsReader: deps.AppointmentsReader,
 		leadSearchReader:   deps.LeadSearchReader,
 		navigationLinkReader: deps.NavigationLinkReader,
+		catalogSearchReader: deps.CatalogSearchReader,
 		leadMutationWriter: deps.LeadMutationWriter,
 		visitSlotReader:    deps.VisitSlotReader,
 		visitMutationWriter: deps.VisitMutationWriter,

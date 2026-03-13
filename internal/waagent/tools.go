@@ -38,6 +38,7 @@ type ToolHandler struct {
 	appointmentsReader AppointmentsReader
 	leadSearchReader   LeadSearchReader
 	navigationLinkReader NavigationLinkReader
+	catalogSearchReader CatalogSearchReader
 	leadMutationWriter LeadMutationWriter
 	visitSlotReader    VisitSlotReader
 	visitMutationWriter VisitMutationWriter

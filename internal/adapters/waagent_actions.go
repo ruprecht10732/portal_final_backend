@@ -9,6 +9,8 @@ import (
 
 	apptsvc "portal_final_backend/internal/appointments/service"
 	appttransport "portal_final_backend/internal/appointments/transport"
+	catalogsvc "portal_final_backend/internal/catalog/service"
+	catalogtransport "portal_final_backend/internal/catalog/transport"
 	leadsmgmt "portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/ports"
 	leadsrepo "portal_final_backend/internal/leads/repository"
@@ -22,6 +24,7 @@ import (
 const waagentActorName = "Reinout"
 
 const errInvalidLeadID = "invalid lead_id"
+const errLeadManagementNotConfigured = "lead management service not configured"
 
 type WAAgentLeadActionsAdapter struct {
 	mgmt *leadsmgmt.Service
@@ -34,7 +37,7 @@ func NewWAAgentLeadActionsAdapter(mgmt *leadsmgmt.Service, repo leadsrepo.LeadsR
 
 func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) ([]waagent.LeadSearchResult, error) {
 	if a.mgmt == nil {
-		return nil, fmt.Errorf("lead management service not configured")
+		return nil, fmt.Errorf(errLeadManagementNotConfigured)
 	}
 	if limit <= 0 {
 		limit = 5
@@ -65,6 +68,81 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 		})
 	}
 	return results, nil
+}
+
+func (a *WAAgentLeadActionsAdapter) CreateLead(ctx context.Context, orgID uuid.UUID, input waagent.CreateLeadInput) (waagent.CreateLeadOutput, error) {
+	if a.mgmt == nil {
+		return waagent.CreateLeadOutput{}, fmt.Errorf(errLeadManagementNotConfigured)
+	}
+	missing := missingCreateLeadFields(input)
+	if len(missing) > 0 {
+		return waagent.CreateLeadOutput{
+			Success:       false,
+			Message:       "Er ontbreken nog gegevens om de lead aan te maken",
+			MissingFields: missing,
+		}, nil
+	}
+	req := leadtransport.CreateLeadRequest{
+		FirstName:    strings.TrimSpace(*input.FirstName),
+		LastName:     strings.TrimSpace(*input.LastName),
+		Phone:        strings.TrimSpace(phone.NormalizeE164(*input.Phone)),
+		ConsumerRole: leadtransport.ConsumerRole(strings.TrimSpace(*input.ConsumerRole)),
+		Street:       strings.TrimSpace(*input.Street),
+		HouseNumber:  strings.TrimSpace(*input.HouseNumber),
+		ZipCode:      strings.TrimSpace(*input.ZipCode),
+		City:         strings.TrimSpace(*input.City),
+		ServiceType:  leadtransport.ServiceType(strings.TrimSpace(*input.ServiceType)),
+		Source:       "whatsapp_agent",
+	}
+	if input.Email != nil {
+		req.Email = strings.TrimSpace(*input.Email)
+	}
+	if input.ConsumerNote != nil {
+		req.ConsumerNote = strings.TrimSpace(*input.ConsumerNote)
+	}
+	resp, err := a.mgmt.Create(ctx, req, orgID)
+	if err != nil {
+		return waagent.CreateLeadOutput{}, err
+	}
+	serviceID := ""
+	serviceType := ""
+	if resp.CurrentService != nil {
+		serviceID = resp.CurrentService.ID.String()
+		serviceType = string(resp.CurrentService.ServiceType)
+	}
+	if serviceType == "" && len(resp.Services) > 0 {
+		serviceID = resp.Services[0].ID.String()
+		serviceType = string(resp.Services[0].ServiceType)
+	}
+	return waagent.CreateLeadOutput{
+		Success: true,
+		Message: "Lead aangemaakt",
+		Lead: &waagent.CreateLeadResult{
+			LeadID:        resp.ID.String(),
+			LeadServiceID: serviceID,
+			CustomerName:  strings.TrimSpace(resp.Consumer.FirstName + " " + resp.Consumer.LastName),
+			ServiceType:   serviceType,
+		},
+	}, nil
+}
+
+func missingCreateLeadFields(input waagent.CreateLeadInput) []string {
+	missing := make([]string, 0, 9)
+	appendMissing := func(name string, value *string) {
+		if value == nil || strings.TrimSpace(*value) == "" {
+			missing = append(missing, name)
+		}
+	}
+	appendMissing("first_name", input.FirstName)
+	appendMissing("last_name", input.LastName)
+	appendMissing("phone", input.Phone)
+	appendMissing("consumer_role", input.ConsumerRole)
+	appendMissing("street", input.Street)
+	appendMissing("house_number", input.HouseNumber)
+	appendMissing("zip_code", input.ZipCode)
+	appendMissing("city", input.City)
+	appendMissing("service_type", input.ServiceType)
+	return missing
 }
 
 func (a *WAAgentLeadActionsAdapter) GetNavigationLink(ctx context.Context, orgID uuid.UUID, leadIDRaw string) (*waagent.NavigationLinkResult, error) {
@@ -104,9 +182,123 @@ func formatLeadDestination(lead leadsrepo.Lead) string {
 	return strings.Join(parts, ", ")
 }
 
+type WAAgentCatalogSearchAdapter struct {
+	svc           *catalogsvc.Service
+	catalogReader ports.CatalogReader
+}
+
+func NewWAAgentCatalogSearchAdapter(svc *catalogsvc.Service, catalogReader ports.CatalogReader) *WAAgentCatalogSearchAdapter {
+	return &WAAgentCatalogSearchAdapter{svc: svc, catalogReader: catalogReader}
+}
+
+func (a *WAAgentCatalogSearchAdapter) SearchProductMaterials(ctx context.Context, orgID uuid.UUID, input waagent.SearchProductMaterialsInput) (waagent.SearchProductMaterialsOutput, error) {
+	if a.svc == nil {
+		return waagent.SearchProductMaterialsOutput{Products: []waagent.ProductResult{}, Message: "Catalogus zoeken is niet beschikbaar"}, nil
+	}
+	query := strings.TrimSpace(input.Query)
+	if query == "" {
+		return waagent.SearchProductMaterialsOutput{Products: []waagent.ProductResult{}, Message: "Query mag niet leeg zijn"}, nil
+	}
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+	items, err := a.svc.SearchForAutocomplete(ctx, orgID, catalogtransport.AutocompleteSearchRequest{Query: query, Limit: limit})
+	if err != nil {
+		return waagent.SearchProductMaterialsOutput{}, err
+	}
+	products := a.mapAutocompleteProducts(ctx, orgID, items)
+	message := "Resultaten gevonden"
+	if len(products) == 0 {
+		message = "Geen passende producten gevonden"
+	}
+	return waagent.SearchProductMaterialsOutput{Products: products, Message: message}, nil
+}
+
+func (a *WAAgentCatalogSearchAdapter) mapAutocompleteProducts(ctx context.Context, orgID uuid.UUID, items []catalogtransport.AutocompleteItemResponse) []waagent.ProductResult {
+	materialsByID := a.hydrateCatalogMaterials(ctx, orgID, items)
+	products := make([]waagent.ProductResult, 0, len(items))
+	for _, item := range items {
+		products = append(products, autocompleteItemToProductResult(item, materialsByID))
+	}
+	return products
+}
+
+func autocompleteItemToProductResult(item catalogtransport.AutocompleteItemResponse, materialsByID map[uuid.UUID][]string) waagent.ProductResult {
+	priceCents := item.UnitPriceCents
+	if priceCents == 0 {
+		priceCents = item.PriceCents
+	}
+	materials := []string{}
+	if item.CatalogProductID != nil {
+		materials = materialsByID[*item.CatalogProductID]
+	}
+	score := 0.0
+	if item.Score != nil {
+		score = *item.Score
+	}
+	result := waagent.ProductResult{
+		ID:               item.ID,
+		Name:             item.Title,
+		Description:      derefString(item.Description),
+		Type:             autocompleteItemType(item.SourceType),
+		PriceEuros:       float64(priceCents) / 100,
+		PriceCents:       priceCents,
+		Unit:             derefString(item.UnitLabel),
+		VatRateBps:       item.VatRateBps,
+		Materials:        materials,
+		SourceURL:        derefString(item.SourceURL),
+		SourceCollection: item.SourceCollection,
+		Score:            score,
+		HighConfidence:   score >= 0.55,
+		Category:         item.SourceLabel,
+	}
+	if item.CatalogProductID != nil {
+		result.ID = item.CatalogProductID.String()
+	}
+	return result
+}
+
+func autocompleteItemType(sourceType string) string {
+	if sourceType == "reference" {
+		return "material"
+	}
+	return "product"
+}
+
+func (a *WAAgentCatalogSearchAdapter) hydrateCatalogMaterials(ctx context.Context, orgID uuid.UUID, items []catalogtransport.AutocompleteItemResponse) map[uuid.UUID][]string {
+	if a.catalogReader == nil {
+		return map[uuid.UUID][]string{}
+	}
+	ids := make([]uuid.UUID, 0)
+	seen := make(map[uuid.UUID]struct{})
+	for _, item := range items {
+		if item.CatalogProductID == nil {
+			continue
+		}
+		if _, ok := seen[*item.CatalogProductID]; ok {
+			continue
+		}
+		seen[*item.CatalogProductID] = struct{}{}
+		ids = append(ids, *item.CatalogProductID)
+	}
+	if len(ids) == 0 {
+		return map[uuid.UUID][]string{}
+	}
+	details, err := a.catalogReader.GetProductDetails(ctx, orgID, ids)
+	if err != nil {
+		return map[uuid.UUID][]string{}
+	}
+	out := make(map[uuid.UUID][]string, len(details))
+	for _, detail := range details {
+		out[detail.ID] = detail.Materials
+	}
+	return out
+}
+
 func (a *WAAgentLeadActionsAdapter) UpdateLeadDetails(ctx context.Context, orgID uuid.UUID, input waagent.UpdateLeadDetailsInput) ([]string, error) {
 	if a.mgmt == nil {
-		return nil, fmt.Errorf("lead management service not configured")
+		return nil, fmt.Errorf(errLeadManagementNotConfigured)
 	}
 	leadID, err := uuid.Parse(strings.TrimSpace(input.LeadID))
 	if err != nil {

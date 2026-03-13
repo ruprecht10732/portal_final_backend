@@ -6,6 +6,7 @@ var domainToolNames = map[string]struct{}{
 	"Calculator":               {},
 	"CancelVisit":              {},
 	"CommitScopeArtifact":      {},
+	"CreateLead":               {},
 	"CreatePartnerOffer":       {},
 	"DraftQuote":               {},
 	"FindMatchingPartners":     {},
