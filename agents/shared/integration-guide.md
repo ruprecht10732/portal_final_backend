@@ -36,7 +36,8 @@ This page explains how support agents feed the main lead workflow.
 
 - Trigger source: incoming WhatsApp messages via webhook.
 - Primary consumers: end-customers who have been linked to an organization via invite code.
-- Operational effect: autonomous read-only replies; queries quotes and appointments but never mutates durable workflow state.
+- Operational effect: autonomous customer support over WhatsApp with bounded write actions. It can query quotes and appointments, search leads, request or update visits, correct lead details, and record timeline notes or clarification requests when policy allows.
 - Authentication: phone-number lookup in RAC_whatsapp_agent_users; unmatched users get hardcoded Dutch onboarding (zero LLM cost).
 - Rate limiting: Redis sliding window, 30 messages per 5 minutes per phone number.
 - Replies are persisted in the operator inbox for visibility.
+- Guardrails: the agent must resolve a concrete lead, appointment slot, or appointment before mutating state and should ask one focused follow-up question when the target is ambiguous.

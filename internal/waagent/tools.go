@@ -36,6 +36,10 @@ type GetAppointmentsOutput struct {
 type ToolHandler struct {
 	quotesReader       QuotesReader
 	appointmentsReader AppointmentsReader
+	leadSearchReader   LeadSearchReader
+	leadMutationWriter LeadMutationWriter
+	visitSlotReader    VisitSlotReader
+	visitMutationWriter VisitMutationWriter
 }
 
 // HandleGetPendingQuotes retrieves quotes scoped to the org from context.

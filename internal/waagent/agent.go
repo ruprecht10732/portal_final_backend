@@ -25,6 +25,7 @@ const (
 	maxToolIterations  = 10
 	assistantPrefix    = "[Jouw vorig antwoord]: "
 	userPrefix         = "[Klant]: "
+	errOrgContextUnavailable = "organization context not available"
 )
 
 // orgIDContextKey is used to inject org_id into tool.Context without exposing it to the LLM.
@@ -51,37 +52,17 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 	}
 
 	kimi := moonshot.NewModel(modelCfg)
-
-	getQuotesTool, err := apptools.NewGetQuotesTool(func(ctx tool.Context, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
-		orgID, ok := ctx.Value(orgIDContextKey{}).(uuid.UUID)
-		if !ok {
-			return GetPendingQuotesOutput{}, fmt.Errorf("organization context not available")
-		}
-		return toolHandler.HandleGetPendingQuotes(ctx, orgID, input)
-	})
+	tools, err := buildWhatsAppTools(toolHandler)
 	if err != nil {
-		return nil, fmt.Errorf("waagent: failed to build GetQuotes tool: %w", err)
+		return nil, err
 	}
-
-	getAppointmentsTool, err := apptools.NewGetAppointmentsTool(func(ctx tool.Context, input GetAppointmentsInput) (GetAppointmentsOutput, error) {
-		orgID, ok := ctx.Value(orgIDContextKey{}).(uuid.UUID)
-		if !ok {
-			return GetAppointmentsOutput{}, fmt.Errorf("organization context not available")
-		}
-		return toolHandler.HandleGetAppointments(ctx, orgID, input)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("waagent: failed to build GetAppointments tool: %w", err)
-	}
-
-	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "whatsapp_agent_tools", []tool.Tool{getQuotesTool, getAppointmentsTool})
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "WhatsAppAgent",
 		Model:       kimi,
 		Description: "Autonomous WhatsApp assistant for authenticated external users.",
 		Instruction: workspace.Instruction,
-		Toolsets:    toolsets,
+		Toolsets:    orchestration.BuildWorkspaceToolsets(workspace, "whatsapp_agent_tools", tools),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("waagent: failed to create agent: %w", err)
@@ -102,6 +83,239 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 		runner:         r,
 		sessionService: sessionService,
 	}, nil
+}
+
+func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
+	searchLeadsTool, err := buildSearchLeadsTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	getAvailableVisitSlotsTool, err := buildGetAvailableVisitSlotsTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	getQuotesTool, err := buildGetQuotesTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	getAppointmentsTool, err := buildGetAppointmentsTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	updateLeadDetailsTool, err := buildUpdateLeadDetailsTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	askCustomerClarificationTool, err := buildAskCustomerClarificationTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	saveNoteTool, err := buildSaveNoteTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	updateStatusTool, err := buildUpdateStatusTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	scheduleVisitTool, err := buildScheduleVisitTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	rescheduleVisitTool, err := buildRescheduleVisitTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	cancelVisitTool, err := buildCancelVisitTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	return []tool.Tool{
+		searchLeadsTool,
+		getAvailableVisitSlotsTool,
+		getQuotesTool,
+		getAppointmentsTool,
+		updateLeadDetailsTool,
+		askCustomerClarificationTool,
+		saveNoteTool,
+		updateStatusTool,
+		scheduleVisitTool,
+		rescheduleVisitTool,
+		cancelVisitTool,
+	}, nil
+}
+
+func buildSearchLeadsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	searchLeadsTool, err := apptools.NewSearchLeadsTool(func(ctx tool.Context, input SearchLeadsInput) (SearchLeadsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return SearchLeadsOutput{}, err
+		}
+		return toolHandler.HandleSearchLeads(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build SearchLeads tool: %w", err)
+	}
+	return searchLeadsTool, nil
+}
+
+func buildGetAvailableVisitSlotsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	visitSlotsTool, err := apptools.NewGetAvailableVisitSlotsTool(func(ctx tool.Context, input GetAvailableVisitSlotsInput) (GetAvailableVisitSlotsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetAvailableVisitSlotsOutput{}, err
+		}
+		return toolHandler.HandleGetAvailableVisitSlots(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GetAvailableVisitSlots tool: %w", err)
+	}
+	return visitSlotsTool, nil
+}
+
+func buildGetQuotesTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	quotesTool, err := apptools.NewGetQuotesTool(func(ctx tool.Context, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetPendingQuotesOutput{}, err
+		}
+		return toolHandler.HandleGetPendingQuotes(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GetQuotes tool: %w", err)
+	}
+	return quotesTool, nil
+}
+
+func buildGetAppointmentsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	appointmentsTool, err := apptools.NewGetAppointmentsTool(func(ctx tool.Context, input GetAppointmentsInput) (GetAppointmentsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetAppointmentsOutput{}, err
+		}
+		return toolHandler.HandleGetAppointments(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GetAppointments tool: %w", err)
+	}
+	return appointmentsTool, nil
+}
+
+func buildUpdateLeadDetailsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	leadDetailsTool, err := apptools.NewUpdateLeadDetailsTool("Updates lead contact or address details when the customer explicitly provides corrected information.", func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return UpdateLeadDetailsOutput{}, err
+		}
+		return toolHandler.HandleUpdateLeadDetails(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build UpdateLeadDetails tool: %w", err)
+	}
+	return leadDetailsTool, nil
+}
+
+func buildAskCustomerClarificationTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	clarificationTool, err := apptools.NewAskCustomerClarificationTool(func(ctx tool.Context, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return AskCustomerClarificationOutput{}, err
+		}
+		return toolHandler.HandleAskCustomerClarification(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build AskCustomerClarification tool: %w", err)
+	}
+	return clarificationTool, nil
+}
+
+func buildSaveNoteTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	noteTool, err := apptools.NewSaveNoteTool(func(ctx tool.Context, input SaveNoteInput) (SaveNoteOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return SaveNoteOutput{}, err
+		}
+		return toolHandler.HandleSaveNote(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build SaveNote tool: %w", err)
+	}
+	return noteTool, nil
+}
+
+func buildUpdateStatusTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	statusTool, err := apptools.NewUpdateStatusTool(func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return UpdateStatusOutput{}, err
+		}
+		return toolHandler.HandleUpdateStatus(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build UpdateStatus tool: %w", err)
+	}
+	return statusTool, nil
+}
+
+func buildScheduleVisitTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	scheduleTool, err := apptools.NewScheduleVisitTool(func(ctx tool.Context, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return ScheduleVisitOutput{}, err
+		}
+		return toolHandler.HandleScheduleVisit(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build ScheduleVisit tool: %w", err)
+	}
+	return scheduleTool, nil
+}
+
+func buildRescheduleVisitTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	rescheduleTool, err := apptools.NewRescheduleVisitTool(func(ctx tool.Context, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return RescheduleVisitOutput{}, err
+		}
+		return toolHandler.HandleRescheduleVisit(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build RescheduleVisit tool: %w", err)
+	}
+	return rescheduleTool, nil
+}
+
+func buildCancelVisitTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	cancelTool, err := apptools.NewCancelVisitTool(func(ctx tool.Context, input CancelVisitInput) (CancelVisitOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return CancelVisitOutput{}, err
+		}
+		return toolHandler.HandleCancelVisit(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build CancelVisit tool: %w", err)
+	}
+	return cancelTool, nil
+}
+
+func orgIDFromToolContext(ctx tool.Context) (uuid.UUID, error) {
+	orgID, ok := ctx.Value(orgIDContextKey{}).(uuid.UUID)
+	if !ok {
+		return uuid.Nil, fmt.Errorf(errOrgContextUnavailable)
+	}
+	return orgID, nil
 }
 
 // Run executes the agent with conversation history and returns the text reply.

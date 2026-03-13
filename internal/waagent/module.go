@@ -17,6 +17,9 @@ import (
 
 // QuoteSummary is a simplified quote representation returned to the LLM.
 type QuoteSummary struct {
+	QuoteID       string `json:"quote_id,omitempty"`
+	LeadID        string `json:"lead_id,omitempty"`
+	LeadServiceID string `json:"lead_service_id,omitempty"`
 	QuoteNumber string `json:"quote_number"`
 	ClientName  string `json:"client_name"`
 	TotalCents  int64  `json:"total_cents"`
@@ -27,6 +30,10 @@ type QuoteSummary struct {
 
 // AppointmentSummary is a simplified appointment representation returned to the LLM.
 type AppointmentSummary struct {
+	AppointmentID string `json:"appointment_id,omitempty"`
+	LeadID        string `json:"lead_id,omitempty"`
+	LeadServiceID string `json:"lead_service_id,omitempty"`
+	AssignedUserID string `json:"assigned_user_id,omitempty"`
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
 	StartTime   string `json:"start_time"`
@@ -43,6 +50,27 @@ type QuotesReader interface {
 // AppointmentsReader lists appointments for an organization.
 type AppointmentsReader interface {
 	ListAppointmentsByOrganization(ctx context.Context, orgID uuid.UUID, from, to *time.Time) ([]AppointmentSummary, error)
+}
+
+type LeadSearchReader interface {
+	SearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) ([]LeadSearchResult, error)
+}
+
+type LeadMutationWriter interface {
+	UpdateLeadDetails(ctx context.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) ([]string, error)
+	AskCustomerClarification(ctx context.Context, orgID uuid.UUID, input AskCustomerClarificationInput) error
+	SaveNote(ctx context.Context, orgID uuid.UUID, input SaveNoteInput) error
+	UpdateLeadStatus(ctx context.Context, orgID uuid.UUID, input UpdateStatusInput) (string, error)
+}
+
+type VisitSlotReader interface {
+	GetAvailableVisitSlots(ctx context.Context, orgID uuid.UUID, startDate, endDate string, slotDuration int) ([]VisitSlotSummary, error)
+}
+
+type VisitMutationWriter interface {
+	ScheduleVisit(ctx context.Context, orgID uuid.UUID, input ScheduleVisitInput) (*AppointmentSummary, error)
+	RescheduleVisit(ctx context.Context, orgID uuid.UUID, input RescheduleVisitInput) (*AppointmentSummary, error)
+	CancelVisit(ctx context.Context, orgID uuid.UUID, input CancelVisitInput) error
 }
 
 // InboxWriter persists outgoing messages to the operator inbox.
@@ -62,6 +90,10 @@ type ModuleDependencies struct {
 	WhatsAppClient     *whatsapp.Client
 	QuotesReader       QuotesReader
 	AppointmentsReader AppointmentsReader
+	LeadSearchReader   LeadSearchReader
+	LeadMutationWriter LeadMutationWriter
+	VisitSlotReader    VisitSlotReader
+	VisitMutationWriter VisitMutationWriter
 	RedisClient        *redis.Client
 	InboxWriter        InboxWriter
 	Logger             *logger.Logger
@@ -82,6 +114,10 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 	toolHandler := &ToolHandler{
 		quotesReader:       deps.QuotesReader,
 		appointmentsReader: deps.AppointmentsReader,
+		leadSearchReader:   deps.LeadSearchReader,
+		leadMutationWriter: deps.LeadMutationWriter,
+		visitSlotReader:    deps.VisitSlotReader,
+		visitMutationWriter: deps.VisitMutationWriter,
 	}
 
 	agent, err := NewAgent(moonshot.Config{

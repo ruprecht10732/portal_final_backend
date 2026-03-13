@@ -46,6 +46,9 @@ func (a *WAAgentQuotesAdapter) ListQuotesByOrganization(ctx context.Context, org
 			clientName += *q.CustomerLastName
 		}
 		out = append(out, waagent.QuoteSummary{
+			QuoteID:       q.ID.String(),
+			LeadID:        q.LeadID.String(),
+			LeadServiceID: uuidPtrToString(q.LeadServiceID),
 			QuoteNumber: q.QuoteNumber,
 			ClientName:  clientName,
 			TotalCents:  q.TotalCents,
@@ -116,10 +119,14 @@ func (a *WAAgentAppointmentsAdapter) ListAppointmentsByOrganization(ctx context.
 	out := make([]waagent.AppointmentSummary, 0, len(resp.Items))
 	for _, appt := range resp.Items {
 		summary := waagent.AppointmentSummary{
-			Title:     appt.Title,
-			StartTime: appt.StartTime.Format(time.RFC3339),
-			EndTime:   appt.EndTime.Format(time.RFC3339),
-			Status:    string(appt.Status),
+			AppointmentID: appt.ID.String(),
+			LeadID:        uuidPtrToString(appt.LeadID),
+			LeadServiceID: uuidPtrToString(appt.LeadServiceID),
+			AssignedUserID: appt.UserID.String(),
+			Title:         appt.Title,
+			StartTime:     appt.StartTime.Format(time.RFC3339),
+			EndTime:       appt.EndTime.Format(time.RFC3339),
+			Status:        string(appt.Status),
 		}
 		if appt.Description != nil {
 			summary.Description = *appt.Description
@@ -130,4 +137,11 @@ func (a *WAAgentAppointmentsAdapter) ListAppointmentsByOrganization(ctx context.
 		out = append(out, summary)
 	}
 	return out, nil
+}
+
+func uuidPtrToString(value *uuid.UUID) string {
+	if value == nil {
+		return ""
+	}
+	return value.String()
 }

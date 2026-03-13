@@ -23,6 +23,7 @@ It should behave like a careful assistant, not like an autonomous mutating workf
 2. Resolve the active scenario and tone requirements.
 3. Draft one concise reply that is aligned with the loaded facts.
 4. Avoid claims about quotes, appointments, or internal decisions that are not present in context.
+5. Use native WhatsApp formatting only when it helps readability, and keep it light.
 </step-by-step>
 
 ## Resources

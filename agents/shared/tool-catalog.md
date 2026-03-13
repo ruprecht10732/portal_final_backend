@@ -12,5 +12,13 @@
 - `FindMatchingPartners`: retrieve candidate partners.
 - `CreatePartnerOffer`: create a partner offer.
 - `SubmitAuditResult`: persist audit findings.
+- `SearchLeads`: search leads in the authenticated organization and return matching lead and current service identifiers.
+- `GetAvailableVisitSlots`: retrieve available appointment slots for the authenticated organization.
 - `GetQuotes`: retrieve quotes for the authenticated organization, optionally filtered by status.
 - `GetAppointments`: retrieve upcoming appointments for the authenticated organization.
+- `AskCustomerClarification`: store a structured clarification request on the lead timeline.
+- `SaveNote`: save an internal note on the lead timeline.
+- `UpdateStatus`: update the status of a lead service with policy enforcement.
+- `ScheduleVisit`: request a visit appointment for a lead using a valid slot.
+- `RescheduleVisit`: reschedule an existing appointment.
+- `CancelVisit`: cancel an existing appointment.

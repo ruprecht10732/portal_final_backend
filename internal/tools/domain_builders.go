@@ -48,6 +48,14 @@ func NewAskCustomerClarificationTool[In any, Out any](handler func(tool.Context,
 	return newDomainTool("AskCustomerClarification", "Stores a Dutch clarification request for the customer when intake is incomplete.", handler)
 }
 
+func NewSearchLeadsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("SearchLeads", "Searches leads in the current organization and returns matching lead and current service identifiers for follow-up actions. Do NOT provide a tenant or organization identifier.", handler)
+}
+
+func NewGetAvailableVisitSlotsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GetAvailableVisitSlots", "Lists available appointment slots for the current organization. Returns start_time, end_time, and assigned_user_id needed to request a visit. Do NOT provide a tenant or organization identifier.", handler)
+}
+
 func NewCalculatorTool[In any, Out any](description string, handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("Calculator", description, handler)
 }
@@ -73,7 +81,7 @@ func NewDraftQuoteTool[In any, Out any](handler func(tool.Context, In) (Out, err
 }
 
 func NewSaveNoteTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("SaveNote", "Saves the call summary as a note on the lead. ALWAYS call this tool to record the call outcome. The body will be normalized/cleaned server-side.", handler)
+	return newDomainTool("SaveNote", "Saves a note on the lead or service timeline. Use this to record important customer context or follow-up information. The body will be normalized/cleaned server-side.", handler)
 }
 
 func NewSetCallOutcomeTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
