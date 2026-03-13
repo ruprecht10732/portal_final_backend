@@ -27,7 +27,7 @@ var gtmContainerIDRegex = regexp.MustCompile(`^GTM-[A-Z0-9]+$`)
 
 // WhatsAppAgentHandler handles incoming WhatsApp messages for the autonomous AI agent.
 type WhatsAppAgentHandler interface {
-	HandleIncomingMessage(ctx context.Context, phone, displayName, text string)
+	HandleIncomingMessage(ctx context.Context, externalMessageID, phone, displayName, text string)
 }
 
 // Handler handles webhook HTTP requests.

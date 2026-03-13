@@ -266,7 +266,7 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 	}
 
 	if h.agentHandler != nil {
-		go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), messageAddress, payload.FromName, body)
+		go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), strings.TrimSpace(payload.ID), messageAddress, payload.FromName, body)
 	}
 
 	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})

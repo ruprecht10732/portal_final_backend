@@ -33,7 +33,7 @@ type Service struct {
 // HandleIncomingMessage processes an incoming WhatsApp message from the global agent device.
 // It resolves the organization from the sender's phone number.
 // It is designed to be called in a goroutine with context.WithoutCancel.
-func (s *Service) HandleIncomingMessage(ctx context.Context, phone, displayName, text string) {
+func (s *Service) HandleIncomingMessage(ctx context.Context, externalMessageID, phone, displayName, text string) {
 	replyTarget := strings.TrimSpace(phone)
 	lookupPhone := normalizeAgentPhoneKey(phone)
 	if replyTarget == "" {
@@ -41,6 +41,15 @@ func (s *Service) HandleIncomingMessage(ctx context.Context, phone, displayName,
 	}
 	if lookupPhone == "" {
 		lookupPhone = replyTarget
+	}
+
+	claimed, err := s.rateLimiter.ClaimMessage(ctx, strings.TrimSpace(externalMessageID))
+	if err != nil {
+		log.Printf("waagent: message dedupe error id=%s: %v", externalMessageID, err)
+	}
+	if !claimed {
+		log.Printf("waagent: duplicate inbound message ignored id=%s phone=%s", externalMessageID, lookupPhone)
+		return
 	}
 
 	// Step 1: Rate limit check

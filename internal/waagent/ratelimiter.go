@@ -14,6 +14,8 @@ const (
 	rateLimitWindow = 5 * time.Minute
 	rateLimitMax    = 30
 	rateLimitPrefix = "waagent:rate:"
+	dedupePrefix    = "waagent:dedupe:"
+	dedupeTTL       = 10 * time.Minute
 )
 
 // RateLimiter enforces a sliding window rate limit per phone number using Redis.
@@ -50,4 +52,20 @@ func (r *RateLimiter) Allow(ctx context.Context, phone string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// ClaimMessage returns true when this message ID has not been seen recently.
+func (r *RateLimiter) ClaimMessage(ctx context.Context, messageID string) (bool, error) {
+	if r.redis == nil {
+		return true, nil
+	}
+	trimmed := messageID
+	if trimmed == "" {
+		return true, nil
+	}
+	created, err := r.redis.SetNX(ctx, dedupePrefix+trimmed, "1", dedupeTTL).Result()
+	if err != nil {
+		return true, fmt.Errorf("waagent: dedupe setnx error: %w", err)
+	}
+	return created, nil
 }
