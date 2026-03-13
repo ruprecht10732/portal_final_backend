@@ -19,7 +19,7 @@ import (
 const (
 	msgRateLimited     = "Je stuurt te veel berichten. Probeer het over een paar minuten opnieuw."
 	msgUnknownPhone    = "Je telefoonnummer is niet gekoppeld aan een organisatie. Neem contact op met je beheerder."
-	recentMessageLimit = 20
+	recentMessageLimit = 8
 )
 
 // Service orchestrates the waagent flow: rate limit → phone→org → AI.

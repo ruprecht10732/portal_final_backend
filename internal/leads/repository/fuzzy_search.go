@@ -53,7 +53,6 @@ LEFT JOIN LATERAL (
 LEFT JOIN RAC_service_types st
 	ON st.id = cs.service_type_id AND st.organization_id = l.organization_id
 WHERE l.organization_id = $1
-	AND l.deleted_at IS NULL
 	AND GREATEST(
 		word_similarity($2, l.consumer_first_name),
 		word_similarity($2, l.consumer_last_name),
