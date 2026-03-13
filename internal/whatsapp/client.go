@@ -220,6 +220,16 @@ type actionRequest struct {
 	Action string `json:"action,omitempty"`
 }
 
+type ChatPresenceAction string
+
+const (
+	ChatPresenceComposing ChatPresenceAction = "composing"
+	ChatPresenceRecording ChatPresenceAction = "recording"
+	ChatPresencePaused    ChatPresenceAction = "paused"
+	chatPresenceStartCompat                  = "start"
+	chatPresenceStopCompat                   = "stop"
+)
+
 type providerActionResponse struct {
 	Code    string `json:"code"`
 	Status  int    `json:"status"`
@@ -906,19 +916,51 @@ func (c *Client) SendChatPresence(ctx context.Context, deviceID string, phoneNum
 		return nil
 	}
 
-	payload := actionRequest{
-		Phone:  normalizeActionPhone(phoneNumber),
-		Action: strings.ToLower(strings.TrimSpace(action)),
-	}
-	if payload.Phone == "" {
+	phone := normalizeActionPhone(phoneNumber)
+	if phone == "" {
 		return errors.New(errPhoneNumberRequired)
 	}
-	if payload.Action == "" {
-		return fmt.Errorf("action is required")
+	normalized, compat, err := normalizeChatPresenceAction(action)
+	if err != nil {
+		return err
 	}
 
-	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/send/chat-presence", c.baseURL), deviceID, payload)
+	primaryPayload := actionRequest{
+		Phone: phone,
+		Type:  normalized,
+	}
+	if primaryPayload.Type == "" {
+		return fmt.Errorf("action is required")
+	}
+	endpoint := fmt.Sprintf("%s/send/chat-presence", c.baseURL)
+	_, err = c.postJSONAction(ctx, endpoint, deviceID, primaryPayload)
+	if err == nil {
+		return nil
+	}
+
+	fallbackPayload := actionRequest{
+		Phone:  phone,
+		Action: compat,
+	}
+	_, fallbackErr := c.postJSONAction(ctx, endpoint, deviceID, fallbackPayload)
+	if fallbackErr == nil {
+		return nil
+	}
 	return err
+}
+
+func normalizeChatPresenceAction(raw string) (string, string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case string(ChatPresenceComposing), chatPresenceStartCompat:
+		return string(ChatPresenceComposing), chatPresenceStartCompat, nil
+	case string(ChatPresencePaused), chatPresenceStopCompat:
+		return string(ChatPresencePaused), chatPresenceStopCompat, nil
+	case string(ChatPresenceRecording):
+		return string(ChatPresenceRecording), chatPresenceStartCompat, nil
+	default:
+		return "", "", fmt.Errorf("action is required")
+	}
 }
 
 func (c *Client) GetDeviceStatus(ctx context.Context, deviceID string) (*DeviceStatusResponse, error) {

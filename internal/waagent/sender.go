@@ -3,6 +3,7 @@ package waagent
 import (
 	"context"
 	"log"
+	"strings"
 
 	waagentdb "portal_final_backend/internal/waagent/db"
 	"portal_final_backend/internal/whatsapp"
@@ -26,7 +27,7 @@ func (s *Sender) SendReply(ctx context.Context, orgID uuid.UUID, phone, text str
 	}
 
 	// Resolve device ID from global agent config
-	cfg, err := s.queries.GetAgentConfig(ctx)
+	cfg, err := s.getAgentConfig(ctx)
 	if err != nil {
 		log.Printf("waagent: no agent device configured: %v", err)
 		return err
@@ -50,4 +51,23 @@ func (s *Sender) SendReply(ctx context.Context, orgID uuid.UUID, phone, text str
 	}
 
 	return nil
+}
+
+func (s *Sender) SendChatPresence(ctx context.Context, phone string, action whatsapp.ChatPresenceAction) error {
+	if s.client == nil {
+		return nil
+	}
+	if strings.TrimSpace(phone) == "" {
+		return nil
+	}
+	cfg, err := s.getAgentConfig(ctx)
+	if err != nil {
+		log.Printf("waagent: no agent device configured for chat presence: %v", err)
+		return err
+	}
+	return s.client.SendChatPresence(ctx, cfg.DeviceID, phone, string(action))
+}
+
+func (s *Sender) getAgentConfig(ctx context.Context) (waagentdb.RacWhatsappAgentConfig, error) {
+	return s.queries.GetAgentConfig(ctx)
 }

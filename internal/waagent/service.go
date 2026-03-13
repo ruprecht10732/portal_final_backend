@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	waagentdb "portal_final_backend/internal/waagent/db"
+	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
@@ -105,6 +106,15 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 			Content: msg.Content,
 		}
 	}
+
+	if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresenceComposing); err != nil {
+		log.Printf("waagent: send chat presence start error phone=%s org=%s: %v", replyTarget, orgID, err)
+	}
+	defer func() {
+		if err := s.sender.SendChatPresence(context.Background(), replyTarget, whatsapp.ChatPresencePaused); err != nil {
+			log.Printf("waagent: send chat presence stop error phone=%s org=%s: %v", replyTarget, orgID, err)
+		}
+	}()
 
 	// Run the AI agent
 	var leadHint *ConversationLeadHint
