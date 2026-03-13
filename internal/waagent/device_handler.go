@@ -18,8 +18,8 @@ const errNoAgentDeviceConfigured = "no agent device configured"
 
 // DeviceHandler manages the global WhatsApp agent device (superadmin only).
 type DeviceHandler struct {
-	queries  waagentdb.Querier
-	waClient *whatsapp.Client
+	queries       waagentdb.Querier
+	waClient      *whatsapp.Client
 	webhookSecret string
 }
 

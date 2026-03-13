@@ -458,27 +458,27 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	wireSMTPEncryptionKeyForIMAP(cfg, log, imapModule.Service())
 
 	modules := []apphttp.Module{
-			notificationModule,
-			authModule,
-			identityModule,
-			imapModule,
-			leadsModule,
-			mapsModule,
-			servicesModule,
-			catalogModule,
-			appointmentsModule,
-			partnersModule,
-			quotesModule,
-			searchModule,
-			webhookModule,
-			exportsModule,
-		}
+		notificationModule,
+		authModule,
+		identityModule,
+		imapModule,
+		leadsModule,
+		mapsModule,
+		servicesModule,
+		catalogModule,
+		appointmentsModule,
+		partnersModule,
+		quotesModule,
+		searchModule,
+		webhookModule,
+		exportsModule,
+	}
 
 	if waagentModule != nil {
 		modules = append(modules, waagentModule)
 	}
 
-		return &apphttp.App{
+	return &apphttp.App{
 		Config:   cfg,
 		Logger:   log,
 		Health:   db.NewPoolAdapter(pool),

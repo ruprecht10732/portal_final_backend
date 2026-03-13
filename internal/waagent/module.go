@@ -58,12 +58,12 @@ type ModuleConfig struct {
 
 // ModuleDependencies groups external waagent dependencies to keep constructor size manageable.
 type ModuleDependencies struct {
-	WhatsAppClient      *whatsapp.Client
-	QuotesReader        QuotesReader
-	AppointmentsReader  AppointmentsReader
-	RedisClient         *redis.Client
-	InboxWriter         InboxWriter
-	Logger              *logger.Logger
+	WhatsAppClient     *whatsapp.Client
+	QuotesReader       QuotesReader
+	AppointmentsReader AppointmentsReader
+	RedisClient        *redis.Client
+	InboxWriter        InboxWriter
+	Logger             *logger.Logger
 }
 
 // Module is the waagent bounded context module.
