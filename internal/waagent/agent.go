@@ -53,6 +53,8 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 	if err != nil {
 		return nil, fmt.Errorf("waagent: failed to load workspace: %w", err)
 	}
+	log.Printf("waagent: workspace loaded name=%s instruction_len=%d allowed_tools=%v",
+		workspace.Name, len(workspace.Instruction), workspace.AllowedTools)
 
 	kimi := moonshot.NewModel(modelCfg)
 	tools, err := buildWhatsAppTools(toolHandler)
@@ -411,6 +413,7 @@ func phoneKeyFromToolContext(ctx tool.Context) (string, bool) {
 
 // Run executes the agent with conversation history and returns the text reply.
 func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint) (string, error) {
+	log.Printf("waagent: Run org=%s phone=%s messages=%d hasLeadHint=%v", orgID, phoneKey, len(messages), leadHint != nil)
 	// Inject org_id into context for tool handlers (never in the LLM prompt).
 	ctx = context.WithValue(ctx, orgIDContextKey{}, orgID)
 	ctx = context.WithValue(ctx, phoneKeyContextKey{}, strings.TrimSpace(phoneKey))

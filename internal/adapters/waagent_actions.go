@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 		limit = 10
 	}
 	query = strings.TrimSpace(query)
+	log.Printf("waagent: SearchLeads org=%s query=%q limit=%d", orgID, query, limit)
 
 	// Tier 1: ILIKE search via the management service.
 	// Multi-word queries (e.g. "Johan Kuiper") are split into first/last name
@@ -51,18 +53,22 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 	// If the split search returns nothing, retry with the full query as a
 	// combined OR-search across all fields.
 	results := a.iLikeSearchLeads(ctx, orgID, query, limit)
+	log.Printf("waagent: SearchLeads tier=ilike org=%s query=%q results=%d", orgID, query, len(results))
 
 	// Tier 2: Fuzzy pg_trgm fallback for partial matches and minor typos.
 	if len(results) == 0 && a.repo != nil {
 		results = a.fuzzySearchLeads(ctx, orgID, query, limit)
+		log.Printf("waagent: SearchLeads tier=fuzzy org=%s query=%q results=%d", orgID, query, len(results))
 	}
 
 	// Tier 3: Quote-based search — finds leads through their associated quotes
 	// even when the lead itself has been soft-deleted.
 	if len(results) == 0 && a.repo != nil {
 		results = a.quoteBasedLeadSearch(ctx, orgID, query, limit)
+		log.Printf("waagent: SearchLeads tier=quote org=%s query=%q results=%d", orgID, query, len(results))
 	}
 
+	log.Printf("waagent: SearchLeads final org=%s query=%q total_results=%d", orgID, query, len(results))
 	return results, nil
 }
 
@@ -78,18 +84,24 @@ func (a *WAAgentLeadActionsAdapter) iLikeSearchLeads(ctx context.Context, orgID 
 	} else {
 		req.Search = query
 	}
+	log.Printf("waagent: iLikeSearch org=%s firstName=%q lastName=%q search=%q", orgID, req.FirstName, req.LastName, req.Search)
 	resp, err := a.mgmt.List(ctx, req, orgID)
 	if err != nil {
+		log.Printf("waagent: iLikeSearch error org=%s: %v", orgID, err)
 		return nil
 	}
+	log.Printf("waagent: iLikeSearch org=%s split_results=%d", orgID, len(resp.Items))
 
 	// Fallback: if split first/last returned nothing, retry with combined OR-search.
 	if len(resp.Items) == 0 && len(parts) >= 2 {
 		req = leadtransport.ListLeadsRequest{Page: 1, PageSize: limit, Search: query}
+		log.Printf("waagent: iLikeSearch fallback org=%s search=%q", orgID, req.Search)
 		resp, err = a.mgmt.List(ctx, req, orgID)
 		if err != nil {
+			log.Printf("waagent: iLikeSearch fallback error org=%s: %v", orgID, err)
 			return nil
 		}
+		log.Printf("waagent: iLikeSearch fallback org=%s results=%d", orgID, len(resp.Items))
 	}
 	results := make([]waagent.LeadSearchResult, 0, len(resp.Items))
 	for _, item := range resp.Items {
@@ -119,7 +131,12 @@ func (a *WAAgentLeadActionsAdapter) iLikeSearchLeads(ctx context.Context, orgID 
 // Returns nil (no error) if pg_trgm is unavailable so the caller degrades gracefully.
 func (a *WAAgentLeadActionsAdapter) fuzzySearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) []waagent.LeadSearchResult {
 	matches, err := a.repo.FuzzySearchLeads(ctx, orgID, query, limit)
-	if err != nil || len(matches) == 0 {
+	if err != nil {
+		log.Printf("waagent: fuzzySearch error org=%s query=%q: %v", orgID, query, err)
+		return nil
+	}
+	if len(matches) == 0 {
+		log.Printf("waagent: fuzzySearch org=%s query=%q no matches", orgID, query)
 		return nil
 	}
 	results := make([]waagent.LeadSearchResult, 0, len(matches))
@@ -706,9 +723,15 @@ func derefString(value *string) string {
 // soft-deleted leads that still have active quotes referencing them.
 func (a *WAAgentLeadActionsAdapter) quoteBasedLeadSearch(ctx context.Context, orgID uuid.UUID, query string, limit int) []waagent.LeadSearchResult {
 	matches, err := a.repo.QuoteBasedLeadSearch(ctx, orgID, query, limit)
-	if err != nil || len(matches) == 0 {
+	if err != nil {
+		log.Printf("waagent: quoteBasedSearch error org=%s query=%q: %v", orgID, query, err)
 		return nil
 	}
+	if len(matches) == 0 {
+		log.Printf("waagent: quoteBasedSearch org=%s query=%q no matches", orgID, query)
+		return nil
+	}
+	log.Printf("waagent: quoteBasedSearch org=%s query=%q matches=%d", orgID, query, len(matches))
 	results := make([]waagent.LeadSearchResult, 0, len(matches))
 	for _, m := range matches {
 		serviceID := ""

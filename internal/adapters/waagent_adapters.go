@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -31,8 +32,10 @@ func (a *WAAgentQuotesAdapter) ListQuotesByOrganization(ctx context.Context, org
 	}
 	resp, err := a.svc.List(ctx, orgID, req)
 	if err != nil {
+		log.Printf("waagent: ListQuotes error org=%s: %v", orgID, err)
 		return nil, err
 	}
+	log.Printf("waagent: ListQuotes org=%s status=%v items=%d", orgID, status, len(resp.Items))
 	out := make([]waagent.QuoteSummary, 0, len(resp.Items))
 	for _, q := range resp.Items {
 		clientName := ""
@@ -117,8 +120,10 @@ func (a *WAAgentAppointmentsAdapter) ListAppointmentsByOrganization(ctx context.
 	}
 	resp, err := a.svc.List(ctx, uuid.Nil, true, orgID, req)
 	if err != nil {
+		log.Printf("waagent: ListAppointments error org=%s: %v", orgID, err)
 		return nil, err
 	}
+	log.Printf("waagent: ListAppointments org=%s items=%d", orgID, len(resp.Items))
 	out := make([]waagent.AppointmentSummary, 0, len(resp.Items))
 	for _, appt := range resp.Items {
 		summary := waagent.AppointmentSummary{
