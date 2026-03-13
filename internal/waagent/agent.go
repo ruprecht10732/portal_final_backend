@@ -562,14 +562,21 @@ func buildAddressLine(street, houseNumber, zipCode, city string) string {
 
 func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, userMessage *genai.Content) (string, error) {
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	var outputText strings.Builder
+	var lastFinalText string
 	iterations := 0
 
 	for event, err := range a.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
 		if err != nil {
 			return "", fmt.Errorf("waagent: run failed: %w", err)
 		}
-		appendContentText(&outputText, event.Content)
+		// Only keep text from the final response event — intermediate
+		// tool-thinking events produce disjointed fragments that get
+		// concatenated into garbled output.
+		if event.IsFinalResponse() {
+			if text := extractContentText(event.Content); text != "" {
+				lastFinalText = text
+			}
+		}
 		iterations++
 		if iterations >= maxToolIterations {
 			log.Printf("waagent: max iterations reached (%d), returning best-effort reply", maxToolIterations)
@@ -577,14 +584,16 @@ func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, 
 		}
 	}
 
-	return strings.TrimSpace(outputText.String()), nil
+	return strings.TrimSpace(lastFinalText), nil
 }
 
-func appendContentText(output *strings.Builder, content *genai.Content) {
+func extractContentText(content *genai.Content) string {
 	if content == nil {
-		return
+		return ""
 	}
+	var b strings.Builder
 	for _, part := range content.Parts {
-		output.WriteString(part.Text)
+		b.WriteString(part.Text)
 	}
+	return b.String()
 }

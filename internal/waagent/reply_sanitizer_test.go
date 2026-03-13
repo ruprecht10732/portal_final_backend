@@ -43,3 +43,31 @@ func TestSanitizeWhatsAppReplyRemovesInternalIDs(t *testing.T) {
 		t.Fatalf("expected UUID to be removed, got %q", got)
 	}
 }
+
+func TestSanitizeWhatsAppReplyConvertsDoubleStarToSingle(t *testing.T) {
+	input := "**Navigatielink voor Roy Band:**\n\nhttps://maps.google.com/test\n\n**Adres:**\n- Marga Klompeland 13"
+	got := sanitizeWhatsAppReply(input)
+
+	if strings.Contains(got, "**") {
+		t.Fatalf("expected double-star markdown to be converted to single-star, got %q", got)
+	}
+	if !strings.Contains(got, "*Navigatielink voor Roy Band:*") {
+		t.Fatalf("expected single-star bold, got %q", got)
+	}
+}
+
+func TestSanitizeWhatsAppReplyRemovesEmptyBullets(t *testing.T) {
+	input := "- Naam: Roy Band\n-\n-\n- Telefoon: +31652855717"
+	got := sanitizeWhatsAppReply(input)
+
+	lines := strings.Split(got, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "-" || trimmed == "*" {
+			t.Fatalf("expected empty bullet points to be removed, got %q", got)
+		}
+	}
+	if !strings.Contains(got, "Naam: Roy Band") {
+		t.Fatalf("expected non-empty bullets to remain, got %q", got)
+	}
+}
