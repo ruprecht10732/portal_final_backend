@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -64,6 +65,43 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 		})
 	}
 	return results, nil
+}
+
+func (a *WAAgentLeadActionsAdapter) GetNavigationLink(ctx context.Context, orgID uuid.UUID, leadIDRaw string) (*waagent.NavigationLinkResult, error) {
+	leadID, err := uuid.Parse(strings.TrimSpace(leadIDRaw))
+	if err != nil {
+		return nil, fmt.Errorf(errInvalidLeadID)
+	}
+	lead, err := a.repo.GetByID(ctx, leadID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	destination := formatLeadDestination(lead)
+	if destination == "" {
+		return nil, fmt.Errorf("lead heeft geen bruikbaar adres")
+	}
+	return &waagent.NavigationLinkResult{
+		LeadID:             leadID.String(),
+		DestinationAddress: destination,
+		URL:                "https://www.google.com/maps/dir/?api=1&destination=" + url.QueryEscape(destination),
+	}, nil
+}
+
+func formatLeadDestination(lead leadsrepo.Lead) string {
+	parts := make([]string, 0, 4)
+	streetLine := strings.TrimSpace(strings.TrimSpace(lead.AddressStreet) + " " + strings.TrimSpace(lead.AddressHouseNumber))
+	if streetLine != "" {
+		parts = append(parts, streetLine)
+	}
+	zipCity := strings.TrimSpace(strings.TrimSpace(lead.AddressZipCode) + " " + strings.TrimSpace(lead.AddressCity))
+	if zipCity != "" {
+		parts = append(parts, zipCity)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	parts = append(parts, "Netherlands")
+	return strings.Join(parts, ", ")
 }
 
 func (a *WAAgentLeadActionsAdapter) UpdateLeadDetails(ctx context.Context, orgID uuid.UUID, input waagent.UpdateLeadDetailsInput) ([]string, error) {

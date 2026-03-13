@@ -8,6 +8,7 @@ metadata:
   allowed-tools:
     - SearchLeads
     - GetAvailableVisitSlots
+    - GetNavigationLink
     - GetQuotes
     - GetAppointments
     - UpdateLeadDetails
@@ -60,3 +61,4 @@ Autonomous WhatsApp assistant for authenticated external users (customers).
 - Never mutate a lead or appointment when the target is ambiguous; search first and ask one focused follow-up question if needed.
 - Do not use `UpdateStatus` to set `Disqualified`.
 - Prefer bounded customer-support actions: scheduling, rescheduling, cancelling visits, correcting lead details, saving notes, and storing clarification requests.
+- Use `GetNavigationLink` when the user asks for route, navigation, or a clickable Google Maps link to a lead address.

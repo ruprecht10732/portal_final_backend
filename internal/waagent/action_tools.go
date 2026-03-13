@@ -54,6 +54,22 @@ type GetAvailableVisitSlotsOutput struct {
 	Count int                `json:"count"`
 }
 
+type GetNavigationLinkInput struct {
+	LeadID string `json:"lead_id"`
+}
+
+type NavigationLinkResult struct {
+	LeadID             string `json:"lead_id"`
+	DestinationAddress string `json:"destination_address"`
+	URL                string `json:"url"`
+}
+
+type GetNavigationLinkOutput struct {
+	Success bool                 `json:"success"`
+	Message string               `json:"message"`
+	Link    *NavigationLinkResult `json:"link,omitempty"`
+}
+
 type UpdateLeadDetailsInput struct {
 	LeadID          string   `json:"lead_id"`
 	FirstName       *string  `json:"first_name,omitempty"`
@@ -193,6 +209,21 @@ func (h *ToolHandler) HandleGetAvailableVisitSlots(_ tool.Context, orgID uuid.UU
 		return GetAvailableVisitSlotsOutput{}, err
 	}
 	return GetAvailableVisitSlotsOutput{Slots: slots, Count: len(slots)}, nil
+}
+
+func (h *ToolHandler) HandleGetNavigationLink(_ tool.Context, orgID uuid.UUID, input GetNavigationLinkInput) (GetNavigationLinkOutput, error) {
+	if h.navigationLinkReader == nil {
+		return GetNavigationLinkOutput{}, fmt.Errorf("navigation link reader not configured")
+	}
+	leadID := strings.TrimSpace(input.LeadID)
+	if leadID == "" {
+		return GetNavigationLinkOutput{Success: false, Message: "lead_id is verplicht"}, fmt.Errorf("lead_id is required")
+	}
+	link, err := h.navigationLinkReader.GetNavigationLink(context.Background(), orgID, leadID)
+	if err != nil {
+		return GetNavigationLinkOutput{Success: false, Message: err.Error()}, err
+	}
+	return GetNavigationLinkOutput{Success: true, Message: "Navigatielink gevonden", Link: link}, nil
 }
 
 func (h *ToolHandler) HandleUpdateLeadDetails(_ tool.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {

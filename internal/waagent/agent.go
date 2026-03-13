@@ -96,6 +96,11 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		return nil, err
 	}
 
+	getNavigationLinkTool, err := buildGetNavigationLinkTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
 	getQuotesTool, err := buildGetQuotesTool(toolHandler)
 	if err != nil {
 		return nil, err
@@ -144,6 +149,7 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 	return []tool.Tool{
 		searchLeadsTool,
 		getAvailableVisitSlotsTool,
+		getNavigationLinkTool,
 		getQuotesTool,
 		getAppointmentsTool,
 		updateLeadDetailsTool,
@@ -154,6 +160,20 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		rescheduleVisitTool,
 		cancelVisitTool,
 	}, nil
+}
+
+func buildGetNavigationLinkTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	navigationTool, err := apptools.NewGetNavigationLinkTool(func(ctx tool.Context, input GetNavigationLinkInput) (GetNavigationLinkOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetNavigationLinkOutput{}, err
+		}
+		return toolHandler.HandleGetNavigationLink(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GetNavigationLink tool: %w", err)
+	}
+	return navigationTool, nil
 }
 
 func buildSearchLeadsTool(toolHandler *ToolHandler) (tool.Tool, error) {

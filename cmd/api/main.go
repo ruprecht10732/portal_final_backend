@@ -442,6 +442,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		QuotesReader:       adapters.NewWAAgentQuotesAdapter(quotesModule.Service()),
 		AppointmentsReader: adapters.NewWAAgentAppointmentsAdapter(appointmentsModule.Service),
 		LeadSearchReader:   adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		NavigationLinkReader: adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		LeadMutationWriter: adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		VisitSlotReader:    adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
 		VisitMutationWriter: adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
