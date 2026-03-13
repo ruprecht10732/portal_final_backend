@@ -110,7 +110,7 @@ func (a waagentTranscriberAdapter) Transcribe(ctx context.Context, input waagent
 }
 
 func initAudioTranscriber(log *logger.Logger) (waagent.AudioTranscriber, func()) {
-	noop := func() {}
+	noop := func() { /* no model loaded, nothing to close */ }
 	client, err := transcription.NewClient()
 	if err != nil {
 		log.Warn("whisper transcription disabled", "error", err)
