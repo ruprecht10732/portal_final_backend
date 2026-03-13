@@ -498,34 +498,7 @@ func (a *Agent) seedSessionHistory(ctx context.Context, sess session.Session, hi
 // service type, and status without needing an extra tool call.
 func (a *Agent) buildLeadContextText(hint *ConversationLeadHint) string {
 	if hint.PreloadedDetails != nil {
-		d := hint.PreloadedDetails
-		var b strings.Builder
-		b.WriteString("Gesprekcontext voor deze klant:\n")
-		if d.CustomerName != "" {
-			b.WriteString("- Klant: " + d.CustomerName + "\n")
-		}
-		if d.FullAddress != "" {
-			b.WriteString("- Adres: " + d.FullAddress + "\n")
-		} else {
-			addr := buildAddressLine(d.Street, d.HouseNumber, d.ZipCode, d.City)
-			if addr != "" {
-				b.WriteString("- Adres: " + addr + "\n")
-			}
-		}
-		if d.Phone != "" {
-			b.WriteString("- Telefoon: " + d.Phone + "\n")
-		}
-		if d.Email != "" {
-			b.WriteString("- E-mail: " + d.Email + "\n")
-		}
-		if d.ServiceType != "" {
-			b.WriteString("- Dienst: " + d.ServiceType + "\n")
-		}
-		if d.Status != "" {
-			b.WriteString("- Status: " + d.Status + "\n")
-		}
-		b.WriteString("(Deze gegevens komen uit het CRM. Gebruik GetLeadDetails voor de meest actuele gegevens als je twijfelt.)")
-		return b.String()
+		return formatPreloadedDetails(hint.PreloadedDetails)
 	}
 	// Fallback: minimal hint
 	text := "Gesprekcontext: laatst besproken klant"
@@ -534,6 +507,36 @@ func (a *Agent) buildLeadContextText(hint *ConversationLeadHint) string {
 	}
 	text += ". Gebruik GetLeadDetails als je meer gegevens nodig hebt over deze klant."
 	return text
+}
+
+func formatPreloadedDetails(d *LeadDetailsResult) string {
+	var b strings.Builder
+	b.WriteString("Gesprekcontext voor deze klant:\n")
+	if d.CustomerName != "" {
+		b.WriteString("- Klant: " + d.CustomerName + "\n")
+	}
+	if d.FullAddress != "" {
+		b.WriteString("- Adres: " + d.FullAddress + "\n")
+	} else {
+		addr := buildAddressLine(d.Street, d.HouseNumber, d.ZipCode, d.City)
+		if addr != "" {
+			b.WriteString("- Adres: " + addr + "\n")
+		}
+	}
+	if d.Phone != "" {
+		b.WriteString("- Telefoon: " + d.Phone + "\n")
+	}
+	if d.Email != "" {
+		b.WriteString("- E-mail: " + d.Email + "\n")
+	}
+	if d.ServiceType != "" {
+		b.WriteString("- Dienst: " + d.ServiceType + "\n")
+	}
+	if d.Status != "" {
+		b.WriteString("- Status: " + d.Status + "\n")
+	}
+	b.WriteString("(Deze gegevens komen uit het CRM. Gebruik GetLeadDetails voor de meest actuele gegevens als je twijfelt.)")
+	return b.String()
 }
 
 func buildAddressLine(street, houseNumber, zipCode, city string) string {

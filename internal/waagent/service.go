@@ -118,17 +118,7 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 	}()
 
 	// Run the AI agent
-	var leadHint *ConversationLeadHint
-	if s.leadHintStore != nil {
-		leadHint, _ = s.leadHintStore.Get(orgID.String(), phoneKey)
-	}
-
-	// Auto-fetch lead details when a hint exists to give the agent richer context.
-	if leadHint != nil && strings.TrimSpace(leadHint.LeadID) != "" && s.leadDetailsReader != nil {
-		if details, err := s.leadDetailsReader.GetLeadDetails(ctx, orgID, leadHint.LeadID); err == nil && details != nil {
-			leadHint.PreloadedDetails = details
-		}
-	}
+	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
 
 	reply, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint)
 	if err != nil {
@@ -178,6 +168,20 @@ func (s *Service) sendHardcoded(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	if err := s.sender.SendReply(ctx, orgID, replyTarget, reply); err != nil {
 		log.Printf("waagent: hardcoded send error phone=%s: %v", replyTarget, err)
 	}
+}
+
+// resolveLeadHint fetches the conversation lead hint and auto-loads details.
+func (s *Service) resolveLeadHint(ctx context.Context, orgID uuid.UUID, phoneKey string) *ConversationLeadHint {
+	if s.leadHintStore == nil {
+		return nil
+	}
+	hint, _ := s.leadHintStore.Get(orgID.String(), phoneKey)
+	if hint != nil && strings.TrimSpace(hint.LeadID) != "" && s.leadDetailsReader != nil {
+		if details, err := s.leadDetailsReader.GetLeadDetails(ctx, orgID, hint.LeadID); err == nil && details != nil {
+			hint.PreloadedDetails = details
+		}
+	}
+	return hint
 }
 
 func (s *Service) lookupAgentUser(ctx context.Context, phone string) (waagentdb.RacWhatsappAgentUser, error) {

@@ -43,7 +43,19 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 	if limit <= 0 {
 		limit = 5
 	}
-	resp, err := a.mgmt.List(ctx, leadtransport.ListLeadsRequest{Search: strings.TrimSpace(query), Page: 1, PageSize: limit}, orgID)
+	query = strings.TrimSpace(query)
+	req := leadtransport.ListLeadsRequest{Page: 1, PageSize: limit}
+	// Multi-word queries (e.g. "Johan Kuiper") cannot match individual first/last
+	// name columns with a single ILIKE pattern containing a space. Split them so
+	// the dedicated firstName/lastName ILIKE filters are used with AND semantics.
+	parts := strings.Fields(query)
+	if len(parts) >= 2 {
+		req.FirstName = parts[0]
+		req.LastName = strings.Join(parts[1:], " ")
+	} else {
+		req.Search = query
+	}
+	resp, err := a.mgmt.List(ctx, req, orgID)
 	if err != nil {
 		return nil, err
 	}
