@@ -160,12 +160,13 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 	rateLimiter := NewRateLimiter(deps.RedisClient, deps.Logger)
 
 	svc := &Service{
-		queries:     queries,
-		agent:       agent,
-		sender:      sender,
-		rateLimiter: rateLimiter,
-		leadHintStore: hintStore,
-		log:         deps.Logger,
+		queries:           queries,
+		agent:             agent,
+		sender:            sender,
+		rateLimiter:       rateLimiter,
+		leadHintStore:     hintStore,
+		leadDetailsReader: deps.LeadDetailsReader,
+		log:               deps.Logger,
 	}
 
 	return &Module{

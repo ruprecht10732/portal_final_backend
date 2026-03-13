@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
+	"google.golang.org/adk/model"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -417,7 +418,7 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 	sessionID := uuid.New().String()
 	userID := "waagent-" + orgID.String()
 
-	_, err := a.sessionService.Create(ctx, &session.CreateRequest{
+	createResp, err := a.sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   agentAppName,
 		UserID:    userID,
 		SessionID: sessionID,
@@ -433,39 +434,124 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 		})
 	}()
 
-	parts := buildConversationParts(messages, leadHint)
-	if len(parts) == 0 {
+	if len(messages) == 0 {
 		return "", fmt.Errorf("waagent: no messages to process")
+	}
+
+	// Seed session with conversation history as proper multi-turn events
+	// so the LLM sees real user/model turns instead of a flattened blob.
+	historyMessages := messages[:len(messages)-1]
+	latestMessage := messages[len(messages)-1]
+
+	if err := a.seedSessionHistory(ctx, createResp.Session, historyMessages, leadHint); err != nil {
+		log.Printf("waagent: failed to seed session history, falling back: %v", err)
 	}
 
 	userMessage := &genai.Content{
 		Role:  "user",
-		Parts: parts,
+		Parts: []*genai.Part{{Text: latestMessage.Content}},
 	}
 
 	return a.collectRunOutput(ctx, userID, sessionID, userMessage)
 }
 
-func buildConversationParts(messages []ConversationMessage, leadHint *ConversationLeadHint) []*genai.Part {
-	parts := make([]*genai.Part, 0, len(messages)+1)
+// seedSessionHistory populates the ADK session with prior conversation turns
+// so the LLM receives proper multi-turn context. Also injects lead context
+// as a synthetic assistant message if a lead hint is available.
+func (a *Agent) seedSessionHistory(ctx context.Context, sess session.Session, history []ConversationMessage, leadHint *ConversationLeadHint) error {
+	// If there's a lead hint, inject it as a system-context event at the start
+	// so the model knows which lead the conversation is about.
 	if leadHint != nil && strings.TrimSpace(leadHint.LeadID) != "" {
-		hintText := "[Gesprekshint]: Laatst opgeloste lead_id=" + leadHint.LeadID
-		if strings.TrimSpace(leadHint.CustomerName) != "" {
-			hintText += ", klant=" + leadHint.CustomerName
+		hintText := a.buildLeadContextText(leadHint)
+		hintEvent := session.NewEvent("history-hint")
+		hintEvent.Author = "WhatsAppAgent"
+		hintEvent.LLMResponse = model.LLMResponse{
+			Content: genai.NewContentFromText(hintText, "model"),
 		}
-		parts = append(parts, &genai.Part{Text: assistantPrefix + hintText})
+		if err := a.sessionService.AppendEvent(ctx, sess, hintEvent); err != nil {
+			return fmt.Errorf("append lead hint event: %w", err)
+		}
 	}
-	for _, msg := range messages {
-		parts = append(parts, &genai.Part{Text: messagePrefix(msg.Role) + msg.Content})
+
+	for i, msg := range history {
+		event := session.NewEvent(fmt.Sprintf("history-%d", i))
+		if msg.Role == "assistant" {
+			event.Author = "WhatsAppAgent"
+			event.LLMResponse = model.LLMResponse{
+				Content: genai.NewContentFromText(msg.Content, "model"),
+			}
+		} else {
+			event.Author = "user"
+			event.LLMResponse = model.LLMResponse{
+				Content: genai.NewContentFromText(msg.Content, "user"),
+			}
+		}
+		if err := a.sessionService.AppendEvent(ctx, sess, event); err != nil {
+			return fmt.Errorf("append history event %d: %w", i, err)
+		}
 	}
-	return parts
+	return nil
 }
 
-func messagePrefix(role string) string {
-	if role == "assistant" {
-		return assistantPrefix
+// buildLeadContextText produces a rich context string from the lead hint.
+// When preloaded details are available, the model gets address, contact info,
+// service type, and status without needing an extra tool call.
+func (a *Agent) buildLeadContextText(hint *ConversationLeadHint) string {
+	if hint.PreloadedDetails != nil {
+		d := hint.PreloadedDetails
+		var b strings.Builder
+		b.WriteString("Gesprekcontext voor deze klant:\n")
+		if d.CustomerName != "" {
+			b.WriteString("- Klant: " + d.CustomerName + "\n")
+		}
+		if d.FullAddress != "" {
+			b.WriteString("- Adres: " + d.FullAddress + "\n")
+		} else {
+			addr := buildAddressLine(d.Street, d.HouseNumber, d.ZipCode, d.City)
+			if addr != "" {
+				b.WriteString("- Adres: " + addr + "\n")
+			}
+		}
+		if d.Phone != "" {
+			b.WriteString("- Telefoon: " + d.Phone + "\n")
+		}
+		if d.Email != "" {
+			b.WriteString("- E-mail: " + d.Email + "\n")
+		}
+		if d.ServiceType != "" {
+			b.WriteString("- Dienst: " + d.ServiceType + "\n")
+		}
+		if d.Status != "" {
+			b.WriteString("- Status: " + d.Status + "\n")
+		}
+		b.WriteString("(Deze gegevens komen uit het CRM. Gebruik GetLeadDetails voor de meest actuele gegevens als je twijfelt.)")
+		return b.String()
 	}
-	return userPrefix
+	// Fallback: minimal hint
+	text := "Gesprekcontext: laatst besproken klant"
+	if strings.TrimSpace(hint.CustomerName) != "" {
+		text += " " + hint.CustomerName
+	}
+	text += ". Gebruik GetLeadDetails als je meer gegevens nodig hebt over deze klant."
+	return text
+}
+
+func buildAddressLine(street, houseNumber, zipCode, city string) string {
+	var parts []string
+	streetPart := strings.TrimSpace(street)
+	if hn := strings.TrimSpace(houseNumber); hn != "" {
+		streetPart += " " + hn
+	}
+	if strings.TrimSpace(streetPart) != "" {
+		parts = append(parts, strings.TrimSpace(streetPart))
+	}
+	if zc := strings.TrimSpace(zipCode); zc != "" {
+		parts = append(parts, zc)
+	}
+	if c := strings.TrimSpace(city); c != "" {
+		parts = append(parts, c)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, userMessage *genai.Content) (string, error) {

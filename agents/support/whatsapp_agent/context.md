@@ -22,15 +22,16 @@ Incoming WhatsApp message from an authenticated (phone-linked) external user, di
 
 ## Constraints
 
-- Read-only tools only: no pipeline mutations, no lead creation.
 - organization_id is never visible to the LLM — injected server-side into tool handlers.
 - Maximum 10 function-calling iterations per request.
 - Rate limited: 30 messages per 5 minutes per phone number.
+- Do not set status to Disqualified via this agent.
 
 ## Downstream Effects
 
 - Operator sees AI replies in the WhatsApp inbox (read-only visibility).
-- No lead or service state changes are made by this agent.
+- Agent can create leads, update lead details, save notes, ask clarifications, and manage appointments.
+- Agent cannot mutate pipeline stages or set status to Disqualified.
 
 ## Failure Modes
 

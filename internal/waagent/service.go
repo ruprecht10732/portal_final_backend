@@ -24,12 +24,13 @@ const (
 
 // Service orchestrates the waagent flow: rate limit → phone→org → AI.
 type Service struct {
-	queries     waagentdb.Querier
-	agent       *Agent
-	sender      *Sender
-	rateLimiter *RateLimiter
-	leadHintStore *ConversationLeadHintStore
-	log         *logger.Logger
+	queries           waagentdb.Querier
+	agent             *Agent
+	sender            *Sender
+	rateLimiter       *RateLimiter
+	leadHintStore     *ConversationLeadHintStore
+	leadDetailsReader LeadDetailsReader
+	log               *logger.Logger
 }
 
 // HandleIncomingMessage processes an incoming WhatsApp message from the global agent device.
@@ -120,6 +121,13 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 	var leadHint *ConversationLeadHint
 	if s.leadHintStore != nil {
 		leadHint, _ = s.leadHintStore.Get(orgID.String(), phoneKey)
+	}
+
+	// Auto-fetch lead details when a hint exists to give the agent richer context.
+	if leadHint != nil && strings.TrimSpace(leadHint.LeadID) != "" && s.leadDetailsReader != nil {
+		if details, err := s.leadDetailsReader.GetLeadDetails(ctx, orgID, leadHint.LeadID); err == nil && details != nil {
+			leadHint.PreloadedDetails = details
+		}
 	}
 
 	reply, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint)
