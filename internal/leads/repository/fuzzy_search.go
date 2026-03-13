@@ -110,3 +110,81 @@ func (r *Repository) FuzzySearchLeads(ctx context.Context, organizationID uuid.U
 	}
 	return results, rows.Err()
 }
+
+// quoteBasedLeadSearchQuery finds leads via their associated quotes.
+// It intentionally does NOT filter on l.deleted_at because the lead may have
+// been soft-deleted while still having active quotes referencing it.
+const quoteBasedLeadSearchQuery = `
+SELECT DISTINCT ON (l.id)
+	l.id,
+	l.consumer_first_name,
+	l.consumer_last_name,
+	l.consumer_phone,
+	l.consumer_email,
+	l.address_city,
+	l.created_at,
+	cs.id AS service_id,
+	COALESCE(st.name, '') AS service_type,
+	COALESCE(cs.status, '') AS service_status
+FROM RAC_quotes q
+JOIN RAC_leads l ON l.id = q.lead_id
+LEFT JOIN LATERAL (
+	SELECT ls.id, ls.status, ls.service_type_id
+	FROM RAC_lead_services ls
+	WHERE ls.lead_id = l.id
+	ORDER BY ls.created_at DESC
+	LIMIT 1
+) cs ON true
+LEFT JOIN RAC_service_types st
+	ON st.id = cs.service_type_id AND st.organization_id = l.organization_id
+WHERE q.organization_id = $1
+	AND (
+		l.consumer_first_name ILIKE '%' || $2 || '%'
+		OR l.consumer_last_name ILIKE '%' || $2 || '%'
+		OR (l.consumer_first_name || ' ' || l.consumer_last_name) ILIKE '%' || $2 || '%'
+		OR l.consumer_phone ILIKE '%' || $2 || '%'
+		OR q.quote_number ILIKE '%' || $2 || '%'
+	)
+ORDER BY l.id, l.created_at DESC
+LIMIT $3
+`
+
+// QuoteBasedLeadSearch finds leads through their associated quotes.
+// This is the last-resort fallback that catches soft-deleted leads and leads
+// that are only discoverable through quote data (e.g. by quote number).
+func (r *Repository) QuoteBasedLeadSearch(ctx context.Context, organizationID uuid.UUID, query string, limit int) ([]FuzzyLeadMatch, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := r.pool.Query(ctx, quoteBasedLeadSearchQuery, toPgUUID(organizationID), query, int32(limit))
+	if err != nil {
+		return nil, nil //nolint:nilerr
+	}
+	defer rows.Close()
+
+	var results []FuzzyLeadMatch
+	for rows.Next() {
+		var m FuzzyLeadMatch
+		var pgServiceID *[16]byte
+		if err := rows.Scan(
+			&m.LeadID,
+			&m.FirstName,
+			&m.LastName,
+			&m.Phone,
+			&m.Email,
+			&m.City,
+			&m.CreatedAt,
+			&pgServiceID,
+			&m.ServiceType,
+			&m.ServiceStatus,
+		); err != nil {
+			return nil, err
+		}
+		if pgServiceID != nil {
+			id := uuid.UUID(*pgServiceID)
+			m.ServiceID = &id
+		}
+		results = append(results, m)
+	}
+	return results, rows.Err()
+}

@@ -22,6 +22,9 @@ type QuoteSummary struct {
 	LeadServiceID string `json:"lead_service_id,omitempty"`
 	QuoteNumber string `json:"quote_number"`
 	ClientName  string `json:"client_name"`
+	ClientPhone string `json:"client_phone,omitempty"`
+	ClientEmail string `json:"client_email,omitempty"`
+	ClientCity  string `json:"client_city,omitempty"`
 	TotalCents  int64  `json:"total_cents"`
 	Status      string `json:"status"`
 	Summary     string `json:"summary,omitempty"`

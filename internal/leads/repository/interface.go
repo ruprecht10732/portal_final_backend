@@ -258,6 +258,7 @@ type CatalogGapReader interface {
 // Scoped to the waagent package; not part of the general-purpose LeadReader.
 type LeadFuzzySearcher interface {
 	FuzzySearchLeads(ctx context.Context, organizationID uuid.UUID, query string, limit int) ([]FuzzyLeadMatch, error)
+	QuoteBasedLeadSearch(ctx context.Context, organizationID uuid.UUID, query string, limit int) ([]FuzzyLeadMatch, error)
 }
 
 // LeadsRepository defines the complete interface for RAC_leads data operations.

@@ -53,7 +53,7 @@ func NewAskCustomerClarificationTool[In any, Out any](handler func(tool.Context,
 }
 
 func NewSearchLeadsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("SearchLeads", "Searches leads in the current organization and returns matching lead and current service identifiers for follow-up actions. Do NOT provide a tenant or organization identifier.", handler)
+	return newDomainTool("SearchLeads", "Searches leads by customer name, phone number, or quote number in the current organization. Also finds leads linked to quotes. Returns matching lead and current service identifiers for follow-up actions. Do NOT provide a tenant or organization identifier.", handler)
 }
 
 func NewGetAvailableVisitSlotsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {

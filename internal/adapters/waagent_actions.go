@@ -45,21 +45,30 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 	}
 	query = strings.TrimSpace(query)
 
-	// Primary strategy: ILIKE search via the management service.
+	// Tier 1: ILIKE search via the management service.
 	// Multi-word queries (e.g. "Johan Kuiper") are split into first/last name
 	// filters so the AND-based ILIKE matching works correctly.
+	// If the split search returns nothing, retry with the full query as a
+	// combined OR-search across all fields.
 	results := a.iLikeSearchLeads(ctx, orgID, query, limit)
 
-	// Fuzzy fallback: if the ILIKE search returned nothing, run a pg_trgm
-	// word_similarity query that tolerates partial matches and minor typos.
+	// Tier 2: Fuzzy pg_trgm fallback for partial matches and minor typos.
 	if len(results) == 0 && a.repo != nil {
 		results = a.fuzzySearchLeads(ctx, orgID, query, limit)
+	}
+
+	// Tier 3: Quote-based search — finds leads through their associated quotes
+	// even when the lead itself has been soft-deleted.
+	if len(results) == 0 && a.repo != nil {
+		results = a.quoteBasedLeadSearch(ctx, orgID, query, limit)
 	}
 
 	return results, nil
 }
 
 // iLikeSearchLeads performs a standard ILIKE-based lead search via the management service.
+// For multi-word queries it first tries a split FirstName+LastName AND-match;
+// if that returns nothing it falls back to a combined OR-search across all fields.
 func (a *WAAgentLeadActionsAdapter) iLikeSearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) []waagent.LeadSearchResult {
 	req := leadtransport.ListLeadsRequest{Page: 1, PageSize: limit}
 	parts := strings.Fields(query)
@@ -72,6 +81,15 @@ func (a *WAAgentLeadActionsAdapter) iLikeSearchLeads(ctx context.Context, orgID 
 	resp, err := a.mgmt.List(ctx, req, orgID)
 	if err != nil {
 		return nil
+	}
+
+	// Fallback: if split first/last returned nothing, retry with combined OR-search.
+	if len(resp.Items) == 0 && len(parts) >= 2 {
+		req = leadtransport.ListLeadsRequest{Page: 1, PageSize: limit, Search: query}
+		resp, err = a.mgmt.List(ctx, req, orgID)
+		if err != nil {
+			return nil
+		}
 	}
 	results := make([]waagent.LeadSearchResult, 0, len(resp.Items))
 	for _, item := range resp.Items {
@@ -682,4 +700,31 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// quoteBasedLeadSearch finds leads via their associated quotes. This catches
+// soft-deleted leads that still have active quotes referencing them.
+func (a *WAAgentLeadActionsAdapter) quoteBasedLeadSearch(ctx context.Context, orgID uuid.UUID, query string, limit int) []waagent.LeadSearchResult {
+	matches, err := a.repo.QuoteBasedLeadSearch(ctx, orgID, query, limit)
+	if err != nil || len(matches) == 0 {
+		return nil
+	}
+	results := make([]waagent.LeadSearchResult, 0, len(matches))
+	for _, m := range matches {
+		serviceID := ""
+		if m.ServiceID != nil {
+			serviceID = m.ServiceID.String()
+		}
+		results = append(results, waagent.LeadSearchResult{
+			LeadID:        m.LeadID.String(),
+			LeadServiceID: serviceID,
+			CustomerName:  strings.TrimSpace(m.FirstName + " " + m.LastName),
+			Phone:         m.Phone,
+			City:          m.City,
+			ServiceType:   m.ServiceType,
+			Status:        m.ServiceStatus,
+			CreatedAt:     m.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return results
 }
