@@ -262,7 +262,7 @@ func (h *ToolHandler) HandleSearchLeads(ctx tool.Context, orgID uuid.UUID, input
 	}
 	limit := input.Limit
 	if limit <= 0 {
-		limit = 5
+		limit = 10
 	}
 	leads, err := h.leadSearchReader.SearchLeads(context.Background(), orgID, query, limit)
 	if err != nil {

@@ -254,6 +254,12 @@ type CatalogGapReader interface {
 // Composite Interface (for backward compatibility)
 // =====================================
 
+// LeadFuzzySearcher performs pg_trgm similarity-based lead search.
+// Scoped to the waagent package; not part of the general-purpose LeadReader.
+type LeadFuzzySearcher interface {
+	FuzzySearchLeads(ctx context.Context, organizationID uuid.UUID, query string, limit int) ([]FuzzyLeadMatch, error)
+}
+
 // LeadsRepository defines the complete interface for RAC_leads data operations.
 // Composed of smaller, focused interfaces for better testability and flexibility.
 type LeadsRepository interface {
@@ -284,6 +290,7 @@ type LeadsRepository interface {
 	OrgMemberReader
 	CatalogSearchLogStore
 	CatalogGapReader
+	LeadFuzzySearcher
 }
 
 // Ensure Repository implements LeadsRepository

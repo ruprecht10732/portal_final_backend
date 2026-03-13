@@ -41,13 +41,27 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 		return nil, errors.New(errLeadManagementNotConfigured)
 	}
 	if limit <= 0 {
-		limit = 5
+		limit = 10
 	}
 	query = strings.TrimSpace(query)
+
+	// Primary strategy: ILIKE search via the management service.
+	// Multi-word queries (e.g. "Johan Kuiper") are split into first/last name
+	// filters so the AND-based ILIKE matching works correctly.
+	results := a.iLikeSearchLeads(ctx, orgID, query, limit)
+
+	// Fuzzy fallback: if the ILIKE search returned nothing, run a pg_trgm
+	// word_similarity query that tolerates partial matches and minor typos.
+	if len(results) == 0 && a.repo != nil {
+		results = a.fuzzySearchLeads(ctx, orgID, query, limit)
+	}
+
+	return results, nil
+}
+
+// iLikeSearchLeads performs a standard ILIKE-based lead search via the management service.
+func (a *WAAgentLeadActionsAdapter) iLikeSearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) []waagent.LeadSearchResult {
 	req := leadtransport.ListLeadsRequest{Page: 1, PageSize: limit}
-	// Multi-word queries (e.g. "Johan Kuiper") cannot match individual first/last
-	// name columns with a single ILIKE pattern containing a space. Split them so
-	// the dedicated firstName/lastName ILIKE filters are used with AND semantics.
 	parts := strings.Fields(query)
 	if len(parts) >= 2 {
 		req.FirstName = parts[0]
@@ -57,7 +71,7 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 	}
 	resp, err := a.mgmt.List(ctx, req, orgID)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	results := make([]waagent.LeadSearchResult, 0, len(resp.Items))
 	for _, item := range resp.Items {
@@ -80,7 +94,34 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 			CreatedAt:     item.CreatedAt.Format(time.RFC3339),
 		})
 	}
-	return results, nil
+	return results
+}
+
+// fuzzySearchLeads performs a pg_trgm similarity-based lead search as a fallback.
+// Returns nil (no error) if pg_trgm is unavailable so the caller degrades gracefully.
+func (a *WAAgentLeadActionsAdapter) fuzzySearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) []waagent.LeadSearchResult {
+	matches, err := a.repo.FuzzySearchLeads(ctx, orgID, query, limit)
+	if err != nil || len(matches) == 0 {
+		return nil
+	}
+	results := make([]waagent.LeadSearchResult, 0, len(matches))
+	for _, m := range matches {
+		serviceID := ""
+		if m.ServiceID != nil {
+			serviceID = m.ServiceID.String()
+		}
+		results = append(results, waagent.LeadSearchResult{
+			LeadID:        m.LeadID.String(),
+			LeadServiceID: serviceID,
+			CustomerName:  strings.TrimSpace(m.FirstName + " " + m.LastName),
+			Phone:         m.Phone,
+			City:          m.City,
+			ServiceType:   m.ServiceType,
+			Status:        m.ServiceStatus,
+			CreatedAt:     m.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return results
 }
 
 func (a *WAAgentLeadActionsAdapter) GetLeadDetails(ctx context.Context, orgID uuid.UUID, leadIDRaw string) (*waagent.LeadDetailsResult, error) {
