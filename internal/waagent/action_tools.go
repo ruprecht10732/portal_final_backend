@@ -2,6 +2,7 @@ package waagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -92,6 +93,30 @@ type SearchLeadsInput struct {
 type SearchLeadsOutput struct {
 	Leads []LeadSearchResult `json:"leads"`
 	Count int                `json:"count"`
+}
+
+type GetLeadDetailsInput struct {
+	LeadID string `json:"lead_id"`
+}
+
+type LeadDetailsResult struct {
+	LeadID        string `json:"lead_id"`
+	CustomerName  string `json:"customer_name"`
+	Phone         string `json:"phone,omitempty"`
+	Email         string `json:"email,omitempty"`
+	Street        string `json:"street,omitempty"`
+	HouseNumber   string `json:"house_number,omitempty"`
+	ZipCode       string `json:"zip_code,omitempty"`
+	City          string `json:"city,omitempty"`
+	FullAddress   string `json:"full_address,omitempty"`
+	ServiceType   string `json:"service_type,omitempty"`
+	Status        string `json:"status,omitempty"`
+}
+
+type GetLeadDetailsOutput struct {
+	Success bool              `json:"success"`
+	Message string            `json:"message"`
+	Lead    *LeadDetailsResult `json:"lead,omitempty"`
 }
 
 type VisitSlotSummary struct {
@@ -227,7 +252,7 @@ type CancelVisitOutput struct {
 	Message string `json:"message"`
 }
 
-func (h *ToolHandler) HandleSearchLeads(_ tool.Context, orgID uuid.UUID, input SearchLeadsInput) (SearchLeadsOutput, error) {
+func (h *ToolHandler) HandleSearchLeads(ctx tool.Context, orgID uuid.UUID, input SearchLeadsInput) (SearchLeadsOutput, error) {
 	if h.leadSearchReader == nil {
 		return SearchLeadsOutput{}, fmt.Errorf("lead search not configured")
 	}
@@ -243,7 +268,24 @@ func (h *ToolHandler) HandleSearchLeads(_ tool.Context, orgID uuid.UUID, input S
 	if err != nil {
 		return SearchLeadsOutput{}, err
 	}
+	h.recordLeadHintIfUnambiguous(ctx, orgID, leads)
 	return SearchLeadsOutput{Leads: leads, Count: len(leads)}, nil
+}
+
+func (h *ToolHandler) HandleGetLeadDetails(ctx tool.Context, orgID uuid.UUID, input GetLeadDetailsInput) (GetLeadDetailsOutput, error) {
+	if h.leadDetailsReader == nil {
+		return GetLeadDetailsOutput{}, fmt.Errorf("lead details reader not configured")
+	}
+	leadID := strings.TrimSpace(input.LeadID)
+	if leadID == "" {
+		return GetLeadDetailsOutput{Success: false, Message: "lead_id is verplicht"}, fmt.Errorf("lead_id is required")
+	}
+	lead, err := h.leadDetailsReader.GetLeadDetails(context.Background(), orgID, leadID)
+	if err != nil {
+		return GetLeadDetailsOutput{Success: false, Message: err.Error()}, err
+	}
+	h.recordLeadHint(ctx, orgID, lead.LeadID, lead.CustomerName)
+	return GetLeadDetailsOutput{Success: true, Message: "Leadgegevens gevonden", Lead: lead}, nil
 }
 
 func (h *ToolHandler) HandleGetAvailableVisitSlots(_ tool.Context, orgID uuid.UUID, input GetAvailableVisitSlotsInput) (GetAvailableVisitSlotsOutput, error) {
@@ -269,7 +311,7 @@ func (h *ToolHandler) HandleGetAvailableVisitSlots(_ tool.Context, orgID uuid.UU
 	return GetAvailableVisitSlotsOutput{Slots: slots, Count: len(slots)}, nil
 }
 
-func (h *ToolHandler) HandleGetNavigationLink(_ tool.Context, orgID uuid.UUID, input GetNavigationLinkInput) (GetNavigationLinkOutput, error) {
+func (h *ToolHandler) HandleGetNavigationLink(ctx tool.Context, orgID uuid.UUID, input GetNavigationLinkInput) (GetNavigationLinkOutput, error) {
 	if h.navigationLinkReader == nil {
 		return GetNavigationLinkOutput{}, fmt.Errorf("navigation link reader not configured")
 	}
@@ -281,14 +323,19 @@ func (h *ToolHandler) HandleGetNavigationLink(_ tool.Context, orgID uuid.UUID, i
 	if err != nil {
 		return GetNavigationLinkOutput{Success: false, Message: err.Error()}, err
 	}
+	h.recordLeadHint(ctx, orgID, link.LeadID, "")
 	return GetNavigationLinkOutput{Success: true, Message: "Navigatielink gevonden", Link: link}, nil
 }
 
-func (h *ToolHandler) HandleCreateLead(_ tool.Context, orgID uuid.UUID, input CreateLeadInput) (CreateLeadOutput, error) {
+func (h *ToolHandler) HandleCreateLead(ctx tool.Context, orgID uuid.UUID, input CreateLeadInput) (CreateLeadOutput, error) {
 	if h.leadMutationWriter == nil {
-		return CreateLeadOutput{}, fmt.Errorf(errLeadMutationsNotConfigured)
+		return CreateLeadOutput{}, errors.New(errLeadMutationsNotConfigured)
 	}
-	return h.leadMutationWriter.CreateLead(context.Background(), orgID, input)
+	output, err := h.leadMutationWriter.CreateLead(context.Background(), orgID, input)
+	if err == nil && output.Success && output.Lead != nil {
+		h.recordLeadHint(ctx, orgID, output.Lead.LeadID, output.Lead.CustomerName)
+	}
+	return output, err
 }
 
 func (h *ToolHandler) HandleSearchProductMaterials(_ tool.Context, orgID uuid.UUID, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
@@ -300,7 +347,7 @@ func (h *ToolHandler) HandleSearchProductMaterials(_ tool.Context, orgID uuid.UU
 
 func (h *ToolHandler) HandleUpdateLeadDetails(_ tool.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
 	if h.leadMutationWriter == nil {
-		return UpdateLeadDetailsOutput{}, fmt.Errorf(errLeadMutationsNotConfigured)
+		return UpdateLeadDetailsOutput{}, errors.New(errLeadMutationsNotConfigured)
 	}
 	if input.ConsumerRole != nil {
 		normalized := normalizeConsumerRole(*input.ConsumerRole)
@@ -315,7 +362,7 @@ func (h *ToolHandler) HandleUpdateLeadDetails(_ tool.Context, orgID uuid.UUID, i
 
 func (h *ToolHandler) HandleAskCustomerClarification(_ tool.Context, orgID uuid.UUID, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
 	if h.leadMutationWriter == nil {
-		return AskCustomerClarificationOutput{}, fmt.Errorf(errLeadMutationsNotConfigured)
+		return AskCustomerClarificationOutput{}, errors.New(errLeadMutationsNotConfigured)
 	}
 	if err := h.leadMutationWriter.AskCustomerClarification(context.Background(), orgID, input); err != nil {
 		return AskCustomerClarificationOutput{Success: false, Message: err.Error()}, err
@@ -325,7 +372,7 @@ func (h *ToolHandler) HandleAskCustomerClarification(_ tool.Context, orgID uuid.
 
 func (h *ToolHandler) HandleSaveNote(_ tool.Context, orgID uuid.UUID, input SaveNoteInput) (SaveNoteOutput, error) {
 	if h.leadMutationWriter == nil {
-		return SaveNoteOutput{}, fmt.Errorf(errLeadMutationsNotConfigured)
+		return SaveNoteOutput{}, errors.New(errLeadMutationsNotConfigured)
 	}
 	if err := h.leadMutationWriter.SaveNote(context.Background(), orgID, input); err != nil {
 		return SaveNoteOutput{Success: false, Message: err.Error()}, err
@@ -335,7 +382,7 @@ func (h *ToolHandler) HandleSaveNote(_ tool.Context, orgID uuid.UUID, input Save
 
 func (h *ToolHandler) HandleUpdateStatus(_ tool.Context, orgID uuid.UUID, input UpdateStatusInput) (UpdateStatusOutput, error) {
 	if h.leadMutationWriter == nil {
-		return UpdateStatusOutput{}, fmt.Errorf(errLeadMutationsNotConfigured)
+		return UpdateStatusOutput{}, errors.New(errLeadMutationsNotConfigured)
 	}
 	normalized := normalizeLeadStatus(input.Status)
 	if normalized == "Disqualified" {
@@ -351,7 +398,7 @@ func (h *ToolHandler) HandleUpdateStatus(_ tool.Context, orgID uuid.UUID, input 
 
 func (h *ToolHandler) HandleScheduleVisit(_ tool.Context, orgID uuid.UUID, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
 	if h.visitMutationWriter == nil {
-		return ScheduleVisitOutput{}, fmt.Errorf(errVisitMutationsNotConfigured)
+		return ScheduleVisitOutput{}, errors.New(errVisitMutationsNotConfigured)
 	}
 	appointment, err := h.visitMutationWriter.ScheduleVisit(context.Background(), orgID, input)
 	if err != nil {
@@ -362,7 +409,7 @@ func (h *ToolHandler) HandleScheduleVisit(_ tool.Context, orgID uuid.UUID, input
 
 func (h *ToolHandler) HandleRescheduleVisit(_ tool.Context, orgID uuid.UUID, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
 	if h.visitMutationWriter == nil {
-		return RescheduleVisitOutput{}, fmt.Errorf(errVisitMutationsNotConfigured)
+		return RescheduleVisitOutput{}, errors.New(errVisitMutationsNotConfigured)
 	}
 	appointment, err := h.visitMutationWriter.RescheduleVisit(context.Background(), orgID, input)
 	if err != nil {
@@ -373,7 +420,7 @@ func (h *ToolHandler) HandleRescheduleVisit(_ tool.Context, orgID uuid.UUID, inp
 
 func (h *ToolHandler) HandleCancelVisit(_ tool.Context, orgID uuid.UUID, input CancelVisitInput) (CancelVisitOutput, error) {
 	if h.visitMutationWriter == nil {
-		return CancelVisitOutput{}, fmt.Errorf(errVisitMutationsNotConfigured)
+		return CancelVisitOutput{}, errors.New(errVisitMutationsNotConfigured)
 	}
 	if err := h.visitMutationWriter.CancelVisit(context.Background(), orgID, input); err != nil {
 		return CancelVisitOutput{Success: false, Message: err.Error()}, err
@@ -420,4 +467,25 @@ func normalizeLeadStatus(raw string) string {
 	default:
 		return raw
 	}
+}
+
+func (h *ToolHandler) recordLeadHintIfUnambiguous(ctx tool.Context, orgID uuid.UUID, leads []LeadSearchResult) {
+	if len(leads) != 1 {
+		return
+	}
+	h.recordLeadHint(ctx, orgID, leads[0].LeadID, leads[0].CustomerName)
+}
+
+func (h *ToolHandler) recordLeadHint(ctx tool.Context, orgID uuid.UUID, leadID, customerName string) {
+	if h == nil || h.leadHintStore == nil {
+		return
+	}
+	phoneKey, ok := phoneKeyFromToolContext(ctx)
+	if !ok {
+		return
+	}
+	h.leadHintStore.Set(orgID.String(), phoneKey, ConversationLeadHint{
+		LeadID:       strings.TrimSpace(leadID),
+		CustomerName: strings.TrimSpace(customerName),
+	})
 }

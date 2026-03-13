@@ -7,6 +7,7 @@ description: >-
 metadata:
   allowed-tools:
     - SearchLeads
+    - GetLeadDetails
     - CreateLead
     - SearchProductMaterials
     - GetAvailableVisitSlots
@@ -64,6 +65,7 @@ Autonomous WhatsApp assistant for authenticated external users (customers).
 - Do not use `UpdateStatus` to set `Disqualified`.
 - Prefer bounded customer-support actions: scheduling, rescheduling, cancelling visits, correcting lead details, saving notes, and storing clarification requests.
 - Use `GetNavigationLink` when the user asks for route, navigation, or a clickable Google Maps link to a lead address.
+- Use `GetLeadDetails` when the user asks for address, phone number, email, or other customer details for a resolved lead.
 - Use `CreateLead` when the customer wants to request work and enough intake data is available.
 - If `CreateLead` reports missing required fields, ask only for those missing fields.
 - Use `SearchProductMaterials` when the customer asks about concrete products or materials and the answer should come from the catalog search surface.

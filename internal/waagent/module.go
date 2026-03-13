@@ -60,6 +60,10 @@ type NavigationLinkReader interface {
 	GetNavigationLink(ctx context.Context, orgID uuid.UUID, leadID string) (*NavigationLinkResult, error)
 }
 
+type LeadDetailsReader interface {
+	GetLeadDetails(ctx context.Context, orgID uuid.UUID, leadID string) (*LeadDetailsResult, error)
+}
+
 type CatalogSearchReader interface {
 	SearchProductMaterials(ctx context.Context, orgID uuid.UUID, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error)
 }
@@ -100,6 +104,7 @@ type ModuleDependencies struct {
 	QuotesReader       QuotesReader
 	AppointmentsReader AppointmentsReader
 	LeadSearchReader   LeadSearchReader
+	LeadDetailsReader  LeadDetailsReader
 	NavigationLinkReader NavigationLinkReader
 	CatalogSearchReader CatalogSearchReader
 	LeadMutationWriter LeadMutationWriter
@@ -121,11 +126,14 @@ type Module struct {
 func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*Module, error) {
 
 	queries := waagentdb.New(pool)
+	hintStore := NewConversationLeadHintStore()
 
 	toolHandler := &ToolHandler{
 		quotesReader:       deps.QuotesReader,
 		appointmentsReader: deps.AppointmentsReader,
 		leadSearchReader:   deps.LeadSearchReader,
+		leadHintStore:      hintStore,
+		leadDetailsReader:  deps.LeadDetailsReader,
 		navigationLinkReader: deps.NavigationLinkReader,
 		catalogSearchReader: deps.CatalogSearchReader,
 		leadMutationWriter: deps.LeadMutationWriter,
@@ -156,6 +164,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		agent:       agent,
 		sender:      sender,
 		rateLimiter: rateLimiter,
+		leadHintStore: hintStore,
 		log:         deps.Logger,
 	}
 

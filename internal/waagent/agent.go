@@ -2,6 +2,7 @@ package waagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -30,6 +31,7 @@ const (
 
 // orgIDContextKey is used to inject org_id into tool.Context without exposing it to the LLM.
 type orgIDContextKey struct{}
+type phoneKeyContextKey struct{}
 
 // ConversationMessage represents a single message in the conversation history.
 type ConversationMessage struct {
@@ -92,6 +94,11 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 	}
 
 	getAvailableVisitSlotsTool, err := buildGetAvailableVisitSlotsTool(toolHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	getLeadDetailsTool, err := buildGetLeadDetailsTool(toolHandler)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +168,7 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		createLeadTool,
 		searchProductMaterialsTool,
 		getAvailableVisitSlotsTool,
+		getLeadDetailsTool,
 		getNavigationLinkTool,
 		getQuotesTool,
 		getAppointmentsTool,
@@ -172,6 +180,20 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		rescheduleVisitTool,
 		cancelVisitTool,
 	}, nil
+}
+
+func buildGetLeadDetailsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	leadDetailsTool, err := apptools.NewGetLeadDetailsTool(func(ctx tool.Context, input GetLeadDetailsInput) (GetLeadDetailsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetLeadDetailsOutput{}, err
+		}
+		return toolHandler.HandleGetLeadDetails(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GetLeadDetails tool: %w", err)
+	}
+	return leadDetailsTool, nil
 }
 
 func buildCreateLeadTool(toolHandler *ToolHandler) (tool.Tool, error) {
@@ -373,15 +395,24 @@ func buildCancelVisitTool(toolHandler *ToolHandler) (tool.Tool, error) {
 func orgIDFromToolContext(ctx tool.Context) (uuid.UUID, error) {
 	orgID, ok := ctx.Value(orgIDContextKey{}).(uuid.UUID)
 	if !ok {
-		return uuid.Nil, fmt.Errorf(errOrgContextUnavailable)
+		return uuid.Nil, errors.New(errOrgContextUnavailable)
 	}
 	return orgID, nil
 }
 
+func phoneKeyFromToolContext(ctx tool.Context) (string, bool) {
+	phoneKey, ok := ctx.Value(phoneKeyContextKey{}).(string)
+	if !ok || strings.TrimSpace(phoneKey) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(phoneKey), true
+}
+
 // Run executes the agent with conversation history and returns the text reply.
-func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, messages []ConversationMessage) (string, error) {
+func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint) (string, error) {
 	// Inject org_id into context for tool handlers (never in the LLM prompt).
 	ctx = context.WithValue(ctx, orgIDContextKey{}, orgID)
+	ctx = context.WithValue(ctx, phoneKeyContextKey{}, strings.TrimSpace(phoneKey))
 
 	sessionID := uuid.New().String()
 	userID := "waagent-" + orgID.String()
@@ -402,7 +433,7 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, messages []Conversatio
 		})
 	}()
 
-	parts := buildConversationParts(messages)
+	parts := buildConversationParts(messages, leadHint)
 	if len(parts) == 0 {
 		return "", fmt.Errorf("waagent: no messages to process")
 	}
@@ -415,8 +446,15 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, messages []Conversatio
 	return a.collectRunOutput(ctx, userID, sessionID, userMessage)
 }
 
-func buildConversationParts(messages []ConversationMessage) []*genai.Part {
-	parts := make([]*genai.Part, 0, len(messages))
+func buildConversationParts(messages []ConversationMessage, leadHint *ConversationLeadHint) []*genai.Part {
+	parts := make([]*genai.Part, 0, len(messages)+1)
+	if leadHint != nil && strings.TrimSpace(leadHint.LeadID) != "" {
+		hintText := "[Gesprekshint]: Laatst opgeloste lead_id=" + leadHint.LeadID
+		if strings.TrimSpace(leadHint.CustomerName) != "" {
+			hintText += ", klant=" + leadHint.CustomerName
+		}
+		parts = append(parts, &genai.Part{Text: assistantPrefix + hintText})
+	}
 	for _, msg := range messages {
 		parts = append(parts, &genai.Part{Text: messagePrefix(msg.Role) + msg.Content})
 	}

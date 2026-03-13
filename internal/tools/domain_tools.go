@@ -24,6 +24,7 @@ var domainToolNames = map[string]struct{}{
 	"SubmitAuditResult":        {},
 	"SubmitQuoteCritique":      {},
 	"GetAvailableVisitSlots":   {},
+	"GetLeadDetails":           {},
 	"GetNavigationLink":        {},
 	"UpdateLeadDetails":        {},
 	"UpdateLeadServiceType":    {},

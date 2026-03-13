@@ -14,6 +14,7 @@
 - `CreatePartnerOffer`: create a partner offer.
 - `SubmitAuditResult`: persist audit findings.
 - `SearchLeads`: search leads in the authenticated organization and return matching lead and current service identifiers.
+- `GetLeadDetails`: return contact and address details for a resolved lead.
 - `GetAvailableVisitSlots`: retrieve available appointment slots for the authenticated organization.
 - `GetNavigationLink`: return a Google Maps directions link for a lead using the lead address.
 - `GetQuotes`: retrieve quotes for the authenticated organization, optionally filtered by status.

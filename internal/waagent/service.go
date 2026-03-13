@@ -27,6 +27,7 @@ type Service struct {
 	agent       *Agent
 	sender      *Sender
 	rateLimiter *RateLimiter
+	leadHintStore *ConversationLeadHintStore
 	log         *logger.Logger
 }
 
@@ -106,13 +107,18 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 	}
 
 	// Run the AI agent
-	reply, err := s.agent.Run(ctx, orgID, messages)
+	var leadHint *ConversationLeadHint
+	if s.leadHintStore != nil {
+		leadHint, _ = s.leadHintStore.Get(orgID.String(), phoneKey)
+	}
+
+	reply, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint)
 	if err != nil {
 		log.Printf("waagent: agent run error phone=%s org=%s: %v", phoneKey, orgID, err)
 		return
 	}
 
-	reply = strings.TrimSpace(reply)
+	reply = sanitizeWhatsAppReply(strings.TrimSpace(reply))
 	if reply == "" {
 		log.Printf("waagent: empty agent reply phone=%s org=%s", phoneKey, orgID)
 		return

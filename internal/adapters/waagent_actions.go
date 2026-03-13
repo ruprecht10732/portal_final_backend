@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -37,7 +38,7 @@ func NewWAAgentLeadActionsAdapter(mgmt *leadsmgmt.Service, repo leadsrepo.LeadsR
 
 func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) ([]waagent.LeadSearchResult, error) {
 	if a.mgmt == nil {
-		return nil, fmt.Errorf(errLeadManagementNotConfigured)
+		return nil, errors.New(errLeadManagementNotConfigured)
 	}
 	if limit <= 0 {
 		limit = 5
@@ -70,9 +71,43 @@ func (a *WAAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID uuid.
 	return results, nil
 }
 
+func (a *WAAgentLeadActionsAdapter) GetLeadDetails(ctx context.Context, orgID uuid.UUID, leadIDRaw string) (*waagent.LeadDetailsResult, error) {
+	if a.mgmt == nil {
+		return nil, errors.New(errLeadManagementNotConfigured)
+	}
+	leadID, err := uuid.Parse(strings.TrimSpace(leadIDRaw))
+	if err != nil {
+		return nil, errors.New(errInvalidLeadID)
+	}
+	resp, err := a.mgmt.GetByID(ctx, leadID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	serviceType := ""
+	status := ""
+	if resp.CurrentService != nil {
+		serviceType = string(resp.CurrentService.ServiceType)
+		status = string(resp.CurrentService.Status)
+	}
+	fullAddress := strings.TrimSpace(strings.TrimSpace(resp.Address.Street)+" "+strings.TrimSpace(resp.Address.HouseNumber)+", "+strings.TrimSpace(resp.Address.ZipCode)+" "+strings.TrimSpace(resp.Address.City))
+	return &waagent.LeadDetailsResult{
+		LeadID:       resp.ID.String(),
+		CustomerName: strings.TrimSpace(resp.Consumer.FirstName + " " + resp.Consumer.LastName),
+		Phone:        resp.Consumer.Phone,
+		Email:        derefString(resp.Consumer.Email),
+		Street:       resp.Address.Street,
+		HouseNumber:  resp.Address.HouseNumber,
+		ZipCode:      resp.Address.ZipCode,
+		City:         resp.Address.City,
+		FullAddress:  strings.Trim(fullAddress, ", "),
+		ServiceType:  serviceType,
+		Status:       status,
+	}, nil
+}
+
 func (a *WAAgentLeadActionsAdapter) CreateLead(ctx context.Context, orgID uuid.UUID, input waagent.CreateLeadInput) (waagent.CreateLeadOutput, error) {
 	if a.mgmt == nil {
-		return waagent.CreateLeadOutput{}, fmt.Errorf(errLeadManagementNotConfigured)
+		return waagent.CreateLeadOutput{}, errors.New(errLeadManagementNotConfigured)
 	}
 	missing := missingCreateLeadFields(input)
 	if len(missing) > 0 {
@@ -133,22 +168,22 @@ func missingCreateLeadFields(input waagent.CreateLeadInput) []string {
 			missing = append(missing, name)
 		}
 	}
-	appendMissing("first_name", input.FirstName)
-	appendMissing("last_name", input.LastName)
-	appendMissing("phone", input.Phone)
-	appendMissing("consumer_role", input.ConsumerRole)
-	appendMissing("street", input.Street)
-	appendMissing("house_number", input.HouseNumber)
-	appendMissing("zip_code", input.ZipCode)
-	appendMissing("city", input.City)
-	appendMissing("service_type", input.ServiceType)
+	appendMissing("voornaam", input.FirstName)
+	appendMissing("achternaam", input.LastName)
+	appendMissing("telefoonnummer", input.Phone)
+	appendMissing("rol van de klant", input.ConsumerRole)
+	appendMissing("straat", input.Street)
+	appendMissing("huisnummer", input.HouseNumber)
+	appendMissing("postcode", input.ZipCode)
+	appendMissing("plaats", input.City)
+	appendMissing("dienst", input.ServiceType)
 	return missing
 }
 
 func (a *WAAgentLeadActionsAdapter) GetNavigationLink(ctx context.Context, orgID uuid.UUID, leadIDRaw string) (*waagent.NavigationLinkResult, error) {
 	leadID, err := uuid.Parse(strings.TrimSpace(leadIDRaw))
 	if err != nil {
-		return nil, fmt.Errorf(errInvalidLeadID)
+		return nil, errors.New(errInvalidLeadID)
 	}
 	lead, err := a.repo.GetByID(ctx, leadID, orgID)
 	if err != nil {
@@ -298,11 +333,11 @@ func (a *WAAgentCatalogSearchAdapter) hydrateCatalogMaterials(ctx context.Contex
 
 func (a *WAAgentLeadActionsAdapter) UpdateLeadDetails(ctx context.Context, orgID uuid.UUID, input waagent.UpdateLeadDetailsInput) ([]string, error) {
 	if a.mgmt == nil {
-		return nil, fmt.Errorf(errLeadManagementNotConfigured)
+		return nil, errors.New(errLeadManagementNotConfigured)
 	}
 	leadID, err := uuid.Parse(strings.TrimSpace(input.LeadID))
 	if err != nil {
-		return nil, fmt.Errorf(errInvalidLeadID)
+		return nil, errors.New(errInvalidLeadID)
 	}
 	req := leadtransport.UpdateLeadRequest{
 		FirstName:       input.FirstName,
@@ -419,7 +454,7 @@ func (a *WAAgentLeadActionsAdapter) UpdateLeadStatus(ctx context.Context, orgID 
 func (a *WAAgentLeadActionsAdapter) resolveLeadAndService(ctx context.Context, orgID uuid.UUID, leadIDRaw string, serviceIDRaw string) (uuid.UUID, uuid.UUID, error) {
 	leadID, err := uuid.Parse(strings.TrimSpace(leadIDRaw))
 	if err != nil {
-		return uuid.Nil, uuid.Nil, fmt.Errorf(errInvalidLeadID)
+		return uuid.Nil, uuid.Nil, errors.New(errInvalidLeadID)
 	}
 	if trimmed := strings.TrimSpace(serviceIDRaw); trimmed != "" {
 		serviceID, parseErr := uuid.Parse(trimmed)
@@ -473,7 +508,7 @@ func (a *WAAgentVisitActionsAdapter) ScheduleVisit(ctx context.Context, orgID uu
 	}
 	leadID, err := uuid.Parse(strings.TrimSpace(input.LeadID))
 	if err != nil {
-		return nil, fmt.Errorf(errInvalidLeadID)
+		return nil, errors.New(errInvalidLeadID)
 	}
 	serviceID, err := uuid.Parse(strings.TrimSpace(input.LeadServiceID))
 	if err != nil {

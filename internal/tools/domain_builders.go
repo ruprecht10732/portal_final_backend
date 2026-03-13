@@ -60,6 +60,10 @@ func NewGetAvailableVisitSlotsTool[In any, Out any](handler func(tool.Context, I
 	return newDomainTool("GetAvailableVisitSlots", "Lists available appointment slots for the current organization. Returns start_time, end_time, and assigned_user_id needed to request a visit. Do NOT provide a tenant or organization identifier.", handler)
 }
 
+func NewGetLeadDetailsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GetLeadDetails", "Returns contact and address details for a lead in the current organization. Use the lead_id from SearchLeads or quote context. Do NOT provide a tenant or organization identifier.", handler)
+}
+
 func NewGetNavigationLinkTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("GetNavigationLink", "Returns a Google Maps directions link for a lead in the current organization using the lead's address. Provide the lead_id returned by SearchLeads. Do NOT provide a tenant or organization identifier.", handler)
 }
