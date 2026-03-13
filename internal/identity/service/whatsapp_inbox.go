@@ -575,6 +575,31 @@ func (s *Service) ReceiveIncomingWhatsAppMessage(ctx context.Context, input webh
 	return true, nil
 }
 
+func (s *Service) PersistIncomingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, phoneNumber, displayName, body string, externalMessageID *string, metadata []byte) error {
+	_, err := s.ReceiveIncomingWhatsAppMessage(ctx, webhookinbox.IncomingWhatsAppMessage{
+		OrganizationID:    organizationID,
+		PhoneNumber:       phoneNumber,
+		DisplayName:       displayName,
+		ExternalMessageID: externalMessageID,
+		Body:              body,
+		Metadata:          json.RawMessage(metadata),
+	})
+	return err
+}
+
+func (s *Service) UpdateIncomingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, externalMessageID, body string, metadata []byte) error {
+	conversation, message, err := s.repo.UpdateWhatsAppMessageByExternalID(ctx, organizationID, externalMessageID, body, json.RawMessage(metadata))
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return nil
+		}
+		return err
+	}
+	s.publishWhatsAppMessageUpdated(organizationID, conversation, message)
+	s.publishWhatsAppConversationUpdated(organizationID, conversation)
+	return nil
+}
+
 func (s *Service) SyncOutgoingWhatsAppMessage(ctx context.Context, input webhookinbox.OutgoingWhatsAppMessage) (bool, error) {
 	conversation, message, created, err := s.repo.SyncSentWhatsAppMessage(ctx, repository.WhatsAppOutgoingMessageParams{
 		OrganizationID:    input.OrganizationID,
@@ -749,9 +774,12 @@ func (s *Service) StarWhatsAppMessage(ctx context.Context, organizationID, conve
 }
 
 func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string) (WhatsAppMediaDownloadResult, error) {
-	_, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
+	message, conversation, deviceID, err := s.getWhatsAppMessageActionContext(ctx, organizationID, conversationID, externalMessageID)
 	if err != nil {
 		return WhatsAppMediaDownloadResult{}, err
+	}
+	if override := whatsAppMessageDeviceOverride(message.Metadata); override != "" {
+		deviceID = override
 	}
 
 	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, conversation.PhoneNumber)
@@ -1404,6 +1432,19 @@ type whatsappPortalMetadata struct {
 		Path      string `json:"path,omitempty"`
 		RemoteURL string `json:"remoteUrl,omitempty"`
 	} `json:"attachment,omitempty"`
+}
+
+func whatsAppMessageDeviceOverride(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var envelope struct {
+		DeviceID string `json:"device_id"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.DeviceID)
 }
 
 func parseWhatsAppPortalMetadata(raw json.RawMessage) whatsappPortalMetadata {

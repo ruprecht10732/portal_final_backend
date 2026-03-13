@@ -68,6 +68,44 @@ func TestLoadAgentWorkspaceParsesAllowedTools(t *testing.T) {
 	}
 }
 
+func TestLoadWhatsAppAgentWorkspaceParsesAllowedTools(t *testing.T) {
+	rootDir := createTestAgentWorkspace(t)
+	t.Setenv("AGENT_WORKSPACE_ROOT", rootDir)
+
+	workspace, err := orchestration.LoadAgentWorkspace("whatsapp-agent")
+	if err != nil {
+		t.Fatalf(errLoadAgentWorkspace, err)
+	}
+
+	wantTools := []string{
+		"SearchLeads",
+		"GetLeadDetails",
+		"CreateLead",
+		"SearchProductMaterials",
+		"AttachCurrentWhatsAppPhoto",
+		"GetAvailableVisitSlots",
+		"GetNavigationLink",
+		"GetQuotes",
+		"DraftQuote",
+		"GenerateQuote",
+		"SendQuotePDF",
+		"GetAppointments",
+		"UpdateLeadDetails",
+		"AskCustomerClarification",
+		"SaveNote",
+		"UpdateStatus",
+		"ScheduleVisit",
+		"RescheduleVisit",
+		"CancelVisit",
+	}
+	if strings.Join(workspace.AllowedTools, ",") != strings.Join(wantTools, ",") {
+		t.Fatalf("unexpected allowed tools: got %v want %v", workspace.AllowedTools, wantTools)
+	}
+	if !strings.Contains(workspace.Instruction, "WhatsApp Agent") {
+		t.Fatalf("expected WhatsApp agent instruction to include skill body")
+	}
+}
+
 func TestLoadAgentContextUnknownAgent(t *testing.T) {
 	rootDir := createTestAgentWorkspace(t)
 	t.Setenv("AGENT_WORKSPACE_ROOT", rootDir)
@@ -210,6 +248,10 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/support/whatsapp_reply/context.md":                 "whatsapp reply context",
 		"agents/support/whatsapp_reply/prompts/base.md":            "whatsapp reply prompt base",
 		"agents/support/whatsapp_reply/skills/reply_generation.md": "whatsapp reply skill",
+		"agents/support/whatsapp_agent/SKILL.md":                   "---\nname: whatsapp_agent\ndescription: Use when an incoming WhatsApp message from an authenticated external user must be answered autonomously using function-calling tools.\nmetadata:\n  allowed-tools:\n    - SearchLeads\n    - GetLeadDetails\n    - CreateLead\n    - SearchProductMaterials\n    - AttachCurrentWhatsAppPhoto\n    - GetAvailableVisitSlots\n    - GetNavigationLink\n    - GetQuotes\n    - DraftQuote\n    - GenerateQuote\n    - SendQuotePDF\n    - GetAppointments\n    - UpdateLeadDetails\n    - AskCustomerClarification\n    - SaveNote\n    - UpdateStatus\n    - ScheduleVisit\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# WhatsApp Agent",
+		"agents/support/whatsapp_agent/context.md":                 "whatsapp agent context",
+		"agents/support/whatsapp_agent/prompts/base.md":            "whatsapp agent prompt base",
+		"agents/support/whatsapp_agent/skills/reply_generation.md": "whatsapp agent skill",
 		"agents/support/email_reply/SKILL.md":                      "---\nname: email_reply\ndescription: Use when a grounded email reply draft is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# Email Reply",
 		"agents/support/email_reply/context.md":                    "email reply context",
 		"agents/support/email_reply/prompts/base.md":               "email reply prompt base",

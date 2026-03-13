@@ -2,6 +2,7 @@ package tools
 
 var domainToolNames = map[string]struct{}{
 	"AskCustomerClarification": {},
+	"AttachCurrentWhatsAppPhoto": {},
 	"CalculateEstimate":        {},
 	"Calculator":               {},
 	"CancelVisit":              {},
@@ -11,6 +12,7 @@ var domainToolNames = map[string]struct{}{
 	"DraftQuote":               {},
 	"FindMatchingPartners":     {},
 	"FlagOnsiteMeasurement":    {},
+	"GenerateQuote":            {},
 	"ListCatalogGaps":          {},
 	"RescheduleVisit":          {},
 	"SaveAnalysis":             {},
@@ -20,6 +22,7 @@ var domainToolNames = map[string]struct{}{
 	"ScheduleVisit":            {},
 	"SearchLeads":              {},
 	"SearchProductMaterials":   {},
+	"SendQuotePDF":             {},
 	"SetCallOutcome":           {},
 	"SubmitAuditResult":        {},
 	"SubmitQuoteCritique":      {},

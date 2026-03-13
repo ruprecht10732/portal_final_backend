@@ -6,6 +6,7 @@ import (
 	"time"
 
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/scheduler"
 	waagentdb "portal_final_backend/internal/waagent/db"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/ai/moonshot"
@@ -114,11 +115,37 @@ type InboxWriter interface {
 	PersistOutgoingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, body string, externalMessageID *string) error
 }
 
+type InboxMessageSync interface {
+	PersistIncomingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, phoneNumber, displayName, body string, externalMessageID *string, metadata []byte) error
+	UpdateIncomingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, externalMessageID, body string, metadata []byte) error
+}
+
 type ObjectStorage interface {
 	DownloadFile(ctx context.Context, bucket, fileKey string) (io.ReadCloser, error)
 	UploadFile(ctx context.Context, bucket, folder, fileName, contentType string, reader io.Reader, size int64) (string, error)
 	ValidateContentType(contentType string) error
 	ValidateFileSize(sizeBytes int64) error
+}
+
+type AudioTranscriptionInput struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
+type AudioTranscriptionResult struct {
+	Text       string
+	Language   string
+	Confidence *float64
+}
+
+type AudioTranscriber interface {
+	Name() string
+	Transcribe(ctx context.Context, input AudioTranscriptionInput) (AudioTranscriptionResult, error)
+}
+
+type AudioTranscriptionScheduler interface {
+	EnqueueWAAgentVoiceTranscription(ctx context.Context, payload scheduler.WAAgentVoiceTranscriptionPayload) error
 }
 
 // ModuleConfig holds waagent configuration.
@@ -140,6 +167,11 @@ type ModuleDependencies struct {
 	LeadMutationWriter          LeadMutationWriter
 	QuoteWorkflowWriter         QuoteWorkflowWriter
 	CurrentInboundPhotoAttacher CurrentInboundPhotoAttacher
+	Storage                     ObjectStorage
+	AttachmentBucket            string
+	TranscriptionScheduler      AudioTranscriptionScheduler
+	AudioTranscriber            AudioTranscriber
+	InboxMessageSync            InboxMessageSync
 	VisitSlotReader             VisitSlotReader
 	VisitMutationWriter         VisitMutationWriter
 	RedisClient                 *redis.Client
@@ -194,13 +226,18 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 	rateLimiter := NewRateLimiter(deps.RedisClient, deps.Logger)
 
 	svc := &Service{
-		queries:           queries,
-		agent:             agent,
-		sender:            sender,
-		rateLimiter:       rateLimiter,
-		leadHintStore:     hintStore,
-		leadDetailsReader: deps.LeadDetailsReader,
-		log:               deps.Logger,
+		queries:                queries,
+		agent:                  agent,
+		sender:                 sender,
+		rateLimiter:            rateLimiter,
+		leadHintStore:          hintStore,
+		leadDetailsReader:      deps.LeadDetailsReader,
+		storage:                deps.Storage,
+		attachmentBucket:       deps.AttachmentBucket,
+		transcriptionScheduler: deps.TranscriptionScheduler,
+		transcriber:            deps.AudioTranscriber,
+		inboxSync:              deps.InboxMessageSync,
+		log:                    deps.Logger,
 	}
 
 	return &Module{

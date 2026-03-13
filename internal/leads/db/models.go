@@ -1375,6 +1375,25 @@ type RacWhatsappAgentUser struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type RacWhatsappAgentVoiceTranscription struct {
+	ID                pgtype.UUID        `json:"id"`
+	OrganizationID    pgtype.UUID        `json:"organization_id"`
+	ExternalMessageID string             `json:"external_message_id"`
+	PhoneNumber       string             `json:"phone_number"`
+	Status            string             `json:"status"`
+	StorageBucket     pgtype.Text        `json:"storage_bucket"`
+	StorageKey        pgtype.Text        `json:"storage_key"`
+	ContentType       pgtype.Text        `json:"content_type"`
+	Provider          pgtype.Text        `json:"provider"`
+	Language          pgtype.Text        `json:"language"`
+	ConfidenceScore   pgtype.Float8      `json:"confidence_score"`
+	TranscriptText    pgtype.Text        `json:"transcript_text"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+}
+
 type RacWhatsappConversation struct {
 	ID                   pgtype.UUID        `json:"id"`
 	OrganizationID       pgtype.UUID        `json:"organization_id"`

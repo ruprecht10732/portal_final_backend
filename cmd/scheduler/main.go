@@ -28,7 +28,10 @@ import (
 	"portal_final_backend/internal/partners"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
+	"portal_final_backend/internal/waagent"
+	waagentdb "portal_final_backend/internal/waagent/db"
 	"portal_final_backend/internal/whatsapp"
+	"portal_final_backend/platform/ai/transcription"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/logger"
@@ -80,6 +83,41 @@ func initStorageOrPanic(ctx context.Context, cfg *config.Config, log *logger.Log
 	)
 
 	return storageSvc
+}
+
+type waagentTranscriberAdapter struct {
+	client *transcription.Client
+}
+
+func (a waagentTranscriberAdapter) Name() string {
+	return a.client.Name()
+}
+
+func (a waagentTranscriberAdapter) Transcribe(ctx context.Context, input waagent.AudioTranscriptionInput) (waagent.AudioTranscriptionResult, error) {
+	result, err := a.client.Transcribe(ctx, transcription.Input{
+		Filename:    input.Filename,
+		ContentType: input.ContentType,
+		Data:        input.Data,
+	})
+	if err != nil {
+		return waagent.AudioTranscriptionResult{}, err
+	}
+	return waagent.AudioTranscriptionResult{
+		Text:       result.Text,
+		Language:   result.Language,
+		Confidence: result.Confidence,
+	}, nil
+}
+
+func initAudioTranscriber(log *logger.Logger) (waagent.AudioTranscriber, func()) {
+	noop := func() {}
+	client, err := transcription.NewClient()
+	if err != nil {
+		log.Warn("whisper transcription disabled", "error", err)
+		return nil, noop
+	}
+	log.Info("whisper.cpp transcription initialized", "model", transcription.DefaultModelPath)
+	return waagentTranscriberAdapter{client: client}, func() { _ = client.Close() }
 }
 
 func main() {
@@ -227,6 +265,40 @@ func main() {
 	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identitySvc, nil, storageSvc, cfg, quoteTermsResolver)
 	notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
 	worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
+	audioTranscriber, closeTranscriber := initAudioTranscriber(log)
+	defer closeTranscriber()
+	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository())
+	waagentModule, err := waagent.NewModule(pool, waagent.ModuleConfig{
+		MoonshotAPIKey: cfg.MoonshotAPIKey,
+		LLMModel:       cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent),
+		WebhookSecret:  cfg.GetWhatsAppWebhookSecret(),
+	}, waagent.ModuleDependencies{
+		WhatsAppClient:              whatsAppClient,
+		QuotesReader:                adapters.NewWAAgentQuotesAdapter(quotesModule.Service()),
+		AppointmentsReader:          adapters.NewWAAgentAppointmentsAdapter(appointmentsModule.Service),
+		LeadSearchReader:            adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		LeadDetailsReader:           adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		NavigationLinkReader:        adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		CatalogSearchReader:         adapters.NewWAAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
+		LeadMutationWriter:          adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		QuoteWorkflowWriter:         adapters.NewWAAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
+		CurrentInboundPhotoAttacher: adapters.NewWAAgentCurrentInboundPhotoAdapter(whatsAppClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), inboxLeadActions, waagentdb.New(pool)),
+		Storage:                     storageSvc,
+		AttachmentBucket:            cfg.GetMinioBucketLeadServiceAttachments(),
+		TranscriptionScheduler:      reminderScheduler,
+		AudioTranscriber:            audioTranscriber,
+		InboxMessageSync:            identitySvc,
+		VisitSlotReader:             adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
+		VisitMutationWriter:         adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
+		RedisClient:                 orchestratorLockRedis,
+		InboxWriter:                 identitySvc,
+		Logger:                      log,
+	})
+	if err != nil {
+		log.Error("failed to initialize waagent module", "error", err)
+		panic("failed to initialize waagent module: " + err.Error())
+	}
+	worker.SetWAAgentVoiceTranscriptionProcessor(waagentModule.Service())
 
 	worker.Run(ctx)
 }

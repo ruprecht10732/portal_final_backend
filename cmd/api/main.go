@@ -41,6 +41,7 @@ import (
 	waagentdb "portal_final_backend/internal/waagent/db"
 	"portal_final_backend/internal/webhook"
 	"portal_final_backend/internal/whatsapp"
+	"portal_final_backend/platform/ai/transcription"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
 	"portal_final_backend/platform/httpkit"
@@ -218,6 +219,41 @@ func initGotenbergIfEnabled(cfg *config.Config, log *logger.Logger) {
 	}
 	pdf.Init(cfg.GetGotenbergURL(), cfg.GetGotenbergUsername(), cfg.GetGotenbergPassword())
 	log.Info("gotenberg PDF generator initialized", "url", cfg.GetGotenbergURL())
+}
+
+type waagentTranscriberAdapter struct {
+	client *transcription.Client
+}
+
+func (a waagentTranscriberAdapter) Name() string {
+	return a.client.Name()
+}
+
+func (a waagentTranscriberAdapter) Transcribe(ctx context.Context, input waagent.AudioTranscriptionInput) (waagent.AudioTranscriptionResult, error) {
+	result, err := a.client.Transcribe(ctx, transcription.Input{
+		Filename:    input.Filename,
+		ContentType: input.ContentType,
+		Data:        input.Data,
+	})
+	if err != nil {
+		return waagent.AudioTranscriptionResult{}, err
+	}
+	return waagent.AudioTranscriptionResult{
+		Text:       result.Text,
+		Language:   result.Language,
+		Confidence: result.Confidence,
+	}, nil
+}
+
+func initAudioTranscriber(log *logger.Logger) (waagent.AudioTranscriber, func()) {
+	noop := func() {}
+	client, err := transcription.NewClient()
+	if err != nil {
+		log.Warn("whisper transcription disabled", "error", err)
+		return nil, noop
+	}
+	log.Info("whisper.cpp transcription initialized", "model", transcription.DefaultModelPath)
+	return waagentTranscriberAdapter{client: client}, func() { _ = client.Close() }
 }
 
 type appBuildDeps struct {
@@ -430,6 +466,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	leadsModule.SetQuoteDrafter(adapters.NewQuotesDraftWriter(quotesModule.Service()))
 	leadsModule.SetPricingIntelligenceReader(adapters.NewQuotePricingIntelligenceReader(quotesModule.Repository()))
 	quotesModule.Service().SetQuotePromptGenerator(adapters.NewQuoteGeneratorAdapter(leadsModule.QuoteGeneratorAgent()))
+	audioTranscriber, closeTranscriber := initAudioTranscriber(log)
+	defer closeTranscriber()
 
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
 	webhookModule.SetWhatsAppWebhookSecret(cfg.GetWhatsAppWebhookSecret())
@@ -450,6 +488,11 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		LeadMutationWriter:          adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		QuoteWorkflowWriter:         adapters.NewWAAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
 		CurrentInboundPhotoAttacher: adapters.NewWAAgentCurrentInboundPhotoAdapter(whatsappClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()), waagentdb.New(pool)),
+		Storage:                     storageSvc,
+		AttachmentBucket:            cfg.GetMinioBucketLeadServiceAttachments(),
+		TranscriptionScheduler:      reminderScheduler,
+		AudioTranscriber:            audioTranscriber,
+		InboxMessageSync:            identityModule.Service(),
 		VisitSlotReader:             adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
 		VisitMutationWriter:         adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
 		RedisClient:                 tokenBlocklistRedis,

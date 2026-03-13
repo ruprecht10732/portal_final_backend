@@ -252,10 +252,10 @@ func (c *Config) GetDatabaseURL() string { return c.DatabaseURL }
 func (c *Config) GetJWTAccessSecret() string { return c.JWTAccessSecret }
 
 // AuthServiceConfig implementation
-func (c *Config) GetAccessTokenTTL() time.Duration  { return c.AccessTokenTTL }
-func (c *Config) GetRefreshTokenTTL() time.Duration { return c.RefreshTokenTTL }
-func (c *Config) GetVerifyTokenTTL() time.Duration  { return c.VerifyTokenTTL }
-func (c *Config) GetResetTokenTTL() time.Duration   { return c.ResetTokenTTL }
+func (c *Config) GetAccessTokenTTL() time.Duration    { return c.AccessTokenTTL }
+func (c *Config) GetRefreshTokenTTL() time.Duration   { return c.RefreshTokenTTL }
+func (c *Config) GetVerifyTokenTTL() time.Duration    { return c.VerifyTokenTTL }
+func (c *Config) GetResetTokenTTL() time.Duration     { return c.ResetTokenTTL }
 func (c *Config) GetBootstrapSuperAdminEmail() string { return c.BootstrapSuperAdminEmail }
 
 // CookieConfig implementation

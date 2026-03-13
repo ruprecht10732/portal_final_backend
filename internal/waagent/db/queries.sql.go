@@ -147,6 +147,43 @@ func (q *Queries) GetAgentUserByPhone(ctx context.Context, phoneNumber string) (
 	return i, err
 }
 
+const getAgentVoiceTranscriptionByExternalID = `-- name: GetAgentVoiceTranscriptionByExternalID :one
+SELECT id, organization_id, external_message_id, phone_number, status, storage_bucket, storage_key, content_type, provider, language, confidence_score, transcript_text, error_message, created_at, updated_at, completed_at
+FROM RAC_whatsapp_agent_voice_transcriptions
+WHERE organization_id = $1
+    AND external_message_id = $2
+LIMIT 1
+`
+
+type GetAgentVoiceTranscriptionByExternalIDParams struct {
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	ExternalMessageID string      `json:"external_message_id"`
+}
+
+func (q *Queries) GetAgentVoiceTranscriptionByExternalID(ctx context.Context, arg GetAgentVoiceTranscriptionByExternalIDParams) (RacWhatsappAgentVoiceTranscription, error) {
+	row := q.db.QueryRow(ctx, getAgentVoiceTranscriptionByExternalID, arg.OrganizationID, arg.ExternalMessageID)
+	var i RacWhatsappAgentVoiceTranscription
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.ExternalMessageID,
+		&i.PhoneNumber,
+		&i.Status,
+		&i.StorageBucket,
+		&i.StorageKey,
+		&i.ContentType,
+		&i.Provider,
+		&i.Language,
+		&i.ConfidenceScore,
+		&i.TranscriptText,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const getRecentAgentMessages = `-- name: GetRecentAgentMessages :many
 SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
 FROM RAC_whatsapp_agent_messages
@@ -314,6 +351,134 @@ func (q *Queries) ListAgentUsersByOrganization(ctx context.Context, organization
 	return items, nil
 }
 
+const markAgentVoiceTranscriptionCompleted = `-- name: MarkAgentVoiceTranscriptionCompleted :exec
+UPDATE RAC_whatsapp_agent_voice_transcriptions
+SET status = 'completed',
+    transcript_text = $3,
+    provider = $4,
+    language = $5,
+    confidence_score = $6,
+    error_message = NULL,
+    updated_at = now(),
+    completed_at = now()
+WHERE organization_id = $1
+    AND external_message_id = $2
+`
+
+type MarkAgentVoiceTranscriptionCompletedParams struct {
+	OrganizationID    pgtype.UUID   `json:"organization_id"`
+	ExternalMessageID string        `json:"external_message_id"`
+	TranscriptText    pgtype.Text   `json:"transcript_text"`
+	Provider          pgtype.Text   `json:"provider"`
+	Language          pgtype.Text   `json:"language"`
+	ConfidenceScore   pgtype.Float8 `json:"confidence_score"`
+}
+
+func (q *Queries) MarkAgentVoiceTranscriptionCompleted(ctx context.Context, arg MarkAgentVoiceTranscriptionCompletedParams) error {
+	_, err := q.db.Exec(ctx, markAgentVoiceTranscriptionCompleted,
+		arg.OrganizationID,
+		arg.ExternalMessageID,
+		arg.TranscriptText,
+		arg.Provider,
+		arg.Language,
+		arg.ConfidenceScore,
+	)
+	return err
+}
+
+const markAgentVoiceTranscriptionFailed = `-- name: MarkAgentVoiceTranscriptionFailed :exec
+UPDATE RAC_whatsapp_agent_voice_transcriptions
+SET status = 'failed',
+    error_message = $3,
+    updated_at = now()
+WHERE organization_id = $1
+    AND external_message_id = $2
+`
+
+type MarkAgentVoiceTranscriptionFailedParams struct {
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	ExternalMessageID string      `json:"external_message_id"`
+	ErrorMessage      pgtype.Text `json:"error_message"`
+}
+
+func (q *Queries) MarkAgentVoiceTranscriptionFailed(ctx context.Context, arg MarkAgentVoiceTranscriptionFailedParams) error {
+	_, err := q.db.Exec(ctx, markAgentVoiceTranscriptionFailed, arg.OrganizationID, arg.ExternalMessageID, arg.ErrorMessage)
+	return err
+}
+
+const markAgentVoiceTranscriptionProcessing = `-- name: MarkAgentVoiceTranscriptionProcessing :exec
+UPDATE RAC_whatsapp_agent_voice_transcriptions
+SET status = 'processing',
+    error_message = NULL,
+    updated_at = now()
+WHERE organization_id = $1
+    AND external_message_id = $2
+`
+
+type MarkAgentVoiceTranscriptionProcessingParams struct {
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	ExternalMessageID string      `json:"external_message_id"`
+}
+
+func (q *Queries) MarkAgentVoiceTranscriptionProcessing(ctx context.Context, arg MarkAgentVoiceTranscriptionProcessingParams) error {
+	_, err := q.db.Exec(ctx, markAgentVoiceTranscriptionProcessing, arg.OrganizationID, arg.ExternalMessageID)
+	return err
+}
+
+const updateAgentMessageByExternalID = `-- name: UpdateAgentMessageByExternalID :exec
+UPDATE RAC_whatsapp_agent_messages
+SET content = $3,
+    metadata = $4
+WHERE organization_id = $1
+    AND external_message_id = $2
+`
+
+type UpdateAgentMessageByExternalIDParams struct {
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	ExternalMessageID pgtype.Text `json:"external_message_id"`
+	Content           string      `json:"content"`
+	Metadata          []byte      `json:"metadata"`
+}
+
+func (q *Queries) UpdateAgentMessageByExternalID(ctx context.Context, arg UpdateAgentMessageByExternalIDParams) error {
+	_, err := q.db.Exec(ctx, updateAgentMessageByExternalID,
+		arg.OrganizationID,
+		arg.ExternalMessageID,
+		arg.Content,
+		arg.Metadata,
+	)
+	return err
+}
+
+const updateAgentVoiceTranscriptionStorage = `-- name: UpdateAgentVoiceTranscriptionStorage :exec
+UPDATE RAC_whatsapp_agent_voice_transcriptions
+SET storage_bucket = $3,
+    storage_key = $4,
+    content_type = $5,
+    updated_at = now()
+WHERE organization_id = $1
+    AND external_message_id = $2
+`
+
+type UpdateAgentVoiceTranscriptionStorageParams struct {
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	ExternalMessageID string      `json:"external_message_id"`
+	StorageBucket     pgtype.Text `json:"storage_bucket"`
+	StorageKey        pgtype.Text `json:"storage_key"`
+	ContentType       pgtype.Text `json:"content_type"`
+}
+
+func (q *Queries) UpdateAgentVoiceTranscriptionStorage(ctx context.Context, arg UpdateAgentVoiceTranscriptionStorageParams) error {
+	_, err := q.db.Exec(ctx, updateAgentVoiceTranscriptionStorage,
+		arg.OrganizationID,
+		arg.ExternalMessageID,
+		arg.StorageBucket,
+		arg.StorageKey,
+		arg.ContentType,
+	)
+	return err
+}
+
 const upsertAgentConfig = `-- name: UpsertAgentConfig :one
 INSERT INTO RAC_whatsapp_agent_config (device_id, account_jid)
 VALUES ($1, $2)
@@ -339,4 +504,43 @@ func (q *Queries) UpsertAgentConfig(ctx context.Context, arg UpsertAgentConfigPa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertAgentVoiceTranscription = `-- name: UpsertAgentVoiceTranscription :exec
+INSERT INTO RAC_whatsapp_agent_voice_transcriptions (
+    organization_id,
+    external_message_id,
+    phone_number,
+    status,
+    provider,
+    error_message
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (organization_id, external_message_id) DO UPDATE SET
+    phone_number = EXCLUDED.phone_number,
+    status = EXCLUDED.status,
+    provider = EXCLUDED.provider,
+    error_message = EXCLUDED.error_message,
+    updated_at = now()
+`
+
+type UpsertAgentVoiceTranscriptionParams struct {
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	ExternalMessageID string      `json:"external_message_id"`
+	PhoneNumber       string      `json:"phone_number"`
+	Status            string      `json:"status"`
+	Provider          pgtype.Text `json:"provider"`
+	ErrorMessage      pgtype.Text `json:"error_message"`
+}
+
+func (q *Queries) UpsertAgentVoiceTranscription(ctx context.Context, arg UpsertAgentVoiceTranscriptionParams) error {
+	_, err := q.db.Exec(ctx, upsertAgentVoiceTranscription,
+		arg.OrganizationID,
+		arg.ExternalMessageID,
+		arg.PhoneNumber,
+		arg.Status,
+		arg.Provider,
+		arg.ErrorMessage,
+	)
+	return err
 }

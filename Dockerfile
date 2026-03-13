@@ -1,6 +1,18 @@
 # Build stage
 FROM golang:1.25-alpine AS builder
 
+RUN apk add --no-cache cmake make g++ git linux-headers
+
+# Build whisper.cpp static libraries
+RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp \
+    && cd /tmp/whisper.cpp && mkdir build && cd build \
+    && cmake .. -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF \
+    && make -j$(nproc) \
+    && mkdir -p /usr/local/lib/whisper /usr/local/include/whisper \
+    && cp src/libwhisper.a ggml/src/libggml*.a /usr/local/lib/whisper/ \
+    && cp /tmp/whisper.cpp/include/whisper.h /tmp/whisper.cpp/ggml/include/ggml*.h /usr/local/include/whisper/ \
+    && rm -rf /tmp/whisper.cpp
+
 WORKDIR /app
 
 COPY go.mod go.sum ./
@@ -8,17 +20,26 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+ENV C_INCLUDE_PATH=/usr/local/include/whisper
+ENV LIBRARY_PATH=/usr/local/lib/whisper
+
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /app/bin/server ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /app/bin/scheduler ./cmd/scheduler
 
 # Runtime stage
 FROM alpine:3.20
 
-RUN addgroup -S app && adduser -S app -G app && apk add --no-cache ca-certificates curl
+RUN addgroup -S app && adduser -S app -G app && apk add --no-cache ca-certificates curl ffmpeg libstdc++ libgomp
 
 WORKDIR /app
+
+# Download whisper model
+RUN mkdir -p /app/models \
+    && wget -q -O /app/models/ggml-base.bin \
+       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+
 COPY --from=builder /app/bin/server /app/server
 COPY --from=builder /app/bin/scheduler /app/scheduler
 COPY --from=builder /app/migrations /app/migrations

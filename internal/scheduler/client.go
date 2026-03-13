@@ -28,6 +28,9 @@ const (
 	leadAutomationTaskUniqueTTL  = leadAutomationTaskTimeout
 	leadAutomationTaskMaxRetry   = 3
 	autoPhotoAnalysisDelay       = 30 * time.Second
+	waAgentVoiceTaskTimeout      = 5 * time.Minute
+	waAgentVoiceTaskUniqueTTL    = 15 * time.Minute
+	waAgentVoiceTaskMaxRetry     = 3
 )
 
 type Client struct {
@@ -80,6 +83,10 @@ type PhotoAnalysisScheduler interface {
 type AuditorScheduler interface {
 	EnqueueAuditVisitReport(ctx context.Context, payload AuditVisitReportPayload) error
 	EnqueueAuditCallLog(ctx context.Context, payload AuditCallLogPayload) error
+}
+
+type WAAgentVoiceTranscriptionScheduler interface {
+	EnqueueWAAgentVoiceTranscription(ctx context.Context, payload WAAgentVoiceTranscriptionPayload) error
 }
 
 type QuoteJobRunner interface {
@@ -302,6 +309,20 @@ func (c *Client) EnqueueAuditCallLog(ctx context.Context, payload AuditCallLogPa
 	return normalizeEnqueueError(err)
 }
 
+func (c *Client) EnqueueWAAgentVoiceTranscription(ctx context.Context, payload WAAgentVoiceTranscriptionPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewWAAgentVoiceTranscriptionTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, waAgentVoiceTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
 func (c *Client) EnqueueIMAPSyncAccount(ctx context.Context, payload IMAPSyncAccountPayload) error {
 	if c == nil || c.client == nil {
 		return nil
@@ -359,6 +380,15 @@ func leadAutomationTaskOptions(queue string) []asynq.Option {
 		asynq.MaxRetry(leadAutomationTaskMaxRetry),
 		asynq.Timeout(leadAutomationTaskTimeout),
 		asynq.Unique(leadAutomationTaskUniqueTTL),
+	}
+}
+
+func waAgentVoiceTaskOptions(queue string) []asynq.Option {
+	return []asynq.Option{
+		asynq.Queue(queue),
+		asynq.MaxRetry(waAgentVoiceTaskMaxRetry),
+		asynq.Timeout(waAgentVoiceTaskTimeout),
+		asynq.Unique(waAgentVoiceTaskUniqueTTL),
 	}
 }
 

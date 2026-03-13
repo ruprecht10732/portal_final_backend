@@ -20,6 +20,7 @@ const TaskRunDispatcher = "leads.dispatcher.run"
 const TaskAnalyzePhotos = "leads.photo_analysis.run"
 const TaskAuditVisitReport = "leads.audit.visit_report"
 const TaskAuditCallLog = "leads.audit.call_log"
+const TaskWAAgentVoiceTranscription = "waagent.voice_transcription.run"
 const TaskIMAPSyncAccount = "imap.sync.account"
 const TaskIMAPSyncSweep = "imap.sync.sweep"
 const TaskApplyHumanFeedbackMemory = "leads.human_feedback.apply_memory"
@@ -120,6 +121,12 @@ type AuditCallLogPayload struct {
 	LeadServiceID string `json:"leadServiceId"`
 }
 
+type WAAgentVoiceTranscriptionPayload struct {
+	OrganizationID    string `json:"organizationId"`
+	PhoneNumber       string `json:"phoneNumber"`
+	ExternalMessageID string `json:"externalMessageId"`
+}
+
 type IMAPSyncAccountPayload struct {
 	AccountID string `json:"accountId"`
 	UserID    string `json:"userId"`
@@ -208,6 +215,22 @@ func ParseLogCallPayload(task *asynq.Task) (LogCallPayload, error) {
 	var payload LogCallPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return LogCallPayload{}, err
+	}
+	return payload, nil
+}
+
+func NewWAAgentVoiceTranscriptionTask(payload WAAgentVoiceTranscriptionPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskWAAgentVoiceTranscription, data), nil
+}
+
+func ParseWAAgentVoiceTranscriptionPayload(task *asynq.Task) (WAAgentVoiceTranscriptionPayload, error) {
+	var payload WAAgentVoiceTranscriptionPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return WAAgentVoiceTranscriptionPayload{}, err
 	}
 	return payload, nil
 }

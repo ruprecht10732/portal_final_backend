@@ -33,6 +33,7 @@ type Worker struct {
 	call    CallLogProcessor
 	offer   OfferSummaryProcessor
 	leadsAI LeadAutomationProcessor
+	voice   WAAgentVoiceTranscriptionProcessor
 	imap    IMAPSyncProcessor
 	embed   *embeddings.Client
 	qdrant  *qdrant.Client
@@ -69,6 +70,10 @@ type LeadAutomationProcessor interface {
 	ProcessPhotoAnalysisJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, userID *uuid.UUID, contextInfo string) error
 	ProcessAuditVisitReportJob(ctx context.Context, leadID, serviceID, tenantID, appointmentID uuid.UUID) error
 	ProcessAuditCallLogJob(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error
+}
+
+type WAAgentVoiceTranscriptionProcessor interface {
+	ProcessVoiceTranscription(ctx context.Context, payload WAAgentVoiceTranscriptionPayload) error
 }
 
 func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, log *logger.Logger) (*Worker, error) {
@@ -145,6 +150,7 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskAnalyzePhotos, w.handlePhotoAnalysis)
 	mux.HandleFunc(TaskAuditVisitReport, w.handleAuditVisitReport)
 	mux.HandleFunc(TaskAuditCallLog, w.handleAuditCallLog)
+	mux.HandleFunc(TaskWAAgentVoiceTranscription, w.handleWAAgentVoiceTranscription)
 	mux.HandleFunc(TaskIMAPSyncAccount, w.handleIMAPSyncAccount)
 	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
 	mux.HandleFunc(TaskApplyHumanFeedbackMemory, w.handleApplyHumanFeedbackMemory)
@@ -174,6 +180,10 @@ func (w *Worker) SetOfferSummaryProcessor(processor OfferSummaryProcessor) {
 
 func (w *Worker) SetLeadAutomationProcessor(processor LeadAutomationProcessor) {
 	w.leadsAI = processor
+}
+
+func (w *Worker) SetWAAgentVoiceTranscriptionProcessor(processor WAAgentVoiceTranscriptionProcessor) {
+	w.voice = processor
 }
 
 func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
@@ -295,6 +305,19 @@ func buildHumanFeedbackMemoryDocument(feedback leadrepo.HumanFeedback) string {
 	sb.WriteString("\n")
 
 	return sb.String()
+}
+
+func (w *Worker) handleWAAgentVoiceTranscription(ctx context.Context, task *asynq.Task) error {
+	if w.voice == nil {
+		return fmt.Errorf("waagent voice transcription processor is not configured")
+	}
+
+	payload, err := ParseWAAgentVoiceTranscriptionPayload(task)
+	if err != nil {
+		return err
+	}
+
+	return w.voice.ProcessVoiceTranscription(ctx, payload)
 }
 
 func (w *Worker) Run(ctx context.Context) {

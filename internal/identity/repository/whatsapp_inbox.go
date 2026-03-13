@@ -890,6 +890,43 @@ func (r *Repository) GetWhatsAppMessageByExternalID(ctx context.Context, organiz
 	return message, conversation, nil
 }
 
+func (r *Repository) UpdateWhatsAppMessageByExternalID(ctx context.Context, organizationID uuid.UUID, externalMessageID string, body string, metadata json.RawMessage) (WhatsAppConversation, WhatsAppMessage, error) {
+	targetID := strings.TrimSpace(externalMessageID)
+	if targetID == "" {
+		return WhatsAppConversation{}, WhatsAppMessage{}, ErrNotFound
+	}
+
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	message, conversation, err := r.getWhatsAppMessageByExternalID(ctx, tx, organizationID, targetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppConversation{}, WhatsAppMessage{}, ErrNotFound
+	}
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, err
+	}
+
+	message, err = r.updateWhatsAppMessageMutation(ctx, tx, message.ID, strings.TrimSpace(body), metadata)
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, err
+	}
+	conversation, err = r.updateConversationForMessageMutation(ctx, tx, conversation, message)
+	if err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return WhatsAppConversation{}, WhatsAppMessage{}, err
+	}
+	return conversation, message, nil
+}
+
 func (r *Repository) ApplyWhatsAppMessageReceipt(ctx context.Context, organizationID uuid.UUID, externalMessageIDs []string, status string, receiptAt *time.Time) ([]WhatsAppConversation, []WhatsAppMessage, error) {
 	ids := normalizeReceiptIDs(externalMessageIDs)
 	if len(ids) == 0 {
