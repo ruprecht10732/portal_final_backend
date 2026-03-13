@@ -219,7 +219,12 @@ func (r *Repository) IsAgentDevice(ctx context.Context, deviceID string) (bool, 
 		return false, nil
 	}
 
-	const query = `SELECT 1 FROM RAC_whatsapp_agent_config WHERE device_id = $1 LIMIT 1`
+	const query = `
+		SELECT 1
+		FROM RAC_whatsapp_agent_config
+		WHERE device_id = $1
+		   OR account_jid = $1
+		LIMIT 1`
 
 	var one int
 	if err := r.pool.QueryRow(ctx, query, trimmed).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
