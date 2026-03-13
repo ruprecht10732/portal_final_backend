@@ -28,6 +28,7 @@ const (
 	refreshTokenType          = "refresh"
 	defaultUserRole           = "user" // Default role for new RAC_users (not admin)
 	defaultAdminRole          = "admin"
+	superAdminRole            = "superadmin"
 	tokenInvalidMessage       = "token invalid"
 	tokenExpiredMessage       = "token expired"
 	invalidCredentialsMessage = "invalid credentials"
@@ -90,8 +91,11 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 		return err
 	}
 
-	roles := rolesForSignup(usingInvite)
+	roles := rolesForSignup(usingInvite, email, s.cfg.GetBootstrapSuperAdminEmail())
 	if err := s.repo.SetUserRolesTx(ctx, tx, user.ID, roles); err != nil {
+		if errors.Is(err, repository.ErrSuperAdminAlreadyAssigned) {
+			return apperr.Conflict("only one superadmin user is allowed")
+		}
 		s.log.Error("failed to set user RAC_roles", "user_id", user.ID, "error", err)
 		return err
 	}
@@ -141,9 +145,12 @@ func normalizeInviteToken(inviteToken *string) (string, bool) {
 	return trimmed, trimmed != ""
 }
 
-func rolesForSignup(usingInvite bool) []string {
+func rolesForSignup(usingInvite bool, email, bootstrapSuperAdminEmail string) []string {
 	if usingInvite {
 		return []string{defaultUserRole}
+	}
+	if strings.TrimSpace(bootstrapSuperAdminEmail) != "" && strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(bootstrapSuperAdminEmail)) {
+		return []string{defaultAdminRole, superAdminRole}
 	}
 	return []string{defaultAdminRole}
 }
@@ -179,7 +186,44 @@ func (s *Service) SignIn(ctx context.Context, email, plainPassword string) (stri
 		return "", "", apperr.Forbidden("email not verified")
 	}
 
+	if err := s.ensureBootstrapSuperAdmin(ctx, user.ID, user.Email); err != nil {
+		return "", "", err
+	}
+
 	return s.issueTokens(ctx, user.ID)
+}
+
+func (s *Service) ensureBootstrapSuperAdmin(ctx context.Context, userID uuid.UUID, email string) error {
+	bootstrapEmail := strings.TrimSpace(s.cfg.GetBootstrapSuperAdminEmail())
+	if bootstrapEmail == "" || !strings.EqualFold(strings.TrimSpace(email), bootstrapEmail) {
+		return nil
+	}
+
+	currentRoles, err := s.repo.GetUserRoles(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if containsString(currentRoles, superAdminRole) {
+		return nil
+	}
+
+	hasSuperAdmin, err := s.repo.HasAnyUserWithRole(ctx, superAdminRole)
+	if err != nil {
+		return err
+	}
+	if hasSuperAdmin {
+		return nil
+	}
+
+	updatedRoles := uniqueRoleList(append(currentRoles, defaultAdminRole, superAdminRole))
+	if err := s.repo.SetUserRoles(ctx, userID, updatedRoles); err != nil {
+		if errors.Is(err, repository.ErrSuperAdminAlreadyAssigned) {
+			return nil
+		}
+		return err
+	}
+
+	return nil
 }
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, string, error) {
@@ -376,8 +420,44 @@ func tokenBlocklistKey(jti string) string {
 	return "auth:blocklist:jti:" + strings.TrimSpace(jti)
 }
 
-func (s *Service) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
-	return s.repo.SetUserRoles(ctx, userID, roles)
+func (s *Service) SetUserRoles(ctx context.Context, actorID uuid.UUID, actorRoles []string, userID uuid.UUID, roles []string) error {
+	_ = actorID
+	if containsString(roles, superAdminRole) && !containsString(actorRoles, superAdminRole) {
+		return apperr.Forbidden("only superadmin can assign the superadmin role")
+	}
+
+	if err := s.repo.SetUserRoles(ctx, userID, roles); err != nil {
+		if errors.Is(err, repository.ErrSuperAdminAlreadyAssigned) {
+			return apperr.Conflict("only one superadmin user is allowed")
+		}
+		return err
+	}
+	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueRoleList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error) {

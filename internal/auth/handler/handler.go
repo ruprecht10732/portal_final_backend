@@ -326,6 +326,11 @@ func (h *Handler) ResolveInvite(c *gin.Context) {
 }
 
 func (h *Handler) SetUserRoles(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
 	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
@@ -342,7 +347,7 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 		return
 	}
 
-	if httpkit.HandleError(c, h.svc.SetUserRoles(c.Request.Context(), userID, req.Roles)) {
+	if httpkit.HandleError(c, h.svc.SetUserRoles(c.Request.Context(), identity.UserID(), identity.Roles(), userID, req.Roles)) {
 		return
 	}
 

@@ -29,8 +29,9 @@ const (
 )
 
 type fakeWebhookAuthRepository struct {
-	keysByHash    map[string]APIKey
-	orgByDeviceID map[string]uuid.UUID
+	keysByHash     map[string]APIKey
+	orgByDeviceID  map[string]uuid.UUID
+	agentDeviceIDs map[string]bool
 }
 
 func (f *fakeWebhookAuthRepository) GetByHash(_ context.Context, keyHash string) (APIKey, error) {
@@ -45,6 +46,10 @@ func (f *fakeWebhookAuthRepository) GetOrganizationIDByWhatsAppDeviceID(_ contex
 		return orgID, nil
 	}
 	return uuid.UUID{}, ErrWhatsAppDeviceNotFound
+}
+
+func (f *fakeWebhookAuthRepository) IsAgentDevice(_ context.Context, deviceID string) (bool, error) {
+	return f.agentDeviceIDs[deviceID], nil
 }
 
 func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhook(t *testing.T) {
@@ -223,6 +228,31 @@ func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSharedSecretQuery(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath+"?webhook_secret="+testWebhookSecret, bytes.NewReader(body))
 	req.Header.Set(contentTypeHeader, jsonContentType)
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhookForAgentDevice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &fakeWebhookAuthRepository{agentDeviceIDs: map[string]bool{testDeviceID: true}}
+	body := []byte(`{"device_id":"device-123","event":"message","payload":{"id":"MSG-1"}}`)
+
+	engine := gin.New()
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
+		if !c.GetBool("isAgentDevice") {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "expected agent device flag"})
+			return
+		}
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath, bytes.NewReader(body))
+	req.Header.Set(contentTypeHeader, jsonContentType)
+	req.Header.Set(signatureHeader, signedWebhookHeader(testWebhookSecret, body))
 	engine.ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusOK {

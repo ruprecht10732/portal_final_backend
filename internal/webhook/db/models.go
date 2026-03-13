@@ -867,6 +867,14 @@ type RacOrganizationInvite struct {
 	UsedBy         pgtype.UUID        `json:"used_by"`
 }
 
+type RacOrganizationInviteCode struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Code           string             `json:"code"`
+	IsActive       bool               `json:"is_active"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacOrganizationMember struct {
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	UserID         pgtype.UUID        `json:"user_id"`
@@ -1339,6 +1347,30 @@ type RacWebhookApiKey struct {
 	IsActive       bool               `json:"is_active"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacWhatsappAgentConfig struct {
+	ID         pgtype.UUID        `json:"id"`
+	DeviceID   string             `json:"device_id"`
+	AccountJid pgtype.Text        `json:"account_jid"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacWhatsappAgentMessage struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	PhoneNumber    string             `json:"phone_number"`
+	Role           string             `json:"role"`
+	Content        string             `json:"content"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type RacWhatsappAgentUser struct {
+	PhoneNumber    string             `json:"phone_number"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	DisplayName    string             `json:"display_name"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type RacWhatsappConversation struct {

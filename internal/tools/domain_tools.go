@@ -25,4 +25,6 @@ var domainToolNames = map[string]struct{}{
 	"UpdateLeadServiceType":    {},
 	"UpdatePipelineStage":      {},
 	"UpdateStatus":             {},
+	"GetPendingQuotes":         {},
+	"GetAppointments":          {},
 }

@@ -211,6 +211,25 @@ func (r *Repository) GetOrganizationIDByWhatsAppDeviceID(ctx context.Context, de
 	return organizationID, nil
 }
 
+// IsAgentDevice checks whether the given device ID belongs to the global
+// WhatsApp agent device (RAC_whatsapp_agent_config).
+func (r *Repository) IsAgentDevice(ctx context.Context, deviceID string) (bool, error) {
+	trimmed := strings.TrimSpace(deviceID)
+	if trimmed == "" {
+		return false, nil
+	}
+
+	const query = `SELECT 1 FROM RAC_whatsapp_agent_config WHERE device_id = $1 LIMIT 1`
+
+	var one int
+	if err := r.pool.QueryRow(ctx, query, trimmed).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ListByOrganization returns all API keys for an organization.
 func (r *Repository) ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]APIKey, error) {
 	rows, err := r.queries.ListWebhookAPIKeysByOrganization(ctx, toPgUUID(orgID))

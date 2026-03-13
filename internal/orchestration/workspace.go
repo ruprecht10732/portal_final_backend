@@ -67,6 +67,7 @@ var workspaceDefinitions = map[string]workspaceDefinition{
 	"call-logger":    {workspaceDir: "agents/support/call_logger"},
 	"offer-summary":  {workspaceDir: "agents/support/offer_summary"},
 	"whatsapp-reply": {workspaceDir: "agents/support/whatsapp_reply"},
+	"whatsapp-agent": {workspaceDir: "agents/support/whatsapp_agent"},
 	"email-reply":    {workspaceDir: "agents/support/email_reply"},
 }
 

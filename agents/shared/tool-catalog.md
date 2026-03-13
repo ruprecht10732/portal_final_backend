@@ -12,3 +12,5 @@
 - `FindMatchingPartners`: retrieve candidate partners.
 - `CreatePartnerOffer`: create a partner offer.
 - `SubmitAuditResult`: persist audit findings.
+- `GetPendingQuotes`: retrieve pending quotes for the authenticated organization.
+- `GetAppointments`: retrieve upcoming appointments for the authenticated organization.

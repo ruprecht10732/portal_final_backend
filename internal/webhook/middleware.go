@@ -23,6 +23,7 @@ import (
 type webhookAuthRepository interface {
 	GetByHash(ctx context.Context, keyHash string) (APIKey, error)
 	GetOrganizationIDByWhatsAppDeviceID(ctx context.Context, deviceID string) (uuid.UUID, error)
+	IsAgentDevice(ctx context.Context, deviceID string) (bool, error)
 }
 
 // APIKeyAuthMiddleware validates the X-Webhook-API-Key header
@@ -140,8 +141,16 @@ func authenticateSecretBackedWhatsAppWebhook(c *gin.Context, repo webhookAuthRep
 
 	organizationID, err := repo.GetOrganizationIDByWhatsAppDeviceID(c.Request.Context(), deviceID)
 	if err != nil {
-		abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "unknown whatsapp device", "unknown_device", slog.String("device_id", deviceID))
-		return uuid.UUID{}, false
+		// Check if this is the global agent device
+		isAgent, agentErr := repo.IsAgentDevice(c.Request.Context(), deviceID)
+		if agentErr != nil || !isAgent {
+			abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "unknown whatsapp device", "unknown_device", slog.String("device_id", deviceID))
+			return uuid.UUID{}, false
+		}
+
+		// Agent device — set flag and allow through with nil org
+		c.Set("isAgentDevice", true)
+		return uuid.UUID{}, true
 	}
 
 	return organizationID, true

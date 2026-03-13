@@ -45,6 +45,7 @@ type RefreshTokenStore interface {
 type RoleManager interface {
 	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]string, error)
 	SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error
+	HasAnyUserWithRole(ctx context.Context, role string) (bool, error)
 }
 
 // =====================================

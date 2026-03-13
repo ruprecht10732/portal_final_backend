@@ -43,6 +43,12 @@ func (m *Module) SetWhatsAppWebhookSecret(secret string) {
 	m.whatsAppWebhookSecret = secret
 }
 
+func (m *Module) SetAgentHandler(handler WhatsAppAgentHandler) {
+	if m.handler != nil {
+		m.handler.agentHandler = handler
+	}
+}
+
 // Name returns the module identifier.
 func (m *Module) Name() string {
 	return "webhook"

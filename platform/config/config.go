@@ -28,6 +28,7 @@ const (
 	LLMModelAgentQuoteGenerator        = "quote_generator"
 	LLMModelAgentOfferSummaryGenerator = "offer_summary_generator"
 	LLMModelAgentWhatsAppReply         = "whatsapp_reply"
+	LLMModelAgentWhatsAppAgent         = "whatsapp_agent"
 )
 
 // =============================================================================
@@ -51,6 +52,7 @@ type AuthServiceConfig interface {
 	GetRefreshTokenTTL() time.Duration
 	GetVerifyTokenTTL() time.Duration
 	GetResetTokenTTL() time.Duration
+	GetBootstrapSuperAdminEmail() string
 }
 
 // CookieConfig provides settings for refresh token cookies.
@@ -194,6 +196,7 @@ type Config struct {
 	LLMModelQuoteGenerator            string
 	LLMModelOfferSummaryGenerator     string
 	LLMModelWhatsAppReply             string
+	LLMModelWhatsAppAgent             string
 	EPOnlineAPIKey                    string
 	MinIOEndpoint                     string
 	MinIOAccessKey                    string
@@ -235,6 +238,7 @@ type Config struct {
 	MoneybirdFrontendURL              string
 	MoneybirdEncryptionKey            string
 	LeadsReconciliationEnabled        bool
+	BootstrapSuperAdminEmail          string
 }
 
 // =============================================================================
@@ -252,6 +256,7 @@ func (c *Config) GetAccessTokenTTL() time.Duration  { return c.AccessTokenTTL }
 func (c *Config) GetRefreshTokenTTL() time.Duration { return c.RefreshTokenTTL }
 func (c *Config) GetVerifyTokenTTL() time.Duration  { return c.VerifyTokenTTL }
 func (c *Config) GetResetTokenTTL() time.Duration   { return c.ResetTokenTTL }
+func (c *Config) GetBootstrapSuperAdminEmail() string { return c.BootstrapSuperAdminEmail }
 
 // CookieConfig implementation
 func (c *Config) GetRefreshCookieName() string            { return c.RefreshCookieName }
@@ -381,6 +386,8 @@ func (c *Config) llmModelOverride(agentName string) string {
 		return c.LLMModelOfferSummaryGenerator
 	case LLMModelAgentWhatsAppReply:
 		return c.LLMModelWhatsAppReply
+	case LLMModelAgentWhatsAppAgent:
+		return c.LLMModelWhatsAppAgent
 	default:
 		return ""
 	}
@@ -469,6 +476,7 @@ func Load() (*Config, error) {
 		LLMModelQuoteGenerator:            getEnv("LLM_MODEL_QUOTE_GENERATOR", ""),
 		LLMModelOfferSummaryGenerator:     getEnv("LLM_MODEL_OFFER_SUMMARY_GENERATOR", ""),
 		LLMModelWhatsAppReply:             getEnv("LLM_MODEL_WHATSAPP_REPLY", ""),
+		LLMModelWhatsAppAgent:             getEnv("LLM_MODEL_WHATSAPP_AGENT", ""),
 		EPOnlineAPIKey:                    getEnv("EP_ONLINE_API_KEY", ""),
 		MinIOEndpoint:                     getEnv("MINIO_ENDPOINT", ""),
 		MinIOAccessKey:                    getEnv("MINIO_ACCESS_KEY", ""),
@@ -510,6 +518,7 @@ func Load() (*Config, error) {
 		MoneybirdFrontendURL:              getEnv("MONEYBIRD_FRONTEND_URL", appBaseURL),
 		MoneybirdEncryptionKey:            getEnv("MONEYBIRD_ENCRYPTION_KEY", ""),
 		LeadsReconciliationEnabled:        strings.EqualFold(getEnv("LEADS_RECONCILIATION_ENABLED", "true"), "true"),
+		BootstrapSuperAdminEmail:          strings.TrimSpace(getEnv("BOOTSTRAP_SUPERADMIN_EMAIL", "")),
 	}
 
 	if cfg.DatabaseURL == "" {

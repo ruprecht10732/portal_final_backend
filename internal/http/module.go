@@ -31,6 +31,8 @@ type RouterContext struct {
 	Protected *gin.RouterGroup
 	// Admin is the admin-only route group under /api/v1/admin.
 	Admin *gin.RouterGroup
+	// SuperAdmin is the superadmin-only route group under /api/v1/superadmin.
+	SuperAdmin *gin.RouterGroup
 	// Config is the JWT configuration for auth middleware (scoped access).
 	Config config.JWTConfig
 	// AuthMiddleware provides the authentication middleware.

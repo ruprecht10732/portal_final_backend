@@ -31,3 +31,12 @@ This page explains how support agents feed the main lead workflow.
 - Trigger source: inbox and conversation assistance requests.
 - Primary consumers: human operators who review or send replies.
 - Operational effect: suggestions only; they do not directly change durable workflow state.
+
+## WhatsApp Agent
+
+- Trigger source: incoming WhatsApp messages via webhook.
+- Primary consumers: end-customers who have been linked to an organization via invite code.
+- Operational effect: autonomous read-only replies; queries quotes and appointments but never mutates durable workflow state.
+- Authentication: phone-number lookup in RAC_whatsapp_agent_users; unmatched users get hardcoded Dutch onboarding (zero LLM cost).
+- Rate limiting: Redis sliding window, 30 messages per 5 minutes per phone number.
+- Replies are persisted in the operator inbox for visibility.

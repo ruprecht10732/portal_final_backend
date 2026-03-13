@@ -23,6 +23,7 @@ This directory is the file-based source of truth for backend agent behavior.
 - `support/offer_summary/`: concise partner-offer summaries.
 - `support/whatsapp_reply/`: grounded WhatsApp reply suggestions.
 - `support/email_reply/`: grounded email reply suggestions.
+- `support/whatsapp_agent/`: autonomous WhatsApp AI assistant for authenticated external users.
 
 ## Trigger Graph
 

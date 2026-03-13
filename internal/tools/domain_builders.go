@@ -107,3 +107,15 @@ func NewFlagOnsiteMeasurementTool[In any, Out any](handler func(tool.Context, In
 func NewSubmitAuditResultTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("SubmitAuditResult", "Submit the audit result. If required info is missing, flag Manual_Intervention and explain what is missing.", handler)
 }
+
+func NewGetPendingQuotesTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GetPendingQuotes",
+		"Lists quotes for the current organization filtered by status. Returns quote_number, client_name, total_cents, and status. Do NOT provide a tenant or organization identifier.",
+		handler)
+}
+
+func NewGetAppointmentsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GetAppointments",
+		"Lists upcoming appointments for the current organization within an optional date range. Returns title, description, start_time, end_time, status, location. Do NOT provide a tenant or organization identifier.",
+		handler)
+}

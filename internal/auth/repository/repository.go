@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -15,6 +16,7 @@ import (
 
 var ErrNotFound = errors.New("not found")
 var ErrInvalidRole = errors.New("invalid role")
+var ErrSuperAdminAlreadyAssigned = errors.New("superadmin already assigned")
 
 const (
 	TokenTypeEmailVerify   = "EMAIL_VERIFY"
@@ -324,7 +326,7 @@ func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles [
 	}
 
 	if err := queries.InsertUserRoles(ctx, authdb.InsertUserRolesParams{UserID: toPgUUID(userID), Column2: roles}); err != nil {
-		return err
+		return mapRoleWriteError(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -353,10 +355,34 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 	}
 
 	if err := queries.InsertUserRoles(ctx, authdb.InsertUserRolesParams{UserID: toPgUUID(userID), Column2: roles}); err != nil {
-		return err
+		return mapRoleWriteError(err)
 	}
 
 	return nil
+}
+
+func (r *Repository) HasAnyUserWithRole(ctx context.Context, role string) (bool, error) {
+	const query = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM RAC_user_roles ur
+			JOIN RAC_roles r ON r.id = ur.role_id
+			WHERE r.name = $1
+		)`
+
+	var exists bool
+	if err := r.pool.QueryRow(ctx, query, role).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func mapRoleWriteError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "ux_single_superadmin_user" {
+		return ErrSuperAdminAlreadyAssigned
+	}
+	return err
 }
 
 func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {

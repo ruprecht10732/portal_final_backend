@@ -134,6 +134,8 @@ const (
 	whatsAppDeletedPlaceholder    = "[Bericht verwijderd]"
 	whatsAppPollPrefix            = "[Poll] "
 	whatsAppRevokedPlaceholder    = "[Bericht verwijderd voor iedereen]"
+	whatsAppIgnoredNonDirectChat  = "group or non-direct chat"
+	whatsAppIgnoredEmptyBody      = "empty message body"
 )
 
 type WhatsAppWebhookResponse struct {
@@ -146,14 +148,25 @@ func (h *Handler) HandleWhatsAppWebhook(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if h.whatsappInbox == nil {
-		httpkit.Error(c, http.StatusServiceUnavailable, "whatsapp inbox ingestion is not configured", nil)
-		return
-	}
 
 	var request WhatsAppWebhookEnvelope
 	if err := c.ShouldBindJSON(&request); err != nil {
 		httpkit.Error(c, http.StatusBadRequest, "invalid payload", err.Error())
+		return
+	}
+
+	// Global agent device — only handle messages, route directly to agent.
+	if c.GetBool("isAgentDevice") {
+		if request.Event == "message" {
+			h.handleAgentDeviceMessage(c, request)
+		} else {
+			httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "agent device only handles messages"})
+		}
+		return
+	}
+
+	if h.whatsappInbox == nil {
+		httpkit.Error(c, http.StatusServiceUnavailable, "whatsapp inbox ingestion is not configured", nil)
 		return
 	}
 
@@ -185,7 +198,7 @@ func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		messageAddress = strings.TrimSpace(payload.ChatID)
 	}
 	if isNonDirectWhatsAppAddress(messageAddress) || isNonDirectWhatsAppAddress(payload.ChatID) {
-		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "group or non-direct chat"})
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredNonDirectChat})
 		return
 	}
 
@@ -195,7 +208,7 @@ func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		return
 	}
 	if body == "" {
-		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty message body"})
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredEmptyBody})
 		return
 	}
 
@@ -219,13 +232,53 @@ func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})
 }
 
+// handleAgentDeviceMessage processes an incoming message on the global agent
+// device. It skips the inbox and dispatches directly to the agent handler which
+// resolves the sender's organisation from the phone number.
+func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebhookEnvelope) {
+	var payload whatsAppWebhookPayload
+	if err := json.Unmarshal(request.Payload, &payload); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
+		return
+	}
+	if payload.IsFromMe {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "outgoing message on agent device"})
+		return
+	}
+
+	messageAddress := strings.TrimSpace(payload.From)
+	if messageAddress == "" {
+		messageAddress = strings.TrimSpace(payload.ChatID)
+	}
+	if isNonDirectWhatsAppAddress(messageAddress) || isNonDirectWhatsAppAddress(payload.ChatID) {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredNonDirectChat})
+		return
+	}
+
+	body, _, err := buildWhatsAppWebhookMessageData(request, payload.Body)
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
+		return
+	}
+	if body == "" {
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredEmptyBody})
+		return
+	}
+
+	if h.agentHandler != nil {
+		go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), messageAddress, payload.FromName, body)
+	}
+
+	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})
+}
+
 func (h *Handler) handleOutgoingWhatsAppMessage(c *gin.Context, orgID uuid.UUID, request WhatsAppWebhookEnvelope, payload whatsAppWebhookPayload) {
 	messageAddress := strings.TrimSpace(payload.ChatID)
 	if messageAddress == "" {
 		messageAddress = strings.TrimSpace(payload.From)
 	}
 	if isNonDirectWhatsAppAddress(messageAddress) || isNonDirectWhatsAppAddress(payload.ChatID) {
-		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "group or non-direct chat"})
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredNonDirectChat})
 		return
 	}
 
@@ -235,7 +288,7 @@ func (h *Handler) handleOutgoingWhatsAppMessage(c *gin.Context, orgID uuid.UUID,
 		return
 	}
 	if body == "" {
-		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "empty message body"})
+		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: whatsAppIgnoredEmptyBody})
 		return
 	}
 

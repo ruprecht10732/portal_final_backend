@@ -37,6 +37,7 @@ import (
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/search"
 	"portal_final_backend/internal/services"
+	"portal_final_backend/internal/waagent"
 	"portal_final_backend/internal/webhook"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
@@ -431,18 +432,32 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
 	webhookModule.SetWhatsAppWebhookSecret(cfg.GetWhatsAppWebhookSecret())
 	webhookModule.SetWhatsAppInboxIngester(identityModule.Service())
+
+	waagentModule, err := waagent.NewModule(pool, waagent.ModuleConfig{
+		MoonshotAPIKey: cfg.MoonshotAPIKey,
+		LLMModel:       cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent),
+		WebhookSecret:  cfg.GetWhatsAppWebhookSecret(),
+	}, waagent.ModuleDependencies{
+		WhatsAppClient:     whatsappClient,
+		QuotesReader:       adapters.NewWAAgentQuotesAdapter(quotesModule.Service()),
+		AppointmentsReader: adapters.NewWAAgentAppointmentsAdapter(appointmentsModule.Service),
+		RedisClient:        tokenBlocklistRedis,
+		InboxWriter:        identityModule.Service(),
+		Logger:             log,
+	})
+	if err != nil {
+		log.Error("failed to create waagent module", "error", err)
+	} else {
+		webhookModule.SetAgentHandler(waagentModule.Service())
+	}
+
 	exportsModule := exports.NewModule(pool, val)
 	wireExportsEncryptionKey(cfg, log, exportsModule)
 
 	wireIMAPEncryptionKey(cfg, log, imapModule.Service())
 	wireSMTPEncryptionKeyForIMAP(cfg, log, imapModule.Service())
 
-	return &apphttp.App{
-		Config:   cfg,
-		Logger:   log,
-		Health:   db.NewPoolAdapter(pool),
-		EventBus: eventBus,
-		Modules: []apphttp.Module{
+	modules := []apphttp.Module{
 			notificationModule,
 			authModule,
 			identityModule,
@@ -457,7 +472,18 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 			searchModule,
 			webhookModule,
 			exportsModule,
-		},
+		}
+
+	if waagentModule != nil {
+		modules = append(modules, waagentModule)
+	}
+
+		return &apphttp.App{
+		Config:   cfg,
+		Logger:   log,
+		Health:   db.NewPoolAdapter(pool),
+		EventBus: eventBus,
+		Modules:  modules,
 	}
 }
 

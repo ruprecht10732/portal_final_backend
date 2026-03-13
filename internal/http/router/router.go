@@ -46,6 +46,8 @@ func New(app *apphttp.App) *gin.Engine {
 	protected.Use(httpkit.AuthRequired(cfg))
 	admin := v1.Group("/admin")
 	admin.Use(httpkit.AuthRequired(cfg), httpkit.RequireRole("admin"))
+	superAdmin := v1.Group("/superadmin")
+	superAdmin.Use(httpkit.AuthRequired(cfg), httpkit.RequireRole("superadmin"))
 
 	// Router context provides shared dependencies to modules
 	routerCtx := &apphttp.RouterContext{
@@ -53,6 +55,7 @@ func New(app *apphttp.App) *gin.Engine {
 		V1:              v1,
 		Protected:       protected,
 		Admin:           admin,
+		SuperAdmin:      superAdmin,
 		Config:          cfg,
 		AuthMiddleware:  httpkit.AuthRequired(cfg),
 		AuthRateLimiter: httpkit.NewAuthRateLimiter(log),
