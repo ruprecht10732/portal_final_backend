@@ -2,6 +2,7 @@ package waagent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,7 +42,8 @@ type ToolHandler struct {
 func (h *ToolHandler) HandleGetPendingQuotes(_ tool.Context, orgID uuid.UUID, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
 	var status *string
 	if input.Status != "" {
-		status = &input.Status
+		normalized := normalizeQuoteStatusFilter(input.Status)
+		status = &normalized
 	}
 
 	quotes, err := h.quotesReader.ListQuotesByOrganization(context.Background(), orgID, status)
@@ -53,6 +55,27 @@ func (h *ToolHandler) HandleGetPendingQuotes(_ tool.Context, orgID uuid.UUID, in
 		Quotes: quotes,
 		Count:  len(quotes),
 	}, nil
+}
+
+func normalizeQuoteStatusFilter(raw string) string {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "draft", "concept", "conceptofferte":
+		return "Draft"
+	case "sent", "pending", "open", "openstaand", "openstaande", "verstuurd":
+		return "Sent"
+	case "accepted", "accept", "goedgekeurd", "geaccepteerd", "akkoord":
+		return "Accepted"
+	case "rejected", "afgewezen", "geweigerd":
+		return "Rejected"
+	case "expired", "verlopen", "expired_quote":
+		return "Expired"
+	default:
+		if normalized == "" {
+			return ""
+		}
+		return strings.ToUpper(normalized[:1]) + normalized[1:]
+	}
 }
 
 // HandleGetAppointments retrieves appointments scoped to the org from context.
