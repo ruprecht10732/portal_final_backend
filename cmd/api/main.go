@@ -38,6 +38,7 @@ import (
 	"portal_final_backend/internal/search"
 	"portal_final_backend/internal/services"
 	"portal_final_backend/internal/waagent"
+	waagentdb "portal_final_backend/internal/waagent/db"
 	"portal_final_backend/internal/webhook"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/config"
@@ -439,19 +440,21 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		LLMModel:       cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent),
 		WebhookSecret:  cfg.GetWhatsAppWebhookSecret(),
 	}, waagent.ModuleDependencies{
-		WhatsAppClient:     whatsappClient,
-		QuotesReader:       adapters.NewWAAgentQuotesAdapter(quotesModule.Service()),
-		AppointmentsReader: adapters.NewWAAgentAppointmentsAdapter(appointmentsModule.Service),
-		LeadSearchReader:   adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		LeadDetailsReader:  adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		NavigationLinkReader: adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		CatalogSearchReader: adapters.NewWAAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
-		LeadMutationWriter: adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		VisitSlotReader:    adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
-		VisitMutationWriter: adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
-		RedisClient:        tokenBlocklistRedis,
-		InboxWriter:        identityModule.Service(),
-		Logger:             log,
+		WhatsAppClient:              whatsappClient,
+		QuotesReader:                adapters.NewWAAgentQuotesAdapter(quotesModule.Service()),
+		AppointmentsReader:          adapters.NewWAAgentAppointmentsAdapter(appointmentsModule.Service),
+		LeadSearchReader:            adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		LeadDetailsReader:           adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		NavigationLinkReader:        adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		CatalogSearchReader:         adapters.NewWAAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
+		LeadMutationWriter:          adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		QuoteWorkflowWriter:         adapters.NewWAAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
+		CurrentInboundPhotoAttacher: adapters.NewWAAgentCurrentInboundPhotoAdapter(whatsappClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()), waagentdb.New(pool)),
+		VisitSlotReader:             adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
+		VisitMutationWriter:         adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
+		RedisClient:                 tokenBlocklistRedis,
+		InboxWriter:                 identityModule.Service(),
+		Logger:                      log,
 	})
 	if err != nil {
 		log.Error("failed to create waagent module", "error", err)

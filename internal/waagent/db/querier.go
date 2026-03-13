@@ -16,8 +16,10 @@ type Querier interface {
 	DeleteAgentUser(ctx context.Context, arg DeleteAgentUserParams) error
 	GetAgentConfig(ctx context.Context) (RacWhatsappAgentConfig, error)
 	GetAgentConfigByDeviceID(ctx context.Context, deviceID string) (RacWhatsappAgentConfig, error)
+	GetAgentMessageByExternalID(ctx context.Context, arg GetAgentMessageByExternalIDParams) (GetAgentMessageByExternalIDRow, error)
 	GetAgentUserByPhone(ctx context.Context, phoneNumber string) (RacWhatsappAgentUser, error)
-	GetRecentAgentMessages(ctx context.Context, arg GetRecentAgentMessagesParams) ([]RacWhatsappAgentMessage, error)
+	GetRecentAgentMessages(ctx context.Context, arg GetRecentAgentMessagesParams) ([]GetRecentAgentMessagesRow, error)
+	GetRecentInboundAgentMessages(ctx context.Context, arg GetRecentInboundAgentMessagesParams) ([]GetRecentInboundAgentMessagesRow, error)
 	InsertAgentMessage(ctx context.Context, arg InsertAgentMessageParams) error
 	ListAgentUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]RacWhatsappAgentUser, error)
 	UpsertAgentConfig(ctx context.Context, arg UpsertAgentConfigParams) (RacWhatsappAgentConfig, error)

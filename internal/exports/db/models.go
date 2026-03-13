@@ -1358,12 +1358,14 @@ type RacWhatsappAgentConfig struct {
 }
 
 type RacWhatsappAgentMessage struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrganizationID pgtype.UUID        `json:"organization_id"`
-	PhoneNumber    string             `json:"phone_number"`
-	Role           string             `json:"role"`
-	Content        string             `json:"content"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrganizationID    pgtype.UUID        `json:"organization_id"`
+	PhoneNumber       string             `json:"phone_number"`
+	Role              string             `json:"role"`
+	Content           string             `json:"content"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	ExternalMessageID pgtype.Text        `json:"external_message_id"`
+	Metadata          []byte             `json:"metadata"`
 }
 
 type RacWhatsappAgentUser struct {

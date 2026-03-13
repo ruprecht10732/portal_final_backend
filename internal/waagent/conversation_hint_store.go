@@ -11,6 +11,7 @@ const conversationLeadHintTTL = 24 * time.Hour
 
 type ConversationLeadHint struct {
 	LeadID           string
+	LeadServiceID    string
 	CustomerName     string
 	UpdatedAt        time.Time
 	PreloadedDetails *LeadDetailsResult // populated at runtime, never persisted

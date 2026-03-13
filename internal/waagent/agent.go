@@ -22,17 +22,18 @@ import (
 )
 
 const (
-	agentWorkspaceName = "whatsapp-agent"
-	agentAppName       = "whatsapp-agent"
-	maxToolIterations  = 10
-	assistantPrefix    = "[Jouw vorig antwoord]: "
-	userPrefix         = "[Klant]: "
+	agentWorkspaceName       = "whatsapp-agent"
+	agentAppName             = "whatsapp-agent"
+	maxToolIterations        = 10
+	assistantPrefix          = "[Jouw vorig antwoord]: "
+	userPrefix               = "[Klant]: "
 	errOrgContextUnavailable = "organization context not available"
 )
 
 // orgIDContextKey is used to inject org_id into tool.Context without exposing it to the LLM.
 type orgIDContextKey struct{}
 type phoneKeyContextKey struct{}
+type currentInboundMessageContextKey struct{}
 
 // ConversationMessage represents a single message in the conversation history.
 type ConversationMessage struct {
@@ -91,98 +92,39 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 }
 
 func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
-	searchLeadsTool, err := buildSearchLeadsTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
+	return buildTools(toolHandler,
+		buildSearchLeadsTool,
+		buildCreateLeadTool,
+		buildSearchProductMaterialsTool,
+		buildAttachCurrentWhatsAppPhotoTool,
+		buildGetAvailableVisitSlotsTool,
+		buildGetLeadDetailsTool,
+		buildGetNavigationLinkTool,
+		buildGetQuotesTool,
+		buildDraftQuoteTool,
+		buildGenerateQuoteTool,
+		buildSendQuotePDFTool,
+		buildGetAppointmentsTool,
+		buildUpdateLeadDetailsTool,
+		buildAskCustomerClarificationTool,
+		buildSaveNoteTool,
+		buildUpdateStatusTool,
+		buildScheduleVisitTool,
+		buildRescheduleVisitTool,
+		buildCancelVisitTool,
+	)
+}
 
-	getAvailableVisitSlotsTool, err := buildGetAvailableVisitSlotsTool(toolHandler)
-	if err != nil {
-		return nil, err
+func buildTools(toolHandler *ToolHandler, builders ...func(*ToolHandler) (tool.Tool, error)) ([]tool.Tool, error) {
+	tools := make([]tool.Tool, 0, len(builders))
+	for _, builder := range builders {
+		builtTool, err := builder(toolHandler)
+		if err != nil {
+			return nil, err
+		}
+		tools = append(tools, builtTool)
 	}
-
-	getLeadDetailsTool, err := buildGetLeadDetailsTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	getNavigationLinkTool, err := buildGetNavigationLinkTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	createLeadTool, err := buildCreateLeadTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	searchProductMaterialsTool, err := buildSearchProductMaterialsTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	getQuotesTool, err := buildGetQuotesTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	getAppointmentsTool, err := buildGetAppointmentsTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	updateLeadDetailsTool, err := buildUpdateLeadDetailsTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	askCustomerClarificationTool, err := buildAskCustomerClarificationTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	saveNoteTool, err := buildSaveNoteTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	updateStatusTool, err := buildUpdateStatusTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	scheduleVisitTool, err := buildScheduleVisitTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	rescheduleVisitTool, err := buildRescheduleVisitTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	cancelVisitTool, err := buildCancelVisitTool(toolHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	return []tool.Tool{
-		searchLeadsTool,
-		createLeadTool,
-		searchProductMaterialsTool,
-		getAvailableVisitSlotsTool,
-		getLeadDetailsTool,
-		getNavigationLinkTool,
-		getQuotesTool,
-		getAppointmentsTool,
-		updateLeadDetailsTool,
-		askCustomerClarificationTool,
-		saveNoteTool,
-		updateStatusTool,
-		scheduleVisitTool,
-		rescheduleVisitTool,
-		cancelVisitTool,
-	}, nil
+	return tools, nil
 }
 
 func buildGetLeadDetailsTool(toolHandler *ToolHandler) (tool.Tool, error) {
@@ -255,6 +197,20 @@ func buildSearchLeadsTool(toolHandler *ToolHandler) (tool.Tool, error) {
 	return searchLeadsTool, nil
 }
 
+func buildAttachCurrentWhatsAppPhotoTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	attachTool, err := apptools.NewAttachCurrentWhatsAppPhotoTool(func(ctx tool.Context, input AttachCurrentWhatsAppPhotoInput) (AttachCurrentWhatsAppPhotoOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return AttachCurrentWhatsAppPhotoOutput{}, err
+		}
+		return toolHandler.HandleAttachCurrentWhatsAppPhoto(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build AttachCurrentWhatsAppPhoto tool: %w", err)
+	}
+	return attachTool, nil
+}
+
 func buildGetAvailableVisitSlotsTool(toolHandler *ToolHandler) (tool.Tool, error) {
 	visitSlotsTool, err := apptools.NewGetAvailableVisitSlotsTool(func(ctx tool.Context, input GetAvailableVisitSlotsInput) (GetAvailableVisitSlotsOutput, error) {
 		orgID, err := orgIDFromToolContext(ctx)
@@ -281,6 +237,48 @@ func buildGetQuotesTool(toolHandler *ToolHandler) (tool.Tool, error) {
 		return nil, fmt.Errorf("waagent: failed to build GetQuotes tool: %w", err)
 	}
 	return quotesTool, nil
+}
+
+func buildDraftQuoteTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	draftTool, err := apptools.NewDraftQuoteTool(func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return DraftQuoteOutput{}, err
+		}
+		return toolHandler.HandleDraftQuote(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build DraftQuote tool: %w", err)
+	}
+	return draftTool, nil
+}
+
+func buildGenerateQuoteTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	generateTool, err := apptools.NewGenerateQuoteTool(func(ctx tool.Context, input GenerateQuoteInput) (GenerateQuoteOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GenerateQuoteOutput{}, err
+		}
+		return toolHandler.HandleGenerateQuote(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GenerateQuote tool: %w", err)
+	}
+	return generateTool, nil
+}
+
+func buildSendQuotePDFTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	sendTool, err := apptools.NewSendQuotePDFTool(func(ctx tool.Context, input SendQuotePDFInput) (SendQuotePDFOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return SendQuotePDFOutput{}, err
+		}
+		return toolHandler.HandleSendQuotePDF(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build SendQuotePDF tool: %w", err)
+	}
+	return sendTool, nil
 }
 
 func buildGetAppointmentsTool(toolHandler *ToolHandler) (tool.Tool, error) {
@@ -411,12 +409,23 @@ func phoneKeyFromToolContext(ctx tool.Context) (string, bool) {
 	return strings.TrimSpace(phoneKey), true
 }
 
+func currentInboundMessageFromToolContext(ctx tool.Context) (CurrentInboundMessage, bool) {
+	message, ok := ctx.Value(currentInboundMessageContextKey{}).(CurrentInboundMessage)
+	if !ok || strings.TrimSpace(message.ExternalMessageID) == "" {
+		return CurrentInboundMessage{}, false
+	}
+	return message, true
+}
+
 // Run executes the agent with conversation history and returns the text reply.
-func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint) (string, error) {
+func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (string, error) {
 	log.Printf("waagent: Run org=%s phone=%s messages=%d hasLeadHint=%v", orgID, phoneKey, len(messages), leadHint != nil)
 	// Inject org_id into context for tool handlers (never in the LLM prompt).
 	ctx = context.WithValue(ctx, orgIDContextKey{}, orgID)
 	ctx = context.WithValue(ctx, phoneKeyContextKey{}, strings.TrimSpace(phoneKey))
+	if inboundMessage != nil {
+		ctx = context.WithValue(ctx, currentInboundMessageContextKey{}, *inboundMessage)
+	}
 
 	sessionID := uuid.New().String()
 	userID := "waagent-" + orgID.String()

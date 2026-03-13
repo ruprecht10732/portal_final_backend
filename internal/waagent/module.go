@@ -2,6 +2,7 @@ package waagent
 
 import (
 	"context"
+	"io"
 	"time"
 
 	apphttp "portal_final_backend/internal/http"
@@ -20,34 +21,40 @@ type QuoteSummary struct {
 	QuoteID       string `json:"quote_id,omitempty"`
 	LeadID        string `json:"lead_id,omitempty"`
 	LeadServiceID string `json:"lead_service_id,omitempty"`
-	QuoteNumber string `json:"quote_number"`
-	ClientName  string `json:"client_name"`
-	ClientPhone string `json:"client_phone,omitempty"`
-	ClientEmail string `json:"client_email,omitempty"`
-	ClientCity  string `json:"client_city,omitempty"`
-	TotalCents  int64  `json:"total_cents"`
-	Status      string `json:"status"`
-	Summary     string `json:"summary,omitempty"`
-	CreatedAt   string `json:"created_at"`
+	QuoteNumber   string `json:"quote_number"`
+	ClientName    string `json:"client_name"`
+	ClientPhone   string `json:"client_phone,omitempty"`
+	ClientEmail   string `json:"client_email,omitempty"`
+	ClientCity    string `json:"client_city,omitempty"`
+	TotalCents    int64  `json:"total_cents"`
+	Status        string `json:"status"`
+	Summary       string `json:"summary,omitempty"`
+	CreatedAt     string `json:"created_at"`
 }
 
 // AppointmentSummary is a simplified appointment representation returned to the LLM.
 type AppointmentSummary struct {
-	AppointmentID string `json:"appointment_id,omitempty"`
-	LeadID        string `json:"lead_id,omitempty"`
-	LeadServiceID string `json:"lead_service_id,omitempty"`
+	AppointmentID  string `json:"appointment_id,omitempty"`
+	LeadID         string `json:"lead_id,omitempty"`
+	LeadServiceID  string `json:"lead_service_id,omitempty"`
 	AssignedUserID string `json:"assigned_user_id,omitempty"`
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	StartTime   string `json:"start_time"`
-	EndTime     string `json:"end_time"`
-	Status      string `json:"status"`
-	Location    string `json:"location,omitempty"`
+	Title          string `json:"title"`
+	Description    string `json:"description,omitempty"`
+	StartTime      string `json:"start_time"`
+	EndTime        string `json:"end_time"`
+	Status         string `json:"status"`
+	Location       string `json:"location,omitempty"`
 }
 
 // QuotesReader lists quotes for an organization.
 type QuotesReader interface {
 	ListQuotesByOrganization(ctx context.Context, orgID uuid.UUID, status *string) ([]QuoteSummary, error)
+}
+
+type QuoteWorkflowWriter interface {
+	DraftQuote(ctx context.Context, orgID uuid.UUID, input DraftQuoteInput) (DraftQuoteOutput, error)
+	GenerateQuote(ctx context.Context, orgID uuid.UUID, input GenerateQuoteInput) (GenerateQuoteOutput, error)
+	GetQuotePDF(ctx context.Context, orgID uuid.UUID, input SendQuotePDFInput) (QuotePDFResult, error)
 }
 
 // AppointmentsReader lists appointments for an organization.
@@ -73,10 +80,23 @@ type CatalogSearchReader interface {
 
 type LeadMutationWriter interface {
 	CreateLead(ctx context.Context, orgID uuid.UUID, input CreateLeadInput) (CreateLeadOutput, error)
+	ResolveServiceID(ctx context.Context, leadID, organizationID uuid.UUID, requestedServiceID *uuid.UUID) (uuid.UUID, error)
 	UpdateLeadDetails(ctx context.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) ([]string, error)
 	AskCustomerClarification(ctx context.Context, orgID uuid.UUID, input AskCustomerClarificationInput) error
 	SaveNote(ctx context.Context, orgID uuid.UUID, input SaveNoteInput) error
 	UpdateLeadStatus(ctx context.Context, orgID uuid.UUID, input UpdateStatusInput) (string, error)
+}
+
+type CurrentInboundMessage struct {
+	ExternalMessageID string
+	PhoneNumber       string
+	DisplayName       string
+	Body              string
+	Metadata          []byte
+}
+
+type CurrentInboundPhotoAttacher interface {
+	AttachCurrentWhatsAppPhoto(ctx context.Context, orgID uuid.UUID, input AttachCurrentWhatsAppPhotoInput, message CurrentInboundMessage) (AttachCurrentWhatsAppPhotoOutput, error)
 }
 
 type VisitSlotReader interface {
@@ -94,6 +114,13 @@ type InboxWriter interface {
 	PersistOutgoingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, body string, externalMessageID *string) error
 }
 
+type ObjectStorage interface {
+	DownloadFile(ctx context.Context, bucket, fileKey string) (io.ReadCloser, error)
+	UploadFile(ctx context.Context, bucket, folder, fileName, contentType string, reader io.Reader, size int64) (string, error)
+	ValidateContentType(contentType string) error
+	ValidateFileSize(sizeBytes int64) error
+}
+
 // ModuleConfig holds waagent configuration.
 type ModuleConfig struct {
 	MoonshotAPIKey string
@@ -103,19 +130,21 @@ type ModuleConfig struct {
 
 // ModuleDependencies groups external waagent dependencies to keep constructor size manageable.
 type ModuleDependencies struct {
-	WhatsAppClient     *whatsapp.Client
-	QuotesReader       QuotesReader
-	AppointmentsReader AppointmentsReader
-	LeadSearchReader   LeadSearchReader
-	LeadDetailsReader  LeadDetailsReader
-	NavigationLinkReader NavigationLinkReader
-	CatalogSearchReader CatalogSearchReader
-	LeadMutationWriter LeadMutationWriter
-	VisitSlotReader    VisitSlotReader
-	VisitMutationWriter VisitMutationWriter
-	RedisClient        *redis.Client
-	InboxWriter        InboxWriter
-	Logger             *logger.Logger
+	WhatsAppClient              *whatsapp.Client
+	QuotesReader                QuotesReader
+	AppointmentsReader          AppointmentsReader
+	LeadSearchReader            LeadSearchReader
+	LeadDetailsReader           LeadDetailsReader
+	NavigationLinkReader        NavigationLinkReader
+	CatalogSearchReader         CatalogSearchReader
+	LeadMutationWriter          LeadMutationWriter
+	QuoteWorkflowWriter         QuoteWorkflowWriter
+	CurrentInboundPhotoAttacher CurrentInboundPhotoAttacher
+	VisitSlotReader             VisitSlotReader
+	VisitMutationWriter         VisitMutationWriter
+	RedisClient                 *redis.Client
+	InboxWriter                 InboxWriter
+	Logger                      *logger.Logger
 }
 
 // Module is the waagent bounded context module.
@@ -130,18 +159,27 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 
 	queries := waagentdb.New(pool)
 	hintStore := NewConversationLeadHintStore()
+	sender := &Sender{
+		client:      deps.WhatsAppClient,
+		queries:     queries,
+		inboxWriter: deps.InboxWriter,
+		log:         deps.Logger,
+	}
 
 	toolHandler := &ToolHandler{
-		quotesReader:       deps.QuotesReader,
-		appointmentsReader: deps.AppointmentsReader,
-		leadSearchReader:   deps.LeadSearchReader,
-		leadHintStore:      hintStore,
-		leadDetailsReader:  deps.LeadDetailsReader,
-		navigationLinkReader: deps.NavigationLinkReader,
-		catalogSearchReader: deps.CatalogSearchReader,
-		leadMutationWriter: deps.LeadMutationWriter,
-		visitSlotReader:    deps.VisitSlotReader,
-		visitMutationWriter: deps.VisitMutationWriter,
+		quotesReader:                deps.QuotesReader,
+		appointmentsReader:          deps.AppointmentsReader,
+		leadSearchReader:            deps.LeadSearchReader,
+		leadHintStore:               hintStore,
+		leadDetailsReader:           deps.LeadDetailsReader,
+		navigationLinkReader:        deps.NavigationLinkReader,
+		catalogSearchReader:         deps.CatalogSearchReader,
+		leadMutationWriter:          deps.LeadMutationWriter,
+		quoteWorkflowWriter:         deps.QuoteWorkflowWriter,
+		currentInboundPhotoAttacher: deps.CurrentInboundPhotoAttacher,
+		sender:                      sender,
+		visitSlotReader:             deps.VisitSlotReader,
+		visitMutationWriter:         deps.VisitMutationWriter,
 	}
 
 	agent, err := NewAgent(moonshot.Config{
@@ -151,13 +189,6 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 	}, toolHandler)
 	if err != nil {
 		return nil, err
-	}
-
-	sender := &Sender{
-		client:      deps.WhatsAppClient,
-		queries:     queries,
-		inboxWriter: deps.InboxWriter,
-		log:         deps.Logger,
 	}
 
 	rateLimiter := NewRateLimiter(deps.RedisClient, deps.Logger)

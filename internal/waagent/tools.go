@@ -34,16 +34,19 @@ type GetAppointmentsOutput struct {
 
 // ToolHandler implements the function-calling tool handlers.
 type ToolHandler struct {
-	quotesReader       QuotesReader
-	appointmentsReader AppointmentsReader
-	leadSearchReader   LeadSearchReader
-	leadHintStore      *ConversationLeadHintStore
-	leadDetailsReader  LeadDetailsReader
-	navigationLinkReader NavigationLinkReader
-	catalogSearchReader CatalogSearchReader
-	leadMutationWriter LeadMutationWriter
-	visitSlotReader    VisitSlotReader
-	visitMutationWriter VisitMutationWriter
+	quotesReader                QuotesReader
+	appointmentsReader          AppointmentsReader
+	leadSearchReader            LeadSearchReader
+	leadHintStore               *ConversationLeadHintStore
+	leadDetailsReader           LeadDetailsReader
+	navigationLinkReader        NavigationLinkReader
+	catalogSearchReader         CatalogSearchReader
+	leadMutationWriter          LeadMutationWriter
+	quoteWorkflowWriter         QuoteWorkflowWriter
+	currentInboundPhotoAttacher CurrentInboundPhotoAttacher
+	sender                      *Sender
+	visitSlotReader             VisitSlotReader
+	visitMutationWriter         VisitMutationWriter
 }
 
 // HandleGetPendingQuotes retrieves quotes scoped to the org from context.

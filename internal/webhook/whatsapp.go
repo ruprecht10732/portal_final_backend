@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"portal_final_backend/internal/waagent"
 	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-gonic/gin"
@@ -255,7 +256,7 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 		return
 	}
 
-	body, _, err := buildWhatsAppWebhookMessageData(request, payload.Body)
+	body, metadata, err := buildWhatsAppWebhookMessageData(request, payload.Body)
 	if err != nil {
 		httpkit.Error(c, http.StatusBadRequest, whatsAppInvalidMessagePayload, err.Error())
 		return
@@ -266,7 +267,13 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 	}
 
 	if h.agentHandler != nil {
-		go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), strings.TrimSpace(payload.ID), messageAddress, payload.FromName, body)
+		go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), waagent.CurrentInboundMessage{
+			ExternalMessageID: strings.TrimSpace(payload.ID),
+			PhoneNumber:       messageAddress,
+			DisplayName:       payload.FromName,
+			Body:              body,
+			Metadata:          metadata,
+		})
 	}
 
 	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})

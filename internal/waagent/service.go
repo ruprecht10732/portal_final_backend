@@ -36,7 +36,10 @@ type Service struct {
 // HandleIncomingMessage processes an incoming WhatsApp message from the global agent device.
 // It resolves the organization from the sender's phone number.
 // It is designed to be called in a goroutine with context.WithoutCancel.
-func (s *Service) HandleIncomingMessage(ctx context.Context, externalMessageID, phone, displayName, text string) {
+func (s *Service) HandleIncomingMessage(ctx context.Context, inbound CurrentInboundMessage) {
+	externalMessageID := strings.TrimSpace(inbound.ExternalMessageID)
+	phone := inbound.PhoneNumber
+	text := inbound.Body
 	replyTarget := strings.TrimSpace(phone)
 	lookupPhone := normalizeAgentPhoneKey(phone)
 	if replyTarget == "" {
@@ -75,16 +78,18 @@ func (s *Service) HandleIncomingMessage(ctx context.Context, externalMessageID, 
 	orgID := uuidFromPgtype(user.OrganizationID)
 
 	// Step 3: AI path
-	s.handleAIMessage(ctx, orgID, lookupPhone, replyTarget, text)
+	s.handleAIMessage(ctx, orgID, lookupPhone, replyTarget, text, &inbound)
 }
 
-func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget, text string) {
+func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget, text string, inbound *CurrentInboundMessage) {
 	// Persist incoming message
 	if err := s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
-		OrganizationID: pgtypeUUID(orgID),
-		PhoneNumber:    phoneKey,
-		Role:           "user",
-		Content:        text,
+		OrganizationID:    pgtypeUUID(orgID),
+		PhoneNumber:       phoneKey,
+		Role:              "user",
+		Content:           text,
+		ExternalMessageID: optionalPgText(inboundMessageID(inbound)),
+		Metadata:          inboundMetadata(inbound),
 	}); err != nil {
 		log.Printf("waagent: failed to persist user message phone=%s: %v", phoneKey, err)
 	}
@@ -120,7 +125,7 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 	// Run the AI agent
 	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
 
-	reply, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint)
+	reply, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound)
 	if err != nil {
 		log.Printf("waagent: agent run error phone=%s org=%s: %v", phoneKey, orgID, err)
 		return
@@ -134,10 +139,12 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 
 	// Persist assistant reply
 	if err := s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
-		OrganizationID: pgtypeUUID(orgID),
-		PhoneNumber:    phoneKey,
-		Role:           "assistant",
-		Content:        reply,
+		OrganizationID:    pgtypeUUID(orgID),
+		PhoneNumber:       phoneKey,
+		Role:              "assistant",
+		Content:           reply,
+		ExternalMessageID: pgtype.Text{},
+		Metadata:          nil,
 	}); err != nil {
 		log.Printf("waagent: failed to persist assistant message phone=%s: %v", phoneKey, err)
 	}
@@ -152,16 +159,20 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 func (s *Service) sendHardcoded(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget, incomingText, reply string) {
 	if orgID != uuid.Nil {
 		_ = s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
-			OrganizationID: pgtypeUUID(orgID),
-			PhoneNumber:    phoneKey,
-			Role:           "user",
-			Content:        incomingText,
+			OrganizationID:    pgtypeUUID(orgID),
+			PhoneNumber:       phoneKey,
+			Role:              "user",
+			Content:           incomingText,
+			ExternalMessageID: pgtype.Text{},
+			Metadata:          nil,
 		})
 		_ = s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
-			OrganizationID: pgtypeUUID(orgID),
-			PhoneNumber:    phoneKey,
-			Role:           "assistant",
-			Content:        reply,
+			OrganizationID:    pgtypeUUID(orgID),
+			PhoneNumber:       phoneKey,
+			Role:              "assistant",
+			Content:           reply,
+			ExternalMessageID: pgtype.Text{},
+			Metadata:          nil,
 		})
 	}
 
@@ -212,4 +223,26 @@ func uuidFromPgtype(id pgtype.UUID) uuid.UUID {
 		return uuid.Nil
 	}
 	return uuid.UUID(id.Bytes)
+}
+
+func optionalPgText(value string) pgtype.Text {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: trimmed, Valid: true}
+}
+
+func inboundMessageID(inbound *CurrentInboundMessage) string {
+	if inbound == nil {
+		return ""
+	}
+	return inbound.ExternalMessageID
+}
+
+func inboundMetadata(inbound *CurrentInboundMessage) []byte {
+	if inbound == nil || len(inbound.Metadata) == 0 {
+		return nil
+	}
+	return inbound.Metadata
 }

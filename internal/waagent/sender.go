@@ -68,6 +68,45 @@ func (s *Sender) SendChatPresence(ctx context.Context, phone string, action what
 	return s.client.SendChatPresence(ctx, cfg.DeviceID, phone, string(action))
 }
 
+func (s *Sender) SendFileReply(ctx context.Context, orgID uuid.UUID, phone, caption, fileName string, data []byte) error {
+	if s.client == nil {
+		return nil
+	}
+	if strings.TrimSpace(fileName) == "" {
+		fileName = "bestand.pdf"
+	}
+	cfg, err := s.getAgentConfig(ctx)
+	if err != nil {
+		log.Printf("waagent: no agent device configured for file send: %v", err)
+		return err
+	}
+	result, err := s.client.SendFile(ctx, cfg.DeviceID, whatsapp.SendFileInput{
+		PhoneNumber: phone,
+		Caption:     strings.TrimSpace(caption),
+		Attachment: &whatsapp.MediaAttachment{
+			Filename: fileName,
+			Data:     data,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if s.inboxWriter != nil && orgID != uuid.Nil {
+		var msgID *string
+		if result.MessageID != "" {
+			msgID = &result.MessageID
+		}
+		body := strings.TrimSpace(caption)
+		if body == "" {
+			body = fileName
+		}
+		if persistErr := s.inboxWriter.PersistOutgoingWhatsAppMessage(ctx, orgID, nil, phone, body, msgID); persistErr != nil {
+			log.Printf("waagent: inbox persist error for file phone=%s org=%s: %v", phone, orgID, persistErr)
+		}
+	}
+	return nil
+}
+
 func (s *Sender) getAgentConfig(ctx context.Context) (waagentdb.RacWhatsappAgentConfig, error) {
 	return s.queries.GetAgentConfig(ctx)
 }

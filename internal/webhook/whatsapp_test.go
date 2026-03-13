@@ -10,11 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"portal_final_backend/internal/waagent"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 const directChatJID = "31612345678@s.whatsapp.net"
+const mediaExamplePath = "statics/media/example.jpeg"
+const errUnmarshalMetadataFmt = "unmarshal metadata: %v"
 
 type fakeWhatsAppInbox struct {
 	seenIDs       map[string]struct{}
@@ -74,6 +78,22 @@ func (f *fakeWhatsAppInbox) ApplyWhatsAppMessageReceipt(_ context.Context, _ uui
 func (f *fakeWhatsAppInbox) ApplyWhatsAppMessageMutation(_ context.Context, message WhatsAppMessageMutation) (bool, error) {
 	f.mutations = append(f.mutations, message)
 	return strings.TrimSpace(message.TargetExternalMessageID) != "", nil
+}
+
+type fakeWhatsAppAgentHandler struct {
+	lastInbound *waagent.CurrentInboundMessage
+	called      chan struct{}
+}
+
+func (f *fakeWhatsAppAgentHandler) HandleIncomingMessage(_ context.Context, inbound waagent.CurrentInboundMessage) {
+	copy := inbound
+	f.lastInbound = &copy
+	if f.called != nil {
+		select {
+		case f.called <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func TestHandleWhatsAppWebhookDedupesIncomingMessages(t *testing.T) {
@@ -297,7 +317,7 @@ func TestHandleWhatsAppWebhookBuildsMediaPortalMetadata(t *testing.T) {
 			"quoted_body":   "Origineel bericht",
 			"view_once":     true,
 			"image": map[string]any{
-				"path":    "statics/media/example.jpeg",
+				"path":    mediaExamplePath,
 				"caption": "Kijk hiernaar",
 			},
 		},
@@ -317,7 +337,7 @@ func TestHandleWhatsAppWebhookBuildsMediaPortalMetadata(t *testing.T) {
 
 	var metadata map[string]any
 	if err := json.Unmarshal(ingester.lastIncoming.Metadata, &metadata); err != nil {
-		t.Fatalf("unmarshal metadata: %v", err)
+		t.Fatalf(errUnmarshalMetadataFmt, err)
 	}
 	portal, ok := metadata["portal"].(map[string]any)
 	if !ok {
@@ -327,7 +347,7 @@ func TestHandleWhatsAppWebhookBuildsMediaPortalMetadata(t *testing.T) {
 		t.Fatalf("expected image portal type, got %#v", portal["messageType"])
 	}
 	attachment, ok := portal["attachment"].(map[string]any)
-	if !ok || attachment["path"] != "statics/media/example.jpeg" {
+	if !ok || attachment["path"] != mediaExamplePath {
 		t.Fatalf("expected image attachment path, got %#v", portal["attachment"])
 	}
 	reply, ok := portal["reply"].(map[string]any)
@@ -381,7 +401,7 @@ func TestHandleWhatsAppWebhookBuildsContactsArrayPreview(t *testing.T) {
 
 	var metadata map[string]any
 	if err := json.Unmarshal(ingester.lastIncoming.Metadata, &metadata); err != nil {
-		t.Fatalf("unmarshal metadata: %v", err)
+		t.Fatalf(errUnmarshalMetadataFmt, err)
 	}
 	portal, ok := metadata["portal"].(map[string]any)
 	if !ok {
@@ -390,6 +410,75 @@ func TestHandleWhatsAppWebhookBuildsContactsArrayPreview(t *testing.T) {
 	contacts, ok := portal["contacts"].([]any)
 	if !ok || len(contacts) != 2 {
 		t.Fatalf("expected 2 contacts in portal metadata, got %#v", portal["contacts"])
+	}
+}
+
+func TestHandleWhatsAppWebhookAgentDeviceForwardsInboundMediaContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}
+	handler := NewHandler(nil, nil, nil, nil)
+	handler.agentHandler = agentHandler
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"device_id": "DEVICE-AGENT",
+		"timestamp": "2026-03-13T12:00:00Z",
+		"payload": map[string]any{
+			"id":         "MEDIA-AGENT-1",
+			"from":       directChatJID,
+			"chat_id":    directChatJID,
+			"from_name":  "Robin",
+			"is_from_me": false,
+			"image": map[string]any{
+				"path":     mediaExamplePath,
+				"filename": "example.jpeg",
+				"caption":  "Nieuwe foto",
+			},
+		},
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhook/whatsapp", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	ctx.Request = req
+	ctx.Set("webhookOrgID", orgID)
+	ctx.Set("isAgentDevice", true)
+
+	handler.HandleWhatsAppWebhook(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+	select {
+	case <-agentHandler.called:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected agent handler to receive inbound message")
+	}
+	if agentHandler.lastInbound == nil {
+		t.Fatal("expected inbound payload to be stored by fake handler")
+	}
+	if agentHandler.lastInbound.ExternalMessageID != "MEDIA-AGENT-1" {
+		t.Fatalf("expected external message id to be forwarded, got %q", agentHandler.lastInbound.ExternalMessageID)
+	}
+	if agentHandler.lastInbound.Body != "Nieuwe foto" {
+		t.Fatalf("expected image caption as body, got %q", agentHandler.lastInbound.Body)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(agentHandler.lastInbound.Metadata, &metadata); err != nil {
+		t.Fatalf(errUnmarshalMetadataFmt, err)
+	}
+	if metadata["device_id"] != "DEVICE-AGENT" {
+		t.Fatalf("expected device_id in metadata, got %#v", metadata["device_id"])
+	}
+	portal, ok := metadata["portal"].(map[string]any)
+	if !ok || portal["messageType"] != "image" {
+		t.Fatalf("expected image portal metadata, got %#v", metadata["portal"])
 	}
 }
 

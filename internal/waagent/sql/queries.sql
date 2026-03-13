@@ -1,13 +1,29 @@
 -- name: InsertAgentMessage :exec
-INSERT INTO RAC_whatsapp_agent_messages (organization_id, phone_number, role, content)
-VALUES ($1, $2, $3, $4);
+INSERT INTO RAC_whatsapp_agent_messages (organization_id, phone_number, role, content, external_message_id, metadata)
+VALUES ($1, $2, $3, $4, $5, $6);
 
 -- name: GetRecentAgentMessages :many
-SELECT id, organization_id, phone_number, role, content, created_at
+SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
 FROM RAC_whatsapp_agent_messages
 WHERE phone_number = $1
 ORDER BY created_at DESC
 LIMIT $2;
+
+-- name: GetRecentInboundAgentMessages :many
+SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
+FROM RAC_whatsapp_agent_messages
+WHERE organization_id = $1
+    AND phone_number = $2
+    AND role = 'user'
+ORDER BY created_at DESC
+LIMIT $3;
+
+-- name: GetAgentMessageByExternalID :one
+SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
+FROM RAC_whatsapp_agent_messages
+WHERE organization_id = $1
+    AND external_message_id = $2
+LIMIT 1;
 
 -- name: GetAgentUserByPhone :one
 SELECT phone_number, organization_id, display_name, created_at

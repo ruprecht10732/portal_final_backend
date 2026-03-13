@@ -27,6 +27,7 @@ const waagentActorName = "Reinout"
 
 const errInvalidLeadID = "invalid lead_id"
 const errLeadManagementNotConfigured = "lead management service not configured"
+const errWAAgentLeadServiceNotFound = "lead service not found"
 
 type WAAgentLeadActionsAdapter struct {
 	mgmt *leadsmgmt.Service
@@ -247,6 +248,33 @@ func (a *WAAgentLeadActionsAdapter) CreateLead(ctx context.Context, orgID uuid.U
 			ServiceType:   serviceType,
 		},
 	}, nil
+}
+
+func (a *WAAgentLeadActionsAdapter) ResolveServiceID(ctx context.Context, leadID, organizationID uuid.UUID, requestedServiceID *uuid.UUID) (uuid.UUID, error) {
+	if a == nil || a.repo == nil {
+		return uuid.Nil, errors.New(errLeadManagementNotConfigured)
+	}
+	if requestedServiceID != nil {
+		service, err := a.repo.GetLeadServiceByID(ctx, *requestedServiceID, organizationID)
+		if err != nil {
+			if errors.Is(err, leadsrepo.ErrServiceNotFound) {
+				return uuid.Nil, fmt.Errorf(errWAAgentLeadServiceNotFound)
+			}
+			return uuid.Nil, err
+		}
+		if service.LeadID != leadID {
+			return uuid.Nil, fmt.Errorf("lead service does not belong to lead")
+		}
+		return service.ID, nil
+	}
+	service, err := a.repo.GetCurrentLeadService(ctx, leadID, organizationID)
+	if err != nil {
+		if errors.Is(err, leadsrepo.ErrServiceNotFound) {
+			return uuid.Nil, fmt.Errorf(errWAAgentLeadServiceNotFound)
+		}
+		return uuid.Nil, err
+	}
+	return service.ID, nil
 }
 
 func missingCreateLeadFields(input waagent.CreateLeadInput) []string {

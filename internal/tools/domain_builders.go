@@ -145,3 +145,15 @@ func NewGetAppointmentsTool[In any, Out any](handler func(tool.Context, In) (Out
 		"Lists upcoming appointments for the current organization within an optional date range. Returns title, description, start_time, end_time, status, location. Do NOT provide a tenant or organization identifier.",
 		handler)
 }
+
+func NewAttachCurrentWhatsAppPhotoTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("AttachCurrentWhatsAppPhoto", "Attaches the current inbound WhatsApp image message to a resolved lead service in the current organization. Use only when the current inbound message is an image from the customer.", handler)
+}
+
+func NewGenerateQuoteTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GenerateQuote", "Generates a draft quote from a grounded natural-language prompt for a resolved lead service in the current organization. Prefer this when the customer asks for a quote without a full explicit item list.", handler)
+}
+
+func NewSendQuotePDFTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("SendQuotePDF", "Retrieves or lazily generates a quote PDF for a resolved quote in the current organization and sends it back to the current WhatsApp customer as a document attachment.", handler)
+}

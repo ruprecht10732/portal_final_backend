@@ -13,6 +13,8 @@ import (
 
 const (
 	errLeadMutationsNotConfigured  = "lead mutations not configured"
+	errPhotoAttachNotConfigured    = "whatsapp photo attachment not configured"
+	errQuoteWorkflowNotConfigured  = "quote workflow not configured"
 	errVisitMutationsNotConfigured = "visit mutations not configured"
 )
 
@@ -38,9 +40,9 @@ type CreateLeadResult struct {
 }
 
 type CreateLeadOutput struct {
-	Success       bool             `json:"success"`
-	Message       string           `json:"message"`
-	MissingFields []string         `json:"missing_fields,omitempty"`
+	Success       bool              `json:"success"`
+	Message       string            `json:"message"`
+	MissingFields []string          `json:"missing_fields,omitempty"`
 	Lead          *CreateLeadResult `json:"lead,omitempty"`
 }
 
@@ -74,6 +76,81 @@ type SearchProductMaterialsOutput struct {
 	Message  string          `json:"message"`
 }
 
+type AttachCurrentWhatsAppPhotoInput struct {
+	LeadID        string `json:"lead_id,omitempty"`
+	LeadServiceID string `json:"lead_service_id,omitempty"`
+}
+
+type AttachCurrentWhatsAppPhotoOutput struct {
+	Success       bool     `json:"success"`
+	Message       string   `json:"message"`
+	AttachmentID  string   `json:"attachment_id,omitempty"`
+	LeadID        string   `json:"lead_id,omitempty"`
+	LeadServiceID string   `json:"lead_service_id,omitempty"`
+	MissingFields []string `json:"missing_fields,omitempty"`
+}
+
+type DraftQuoteItem struct {
+	Description      string  `json:"description"`
+	Quantity         string  `json:"quantity"`
+	UnitPriceCents   int64   `json:"unit_price_cents"`
+	TaxRateBps       int     `json:"tax_rate_bps,omitempty"`
+	IsOptional       bool    `json:"is_optional,omitempty"`
+	CatalogProductID *string `json:"catalog_product_id,omitempty"`
+}
+
+type DraftQuoteInput struct {
+	LeadID        string           `json:"lead_id,omitempty"`
+	LeadServiceID string           `json:"lead_service_id,omitempty"`
+	Notes         string           `json:"notes,omitempty"`
+	Items         []DraftQuoteItem `json:"items"`
+}
+
+type DraftQuoteOutput struct {
+	Success       bool     `json:"success"`
+	Message       string   `json:"message"`
+	QuoteID       string   `json:"quote_id,omitempty"`
+	QuoteNumber   string   `json:"quote_number,omitempty"`
+	ItemCount     int      `json:"item_count,omitempty"`
+	MissingFields []string `json:"missing_fields,omitempty"`
+}
+
+type GenerateQuoteInput struct {
+	LeadID        string `json:"lead_id,omitempty"`
+	LeadServiceID string `json:"lead_service_id,omitempty"`
+	Prompt        string `json:"prompt"`
+	Force         *bool  `json:"force,omitempty"`
+}
+
+type GenerateQuoteOutput struct {
+	Success            bool     `json:"success"`
+	Message            string   `json:"message"`
+	QuoteID            string   `json:"quote_id,omitempty"`
+	QuoteNumber        string   `json:"quote_number,omitempty"`
+	ItemCount          int      `json:"item_count,omitempty"`
+	MissingInformation []string `json:"missing_information,omitempty"`
+}
+
+type SendQuotePDFInput struct {
+	QuoteID string `json:"quote_id"`
+	Caption string `json:"caption,omitempty"`
+}
+
+type SendQuotePDFOutput struct {
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
+	QuoteID     string `json:"quote_id,omitempty"`
+	QuoteNumber string `json:"quote_number,omitempty"`
+	FileName    string `json:"file_name,omitempty"`
+}
+
+type QuotePDFResult struct {
+	QuoteID     string
+	QuoteNumber string
+	FileName    string
+	Data        []byte
+}
+
 type LeadSearchResult struct {
 	LeadID        string `json:"lead_id"`
 	LeadServiceID string `json:"lead_service_id,omitempty"`
@@ -100,22 +177,22 @@ type GetLeadDetailsInput struct {
 }
 
 type LeadDetailsResult struct {
-	LeadID        string `json:"lead_id"`
-	CustomerName  string `json:"customer_name"`
-	Phone         string `json:"phone,omitempty"`
-	Email         string `json:"email,omitempty"`
-	Street        string `json:"street,omitempty"`
-	HouseNumber   string `json:"house_number,omitempty"`
-	ZipCode       string `json:"zip_code,omitempty"`
-	City          string `json:"city,omitempty"`
-	FullAddress   string `json:"full_address,omitempty"`
-	ServiceType   string `json:"service_type,omitempty"`
-	Status        string `json:"status,omitempty"`
+	LeadID       string `json:"lead_id"`
+	CustomerName string `json:"customer_name"`
+	Phone        string `json:"phone,omitempty"`
+	Email        string `json:"email,omitempty"`
+	Street       string `json:"street,omitempty"`
+	HouseNumber  string `json:"house_number,omitempty"`
+	ZipCode      string `json:"zip_code,omitempty"`
+	City         string `json:"city,omitempty"`
+	FullAddress  string `json:"full_address,omitempty"`
+	ServiceType  string `json:"service_type,omitempty"`
+	Status       string `json:"status,omitempty"`
 }
 
 type GetLeadDetailsOutput struct {
-	Success bool              `json:"success"`
-	Message string            `json:"message"`
+	Success bool               `json:"success"`
+	Message string             `json:"message"`
 	Lead    *LeadDetailsResult `json:"lead,omitempty"`
 }
 
@@ -148,8 +225,8 @@ type NavigationLinkResult struct {
 }
 
 type GetNavigationLinkOutput struct {
-	Success bool                 `json:"success"`
-	Message string               `json:"message"`
+	Success bool                  `json:"success"`
+	Message string                `json:"message"`
 	Link    *NavigationLinkResult `json:"link,omitempty"`
 }
 
@@ -284,7 +361,7 @@ func (h *ToolHandler) HandleGetLeadDetails(ctx tool.Context, orgID uuid.UUID, in
 	if err != nil {
 		return GetLeadDetailsOutput{Success: false, Message: err.Error()}, err
 	}
-	h.recordLeadHint(ctx, orgID, lead.LeadID, lead.CustomerName)
+	h.recordLeadHint(ctx, orgID, lead.LeadID, lead.CustomerName, "")
 	return GetLeadDetailsOutput{Success: true, Message: "Leadgegevens gevonden", Lead: lead}, nil
 }
 
@@ -323,7 +400,7 @@ func (h *ToolHandler) HandleGetNavigationLink(ctx tool.Context, orgID uuid.UUID,
 	if err != nil {
 		return GetNavigationLinkOutput{Success: false, Message: err.Error()}, err
 	}
-	h.recordLeadHint(ctx, orgID, link.LeadID, "")
+	h.recordLeadHint(ctx, orgID, link.LeadID, "", "")
 	return GetNavigationLinkOutput{Success: true, Message: "Navigatielink gevonden", Link: link}, nil
 }
 
@@ -333,7 +410,7 @@ func (h *ToolHandler) HandleCreateLead(ctx tool.Context, orgID uuid.UUID, input 
 	}
 	output, err := h.leadMutationWriter.CreateLead(context.Background(), orgID, input)
 	if err == nil && output.Success && output.Lead != nil {
-		h.recordLeadHint(ctx, orgID, output.Lead.LeadID, output.Lead.CustomerName)
+		h.recordLeadHint(ctx, orgID, output.Lead.LeadID, output.Lead.CustomerName, output.Lead.LeadServiceID)
 	}
 	return output, err
 }
@@ -343,6 +420,95 @@ func (h *ToolHandler) HandleSearchProductMaterials(_ tool.Context, orgID uuid.UU
 		return SearchProductMaterialsOutput{}, fmt.Errorf("catalog search not configured")
 	}
 	return h.catalogSearchReader.SearchProductMaterials(context.Background(), orgID, input)
+}
+
+func (h *ToolHandler) HandleAttachCurrentWhatsAppPhoto(ctx tool.Context, orgID uuid.UUID, input AttachCurrentWhatsAppPhotoInput) (AttachCurrentWhatsAppPhotoOutput, error) {
+	if h.currentInboundPhotoAttacher == nil {
+		return AttachCurrentWhatsAppPhotoOutput{}, errors.New(errPhotoAttachNotConfigured)
+	}
+	message, ok := currentInboundMessageFromToolContext(ctx)
+	if !ok {
+		return AttachCurrentWhatsAppPhotoOutput{Success: false, Message: "De huidige WhatsApp-foto is niet beschikbaar", MissingFields: []string{"foto opnieuw sturen"}}, fmt.Errorf("current inbound message context unavailable")
+	}
+	resolvedLeadID, resolvedServiceID, missing, err := h.resolveLeadAndServiceIDs(ctx, orgID, input.LeadID, input.LeadServiceID)
+	if len(missing) > 0 {
+		return AttachCurrentWhatsAppPhotoOutput{Success: false, Message: "Ik mis nog de juiste lead of dienst om deze foto toe te voegen", MissingFields: missing}, nil
+	}
+	if err != nil {
+		return AttachCurrentWhatsAppPhotoOutput{Success: false, Message: err.Error()}, err
+	}
+	input.LeadID = resolvedLeadID.String()
+	input.LeadServiceID = resolvedServiceID.String()
+	output, err := h.currentInboundPhotoAttacher.AttachCurrentWhatsAppPhoto(context.Background(), orgID, input, message)
+	if err == nil && output.Success {
+		h.recordLeadHint(ctx, orgID, output.LeadID, "", output.LeadServiceID)
+	}
+	return output, err
+}
+
+func (h *ToolHandler) HandleDraftQuote(ctx tool.Context, orgID uuid.UUID, input DraftQuoteInput) (DraftQuoteOutput, error) {
+	if h.quoteWorkflowWriter == nil {
+		return DraftQuoteOutput{}, errors.New(errQuoteWorkflowNotConfigured)
+	}
+	resolvedLeadID, resolvedServiceID, missing, err := h.resolveLeadAndServiceIDs(ctx, orgID, input.LeadID, input.LeadServiceID)
+	if len(missing) > 0 {
+		return DraftQuoteOutput{Success: false, Message: "Ik mis nog gegevens om de offerte op te bouwen", MissingFields: missing}, nil
+	}
+	if err != nil {
+		return DraftQuoteOutput{Success: false, Message: err.Error()}, err
+	}
+	input.LeadID = resolvedLeadID.String()
+	input.LeadServiceID = resolvedServiceID.String()
+	output, err := h.quoteWorkflowWriter.DraftQuote(context.Background(), orgID, input)
+	if err == nil && output.Success && input.LeadID != "" {
+		h.recordLeadHint(ctx, orgID, input.LeadID, "", input.LeadServiceID)
+	}
+	return output, err
+}
+
+func (h *ToolHandler) HandleGenerateQuote(ctx tool.Context, orgID uuid.UUID, input GenerateQuoteInput) (GenerateQuoteOutput, error) {
+	if h.quoteWorkflowWriter == nil {
+		return GenerateQuoteOutput{}, errors.New(errQuoteWorkflowNotConfigured)
+	}
+	resolvedLeadID, resolvedServiceID, missing, err := h.resolveLeadAndServiceIDs(ctx, orgID, input.LeadID, input.LeadServiceID)
+	if len(missing) > 0 {
+		return GenerateQuoteOutput{Success: false, Message: "Ik mis nog gegevens om een offerte te maken", MissingInformation: missing}, nil
+	}
+	if err != nil {
+		return GenerateQuoteOutput{Success: false, Message: err.Error()}, err
+	}
+	input.LeadID = resolvedLeadID.String()
+	input.LeadServiceID = resolvedServiceID.String()
+	output, err := h.quoteWorkflowWriter.GenerateQuote(context.Background(), orgID, input)
+	if err == nil && output.Success && input.LeadID != "" {
+		h.recordLeadHint(ctx, orgID, input.LeadID, "", input.LeadServiceID)
+	}
+	return output, err
+}
+
+func (h *ToolHandler) HandleSendQuotePDF(ctx tool.Context, orgID uuid.UUID, input SendQuotePDFInput) (SendQuotePDFOutput, error) {
+	if h.quoteWorkflowWriter == nil {
+		return SendQuotePDFOutput{}, errors.New(errQuoteWorkflowNotConfigured)
+	}
+	if h.sender == nil {
+		return SendQuotePDFOutput{Success: false, Message: "WhatsApp-verzending is niet beschikbaar"}, fmt.Errorf("sender not configured")
+	}
+	phoneKey, ok := phoneKeyFromToolContext(ctx)
+	if !ok {
+		return SendQuotePDFOutput{Success: false, Message: "Klantcontext ontbreekt voor het verzenden van de PDF"}, fmt.Errorf("phone context unavailable")
+	}
+	pdfResult, err := h.quoteWorkflowWriter.GetQuotePDF(context.Background(), orgID, input)
+	if err != nil {
+		return SendQuotePDFOutput{Success: false, Message: err.Error()}, err
+	}
+	caption := strings.TrimSpace(input.Caption)
+	if caption == "" {
+		caption = fmt.Sprintf("Offerte %s als pdf.", pdfResult.QuoteNumber)
+	}
+	if err := h.sender.SendFileReply(context.Background(), orgID, phoneKey, caption, pdfResult.FileName, pdfResult.Data); err != nil {
+		return SendQuotePDFOutput{Success: false, Message: err.Error(), QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, err
+	}
+	return SendQuotePDFOutput{Success: true, Message: "Offerte-pdf verzonden", QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, nil
 }
 
 func (h *ToolHandler) HandleUpdateLeadDetails(_ tool.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
@@ -473,10 +639,10 @@ func (h *ToolHandler) recordLeadHintIfUnambiguous(ctx tool.Context, orgID uuid.U
 	if len(leads) != 1 {
 		return
 	}
-	h.recordLeadHint(ctx, orgID, leads[0].LeadID, leads[0].CustomerName)
+	h.recordLeadHint(ctx, orgID, leads[0].LeadID, leads[0].CustomerName, leads[0].LeadServiceID)
 }
 
-func (h *ToolHandler) recordLeadHint(ctx tool.Context, orgID uuid.UUID, leadID, customerName string) {
+func (h *ToolHandler) recordLeadHint(ctx tool.Context, orgID uuid.UUID, leadID, customerName, leadServiceID string) {
 	if h == nil || h.leadHintStore == nil {
 		return
 	}
@@ -485,7 +651,69 @@ func (h *ToolHandler) recordLeadHint(ctx tool.Context, orgID uuid.UUID, leadID, 
 		return
 	}
 	h.leadHintStore.Set(orgID.String(), phoneKey, ConversationLeadHint{
-		LeadID:       strings.TrimSpace(leadID),
-		CustomerName: strings.TrimSpace(customerName),
+		LeadID:        strings.TrimSpace(leadID),
+		LeadServiceID: strings.TrimSpace(leadServiceID),
+		CustomerName:  strings.TrimSpace(customerName),
 	})
+}
+
+func (h *ToolHandler) resolveLeadAndServiceIDs(ctx tool.Context, orgID uuid.UUID, leadIDRaw, leadServiceIDRaw string) (uuid.UUID, uuid.UUID, []string, error) {
+	leadIDText, serviceIDText := h.hydrateLeadContextFromHint(ctx, orgID, leadIDRaw, leadServiceIDRaw)
+	if strings.TrimSpace(leadIDText) == "" {
+		return uuid.Nil, uuid.Nil, []string{"lead"}, nil
+	}
+
+	leadID, err := uuid.Parse(strings.TrimSpace(leadIDText))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, nil, fmt.Errorf("ongeldige lead_id")
+	}
+
+	serviceID, resolved, resolveErr := h.parseOrResolveServiceID(orgID, leadID, serviceIDText)
+	if resolveErr != nil {
+		return uuid.Nil, uuid.Nil, nil, resolveErr
+	}
+	if !resolved {
+		return leadID, uuid.Nil, []string{"dienst"}, nil
+	}
+	return leadID, serviceID, nil, nil
+}
+
+func (h *ToolHandler) hydrateLeadContextFromHint(ctx tool.Context, orgID uuid.UUID, leadIDRaw, leadServiceIDRaw string) (string, string) {
+	leadIDText := strings.TrimSpace(leadIDRaw)
+	serviceIDText := strings.TrimSpace(leadServiceIDRaw)
+	if leadIDText != "" || h.leadHintStore == nil {
+		return leadIDText, serviceIDText
+	}
+	phoneKey, ok := phoneKeyFromToolContext(ctx)
+	if !ok {
+		return leadIDText, serviceIDText
+	}
+	hint, ok := h.leadHintStore.Get(orgID.String(), phoneKey)
+	if !ok {
+		return leadIDText, serviceIDText
+	}
+	leadIDText = strings.TrimSpace(hint.LeadID)
+	if serviceIDText == "" {
+		serviceIDText = strings.TrimSpace(hint.LeadServiceID)
+	}
+	return leadIDText, serviceIDText
+}
+
+func (h *ToolHandler) parseOrResolveServiceID(orgID uuid.UUID, leadID uuid.UUID, leadServiceIDRaw string) (uuid.UUID, bool, error) {
+	serviceIDText := strings.TrimSpace(leadServiceIDRaw)
+	if serviceIDText != "" {
+		serviceID, err := uuid.Parse(serviceIDText)
+		if err != nil {
+			return uuid.Nil, false, fmt.Errorf("ongeldige lead_service_id")
+		}
+		return serviceID, true, nil
+	}
+	if h.leadMutationWriter == nil {
+		return uuid.Nil, false, nil
+	}
+	serviceID, err := h.leadMutationWriter.ResolveServiceID(context.Background(), leadID, orgID, nil)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return serviceID, true, nil
 }

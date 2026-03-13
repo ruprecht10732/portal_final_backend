@@ -89,6 +89,46 @@ func (q *Queries) GetAgentConfigByDeviceID(ctx context.Context, deviceID string)
 	return i, err
 }
 
+const getAgentMessageByExternalID = `-- name: GetAgentMessageByExternalID :one
+SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
+FROM RAC_whatsapp_agent_messages
+WHERE organization_id = $1
+    AND external_message_id = $2
+LIMIT 1
+`
+
+type GetAgentMessageByExternalIDParams struct {
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	ExternalMessageID pgtype.Text `json:"external_message_id"`
+}
+
+type GetAgentMessageByExternalIDRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	OrganizationID    pgtype.UUID        `json:"organization_id"`
+	PhoneNumber       string             `json:"phone_number"`
+	Role              string             `json:"role"`
+	Content           string             `json:"content"`
+	ExternalMessageID pgtype.Text        `json:"external_message_id"`
+	Metadata          []byte             `json:"metadata"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetAgentMessageByExternalID(ctx context.Context, arg GetAgentMessageByExternalIDParams) (GetAgentMessageByExternalIDRow, error) {
+	row := q.db.QueryRow(ctx, getAgentMessageByExternalID, arg.OrganizationID, arg.ExternalMessageID)
+	var i GetAgentMessageByExternalIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.PhoneNumber,
+		&i.Role,
+		&i.Content,
+		&i.ExternalMessageID,
+		&i.Metadata,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getAgentUserByPhone = `-- name: GetAgentUserByPhone :one
 SELECT phone_number, organization_id, display_name, created_at
 FROM RAC_whatsapp_agent_users
@@ -108,7 +148,7 @@ func (q *Queries) GetAgentUserByPhone(ctx context.Context, phoneNumber string) (
 }
 
 const getRecentAgentMessages = `-- name: GetRecentAgentMessages :many
-SELECT id, organization_id, phone_number, role, content, created_at
+SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
 FROM RAC_whatsapp_agent_messages
 WHERE phone_number = $1
 ORDER BY created_at DESC
@@ -120,21 +160,90 @@ type GetRecentAgentMessagesParams struct {
 	Limit       int32  `json:"limit"`
 }
 
-func (q *Queries) GetRecentAgentMessages(ctx context.Context, arg GetRecentAgentMessagesParams) ([]RacWhatsappAgentMessage, error) {
+type GetRecentAgentMessagesRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	OrganizationID    pgtype.UUID        `json:"organization_id"`
+	PhoneNumber       string             `json:"phone_number"`
+	Role              string             `json:"role"`
+	Content           string             `json:"content"`
+	ExternalMessageID pgtype.Text        `json:"external_message_id"`
+	Metadata          []byte             `json:"metadata"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetRecentAgentMessages(ctx context.Context, arg GetRecentAgentMessagesParams) ([]GetRecentAgentMessagesRow, error) {
 	rows, err := q.db.Query(ctx, getRecentAgentMessages, arg.PhoneNumber, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RacWhatsappAgentMessage
+	var items []GetRecentAgentMessagesRow
 	for rows.Next() {
-		var i RacWhatsappAgentMessage
+		var i GetRecentAgentMessagesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrganizationID,
 			&i.PhoneNumber,
 			&i.Role,
 			&i.Content,
+			&i.ExternalMessageID,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecentInboundAgentMessages = `-- name: GetRecentInboundAgentMessages :many
+SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
+FROM RAC_whatsapp_agent_messages
+WHERE organization_id = $1
+    AND phone_number = $2
+    AND role = 'user'
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type GetRecentInboundAgentMessagesParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	PhoneNumber    string      `json:"phone_number"`
+	Limit          int32       `json:"limit"`
+}
+
+type GetRecentInboundAgentMessagesRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	OrganizationID    pgtype.UUID        `json:"organization_id"`
+	PhoneNumber       string             `json:"phone_number"`
+	Role              string             `json:"role"`
+	Content           string             `json:"content"`
+	ExternalMessageID pgtype.Text        `json:"external_message_id"`
+	Metadata          []byte             `json:"metadata"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetRecentInboundAgentMessages(ctx context.Context, arg GetRecentInboundAgentMessagesParams) ([]GetRecentInboundAgentMessagesRow, error) {
+	rows, err := q.db.Query(ctx, getRecentInboundAgentMessages, arg.OrganizationID, arg.PhoneNumber, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecentInboundAgentMessagesRow
+	for rows.Next() {
+		var i GetRecentInboundAgentMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.PhoneNumber,
+			&i.Role,
+			&i.Content,
+			&i.ExternalMessageID,
+			&i.Metadata,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -148,15 +257,17 @@ func (q *Queries) GetRecentAgentMessages(ctx context.Context, arg GetRecentAgent
 }
 
 const insertAgentMessage = `-- name: InsertAgentMessage :exec
-INSERT INTO RAC_whatsapp_agent_messages (organization_id, phone_number, role, content)
-VALUES ($1, $2, $3, $4)
+INSERT INTO RAC_whatsapp_agent_messages (organization_id, phone_number, role, content, external_message_id, metadata)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertAgentMessageParams struct {
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	PhoneNumber    string      `json:"phone_number"`
-	Role           string      `json:"role"`
-	Content        string      `json:"content"`
+	OrganizationID    pgtype.UUID `json:"organization_id"`
+	PhoneNumber       string      `json:"phone_number"`
+	Role              string      `json:"role"`
+	Content           string      `json:"content"`
+	ExternalMessageID pgtype.Text `json:"external_message_id"`
+	Metadata          []byte      `json:"metadata"`
 }
 
 func (q *Queries) InsertAgentMessage(ctx context.Context, arg InsertAgentMessageParams) error {
@@ -165,6 +276,8 @@ func (q *Queries) InsertAgentMessage(ctx context.Context, arg InsertAgentMessage
 		arg.PhoneNumber,
 		arg.Role,
 		arg.Content,
+		arg.ExternalMessageID,
+		arg.Metadata,
 	)
 	return err
 }
