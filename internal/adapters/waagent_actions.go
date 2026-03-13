@@ -101,7 +101,7 @@ func (a *WAAgentLeadActionsAdapter) GetLeadDetails(ctx context.Context, orgID uu
 		serviceType = string(resp.CurrentService.ServiceType)
 		status = string(resp.CurrentService.Status)
 	}
-	fullAddress := strings.TrimSpace(strings.TrimSpace(resp.Address.Street)+" "+strings.TrimSpace(resp.Address.HouseNumber)+", "+strings.TrimSpace(resp.Address.ZipCode)+" "+strings.TrimSpace(resp.Address.City))
+	fullAddress := strings.TrimSpace(strings.TrimSpace(resp.Address.Street) + " " + strings.TrimSpace(resp.Address.HouseNumber) + ", " + strings.TrimSpace(resp.Address.ZipCode) + " " + strings.TrimSpace(resp.Address.City))
 	return &waagent.LeadDetailsResult{
 		LeadID:       resp.ID.String(),
 		CustomerName: strings.TrimSpace(resp.Consumer.FirstName + " " + resp.Consumer.LastName),
@@ -543,16 +543,16 @@ func (a *WAAgentVisitActionsAdapter) ScheduleVisit(ctx context.Context, orgID uu
 		return nil, err
 	}
 	return &waagent.AppointmentSummary{
-		AppointmentID: appointment.ID.String(),
-		LeadID:        leadID.String(),
-		LeadServiceID: serviceID.String(),
+		AppointmentID:  appointment.ID.String(),
+		LeadID:         leadID.String(),
+		LeadServiceID:  serviceID.String(),
 		AssignedUserID: userID.String(),
-		Title:         appointment.Title,
-		Description:   derefString(appointment.Description),
-		Location:      derefString(appointment.Location),
-		StartTime:     appointment.StartTime.Format(time.RFC3339),
-		EndTime:       appointment.EndTime.Format(time.RFC3339),
-		Status:        appointment.Status,
+		Title:          appointment.Title,
+		Description:    derefString(appointment.Description),
+		Location:       derefString(appointment.Location),
+		StartTime:      appointment.StartTime.Format(time.RFC3339),
+		EndTime:        appointment.EndTime.Format(time.RFC3339),
+		Status:         appointment.Status,
 	}, nil
 }
 
@@ -623,16 +623,16 @@ func appointmentSummaryFromResponse(resp *appttransport.AppointmentResponse) *wa
 		serviceID = resp.LeadServiceID.String()
 	}
 	return &waagent.AppointmentSummary{
-		AppointmentID: resp.ID.String(),
-		LeadID:        leadID,
-		LeadServiceID: serviceID,
+		AppointmentID:  resp.ID.String(),
+		LeadID:         leadID,
+		LeadServiceID:  serviceID,
 		AssignedUserID: resp.UserID.String(),
-		Title:         resp.Title,
-		Description:   derefString(resp.Description),
-		Location:      derefString(resp.Location),
-		StartTime:     resp.StartTime.Format(time.RFC3339),
-		EndTime:       resp.EndTime.Format(time.RFC3339),
-		Status:        string(resp.Status),
+		Title:          resp.Title,
+		Description:    derefString(resp.Description),
+		Location:       derefString(resp.Location),
+		StartTime:      resp.StartTime.Format(time.RFC3339),
+		EndTime:        resp.EndTime.Format(time.RFC3339),
+		Status:         string(resp.Status),
 	}
 }
 
