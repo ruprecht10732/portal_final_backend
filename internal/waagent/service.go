@@ -2,6 +2,7 @@ package waagent
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -32,47 +34,56 @@ type Service struct {
 // It resolves the organization from the sender's phone number.
 // It is designed to be called in a goroutine with context.WithoutCancel.
 func (s *Service) HandleIncomingMessage(ctx context.Context, phone, displayName, text string) {
+	replyTarget := strings.TrimSpace(phone)
+	lookupPhone := normalizeAgentPhoneKey(phone)
+	if replyTarget == "" {
+		replyTarget = lookupPhone
+	}
+	if lookupPhone == "" {
+		lookupPhone = replyTarget
+	}
+
 	// Step 1: Rate limit check
-	allowed, err := s.rateLimiter.Allow(ctx, phone)
+	allowed, err := s.rateLimiter.Allow(ctx, lookupPhone)
 	if err != nil {
-		log.Printf("waagent: rate limiter error phone=%s: %v", phone, err)
+		log.Printf("waagent: rate limiter error phone=%s: %v", lookupPhone, err)
 	}
 	if !allowed {
-		s.sendHardcoded(ctx, uuid.Nil, phone, text, msgRateLimited)
+		s.sendHardcoded(ctx, uuid.Nil, lookupPhone, replyTarget, text, msgRateLimited)
 		return
 	}
 
 	// Step 2: Phone → org lookup
-	user, err := s.queries.GetAgentUserByPhone(ctx, phone)
+	user, err := s.lookupAgentUser(ctx, phone)
 	if err != nil {
-		s.sendHardcoded(ctx, uuid.Nil, phone, text, msgUnknownPhone)
+		s.sendHardcoded(ctx, uuid.Nil, lookupPhone, replyTarget, text, msgUnknownPhone)
 		return
 	}
 
 	orgID := uuidFromPgtype(user.OrganizationID)
 
 	// Step 3: AI path
-	s.handleAIMessage(ctx, orgID, phone, text)
+	s.handleAIMessage(ctx, orgID, lookupPhone, replyTarget, text)
 }
 
-func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phone, text string) {
+func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget, text string) {
 	// Persist incoming message
 	if err := s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
 		OrganizationID: pgtypeUUID(orgID),
-		PhoneNumber:    phone,
+		PhoneNumber:    phoneKey,
 		Role:           "user",
 		Content:        text,
 	}); err != nil {
-		log.Printf("waagent: failed to persist user message phone=%s: %v", phone, err)
+		log.Printf("waagent: failed to persist user message phone=%s: %v", phoneKey, err)
 	}
 
 	// Load recent conversation history
 	recent, err := s.queries.GetRecentAgentMessages(ctx, waagentdb.GetRecentAgentMessagesParams{
-		PhoneNumber: phone,
+		PhoneNumber: phoneKey,
 		Limit:       recentMessageLimit,
 	})
 	if err != nil {
-		log.Printf("waagent: failed to load history phone=%s: %v", phone, err)
+		log.Printf("waagent: failed to load history phone=%s: %v", phoneKey, err)
 		recent = nil
 	}
 
@@ -88,52 +99,71 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phone, t
 	// Run the AI agent
 	reply, err := s.agent.Run(ctx, orgID, messages)
 	if err != nil {
-		log.Printf("waagent: agent run error phone=%s org=%s: %v", phone, orgID, err)
+		log.Printf("waagent: agent run error phone=%s org=%s: %v", phoneKey, orgID, err)
 		return
 	}
 
 	reply = strings.TrimSpace(reply)
 	if reply == "" {
-		log.Printf("waagent: empty agent reply phone=%s org=%s", phone, orgID)
+		log.Printf("waagent: empty agent reply phone=%s org=%s", phoneKey, orgID)
 		return
 	}
 
 	// Persist assistant reply
 	if err := s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
 		OrganizationID: pgtypeUUID(orgID),
-		PhoneNumber:    phone,
+		PhoneNumber:    phoneKey,
 		Role:           "assistant",
 		Content:        reply,
 	}); err != nil {
-		log.Printf("waagent: failed to persist assistant message phone=%s: %v", phone, err)
+		log.Printf("waagent: failed to persist assistant message phone=%s: %v", phoneKey, err)
 	}
 
 	// Send via WhatsApp + inbox write
-	if err := s.sender.SendReply(ctx, orgID, phone, reply); err != nil {
-		log.Printf("waagent: send reply error phone=%s org=%s: %v", phone, orgID, err)
+	if err := s.sender.SendReply(ctx, orgID, replyTarget, reply); err != nil {
+		log.Printf("waagent: send reply error phone=%s org=%s: %v", replyTarget, orgID, err)
 	}
 }
 
 // sendHardcoded persists messages and sends a hardcoded reply without invoking the LLM.
-func (s *Service) sendHardcoded(ctx context.Context, orgID uuid.UUID, phone, incomingText, reply string) {
+func (s *Service) sendHardcoded(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget, incomingText, reply string) {
 	if orgID != uuid.Nil {
 		_ = s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
 			OrganizationID: pgtypeUUID(orgID),
-			PhoneNumber:    phone,
+			PhoneNumber:    phoneKey,
 			Role:           "user",
 			Content:        incomingText,
 		})
 		_ = s.queries.InsertAgentMessage(ctx, waagentdb.InsertAgentMessageParams{
 			OrganizationID: pgtypeUUID(orgID),
-			PhoneNumber:    phone,
+			PhoneNumber:    phoneKey,
 			Role:           "assistant",
 			Content:        reply,
 		})
 	}
 
-	if err := s.sender.SendReply(ctx, orgID, phone, reply); err != nil {
-		log.Printf("waagent: hardcoded send error phone=%s: %v", phone, err)
+	if err := s.sender.SendReply(ctx, orgID, replyTarget, reply); err != nil {
+		log.Printf("waagent: hardcoded send error phone=%s: %v", replyTarget, err)
 	}
+}
+
+func (s *Service) lookupAgentUser(ctx context.Context, phone string) (waagentdb.RacWhatsappAgentUser, error) {
+	var lastErr error
+	for _, candidate := range agentPhoneCandidates(phone) {
+		user, err := s.queries.GetAgentUserByPhone(ctx, candidate)
+		if err == nil {
+			return user, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			lastErr = err
+			continue
+		}
+		return waagentdb.RacWhatsappAgentUser{}, err
+	}
+	if lastErr == nil {
+		lastErr = pgx.ErrNoRows
+	}
+	return waagentdb.RacWhatsappAgentUser{}, lastErr
 }
 
 func pgtypeUUID(id uuid.UUID) pgtype.UUID {

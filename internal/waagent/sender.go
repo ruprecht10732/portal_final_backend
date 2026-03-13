@@ -38,7 +38,7 @@ func (s *Sender) SendReply(ctx context.Context, orgID uuid.UUID, phone, text str
 	}
 
 	// Write to inbox for operator visibility
-	if s.inboxWriter != nil {
+	if s.inboxWriter != nil && orgID != uuid.Nil {
 		var msgID *string
 		if result.MessageID != "" {
 			msgID = &result.MessageID

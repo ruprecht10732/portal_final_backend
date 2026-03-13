@@ -83,7 +83,7 @@ func (h *PhoneHandler) Register(c *gin.Context) {
 		return
 	}
 
-	phone := strings.TrimSpace(req.PhoneNumber)
+	phone := normalizeAgentPhoneKey(req.PhoneNumber)
 	if phone == "" {
 		httpkit.Error(c, http.StatusBadRequest, "phoneNumber is required", nil)
 		return
