@@ -52,7 +52,7 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 
 	kimi := moonshot.NewModel(modelCfg)
 
-	getPendingQuotesTool, err := apptools.NewGetPendingQuotesTool(func(ctx tool.Context, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
+	getQuotesTool, err := apptools.NewGetQuotesTool(func(ctx tool.Context, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
 		orgID, ok := ctx.Value(orgIDContextKey{}).(uuid.UUID)
 		if !ok {
 			return GetPendingQuotesOutput{}, fmt.Errorf("organization context not available")
@@ -60,7 +60,7 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 		return toolHandler.HandleGetPendingQuotes(ctx, orgID, input)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("waagent: failed to build GetPendingQuotes tool: %w", err)
+		return nil, fmt.Errorf("waagent: failed to build GetQuotes tool: %w", err)
 	}
 
 	getAppointmentsTool, err := apptools.NewGetAppointmentsTool(func(ctx tool.Context, input GetAppointmentsInput) (GetAppointmentsOutput, error) {
@@ -74,7 +74,7 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 		return nil, fmt.Errorf("waagent: failed to build GetAppointments tool: %w", err)
 	}
 
-	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "whatsapp_agent_tools", []tool.Tool{getPendingQuotesTool, getAppointmentsTool})
+	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "whatsapp_agent_tools", []tool.Tool{getQuotesTool, getAppointmentsTool})
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "WhatsAppAgent",

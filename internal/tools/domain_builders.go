@@ -114,6 +114,12 @@ func NewGetPendingQuotesTool[In any, Out any](handler func(tool.Context, In) (Ou
 		handler)
 }
 
+func NewGetQuotesTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GetQuotes",
+		"Lists quotes for the current organization filtered by status. Returns quote_number, client_name, total_cents, status, created_at, and a readable summary of what the quote covers. Do NOT provide a tenant or organization identifier.",
+		handler)
+}
+
 func NewGetAppointmentsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("GetAppointments",
 		"Lists upcoming appointments for the current organization within an optional date range. Returns title, description, start_time, end_time, status, location. Do NOT provide a tenant or organization identifier.",

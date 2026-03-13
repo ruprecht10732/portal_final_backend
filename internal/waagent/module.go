@@ -21,6 +21,7 @@ type QuoteSummary struct {
 	ClientName  string `json:"client_name"`
 	TotalCents  int64  `json:"total_cents"`
 	Status      string `json:"status"`
+	Summary     string `json:"summary,omitempty"`
 	CreatedAt   string `json:"created_at"`
 }
 

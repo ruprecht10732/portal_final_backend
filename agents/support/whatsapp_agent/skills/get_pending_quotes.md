@@ -1,4 +1,4 @@
-# GetPendingQuotes
+# GetQuotes
 
 ## Purpose
 
@@ -8,7 +8,7 @@ Retrieve quotes for the authenticated user's organization, optionally filtered b
 
 | Parameter | Type   | Required | Description                                         |
 |-----------|--------|----------|-----------------------------------------------------|
-| status    | string | No       | Filter by quote status (e.g., "draft", "sent", "accepted"). Omit for all statuses. |
+| status    | string | No       | Filter by quote status (e.g., "draft", "sent", "accepted", "goedgekeurd"). Omit for all statuses. |
 
 ## Security
 
@@ -18,7 +18,7 @@ Retrieve quotes for the authenticated user's organization, optionally filtered b
 
 ## Output Format
 
-Returns a list of quotes with: quote_number, client_name, total_cents, status, created_at.
+Returns a list of quotes with: quote_number, client_name, total_cents, status, created_at, and a short summary of what the quote covers.
 
 ## Failure Policy
 

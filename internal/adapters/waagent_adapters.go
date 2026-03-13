@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/appointments/service"
@@ -49,10 +50,45 @@ func (a *WAAgentQuotesAdapter) ListQuotesByOrganization(ctx context.Context, org
 			ClientName:  clientName,
 			TotalCents:  q.TotalCents,
 			Status:      string(q.Status),
+			Summary:     summarizeQuote(q),
 			CreatedAt:   q.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	return out, nil
+}
+
+func summarizeQuote(q quotetransport.QuoteResponse) string {
+	parts := make([]string, 0, len(q.Items))
+	for _, item := range q.Items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = strings.TrimSpace(item.Description)
+		}
+		if title == "" {
+			continue
+		}
+		parts = append(parts, title)
+		if len(parts) >= 3 {
+			break
+		}
+	}
+
+	summary := strings.Join(parts, ", ")
+	if notes := strings.TrimSpace(valueOrEmpty(q.Notes)); notes != "" {
+		if summary == "" {
+			summary = notes
+		} else {
+			summary += ". " + notes
+		}
+	}
+	return strings.TrimSpace(summary)
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // WAAgentAppointmentsAdapter adapts the appointments service for the waagent module.
