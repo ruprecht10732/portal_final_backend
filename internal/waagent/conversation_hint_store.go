@@ -108,13 +108,19 @@ func (s *ConversationLeadHintStore) Set(orgID, phoneKey string, hint Conversatio
 		return
 	}
 	key := conversationLeadHintKey(orgID, phoneKey)
-	if key == "" || hintIsEmpty(hint) {
+	if key == "" {
 		return
 	}
-	hint = normalizeConversationLeadHint(hint)
-	hint.UpdatedAt = s.currentTime()
 	s.mu.Lock()
 	s.pruneExpiredLocked()
+	existing := normalizeConversationLeadHint(s.items[key])
+	hint = mergeConversationLeadHints(existing, hint)
+	if hintIsEmpty(hint) {
+		delete(s.items, key)
+		s.mu.Unlock()
+		return
+	}
+	hint.UpdatedAt = s.currentTime()
 	s.items[key] = hint
 	s.evictOverflowLocked()
 	s.mu.Unlock()
@@ -255,6 +261,37 @@ func normalizeConversationLeadHint(hint ConversationLeadHint) ConversationLeadHi
 	hint.RecentQuotes = append([]RecentQuoteHint(nil), hint.RecentQuotes...)
 	hint.RecentAppointments = append([]RecentAppointmentHint(nil), hint.RecentAppointments...)
 	return hint
+}
+
+func mergeConversationLeadHints(existing, incoming ConversationLeadHint) ConversationLeadHint {
+	merged := normalizeConversationLeadHint(incoming)
+	existing = normalizeConversationLeadHint(existing)
+	if merged.LeadID == "" {
+		merged.LeadID = existing.LeadID
+	}
+	if merged.LeadServiceID == "" {
+		merged.LeadServiceID = existing.LeadServiceID
+	}
+	if merged.CustomerName == "" {
+		merged.CustomerName = existing.CustomerName
+	}
+	if len(merged.RecentQuotes) == 0 {
+		merged.RecentQuotes = existing.RecentQuotes
+	}
+	if len(merged.RecentAppointments) == 0 {
+		merged.RecentAppointments = existing.RecentAppointments
+	}
+	if merged.PreloadedDetails == nil {
+		merged.PreloadedDetails = existing.PreloadedDetails
+	}
+	return merged
+}
+
+func hasConversationRoutingContext(hint *ConversationLeadHint) bool {
+	if hint == nil {
+		return false
+	}
+	return strings.TrimSpace(hint.LeadID) != "" || len(hint.RecentQuotes) > 0 || len(hint.RecentAppointments) > 0
 }
 
 func hintIsEmpty(hint ConversationLeadHint) bool {

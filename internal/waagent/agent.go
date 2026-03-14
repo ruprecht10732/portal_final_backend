@@ -533,7 +533,7 @@ func (a *Agent) seedSessionHistory(ctx context.Context, sess session.Session, hi
 	// If there's a lead hint, inject it before history so the model knows which
 	// customer the conversation most likely refers to. The hint is deliberately
 	// phrased as routing context only and must not be treated as verified output.
-	if leadHint != nil && strings.TrimSpace(leadHint.LeadID) != "" {
+	if hasConversationRoutingContext(leadHint) {
 		hintText := a.buildLeadContextText(leadHint)
 		hintEvent := session.NewEvent("history-hint")
 		hintEvent.Author = "WhatsAppAgent"

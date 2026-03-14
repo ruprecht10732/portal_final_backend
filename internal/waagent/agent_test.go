@@ -63,3 +63,23 @@ func TestBuildLeadContextTextUsesRoutingHintOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildLeadContextTextUsesRecentListsWithoutLeadID(t *testing.T) {
+	t.Parallel()
+
+	agent := &Agent{}
+	hint := &ConversationLeadHint{
+		RecentQuotes: []RecentQuoteHint{{
+			QuoteNumber: "OFF-2026-0021",
+			ClientName:  "Joey Plomp",
+		}},
+	}
+
+	text := agent.buildLeadContextText(hint)
+	if !strings.Contains(text, "Laatst getoonde offertes in dit gesprek:") {
+		t.Fatalf("expected recent quote context in hint text, got %q", text)
+	}
+	if strings.Contains(text, "Laatst besproken klant:") {
+		t.Fatalf("expected no resolved customer label in hint text, got %q", text)
+	}
+}

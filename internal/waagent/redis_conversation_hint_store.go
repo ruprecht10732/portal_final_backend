@@ -92,8 +92,16 @@ func (s *RedisConversationLeadHintStore) Set(orgID, phoneKey string, hint Conver
 		return
 	}
 	key := s.redisKey(orgID, phoneKey)
+	if key == "" {
+		return
+	}
+	existing, _ := s.Get(orgID, phoneKey)
+	if existing != nil {
+		hint = mergeConversationLeadHints(*existing, hint)
+	}
 	hint = normalizeConversationLeadHint(hint)
-	if key == "" || hintIsEmpty(hint) {
+	if hintIsEmpty(hint) {
+		_ = s.redis.Del(context.Background(), key).Err()
 		return
 	}
 	record := redisConversationLeadHintRecord{

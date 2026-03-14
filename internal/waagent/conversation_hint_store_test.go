@@ -162,3 +162,44 @@ func TestConversationLeadHintStoreMergesRecentAppointmentsIntoExistingHint(t *te
 		t.Fatalf("expected updated timestamp %v, got %v", now, hint.UpdatedAt)
 	}
 }
+
+func TestConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
+	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
+	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+		QuoteNumber: "OFF-2026-0021",
+		ClientName:  "Joey Plomp",
+	}})
+	now = now.Add(time.Minute)
+	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+
+	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	if !ok || hint == nil {
+		t.Fatal("expected merged hint to be returned")
+	}
+	if hint.LeadID != testHintLeadID || hint.CustomerName != "Robin" {
+		t.Fatalf("unexpected lead hint payload %#v", hint)
+	}
+	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+		t.Fatalf("expected recent quote to be preserved, got %#v", hint.RecentQuotes)
+	}
+}
+
+func TestHasConversationRoutingContextAllowsRecentListsWithoutLeadID(t *testing.T) {
+	t.Parallel()
+
+	if hasConversationRoutingContext(nil) {
+		t.Fatal("expected nil hint not to count as routing context")
+	}
+	if hasConversationRoutingContext(&ConversationLeadHint{}) {
+		t.Fatal("expected empty hint not to count as routing context")
+	}
+	if !hasConversationRoutingContext(&ConversationLeadHint{RecentQuotes: []RecentQuoteHint{{QuoteNumber: "OFF-2026-0021"}}}) {
+		t.Fatal("expected recent quotes to count as routing context")
+	}
+	if !hasConversationRoutingContext(&ConversationLeadHint{RecentAppointments: []RecentAppointmentHint{{AppointmentID: "appt-1"}}}) {
+		t.Fatal("expected recent appointments to count as routing context")
+	}
+}

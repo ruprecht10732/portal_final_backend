@@ -165,3 +165,36 @@ func TestRedisConversationLeadHintStorePersistsRecentQuoteAndAppointmentLists(t 
 		t.Fatalf("expected updated_at %v, got %v", now, hint.UpdatedAt)
 	}
 }
+
+func TestRedisConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(t *testing.T) {
+	t.Parallel()
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf(redisHintStoreStartFailedMsg, err)
+	}
+	defer redisServer.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer func() { _ = client.Close() }()
+
+	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
+	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, func() time.Time { return now })
+	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+		QuoteNumber: "OFF-2026-0021",
+		ClientName:  "Joey Plomp",
+	}})
+	now = now.Add(time.Minute)
+	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+
+	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	if !ok || hint == nil {
+		t.Fatal("expected merged redis hint to be returned")
+	}
+	if hint.LeadID != testHintLeadID || hint.CustomerName != "Robin" {
+		t.Fatalf("unexpected lead hint payload %#v", hint)
+	}
+	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+		t.Fatalf("expected recent quote to be preserved, got %#v", hint.RecentQuotes)
+	}
+}
