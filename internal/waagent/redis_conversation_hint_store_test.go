@@ -139,13 +139,13 @@ func TestRedisConversationLeadHintStorePersistsRecentQuoteAndAppointmentLists(t 
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, func() time.Time { return now })
 	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
 		QuoteID:     "quote-1",
-		QuoteNumber: "OFF-2026-0021",
-		ClientName:  "Joey Plomp",
+		QuoteNumber: testQuoteNumber,
+		ClientName:  testQuoteClientName,
 		Summary:     "Kogellagerscharnier RVS",
 	}})
 	now = now.Add(10 * time.Minute)
 	store.RememberAppointments(testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
-		AppointmentID: "appt-1",
+		AppointmentID: testAppointmentID,
 		Title:         "Bezoek",
 		StartTime:     "2026-03-16T09:00:00Z",
 		Location:      "Alkmaar",
@@ -155,10 +155,10 @@ func TestRedisConversationLeadHintStorePersistsRecentQuoteAndAppointmentLists(t 
 	if !ok || hint == nil {
 		t.Fatal("expected redis-backed hint with recent lists to be returned")
 	}
-	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != testQuoteNumber {
 		t.Fatalf("unexpected recent quotes %#v", hint.RecentQuotes)
 	}
-	if len(hint.RecentAppointments) != 1 || hint.RecentAppointments[0].AppointmentID != "appt-1" {
+	if len(hint.RecentAppointments) != 1 || hint.RecentAppointments[0].AppointmentID != testAppointmentID {
 		t.Fatalf("unexpected recent appointments %#v", hint.RecentAppointments)
 	}
 	if !hint.UpdatedAt.Equal(now) {
@@ -181,8 +181,8 @@ func TestRedisConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, func() time.Time { return now })
 	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
-		QuoteNumber: "OFF-2026-0021",
-		ClientName:  "Joey Plomp",
+		QuoteNumber: testQuoteNumber,
+		ClientName:  testQuoteClientName,
 	}})
 	now = now.Add(time.Minute)
 	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
@@ -194,7 +194,7 @@ func TestRedisConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(
 	if hint.LeadID != testHintLeadID || hint.CustomerName != "Robin" {
 		t.Fatalf("unexpected lead hint payload %#v", hint)
 	}
-	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != testQuoteNumber {
 		t.Fatalf("expected recent quote to be preserved, got %#v", hint.RecentQuotes)
 	}
 }

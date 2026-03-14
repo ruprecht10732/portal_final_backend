@@ -29,11 +29,10 @@ const (
 	testLeadLookupQuestion               = "Zoek adres van Joey plomp"
 	testQuoteLookupQuestion              = "De offerte van Joey plomp"
 	testGenericHelpQuestion              = "Kun je mij helpen?"
-	testWriteQuoteQuestion               = "Maak een offerte voor dakisolatie"
-	testExpectedLookupModeCallMsg        = "expected lookup-mode agent run, got %d calls"
-	testExpectedLookupModeMsg            = "expected lookup mode, got %q"
-	testUnexpectedLookupModeReplyMsg     = "unexpected lookup mode reply %q"
-	testUnexpectedLookupReasonMsg        = "unexpected lookup mode reason %q"
+	testExpectedDefaultModeCallMsg       = "expected default-mode agent run, got %d calls"
+	testExpectedDefaultModeMsg           = "expected default mode, got %q"
+	testExpectedDefaultReasonMsg         = "expected default reason, got %q"
+	testUnexpectedServiceReplyMsg        = "unexpected reply %q"
 )
 
 type serviceTestLeadDetailsReader struct {
@@ -305,7 +304,7 @@ func TestRunAgentReplyPersistsStatusFallbackWhenGroundingFails(t *testing.T) {
 		t.Fatalf("expected grounding failure to remain visible, got %q", agent.result.GroundingFailure)
 	}
 	if agent.lastMode != agentRunModeDefault {
-		t.Fatalf("expected default mode, got %q", agent.lastMode)
+		t.Fatalf(testExpectedDefaultModeMsg, agent.lastMode)
 	}
 }
 
@@ -392,19 +391,19 @@ func TestHandleAIMessageRoutesSimpleLeadLookupToLookupMode(t *testing.T) {
 	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testLeadLookupQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-lead", PhoneNumber: testAgentPhone, Body: testLeadLookupQuestion})
 
 	if agent.calls != 1 {
-		t.Fatalf(testExpectedLookupModeCallMsg, agent.calls)
+		t.Fatalf(testExpectedDefaultModeCallMsg, agent.calls)
 	}
-	if agent.lastMode != agentRunModeLookup {
-		t.Fatalf(testExpectedLookupModeMsg, agent.lastMode)
+	if agent.lastMode != agentRunModeDefault {
+		t.Fatalf(testExpectedDefaultModeMsg, agent.lastMode)
 	}
-	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testLeadLookupQuestion); decision.reason != "lead_address_lookup" {
-		t.Fatalf(testUnexpectedLookupReasonMsg, decision.reason)
+	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testLeadLookupQuestion); decision.reason != "default" {
+		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
 	}
 	if len(queries.inserted) != 2 {
 		t.Fatalf(testExpectedPersistedConversationMsg, len(queries.inserted))
 	}
 	if queries.inserted[1].Content != testLookupModeReply {
-		t.Fatalf(testUnexpectedLookupModeReplyMsg, queries.inserted[1].Content)
+		t.Fatalf(testUnexpectedServiceReplyMsg, queries.inserted[1].Content)
 	}
 	if agent.lastInbound == nil || agent.lastInbound.Body != testLeadLookupQuestion {
 		t.Fatalf("expected inbound message to reach lookup agent, got %#v", agent.lastInbound)
@@ -429,19 +428,19 @@ func TestHandleAIMessageRoutesSimpleQuoteLookupToLookupMode(t *testing.T) {
 	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testQuoteLookupQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-quote-fast", PhoneNumber: testAgentPhone, Body: testQuoteLookupQuestion})
 
 	if agent.calls != 1 {
-		t.Fatalf(testExpectedLookupModeCallMsg, agent.calls)
+		t.Fatalf(testExpectedDefaultModeCallMsg, agent.calls)
 	}
-	if agent.lastMode != agentRunModeLookup {
-		t.Fatalf(testExpectedLookupModeMsg, agent.lastMode)
+	if agent.lastMode != agentRunModeDefault {
+		t.Fatalf(testExpectedDefaultModeMsg, agent.lastMode)
 	}
-	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testQuoteLookupQuestion); decision.reason != "quote_lookup" {
-		t.Fatalf(testUnexpectedLookupReasonMsg, decision.reason)
+	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testQuoteLookupQuestion); decision.reason != "default" {
+		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
 	}
 	if len(queries.inserted) != 2 {
 		t.Fatalf(testExpectedPersistedConversationMsg, len(queries.inserted))
 	}
 	if queries.inserted[1].Content != testLookupModeReply {
-		t.Fatalf(testUnexpectedLookupModeReplyMsg, queries.inserted[1].Content)
+		t.Fatalf(testUnexpectedServiceReplyMsg, queries.inserted[1].Content)
 	}
 }
 
@@ -463,13 +462,13 @@ func TestHandleAIMessageRoutesAmbiguousLookupToLookupMode(t *testing.T) {
 	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, "Zoek Joey plomp", &CurrentInboundMessage{ExternalMessageID: "msg-ambiguous", PhoneNumber: testAgentPhone, Body: "Zoek Joey plomp"})
 
 	if agent.calls != 1 {
-		t.Fatalf(testExpectedLookupModeCallMsg, agent.calls)
+		t.Fatalf(testExpectedDefaultModeCallMsg, agent.calls)
 	}
-	if agent.lastMode != agentRunModeLookup {
-		t.Fatalf(testExpectedLookupModeMsg, agent.lastMode)
+	if agent.lastMode != agentRunModeDefault {
+		t.Fatalf(testExpectedDefaultModeMsg, agent.lastMode)
 	}
 	if queries.inserted[1].Content != testLookupModeReply {
-		t.Fatalf(testUnexpectedLookupModeReplyMsg, queries.inserted[1].Content)
+		t.Fatalf(testUnexpectedServiceReplyMsg, queries.inserted[1].Content)
 	}
 }
 
@@ -493,10 +492,10 @@ func TestHandleAIMessageKeepsDefaultModeForGenericMessages(t *testing.T) {
 		t.Fatalf("expected one agent run, got %d calls", agent.calls)
 	}
 	if agent.lastMode != agentRunModeDefault {
-		t.Fatalf("expected default mode, got %q", agent.lastMode)
+		t.Fatalf(testExpectedDefaultModeMsg, agent.lastMode)
 	}
 	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testGenericHelpQuestion); decision.reason != "default" {
-		t.Fatalf("expected default reason, got %q", decision.reason)
+		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
 	}
 	if len(queries.inserted) != 2 {
 		t.Fatalf(testExpectedPersistedConversationMsg, len(queries.inserted))
@@ -506,7 +505,7 @@ func TestHandleAIMessageKeepsDefaultModeForGenericMessages(t *testing.T) {
 	}
 }
 
-func TestHandleAIMessageRoutesWriteRequestToWriteMode(t *testing.T) {
+func TestHandleAIMessageKeepsWriteRequestsOnDefaultMode(t *testing.T) {
 	t.Parallel()
 
 	orgID := uuid.New()
@@ -520,16 +519,17 @@ func TestHandleAIMessageRoutesWriteRequestToWriteMode(t *testing.T) {
 		log:     logger.New("development"),
 	}
 
-	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testWriteQuoteQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-write", PhoneNumber: testAgentPhone, Body: testWriteQuoteQuestion})
+	writeQuestion := "Maak een offerte voor dakisolatie"
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, writeQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-write", PhoneNumber: testAgentPhone, Body: writeQuestion})
 
 	if agent.calls != 1 {
-		t.Fatalf("expected one write-mode agent run, got %d calls", agent.calls)
+		t.Fatalf("expected one default-mode agent run, got %d calls", agent.calls)
 	}
-	if agent.lastMode != agentRunModeWrite {
-		t.Fatalf("expected write mode, got %q", agent.lastMode)
+	if agent.lastMode != agentRunModeDefault {
+		t.Fatalf(testExpectedDefaultModeMsg, agent.lastMode)
 	}
-	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testWriteQuoteQuestion); decision.reason != "write_generate_quote" {
-		t.Fatalf("expected write reason, got %q", decision.reason)
+	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), writeQuestion); decision.reason != "default" {
+		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
 	}
 }
 
@@ -543,11 +543,11 @@ func TestSelectAgentRunModeInheritsAddressIntentFromBareNameFollowUp(t *testing.
 	}
 
 	decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testLookupCustomerName)
-	if decision.mode != agentRunModeLookup {
-		t.Fatalf(testExpectedLookupModeMsg, decision.mode)
+	if decision.mode != agentRunModeDefault {
+		t.Fatalf(testExpectedDefaultModeMsg, decision.mode)
 	}
-	if decision.reason != "lead_address_lookup" {
-		t.Fatalf(testUnexpectedLookupReasonMsg, decision.reason)
+	if decision.reason != "default" {
+		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
 	}
 }
 
@@ -564,35 +564,10 @@ func TestSelectAgentRunModeUsesLookupForAffirmativeFollowUpWithLeadHint(t *testi
 	}
 
 	decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), "Ja")
-	if decision.mode != agentRunModeLookup {
-		t.Fatalf(testExpectedLookupModeMsg, decision.mode)
+	if decision.mode != agentRunModeDefault {
+		t.Fatalf(testExpectedDefaultModeMsg, decision.mode)
 	}
-	if decision.reason != "lead_address_lookup" {
-		t.Fatalf(testUnexpectedLookupReasonMsg, decision.reason)
-	}
-}
-
-func TestRunAgentReplyUsesLookupFallbackWhenReplyViolatesPolicy(t *testing.T) {
-	t.Parallel()
-
-	orgID := uuid.New()
-	queries := &serviceTestQuerier{}
-	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
-	agent := &serviceTestAgent{result: AgentRunResult{Reply: "Ik ga dit nu opzoeken. Laat me dat zoeken. Ik heb gezocht. Dit is de uitkomst."}}
-	service := &Service{
-		queries: queries,
-		agent:   agent,
-		sender:  newTestSender(transport, serviceTestConfigReader{}, nil),
-		log:     logger.New("development"),
-	}
-	inbound := &CurrentInboundMessage{ExternalMessageID: "msg-lookup-policy", PhoneNumber: testAgentPhone, Body: testLeadLookupQuestion}
-
-	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound, agentModeDecision{mode: agentRunModeLookup, reason: "lead_address_lookup"})
-
-	if len(queries.inserted) != 1 {
-		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
-	}
-	if queries.inserted[0].Content != lookupModeFallback {
-		t.Fatalf("unexpected lookup policy fallback %q", queries.inserted[0].Content)
+	if decision.reason != "default" {
+		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
 	}
 }

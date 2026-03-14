@@ -28,11 +28,7 @@ import (
 const (
 	agentWorkspaceName       = "whatsapp-agent"
 	agentAppName             = "whatsapp-agent"
-	agentLookupAppName       = "whatsapp-agent-lookup"
-	agentPlannerAppName      = "whatsapp-agent-planner"
-	agentEditorAppName       = "whatsapp-agent-editor"
 	maxToolIterations        = 10
-	maxLookupRepairAttempts  = 2
 	assistantPrefix          = "[Jouw vorig antwoord]: "
 	userPrefix               = "[Klant]: "
 	errOrgContextUnavailable = "organization context not available"
@@ -42,47 +38,7 @@ type agentRunMode string
 
 const (
 	agentRunModeDefault agentRunMode = "default"
-	agentRunModeLookup  agentRunMode = "lookup"
-	agentRunModeWrite   agentRunMode = "write"
 )
-
-const lookupModeInstruction = `
-Je werkt nu in lookupmodus.
-
-- Behandel dit als een read-only vraag over klant- of offertedata.
-- Gebruik alleen de beschikbare lookuptools om feiten te controleren.
-- Voer geen schrijf-, status-, afspraak-, of verzendacties uit.
-- Als meerdere klanten of offertes passen, stel precies een korte verduidelijkingsvraag.
-- Als je niets vindt, zeg dat kort en duidelijk.
-- Houd het antwoord kort en praktisch.`
-
-const writePlannerInstruction = `
-Je bent de planningslaag voor een WhatsApp-agent.
-
-Analyseer de laatste klantvraag en geef ALLEEN JSON terug in dit formaat:
-{"tool_name":"...","goal":"...","safe_to_execute":true,"missing_information":["..."],"reason":"..."}
-
-Regels:
-- Kies precies één primaire schrijfactie als einddoel.
-- Toegestane tool_name waarden: CreateLead, DraftQuote, GenerateQuote, SendQuotePDF, UpdateLeadDetails, AskCustomerClarification, SaveNote, UpdateStatus, ScheduleVisit, RescheduleVisit, CancelVisit, AttachCurrentWhatsAppPhoto.
-- Gebruik safe_to_execute=false als cruciale informatie ontbreekt of de vraag te vaag is.
-- Zet ontbrekende gegevens in missing_information.
-- Als dit geen duidelijke schrijfactie is, zet safe_to_execute=false en laat tool_name leeg.
-- Geef alleen JSON terug, zonder uitleg of markdown.`
-
-const replyEditorInstruction = `
-Je bent de laatste controlelaag voor een WhatsApp-agent.
-
-Beoordeel of het conceptantwoord de vraag van de gebruiker direct en passend beantwoordt zonder procesnarratie of ontwijking.
-Geef ALLEEN JSON terug in dit formaat:
-{"approved":true,"issue":""}
-
-Regels:
-- approved=true alleen als het antwoord direct genoeg is en past bij de vraag.
-- approved=false als het antwoord de vraag ontwijkt, vooral processtappen beschrijft, of niet duidelijk genoeg ingaat op de vraag.
-- issue is een korte code zoals did_not_answer_request, too_indirect, process_narration, too_vague.
-- Verzin geen nieuwe feiten en herschrijf het antwoord niet.
-- Geef alleen JSON terug, zonder uitleg of markdown.`
 
 // orgIDContextKey is used to inject org_id into tool.Context without exposing it to the LLM.
 type orgIDContextKey struct{}
@@ -98,9 +54,6 @@ type ConversationMessage struct {
 // Agent wraps the ADK agent and runner for the WhatsApp agent.
 type Agent struct {
 	defaultRuntime agentRuntime
-	lookupRuntime  agentRuntime
-	plannerRuntime agentRuntime
-	editorRuntime  agentRuntime
 	sessionService session.Service
 	log            *logger.Logger
 }
@@ -123,7 +76,6 @@ type agentExecutionRequest struct {
 	messages       []ConversationMessage
 	leadHint       *ConversationLeadHint
 	inboundMessage *CurrentInboundMessage
-	directive      string
 }
 
 type AgentRunResult struct {
@@ -147,19 +99,6 @@ type replyGroundingEvidence struct {
 type groundingDecision struct {
 	Code             string
 	UnsupportedFacts []string
-}
-
-type writeExecutionPlan struct {
-	ToolName           string   `json:"tool_name"`
-	Goal               string   `json:"goal"`
-	SafeToExecute      bool     `json:"safe_to_execute"`
-	MissingInformation []string `json:"missing_information"`
-	Reason             string   `json:"reason"`
-}
-
-type replyEditorDecision struct {
-	Approved bool   `json:"approved"`
-	Issue    string `json:"issue"`
 }
 
 var (
@@ -211,39 +150,8 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler, log *logger.Lo
 	if err != nil {
 		return nil, err
 	}
-	lookupRuntime, err := newAgentRuntime(modelCfg, workspace, sessionService, toolHandler, agentRuntimeConfig{
-		appName:     agentLookupAppName,
-		agentName:   "WhatsAppLookupAgent",
-		instruction: workspace.Instruction + "\n\n" + strings.TrimSpace(lookupModeInstruction),
-		toolBuilder: buildLookupWhatsAppTools,
-	})
-	if err != nil {
-		return nil, err
-	}
-	plannerRuntime, err := newAgentRuntime(modelCfg, workspace, sessionService, toolHandler, agentRuntimeConfig{
-		appName:     agentPlannerAppName,
-		agentName:   "WhatsAppWritePlanner",
-		instruction: workspace.Instruction + "\n\n" + strings.TrimSpace(writePlannerInstruction),
-		toolBuilder: buildNoTools,
-	})
-	if err != nil {
-		return nil, err
-	}
-	editorRuntime, err := newAgentRuntime(modelCfg, workspace, sessionService, toolHandler, agentRuntimeConfig{
-		appName:     agentEditorAppName,
-		agentName:   "WhatsAppReplyEditor",
-		instruction: workspace.Instruction + "\n\n" + strings.TrimSpace(replyEditorInstruction),
-		toolBuilder: buildNoTools,
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	return &Agent{
 		defaultRuntime: defaultRuntime,
-		lookupRuntime:  lookupRuntime,
-		plannerRuntime: plannerRuntime,
-		editorRuntime:  editorRuntime,
 		sessionService: sessionService,
 		log:            log,
 	}, nil
@@ -298,18 +206,6 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		buildRescheduleVisitTool,
 		buildCancelVisitTool,
 	)
-}
-
-func buildLookupWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
-	return buildTools(toolHandler,
-		buildSearchLeadsTool,
-		buildGetLeadDetailsTool,
-		buildGetQuotesTool,
-	)
-}
-
-func buildNoTools(*ToolHandler) ([]tool.Tool, error) {
-	return nil, nil
 }
 
 func buildTools(toolHandler *ToolHandler, builders ...func(*ToolHandler) (tool.Tool, error)) ([]tool.Tool, error) {
@@ -622,29 +518,11 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 	}
 	ctx = a.enrichRunContext(ctx, orgID, phoneKey, inboundMessage)
 
-	var (
-		result AgentRunResult
-		err    error
-	)
-	switch mode {
-	case agentRunModeWrite:
-		result, err = a.runWritePipeline(ctx, orgID, phoneKey, messages, leadHint, inboundMessage)
-	case agentRunModeLookup:
-		result, err = a.runLookupPipeline(ctx, orgID, phoneKey, messages, leadHint, inboundMessage)
-	default:
-		result, err = a.runExecutionPipeline(ctx, a.defaultRuntime, agentExecutionRequest{orgID: orgID, phoneKey: phoneKey, messages: messages, leadHint: leadHint, inboundMessage: inboundMessage})
-	}
+	result, err := a.runExecutionPipeline(ctx, a.defaultRuntime, agentExecutionRequest{orgID: orgID, phoneKey: phoneKey, messages: messages, leadHint: leadHint, inboundMessage: inboundMessage})
 	if err != nil {
 		return AgentRunResult{}, err
 	}
-	return a.applyFinalEditor(ctx, messages[len(messages)-1].Content, mode, result), nil
-}
-
-func (a *Agent) runtimeForMode(mode agentRunMode) agentRuntime {
-	if mode == agentRunModeLookup {
-		return a.lookupRuntime
-	}
-	return a.defaultRuntime
+	return result, nil
 }
 
 func (a *Agent) enrichRunContext(ctx context.Context, orgID uuid.UUID, phoneKey string, inboundMessage *CurrentInboundMessage) context.Context {
@@ -654,36 +532,6 @@ func (a *Agent) enrichRunContext(ctx context.Context, orgID uuid.UUID, phoneKey 
 		ctx = context.WithValue(ctx, currentInboundMessageContextKey{}, *inboundMessage)
 	}
 	return ctx
-}
-
-func (a *Agent) runWritePipeline(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (AgentRunResult, error) {
-	plan, blockedReply, err := a.planWriteAction(ctx, orgID, phoneKey, messages, leadHint, inboundMessage)
-	if err != nil {
-		return AgentRunResult{}, err
-	}
-	if blockedReply != "" {
-		return AgentRunResult{Reply: blockedReply, GroundingFailure: "write_plan_blocked"}, nil
-	}
-	return a.runExecutionPipeline(ctx, a.defaultRuntime, agentExecutionRequest{orgID: orgID, phoneKey: phoneKey, messages: messages, leadHint: leadHint, inboundMessage: inboundMessage, directive: buildWriteExecutionDirective(plan)})
-}
-
-func (a *Agent) runLookupPipeline(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (AgentRunResult, error) {
-	request := agentExecutionRequest{orgID: orgID, phoneKey: phoneKey, messages: messages, leadHint: leadHint, inboundMessage: inboundMessage}
-	result, err := a.runExecutionPipeline(ctx, a.lookupRuntime, request)
-	if err != nil {
-		return AgentRunResult{}, err
-	}
-	for attempt := 1; attempt < maxLookupRepairAttempts && shouldRetryLookupRun(messages, leadHint, result); attempt++ {
-		repairDirective := buildLookupRepairDirective(messages, leadHint, result)
-		a.logInfo(ctx, "waagent: retrying lookup run", "attempt", attempt+1, "grounding_failure", result.GroundingFailure, "tool_response_count", result.ToolResponseCount)
-		request.directive = repairDirective
-		retryResult, retryErr := a.runExecutionPipeline(ctx, a.lookupRuntime, request)
-		if retryErr != nil {
-			return AgentRunResult{}, retryErr
-		}
-		result = preferLookupRetryResult(result, retryResult)
-	}
-	return result, nil
 }
 
 func (a *Agent) runExecutionPipeline(ctx context.Context, runtime agentRuntime, request agentExecutionRequest) (AgentRunResult, error) {
@@ -705,24 +553,8 @@ func (a *Agent) runRuntimeConversation(ctx context.Context, runtime agentRuntime
 	if err := a.seedSessionHistory(ctx, createResp.Session, historyMessages, request.leadHint); err != nil {
 		a.logWarn(ctx, "waagent: failed to seed session history; continuing without seeded history", "error", err)
 	}
-	if request.directive != "" {
-		if err := a.appendDirectiveHint(ctx, createResp.Session, request.directive); err != nil {
-			a.logWarn(ctx, "waagent: failed to append directive hint; continuing without directive", "error", err)
-		}
-	}
 	userMessage := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: latestMessage.Content}}}
 	return a.collectRunOutput(ctx, runtime, userID, sessionID, userMessage)
-}
-
-func (a *Agent) appendDirectiveHint(ctx context.Context, sess session.Session, directive string) error {
-	trimmed := strings.TrimSpace(directive)
-	if trimmed == "" {
-		return nil
-	}
-	event := session.NewEvent("directive-hint")
-	event.Author = "WhatsAppAgent"
-	event.LLMResponse = model.LLMResponse{Content: genai.NewContentFromText(trimmed, "model")}
-	return a.sessionService.AppendEvent(ctx, sess, event)
 }
 
 // seedSessionHistory populates the ADK session with prior conversation turns

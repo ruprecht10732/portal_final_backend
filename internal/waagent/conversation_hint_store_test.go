@@ -7,12 +7,16 @@ import (
 )
 
 const (
-	testHintOrgID    = "org-123"
-	testHintPhoneKey = "+31612345678"
-	testHintLeadID   = "lead-123"
-	testHintPhoneOne = "+31610000001"
-	testHintPhoneTwo = "+31610000002"
-	testHintPhoneTri = "+31610000003"
+	testHintOrgID        = "org-123"
+	testHintPhoneKey     = "+31612345678"
+	testHintLeadID       = "lead-123"
+	testHintPhoneOne     = "+31610000001"
+	testHintPhoneTwo     = "+31610000002"
+	testHintPhoneTri     = "+31610000003"
+	testHintUpdatedAtMsg = "expected updated timestamp %v, got %v"
+	testQuoteNumber      = "OFF-2026-0021"
+	testQuoteClientName  = "Joey Plomp"
+	testAppointmentID    = "appt-1"
 )
 
 func TestConversationLeadHintStoreReturnsStoredHint(t *testing.T) {
@@ -30,7 +34,7 @@ func TestConversationLeadHintStoreReturnsStoredHint(t *testing.T) {
 		t.Fatalf("unexpected hint payload: %#v", hint)
 	}
 	if !hint.UpdatedAt.Equal(now) {
-		t.Fatalf("expected updated timestamp %v, got %v", now, hint.UpdatedAt)
+		t.Fatalf(testHintUpdatedAtMsg, now, hint.UpdatedAt)
 	}
 }
 
@@ -110,8 +114,8 @@ func TestConversationLeadHintStoreRemembersRecentQuotesWithoutLeadID(t *testing.
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
 	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
 		QuoteID:     "quote-1",
-		QuoteNumber: "OFF-2026-0021",
-		ClientName:  "Joey Plomp",
+		QuoteNumber: testQuoteNumber,
+		ClientName:  testQuoteClientName,
 		LeadID:      "lead-joey",
 		Summary:     "Kogellagerscharnier RVS",
 	}})
@@ -123,14 +127,14 @@ func TestConversationLeadHintStoreRemembersRecentQuotesWithoutLeadID(t *testing.
 	if len(hint.RecentQuotes) != 1 {
 		t.Fatalf("expected 1 recent quote, got %#v", hint.RecentQuotes)
 	}
-	if hint.RecentQuotes[0].ClientName != "Joey Plomp" || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+	if hint.RecentQuotes[0].ClientName != testQuoteClientName || hint.RecentQuotes[0].QuoteNumber != testQuoteNumber {
 		t.Fatalf("unexpected recent quote payload %#v", hint.RecentQuotes[0])
 	}
 	if strings.TrimSpace(hint.LeadID) != "" {
 		t.Fatalf("expected lead id to remain empty, got %q", hint.LeadID)
 	}
 	if !hint.UpdatedAt.Equal(now) {
-		t.Fatalf("expected updated timestamp %v, got %v", now, hint.UpdatedAt)
+		t.Fatalf(testHintUpdatedAtMsg, now, hint.UpdatedAt)
 	}
 }
 
@@ -142,7 +146,7 @@ func TestConversationLeadHintStoreMergesRecentAppointmentsIntoExistingHint(t *te
 	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
 	now = now.Add(5 * time.Minute)
 	store.RememberAppointments(testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
-		AppointmentID: "appt-1",
+		AppointmentID: testAppointmentID,
 		Title:         "Bezoek",
 		StartTime:     "2026-03-16T09:00:00Z",
 		Location:      "Alkmaar",
@@ -155,11 +159,11 @@ func TestConversationLeadHintStoreMergesRecentAppointmentsIntoExistingHint(t *te
 	if hint.LeadID != testHintLeadID || hint.CustomerName != "Robin" {
 		t.Fatalf("expected base hint to remain intact, got %#v", hint)
 	}
-	if len(hint.RecentAppointments) != 1 || hint.RecentAppointments[0].AppointmentID != "appt-1" {
+	if len(hint.RecentAppointments) != 1 || hint.RecentAppointments[0].AppointmentID != testAppointmentID {
 		t.Fatalf("unexpected recent appointments %#v", hint.RecentAppointments)
 	}
 	if !hint.UpdatedAt.Equal(now) {
-		t.Fatalf("expected updated timestamp %v, got %v", now, hint.UpdatedAt)
+		t.Fatalf(testHintUpdatedAtMsg, now, hint.UpdatedAt)
 	}
 }
 
@@ -169,8 +173,8 @@ func TestConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(t *te
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
 	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
-		QuoteNumber: "OFF-2026-0021",
-		ClientName:  "Joey Plomp",
+		QuoteNumber: testQuoteNumber,
+		ClientName:  testQuoteClientName,
 	}})
 	now = now.Add(time.Minute)
 	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
@@ -182,7 +186,7 @@ func TestConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(t *te
 	if hint.LeadID != testHintLeadID || hint.CustomerName != "Robin" {
 		t.Fatalf("unexpected lead hint payload %#v", hint)
 	}
-	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != testQuoteNumber {
 		t.Fatalf("expected recent quote to be preserved, got %#v", hint.RecentQuotes)
 	}
 }
@@ -196,10 +200,10 @@ func TestHasConversationRoutingContextAllowsRecentListsWithoutLeadID(t *testing.
 	if hasConversationRoutingContext(&ConversationLeadHint{}) {
 		t.Fatal("expected empty hint not to count as routing context")
 	}
-	if !hasConversationRoutingContext(&ConversationLeadHint{RecentQuotes: []RecentQuoteHint{{QuoteNumber: "OFF-2026-0021"}}}) {
+	if !hasConversationRoutingContext(&ConversationLeadHint{RecentQuotes: []RecentQuoteHint{{QuoteNumber: testQuoteNumber}}}) {
 		t.Fatal("expected recent quotes to count as routing context")
 	}
-	if !hasConversationRoutingContext(&ConversationLeadHint{RecentAppointments: []RecentAppointmentHint{{AppointmentID: "appt-1"}}}) {
+	if !hasConversationRoutingContext(&ConversationLeadHint{RecentAppointments: []RecentAppointmentHint{{AppointmentID: testAppointmentID}}}) {
 		t.Fatal("expected recent appointments to count as routing context")
 	}
 }
