@@ -19,6 +19,8 @@ import (
 const directChatJID = "31612345678@s.whatsapp.net"
 const mediaExamplePath = "statics/media/example.jpeg"
 const errUnmarshalMetadataFmt = "unmarshal metadata: %v"
+const agentDeviceID = "DEVICE-AGENT"
+const messageAckEvent = "message.ack"
 
 type fakeWhatsAppInbox struct {
 	seenIDs       map[string]struct{}
@@ -176,7 +178,7 @@ func TestHandleWhatsAppWebhookAppliesReadReceipt(t *testing.T) {
 	orgID := uuid.New()
 
 	body := map[string]any{
-		"event":     "message.ack",
+		"event":     messageAckEvent,
 		"timestamp": "2026-03-09T11:00:00Z",
 		"payload": map[string]any{
 			"ids":          []string{"OUT-1", "OUT-2"},
@@ -205,7 +207,7 @@ func TestHandleWhatsAppWebhookNormalizesReadSelfReceipt(t *testing.T) {
 	orgID := uuid.New()
 
 	body := map[string]any{
-		"event":     "message.ack",
+		"event":     messageAckEvent,
 		"timestamp": "2026-03-10T09:00:00Z",
 		"payload": map[string]any{
 			"id":           "OUT-SELF-1",
@@ -422,7 +424,7 @@ func TestHandleWhatsAppWebhookAgentDeviceForwardsInboundMediaContext(t *testing.
 
 	body := map[string]any{
 		"event":     "message",
-		"device_id": "DEVICE-AGENT",
+		"device_id": agentDeviceID,
 		"timestamp": "2026-03-13T12:00:00Z",
 		"payload": map[string]any{
 			"id":         "MEDIA-AGENT-1",
@@ -482,7 +484,126 @@ func TestHandleWhatsAppWebhookAgentDeviceForwardsInboundMediaContext(t *testing.
 	}
 }
 
+func TestHandleWhatsAppWebhookAgentDeviceIgnoresOutgoingMessages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}
+	handler := NewHandler(nil, nil, nil, nil)
+	handler.agentHandler = agentHandler
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"device_id": agentDeviceID,
+		"timestamp": "2026-03-13T12:05:00Z",
+		"payload": map[string]any{
+			"id":         "AGENT-OUT-1",
+			"from":       directChatJID,
+			"chat_id":    directChatJID,
+			"from_name":  "Robin",
+			"is_from_me": true,
+			"body":       "Echo vanaf toestel",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequestWithOptions(t, handler, orgID, body, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for agent outgoing webhook, got %d", response.Code)
+	}
+	assertWebhookResponse(t, response.Body.Bytes(), "ignored", "outgoing message on agent device")
+	select {
+	case <-agentHandler.called:
+		t.Fatal("expected agent handler not to be called for outgoing agent-device message")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestHandleWhatsAppWebhookAgentDeviceIgnoresGroupChats(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}
+	handler := NewHandler(nil, nil, nil, nil)
+	handler.agentHandler = agentHandler
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"device_id": agentDeviceID,
+		"timestamp": "2026-03-13T12:10:00Z",
+		"payload": map[string]any{
+			"id":         "AGENT-GROUP-1",
+			"from":       "12345-67890@g.us",
+			"chat_id":    "12345-67890@g.us",
+			"from_name":  "Groep",
+			"is_from_me": false,
+			"body":       "Hallo groep",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequestWithOptions(t, handler, orgID, body, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for agent group-chat webhook, got %d", response.Code)
+	}
+	assertWebhookResponse(t, response.Body.Bytes(), "ignored", whatsAppIgnoredNonDirectChat)
+	select {
+	case <-agentHandler.called:
+		t.Fatal("expected agent handler not to be called for non-direct chat")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestHandleWhatsAppWebhookAgentDeviceRejectsInvalidMessagePayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(nil, nil, nil, nil)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"device_id": agentDeviceID,
+		"timestamp": "2026-03-13T12:15:00Z",
+		"payload":   "not-an-object",
+	}
+
+	response := executeWhatsAppWebhookRequestWithOptions(t, handler, orgID, body, true)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid agent payload, got %d", response.Code)
+	}
+	assertWebhookError(t, response.Body.Bytes(), whatsAppInvalidMessagePayload)
+}
+
+func TestHandleWhatsAppWebhookAgentDeviceIgnoresNonMessageEvents(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}
+	handler := NewHandler(nil, nil, nil, nil)
+	handler.agentHandler = agentHandler
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     messageAckEvent,
+		"device_id": agentDeviceID,
+		"timestamp": "2026-03-13T12:20:00Z",
+		"payload": map[string]any{
+			"id":           "ACK-1",
+			"receipt_type": "read",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequestWithOptions(t, handler, orgID, body, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for non-message agent event, got %d", response.Code)
+	}
+	assertWebhookResponse(t, response.Body.Bytes(), "ignored", "agent device only handles messages")
+	select {
+	case <-agentHandler.called:
+		t.Fatal("expected agent handler not to be called for non-message agent event")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func executeWhatsAppWebhookRequest(t *testing.T, handler *Handler, orgID uuid.UUID, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	return executeWhatsAppWebhookRequestWithOptions(t, handler, orgID, body, false)
+}
+
+func executeWhatsAppWebhookRequestWithOptions(t *testing.T, handler *Handler, orgID uuid.UUID, body map[string]any, isAgentDevice bool) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -494,6 +615,9 @@ func executeWhatsAppWebhookRequest(t *testing.T, handler *Handler, orgID uuid.UU
 	req.Header.Set("Content-Type", "application/json")
 	ctx.Request = req
 	ctx.Set("webhookOrgID", orgID)
+	if isAgentDevice {
+		ctx.Set("isAgentDevice", true)
+	}
 	handler.HandleWhatsAppWebhook(ctx)
 	return recorder
 }
@@ -506,5 +630,30 @@ func assertWebhookStatus(t *testing.T, body []byte, expected string) {
 	}
 	if response.Status != expected {
 		t.Fatalf("expected response status %q, got %q", expected, response.Status)
+	}
+}
+
+func assertWebhookResponse(t *testing.T, body []byte, expectedStatus, expectedReason string) {
+	t.Helper()
+	var response WhatsAppWebhookResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.Status != expectedStatus {
+		t.Fatalf("expected response status %q, got %q", expectedStatus, response.Status)
+	}
+	if response.Reason != expectedReason {
+		t.Fatalf("expected response reason %q, got %q", expectedReason, response.Reason)
+	}
+}
+
+func assertWebhookError(t *testing.T, body []byte, expectedMessage string) {
+	t.Helper()
+	var response map[string]any
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("unmarshal error response: %v", err)
+	}
+	if response["error"] != expectedMessage {
+		t.Fatalf("expected error %q, got %#v", expectedMessage, response["error"])
 	}
 }

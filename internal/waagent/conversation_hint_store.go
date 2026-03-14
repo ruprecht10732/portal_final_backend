@@ -7,7 +7,12 @@ import (
 	"time"
 )
 
-const conversationLeadHintTTL = 24 * time.Hour
+const (
+	conversationLeadHintTTL        = 24 * time.Hour
+	conversationLeadHintMaxEntries = 1000
+)
+
+type conversationLeadHintClock func() time.Time
 
 type ConversationLeadHint struct {
 	LeadID           string
@@ -18,12 +23,33 @@ type ConversationLeadHint struct {
 }
 
 type ConversationLeadHintStore struct {
-	mu    sync.RWMutex
-	items map[string]ConversationLeadHint
+	mu         sync.RWMutex
+	items      map[string]ConversationLeadHint
+	now        conversationLeadHintClock
+	ttl        time.Duration
+	maxEntries int
 }
 
 func NewConversationLeadHintStore() *ConversationLeadHintStore {
-	return &ConversationLeadHintStore{items: make(map[string]ConversationLeadHint)}
+	return newConversationLeadHintStore(time.Now, conversationLeadHintTTL, conversationLeadHintMaxEntries)
+}
+
+func newConversationLeadHintStore(now conversationLeadHintClock, ttl time.Duration, maxEntries int) *ConversationLeadHintStore {
+	if now == nil {
+		now = time.Now
+	}
+	if ttl <= 0 {
+		ttl = conversationLeadHintTTL
+	}
+	if maxEntries <= 0 {
+		maxEntries = conversationLeadHintMaxEntries
+	}
+	return &ConversationLeadHintStore{
+		items:      make(map[string]ConversationLeadHint),
+		now:        now,
+		ttl:        ttl,
+		maxEntries: maxEntries,
+	}
 }
 
 func (s *ConversationLeadHintStore) Get(orgID, phoneKey string) (*ConversationLeadHint, bool) {
@@ -40,7 +66,7 @@ func (s *ConversationLeadHintStore) Get(orgID, phoneKey string) (*ConversationLe
 	if !ok {
 		return nil, false
 	}
-	if time.Since(hint.UpdatedAt) > conversationLeadHintTTL {
+	if s.isExpired(hint) {
 		s.mu.Lock()
 		delete(s.items, key)
 		s.mu.Unlock()
@@ -58,10 +84,51 @@ func (s *ConversationLeadHintStore) Set(orgID, phoneKey string, hint Conversatio
 	if key == "" || strings.TrimSpace(hint.LeadID) == "" {
 		return
 	}
-	hint.UpdatedAt = time.Now().UTC()
+	hint.UpdatedAt = s.currentTime()
 	s.mu.Lock()
+	s.pruneExpiredLocked()
 	s.items[key] = hint
+	s.evictOverflowLocked()
 	s.mu.Unlock()
+}
+
+func (s *ConversationLeadHintStore) currentTime() time.Time {
+	if s == nil || s.now == nil {
+		return time.Now().UTC()
+	}
+	return s.now().UTC()
+}
+
+func (s *ConversationLeadHintStore) isExpired(hint ConversationLeadHint) bool {
+	if s == nil {
+		return false
+	}
+	return s.currentTime().Sub(hint.UpdatedAt) > s.ttl
+}
+
+func (s *ConversationLeadHintStore) pruneExpiredLocked() {
+	for key, hint := range s.items {
+		if s.isExpired(hint) {
+			delete(s.items, key)
+		}
+	}
+}
+
+func (s *ConversationLeadHintStore) evictOverflowLocked() {
+	for len(s.items) > s.maxEntries {
+		oldestKey := ""
+		var oldestAt time.Time
+		for key, hint := range s.items {
+			if oldestKey == "" || hint.UpdatedAt.Before(oldestAt) {
+				oldestKey = key
+				oldestAt = hint.UpdatedAt
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(s.items, oldestKey)
+	}
 }
 
 func conversationLeadHintKey(orgID, phoneKey string) string {

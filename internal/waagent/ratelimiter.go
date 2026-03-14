@@ -3,6 +3,7 @@ package waagent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"portal_final_backend/platform/logger"
@@ -26,11 +27,18 @@ type RateLimiter struct {
 
 // NewRateLimiter creates a new Redis-backed rate limiter.
 func NewRateLimiter(client *redis.Client, log *logger.Logger) *RateLimiter {
+	if client == nil && log != nil {
+		log.Warn("waagent rate limiter running without redis; dedupe and throttling are disabled")
+	}
 	return &RateLimiter{redis: client, log: log}
 }
 
 // Allow returns true if the phone number is within the rate limit (30 calls per 5 minutes).
 func (r *RateLimiter) Allow(ctx context.Context, phone string) (bool, error) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return true, nil
+	}
 	if r.redis == nil {
 		return true, nil
 	}
@@ -47,7 +55,9 @@ func (r *RateLimiter) Allow(ctx context.Context, phone string) (bool, error) {
 
 	count := incrCmd.Val()
 	if count > rateLimitMax {
-		r.log.Warn("waagent: rate limit exceeded", "phone", phone, "count", count)
+		if r.log != nil {
+			r.log.Warn("waagent: rate limit exceeded", "phone", phone, "count", count)
+		}
 		return false, nil
 	}
 
@@ -56,14 +66,14 @@ func (r *RateLimiter) Allow(ctx context.Context, phone string) (bool, error) {
 
 // ClaimMessage returns true when this message ID has not been seen recently.
 func (r *RateLimiter) ClaimMessage(ctx context.Context, messageID string) (bool, error) {
+	messageID = strings.TrimSpace(messageID)
 	if r.redis == nil {
 		return true, nil
 	}
-	trimmed := messageID
-	if trimmed == "" {
+	if messageID == "" {
 		return true, nil
 	}
-	created, err := r.redis.SetNX(ctx, dedupePrefix+trimmed, "1", dedupeTTL).Result()
+	created, err := r.redis.SetNX(ctx, dedupePrefix+messageID, "1", dedupeTTL).Result()
 	if err != nil {
 		return true, fmt.Errorf("waagent: dedupe setnx error: %w", err)
 	}

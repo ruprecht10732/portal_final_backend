@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -19,6 +18,7 @@ import (
 	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/logger"
 )
 
 const (
@@ -46,16 +46,18 @@ type Agent struct {
 	adkAgent       agent.Agent
 	runner         *runner.Runner
 	sessionService session.Service
+	log            *logger.Logger
 }
 
 // NewAgent creates a new WhatsApp agent with function-calling tools.
-func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error) {
+func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler, log *logger.Logger) (*Agent, error) {
 	workspace, err := orchestration.LoadAgentWorkspace(agentWorkspaceName)
 	if err != nil {
 		return nil, fmt.Errorf("waagent: failed to load workspace: %w", err)
 	}
-	log.Printf("waagent: workspace loaded name=%s instruction_len=%d allowed_tools=%v",
-		workspace.Name, len(workspace.Instruction), workspace.AllowedTools)
+	if log != nil {
+		log.Info("waagent: workspace loaded", "name", workspace.Name, "instruction_length", len(workspace.Instruction), "allowed_tools", workspace.AllowedTools)
+	}
 
 	kimi := moonshot.NewModel(modelCfg)
 	tools, err := buildWhatsAppTools(toolHandler)
@@ -88,6 +90,7 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler) (*Agent, error
 		adkAgent:       adkAgent,
 		runner:         r,
 		sessionService: sessionService,
+		log:            log,
 	}, nil
 }
 
@@ -419,7 +422,7 @@ func currentInboundMessageFromToolContext(ctx tool.Context) (CurrentInboundMessa
 
 // Run executes the agent with conversation history and returns the text reply.
 func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (string, error) {
-	log.Printf("waagent: Run org=%s phone=%s messages=%d hasLeadHint=%v", orgID, phoneKey, len(messages), leadHint != nil)
+	a.logInfo(ctx, "waagent: run started", "organization_id", orgID.String(), "phone", phoneKey, "messages", len(messages), "has_lead_hint", leadHint != nil)
 	// Inject org_id into context for tool handlers (never in the LLM prompt).
 	ctx = context.WithValue(ctx, orgIDContextKey{}, orgID)
 	ctx = context.WithValue(ctx, phoneKeyContextKey{}, strings.TrimSpace(phoneKey))
@@ -456,7 +459,7 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 	latestMessage := messages[len(messages)-1]
 
 	if err := a.seedSessionHistory(ctx, createResp.Session, historyMessages, leadHint); err != nil {
-		log.Printf("waagent: failed to seed session history, falling back: %v", err)
+		a.logWarn(ctx, "waagent: failed to seed session history; continuing without seeded history", "error", err)
 	}
 
 	userMessage := &genai.Content{
@@ -468,11 +471,12 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 }
 
 // seedSessionHistory populates the ADK session with prior conversation turns
-// so the LLM receives proper multi-turn context. Also injects lead context
-// as a synthetic assistant message if a lead hint is available.
+// so the LLM receives proper multi-turn context. It also injects a lead-routing
+// hint when a lead was previously resolved for the conversation.
 func (a *Agent) seedSessionHistory(ctx context.Context, sess session.Session, history []ConversationMessage, leadHint *ConversationLeadHint) error {
-	// If there's a lead hint, inject it as a system-context event at the start
-	// so the model knows which lead the conversation is about.
+	// If there's a lead hint, inject it before history so the model knows which
+	// customer the conversation most likely refers to. The hint is deliberately
+	// phrased as routing context only and must not be treated as verified output.
 	if leadHint != nil && strings.TrimSpace(leadHint.LeadID) != "" {
 		hintText := a.buildLeadContextText(leadHint)
 		hintEvent := session.NewEvent("history-hint")
@@ -505,20 +509,27 @@ func (a *Agent) seedSessionHistory(ctx context.Context, sess session.Session, hi
 	return nil
 }
 
-// buildLeadContextText produces a rich context string from the lead hint.
-// When preloaded details are available, the model gets address, contact info,
-// service type, and status without needing an extra tool call.
+// buildLeadContextText produces a routing hint from the lead context.
+// It intentionally avoids exposing concrete customer details as verified facts
+// so the model still has to call tools for customer-facing specifics.
 func (a *Agent) buildLeadContextText(hint *ConversationLeadHint) string {
-	if hint.PreloadedDetails != nil {
-		return formatPreloadedDetails(hint.PreloadedDetails)
+	var b strings.Builder
+	b.WriteString("Gesprekcontext: gebruik deze leadhint alleen om de juiste klant te herkennen. ")
+	if hint.PreloadedDetails != nil && strings.TrimSpace(hint.CustomerName) == "" {
+		hint.CustomerName = strings.TrimSpace(hint.PreloadedDetails.CustomerName)
 	}
-	// Fallback: minimal hint
-	text := "Gesprekcontext: laatst besproken klant"
 	if strings.TrimSpace(hint.CustomerName) != "" {
-		text += " " + hint.CustomerName
+		b.WriteString("Laatst besproken klant: ")
+		b.WriteString(hint.CustomerName)
+		b.WriteString(". ")
+	} else {
+		b.WriteString("Er is een eerder opgeloste klant in dit gesprek. ")
 	}
-	text += ". Gebruik GetLeadDetails als je meer gegevens nodig hebt over deze klant."
-	return text
+	if strings.TrimSpace(hint.LeadServiceID) != "" {
+		b.WriteString("Er is ook al een dienstcontext gekoppeld aan dit gesprek. ")
+	}
+	b.WriteString("Beantwoord geen concrete details zoals adres, telefoon, e-mail, status, afspraken of offertes op basis van deze hint alleen. Verifieer die eerst met GetLeadDetails, GetQuotes of GetAppointments.")
+	return b.String()
 }
 
 func formatPreloadedDetails(d *LeadDetailsResult) string {
@@ -588,12 +599,31 @@ func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, 
 		}
 		iterations++
 		if iterations >= maxToolIterations {
-			log.Printf("waagent: max iterations reached (%d), returning best-effort reply", maxToolIterations)
+			a.logWarn(ctx, "waagent: max iterations reached; returning best-effort reply", "max_iterations", maxToolIterations)
 			break
 		}
 	}
 
 	return strings.TrimSpace(lastFinalText), nil
+}
+
+func (a *Agent) loggerWithContext(ctx context.Context) *logger.Logger {
+	if a == nil || a.log == nil {
+		return nil
+	}
+	return a.log.WithContext(ctx)
+}
+
+func (a *Agent) logInfo(ctx context.Context, message string, args ...any) {
+	if lg := a.loggerWithContext(ctx); lg != nil {
+		lg.Info(message, args...)
+	}
+}
+
+func (a *Agent) logWarn(ctx context.Context, message string, args ...any) {
+	if lg := a.loggerWithContext(ctx); lg != nil {
+		lg.Warn(message, args...)
+	}
 }
 
 func extractContentText(content *genai.Content) string {

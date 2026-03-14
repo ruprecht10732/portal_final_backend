@@ -30,6 +30,7 @@ func New(app *apphttp.App) *gin.Engine {
 
 	// Security headers
 	engine.Use(httpkit.SecurityHeaders())
+	engine.Use(httpkit.RequestCorrelation())
 
 	// Request logging
 	engine.Use(httpkit.RequestLogger(log))

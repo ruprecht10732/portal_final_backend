@@ -2,7 +2,6 @@ package waagent
 
 import (
 	"context"
-	"log"
 	"strings"
 
 	waagentdb "portal_final_backend/internal/waagent/db"
@@ -14,8 +13,8 @@ import (
 
 // Sender sends WhatsApp replies via the global agent device and persists them to the operator inbox.
 type Sender struct {
-	client      *whatsapp.Client
-	queries     waagentdb.Querier
+	client      WhatsAppTransport
+	queries     AgentConfigReader
 	inboxWriter InboxWriter
 	log         *logger.Logger
 }
@@ -29,7 +28,7 @@ func (s *Sender) SendReply(ctx context.Context, orgID uuid.UUID, phone, text str
 	// Resolve device ID from global agent config
 	cfg, err := s.getAgentConfig(ctx)
 	if err != nil {
-		log.Printf("waagent: no agent device configured: %v", err)
+		s.logWarn(ctx, "waagent: no agent device configured", "error", err)
 		return err
 	}
 
@@ -46,7 +45,7 @@ func (s *Sender) SendReply(ctx context.Context, orgID uuid.UUID, phone, text str
 		}
 
 		if persistErr := s.inboxWriter.PersistOutgoingWhatsAppMessage(ctx, orgID, nil, phone, text, msgID); persistErr != nil {
-			log.Printf("waagent: inbox persist error phone=%s org=%s: %v", phone, orgID, persistErr)
+			s.logWarn(ctx, "waagent: inbox persist error", "phone", phone, "organization_id", orgID.String(), "error", persistErr)
 		}
 	}
 
@@ -62,7 +61,7 @@ func (s *Sender) SendChatPresence(ctx context.Context, phone string, action what
 	}
 	cfg, err := s.getAgentConfig(ctx)
 	if err != nil {
-		log.Printf("waagent: no agent device configured for chat presence: %v", err)
+		s.logWarn(ctx, "waagent: no agent device configured for chat presence", "phone", phone, "error", err)
 		return err
 	}
 	return s.client.SendChatPresence(ctx, cfg.DeviceID, phone, string(action))
@@ -77,7 +76,7 @@ func (s *Sender) SendFileReply(ctx context.Context, orgID uuid.UUID, phone, capt
 	}
 	cfg, err := s.getAgentConfig(ctx)
 	if err != nil {
-		log.Printf("waagent: no agent device configured for file send: %v", err)
+		s.logWarn(ctx, "waagent: no agent device configured for file send", "phone", phone, "error", err)
 		return err
 	}
 	result, err := s.client.SendFile(ctx, cfg.DeviceID, whatsapp.SendFileInput{
@@ -101,7 +100,7 @@ func (s *Sender) SendFileReply(ctx context.Context, orgID uuid.UUID, phone, capt
 			body = fileName
 		}
 		if persistErr := s.inboxWriter.PersistOutgoingWhatsAppMessage(ctx, orgID, nil, phone, body, msgID); persistErr != nil {
-			log.Printf("waagent: inbox persist error for file phone=%s org=%s: %v", phone, orgID, persistErr)
+			s.logWarn(ctx, "waagent: inbox persist error for file", "phone", phone, "organization_id", orgID.String(), "error", persistErr)
 		}
 	}
 	return nil
@@ -109,4 +108,17 @@ func (s *Sender) SendFileReply(ctx context.Context, orgID uuid.UUID, phone, capt
 
 func (s *Sender) getAgentConfig(ctx context.Context) (waagentdb.RacWhatsappAgentConfig, error) {
 	return s.queries.GetAgentConfig(ctx)
+}
+
+func (s *Sender) loggerWithContext(ctx context.Context) *logger.Logger {
+	if s == nil || s.log == nil {
+		return nil
+	}
+	return s.log.WithContext(ctx)
+}
+
+func (s *Sender) logWarn(ctx context.Context, message string, args ...any) {
+	if lg := s.loggerWithContext(ctx); lg != nil {
+		lg.Warn(message, args...)
+	}
 }

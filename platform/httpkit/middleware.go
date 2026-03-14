@@ -5,6 +5,7 @@ package httpkit
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,6 +19,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 )
+
+const headerRequestID = "X-Request-ID"
+const headerTraceID = "X-Trace-ID"
 
 const (
 	// ContextUserIDKey is the gin context key for the authenticated user ID.
@@ -43,7 +47,34 @@ func RequestLogger(log *logger.Logger) gin.HandlerFunc {
 		status := c.Writer.Status()
 		clientIP := c.ClientIP()
 
-		log.HTTPRequest(c.Request.Method, path, status, float64(latency.Milliseconds()), clientIP)
+		log.WithContext(c.Request.Context()).Info("http_request",
+			slog.String("method", c.Request.Method),
+			slog.String("path", path),
+			slog.Int("status", status),
+			slog.Float64("latency_ms", float64(latency.Milliseconds())),
+			slog.String("client_ip", clientIP),
+		)
+	}
+}
+
+// RequestCorrelation injects request and trace identifiers into the request context.
+func RequestCorrelation() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestID := strings.TrimSpace(c.GetHeader(headerRequestID))
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+		traceID := strings.TrimSpace(c.GetHeader(headerTraceID))
+		if traceID == "" {
+			traceID = requestID
+		}
+
+		ctx := context.WithValue(c.Request.Context(), logger.RequestIDKey, requestID)
+		ctx = context.WithValue(ctx, logger.TraceIDKey, traceID)
+		c.Request = c.Request.WithContext(ctx)
+		c.Header(headerRequestID, requestID)
+		c.Header(headerTraceID, traceID)
+		c.Next()
 	}
 }
 

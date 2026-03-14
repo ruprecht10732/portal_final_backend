@@ -32,6 +32,8 @@ func TestWAAgentVoiceTranscriptionTaskRoundTrip(t *testing.T) {
 		OrganizationID:    "org-1",
 		PhoneNumber:       "+31612345678",
 		ExternalMessageID: "msg-42",
+		RequestID:         "req-1",
+		TraceID:           "trace-1",
 	}
 	task, err := NewWAAgentVoiceTranscriptionTask(payload)
 	if err != nil {

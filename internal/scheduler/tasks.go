@@ -125,6 +125,8 @@ type WAAgentVoiceTranscriptionPayload struct {
 	OrganizationID    string `json:"organizationId"`
 	PhoneNumber       string `json:"phoneNumber"`
 	ExternalMessageID string `json:"externalMessageId"`
+	RequestID         string `json:"requestId,omitempty"`
+	TraceID           string `json:"traceId,omitempty"`
 }
 
 type IMAPSyncAccountPayload struct {

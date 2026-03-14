@@ -32,12 +32,17 @@ type GetAppointmentsOutput struct {
 	Count        int                  `json:"count"`
 }
 
+type LeadHintStore interface {
+	Get(orgID, phoneKey string) (*ConversationLeadHint, bool)
+	Set(orgID, phoneKey string, hint ConversationLeadHint)
+}
+
 // ToolHandler implements the function-calling tool handlers.
 type ToolHandler struct {
 	quotesReader                QuotesReader
 	appointmentsReader          AppointmentsReader
 	leadSearchReader            LeadSearchReader
-	leadHintStore               *ConversationLeadHintStore
+	leadHintStore               LeadHintStore
 	leadDetailsReader           LeadDetailsReader
 	navigationLinkReader        NavigationLinkReader
 	catalogSearchReader         CatalogSearchReader

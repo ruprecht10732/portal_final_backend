@@ -2,7 +2,9 @@ package waagent
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	apphttp "portal_final_backend/internal/http"
@@ -148,6 +150,17 @@ type AudioTranscriptionScheduler interface {
 	EnqueueWAAgentVoiceTranscription(ctx context.Context, payload scheduler.WAAgentVoiceTranscriptionPayload) error
 }
 
+type WhatsAppTransport interface {
+	SendMessage(ctx context.Context, deviceID string, phoneNumber string, message string) (whatsapp.SendResult, error)
+	SendChatPresence(ctx context.Context, deviceID string, phoneNumber string, action string) error
+	SendFile(ctx context.Context, deviceID string, input whatsapp.SendFileInput) (whatsapp.SendResult, error)
+	DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (whatsapp.DownloadMediaFileResult, error)
+}
+
+type AgentConfigReader interface {
+	GetAgentConfig(ctx context.Context) (waagentdb.RacWhatsappAgentConfig, error)
+}
+
 // ModuleConfig holds waagent configuration.
 type ModuleConfig struct {
 	MoonshotAPIKey string
@@ -186,11 +199,75 @@ type Module struct {
 	phoneHandler  *PhoneHandler
 }
 
+func appendMissingDependency(missing []string, condition bool, name string) []string {
+	if condition {
+		return append(missing, name)
+	}
+	return missing
+}
+
+func collectCoreDependencyErrors(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) []string {
+	missing := make([]string, 0, 16)
+	missing = appendMissingDependency(missing, pool == nil, "database pool")
+	missing = appendMissingDependency(missing, deps.Logger == nil, "logger")
+	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.MoonshotAPIKey) == "", "moonshot api key")
+	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.LLMModel) == "", "llm model")
+	missing = appendMissingDependency(missing, deps.WhatsAppClient == nil, "whatsapp client")
+	missing = appendMissingDependency(missing, deps.QuotesReader == nil, "quotes reader")
+	missing = appendMissingDependency(missing, deps.AppointmentsReader == nil, "appointments reader")
+	missing = appendMissingDependency(missing, deps.LeadSearchReader == nil, "lead search reader")
+	missing = appendMissingDependency(missing, deps.LeadDetailsReader == nil, "lead details reader")
+	missing = appendMissingDependency(missing, deps.NavigationLinkReader == nil, "navigation link reader")
+	missing = appendMissingDependency(missing, deps.CatalogSearchReader == nil, "catalog search reader")
+	missing = appendMissingDependency(missing, deps.LeadMutationWriter == nil, "lead mutation writer")
+	missing = appendMissingDependency(missing, deps.QuoteWorkflowWriter == nil, "quote workflow writer")
+	missing = appendMissingDependency(missing, deps.CurrentInboundPhotoAttacher == nil, "current inbound photo attacher")
+	missing = appendMissingDependency(missing, deps.InboxMessageSync == nil, "inbox message sync")
+	missing = appendMissingDependency(missing, deps.VisitSlotReader == nil, "visit slot reader")
+	missing = appendMissingDependency(missing, deps.VisitMutationWriter == nil, "visit mutation writer")
+	missing = appendMissingDependency(missing, deps.RedisClient == nil, "redis client")
+	missing = appendMissingDependency(missing, deps.InboxWriter == nil, "inbox writer")
+	return missing
+}
+
+func collectAudioDependencyErrors(deps ModuleDependencies) []string {
+	hasAudioConfig := deps.Storage != nil || strings.TrimSpace(deps.AttachmentBucket) != "" || deps.TranscriptionScheduler != nil || deps.AudioTranscriber != nil
+	if !hasAudioConfig {
+		return nil
+	}
+	missing := make([]string, 0, 4)
+	missing = appendMissingDependency(missing, deps.Storage == nil, "storage")
+	missing = appendMissingDependency(missing, strings.TrimSpace(deps.AttachmentBucket) == "", "attachment bucket")
+	missing = appendMissingDependency(missing, deps.TranscriptionScheduler == nil, "transcription scheduler")
+	missing = appendMissingDependency(missing, deps.AudioTranscriber == nil, "audio transcriber")
+	if len(missing) == 0 {
+		return nil
+	}
+	return missing
+}
+
+func validateModuleDependencies(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) error {
+	missing := collectCoreDependencyErrors(pool, cfg, deps)
+	if len(missing) > 0 {
+		return fmt.Errorf("waagent: invalid module configuration: missing %s", strings.Join(missing, ", "))
+	}
+
+	audioMissing := collectAudioDependencyErrors(deps)
+	if len(audioMissing) > 0 {
+		return fmt.Errorf("waagent: invalid audio transcription configuration: missing %s", strings.Join(audioMissing, ", "))
+	}
+
+	return nil
+}
+
 // NewModule creates and initialises the waagent module.
 func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*Module, error) {
+	if err := validateModuleDependencies(pool, cfg, deps); err != nil {
+		return nil, err
+	}
 
 	queries := waagentdb.New(pool)
-	hintStore := NewConversationLeadHintStore()
+	hintStore := NewRedisConversationLeadHintStore(deps.RedisClient, deps.Logger)
 	sender := &Sender{
 		client:      deps.WhatsAppClient,
 		queries:     queries,
@@ -218,7 +295,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		APIKey:          cfg.MoonshotAPIKey,
 		Model:           cfg.LLMModel,
 		DisableThinking: true,
-	}, toolHandler)
+	}, toolHandler, deps.Logger)
 	if err != nil {
 		return nil, err
 	}
