@@ -3,13 +3,9 @@ FROM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache cmake make g++ git linux-headers
 
-# Build whisper.cpp static libraries (pinned to Go module commit)
-RUN git init /tmp/whisper.cpp \
-    && cd /tmp/whisper.cpp \
-    && git remote add origin https://github.com/ggerganov/whisper.cpp.git \
-    && git fetch --depth 1 origin 30c5194c9691 \
-    && git checkout FETCH_HEAD \
-    && mkdir build && cd build \
+# Build whisper.cpp static libraries
+RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp \
+    && cd /tmp/whisper.cpp && mkdir build && cd build \
     && cmake .. -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF \
     && make -j$(nproc) \
     && mkdir -p /usr/local/lib/whisper /usr/local/include/whisper \
