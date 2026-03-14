@@ -170,12 +170,21 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	}
 
 	// Reverse to chronological order (DB returns DESC)
-	messages := make([]ConversationMessage, len(recent))
-	for i, msg := range recent {
-		messages[len(recent)-1-i] = ConversationMessage{
+	messages := make([]ConversationMessage, 0, len(recent))
+	for i := len(recent) - 1; i >= 0; i-- {
+		msg := recent[i]
+		// Strip failed voice-transcription noise so the LLM does not mimic
+		// the hardcoded fallback pattern from earlier attempts.
+		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == msgVoiceUnavailable {
+			continue
+		}
+		if msg.Role == "user" && strings.TrimSpace(msg.Content) == voiceMessagePlaceholder {
+			continue
+		}
+		messages = append(messages, ConversationMessage{
 			Role:    msg.Role,
 			Content: msg.Content,
-		}
+		})
 	}
 
 	if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresenceComposing); err != nil {
