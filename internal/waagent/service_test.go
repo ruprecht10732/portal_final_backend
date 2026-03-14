@@ -21,15 +21,28 @@ const testAgentPhone = "+31612345678"
 
 const (
 	testExpectedAssistantPersistCountMsg = "expected one assistant message to be persisted, got %d"
+	testExpectedPersistedConversationMsg = "expected inbound and assistant message to be persisted, got %d entries"
 	testQuoteRequestMessage              = "Heeft u mijn offerte?"
+	testLookupModeReply                  = "lookup-mode-reply"
+	testDefaultModeReply                 = "default-mode-reply"
+	testLookupCustomerName               = "Joey Plomp"
+	testLeadLookupQuestion               = "Zoek adres van Joey plomp"
+	testExpectedLookupModeCallMsg        = "expected lookup-mode agent run, got %d calls"
+	testExpectedLookupModeMsg            = "expected lookup mode, got %q"
+	testUnexpectedLookupModeReplyMsg     = "unexpected lookup mode reply %q"
 )
 
 type serviceTestLeadDetailsReader struct {
 	calls int
+	lead  *LeadDetailsResult
 }
 
 func (r *serviceTestLeadDetailsReader) GetLeadDetails(context.Context, uuid.UUID, string) (*LeadDetailsResult, error) {
 	r.calls++
+	if r.lead != nil {
+		copyLead := *r.lead
+		return &copyLead, nil
+	}
 	return &LeadDetailsResult{LeadID: testHintLeadID, CustomerName: "Robin"}, nil
 }
 
@@ -42,6 +55,7 @@ type serviceTestQuerier struct {
 }
 
 type serviceTestAgent struct {
+	calls            int
 	result           AgentRunResult
 	err              error
 	lastMessages     []ConversationMessage
@@ -49,11 +63,14 @@ type serviceTestAgent struct {
 	lastInbound      *CurrentInboundMessage
 	lastPhoneKey     string
 	lastOrganization uuid.UUID
+	lastMode         agentRunMode
 }
 
-func (a *serviceTestAgent) Run(_ context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (AgentRunResult, error) {
+func (a *serviceTestAgent) Run(_ context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage, mode agentRunMode) (AgentRunResult, error) {
+	a.calls++
 	a.lastOrganization = orgID
 	a.lastPhoneKey = phoneKey
+	a.lastMode = mode
 	a.lastMessages = append([]ConversationMessage(nil), messages...)
 	if leadHint != nil {
 		copyHint := *leadHint
@@ -263,7 +280,7 @@ func TestRunAgentReplyPersistsStatusFallbackWhenGroundingFails(t *testing.T) {
 	}
 	inbound := &CurrentInboundMessage{ExternalMessageID: "msg-status", PhoneNumber: testAgentPhone, Body: "Wat is mijn status?"}
 
-	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound)
+	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound, agentRunModeDefault)
 
 	if len(queries.inserted) != 1 {
 		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
@@ -283,6 +300,9 @@ func TestRunAgentReplyPersistsStatusFallbackWhenGroundingFails(t *testing.T) {
 	if agent.result.GroundingFailure != "lead_details_without_lead_tool" {
 		t.Fatalf("expected grounding failure to remain visible, got %q", agent.result.GroundingFailure)
 	}
+	if agent.lastMode != agentRunModeDefault {
+		t.Fatalf("expected default mode, got %q", agent.lastMode)
+	}
 }
 
 func TestRunAgentReplyPersistsQuoteReplyFromValidatedAgentResult(t *testing.T) {
@@ -300,7 +320,7 @@ func TestRunAgentReplyPersistsQuoteReplyFromValidatedAgentResult(t *testing.T) {
 	}
 	inbound := &CurrentInboundMessage{ExternalMessageID: "msg-quote", PhoneNumber: testAgentPhone, Body: testQuoteRequestMessage}
 
-	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound)
+	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound, agentRunModeDefault)
 
 	if transport.lastSendMessagePhone == "" {
 		t.Fatal("expected validated quote reply to be sent")
@@ -331,7 +351,7 @@ func TestRunAgentReplyPersistsAppointmentFallbackWhenGroundingFails(t *testing.T
 	}
 	inbound := &CurrentInboundMessage{ExternalMessageID: "msg-visit", PhoneNumber: testAgentPhone, Body: "Wanneer is mijn afspraak?"}
 
-	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound)
+	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound, agentRunModeDefault)
 
 	if transport.lastSendMessagePhone == "" {
 		t.Fatal("expected appointment fallback to be sent")
@@ -347,5 +367,128 @@ func TestRunAgentReplyPersistsAppointmentFallbackWhenGroundingFails(t *testing.T
 	}
 	if agent.lastOrganization != orgID {
 		t.Fatalf("expected orgID %s, got %s", orgID, agent.lastOrganization)
+	}
+}
+
+func TestHandleAIMessageRoutesSimpleLeadLookupToLookupMode(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testLookupModeReply}}
+	service := &Service{
+		queries:       queries,
+		agent:         agent,
+		sender:        newTestSender(transport, serviceTestConfigReader{}, nil),
+		leadHintStore: NewConversationLeadHintStore(),
+		log:           logger.New("development"),
+	}
+
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testLeadLookupQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-lead", PhoneNumber: testAgentPhone, Body: testLeadLookupQuestion})
+
+	if agent.calls != 1 {
+		t.Fatalf(testExpectedLookupModeCallMsg, agent.calls)
+	}
+	if agent.lastMode != agentRunModeLookup {
+		t.Fatalf(testExpectedLookupModeMsg, agent.lastMode)
+	}
+	if len(queries.inserted) != 2 {
+		t.Fatalf(testExpectedPersistedConversationMsg, len(queries.inserted))
+	}
+	if queries.inserted[1].Content != testLookupModeReply {
+		t.Fatalf(testUnexpectedLookupModeReplyMsg, queries.inserted[1].Content)
+	}
+	if agent.lastInbound == nil || agent.lastInbound.Body != testLeadLookupQuestion {
+		t.Fatalf("expected inbound message to reach lookup agent, got %#v", agent.lastInbound)
+	}
+}
+
+func TestHandleAIMessageRoutesSimpleQuoteLookupToLookupMode(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testLookupModeReply}}
+	service := &Service{
+		queries:       queries,
+		agent:         agent,
+		sender:        newTestSender(transport, serviceTestConfigReader{}, nil),
+		leadHintStore: NewConversationLeadHintStore(),
+		log:           logger.New("development"),
+	}
+
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, "De offerte van Joey plomp", &CurrentInboundMessage{ExternalMessageID: "msg-quote-fast", PhoneNumber: testAgentPhone, Body: "De offerte van Joey plomp"})
+
+	if agent.calls != 1 {
+		t.Fatalf(testExpectedLookupModeCallMsg, agent.calls)
+	}
+	if agent.lastMode != agentRunModeLookup {
+		t.Fatalf(testExpectedLookupModeMsg, agent.lastMode)
+	}
+	if len(queries.inserted) != 2 {
+		t.Fatalf(testExpectedPersistedConversationMsg, len(queries.inserted))
+	}
+	if queries.inserted[1].Content != testLookupModeReply {
+		t.Fatalf(testUnexpectedLookupModeReplyMsg, queries.inserted[1].Content)
+	}
+}
+
+func TestHandleAIMessageRoutesAmbiguousLookupToLookupMode(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testLookupModeReply}}
+	service := &Service{
+		queries:       queries,
+		agent:         agent,
+		sender:        newTestSender(transport, serviceTestConfigReader{}, nil),
+		leadHintStore: NewConversationLeadHintStore(),
+		log:           logger.New("development"),
+	}
+
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, "Zoek Joey plomp", &CurrentInboundMessage{ExternalMessageID: "msg-ambiguous", PhoneNumber: testAgentPhone, Body: "Zoek Joey plomp"})
+
+	if agent.calls != 1 {
+		t.Fatalf(testExpectedLookupModeCallMsg, agent.calls)
+	}
+	if agent.lastMode != agentRunModeLookup {
+		t.Fatalf(testExpectedLookupModeMsg, agent.lastMode)
+	}
+	if queries.inserted[1].Content != testLookupModeReply {
+		t.Fatalf(testUnexpectedLookupModeReplyMsg, queries.inserted[1].Content)
+	}
+}
+
+func TestHandleAIMessageKeepsDefaultModeForGenericMessages(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testDefaultModeReply}}
+	service := &Service{
+		queries: queries,
+		agent:   agent,
+		sender:  newTestSender(transport, serviceTestConfigReader{}, nil),
+		log:     logger.New("development"),
+	}
+
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, "Kun je mij helpen?", &CurrentInboundMessage{ExternalMessageID: "msg-default", PhoneNumber: testAgentPhone, Body: "Kun je mij helpen?"})
+
+	if agent.calls != 1 {
+		t.Fatalf("expected one agent run, got %d calls", agent.calls)
+	}
+	if agent.lastMode != agentRunModeDefault {
+		t.Fatalf("expected default mode, got %q", agent.lastMode)
+	}
+	if len(queries.inserted) != 2 {
+		t.Fatalf(testExpectedPersistedConversationMsg, len(queries.inserted))
+	}
+	if queries.inserted[1].Content != testDefaultModeReply {
+		t.Fatalf("unexpected default mode reply %q", queries.inserted[1].Content)
 	}
 }

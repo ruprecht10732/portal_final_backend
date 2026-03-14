@@ -28,11 +28,29 @@ import (
 const (
 	agentWorkspaceName       = "whatsapp-agent"
 	agentAppName             = "whatsapp-agent"
+	agentLookupAppName       = "whatsapp-agent-lookup"
 	maxToolIterations        = 10
 	assistantPrefix          = "[Jouw vorig antwoord]: "
 	userPrefix               = "[Klant]: "
 	errOrgContextUnavailable = "organization context not available"
 )
+
+type agentRunMode string
+
+const (
+	agentRunModeDefault agentRunMode = "default"
+	agentRunModeLookup  agentRunMode = "lookup"
+)
+
+const lookupModeInstruction = `
+Je werkt nu in lookupmodus.
+
+- Behandel dit als een read-only vraag over klant- of offertedata.
+- Gebruik alleen de beschikbare lookuptools om feiten te controleren.
+- Voer geen schrijf-, status-, afspraak-, of verzendacties uit.
+- Als meerdere klanten of offertes passen, stel precies een korte verduidelijkingsvraag.
+- Als je niets vindt, zeg dat kort en duidelijk.
+- Houd het antwoord kort en praktisch.`
 
 // orgIDContextKey is used to inject org_id into tool.Context without exposing it to the LLM.
 type orgIDContextKey struct{}
@@ -47,10 +65,22 @@ type ConversationMessage struct {
 
 // Agent wraps the ADK agent and runner for the WhatsApp agent.
 type Agent struct {
-	adkAgent       agent.Agent
-	runner         *runner.Runner
+	defaultRuntime agentRuntime
+	lookupRuntime  agentRuntime
 	sessionService session.Service
 	log            *logger.Logger
+}
+
+type agentRuntime struct {
+	appName string
+	runner  *runner.Runner
+}
+
+type agentRuntimeConfig struct {
+	appName     string
+	agentName   string
+	instruction string
+	toolBuilder func(*ToolHandler) ([]tool.Tool, error)
 }
 
 type AgentRunResult struct {
@@ -115,39 +145,59 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler, log *logger.Lo
 		log.Info("waagent: workspace loaded", "name", workspace.Name, "instruction_length", len(workspace.Instruction), "allowed_tools", workspace.AllowedTools)
 	}
 
-	kimi := moonshot.NewModel(modelCfg)
-	tools, err := buildWhatsAppTools(toolHandler)
+	sessionService := session.InMemoryService()
+	defaultRuntime, err := newAgentRuntime(modelCfg, workspace, sessionService, toolHandler, agentRuntimeConfig{
+		appName:     agentAppName,
+		agentName:   "WhatsAppAgent",
+		instruction: workspace.Instruction,
+		toolBuilder: buildWhatsAppTools,
+	})
+	if err != nil {
+		return nil, err
+	}
+	lookupRuntime, err := newAgentRuntime(modelCfg, workspace, sessionService, toolHandler, agentRuntimeConfig{
+		appName:     agentLookupAppName,
+		agentName:   "WhatsAppLookupAgent",
+		instruction: workspace.Instruction + "\n\n" + strings.TrimSpace(lookupModeInstruction),
+		toolBuilder: buildLookupWhatsAppTools,
+	})
 	if err != nil {
 		return nil, err
 	}
 
+	return &Agent{
+		defaultRuntime: defaultRuntime,
+		lookupRuntime:  lookupRuntime,
+		sessionService: sessionService,
+		log:            log,
+	}, nil
+}
+
+func newAgentRuntime(modelCfg moonshot.Config, workspace orchestration.Workspace, sessionService session.Service, toolHandler *ToolHandler, cfg agentRuntimeConfig) (agentRuntime, error) {
+	kimi := moonshot.NewModel(modelCfg)
+	tools, err := cfg.toolBuilder(toolHandler)
+	if err != nil {
+		return agentRuntime{}, err
+	}
 	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "WhatsAppAgent",
+		Name:        cfg.agentName,
 		Model:       kimi,
 		Description: "Autonomous WhatsApp assistant for authenticated external users.",
-		Instruction: workspace.Instruction,
-		Toolsets:    orchestration.BuildWorkspaceToolsets(workspace, "whatsapp_agent_tools", tools),
+		Instruction: cfg.instruction,
+		Toolsets:    orchestration.BuildWorkspaceToolsets(workspace, cfg.appName+"_tools", tools),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("waagent: failed to create agent: %w", err)
+		return agentRuntime{}, fmt.Errorf("waagent: failed to create agent runtime %s: %w", cfg.appName, err)
 	}
-
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
-		AppName:        agentAppName,
+		AppName:        cfg.appName,
 		Agent:          adkAgent,
 		SessionService: sessionService,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("waagent: failed to create runner: %w", err)
+		return agentRuntime{}, fmt.Errorf("waagent: failed to create runner %s: %w", cfg.appName, err)
 	}
-
-	return &Agent{
-		adkAgent:       adkAgent,
-		runner:         r,
-		sessionService: sessionService,
-		log:            log,
-	}, nil
+	return agentRuntime{appName: cfg.appName, runner: r}, nil
 }
 
 func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
@@ -171,6 +221,14 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		buildScheduleVisitTool,
 		buildRescheduleVisitTool,
 		buildCancelVisitTool,
+	)
+}
+
+func buildLookupWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
+	return buildTools(toolHandler,
+		buildSearchLeadsTool,
+		buildGetLeadDetailsTool,
+		buildGetQuotesTool,
 	)
 }
 
@@ -477,7 +535,7 @@ func currentInboundMessageFromToolContext(ctx tool.Context) (CurrentInboundMessa
 }
 
 // Run executes the agent with conversation history and returns the text reply.
-func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (AgentRunResult, error) {
+func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage, mode agentRunMode) (AgentRunResult, error) {
 	a.logInfo(ctx, "waagent: run started", "organization_id", orgID.String(), "phone", phoneKey, "messages", len(messages), "has_lead_hint", leadHint != nil)
 	// Inject org_id into context for tool handlers (never in the LLM prompt).
 	ctx = context.WithValue(ctx, orgIDContextKey{}, orgID)
@@ -489,8 +547,9 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 	sessionID := uuid.New().String()
 	userID := "waagent-" + orgID.String()
 
+	runtime := a.runtimeForMode(mode)
 	createResp, err := a.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   agentAppName,
+		AppName:   runtime.appName,
 		UserID:    userID,
 		SessionID: sessionID,
 	})
@@ -499,7 +558,7 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 	}
 	defer func() {
 		_ = a.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   agentAppName,
+			AppName:   runtime.appName,
 			UserID:    userID,
 			SessionID: sessionID,
 		})
@@ -523,7 +582,14 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 		Parts: []*genai.Part{{Text: latestMessage.Content}},
 	}
 
-	return a.collectRunOutput(ctx, userID, sessionID, userMessage)
+	return a.collectRunOutput(ctx, runtime, userID, sessionID, userMessage)
+}
+
+func (a *Agent) runtimeForMode(mode agentRunMode) agentRuntime {
+	if mode == agentRunModeLookup {
+		return a.lookupRuntime
+	}
+	return a.defaultRuntime
 }
 
 // seedSessionHistory populates the ADK session with prior conversation turns
@@ -636,13 +702,13 @@ func formatRecentAppointmentHints(appointments []RecentAppointmentHint) string {
 	return strings.Join(parts, "; ")
 }
 
-func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, userMessage *genai.Content) (AgentRunResult, error) {
+func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, userID, sessionID string, userMessage *genai.Content) (AgentRunResult, error) {
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var lastFinalText string
 	iterations := 0
 	evidence := newReplyGroundingEvidence()
 
-	for event, err := range a.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
+	for event, err := range runtime.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
 		if err != nil {
 			return AgentRunResult{}, fmt.Errorf("waagent: run failed: %w", err)
 		}

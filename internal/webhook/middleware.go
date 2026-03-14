@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,6 +25,11 @@ type webhookAuthRepository interface {
 	GetByHash(ctx context.Context, keyHash string) (APIKey, error)
 	GetOrganizationIDByWhatsAppDeviceID(ctx context.Context, deviceID string) (uuid.UUID, error)
 	IsAgentDevice(ctx context.Context, deviceID string) (bool, error)
+}
+
+type whatsAppWebhookDeviceResolution struct {
+	organizationID uuid.UUID
+	isAgentDevice  bool
 }
 
 // APIKeyAuthMiddleware validates the X-Webhook-API-Key header
@@ -139,21 +145,17 @@ func authenticateSecretBackedWhatsAppWebhook(c *gin.Context, repo webhookAuthRep
 		return uuid.UUID{}, false
 	}
 
-	organizationID, err := repo.GetOrganizationIDByWhatsAppDeviceID(c.Request.Context(), deviceID)
+	resolution, err := resolveWhatsAppWebhookDevice(c.Request.Context(), repo, deviceID)
 	if err != nil {
-		// Check if this is the global agent device
-		isAgent, agentErr := repo.IsAgentDevice(c.Request.Context(), deviceID)
-		if agentErr != nil || !isAgent {
-			abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "unknown whatsapp device", "unknown_device", slog.String("device_id", deviceID))
-			return uuid.UUID{}, false
-		}
-
-		// Agent device — set flag and allow through with nil org
+		abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "unknown whatsapp device", "unknown_device", slog.String("device_id", deviceID))
+		return uuid.UUID{}, false
+	}
+	if resolution.isAgentDevice {
 		c.Set("isAgentDevice", true)
 		return uuid.UUID{}, true
 	}
 
-	return organizationID, true
+	return resolution.organizationID, true
 }
 
 func abortWhatsAppWebhookAuth(c *gin.Context, log *logger.Logger, status int, message string, reason string, attrs ...slog.Attr) {
@@ -230,6 +232,69 @@ func extractWhatsAppWebhookDeviceID(body []byte) (string, error) {
 	}
 
 	return "", ErrWhatsAppDeviceNotFound
+}
+
+func resolveWhatsAppWebhookDevice(ctx context.Context, repo webhookAuthRepository, rawDeviceID string) (whatsAppWebhookDeviceResolution, error) {
+	for _, candidate := range whatsAppWebhookDeviceCandidates(rawDeviceID) {
+		organizationID, err := repo.GetOrganizationIDByWhatsAppDeviceID(ctx, candidate)
+		if err == nil {
+			return whatsAppWebhookDeviceResolution{organizationID: organizationID}, nil
+		}
+		if !errors.Is(err, ErrWhatsAppDeviceNotFound) {
+			return whatsAppWebhookDeviceResolution{}, err
+		}
+	}
+
+	for _, candidate := range whatsAppWebhookDeviceCandidates(rawDeviceID) {
+		isAgent, err := repo.IsAgentDevice(ctx, candidate)
+		if err != nil {
+			return whatsAppWebhookDeviceResolution{}, err
+		}
+		if isAgent {
+			return whatsAppWebhookDeviceResolution{isAgentDevice: true}, nil
+		}
+	}
+
+	return whatsAppWebhookDeviceResolution{}, ErrWhatsAppDeviceNotFound
+}
+
+func whatsAppWebhookDeviceCandidates(rawDeviceID string) []string {
+	trimmed := strings.TrimSpace(rawDeviceID)
+	if trimmed == "" {
+		return nil
+	}
+
+	candidates := make([]string, 0, 6)
+	seen := make(map[string]struct{}, 6)
+	appendCandidate := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		candidates = append(candidates, value)
+	}
+
+	appendCandidate(trimmed)
+	lower := strings.ToLower(trimmed)
+	appendCandidate(lower)
+
+	base := lower
+	if at := strings.Index(base, "@"); at >= 0 {
+		base = base[:at]
+	}
+	base = strings.TrimSpace(base)
+	base = strings.TrimPrefix(base, "+")
+	appendCandidate(base)
+	if base != "" {
+		appendCandidate("+" + base)
+		appendCandidate(base + "@s.whatsapp.net")
+	}
+
+	return candidates
 }
 
 func isWebhookOriginAllowed(c *gin.Context, allowedDomains []string) bool {

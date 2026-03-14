@@ -43,7 +43,7 @@ type Service struct {
 }
 
 type agentRunner interface {
-	Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (AgentRunResult, error)
+	Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage, mode agentRunMode) (AgentRunResult, error)
 }
 
 type voiceTranscriptionContext struct {
@@ -110,7 +110,7 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 		s.logError(ctx, "waagent: failed to persist user message", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
 	}
 	s.syncInboundInboxMessage(ctx, orgID, replyTarget, inbound)
-	s.runAgentReply(ctx, orgID, phoneKey, replyTarget, inbound)
+	s.runAgentReply(ctx, orgID, phoneKey, replyTarget, inbound, s.selectAgentRunMode(ctx, orgID, phoneKey, text))
 }
 
 func (s *Service) handleIncomingAudioMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound CurrentInboundMessage) {
@@ -162,7 +162,7 @@ func (s *Service) handleIncomingAudioMessage(ctx context.Context, orgID uuid.UUI
 	}
 }
 
-func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound *CurrentInboundMessage) {
+func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound *CurrentInboundMessage, mode agentRunMode) {
 
 	// Load recent conversation history
 	recent, err := s.queries.GetRecentAgentMessages(ctx, waagentdb.GetRecentAgentMessagesParams{
@@ -174,22 +174,16 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		recent = nil
 	}
 
-	// Reverse to chronological order (DB returns DESC)
 	messages := make([]ConversationMessage, 0, len(recent))
 	for i := len(recent) - 1; i >= 0; i-- {
 		msg := recent[i]
-		// Strip failed voice-transcription noise so the LLM does not mimic
-		// the hardcoded fallback pattern from earlier attempts.
 		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == msgVoiceUnavailable {
 			continue
 		}
 		if msg.Role == "user" && strings.TrimSpace(msg.Content) == voiceMessagePlaceholder {
 			continue
 		}
-		messages = append(messages, ConversationMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
+		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content})
 	}
 
 	if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresenceComposing); err != nil {
@@ -201,18 +195,18 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		}
 	}()
 
-	// Run the AI agent
 	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
 
-	runResult, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound)
+	runResult, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound, mode)
 	if err != nil {
-		s.logError(ctx, "waagent: agent run error", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
+		s.logError(ctx, "waagent: agent run error", "phone", phoneKey, "organization_id", orgID.String(), "mode", string(mode), "error", err)
 		return
 	}
 	if runResult.GroundingFailure != "" {
 		s.logWarn(ctx, "waagent: grounded reply fallback used",
 			"phone", phoneKey,
 			"organization_id", orgID.String(),
+			"mode", string(mode),
 			"reason", runResult.GroundingFailure,
 			"unsupported_facts", runResult.GroundingFacts,
 			"tool_response_names", runResult.ToolResponseNames,
@@ -221,7 +215,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 
 	reply := sanitizeWhatsAppReply(strings.TrimSpace(runResult.Reply))
 	if reply == "" {
-		s.logWarn(ctx, "waagent: empty agent reply", "phone", phoneKey, "organization_id", orgID.String())
+		s.logWarn(ctx, "waagent: empty agent reply", "phone", phoneKey, "organization_id", orgID.String(), "mode", string(mode))
 		return
 	}
 
@@ -430,7 +424,7 @@ func (s *Service) finalizeVoiceTranscription(ctx context.Context, voiceCtx voice
 		Body:              transcriptText,
 		Metadata:          metadata,
 	}
-	s.runAgentReply(ctx, voiceCtx.orgID, voiceCtx.phoneKey, voiceCtx.phoneNumber, inbound)
+	s.runAgentReply(ctx, voiceCtx.orgID, voiceCtx.phoneKey, voiceCtx.phoneNumber, inbound, agentRunModeDefault)
 	return s.queries.MarkAgentVoiceTranscriptionCompleted(ctx, waagentdb.MarkAgentVoiceTranscriptionCompletedParams{
 		OrganizationID:    pgtypeUUID(voiceCtx.orgID),
 		ExternalMessageID: voiceCtx.externalMessageID,
@@ -509,6 +503,170 @@ func inboundMetadata(inbound *CurrentInboundMessage) []byte {
 		return nil
 	}
 	return inbound.Metadata
+}
+
+type simpleLookupIntent struct {
+	kind         string
+	subject      string
+	useLeadHint  bool
+	wantsAddress bool
+	wantsContact bool
+	wantsStatus  bool
+	wantsQuote   bool
+	genericLead  bool
+}
+
+func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phoneKey, message string) agentRunMode {
+	recent, err := s.queries.GetRecentAgentMessages(ctx, waagentdb.GetRecentAgentMessagesParams{
+		PhoneNumber: phoneKey,
+		Limit:       recentMessageLimit,
+	})
+	if err != nil {
+		s.logWarn(ctx, "waagent: simple lookup history unavailable", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
+		recent = nil
+	}
+	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
+	intent := detectSimpleLookupIntent(message, recent, leadHint)
+	if intent.kind == "" {
+		return agentRunModeDefault
+	}
+	return agentRunModeLookup
+}
+
+func detectSimpleLookupIntent(message string, recent []waagentdb.GetRecentAgentMessagesRow, leadHint *ConversationLeadHint) simpleLookupIntent {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return simpleLookupIntent{}
+	}
+	intent := baseSimpleLookupIntent(trimmed)
+	if intent.kind == "" && looksLikeSimpleCustomerReference(trimmed) {
+		intent = inferSimpleLookupIntentFromRecent(trimmed, recent)
+	}
+	if intent.kind == "" {
+		return simpleLookupIntent{}
+	}
+	if intent.subject == "" && leadHint != nil && strings.TrimSpace(leadHint.LeadID) != "" {
+		intent.useLeadHint = true
+	}
+	if intent.subject == "" && !intent.useLeadHint {
+		return simpleLookupIntent{}
+	}
+	return intent
+}
+
+func baseSimpleLookupIntent(message string) simpleLookupIntent {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	intent := simpleLookupIntent{
+		subject:      extractSimpleLookupSubject(message),
+		wantsAddress: containsAny(lower, "adres", "straat", "huisnummer", "postcode"),
+		wantsContact: containsAny(lower, "telefoon", "telefoonnummer", "nummer", "e-mail", "email", "mailadres"),
+		wantsStatus:  strings.Contains(lower, "status"),
+		wantsQuote:   containsAny(lower, "offerte", "quote"),
+		genericLead:  strings.HasPrefix(lower, "zoek") || strings.HasPrefix(lower, "vind"),
+	}
+	if intent.wantsQuote {
+		intent.kind = "quote"
+	}
+	if intent.wantsAddress || intent.wantsContact || intent.wantsStatus || intent.genericLead {
+		intent.kind = "lead"
+	}
+	return intent
+}
+
+func inferSimpleLookupIntentFromRecent(message string, recent []waagentdb.GetRecentAgentMessagesRow) simpleLookupIntent {
+	intent := simpleLookupIntent{subject: strings.TrimSpace(message)}
+	switch inferLookupIntentFromRecent(recent) {
+	case "quote":
+		intent.kind = "quote"
+		intent.wantsQuote = true
+	case "lead":
+		intent.kind = "lead"
+		intent.genericLead = true
+	}
+	return intent
+}
+
+func inferLookupIntentFromRecent(recent []waagentdb.GetRecentAgentMessagesRow) string {
+	for i := len(recent) - 1; i >= 0; i-- {
+		row := recent[i]
+		if row.Role != "assistant" {
+			continue
+		}
+		lower := strings.ToLower(strings.TrimSpace(row.Content))
+		if containsAny(lower, "offerte", "offertenummer", "offertedetail") {
+			return "quote"
+		}
+		if containsAny(lower, "klantnaam", "klantdetail", "dossier", "klant") {
+			return "lead"
+		}
+		break
+	}
+	return ""
+}
+
+func extractSimpleLookupSubject(message string) string {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	prefixes := []string{
+		"waar gaat de offerte over van ",
+		"wat is het adres van ",
+		"zoek telefoonnummer van ",
+		"zoek telefoon van ",
+		"zoek e-mail van ",
+		"zoek email van ",
+		"zoek status van ",
+		"de offerte van ",
+		"offerte van ",
+		"adres van ",
+		"status van ",
+		"zoek klant ",
+		"zoek ",
+		"vind ",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			trimmed = strings.TrimSpace(trimmed[len(prefix):])
+			break
+		}
+	}
+	trimmed = strings.TrimSpace(strings.Trim(trimmed, ".,!?;:"))
+	for _, prefix := range []string{"de ", "het ", "van ", "klant ", "dossier ", "offerte "} {
+		if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+			trimmed = strings.TrimSpace(trimmed[len(prefix):])
+		}
+	}
+	if strings.Count(trimmed, " ") > 4 {
+		return ""
+	}
+	return trimmed
+}
+
+func looksLikeSimpleCustomerReference(value string) bool {
+	parts := strings.Fields(strings.TrimSpace(value))
+	if len(parts) == 0 || len(parts) > 4 {
+		return false
+	}
+	letters := 0
+	for _, part := range parts {
+		part = strings.TrimSpace(strings.Trim(part, ".,!?;:"))
+		if len(part) < 2 {
+			return false
+		}
+		letters += len(part)
+	}
+	return letters >= 4
+}
+
+func containsAny(value string, parts ...string) bool {
+	for _, part := range parts {
+		if strings.Contains(value, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) claimInboundMessage(ctx context.Context, externalMessageID, phoneKey string) (bool, error) {
