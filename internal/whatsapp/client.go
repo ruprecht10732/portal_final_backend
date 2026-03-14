@@ -513,29 +513,38 @@ func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, message
 	}
 
 	// API v8+ returns media data inline as base64.
-	if b64 := strings.TrimSpace(parsed.Results.Data); b64 != "" {
-		decoded, decErr := base64.StdEncoding.DecodeString(b64)
-		if decErr != nil {
-			decoded, decErr = base64.RawStdEncoding.DecodeString(b64)
-		}
-		if decErr == nil && len(decoded) > 0 {
-			contentType := strings.TrimSpace(mediaType)
-			if contentType == "" {
-				contentType = inferContentType(result.Filename, result.FilePath, result.MediaType)
-			}
-			return DownloadMediaFileResult{
-				DownloadMediaResult: result,
-				ContentType:         contentType,
-				Data:                decoded,
-			}, nil
-		}
+	if fileResult, ok := decodeInlineMediaData(parsed.Results.Data, mediaType, result); ok {
+		return fileResult, nil
 	}
 
 	// Fallback: fetch binary from the file_path URL (older provider versions).
+	return c.downloadMediaFromURL(ctx, result)
+}
+
+func decodeInlineMediaData(rawData string, mediaType string, result DownloadMediaResult) (DownloadMediaFileResult, bool) {
+	b64 := strings.TrimSpace(rawData)
+	if b64 == "" {
+		return DownloadMediaFileResult{}, false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(b64)
+	}
+	if err != nil || len(decoded) == 0 {
+		return DownloadMediaFileResult{}, false
+	}
+	contentType := resolveMediaContentType(mediaType, result)
+	return DownloadMediaFileResult{
+		DownloadMediaResult: result,
+		ContentType:         contentType,
+		Data:                decoded,
+	}, true
+}
+
+func (c *Client) downloadMediaFromURL(ctx context.Context, result DownloadMediaResult) (DownloadMediaFileResult, error) {
 	if strings.TrimSpace(result.DownloadURL) == "" {
 		return DownloadMediaFileResult{}, fmt.Errorf("download url is missing for media message")
 	}
-
 	data, contentType, err := c.fetchBinaryFromURL(ctx, result.DownloadURL)
 	if err != nil {
 		return DownloadMediaFileResult{}, err
@@ -543,12 +552,19 @@ func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, message
 	if contentType == "" {
 		contentType = inferContentType(result.Filename, result.FilePath, result.MediaType)
 	}
-
 	return DownloadMediaFileResult{
 		DownloadMediaResult: result,
 		ContentType:         contentType,
 		Data:                data,
 	}, nil
+}
+
+func resolveMediaContentType(mediaType string, result DownloadMediaResult) string {
+	contentType := strings.TrimSpace(mediaType)
+	if contentType == "" {
+		contentType = inferContentType(result.Filename, result.FilePath, result.MediaType)
+	}
+	return contentType
 }
 
 func (c *Client) ArchiveChat(ctx context.Context, deviceID string, chatJID string, archived bool) error {

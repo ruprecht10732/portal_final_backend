@@ -12,6 +12,7 @@ import (
 )
 
 const voiceMessagePlaceholder = "[Spraakbericht]"
+const voiceDefaultContentType = "audio/ogg"
 
 var voicePathSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
@@ -135,13 +136,26 @@ func chooseVoiceFileName(downloadFilename string, contentType string) string {
 
 func normalizeVoiceImportContentType(contentType string, mediaType string) string {
 	trimmed := strings.TrimSpace(strings.Split(contentType, ";")[0])
-	if trimmed != "" {
-		return trimmed
+	isAudio := strings.EqualFold(strings.TrimSpace(mediaType), "audio")
+	if trimmed == "" {
+		if isAudio {
+			return voiceDefaultContentType
+		}
+		return "application/octet-stream"
 	}
-	if strings.EqualFold(strings.TrimSpace(mediaType), "audio") {
-		return "audio/ogg"
+	// GoWA returns "application/ogg" for WhatsApp voice notes (OGG Opus).
+	// Remap to the correct audio MIME type when the media type confirms audio.
+	if isAudio && !strings.HasPrefix(strings.ToLower(trimmed), "audio/") {
+		switch strings.ToLower(trimmed) {
+		case "application/ogg":
+			return voiceDefaultContentType
+		case "application/opus":
+			return "audio/opus"
+		default:
+			return voiceDefaultContentType
+		}
 	}
-	return "application/octet-stream"
+	return trimmed
 }
 
 func formatVoiceTranscriptUserMessage(transcript string) string {
