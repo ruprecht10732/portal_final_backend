@@ -2,9 +2,13 @@ package waagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -47,6 +51,58 @@ type Agent struct {
 	runner         *runner.Runner
 	sessionService session.Service
 	log            *logger.Logger
+}
+
+type AgentRunResult struct {
+	Reply             string
+	ToolResponseNames []string
+	ToolResponseCount int
+	GroundingFailure  string
+	GroundingFacts    []string
+}
+
+type toolResponseObservation struct {
+	Name    string
+	Payload string
+}
+
+type replyGroundingEvidence struct {
+	toolResponseNames map[string]int
+	toolResponses     []toolResponseObservation
+}
+
+type groundingDecision struct {
+	Code             string
+	UnsupportedFacts []string
+}
+
+var (
+	reCurrencyAmount = regexp.MustCompile(`€\s?[0-9][0-9.]*([,][0-9]{2})?`)
+	reClockTime      = regexp.MustCompile(`\b\d{1,2}:\d{2}\b`)
+	reISODate        = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
+	reNumericDate    = regexp.MustCompile(`\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b`)
+	reDutchDate      = regexp.MustCompile(`(?i)\b\d{1,2}\s+(januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)\s+\d{4}\b`)
+	reEmail          = regexp.MustCompile(`(?i)\b[\w.%+-]+@[\w.-]+\.[a-z]{2,}\b`)
+	rePhone          = regexp.MustCompile(`(?:\+31|0)[0-9\s\-()]{8,}`)
+	reAddressLine    = regexp.MustCompile(`(?im)\badres:\s*([^\n]+)`)
+	reQuoteLine      = regexp.MustCompile(`(?im)\b(?:offerte|offertenummer|quotenummer):\s*([^\n]+)`)
+	reStatusLine     = regexp.MustCompile(`(?im)\bstatus:\s*([^\n]+)`)
+	reQuoteNumber    = regexp.MustCompile(`(?i)^[a-z]{2,}[a-z0-9-]*\d[a-z0-9-]*$`)
+)
+
+var dutchMonthNumbers = map[string]string{
+	"januari":   "01",
+	"februari":  "02",
+	"maart":     "03",
+	"april":     "04",
+	"mei":       "05",
+	"juni":      "06",
+	"juli":      "07",
+	"augustus":  "08",
+	"september": "09",
+	"oktober":   "10",
+	"november":  "11",
+	"december":  "12",
 }
 
 // NewAgent creates a new WhatsApp agent with function-calling tools.
@@ -421,7 +477,7 @@ func currentInboundMessageFromToolContext(ctx tool.Context) (CurrentInboundMessa
 }
 
 // Run executes the agent with conversation history and returns the text reply.
-func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (string, error) {
+func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (AgentRunResult, error) {
 	a.logInfo(ctx, "waagent: run started", "organization_id", orgID.String(), "phone", phoneKey, "messages", len(messages), "has_lead_hint", leadHint != nil)
 	// Inject org_id into context for tool handlers (never in the LLM prompt).
 	ctx = context.WithValue(ctx, orgIDContextKey{}, orgID)
@@ -439,7 +495,7 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return "", fmt.Errorf("waagent: create session: %w", err)
+		return AgentRunResult{}, fmt.Errorf("waagent: create session: %w", err)
 	}
 	defer func() {
 		_ = a.sessionService.Delete(ctx, &session.DeleteRequest{
@@ -450,7 +506,7 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 	}()
 
 	if len(messages) == 0 {
-		return "", fmt.Errorf("waagent: no messages to process")
+		return AgentRunResult{}, fmt.Errorf("waagent: no messages to process")
 	}
 
 	// Seed session with conversation history as proper multi-turn events
@@ -580,15 +636,17 @@ func buildAddressLine(street, houseNumber, zipCode, city string) string {
 	return strings.Join(parts, ", ")
 }
 
-func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, userMessage *genai.Content) (string, error) {
+func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, userMessage *genai.Content) (AgentRunResult, error) {
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var lastFinalText string
 	iterations := 0
+	evidence := newReplyGroundingEvidence()
 
 	for event, err := range a.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
 		if err != nil {
-			return "", fmt.Errorf("waagent: run failed: %w", err)
+			return AgentRunResult{}, fmt.Errorf("waagent: run failed: %w", err)
 		}
+		evidence.observe(event)
 		// Only keep text from the final response event — intermediate
 		// tool-thinking events produce disjointed fragments that get
 		// concatenated into garbled output.
@@ -604,7 +662,23 @@ func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, 
 		}
 	}
 
-	return strings.TrimSpace(lastFinalText), nil
+	reply := strings.TrimSpace(lastFinalText)
+	validatedReply, decision := validateGroundedReply(reply, evidence)
+	if decision.Code != "" {
+		a.logWarn(ctx, "waagent: grounded reply validation fallback",
+			"reason", decision.Code,
+			"unsupported_facts", decision.UnsupportedFacts,
+			"tool_response_names", evidence.toolNames(),
+			"tool_response_count", evidence.toolResponseCount())
+	}
+
+	return AgentRunResult{
+		Reply:             validatedReply,
+		ToolResponseNames: evidence.toolNames(),
+		ToolResponseCount: evidence.toolResponseCount(),
+		GroundingFailure:  decision.Code,
+		GroundingFacts:    decision.UnsupportedFacts,
+	}, nil
 }
 
 func (a *Agent) loggerWithContext(ctx context.Context) *logger.Logger {
@@ -635,4 +709,514 @@ func extractContentText(content *genai.Content) string {
 		b.WriteString(part.Text)
 	}
 	return b.String()
+}
+
+func newReplyGroundingEvidence() *replyGroundingEvidence {
+	return &replyGroundingEvidence{toolResponseNames: make(map[string]int)}
+}
+
+func (e *replyGroundingEvidence) observe(event *session.Event) {
+	if e == nil || event == nil || event.Content == nil {
+		return
+	}
+	for _, part := range event.Content.Parts {
+		if part == nil || part.FunctionResponse == nil {
+			continue
+		}
+		response := part.FunctionResponse
+		name := strings.TrimSpace(response.Name)
+		if name == "" {
+			continue
+		}
+		e.toolResponseNames[name]++
+		payload := marshalToolResponsePayload(response.Response)
+		e.toolResponses = append(e.toolResponses, toolResponseObservation{Name: name, Payload: payload})
+	}
+}
+
+func (e *replyGroundingEvidence) hasToolResponse(names ...string) bool {
+	if e == nil {
+		return false
+	}
+	for _, name := range names {
+		if e.toolResponseNames[strings.TrimSpace(name)] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *replyGroundingEvidence) toolNames() []string {
+	if e == nil || len(e.toolResponseNames) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(e.toolResponseNames))
+	for name := range e.toolResponseNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (e *replyGroundingEvidence) toolResponseCount() int {
+	if e == nil {
+		return 0
+	}
+	return len(e.toolResponses)
+}
+
+func (e *replyGroundingEvidence) payloadsForTools(names ...string) []string {
+	if e == nil || len(e.toolResponses) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		trimmed := strings.TrimSpace(name)
+		if trimmed != "" {
+			allowed[trimmed] = struct{}{}
+		}
+	}
+	payloads := make([]string, 0, len(e.toolResponses))
+	for _, response := range e.toolResponses {
+		if _, ok := allowed[response.Name]; ok && strings.TrimSpace(response.Payload) != "" {
+			payloads = append(payloads, response.Payload)
+		}
+	}
+	return payloads
+}
+
+func marshalToolResponsePayload(payload map[string]any) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func validateGroundedReply(reply string, evidence *replyGroundingEvidence) (string, groundingDecision) {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return "", groundingDecision{}
+	}
+	decision := detectGroundingIssue(trimmed, evidence)
+	if decision.Code == "" {
+		return trimmed, groundingDecision{}
+	}
+	return fallbackReplyForGroundingIssue(decision.Code), decision
+}
+
+func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) groundingDecision {
+	quoteTools := []string{"GetQuotes", "DraftQuote", "GenerateQuote", "SendQuotePDF"}
+	if replyMentionsQuoteSpecifics(reply) {
+		if !evidence.hasToolResponse(quoteTools...) {
+			return groundingDecision{Code: "quote_details_without_quote_tool", UnsupportedFacts: extractQuoteFacts(reply)}
+		}
+		if unsupported := unsupportedQuoteFacts(reply, evidence.payloadsForTools(quoteTools...)); len(unsupported) > 0 {
+			return groundingDecision{Code: "quote_fact_not_in_tool_result", UnsupportedFacts: unsupported}
+		}
+	}
+	appointmentTools := []string{"GetAppointments", "GetAvailableVisitSlots", "ScheduleVisit", "RescheduleVisit", "CancelVisit"}
+	if replyMentionsAppointmentSpecifics(reply) {
+		if !evidence.hasToolResponse(appointmentTools...) {
+			return groundingDecision{Code: "appointment_details_without_appointment_tool", UnsupportedFacts: extractAppointmentFacts(reply)}
+		}
+		if unsupported := unsupportedAppointmentFacts(reply, evidence.payloadsForTools(appointmentTools...)); len(unsupported) > 0 {
+			return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
+		}
+	}
+	leadTools := []string{"GetLeadDetails", "CreateLead", "UpdateLeadDetails"}
+	if replyMentionsLeadSpecifics(reply) {
+		if !evidence.hasToolResponse(leadTools...) {
+			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: extractLeadFacts(reply)}
+		}
+		if unsupported := unsupportedLeadFacts(reply, evidence.payloadsForTools(leadTools...)); len(unsupported) > 0 {
+			return groundingDecision{Code: "lead_fact_not_in_tool_result", UnsupportedFacts: unsupported}
+		}
+	}
+	return groundingDecision{}
+}
+
+func replyMentionsQuoteSpecifics(reply string) bool {
+	if reCurrencyAmount.MatchString(reply) {
+		return true
+	}
+	lower := strings.ToLower(reply)
+	return strings.Contains(lower, "offerte") || strings.Contains(lower, "prijsopgave") || strings.Contains(lower, "quote pdf")
+}
+
+func replyMentionsAppointmentSpecifics(reply string) bool {
+	if reClockTime.MatchString(reply) {
+		return true
+	}
+	for _, marker := range []string{"datum:", "tijd:", "locatie:", "afspraak", "bezoek", "gepland"} {
+		if strings.Contains(strings.ToLower(reply), marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func replyMentionsLeadSpecifics(reply string) bool {
+	if reEmail.MatchString(reply) || rePhone.MatchString(reply) {
+		return true
+	}
+	for _, marker := range []string{"adres:", "telefoon:", "e-mail:", "email:", "status:"} {
+		if strings.Contains(strings.ToLower(reply), marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func fallbackReplyForGroundingIssue(issue string) string {
+	switch issue {
+	case "quote_details_without_quote_tool":
+		fallthrough
+	case "quote_fact_not_in_tool_result":
+		return "Ik kan die offertegegevens nu niet betrouwbaar bevestigen. Over welke offerte gaat het precies?"
+	case "appointment_details_without_appointment_tool":
+		fallthrough
+	case "appointment_fact_not_in_tool_result":
+		return "Ik kan die afspraak nu niet betrouwbaar bevestigen. Over welke afspraak gaat het precies?"
+	case "lead_details_without_lead_tool":
+		fallthrough
+	case "lead_fact_not_in_tool_result":
+		return "Ik kan die klantgegevens nu niet betrouwbaar bevestigen. Welke klant of welk dossier bedoelt u precies?"
+	default:
+		return "Ik kan dat detail nu niet betrouwbaar bevestigen. Kunt u aangeven welk onderdeel ik eerst moet controleren?"
+	}
+}
+
+func unsupportedQuoteFacts(reply string, payloads []string) []string {
+	unsupported := make([]string, 0)
+	for _, fact := range extractQuoteFacts(reply) {
+		if payloadsContainAnyFactVariant(payloads, quoteFactVariants(fact)) {
+			continue
+		}
+		unsupported = append(unsupported, fact)
+	}
+	return unsupported
+}
+
+func unsupportedAppointmentFacts(reply string, payloads []string) []string {
+	return unsupportedFactsFromCandidates(extractAppointmentFacts(reply), payloads, appointmentFactVariants)
+}
+
+func unsupportedLeadFacts(reply string, payloads []string) []string {
+	unsupported := make([]string, 0)
+	for _, fact := range extractLeadFacts(reply) {
+		if isAddressFact(fact) {
+			if addressFactSupported(fact, payloads) {
+				continue
+			}
+			unsupported = append(unsupported, fact)
+			continue
+		}
+		if payloadsContainAnyFactVariant(payloads, leadFactVariants(fact)) {
+			continue
+		}
+		unsupported = append(unsupported, fact)
+	}
+	return unsupported
+}
+
+func unsupportedFactsFromCandidates(facts, payloads []string, variants func(string) []string) []string {
+	if len(facts) == 0 {
+		return nil
+	}
+	unsupported := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		if !payloadsContainAnyFactVariant(payloads, variants(fact)) {
+			unsupported = append(unsupported, fact)
+		}
+	}
+	return unsupported
+}
+
+func payloadsContainAnyFactVariant(payloads, variants []string) bool {
+	if len(payloads) == 0 || len(variants) == 0 {
+		return false
+	}
+	for _, payload := range payloads {
+		normalizedPayload := normalizeFactText(payload)
+		for _, variant := range variants {
+			if variant == "" {
+				continue
+			}
+			if strings.Contains(normalizedPayload, normalizeFactText(variant)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extractQuoteFacts(reply string) []string {
+	facts := make([]string, 0, 4)
+	facts = append(facts, reCurrencyAmount.FindAllString(reply, -1)...)
+	cleanReply := strings.ReplaceAll(reply, "*", "")
+	for _, match := range reQuoteLine.FindAllStringSubmatch(cleanReply, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		quoteNumber := strings.TrimSpace(match[1])
+		if looksLikeQuoteNumber(quoteNumber) {
+			facts = append(facts, quoteNumber)
+		}
+	}
+	return uniqueStrings(facts)
+}
+
+func extractAppointmentFacts(reply string) []string {
+	facts := make([]string, 0, 4)
+	facts = append(facts, reClockTime.FindAllString(reply, -1)...)
+	facts = append(facts, reISODate.FindAllString(reply, -1)...)
+	facts = append(facts, reNumericDate.FindAllString(reply, -1)...)
+	facts = append(facts, reDutchDate.FindAllString(reply, -1)...)
+	return uniqueStrings(facts)
+}
+
+func extractLeadFacts(reply string) []string {
+	facts := make([]string, 0, 4)
+	facts = append(facts, reEmail.FindAllString(reply, -1)...)
+	facts = append(facts, rePhone.FindAllString(reply, -1)...)
+	cleanReply := strings.ReplaceAll(reply, "*", "")
+	for _, match := range reAddressLine.FindAllStringSubmatch(cleanReply, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		address := strings.TrimSpace(match[1])
+		if address != "" {
+			facts = append(facts, address)
+		}
+	}
+	for _, match := range reStatusLine.FindAllStringSubmatch(cleanReply, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		status := strings.TrimSpace(match[1])
+		if status != "" {
+			facts = append(facts, status)
+		}
+	}
+	return uniqueStrings(facts)
+}
+
+func currencyFactVariants(fact string) []string {
+	trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(fact), "€"))
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return nil
+	}
+	digits := strings.NewReplacer(".", "", ",", "", " ", "").Replace(trimmed)
+	whole := strings.NewReplacer(".", "", " ", "").Replace(trimmed)
+	whole = strings.ReplaceAll(whole, ",00", "")
+	variants := []string{trimmed, digits, whole, strings.ReplaceAll(trimmed, ",", ".")}
+	return uniqueStrings(variants)
+}
+
+func quoteFactVariants(fact string) []string {
+	if reCurrencyAmount.MatchString(fact) {
+		return currencyFactVariants(fact)
+	}
+	trimmed := strings.TrimSpace(fact)
+	variants := []string{trimmed, strings.ToUpper(trimmed), strings.ToLower(trimmed)}
+	return uniqueStrings(variants)
+}
+
+func appointmentFactVariants(fact string) []string {
+	variants := []string{strings.TrimSpace(fact)}
+	if parsed := parseDateFact(fact); parsed != nil {
+		variants = append(variants,
+			fmt.Sprintf("%04d-%02d-%02d", parsed.year, parsed.month, parsed.day),
+			fmt.Sprintf("%02d-%02d-%04d", parsed.day, parsed.month, parsed.year),
+			fmt.Sprintf("%02d/%02d/%04d", parsed.day, parsed.month, parsed.year),
+		)
+	}
+	return uniqueStrings(variants)
+}
+
+func leadFactVariants(fact string) []string {
+	trimmed := strings.TrimSpace(fact)
+	variants := []string{trimmed}
+	if rePhone.MatchString(trimmed) {
+		digitsOnly := strings.Map(func(r rune) rune {
+			if unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, trimmed)
+		variants = append(variants, digitsOnly)
+	}
+	return uniqueStrings(variants)
+}
+
+func looksLikeQuoteNumber(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed != "" && reQuoteNumber.MatchString(trimmed)
+}
+
+func isAddressFact(fact string) bool {
+	trimmed := strings.TrimSpace(fact)
+	return strings.Contains(trimmed, ",") || (strings.ContainsAny(trimmed, "0123456789") && strings.Contains(trimmed, " "))
+}
+
+func addressFactSupported(fact string, payloads []string) bool {
+	tokens := addressFactTokens(fact)
+	if len(tokens) == 0 || len(payloads) == 0 {
+		return false
+	}
+	for _, payload := range payloads {
+		normalizedPayload := normalizeFactText(payload)
+		allPresent := true
+		for _, token := range tokens {
+			if !strings.Contains(normalizedPayload, normalizeFactText(token)) {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			return true
+		}
+	}
+	return false
+}
+
+func addressFactTokens(fact string) []string {
+	replacer := strings.NewReplacer(",", " ", ".", " ", ";", " ", ":", " ")
+	parts := strings.Fields(replacer.Replace(strings.TrimSpace(fact)))
+	tokens := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		normalized := normalizeFactText(trimmed)
+		if len(normalized) <= 1 {
+			continue
+		}
+		tokens = append(tokens, trimmed)
+	}
+	return uniqueStrings(tokens)
+}
+
+type parsedDateFact struct {
+	day   int
+	month int
+	year  int
+}
+
+func parseDateFact(fact string) *parsedDateFact {
+	trimmed := strings.ToLower(strings.TrimSpace(fact))
+	if trimmed == "" {
+		return nil
+	}
+	for _, parser := range []func(string) *parsedDateFact{parseISODateFact, parseSlashedDateFact, parseDashedDayFirstDateFact, parseDutchMonthDateFact} {
+		if parsed := parser(trimmed); parsed != nil {
+			return parsed
+		}
+	}
+	return nil
+}
+
+func parseISODateFact(trimmed string) *parsedDateFact {
+	var year, month, day int
+	if _, err := fmt.Sscanf(trimmed, "%d-%d-%d", &year, &month, &day); err != nil || year <= 1900 {
+		return nil
+	}
+	return &parsedDateFact{day: day, month: month, year: year}
+}
+
+func parseSlashedDateFact(trimmed string) *parsedDateFact {
+	var day, month, year int
+	if _, err := fmt.Sscanf(trimmed, "%d/%d/%d", &day, &month, &year); err != nil || year <= 0 {
+		return nil
+	}
+	return &parsedDateFact{day: day, month: month, year: normalizeTwoDigitYear(year)}
+}
+
+func parseDashedDayFirstDateFact(trimmed string) *parsedDateFact {
+	var day, month, year int
+	if _, err := fmt.Sscanf(trimmed, "%d-%d-%d", &day, &month, &year); err != nil || year <= 0 {
+		return nil
+	}
+	return &parsedDateFact{day: day, month: month, year: normalizeTwoDigitYear(year)}
+}
+
+func parseDutchMonthDateFact(trimmed string) *parsedDateFact {
+	parts := strings.Fields(trimmed)
+	if len(parts) != 3 {
+		return nil
+	}
+	monthNumber, ok := dutchMonthNumbers[parts[1]]
+	if !ok {
+		return nil
+	}
+	day, ok := scanInt(parts[0])
+	if !ok {
+		return nil
+	}
+	month, ok := scanInt(monthNumber)
+	if !ok {
+		return nil
+	}
+	year, ok := scanInt(parts[2])
+	if !ok {
+		return nil
+	}
+	return &parsedDateFact{day: day, month: month, year: year}
+}
+
+func scanInt(input string) (int, bool) {
+	var value int
+	if _, err := fmt.Sscanf(input, "%d", &value); err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func normalizeTwoDigitYear(year int) int {
+	if year < 100 {
+		return year + 2000
+	}
+	return year
+}
+
+func normalizeFactText(input string) string {
+	lower := strings.ToLower(input)
+	var b strings.Builder
+	b.Grow(len(lower))
+	for _, r := range lower {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func uniqueStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	unique := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		key := normalizeFactText(trimmed)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, trimmed)
+	}
+	return unique
 }

@@ -29,7 +29,7 @@ const (
 // Service orchestrates the waagent flow: rate limit → phone→org → AI.
 type Service struct {
 	queries                waagentdb.Querier
-	agent                  *Agent
+	agent                  agentRunner
 	sender                 *Sender
 	rateLimiter            *RateLimiter
 	leadHintStore          LeadHintStore
@@ -40,6 +40,10 @@ type Service struct {
 	transcriber            AudioTranscriber
 	inboxSync              InboxMessageSync
 	log                    *logger.Logger
+}
+
+type agentRunner interface {
+	Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messages []ConversationMessage, leadHint *ConversationLeadHint, inboundMessage *CurrentInboundMessage) (AgentRunResult, error)
 }
 
 type voiceTranscriptionContext struct {
@@ -200,13 +204,22 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	// Run the AI agent
 	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
 
-	reply, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound)
+	runResult, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound)
 	if err != nil {
 		s.logError(ctx, "waagent: agent run error", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
 		return
 	}
+	if runResult.GroundingFailure != "" {
+		s.logWarn(ctx, "waagent: grounded reply fallback used",
+			"phone", phoneKey,
+			"organization_id", orgID.String(),
+			"reason", runResult.GroundingFailure,
+			"unsupported_facts", runResult.GroundingFacts,
+			"tool_response_names", runResult.ToolResponseNames,
+			"tool_response_count", runResult.ToolResponseCount)
+	}
 
-	reply = sanitizeWhatsAppReply(strings.TrimSpace(reply))
+	reply := sanitizeWhatsAppReply(strings.TrimSpace(runResult.Reply))
 	if reply == "" {
 		s.logWarn(ctx, "waagent: empty agent reply", "phone", phoneKey, "organization_id", orgID.String())
 		return
