@@ -322,7 +322,7 @@ func TestRunAgentReplyPersistsAppointmentFallbackWhenGroundingFails(t *testing.T
 	orgID := uuid.New()
 	queries := &serviceTestQuerier{}
 	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
-	agent := &serviceTestAgent{result: AgentRunResult{Reply: "Ik kan die afspraak nu niet betrouwbaar bevestigen. Over welke afspraak gaat het precies?", GroundingFailure: "appointment_details_without_appointment_tool"}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: "Noem de datum, periode of klant, dan pak ik de juiste afspraak erbij.", GroundingFailure: "appointment_details_without_appointment_tool"}}
 	service := &Service{
 		queries: queries,
 		agent:   agent,
@@ -342,7 +342,7 @@ func TestRunAgentReplyPersistsAppointmentFallbackWhenGroundingFails(t *testing.T
 	if len(queries.inserted) != 1 {
 		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
 	}
-	if queries.inserted[0].Content != "Ik kan die afspraak nu niet betrouwbaar bevestigen. Over welke afspraak gaat het precies?" {
+	if queries.inserted[0].Content != "Noem de datum, periode of klant, dan pak ik de juiste afspraak erbij." {
 		t.Fatalf("unexpected persisted appointment fallback %q", queries.inserted[0].Content)
 	}
 	if agent.lastOrganization != orgID {

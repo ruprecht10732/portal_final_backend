@@ -810,27 +810,27 @@ func validateGroundedReply(reply string, evidence *replyGroundingEvidence) (stri
 
 func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) groundingDecision {
 	quoteTools := []string{"GetQuotes", "DraftQuote", "GenerateQuote", "SendQuotePDF"}
-	if replyMentionsQuoteSpecifics(reply) {
+	if quoteFacts := extractQuoteFacts(reply); len(quoteFacts) > 0 {
 		if !evidence.hasToolResponse(quoteTools...) {
-			return groundingDecision{Code: "quote_details_without_quote_tool", UnsupportedFacts: extractQuoteFacts(reply)}
+			return groundingDecision{Code: "quote_details_without_quote_tool", UnsupportedFacts: quoteFacts}
 		}
 		if unsupported := unsupportedQuoteFacts(reply, evidence.payloadsForTools(quoteTools...)); len(unsupported) > 0 {
 			return groundingDecision{Code: "quote_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
 	appointmentTools := []string{"GetAppointments", "GetAvailableVisitSlots", "ScheduleVisit", "RescheduleVisit", "CancelVisit"}
-	if replyMentionsAppointmentSpecifics(reply) {
+	if appointmentFacts := extractAppointmentFacts(reply); len(appointmentFacts) > 0 {
 		if !evidence.hasToolResponse(appointmentTools...) {
-			return groundingDecision{Code: "appointment_details_without_appointment_tool", UnsupportedFacts: extractAppointmentFacts(reply)}
+			return groundingDecision{Code: "appointment_details_without_appointment_tool", UnsupportedFacts: appointmentFacts}
 		}
 		if unsupported := unsupportedAppointmentFacts(reply, evidence.payloadsForTools(appointmentTools...)); len(unsupported) > 0 {
 			return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
 	leadTools := []string{"GetLeadDetails", "CreateLead", "UpdateLeadDetails"}
-	if replyMentionsLeadSpecifics(reply) {
+	if leadFacts := extractLeadFacts(reply); len(leadFacts) > 0 {
 		if !evidence.hasToolResponse(leadTools...) {
-			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: extractLeadFacts(reply)}
+			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: leadFacts}
 		}
 		if unsupported := unsupportedLeadFacts(reply, evidence.payloadsForTools(leadTools...)); len(unsupported) > 0 {
 			return groundingDecision{Code: "lead_fact_not_in_tool_result", UnsupportedFacts: unsupported}
@@ -839,54 +839,22 @@ func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) ground
 	return groundingDecision{}
 }
 
-func replyMentionsQuoteSpecifics(reply string) bool {
-	if reCurrencyAmount.MatchString(reply) {
-		return true
-	}
-	lower := strings.ToLower(reply)
-	return strings.Contains(lower, "offerte") || strings.Contains(lower, "prijsopgave") || strings.Contains(lower, "quote pdf")
-}
-
-func replyMentionsAppointmentSpecifics(reply string) bool {
-	if reClockTime.MatchString(reply) {
-		return true
-	}
-	for _, marker := range []string{"datum:", "tijd:", "locatie:", "afspraak", "bezoek", "gepland"} {
-		if strings.Contains(strings.ToLower(reply), marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func replyMentionsLeadSpecifics(reply string) bool {
-	if reEmail.MatchString(reply) || rePhone.MatchString(reply) {
-		return true
-	}
-	for _, marker := range []string{"adres:", "telefoon:", "e-mail:", "email:", "status:"} {
-		if strings.Contains(strings.ToLower(reply), marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func fallbackReplyForGroundingIssue(issue string) string {
 	switch issue {
 	case "quote_details_without_quote_tool":
-		fallthrough
+		return "Noem de klantnaam of het offertenummer, dan pak ik de juiste offerte erbij."
 	case "quote_fact_not_in_tool_result":
-		return "Ik kan die offertegegevens nu niet betrouwbaar bevestigen. Over welke offerte gaat het precies?"
+		return "Ik kan dat offertedetail zo niet bevestigen. Noem de klantnaam of het offertenummer, dan controleer ik het meteen."
 	case "appointment_details_without_appointment_tool":
-		fallthrough
+		return "Noem de datum, periode of klant, dan pak ik de juiste afspraak erbij."
 	case "appointment_fact_not_in_tool_result":
-		return "Ik kan die afspraak nu niet betrouwbaar bevestigen. Over welke afspraak gaat het precies?"
+		return "Ik kan dat afspraakdetail zo niet bevestigen. Noem de datum, periode of klant, dan controleer ik het meteen."
 	case "lead_details_without_lead_tool":
-		fallthrough
+		return "Noem de klantnaam of het dossier waar het over gaat, dan controleer ik de gegevens."
 	case "lead_fact_not_in_tool_result":
-		return "Ik kan die klantgegevens nu niet betrouwbaar bevestigen. Welke klant of welk dossier bedoelt u precies?"
+		return "Ik kan dat klantdetail zo niet bevestigen. Noem de klantnaam of het dossier, dan controleer ik het meteen."
 	default:
-		return "Ik kan dat detail nu niet betrouwbaar bevestigen. Kunt u aangeven welk onderdeel ik eerst moet controleren?"
+		return "Noem even welk onderdeel ik moet controleren, dan pak ik het gericht erbij."
 	}
 }
 

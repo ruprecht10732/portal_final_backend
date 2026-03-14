@@ -55,7 +55,7 @@ type ToolHandler struct {
 }
 
 // HandleGetPendingQuotes retrieves quotes scoped to the org from context.
-func (h *ToolHandler) HandleGetPendingQuotes(_ tool.Context, orgID uuid.UUID, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
+func (h *ToolHandler) HandleGetPendingQuotes(ctx tool.Context, orgID uuid.UUID, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
 	var status *string
 	if input.Status != "" {
 		normalized := normalizeQuoteStatusFilter(input.Status)
@@ -66,6 +66,7 @@ func (h *ToolHandler) HandleGetPendingQuotes(_ tool.Context, orgID uuid.UUID, in
 	if err != nil {
 		return GetPendingQuotesOutput{}, err
 	}
+	h.recordLeadHintFromQuotes(ctx, orgID, quotes)
 
 	return GetPendingQuotesOutput{
 		Quotes: quotes,
@@ -95,7 +96,7 @@ func normalizeQuoteStatusFilter(raw string) string {
 }
 
 // HandleGetAppointments retrieves appointments scoped to the org from context.
-func (h *ToolHandler) HandleGetAppointments(_ tool.Context, orgID uuid.UUID, input GetAppointmentsInput) (GetAppointmentsOutput, error) {
+func (h *ToolHandler) HandleGetAppointments(ctx tool.Context, orgID uuid.UUID, input GetAppointmentsInput) (GetAppointmentsOutput, error) {
 	var from, to *time.Time
 
 	if input.DateFrom != "" {
@@ -125,9 +126,32 @@ func (h *ToolHandler) HandleGetAppointments(_ tool.Context, orgID uuid.UUID, inp
 	if err != nil {
 		return GetAppointmentsOutput{}, err
 	}
+	h.recordLeadHintFromAppointments(ctx, orgID, appointments)
 
 	return GetAppointmentsOutput{
 		Appointments: appointments,
 		Count:        len(appointments),
 	}, nil
+}
+
+func (h *ToolHandler) recordLeadHintFromQuotes(ctx tool.Context, orgID uuid.UUID, quotes []QuoteSummary) {
+	if len(quotes) != 1 {
+		return
+	}
+	quote := quotes[0]
+	if strings.TrimSpace(quote.LeadID) == "" {
+		return
+	}
+	h.recordLeadHint(ctx, orgID, quote.LeadID, quote.ClientName, quote.LeadServiceID)
+}
+
+func (h *ToolHandler) recordLeadHintFromAppointments(ctx tool.Context, orgID uuid.UUID, appointments []AppointmentSummary) {
+	if len(appointments) != 1 {
+		return
+	}
+	appointment := appointments[0]
+	if strings.TrimSpace(appointment.LeadID) == "" {
+		return
+	}
+	h.recordLeadHint(ctx, orgID, appointment.LeadID, "", appointment.LeadServiceID)
 }
