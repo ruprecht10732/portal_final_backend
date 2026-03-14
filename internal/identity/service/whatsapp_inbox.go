@@ -835,6 +835,7 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 
 	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, conversation.PhoneNumber)
 	if err != nil {
+		log.Printf("whatsapp inbox: media download failed organization=%s conversation=%s message=%s device=%s phone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, conversation.PhoneNumber, err)
 		return WhatsAppMediaDownloadResult{}, apperr.Internal("WhatsApp-media kon niet worden gedownload")
 	}
 	if cached, ok := s.cacheWhatsAppMediaDownload(ctx, organizationID, conversationID, externalMessageID, message, conversation, deviceID); ok {

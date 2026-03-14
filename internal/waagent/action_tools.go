@@ -499,14 +499,14 @@ func (h *ToolHandler) HandleSendQuotePDF(ctx tool.Context, orgID uuid.UUID, inpu
 	}
 	pdfResult, err := h.quoteWorkflowWriter.GetQuotePDF(context.Background(), orgID, input)
 	if err != nil {
-		return SendQuotePDFOutput{Success: false, Message: err.Error()}, err
+		return SendQuotePDFOutput{Success: false, Message: "Ik kan de offerte-pdf nu niet ophalen. Probeer het later opnieuw."}, err
 	}
 	caption := strings.TrimSpace(input.Caption)
 	if caption == "" {
 		caption = fmt.Sprintf("Offerte %s als pdf.", pdfResult.QuoteNumber)
 	}
 	if err := h.sender.SendFileReply(context.Background(), orgID, phoneKey, caption, pdfResult.FileName, pdfResult.Data); err != nil {
-		return SendQuotePDFOutput{Success: false, Message: err.Error(), QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, err
+		return SendQuotePDFOutput{Success: false, Message: "Ik kan de offerte-pdf nu niet via WhatsApp versturen. Probeer het later opnieuw.", QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, err
 	}
 	return SendQuotePDFOutput{Success: true, Message: "Offerte-pdf verzonden", QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, nil
 }

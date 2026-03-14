@@ -163,6 +163,25 @@ func TestNormalizeRecipientPreservesJIDs(t *testing.T) {
 	}
 }
 
+func TestMediaDownloadPhoneCandidatesIncludeJIDFallback(t *testing.T) {
+	t.Parallel()
+
+	got := mediaDownloadPhoneCandidates(testPhoneNumber)
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "31612345678") {
+		t.Fatalf("expected bare phone candidate, got %v", got)
+	}
+	if !strings.Contains(joined, "31612345678@s.whatsapp.net") {
+		t.Fatalf("expected JID phone candidate, got %v", got)
+	}
+	if !strings.Contains(joined, "+31612345678") {
+		t.Fatalf("expected plus-prefixed phone candidate, got %v", got)
+	}
+	if len(got) < 3 {
+		t.Fatalf("expected multiple phone candidates, got %v", got)
+	}
+}
+
 func assertMultipartImageRequest(t *testing.T, r *http.Request) {
 	t.Helper()
 

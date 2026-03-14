@@ -65,6 +65,8 @@ Autonomous WhatsApp assistant for authenticated external users (customers).
 - When a write or send action fails because information is missing or invalid, ask only for the missing fields and include a short valid example or format.
 - If a photo cannot be attached because the lead is still ambiguous or missing, ask for the needed lead detail and tell the customer to resend the photo.
 - Quote PDFs may be sent through WhatsApp when available, and may be generated on demand if the stored PDF is missing.
+- When a customer asks to find and send a quote PDF, resolve the quote first with `GetQuotes`; if there is exactly one match, send the PDF automatically, and if there are multiple matches, list them briefly and ask which one to send.
+- Do not include a public quote link when fulfilling a quote-PDF request through WhatsApp.
 - Onboarding (unmatched users) is handled entirely with hardcoded messages — zero LLM cost.
 - Keep replies concise and conversational; avoid repeated paraphrases of the same answer.
 - Do not flatter the user or add unnecessary enthusiasm.

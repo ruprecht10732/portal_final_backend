@@ -441,84 +441,128 @@ func (c *Client) StarMessage(ctx context.Context, deviceID string, messageID str
 }
 
 func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaResult, error) {
-	phone := normalizeRecipient(phoneNumber)
-	if phone == "" {
+	phones := mediaDownloadPhoneCandidates(phoneNumber)
+	if len(phones) == 0 {
 		return DownloadMediaResult{}, errors.New(errPhoneNumberRequired)
 	}
+	var lastErr error
+	for _, phone := range phones {
+		parsed, err := c.fetchDownloadMediaResponse(ctx, deviceID, messageID, phone)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return c.downloadMediaResultFromProvider(parsed), nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("media download returned no usable response")
+	}
+	return DownloadMediaResult{}, lastErr
+}
 
-	endpoint := fmt.Sprintf("%s/message/%s/download?phone=%s", c.baseURL, url.PathEscape(strings.TrimSpace(messageID)), url.QueryEscape(phone))
+func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaFileResult, error) {
+	phones := mediaDownloadPhoneCandidates(phoneNumber)
+	if len(phones) == 0 {
+		return DownloadMediaFileResult{}, errors.New(errPhoneNumberRequired)
+	}
+	var lastErr error
+	for _, phone := range phones {
+		parsed, err := c.fetchDownloadMediaResponse(ctx, deviceID, messageID, phone)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		result := c.downloadMediaResultFromProvider(parsed)
+		mediaType := strings.TrimSpace(coalesceStr(parsed.Results.MimeType, parsed.Results.MediaType))
+		if fileResult, ok := decodeInlineMediaData(parsed.Results.Data, mediaType, result); ok {
+			return fileResult, nil
+		}
+		return c.downloadMediaFromURL(ctx, result)
+	}
+	if lastErr == nil {
+		lastErr = errors.New("media download returned no usable response")
+	}
+	return DownloadMediaFileResult{}, lastErr
+}
+
+func (c *Client) fetchDownloadMediaResponse(ctx context.Context, deviceID string, messageID string, phone string) (providerDownloadMediaResponse, error) {
+	endpoint := fmt.Sprintf("%s/message/%s/download?phone=%s", c.baseURL, url.PathEscape(strings.TrimSpace(messageID)), url.QueryEscape(strings.TrimSpace(phone)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return DownloadMediaResult{}, err
+		return providerDownloadMediaResponse{}, err
 	}
 	c.addHeaders(req, deviceID)
 	data, err := c.doRequest(req)
 	if err != nil {
-		return DownloadMediaResult{}, err
+		return providerDownloadMediaResponse{}, fmt.Errorf("download media phone=%s: %w", phone, err)
 	}
-
 	var parsed providerDownloadMediaResponse
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return DownloadMediaResult{}, fmt.Errorf("parse download media response: %w", err)
+		return providerDownloadMediaResponse{}, fmt.Errorf("parse download media response: %w", err)
 	}
+	if err := validateProviderDownloadMediaResponse(parsed); err != nil {
+		return providerDownloadMediaResponse{}, fmt.Errorf("download media phone=%s: %w", phone, err)
+	}
+	return parsed, nil
+}
 
-	// API v8 returns file_name; older versions return filename.
+func (c *Client) downloadMediaResultFromProvider(parsed providerDownloadMediaResponse) DownloadMediaResult {
 	fileName := coalesceStr(parsed.Results.FileName, parsed.Results.Filename)
-	// API v8 returns mime_type; older versions return media_type.
 	mediaType := coalesceStr(parsed.Results.MimeType, parsed.Results.MediaType)
-
+	filePath := strings.TrimSpace(parsed.Results.FilePath)
 	return DownloadMediaResult{
 		MessageID:   strings.TrimSpace(parsed.Results.MessageID),
 		MediaType:   strings.TrimSpace(mediaType),
 		Filename:    strings.TrimSpace(fileName),
-		FilePath:    strings.TrimSpace(parsed.Results.FilePath),
+		FilePath:    filePath,
 		FileSize:    parsed.Results.FileSize,
-		DownloadURL: c.resolveProviderAssetURL(strings.TrimSpace(parsed.Results.FilePath)),
-	}, nil
+		DownloadURL: c.resolveProviderAssetURL(filePath),
+	}
 }
 
-func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaFileResult, error) {
-	normPhone := normalizeRecipient(phoneNumber)
-	if normPhone == "" {
-		return DownloadMediaFileResult{}, errors.New(errPhoneNumberRequired)
+func validateProviderDownloadMediaResponse(parsed providerDownloadMediaResponse) error {
+	code := strings.ToUpper(strings.TrimSpace(parsed.Code))
+	if code != "" && code != "SUCCESS" {
+		return fmt.Errorf("provider code %s: %s", parsed.Code, strings.TrimSpace(parsed.Message))
 	}
-
-	endpoint := fmt.Sprintf("%s/message/%s/download?phone=%s", c.baseURL, url.PathEscape(strings.TrimSpace(messageID)), url.QueryEscape(normPhone))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return DownloadMediaFileResult{}, err
+	if strings.TrimSpace(parsed.Results.Data) == "" && strings.TrimSpace(parsed.Results.FilePath) == "" {
+		return fmt.Errorf("provider returned no media data: %s", strings.TrimSpace(parsed.Message))
 	}
-	c.addHeaders(req, deviceID)
-	raw, err := c.doRequest(req)
-	if err != nil {
-		return DownloadMediaFileResult{}, err
+	return nil
+}
+
+func mediaDownloadPhoneCandidates(phoneNumber string) []string {
+	trimmed := strings.TrimSpace(phoneNumber)
+	if trimmed == "" {
+		return nil
 	}
-
-	var parsed providerDownloadMediaResponse
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return DownloadMediaFileResult{}, fmt.Errorf("parse download media response: %w", err)
+	candidates := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	appendCandidate := func(value string) {
+		normalized := strings.TrimSpace(value)
+		if normalized == "" {
+			return
+		}
+		if _, ok := seen[normalized]; ok {
+			return
+		}
+		seen[normalized] = struct{}{}
+		candidates = append(candidates, normalized)
 	}
-
-	// Normalise field names across API versions.
-	fileName := coalesceStr(parsed.Results.FileName, parsed.Results.Filename)
-	mediaType := coalesceStr(parsed.Results.MimeType, parsed.Results.MediaType)
-
-	result := DownloadMediaResult{
-		MessageID:   strings.TrimSpace(parsed.Results.MessageID),
-		MediaType:   strings.TrimSpace(mediaType),
-		Filename:    strings.TrimSpace(fileName),
-		FilePath:    strings.TrimSpace(parsed.Results.FilePath),
-		FileSize:    parsed.Results.FileSize,
-		DownloadURL: c.resolveProviderAssetURL(strings.TrimSpace(parsed.Results.FilePath)),
+	appendCandidate(normalizeRecipient(trimmed))
+	if strings.Contains(trimmed, "@") {
+		appendCandidate(trimmed)
+		if bare := strings.TrimSpace(strings.SplitN(trimmed, "@", 2)[0]); bare != "" {
+			appendCandidate(bare)
+			appendCandidate(bare + "@s.whatsapp.net")
+		}
+		return candidates
 	}
-
-	// API v8+ returns media data inline as base64.
-	if fileResult, ok := decodeInlineMediaData(parsed.Results.Data, mediaType, result); ok {
-		return fileResult, nil
-	}
-
-	// Fallback: fetch binary from the file_path URL (older provider versions).
-	return c.downloadMediaFromURL(ctx, result)
+	digits := strings.TrimPrefix(phone.NormalizeE164(trimmed), "+")
+	appendCandidate(digits)
+	appendCandidate(digits + "@s.whatsapp.net")
+	appendCandidate("+" + digits)
+	return candidates
 }
 
 func decodeInlineMediaData(rawData string, mediaType string, result DownloadMediaResult) (DownloadMediaFileResult, bool) {
