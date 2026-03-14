@@ -38,6 +38,12 @@ var AllowedContentTypes = map[string]bool{
 	"audio/ogg":   true,
 	"audio/webm":  true,
 	"audio/x-wav": true,
+	"audio/opus":  true,
+	"audio/aac":   true,
+	"audio/mp4":   true,
+	"audio/x-m4a": true,
+	"audio/amr":   true,
+	"audio/3gpp":  true,
 }
 
 // ValidateContentType checks if the content type is allowed.

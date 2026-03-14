@@ -118,7 +118,7 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 
 func (s *Service) handleIncomingAudioMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound CurrentInboundMessage) {
 	if strings.TrimSpace(inbound.ExternalMessageID) == "" {
-		log.Printf("waagent: audio message missing external id phone=%s org=%s", phoneKey, orgID)
+		log.Printf("waagent: audio fallback reason=missing_external_id phone=%s org=%s", phoneKey, orgID)
 		s.sendAudioFallback(ctx, orgID, phoneKey, replyTarget, inbound)
 		return
 	}
@@ -140,7 +140,8 @@ func (s *Service) handleIncomingAudioMessage(ctx context.Context, orgID uuid.UUI
 		log.Printf("waagent: failed to create pending audio transcription row phone=%s: %v", phoneKey, err)
 	}
 	if s.transcriptionScheduler == nil || s.transcriber == nil || s.storage == nil || strings.TrimSpace(s.attachmentBucket) == "" {
-		log.Printf("waagent: audio transcription not configured phone=%s org=%s", phoneKey, orgID)
+		log.Printf("waagent: audio fallback reason=deps_nil phone=%s org=%s scheduler=%v transcriber=%v storage=%v bucket=%q",
+			phoneKey, orgID, s.transcriptionScheduler != nil, s.transcriber != nil, s.storage != nil, s.attachmentBucket)
 		s.failVoiceTranscription(ctx, orgID, inbound.ExternalMessageID, "audio transcription is not configured", false)
 		s.sendAudioFallback(ctx, orgID, phoneKey, replyTarget, inbound)
 		return
@@ -150,7 +151,7 @@ func (s *Service) handleIncomingAudioMessage(ctx context.Context, orgID uuid.UUI
 		PhoneNumber:       replyTarget,
 		ExternalMessageID: inbound.ExternalMessageID,
 	}); err != nil {
-		log.Printf("waagent: enqueue audio transcription failed phone=%s org=%s: %v", phoneKey, orgID, err)
+		log.Printf("waagent: audio fallback reason=enqueue_failed phone=%s org=%s: %v", phoneKey, orgID, err)
 		s.failVoiceTranscription(ctx, orgID, inbound.ExternalMessageID, err.Error(), false)
 		s.sendAudioFallback(ctx, orgID, phoneKey, replyTarget, inbound)
 	}
@@ -232,6 +233,8 @@ func (s *Service) sendHardcoded(ctx context.Context, orgID uuid.UUID, phoneKey, 
 
 func (s *Service) ProcessVoiceTranscription(ctx context.Context, payload scheduler.WAAgentVoiceTranscriptionPayload) error {
 	if s.transcriber == nil || s.storage == nil || s.sender == nil || s.sender.client == nil {
+		log.Printf("waagent: voice transcription deps nil transcriber=%v storage=%v sender=%v client=%v",
+			s.transcriber != nil, s.storage != nil, s.sender != nil, s.sender != nil && s.sender.client != nil)
 		return fmt.Errorf("waagent voice transcription dependencies are not configured")
 	}
 	voiceCtx, err := s.prepareVoiceTranscription(ctx, payload)
@@ -297,10 +300,13 @@ func (s *Service) downloadAndStoreVoiceNote(ctx context.Context, voiceCtx voiceT
 	}
 	mediaFile, err := s.sender.client.DownloadMediaFile(ctx, config.DeviceID, voiceCtx.externalMessageID, voiceCtx.phoneNumber)
 	if err != nil {
+		log.Printf("waagent: voice download failed phone=%s external=%s device=%s: %v", voiceCtx.phoneKey, voiceCtx.externalMessageID, config.DeviceID, err)
 		s.failVoiceTranscription(ctx, voiceCtx.orgID, voiceCtx.externalMessageID, err.Error(), true)
 		return nil, err
 	}
 	contentType := normalizeVoiceImportContentType(mediaFile.ContentType, mediaFile.MediaType)
+	log.Printf("waagent: voice download ok phone=%s contentType=%q rawContentType=%q rawMediaType=%q size=%d",
+		voiceCtx.phoneKey, contentType, mediaFile.ContentType, mediaFile.MediaType, len(mediaFile.Data))
 	if err := s.validateVoiceNote(ctx, voiceCtx, contentType, mediaFile.Data); err != nil {
 		return nil, nil
 	}
@@ -328,12 +334,19 @@ func (s *Service) downloadAndStoreVoiceNote(ctx context.Context, voiceCtx voiceT
 }
 
 func (s *Service) validateVoiceNote(ctx context.Context, voiceCtx voiceTranscriptionContext, contentType string, data []byte) error {
-	if err := s.storage.ValidateContentType(contentType); err != nil {
-		s.failVoiceTranscription(ctx, voiceCtx.orgID, voiceCtx.externalMessageID, err.Error(), false)
-		s.sendAudioFallback(ctx, voiceCtx.orgID, voiceCtx.phoneKey, voiceCtx.phoneNumber, CurrentInboundMessage{ExternalMessageID: voiceCtx.externalMessageID})
-		return err
+	// Voice notes from WhatsApp may use MIME types (e.g. audio/opus, audio/aac)
+	// that are not in the general-purpose storage upload whitelist. Since we already
+	// verified this is an audio message upstream, accept any audio/* content type.
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "audio/") {
+		if err := s.storage.ValidateContentType(contentType); err != nil {
+			log.Printf("waagent: audio fallback reason=content_type_rejected phone=%s contentType=%q", voiceCtx.phoneKey, contentType)
+			s.failVoiceTranscription(ctx, voiceCtx.orgID, voiceCtx.externalMessageID, err.Error(), false)
+			s.sendAudioFallback(ctx, voiceCtx.orgID, voiceCtx.phoneKey, voiceCtx.phoneNumber, CurrentInboundMessage{ExternalMessageID: voiceCtx.externalMessageID})
+			return err
+		}
 	}
 	if err := s.storage.ValidateFileSize(int64(len(data))); err != nil {
+		log.Printf("waagent: audio fallback reason=file_size_rejected phone=%s size=%d", voiceCtx.phoneKey, len(data))
 		s.failVoiceTranscription(ctx, voiceCtx.orgID, voiceCtx.externalMessageID, err.Error(), false)
 		s.sendAudioFallback(ctx, voiceCtx.orgID, voiceCtx.phoneKey, voiceCtx.phoneNumber, CurrentInboundMessage{ExternalMessageID: voiceCtx.externalMessageID})
 		return err
@@ -348,9 +361,11 @@ func (s *Service) transcribeVoiceNote(ctx context.Context, voiceCtx voiceTranscr
 		Data:        note.data,
 	})
 	if err != nil {
+		log.Printf("waagent: voice transcribe failed phone=%s contentType=%q size=%d: %v", voiceCtx.phoneKey, note.contentType, len(note.data), err)
 		s.failVoiceTranscription(ctx, voiceCtx.orgID, voiceCtx.externalMessageID, err.Error(), true)
 		return AudioTranscriptionResult{}, err
 	}
+	log.Printf("waagent: voice transcribe ok phone=%s lang=%s text=%q", voiceCtx.phoneKey, result.Language, truncateForLog(result.Text, 80))
 	return result, nil
 }
 
@@ -559,6 +574,14 @@ func truncateReason(value string) string {
 		return trimmed
 	}
 	return trimmed[:500]
+}
+
+func truncateForLog(value string, max int) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) <= max {
+		return trimmed
+	}
+	return trimmed[:max] + "…"
 }
 
 func (s *Service) syncInboundInboxMessage(ctx context.Context, orgID uuid.UUID, phoneNumber string, inbound *CurrentInboundMessage) {
