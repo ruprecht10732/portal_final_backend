@@ -248,9 +248,12 @@ type providerDownloadMediaResponse struct {
 		MessageID string `json:"message_id"`
 		Status    string `json:"status"`
 		MediaType string `json:"media_type"`
+		MimeType  string `json:"mime_type"`
 		Filename  string `json:"filename"`
+		FileName  string `json:"file_name"`
 		FilePath  string `json:"file_path"`
 		FileSize  int64  `json:"file_size"`
+		Data      string `json:"data"`
 	} `json:"results"`
 }
 
@@ -459,10 +462,15 @@ func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID s
 		return DownloadMediaResult{}, fmt.Errorf("parse download media response: %w", err)
 	}
 
+	// API v8 returns file_name; older versions return filename.
+	fileName := coalesceStr(parsed.Results.FileName, parsed.Results.Filename)
+	// API v8 returns mime_type; older versions return media_type.
+	mediaType := coalesceStr(parsed.Results.MimeType, parsed.Results.MediaType)
+
 	return DownloadMediaResult{
 		MessageID:   strings.TrimSpace(parsed.Results.MessageID),
-		MediaType:   strings.TrimSpace(parsed.Results.MediaType),
-		Filename:    strings.TrimSpace(parsed.Results.Filename),
+		MediaType:   strings.TrimSpace(mediaType),
+		Filename:    strings.TrimSpace(fileName),
 		FilePath:    strings.TrimSpace(parsed.Results.FilePath),
 		FileSize:    parsed.Results.FileSize,
 		DownloadURL: c.resolveProviderAssetURL(strings.TrimSpace(parsed.Results.FilePath)),
@@ -470,10 +478,60 @@ func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID s
 }
 
 func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaFileResult, error) {
-	result, err := c.DownloadMedia(ctx, deviceID, messageID, phoneNumber)
+	normPhone := normalizeRecipient(phoneNumber)
+	if normPhone == "" {
+		return DownloadMediaFileResult{}, errors.New(errPhoneNumberRequired)
+	}
+
+	endpoint := fmt.Sprintf("%s/message/%s/download?phone=%s", c.baseURL, url.PathEscape(strings.TrimSpace(messageID)), url.QueryEscape(normPhone))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return DownloadMediaFileResult{}, err
 	}
+	c.addHeaders(req, deviceID)
+	raw, err := c.doRequest(req)
+	if err != nil {
+		return DownloadMediaFileResult{}, err
+	}
+
+	var parsed providerDownloadMediaResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return DownloadMediaFileResult{}, fmt.Errorf("parse download media response: %w", err)
+	}
+
+	// Normalise field names across API versions.
+	fileName := coalesceStr(parsed.Results.FileName, parsed.Results.Filename)
+	mediaType := coalesceStr(parsed.Results.MimeType, parsed.Results.MediaType)
+
+	result := DownloadMediaResult{
+		MessageID:   strings.TrimSpace(parsed.Results.MessageID),
+		MediaType:   strings.TrimSpace(mediaType),
+		Filename:    strings.TrimSpace(fileName),
+		FilePath:    strings.TrimSpace(parsed.Results.FilePath),
+		FileSize:    parsed.Results.FileSize,
+		DownloadURL: c.resolveProviderAssetURL(strings.TrimSpace(parsed.Results.FilePath)),
+	}
+
+	// API v8+ returns media data inline as base64.
+	if b64 := strings.TrimSpace(parsed.Results.Data); b64 != "" {
+		decoded, decErr := base64.StdEncoding.DecodeString(b64)
+		if decErr != nil {
+			decoded, decErr = base64.RawStdEncoding.DecodeString(b64)
+		}
+		if decErr == nil && len(decoded) > 0 {
+			contentType := strings.TrimSpace(mediaType)
+			if contentType == "" {
+				contentType = inferContentType(result.Filename, result.FilePath, result.MediaType)
+			}
+			return DownloadMediaFileResult{
+				DownloadMediaResult: result,
+				ContentType:         contentType,
+				Data:                decoded,
+			}, nil
+		}
+	}
+
+	// Fallback: fetch binary from the file_path URL (older provider versions).
 	if strings.TrimSpace(result.DownloadURL) == "" {
 		return DownloadMediaFileResult{}, fmt.Errorf("download url is missing for media message")
 	}
@@ -506,6 +564,15 @@ func (c *Client) PinChat(ctx context.Context, deviceID string, chatJID string, p
 func (c *Client) SetDisappearingTimer(ctx context.Context, deviceID string, chatJID string, timerSeconds int) error {
 	_, err := c.postJSONAction(ctx, fmt.Sprintf("%s/chat/%s/disappearing", c.baseURL, url.PathEscape(strings.TrimSpace(chatJID))), deviceID, map[string]any{"timer_seconds": timerSeconds})
 	return err
+}
+
+func coalesceStr(values ...string) string {
+	for _, v := range values {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func hostFromURL(raw string) string {
