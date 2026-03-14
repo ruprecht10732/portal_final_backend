@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -40,15 +42,45 @@ type Client struct {
 }
 
 func NewClient() (*Client, error) {
-	model, err := whisper.New(DefaultModelPath)
+	modelPath := resolveModelPath()
+	model, err := whisper.New(modelPath)
 	if err != nil {
-		return nil, fmt.Errorf("load whisper model %q: %w", DefaultModelPath, err)
+		return nil, fmt.Errorf("load whisper model %q (cwd=%s): %w", modelPath, cwdOrUnknown(), err)
 	}
 	return &Client{
 		model:    model,
 		language: DefaultLanguage,
 		threads:  DefaultThreads,
 	}, nil
+}
+
+// resolveModelPath searches for the whisper model in multiple locations:
+// 1. Relative to the executable (e.g. /app/models/ggml-base.bin in Docker)
+// 2. Relative to the current working directory
+// 3. Absolute Docker path (/app/models/ggml-base.bin)
+func resolveModelPath() string {
+	if exePath, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exePath), DefaultModelPath)
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate
+		}
+	}
+	if _, err := os.Stat(DefaultModelPath); err == nil {
+		return DefaultModelPath
+	}
+	candidate := filepath.Join("/app", DefaultModelPath)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return DefaultModelPath
+}
+
+func cwdOrUnknown() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "unknown"
+	}
+	return dir
 }
 
 func (c *Client) Close() error {
