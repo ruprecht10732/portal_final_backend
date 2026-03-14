@@ -581,59 +581,59 @@ func (a *Agent) buildLeadContextText(hint *ConversationLeadHint) string {
 	} else {
 		b.WriteString("Er is een eerder opgeloste klant in dit gesprek. ")
 	}
+	if len(hint.RecentQuotes) > 0 {
+		b.WriteString("Laatst getoonde offertes in dit gesprek: ")
+		b.WriteString(formatRecentQuoteHints(hint.RecentQuotes))
+		b.WriteString(". ")
+	}
+	if len(hint.RecentAppointments) > 0 {
+		b.WriteString("Laatst getoonde afspraken in dit gesprek: ")
+		b.WriteString(formatRecentAppointmentHints(hint.RecentAppointments))
+		b.WriteString(". ")
+	}
 	if strings.TrimSpace(hint.LeadServiceID) != "" {
 		b.WriteString("Er is ook al een dienstcontext gekoppeld aan dit gesprek. ")
 	}
-	b.WriteString("Beantwoord geen concrete details zoals adres, telefoon, e-mail, status, afspraken of offertes op basis van deze hint alleen. Verifieer die eerst met GetLeadDetails, GetQuotes of GetAppointments.")
+	b.WriteString("Beantwoord geen concrete details zoals adres, telefoon, e-mail, status, afspraken of offertes op basis van deze hint alleen. Gebruik deze context alleen voor routering en verifieer daarna met GetLeadDetails, GetQuotes of GetAppointments.")
 	return b.String()
 }
 
-func formatPreloadedDetails(d *LeadDetailsResult) string {
-	var b strings.Builder
-	b.WriteString("Gesprekcontext voor deze klant:\n")
-	if d.CustomerName != "" {
-		b.WriteString("- Klant: " + d.CustomerName + "\n")
-	}
-	if d.FullAddress != "" {
-		b.WriteString("- Adres: " + d.FullAddress + "\n")
-	} else {
-		addr := buildAddressLine(d.Street, d.HouseNumber, d.ZipCode, d.City)
-		if addr != "" {
-			b.WriteString("- Adres: " + addr + "\n")
+func formatRecentQuoteHints(quotes []RecentQuoteHint) string {
+	parts := make([]string, 0, len(quotes))
+	for _, quote := range quotes {
+		fragment := strings.TrimSpace(quote.ClientName)
+		if fragment == "" {
+			fragment = strings.TrimSpace(quote.QuoteNumber)
+		}
+		if strings.TrimSpace(quote.QuoteNumber) != "" && !strings.Contains(fragment, quote.QuoteNumber) {
+			fragment = strings.TrimSpace(fragment + " (" + quote.QuoteNumber + ")")
+		}
+		if strings.TrimSpace(quote.Summary) != "" {
+			fragment = strings.TrimSpace(fragment + ": " + quote.Summary)
+		}
+		if fragment != "" {
+			parts = append(parts, fragment)
 		}
 	}
-	if d.Phone != "" {
-		b.WriteString("- Telefoon: " + d.Phone + "\n")
-	}
-	if d.Email != "" {
-		b.WriteString("- E-mail: " + d.Email + "\n")
-	}
-	if d.ServiceType != "" {
-		b.WriteString("- Dienst: " + d.ServiceType + "\n")
-	}
-	if d.Status != "" {
-		b.WriteString("- Status: " + d.Status + "\n")
-	}
-	b.WriteString("(Deze gegevens komen uit het CRM. Gebruik GetLeadDetails voor de meest actuele gegevens als je twijfelt.)")
-	return b.String()
+	return strings.Join(parts, "; ")
 }
 
-func buildAddressLine(street, houseNumber, zipCode, city string) string {
-	var parts []string
-	streetPart := strings.TrimSpace(street)
-	if hn := strings.TrimSpace(houseNumber); hn != "" {
-		streetPart += " " + hn
+func formatRecentAppointmentHints(appointments []RecentAppointmentHint) string {
+	parts := make([]string, 0, len(appointments))
+	for _, appointment := range appointments {
+		fragment := strings.TrimSpace(appointment.Title)
+		if fragment == "" {
+			fragment = "afspraak"
+		}
+		if strings.TrimSpace(appointment.StartTime) != "" {
+			fragment = strings.TrimSpace(fragment + " op " + appointment.StartTime)
+		}
+		if strings.TrimSpace(appointment.Location) != "" {
+			fragment = strings.TrimSpace(fragment + " in " + appointment.Location)
+		}
+		parts = append(parts, fragment)
 	}
-	if strings.TrimSpace(streetPart) != "" {
-		parts = append(parts, strings.TrimSpace(streetPart))
-	}
-	if zc := strings.TrimSpace(zipCode); zc != "" {
-		parts = append(parts, zc)
-	}
-	if c := strings.TrimSpace(city); c != "" {
-		parts = append(parts, c)
-	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, "; ")
 }
 
 func (a *Agent) collectRunOutput(ctx context.Context, userID, sessionID string, userMessage *genai.Content) (AgentRunResult, error) {

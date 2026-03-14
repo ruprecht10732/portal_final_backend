@@ -25,7 +25,6 @@ type senderTestTransport struct {
 	lastSendMessageText  string
 	lastPresencePhone    string
 	lastPresenceAction   string
-	lastSendFileInput    whatsapp.SendFileInput
 }
 
 func (t *senderTestTransport) SendMessage(context.Context, string, string, string) (whatsapp.SendResult, error) {
@@ -61,12 +60,12 @@ func (r senderTestConfigReader) GetAgentConfig(context.Context) (waagentdb.RacWh
 }
 
 type senderTestInboxWriter struct {
-	lastOrgID    uuid.UUID
-	lastPhone    string
-	lastBody     string
+	lastOrgID     uuid.UUID
+	lastPhone     string
+	lastBody      string
 	lastMessageID *string
-	err          error
-	calls        int
+	err           error
+	calls         int
 }
 
 func (w *senderTestInboxWriter) PersistOutgoingWhatsAppMessage(_ context.Context, organizationID uuid.UUID, _ *uuid.UUID, phoneNumber string, body string, externalMessageID *string) error {

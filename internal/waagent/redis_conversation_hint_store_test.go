@@ -122,3 +122,46 @@ func TestRedisConversationLeadHintStoreDropsCorruptPayloads(t *testing.T) {
 		t.Fatal("expected corrupt redis hint to be deleted")
 	}
 }
+
+func TestRedisConversationLeadHintStorePersistsRecentQuoteAndAppointmentLists(t *testing.T) {
+	t.Parallel()
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf(redisHintStoreStartFailedMsg, err)
+	}
+	defer redisServer.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer func() { _ = client.Close() }()
+
+	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
+	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, func() time.Time { return now })
+	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+		QuoteID:     "quote-1",
+		QuoteNumber: "OFF-2026-0021",
+		ClientName:  "Joey Plomp",
+		Summary:     "Kogellagerscharnier RVS",
+	}})
+	now = now.Add(10 * time.Minute)
+	store.RememberAppointments(testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
+		AppointmentID: "appt-1",
+		Title:         "Bezoek",
+		StartTime:     "2026-03-16T09:00:00Z",
+		Location:      "Alkmaar",
+	}})
+
+	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	if !ok || hint == nil {
+		t.Fatal("expected redis-backed hint with recent lists to be returned")
+	}
+	if len(hint.RecentQuotes) != 1 || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+		t.Fatalf("unexpected recent quotes %#v", hint.RecentQuotes)
+	}
+	if len(hint.RecentAppointments) != 1 || hint.RecentAppointments[0].AppointmentID != "appt-1" {
+		t.Fatalf("unexpected recent appointments %#v", hint.RecentAppointments)
+	}
+	if !hint.UpdatedAt.Equal(now) {
+		t.Fatalf("expected updated_at %v, got %v", now, hint.UpdatedAt)
+	}
+}

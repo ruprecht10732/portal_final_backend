@@ -244,7 +244,7 @@ func (a *WAAgentCurrentInboundPhotoAdapter) resolvePhotoSource(ctx context.Conte
 		return source, nil
 	}
 	if a.historyReader == nil {
-		return waagentPhotoSource{}, fmt.Errorf("Ik zie geen recente foto in dit gesprek")
+		return waagentPhotoSource{}, fmt.Errorf("ik zie geen recente foto in dit gesprek")
 	}
 	recent, err := a.historyReader.GetRecentInboundAgentMessages(ctx, waagentdb.GetRecentInboundAgentMessagesParams{
 		OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
@@ -259,7 +259,7 @@ func (a *WAAgentCurrentInboundPhotoAdapter) resolvePhotoSource(ctx context.Conte
 			return source, nil
 		}
 	}
-	return waagentPhotoSource{}, fmt.Errorf("Ik zie geen recente foto in dit gesprek")
+	return waagentPhotoSource{}, fmt.Errorf("ik zie geen recente foto in dit gesprek")
 }
 
 func photoSourceFromCurrentMessage(message waagent.CurrentInboundMessage) (waagentPhotoSource, bool) {

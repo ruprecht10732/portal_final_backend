@@ -258,7 +258,7 @@ func (a *WAAgentLeadActionsAdapter) ResolveServiceID(ctx context.Context, leadID
 		service, err := a.repo.GetLeadServiceByID(ctx, *requestedServiceID, organizationID)
 		if err != nil {
 			if errors.Is(err, leadsrepo.ErrServiceNotFound) {
-				return uuid.Nil, fmt.Errorf(errWAAgentLeadServiceNotFound)
+				return uuid.Nil, errors.New(errWAAgentLeadServiceNotFound)
 			}
 			return uuid.Nil, err
 		}
@@ -270,7 +270,7 @@ func (a *WAAgentLeadActionsAdapter) ResolveServiceID(ctx context.Context, leadID
 	service, err := a.repo.GetCurrentLeadService(ctx, leadID, organizationID)
 	if err != nil {
 		if errors.Is(err, leadsrepo.ErrServiceNotFound) {
-			return uuid.Nil, fmt.Errorf(errWAAgentLeadServiceNotFound)
+			return uuid.Nil, errors.New(errWAAgentLeadServiceNotFound)
 		}
 		return uuid.Nil, err
 	}

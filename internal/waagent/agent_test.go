@@ -13,6 +13,17 @@ func TestBuildLeadContextTextUsesRoutingHintOnly(t *testing.T) {
 		LeadID:        testHintLeadID,
 		LeadServiceID: "svc-123",
 		CustomerName:  "Robin Example",
+		RecentQuotes: []RecentQuoteHint{{
+			QuoteNumber: "OFF-2026-0021",
+			ClientName:  "Joey Plomp",
+			Summary:     "Kogellagerscharnier RVS",
+		}},
+		RecentAppointments: []RecentAppointmentHint{{
+			AppointmentID: "appt-1",
+			Title:         "Bezoek",
+			StartTime:     "2026-03-16T09:00:00Z",
+			Location:      "Alkmaar",
+		}},
 		PreloadedDetails: &LeadDetailsResult{
 			CustomerName: "Robin Example",
 			FullAddress:  "Kerkstraat 12, Alkmaar",
@@ -26,8 +37,12 @@ func TestBuildLeadContextTextUsesRoutingHintOnly(t *testing.T) {
 
 	for _, want := range []string{
 		"Laatst besproken klant: Robin Example.",
+		"Laatst getoonde offertes in dit gesprek:",
+		"Joey Plomp (OFF-2026-0021): Kogellagerscharnier RVS",
+		"Laatst getoonde afspraken in dit gesprek:",
+		"Bezoek op 2026-03-16T09:00:00Z in Alkmaar",
 		"dienstcontext",
-		"Verifieer",
+		"verifieer",
 		"GetLeadDetails",
 		"GetQuotes",
 		"GetAppointments",

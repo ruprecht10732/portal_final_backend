@@ -1,6 +1,7 @@
 package waagent
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,5 +100,65 @@ func TestConversationLeadHintStorePrunesExpiredEntriesOnSet(t *testing.T) {
 	}
 	if _, ok := store.Get(testHintOrgID, testHintPhoneOne); ok {
 		t.Fatal("expected expired hint to be gone after prune-on-set")
+	}
+}
+
+func TestConversationLeadHintStoreRemembersRecentQuotesWithoutLeadID(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
+	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
+	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+		QuoteID:     "quote-1",
+		QuoteNumber: "OFF-2026-0021",
+		ClientName:  "Joey Plomp",
+		LeadID:      "lead-joey",
+		Summary:     "Kogellagerscharnier RVS",
+	}})
+
+	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	if !ok || hint == nil {
+		t.Fatal("expected hint with recent quotes to be returned")
+	}
+	if len(hint.RecentQuotes) != 1 {
+		t.Fatalf("expected 1 recent quote, got %#v", hint.RecentQuotes)
+	}
+	if hint.RecentQuotes[0].ClientName != "Joey Plomp" || hint.RecentQuotes[0].QuoteNumber != "OFF-2026-0021" {
+		t.Fatalf("unexpected recent quote payload %#v", hint.RecentQuotes[0])
+	}
+	if strings.TrimSpace(hint.LeadID) != "" {
+		t.Fatalf("expected lead id to remain empty, got %q", hint.LeadID)
+	}
+	if !hint.UpdatedAt.Equal(now) {
+		t.Fatalf("expected updated timestamp %v, got %v", now, hint.UpdatedAt)
+	}
+}
+
+func TestConversationLeadHintStoreMergesRecentAppointmentsIntoExistingHint(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
+	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
+	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	now = now.Add(5 * time.Minute)
+	store.RememberAppointments(testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
+		AppointmentID: "appt-1",
+		Title:         "Bezoek",
+		StartTime:     "2026-03-16T09:00:00Z",
+		Location:      "Alkmaar",
+	}})
+
+	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	if !ok || hint == nil {
+		t.Fatal("expected merged hint to be returned")
+	}
+	if hint.LeadID != testHintLeadID || hint.CustomerName != "Robin" {
+		t.Fatalf("expected base hint to remain intact, got %#v", hint)
+	}
+	if len(hint.RecentAppointments) != 1 || hint.RecentAppointments[0].AppointmentID != "appt-1" {
+		t.Fatalf("unexpected recent appointments %#v", hint.RecentAppointments)
+	}
+	if !hint.UpdatedAt.Equal(now) {
+		t.Fatalf("expected updated timestamp %v, got %v", now, hint.UpdatedAt)
 	}
 }

@@ -76,7 +76,7 @@ func (s *Service) HandleIncomingMessage(ctx context.Context, inbound CurrentInbo
 		lookupPhone = replyTarget
 	}
 
-	claimed, err := s.claimInboundMessage(ctx, externalMessageID, lookupPhone)
+	claimed, _ := s.claimInboundMessage(ctx, externalMessageID, lookupPhone)
 	if !claimed {
 		return
 	}

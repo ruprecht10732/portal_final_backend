@@ -14,10 +14,12 @@ import (
 const conversationLeadHintRedisPrefix = "waagent:lead-hint:"
 
 type redisConversationLeadHintRecord struct {
-	LeadID        string    `json:"lead_id"`
-	LeadServiceID string    `json:"lead_service_id,omitempty"`
-	CustomerName  string    `json:"customer_name,omitempty"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	LeadID             string                  `json:"lead_id,omitempty"`
+	LeadServiceID      string                  `json:"lead_service_id,omitempty"`
+	CustomerName       string                  `json:"customer_name,omitempty"`
+	RecentQuotes       []RecentQuoteHint       `json:"recent_quotes,omitempty"`
+	RecentAppointments []RecentAppointmentHint `json:"recent_appointments,omitempty"`
+	UpdatedAt          time.Time               `json:"updated_at"`
 }
 
 type RedisConversationLeadHintStore struct {
@@ -70,16 +72,19 @@ func (s *RedisConversationLeadHintStore) Get(orgID, phoneKey string) (*Conversat
 		s.logWarn("waagent: failed to decode redis conversation hint", "key", key, "error", err)
 		return nil, false
 	}
-	if strings.TrimSpace(record.LeadID) == "" {
+	hint := normalizeConversationLeadHint(ConversationLeadHint{
+		LeadID:             strings.TrimSpace(record.LeadID),
+		LeadServiceID:      strings.TrimSpace(record.LeadServiceID),
+		CustomerName:       strings.TrimSpace(record.CustomerName),
+		RecentQuotes:       record.RecentQuotes,
+		RecentAppointments: record.RecentAppointments,
+		UpdatedAt:          record.UpdatedAt,
+	})
+	if hintIsEmpty(hint) {
 		_ = s.redis.Del(context.Background(), key).Err()
 		return nil, false
 	}
-	return &ConversationLeadHint{
-		LeadID:        strings.TrimSpace(record.LeadID),
-		LeadServiceID: strings.TrimSpace(record.LeadServiceID),
-		CustomerName:  strings.TrimSpace(record.CustomerName),
-		UpdatedAt:     record.UpdatedAt,
-	}, true
+	return &hint, true
 }
 
 func (s *RedisConversationLeadHintStore) Set(orgID, phoneKey string, hint ConversationLeadHint) {
@@ -87,15 +92,17 @@ func (s *RedisConversationLeadHintStore) Set(orgID, phoneKey string, hint Conver
 		return
 	}
 	key := s.redisKey(orgID, phoneKey)
-	leadID := strings.TrimSpace(hint.LeadID)
-	if key == "" || leadID == "" {
+	hint = normalizeConversationLeadHint(hint)
+	if key == "" || hintIsEmpty(hint) {
 		return
 	}
 	record := redisConversationLeadHintRecord{
-		LeadID:        leadID,
-		LeadServiceID: strings.TrimSpace(hint.LeadServiceID),
-		CustomerName:  strings.TrimSpace(hint.CustomerName),
-		UpdatedAt:     s.currentTime(),
+		LeadID:             hint.LeadID,
+		LeadServiceID:      hint.LeadServiceID,
+		CustomerName:       hint.CustomerName,
+		RecentQuotes:       hint.RecentQuotes,
+		RecentAppointments: hint.RecentAppointments,
+		UpdatedAt:          s.currentTime(),
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
@@ -105,6 +112,39 @@ func (s *RedisConversationLeadHintStore) Set(orgID, phoneKey string, hint Conver
 	if err := s.redis.Set(context.Background(), key, payload, s.ttl).Err(); err != nil {
 		s.logWarn("waagent: failed to store redis conversation hint", "key", key, "error", err)
 	}
+}
+
+func (s *RedisConversationLeadHintStore) RememberQuotes(orgID, phoneKey string, quotes []QuoteSummary) {
+	s.remember(orgID, phoneKey, func(hint *ConversationLeadHint) {
+		hint.RecentQuotes = summarizeRecentQuotes(quotes)
+	})
+}
+
+func (s *RedisConversationLeadHintStore) RememberAppointments(orgID, phoneKey string, appointments []AppointmentSummary) {
+	s.remember(orgID, phoneKey, func(hint *ConversationLeadHint) {
+		hint.RecentAppointments = summarizeRecentAppointments(appointments)
+	})
+}
+
+func (s *RedisConversationLeadHintStore) remember(orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
+	if s == nil || s.redis == nil || mutate == nil {
+		return
+	}
+	key := s.redisKey(orgID, phoneKey)
+	if key == "" {
+		return
+	}
+	hint, _ := s.Get(orgID, phoneKey)
+	merged := ConversationLeadHint{}
+	if hint != nil {
+		merged = *hint
+	}
+	mutate(&merged)
+	if hintIsEmpty(merged) {
+		_ = s.redis.Del(context.Background(), key).Err()
+		return
+	}
+	s.Set(orgID, phoneKey, merged)
 }
 
 func (s *RedisConversationLeadHintStore) redisKey(orgID, phoneKey string) string {

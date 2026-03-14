@@ -35,6 +35,8 @@ type GetAppointmentsOutput struct {
 type LeadHintStore interface {
 	Get(orgID, phoneKey string) (*ConversationLeadHint, bool)
 	Set(orgID, phoneKey string, hint ConversationLeadHint)
+	RememberQuotes(orgID, phoneKey string, quotes []QuoteSummary)
+	RememberAppointments(orgID, phoneKey string, appointments []AppointmentSummary)
 }
 
 // ToolHandler implements the function-calling tool handlers.
@@ -135,6 +137,12 @@ func (h *ToolHandler) HandleGetAppointments(ctx tool.Context, orgID uuid.UUID, i
 }
 
 func (h *ToolHandler) recordLeadHintFromQuotes(ctx tool.Context, orgID uuid.UUID, quotes []QuoteSummary) {
+	if h == nil || h.leadHintStore == nil {
+		return
+	}
+	if phoneKey, ok := phoneKeyFromToolContext(ctx); ok {
+		h.leadHintStore.RememberQuotes(orgID.String(), phoneKey, quotes)
+	}
 	if len(quotes) != 1 {
 		return
 	}
@@ -146,6 +154,12 @@ func (h *ToolHandler) recordLeadHintFromQuotes(ctx tool.Context, orgID uuid.UUID
 }
 
 func (h *ToolHandler) recordLeadHintFromAppointments(ctx tool.Context, orgID uuid.UUID, appointments []AppointmentSummary) {
+	if h == nil || h.leadHintStore == nil {
+		return
+	}
+	if phoneKey, ok := phoneKeyFromToolContext(ctx); ok {
+		h.leadHintStore.RememberAppointments(orgID.String(), phoneKey, appointments)
+	}
 	if len(appointments) != 1 {
 		return
 	}
