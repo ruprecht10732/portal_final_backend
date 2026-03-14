@@ -267,7 +267,7 @@ func main() {
 	worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
 	audioTranscriber, closeTranscriber := initAudioTranscriber(log)
 	defer closeTranscriber()
-	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository())
+	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository(), eventBus)
 	waagentModule, err := waagent.NewModule(pool, waagent.ModuleConfig{
 		MoonshotAPIKey: cfg.MoonshotAPIKey,
 		LLMModel:       cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent),

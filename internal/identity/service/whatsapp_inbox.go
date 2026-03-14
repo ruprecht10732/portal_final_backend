@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
+	"path"
 	"strings"
 	"time"
 
@@ -116,8 +118,54 @@ func (s *Service) GetWhatsAppConversationMessages(ctx context.Context, organizat
 	if err != nil {
 		return repository.WhatsAppConversation{}, nil, err
 	}
+	messages = s.preResolveWhatsAppMessageMedia(ctx, organizationID, conversation, messages)
 
 	return conversation, messages, nil
+}
+
+func (s *Service) preResolveWhatsAppMessageMedia(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation, messages []repository.WhatsAppMessage) []repository.WhatsAppMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+	enriched := make([]repository.WhatsAppMessage, 0, len(messages))
+	for _, message := range messages {
+		enriched = append(enriched, s.preResolveWhatsAppMessage(ctx, organizationID, conversation, message))
+	}
+	return enriched
+}
+
+func (s *Service) preResolveWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) repository.WhatsAppMessage {
+	if s == nil || message.ExternalMessageID == nil {
+		return message
+	}
+	metadata := parseWhatsAppPortalMetadata(message.Metadata)
+	if metadata.Attachment == nil {
+		return message
+	}
+	result, ok := s.cachedWhatsAppMediaDownloadURL(ctx, message)
+	if !ok {
+		if s.whatsapp == nil {
+			return message
+		}
+		deviceID := whatsAppMessageDeviceOverride(message.Metadata)
+		if deviceID == "" {
+			resolvedDeviceID, err := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
+			if err != nil {
+				return message
+			}
+			deviceID = resolvedDeviceID
+		}
+		result, ok = s.cacheWhatsAppMediaDownload(ctx, organizationID, conversation.ID, strings.TrimSpace(*message.ExternalMessageID), message, conversation, deviceID)
+		if !ok {
+			return message
+		}
+	}
+	merged, err := mergeWhatsAppMediaResponseMetadata(message.Metadata, result)
+	if err != nil {
+		return message
+	}
+	message.Metadata = merged
+	return message
 }
 
 func (s *Service) GetWhatsAppConversationLeadState(ctx context.Context, organizationID uuid.UUID, conversation *repository.WhatsAppConversation) (*LeadInboxSummary, *LeadInboxSummary, error) {
@@ -570,7 +618,7 @@ func (s *Service) ReceiveIncomingWhatsAppMessage(ctx context.Context, input webh
 		return false, nil
 	}
 
-	s.publishWhatsAppMessageReceived(input.OrganizationID, conversation, message)
+	s.publishWhatsAppMessageReceived(ctx, input.OrganizationID, conversation, message)
 	s.publishWhatsAppConversationUpdated(input.OrganizationID, conversation)
 	return true, nil
 }
@@ -595,7 +643,7 @@ func (s *Service) UpdateIncomingWhatsAppMessage(ctx context.Context, organizatio
 		}
 		return err
 	}
-	s.publishWhatsAppMessageUpdated(organizationID, conversation, message)
+	s.publishWhatsAppMessageUpdated(ctx, organizationID, conversation, message)
 	s.publishWhatsAppConversationUpdated(organizationID, conversation)
 	return nil
 }
@@ -616,7 +664,7 @@ func (s *Service) SyncOutgoingWhatsAppMessage(ctx context.Context, input webhook
 		return false, nil
 	}
 
-	s.publishWhatsAppMessageSent(input.OrganizationID, conversation, message)
+	s.publishWhatsAppMessageSent(ctx, input.OrganizationID, conversation, message)
 	s.publishWhatsAppConversationUpdated(input.OrganizationID, conversation)
 	return true, nil
 }
@@ -781,10 +829,16 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 	if override := whatsAppMessageDeviceOverride(message.Metadata); override != "" {
 		deviceID = override
 	}
+	if cached, ok := s.cachedWhatsAppMediaDownloadURL(ctx, message); ok {
+		return cached, nil
+	}
 
 	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, conversation.PhoneNumber)
 	if err != nil {
 		return WhatsAppMediaDownloadResult{}, apperr.Internal("WhatsApp-media kon niet worden gedownload")
+	}
+	if cached, ok := s.cacheWhatsAppMediaDownload(ctx, organizationID, conversationID, externalMessageID, message, conversation, deviceID); ok {
+		return cached, nil
 	}
 
 	return WhatsAppMediaDownloadResult{
@@ -947,7 +1001,7 @@ func (s *Service) persistOutgoingWhatsAppMessage(ctx context.Context, organizati
 		return repository.WhatsAppConversation{}, repository.WhatsAppMessage{}, err
 	}
 
-	s.publishWhatsAppMessageSent(organizationID, conversation, message)
+	s.publishWhatsAppMessageSent(ctx, organizationID, conversation, message)
 	s.publishWhatsAppConversationUpdated(organizationID, conversation)
 
 	return conversation, message, nil
@@ -974,7 +1028,7 @@ func (s *Service) ApplyWhatsAppMessageReceipt(ctx context.Context, organizationI
 				continue
 			}
 		}
-		s.publishWhatsAppMessageSent(organizationID, conversation, message)
+		s.publishWhatsAppMessageSent(ctx, organizationID, conversation, message)
 	}
 	for _, conversation := range conversations {
 		s.publishWhatsAppConversationUpdated(organizationID, conversation)
@@ -1005,15 +1059,16 @@ func (s *Service) ApplyWhatsAppMessageMutation(ctx context.Context, input webhoo
 		return false, nil
 	}
 
-	s.publishWhatsAppMessageUpdated(input.OrganizationID, conversation, message)
+	s.publishWhatsAppMessageUpdated(ctx, input.OrganizationID, conversation, message)
 	s.publishWhatsAppConversationUpdated(input.OrganizationID, conversation)
 	return true, nil
 }
 
-func (s *Service) publishWhatsAppMessageSent(organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) {
+func (s *Service) publishWhatsAppMessageSent(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) {
 	if s.sse == nil {
 		return
 	}
+	message = s.preResolveWhatsAppMessage(ctx, organizationID, conversation, message)
 
 	event := sse.Event{
 		Type:    sse.EventWhatsAppMessageSent,
@@ -1054,10 +1109,11 @@ func (s *Service) publishWhatsAppMessageSent(organizationID uuid.UUID, conversat
 	s.sse.PublishToOrganization(organizationID, event)
 }
 
-func (s *Service) publishWhatsAppMessageReceived(organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) {
+func (s *Service) publishWhatsAppMessageReceived(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) {
 	if s.sse == nil {
 		return
 	}
+	message = s.preResolveWhatsAppMessage(ctx, organizationID, conversation, message)
 
 	event := sse.Event{
 		Type:    sse.EventWhatsAppMessageReceived,
@@ -1130,10 +1186,11 @@ func (s *Service) publishWhatsAppConversationUpdated(organizationID uuid.UUID, c
 	s.sse.PublishToOrganization(organizationID, event)
 }
 
-func (s *Service) publishWhatsAppMessageUpdated(organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) {
+func (s *Service) publishWhatsAppMessageUpdated(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation, message repository.WhatsAppMessage) {
 	if s.sse == nil {
 		return
 	}
+	message = s.preResolveWhatsAppMessage(ctx, organizationID, conversation, message)
 
 	event := sse.Event{
 		Type:    sse.EventWhatsAppMessageUpdated,
@@ -1427,11 +1484,23 @@ type whatsappPortalMetadata struct {
 	Caption     string `json:"caption,omitempty"`
 	Text        string `json:"text,omitempty"`
 	Attachment  *struct {
-		MediaType string `json:"mediaType,omitempty"`
-		Filename  string `json:"filename,omitempty"`
-		Path      string `json:"path,omitempty"`
-		RemoteURL string `json:"remoteUrl,omitempty"`
+		MediaType   string `json:"mediaType,omitempty"`
+		Filename    string `json:"filename,omitempty"`
+		Path        string `json:"path,omitempty"`
+		RemoteURL   string `json:"remoteUrl,omitempty"`
+		StorageKey  string `json:"storageKey,omitempty"`
+		ContentType string `json:"contentType,omitempty"`
+		SizeBytes   int64  `json:"sizeBytes,omitempty"`
+		CachedAt    string `json:"cachedAt,omitempty"`
 	} `json:"attachment,omitempty"`
+}
+
+type whatsAppMediaCacheMetadata struct {
+	MediaType   string
+	Filename    string
+	StorageKey  string
+	ContentType string
+	SizeBytes   int64
 }
 
 func whatsAppMessageDeviceOverride(raw json.RawMessage) string {
@@ -1488,6 +1557,32 @@ func normalizeWhatsAppImportContentType(contentType string, mediaType string) st
 	return ""
 }
 
+func normalizeWhatsAppCachedContentType(contentType string, mediaType string, fileName string, filePath string) string {
+	trimmed := strings.TrimSpace(strings.Split(contentType, ";")[0])
+	if trimmed != "" {
+		return strings.ToLower(trimmed)
+	}
+	for _, candidate := range []string{fileName, filePath} {
+		ext := strings.ToLower(strings.TrimSpace(path.Ext(candidate)))
+		if ext == "" {
+			continue
+		}
+		if inferred := strings.TrimSpace(mime.TypeByExtension(ext)); inferred != "" {
+			return strings.ToLower(inferred)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "image":
+		return "image/jpeg"
+	case "audio":
+		return "audio/ogg"
+	case "video", "video_note":
+		return "video/mp4"
+	default:
+		return ""
+	}
+}
+
 func chooseWhatsAppImportFilename(fileResult whatsapp.DownloadMediaFileResult, message repository.WhatsAppMessage) string {
 	if trimmed := strings.TrimSpace(fileResult.Filename); trimmed != "" {
 		return trimmed
@@ -1499,6 +1594,210 @@ func chooseWhatsAppImportFilename(fileResult whatsapp.DownloadMediaFileResult, m
 		}
 	}
 	return fmt.Sprintf("whatsapp-image-%s.jpg", message.CreatedAt.UTC().Format("20060102-150405"))
+}
+
+func chooseWhatsAppMediaFilename(result whatsapp.DownloadMediaFileResult, message repository.WhatsAppMessage) string {
+	if trimmed := strings.TrimSpace(result.Filename); trimmed != "" {
+		return trimmed
+	}
+	metadata := parseWhatsAppPortalMetadata(message.Metadata)
+	if metadata.Attachment != nil {
+		if trimmed := strings.TrimSpace(metadata.Attachment.Filename); trimmed != "" {
+			return trimmed
+		}
+	}
+	contentType := normalizeWhatsAppCachedContentType(result.ContentType, result.MediaType, result.Filename, result.FilePath)
+	extensions, _ := mime.ExtensionsByType(contentType)
+	extension := ".bin"
+	if len(extensions) > 0 && strings.TrimSpace(extensions[0]) != "" {
+		extension = extensions[0]
+	}
+	return fmt.Sprintf("whatsapp-media-%s%s", message.CreatedAt.UTC().Format("20060102-150405"), extension)
+}
+
+func cachedWhatsAppMediaFromMetadata(raw json.RawMessage) (whatsAppMediaCacheMetadata, bool) {
+	metadata := parseWhatsAppPortalMetadata(raw)
+	if metadata.Attachment == nil {
+		return whatsAppMediaCacheMetadata{}, false
+	}
+	storageKey := strings.TrimSpace(metadata.Attachment.StorageKey)
+	if storageKey == "" {
+		return whatsAppMediaCacheMetadata{}, false
+	}
+	return whatsAppMediaCacheMetadata{
+		MediaType:   strings.TrimSpace(metadata.Attachment.MediaType),
+		Filename:    strings.TrimSpace(metadata.Attachment.Filename),
+		StorageKey:  storageKey,
+		ContentType: strings.TrimSpace(metadata.Attachment.ContentType),
+		SizeBytes:   metadata.Attachment.SizeBytes,
+	}, true
+}
+
+func mergeWhatsAppMediaCacheMetadata(raw json.RawMessage, cache whatsAppMediaCacheMetadata) (json.RawMessage, error) {
+	metadataMap := make(map[string]any)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &metadataMap); err != nil {
+			metadataMap = make(map[string]any)
+		}
+	}
+	portalData, _ := metadataMap["portal"].(map[string]any)
+	if portalData == nil {
+		portalData = make(map[string]any)
+	}
+	attachment, _ := portalData["attachment"].(map[string]any)
+	if attachment == nil {
+		attachment = make(map[string]any)
+	}
+	if trimmed := strings.TrimSpace(cache.MediaType); trimmed != "" {
+		attachment["mediaType"] = trimmed
+		if _, exists := portalData["messageType"]; !exists {
+			portalData["messageType"] = trimmed
+		}
+	}
+	if trimmed := strings.TrimSpace(cache.Filename); trimmed != "" {
+		attachment["filename"] = trimmed
+	}
+	attachment["storageKey"] = cache.StorageKey
+	attachment["contentType"] = cache.ContentType
+	attachment["sizeBytes"] = cache.SizeBytes
+	attachment["cachedAt"] = time.Now().UTC().Format(time.RFC3339)
+	portalData["attachment"] = attachment
+	metadataMap["portal"] = portalData
+	encoded, err := json.Marshal(metadataMap)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func mergeWhatsAppMediaResponseMetadata(raw json.RawMessage, result WhatsAppMediaDownloadResult) (json.RawMessage, error) {
+	metadataMap := make(map[string]any)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &metadataMap); err != nil {
+			metadataMap = make(map[string]any)
+		}
+	}
+	portalData, _ := metadataMap["portal"].(map[string]any)
+	if portalData == nil {
+		portalData = make(map[string]any)
+	}
+	attachment, _ := portalData["attachment"].(map[string]any)
+	if attachment == nil {
+		attachment = make(map[string]any)
+	}
+	if trimmed := strings.TrimSpace(result.Filename); trimmed != "" {
+		attachment["filename"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(result.FilePath); trimmed != "" {
+		attachment["path"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(result.DownloadURL); trimmed != "" {
+		attachment["remoteUrl"] = trimmed
+	}
+	if trimmed := strings.TrimSpace(result.MediaType); trimmed != "" {
+		attachment["contentType"] = trimmed
+	}
+	if result.FileSize > 0 {
+		attachment["sizeBytes"] = result.FileSize
+	}
+	portalData["attachment"] = attachment
+	metadataMap["portal"] = portalData
+	encoded, err := json.Marshal(metadataMap)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func sanitizeWhatsAppMediaPathSegment(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "message"
+	}
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "?", "-", "&", "-", "#", "-")
+	return replacer.Replace(trimmed)
+}
+
+func (s *Service) cachedWhatsAppMediaDownloadURL(ctx context.Context, message repository.WhatsAppMessage) (WhatsAppMediaDownloadResult, bool) {
+	if s == nil || s.storage == nil || strings.TrimSpace(s.attachmentsBucket) == "" {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	cache, ok := cachedWhatsAppMediaFromMetadata(message.Metadata)
+	if !ok {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	presigned, err := s.storage.GenerateDownloadURL(ctx, s.attachmentsBucket, cache.StorageKey)
+	if err != nil {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	messageID := ""
+	if message.ExternalMessageID != nil {
+		messageID = strings.TrimSpace(*message.ExternalMessageID)
+	}
+	return WhatsAppMediaDownloadResult{
+		MessageID:   messageID,
+		MediaType:   firstNonEmptyTrimmed(cache.ContentType, cache.MediaType),
+		Filename:    cache.Filename,
+		FilePath:    cache.StorageKey,
+		FileSize:    cache.SizeBytes,
+		DownloadURL: presigned.URL,
+	}, true
+}
+
+func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID, conversationID uuid.UUID, externalMessageID string, message repository.WhatsAppMessage, conversation repository.WhatsAppConversation, deviceID string) (WhatsAppMediaDownloadResult, bool) {
+	if s == nil || s.storage == nil || strings.TrimSpace(s.attachmentsBucket) == "" {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, conversation.PhoneNumber)
+	if err != nil {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	contentType := normalizeWhatsAppCachedContentType(fileResult.ContentType, fileResult.MediaType, fileResult.Filename, fileResult.FilePath)
+	if contentType == "" {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	if err := s.storage.ValidateContentType(contentType); err != nil {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	sizeBytes := int64(len(fileResult.Data))
+	if err := s.storage.ValidateFileSize(sizeBytes); err != nil {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	fileName := chooseWhatsAppMediaFilename(fileResult, message)
+	folder := fmt.Sprintf("%s/whatsapp-media/%s/%s", organizationID.String(), conversationID.String(), sanitizeWhatsAppMediaPathSegment(externalMessageID))
+	fileKey, err := s.storage.UploadFile(ctx, s.attachmentsBucket, folder, fileName, contentType, bytes.NewReader(fileResult.Data), sizeBytes)
+	if err != nil {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	presigned, err := s.storage.GenerateDownloadURL(ctx, s.attachmentsBucket, fileKey)
+	if err != nil {
+		return WhatsAppMediaDownloadResult{}, false
+	}
+	metadata, err := mergeWhatsAppMediaCacheMetadata(message.Metadata, whatsAppMediaCacheMetadata{
+		MediaType:   strings.TrimSpace(fileResult.MediaType),
+		Filename:    fileName,
+		StorageKey:  fileKey,
+		ContentType: contentType,
+		SizeBytes:   sizeBytes,
+	})
+	if err == nil {
+		_, updatedMessage, updateErr := s.repo.UpdateWhatsAppMessageByExternalID(ctx, organizationID, externalMessageID, message.Body, metadata)
+		if updateErr == nil {
+			message = updatedMessage
+		}
+	}
+	messageID := strings.TrimSpace(fileResult.MessageID)
+	if messageID == "" && message.ExternalMessageID != nil {
+		messageID = strings.TrimSpace(*message.ExternalMessageID)
+	}
+	return WhatsAppMediaDownloadResult{
+		MessageID:   messageID,
+		MediaType:   firstNonEmptyTrimmed(contentType, fileResult.MediaType),
+		Filename:    fileName,
+		FilePath:    fileKey,
+		FileSize:    sizeBytes,
+		DownloadURL: presigned.URL,
+	}, true
 }
 
 func buildImportantWhatsAppMessagesNote(conversation repository.WhatsAppConversation, messages []repository.WhatsAppMessage) string {

@@ -320,7 +320,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	identityModule.Service().SetSSE(leadsModule.SSE())
 	identityModule.Service().SetWhatsAppReplySuggester(adapters.NewWhatsAppReplySuggesterAdapter(leadsModule.WhatsAppReplyGenerator()))
 	imapModule.Service().SetEmailReplySuggester(adapters.NewEmailReplySuggesterAdapter(leadsModule.EmailReplyGenerator()))
-	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository())
+	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository(), eventBus)
 	identityModule.Service().SetWhatsAppLeadActions(inboxLeadActions, cfg.GetMinioBucketLeadServiceAttachments())
 	imapModule.Service().SetInboxLeadActions(inboxLeadActions)
 	leadsModule.ManagementService().SetTimelineWhatsAppSender(leadsmgmt.TimelineWhatsAppSenderFunc(func(ctx context.Context, params leadsmgmt.TimelineWhatsAppSendParams) error {
@@ -487,7 +487,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		CatalogSearchReader:         adapters.NewWAAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
 		LeadMutationWriter:          adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		QuoteWorkflowWriter:         adapters.NewWAAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
-		CurrentInboundPhotoAttacher: adapters.NewWAAgentCurrentInboundPhotoAdapter(whatsappClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()), waagentdb.New(pool)),
+		CurrentInboundPhotoAttacher: adapters.NewWAAgentCurrentInboundPhotoAdapter(whatsappClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), inboxLeadActions, waagentdb.New(pool)),
 		Storage:                     storageSvc,
 		AttachmentBucket:            cfg.GetMinioBucketLeadServiceAttachments(),
 		TranscriptionScheduler:      reminderScheduler,

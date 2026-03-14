@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"portal_final_backend/internal/events"
 	identityservice "portal_final_backend/internal/identity/service"
 	imapservice "portal_final_backend/internal/imap/service"
 	leadmgmt "portal_final_backend/internal/leads/management"
@@ -18,6 +19,7 @@ import (
 type InboxLeadActionsAdapter struct {
 	management *leadmgmt.Service
 	repo       leadrepo.LeadsRepository
+	eventBus   events.Bus
 }
 
 const (
@@ -25,8 +27,8 @@ const (
 	errLeadServiceNotFound         = "lead service not found"
 )
 
-func NewInboxLeadActionsAdapter(management *leadmgmt.Service, repo leadrepo.LeadsRepository) *InboxLeadActionsAdapter {
-	return &InboxLeadActionsAdapter{management: management, repo: repo}
+func NewInboxLeadActionsAdapter(management *leadmgmt.Service, repo leadrepo.LeadsRepository, eventBus events.Bus) *InboxLeadActionsAdapter {
+	return &InboxLeadActionsAdapter{management: management, repo: repo, eventBus: eventBus}
 }
 
 func (a *InboxLeadActionsAdapter) Create(ctx context.Context, req leadstransport.CreateLeadRequest, tenantID uuid.UUID) (leadstransport.LeadResponse, error) {
@@ -90,6 +92,19 @@ func (a *InboxLeadActionsAdapter) CreateAttachment(ctx context.Context, params i
 	})
 	if err != nil {
 		return identityservice.CreateLeadAttachmentResult{}, err
+	}
+	if a.eventBus != nil {
+		a.eventBus.Publish(ctx, events.AttachmentUploaded{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        params.LeadID,
+			LeadServiceID: params.ServiceID,
+			TenantID:      params.OrganizationID,
+			AttachmentID:  attachment.ID,
+			FileName:      params.FileName,
+			FileKey:       params.FileKey,
+			ContentType:   params.ContentType,
+			SizeBytes:     params.SizeBytes,
+		})
 	}
 
 	return identityservice.CreateLeadAttachmentResult{AttachmentID: attachment.ID}, nil

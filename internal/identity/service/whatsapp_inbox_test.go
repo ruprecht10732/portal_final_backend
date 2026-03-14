@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"portal_final_backend/internal/identity/repository"
@@ -75,5 +77,73 @@ func TestAppErrIsRecognizesNotFound(t *testing.T) {
 
 	if !apperr.Is(apperr.NotFound("lead not found"), apperr.KindNotFound) {
 		t.Fatal("expected apperr.Is to recognize not found errors")
+	}
+}
+
+func TestMergeWhatsAppMediaCacheMetadataRoundTripsCacheFields(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"portal":{"messageType":"audio","attachment":{"mediaType":"audio","filename":"note.ogg","remoteUrl":"https://provider/media"}}}`)
+	merged, err := mergeWhatsAppMediaCacheMetadata(raw, whatsAppMediaCacheMetadata{
+		MediaType:   "audio",
+		Filename:    "note.ogg",
+		StorageKey:  "org/whatsapp-media/conversation/message/note_1234.ogg",
+		ContentType: "audio/ogg",
+		SizeBytes:   12345,
+	})
+	if err != nil {
+		t.Fatalf("mergeWhatsAppMediaCacheMetadata error: %v", err)
+	}
+
+	cache, ok := cachedWhatsAppMediaFromMetadata(merged)
+	if !ok {
+		t.Fatal("expected cached metadata to be present")
+	}
+	if cache.StorageKey != "org/whatsapp-media/conversation/message/note_1234.ogg" {
+		t.Fatalf("expected storage key to round-trip, got %q", cache.StorageKey)
+	}
+	if cache.ContentType != "audio/ogg" {
+		t.Fatalf("expected content type audio/ogg, got %q", cache.ContentType)
+	}
+	if cache.SizeBytes != 12345 {
+		t.Fatalf("expected sizeBytes 12345, got %d", cache.SizeBytes)
+	}
+	if cache.Filename != "note.ogg" {
+		t.Fatalf("expected filename note.ogg, got %q", cache.Filename)
+	}
+	parsed := parseWhatsAppPortalMetadata(merged)
+	if parsed.Attachment == nil || strings.TrimSpace(parsed.Attachment.RemoteURL) != "https://provider/media" {
+		t.Fatal("expected existing attachment metadata to be preserved")
+	}
+}
+
+func TestMergeWhatsAppMediaResponseMetadataOverridesRenderableURL(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"portal":{"messageType":"image","attachment":{"mediaType":"image","filename":"photo.jpg","remoteUrl":"https://provider/media.jpg","storageKey":"org/file.jpg"}}}`)
+	merged, err := mergeWhatsAppMediaResponseMetadata(raw, WhatsAppMediaDownloadResult{
+		MessageID:   "MSG-1",
+		MediaType:   "image/jpeg",
+		Filename:    "photo.jpg",
+		FilePath:    "org/file.jpg",
+		FileSize:    4567,
+		DownloadURL: "https://storage/presigned-photo.jpg",
+	})
+	if err != nil {
+		t.Fatalf("mergeWhatsAppMediaResponseMetadata error: %v", err)
+	}
+
+	parsed := parseWhatsAppPortalMetadata(merged)
+	if parsed.Attachment == nil {
+		t.Fatal("expected attachment metadata to be present")
+	}
+	if strings.TrimSpace(parsed.Attachment.RemoteURL) != "https://storage/presigned-photo.jpg" {
+		t.Fatalf("expected remoteUrl to be replaced with presigned url, got %q", parsed.Attachment.RemoteURL)
+	}
+	if strings.TrimSpace(parsed.Attachment.Path) != "org/file.jpg" {
+		t.Fatalf("expected path to be updated to storage key, got %q", parsed.Attachment.Path)
+	}
+	if strings.TrimSpace(parsed.Attachment.Filename) != "photo.jpg" {
+		t.Fatalf("expected filename to stay photo.jpg, got %q", parsed.Attachment.Filename)
 	}
 }
