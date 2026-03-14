@@ -24,6 +24,7 @@ const (
 	msgVoiceUnavailable = "Ik kon je spraakbericht niet verwerken. Stuur je vraag als tekst, dan help ik je meteen."
 	recentMessageLimit  = 8
 	logAudioFallback    = "waagent: audio fallback"
+	lookupModeFallback  = "Ik kan dit niet betrouwbaar bevestigen zonder een duidelijkere klant- of offerteverwijzing. Welke bedoel je precies?"
 )
 
 // Service orchestrates the waagent flow: rate limit → phone→org → AI.
@@ -110,7 +111,16 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 		s.logError(ctx, "waagent: failed to persist user message", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
 	}
 	s.syncInboundInboxMessage(ctx, orgID, replyTarget, inbound)
-	s.runAgentReply(ctx, orgID, phoneKey, replyTarget, inbound, s.selectAgentRunMode(ctx, orgID, phoneKey, text))
+	decision := s.selectAgentRunMode(ctx, orgID, phoneKey, text)
+	s.logInfo(ctx, "waagent: agent mode selected",
+		"phone", phoneKey,
+		"organization_id", orgID.String(),
+		"mode", string(decision.mode),
+		"reason", decision.reason,
+		"intent_kind", decision.intentKind,
+		"subject", decision.subject,
+		"use_lead_hint", decision.useLeadHint)
+	s.runAgentReply(ctx, orgID, phoneKey, replyTarget, inbound, decision)
 }
 
 func (s *Service) handleIncomingAudioMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound CurrentInboundMessage) {
@@ -162,7 +172,7 @@ func (s *Service) handleIncomingAudioMessage(ctx context.Context, orgID uuid.UUI
 	}
 }
 
-func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound *CurrentInboundMessage, mode agentRunMode) {
+func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string, inbound *CurrentInboundMessage, decision agentModeDecision) {
 
 	// Load recent conversation history
 	recent, err := s.queries.GetRecentAgentMessages(ctx, waagentdb.GetRecentAgentMessagesParams{
@@ -197,25 +207,27 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 
 	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
 
-	runResult, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound, mode)
+	runResult, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound, decision.mode)
 	if err != nil {
-		s.logError(ctx, "waagent: agent run error", "phone", phoneKey, "organization_id", orgID.String(), "mode", string(mode), "error", err)
+		s.logError(ctx, "waagent: agent run error", "phone", phoneKey, "organization_id", orgID.String(), "mode", string(decision.mode), "reason", decision.reason, "error", err)
 		return
 	}
 	if runResult.GroundingFailure != "" {
 		s.logWarn(ctx, "waagent: grounded reply fallback used",
 			"phone", phoneKey,
 			"organization_id", orgID.String(),
-			"mode", string(mode),
-			"reason", runResult.GroundingFailure,
+			"mode", string(decision.mode),
+			"decision_reason", decision.reason,
+			"grounding_reason", runResult.GroundingFailure,
 			"unsupported_facts", runResult.GroundingFacts,
 			"tool_response_names", runResult.ToolResponseNames,
 			"tool_response_count", runResult.ToolResponseCount)
 	}
 
 	reply := sanitizeWhatsAppReply(strings.TrimSpace(runResult.Reply))
+	reply = s.applyReplyPolicy(ctx, orgID, phoneKey, decision, reply)
 	if reply == "" {
-		s.logWarn(ctx, "waagent: empty agent reply", "phone", phoneKey, "organization_id", orgID.String(), "mode", string(mode))
+		s.logWarn(ctx, "waagent: empty agent reply", "phone", phoneKey, "organization_id", orgID.String(), "mode", string(decision.mode), "reason", decision.reason)
 		return
 	}
 
@@ -424,7 +436,7 @@ func (s *Service) finalizeVoiceTranscription(ctx context.Context, voiceCtx voice
 		Body:              transcriptText,
 		Metadata:          metadata,
 	}
-	s.runAgentReply(ctx, voiceCtx.orgID, voiceCtx.phoneKey, voiceCtx.phoneNumber, inbound, agentRunModeDefault)
+	s.runAgentReply(ctx, voiceCtx.orgID, voiceCtx.phoneKey, voiceCtx.phoneNumber, inbound, agentModeDecision{mode: agentRunModeDefault, reason: "voice_transcription"})
 	return s.queries.MarkAgentVoiceTranscriptionCompleted(ctx, waagentdb.MarkAgentVoiceTranscriptionCompletedParams{
 		OrganizationID:    pgtypeUUID(voiceCtx.orgID),
 		ExternalMessageID: voiceCtx.externalMessageID,
@@ -516,7 +528,15 @@ type simpleLookupIntent struct {
 	genericLead  bool
 }
 
-func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phoneKey, message string) agentRunMode {
+type agentModeDecision struct {
+	mode        agentRunMode
+	reason      string
+	subject     string
+	intentKind  string
+	useLeadHint bool
+}
+
+func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phoneKey, message string) agentModeDecision {
 	recent, err := s.queries.GetRecentAgentMessages(ctx, waagentdb.GetRecentAgentMessagesParams{
 		PhoneNumber: phoneKey,
 		Limit:       recentMessageLimit,
@@ -528,9 +548,97 @@ func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phone
 	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
 	intent := detectSimpleLookupIntent(message, recent, leadHint)
 	if intent.kind == "" {
-		return agentRunModeDefault
+		return agentModeDecision{mode: agentRunModeDefault, reason: "default"}
 	}
-	return agentRunModeLookup
+	return agentModeDecision{
+		mode:        agentRunModeLookup,
+		reason:      lookupModeReason(intent),
+		subject:     strings.TrimSpace(intent.subject),
+		intentKind:  intent.kind,
+		useLeadHint: intent.useLeadHint,
+	}
+}
+
+func lookupModeReason(intent simpleLookupIntent) string {
+	if intent.useLeadHint {
+		return "lead_hint_lookup"
+	}
+	if intent.wantsQuote {
+		return "quote_lookup"
+	}
+	if intent.wantsAddress {
+		return "lead_address_lookup"
+	}
+	if intent.wantsContact {
+		return "lead_contact_lookup"
+	}
+	if intent.wantsStatus {
+		return "lead_status_lookup"
+	}
+	if intent.genericLead {
+		return "lead_lookup"
+	}
+	return "lookup"
+}
+
+func (s *Service) applyReplyPolicy(ctx context.Context, orgID uuid.UUID, phoneKey string, decision agentModeDecision, reply string) string {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return ""
+	}
+	if issue := validateReplyPolicy(decision.mode, trimmed); issue != "" {
+		s.logWarn(ctx, "waagent: reply policy fallback used",
+			"phone", phoneKey,
+			"organization_id", orgID.String(),
+			"mode", string(decision.mode),
+			"reason", decision.reason,
+			"policy_issue", issue)
+		if decision.mode == agentRunModeLookup {
+			return lookupModeFallback
+		}
+	}
+	return trimmed
+}
+
+func validateReplyPolicy(mode agentRunMode, reply string) string {
+	if strings.TrimSpace(reply) == "" {
+		return "empty_reply"
+	}
+	if mode != agentRunModeLookup {
+		return ""
+	}
+	lower := strings.ToLower(strings.TrimSpace(reply))
+	if strings.Contains(lower, "ik ga ") || strings.Contains(lower, "laat me ") || strings.Contains(lower, "ik heb gezocht") || strings.Contains(lower, "opnieuw gezocht") {
+		return "process_narration"
+	}
+	if countReplySentences(reply) > 5 {
+		return "lookup_reply_too_long"
+	}
+	if countNonEmptyReplyLines(reply) > 10 {
+		return "lookup_reply_too_many_lines"
+	}
+	return ""
+}
+
+func countReplySentences(reply string) int {
+	count := 0
+	for _, marker := range []string{".", "!", "?"} {
+		count += strings.Count(reply, marker)
+	}
+	if count == 0 && strings.TrimSpace(reply) != "" {
+		return 1
+	}
+	return count
+}
+
+func countNonEmptyReplyLines(reply string) int {
+	count := 0
+	for _, line := range strings.Split(reply, "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func detectSimpleLookupIntent(message string, recent []waagentdb.GetRecentAgentMessagesRow, leadHint *ConversationLeadHint) simpleLookupIntent {
