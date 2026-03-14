@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	DefaultModelPath = "models/ggml-base.bin"
+	DefaultModelPath = "models/ggml-large-v3-turbo.bin"
 	DefaultLanguage  = "nl"
 	DefaultThreads   = 4
 )

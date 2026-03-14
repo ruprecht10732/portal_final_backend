@@ -37,10 +37,10 @@ WORKDIR /app
 
 # Download whisper model and verify integrity
 RUN mkdir -p /app/models \
-    && curl -fSL -o /app/models/ggml-base.bin \
-       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin \
-    && MODEL_SIZE=$(stat -c%s /app/models/ggml-base.bin) \
-    && if [ "$MODEL_SIZE" -lt 100000000 ]; then echo "Model download too small: ${MODEL_SIZE} bytes" && exit 1; fi \
+    && curl -fSL -o /app/models/ggml-large-v3-turbo.bin \
+       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin \
+    && MODEL_SIZE=$(stat -c%s /app/models/ggml-large-v3-turbo.bin) \
+    && if [ "$MODEL_SIZE" -lt 1000000000 ]; then echo "Model download too small: ${MODEL_SIZE} bytes" && exit 1; fi \
     && echo "Whisper model downloaded: ${MODEL_SIZE} bytes"
 
 COPY --from=builder /app/bin/server /app/server
