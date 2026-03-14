@@ -29,6 +29,7 @@ const (
 	testLeadLookupQuestion               = "Zoek adres van Joey plomp"
 	testQuoteLookupQuestion              = "De offerte van Joey plomp"
 	testGenericHelpQuestion              = "Kun je mij helpen?"
+	testWriteQuoteQuestion               = "Maak een offerte voor dakisolatie"
 	testExpectedLookupModeCallMsg        = "expected lookup-mode agent run, got %d calls"
 	testExpectedLookupModeMsg            = "expected lookup mode, got %q"
 	testUnexpectedLookupModeReplyMsg     = "unexpected lookup mode reply %q"
@@ -502,6 +503,72 @@ func TestHandleAIMessageKeepsDefaultModeForGenericMessages(t *testing.T) {
 	}
 	if queries.inserted[1].Content != testDefaultModeReply {
 		t.Fatalf("unexpected default mode reply %q", queries.inserted[1].Content)
+	}
+}
+
+func TestHandleAIMessageRoutesWriteRequestToWriteMode(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testDefaultModeReply}}
+	service := &Service{
+		queries: queries,
+		agent:   agent,
+		sender:  newTestSender(transport, serviceTestConfigReader{}, nil),
+		log:     logger.New("development"),
+	}
+
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testWriteQuoteQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-write", PhoneNumber: testAgentPhone, Body: testWriteQuoteQuestion})
+
+	if agent.calls != 1 {
+		t.Fatalf("expected one write-mode agent run, got %d calls", agent.calls)
+	}
+	if agent.lastMode != agentRunModeWrite {
+		t.Fatalf("expected write mode, got %q", agent.lastMode)
+	}
+	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testWriteQuoteQuestion); decision.reason != "write_generate_quote" {
+		t.Fatalf("expected write reason, got %q", decision.reason)
+	}
+}
+
+func TestSelectAgentRunModeInheritsAddressIntentFromBareNameFollowUp(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	service := &Service{
+		queries: &serviceTestQuerier{recent: []waagentdb.GetRecentAgentMessagesRow{{Role: "user", Content: testLeadLookupQuestion}, {Role: "assistant", Content: "Ik kan dat voor u opzoeken."}}},
+		log:     logger.New("development"),
+	}
+
+	decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testLookupCustomerName)
+	if decision.mode != agentRunModeLookup {
+		t.Fatalf(testExpectedLookupModeMsg, decision.mode)
+	}
+	if decision.reason != "lead_address_lookup" {
+		t.Fatalf(testUnexpectedLookupReasonMsg, decision.reason)
+	}
+}
+
+func TestSelectAgentRunModeUsesLookupForAffirmativeFollowUpWithLeadHint(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	store := NewConversationLeadHintStore()
+	store.Set(orgID.String(), normalizeAgentPhoneKey(testAgentPhone), ConversationLeadHint{LeadID: testHintLeadID, CustomerName: testLookupCustomerName})
+	service := &Service{
+		queries:       &serviceTestQuerier{recent: []waagentdb.GetRecentAgentMessagesRow{{Role: "user", Content: testLeadLookupQuestion}, {Role: "assistant", Content: "Ik heb Carola Dekker gevonden. Wil je dat ik de volledige contactgegevens en adresdetails voor je ophaal?"}}},
+		leadHintStore: store,
+		log:           logger.New("development"),
+	}
+
+	decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), "Ja")
+	if decision.mode != agentRunModeLookup {
+		t.Fatalf(testExpectedLookupModeMsg, decision.mode)
+	}
+	if decision.reason != "lead_address_lookup" {
+		t.Fatalf(testUnexpectedLookupReasonMsg, decision.reason)
 	}
 }
 

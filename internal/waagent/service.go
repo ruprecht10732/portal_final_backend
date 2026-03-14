@@ -536,6 +536,11 @@ type agentModeDecision struct {
 	useLeadHint bool
 }
 
+type writeIntent struct {
+	toolHint string
+	reason   string
+}
+
 func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phoneKey, message string) agentModeDecision {
 	recent, err := s.queries.GetRecentAgentMessages(ctx, waagentdb.GetRecentAgentMessagesParams{
 		PhoneNumber: phoneKey,
@@ -546,6 +551,13 @@ func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phone
 		recent = nil
 	}
 	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
+	if writeIntent, ok := detectWriteIntent(message); ok {
+		return agentModeDecision{
+			mode:       agentRunModeWrite,
+			reason:     writeIntent.reason,
+			intentKind: writeIntent.toolHint,
+		}
+	}
 	intent := detectSimpleLookupIntent(message, recent, leadHint)
 	if intent.kind == "" {
 		return agentModeDecision{mode: agentRunModeDefault, reason: "default"}
@@ -560,9 +572,6 @@ func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phone
 }
 
 func lookupModeReason(intent simpleLookupIntent) string {
-	if intent.useLeadHint {
-		return "lead_hint_lookup"
-	}
 	if intent.wantsQuote {
 		return "quote_lookup"
 	}
@@ -578,7 +587,35 @@ func lookupModeReason(intent simpleLookupIntent) string {
 	if intent.genericLead {
 		return "lead_lookup"
 	}
+	if intent.useLeadHint {
+		return "lead_hint_lookup"
+	}
 	return "lookup"
+}
+
+func detectWriteIntent(message string) (writeIntent, bool) {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return writeIntent{}, false
+	}
+	switch {
+	case containsAny(lower, "maak een offerte", "maak offerte", "offerte maken", "offerte opstellen"):
+		return writeIntent{toolHint: "GenerateQuote", reason: "write_generate_quote"}, true
+	case containsAny(lower, "stuur pdf", "stuur de pdf", "stuur offerte pdf", "stuur de offerte", "offerte mailen"):
+		return writeIntent{toolHint: "SendQuotePDF", reason: "write_send_quote_pdf"}, true
+	case containsAny(lower, "plan afspraak", "plan een afspraak", "maak een afspraak", "bezoek inplannen"):
+		return writeIntent{toolHint: "ScheduleVisit", reason: "write_schedule_visit"}, true
+	case containsAny(lower, "verzet afspraak", "verplaats afspraak", "afspraak verzetten", "afspraak verplaatsen"):
+		return writeIntent{toolHint: "RescheduleVisit", reason: "write_reschedule_visit"}, true
+	case containsAny(lower, "annuleer afspraak", "afspraak annuleren", "zeg afspraak af"):
+		return writeIntent{toolHint: "CancelVisit", reason: "write_cancel_visit"}, true
+	case containsAny(lower, "mijn adres is gewijzigd", "mijn telefoonnummer is gewijzigd", "pas mijn adres aan", "pas mijn telefoonnummer aan", "wijzig mijn email", "wijzig mijn e-mail"):
+		return writeIntent{toolHint: "UpdateLeadDetails", reason: "write_update_lead_details"}, true
+	case containsAny(lower, "nieuwe aanvraag", "aanvraag aanmaken", "nieuwe klus", "nieuwe offerteaanvraag"):
+		return writeIntent{toolHint: "CreateLead", reason: "write_create_lead"}, true
+	default:
+		return writeIntent{}, false
+	}
 }
 
 func (s *Service) applyReplyPolicy(ctx context.Context, orgID uuid.UUID, phoneKey string, decision agentModeDecision, reply string) string {
@@ -646,6 +683,14 @@ func detectSimpleLookupIntent(message string, recent []waagentdb.GetRecentAgentM
 	if trimmed == "" {
 		return simpleLookupIntent{}
 	}
+	if isAffirmativeLookupFollowUp(trimmed, recent, leadHint) {
+		intent := inferLookupIntentDetailsFromRecent(recent)
+		intent.useLeadHint = leadHint != nil && strings.TrimSpace(leadHint.LeadID) != ""
+		intent.subject = ""
+		if intent.kind != "" {
+			return intent
+		}
+	}
 	intent := baseSimpleLookupIntent(trimmed)
 	if intent.kind == "" && looksLikeSimpleCustomerReference(trimmed) {
 		intent = inferSimpleLookupIntentFromRecent(trimmed, recent)
@@ -682,16 +727,33 @@ func baseSimpleLookupIntent(message string) simpleLookupIntent {
 }
 
 func inferSimpleLookupIntentFromRecent(message string, recent []waagentdb.GetRecentAgentMessagesRow) simpleLookupIntent {
-	intent := simpleLookupIntent{subject: strings.TrimSpace(message)}
-	switch inferLookupIntentFromRecent(recent) {
-	case "quote":
-		intent.kind = "quote"
-		intent.wantsQuote = true
-	case "lead":
-		intent.kind = "lead"
-		intent.genericLead = true
+	intent := inferLookupIntentDetailsFromRecent(recent)
+	intent.subject = strings.TrimSpace(message)
+	if intent.kind == "" {
+		switch inferLookupIntentFromRecent(recent) {
+		case "quote":
+			intent.kind = "quote"
+			intent.wantsQuote = true
+		case "lead":
+			intent.kind = "lead"
+			intent.genericLead = true
+		}
 	}
 	return intent
+}
+
+func inferLookupIntentDetailsFromRecent(recent []waagentdb.GetRecentAgentMessagesRow) simpleLookupIntent {
+	for i := len(recent) - 1; i >= 0; i-- {
+		row := recent[i]
+		if row.Role != "user" {
+			continue
+		}
+		intent := baseSimpleLookupIntent(row.Content)
+		if intent.kind != "" {
+			return intent
+		}
+	}
+	return simpleLookupIntent{}
 }
 
 func inferLookupIntentFromRecent(recent []waagentdb.GetRecentAgentMessagesRow) string {
@@ -766,6 +828,27 @@ func looksLikeSimpleCustomerReference(value string) bool {
 		letters += len(part)
 	}
 	return letters >= 4
+}
+
+func isAffirmativeLookupFollowUp(message string, recent []waagentdb.GetRecentAgentMessagesRow, leadHint *ConversationLeadHint) bool {
+	if !isAffirmativeText(message) {
+		return false
+	}
+	if leadHint == nil || strings.TrimSpace(leadHint.LeadID) == "" {
+		return false
+	}
+	intent := inferLookupIntentDetailsFromRecent(recent)
+	return intent.kind != ""
+}
+
+func isAffirmativeText(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(strings.Trim(message, ".!?")))
+	switch lower {
+	case "ja", "ja graag", "graag", "doe maar", "prima", "ok", "okay":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsAny(value string, parts ...string) bool {
