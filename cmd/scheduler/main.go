@@ -196,6 +196,7 @@ func main() {
 	}
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
+	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
 
 	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
 	leadsModule.SetCatalogReader(catalogReader)

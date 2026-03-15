@@ -810,8 +810,12 @@ func (h *Handler) CompleteService(c *gin.Context) {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
 
-	lead, err := h.mgmt.CompleteService(c.Request.Context(), leadID, serviceID, req, tenantID)
+	lead, err := h.mgmt.CompleteService(c.Request.Context(), leadID, serviceID, identity.UserID(), req, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

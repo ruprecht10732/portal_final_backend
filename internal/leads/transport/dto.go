@@ -29,6 +29,7 @@ const (
 	LeadStatusAttemptedContact     LeadStatus = "Attempted_Contact"
 	LeadStatusAppointmentScheduled LeadStatus = "Appointment_Scheduled"
 	LeadStatusNeedsRescheduling    LeadStatus = "Needs_Rescheduling"
+	LeadStatusCompleted            LeadStatus = "Completed"
 	LeadStatusDisqualified         LeadStatus = "Disqualified"
 )
 
@@ -91,7 +92,7 @@ type UpdateLeadRequest struct {
 }
 
 type UpdateServiceStatusRequest struct {
-	Status LeadStatus `json:"status" validate:"required,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Disqualified"`
+	Status LeadStatus `json:"status" validate:"required,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Completed Disqualified"`
 }
 
 type AddServiceRequest struct {
@@ -106,7 +107,7 @@ type UpdateServiceTypeRequest struct {
 }
 
 type UpdateLeadStatusRequest struct {
-	Status LeadStatus `json:"status" validate:"required,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Disqualified"`
+	Status LeadStatus `json:"status" validate:"required,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Completed Disqualified"`
 }
 
 type AssignLeadRequest struct {
@@ -118,7 +119,7 @@ type BulkDeleteLeadsRequest struct {
 }
 
 type ListLeadsRequest struct {
-	Status          *LeadStatus   `form:"status" validate:"omitempty,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Disqualified"`
+	Status          *LeadStatus   `form:"status" validate:"omitempty,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Completed Disqualified"`
 	ServiceType     *ServiceType  `form:"serviceType" validate:"omitempty,min=1,max=100"`
 	Search          string        `form:"search" validate:"max=100"`
 	FirstName       string        `form:"firstName" validate:"omitempty,max=100"`
@@ -181,8 +182,8 @@ type LeadServiceResponse struct {
 }
 
 type CompleteServiceRequest struct {
-	ExtraWorkAmountCents *int64  `json:"extraWorkAmountCents"`
-	ExtraWorkNotes       *string `json:"extraWorkNotes"`
+	ExtraWorkAmountCents *int64  `json:"extraWorkAmountCents,omitempty" validate:"omitempty,min=0"`
+	ExtraWorkNotes       *string `json:"extraWorkNotes,omitempty" validate:"omitempty,max=2000"`
 }
 
 type LeadPreferencesResponse struct {

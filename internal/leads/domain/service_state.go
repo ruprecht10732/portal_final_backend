@@ -10,6 +10,7 @@ const (
 	LeadStatusAttemptedContact     = "Attempted_Contact"
 	LeadStatusAppointmentScheduled = "Appointment_Scheduled"
 	LeadStatusNeedsRescheduling    = "Needs_Rescheduling"
+	LeadStatusCompleted            = "Completed"
 	LeadStatusDisqualified         = "Disqualified"
 )
 
@@ -36,6 +37,12 @@ func IsTerminalPipelineStage(stage string) bool {
 // not contradictory. Returns a non-empty reason string when the combination
 // is invalid.
 func ValidateStateCombination(status, pipelineStage string) string {
+	if status == LeadStatusCompleted && pipelineStage != PipelineStageCompleted {
+		return "Completed status requires Completed pipeline stage"
+	}
+	if pipelineStage == PipelineStageCompleted && status != LeadStatusCompleted {
+		return "Completed pipeline stage requires Completed status"
+	}
 	if status == LeadStatusDisqualified && pipelineStage != PipelineStageLost {
 		return "Disqualified status requires Lost pipeline stage"
 	}

@@ -418,6 +418,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		return partner.ContactPhone, nil
 	}))
 	quotesModule := quotes.NewModule(pool, eventBus, val)
+	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
 	searchModule := search.NewModule(pool, val)
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
 	if cfg.IsEmbeddingEnabled() && cfg.IsQdrantEnabled() {

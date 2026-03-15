@@ -213,9 +213,14 @@ FROM updated u;
 -- Completes a service that is currently in the Fulfillment pipeline stage.
 -- Optionally records extra work amount (in cents) and notes.
 -- Returns no rows if the service does not exist or is not in Fulfillment stage.
-WITH updated AS (
+WITH current AS (
+	SELECT status AS old_status, pipeline_stage AS old_stage
+	FROM RAC_lead_services ls
+	WHERE ls.id = $1 AND ls.organization_id = $2
+), updated AS (
 	UPDATE RAC_lead_services ls
-	SET pipeline_stage          = 'Completed',
+	SET status                  = 'Completed',
+	    pipeline_stage          = 'Completed',
 	    extra_work_amount_cents = $3,
 	    extra_work_notes        = $4,
 	    updated_at              = now()
@@ -223,10 +228,16 @@ WITH updated AS (
 	  AND ls.organization_id = $2
 	  AND ls.pipeline_stage = 'Fulfillment'
 	RETURNING *
-), event AS (
+), status_event AS (
+	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+	SELECT u.organization_id, u.lead_id, u.id, 'status_changed', u.status, u.pipeline_stage, u.updated_at
+	FROM updated u
+	WHERE (SELECT old_status FROM current) IS DISTINCT FROM 'Completed'
+), stage_event AS (
 	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
 	SELECT u.organization_id, u.lead_id, u.id, 'pipeline_stage_changed', u.status, u.pipeline_stage, u.updated_at
 	FROM updated u
+	WHERE (SELECT old_stage FROM current) IS DISTINCT FROM 'Completed'
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,

@@ -21,7 +21,41 @@ import (
 const (
 	errSaveAttachmentsFmt = "save attachments: %w"
 	errSaveURLsFmt        = "save urls: %w"
+	extraWorkTitle        = "Extra work"
+	extraWorkFallbackDesc = "Additional work completed during fulfillment"
+	defaultTaxRateBps    = 2100
 )
+
+func inferExtraWorkTaxRate(items []repository.QuoteItem) int {
+	for _, item := range items {
+		if !item.IsOptional || item.IsSelected {
+			return item.TaxRateBps
+		}
+	}
+	if len(items) > 0 {
+		return items[0].TaxRateBps
+	}
+	return defaultTaxRateBps
+}
+
+func buildExtraWorkItemRequest(amountCents int64, notes *string, items []repository.QuoteItem) transport.QuoteItemRequest {
+	description := extraWorkFallbackDesc
+	if notes != nil {
+		trimmed := strings.TrimSpace(*notes)
+		if trimmed != "" {
+			description = trimmed
+		}
+	}
+	return transport.QuoteItemRequest{
+		Title:          extraWorkTitle,
+		Description:    description,
+		Quantity:       "1",
+		UnitPriceCents: amountCents,
+		TaxRateBps:     inferExtraWorkTaxRate(items),
+		IsOptional:     false,
+		IsSelected:     true,
+	}
+}
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.UUID, req transport.CreateQuoteRequest) (*transport.QuoteResponse, error) {
 	quoteNumber, err := s.repo.NextQuoteNumber(ctx, tenantID)
@@ -258,6 +292,57 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 	}
 
 	return s.buildResponse(ctx, quote, items)
+}
+
+func (s *Service) AddExtraWorkToQuote(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID, actorID uuid.UUID, amountCents int64, notes *string) error {
+	if amountCents <= 0 {
+		return nil
+	}
+
+	quote, err := s.repo.GetByID(ctx, quoteID, organizationID)
+	if err != nil {
+		return err
+	}
+
+	items, err := s.repo.GetItemsByQuoteID(ctx, quoteID, organizationID)
+	if err != nil {
+		return err
+	}
+
+	itemReqs := toItemRequests(items)
+	itemReqs = append(itemReqs, buildExtraWorkItemRequest(amountCents, notes, items))
+	updatedItems := buildItemsFromRequest(quote.ID, organizationID, itemReqs)
+	calc := CalculateQuote(transport.QuoteCalculationRequest{
+		Items:         itemReqs,
+		PricingMode:   quote.PricingMode,
+		DiscountType:  quote.DiscountType,
+		DiscountValue: quote.DiscountValue,
+	})
+
+	quote.SubtotalCents = calc.SubtotalCents
+	quote.DiscountAmountCents = calc.DiscountAmountCents
+	quote.TaxTotalCents = calc.VatTotalCents
+	quote.TotalCents = calc.TotalCents
+	quote.UpdatedAt = time.Now()
+
+	return s.repo.UpdateWithItems(ctx, quote, updatedItems, true, &repository.QuotePricingSnapshot{
+		QuoteID:             quote.ID,
+		OrganizationID:      organizationID,
+		LeadID:              quote.LeadID,
+		LeadServiceID:       quote.LeadServiceID,
+		SourceType:          "lead_completion_extra_work",
+		PricingMode:         quote.PricingMode,
+		DiscountType:        quote.DiscountType,
+		DiscountValue:       quote.DiscountValue,
+		ExtraCostsCents:     &amountCents,
+		SubtotalCents:       quote.SubtotalCents,
+		DiscountAmountCents: quote.DiscountAmountCents,
+		TaxTotalCents:       quote.TaxTotalCents,
+		TotalCents:          quote.TotalCents,
+		Notes:               notes,
+		CreatedByActor:      "user",
+		CreatedByUserID:     &actorID,
+	})
 }
 
 func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (*transport.QuoteResponse, error) {

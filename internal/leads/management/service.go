@@ -44,6 +44,7 @@ type Repository interface {
 	repository.ActivityLogger
 	repository.LeadServiceReader
 	repository.LeadServiceWriter
+	repository.QuotePriceReader
 	repository.MetricsReader
 	repository.TimelineEventStore
 	repository.ActivityFeedReader
@@ -62,10 +63,15 @@ type Service struct {
 	inAppService           *inapp.Service
 	timelineWhatsAppSender TimelineWhatsAppSender
 	partnerPhoneResolver   PartnerPhoneResolver
+	acceptedQuoteUpdater   AcceptedQuoteUpdater
 	energyEnricher         ports.EnergyLabelEnricher
 	leadEnricher           ports.LeadEnricher
 	scorer                 *scoring.Service
 	workflowOverrideWriter LeadWorkflowOverrideWriter
+}
+
+type AcceptedQuoteUpdater interface {
+	AddExtraWorkToQuote(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID, actorID uuid.UUID, amountCents int64, notes *string) error
 }
 
 type LeadWorkflowOverrideWriter interface {
@@ -142,6 +148,10 @@ func (s *Service) SetTimelineWhatsAppSender(sender TimelineWhatsAppSender) {
 
 func (s *Service) SetPartnerPhoneResolver(resolver PartnerPhoneResolver) {
 	s.partnerPhoneResolver = resolver
+}
+
+func (s *Service) SetAcceptedQuoteUpdater(updater AcceptedQuoteUpdater) {
+	s.acceptedQuoteUpdater = updater
 }
 
 // Create creates a new lead.
@@ -982,7 +992,7 @@ func (s *Service) UpdateServiceType(ctx context.Context, leadID uuid.UUID, servi
 
 // CompleteService moves a service from the Fulfillment pipeline stage to Completed,
 // optionally recording extra work amount and notes.
-func (s *Service) CompleteService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, req transport.CompleteServiceRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
+func (s *Service) CompleteService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, actorID uuid.UUID, req transport.CompleteServiceRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
 	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
@@ -990,12 +1000,20 @@ func (s *Service) CompleteService(ctx context.Context, leadID uuid.UUID, service
 		}
 		return transport.LeadResponse{}, err
 	}
+	if svc.LeadID != leadID {
+		return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
+	}
 
 	if svc.PipelineStage != domain.PipelineStageFulfillment {
 		return transport.LeadResponse{}, apperr.Validation("only services in the Fulfillment stage can be marked as complete")
 	}
 
-	if _, err := s.repo.CompleteLeadService(ctx, serviceID, tenantID, req.ExtraWorkAmountCents, req.ExtraWorkNotes); err != nil {
+	if err := s.updateAcceptedQuoteExtraWork(ctx, serviceID, tenantID, actorID, req); err != nil {
+		return transport.LeadResponse{}, err
+	}
+
+	updatedService, err := s.repo.CompleteLeadService(ctx, serviceID, tenantID, req.ExtraWorkAmountCents, req.ExtraWorkNotes)
+	if err != nil {
 		if errors.Is(err, repository.ErrServiceNotFound) {
 			return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
 		}
@@ -1009,11 +1027,30 @@ func (s *Service) CompleteService(ctx context.Context, leadID uuid.UUID, service
 			LeadServiceID: serviceID,
 			TenantID:      tenantID,
 			OldStatus:     svc.Status,
-			NewStatus:     svc.Status, // status unchanged; stage moves to Completed
+			NewStatus:     updatedService.Status,
 		})
 	}
 
 	return s.GetByID(ctx, leadID, tenantID)
+}
+
+func (s *Service) updateAcceptedQuoteExtraWork(ctx context.Context, serviceID uuid.UUID, tenantID uuid.UUID, actorID uuid.UUID, req transport.CompleteServiceRequest) error {
+	if req.ExtraWorkAmountCents == nil || *req.ExtraWorkAmountCents <= 0 {
+		return nil
+	}
+	if s.acceptedQuoteUpdater == nil {
+		return apperr.Internal("accepted quote updater is not configured")
+	}
+
+	quoteID, err := s.repo.GetLatestAcceptedQuoteIDForService(ctx, serviceID, tenantID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return apperr.Validation("accepted quote not found for service")
+		}
+		return err
+	}
+
+	return s.acceptedQuoteUpdater.AddExtraWorkToQuote(ctx, quoteID, tenantID, actorID, *req.ExtraWorkAmountCents, req.ExtraWorkNotes)
 }
 
 func (s *Service) disqualifyServiceAndMarkLost(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, tenantID uuid.UUID, notFoundMsg string) (transport.LeadResponse, error) {
