@@ -207,3 +207,16 @@ func TestHasConversationRoutingContextAllowsRecentListsWithoutLeadID(t *testing.
 		t.Fatal("expected recent appointments to count as routing context")
 	}
 }
+
+func TestConversationLeadHintStoreClearRemovesStoredHint(t *testing.T) {
+	t.Parallel()
+
+	store := newConversationLeadHintStore(time.Now, time.Hour, 10)
+	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Clear(testHintOrgID, testHintPhoneKey)
+
+	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	if ok || hint != nil {
+		t.Fatalf("expected cleared hint to be removed, got %#v", hint)
+	}
+}

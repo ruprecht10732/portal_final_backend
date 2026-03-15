@@ -38,6 +38,7 @@ type LeadHintStore interface {
 	Set(orgID, phoneKey string, hint ConversationLeadHint)
 	RememberQuotes(orgID, phoneKey string, quotes []QuoteSummary)
 	RememberAppointments(orgID, phoneKey string, appointments []AppointmentSummary)
+	Clear(orgID, phoneKey string)
 }
 
 // ToolHandler implements the function-calling tool handlers.

@@ -36,6 +36,22 @@ func (q *Queries) DeleteAgentConfig(ctx context.Context) error {
 	return err
 }
 
+const deleteAgentMessagesByPhone = `-- name: DeleteAgentMessagesByPhone :exec
+DELETE FROM RAC_whatsapp_agent_messages
+WHERE organization_id = $1
+    AND phone_number = $2
+`
+
+type DeleteAgentMessagesByPhoneParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	PhoneNumber    string      `json:"phone_number"`
+}
+
+func (q *Queries) DeleteAgentMessagesByPhone(ctx context.Context, arg DeleteAgentMessagesByPhoneParams) error {
+	_, err := q.db.Exec(ctx, deleteAgentMessagesByPhone, arg.OrganizationID, arg.PhoneNumber)
+	return err
+}
+
 const deleteAgentUser = `-- name: DeleteAgentUser :exec
 DELETE FROM RAC_whatsapp_agent_users
 WHERE phone_number = $1 AND organization_id = $2

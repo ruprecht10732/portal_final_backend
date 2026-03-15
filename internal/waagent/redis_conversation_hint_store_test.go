@@ -198,3 +198,25 @@ func TestRedisConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(
 		t.Fatalf("expected recent quote to be preserved, got %#v", hint.RecentQuotes)
 	}
 }
+
+func TestRedisConversationLeadHintStoreClearDeletesHint(t *testing.T) {
+	t.Parallel()
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf(redisHintStoreStartFailedMsg, err)
+	}
+	defer redisServer.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer func() { _ = client.Close() }()
+
+	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, time.Now)
+	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Clear(testHintOrgID, testHintPhoneKey)
+
+	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	if ok || hint != nil {
+		t.Fatalf("expected cleared redis hint to be removed, got %#v", hint)
+	}
+}

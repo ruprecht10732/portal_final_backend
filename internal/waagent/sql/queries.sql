@@ -9,6 +9,11 @@ SET content = $3,
 WHERE organization_id = $1
     AND external_message_id = $2;
 
+-- name: DeleteAgentMessagesByPhone :exec
+DELETE FROM RAC_whatsapp_agent_messages
+WHERE organization_id = $1
+    AND phone_number = $2;
+
 -- name: GetRecentAgentMessages :many
 SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
 FROM RAC_whatsapp_agent_messages

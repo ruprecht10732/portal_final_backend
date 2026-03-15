@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	CreateAgentUser(ctx context.Context, arg CreateAgentUserParams) error
 	DeleteAgentConfig(ctx context.Context) error
+	DeleteAgentMessagesByPhone(ctx context.Context, arg DeleteAgentMessagesByPhoneParams) error
 	DeleteAgentUser(ctx context.Context, arg DeleteAgentUserParams) error
 	GetAgentConfig(ctx context.Context) (RacWhatsappAgentConfig, error)
 	GetAgentConfigByDeviceID(ctx context.Context, deviceID string) (RacWhatsappAgentConfig, error)

@@ -24,6 +24,7 @@ const (
 	msgUnknownPhone      = "Je telefoonnummer is niet gekoppeld aan een organisatie. Neem contact op met je beheerder."
 	msgVoiceUnavailable  = "Ik kon je spraakbericht niet verwerken. Stuur je vraag als tekst, dan help ik je meteen."
 	msgSystemUnavailable = "Ons systeem is tijdelijk niet beschikbaar. Probeer het later opnieuw."
+	msgConversationReset = "Ik heb ons gesprek gewist. We beginnen opnieuw met een schone context."
 	recentMessageLimit   = 100
 	logAudioFallback     = "waagent: audio fallback"
 )
@@ -98,6 +99,11 @@ func (s *Service) HandleIncomingMessage(ctx context.Context, inbound CurrentInbo
 	}
 
 	orgID := uuidFromPgtype(user.OrganizationID)
+
+	if shouldResetConversation(text) {
+		s.resetConversation(ctx, orgID, lookupPhone, replyTarget)
+		return
+	}
 
 	if isAudioInboundMessage(inbound) {
 		s.handleIncomingAudioMessage(ctx, orgID, lookupPhone, replyTarget, inbound)
@@ -185,7 +191,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	messages := make([]ConversationMessage, 0, len(recent))
 	for i := len(recent) - 1; i >= 0; i-- {
 		msg := recent[i]
-		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) == msgVoiceUnavailable {
+		if shouldSkipReplayedMessage(msg.Role, msg.Content) {
 			continue
 		}
 		if msg.Role == "user" && strings.TrimSpace(msg.Content) == voiceMessagePlaceholder {
@@ -231,6 +237,40 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	}
 
 	s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, reply)
+}
+
+func shouldResetConversation(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	return normalized == "/clear" || normalized == "/reset"
+}
+
+func shouldSkipReplayedMessage(role, content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if role == "assistant" {
+		if trimmed == msgVoiceUnavailable || trimmed == msgSystemUnavailable {
+			return true
+		}
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "ik kan die klantgegevens nu niet betrouwbaar bevestigen") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) resetConversation(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string) {
+	if err := s.queries.DeleteAgentMessagesByPhone(ctx, waagentdb.DeleteAgentMessagesByPhoneParams{
+		OrganizationID: pgtypeUUID(orgID),
+		PhoneNumber:    phoneKey,
+	}); err != nil {
+		s.logError(ctx, "waagent: failed to reset conversation history", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
+		s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgSystemUnavailable)
+		return
+	}
+	if s.leadHintStore != nil {
+		s.leadHintStore.Clear(orgID.String(), phoneKey)
+	}
+	s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgConversationReset)
 }
 
 // sendHardcoded persists messages and sends a hardcoded reply without invoking the LLM.

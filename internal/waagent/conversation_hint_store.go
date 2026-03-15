@@ -138,6 +138,19 @@ func (s *ConversationLeadHintStore) RememberAppointments(orgID, phoneKey string,
 	})
 }
 
+func (s *ConversationLeadHintStore) Clear(orgID, phoneKey string) {
+	if s == nil {
+		return
+	}
+	key := conversationLeadHintKey(orgID, phoneKey)
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	delete(s.items, key)
+	s.mu.Unlock()
+}
+
 func (s *ConversationLeadHintStore) remember(orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
 	if s == nil || mutate == nil {
 		return

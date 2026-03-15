@@ -134,6 +134,19 @@ func (s *RedisConversationLeadHintStore) RememberAppointments(orgID, phoneKey st
 	})
 }
 
+func (s *RedisConversationLeadHintStore) Clear(orgID, phoneKey string) {
+	if s == nil || s.redis == nil {
+		return
+	}
+	key := s.redisKey(orgID, phoneKey)
+	if key == "" {
+		return
+	}
+	if err := s.redis.Del(context.Background(), key).Err(); err != nil {
+		s.logWarn("waagent: failed to clear redis conversation hint", "key", key, "error", err)
+	}
+}
+
 func (s *RedisConversationLeadHintStore) remember(orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
 	if s == nil || s.redis == nil || mutate == nil {
 		return

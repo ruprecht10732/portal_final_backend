@@ -23,6 +23,7 @@ const testAgentPhone = "+31612345678"
 const (
 	testExpectedAssistantPersistCountMsg = "expected one assistant message to be persisted, got %d"
 	testExpectedPersistedConversationMsg = "expected inbound and assistant message to be persisted, got %d entries"
+	testMiniredisStartFailedMsg          = "failed to start miniredis: %v"
 	testQuoteRequestMessage              = "Heeft u mijn offerte?"
 	testLookupModeReply                  = "lookup-mode-reply"
 	testDefaultModeReply                 = "default-mode-reply"
@@ -30,6 +31,7 @@ const (
 	testLeadLookupQuestion               = "Zoek adres van Joey plomp"
 	testQuoteLookupQuestion              = "De offerte van Joey plomp"
 	testGenericHelpQuestion              = "Kun je mij helpen?"
+	testGroundingFallbackReply           = "Ik kan die klantgegevens nu niet betrouwbaar bevestigen. Welke klant of welk dossier bedoelt u precies?"
 	testExpectedDefaultModeCallMsg       = "expected default-mode agent run, got %d calls"
 	testExpectedDefaultModeMsg           = "expected default mode, got %q"
 	testExpectedDefaultReasonMsg         = "expected default reason, got %q"
@@ -56,6 +58,7 @@ type serviceTestQuerier struct {
 	lookupUser  waagentdb.RacWhatsappAgentUser
 	recent      []waagentdb.GetRecentAgentMessagesRow
 	inserted    []waagentdb.InsertAgentMessageParams
+	deleted     []waagentdb.DeleteAgentMessagesByPhoneParams
 }
 
 type serviceTestAgent struct {
@@ -94,6 +97,12 @@ func (q *serviceTestQuerier) CreateAgentUser(context.Context, waagentdb.CreateAg
 	return nil
 }
 func (q *serviceTestQuerier) DeleteAgentConfig(context.Context) error { return nil }
+func (q *serviceTestQuerier) DeleteAgentMessagesByPhone(_ context.Context, params waagentdb.DeleteAgentMessagesByPhoneParams) error {
+	q.deleted = append(q.deleted, params)
+	q.recent = nil
+	q.inserted = nil
+	return nil
+}
 func (q *serviceTestQuerier) DeleteAgentUser(context.Context, waagentdb.DeleteAgentUserParams) error {
 	return nil
 }
@@ -172,7 +181,7 @@ func TestHandleIncomingMessageIgnoresDuplicateBeforeLookup(t *testing.T) {
 
 	redisServer, err := miniredis.Run()
 	if err != nil {
-		t.Fatalf("failed to start miniredis: %v", err)
+		t.Fatalf(testMiniredisStartFailedMsg, err)
 	}
 	defer redisServer.Close()
 
@@ -200,7 +209,7 @@ func TestHandleIncomingMessageRateLimitedBeforeLookup(t *testing.T) {
 
 	redisServer, err := miniredis.Run()
 	if err != nil {
-		t.Fatalf("failed to start miniredis: %v", err)
+		t.Fatalf(testMiniredisStartFailedMsg, err)
 	}
 	defer redisServer.Close()
 
@@ -275,7 +284,7 @@ func TestRunAgentReplyPersistsStatusFallbackWhenGroundingFails(t *testing.T) {
 	orgID := uuid.New()
 	queries := &serviceTestQuerier{}
 	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
-	agent := &serviceTestAgent{result: AgentRunResult{Reply: "Ik kan die klantgegevens nu niet betrouwbaar bevestigen. Welke klant of welk dossier bedoelt u precies?", GroundingFailure: "lead_details_without_lead_tool"}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testGroundingFallbackReply, GroundingFailure: "lead_details_without_lead_tool"}}
 	service := &Service{
 		queries: queries,
 		agent:   agent,
@@ -289,7 +298,7 @@ func TestRunAgentReplyPersistsStatusFallbackWhenGroundingFails(t *testing.T) {
 	if len(queries.inserted) != 1 {
 		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
 	}
-	if queries.inserted[0].Content != "Ik kan die klantgegevens nu niet betrouwbaar bevestigen. Welke klant of welk dossier bedoelt u precies?" {
+	if queries.inserted[0].Content != testGroundingFallbackReply {
 		t.Fatalf("unexpected persisted status fallback %q", queries.inserted[0].Content)
 	}
 	if transport.lastSendMessagePhone == "" {
@@ -584,6 +593,81 @@ func TestRunAgentReplySendsFallbackWhenAgentRunFails(t *testing.T) {
 	}
 	if agent.calls != 1 {
 		t.Fatalf("expected one failed agent run, got %d", agent.calls)
+	}
+}
+
+func TestHandleIncomingMessageResetCommandClearsHistoryAndHints(t *testing.T) {
+	t.Parallel()
+
+	redisServer, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf(testMiniredisStartFailedMsg, err)
+	}
+	defer redisServer.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer func() { _ = client.Close() }()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{lookupUser: waagentdb.RacWhatsappAgentUser{OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true}}}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	store := NewConversationLeadHintStore()
+	store.Set(orgID.String(), normalizeAgentPhoneKey(testAgentPhone), ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	service := &Service{
+		queries:       queries,
+		sender:        newTestSender(transport, serviceTestConfigReader{}, nil),
+		rateLimiter:   NewRateLimiter(client, logger.New("development")),
+		leadHintStore: store,
+		log:           logger.New("development"),
+	}
+
+	service.HandleIncomingMessage(context.Background(), CurrentInboundMessage{ExternalMessageID: "msg-reset", PhoneNumber: testAgentPhone, Body: "/reset"})
+
+	if len(queries.deleted) != 1 {
+		t.Fatalf("expected one history delete call, got %d", len(queries.deleted))
+	}
+	if transport.lastSendMessagePhone == "" {
+		t.Fatal("expected reset confirmation to be sent")
+	}
+	if len(queries.inserted) != 1 || queries.inserted[0].Content != msgConversationReset {
+		t.Fatalf("expected only reset confirmation to be persisted, got %#v", queries.inserted)
+	}
+	if hint, ok := store.Get(orgID.String(), normalizeAgentPhoneKey(testAgentPhone)); ok || hint != nil {
+		t.Fatalf("expected lead hint to be cleared, got %#v", hint)
+	}
+	if queries.lookupCalls == 0 {
+		t.Fatal("expected phone lookup before reset handling")
+	}
+	if len(queries.inserted) != 1 {
+		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
+	}
+}
+
+func TestRunAgentReplySkipsPoisonedAssistantHistory(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{recent: []waagentdb.GetRecentAgentMessagesRow{
+		{Role: "assistant", Content: testGroundingFallbackReply},
+		{Role: "user", Content: testQuoteRequestMessage},
+	}}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testDefaultModeReply}}
+	service := &Service{
+		queries: queries,
+		agent:   agent,
+		sender:  newTestSender(transport, serviceTestConfigReader{}, nil),
+		log:     logger.New("development"),
+	}
+	inbound := &CurrentInboundMessage{ExternalMessageID: "msg-clean", PhoneNumber: testAgentPhone, Body: testGenericHelpQuestion}
+
+	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound, agentModeDecision{mode: agentRunModeDefault, reason: "test_default"})
+
+	if len(agent.lastMessages) != 1 {
+		t.Fatalf("expected poisoned assistant reply to be filtered, got %#v", agent.lastMessages)
+	}
+	if agent.lastMessages[0].Role != "user" || agent.lastMessages[0].Content != testQuoteRequestMessage {
+		t.Fatalf("unexpected replayed history %#v", agent.lastMessages)
 	}
 }
 
