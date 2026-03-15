@@ -1229,6 +1229,15 @@ func normalizeAnalysisInput(ctx tool.Context, deps *ToolDependencies, input Save
 	log.Printf("handleSaveAnalysis: normalized recommendedAction '%s' -> '%s'", input.RecommendedAction, recommendedAction)
 
 	missingInformation := normalizeMissingInformation(input.MissingInformation)
+
+	// Guard: LLMs sometimes produce a contradiction where missing fields are listed
+	// but the recommended action is not "RequestInfo". Force the correct action so
+	// the domain invariant check (ValidateAnalysisStageTransition) is never bypassed.
+	if len(missingInformation) > 0 && recommendedAction != "RequestInfo" {
+		log.Printf("normalizeAnalysisInput: auto-correcting contradictory recommendedAction '%s' -> 'RequestInfo' (missingInformation non-empty, count=%d)", recommendedAction, len(missingInformation))
+		recommendedAction = "RequestInfo"
+	}
+
 	resolvedInformation := normalizeMissingInformation(input.ResolvedInformation)
 	extractedFacts := normalizeExtractedFacts(input.ExtractedFacts)
 	resolvedInformation, extractedFacts = populateAnalysisFacts(ctx, deps, lead, tenantID, leadServiceID, resolvedInformation, extractedFacts)
@@ -1365,7 +1374,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 	recalculateAndRecordScore(ctx, deps, leadID, leadServiceID, tenantID, actorType, actorName)
 
 	log.Printf(
-		"gatekeeper SaveAnalysis: run=%s leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d confidence=%.2f",
+		"gatekeeper SaveAnalysis: run=%s leadId=%s serviceId=%s urgency=%s quality=%s action=%s missing=%d confidence=%.2f risk_flags=%d",
 		deps.GetRunID(),
 		leadID,
 		leadServiceID,
@@ -1374,6 +1383,7 @@ func handleSaveAnalysis(ctx tool.Context, deps *ToolDependencies, input SaveAnal
 		normalized.RecommendedAction,
 		len(input.MissingInformation),
 		normalized.CompositeConfidence,
+		len(normalized.RiskFlags),
 	)
 
 	deps.MarkSaveAnalysisCalled()
@@ -1762,6 +1772,8 @@ func validateEstimationInvariant(ctx context.Context, deps *ToolDependencies, st
 
 	recommendedAction, missingInformation := latestAnalysisInvariantInputs(ctx, deps, serviceID, tenantID)
 	if reason := domain.ValidateAnalysisStageTransition(recommendedAction, missingInformation, stage); reason != "" {
+		log.Printf("stage_blocked=true stage=%s service=%s block_reason=%s recommended_action=%s missing_count=%d",
+			stage, serviceID, reason, recommendedAction, len(missingInformation))
 		return UpdatePipelineStageOutput{Success: false, Message: "Cannot move to Estimation while intake is incomplete"}, fmt.Errorf("analysis-stage invariant blocked Estimation for service %s: %s", serviceID, reason)
 	}
 

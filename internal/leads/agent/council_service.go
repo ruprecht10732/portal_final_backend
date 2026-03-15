@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -95,7 +96,12 @@ func (c *DefaultMultiAgentCouncil) Evaluate(ctx context.Context, input CouncilEv
 	}
 
 	out.ReadinessSignals = append(out.ReadinessSignals, "readiness_mode=advisory")
-	return normalizeCouncilEvaluation(out), nil
+	result := normalizeCouncilEvaluation(out)
+	if result.Decision != CouncilDecisionAllow {
+		log.Printf("council_veto: decision=%s reason_code=%s lead=%s service=%s risk_signals=%v estimator_signals=%v",
+			result.Decision, result.ReasonCode, input.LeadID, input.ServiceID, result.RiskSignals, result.EstimatorSignals)
+	}
+	return result, nil
 }
 
 func addBaseCouncilSignals(out CouncilEvaluation, mode string, analysis repository.AIAnalysis) CouncilEvaluation {

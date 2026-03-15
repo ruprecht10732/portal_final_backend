@@ -94,13 +94,19 @@ Address:
 {{ .LocationSummary }}
 
 Service Note (raw):
+<untrusted-customer-input>
 {{ .ServiceNoteSummary }}
+</untrusted-customer-input>
 
 Notes:
+<untrusted-customer-input>
 {{ .NotesSection }}
+</untrusted-customer-input>
 
 Visit Report (latest appointment):
+<untrusted-customer-input>
 {{ .VisitReportSummary }}
+</untrusted-customer-input>
 
 Preferences (from customer portal):
 {{ .PreferencesSummary }}

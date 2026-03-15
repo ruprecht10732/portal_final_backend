@@ -84,10 +84,14 @@ Address:
 {{ .LocationSummary }}
 
 Service Note (raw):
+<untrusted-customer-input>
 {{ .ServiceNoteSummary }}
+</untrusted-customer-input>
 
 Notes:
+<untrusted-customer-input>
 {{ .NotesSection }}
+</untrusted-customer-input>
 
 Preferences (from customer portal):
 {{ .PreferencesSummary }}

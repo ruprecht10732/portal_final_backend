@@ -25,6 +25,7 @@ const (
 	msgVoiceUnavailable  = "Ik kon je spraakbericht niet verwerken. Stuur je vraag als tekst, dan help ik je meteen."
 	msgSystemUnavailable = "Ons systeem is tijdelijk niet beschikbaar. Probeer het later opnieuw."
 	msgConversationReset = "Ik heb ons gesprek gewist. We beginnen opnieuw met een schone context."
+	msgGroundingFallback = "Ik kan deze informatie op dit moment niet betrouwbaar bevestigen. Bekijk de actuele gegevens in het portaal."
 	recentMessageLimit   = 100
 	logAudioFallback     = "waagent: audio fallback"
 )
@@ -226,7 +227,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		return
 	}
 	if runResult.GroundingFailure != "" {
-		s.logWarn(ctx, "waagent: grounding issue observed",
+		s.logWarn(ctx, "waagent: grounding failure blocked reply",
 			"phone", phoneKey,
 			"organization_id", orgID.String(),
 			"mode", string(decision.mode),
@@ -235,6 +236,8 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 			"unsupported_facts", runResult.GroundingFacts,
 			"tool_response_names", runResult.ToolResponseNames,
 			"tool_response_count", runResult.ToolResponseCount)
+		s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgGroundingFallback)
+		return
 	}
 
 	reply := sanitizeWhatsAppReply(strings.TrimSpace(runResult.Reply))
@@ -255,7 +258,7 @@ func shouldResetConversation(message string) bool {
 func shouldSkipReplayedMessage(role, content string) bool {
 	trimmed := strings.TrimSpace(content)
 	if role == "assistant" {
-		if trimmed == msgVoiceUnavailable || trimmed == msgSystemUnavailable {
+		if trimmed == msgVoiceUnavailable || trimmed == msgSystemUnavailable || trimmed == msgGroundingFallback {
 			return true
 		}
 		lower := strings.ToLower(trimmed)

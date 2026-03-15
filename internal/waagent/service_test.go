@@ -298,7 +298,7 @@ func TestRunAgentReplyPersistsStatusFallbackWhenGroundingFails(t *testing.T) {
 	if len(queries.inserted) != 1 {
 		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
 	}
-	if queries.inserted[0].Content != testGroundingFallbackReply {
+	if queries.inserted[0].Content != msgGroundingFallback {
 		t.Fatalf("unexpected persisted status fallback %q", queries.inserted[0].Content)
 	}
 	if transport.lastSendMessagePhone == "" {
@@ -379,7 +379,7 @@ func TestRunAgentReplyPersistsAppointmentFallbackWhenGroundingFails(t *testing.T
 	if len(queries.inserted) != 1 {
 		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
 	}
-	if queries.inserted[0].Content != "Noem de datum, periode of klant, dan pak ik de juiste afspraak erbij." {
+	if queries.inserted[0].Content != msgGroundingFallback {
 		t.Fatalf("unexpected persisted appointment fallback %q", queries.inserted[0].Content)
 	}
 	if agent.lastOrganization != orgID {

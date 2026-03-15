@@ -1149,6 +1149,9 @@ func (q *QuotingAgent) emitQuoteCriticHumanAlert(ctx context.Context, reqDeps *T
 			ErrorCode: "quote_critic_requires_human",
 		}.ToMap(),
 	})
+	if _, err := q.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageManualIntervention); err != nil {
+		log.Printf("quoting-agent: failed to update stage to Manual_Intervention for service=%s: %v", serviceID, err)
+	}
 }
 
 func (q *QuotingAgent) fetchEstimationGuidelines(ctx context.Context, tenantID uuid.UUID, serviceType string) string {
