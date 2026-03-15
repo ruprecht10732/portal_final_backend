@@ -100,19 +100,19 @@ WHERE organization_id = $1
     AND external_message_id = $2;
 
 -- name: GetAgentUserByPhone :one
-SELECT phone_number, organization_id, display_name, created_at
+SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
 FROM RAC_whatsapp_agent_users
 WHERE phone_number = $1;
 
 -- name: ListAgentUsersByOrganization :many
-SELECT phone_number, organization_id, display_name, created_at
+SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
 FROM RAC_whatsapp_agent_users
 WHERE organization_id = $1
 ORDER BY created_at DESC;
 
 -- name: CreateAgentUser :exec
-INSERT INTO RAC_whatsapp_agent_users (phone_number, organization_id, display_name)
-VALUES ($1, $2, $3);
+INSERT INTO RAC_whatsapp_agent_users (phone_number, organization_id, display_name, user_type, partner_id)
+VALUES ($1, $2, $3, $4, $5);
 
 -- name: DeleteAgentUser :exec
 DELETE FROM RAC_whatsapp_agent_users

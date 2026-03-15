@@ -55,7 +55,7 @@ func (r *serviceTestLeadDetailsReader) GetLeadDetails(context.Context, uuid.UUID
 type serviceTestQuerier struct {
 	lookupCalls int
 	lookupErr   error
-	lookupUser  waagentdb.RacWhatsappAgentUser
+	lookupUser  waagentdb.GetAgentUserByPhoneRow
 	recent      []waagentdb.GetRecentAgentMessagesRow
 	inserted    []waagentdb.InsertAgentMessageParams
 	deleted     []waagentdb.DeleteAgentMessagesByPhoneParams
@@ -115,10 +115,10 @@ func (q *serviceTestQuerier) GetAgentConfigByDeviceID(context.Context, string) (
 func (q *serviceTestQuerier) GetAgentMessageByExternalID(context.Context, waagentdb.GetAgentMessageByExternalIDParams) (waagentdb.GetAgentMessageByExternalIDRow, error) {
 	return waagentdb.GetAgentMessageByExternalIDRow{}, pgx.ErrNoRows
 }
-func (q *serviceTestQuerier) GetAgentUserByPhone(context.Context, string) (waagentdb.RacWhatsappAgentUser, error) {
+func (q *serviceTestQuerier) GetAgentUserByPhone(context.Context, string) (waagentdb.GetAgentUserByPhoneRow, error) {
 	q.lookupCalls++
 	if q.lookupErr != nil {
-		return waagentdb.RacWhatsappAgentUser{}, q.lookupErr
+		return waagentdb.GetAgentUserByPhoneRow{}, q.lookupErr
 	}
 	return q.lookupUser, nil
 }
@@ -135,7 +135,7 @@ func (q *serviceTestQuerier) InsertAgentMessage(_ context.Context, params waagen
 	q.inserted = append(q.inserted, params)
 	return nil
 }
-func (q *serviceTestQuerier) ListAgentUsersByOrganization(context.Context, pgtype.UUID) ([]waagentdb.RacWhatsappAgentUser, error) {
+func (q *serviceTestQuerier) ListAgentUsersByOrganization(context.Context, pgtype.UUID) ([]waagentdb.ListAgentUsersByOrganizationRow, error) {
 	return nil, nil
 }
 func (q *serviceTestQuerier) MarkAgentVoiceTranscriptionCompleted(context.Context, waagentdb.MarkAgentVoiceTranscriptionCompletedParams) error {
@@ -242,7 +242,7 @@ func TestHandleIncomingMessageContinuesWhenRedisUnavailable(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 5 * time.Millisecond, ReadTimeout: 5 * time.Millisecond, WriteTimeout: 5 * time.Millisecond})
 	defer func() { _ = client.Close() }()
 
-	queries := &serviceTestQuerier{lookupErr: pgx.ErrNoRows, lookupUser: waagentdb.RacWhatsappAgentUser{OrganizationID: pgtype.UUID{Bytes: uuid.New(), Valid: true}}}
+	queries := &serviceTestQuerier{lookupErr: pgx.ErrNoRows, lookupUser: waagentdb.GetAgentUserByPhoneRow{OrganizationID: pgtype.UUID{Bytes: uuid.New(), Valid: true}}}
 	service := newTestService(t, client, queries)
 
 	service.HandleIncomingMessage(context.Background(), CurrentInboundMessage{ExternalMessageID: "msg-3", PhoneNumber: testAgentPhone, Body: "hallo"})
@@ -402,7 +402,7 @@ func TestHandleAIMessageRoutesSimpleLeadLookupToLookupMode(t *testing.T) {
 		log:           logger.New("development"),
 	}
 
-	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testLeadLookupQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-lead", PhoneNumber: testAgentPhone, Body: testLeadLookupQuestion})
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testLeadLookupQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-lead", PhoneNumber: testAgentPhone, Body: testLeadLookupQuestion}, waagentdb.GetAgentUserByPhoneRow{})
 
 	if agent.calls != 1 {
 		t.Fatalf(testExpectedDefaultModeCallMsg, agent.calls)
@@ -439,7 +439,7 @@ func TestHandleAIMessageRoutesSimpleQuoteLookupToLookupMode(t *testing.T) {
 		log:           logger.New("development"),
 	}
 
-	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testQuoteLookupQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-quote-fast", PhoneNumber: testAgentPhone, Body: testQuoteLookupQuestion})
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testQuoteLookupQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-quote-fast", PhoneNumber: testAgentPhone, Body: testQuoteLookupQuestion}, waagentdb.GetAgentUserByPhoneRow{})
 
 	if agent.calls != 1 {
 		t.Fatalf(testExpectedDefaultModeCallMsg, agent.calls)
@@ -473,7 +473,7 @@ func TestHandleAIMessageRoutesAmbiguousLookupToLookupMode(t *testing.T) {
 		log:           logger.New("development"),
 	}
 
-	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, "Zoek Joey plomp", &CurrentInboundMessage{ExternalMessageID: "msg-ambiguous", PhoneNumber: testAgentPhone, Body: "Zoek Joey plomp"})
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, "Zoek Joey plomp", &CurrentInboundMessage{ExternalMessageID: "msg-ambiguous", PhoneNumber: testAgentPhone, Body: "Zoek Joey plomp"}, waagentdb.GetAgentUserByPhoneRow{})
 
 	if agent.calls != 1 {
 		t.Fatalf(testExpectedDefaultModeCallMsg, agent.calls)
@@ -500,7 +500,7 @@ func TestHandleAIMessageKeepsDefaultModeForGenericMessages(t *testing.T) {
 		log:     logger.New("development"),
 	}
 
-	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testGenericHelpQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-default", PhoneNumber: testAgentPhone, Body: testGenericHelpQuestion})
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testGenericHelpQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-default", PhoneNumber: testAgentPhone, Body: testGenericHelpQuestion}, waagentdb.GetAgentUserByPhoneRow{})
 
 	if agent.calls != 1 {
 		t.Fatalf("expected one agent run, got %d calls", agent.calls)
@@ -534,7 +534,7 @@ func TestHandleAIMessageKeepsWriteRequestsOnDefaultMode(t *testing.T) {
 	}
 
 	writeQuestion := "Maak een offerte voor dakisolatie"
-	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, writeQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-write", PhoneNumber: testAgentPhone, Body: writeQuestion})
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, writeQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-write", PhoneNumber: testAgentPhone, Body: writeQuestion}, waagentdb.GetAgentUserByPhoneRow{})
 
 	if agent.calls != 1 {
 		t.Fatalf("expected one default-mode agent run, got %d calls", agent.calls)
@@ -544,6 +544,35 @@ func TestHandleAIMessageKeepsWriteRequestsOnDefaultMode(t *testing.T) {
 	}
 	if decision := service.selectAgentRunMode(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), writeQuestion); decision.reason != "default" {
 		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
+	}
+}
+
+func TestHandleAIMessageRoutesPartnerToPartnerMode(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	partnerID := uuid.New()
+	queries := &serviceTestQuerier{}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testDefaultModeReply}}
+	service := &Service{
+		queries: queries,
+		agent:   agent,
+		sender:  newTestSender(transport, serviceTestConfigReader{}, nil),
+		log:     logger.New("development"),
+	}
+
+	service.handleAIMessage(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, testGenericHelpQuestion, &CurrentInboundMessage{ExternalMessageID: "msg-partner", PhoneNumber: testAgentPhone, Body: testGenericHelpQuestion}, waagentdb.GetAgentUserByPhoneRow{
+		OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+		UserType:       "partner",
+		PartnerID:      pgtype.UUID{Bytes: partnerID, Valid: true},
+	})
+
+	if agent.calls != 1 {
+		t.Fatalf("expected one partner-mode agent run, got %d calls", agent.calls)
+	}
+	if agent.lastMode != agentRunModePartner {
+		t.Fatalf("expected partner mode, got %q", agent.lastMode)
 	}
 }
 
@@ -609,7 +638,7 @@ func TestHandleIncomingMessageResetCommandClearsHistoryAndHints(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	orgID := uuid.New()
-	queries := &serviceTestQuerier{lookupUser: waagentdb.RacWhatsappAgentUser{OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true}}}
+	queries := &serviceTestQuerier{lookupUser: waagentdb.GetAgentUserByPhoneRow{OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true}}}
 	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
 	store := NewConversationLeadHintStore()
 	store.Set(orgID.String(), normalizeAgentPhoneKey(testAgentPhone), ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})

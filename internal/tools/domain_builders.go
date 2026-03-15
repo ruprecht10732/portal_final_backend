@@ -146,8 +146,28 @@ func NewGetAppointmentsTool[In any, Out any](handler func(tool.Context, In) (Out
 		handler)
 }
 
+func NewGetMyJobsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GetMyJobs",
+		"Lists the authenticated partner's accepted jobs and their latest appointment context. Use this first when the partner refers to one of their own jobs.",
+		handler)
+}
+
+func NewGetPartnerJobDetailsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("GetPartnerJobDetails",
+		"Returns the details for one accepted partner job, resolved by appointment_id, lead_service_id, or lead_id.",
+		handler)
+}
+
 func NewAttachCurrentWhatsAppPhotoTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("AttachCurrentWhatsAppPhoto", "Attaches the current inbound WhatsApp image message to a resolved lead service in the current organization. Use only when the current inbound message is an image from the customer.", handler)
+}
+
+func NewSaveMeasurementTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("SaveMeasurement", "Stores measurements, access difficulty, and notes on the selected appointment visit report for the authenticated partner's job.", handler)
+}
+
+func NewUpdateAppointmentStatusTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("UpdateAppointmentStatus", "Updates the status of an appointment for the authenticated partner's accepted job. Valid values: scheduled, requested, completed, cancelled, no_show.", handler)
 }
 
 func NewGenerateQuoteTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {

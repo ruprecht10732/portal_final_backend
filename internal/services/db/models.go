@@ -1375,6 +1375,8 @@ type RacWhatsappAgentUser struct {
 	OrganizationID pgtype.UUID        `json:"organization_id"`
 	DisplayName    string             `json:"display_name"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UserType       string             `json:"user_type"`
+	PartnerID      pgtype.UUID        `json:"partner_id"`
 }
 
 type RacWhatsappAgentVoiceTranscription struct {

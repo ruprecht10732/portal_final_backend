@@ -16,6 +16,7 @@ const (
 	errPhotoAttachNotConfigured    = "whatsapp photo attachment not configured"
 	errQuoteWorkflowNotConfigured  = "quote workflow not configured"
 	errVisitMutationsNotConfigured = "visit mutations not configured"
+	errPartnerJobsUnavailable      = "Partner-opdrachten zijn niet beschikbaar"
 )
 
 type CreateLeadInput struct {
@@ -77,6 +78,7 @@ type SearchProductMaterialsOutput struct {
 }
 
 type AttachCurrentWhatsAppPhotoInput struct {
+	AppointmentID string `json:"appointment_id,omitempty"`
 	LeadID        string `json:"lead_id,omitempty"`
 	LeadServiceID string `json:"lead_service_id,omitempty"`
 }
@@ -396,6 +398,20 @@ func (h *ToolHandler) HandleGetNavigationLink(ctx tool.Context, orgID uuid.UUID,
 	if leadID == "" {
 		return GetNavigationLinkOutput{Success: false, Message: "lead_id is verplicht"}, fmt.Errorf("lead_id is required")
 	}
+	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
+		if h.partnerJobReader == nil {
+			return GetNavigationLinkOutput{Success: false, Message: errPartnerJobsUnavailable}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		}
+		parsedLeadID, err := uuid.Parse(leadID)
+		if err != nil {
+			return GetNavigationLinkOutput{Success: false, Message: "lead_id is ongeldig"}, err
+		}
+		job, err := h.partnerJobReader.GetPartnerJobByLead(context.Background(), orgID, partnerID, parsedLeadID)
+		if err != nil {
+			return GetNavigationLinkOutput{Success: false, Message: err.Error()}, err
+		}
+		leadID = job.LeadID
+	}
 	link, err := h.navigationLinkReader.GetNavigationLink(context.Background(), orgID, leadID)
 	if err != nil {
 		return GetNavigationLinkOutput{Success: false, Message: err.Error()}, err
@@ -430,6 +446,17 @@ func (h *ToolHandler) HandleAttachCurrentWhatsAppPhoto(ctx tool.Context, orgID u
 	if !ok {
 		return AttachCurrentWhatsAppPhotoOutput{Success: false, Message: "De huidige WhatsApp-foto is niet beschikbaar", MissingFields: []string{"foto opnieuw sturen"}}, fmt.Errorf("current inbound message context unavailable")
 	}
+	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
+		if h.partnerJobReader == nil {
+			return AttachCurrentWhatsAppPhotoOutput{Success: false, Message: errPartnerJobsUnavailable}, fmt.Errorf("partner job reader not configured")
+		}
+		job, err := h.resolvePartnerJobForPhoto(orgID, partnerID, input)
+		if err != nil {
+			return AttachCurrentWhatsAppPhotoOutput{Success: false, Message: err.Error()}, err
+		}
+		input.LeadID = job.LeadID
+		input.LeadServiceID = job.LeadServiceID
+	}
 	resolvedLeadID, resolvedServiceID, missing, err := h.resolveLeadAndServiceIDs(ctx, orgID, input.LeadID, input.LeadServiceID)
 	if len(missing) > 0 {
 		return AttachCurrentWhatsAppPhotoOutput{Success: false, Message: "Ik mis nog de juiste lead of dienst om deze foto toe te voegen", MissingFields: missing}, nil
@@ -444,6 +471,29 @@ func (h *ToolHandler) HandleAttachCurrentWhatsAppPhoto(ctx tool.Context, orgID u
 		h.recordLeadHint(ctx, orgID, output.LeadID, "", output.LeadServiceID)
 	}
 	return output, err
+}
+
+func (h *ToolHandler) resolvePartnerJobForPhoto(orgID, partnerID uuid.UUID, input AttachCurrentWhatsAppPhotoInput) (*PartnerJobSummary, error) {
+	if appointmentID := strings.TrimSpace(input.AppointmentID); appointmentID != "" {
+		parsedAppointmentID, err := uuid.Parse(appointmentID)
+		if err != nil {
+			return nil, fmt.Errorf("ongeldige appointment_id")
+		}
+		job, err := h.partnerJobReader.GetPartnerJobByAppointment(context.Background(), orgID, partnerID, parsedAppointmentID)
+		if err != nil {
+			return nil, err
+		}
+		return job, nil
+	}
+	serviceIDText := strings.TrimSpace(input.LeadServiceID)
+	if serviceIDText == "" {
+		return nil, fmt.Errorf("appointment_id of lead_service_id is verplicht")
+	}
+	serviceID, err := uuid.Parse(serviceIDText)
+	if err != nil {
+		return nil, fmt.Errorf("ongeldige lead_service_id")
+	}
+	return h.partnerJobReader.GetPartnerJobByService(context.Background(), orgID, partnerID, serviceID)
 }
 
 func (h *ToolHandler) HandleDraftQuote(ctx tool.Context, orgID uuid.UUID, input DraftQuoteInput) (DraftQuoteOutput, error) {
@@ -576,9 +626,21 @@ func (h *ToolHandler) HandleScheduleVisit(_ tool.Context, orgID uuid.UUID, input
 	return ScheduleVisitOutput{Success: true, Message: "Afspraak aangevraagd", Appointment: appointment}, nil
 }
 
-func (h *ToolHandler) HandleRescheduleVisit(_ tool.Context, orgID uuid.UUID, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
+func (h *ToolHandler) HandleRescheduleVisit(ctx tool.Context, orgID uuid.UUID, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
 	if h.visitMutationWriter == nil {
 		return RescheduleVisitOutput{}, errors.New(errVisitMutationsNotConfigured)
+	}
+	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
+		if h.partnerJobReader == nil {
+			return RescheduleVisitOutput{Success: false, Message: errPartnerJobsUnavailable}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		}
+		appointmentID, err := uuid.Parse(strings.TrimSpace(input.AppointmentID))
+		if err != nil {
+			return RescheduleVisitOutput{Success: false, Message: "appointment_id is ongeldig"}, err
+		}
+		if _, err := h.partnerJobReader.GetPartnerJobByAppointment(context.Background(), orgID, partnerID, appointmentID); err != nil {
+			return RescheduleVisitOutput{Success: false, Message: err.Error()}, err
+		}
 	}
 	appointment, err := h.visitMutationWriter.RescheduleVisit(context.Background(), orgID, input)
 	if err != nil {
@@ -587,9 +649,21 @@ func (h *ToolHandler) HandleRescheduleVisit(_ tool.Context, orgID uuid.UUID, inp
 	return RescheduleVisitOutput{Success: true, Message: "Afspraak verplaatst", Appointment: appointment}, nil
 }
 
-func (h *ToolHandler) HandleCancelVisit(_ tool.Context, orgID uuid.UUID, input CancelVisitInput) (CancelVisitOutput, error) {
+func (h *ToolHandler) HandleCancelVisit(ctx tool.Context, orgID uuid.UUID, input CancelVisitInput) (CancelVisitOutput, error) {
 	if h.visitMutationWriter == nil {
 		return CancelVisitOutput{}, errors.New(errVisitMutationsNotConfigured)
+	}
+	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
+		if h.partnerJobReader == nil {
+			return CancelVisitOutput{Success: false, Message: errPartnerJobsUnavailable}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		}
+		appointmentID, err := uuid.Parse(strings.TrimSpace(input.AppointmentID))
+		if err != nil {
+			return CancelVisitOutput{Success: false, Message: "appointment_id is ongeldig"}, err
+		}
+		if _, err := h.partnerJobReader.GetPartnerJobByAppointment(context.Background(), orgID, partnerID, appointmentID); err != nil {
+			return CancelVisitOutput{Success: false, Message: err.Error()}, err
+		}
 	}
 	if err := h.visitMutationWriter.CancelVisit(context.Background(), orgID, input); err != nil {
 		return CancelVisitOutput{Success: false, Message: err.Error()}, err

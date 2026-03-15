@@ -112,6 +112,50 @@ type VisitMutationWriter interface {
 	CancelVisit(ctx context.Context, orgID uuid.UUID, input CancelVisitInput) error
 }
 
+type PartnerPhoneRecord struct {
+	PartnerID    uuid.UUID
+	DisplayName  string
+	PhoneNumber  string
+	BusinessName string
+}
+
+type PartnerPhoneReader interface {
+	GetPartnerPhone(ctx context.Context, orgID, partnerID uuid.UUID) (*PartnerPhoneRecord, error)
+}
+
+type PartnerJobSummary struct {
+	OfferID            string `json:"offer_id,omitempty"`
+	PartnerID          string `json:"partner_id,omitempty"`
+	LeadID             string `json:"lead_id,omitempty"`
+	LeadServiceID      string `json:"lead_service_id,omitempty"`
+	AppointmentID      string `json:"appointment_id,omitempty"`
+	CustomerName       string `json:"customer_name,omitempty"`
+	ServiceType        string `json:"service_type,omitempty"`
+	City               string `json:"city,omitempty"`
+	AppointmentTitle   string `json:"appointment_title,omitempty"`
+	AppointmentStatus  string `json:"appointment_status,omitempty"`
+	AppointmentStart   string `json:"appointment_start,omitempty"`
+	AppointmentEnd     string `json:"appointment_end,omitempty"`
+	DestinationAddress string `json:"destination_address,omitempty"`
+	VakmanPriceCents   int64  `json:"vakman_price_cents,omitempty"`
+	OfferStatus        string `json:"offer_status,omitempty"`
+}
+
+type PartnerJobReader interface {
+	ListPartnerJobs(ctx context.Context, orgID, partnerID uuid.UUID) ([]PartnerJobSummary, error)
+	GetPartnerJobByService(ctx context.Context, orgID, partnerID, leadServiceID uuid.UUID) (*PartnerJobSummary, error)
+	GetPartnerJobByAppointment(ctx context.Context, orgID, partnerID, appointmentID uuid.UUID) (*PartnerJobSummary, error)
+	GetPartnerJobByLead(ctx context.Context, orgID, partnerID, leadID uuid.UUID) (*PartnerJobSummary, error)
+}
+
+type AppointmentVisitReportWriter interface {
+	UpsertVisitReport(ctx context.Context, orgID, appointmentID uuid.UUID, input SaveMeasurementInput) error
+}
+
+type AppointmentStatusWriter interface {
+	UpdateAppointmentStatus(ctx context.Context, orgID, appointmentID uuid.UUID, input UpdateAppointmentStatusInput) (*AppointmentSummary, error)
+}
+
 // InboxWriter persists outgoing messages to the operator inbox.
 type InboxWriter interface {
 	PersistOutgoingWhatsAppMessage(ctx context.Context, organizationID uuid.UUID, leadID *uuid.UUID, phoneNumber string, body string, externalMessageID *string) error
@@ -170,26 +214,30 @@ type ModuleConfig struct {
 
 // ModuleDependencies groups external waagent dependencies to keep constructor size manageable.
 type ModuleDependencies struct {
-	WhatsAppClient              *whatsapp.Client
-	QuotesReader                QuotesReader
-	AppointmentsReader          AppointmentsReader
-	LeadSearchReader            LeadSearchReader
-	LeadDetailsReader           LeadDetailsReader
-	NavigationLinkReader        NavigationLinkReader
-	CatalogSearchReader         CatalogSearchReader
-	LeadMutationWriter          LeadMutationWriter
-	QuoteWorkflowWriter         QuoteWorkflowWriter
-	CurrentInboundPhotoAttacher CurrentInboundPhotoAttacher
-	Storage                     ObjectStorage
-	AttachmentBucket            string
-	TranscriptionScheduler      AudioTranscriptionScheduler
-	AudioTranscriber            AudioTranscriber
-	InboxMessageSync            InboxMessageSync
-	VisitSlotReader             VisitSlotReader
-	VisitMutationWriter         VisitMutationWriter
-	RedisClient                 *redis.Client
-	InboxWriter                 InboxWriter
-	Logger                      *logger.Logger
+	WhatsAppClient               *whatsapp.Client
+	QuotesReader                 QuotesReader
+	AppointmentsReader           AppointmentsReader
+	LeadSearchReader             LeadSearchReader
+	LeadDetailsReader            LeadDetailsReader
+	NavigationLinkReader         NavigationLinkReader
+	CatalogSearchReader          CatalogSearchReader
+	LeadMutationWriter           LeadMutationWriter
+	QuoteWorkflowWriter          QuoteWorkflowWriter
+	CurrentInboundPhotoAttacher  CurrentInboundPhotoAttacher
+	Storage                      ObjectStorage
+	AttachmentBucket             string
+	TranscriptionScheduler       AudioTranscriptionScheduler
+	AudioTranscriber             AudioTranscriber
+	InboxMessageSync             InboxMessageSync
+	VisitSlotReader              VisitSlotReader
+	VisitMutationWriter          VisitMutationWriter
+	PartnerPhoneReader           PartnerPhoneReader
+	PartnerJobReader             PartnerJobReader
+	AppointmentVisitReportWriter AppointmentVisitReportWriter
+	AppointmentStatusWriter      AppointmentStatusWriter
+	RedisClient                  *redis.Client
+	InboxWriter                  InboxWriter
+	Logger                       *logger.Logger
 }
 
 // Module is the waagent bounded context module.
@@ -207,7 +255,7 @@ func appendMissingDependency(missing []string, condition bool, name string) []st
 }
 
 func collectCoreDependencyErrors(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) []string {
-	missing := make([]string, 0, 16)
+	missing := make([]string, 0, 20)
 	missing = appendMissingDependency(missing, pool == nil, "database pool")
 	missing = appendMissingDependency(missing, deps.Logger == nil, "logger")
 	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.MoonshotAPIKey) == "", "moonshot api key")
@@ -225,6 +273,10 @@ func collectCoreDependencyErrors(pool *pgxpool.Pool, cfg ModuleConfig, deps Modu
 	missing = appendMissingDependency(missing, deps.InboxMessageSync == nil, "inbox message sync")
 	missing = appendMissingDependency(missing, deps.VisitSlotReader == nil, "visit slot reader")
 	missing = appendMissingDependency(missing, deps.VisitMutationWriter == nil, "visit mutation writer")
+	missing = appendMissingDependency(missing, deps.PartnerPhoneReader == nil, "partner phone reader")
+	missing = appendMissingDependency(missing, deps.PartnerJobReader == nil, "partner job reader")
+	missing = appendMissingDependency(missing, deps.AppointmentVisitReportWriter == nil, "appointment visit report writer")
+	missing = appendMissingDependency(missing, deps.AppointmentStatusWriter == nil, "appointment status writer")
 	missing = appendMissingDependency(missing, deps.RedisClient == nil, "redis client")
 	missing = appendMissingDependency(missing, deps.InboxWriter == nil, "inbox writer")
 	return missing
@@ -276,19 +328,22 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 	}
 
 	toolHandler := &ToolHandler{
-		quotesReader:                deps.QuotesReader,
-		appointmentsReader:          deps.AppointmentsReader,
-		leadSearchReader:            deps.LeadSearchReader,
-		leadHintStore:               hintStore,
-		leadDetailsReader:           deps.LeadDetailsReader,
-		navigationLinkReader:        deps.NavigationLinkReader,
-		catalogSearchReader:         deps.CatalogSearchReader,
-		leadMutationWriter:          deps.LeadMutationWriter,
-		quoteWorkflowWriter:         deps.QuoteWorkflowWriter,
-		currentInboundPhotoAttacher: deps.CurrentInboundPhotoAttacher,
-		sender:                      sender,
-		visitSlotReader:             deps.VisitSlotReader,
-		visitMutationWriter:         deps.VisitMutationWriter,
+		quotesReader:                 deps.QuotesReader,
+		appointmentsReader:           deps.AppointmentsReader,
+		leadSearchReader:             deps.LeadSearchReader,
+		leadHintStore:                hintStore,
+		leadDetailsReader:            deps.LeadDetailsReader,
+		navigationLinkReader:         deps.NavigationLinkReader,
+		catalogSearchReader:          deps.CatalogSearchReader,
+		leadMutationWriter:           deps.LeadMutationWriter,
+		quoteWorkflowWriter:          deps.QuoteWorkflowWriter,
+		currentInboundPhotoAttacher:  deps.CurrentInboundPhotoAttacher,
+		sender:                       sender,
+		visitSlotReader:              deps.VisitSlotReader,
+		visitMutationWriter:          deps.VisitMutationWriter,
+		partnerJobReader:             deps.PartnerJobReader,
+		appointmentVisitReportWriter: deps.AppointmentVisitReportWriter,
+		appointmentStatusWriter:      deps.AppointmentStatusWriter,
 	}
 
 	agent, err := NewAgent(moonshot.Config{
@@ -320,7 +375,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 	return &Module{
 		service:       svc,
 		deviceHandler: &DeviceHandler{queries: queries, waClient: deps.WhatsAppClient, webhookSecret: cfg.WebhookSecret},
-		phoneHandler:  &PhoneHandler{queries: queries},
+		phoneHandler:  &PhoneHandler{queries: queries, partnerPhoneReader: deps.PartnerPhoneReader},
 	}, nil
 }
 

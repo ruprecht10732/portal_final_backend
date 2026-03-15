@@ -12,18 +12,26 @@ import (
 )
 
 const createAgentUser = `-- name: CreateAgentUser :exec
-INSERT INTO RAC_whatsapp_agent_users (phone_number, organization_id, display_name)
-VALUES ($1, $2, $3)
+INSERT INTO RAC_whatsapp_agent_users (phone_number, organization_id, display_name, user_type, partner_id)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type CreateAgentUserParams struct {
 	PhoneNumber    string      `json:"phone_number"`
 	OrganizationID pgtype.UUID `json:"organization_id"`
 	DisplayName    string      `json:"display_name"`
+	UserType       string      `json:"user_type"`
+	PartnerID      pgtype.UUID `json:"partner_id"`
 }
 
 func (q *Queries) CreateAgentUser(ctx context.Context, arg CreateAgentUserParams) error {
-	_, err := q.db.Exec(ctx, createAgentUser, arg.PhoneNumber, arg.OrganizationID, arg.DisplayName)
+	_, err := q.db.Exec(ctx, createAgentUser,
+		arg.PhoneNumber,
+		arg.OrganizationID,
+		arg.DisplayName,
+		arg.UserType,
+		arg.PartnerID,
+	)
 	return err
 }
 
@@ -146,18 +154,29 @@ func (q *Queries) GetAgentMessageByExternalID(ctx context.Context, arg GetAgentM
 }
 
 const getAgentUserByPhone = `-- name: GetAgentUserByPhone :one
-SELECT phone_number, organization_id, display_name, created_at
+SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
 FROM RAC_whatsapp_agent_users
 WHERE phone_number = $1
 `
 
-func (q *Queries) GetAgentUserByPhone(ctx context.Context, phoneNumber string) (RacWhatsappAgentUser, error) {
+type GetAgentUserByPhoneRow struct {
+	PhoneNumber    string             `json:"phone_number"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	DisplayName    string             `json:"display_name"`
+	UserType       string             `json:"user_type"`
+	PartnerID      pgtype.UUID        `json:"partner_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetAgentUserByPhone(ctx context.Context, phoneNumber string) (GetAgentUserByPhoneRow, error) {
 	row := q.db.QueryRow(ctx, getAgentUserByPhone, phoneNumber)
-	var i RacWhatsappAgentUser
+	var i GetAgentUserByPhoneRow
 	err := row.Scan(
 		&i.PhoneNumber,
 		&i.OrganizationID,
 		&i.DisplayName,
+		&i.UserType,
+		&i.PartnerID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -336,25 +355,36 @@ func (q *Queries) InsertAgentMessage(ctx context.Context, arg InsertAgentMessage
 }
 
 const listAgentUsersByOrganization = `-- name: ListAgentUsersByOrganization :many
-SELECT phone_number, organization_id, display_name, created_at
+SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
 FROM RAC_whatsapp_agent_users
 WHERE organization_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListAgentUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]RacWhatsappAgentUser, error) {
+type ListAgentUsersByOrganizationRow struct {
+	PhoneNumber    string             `json:"phone_number"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	DisplayName    string             `json:"display_name"`
+	UserType       string             `json:"user_type"`
+	PartnerID      pgtype.UUID        `json:"partner_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListAgentUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]ListAgentUsersByOrganizationRow, error) {
 	rows, err := q.db.Query(ctx, listAgentUsersByOrganization, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RacWhatsappAgentUser
+	var items []ListAgentUsersByOrganizationRow
 	for rows.Next() {
-		var i RacWhatsappAgentUser
+		var i ListAgentUsersByOrganizationRow
 		if err := rows.Scan(
 			&i.PhoneNumber,
 			&i.OrganizationID,
 			&i.DisplayName,
+			&i.UserType,
+			&i.PartnerID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

@@ -27,23 +27,27 @@ import (
 )
 
 const (
-	agentWorkspaceName       = "whatsapp-agent"
-	agentAppName             = "whatsapp-agent"
-	maxToolIterations        = 10
-	assistantPrefix          = "[Jouw vorig antwoord]: "
-	userPrefix               = "[Klant]: "
-	errOrgContextUnavailable = "organization context not available"
+	agentWorkspaceName        = "whatsapp-agent"
+	agentPartnerWorkspaceName = "whatsapp-partner-agent"
+	agentAppName              = "whatsapp-agent"
+	agentPartnerAppName       = "whatsapp-partner-agent"
+	maxToolIterations         = 10
+	assistantPrefix           = "[Jouw vorig antwoord]: "
+	userPrefix                = "[Klant]: "
+	errOrgContextUnavailable  = "organization context not available"
 )
 
 type agentRunMode string
 
 const (
 	agentRunModeDefault agentRunMode = "default"
+	agentRunModePartner agentRunMode = "partner"
 )
 
 // orgIDContextKey is used to inject org_id into tool.Context without exposing it to the LLM.
 type orgIDContextKey struct{}
 type phoneKeyContextKey struct{}
+type partnerIDContextKey struct{}
 type currentInboundMessageContextKey struct{}
 
 // ConversationMessage represents a single message in the conversation history.
@@ -56,6 +60,7 @@ type ConversationMessage struct {
 // Agent wraps the ADK agent and runner for the WhatsApp agent.
 type Agent struct {
 	defaultRuntime agentRuntime
+	partnerRuntime agentRuntime
 	sessionService session.Service
 	log            *logger.Logger
 }
@@ -152,8 +157,22 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler, log *logger.Lo
 	if err != nil {
 		return nil, err
 	}
+	partnerWorkspace, err := orchestration.LoadAgentWorkspace(agentPartnerWorkspaceName)
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to load partner workspace: %w", err)
+	}
+	partnerRuntime, err := newAgentRuntime(modelCfg, partnerWorkspace, sessionService, toolHandler, agentRuntimeConfig{
+		appName:     agentPartnerAppName,
+		agentName:   "WhatsAppPartnerAgent",
+		instruction: partnerWorkspace.Instruction,
+		toolBuilder: buildPartnerWhatsAppTools,
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &Agent{
 		defaultRuntime: defaultRuntime,
+		partnerRuntime: partnerRuntime,
 		sessionService: sessionService,
 		log:            log,
 	}, nil
@@ -210,6 +229,20 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 	)
 }
 
+func buildPartnerWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
+	return buildTools(toolHandler,
+		buildGetMyJobsTool,
+		buildGetPartnerJobDetailsTool,
+		buildGetNavigationLinkTool,
+		buildGetAppointmentsTool,
+		buildAttachCurrentWhatsAppPhotoTool,
+		buildSaveMeasurementTool,
+		buildUpdateAppointmentStatusTool,
+		buildRescheduleVisitTool,
+		buildCancelVisitTool,
+	)
+}
+
 func buildTools(toolHandler *ToolHandler, builders ...func(*ToolHandler) (tool.Tool, error)) ([]tool.Tool, error) {
 	tools := make([]tool.Tool, 0, len(builders))
 	for _, builder := range builders {
@@ -234,6 +267,34 @@ func buildGetLeadDetailsTool(toolHandler *ToolHandler) (tool.Tool, error) {
 		return nil, fmt.Errorf("waagent: failed to build GetLeadDetails tool: %w", err)
 	}
 	return leadDetailsTool, nil
+}
+
+func buildGetMyJobsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	jobsTool, err := apptools.NewGetMyJobsTool(func(ctx tool.Context, input GetMyJobsInput) (GetMyJobsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetMyJobsOutput{}, err
+		}
+		return toolHandler.HandleGetMyJobs(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GetMyJobs tool: %w", err)
+	}
+	return jobsTool, nil
+}
+
+func buildGetPartnerJobDetailsTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	detailsTool, err := apptools.NewGetPartnerJobDetailsTool(func(ctx tool.Context, input GetPartnerJobDetailsInput) (GetPartnerJobDetailsOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetPartnerJobDetailsOutput{}, err
+		}
+		return toolHandler.HandleGetPartnerJobDetails(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build GetPartnerJobDetails tool: %w", err)
+	}
+	return detailsTool, nil
 }
 
 func buildCreateLeadTool(toolHandler *ToolHandler) (tool.Tool, error) {
@@ -376,6 +437,34 @@ func buildSendQuotePDFTool(toolHandler *ToolHandler) (tool.Tool, error) {
 	return sendTool, nil
 }
 
+func buildSaveMeasurementTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	saveTool, err := apptools.NewSaveMeasurementTool(func(ctx tool.Context, input SaveMeasurementInput) (SaveMeasurementOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return SaveMeasurementOutput{}, err
+		}
+		return toolHandler.HandleSaveMeasurement(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build SaveMeasurement tool: %w", err)
+	}
+	return saveTool, nil
+}
+
+func buildUpdateAppointmentStatusTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	statusTool, err := apptools.NewUpdateAppointmentStatusTool(func(ctx tool.Context, input UpdateAppointmentStatusInput) (UpdateAppointmentStatusOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return UpdateAppointmentStatusOutput{}, err
+		}
+		return toolHandler.HandleUpdateAppointmentStatus(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waagent: failed to build UpdateAppointmentStatus tool: %w", err)
+	}
+	return statusTool, nil
+}
+
 func buildGetAppointmentsTool(toolHandler *ToolHandler) (tool.Tool, error) {
 	appointmentsTool, err := apptools.NewGetAppointmentsTool(func(ctx tool.Context, input GetAppointmentsInput) (GetAppointmentsOutput, error) {
 		orgID, err := orgIDFromToolContext(ctx)
@@ -504,6 +593,14 @@ func phoneKeyFromToolContext(ctx tool.Context) (string, bool) {
 	return strings.TrimSpace(phoneKey), true
 }
 
+func partnerIDFromToolContext(ctx tool.Context) (uuid.UUID, bool) {
+	partnerID, ok := ctx.Value(partnerIDContextKey{}).(uuid.UUID)
+	if !ok || partnerID == uuid.Nil {
+		return uuid.Nil, false
+	}
+	return partnerID, true
+}
+
 func currentInboundMessageFromToolContext(ctx tool.Context) (CurrentInboundMessage, bool) {
 	message, ok := ctx.Value(currentInboundMessageContextKey{}).(CurrentInboundMessage)
 	if !ok || strings.TrimSpace(message.ExternalMessageID) == "" {
@@ -519,8 +616,11 @@ func (a *Agent) Run(ctx context.Context, orgID uuid.UUID, phoneKey string, messa
 		return AgentRunResult{}, fmt.Errorf("waagent: no messages to process")
 	}
 	ctx = a.enrichRunContext(ctx, orgID, phoneKey, inboundMessage)
-
-	result, err := a.runExecutionPipeline(ctx, a.defaultRuntime, agentExecutionRequest{orgID: orgID, phoneKey: phoneKey, messages: messages, leadHint: leadHint, inboundMessage: inboundMessage})
+	runtime := a.defaultRuntime
+	if mode == agentRunModePartner {
+		runtime = a.partnerRuntime
+	}
+	result, err := a.runExecutionPipeline(ctx, runtime, agentExecutionRequest{orgID: orgID, phoneKey: phoneKey, messages: messages, leadHint: leadHint, inboundMessage: inboundMessage})
 	if err != nil {
 		return AgentRunResult{}, err
 	}

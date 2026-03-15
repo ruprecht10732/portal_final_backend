@@ -18,12 +18,12 @@ type Querier interface {
 	GetAgentConfig(ctx context.Context) (RacWhatsappAgentConfig, error)
 	GetAgentConfigByDeviceID(ctx context.Context, deviceID string) (RacWhatsappAgentConfig, error)
 	GetAgentMessageByExternalID(ctx context.Context, arg GetAgentMessageByExternalIDParams) (GetAgentMessageByExternalIDRow, error)
-	GetAgentUserByPhone(ctx context.Context, phoneNumber string) (RacWhatsappAgentUser, error)
+	GetAgentUserByPhone(ctx context.Context, phoneNumber string) (GetAgentUserByPhoneRow, error)
 	GetAgentVoiceTranscriptionByExternalID(ctx context.Context, arg GetAgentVoiceTranscriptionByExternalIDParams) (RacWhatsappAgentVoiceTranscription, error)
 	GetRecentAgentMessages(ctx context.Context, arg GetRecentAgentMessagesParams) ([]GetRecentAgentMessagesRow, error)
 	GetRecentInboundAgentMessages(ctx context.Context, arg GetRecentInboundAgentMessagesParams) ([]GetRecentInboundAgentMessagesRow, error)
 	InsertAgentMessage(ctx context.Context, arg InsertAgentMessageParams) error
-	ListAgentUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]RacWhatsappAgentUser, error)
+	ListAgentUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]ListAgentUsersByOrganizationRow, error)
 	MarkAgentVoiceTranscriptionCompleted(ctx context.Context, arg MarkAgentVoiceTranscriptionCompletedParams) error
 	MarkAgentVoiceTranscriptionFailed(ctx context.Context, arg MarkAgentVoiceTranscriptionFailedParams) error
 	MarkAgentVoiceTranscriptionProcessing(ctx context.Context, arg MarkAgentVoiceTranscriptionProcessingParams) error

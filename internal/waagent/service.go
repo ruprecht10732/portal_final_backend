@@ -110,15 +110,20 @@ func (s *Service) HandleIncomingMessage(ctx context.Context, inbound CurrentInbo
 		return
 	}
 
-	s.handleAIMessage(ctx, orgID, lookupPhone, replyTarget, text, &inbound)
+	s.handleAIMessage(ctx, orgID, lookupPhone, replyTarget, text, &inbound, user)
 }
 
-func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget, text string, inbound *CurrentInboundMessage) {
+func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget, text string, inbound *CurrentInboundMessage, agentUser waagentdb.GetAgentUserByPhoneRow) {
 	if err := s.persistInboundMessage(ctx, orgID, phoneKey, text, inbound); err != nil {
 		s.logError(ctx, "waagent: failed to persist user message", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
 	}
 	s.syncInboundInboxMessage(ctx, orgID, replyTarget, inbound)
 	decision := s.selectAgentRunMode(ctx, orgID, phoneKey, text)
+	if partnerID, ok := partnerIDFromAgentUser(agentUser); ok {
+		decision.mode = agentRunModePartner
+		decision.reason = "partner"
+		decision.partnerID = &partnerID
+	}
 	s.logInfo(ctx, "waagent: agent mode selected",
 		"phone", phoneKey,
 		"organization_id", orgID.String(),
@@ -210,6 +215,9 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	}()
 
 	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
+	if decision.partnerID != nil {
+		ctx = context.WithValue(ctx, partnerIDContextKey{}, *decision.partnerID)
+	}
 
 	runResult, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound, decision.mode)
 	if err != nil {
@@ -497,7 +505,7 @@ func (s *Service) resolveLeadHint(ctx context.Context, orgID uuid.UUID, phoneKey
 	return hint
 }
 
-func (s *Service) lookupAgentUser(ctx context.Context, phone string) (waagentdb.RacWhatsappAgentUser, error) {
+func (s *Service) lookupAgentUser(ctx context.Context, phone string) (waagentdb.GetAgentUserByPhoneRow, error) {
 	var lastErr error
 	for _, candidate := range agentPhoneCandidates(phone) {
 		user, err := s.queries.GetAgentUserByPhone(ctx, candidate)
@@ -508,12 +516,12 @@ func (s *Service) lookupAgentUser(ctx context.Context, phone string) (waagentdb.
 			lastErr = err
 			continue
 		}
-		return waagentdb.RacWhatsappAgentUser{}, err
+		return waagentdb.GetAgentUserByPhoneRow{}, err
 	}
 	if lastErr == nil {
 		lastErr = pgx.ErrNoRows
 	}
-	return waagentdb.RacWhatsappAgentUser{}, lastErr
+	return waagentdb.GetAgentUserByPhoneRow{}, lastErr
 }
 
 func pgtypeUUID(id uuid.UUID) pgtype.UUID {
@@ -557,8 +565,9 @@ func inboundMetadata(inbound *CurrentInboundMessage) []byte {
 }
 
 type agentModeDecision struct {
-	mode   agentRunMode
-	reason string
+	mode      agentRunMode
+	reason    string
+	partnerID *uuid.UUID
 }
 
 func (s *Service) selectAgentRunMode(ctx context.Context, orgID uuid.UUID, phoneKey, message string) agentModeDecision {
@@ -575,6 +584,13 @@ func (s *Service) applyReplyPolicy(ctx context.Context, orgID uuid.UUID, phoneKe
 	_ = phoneKey
 	_ = decision
 	return strings.TrimSpace(reply)
+}
+
+func partnerIDFromAgentUser(user waagentdb.GetAgentUserByPhoneRow) (uuid.UUID, bool) {
+	if strings.TrimSpace(user.UserType) != "partner" || !user.PartnerID.Valid {
+		return uuid.Nil, false
+	}
+	return uuid.UUID(user.PartnerID.Bytes), true
 }
 
 func timestamptzPtr(value pgtype.Timestamptz) *time.Time {

@@ -43,19 +43,22 @@ type LeadHintStore interface {
 
 // ToolHandler implements the function-calling tool handlers.
 type ToolHandler struct {
-	quotesReader                QuotesReader
-	appointmentsReader          AppointmentsReader
-	leadSearchReader            LeadSearchReader
-	leadHintStore               LeadHintStore
-	leadDetailsReader           LeadDetailsReader
-	navigationLinkReader        NavigationLinkReader
-	catalogSearchReader         CatalogSearchReader
-	leadMutationWriter          LeadMutationWriter
-	quoteWorkflowWriter         QuoteWorkflowWriter
-	currentInboundPhotoAttacher CurrentInboundPhotoAttacher
-	sender                      *Sender
-	visitSlotReader             VisitSlotReader
-	visitMutationWriter         VisitMutationWriter
+	quotesReader                 QuotesReader
+	appointmentsReader           AppointmentsReader
+	leadSearchReader             LeadSearchReader
+	leadHintStore                LeadHintStore
+	leadDetailsReader            LeadDetailsReader
+	navigationLinkReader         NavigationLinkReader
+	catalogSearchReader          CatalogSearchReader
+	leadMutationWriter           LeadMutationWriter
+	quoteWorkflowWriter          QuoteWorkflowWriter
+	currentInboundPhotoAttacher  CurrentInboundPhotoAttacher
+	sender                       *Sender
+	visitSlotReader              VisitSlotReader
+	visitMutationWriter          VisitMutationWriter
+	partnerJobReader             PartnerJobReader
+	appointmentVisitReportWriter AppointmentVisitReportWriter
+	appointmentStatusWriter      AppointmentStatusWriter
 }
 
 // HandleGetPendingQuotes retrieves quotes scoped to the org from context.
@@ -130,12 +133,49 @@ func (h *ToolHandler) HandleGetAppointments(ctx tool.Context, orgID uuid.UUID, i
 	if err != nil {
 		return GetAppointmentsOutput{}, fmt.Errorf("ik kan de afspraken nu niet ophalen. probeer het later opnieuw")
 	}
+	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
+		appointments, err = h.filterPartnerAppointments(orgID, partnerID, appointments)
+		if err != nil {
+			return GetAppointmentsOutput{}, err
+		}
+	}
 	h.recordLeadHintFromAppointments(ctx, orgID, appointments)
 
 	return GetAppointmentsOutput{
 		Appointments: appointments,
 		Count:        len(appointments),
 	}, nil
+}
+
+func (h *ToolHandler) filterPartnerAppointments(orgID, partnerID uuid.UUID, appointments []AppointmentSummary) ([]AppointmentSummary, error) {
+	if h.partnerJobReader == nil {
+		return nil, fmt.Errorf(errPartnerJobReaderNotConfigured)
+	}
+	jobs, err := h.partnerJobReader.ListPartnerJobs(context.Background(), orgID, partnerID)
+	if err != nil {
+		return nil, err
+	}
+	allowedAppointments := make(map[string]struct{}, len(jobs))
+	allowedServices := make(map[string]struct{}, len(jobs))
+	for _, job := range jobs {
+		if strings.TrimSpace(job.AppointmentID) != "" {
+			allowedAppointments[strings.TrimSpace(job.AppointmentID)] = struct{}{}
+		}
+		if strings.TrimSpace(job.LeadServiceID) != "" {
+			allowedServices[strings.TrimSpace(job.LeadServiceID)] = struct{}{}
+		}
+	}
+	filtered := make([]AppointmentSummary, 0, len(appointments))
+	for _, appointment := range appointments {
+		if _, ok := allowedAppointments[strings.TrimSpace(appointment.AppointmentID)]; ok {
+			filtered = append(filtered, appointment)
+			continue
+		}
+		if _, ok := allowedServices[strings.TrimSpace(appointment.LeadServiceID)]; ok {
+			filtered = append(filtered, appointment)
+		}
+	}
+	return filtered, nil
 }
 
 func (h *ToolHandler) recordLeadHintFromQuotes(ctx tool.Context, orgID uuid.UUID, quotes []QuoteSummary) {

@@ -135,6 +135,42 @@ func (testInboxWriter) PersistOutgoingWhatsAppMessage(context.Context, uuid.UUID
 	return nil
 }
 
+type testPartnerPhoneReader struct{}
+
+func (testPartnerPhoneReader) GetPartnerPhone(context.Context, uuid.UUID, uuid.UUID) (*PartnerPhoneRecord, error) {
+	return &PartnerPhoneRecord{PartnerID: uuid.New(), DisplayName: "Partner", PhoneNumber: "+31611111111"}, nil
+}
+
+type testPartnerJobReader struct{}
+
+func (testPartnerJobReader) ListPartnerJobs(context.Context, uuid.UUID, uuid.UUID) ([]PartnerJobSummary, error) {
+	return nil, nil
+}
+
+func (testPartnerJobReader) GetPartnerJobByService(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*PartnerJobSummary, error) {
+	return &PartnerJobSummary{}, nil
+}
+
+func (testPartnerJobReader) GetPartnerJobByAppointment(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*PartnerJobSummary, error) {
+	return &PartnerJobSummary{}, nil
+}
+
+func (testPartnerJobReader) GetPartnerJobByLead(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*PartnerJobSummary, error) {
+	return &PartnerJobSummary{}, nil
+}
+
+type testAppointmentVisitReportWriter struct{}
+
+func (testAppointmentVisitReportWriter) UpsertVisitReport(context.Context, uuid.UUID, uuid.UUID, SaveMeasurementInput) error {
+	return nil
+}
+
+type testAppointmentStatusWriter struct{}
+
+func (testAppointmentStatusWriter) UpdateAppointmentStatus(context.Context, uuid.UUID, uuid.UUID, UpdateAppointmentStatusInput) (*AppointmentSummary, error) {
+	return &AppointmentSummary{}, nil
+}
+
 type testStorage struct{}
 
 func (testStorage) DownloadFile(context.Context, string, string) (io.ReadCloser, error) {
@@ -171,22 +207,26 @@ func (testAudioTranscriber) Transcribe(context.Context, AudioTranscriptionInput)
 
 func validModuleDependencies() ModuleDependencies {
 	return ModuleDependencies{
-		WhatsAppClient:              &whatsapp.Client{},
-		QuotesReader:                testQuotesReader{},
-		AppointmentsReader:          testAppointmentsReader{},
-		LeadSearchReader:            testLeadSearchReader{},
-		LeadDetailsReader:           testLeadDetailsReader{},
-		NavigationLinkReader:        testNavigationLinkReader{},
-		CatalogSearchReader:         testCatalogSearchReader{},
-		LeadMutationWriter:          testLeadMutationWriter{},
-		QuoteWorkflowWriter:         testQuoteWorkflowWriter{},
-		CurrentInboundPhotoAttacher: testPhotoAttacher{},
-		InboxMessageSync:            testInboxMessageSync{},
-		VisitSlotReader:             testVisitSlotReader{},
-		VisitMutationWriter:         testVisitMutationWriter{},
-		RedisClient:                 redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}),
-		InboxWriter:                 testInboxWriter{},
-		Logger:                      logger.New("development"),
+		WhatsAppClient:               &whatsapp.Client{},
+		QuotesReader:                 testQuotesReader{},
+		AppointmentsReader:           testAppointmentsReader{},
+		LeadSearchReader:             testLeadSearchReader{},
+		LeadDetailsReader:            testLeadDetailsReader{},
+		NavigationLinkReader:         testNavigationLinkReader{},
+		CatalogSearchReader:          testCatalogSearchReader{},
+		LeadMutationWriter:           testLeadMutationWriter{},
+		QuoteWorkflowWriter:          testQuoteWorkflowWriter{},
+		CurrentInboundPhotoAttacher:  testPhotoAttacher{},
+		InboxMessageSync:             testInboxMessageSync{},
+		VisitSlotReader:              testVisitSlotReader{},
+		VisitMutationWriter:          testVisitMutationWriter{},
+		PartnerPhoneReader:           testPartnerPhoneReader{},
+		PartnerJobReader:             testPartnerJobReader{},
+		AppointmentVisitReportWriter: testAppointmentVisitReportWriter{},
+		AppointmentStatusWriter:      testAppointmentStatusWriter{},
+		RedisClient:                  redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}),
+		InboxWriter:                  testInboxWriter{},
+		Logger:                       logger.New("development"),
 	}
 }
 
