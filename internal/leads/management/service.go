@@ -68,6 +68,7 @@ type Service struct {
 	inAppService           *inapp.Service
 	leadDetailQuotes       LeadDetailQuotesReader
 	leadDetailAppointments LeadDetailAppointmentsReader
+	leadDetailWorkflow     LeadDetailWorkflowContextReader
 	timelineWhatsAppSender TimelineWhatsAppSender
 	partnerPhoneResolver   PartnerPhoneResolver
 	acceptedQuoteUpdater   AcceptedQuoteUpdater
@@ -87,6 +88,10 @@ type LeadDetailQuotesReader interface {
 
 type LeadDetailAppointmentsReader interface {
 	ListLeadAppointments(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, leadID uuid.UUID) ([]appointmentstransport.AppointmentResponse, error)
+}
+
+type LeadDetailWorkflowContextReader interface {
+	GetLeadWorkflowContext(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID, leadSource *string, leadServiceType *string, pipelineStage *string) (*transport.LeadDetailWorkflowContext, error)
 }
 
 type LeadWorkflowOverrideWriter interface {
@@ -175,6 +180,10 @@ func (s *Service) SetLeadDetailQuotesReader(reader LeadDetailQuotesReader) {
 
 func (s *Service) SetLeadDetailAppointmentsReader(reader LeadDetailAppointmentsReader) {
 	s.leadDetailAppointments = reader
+}
+
+func (s *Service) SetLeadDetailWorkflowContextReader(reader LeadDetailWorkflowContextReader) {
+	s.leadDetailWorkflow = reader
 }
 
 // Create creates a new lead.
@@ -380,6 +389,12 @@ func (s *Service) GetDetailContext(ctx context.Context, id uuid.UUID, tenantID u
 		Communications: communications,
 	}
 
+	workflowContext, err := s.loadLeadWorkflowContext(ctx, leadResponse, tenantID)
+	if err != nil {
+		return transport.LeadDetailContextResponse{}, err
+	}
+	response.Workflow = workflowContext
+
 	if leadResponse.CurrentService == nil {
 		return response, nil
 	}
@@ -415,6 +430,23 @@ func (s *Service) loadLeadDetailAppointments(ctx context.Context, userID uuid.UU
 		return []appointmentstransport.AppointmentResponse{}, nil
 	}
 	return s.leadDetailAppointments.ListLeadAppointments(ctx, userID, isAdmin, tenantID, leadID)
+}
+
+func (s *Service) loadLeadWorkflowContext(ctx context.Context, lead transport.LeadResponse, tenantID uuid.UUID) (*transport.LeadDetailWorkflowContext, error) {
+	if s.leadDetailWorkflow == nil {
+		return nil, nil
+	}
+
+	var leadServiceType *string
+	var pipelineStage *string
+	if lead.CurrentService != nil {
+		serviceType := string(lead.CurrentService.ServiceType)
+		stage := string(lead.CurrentService.PipelineStage)
+		leadServiceType = &serviceType
+		pipelineStage = &stage
+	}
+
+	return s.leadDetailWorkflow.GetLeadWorkflowContext(ctx, tenantID, lead.ID, lead.Source, leadServiceType, pipelineStage)
 }
 
 func (s *Service) populateCurrentServiceDetailContext(ctx context.Context, tenantID uuid.UUID, serviceID uuid.UUID, response *transport.LeadDetailContextResponse) error {

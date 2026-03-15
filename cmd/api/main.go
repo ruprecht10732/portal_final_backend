@@ -316,6 +316,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		panic("failed to initialize leads module: " + err.Error())
 	}
 	leadsModule.ManagementService().SetWorkflowOverrideWriter(identityModule.Service())
+	leadsModule.ManagementService().SetLeadDetailWorkflowContextReader(adapters.NewLeadDetailWorkflowContextReader(identityModule.Service()))
 	leadsModule.ManagementService().SetInAppNotificationService(notificationModule.InAppService())
 	identityModule.Service().SetSSE(leadsModule.SSE())
 	identityModule.Service().SetWhatsAppReplySuggester(adapters.NewWhatsAppReplySuggesterAdapter(leadsModule.WhatsAppReplyGenerator()))
