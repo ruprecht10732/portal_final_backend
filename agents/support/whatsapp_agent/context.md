@@ -41,3 +41,9 @@ Incoming WhatsApp message from an authenticated (phone-linked) external user, di
 - LLM error → logged; no reply sent (fail silent).
 - Tool returns no data → agent responds honestly ("no results found").
 - The Go layer should prefer model autonomy over deterministic pre-routing, except for hard safety boundaries like auth, rate limiting, and tenant scoping.
+
+## Autonomy Notes
+
+- Broad overview questions like `Welke afspraken zijn er?` or `Welke offertes zijn er?` should trigger the appropriate listing tool and a direct summary of the results.
+- A follow-up like `Die van Carola Dekker` after a quote request should be treated as disambiguation of the pending quote search, not as a brand-new vague request.
+- Once the target customer is resolved and exactly one quote or one relevant result remains, answer directly instead of asking another clarification question.

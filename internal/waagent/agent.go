@@ -625,7 +625,7 @@ func (a *Agent) buildLeadContextText(hint *ConversationLeadHint) string {
 	if strings.TrimSpace(hint.LeadServiceID) != "" {
 		b.WriteString("Er is ook al een dienstcontext gekoppeld aan dit gesprek. ")
 	}
-	b.WriteString("Beantwoord geen concrete details zoals adres, telefoon, e-mail, status, afspraken of offertes op basis van deze hint alleen. Gebruik deze context alleen voor routering en verifieer daarna met GetLeadDetails, GetQuotes of GetAppointments.")
+	b.WriteString("Gebruik deze context om sneller de juiste klant of het juiste dossier te herkennen, en verifieer concrete klant-, offerte- of afspraakdetails met GetLeadDetails, GetQuotes of GetAppointments zodra dat nodig is voor je antwoord.")
 	return b.String()
 }
 
@@ -694,9 +694,9 @@ func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, user
 	}
 
 	reply := strings.TrimSpace(lastFinalText)
-	validatedReply, decision := validateGroundedReply(reply, evidence)
+	_, decision := validateGroundedReply(reply, evidence)
 	if decision.Code != "" {
-		a.logWarn(ctx, "waagent: grounded reply validation fallback",
+		a.logWarn(ctx, "waagent: grounding issue observed",
 			"reason", decision.Code,
 			"unsupported_facts", decision.UnsupportedFacts,
 			"tool_response_names", evidence.toolNames(),
@@ -704,7 +704,7 @@ func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, user
 	}
 
 	return AgentRunResult{
-		Reply:             validatedReply,
+		Reply:             reply,
 		ToolResponseNames: evidence.toolNames(),
 		ToolResponseCount: evidence.toolResponseCount(),
 		GroundingFailure:  decision.Code,

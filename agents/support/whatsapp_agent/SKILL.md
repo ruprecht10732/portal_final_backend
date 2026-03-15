@@ -43,7 +43,7 @@ Autonomous WhatsApp assistant for authenticated external users (customers).
 
 1. Receive incoming WhatsApp message from the webhook handler.
 2. Authenticate the sender by phone number (phone → organization mapping).
-3. Load recent conversation history (last 20 messages).
+3. Load recent conversation history (last 100 messages).
 4. Invoke the LLM with function-calling tools scoped to the sender's organization.
 5. Resolve the correct lead, appointment slot, or appointment before any write action.
 6. Reuse the current inbound WhatsApp media context when the customer sends a photo that should be attached to their lead.
@@ -66,6 +66,9 @@ Autonomous WhatsApp assistant for authenticated external users (customers).
 - If a photo cannot be attached because the lead is still ambiguous or missing, ask for the needed lead detail and tell the customer to resend the photo.
 - Quote PDFs may be sent through WhatsApp when available, and may be generated on demand if the stored PDF is missing.
 - When a customer asks to find and send a quote PDF, resolve the quote first with `GetQuotes`; if there is exactly one match, send the PDF automatically, and if there are multiple matches, list them briefly and ask which one to send.
+- When a customer asks to find a quote for a named customer, use the available tools to resolve that customer and retrieve matching quotes before asking a follow-up question.
+- If exactly one quote matches the resolved customer or follow-up selection, answer directly and do not ask which quote they mean.
+- If the user asks for an overview such as "Welke afspraken zijn er?" or "Welke offertes zijn er?", call the relevant listing tool and show the available items. Do not ask which item they mean before listing the results.
 - Do not include a public quote link when fulfilling a quote-PDF request through WhatsApp.
 - Onboarding (unmatched users) is handled entirely with hardcoded messages — zero LLM cost.
 - Keep replies concise and conversational; avoid repeated paraphrases of the same answer.

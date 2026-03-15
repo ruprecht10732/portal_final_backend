@@ -25,3 +25,9 @@ Returns a list of appointments with: title, description, start_time, end_time, s
 
 - No appointments found → respond: "Er staan geen afspraken gepland in die periode."
 - Database error → logged internally; respond: "Ik kan de afspraken even niet ophalen. Probeer het later opnieuw."
+
+## Autonomy Rules
+
+- If the user asks for an overview such as `Welke afspraken zijn er?`, call the tool and list the upcoming appointments.
+- Do not ask which appointment the user means when they are clearly asking for an overview.
+- Ask a follow-up question only when the user wants one specific appointment action or detail and multiple appointments are still plausible after retrieval.

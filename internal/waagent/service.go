@@ -209,7 +209,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		return
 	}
 	if runResult.GroundingFailure != "" {
-		s.logWarn(ctx, "waagent: grounded reply fallback used",
+		s.logWarn(ctx, "waagent: grounding issue observed",
 			"phone", phoneKey,
 			"organization_id", orgID.String(),
 			"mode", string(decision.mode),
