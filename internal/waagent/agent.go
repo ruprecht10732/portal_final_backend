@@ -28,9 +28,9 @@ import (
 
 const (
 	agentWorkspaceName        = "whatsapp-agent"
-	agentPartnerWorkspaceName = "whatsapp-partner-agent"
+	agentPartnerWorkspaceName = "whatsapp_partner_agent"
 	agentAppName              = "whatsapp-agent"
-	agentPartnerAppName       = "whatsapp-partner-agent"
+	agentPartnerAppName       = "whatsapp_partner_agent"
 	maxToolIterations         = 10
 	assistantPrefix           = "[Jouw vorig antwoord]: "
 	userPrefix                = "[Klant]: "
