@@ -45,6 +45,10 @@ func (m *Module) SetWhatsAppWebhookSecret(secret string) {
 
 func (m *Module) SetAgentHandler(handler WhatsAppAgentHandler) {
 	if m.handler != nil {
+		if isNilWhatsAppAgentHandler(handler) {
+			m.handler.agentHandler = nil
+			return
+		}
 		m.handler.agentHandler = handler
 	}
 }

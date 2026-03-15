@@ -266,7 +266,7 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 		return
 	}
 
-	if h.agentHandler != nil {
+	if !isNilWhatsAppAgentHandler(h.agentHandler) {
 		go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), waagent.CurrentInboundMessage{
 			ExternalMessageID: strings.TrimSpace(payload.ID),
 			PhoneNumber:       messageAddress,

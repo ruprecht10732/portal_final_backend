@@ -68,6 +68,10 @@ type storedVoiceNote struct {
 // It resolves the organization from the sender's phone number.
 // It is designed to be called in a goroutine with context.WithoutCancel.
 func (s *Service) HandleIncomingMessage(ctx context.Context, inbound CurrentInboundMessage) {
+	if s == nil {
+		return
+	}
+
 	externalMessageID := strings.TrimSpace(inbound.ExternalMessageID)
 	phone := inbound.PhoneNumber
 	text := inbound.Body

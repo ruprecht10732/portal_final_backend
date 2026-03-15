@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -38,6 +39,19 @@ type Handler struct {
 	val           *validator.Validator
 	whatsappInbox WhatsAppInboxIngester
 	agentHandler  WhatsAppAgentHandler
+}
+
+func isNilWhatsAppAgentHandler(handler WhatsAppAgentHandler) bool {
+	if handler == nil {
+		return true
+	}
+	value := reflect.ValueOf(handler)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 // NewHandler creates a new webhook handler.

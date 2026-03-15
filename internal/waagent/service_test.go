@@ -251,6 +251,13 @@ func TestHandleIncomingMessageContinuesWhenRedisUnavailable(t *testing.T) {
 	}
 }
 
+func TestHandleIncomingMessageNilServiceDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	var service *Service
+	service.HandleIncomingMessage(context.Background(), CurrentInboundMessage{ExternalMessageID: "msg-nil", PhoneNumber: testAgentPhone, Body: "hallo"})
+}
+
 func TestResolveLeadHintDoesNotAutoLoadDetails(t *testing.T) {
 	t.Parallel()
 

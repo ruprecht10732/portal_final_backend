@@ -517,6 +517,17 @@ func TestHandleWhatsAppWebhookAgentDeviceIgnoresOutgoingMessages(t *testing.T) {
 	}
 }
 
+func TestModuleSetAgentHandlerDropsTypedNilService(t *testing.T) {
+	module := &Module{handler: NewHandler(nil, nil, nil, nil)}
+	var service *waagent.Service
+
+	module.SetAgentHandler(service)
+
+	if module.handler.agentHandler != nil {
+		t.Fatal("expected typed nil waagent service to be dropped")
+	}
+}
+
 func TestHandleWhatsAppWebhookAgentDeviceIgnoresGroupChats(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}
