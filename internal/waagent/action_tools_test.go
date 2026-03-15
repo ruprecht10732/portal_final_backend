@@ -25,8 +25,9 @@ const (
 )
 
 type actionToolsTestQuoteWorkflowWriter struct {
-	pdfResult QuotePDFResult
-	pdfErr    error
+	pdfResult   QuotePDFResult
+	pdfErr      error
+	generateErr error
 }
 
 func (w actionToolsTestQuoteWorkflowWriter) DraftQuote(context.Context, uuid.UUID, DraftQuoteInput) (DraftQuoteOutput, error) {
@@ -34,6 +35,9 @@ func (w actionToolsTestQuoteWorkflowWriter) DraftQuote(context.Context, uuid.UUI
 }
 
 func (w actionToolsTestQuoteWorkflowWriter) GenerateQuote(context.Context, uuid.UUID, GenerateQuoteInput) (GenerateQuoteOutput, error) {
+	if w.generateErr != nil {
+		return GenerateQuoteOutput{}, w.generateErr
+	}
 	return GenerateQuoteOutput{}, nil
 }
 
@@ -49,6 +53,17 @@ type actionToolsTestTransport struct {
 	sendFileErr    error
 	lastSendFile   whatsapp.SendFileInput
 	lastDeviceID   string
+}
+
+type actionToolsTestLeadDetailsReader struct {
+	err error
+}
+
+func (r actionToolsTestLeadDetailsReader) GetLeadDetails(context.Context, uuid.UUID, string) (*LeadDetailsResult, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &LeadDetailsResult{LeadID: testHintLeadID, CustomerName: "Robin"}, nil
 }
 
 func (t *actionToolsTestTransport) SendMessage(context.Context, string, string, string) (whatsapp.SendResult, error) {
@@ -240,5 +255,35 @@ func TestHandleSendQuotePDFReturnsSafeMessageWhenSendFails(t *testing.T) {
 	}
 	if output.QuoteID != actionToolsTestQuoteID || output.QuoteNumber != actionToolsTestQuoteNumber || output.FileName != actionToolsTestFileName {
 		t.Fatalf("expected quote metadata to be preserved, got %#v", output)
+	}
+}
+
+func TestHandleGetLeadDetailsReturnsSafeMessageOnReaderFailure(t *testing.T) {
+	t.Parallel()
+
+	handler := &ToolHandler{leadDetailsReader: actionToolsTestLeadDetailsReader{err: errors.New("backend down")}}
+
+	output, err := handler.HandleGetLeadDetails(newActionToolsTestContext(testSenderPhone), uuid.New(), GetLeadDetailsInput{LeadID: testHintLeadID})
+	if err == nil {
+		t.Fatal("expected reader error")
+	}
+	if output.Message != "Ik kan de leadgegevens nu niet ophalen. Probeer het later opnieuw." {
+		t.Fatalf("unexpected safe error message %q", output.Message)
+	}
+}
+
+func TestHandleGenerateQuoteReturnsSafeMessageOnWriterFailure(t *testing.T) {
+	t.Parallel()
+
+	expectedErr := errors.New("quote backend timeout")
+	handler := &ToolHandler{quoteWorkflowWriter: actionToolsTestQuoteWorkflowWriter{generateErr: expectedErr}, leadMutationWriter: testLeadMutationWriter{}}
+	leadID := uuid.NewString()
+
+	output, err := handler.HandleGenerateQuote(newActionToolsTestContext(testSenderPhone), uuid.New(), GenerateQuoteInput{LeadID: leadID, Prompt: "Maak een offerte"})
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("expected original error, got %v", err)
+	}
+	if output.Message != "Ik kan de offerte nu niet genereren. Probeer het later opnieuw." {
+		t.Fatalf("unexpected safe error message %q", output.Message)
 	}
 }

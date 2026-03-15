@@ -3,6 +3,7 @@ package waagent
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildLeadContextTextUsesRoutingHintOnly(t *testing.T) {
@@ -81,5 +82,19 @@ func TestBuildLeadContextTextUsesRecentListsWithoutLeadID(t *testing.T) {
 	}
 	if strings.Contains(text, "Laatst besproken klant:") {
 		t.Fatalf("expected no resolved customer label in hint text, got %q", text)
+	}
+}
+
+func TestFormatConversationHistoryContentIncludesTimestampWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	sentAt := time.Date(2026, time.March, 15, 8, 14, 0, 0, time.UTC)
+	formatted := formatConversationHistoryContent(ConversationMessage{Role: "user", Content: "Die van Carola Dekker", SentAt: &sentAt})
+
+	if !strings.Contains(formatted, "[Berichttijd: 2026-03-15T08:14:00Z]") {
+		t.Fatalf("expected timestamp marker in formatted history, got %q", formatted)
+	}
+	if !strings.Contains(formatted, "Die van Carola Dekker") {
+		t.Fatalf("expected original content in formatted history, got %q", formatted)
 	}
 }

@@ -2,6 +2,7 @@ package waagent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -102,13 +103,13 @@ func (h *ToolHandler) HandleGetAppointments(ctx tool.Context, orgID uuid.UUID, i
 	var from, to *time.Time
 
 	if input.DateFrom != "" {
-		t, err := time.Parse("2006-01-02", input.DateFrom)
+		t, err := parseAppointmentDateInput(input.DateFrom)
 		if err == nil {
 			from = &t
 		}
 	}
 	if input.DateTo != "" {
-		t, err := time.Parse("2006-01-02", input.DateTo)
+		t, err := parseAppointmentDateInput(input.DateTo)
 		if err == nil {
 			to = &t
 		}
@@ -126,7 +127,7 @@ func (h *ToolHandler) HandleGetAppointments(ctx tool.Context, orgID uuid.UUID, i
 
 	appointments, err := h.appointmentsReader.ListAppointmentsByOrganization(context.Background(), orgID, from, to)
 	if err != nil {
-		return GetAppointmentsOutput{}, err
+		return GetAppointmentsOutput{}, fmt.Errorf("ik kan de afspraken nu niet ophalen. probeer het later opnieuw")
 	}
 	h.recordLeadHintFromAppointments(ctx, orgID, appointments)
 
@@ -168,4 +169,18 @@ func (h *ToolHandler) recordLeadHintFromAppointments(ctx tool.Context, orgID uui
 		return
 	}
 	h.recordLeadHint(ctx, orgID, appointment.LeadID, "", appointment.LeadServiceID)
+}
+
+func parseAppointmentDateInput(raw string) (time.Time, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, fmt.Errorf("empty date")
+	}
+	if parsed, err := time.Parse("2006-01-02", trimmed); err == nil {
+		return parsed, nil
+	}
+	if parsed := parseDateFact(trimmed); parsed != nil {
+		return time.Date(parsed.year, time.Month(parsed.month), parsed.day, 0, 0, 0, 0, time.UTC), nil
+	}
+	return time.Time{}, fmt.Errorf("unsupported date format")
 }

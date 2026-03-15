@@ -20,6 +20,8 @@ Retrieve quotes for the authenticated user's organization, optionally filtered b
 
 Returns a list of quotes with: quote_number, client_name, total_cents, status, created_at, and a short summary of what the quote covers.
 
+- Communicate `total_cents` to the customer as euros, for example `15000 -> EUR 150,00`.
+
 ## Failure Policy
 
 - No quotes found → respond: "Er zijn momenteel geen offertes met die status."

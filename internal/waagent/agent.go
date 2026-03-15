@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -49,6 +50,7 @@ type currentInboundMessageContextKey struct{}
 type ConversationMessage struct {
 	Role    string
 	Content string
+	SentAt  *time.Time
 }
 
 // Agent wraps the ADK agent and runner for the WhatsApp agent.
@@ -578,15 +580,16 @@ func (a *Agent) seedSessionHistory(ctx context.Context, sess session.Session, hi
 
 	for i, msg := range history {
 		event := session.NewEvent(fmt.Sprintf("history-%d", i))
+		formattedContent := formatConversationHistoryContent(msg)
 		if msg.Role == "assistant" {
 			event.Author = "WhatsAppAgent"
 			event.LLMResponse = model.LLMResponse{
-				Content: genai.NewContentFromText(msg.Content, "model"),
+				Content: genai.NewContentFromText(formattedContent, "model"),
 			}
 		} else {
 			event.Author = "user"
 			event.LLMResponse = model.LLMResponse{
-				Content: genai.NewContentFromText(msg.Content, "user"),
+				Content: genai.NewContentFromText(formattedContent, "user"),
 			}
 		}
 		if err := a.sessionService.AppendEvent(ctx, sess, event); err != nil {
@@ -594,6 +597,14 @@ func (a *Agent) seedSessionHistory(ctx context.Context, sess session.Session, hi
 		}
 	}
 	return nil
+}
+
+func formatConversationHistoryContent(msg ConversationMessage) string {
+	content := strings.TrimSpace(msg.Content)
+	if msg.SentAt == nil || msg.SentAt.IsZero() {
+		return content
+	}
+	return fmt.Sprintf("[Berichttijd: %s]\n%s", msg.SentAt.UTC().Format(time.RFC3339), content)
 }
 
 // buildLeadContextText produces a routing hint from the lead context.

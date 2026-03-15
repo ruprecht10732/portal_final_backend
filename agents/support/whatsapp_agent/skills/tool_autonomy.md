@@ -10,6 +10,7 @@ Encourage the WhatsApp agent to use its bounded tools proactively, like the othe
 - Once the target customer, quote, or appointment is sufficiently resolved, continue to the next relevant tool call directly.
 - Do not narrate your internal process. Use the tools, then answer.
 - For write actions, resolve the target and act carefully, but do not wait for a separate planner confirmation layer if the request is already explicit and safe.
+- If a write action is only implied or still vague, ask for confirmation or the missing detail before acting.
 - Use the workspace rules and tool contracts as the main constraints instead of relying on extra Go-side orchestration.
 
 ## Safety Boundary

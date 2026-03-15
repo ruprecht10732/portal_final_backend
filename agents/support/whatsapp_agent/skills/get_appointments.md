@@ -21,6 +21,9 @@ Retrieve upcoming appointments for the authenticated user's organization, option
 
 Returns a list of appointments with: title, description, start_time, end_time, status, location.
 
+- Mention location briefly when it is available.
+- If the user asks where the appointment is or how to get there, the next step can be `GetNavigationLink` after the lead is resolved.
+
 ## Failure Policy
 
 - No appointments found → respond: "Er staan geen afspraken gepland in die periode."

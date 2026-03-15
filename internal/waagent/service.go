@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"portal_final_backend/internal/scheduler"
 	waagentdb "portal_final_backend/internal/waagent/db"
@@ -19,11 +20,12 @@ import (
 
 // Hardcoded Dutch messages — zero LLM cost for rate limiting and unknown users.
 const (
-	msgRateLimited      = "Je stuurt te veel berichten. Probeer het over een paar minuten opnieuw."
-	msgUnknownPhone     = "Je telefoonnummer is niet gekoppeld aan een organisatie. Neem contact op met je beheerder."
-	msgVoiceUnavailable = "Ik kon je spraakbericht niet verwerken. Stuur je vraag als tekst, dan help ik je meteen."
-	recentMessageLimit  = 100
-	logAudioFallback    = "waagent: audio fallback"
+	msgRateLimited       = "Je stuurt te veel berichten. Probeer het over een paar minuten opnieuw."
+	msgUnknownPhone      = "Je telefoonnummer is niet gekoppeld aan een organisatie. Neem contact op met je beheerder."
+	msgVoiceUnavailable  = "Ik kon je spraakbericht niet verwerken. Stuur je vraag als tekst, dan help ik je meteen."
+	msgSystemUnavailable = "Ons systeem is tijdelijk niet beschikbaar. Probeer het later opnieuw."
+	recentMessageLimit   = 100
+	logAudioFallback     = "waagent: audio fallback"
 )
 
 // Service orchestrates the waagent flow: rate limit → phone→org → AI.
@@ -189,7 +191,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		if msg.Role == "user" && strings.TrimSpace(msg.Content) == voiceMessagePlaceholder {
 			continue
 		}
-		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content})
+		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content, SentAt: timestamptzPtr(msg.CreatedAt)})
 	}
 
 	if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresenceComposing); err != nil {
@@ -206,6 +208,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	runResult, err := s.agent.Run(ctx, orgID, phoneKey, messages, leadHint, inbound, decision.mode)
 	if err != nil {
 		s.logError(ctx, "waagent: agent run error", "phone", phoneKey, "organization_id", orgID.String(), "mode", string(decision.mode), "reason", decision.reason, "error", err)
+		s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgSystemUnavailable)
 		return
 	}
 	if runResult.GroundingFailure != "" {
@@ -532,6 +535,14 @@ func (s *Service) applyReplyPolicy(ctx context.Context, orgID uuid.UUID, phoneKe
 	_ = phoneKey
 	_ = decision
 	return strings.TrimSpace(reply)
+}
+
+func timestamptzPtr(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	timestamp := value.Time
+	return &timestamp
 }
 
 func (s *Service) claimInboundMessage(ctx context.Context, externalMessageID, phoneKey string) (bool, error) {

@@ -359,7 +359,7 @@ func (h *ToolHandler) HandleGetLeadDetails(ctx tool.Context, orgID uuid.UUID, in
 	}
 	lead, err := h.leadDetailsReader.GetLeadDetails(context.Background(), orgID, leadID)
 	if err != nil {
-		return GetLeadDetailsOutput{Success: false, Message: err.Error()}, err
+		return GetLeadDetailsOutput{Success: false, Message: "Ik kan de leadgegevens nu niet ophalen. Probeer het later opnieuw."}, err
 	}
 	h.recordLeadHint(ctx, orgID, lead.LeadID, lead.CustomerName, "")
 	return GetLeadDetailsOutput{Success: true, Message: "Leadgegevens gevonden", Lead: lead}, nil
@@ -460,7 +460,7 @@ func (h *ToolHandler) HandleDraftQuote(ctx tool.Context, orgID uuid.UUID, input 
 	input.LeadID = resolvedLeadID.String()
 	input.LeadServiceID = resolvedServiceID.String()
 	output, err := h.quoteWorkflowWriter.DraftQuote(context.Background(), orgID, input)
-	if err == nil && output.Success && input.LeadID != "" {
+	if output.Success && input.LeadID != "" {
 		h.recordLeadHint(ctx, orgID, input.LeadID, "", input.LeadServiceID)
 	}
 	return output, err
@@ -480,7 +480,10 @@ func (h *ToolHandler) HandleGenerateQuote(ctx tool.Context, orgID uuid.UUID, inp
 	input.LeadID = resolvedLeadID.String()
 	input.LeadServiceID = resolvedServiceID.String()
 	output, err := h.quoteWorkflowWriter.GenerateQuote(context.Background(), orgID, input)
-	if err == nil && output.Success && input.LeadID != "" {
+	if err != nil {
+		return GenerateQuoteOutput{Success: false, Message: "Ik kan de offerte nu niet genereren. Probeer het later opnieuw."}, err
+	}
+	if output.Success && input.LeadID != "" {
 		h.recordLeadHint(ctx, orgID, input.LeadID, "", input.LeadServiceID)
 	}
 	return output, err

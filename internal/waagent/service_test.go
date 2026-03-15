@@ -2,6 +2,7 @@ package waagent
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -312,7 +313,8 @@ func TestRunAgentReplyPersistsQuoteReplyFromValidatedAgentResult(t *testing.T) {
 	t.Parallel()
 
 	orgID := uuid.New()
-	queries := &serviceTestQuerier{recent: []waagentdb.GetRecentAgentMessagesRow{{Role: "user", Content: testQuoteRequestMessage}}}
+	sentAt := pgtype.Timestamptz{Time: time.Date(2026, time.March, 15, 8, 14, 0, 0, time.UTC), Valid: true}
+	queries := &serviceTestQuerier{recent: []waagentdb.GetRecentAgentMessagesRow{{Role: "user", Content: testQuoteRequestMessage, CreatedAt: sentAt}}}
 	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
 	agent := &serviceTestAgent{result: AgentRunResult{Reply: "*Offerte:* klaar\n*Bedrag:* € 125,00", ToolResponseNames: []string{"GetQuotes"}}}
 	service := &Service{
@@ -330,6 +332,9 @@ func TestRunAgentReplyPersistsQuoteReplyFromValidatedAgentResult(t *testing.T) {
 	}
 	if len(agent.lastMessages) != 1 || agent.lastMessages[0].Content != testQuoteRequestMessage {
 		t.Fatalf("expected latest conversation message to be passed to agent, got %#v", agent.lastMessages)
+	}
+	if agent.lastMessages[0].SentAt == nil || !agent.lastMessages[0].SentAt.Equal(sentAt.Time) {
+		t.Fatalf("expected message timestamp to be preserved, got %#v", agent.lastMessages[0].SentAt)
 	}
 	if len(queries.inserted) != 1 {
 		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
@@ -548,6 +553,37 @@ func TestSelectAgentRunModeInheritsAddressIntentFromBareNameFollowUp(t *testing.
 	}
 	if decision.reason != "default" {
 		t.Fatalf(testExpectedDefaultReasonMsg, decision.reason)
+	}
+}
+
+func TestRunAgentReplySendsFallbackWhenAgentRunFails(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{}
+	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
+	agent := &serviceTestAgent{err: errors.New("runner timeout")}
+	service := &Service{
+		queries: queries,
+		agent:   agent,
+		sender:  newTestSender(transport, serviceTestConfigReader{}, nil),
+		log:     logger.New("development"),
+	}
+	inbound := &CurrentInboundMessage{ExternalMessageID: "msg-error", PhoneNumber: testAgentPhone, Body: "Welke afspraken zijn er?"}
+
+	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(testAgentPhone), testAgentPhone, inbound, agentModeDecision{mode: agentRunModeDefault, reason: "test_default"})
+
+	if transport.lastSendMessagePhone == "" {
+		t.Fatal("expected fallback reply to be sent")
+	}
+	if len(queries.inserted) != 1 {
+		t.Fatalf(testExpectedAssistantPersistCountMsg, len(queries.inserted))
+	}
+	if queries.inserted[0].Content != msgSystemUnavailable {
+		t.Fatalf("unexpected persisted fallback %q", queries.inserted[0].Content)
+	}
+	if agent.calls != 1 {
+		t.Fatalf("expected one failed agent run, got %d", agent.calls)
 	}
 }
 
