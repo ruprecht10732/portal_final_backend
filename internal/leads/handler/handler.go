@@ -109,6 +109,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/check-duplicate", h.CheckDuplicate)
 	rg.GET("/check-returning-customer", h.CheckReturningCustomer)
 	rg.GET("/:id", h.GetByID)
+	rg.GET("/:id/detail-context", h.GetDetailContext)
 	rg.GET("/:id/communications", h.GetInboxCommunications)
 	rg.GET("/:id/timeline", h.GetTimeline)
 	rg.POST("/:id/timeline/:eventId/send-whatsapp", h.SendTimelineWhatsApp)
@@ -324,6 +325,30 @@ func (h *Handler) GetByID(c *gin.Context) {
 	}
 
 	httpkit.OK(c, lead)
+}
+
+func (h *Handler) GetDetailContext(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	contextResponse, err := h.mgmt.GetDetailContext(c.Request.Context(), id, tenantID, identity.UserID(), identity.HasRole("admin"))
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, contextResponse)
 }
 
 func (h *Handler) GetTimeline(c *gin.Context) {

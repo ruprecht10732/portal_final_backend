@@ -190,8 +190,9 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 
 	// Load recent conversation history
 	recent, err := s.queries.GetRecentAgentMessages(ctx, waagentdb.GetRecentAgentMessagesParams{
-		PhoneNumber: phoneKey,
-		Limit:       recentMessageLimit,
+		OrganizationID: pgtypeUUID(orgID),
+		PhoneNumber:    phoneKey,
+		Limit:          recentMessageLimit,
 	})
 	if err != nil {
 		s.logWarn(ctx, "waagent: failed to load history", "phone", phoneKey, "organization_id", orgID.String(), "error", err)

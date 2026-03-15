@@ -188,6 +188,24 @@ func ToLinkedIMAPMessageResponse(item repository.LinkedIMAPMessage) transport.Li
 	}
 }
 
+func toAIAnalysisResponsePtr(analysis repository.AIAnalysis) *transport.AIAnalysisResponse {
+	response := transport.ToAIAnalysisResponse(analysis)
+	return &response
+}
+
+func toLeadNoteResponse(note repository.LeadNote) transport.LeadNoteResponse {
+	return transport.LeadNoteResponse{
+		ID:          note.ID,
+		LeadID:      note.LeadID,
+		AuthorID:    note.AuthorID,
+		AuthorEmail: note.AuthorEmail,
+		Type:        note.Type,
+		Body:        note.Body,
+		CreatedAt:   note.CreatedAt,
+		UpdatedAt:   note.UpdatedAt,
+	}
+}
+
 func leadPreferencesFromService(svc repository.LeadService) *transport.LeadPreferencesResponse {
 	if len(svc.CustomerPreferences) == 0 {
 		return nil

@@ -17,9 +17,10 @@ WHERE organization_id = $1
 -- name: GetRecentAgentMessages :many
 SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
 FROM RAC_whatsapp_agent_messages
-WHERE phone_number = $1
+WHERE organization_id = $1
+    AND phone_number = $2
 ORDER BY created_at DESC
-LIMIT $2;
+LIMIT $3;
 
 -- name: GetRecentInboundAgentMessages :many
 SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at

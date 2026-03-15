@@ -419,6 +419,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	}))
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
+	leadsModule.ManagementService().SetLeadDetailQuotesReader(adapters.NewLeadDetailQuoteReader(quotesModule.Service()))
+	leadsModule.ManagementService().SetLeadDetailAppointmentsReader(adapters.NewLeadDetailAppointmentReader(appointmentsModule.Service))
 	searchModule := search.NewModule(pool, val)
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
 	if cfg.IsEmbeddingEnabled() && cfg.IsQdrantEnabled() {

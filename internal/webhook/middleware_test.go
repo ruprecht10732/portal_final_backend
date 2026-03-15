@@ -27,12 +27,14 @@ const (
 	sharedSecretHeader  = "X-Webhook-Secret"
 	expected200Format   = "expected 200, got %d: %s"
 	expected401Format   = "expected 401, got %d: %s"
+	expectedAgentFlag   = "expected agent device flag"
 )
 
 type fakeWebhookAuthRepository struct {
 	keysByHash     map[string]APIKey
 	orgByDeviceID  map[string]uuid.UUID
 	agentDeviceIDs map[string]bool
+	agentUserPhones map[string]bool
 }
 
 func (f *fakeWebhookAuthRepository) GetByHash(_ context.Context, keyHash string) (APIKey, error) {
@@ -51,6 +53,10 @@ func (f *fakeWebhookAuthRepository) GetOrganizationIDByWhatsAppDeviceID(_ contex
 
 func (f *fakeWebhookAuthRepository) IsAgentDevice(_ context.Context, deviceID string) (bool, error) {
 	return f.agentDeviceIDs[deviceID], nil
+}
+
+func (f *fakeWebhookAuthRepository) IsAgentUserPhone(_ context.Context, phone string) (bool, error) {
+	return f.agentUserPhones[phone], nil
 }
 
 func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhook(t *testing.T) {
@@ -285,7 +291,7 @@ func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhookForAgentDevice(t *testi
 	engine := gin.New()
 	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
 		if !c.GetBool("isAgentDevice") {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "expected agent device flag"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": expectedAgentFlag})
 			return
 		}
 		c.Status(http.StatusOK)
@@ -311,7 +317,32 @@ func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhookForAgentDeviceBarePhone
 	engine := gin.New()
 	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
 		if !c.GetBool("isAgentDevice") {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "expected agent device flag"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": expectedAgentFlag})
+			return
+		}
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, whatsAppWebhookPath, bytes.NewReader(body))
+	req.Header.Set(contentTypeHeader, jsonContentType)
+	req.Header.Set(signatureHeader, signedWebhookHeader(testWebhookSecret, body))
+	engine.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhookForAgentMemberPhoneCandidate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &fakeWebhookAuthRepository{agentUserPhones: map[string]bool{"+31612345678": true}}
+	body := []byte(`{"device_id":"31612345678@s.whatsapp.net","event":"message","payload":{"id":"MSG-1"}}`)
+
+	engine := gin.New()
+	engine.POST(whatsAppWebhookPath, WhatsAppAPIKeyAuthMiddleware(repo, testWebhookSecret, logger.New("development")), func(c *gin.Context) {
+		if !c.GetBool("isAgentDevice") {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": expectedAgentFlag})
 			return
 		}
 		c.Status(http.StatusOK)

@@ -222,14 +222,16 @@ func (q *Queries) GetAgentVoiceTranscriptionByExternalID(ctx context.Context, ar
 const getRecentAgentMessages = `-- name: GetRecentAgentMessages :many
 SELECT id, organization_id, phone_number, role, content, external_message_id, metadata, created_at
 FROM RAC_whatsapp_agent_messages
-WHERE phone_number = $1
+WHERE organization_id = $1
+    AND phone_number = $2
 ORDER BY created_at DESC
-LIMIT $2
+LIMIT $3
 `
 
 type GetRecentAgentMessagesParams struct {
-	PhoneNumber string `json:"phone_number"`
-	Limit       int32  `json:"limit"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	PhoneNumber    string      `json:"phone_number"`
+	Limit          int32       `json:"limit"`
 }
 
 type GetRecentAgentMessagesRow struct {
@@ -244,7 +246,7 @@ type GetRecentAgentMessagesRow struct {
 }
 
 func (q *Queries) GetRecentAgentMessages(ctx context.Context, arg GetRecentAgentMessagesParams) ([]GetRecentAgentMessagesRow, error) {
-	rows, err := q.db.Query(ctx, getRecentAgentMessages, arg.PhoneNumber, arg.Limit)
+	rows, err := q.db.Query(ctx, getRecentAgentMessages, arg.OrganizationID, arg.PhoneNumber, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

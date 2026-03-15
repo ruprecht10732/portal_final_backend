@@ -57,6 +57,7 @@ type serviceTestQuerier struct {
 	lookupErr   error
 	lookupUser  waagentdb.GetAgentUserByPhoneRow
 	recent      []waagentdb.GetRecentAgentMessagesRow
+	recentArgs  []waagentdb.GetRecentAgentMessagesParams
 	inserted    []waagentdb.InsertAgentMessageParams
 	deleted     []waagentdb.DeleteAgentMessagesByPhoneParams
 }
@@ -125,7 +126,8 @@ func (q *serviceTestQuerier) GetAgentUserByPhone(context.Context, string) (waage
 func (q *serviceTestQuerier) GetAgentVoiceTranscriptionByExternalID(context.Context, waagentdb.GetAgentVoiceTranscriptionByExternalIDParams) (waagentdb.RacWhatsappAgentVoiceTranscription, error) {
 	return waagentdb.RacWhatsappAgentVoiceTranscription{}, pgx.ErrNoRows
 }
-func (q *serviceTestQuerier) GetRecentAgentMessages(context.Context, waagentdb.GetRecentAgentMessagesParams) ([]waagentdb.GetRecentAgentMessagesRow, error) {
+func (q *serviceTestQuerier) GetRecentAgentMessages(_ context.Context, params waagentdb.GetRecentAgentMessagesParams) ([]waagentdb.GetRecentAgentMessagesRow, error) {
+	q.recentArgs = append(q.recentArgs, params)
 	return q.recent, nil
 }
 func (q *serviceTestQuerier) GetRecentInboundAgentMessages(context.Context, waagentdb.GetRecentInboundAgentMessagesParams) ([]waagentdb.GetRecentInboundAgentMessagesRow, error) {
@@ -233,6 +235,39 @@ func TestHandleIncomingMessageRateLimitedBeforeLookup(t *testing.T) {
 	service.HandleIncomingMessage(ctx, CurrentInboundMessage{ExternalMessageID: "msg-2", PhoneNumber: testAgentPhone, Body: "hallo"})
 	if queries.lookupCalls != 0 {
 		t.Fatalf("expected rate-limited message to skip lookup, got %d lookups", queries.lookupCalls)
+	}
+}
+
+func TestRunAgentReplyScopesRecentHistoryByOrganization(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	queries := &serviceTestQuerier{}
+	agent := &serviceTestAgent{result: AgentRunResult{Reply: testDefaultModeReply}}
+	service := &Service{
+		queries: queries,
+		agent:   agent,
+		sender:  &Sender{},
+		log:     logger.New("development"),
+	}
+
+	service.runAgentReply(
+		context.Background(),
+		orgID,
+		normalizeAgentPhoneKey(testAgentPhone),
+		testAgentPhone,
+		&CurrentInboundMessage{ExternalMessageID: "msg-org-scope", PhoneNumber: testAgentPhone, Body: testGenericHelpQuestion},
+		agentModeDecision{mode: agentRunModeDefault},
+	)
+
+	if len(queries.recentArgs) != 1 {
+		t.Fatalf("expected one recent history query, got %d", len(queries.recentArgs))
+	}
+	if !queries.recentArgs[0].OrganizationID.Valid || uuid.UUID(queries.recentArgs[0].OrganizationID.Bytes) != orgID {
+		t.Fatalf("expected recent history query to use organization %s", orgID)
+	}
+	if queries.recentArgs[0].PhoneNumber != normalizeAgentPhoneKey(testAgentPhone) {
+		t.Fatalf("expected recent history query to use normalized phone %q, got %q", normalizeAgentPhoneKey(testAgentPhone), queries.recentArgs[0].PhoneNumber)
 	}
 }
 

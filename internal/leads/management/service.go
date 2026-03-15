@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	appointmentstransport "portal_final_backend/internal/appointments/transport"
 	"portal_final_backend/internal/auth/token"
 	"portal_final_backend/internal/events"
 	identityrepo "portal_final_backend/internal/identity/repository"
@@ -22,6 +23,7 @@ import (
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification/inapp"
+	quotestransport "portal_final_backend/internal/quotes/transport"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
 
@@ -44,6 +46,9 @@ type Repository interface {
 	repository.ActivityLogger
 	repository.LeadServiceReader
 	repository.LeadServiceWriter
+	repository.NoteStore
+	repository.AIAnalysisStore
+	repository.PhotoAnalysisStore
 	repository.QuotePriceReader
 	repository.MetricsReader
 	repository.TimelineEventStore
@@ -61,6 +66,8 @@ type Service struct {
 	eventBus               events.Bus
 	maps                   *maps.Service
 	inAppService           *inapp.Service
+	leadDetailQuotes       LeadDetailQuotesReader
+	leadDetailAppointments LeadDetailAppointmentsReader
 	timelineWhatsAppSender TimelineWhatsAppSender
 	partnerPhoneResolver   PartnerPhoneResolver
 	acceptedQuoteUpdater   AcceptedQuoteUpdater
@@ -72,6 +79,14 @@ type Service struct {
 
 type AcceptedQuoteUpdater interface {
 	AddExtraWorkToQuote(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID, actorID uuid.UUID, amountCents int64, notes *string) error
+}
+
+type LeadDetailQuotesReader interface {
+	ListLeadQuotes(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID) ([]quotestransport.QuoteResponse, error)
+}
+
+type LeadDetailAppointmentsReader interface {
+	ListLeadAppointments(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, leadID uuid.UUID) ([]appointmentstransport.AppointmentResponse, error)
 }
 
 type LeadWorkflowOverrideWriter interface {
@@ -152,6 +167,14 @@ func (s *Service) SetPartnerPhoneResolver(resolver PartnerPhoneResolver) {
 
 func (s *Service) SetAcceptedQuoteUpdater(updater AcceptedQuoteUpdater) {
 	s.acceptedQuoteUpdater = updater
+}
+
+func (s *Service) SetLeadDetailQuotesReader(reader LeadDetailQuotesReader) {
+	s.leadDetailQuotes = reader
+}
+
+func (s *Service) SetLeadDetailAppointmentsReader(reader LeadDetailAppointmentsReader) {
+	s.leadDetailAppointments = reader
 }
 
 // Create creates a new lead.
@@ -314,6 +337,108 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, tenantID uuid.UUID)
 	s.enrichWithLeadData(ctx, tenantID, &lead, &resp)
 
 	return resp, nil
+}
+
+func (s *Service) GetDetailContext(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, userID uuid.UUID, isAdmin bool) (transport.LeadDetailContextResponse, error) {
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id, tenantID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return transport.LeadDetailContextResponse{}, apperr.NotFound(leadNotFoundMsg)
+		}
+		return transport.LeadDetailContextResponse{}, err
+	}
+
+	leadResponse := ToLeadResponseWithServices(lead, services)
+	s.enrichWithEnergyLabel(ctx, tenantID, &lead, &leadResponse)
+	s.enrichWithLeadData(ctx, tenantID, &lead, &leadResponse)
+
+	notes, err := s.loadLeadDetailNotes(ctx, id, tenantID)
+	if err != nil {
+		return transport.LeadDetailContextResponse{}, err
+	}
+
+	communications, err := s.GetInboxCommunications(ctx, id, tenantID)
+	if err != nil {
+		return transport.LeadDetailContextResponse{}, err
+	}
+
+	quotes, err := s.loadLeadDetailQuotes(ctx, tenantID, id)
+	if err != nil {
+		return transport.LeadDetailContextResponse{}, err
+	}
+
+	appointments, err := s.loadLeadDetailAppointments(ctx, userID, isAdmin, tenantID, id)
+	if err != nil {
+		return transport.LeadDetailContextResponse{}, err
+	}
+
+	response := transport.LeadDetailContextResponse{
+		Lead:           leadResponse,
+		Notes:          notes,
+		Appointments:   appointments,
+		Quotes:         quotes,
+		Communications: communications,
+	}
+
+	if leadResponse.CurrentService == nil {
+		return response, nil
+	}
+
+	if err := s.populateCurrentServiceDetailContext(ctx, tenantID, leadResponse.CurrentService.ID, &response); err != nil {
+		return transport.LeadDetailContextResponse{}, err
+	}
+
+	return response, nil
+}
+
+func (s *Service) loadLeadDetailNotes(ctx context.Context, leadID uuid.UUID, tenantID uuid.UUID) ([]transport.LeadNoteResponse, error) {
+	notesList, err := s.repo.ListLeadNotes(ctx, leadID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	notes := make([]transport.LeadNoteResponse, len(notesList))
+	for i, note := range notesList {
+		notes[i] = toLeadNoteResponse(note)
+	}
+	return notes, nil
+}
+
+func (s *Service) loadLeadDetailQuotes(ctx context.Context, tenantID uuid.UUID, leadID uuid.UUID) ([]quotestransport.QuoteResponse, error) {
+	if s.leadDetailQuotes == nil {
+		return []quotestransport.QuoteResponse{}, nil
+	}
+	return s.leadDetailQuotes.ListLeadQuotes(ctx, tenantID, leadID)
+}
+
+func (s *Service) loadLeadDetailAppointments(ctx context.Context, userID uuid.UUID, isAdmin bool, tenantID uuid.UUID, leadID uuid.UUID) ([]appointmentstransport.AppointmentResponse, error) {
+	if s.leadDetailAppointments == nil {
+		return []appointmentstransport.AppointmentResponse{}, nil
+	}
+	return s.leadDetailAppointments.ListLeadAppointments(ctx, userID, isAdmin, tenantID, leadID)
+}
+
+func (s *Service) populateCurrentServiceDetailContext(ctx context.Context, tenantID uuid.UUID, serviceID uuid.UUID, response *transport.LeadDetailContextResponse) error {
+	analysis, err := s.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
+	if err == nil {
+		response.CurrentServiceAnalysis = &transport.LeadDetailAnalysisContext{
+			Analysis:  toAIAnalysisResponsePtr(analysis),
+			IsDefault: false,
+		}
+	} else if errors.Is(err, repository.ErrNotFound) {
+		response.CurrentServiceAnalysis = &transport.LeadDetailAnalysisContext{IsDefault: true}
+	} else {
+		return err
+	}
+
+	photoAnalysis, err := s.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID)
+	if err == nil {
+		response.CurrentServicePhotoAnalysis = &photoAnalysis
+		return nil
+	}
+	if errors.Is(err, repository.ErrPhotoAnalysisNotFound) {
+		return nil
+	}
+	return err
 }
 
 // enrichWithEnergyLabel ensures the lead has up-to-date energy label data.
