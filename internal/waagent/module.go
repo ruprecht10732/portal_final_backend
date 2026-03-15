@@ -254,10 +254,15 @@ func appendMissingDependency(missing []string, condition bool, name string) []st
 	return missing
 }
 
-func collectCoreDependencyErrors(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) []string {
-	missing := make([]string, 0, 20)
+func collectCoreDependencyErrors(pool *pgxpool.Pool, deps ModuleDependencies) []string {
+	missing := make([]string, 0, 2)
 	missing = appendMissingDependency(missing, pool == nil, "database pool")
 	missing = appendMissingDependency(missing, deps.Logger == nil, "logger")
+	return missing
+}
+
+func collectRuntimeDependencyErrors(cfg ModuleConfig, deps ModuleDependencies) []string {
+	missing := make([]string, 0, 20)
 	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.MoonshotAPIKey) == "", "moonshot api key")
 	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.LLMModel) == "", "llm model")
 	missing = appendMissingDependency(missing, deps.WhatsAppClient == nil, "whatsapp client")
@@ -298,10 +303,19 @@ func collectAudioDependencyErrors(deps ModuleDependencies) []string {
 	return missing
 }
 
-func validateModuleDependencies(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) error {
-	missing := collectCoreDependencyErrors(pool, cfg, deps)
+func validateModuleDependencies(pool *pgxpool.Pool, deps ModuleDependencies) error {
+	missing := collectCoreDependencyErrors(pool, deps)
 	if len(missing) > 0 {
 		return fmt.Errorf("waagent: invalid module configuration: missing %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+func validateRuntimeDependencies(cfg ModuleConfig, deps ModuleDependencies) error {
+	missing := collectRuntimeDependencyErrors(cfg, deps)
+	if len(missing) > 0 {
+		return fmt.Errorf("waagent: invalid runtime configuration: missing %s", strings.Join(missing, ", "))
 	}
 
 	audioMissing := collectAudioDependencyErrors(deps)
@@ -314,11 +328,25 @@ func validateModuleDependencies(pool *pgxpool.Pool, cfg ModuleConfig, deps Modul
 
 // NewModule creates and initialises the waagent module.
 func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*Module, error) {
-	if err := validateModuleDependencies(pool, cfg, deps); err != nil {
+	if err := validateModuleDependencies(pool, deps); err != nil {
 		return nil, err
 	}
 
 	queries := waagentdb.New(pool)
+	module := &Module{
+		phoneHandler: &PhoneHandler{queries: queries, partnerPhoneReader: deps.PartnerPhoneReader},
+	}
+	if deps.WhatsAppClient != nil {
+		module.deviceHandler = &DeviceHandler{queries: queries, waClient: deps.WhatsAppClient, webhookSecret: cfg.WebhookSecret}
+	}
+
+	if err := validateRuntimeDependencies(cfg, deps); err != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("waagent: AI runtime unavailable; admin membership routes remain enabled", "error", err)
+		}
+		return module, nil
+	}
+
 	hintStore := NewRedisConversationLeadHintStore(deps.RedisClient, deps.Logger)
 	sender := &Sender{
 		client:      deps.WhatsAppClient,
@@ -352,7 +380,10 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		DisableThinking: false,
 	}, toolHandler, deps.Logger)
 	if err != nil {
-		return nil, err
+		if deps.Logger != nil {
+			deps.Logger.Warn("waagent: failed to initialize AI runtime; admin membership routes remain enabled", "error", err)
+		}
+		return module, nil
 	}
 
 	rateLimiter := NewRateLimiter(deps.RedisClient, deps.Logger)
@@ -372,11 +403,8 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		log:                    deps.Logger,
 	}
 
-	return &Module{
-		service:       svc,
-		deviceHandler: &DeviceHandler{queries: queries, waClient: deps.WhatsAppClient, webhookSecret: cfg.WebhookSecret},
-		phoneHandler:  &PhoneHandler{queries: queries, partnerPhoneReader: deps.PartnerPhoneReader},
-	}, nil
+	module.service = svc
+	return module, nil
 }
 
 // Service returns the waagent service for webhook integration.
@@ -385,12 +413,16 @@ func (m *Module) Service() *Service { return m.service }
 // RegisterRoutes mounts waagent routes on the provided router context.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	// Superadmin: global agent device management
-	agentDevice := ctx.SuperAdmin.Group("/whatsapp-agent")
-	m.deviceHandler.RegisterSuperAdminRoutes(agentDevice)
+	if m.deviceHandler != nil {
+		agentDevice := ctx.SuperAdmin.Group("/whatsapp-agent")
+		m.deviceHandler.RegisterSuperAdminRoutes(agentDevice)
+	}
 
 	// Org admin: phone-to-org registration
-	agentMembers := ctx.Admin.Group("/organizations/me/whatsapp-agent/members")
-	m.phoneHandler.RegisterAdminRoutes(agentMembers)
+	if m.phoneHandler != nil {
+		agentMembers := ctx.Admin.Group("/organizations/me/whatsapp-agent/members")
+		m.phoneHandler.RegisterAdminRoutes(agentMembers)
+	}
 }
 
 // Name returns the module identifier.

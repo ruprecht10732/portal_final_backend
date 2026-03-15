@@ -233,26 +233,26 @@ func validModuleDependencies() ModuleDependencies {
 func TestValidateModuleDependenciesRequiresCoreProductionDeps(t *testing.T) {
 	t.Parallel()
 
-	err := validateModuleDependencies(nil, ModuleConfig{}, ModuleDependencies{})
+	err := validateModuleDependencies(nil, ModuleDependencies{})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 
 	message := err.Error()
-	for _, expected := range []string{"database pool", "logger", "moonshot api key", "llm model", "redis client"} {
+	for _, expected := range []string{"database pool", "logger"} {
 		if !strings.Contains(message, expected) {
 			t.Fatalf("expected %q in validation error, got %q", expected, message)
 		}
 	}
 }
 
-func TestValidateModuleDependenciesRejectsPartialAudioConfig(t *testing.T) {
+func TestValidateRuntimeDependenciesRejectsPartialAudioConfig(t *testing.T) {
 	t.Parallel()
 
 	deps := validModuleDependencies()
 	deps.Storage = testStorage{}
 
-	err := validateModuleDependencies(&pgxpool.Pool{}, ModuleConfig{MoonshotAPIKey: "key", LLMModel: "model"}, deps)
+	err := validateRuntimeDependencies(ModuleConfig{MoonshotAPIKey: "key", LLMModel: "model"}, deps)
 	if err == nil {
 		t.Fatal("expected audio validation error")
 	}
@@ -266,7 +266,7 @@ func TestValidateModuleDependenciesRejectsPartialAudioConfig(t *testing.T) {
 	}
 }
 
-func TestValidateModuleDependenciesAcceptsCompleteAudioConfig(t *testing.T) {
+func TestValidateRuntimeDependenciesAcceptsCompleteAudioConfig(t *testing.T) {
 	t.Parallel()
 
 	deps := validModuleDependencies()
@@ -275,8 +275,29 @@ func TestValidateModuleDependenciesAcceptsCompleteAudioConfig(t *testing.T) {
 	deps.TranscriptionScheduler = testAudioScheduler{}
 	deps.AudioTranscriber = testAudioTranscriber{}
 
-	err := validateModuleDependencies(&pgxpool.Pool{}, ModuleConfig{MoonshotAPIKey: "key", LLMModel: "model"}, deps)
+	err := validateRuntimeDependencies(ModuleConfig{MoonshotAPIKey: "key", LLMModel: "model"}, deps)
 	if err != nil {
 		t.Fatalf("expected valid configuration, got %v", err)
+	}
+}
+
+func TestNewModuleReturnsRouteOnlyModuleWhenRuntimeDepsMissing(t *testing.T) {
+	t.Parallel()
+
+	deps := validModuleDependencies()
+	errLogger := logger.New("development")
+	deps.Logger = errLogger
+	module, err := NewModule(&pgxpool.Pool{}, ModuleConfig{}, deps)
+	if err != nil {
+		t.Fatalf("expected route-only module without runtime, got error: %v", err)
+	}
+	if module == nil {
+		t.Fatal("expected module instance")
+	}
+	if module.phoneHandler == nil {
+		t.Fatal("expected phone handler to remain available")
+	}
+	if module.Service() != nil {
+		t.Fatal("expected nil waagent service when runtime configuration is missing")
 	}
 }
