@@ -294,7 +294,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 	agent, err := NewAgent(moonshot.Config{
 		APIKey:          cfg.MoonshotAPIKey,
 		Model:           cfg.LLMModel,
-		DisableThinking: true,
+		DisableThinking: false,
 	}, toolHandler, deps.Logger)
 	if err != nil {
 		return nil, err
