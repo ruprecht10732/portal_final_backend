@@ -980,6 +980,42 @@ func (s *Service) UpdateServiceType(ctx context.Context, leadID uuid.UUID, servi
 	return s.GetByID(ctx, leadID, tenantID)
 }
 
+// CompleteService moves a service from the Fulfillment pipeline stage to Completed,
+// optionally recording extra work amount and notes.
+func (s *Service) CompleteService(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, req transport.CompleteServiceRequest, tenantID uuid.UUID) (transport.LeadResponse, error) {
+	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	if svc.PipelineStage != domain.PipelineStageFulfillment {
+		return transport.LeadResponse{}, apperr.Validation("only services in the Fulfillment stage can be marked as complete")
+	}
+
+	if _, err := s.repo.CompleteLeadService(ctx, serviceID, tenantID, req.ExtraWorkAmountCents, req.ExtraWorkNotes); err != nil {
+		if errors.Is(err, repository.ErrServiceNotFound) {
+			return transport.LeadResponse{}, apperr.NotFound(leadServiceNotFoundMsg)
+		}
+		return transport.LeadResponse{}, err
+	}
+
+	if s.eventBus != nil {
+		s.eventBus.Publish(ctx, events.LeadServiceStatusChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        leadID,
+			LeadServiceID: serviceID,
+			TenantID:      tenantID,
+			OldStatus:     svc.Status,
+			NewStatus:     svc.Status, // status unchanged; stage moves to Completed
+		})
+	}
+
+	return s.GetByID(ctx, leadID, tenantID)
+}
+
 func (s *Service) disqualifyServiceAndMarkLost(ctx context.Context, leadID uuid.UUID, serviceID uuid.UUID, tenantID uuid.UUID, notFoundMsg string) (transport.LeadResponse, error) {
 	svc, err := s.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {

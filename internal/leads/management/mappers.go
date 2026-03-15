@@ -147,14 +147,16 @@ func ToLeadResponseWithServices(lead repository.Lead, services []repository.Lead
 // ToLeadServiceResponse converts a repository LeadService to a transport LeadServiceResponse.
 func ToLeadServiceResponse(svc repository.LeadService) transport.LeadServiceResponse {
 	resp := transport.LeadServiceResponse{
-		ID:            svc.ID,
-		ServiceType:   transport.ServiceType(svc.ServiceType),
-		Status:        transport.LeadStatus(svc.Status),
-		PipelineStage: transport.PipelineStage(svc.PipelineStage),
-		Preferences:   leadPreferencesFromService(svc),
-		ConsumerNote:  svc.ConsumerNote,
-		CreatedAt:     svc.CreatedAt,
-		UpdatedAt:     svc.UpdatedAt,
+		ID:                   svc.ID,
+		ServiceType:          transport.ServiceType(svc.ServiceType),
+		Status:               transport.LeadStatus(svc.Status),
+		PipelineStage:        transport.PipelineStage(svc.PipelineStage),
+		Preferences:          leadPreferencesFromService(svc),
+		ConsumerNote:         svc.ConsumerNote,
+		ExtraWorkAmountCents: svc.ExtraWorkAmountCents,
+		ExtraWorkNotes:       svc.ExtraWorkNotes,
+		CreatedAt:            svc.CreatedAt,
+		UpdatedAt:            svc.UpdatedAt,
 	}
 
 	return resp

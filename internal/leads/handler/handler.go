@@ -124,6 +124,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/services", h.AddService)
 	rg.PATCH("/:id/services/:serviceId/status", h.UpdateServiceStatus)
 	rg.PATCH("/:id/services/:serviceId/type", h.UpdateServiceType)
+	rg.PATCH("/:id/services/:serviceId/complete", h.CompleteService)
 	// AI Advisor routes
 	rg.POST("/:id/analyze", h.AnalyzeLead)
 	rg.GET("/:id/analysis", h.GetAnalysis)
@@ -775,6 +776,42 @@ func (h *Handler) UpdateServiceType(c *gin.Context) {
 	}
 
 	lead, err := h.mgmt.UpdateServiceType(c.Request.Context(), leadID, serviceID, req, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, lead)
+}
+
+func (h *Handler) CompleteService(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.CompleteServiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	lead, err := h.mgmt.CompleteService(c.Request.Context(), leadID, serviceID, req, tenantID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

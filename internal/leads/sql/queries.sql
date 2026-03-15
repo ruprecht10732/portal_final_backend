@@ -36,6 +36,7 @@ WITH resolved_service_type AS (
 )
 SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
 	i.customer_preferences, i.gatekeeper_nurturing_loop_count, i.gatekeeper_nurturing_loop_fingerprint,
+	i.extra_work_amount_cents, i.extra_work_notes,
 	i.created_at, i.updated_at
 FROM inserted i
 JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = i.organization_id;
@@ -43,6 +44,7 @@ JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = 
 -- name: GetLeadServiceByID :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
@@ -51,6 +53,7 @@ WHERE ls.id = $1 AND ls.organization_id = $2;
 -- name: ListLeadServices :many
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
@@ -60,6 +63,7 @@ ORDER BY ls.created_at DESC;
 -- name: GetCurrentActiveLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
@@ -70,6 +74,7 @@ LIMIT 1;
 -- name: GetLatestLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
 JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
@@ -107,6 +112,7 @@ WITH current AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id;
@@ -126,6 +132,7 @@ WITH target AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM updated u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id;
@@ -148,6 +155,7 @@ WITH updated AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id;
@@ -170,6 +178,7 @@ WITH updated AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id;
@@ -199,6 +208,32 @@ WITH updated AS (
 INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
 SELECT u.organization_id, u.lead_id, u.id, 'pipeline_stage_changed', u.status, u.pipeline_stage, u.updated_at
 FROM updated u;
+
+-- name: CompleteLeadService :one
+-- Completes a service that is currently in the Fulfillment pipeline stage.
+-- Optionally records extra work amount (in cents) and notes.
+-- Returns no rows if the service does not exist or is not in Fulfillment stage.
+WITH updated AS (
+	UPDATE RAC_lead_services ls
+	SET pipeline_stage          = 'Completed',
+	    extra_work_amount_cents = $3,
+	    extra_work_notes        = $4,
+	    updated_at              = now()
+	WHERE ls.id = $1
+	  AND ls.organization_id = $2
+	  AND ls.pipeline_stage = 'Fulfillment'
+	RETURNING *
+), event AS (
+	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
+	SELECT u.organization_id, u.lead_id, u.id, 'pipeline_stage_changed', u.status, u.pipeline_stage, u.updated_at
+	FROM updated u
+)
+SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
+	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.extra_work_amount_cents, u.extra_work_notes,
+	u.created_at, u.updated_at
+FROM updated u
+JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id;
 
 -- name: UpdateServicePreferences :exec
 UPDATE RAC_lead_services

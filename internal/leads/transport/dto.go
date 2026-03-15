@@ -168,14 +168,21 @@ type AddressResponse struct {
 }
 
 type LeadServiceResponse struct {
-	ID            uuid.UUID                `json:"id"`
-	ServiceType   ServiceType              `json:"serviceType"`
-	Status        LeadStatus               `json:"status"`
-	PipelineStage PipelineStage            `json:"pipelineStage"`
-	Preferences   *LeadPreferencesResponse `json:"preferences,omitempty"`
-	ConsumerNote  *string                  `json:"consumerNote,omitempty"`
-	CreatedAt     time.Time                `json:"createdAt"`
-	UpdatedAt     time.Time                `json:"updatedAt"`
+	ID                   uuid.UUID                `json:"id"`
+	ServiceType          ServiceType              `json:"serviceType"`
+	Status               LeadStatus               `json:"status"`
+	PipelineStage        PipelineStage            `json:"pipelineStage"`
+	Preferences          *LeadPreferencesResponse `json:"preferences,omitempty"`
+	ConsumerNote         *string                  `json:"consumerNote,omitempty"`
+	ExtraWorkAmountCents *int64                   `json:"extraWorkAmountCents,omitempty"`
+	ExtraWorkNotes       *string                  `json:"extraWorkNotes,omitempty"`
+	CreatedAt            time.Time                `json:"createdAt"`
+	UpdatedAt            time.Time                `json:"updatedAt"`
+}
+
+type CompleteServiceRequest struct {
+	ExtraWorkAmountCents *int64  `json:"extraWorkAmountCents"`
+	ExtraWorkNotes       *string `json:"extraWorkNotes"`
 }
 
 type LeadPreferencesResponse struct {

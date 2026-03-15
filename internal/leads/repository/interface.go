@@ -82,6 +82,7 @@ type LeadServiceWriter interface {
 	InsertLeadServiceEvent(ctx context.Context, params InsertServiceEventParams) error
 	UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error
 	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error
+	CompleteLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, extraWorkAmountCents *int64, extraWorkNotes *string) (LeadService, error)
 }
 
 // ServiceContextDefinition provides context for the AI gatekeeper.

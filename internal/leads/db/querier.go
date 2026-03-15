@@ -14,6 +14,10 @@ type Querier interface {
 	AddLeadActivity(ctx context.Context, arg AddLeadActivityParams) error
 	BulkDeleteLeads(ctx context.Context, arg BulkDeleteLeadsParams) (int64, error)
 	CloseAllActiveServices(ctx context.Context, arg CloseAllActiveServicesParams) error
+	// Completes a service that is currently in the Fulfillment pipeline stage.
+	// Optionally records extra work amount (in cents) and notes.
+	// Returns no rows if the service does not exist or is not in Fulfillment stage.
+	CompleteLeadService(ctx context.Context, arg CompleteLeadServiceParams) (CompleteLeadServiceRow, error)
 	CountActionItems(ctx context.Context, arg CountActionItemsParams) (int32, error)
 	CountLeads(ctx context.Context, arg CountLeadsParams) (int32, error)
 	CreateAIAnalysis(ctx context.Context, arg CreateAIAnalysisParams) (CreateAIAnalysisRow, error)

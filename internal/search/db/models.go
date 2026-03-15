@@ -775,6 +775,8 @@ type RacLeadService struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
+	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 }
 
 // Stores metadata for files uploaded to MinIO for lead services

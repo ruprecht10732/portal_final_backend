@@ -142,6 +142,13 @@ func toPgInt8Value(value int64) pgtype.Int8 {
 	return pgtype.Int8{Int64: value, Valid: true}
 }
 
+func toPgInt8Ptr(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *value, Valid: true}
+}
+
 func toPgFloat8Ptr(value *float64) pgtype.Float8 {
 	if value == nil {
 		return pgtype.Float8{}
