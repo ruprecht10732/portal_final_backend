@@ -528,6 +528,32 @@ func TestModuleSetAgentHandlerDropsTypedNilService(t *testing.T) {
 	}
 }
 
+func TestHandleWhatsAppWebhookAgentDeviceRequiresAgentHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(nil, nil, nil, nil)
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"device_id": agentDeviceID,
+		"timestamp": "2026-03-13T12:08:00Z",
+		"payload": map[string]any{
+			"id":         "AGENT-MISSING-1",
+			"from":       directChatJID,
+			"chat_id":    directChatJID,
+			"from_name":  "Robin",
+			"is_from_me": false,
+			"body":       "Hallo",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequestWithOptions(t, handler, orgID, body, true)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when agent handler is missing, got %d", response.Code)
+	}
+	assertWebhookError(t, response.Body.Bytes(), whatsAppAgentUnavailable)
+}
+
 func TestHandleWhatsAppWebhookAgentDeviceIgnoresGroupChats(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}

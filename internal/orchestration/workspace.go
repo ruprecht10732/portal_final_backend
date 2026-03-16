@@ -68,6 +68,8 @@ var workspaceDefinitions = map[string]workspaceDefinition{
 	"offer-summary":  {workspaceDir: "agents/support/offer_summary"},
 	"whatsapp-reply": {workspaceDir: "agents/support/whatsapp_reply"},
 	"whatsapp-agent": {workspaceDir: "agents/support/whatsapp_agent"},
+	"whatsapp_partner_agent": {workspaceDir: "agents/support/whatsapp_partner_agent"},
+	"whatsapp-partner-agent": {workspaceDir: "agents/support/whatsapp_partner_agent"},
 	"email-reply":    {workspaceDir: "agents/support/email_reply"},
 }
 

@@ -137,6 +137,7 @@ const (
 	whatsAppRevokedPlaceholder    = "[Bericht verwijderd voor iedereen]"
 	whatsAppIgnoredNonDirectChat  = "group or non-direct chat"
 	whatsAppIgnoredEmptyBody      = "empty message body"
+	whatsAppAgentUnavailable      = "agent runtime unavailable"
 )
 
 type WhatsAppWebhookResponse struct {
@@ -266,15 +267,18 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 		return
 	}
 
-	if !isNilWhatsAppAgentHandler(h.agentHandler) {
-		go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), waagent.CurrentInboundMessage{
-			ExternalMessageID: strings.TrimSpace(payload.ID),
-			PhoneNumber:       messageAddress,
-			DisplayName:       payload.FromName,
-			Body:              body,
-			Metadata:          metadata,
-		})
+	if isNilWhatsAppAgentHandler(h.agentHandler) {
+		httpkit.Error(c, http.StatusServiceUnavailable, whatsAppAgentUnavailable, nil)
+		return
 	}
+
+	go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), waagent.CurrentInboundMessage{
+		ExternalMessageID: strings.TrimSpace(payload.ID),
+		PhoneNumber:       messageAddress,
+		DisplayName:       payload.FromName,
+		Body:              body,
+		Metadata:          metadata,
+	})
 
 	httpkit.OK(c, WhatsAppWebhookResponse{Status: "processed"})
 }

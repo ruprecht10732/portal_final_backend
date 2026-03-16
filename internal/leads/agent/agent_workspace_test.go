@@ -11,6 +11,7 @@ import (
 
 const offerSummaryPromptBase = "offer summary prompt base"
 const errLoadAgentWorkspace = "LoadAgentWorkspace returned error: %v"
+const errUnexpectedAllowedTools = "unexpected allowed tools: got %v want %v"
 
 func TestLoadAgentContextSuccess(t *testing.T) {
 	rootDir := createTestAgentWorkspace(t)
@@ -64,7 +65,7 @@ func TestLoadAgentWorkspaceParsesAllowedTools(t *testing.T) {
 
 	wantTools := []string{"SaveAnalysis", "UpdateLeadDetails", "UpdateLeadServiceType", "UpdatePipelineStage"}
 	if strings.Join(workspace.AllowedTools, ",") != strings.Join(wantTools, ",") {
-		t.Fatalf("unexpected allowed tools: got %v want %v", workspace.AllowedTools, wantTools)
+		t.Fatalf(errUnexpectedAllowedTools, workspace.AllowedTools, wantTools)
 	}
 }
 
@@ -99,10 +100,46 @@ func TestLoadWhatsAppAgentWorkspaceParsesAllowedTools(t *testing.T) {
 		"CancelVisit",
 	}
 	if strings.Join(workspace.AllowedTools, ",") != strings.Join(wantTools, ",") {
-		t.Fatalf("unexpected allowed tools: got %v want %v", workspace.AllowedTools, wantTools)
+		t.Fatalf(errUnexpectedAllowedTools, workspace.AllowedTools, wantTools)
 	}
 	if !strings.Contains(workspace.Instruction, "WhatsApp Agent") {
 		t.Fatalf("expected WhatsApp agent instruction to include skill body")
+	}
+}
+
+func TestLoadWhatsAppPartnerAgentWorkspaceParsesAllowedTools(t *testing.T) {
+	rootDir := createTestAgentWorkspace(t)
+	t.Setenv("AGENT_WORKSPACE_ROOT", rootDir)
+
+	workspace, err := orchestration.LoadAgentWorkspace("whatsapp_partner_agent")
+	if err != nil {
+		t.Fatalf(errLoadAgentWorkspace, err)
+	}
+
+	wantTools := []string{
+		"GetMyJobs",
+		"GetPartnerJobDetails",
+		"GetNavigationLink",
+		"GetAppointments",
+		"AttachCurrentWhatsAppPhoto",
+		"SaveMeasurement",
+		"UpdateAppointmentStatus",
+		"RescheduleVisit",
+		"CancelVisit",
+	}
+	if strings.Join(workspace.AllowedTools, ",") != strings.Join(wantTools, ",") {
+		t.Fatalf(errUnexpectedAllowedTools, workspace.AllowedTools, wantTools)
+	}
+	if !strings.Contains(workspace.Instruction, "WhatsApp Partner Agent") {
+		t.Fatalf("expected WhatsApp partner agent instruction to include skill body")
+	}
+
+	legacyWorkspace, err := orchestration.LoadAgentWorkspace("whatsapp-partner-agent")
+	if err != nil {
+		t.Fatalf(errLoadAgentWorkspace, err)
+	}
+	if strings.Join(legacyWorkspace.AllowedTools, ",") != strings.Join(wantTools, ",") {
+		t.Fatalf(errUnexpectedAllowedTools, legacyWorkspace.AllowedTools, wantTools)
 	}
 }
 
@@ -252,6 +289,10 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/support/whatsapp_agent/context.md":                 "whatsapp agent context",
 		"agents/support/whatsapp_agent/prompts/base.md":            "whatsapp agent prompt base",
 		"agents/support/whatsapp_agent/skills/reply_generation.md": "whatsapp agent skill",
+		"agents/support/whatsapp_partner_agent/SKILL.md":           "---\nname: whatsapp_partner_agent\ndescription: Use when an incoming WhatsApp message from a registered partner or vakman must be answered autonomously with partner-scoped tools only.\nmetadata:\n  allowed-tools:\n    - GetMyJobs\n    - GetPartnerJobDetails\n    - GetNavigationLink\n    - GetAppointments\n    - AttachCurrentWhatsAppPhoto\n    - SaveMeasurement\n    - UpdateAppointmentStatus\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# WhatsApp Partner Agent",
+		"agents/support/whatsapp_partner_agent/context.md":         "whatsapp partner agent context",
+		"agents/support/whatsapp_partner_agent/prompts/base.md":    "whatsapp partner agent prompt base",
+		"agents/support/whatsapp_partner_agent/skills/reply_generation.md": "whatsapp partner agent skill",
 		"agents/support/email_reply/SKILL.md":                      "---\nname: email_reply\ndescription: Use when a grounded email reply draft is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# Email Reply",
 		"agents/support/email_reply/context.md":                    "email reply context",
 		"agents/support/email_reply/prompts/base.md":               "email reply prompt base",
