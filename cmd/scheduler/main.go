@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"portal_final_backend/internal/adapters"
 	"portal_final_backend/internal/adapters/storage"

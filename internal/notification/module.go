@@ -36,6 +36,7 @@ import (
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/phone"
+	"portal_final_backend/platform/timekit"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -2676,7 +2677,7 @@ func (m *Module) handleAppointmentWhatsApp(ctx context.Context, p appointmentWha
 	}
 
 	name := defaultName(strings.TrimSpace(p.ConsumerName), "klant")
-	nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+	nlLoc := timekit.ResolveLocation("Europe/Amsterdam")
 	localStart := p.StartTime.In(nlLoc)
 	dateStr := localStart.Format("02-01-2006")
 	timeStr := localStart.Format("15:04")
@@ -2709,7 +2710,7 @@ func (m *Module) handleAppointmentEmail(ctx context.Context, p appointmentWhatsA
 	}
 
 	name := defaultName(strings.TrimSpace(p.ConsumerName), "klant")
-	nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+	nlLoc := timekit.ResolveLocation("Europe/Amsterdam")
 	localStart := p.StartTime.In(nlLoc)
 	dateStr := localStart.Format("02-01-2006")
 	timeStr := localStart.Format("15:04")

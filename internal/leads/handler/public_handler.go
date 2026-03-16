@@ -16,6 +16,7 @@ import (
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/platform/httpkit"
+	"portal_final_backend/platform/timekit"
 	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
@@ -364,7 +365,7 @@ func (h *PublicHandler) RequestAppointment(c *gin.Context) {
 		return
 	}
 
-	nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+	nlLoc := timekit.ResolveLocation("Europe/Amsterdam")
 	startLabel := req.StartTime.In(nlLoc).Format("02-01-2006 om 15:04")
 	summary := fmt.Sprintf("Klant heeft een inspectie aangevraagd voor %s", startLabel)
 	_, _ = h.repo.CreateTimelineEvent(c.Request.Context(), repository.CreateTimelineEventParams{
@@ -583,7 +584,7 @@ func resolveCustomerStatus(stage string, quote *ports.PublicQuoteSummary, appt *
 	}
 
 	if appt != nil {
-		nlLoc, _ := time.LoadLocation("Europe/Amsterdam")
+		nlLoc := timekit.ResolveLocation("Europe/Amsterdam")
 		apptDate := appt.StartTime.In(nlLoc).Format("02-01-2006 om 15:04")
 		return "In planning", fmt.Sprintf("We hebben een moment gereserveerd op %s.", apptDate), 2
 	}

@@ -17,6 +17,7 @@ import (
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/sanitize"
+	"portal_final_backend/platform/timekit"
 
 	"github.com/google/uuid"
 )
@@ -297,7 +298,7 @@ func (s *Service) sendConfirmationEmailIfNeeded(ctx context.Context, sendEmail *
 		return
 	}
 	if consumerEmail := s.getLeadEmail(ctx, *appt.LeadID, tenantID); consumerEmail != "" {
-		nlLoc, _ := time.LoadLocation(defaultTimezone)
+		nlLoc := timekit.ResolveLocation(defaultTimezone)
 		scheduledDate := appt.StartTime.In(nlLoc).Format("Monday, January 2, 2006 at 15:04")
 		_ = s.emailSender.SendVisitInviteEmail(ctx, consumerEmail, leadInfo.FirstName, scheduledDate, leadInfo.Address)
 	}
