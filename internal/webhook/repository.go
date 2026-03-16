@@ -235,31 +235,6 @@ func (r *Repository) IsAgentDevice(ctx context.Context, deviceID string) (bool, 
 	return true, nil
 }
 
-func (r *Repository) IsAgentUserPhone(ctx context.Context, phone string) (bool, error) {
-	trimmed := strings.TrimSpace(phone)
-	if trimmed == "" {
-		return false, nil
-	}
-
-	const query = `
-		SELECT 1
-		FROM RAC_whatsapp_agent_users u
-		WHERE u.phone_number = $1
-		  AND EXISTS (
-			SELECT 1
-			FROM RAC_whatsapp_agent_config cfg
-		  )
-		LIMIT 1`
-
-	var one int
-	if err := r.pool.QueryRow(ctx, query, trimmed).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	} else if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 // ListByOrganization returns all API keys for an organization.
 func (r *Repository) ListByOrganization(ctx context.Context, orgID uuid.UUID) ([]APIKey, error) {
 	rows, err := r.queries.ListWebhookAPIKeysByOrganization(ctx, toPgUUID(orgID))

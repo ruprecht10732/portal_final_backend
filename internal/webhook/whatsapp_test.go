@@ -484,6 +484,46 @@ func TestHandleWhatsAppWebhookAgentDeviceForwardsInboundMediaContext(t *testing.
 	}
 }
 
+func TestHandleWhatsAppWebhookRoutesNonAgentMessagesToInboxEvenWhenAgentHandlerExists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingester := &fakeWhatsAppInbox{}
+	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}
+	handler := NewHandler(nil, nil, nil, ingester)
+	handler.agentHandler = agentHandler
+	orgID := uuid.New()
+
+	body := map[string]any{
+		"event":     "message",
+		"device_id": "31612345678@s.whatsapp.net",
+		"timestamp": "2026-03-13T12:03:00Z",
+		"payload": map[string]any{
+			"id":         "INBOX-ROUTE-1",
+			"from":       directChatJID,
+			"chat_id":    directChatJID,
+			"from_name":  "Robin",
+			"is_from_me": false,
+			"body":       "Hallo vanaf inboxnummer",
+		},
+	}
+
+	response := executeWhatsAppWebhookRequest(t, handler, orgID, body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200 for inbox-routed webhook, got %d", response.Code)
+	}
+	assertWebhookStatus(t, response.Body.Bytes(), "processed")
+	if ingester.unreadCount != 1 {
+		t.Fatalf("expected inbox ingester to receive the message, got unread count %d", ingester.unreadCount)
+	}
+	if ingester.lastIncoming == nil {
+		t.Fatal("expected inbox ingester to capture inbound payload")
+	}
+	select {
+	case <-agentHandler.called:
+		t.Fatal("expected agent handler not to be called for non-agent webhook")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestHandleWhatsAppWebhookAgentDeviceIgnoresOutgoingMessages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	agentHandler := &fakeWhatsAppAgentHandler{called: make(chan struct{}, 1)}

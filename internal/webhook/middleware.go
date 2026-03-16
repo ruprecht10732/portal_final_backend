@@ -25,7 +25,6 @@ type webhookAuthRepository interface {
 	GetByHash(ctx context.Context, keyHash string) (APIKey, error)
 	GetOrganizationIDByWhatsAppDeviceID(ctx context.Context, deviceID string) (uuid.UUID, error)
 	IsAgentDevice(ctx context.Context, deviceID string) (bool, error)
-	IsAgentUserPhone(ctx context.Context, phone string) (bool, error)
 }
 
 type whatsAppWebhookDeviceResolution struct {
@@ -252,16 +251,6 @@ func resolveWhatsAppWebhookDevice(ctx context.Context, repo webhookAuthRepositor
 			return whatsAppWebhookDeviceResolution{}, err
 		}
 		if isAgent {
-			return whatsAppWebhookDeviceResolution{isAgentDevice: true}, nil
-		}
-	}
-
-	for _, candidate := range whatsAppWebhookDeviceCandidates(rawDeviceID) {
-		isAgentUserPhone, err := repo.IsAgentUserPhone(ctx, candidate)
-		if err != nil {
-			return whatsAppWebhookDeviceResolution{}, err
-		}
-		if isAgentUserPhone {
 			return whatsAppWebhookDeviceResolution{isAgentDevice: true}, nil
 		}
 	}
