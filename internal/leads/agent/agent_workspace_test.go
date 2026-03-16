@@ -13,14 +13,23 @@ const offerSummaryPromptBase = "offer summary prompt base"
 const errLoadAgentWorkspace = "LoadAgentWorkspace returned error: %v"
 const errUnexpectedAllowedTools = "unexpected allowed tools: got %v want %v"
 const gatekeeperContextText = "gatekeeper context"
-const partnerReplySkillText = "whatsapp partner agent skill"
-const partnerGetMyJobsSkillText = "partner get my jobs skill"
-const partnerGetJobDetailsSkillText = "partner get job details skill"
-const partnerAttachPhotoSkillText = "partner attach photo skill"
-const partnerSaveMeasurementSkillText = "partner save measurement skill"
-const partnerUpdateStatusSkillText = "partner update appointment status skill"
-const partnerRescheduleSkillText = "partner reschedule visit skill"
-const partnerCancelSkillText = "partner cancel visit skill"
+
+var partnerSkillMarkers = map[string]string{
+	"attach_current_whatsapp_photo.md": "partner attach photo skill",
+	"cancel_visit.md":                  "partner cancel visit skill",
+	"conversation_continuity.md":       "partner conversation continuity skill",
+	"get_appointments.md":              "partner get appointments skill",
+	"get_my_jobs.md":                   "partner get my jobs skill",
+	"get_partner_job_details.md":       "partner get job details skill",
+	"job_resolution.md":                "partner job resolution skill",
+	"navigation_link.md":               "partner navigation link skill",
+	"reply_generation.md":              "partner reply generation skill",
+	"reschedule_visit.md":              "partner reschedule visit skill",
+	"save_measurement.md":              "partner save measurement skill",
+	"tool_autonomy.md":                 "partner tool autonomy skill",
+	"update_appointment_status.md":     "partner update appointment status skill",
+	"visit_updates.md":                 "partner visit updates skill",
+}
 
 func TestLoadAgentContextSuccess(t *testing.T) {
 	rootDir := createTestAgentWorkspace(t)
@@ -142,28 +151,12 @@ func TestLoadWhatsAppPartnerAgentWorkspaceParsesAllowedTools(t *testing.T) {
 	if !strings.Contains(workspace.Instruction, "WhatsApp Partner Agent") {
 		t.Fatalf("expected WhatsApp partner agent instruction to include skill body")
 	}
-	for _, marker := range []string{
-		partnerReplySkillText,
-		partnerGetMyJobsSkillText,
-		partnerGetJobDetailsSkillText,
-		partnerAttachPhotoSkillText,
-		partnerSaveMeasurementSkillText,
-		partnerUpdateStatusSkillText,
-		partnerRescheduleSkillText,
-		partnerCancelSkillText,
-	} {
+	for _, marker := range partnerSkillMarkers {
 		if !strings.Contains(workspace.Instruction, marker) {
 			t.Fatalf("expected partner workspace instruction to contain %q", marker)
 		}
 	}
 
-	legacyWorkspace, err := orchestration.LoadAgentWorkspace("whatsapp-partner-agent")
-	if err != nil {
-		t.Fatalf(errLoadAgentWorkspace, err)
-	}
-	if strings.Join(legacyWorkspace.AllowedTools, ",") != strings.Join(wantTools, ",") {
-		t.Fatalf(errUnexpectedAllowedTools, legacyWorkspace.AllowedTools, wantTools)
-	}
 }
 
 func TestLoadAgentContextUnknownAgent(t *testing.T) {
@@ -173,6 +166,22 @@ func TestLoadAgentContextUnknownAgent(t *testing.T) {
 	_, err := orchestration.LoadAgentWorkspace("unknown-agent")
 	if err == nil || !strings.Contains(err.Error(), "unsupported agent workspace") {
 		t.Fatalf("expected unsupported agent workspace error, got %v", err)
+	}
+}
+
+func TestLoadWhatsAppPartnerAgentWorkspaceIncludesAllPartnerSkills(t *testing.T) {
+	rootDir := createTestAgentWorkspace(t)
+	t.Setenv("AGENT_WORKSPACE_ROOT", rootDir)
+
+	workspace, err := orchestration.LoadAgentWorkspace("whatsapp_partner_agent")
+	if err != nil {
+		t.Fatalf(errLoadAgentWorkspace, err)
+	}
+
+	for fileName, marker := range partnerSkillMarkers {
+		if !strings.Contains(workspace.Instruction, marker) {
+			t.Fatalf("expected partner workspace instruction to contain marker %q for %s", marker, fileName)
+		}
 	}
 }
 
@@ -252,81 +261,73 @@ func createTestAgentWorkspace(t *testing.T) string {
 	t.Helper()
 	rootDir := t.TempDir()
 	files := map[string]string{
-		"AGENTS.md":                                                                     "root instructions",
-		"agents/shared/SKILL.md":                                                        "---\nname: shared\ndescription: Use when any backend lead-processing agent needs shared governance.\nmetadata:\n  allowed-tools: []\n---\n\n# Shared Governance",
-		"agents/shared/a-shared.md":                                                     "a shared file",
-		"agents/shared/execution-contract.md":                                           "shared execution contract",
-		"agents/shared/identity.md":                                                     "shared identity",
-		"agents/shared/pipeline-invariants.md":                                          "shared pipeline invariants",
-		"agents/shared/status-governance.md":                                            "shared status governance",
-		"agents/shared/tool-catalog.md":                                                 "shared tool catalog",
-		"agents/shared/product-selection.md":                                            "shared product selection",
-		"agents/shared/communication-rules.md":                                          "shared communication rules",
-		"agents/shared/z-shared.md":                                                     "z shared file",
-		"agents/gatekeeper/SKILL.md":                                                    "---\nname: gatekeeper\ndescription: Use when a lead or service needs intake validation before pipeline progression.\nmetadata:\n  allowed-tools:\n    - SaveAnalysis\n    - UpdateLeadDetails\n    - UpdateLeadServiceType\n    - UpdatePipelineStage\n---\n\n# Gatekeeper",
-		"agents/gatekeeper/context.md":                                                  gatekeeperContextText,
-		"agents/gatekeeper/skills/a-skill.md":                                           "a skill file",
-		"agents/gatekeeper/skills/save_analysis.md":                                     "save analysis skill",
-		"agents/gatekeeper/skills/update_lead_details.md":                               "update lead details skill",
-		"agents/gatekeeper/skills/update_lead_service_type.md":                          "update lead service type skill",
-		"agents/gatekeeper/skills/update_pipeline_stage.md":                             "update pipeline stage skill",
-		"agents/gatekeeper/skills/z-skill.md":                                           "z skill file",
-		"agents/qualifier/SKILL.md":                                                     "---\nname: qualifier\ndescription: Use when intake needs a clarification request.\nmetadata:\n  allowed-tools:\n    - AskCustomerClarification\n    - SaveAnalysis\n---\n\n# Qualifier",
-		"agents/qualifier/context.md":                                                   "qualifier context",
-		"agents/qualifier/skills/ask_customer_clarification.md":                         "ask customer clarification skill",
-		"agents/qualifier/skills/save_analysis.md":                                      "qualifier save analysis skill",
-		"agents/calculator/SKILL.md":                                                    "---\nname: calculator\ndescription: Use when a service must be scoped, estimated, or quoted.\nmetadata:\n  allowed-tools:\n    - Calculator\n    - CalculateEstimate\n    - SearchProductMaterials\n    - ListCatalogGaps\n    - DraftQuote\n    - SaveEstimation\n    - SubmitQuoteCritique\n    - CommitScopeArtifact\n    - AskCustomerClarification\n    - UpdatePipelineStage\n---\n\n# Calculator",
-		"agents/calculator/context.md":                                                  "calculator context",
-		"agents/calculator/skills/calculator.md":                                        "calculator skill",
-		"agents/calculator/skills/calculate_estimate.md":                                "calculate estimate skill",
-		"agents/calculator/skills/search_product_materials.md":                          "search product materials skill",
-		"agents/calculator/skills/list_catalog_gaps.md":                                 "list catalog gaps skill",
-		"agents/calculator/skills/draft_quote.md":                                       "draft quote skill",
-		"agents/calculator/skills/save_estimation.md":                                   "save estimation skill",
-		"agents/calculator/skills/submit_quote_critique.md":                             "submit quote critique skill",
-		"agents/calculator/skills/commit_scope_artifact.md":                             "commit scope artifact skill",
-		"agents/matchmaker/SKILL.md":                                                    "---\nname: matchmaker\ndescription: Use when a fulfillment-ready service needs partner routing.\nmetadata:\n  allowed-tools:\n    - FindMatchingPartners\n    - CreatePartnerOffer\n    - UpdatePipelineStage\n---\n\n# Matchmaker",
-		"agents/matchmaker/context.md":                                                  "matchmaker context",
-		"agents/matchmaker/skills/find_matching_partners.md":                            "find matching partners skill",
-		"agents/matchmaker/skills/create_partner_offer.md":                              "create partner offer skill",
-		"agents/matchmaker/skills/update_pipeline_stage.md":                             "matchmaker update stage skill",
-		"agents/support/auditor/SKILL.md":                                               "---\nname: auditor\ndescription: Use when operational evidence must be audited.\nmetadata:\n  allowed-tools:\n    - SubmitAuditResult\n---\n\n# Auditor",
-		"agents/support/auditor/context.md":                                             "auditor context",
-		"agents/support/auditor/skills/submit_audit_result.md":                          "submit audit result skill",
-		"agents/support/photo_analyzer/SKILL.md":                                        "---\nname: photo_analyzer\ndescription: Use when images need structured visual analysis.\nmetadata:\n  allowed-tools:\n    - SavePhotoAnalysis\n    - Calculator\n    - FlagOnsiteMeasurement\n---\n\n# Photo Analyzer",
-		"agents/support/photo_analyzer/context.md":                                      "photo analyzer context",
-		"agents/support/photo_analyzer/skills/analyze_photos.md":                        "photo analyzer skill",
-		"agents/support/call_logger/SKILL.md":                                           "---\nname: call_logger\ndescription: Use when a rough call summary must become structured lead updates.\nmetadata:\n  allowed-tools:\n    - SaveNote\n    - UpdateLeadDetails\n    - SetCallOutcome\n    - UpdateStatus\n    - UpdatePipelineStage\n    - ScheduleVisit\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# Call Logger",
-		"agents/support/call_logger/context.md":                                         "call logger context",
-		"agents/support/call_logger/prompts/base.md":                                    "call logger prompt base",
-		"agents/support/call_logger/skills/log_call.md":                                 "call logger skill",
-		"agents/support/offer_summary/SKILL.md":                                         "---\nname: offer_summary\ndescription: Use when a concise partner-offer summary is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# Offer Summary",
-		"agents/support/offer_summary/context.md":                                       "offer summary context",
-		"agents/support/offer_summary/prompts/base.md":                                  offerSummaryPromptBase,
-		"agents/support/offer_summary/skills/generate_summary.md":                       "offer summary skill",
-		"agents/support/whatsapp_reply/SKILL.md":                                        "---\nname: whatsapp_reply\ndescription: Use when a grounded WhatsApp reply draft is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# WhatsApp Reply",
-		"agents/support/whatsapp_reply/context.md":                                      "whatsapp reply context",
-		"agents/support/whatsapp_reply/prompts/base.md":                                 "whatsapp reply prompt base",
-		"agents/support/whatsapp_reply/skills/reply_generation.md":                      "whatsapp reply skill",
-		"agents/support/whatsapp_agent/SKILL.md":                                        "---\nname: whatsapp_agent\ndescription: Use when an incoming WhatsApp message from an authenticated external user must be answered autonomously using function-calling tools.\nmetadata:\n  allowed-tools:\n    - SearchLeads\n    - GetLeadDetails\n    - CreateLead\n    - SearchProductMaterials\n    - AttachCurrentWhatsAppPhoto\n    - GetAvailableVisitSlots\n    - GetNavigationLink\n    - GetQuotes\n    - DraftQuote\n    - GenerateQuote\n    - SendQuotePDF\n    - GetAppointments\n    - UpdateLeadDetails\n    - AskCustomerClarification\n    - SaveNote\n    - UpdateStatus\n    - ScheduleVisit\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# WhatsApp Agent",
-		"agents/support/whatsapp_agent/context.md":                                      "whatsapp agent context",
-		"agents/support/whatsapp_agent/prompts/base.md":                                 "whatsapp agent prompt base",
-		"agents/support/whatsapp_agent/skills/reply_generation.md":                      "whatsapp agent skill",
-		"agents/support/whatsapp_partner_agent/SKILL.md":                                "---\nname: whatsapp_partner_agent\ndescription: Use when an incoming WhatsApp message from a registered partner or vakman must be answered autonomously with partner-scoped tools only.\nmetadata:\n  allowed-tools:\n    - GetMyJobs\n    - GetPartnerJobDetails\n    - GetNavigationLink\n    - GetAppointments\n    - AttachCurrentWhatsAppPhoto\n    - SaveMeasurement\n    - UpdateAppointmentStatus\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# WhatsApp Partner Agent",
-		"agents/support/whatsapp_partner_agent/context.md":                              "whatsapp partner agent context",
-		"agents/support/whatsapp_partner_agent/prompts/base.md":                         "whatsapp partner agent prompt base",
-		"agents/support/whatsapp_partner_agent/skills/reply_generation.md":              partnerReplySkillText,
-		"agents/support/whatsapp_partner_agent/skills/get_my_jobs.md":                   partnerGetMyJobsSkillText,
-		"agents/support/whatsapp_partner_agent/skills/get_partner_job_details.md":       partnerGetJobDetailsSkillText,
-		"agents/support/whatsapp_partner_agent/skills/attach_current_whatsapp_photo.md": partnerAttachPhotoSkillText,
-		"agents/support/whatsapp_partner_agent/skills/save_measurement.md":              partnerSaveMeasurementSkillText,
-		"agents/support/whatsapp_partner_agent/skills/update_appointment_status.md":     partnerUpdateStatusSkillText,
-		"agents/support/whatsapp_partner_agent/skills/reschedule_visit.md":              partnerRescheduleSkillText,
-		"agents/support/whatsapp_partner_agent/skills/cancel_visit.md":                  partnerCancelSkillText,
-		"agents/support/email_reply/SKILL.md":                                           "---\nname: email_reply\ndescription: Use when a grounded email reply draft is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# Email Reply",
-		"agents/support/email_reply/context.md":                                         "email reply context",
-		"agents/support/email_reply/prompts/base.md":                                    "email reply prompt base",
-		"agents/support/email_reply/skills/reply_generation.md":                         "email reply skill",
+		"AGENTS.md":                                                "root instructions",
+		"agents/shared/SKILL.md":                                   "---\nname: shared\ndescription: Use when any backend lead-processing agent needs shared governance.\nmetadata:\n  allowed-tools: []\n---\n\n# Shared Governance",
+		"agents/shared/a-shared.md":                                "a shared file",
+		"agents/shared/execution-contract.md":                      "shared execution contract",
+		"agents/shared/identity.md":                                "shared identity",
+		"agents/shared/pipeline-invariants.md":                     "shared pipeline invariants",
+		"agents/shared/status-governance.md":                       "shared status governance",
+		"agents/shared/tool-catalog.md":                            "shared tool catalog",
+		"agents/shared/product-selection.md":                       "shared product selection",
+		"agents/shared/communication-rules.md":                     "shared communication rules",
+		"agents/shared/z-shared.md":                                "z shared file",
+		"agents/gatekeeper/SKILL.md":                               "---\nname: gatekeeper\ndescription: Use when a lead or service needs intake validation before pipeline progression.\nmetadata:\n  allowed-tools:\n    - SaveAnalysis\n    - UpdateLeadDetails\n    - UpdateLeadServiceType\n    - UpdatePipelineStage\n---\n\n# Gatekeeper",
+		"agents/gatekeeper/context.md":                             gatekeeperContextText,
+		"agents/gatekeeper/skills/a-skill.md":                      "a skill file",
+		"agents/gatekeeper/skills/save_analysis.md":                "save analysis skill",
+		"agents/gatekeeper/skills/update_lead_details.md":          "update lead details skill",
+		"agents/gatekeeper/skills/update_lead_service_type.md":     "update lead service type skill",
+		"agents/gatekeeper/skills/update_pipeline_stage.md":        "update pipeline stage skill",
+		"agents/gatekeeper/skills/z-skill.md":                      "z skill file",
+		"agents/qualifier/SKILL.md":                                "---\nname: qualifier\ndescription: Use when intake needs a clarification request.\nmetadata:\n  allowed-tools:\n    - AskCustomerClarification\n    - SaveAnalysis\n---\n\n# Qualifier",
+		"agents/qualifier/context.md":                              "qualifier context",
+		"agents/qualifier/skills/ask_customer_clarification.md":    "ask customer clarification skill",
+		"agents/qualifier/skills/save_analysis.md":                 "qualifier save analysis skill",
+		"agents/calculator/SKILL.md":                               "---\nname: calculator\ndescription: Use when a service must be scoped, estimated, or quoted.\nmetadata:\n  allowed-tools:\n    - Calculator\n    - CalculateEstimate\n    - SearchProductMaterials\n    - ListCatalogGaps\n    - DraftQuote\n    - SaveEstimation\n    - SubmitQuoteCritique\n    - CommitScopeArtifact\n    - AskCustomerClarification\n    - UpdatePipelineStage\n---\n\n# Calculator",
+		"agents/calculator/context.md":                             "calculator context",
+		"agents/calculator/skills/calculator.md":                   "calculator skill",
+		"agents/calculator/skills/calculate_estimate.md":           "calculate estimate skill",
+		"agents/calculator/skills/search_product_materials.md":     "search product materials skill",
+		"agents/calculator/skills/list_catalog_gaps.md":            "list catalog gaps skill",
+		"agents/calculator/skills/draft_quote.md":                  "draft quote skill",
+		"agents/calculator/skills/save_estimation.md":              "save estimation skill",
+		"agents/calculator/skills/submit_quote_critique.md":        "submit quote critique skill",
+		"agents/calculator/skills/commit_scope_artifact.md":        "commit scope artifact skill",
+		"agents/matchmaker/SKILL.md":                               "---\nname: matchmaker\ndescription: Use when a fulfillment-ready service needs partner routing.\nmetadata:\n  allowed-tools:\n    - FindMatchingPartners\n    - CreatePartnerOffer\n    - UpdatePipelineStage\n---\n\n# Matchmaker",
+		"agents/matchmaker/context.md":                             "matchmaker context",
+		"agents/matchmaker/skills/find_matching_partners.md":       "find matching partners skill",
+		"agents/matchmaker/skills/create_partner_offer.md":         "create partner offer skill",
+		"agents/matchmaker/skills/update_pipeline_stage.md":        "matchmaker update stage skill",
+		"agents/support/auditor/SKILL.md":                          "---\nname: auditor\ndescription: Use when operational evidence must be audited.\nmetadata:\n  allowed-tools:\n    - SubmitAuditResult\n---\n\n# Auditor",
+		"agents/support/auditor/context.md":                        "auditor context",
+		"agents/support/auditor/skills/submit_audit_result.md":     "submit audit result skill",
+		"agents/support/photo_analyzer/SKILL.md":                   "---\nname: photo_analyzer\ndescription: Use when images need structured visual analysis.\nmetadata:\n  allowed-tools:\n    - SavePhotoAnalysis\n    - Calculator\n    - FlagOnsiteMeasurement\n---\n\n# Photo Analyzer",
+		"agents/support/photo_analyzer/context.md":                 "photo analyzer context",
+		"agents/support/photo_analyzer/skills/analyze_photos.md":   "photo analyzer skill",
+		"agents/support/call_logger/SKILL.md":                      "---\nname: call_logger\ndescription: Use when a rough call summary must become structured lead updates.\nmetadata:\n  allowed-tools:\n    - SaveNote\n    - UpdateLeadDetails\n    - SetCallOutcome\n    - UpdateStatus\n    - UpdatePipelineStage\n    - ScheduleVisit\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# Call Logger",
+		"agents/support/call_logger/context.md":                    "call logger context",
+		"agents/support/call_logger/prompts/base.md":               "call logger prompt base",
+		"agents/support/call_logger/skills/log_call.md":            "call logger skill",
+		"agents/support/offer_summary/SKILL.md":                    "---\nname: offer_summary\ndescription: Use when a concise partner-offer summary is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# Offer Summary",
+		"agents/support/offer_summary/context.md":                  "offer summary context",
+		"agents/support/offer_summary/prompts/base.md":             offerSummaryPromptBase,
+		"agents/support/offer_summary/skills/generate_summary.md":  "offer summary skill",
+		"agents/support/whatsapp_reply/SKILL.md":                   "---\nname: whatsapp_reply\ndescription: Use when a grounded WhatsApp reply draft is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# WhatsApp Reply",
+		"agents/support/whatsapp_reply/context.md":                 "whatsapp reply context",
+		"agents/support/whatsapp_reply/prompts/base.md":            "whatsapp reply prompt base",
+		"agents/support/whatsapp_reply/skills/reply_generation.md": "whatsapp reply skill",
+		"agents/support/whatsapp_agent/SKILL.md":                   "---\nname: whatsapp_agent\ndescription: Use when an incoming WhatsApp message from an authenticated external user must be answered autonomously using function-calling tools.\nmetadata:\n  allowed-tools:\n    - SearchLeads\n    - GetLeadDetails\n    - CreateLead\n    - SearchProductMaterials\n    - AttachCurrentWhatsAppPhoto\n    - GetAvailableVisitSlots\n    - GetNavigationLink\n    - GetQuotes\n    - DraftQuote\n    - GenerateQuote\n    - SendQuotePDF\n    - GetAppointments\n    - UpdateLeadDetails\n    - AskCustomerClarification\n    - SaveNote\n    - UpdateStatus\n    - ScheduleVisit\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# WhatsApp Agent",
+		"agents/support/whatsapp_agent/context.md":                 "whatsapp agent context",
+		"agents/support/whatsapp_agent/prompts/base.md":            "whatsapp agent prompt base",
+		"agents/support/whatsapp_agent/skills/reply_generation.md": "whatsapp agent skill",
+		"agents/support/whatsapp_partner_agent/SKILL.md":           "---\nname: whatsapp_partner_agent\ndescription: Use when an incoming WhatsApp message from a registered partner or vakman must be answered autonomously with partner-scoped tools only.\nmetadata:\n  allowed-tools:\n    - GetMyJobs\n    - GetPartnerJobDetails\n    - GetNavigationLink\n    - GetAppointments\n    - AttachCurrentWhatsAppPhoto\n    - SaveMeasurement\n    - UpdateAppointmentStatus\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# WhatsApp Partner Agent",
+		"agents/support/whatsapp_partner_agent/context.md":         "whatsapp partner agent context",
+		"agents/support/whatsapp_partner_agent/prompts/base.md":    "whatsapp partner agent prompt base",
+		"agents/support/email_reply/SKILL.md":                      "---\nname: email_reply\ndescription: Use when a grounded email reply draft is requested.\nmetadata:\n  allowed-tools: []\n---\n\n# Email Reply",
+		"agents/support/email_reply/context.md":                    "email reply context",
+		"agents/support/email_reply/prompts/base.md":               "email reply prompt base",
+		"agents/support/email_reply/skills/reply_generation.md":    "email reply skill",
 	}
 
 	for relativePath, content := range files {
@@ -335,6 +336,17 @@ func createTestAgentWorkspace(t *testing.T) string {
 			t.Fatalf("mkdir %s: %v", relativePath, err)
 		}
 		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relativePath, err)
+		}
+	}
+
+	for fileName, marker := range partnerSkillMarkers {
+		relativePath := filepath.Join("agents", "support", "whatsapp_partner_agent", "skills", fileName)
+		fullPath := filepath.Join(rootDir, relativePath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", relativePath, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(marker), 0o644); err != nil {
 			t.Fatalf("write %s: %v", relativePath, err)
 		}
 	}

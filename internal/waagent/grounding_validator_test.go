@@ -12,6 +12,7 @@ const (
 	testLeadSpecificReply     = "*Adres:* Kerkstraat 12\n*Status:* Intake\n*Telefoon:* +31612345678"
 	testLeadAddressReply      = "*Adres:* Kerkstraat 12, 1811 AB Alkmaar"
 	testLeadStatusReply       = "*Status:* Intake\n*Telefoon:* +31612345678"
+	testLeadFactFallbackReply = "Ik kan dat klantdetail zo niet bevestigen. Noem de klantnaam of het dossier, dan controleer ik het meteen."
 )
 
 func newGroundingEvidenceWithResponse(toolName string, payload string) *replyGroundingEvidence {
@@ -181,6 +182,32 @@ func TestValidateGroundedReplyAllowsLeadStatusWhenToolPayloadMatches(t *testing.
 	}
 }
 
+func TestValidateGroundedReplyAllowsLeadPhoneFromSearchLeads(t *testing.T) {
+	t.Parallel()
+
+	evidence := newGroundingEvidenceWithResponse("SearchLeads", `{"leads":[{"customer_name":"A. Boogaard","phone":"+31640567063","city":"Alkmaar"}],"count":1}`)
+	reply, issue := validateGroundedReply("Het telefoonnummer van A. Boogaard is +31640567063.", evidence)
+	if issue.Code != "" {
+		t.Fatalf(testNoGroundingIssueMsg, issue.Code)
+	}
+	if reply != "Het telefoonnummer van A. Boogaard is +31640567063." {
+		t.Fatalf(testUnexpectedReplyMsg, reply)
+	}
+}
+
+func TestValidateGroundedReplyRejectsLeadAddressFromSearchLeadsOnly(t *testing.T) {
+	t.Parallel()
+
+	evidence := newGroundingEvidenceWithResponse("SearchLeads", `{"leads":[{"customer_name":"A. Boogaard","phone":"+31640567063","city":"Alkmaar"}],"count":1}`)
+	reply, issue := validateGroundedReply(testLeadAddressReply, evidence)
+	if issue.Code != "lead_fact_not_in_tool_result" {
+		t.Fatalf("expected lead fact mismatch, got %q", issue.Code)
+	}
+	if reply != testLeadFactFallbackReply {
+		t.Fatalf(testUnexpectedFallbackMsg, reply)
+	}
+}
+
 func TestValidateGroundedReplyRejectsLeadStatusMissingFromToolResult(t *testing.T) {
 	t.Parallel()
 
@@ -192,7 +219,7 @@ func TestValidateGroundedReplyRejectsLeadStatusMissingFromToolResult(t *testing.
 	if len(issue.UnsupportedFacts) != 1 || issue.UnsupportedFacts[0] != "Intake" {
 		t.Fatalf("unexpected unsupported lead facts %#v", issue.UnsupportedFacts)
 	}
-	if reply != "Ik kan dat klantdetail zo niet bevestigen. Noem de klantnaam of het dossier, dan controleer ik het meteen." {
+	if reply != testLeadFactFallbackReply {
 		t.Fatalf(testUnexpectedFallbackMsg, reply)
 	}
 }
@@ -221,7 +248,7 @@ func TestValidateGroundedReplyRejectsLeadAddressMissingFromToolResult(t *testing
 	if len(issue.UnsupportedFacts) != 1 || issue.UnsupportedFacts[0] != "Kerkstraat 12, 1811 AB Alkmaar" {
 		t.Fatalf("unexpected unsupported lead facts %#v", issue.UnsupportedFacts)
 	}
-	if reply != "Ik kan dat klantdetail zo niet bevestigen. Noem de klantnaam of het dossier, dan controleer ik het meteen." {
+	if reply != testLeadFactFallbackReply {
 		t.Fatalf(testUnexpectedFallbackMsg, reply)
 	}
 }

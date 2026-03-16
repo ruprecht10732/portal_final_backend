@@ -969,7 +969,7 @@ func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) ground
 			return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
-	leadTools := []string{"GetLeadDetails", "CreateLead", "UpdateLeadDetails"}
+	leadTools := []string{"SearchLeads", "GetLeadDetails", "CreateLead", "UpdateLeadDetails"}
 	if leadFacts := extractLeadFacts(reply); len(leadFacts) > 0 {
 		if !evidence.hasToolResponse(leadTools...) {
 			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: leadFacts}
