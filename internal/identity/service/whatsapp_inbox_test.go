@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const testWhatsAppMediaPhone = "+31686261598"
+
 func TestClearStaleWhatsAppConversationLeadRemovesLeadIDAndPersistsCleanup(t *testing.T) {
 	t.Parallel()
 
@@ -145,5 +147,30 @@ func TestMergeWhatsAppMediaResponseMetadataOverridesRenderableURL(t *testing.T) 
 	}
 	if strings.TrimSpace(parsed.Attachment.Filename) != "photo.jpg" {
 		t.Fatalf("expected filename to stay photo.jpg, got %q", parsed.Attachment.Filename)
+	}
+}
+
+func TestWhatsAppMediaDownloadTargetPrefersChatIdentifiersFromMetadata(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"payload":{"chat_id":"212450775417035@lid","from_lid":"212450775417035@lid","from":"31686261598@s.whatsapp.net"}}`)
+
+	got := whatsAppMediaDownloadTarget(raw, testWhatsAppMediaPhone)
+	if got != "212450775417035@lid" {
+		t.Fatalf("expected chat_id to be used for linked-device media download, got %q", got)
+	}
+}
+
+func TestWhatsAppMediaDownloadTargetFallsBackToSenderAndPhone(t *testing.T) {
+	t.Parallel()
+
+	withSender := json.RawMessage(`{"payload":{"from":"31686261598@s.whatsapp.net"}}`)
+	if got := whatsAppMediaDownloadTarget(withSender, testWhatsAppMediaPhone); got != "31686261598@s.whatsapp.net" {
+		t.Fatalf("expected sender jid fallback, got %q", got)
+	}
+
+	withoutPayload := json.RawMessage(`{"payload":{}}`)
+	if got := whatsAppMediaDownloadTarget(withoutPayload, testWhatsAppMediaPhone); got != testWhatsAppMediaPhone {
+		t.Fatalf("expected phone fallback, got %q", got)
 	}
 }
