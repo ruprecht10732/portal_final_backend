@@ -58,19 +58,19 @@ type skillMetadataFields struct {
 }
 
 var workspaceDefinitions = map[string]workspaceDefinition{
-	"gatekeeper":     {workspaceDir: "agents/gatekeeper"},
-	"qualifier":      {workspaceDir: "agents/qualifier"},
-	"calculator":     {workspaceDir: "agents/calculator"},
-	"matchmaker":     {workspaceDir: "agents/matchmaker"},
-	"auditor":        {workspaceDir: "agents/support/auditor"},
-	"photo-analyzer": {workspaceDir: "agents/support/photo_analyzer"},
-	"call-logger":    {workspaceDir: "agents/support/call_logger"},
-	"offer-summary":  {workspaceDir: "agents/support/offer_summary"},
-	"whatsapp-reply": {workspaceDir: "agents/support/whatsapp_reply"},
-	"whatsapp-agent": {workspaceDir: "agents/support/whatsapp_agent"},
+	"gatekeeper":             {workspaceDir: "agents/gatekeeper"},
+	"qualifier":              {workspaceDir: "agents/qualifier"},
+	"calculator":             {workspaceDir: "agents/calculator"},
+	"matchmaker":             {workspaceDir: "agents/matchmaker"},
+	"auditor":                {workspaceDir: "agents/support/auditor"},
+	"photo-analyzer":         {workspaceDir: "agents/support/photo_analyzer"},
+	"call-logger":            {workspaceDir: "agents/support/call_logger"},
+	"offer-summary":          {workspaceDir: "agents/support/offer_summary"},
+	"whatsapp-reply":         {workspaceDir: "agents/support/whatsapp_reply"},
+	"whatsapp-agent":         {workspaceDir: "agents/support/whatsapp_agent"},
 	"whatsapp_partner_agent": {workspaceDir: "agents/support/whatsapp_partner_agent"},
 	"whatsapp-partner-agent": {workspaceDir: "agents/support/whatsapp_partner_agent"},
-	"email-reply":    {workspaceDir: "agents/support/email_reply"},
+	"email-reply":            {workspaceDir: "agents/support/email_reply"},
 }
 
 var loggedWorkspaceLoads sync.Map
