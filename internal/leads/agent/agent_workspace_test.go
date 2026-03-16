@@ -12,6 +12,7 @@ import (
 const offerSummaryPromptBase = "offer summary prompt base"
 const errLoadAgentWorkspace = "LoadAgentWorkspace returned error: %v"
 const errUnexpectedAllowedTools = "unexpected allowed tools: got %v want %v"
+const gatekeeperContextText = "gatekeeper context"
 
 func TestLoadAgentContextSuccess(t *testing.T) {
 	rootDir := createTestAgentWorkspace(t)
@@ -28,7 +29,7 @@ func TestLoadAgentContextSuccess(t *testing.T) {
 		"Shared Governance",
 		"shared identity",
 		"Gatekeeper",
-		"gatekeeper context",
+		gatekeeperContextText,
 		"save analysis skill",
 		"Workspace Persistence",
 		"Active workspace agent: gatekeeper",
@@ -241,7 +242,7 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/shared/communication-rules.md":                             "shared communication rules",
 		"agents/shared/z-shared.md":                                        "z shared file",
 		"agents/gatekeeper/SKILL.md":                                       "---\nname: gatekeeper\ndescription: Use when a lead or service needs intake validation before pipeline progression.\nmetadata:\n  allowed-tools:\n    - SaveAnalysis\n    - UpdateLeadDetails\n    - UpdateLeadServiceType\n    - UpdatePipelineStage\n---\n\n# Gatekeeper",
-		"agents/gatekeeper/context.md":                                     "gatekeeper context",
+		"agents/gatekeeper/context.md":                                     gatekeeperContextText,
 		"agents/gatekeeper/skills/a-skill.md":                              "a skill file",
 		"agents/gatekeeper/skills/save_analysis.md":                        "save analysis skill",
 		"agents/gatekeeper/skills/update_lead_details.md":                  "update lead details skill",
