@@ -382,12 +382,12 @@ func buildGetAvailableVisitSlotsTool(toolHandler *ToolHandler) (tool.Tool, error
 }
 
 func buildGetQuotesTool(toolHandler *ToolHandler) (tool.Tool, error) {
-	quotesTool, err := apptools.NewGetQuotesTool(func(ctx tool.Context, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
+	quotesTool, err := apptools.NewGetQuotesTool(func(ctx tool.Context, input GetQuotesInput) (GetQuotesOutput, error) {
 		orgID, err := orgIDFromToolContext(ctx)
 		if err != nil {
-			return GetPendingQuotesOutput{}, err
+			return GetQuotesOutput{}, err
 		}
-		return toolHandler.HandleGetPendingQuotes(ctx, orgID, input)
+		return toolHandler.HandleGetQuotes(ctx, orgID, input)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("waagent: failed to build GetQuotes tool: %w", err)
@@ -960,7 +960,7 @@ func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) ground
 			return groundingDecision{Code: "quote_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
-	appointmentTools := []string{"GetAppointments", "GetAvailableVisitSlots", "ScheduleVisit", "RescheduleVisit", "CancelVisit"}
+	appointmentTools := []string{"GetAppointments", "GetAvailableVisitSlots", "ScheduleVisit", "RescheduleVisit", "CancelVisit", "GetMyJobs", "GetPartnerJobDetails", "UpdateAppointmentStatus"}
 	if appointmentFacts := extractAppointmentFacts(reply); len(appointmentFacts) > 0 {
 		if !evidence.hasToolResponse(appointmentTools...) {
 			return groundingDecision{Code: "appointment_details_without_appointment_tool", UnsupportedFacts: appointmentFacts}
@@ -969,7 +969,7 @@ func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) ground
 			return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
-	leadTools := []string{"SearchLeads", "GetLeadDetails", "CreateLead", "UpdateLeadDetails"}
+	leadTools := []string{"SearchLeads", "GetLeadDetails", "CreateLead", "UpdateLeadDetails", "GetNavigationLink", "GetMyJobs", "GetPartnerJobDetails"}
 	if leadFacts := extractLeadFacts(reply); len(leadFacts) > 0 {
 		if !evidence.hasToolResponse(leadTools...) {
 			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: leadFacts}

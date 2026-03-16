@@ -10,13 +10,13 @@ import (
 	"google.golang.org/adk/tool"
 )
 
-// GetPendingQuotesInput — no organization field (compile-time safety).
-type GetPendingQuotesInput struct {
+// GetQuotesInput — no organization field (compile-time safety).
+type GetQuotesInput struct {
 	Status string `json:"status,omitempty"`
 }
 
-// GetPendingQuotesOutput is the tool output returned to the LLM.
-type GetPendingQuotesOutput struct {
+// GetQuotesOutput is the tool output returned to the LLM.
+type GetQuotesOutput struct {
 	Quotes []QuoteSummary `json:"quotes"`
 	Count  int            `json:"count"`
 }
@@ -61,8 +61,8 @@ type ToolHandler struct {
 	appointmentStatusWriter      AppointmentStatusWriter
 }
 
-// HandleGetPendingQuotes retrieves quotes scoped to the org from context.
-func (h *ToolHandler) HandleGetPendingQuotes(ctx tool.Context, orgID uuid.UUID, input GetPendingQuotesInput) (GetPendingQuotesOutput, error) {
+// HandleGetQuotes retrieves quotes scoped to the org from context.
+func (h *ToolHandler) HandleGetQuotes(ctx tool.Context, orgID uuid.UUID, input GetQuotesInput) (GetQuotesOutput, error) {
 	var status *string
 	if input.Status != "" {
 		normalized := normalizeQuoteStatusFilter(input.Status)
@@ -71,11 +71,11 @@ func (h *ToolHandler) HandleGetPendingQuotes(ctx tool.Context, orgID uuid.UUID, 
 
 	quotes, err := h.quotesReader.ListQuotesByOrganization(context.Background(), orgID, status)
 	if err != nil {
-		return GetPendingQuotesOutput{}, err
+		return GetQuotesOutput{}, err
 	}
 	h.recordLeadHintFromQuotes(ctx, orgID, quotes)
 
-	return GetPendingQuotesOutput{
+	return GetQuotesOutput{
 		Quotes: quotes,
 		Count:  len(quotes),
 	}, nil

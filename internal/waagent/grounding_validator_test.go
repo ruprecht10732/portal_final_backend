@@ -195,6 +195,32 @@ func TestValidateGroundedReplyAllowsLeadPhoneFromSearchLeads(t *testing.T) {
 	}
 }
 
+func TestValidateGroundedReplyAllowsLeadAddressFromNavigationLink(t *testing.T) {
+	t.Parallel()
+
+	evidence := newGroundingEvidenceWithResponse("GetNavigationLink", `{"success":true,"message":"Navigatielink gevonden","link":{"lead_id":"lead-1","destination_address":"Kerkstraat 12, 1811 AB Alkmaar","url":"https://maps.example/route"}}`)
+	reply, issue := validateGroundedReply(testLeadAddressReply, evidence)
+	if issue.Code != "" {
+		t.Fatalf(testNoGroundingIssueMsg, issue.Code)
+	}
+	if reply != testLeadAddressReply {
+		t.Fatalf(testUnexpectedReplyMsg, reply)
+	}
+}
+
+func TestValidateGroundedReplyAllowsAppointmentDetailsFromPartnerJobDetails(t *testing.T) {
+	t.Parallel()
+
+	evidence := newGroundingEvidenceWithResponse("GetPartnerJobDetails", `{"success":true,"message":"Opdracht gevonden","job":{"appointment_start":"2026-03-18T16:00:00Z","appointment_end":"2026-03-18T17:00:00Z","destination_address":"Kerkstraat 12, 1811 AB Alkmaar"}}`)
+	reply, issue := validateGroundedReply(testAppointmentReply, evidence)
+	if issue.Code != "" {
+		t.Fatalf(testNoGroundingIssueMsg, issue.Code)
+	}
+	if reply != testAppointmentReply {
+		t.Fatalf(testUnexpectedReplyMsg, reply)
+	}
+}
+
 func TestValidateGroundedReplyRejectsLeadAddressFromSearchLeadsOnly(t *testing.T) {
 	t.Parallel()
 
