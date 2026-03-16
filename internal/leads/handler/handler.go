@@ -880,6 +880,17 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	// Trigger gatekeeper analysis asynchronously
 	if h.gatekeeperQueue != nil {
 		queuedServiceID := validation.ServiceID
+		message := "Analysis queued successfully"
+		run := transport.NewAutomationRunResponse(transport.AutomationRunParams{
+			JobID:           uuid.New(),
+			Kind:            transport.AutomationRunKindLeadAnalysis,
+			Status:          "pending",
+			LeadID:          id,
+			LeadServiceID:   *queuedServiceID,
+			Step:            "Gatekeeper queued",
+			ProgressPercent: 5,
+			Message:         &message,
+		})
 		if err := h.gatekeeperQueue.EnqueueGatekeeperRun(c.Request.Context(), scheduler.GatekeeperRunPayload{
 			TenantID:      tenantID.String(),
 			LeadID:        id.String(),
@@ -891,8 +902,10 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 		}
 
 		httpkit.JSON(c, http.StatusAccepted, gin.H{
-			"message": "Analysis queued successfully",
+			"status":  "queued",
+			"message": message,
 			"leadId":  id,
+			"run":     run,
 		})
 		return
 	}
@@ -906,8 +919,18 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	}()
 
 	httpkit.OK(c, gin.H{
+		"status":  "queued",
 		"message": "Analysis triggered successfully",
 		"leadId":  id,
+		"run": transport.NewAutomationRunResponse(transport.AutomationRunParams{
+			JobID:           uuid.New(),
+			Kind:            transport.AutomationRunKindLeadAnalysis,
+			Status:          "running",
+			LeadID:          id,
+			LeadServiceID:   *validation.ServiceID,
+			Step:            "Gatekeeper started",
+			ProgressPercent: 10,
+		}),
 	})
 }
 

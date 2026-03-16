@@ -15,7 +15,6 @@ import (
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
-	"google.golang.org/genai"
 
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/domain"
@@ -328,50 +327,16 @@ func (c *CallLogger) resolveExistingAppointment(ctx context.Context, tenantID, s
 // executeAgentRun creates an ephemeral session, runs the agent, and returns the
 // concatenated text output.
 func (c *CallLogger) executeAgentRun(ctx context.Context, userIDStr, sessionID, promptText string) (string, error) {
-	_, err := c.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   c.appName,
-		UserID:    userIDStr,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
-	}
-	defer func() {
-		if deleteErr := c.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   c.appName,
-			UserID:    userIDStr,
-			SessionID: sessionID,
-		}); deleteErr != nil {
-			log.Printf("warning: failed to delete call logger session: %v", deleteErr)
-		}
-	}()
-
-	userMessage := &genai.Content{
-		Role: "user",
-		Parts: []*genai.Part{
-			{Text: promptText},
-		},
-	}
-
-	runConfig := agent.RunConfig{
-		StreamingMode: agent.StreamingModeNone,
-	}
-
-	var outputText string
-	var toolTrace []observedToolTrace
-	err = consumeRunEvents(c.runner.Run(ctx, userIDStr, sessionID, userMessage, runConfig), "call logger run failed", func(event *session.Event) {
-		if event.Content != nil {
-			for _, part := range event.Content.Parts {
-				outputText += part.Text
-			}
-		}
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace("call-logger", userIDStr, sessionID, toolTrace)
-	if err != nil {
-		return "", err
-	}
-
-	return outputText, nil
+	return runPromptTextSession(ctx, promptRunRequest{
+		SessionService:       c.sessionService,
+		Runner:               c.runner,
+		AppName:              c.appName,
+		UserID:               userIDStr,
+		SessionID:            sessionID,
+		CreateSessionMessage: "failed to create session",
+		RunFailureMessage:    "call logger run failed",
+		TraceLabel:           "call-logger",
+	}, promptText)
 }
 
 // ProcessSummary is the main entry point for processing a call summary

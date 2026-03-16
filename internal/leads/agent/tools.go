@@ -2169,6 +2169,24 @@ func createUpdatePipelineStageTool(_ *ToolDependencies) (tool.Tool, error) {
 	})
 }
 
+func createSaveAnalysisTool() (tool.Tool, error) {
+	return apptools.NewSaveAnalysisTool(func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
+		return handleSaveAnalysis(ctx, GetDependencies(ctx), input)
+	})
+}
+
+func createUpdateLeadServiceTypeTool() (tool.Tool, error) {
+	return apptools.NewUpdateLeadServiceTypeTool(func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
+		return handleUpdateLeadServiceType(ctx, GetDependencies(ctx), input)
+	})
+}
+
+func createUpdateLeadDetailsTool(description string) (tool.Tool, error) {
+	return apptools.NewUpdateLeadDetailsTool(description, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
+		return handleUpdateLeadDetails(ctx, GetDependencies(ctx), input)
+	})
+}
+
 func latestAnalysisInvariantInputs(ctx context.Context, deps *ToolDependencies, serviceID, tenantID uuid.UUID) (string, []string) {
 	if analysis, err := deps.Repo.GetLatestAIAnalysis(ctx, serviceID, tenantID); err == nil {
 		return analysis.RecommendedAction, analysis.MissingInformation
@@ -2199,6 +2217,46 @@ func stringifyAnySlice(items []any) []string {
 	}
 	return out
 }
+
+func createFindMatchingPartnersTool() (tool.Tool, error) {
+	return apptools.NewFindMatchingPartnersTool(func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
+		return handleFindMatchingPartners(ctx, GetDependencies(ctx), input)
+	})
+}
+
+func createCreatePartnerOfferTool() (tool.Tool, error) {
+	return apptools.NewCreatePartnerOfferTool(func(ctx tool.Context, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
+		deps := GetDependencies(ctx)
+		if deps.OfferCreator == nil {
+			return CreatePartnerOfferOutput{Success: false, Message: "Offer creation not configured"}, fmt.Errorf("offer creator not configured")
+		}
+
+		tenantID, serviceID, partnerID, hours, contextMessage, err := resolveOfferContext(deps, input.PartnerID, input.ExpirationHours)
+		if err != nil {
+			return CreatePartnerOfferOutput{Success: false, Message: contextMessage}, err
+		}
+
+		quoteID, err := deps.Repo.GetLatestAcceptedQuoteIDForService(ctx, serviceID, tenantID)
+		if err != nil {
+			return CreatePartnerOfferOutput{Success: false, Message: "Accepted quote not found for service"}, err
+		}
+
+		summary := truncateRunes(strings.TrimSpace(input.JobSummaryShort), 200)
+		result, err := deps.OfferCreator.CreateOfferFromQuote(ctx, tenantID, ports.CreateOfferFromQuoteParams{
+			PartnerID:       partnerID,
+			QuoteID:         quoteID,
+			ExpiresInHours:  hours,
+			JobSummaryShort: summary,
+		})
+		if err != nil {
+			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err
+		}
+
+		deps.MarkOfferCreated()
+		return CreatePartnerOfferOutput{Success: true, Message: "Offer created", OfferID: result.OfferID.String(), PublicToken: result.PublicToken}, nil
+	})
+}
+
 func handleFindMatchingPartners(ctx tool.Context, deps *ToolDependencies, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
 	tenantID, err := getTenantID(deps)
 	if err != nil {

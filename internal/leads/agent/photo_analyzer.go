@@ -289,21 +289,27 @@ func (pa *PhotoAnalyzer) cleanupSession(ctx context.Context, userID, sessionID s
 }
 
 func (pa *PhotoAnalyzer) runAnalysis(ctx context.Context, userID, sessionID string, userContent *genai.Content) (string, error) {
-	var output string
-	runConfig := agent.RunConfig{
-		StreamingMode: agent.StreamingModeNone,
-	}
-
-	var toolTrace []observedToolTrace
-	err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, userContent, runConfig), "photo analysis failed", func(event *session.Event) {
-		output += collectContentText(event.Content)
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace(photoAnalyzerTraceLabel, userID, sessionID, toolTrace)
+	var output strings.Builder
+	err := runPromptSession(ctx, promptRunRequest{
+		SessionService:       pa.sessionService,
+		Runner:               pa.runner,
+		AppName:              pa.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		UserMessage:          userContent,
+		CreateSessionMessage: "failed to create session",
+		RunFailureMessage:    "photo analysis failed",
+		TraceLabel:           photoAnalyzerTraceLabel,
+	},
+		func(event *session.Event) {
+			output.WriteString(collectContentText(event.Content))
+		},
+	)
 	if err != nil {
 		return "", err
 	}
 
-	return output, nil
+	return output.String(), nil
 }
 
 func (pa *PhotoAnalyzer) getOrRetryResult(ctx context.Context, userID, sessionID string, output string) (*PhotoAnalysis, error) {
@@ -335,15 +341,21 @@ func (pa *PhotoAnalyzer) retryForResult(ctx context.Context, userID, sessionID s
 		},
 	}
 
-	runConfig := agent.RunConfig{
-		StreamingMode: agent.StreamingModeNone,
-	}
-
-	var toolTrace []observedToolTrace
-	err := consumeRunEvents(pa.runner.Run(ctx, userID, sessionID, retryContent, runConfig), "photo analysis retry failed", func(event *session.Event) {
-		output += collectContentText(event.Content)
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace(photoAnalyzerRetryTraceLabel, userID, sessionID, toolTrace)
+	err := runPromptSession(ctx, promptRunRequest{
+		SessionService:       pa.sessionService,
+		Runner:               pa.runner,
+		AppName:              pa.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		UserMessage:          retryContent,
+		CreateSessionMessage: "failed to create session",
+		RunFailureMessage:    "photo analysis retry failed",
+		TraceLabel:           photoAnalyzerRetryTraceLabel,
+	},
+		func(event *session.Event) {
+			output += collectContentText(event.Content)
+		},
+	)
 	if err != nil {
 		return output, err
 	}

@@ -10,7 +10,6 @@ import (
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
-	"google.golang.org/genai"
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/orchestration"
@@ -68,48 +67,21 @@ func (g *OfferSummaryGenerator) GenerateOfferSummary(ctx context.Context, tenant
 	promptText := buildOfferSummaryPrompt(input)
 	sessionID := uuid.New().String()
 	userID := "offer-summary-" + input.LeadServiceID.String()
-
-	_, err := g.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   g.appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return "", fmt.Errorf("offer summary: create session: %w", err)
-	}
-	defer func() {
-		_ = g.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   g.appName,
-			UserID:    userID,
-			SessionID: sessionID,
-		})
-	}()
-
-	userMessage := &genai.Content{
-		Role: "user",
-		Parts: []*genai.Part{{
-			Text: promptText,
-		}},
-	}
-
-	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-
-	var outputText strings.Builder
-	var toolTrace []observedToolTrace
-	err = consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "offer summary: run failed", func(event *session.Event) {
-		if event.Content == nil {
-			return
-		}
-		for _, part := range event.Content.Parts {
-			outputText.WriteString(part.Text)
-		}
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace("offer-summary", userID, sessionID, toolTrace)
+	outputText, err := runPromptTextSession(ctx, promptRunRequest{
+		SessionService:       g.sessionService,
+		Runner:               g.runner,
+		AppName:              g.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		CreateSessionMessage: "offer summary: create session",
+		RunFailureMessage:    "offer summary: run failed",
+		TraceLabel:           "offer-summary",
+	}, promptText)
 	if err != nil {
 		return "", err
 	}
 
-	return strings.TrimSpace(outputText.String()), nil
+	return strings.TrimSpace(outputText), nil
 }
 
 func buildOfferSummaryPrompt(input ports.OfferSummaryInput) string {

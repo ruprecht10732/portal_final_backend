@@ -1202,34 +1202,21 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 	}
 
 	sessionID := uuid.New().String()
-
-	_, err := activeSessionService.Create(ctx, &session.CreateRequest{
-		AppName:   activeAppName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create quoting session: %w", err)
-	}
-	defer func() {
-		_ = activeSessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   activeAppName,
-			UserID:    userID,
-			SessionID: sessionID,
-		})
-	}()
-
-	userMessage := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{{Text: promptText}},
-	}
-
-	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	var toolTrace []observedToolTrace
-	err = consumeRunEvents(activeRunner.Run(ctx, userID, sessionID, userMessage, runConfig), "quoting agent run failed", func(event *session.Event) {
-		_ = event
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace(strings.ToLower(agentName), userID, sessionID, toolTrace)
+	err := runPromptSession(ctx, promptRunRequest{
+		SessionService:       activeSessionService,
+		Runner:               activeRunner,
+		AppName:              activeAppName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		UserMessage:          &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}},
+		CreateSessionMessage: "failed to create quoting session",
+		RunFailureMessage:    "quoting agent run failed",
+		TraceLabel:           strings.ToLower(agentName),
+	},
+		func(event *session.Event) {
+			_ = event
+		},
+	)
 	if err != nil {
 		return err
 	}

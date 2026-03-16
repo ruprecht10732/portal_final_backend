@@ -21,7 +21,6 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/orchestration"
-	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/moonshot"
 )
 
@@ -50,27 +49,19 @@ func NewGatekeeper(apiKey string, modelName string, repo repository.LeadsReposit
 		CouncilService: NewDefaultMultiAgentCouncil(repo),
 	}
 
-	updateStageTool, err := apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		return handleUpdatePipelineStage(ctx, GetDependencies(ctx), input)
-	})
+	updateStageTool, err := createUpdatePipelineStageTool(deps)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
-	saveAnalysisTool, err := apptools.NewSaveAnalysisTool(func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
-		return handleSaveAnalysis(ctx, GetDependencies(ctx), input)
-	})
+	saveAnalysisTool, err := createSaveAnalysisTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build SaveAnalysis tool: %w", err)
 	}
-	updateServiceTypeTool, err := apptools.NewUpdateLeadServiceTypeTool(func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
-		return handleUpdateLeadServiceType(ctx, GetDependencies(ctx), input)
-	})
+	updateServiceTypeTool, err := createUpdateLeadServiceTypeTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdateLeadServiceType tool: %w", err)
 	}
-	updateLeadDetailsTool, err := apptools.NewUpdateLeadDetailsTool("Updates lead contact or address details when you are highly confident the current data is wrong.", func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
-		return handleUpdateLeadDetails(ctx, GetDependencies(ctx), input)
-	})
+	updateLeadDetailsTool, err := createUpdateLeadDetailsTool("Updates lead contact or address details when you are highly confident the current data is wrong.")
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdateLeadDetails tool: %w", err)
 	}
@@ -495,37 +486,19 @@ func getSlugLike(name string) string {
 func (g *Gatekeeper) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {
 	sessionID := uuid.New().String()
 	userID := "gatekeeper-" + leadID.String()
-
-	_, err := g.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   g.appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create gatekeeper session: %w", err)
-	}
-	defer func() {
-		_ = g.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   g.appName,
-			UserID:    userID,
-			SessionID: sessionID,
-		})
-	}()
-
-	userMessage := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{{Text: promptText}},
-	}
-
-	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	var toolTrace []observedToolTrace
-	err = consumeRunEvents(g.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "gatekeeper run failed", func(event *session.Event) {
-		_ = event
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace("gatekeeper", userID, sessionID, toolTrace)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return runPromptSession(ctx, promptRunRequest{
+		SessionService:       g.sessionService,
+		Runner:               g.runner,
+		AppName:              g.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		UserMessage:          &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}},
+		CreateSessionMessage: "failed to create gatekeeper session",
+		RunFailureMessage:    "gatekeeper run failed",
+		TraceLabel:           "gatekeeper",
+	},
+		func(event *session.Event) {
+			_ = event
+		},
+	)
 }

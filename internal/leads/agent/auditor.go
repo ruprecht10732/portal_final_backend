@@ -233,34 +233,21 @@ func (a *Auditor) AuditCallLog(ctx context.Context, leadID, serviceID, tenantID 
 func (a *Auditor) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {
 	sessionID := uuid.New().String()
 	userID := "auditor-" + leadID.String()
-
-	_, err := a.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   a.appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create auditor session: %w", err)
-	}
-	defer func() {
-		_ = a.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   a.appName,
-			UserID:    userID,
-			SessionID: sessionID,
-		})
-	}()
-
-	userMessage := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}}
-	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	var toolTrace []observedToolTrace
-	err = consumeRunEvents(a.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "auditor run failed", func(event *session.Event) {
-		_ = event
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace("auditor", userID, sessionID, toolTrace)
-	if err != nil {
-		return err
-	}
-	return nil
+	return runPromptSession(ctx, promptRunRequest{
+		SessionService:       a.sessionService,
+		Runner:               a.runner,
+		AppName:              a.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		UserMessage:          &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}},
+		CreateSessionMessage: "failed to create auditor session",
+		RunFailureMessage:    "auditor run failed",
+		TraceLabel:           "auditor",
+	},
+		func(event *session.Event) {
+			_ = event
+		},
+	)
 }
 
 func buildIntakeContext(ctx context.Context, repo repository.LeadsRepository, tenantID uuid.UUID, currentServiceType string) string {

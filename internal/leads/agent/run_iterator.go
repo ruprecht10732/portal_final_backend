@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"iter"
 	"log"
 	"sort"
 	"strings"
 
+	"google.golang.org/adk/agent"
+	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 )
@@ -35,6 +38,54 @@ func consumeRunEvents[T any](seq iter.Seq2[T, error], runFailureMessage string, 
 	}
 
 	return nil
+}
+
+type promptRunRequest struct {
+	SessionService       session.Service
+	Runner               *runner.Runner
+	AppName              string
+	UserID               string
+	SessionID            string
+	UserMessage          *genai.Content
+	CreateSessionMessage string
+	RunFailureMessage    string
+	TraceLabel           string
+}
+
+func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*session.Event)) error {
+	_, err := req.SessionService.Create(ctx, &session.CreateRequest{
+		AppName:   req.AppName,
+		UserID:    req.UserID,
+		SessionID: req.SessionID,
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %w", req.CreateSessionMessage, err)
+	}
+	defer func() {
+		_ = req.SessionService.Delete(ctx, &session.DeleteRequest{
+			AppName:   req.AppName,
+			UserID:    req.UserID,
+			SessionID: req.SessionID,
+		})
+	}()
+
+	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
+	var toolTrace []observedToolTrace
+	err = consumeRunEvents(req.Runner.Run(ctx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace))
+	logObservedToolTrace(req.TraceLabel, req.UserID, req.SessionID, toolTrace)
+	return err
+}
+
+func runPromptTextSession(ctx context.Context, req promptRunRequest, promptText string) (string, error) {
+	var output strings.Builder
+	req.UserMessage = &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}}
+	err := runPromptSession(ctx, req, func(event *session.Event) {
+		output.WriteString(collectContentText(event.Content))
+	})
+	if err != nil {
+		return "", err
+	}
+	return output.String(), nil
 }
 
 func observeSessionToolTrace(items *[]observedToolTrace) func(*session.Event) {

@@ -7,11 +7,9 @@ import (
 	"log"
 	"strings"
 
-	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
-	"google.golang.org/genai"
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
@@ -101,45 +99,21 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 	promptText := buildEmailReplyPrompt(resolvedInput, replyContext, settings.WhatsAppToneOfVoice)
 	sessionID := uuid.NewString()
 	userID := "email-reply-" + input.OrganizationID.String() + ":" + sanitizeUserInput(strings.ToLower(strings.TrimSpace(input.CustomerEmail)), 120)
-
-	_, err = sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   a.appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return ports.ReplySuggestionDraft{}, fmt.Errorf("email reply: create session: %w", err)
-	}
-	defer func() {
-		_ = sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   a.appName,
-			UserID:    userID,
-			SessionID: sessionID,
-		})
-	}()
-
-	userMessage := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{{Text: promptText}},
-	}
-
-	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	var outputText strings.Builder
-	var toolTrace []observedToolTrace
-	err = consumeRunEvents(r.Run(ctx, userID, sessionID, userMessage, runConfig), "email reply: run failed", func(event *session.Event) {
-		if event.Content == nil {
-			return
-		}
-		for _, part := range event.Content.Parts {
-			outputText.WriteString(part.Text)
-		}
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace("email-reply", userID, sessionID, toolTrace)
+	outputText, err := runPromptTextSession(ctx, promptRunRequest{
+		SessionService:       sessionService,
+		Runner:               r,
+		AppName:              a.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		CreateSessionMessage: "email reply: create session",
+		RunFailureMessage:    "email reply: run failed",
+		TraceLabel:           "email-reply",
+	}, promptText)
 	if err != nil {
 		return ports.ReplySuggestionDraft{}, err
 	}
 
-	response := strings.TrimSpace(outputText.String())
+	response := strings.TrimSpace(outputText)
 	if response == "" {
 		return ports.ReplySuggestionDraft{}, apperr.Internal("email reply: empty model response")
 	}

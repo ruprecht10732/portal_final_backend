@@ -14,6 +14,7 @@ import (
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/httpkit"
@@ -107,6 +108,8 @@ func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
 	userID := identity.UserID()
 	if h.queue != nil {
 		userIDStr := userID.String()
+		message := "Photo analysis queued"
+		photoCount := len(imageAttachments)
 		err := h.queue.EnqueuePhotoAnalysis(c.Request.Context(), scheduler.PhotoAnalysisPayload{
 			TenantID:      tenantID.String(),
 			LeadID:        leadID.String(),
@@ -119,9 +122,20 @@ func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
 		}
 
 		httpkit.JSON(c, http.StatusAccepted, gin.H{
-			"status":     "processing",
-			"message":    "Photo analysis queued",
-			"photoCount": len(imageAttachments),
+			"status":     "queued",
+			"message":    message,
+			"photoCount": photoCount,
+			"run": transport.NewAutomationRunResponse(transport.AutomationRunParams{
+				JobID:           uuid.New(),
+				Kind:            transport.AutomationRunKindPhotoAnalysis,
+				Status:          "pending",
+				LeadID:          leadID,
+				LeadServiceID:   serviceID,
+				Step:            "Photo analysis queued",
+				ProgressPercent: 5,
+				Message:         &message,
+				PhotoCount:      &photoCount,
+			}),
 		})
 		return
 	}
@@ -130,10 +144,24 @@ func (h *PhotoAnalysisHandler) AnalyzePhotos(c *gin.Context) {
 	go h.runPhotoAnalysis(context.Background(), leadID, serviceID, *tenantID, &userID, imageAttachments, contextInfo)
 
 	httpkit.OK(c, gin.H{
-		"status":     "processing",
+		"status":     "queued",
 		"message":    "Photo analysis started",
 		"photoCount": len(imageAttachments),
+		"run": transport.NewAutomationRunResponse(transport.AutomationRunParams{
+			JobID:           uuid.New(),
+			Kind:            transport.AutomationRunKindPhotoAnalysis,
+			Status:          "running",
+			LeadID:          leadID,
+			LeadServiceID:   serviceID,
+			Step:            "Photo analysis started",
+			ProgressPercent: 10,
+			PhotoCount:      intPtr(len(imageAttachments)),
+		}),
 	})
+}
+
+func intPtr(value int) *int {
+	return &value
 }
 
 func (h *PhotoAnalysisHandler) getIdentityAndTenant(c *gin.Context) (httpkit.Identity, *uuid.UUID, bool) {

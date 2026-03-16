@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -18,7 +17,6 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
-	apptools "portal_final_backend/internal/tools"
 	"portal_final_backend/platform/ai/moonshot"
 )
 
@@ -46,50 +44,17 @@ func NewDispatcher(apiKey string, modelName string, repo repository.LeadsReposit
 		CouncilService: NewDefaultMultiAgentCouncil(repo),
 	}
 
-	findPartnersTool, err := apptools.NewFindMatchingPartnersTool(func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
-		return handleFindMatchingPartners(ctx, GetDependencies(ctx), input)
-	})
+	findPartnersTool, err := createFindMatchingPartnersTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build FindMatchingPartners tool: %w", err)
 	}
 
-	updateStageTool, err := apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		return handleUpdatePipelineStage(ctx, GetDependencies(ctx), input)
-	})
+	updateStageTool, err := createUpdatePipelineStageTool(deps)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build UpdatePipelineStage tool: %w", err)
 	}
 
-	createOfferTool, err := apptools.NewCreatePartnerOfferTool(func(ctx tool.Context, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
-		deps := GetDependencies(ctx)
-		if deps.OfferCreator == nil {
-			return CreatePartnerOfferOutput{Success: false, Message: "Offer creation not configured"}, fmt.Errorf("offer creator not configured")
-		}
-
-		tenantID, serviceID, partnerID, hours, contextMessage, err := resolveOfferContext(deps, input.PartnerID, input.ExpirationHours)
-		if err != nil {
-			return CreatePartnerOfferOutput{Success: false, Message: contextMessage}, err
-		}
-
-		quoteID, err := deps.Repo.GetLatestAcceptedQuoteIDForService(ctx, serviceID, tenantID)
-		if err != nil {
-			return CreatePartnerOfferOutput{Success: false, Message: "Accepted quote not found for service"}, err
-		}
-
-		summary := truncateRunes(strings.TrimSpace(input.JobSummaryShort), 200)
-		result, err := deps.OfferCreator.CreateOfferFromQuote(ctx, tenantID, ports.CreateOfferFromQuoteParams{
-			PartnerID:       partnerID,
-			QuoteID:         quoteID,
-			ExpiresInHours:  hours,
-			JobSummaryShort: summary,
-		})
-		if err != nil {
-			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err
-		}
-
-		deps.MarkOfferCreated()
-		return CreatePartnerOfferOutput{Success: true, Message: "Offer created", OfferID: result.OfferID.String(), PublicToken: result.PublicToken}, nil
-	})
+	createOfferTool, err := createCreatePartnerOfferTool()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build CreatePartnerOffer tool: %w", err)
 	}
@@ -230,37 +195,19 @@ func (d *Dispatcher) ensureDispatchPostconditions(ctx context.Context, runID str
 func (d *Dispatcher) runWithPrompt(ctx context.Context, promptText string, leadID uuid.UUID) error {
 	sessionID := uuid.New().String()
 	userID := "dispatcher-" + leadID.String()
-
-	_, err := d.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   d.appName,
-		UserID:    userID,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create dispatcher session: %w", err)
-	}
-	defer func() {
-		_ = d.sessionService.Delete(ctx, &session.DeleteRequest{
-			AppName:   d.appName,
-			UserID:    userID,
-			SessionID: sessionID,
-		})
-	}()
-
-	userMessage := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{{Text: promptText}},
-	}
-
-	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	var toolTrace []observedToolTrace
-	err = consumeRunEvents(d.runner.Run(ctx, userID, sessionID, userMessage, runConfig), "dispatcher run failed", func(event *session.Event) {
-		_ = event
-	}, observeSessionToolTrace(&toolTrace))
-	logObservedToolTrace("dispatcher", userID, sessionID, toolTrace)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return runPromptSession(ctx, promptRunRequest{
+		SessionService:       d.sessionService,
+		Runner:               d.runner,
+		AppName:              d.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		UserMessage:          &genai.Content{Role: "user", Parts: []*genai.Part{{Text: promptText}}},
+		CreateSessionMessage: "failed to create dispatcher session",
+		RunFailureMessage:    "dispatcher run failed",
+		TraceLabel:           "dispatcher",
+	},
+		func(event *session.Event) {
+			_ = event
+		},
+	)
 }

@@ -254,6 +254,57 @@ type AIAnalysisResponse struct {
 	CreatedAt               time.Time          `json:"createdAt"`
 }
 
+type AutomationRunKind string
+
+const (
+	AutomationRunKindLeadAnalysis  AutomationRunKind = "lead_analysis"
+	AutomationRunKindPhotoAnalysis AutomationRunKind = "photo_analysis"
+)
+
+type AutomationRunResponse struct {
+	JobID           uuid.UUID         `json:"jobId"`
+	Kind            AutomationRunKind `json:"kind"`
+	Status          string            `json:"status"`
+	Step            string            `json:"step"`
+	ProgressPercent int               `json:"progressPercent"`
+	LeadID          uuid.UUID         `json:"leadId"`
+	LeadServiceID   uuid.UUID         `json:"leadServiceId"`
+	StartedAt       time.Time         `json:"startedAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
+	FinishedAt      *time.Time        `json:"finishedAt,omitempty"`
+	Message         *string           `json:"message,omitempty"`
+	PhotoCount      *int              `json:"photoCount,omitempty"`
+}
+
+type AutomationRunParams struct {
+	JobID           uuid.UUID
+	Kind            AutomationRunKind
+	Status          string
+	LeadID          uuid.UUID
+	LeadServiceID   uuid.UUID
+	Step            string
+	ProgressPercent int
+	Message         *string
+	PhotoCount      *int
+}
+
+func NewAutomationRunResponse(params AutomationRunParams) AutomationRunResponse {
+	now := time.Now().UTC()
+	return AutomationRunResponse{
+		JobID:           params.JobID,
+		Kind:            params.Kind,
+		Status:          params.Status,
+		Step:            params.Step,
+		ProgressPercent: params.ProgressPercent,
+		LeadID:          params.LeadID,
+		LeadServiceID:   params.LeadServiceID,
+		StartedAt:       now,
+		UpdatedAt:       now,
+		Message:         params.Message,
+		PhotoCount:      params.PhotoCount,
+	}
+}
+
 func ToAIAnalysisResponse(analysis repository.AIAnalysis) AIAnalysisResponse {
 	return AIAnalysisResponse{
 		ID:                      analysis.ID,
