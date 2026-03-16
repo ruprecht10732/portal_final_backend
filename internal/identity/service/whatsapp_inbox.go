@@ -841,6 +841,14 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 	if cached, ok := s.cacheWhatsAppMediaDownload(ctx, organizationID, conversationID, externalMessageID, message, conversation, deviceID); ok {
 		return cached, nil
 	}
+	message = s.persistWhatsAppMediaDownloadResult(ctx, organizationID, externalMessageID, message, WhatsAppMediaDownloadResult{
+		MessageID:   result.MessageID,
+		MediaType:   result.MediaType,
+		Filename:    result.Filename,
+		FilePath:    result.FilePath,
+		FileSize:    result.FileSize,
+		DownloadURL: result.DownloadURL,
+	})
 
 	return WhatsAppMediaDownloadResult{
 		MessageID:   result.MessageID,
@@ -1710,6 +1718,27 @@ func mergeWhatsAppMediaResponseMetadata(raw json.RawMessage, result WhatsAppMedi
 	return encoded, nil
 }
 
+func (s *Service) persistWhatsAppMediaDownloadResult(ctx context.Context, organizationID uuid.UUID, externalMessageID string, message repository.WhatsAppMessage, result WhatsAppMediaDownloadResult) repository.WhatsAppMessage {
+	if s == nil || s.repo == nil {
+		return message
+	}
+	trimmedID := strings.TrimSpace(externalMessageID)
+	if trimmedID == "" {
+		return message
+	}
+	metadata, err := mergeWhatsAppMediaResponseMetadata(message.Metadata, result)
+	if err != nil {
+		log.Printf("whatsapp inbox: merge media metadata failed organization=%s message=%s err=%v", organizationID, trimmedID, err)
+		return message
+	}
+	_, updatedMessage, err := s.repo.UpdateWhatsAppMessageByExternalID(ctx, organizationID, trimmedID, message.Body, metadata)
+	if err != nil {
+		log.Printf("whatsapp inbox: persist media metadata failed organization=%s message=%s err=%v", organizationID, trimmedID, err)
+		return message
+	}
+	return updatedMessage
+}
+
 func sanitizeWhatsAppMediaPathSegment(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -1751,27 +1780,33 @@ func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID
 	}
 	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, conversation.PhoneNumber)
 	if err != nil {
+		log.Printf("whatsapp inbox: media file download failed organization=%s conversation=%s message=%s device=%s phone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, conversation.PhoneNumber, err)
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	contentType := normalizeWhatsAppCachedContentType(fileResult.ContentType, fileResult.MediaType, fileResult.Filename, fileResult.FilePath)
 	if contentType == "" {
+		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=unknown-content-type mediaType=%q filename=%q filePath=%q", organizationID, conversationID, externalMessageID, fileResult.MediaType, fileResult.Filename, fileResult.FilePath)
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	if err := s.storage.ValidateContentType(contentType); err != nil {
+		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=invalid-content-type contentType=%q err=%v", organizationID, conversationID, externalMessageID, contentType, err)
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	sizeBytes := int64(len(fileResult.Data))
 	if err := s.storage.ValidateFileSize(sizeBytes); err != nil {
+		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=invalid-size sizeBytes=%d err=%v", organizationID, conversationID, externalMessageID, sizeBytes, err)
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	fileName := chooseWhatsAppMediaFilename(fileResult, message)
 	folder := fmt.Sprintf("%s/whatsapp-media/%s/%s", organizationID.String(), conversationID.String(), sanitizeWhatsAppMediaPathSegment(externalMessageID))
 	fileKey, err := s.storage.UploadFile(ctx, s.attachmentsBucket, folder, fileName, contentType, bytes.NewReader(fileResult.Data), sizeBytes)
 	if err != nil {
+		log.Printf("whatsapp inbox: media cache upload failed organization=%s conversation=%s message=%s key=%s/%s err=%v", organizationID, conversationID, externalMessageID, folder, fileName, err)
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	presigned, err := s.storage.GenerateDownloadURL(ctx, s.attachmentsBucket, fileKey)
 	if err != nil {
+		log.Printf("whatsapp inbox: media cache presign failed organization=%s conversation=%s message=%s key=%s err=%v", organizationID, conversationID, externalMessageID, fileKey, err)
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	metadata, err := mergeWhatsAppMediaCacheMetadata(message.Metadata, whatsAppMediaCacheMetadata{
@@ -1785,7 +1820,11 @@ func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID
 		_, updatedMessage, updateErr := s.repo.UpdateWhatsAppMessageByExternalID(ctx, organizationID, externalMessageID, message.Body, metadata)
 		if updateErr == nil {
 			message = updatedMessage
+		} else {
+			log.Printf("whatsapp inbox: media cache metadata update failed organization=%s conversation=%s message=%s err=%v", organizationID, conversationID, externalMessageID, updateErr)
 		}
+	} else {
+		log.Printf("whatsapp inbox: media cache metadata merge failed organization=%s conversation=%s message=%s err=%v", organizationID, conversationID, externalMessageID, err)
 	}
 	messageID := strings.TrimSpace(fileResult.MessageID)
 	if messageID == "" && message.ExternalMessageID != nil {
