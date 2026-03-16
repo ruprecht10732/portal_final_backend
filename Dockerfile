@@ -1,11 +1,15 @@
 # Build stage
 FROM golang:1.25-alpine AS builder
 
+ARG WHISPER_CPP_COMMIT=30c5194c9691
+
 RUN apk add --no-cache cmake make g++ git linux-headers
 
 # Build whisper.cpp static libraries
-RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp \
-    && cd /tmp/whisper.cpp && mkdir build && cd build \
+RUN git clone https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp \
+    && cd /tmp/whisper.cpp \
+    && git checkout "$WHISPER_CPP_COMMIT" \
+    && mkdir build && cd build \
     && cmake .. -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF \
     && make -j$(nproc) \
     && mkdir -p /usr/local/lib/whisper /usr/local/include/whisper \
