@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"portal_final_backend/internal/waagent"
+	"portal_final_backend/internal/whatsappagent"
 	"portal_final_backend/platform/httpkit"
 
 	"github.com/gin-gonic/gin"
@@ -272,7 +272,7 @@ func (h *Handler) handleAgentDeviceMessage(c *gin.Context, request WhatsAppWebho
 		return
 	}
 
-	go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), waagent.CurrentInboundMessage{
+	go h.agentHandler.HandleIncomingMessage(context.WithoutCancel(c.Request.Context()), whatsappagent.CurrentInboundMessage{
 		ExternalMessageID: strings.TrimSpace(payload.ID),
 		PhoneNumber:       messageAddress,
 		DisplayName:       payload.FromName,

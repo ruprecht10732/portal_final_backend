@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"portal_final_backend/internal/waagent"
+	"portal_final_backend/internal/whatsappagent"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -83,11 +83,11 @@ func (f *fakeWhatsAppInbox) ApplyWhatsAppMessageMutation(_ context.Context, mess
 }
 
 type fakeWhatsAppAgentHandler struct {
-	lastInbound *waagent.CurrentInboundMessage
+	lastInbound *whatsappagent.CurrentInboundMessage
 	called      chan struct{}
 }
 
-func (f *fakeWhatsAppAgentHandler) HandleIncomingMessage(_ context.Context, inbound waagent.CurrentInboundMessage) {
+func (f *fakeWhatsAppAgentHandler) HandleIncomingMessage(_ context.Context, inbound whatsappagent.CurrentInboundMessage) {
 	copy := inbound
 	f.lastInbound = &copy
 	if f.called != nil {
@@ -559,12 +559,12 @@ func TestHandleWhatsAppWebhookAgentDeviceIgnoresOutgoingMessages(t *testing.T) {
 
 func TestModuleSetAgentHandlerDropsTypedNilService(t *testing.T) {
 	module := &Module{handler: NewHandler(nil, nil, nil, nil)}
-	var service *waagent.Service
+	var service *whatsappagent.Service
 
 	module.SetAgentHandler(service)
 
 	if module.handler.agentHandler != nil {
-		t.Fatal("expected typed nil waagent service to be dropped")
+		t.Fatal("expected typed nil whatsappagent service to be dropped")
 	}
 }
 

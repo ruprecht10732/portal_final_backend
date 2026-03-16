@@ -29,9 +29,9 @@ import (
 	"portal_final_backend/internal/partners"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
-	"portal_final_backend/internal/waagent"
-	waagentdb "portal_final_backend/internal/waagent/db"
 	"portal_final_backend/internal/whatsapp"
+	"portal_final_backend/internal/whatsappagent"
+	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
 	"portal_final_backend/platform/ai/transcription"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/db"
@@ -86,31 +86,31 @@ func initStorageOrPanic(ctx context.Context, cfg *config.Config, log *logger.Log
 	return storageSvc
 }
 
-type waagentTranscriberAdapter struct {
+type whatsappagentTranscriberAdapter struct {
 	client *transcription.Client
 }
 
-func (a waagentTranscriberAdapter) Name() string {
+func (a whatsappagentTranscriberAdapter) Name() string {
 	return a.client.Name()
 }
 
-func (a waagentTranscriberAdapter) Transcribe(ctx context.Context, input waagent.AudioTranscriptionInput) (waagent.AudioTranscriptionResult, error) {
+func (a whatsappagentTranscriberAdapter) Transcribe(ctx context.Context, input whatsappagent.AudioTranscriptionInput) (whatsappagent.AudioTranscriptionResult, error) {
 	result, err := a.client.Transcribe(ctx, transcription.Input{
 		Filename:    input.Filename,
 		ContentType: input.ContentType,
 		Data:        input.Data,
 	})
 	if err != nil {
-		return waagent.AudioTranscriptionResult{}, err
+		return whatsappagent.AudioTranscriptionResult{}, err
 	}
-	return waagent.AudioTranscriptionResult{
+	return whatsappagent.AudioTranscriptionResult{
 		Text:       result.Text,
 		Language:   result.Language,
 		Confidence: result.Confidence,
 	}, nil
 }
 
-func initAudioTranscriber(log *logger.Logger) (waagent.AudioTranscriber, func()) {
+func initAudioTranscriber(log *logger.Logger) (whatsappagent.AudioTranscriber, func()) {
 	noop := func() { /* no model loaded, nothing to close */ }
 	client, err := transcription.NewClient()
 	if err != nil {
@@ -118,7 +118,7 @@ func initAudioTranscriber(log *logger.Logger) (waagent.AudioTranscriber, func())
 		return nil, noop
 	}
 	log.Info("whisper.cpp transcription initialized", "model", transcription.DefaultModelPath)
-	return waagentTranscriberAdapter{client: client}, func() { _ = client.Close() }
+	return whatsappagentTranscriberAdapter{client: client}, func() { _ = client.Close() }
 }
 
 func main() {
@@ -270,41 +270,41 @@ func main() {
 	audioTranscriber, closeTranscriber := initAudioTranscriber(log)
 	defer closeTranscriber()
 	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository(), eventBus)
-	waagentModule, err := waagent.NewModule(pool, waagent.ModuleConfig{
+	whatsappagentModule, err := whatsappagent.NewModule(pool, whatsappagent.ModuleConfig{
 		MoonshotAPIKey: cfg.MoonshotAPIKey,
 		LLMModel:       cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent),
 		WebhookSecret:  cfg.GetWhatsAppWebhookSecret(),
-	}, waagent.ModuleDependencies{
+	}, whatsappagent.ModuleDependencies{
 		WhatsAppClient:               whatsAppClient,
-		QuotesReader:                 adapters.NewWAAgentQuotesAdapter(quotesModule.Service()),
-		AppointmentsReader:           adapters.NewWAAgentAppointmentsAdapter(appointmentsModule.Service),
-		LeadSearchReader:             adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		LeadDetailsReader:            adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		NavigationLinkReader:         adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		CatalogSearchReader:          adapters.NewWAAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
-		LeadMutationWriter:           adapters.NewWAAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
-		QuoteWorkflowWriter:          adapters.NewWAAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
-		CurrentInboundPhotoAttacher:  adapters.NewWAAgentCurrentInboundPhotoAdapter(whatsAppClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), inboxLeadActions, waagentdb.New(pool)),
+		QuotesReader:                 adapters.NewWhatsAppAgentQuotesAdapter(quotesModule.Service()),
+		AppointmentsReader:           adapters.NewWhatsAppAgentAppointmentsAdapter(appointmentsModule.Service),
+		LeadSearchReader:             adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		LeadDetailsReader:            adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		NavigationLinkReader:         adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		CatalogSearchReader:          adapters.NewWhatsAppAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
+		LeadMutationWriter:           adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		QuoteWorkflowWriter:          adapters.NewWhatsAppAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
+		CurrentInboundPhotoAttacher:  adapters.NewWhatsAppAgentCurrentInboundPhotoAdapter(whatsAppClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), inboxLeadActions, whatsappagentdb.New(pool)),
 		Storage:                      storageSvc,
 		AttachmentBucket:             cfg.GetMinioBucketLeadServiceAttachments(),
 		TranscriptionScheduler:       reminderScheduler,
 		AudioTranscriber:             audioTranscriber,
 		InboxMessageSync:             identitySvc,
-		VisitSlotReader:              adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
-		VisitMutationWriter:          adapters.NewWAAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
-		PartnerPhoneReader:           adapters.NewWAAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
-		PartnerJobReader:             adapters.NewWAAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
-		AppointmentVisitReportWriter: adapters.NewWAAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
-		AppointmentStatusWriter:      adapters.NewWAAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
+		VisitSlotReader:              adapters.NewWhatsAppAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
+		VisitMutationWriter:          adapters.NewWhatsAppAgentVisitActionsAdapter(adapters.NewAppointmentSlotAdapter(appointmentsModule.Service), appointmentsModule.Service, leadsModule.Repository()),
+		PartnerPhoneReader:           adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
+		PartnerJobReader:             adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
+		AppointmentVisitReportWriter: adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
+		AppointmentStatusWriter:      adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
 		RedisClient:                  orchestratorLockRedis,
 		InboxWriter:                  identitySvc,
 		Logger:                       log,
 	})
 	if err != nil {
-		log.Error("failed to initialize waagent module", "error", err)
-		panic("failed to initialize waagent module: " + err.Error())
+		log.Error("failed to initialize whatsappagent module", "error", err)
+		panic("failed to initialize whatsappagent module: " + err.Error())
 	}
-	worker.SetWAAgentVoiceTranscriptionProcessor(waagentModule.Service())
+	worker.SetWAAgentVoiceTranscriptionProcessor(whatsappagentModule.Service())
 
 	worker.Run(ctx)
 }

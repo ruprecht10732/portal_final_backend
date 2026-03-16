@@ -256,7 +256,7 @@ type CatalogGapReader interface {
 // =====================================
 
 // LeadFuzzySearcher performs pg_trgm similarity-based lead search.
-// Scoped to the waagent package; not part of the general-purpose LeadReader.
+// Scoped to the whatsappagent package; not part of the general-purpose LeadReader.
 type LeadFuzzySearcher interface {
 	FuzzySearchLeads(ctx context.Context, organizationID uuid.UUID, query string, limit int) ([]FuzzyLeadMatch, error)
 	QuoteBasedLeadSearch(ctx context.Context, organizationID uuid.UUID, query string, limit int) ([]FuzzyLeadMatch, error)

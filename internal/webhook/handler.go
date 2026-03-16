@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"portal_final_backend/internal/waagent"
+	"portal_final_backend/internal/whatsappagent"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/validator"
 
@@ -29,7 +29,7 @@ var gtmContainerIDRegex = regexp.MustCompile(`^GTM-[A-Z0-9]+$`)
 
 // WhatsAppAgentHandler handles incoming WhatsApp messages for the autonomous AI agent.
 type WhatsAppAgentHandler interface {
-	HandleIncomingMessage(ctx context.Context, inbound waagent.CurrentInboundMessage)
+	HandleIncomingMessage(ctx context.Context, inbound whatsappagent.CurrentInboundMessage)
 }
 
 // Handler handles webhook HTTP requests.

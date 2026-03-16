@@ -309,7 +309,7 @@ func buildHumanFeedbackMemoryDocument(feedback leadrepo.HumanFeedback) string {
 
 func (w *Worker) handleWAAgentVoiceTranscription(ctx context.Context, task *asynq.Task) error {
 	if w.voice == nil {
-		return fmt.Errorf("waagent voice transcription processor is not configured")
+		return fmt.Errorf("whatsappagent voice transcription processor is not configured")
 	}
 
 	payload, err := ParseWAAgentVoiceTranscriptionPayload(task)

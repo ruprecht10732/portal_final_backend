@@ -184,12 +184,12 @@ sql:
 
   # WhatsApp Agent Domain – autonomous WhatsApp agent users, invite codes, and messages
   - schema: "migrations"
-    queries: "internal/waagent/sql"
+    queries: "internal/whatsappagent/sql"
     engine: "postgresql"
     gen:
       go:
-        package: "waagentdb"
-        out: "internal/waagent/db"
+        package: "whatsappagentdb"
+        out: "internal/whatsappagent/db"
         sql_package: "pgx/v5"
         emit_json_tags: true
         emit_prepared_queries: false

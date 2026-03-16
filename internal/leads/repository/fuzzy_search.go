@@ -80,7 +80,7 @@ func (r *Repository) FuzzySearchLeads(ctx context.Context, organizationID uuid.U
 		// If pg_trgm is not installed yet the function word_similarity won't exist.
 		// Return an empty result instead of propagating the error so the caller can
 		// fall back to the standard ILIKE search.
-		log.Printf("waagent: FuzzySearchLeads SQL error org=%s query=%q: %v", organizationID, query, err)
+		log.Printf("whatsappagent: FuzzySearchLeads SQL error org=%s query=%q: %v", organizationID, query, err)
 		return nil, nil //nolint:nilerr
 	}
 	defer rows.Close()
@@ -159,7 +159,7 @@ func (r *Repository) QuoteBasedLeadSearch(ctx context.Context, organizationID uu
 	}
 	rows, err := r.pool.Query(ctx, quoteBasedLeadSearchQuery, toPgUUID(organizationID), query, int32(limit))
 	if err != nil {
-		log.Printf("waagent: QuoteBasedLeadSearch SQL error org=%s query=%q: %v", organizationID, query, err)
+		log.Printf("whatsappagent: QuoteBasedLeadSearch SQL error org=%s query=%q: %v", organizationID, query, err)
 		return nil, nil //nolint:nilerr
 	}
 	defer rows.Close()
