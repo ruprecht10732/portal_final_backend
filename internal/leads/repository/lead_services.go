@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	leadsdb "portal_final_backend/internal/leads/db"
+	"portal_final_backend/internal/leads/domain"
 )
 
 var ErrServiceNotFound = errors.New("lead service not found")
@@ -190,6 +192,14 @@ func (r *Repository) ResetGatekeeperNurturingLoopState(ctx context.Context, id u
 }
 
 func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error) {
+	svc, err := r.GetLeadServiceByID(ctx, id, organizationID)
+	if err != nil {
+		return LeadService{}, err
+	}
+	if reason := domain.ValidateStateCombination(svc.Status, stage); reason != "" {
+		return LeadService{}, fmt.Errorf("invalid state combination: %s", reason)
+	}
+
 	row, err := r.queries.UpdatePipelineStage(ctx, leadsdb.UpdatePipelineStageParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID), PipelineStage: leadsdb.PipelineStage(stage)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LeadService{}, ErrServiceNotFound
@@ -200,9 +210,23 @@ func (r *Repository) UpdatePipelineStage(ctx context.Context, id uuid.UUID, orga
 	return leadServiceFromRow(leadServiceFields{ID: row.ID, LeadID: row.LeadID, OrganizationID: row.OrganizationID, ServiceType: row.ServiceType, Status: row.Status, PipelineStage: string(row.PipelineStage), ConsumerNote: row.ConsumerNote, Source: row.Source, CustomerPreferences: row.CustomerPreferences, GatekeeperNurturingLoopCount: row.GatekeeperNurturingLoopCount, GatekeeperNurturingLoopFingerprint: row.GatekeeperNurturingLoopFingerprint, ExtraWorkAmountCents: row.ExtraWorkAmountCents, ExtraWorkNotes: row.ExtraWorkNotes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
-// CloseAllActiveServices marks all non-terminal services for a lead as Completed (pipeline stage).
+// CloseAllActiveServices marks all non-terminal services for a lead as Completed/Completed.
 func (r *Repository) CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error {
-	return r.queries.CloseAllActiveServices(ctx, leadsdb.CloseAllActiveServicesParams{LeadID: toPgUUID(leadID), OrganizationID: toPgUUID(organizationID)})
+	services, err := r.ListLeadServices(ctx, leadID, organizationID)
+	if err != nil {
+		return err
+	}
+
+	for _, svc := range services {
+		if domain.IsTerminal(svc.Status, svc.PipelineStage) {
+			continue
+		}
+		if _, err := r.UpdateServiceStatusAndPipelineStage(ctx, svc.ID, organizationID, domain.LeadStatusCompleted, domain.PipelineStageCompleted); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *Repository) UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error {

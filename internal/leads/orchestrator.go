@@ -229,12 +229,8 @@ func (o *Orchestrator) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serv
 
 	o.log.Info("orchestrator: auto-disqualifying Junk lead", "leadId", leadID, "serviceId", serviceID)
 
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, tenantID, domain.LeadStatusDisqualified); err != nil {
-		o.log.Error("orchestrator: failed to set service status to Disqualified", "error", err)
-		return
-	}
-	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageLost); err != nil {
-		o.log.Error("orchestrator: failed to set pipeline stage to Lost", "error", err)
+	if _, _, err := o.updateServiceState(ctx, serviceID, tenantID, svc.Status, svc.PipelineStage, domain.LeadStatusDisqualified, domain.PipelineStageLost); err != nil {
+		o.log.Error("orchestrator: failed to auto-disqualify Junk lead", "error", err)
 		return
 	}
 
@@ -720,8 +716,10 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 	}
 	serviceID := *evt.LeadServiceID
 
+	oldStatus := ""
 	oldStage := ""
 	if svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, evt.OrganizationID); err == nil {
+		oldStatus = svc.Status
 		oldStage = svc.PipelineStage
 	}
 
@@ -740,13 +738,9 @@ func (o *Orchestrator) OnQuoteAccepted(ctx context.Context, evt events.QuoteAcce
 		}.ToMap(),
 	})
 
-	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageFulfillment); err != nil {
-		o.log.Error("orchestrator: failed to advance stage after quote acceptance", "error", err)
+	if _, _, err := o.updateServiceState(ctx, serviceID, evt.OrganizationID, oldStatus, oldStage, domain.LeadStatusInProgress, domain.PipelineStageFulfillment); err != nil {
+		o.log.Error("orchestrator: failed to advance state after quote acceptance", "error", err)
 		return
-	}
-
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusInProgress); err != nil {
-		o.log.Error("orchestrator: failed to set service status after quote acceptance", "error", err)
 	}
 
 	if evt.TotalCents > 0 {
@@ -773,8 +767,10 @@ func (o *Orchestrator) OnQuoteRejected(ctx context.Context, evt events.QuoteReje
 	}
 
 	serviceID := *evt.LeadServiceID
+	oldStatus := ""
 	oldStage := ""
 	if svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, evt.OrganizationID); err == nil {
+		oldStatus = svc.Status
 		oldStage = svc.PipelineStage
 	}
 
@@ -799,8 +795,8 @@ func (o *Orchestrator) OnQuoteRejected(ctx context.Context, evt events.QuoteReje
 		}.ToMap(),
 	})
 
-	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageLost); err != nil {
-		o.log.Error("orchestrator: failed to advance stage after quote rejection", "error", err)
+	if _, _, err := o.updateServiceState(ctx, serviceID, evt.OrganizationID, oldStatus, oldStage, domain.LeadStatusDisqualified, domain.PipelineStageLost); err != nil {
+		o.log.Error("orchestrator: failed to advance state after quote rejection", "error", err)
 		return
 	}
 
@@ -835,13 +831,9 @@ func (o *Orchestrator) OnQuoteSent(ctx context.Context, evt events.QuoteSent) {
 	}
 
 	oldStage := svc.PipelineStage
-	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, evt.OrganizationID, domain.PipelineStageProposal); err != nil {
-		o.log.Error("orchestrator: failed to advance stage after quote sent", "error", err)
+	if _, _, err := o.updateServiceState(ctx, serviceID, evt.OrganizationID, svc.Status, svc.PipelineStage, domain.LeadStatusPending, domain.PipelineStageProposal); err != nil {
+		o.log.Error("orchestrator: failed to advance state after quote sent", "error", err)
 		return
-	}
-
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, evt.OrganizationID, domain.LeadStatusPending); err != nil {
-		o.log.Error("orchestrator: failed to set service status after quote sent", "error", err)
 	}
 
 	o.eventBus.Publish(ctx, events.PipelineStageChanged{
@@ -1109,8 +1101,16 @@ func (o *Orchestrator) applyReconciledState(ctx context.Context, p applyReconcil
 		return
 	}
 
-	stageChanged := o.applyReconciledStage(ctx, p.LeadID, p.ServiceID, p.TenantID, oldStage, p.Desired.Stage)
-	statusChanged := o.applyReconciledStatus(ctx, p.ServiceID, p.TenantID, oldStatus, p.Desired.Status)
+	stageChanged, statusChanged, err := o.updateServiceState(ctx, p.ServiceID, p.TenantID, oldStatus, oldStage, p.Desired.Status, p.Desired.Stage)
+	if err != nil {
+		o.log.Error("orchestrator: failed to apply reconciled state",
+			"error", err,
+			"serviceId", p.ServiceID,
+			"desiredStage", p.Desired.Stage,
+			"desiredStatus", p.Desired.Status,
+		)
+		return
+	}
 
 	// Visit reports represent a milestone that must be exportable (Visit_Completed)
 	// without introducing a legacy or terminal status value.
@@ -1128,6 +1128,16 @@ func (o *Orchestrator) applyReconciledState(ctx context.Context, p applyReconcil
 
 	if !stageChanged && !statusChanged {
 		return
+	}
+	if stageChanged {
+		o.eventBus.Publish(ctx, events.PipelineStageChanged{
+			BaseEvent:     events.NewBaseEvent(),
+			LeadID:        p.LeadID,
+			LeadServiceID: p.ServiceID,
+			TenantID:      p.TenantID,
+			OldStage:      oldStage,
+			NewStage:      p.Desired.Stage,
+		})
 	}
 
 	reason := p.Desired.Reason
@@ -1162,34 +1172,42 @@ func (o *Orchestrator) applyReconciledState(ctx context.Context, p applyReconcil
 	)
 }
 
-func (o *Orchestrator) applyReconciledStage(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, oldStage, newStage string) bool {
-	if newStage == "" || newStage == oldStage {
-		return false
+func (o *Orchestrator) updateServiceState(ctx context.Context, serviceID, tenantID uuid.UUID, oldStatus, oldStage, newStatus, newStage string) (bool, bool, error) {
+	targetStatus := newStatus
+	if targetStatus == "" {
+		targetStatus = oldStatus
 	}
-	if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, tenantID, newStage); err != nil {
-		o.log.Error("orchestrator: failed to reconcile stage", "error", err)
-		return false
+	targetStage := newStage
+	if targetStage == "" {
+		targetStage = oldStage
 	}
-	o.eventBus.Publish(ctx, events.PipelineStageChanged{
-		BaseEvent:     events.NewBaseEvent(),
-		LeadID:        leadID,
-		LeadServiceID: serviceID,
-		TenantID:      tenantID,
-		OldStage:      oldStage,
-		NewStage:      newStage,
-	})
-	return true
-}
 
-func (o *Orchestrator) applyReconciledStatus(ctx context.Context, serviceID, tenantID uuid.UUID, oldStatus, newStatus string) bool {
-	if newStatus == "" || newStatus == oldStatus {
-		return false
+	if reason := domain.ValidateStateCombination(targetStatus, targetStage); reason != "" {
+		return false, false, fmt.Errorf("invalid state combination: %s", reason)
 	}
-	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, tenantID, newStatus); err != nil {
-		o.log.Error("orchestrator: failed to reconcile status", "error", err)
-		return false
+
+	statusChanged := targetStatus != "" && targetStatus != oldStatus
+	stageChanged := targetStage != "" && targetStage != oldStage
+	if !statusChanged && !stageChanged {
+		return false, false, nil
 	}
-	return true
+
+	if statusChanged && stageChanged {
+		if _, err := o.repo.UpdateServiceStatusAndPipelineStage(ctx, serviceID, tenantID, targetStatus, targetStage); err != nil {
+			return false, false, err
+		}
+		return true, true, nil
+	}
+	if stageChanged {
+		if _, err := o.repo.UpdatePipelineStage(ctx, serviceID, tenantID, targetStage); err != nil {
+			return false, false, err
+		}
+		return true, false, nil
+	}
+	if _, err := o.repo.UpdateServiceStatus(ctx, serviceID, tenantID, targetStatus); err != nil {
+		return false, false, err
+	}
+	return false, true, nil
 }
 
 type maybeWriteTimelineParams struct {

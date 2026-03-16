@@ -340,11 +340,8 @@ func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, servic
 
 	log.Printf("gatekeeper: auto-disqualifying Junk lead (service=%s lead=%s)", serviceID, leadID)
 
-	if _, err := g.repo.UpdatePipelineStage(ctx, serviceID, tenantID, domain.PipelineStageLost); err != nil {
-		log.Printf("gatekeeper: failed to set pipeline stage to Lost during junk auto-disqualify: %v", err)
-	}
-	if _, err := g.repo.UpdateServiceStatus(ctx, serviceID, tenantID, domain.LeadStatusDisqualified); err != nil {
-		log.Printf("gatekeeper: failed to set service status to Disqualified during junk auto-disqualify: %v", err)
+	if _, err := g.repo.UpdateServiceStatusAndPipelineStage(ctx, serviceID, tenantID, domain.LeadStatusDisqualified, domain.PipelineStageLost); err != nil {
+		log.Printf("gatekeeper: failed to set service state to Disqualified/Lost during junk auto-disqualify: %v", err)
 		return
 	}
 
