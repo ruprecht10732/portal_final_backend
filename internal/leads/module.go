@@ -906,6 +906,8 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	// All RAC_leads routes require authentication
 	leadsGroup := ctx.Protected.Group("/leads")
 	m.handler.RegisterRoutes(leadsGroup)
+	adminLeadsGroup := ctx.Admin.Group("/leads")
+	m.handler.RegisterAdminRoutes(adminLeadsGroup)
 
 	// Attachment routes: /RAC_leads/:id/services/:serviceId/attachments
 	attachmentsGroup := leadsGroup.Group("/:id/services/:serviceId/attachments")

@@ -298,6 +298,238 @@ func (s *Service) Create(ctx context.Context, req transport.CreateLeadRequest, t
 	return resp, nil
 }
 
+func (s *Service) TransferToOrganization(ctx context.Context, id uuid.UUID, sourceTenantID uuid.UUID, destinationTenantID uuid.UUID, actorID uuid.UUID) (transport.TransferLeadResponse, error) {
+	if sourceTenantID == destinationTenantID {
+		return transport.TransferLeadResponse{}, apperr.Validation("destination organization must differ from source organization")
+	}
+
+	lead, services, err := s.loadTransferLeadContext(ctx, id, sourceTenantID)
+	if err != nil {
+		return transport.TransferLeadResponse{}, err
+	}
+
+	createdLead, err := s.cloneLeadToOrganization(ctx, lead, services, destinationTenantID)
+	if err != nil {
+		return transport.TransferLeadResponse{}, err
+	}
+	s.recordLeadTransferAudit(ctx, leadTransferAuditParams{
+		leadID:                lead.ID,
+		serviceID:             nil,
+		tenantID:              sourceTenantID,
+		relatedOrganizationID: destinationTenantID,
+		actorID:               actorID,
+		action:                "transferred_out",
+		title:                 "Lead transferred to another organization",
+	})
+	s.recordLeadTransferAudit(ctx, leadTransferAuditParams{
+		leadID:                createdLead.ID,
+		serviceID:             currentLeadServiceID(createdLead),
+		tenantID:              destinationTenantID,
+		relatedOrganizationID: sourceTenantID,
+		actorID:               actorID,
+		action:                "transferred_in",
+		title:                 "Lead received from another organization",
+	})
+
+	if err := s.Delete(ctx, id, sourceTenantID); err != nil {
+		return transport.TransferLeadResponse{}, err
+	}
+
+	destinationLead, destinationServices, err := s.repo.GetByIDWithServices(ctx, createdLead.ID, destinationTenantID)
+	if err != nil {
+		return transport.TransferLeadResponse{}, err
+	}
+
+	return transport.TransferLeadResponse{
+		Lead:                      ToLeadResponseWithServices(destinationLead, destinationServices),
+		DestinationOrganizationID: destinationTenantID,
+	}, nil
+}
+
+type leadTransferAuditParams struct {
+	leadID                uuid.UUID
+	serviceID             *uuid.UUID
+	tenantID              uuid.UUID
+	relatedOrganizationID uuid.UUID
+	actorID               uuid.UUID
+	action                string
+	title                 string
+}
+
+func (s *Service) recordLeadTransferAudit(ctx context.Context, params leadTransferAuditParams) {
+	_ = s.repo.AddActivity(ctx, params.leadID, params.tenantID, params.actorID, params.action, map[string]interface{}{
+		"relatedOrganizationId": params.relatedOrganizationID,
+	})
+	_, _ = s.repo.CreateTimelineEvent(ctx, repository.CreateTimelineEventParams{
+		LeadID:         params.leadID,
+		ServiceID:      params.serviceID,
+		OrganizationID: params.tenantID,
+		ActorType:      repository.ActorTypeSystem,
+		ActorName:      repository.ActorNameOrchestrator,
+		EventType:      "lead_transfer",
+		Title:          params.title,
+		Summary:        repository.TruncateSummary(params.title, repository.TimelineSummaryMaxLen),
+		Metadata: map[string]any{
+			"relatedOrganizationId": params.relatedOrganizationID,
+			"action":                params.action,
+		},
+		Visibility: repository.TimelineVisibilityInternal,
+	})
+}
+
+func currentLeadServiceID(lead transport.LeadResponse) *uuid.UUID {
+	if lead.CurrentService == nil {
+		return nil
+	}
+	return &lead.CurrentService.ID
+}
+
+func (s *Service) loadTransferLeadContext(ctx context.Context, id uuid.UUID, tenantID uuid.UUID) (repository.Lead, []repository.LeadService, error) {
+	lead, services, err := s.repo.GetByIDWithServices(ctx, id, tenantID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return repository.Lead{}, nil, apperr.NotFound(leadNotFoundMsg)
+		}
+		return repository.Lead{}, nil, err
+	}
+	return lead, services, nil
+}
+
+func (s *Service) cloneLeadToOrganization(ctx context.Context, lead repository.Lead, services []repository.LeadService, destinationTenantID uuid.UUID) (transport.LeadResponse, error) {
+	orderedServices := orderServicesForTransfer(services)
+	if len(orderedServices) == 0 {
+		return transport.LeadResponse{}, apperr.Validation("lead has no services to transfer")
+	}
+
+	createdLead, err := s.createTransferredLead(ctx, lead, orderedServices[0], destinationTenantID)
+	if err != nil {
+		return transport.LeadResponse{}, err
+	}
+
+	if err := s.appendTransferredServices(ctx, createdLead, orderedServices[1:], destinationTenantID); err != nil {
+		return transport.LeadResponse{}, err
+	}
+
+	return createdLead, nil
+}
+
+func (s *Service) createTransferredLead(ctx context.Context, lead repository.Lead, service repository.LeadService, destinationTenantID uuid.UUID) (transport.LeadResponse, error) {
+	createdLead, err := s.Create(ctx, transport.CreateLeadRequest{
+		FirstName:       lead.ConsumerFirstName,
+		LastName:        lead.ConsumerLastName,
+		Phone:           lead.ConsumerPhone,
+		Email:           summaryValue(primaryString(lead.ConsumerEmail)),
+		ConsumerRole:    transport.ConsumerRole(lead.ConsumerRole),
+		Street:          lead.AddressStreet,
+		HouseNumber:     lead.AddressHouseNumber,
+		ZipCode:         lead.AddressZipCode,
+		City:            lead.AddressCity,
+		Latitude:        lead.Latitude,
+		Longitude:       lead.Longitude,
+		ServiceType:     transport.ServiceType(service.ServiceType),
+		ConsumerNote:    summaryValue(service.ConsumerNote),
+		Source:          firstNonEmptyString(service.Source, lead.Source),
+		WhatsAppOptedIn: boolPtr(lead.WhatsAppOptedIn),
+	}, destinationTenantID)
+	if err != nil {
+		return transport.LeadResponse{}, err
+	}
+
+	if createdLead.CurrentService != nil {
+		if _, err := s.repo.UpdateServiceStatusAndPipelineStage(ctx, createdLead.CurrentService.ID, destinationTenantID, service.Status, service.PipelineStage); err != nil {
+			return transport.LeadResponse{}, err
+		}
+	}
+
+	return createdLead, nil
+}
+
+func (s *Service) appendTransferredServices(ctx context.Context, createdLead transport.LeadResponse, services []repository.LeadService, destinationTenantID uuid.UUID) error {
+	createdServiceIDs := make(map[uuid.UUID]struct{}, len(createdLead.Services))
+	for _, svc := range createdLead.Services {
+		createdServiceIDs[svc.ID] = struct{}{}
+	}
+
+	for _, sourceService := range services {
+		updatedLead, err := s.AddService(ctx, createdLead.ID, transport.AddServiceRequest{
+			ServiceType:  transport.ServiceType(sourceService.ServiceType),
+			ConsumerNote: summaryValue(sourceService.ConsumerNote),
+			Source:       summaryValue(sourceService.Source),
+		}, destinationTenantID)
+		if err != nil {
+			return err
+		}
+		if err := s.syncTransferredServiceState(ctx, updatedLead.Services, createdServiceIDs, sourceService, destinationTenantID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Service) syncTransferredServiceState(ctx context.Context, services []transport.LeadServiceResponse, createdServiceIDs map[uuid.UUID]struct{}, sourceService repository.LeadService, tenantID uuid.UUID) error {
+	for _, addedService := range services {
+		if _, exists := createdServiceIDs[addedService.ID]; exists {
+			continue
+		}
+		createdServiceIDs[addedService.ID] = struct{}{}
+		_, err := s.repo.UpdateServiceStatusAndPipelineStage(ctx, addedService.ID, tenantID, sourceService.Status, sourceService.PipelineStage)
+		return err
+	}
+	return nil
+}
+
+func orderServicesForTransfer(services []repository.LeadService) []repository.LeadService {
+	if len(services) == 0 {
+		return nil
+	}
+
+	ordered := make([]repository.LeadService, 0, len(services))
+	for _, svc := range services {
+		if !domain.IsTerminalPipelineStage(svc.PipelineStage) {
+			ordered = append(ordered, svc)
+		}
+	}
+	for _, svc := range services {
+		if domain.IsTerminalPipelineStage(svc.PipelineStage) {
+			ordered = append(ordered, svc)
+		}
+	}
+	if len(ordered) == 0 {
+		return append([]repository.LeadService(nil), services...)
+	}
+	return ordered
+}
+
+func primaryString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func boolPtr(value bool) *bool {
+	result := value
+	return &result
+}
+
+func firstNonEmptyString(values ...*string) string {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(*value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func (s *Service) GetInboxCommunications(ctx context.Context, leadID, tenantID uuid.UUID) (transport.LeadInboxCommunicationsResponse, error) {
 	if _, err := s.repo.GetByID(ctx, leadID, tenantID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {

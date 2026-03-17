@@ -1080,6 +1080,20 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 	return nil
 }
 
+func (r *Repository) DeleteLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
+	commandTag, err := r.pool.Exec(ctx, `
+		DELETE FROM RAC_lead_services
+		WHERE id = $1 AND organization_id = $2
+	`, id, organizationID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() == 0 {
+		return ErrServiceNotFound
+	}
+	return nil
+}
+
 // ListRecentActivity returns the most recent org-wide activity by unioning
 // lead activity, quote activity, and recent appointments.
 // Events are clustered: sequential events with the same lead, event type, and category

@@ -88,6 +88,10 @@ type SetQuoteLeadServiceRequest struct {
 	LeadServiceID uuid.UUID `json:"leadServiceId" validate:"required"`
 }
 
+type TransferQuoteRequest struct {
+	DestinationOrganizationID uuid.UUID `json:"destinationOrganizationId" validate:"required"`
+}
+
 // QuoteCalculationRequest is the request body for the preview calculation endpoint
 type QuoteCalculationRequest struct {
 	Items         []QuoteItemRequest `json:"items" validate:"required,dive"`
@@ -250,6 +254,13 @@ type QuoteListResponse struct {
 	Page       int             `json:"page"`
 	PageSize   int             `json:"pageSize"`
 	TotalPages int             `json:"totalPages"`
+}
+
+type TransferQuoteResponse struct {
+	Quote                     QuoteResponse `json:"quote"`
+	DestinationLeadID         uuid.UUID     `json:"destinationLeadId"`
+	DestinationOrganizationID uuid.UUID     `json:"destinationOrganizationId"`
+	SourceLeadDeleted         bool          `json:"sourceLeadDeleted"`
 }
 
 // PendingApprovalItem represents one draft quote ready for agent review.

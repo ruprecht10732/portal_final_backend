@@ -98,6 +98,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/:id", h.Delete)
 }
 
+func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
+	rg.POST("/:id/transfer", h.Transfer)
+}
+
 // CancelGenerateJob handles POST /api/v1/quotes/generate-jobs/:id/cancel
 func (h *Handler) CancelGenerateJob(c *gin.Context) {
 	jobID, err := uuid.Parse(c.Param("id"))
@@ -808,6 +812,41 @@ func (h *Handler) Delete(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"message": "quote deleted"})
+}
+
+func (h *Handler) Transfer(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.TransferQuoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	result, err := h.svc.TransferToOrganization(c.Request.Context(), id, tenantID, req.DestinationOrganizationID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // PreviewCalculation handles POST /api/v1/quotes/calculate

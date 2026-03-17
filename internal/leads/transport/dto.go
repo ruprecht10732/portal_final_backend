@@ -118,6 +118,10 @@ type BulkDeleteLeadsRequest struct {
 	IDs []uuid.UUID `json:"ids" validate:"required,min=1,dive,required"`
 }
 
+type TransferLeadRequest struct {
+	DestinationOrganizationID uuid.UUID `json:"destinationOrganizationId" validate:"required"`
+}
+
 type ListLeadsRequest struct {
 	Status          *LeadStatus   `form:"status" validate:"omitempty,oneof=New Pending In_Progress Attempted_Contact Appointment_Scheduled Needs_Rescheduling Completed Disqualified"`
 	ServiceType     *ServiceType  `form:"serviceType" validate:"omitempty,min=1,max=100"`
@@ -345,6 +349,11 @@ type LeadResponse struct {
 	WhatsAppOptedIn bool                    `json:"whatsappOptedIn"`
 	CreatedAt       time.Time               `json:"createdAt"`
 	UpdatedAt       time.Time               `json:"updatedAt"`
+}
+
+type TransferLeadResponse struct {
+	Lead                      LeadResponse `json:"lead"`
+	DestinationOrganizationID uuid.UUID    `json:"destinationOrganizationId"`
 }
 
 type LinkedWhatsAppConversationResponse struct {

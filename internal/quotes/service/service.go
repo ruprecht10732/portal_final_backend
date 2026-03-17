@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"portal_final_backend/internal/events"
+	leadrepo "portal_final_backend/internal/leads/repository"
+	leadstransport "portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/notification/sse"
 	"portal_final_backend/internal/quotes/repository"
 	"portal_final_backend/internal/scheduler"
@@ -89,6 +91,17 @@ type LogoPresigner interface {
 	GenerateLogoURL(ctx context.Context, fileKey string) (string, error)
 }
 
+type LeadTransferCreator interface {
+	Create(ctx context.Context, req leadstransport.CreateLeadRequest, tenantID uuid.UUID) (leadstransport.LeadResponse, error)
+}
+
+type LeadTransferRepository interface {
+	GetByIDWithServices(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (leadrepo.Lead, []leadrepo.LeadService, error)
+	DeleteLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
+	UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (leadrepo.LeadService, error)
+	Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
+}
+
 // Service provides business logic for quotes.
 type Service struct {
 	repo          *repository.Repository
@@ -102,6 +115,8 @@ type Service struct {
 	feedbackQueue HumanFeedbackMemoryQueue
 	moneybird     *moneybirdConfig
 	logoPresigner LogoPresigner
+	leadCreator   LeadTransferCreator
+	leadRepo      LeadTransferRepository
 }
 
 // GenerateQuoteJobQueue enqueues async quote generation tasks.
@@ -266,3 +281,5 @@ func (s *Service) SetHumanFeedbackMemoryQueue(queue HumanFeedbackMemoryQueue) {
 	s.feedbackQueue = queue
 }
 func (s *Service) SetLogoPresigner(lp LogoPresigner) { s.logoPresigner = lp }
+func (s *Service) SetLeadTransferCreator(creator LeadTransferCreator) { s.leadCreator = creator }
+func (s *Service) SetLeadTransferRepository(repo LeadTransferRepository) { s.leadRepo = repo }

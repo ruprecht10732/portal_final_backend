@@ -421,6 +421,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		return partner.ContactPhone, nil
 	}))
 	quotesModule := quotes.NewModule(pool, eventBus, val)
+	quotesModule.Service().SetLeadTransferCreator(leadsModule.ManagementService())
+	quotesModule.Service().SetLeadTransferRepository(leadsModule.Repository())
 	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
 	leadsModule.ManagementService().SetLeadDetailQuotesReader(adapters.NewLeadDetailQuoteReader(quotesModule.Service()))
 	leadsModule.ManagementService().SetLeadDetailAppointmentsReader(adapters.NewLeadDetailAppointmentReader(appointmentsModule.Service))

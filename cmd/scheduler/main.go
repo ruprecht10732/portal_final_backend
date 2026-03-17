@@ -198,6 +198,8 @@ func main() {
 	}
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
+	quotesModule.Service().SetLeadTransferCreator(leadsModule.ManagementService())
+	quotesModule.Service().SetLeadTransferRepository(leadsModule.Repository())
 	tasksModule := tasks.NewModule(pool, val, reminderScheduler, leadsModule.Repository(), log)
 	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
 

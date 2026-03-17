@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const quotesRoutePath = "/quotes"
+
 // Module represents the quotes domain module
 type Module struct {
 	handler       *handler.Handler
@@ -98,11 +100,13 @@ func (m *Module) SetLogoPresigner(lp service.LogoPresigner) {
 
 // RegisterRoutes registers the module's routes
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	quotes := ctx.Protected.Group("/quotes")
+	quotes := ctx.Protected.Group(quotesRoutePath)
 	m.handler.RegisterRoutes(quotes)
+	adminQuotes := ctx.Admin.Group(quotesRoutePath)
+	m.handler.RegisterAdminRoutes(adminQuotes)
 
 	// OAuth callback route for external providers (no auth middleware)
-	publicIntegrations := ctx.V1.Group("/quotes")
+	publicIntegrations := ctx.V1.Group(quotesRoutePath)
 	m.handler.RegisterPublicRoutes(publicIntegrations)
 
 	// Public routes — no auth middleware

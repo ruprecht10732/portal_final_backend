@@ -134,6 +134,46 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/services/:serviceId/log-call", h.LogCall)
 }
 
+func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
+	rg.POST("/:id/transfer", h.Transfer)
+}
+
+func (h *Handler) Transfer(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.TransferLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.mgmt.TransferToOrganization(c.Request.Context(), id, tenantID, req.DestinationOrganizationID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	h.publishLeadUpdate(tenantID, &id, "transferred")
+	h.publishLeadUpdate(req.DestinationOrganizationID, &result.Lead.ID, "created")
+	httpkit.OK(c, result)
+}
+
 func (h *Handler) GetMetrics(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {

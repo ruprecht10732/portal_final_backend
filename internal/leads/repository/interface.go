@@ -73,6 +73,7 @@ type LeadServiceReader interface {
 // LeadServiceWriter provides write operations for lead services.
 type LeadServiceWriter interface {
 	CreateLeadService(ctx context.Context, params CreateLeadServiceParams) (LeadService, error)
+	DeleteLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
 	UpdateLeadServiceType(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, serviceType string) (LeadService, error)
 	UpdateServiceStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string) (LeadService, error)
 	UpdateServiceStatusAndPipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, status string, stage string) (LeadService, error)
