@@ -43,7 +43,7 @@ func (t *senderTestTransport) SendFile(context.Context, string, whatsapp.SendFil
 	return t.sendFileResult, t.sendFileErr
 }
 
-func (t *senderTestTransport) DownloadMediaFile(context.Context, string, string, string) (whatsapp.DownloadMediaFileResult, error) {
+func (t *senderTestTransport) DownloadMediaFile(context.Context, string, string, string, ...string) (whatsapp.DownloadMediaFileResult, error) {
 	return whatsapp.DownloadMediaFileResult{}, nil
 }
 

@@ -832,7 +832,8 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 
 	deviceID, deviceSource := resolveWhatsAppMessageDeviceID(message.Metadata, deviceID)
 	downloadTarget, downloadTargetSource := s.resolveWhatsAppMediaDownloadTarget(ctx, organizationID, conversationID, message, conversation)
-	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, downloadTarget)
+	fallbackPhones := whatsAppMediaDownloadFallbackPhones(message.Metadata, conversation.PhoneNumber, downloadTarget)
+	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, downloadTarget, fallbackPhones...)
 	if err != nil {
 		log.Printf("whatsapp inbox: media download failed organization=%s conversation=%s message=%s device=%s deviceSource=%s target=%s targetSource=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, deviceSource, downloadTarget, downloadTargetSource, conversation.PhoneNumber, err)
 		return WhatsAppMediaDownloadResult{}, apperr.Internal("WhatsApp-media kon niet worden gedownload")
@@ -1594,6 +1595,27 @@ func isWhatsAppLID(s string) bool {
 	return strings.HasSuffix(strings.TrimSpace(s), "@lid")
 }
 
+func whatsAppMetadataLID(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var envelope struct {
+		Payload struct {
+			ChatID  string `json:"chat_id"`
+			FromLID string `json:"from_lid"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	for _, v := range []string{envelope.Payload.ChatID, envelope.Payload.FromLID} {
+		if trimmed := strings.TrimSpace(v); isWhatsAppLID(trimmed) {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func isWhatsAppImageMessage(message repository.WhatsAppMessage) bool {
 	metadata := parseWhatsAppPortalMetadata(message.Metadata)
 	if strings.EqualFold(strings.TrimSpace(metadata.MessageType), "image") {
@@ -1603,6 +1625,24 @@ func isWhatsAppImageMessage(message repository.WhatsAppMessage) bool {
 		return true
 	}
 	return false
+}
+
+func whatsAppMediaDownloadFallbackPhones(raw json.RawMessage, conversationPhone string, primaryTarget string) []string {
+	var fallbacks []string
+	seen := map[string]struct{}{primaryTarget: {}}
+	add := func(v string) {
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		fallbacks = append(fallbacks, v)
+	}
+	add(whatsAppMetadataLID(raw))
+	add(strings.TrimSpace(conversationPhone))
+	return fallbacks
 }
 
 func (s *Service) resolveWhatsAppMediaDownloadTarget(ctx context.Context, organizationID, conversationID uuid.UUID, message repository.WhatsAppMessage, conversation repository.WhatsAppConversation) (string, string) {
@@ -1847,7 +1887,8 @@ func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID
 	}
 	_, deviceSource := resolveWhatsAppMessageDeviceID(message.Metadata, deviceID)
 	downloadTarget, downloadTargetSource := s.resolveWhatsAppMediaDownloadTarget(ctx, organizationID, conversationID, message, conversation)
-	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, downloadTarget)
+	fallbackPhones := whatsAppMediaDownloadFallbackPhones(message.Metadata, conversation.PhoneNumber, downloadTarget)
+	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, downloadTarget, fallbackPhones...)
 	if err != nil {
 		log.Printf("whatsapp inbox: media file download failed organization=%s conversation=%s message=%s device=%s deviceSource=%s target=%s targetSource=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, deviceSource, downloadTarget, downloadTargetSource, conversation.PhoneNumber, err)
 		return WhatsAppMediaDownloadResult{}, false
@@ -2007,7 +2048,8 @@ func (s *Service) importWhatsAppImageAttachment(ctx context.Context, organizatio
 	}
 
 	downloadTarget := whatsAppMediaDownloadTarget(message.Metadata, conversation.PhoneNumber)
-	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, downloadTarget)
+	fallbackPhones := whatsAppMediaDownloadFallbackPhones(message.Metadata, conversation.PhoneNumber, downloadTarget)
+	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, downloadTarget, fallbackPhones...)
 	if err != nil {
 		return CreateLeadAttachmentResult{}, apperr.Internal("WhatsApp-afbeelding kon niet worden opgehaald")
 	}

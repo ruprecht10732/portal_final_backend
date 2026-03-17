@@ -441,8 +441,8 @@ func (c *Client) StarMessage(ctx context.Context, deviceID string, messageID str
 	return err
 }
 
-func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaResult, error) {
-	phones := mediaDownloadPhoneCandidates(phoneNumber)
+func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID string, phoneNumber string, fallbackPhones ...string) (DownloadMediaResult, error) {
+	phones := combineCandidatePhones(phoneNumber, fallbackPhones)
 	if len(phones) == 0 {
 		return DownloadMediaResult{}, errors.New(errPhoneNumberRequired)
 	}
@@ -461,8 +461,8 @@ func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID s
 	return DownloadMediaResult{}, mediaDownloadCandidateError(phones, lastErr)
 }
 
-func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaFileResult, error) {
-	phones := mediaDownloadPhoneCandidates(phoneNumber)
+func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string, fallbackPhones ...string) (DownloadMediaFileResult, error) {
+	phones := combineCandidatePhones(phoneNumber, fallbackPhones)
 	if len(phones) == 0 {
 		return DownloadMediaFileResult{}, errors.New(errPhoneNumberRequired)
 	}
@@ -537,6 +537,11 @@ func mediaDownloadPhoneCandidates(phoneNumber string) []string {
 	if trimmed == "" {
 		return nil
 	}
+	// LID JIDs (e.g. 212450775417035@lid) are opaque linked-device identifiers.
+	// Only pass them through as-is; digit stripping produces invalid phones.
+	if strings.HasSuffix(trimmed, "@lid") {
+		return []string{trimmed}
+	}
 	candidates := make([]string, 0, 4)
 	seen := make(map[string]struct{}, 4)
 	appendCandidate := func(value string) {
@@ -563,6 +568,26 @@ func mediaDownloadPhoneCandidates(phoneNumber string) []string {
 	appendCandidate(digits)
 	appendCandidate(digits + "@s.whatsapp.net")
 	appendCandidate("+" + digits)
+	return candidates
+}
+
+func combineCandidatePhones(primary string, fallbacks []string) []string {
+	candidates := mediaDownloadPhoneCandidates(primary)
+	if len(fallbacks) == 0 {
+		return candidates
+	}
+	seen := make(map[string]struct{}, len(candidates)+len(fallbacks)*3)
+	for _, c := range candidates {
+		seen[c] = struct{}{}
+	}
+	for _, fb := range fallbacks {
+		for _, c := range mediaDownloadPhoneCandidates(fb) {
+			if _, ok := seen[c]; !ok {
+				seen[c] = struct{}{}
+				candidates = append(candidates, c)
+			}
+		}
+	}
 	return candidates
 }
 

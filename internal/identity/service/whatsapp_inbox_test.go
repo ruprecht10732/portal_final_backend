@@ -298,3 +298,78 @@ func TestIsWhatsAppLID(t *testing.T) {
 		t.Fatal("expected empty string to not be recognized as LID")
 	}
 }
+
+func TestWhatsAppMetadataLIDExtractsChatID(t *testing.T) {
+	t.Parallel()
+
+	got := whatsAppMetadataLID(json.RawMessage(`{"payload":{"chat_id":"212450775417035@lid","from":"31686261598@s.whatsapp.net"}}`))
+	if got != testWhatsAppChatLID {
+		t.Fatalf("expected LID from chat_id, got %q", got)
+	}
+}
+
+func TestWhatsAppMetadataLIDExtractsFromLID(t *testing.T) {
+	t.Parallel()
+
+	got := whatsAppMetadataLID(json.RawMessage(`{"payload":{"from_lid":"212450775417035@lid","chat_id":"31686261598@s.whatsapp.net"}}`))
+	if got != testWhatsAppChatLID {
+		t.Fatalf("expected LID from from_lid, got %q", got)
+	}
+}
+
+func TestWhatsAppMetadataLIDReturnsEmptyWhenNoLID(t *testing.T) {
+	t.Parallel()
+
+	got := whatsAppMetadataLID(json.RawMessage(`{"payload":{"from":"31686261598@s.whatsapp.net","chat_id":"31686261598@s.whatsapp.net"}}`))
+	if got != "" {
+		t.Fatalf("expected empty string when no LID present, got %q", got)
+	}
+}
+
+func TestWhatsAppMetadataLIDHandlesNilMetadata(t *testing.T) {
+	t.Parallel()
+
+	got := whatsAppMetadataLID(nil)
+	if got != "" {
+		t.Fatalf("expected empty string for nil metadata, got %q", got)
+	}
+}
+
+func TestWhatsAppMediaDownloadFallbackPhonesIncludesLIDAndConversationPhone(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"payload":{"chat_id":"212450775417035@lid","from":"31686261598@s.whatsapp.net"}}`)
+	got := whatsAppMediaDownloadFallbackPhones(raw, "+31686261598", "31686261598@s.whatsapp.net")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 fallbacks (LID + phone), got %v", got)
+	}
+	if got[0] != testWhatsAppChatLID {
+		t.Fatalf("expected LID as first fallback, got %q", got[0])
+	}
+	if got[1] != testWhatsAppMediaPhone {
+		t.Fatalf("expected conversation phone as second fallback, got %q", got[1])
+	}
+}
+
+func TestWhatsAppMediaDownloadFallbackPhonesExcludesPrimaryTarget(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"payload":{"chat_id":"212450775417035@lid"}}`)
+	got := whatsAppMediaDownloadFallbackPhones(raw, "212450775417035@lid", "212450775417035@lid")
+	if len(got) != 0 {
+		t.Fatalf("expected no fallbacks when LID and conversation phone match primary target, got %v", got)
+	}
+}
+
+func TestWhatsAppMediaDownloadFallbackPhonesHandlesNoLID(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"payload":{"from":"31686261598@s.whatsapp.net"}}`)
+	got := whatsAppMediaDownloadFallbackPhones(raw, "+31686261598", "31686261598@s.whatsapp.net")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 fallback (phone only), got %v", got)
+	}
+	if got[0] != testWhatsAppMediaPhone {
+		t.Fatalf("expected conversation phone as fallback, got %q", got[0])
+	}
+}

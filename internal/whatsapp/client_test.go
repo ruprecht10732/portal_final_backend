@@ -184,6 +184,56 @@ func TestMediaDownloadPhoneCandidatesIncludeJIDFallback(t *testing.T) {
 	}
 }
 
+func TestMediaDownloadPhoneCandidatesLIDPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	got := mediaDownloadPhoneCandidates("212450775417035@lid")
+	if len(got) != 1 {
+		t.Fatalf("expected single LID candidate, got %v", got)
+	}
+	if got[0] != "212450775417035@lid" {
+		t.Fatalf("expected raw LID value, got %q", got[0])
+	}
+}
+
+func TestCombineCandidatePhonesMergesPrimaryAndFallbacks(t *testing.T) {
+	t.Parallel()
+
+	got := combineCandidatePhones(testPhoneNumber, []string{"212450775417035@lid"})
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "31612345678") {
+		t.Fatalf("expected primary phone candidate, got %v", got)
+	}
+	if !strings.Contains(joined, "212450775417035@lid") {
+		t.Fatalf("expected LID fallback candidate, got %v", got)
+	}
+}
+
+func TestCombineCandidatePhonesDeduplicates(t *testing.T) {
+	t.Parallel()
+
+	// Primary and fallback share the same phone — should not duplicate
+	got := combineCandidatePhones(testPhoneNumber, []string{testPhoneNumber})
+	count := 0
+	for _, c := range got {
+		if c == "31612345678" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected deduplicated candidates, got %v", got)
+	}
+}
+
+func TestCombineCandidatePhonesEmptyFallbacks(t *testing.T) {
+	t.Parallel()
+
+	got := combineCandidatePhones(testPhoneNumber, nil)
+	if len(got) < 3 {
+		t.Fatalf("expected primary-only candidates with no fallbacks, got %v", got)
+	}
+}
+
 func TestDownloadMediaFileRetriesCandidates(t *testing.T) {
 	t.Parallel()
 

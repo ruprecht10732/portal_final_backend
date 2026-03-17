@@ -27,7 +27,7 @@ type fakeWAAgentMediaDownloader struct {
 	err           error
 }
 
-func (f *fakeWAAgentMediaDownloader) DownloadMediaFile(_ context.Context, deviceID string, messageID string, phoneNumber string) (whatsapp.DownloadMediaFileResult, error) {
+func (f *fakeWAAgentMediaDownloader) DownloadMediaFile(_ context.Context, deviceID string, messageID string, phoneNumber string, _ ...string) (whatsapp.DownloadMediaFileResult, error) {
 	f.lastDeviceID = deviceID
 	f.lastMessageID = messageID
 	f.lastPhone = phoneNumber

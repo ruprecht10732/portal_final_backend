@@ -9,8 +9,8 @@ import (
 
 	apphttp "portal_final_backend/internal/http"
 	"portal_final_backend/internal/scheduler"
-	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
 	"portal_final_backend/internal/whatsapp"
+	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
 	"portal_final_backend/platform/ai/moonshot"
 	"portal_final_backend/platform/logger"
 
@@ -198,7 +198,7 @@ type WhatsAppTransport interface {
 	SendMessage(ctx context.Context, deviceID string, phoneNumber string, message string) (whatsapp.SendResult, error)
 	SendChatPresence(ctx context.Context, deviceID string, phoneNumber string, action string) error
 	SendFile(ctx context.Context, deviceID string, input whatsapp.SendFileInput) (whatsapp.SendResult, error)
-	DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (whatsapp.DownloadMediaFileResult, error)
+	DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string, fallbackPhones ...string) (whatsapp.DownloadMediaFileResult, error)
 }
 
 type AgentConfigReader interface {

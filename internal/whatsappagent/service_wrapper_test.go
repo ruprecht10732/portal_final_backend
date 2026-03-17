@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"portal_final_backend/internal/scheduler"
-	"portal_final_backend/internal/whatsappagent/engine"
 	"portal_final_backend/internal/whatsapp"
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
+	"portal_final_backend/internal/whatsappagent/engine"
 	"portal_final_backend/platform/logger"
 
 	"github.com/alicebob/miniredis/v2"
@@ -73,20 +73,20 @@ func (r *serviceWrapperTestReplyRunner) RunPreparedPartnerAgent(_ context.Contex
 
 type serviceWrapperTestQueries struct {
 	transcriptionLookupErr error
-	lookupErr             error
-	lookupUser            whatsappagentdb.GetAgentUserByPhoneRow
-	messageRow            whatsappagentdb.GetAgentMessageByExternalIDRow
-	processingCalls       int
-	lookupCalls           int
-	deleteCalls           int
-	upsertVoiceCalls      int
-	recent                []whatsappagentdb.GetRecentAgentMessagesRow
-	recentArgs            []whatsappagentdb.GetRecentAgentMessagesParams
-	storageUpdates        []whatsappagentdb.UpdateAgentVoiceTranscriptionStorageParams
-	messageUpdates        []whatsappagentdb.UpdateAgentMessageByExternalIDParams
-	completed             []whatsappagentdb.MarkAgentVoiceTranscriptionCompletedParams
-	failed                []whatsappagentdb.MarkAgentVoiceTranscriptionFailedParams
-	inserted              []whatsappagentdb.InsertAgentMessageParams
+	lookupErr              error
+	lookupUser             whatsappagentdb.GetAgentUserByPhoneRow
+	messageRow             whatsappagentdb.GetAgentMessageByExternalIDRow
+	processingCalls        int
+	lookupCalls            int
+	deleteCalls            int
+	upsertVoiceCalls       int
+	recent                 []whatsappagentdb.GetRecentAgentMessagesRow
+	recentArgs             []whatsappagentdb.GetRecentAgentMessagesParams
+	storageUpdates         []whatsappagentdb.UpdateAgentVoiceTranscriptionStorageParams
+	messageUpdates         []whatsappagentdb.UpdateAgentMessageByExternalIDParams
+	completed              []whatsappagentdb.MarkAgentVoiceTranscriptionCompletedParams
+	failed                 []whatsappagentdb.MarkAgentVoiceTranscriptionFailedParams
+	inserted               []whatsappagentdb.InsertAgentMessageParams
 }
 
 func (q *serviceWrapperTestQueries) DeleteAgentMessagesByPhone(context.Context, whatsappagentdb.DeleteAgentMessagesByPhoneParams) error {
@@ -169,7 +169,7 @@ func (t *serviceWrapperTestTransport) SendFile(context.Context, string, whatsapp
 	return whatsapp.SendResult{}, nil
 }
 
-func (t *serviceWrapperTestTransport) DownloadMediaFile(context.Context, string, string, string) (whatsapp.DownloadMediaFileResult, error) {
+func (t *serviceWrapperTestTransport) DownloadMediaFile(context.Context, string, string, string, ...string) (whatsapp.DownloadMediaFileResult, error) {
 	return t.downloadResult, nil
 }
 
@@ -186,7 +186,7 @@ func (s serviceWrapperTestStorage) UploadFile(context.Context, string, string, s
 }
 
 func (s serviceWrapperTestStorage) ValidateContentType(string) error { return nil }
-func (s serviceWrapperTestStorage) ValidateFileSize(int64) error { return nil }
+func (s serviceWrapperTestStorage) ValidateFileSize(int64) error     { return nil }
 
 type serviceWrapperTestTranscriber struct{}
 
@@ -275,8 +275,8 @@ func TestServiceHandleIncomingMessageIgnoresDuplicateBeforeLookup(t *testing.T) 
 	t.Parallel()
 
 	redisServer, err := miniredis.Run()
-		if err != nil {
-			t.Fatalf(serviceWrapperMiniredisStartFailedMsg, err)
+	if err != nil {
+		t.Fatalf(serviceWrapperMiniredisStartFailedMsg, err)
 	}
 	defer redisServer.Close()
 

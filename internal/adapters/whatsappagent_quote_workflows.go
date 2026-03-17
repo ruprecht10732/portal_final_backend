@@ -152,7 +152,7 @@ type whatsappagentPhotoLeadActions interface {
 }
 
 type whatsappagentMediaDownloader interface {
-	DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (whatsapp.DownloadMediaFileResult, error)
+	DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string, fallbackPhones ...string) (whatsapp.DownloadMediaFileResult, error)
 }
 
 type whatsappagentAgentMessageReader interface {
