@@ -833,10 +833,15 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 		return cached, nil
 	}
 
-	downloadTarget := whatsAppMediaDownloadTarget(message.Metadata, conversation.PhoneNumber)
+	deviceSource := "organization_settings"
+	if override := whatsAppMessageDeviceOverride(message.Metadata); override != "" {
+		deviceID = override
+		deviceSource = "message_metadata"
+	}
+	downloadTarget, downloadTargetSource := whatsAppMediaDownloadTargetDetails(message.Metadata, conversation.PhoneNumber)
 	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, downloadTarget)
 	if err != nil {
-		log.Printf("whatsapp inbox: media download failed organization=%s conversation=%s message=%s device=%s target=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, downloadTarget, conversation.PhoneNumber, err)
+		log.Printf("whatsapp inbox: media download failed organization=%s conversation=%s message=%s device=%s deviceSource=%s target=%s targetSource=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, deviceSource, downloadTarget, downloadTargetSource, conversation.PhoneNumber, err)
 		return WhatsAppMediaDownloadResult{}, apperr.Internal("WhatsApp-media kon niet worden gedownload")
 	}
 	if cached, ok := s.cacheWhatsAppMediaDownload(ctx, organizationID, conversationID, externalMessageID, message, conversation, deviceID); ok {
@@ -1546,9 +1551,14 @@ func parseWhatsAppPortalMetadata(raw json.RawMessage) whatsappPortalMetadata {
 }
 
 func whatsAppMediaDownloadTarget(raw json.RawMessage, fallback string) string {
+	target, _ := whatsAppMediaDownloadTargetDetails(raw, fallback)
+	return target
+}
+
+func whatsAppMediaDownloadTargetDetails(raw json.RawMessage, fallback string) (string, string) {
 	trimmedFallback := strings.TrimSpace(fallback)
 	if len(raw) == 0 {
-		return trimmedFallback
+		return trimmedFallback, "conversation_phone"
 	}
 	var envelope struct {
 		Payload struct {
@@ -1558,18 +1568,21 @@ func whatsAppMediaDownloadTarget(raw json.RawMessage, fallback string) string {
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return trimmedFallback
+		return trimmedFallback, "conversation_phone"
 	}
-	for _, candidate := range []string{
-		strings.TrimSpace(envelope.Payload.ChatID),
-		strings.TrimSpace(envelope.Payload.FromLID),
-		strings.TrimSpace(envelope.Payload.From),
+	for _, candidate := range []struct {
+		value  string
+		source string
+	}{
+		{value: strings.TrimSpace(envelope.Payload.ChatID), source: "payload.chat_id"},
+		{value: strings.TrimSpace(envelope.Payload.FromLID), source: "payload.from_lid"},
+		{value: strings.TrimSpace(envelope.Payload.From), source: "payload.from"},
 	} {
-		if candidate != "" {
-			return candidate
+		if candidate.value != "" {
+			return candidate.value, candidate.source
 		}
 	}
-	return trimmedFallback
+	return trimmedFallback, "conversation_phone"
 }
 
 func isWhatsAppImageMessage(message repository.WhatsAppMessage) bool {
@@ -1597,7 +1610,11 @@ func normalizeWhatsAppImportContentType(contentType string, mediaType string) st
 func normalizeWhatsAppCachedContentType(contentType string, mediaType string, fileName string, filePath string) string {
 	trimmed := strings.TrimSpace(strings.Split(contentType, ";")[0])
 	if trimmed != "" {
-		return strings.ToLower(trimmed)
+		normalized := strings.ToLower(trimmed)
+		if normalized == "application/ogg" {
+			return "audio/ogg"
+		}
+		return normalized
 	}
 	for _, candidate := range []string{fileName, filePath} {
 		ext := strings.ToLower(strings.TrimSpace(path.Ext(candidate)))
@@ -1806,24 +1823,18 @@ func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID
 	if s == nil || s.storage == nil || strings.TrimSpace(s.attachmentsBucket) == "" {
 		return WhatsAppMediaDownloadResult{}, false
 	}
-	downloadTarget := whatsAppMediaDownloadTarget(message.Metadata, conversation.PhoneNumber)
+	deviceSource := "organization_settings"
+	if override := whatsAppMessageDeviceOverride(message.Metadata); override != "" && strings.TrimSpace(override) == strings.TrimSpace(deviceID) {
+		deviceSource = "message_metadata"
+	}
+	downloadTarget, downloadTargetSource := whatsAppMediaDownloadTargetDetails(message.Metadata, conversation.PhoneNumber)
 	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, downloadTarget)
 	if err != nil {
-		log.Printf("whatsapp inbox: media file download failed organization=%s conversation=%s message=%s device=%s target=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, downloadTarget, conversation.PhoneNumber, err)
+		log.Printf("whatsapp inbox: media file download failed organization=%s conversation=%s message=%s device=%s deviceSource=%s target=%s targetSource=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, deviceSource, downloadTarget, downloadTargetSource, conversation.PhoneNumber, err)
 		return WhatsAppMediaDownloadResult{}, false
 	}
-	contentType := normalizeWhatsAppCachedContentType(fileResult.ContentType, fileResult.MediaType, fileResult.Filename, fileResult.FilePath)
-	if contentType == "" {
-		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=unknown-content-type mediaType=%q filename=%q filePath=%q", organizationID, conversationID, externalMessageID, fileResult.MediaType, fileResult.Filename, fileResult.FilePath)
-		return WhatsAppMediaDownloadResult{}, false
-	}
-	if err := s.storage.ValidateContentType(contentType); err != nil {
-		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=invalid-content-type contentType=%q err=%v", organizationID, conversationID, externalMessageID, contentType, err)
-		return WhatsAppMediaDownloadResult{}, false
-	}
-	sizeBytes := int64(len(fileResult.Data))
-	if err := s.storage.ValidateFileSize(sizeBytes); err != nil {
-		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=invalid-size sizeBytes=%d err=%v", organizationID, conversationID, externalMessageID, sizeBytes, err)
+	contentType, sizeBytes, ok := s.validateWhatsAppMediaCacheCandidate(organizationID, conversationID, externalMessageID, fileResult)
+	if !ok {
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	fileName := chooseWhatsAppMediaFilename(fileResult, message)
@@ -1867,6 +1878,24 @@ func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID
 		FileSize:    sizeBytes,
 		DownloadURL: presigned.URL,
 	}, true
+}
+
+func (s *Service) validateWhatsAppMediaCacheCandidate(organizationID, conversationID uuid.UUID, externalMessageID string, fileResult whatsapp.DownloadMediaFileResult) (string, int64, bool) {
+	contentType := normalizeWhatsAppCachedContentType(fileResult.ContentType, fileResult.MediaType, fileResult.Filename, fileResult.FilePath)
+	if contentType == "" {
+		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=unknown-content-type mediaType=%q filename=%q filePath=%q", organizationID, conversationID, externalMessageID, fileResult.MediaType, fileResult.Filename, fileResult.FilePath)
+		return "", 0, false
+	}
+	if err := s.storage.ValidateContentType(contentType); err != nil {
+		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=invalid-content-type contentType=%q err=%v", organizationID, conversationID, externalMessageID, contentType, err)
+		return "", 0, false
+	}
+	sizeBytes := int64(len(fileResult.Data))
+	if err := s.storage.ValidateFileSize(sizeBytes); err != nil {
+		log.Printf("whatsapp inbox: media cache skipped organization=%s conversation=%s message=%s reason=invalid-size sizeBytes=%d err=%v", organizationID, conversationID, externalMessageID, sizeBytes, err)
+		return "", 0, false
+	}
+	return contentType, sizeBytes, true
 }
 
 func buildImportantWhatsAppMessagesNote(conversation repository.WhatsAppConversation, messages []repository.WhatsAppMessage) string {

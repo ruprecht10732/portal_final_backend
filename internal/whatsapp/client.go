@@ -101,6 +101,7 @@ type SendResult struct {
 
 const headerContentType = "Content-Type"
 const errPhoneNumberRequired = "phone number is required"
+const errMediaDownloadNoUsableResponse = "media download returned no usable response"
 
 type MediaAttachment struct {
 	Filename string
@@ -223,11 +224,11 @@ type actionRequest struct {
 type ChatPresenceAction string
 
 const (
-	ChatPresenceComposing ChatPresenceAction = "composing"
-	ChatPresenceRecording ChatPresenceAction = "recording"
-	ChatPresencePaused    ChatPresenceAction = "paused"
-	chatPresenceStartCompat                  = "start"
-	chatPresenceStopCompat                   = "stop"
+	ChatPresenceComposing   ChatPresenceAction = "composing"
+	ChatPresenceRecording   ChatPresenceAction = "recording"
+	ChatPresencePaused      ChatPresenceAction = "paused"
+	chatPresenceStartCompat                    = "start"
+	chatPresenceStopCompat                     = "stop"
 )
 
 type providerActionResponse struct {
@@ -455,9 +456,9 @@ func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID s
 		return c.downloadMediaResultFromProvider(parsed), nil
 	}
 	if lastErr == nil {
-		lastErr = errors.New("media download returned no usable response")
+		lastErr = errors.New(errMediaDownloadNoUsableResponse)
 	}
-	return DownloadMediaResult{}, lastErr
+	return DownloadMediaResult{}, mediaDownloadCandidateError(phones, lastErr)
 }
 
 func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string) (DownloadMediaFileResult, error) {
@@ -480,9 +481,9 @@ func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, message
 		return c.downloadMediaFromURL(ctx, result)
 	}
 	if lastErr == nil {
-		lastErr = errors.New("media download returned no usable response")
+		lastErr = errors.New(errMediaDownloadNoUsableResponse)
 	}
-	return DownloadMediaFileResult{}, lastErr
+	return DownloadMediaFileResult{}, mediaDownloadCandidateError(phones, lastErr)
 }
 
 func (c *Client) fetchDownloadMediaResponse(ctx context.Context, deviceID string, messageID string, phone string) (providerDownloadMediaResponse, error) {
@@ -563,6 +564,16 @@ func mediaDownloadPhoneCandidates(phoneNumber string) []string {
 	appendCandidate(digits + "@s.whatsapp.net")
 	appendCandidate("+" + digits)
 	return candidates
+}
+
+func mediaDownloadCandidateError(phones []string, lastErr error) error {
+	if lastErr == nil {
+		lastErr = errors.New(errMediaDownloadNoUsableResponse)
+	}
+	if len(phones) == 0 {
+		return lastErr
+	}
+	return fmt.Errorf("media download failed for candidate phones [%s]: %w", strings.Join(phones, ", "), lastErr)
 }
 
 func decodeInlineMediaData(rawData string, mediaType string, result DownloadMediaResult) (DownloadMediaFileResult, bool) {

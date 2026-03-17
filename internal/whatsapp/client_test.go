@@ -17,6 +17,8 @@ import (
 
 const testUnexpectedPathFmt = "unexpected path %q"
 const testPhoneNumber = "+31612345678"
+const testJSONContentType = "application/json"
+const testPhoneJID = "31612345678@s.whatsapp.net"
 
 func TestGetDeviceInfoReturnsAccountJID(t *testing.T) {
 	t.Parallel()
@@ -28,7 +30,7 @@ func TestGetDeviceInfoReturnsAccountJID(t *testing.T) {
 		if got := r.Header.Get("X-Device-Id"); got != "org_test" {
 			t.Fatalf("expected X-Device-Id header, got %q", got)
 		}
-		w.Header().Set(headerContentType, "application/json")
+		w.Header().Set(headerContentType, testJSONContentType)
 		_, _ = w.Write([]byte(`{"status":200,"code":"SUCCESS","results":{"id":"org_test","display_name":"Robin","jid":"31619330634@s.whatsapp.net","state":"logged_in"}}`))
 	}))
 	defer server.Close()
@@ -72,7 +74,7 @@ func TestSendImageUsesMultipartFormAndParsesMessageID(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertMultipartImageRequest(t, r)
-		w.Header().Set(headerContentType, "application/json")
+		w.Header().Set(headerContentType, testJSONContentType)
 		_, _ = w.Write([]byte(`{"status":200,"code":"SUCCESS","results":{"message_id":"msg-123"}}`))
 	}))
 	defer server.Close()
@@ -171,7 +173,7 @@ func TestMediaDownloadPhoneCandidatesIncludeJIDFallback(t *testing.T) {
 	if !strings.Contains(joined, "31612345678") {
 		t.Fatalf("expected bare phone candidate, got %v", got)
 	}
-	if !strings.Contains(joined, "31612345678@s.whatsapp.net") {
+	if !strings.Contains(joined, testPhoneJID) {
 		t.Fatalf("expected JID phone candidate, got %v", got)
 	}
 	if !strings.Contains(joined, "+31612345678") {
@@ -179,6 +181,86 @@ func TestMediaDownloadPhoneCandidatesIncludeJIDFallback(t *testing.T) {
 	}
 	if len(got) < 3 {
 		t.Fatalf("expected multiple phone candidates, got %v", got)
+	}
+}
+
+func TestDownloadMediaFileRetriesCandidates(t *testing.T) {
+	t.Parallel()
+
+	requestedPhones := make([]string, 0, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/message/") || !strings.HasSuffix(r.URL.Path, "/download") {
+			t.Fatalf(testUnexpectedPathFmt, r.URL.Path)
+		}
+		phone := r.URL.Query().Get("phone")
+		requestedPhones = append(requestedPhones, phone)
+		w.Header().Set(headerContentType, testJSONContentType)
+		if phone == testPhoneJID {
+			_, _ = w.Write([]byte(`{"status":200,"code":"SUCCESS","results":{"message_id":"msg-123","mime_type":"application/ogg","file_name":"voice.ogg","data":"b2dnLWRhdGE="}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":500,"code":"INTERNAL_SERVER_ERROR","message":"message msg-123 does not belong to chat"}`))
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:           server.URL,
+		baseHost:          server.Listener.Addr().String(),
+		apiKey:            "secret",
+		apiKeyFingerprint: "fp",
+		http:              &http.Client{Timeout: time.Second},
+		log:               logger.New("development"),
+	}
+
+	result, err := client.DownloadMediaFile(context.Background(), "org_test", "msg-123", testPhoneNumber)
+	if err != nil {
+		t.Fatalf("DownloadMediaFile returned error: %v", err)
+	}
+	if string(result.Data) != "ogg-data" {
+		t.Fatalf("expected decoded inline media, got %q", string(result.Data))
+	}
+	if result.ContentType != "application/ogg" {
+		t.Fatalf("expected provider mime type to be preserved in download result, got %q", result.ContentType)
+	}
+	if len(requestedPhones) < 2 {
+		t.Fatalf("expected retry across phone candidates, got %v", requestedPhones)
+	}
+	if requestedPhones[0] != "31612345678" {
+		t.Fatalf("expected first candidate to be normalized phone, got %q", requestedPhones[0])
+	}
+	if requestedPhones[1] != testPhoneJID {
+		t.Fatalf("expected second candidate to be jid phone, got %q", requestedPhones[1])
+	}
+}
+
+func TestDownloadMediaFileReportsAttemptedCandidatePhonesOnFailure(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(headerContentType, testJSONContentType)
+		_, _ = w.Write([]byte(`{"status":404,"code":"DEVICE_NOT_FOUND","message":"device not found"}`))
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:           server.URL,
+		baseHost:          server.Listener.Addr().String(),
+		apiKey:            "secret",
+		apiKeyFingerprint: "fp",
+		http:              &http.Client{Timeout: time.Second},
+		log:               logger.New("development"),
+	}
+
+	_, err := client.DownloadMediaFile(context.Background(), "org_test", "msg-404", testPhoneNumber)
+	if err == nil {
+		t.Fatal("expected DownloadMediaFile to fail")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "candidate phones [31612345678, "+testPhoneJID+", +31612345678]") {
+		t.Fatalf("expected attempted candidate phones in error, got %q", message)
+	}
+	if !strings.Contains(message, "DEVICE_NOT_FOUND") {
+		t.Fatalf("expected provider error details in error, got %q", message)
 	}
 }
 

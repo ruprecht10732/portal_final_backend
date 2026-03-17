@@ -15,6 +15,7 @@ import (
 )
 
 const testWhatsAppMediaPhone = "+31686261598"
+const testAudioOggContentType = "audio/ogg"
 
 func TestClearStaleWhatsAppConversationLeadRemovesLeadIDAndPersistsCleanup(t *testing.T) {
 	t.Parallel()
@@ -90,7 +91,7 @@ func TestMergeWhatsAppMediaCacheMetadataRoundTripsCacheFields(t *testing.T) {
 		MediaType:   "audio",
 		Filename:    "note.ogg",
 		StorageKey:  "org/whatsapp-media/conversation/message/note_1234.ogg",
-		ContentType: "audio/ogg",
+		ContentType: testAudioOggContentType,
 		SizeBytes:   12345,
 	})
 	if err != nil {
@@ -104,8 +105,8 @@ func TestMergeWhatsAppMediaCacheMetadataRoundTripsCacheFields(t *testing.T) {
 	if cache.StorageKey != "org/whatsapp-media/conversation/message/note_1234.ogg" {
 		t.Fatalf("expected storage key to round-trip, got %q", cache.StorageKey)
 	}
-	if cache.ContentType != "audio/ogg" {
-		t.Fatalf("expected content type audio/ogg, got %q", cache.ContentType)
+	if cache.ContentType != testAudioOggContentType {
+		t.Fatalf("expected content type %s, got %q", testAudioOggContentType, cache.ContentType)
 	}
 	if cache.SizeBytes != 12345 {
 		t.Fatalf("expected sizeBytes 12345, got %d", cache.SizeBytes)
@@ -172,5 +173,28 @@ func TestWhatsAppMediaDownloadTargetFallsBackToSenderAndPhone(t *testing.T) {
 	withoutPayload := json.RawMessage(`{"payload":{}}`)
 	if got := whatsAppMediaDownloadTarget(withoutPayload, testWhatsAppMediaPhone); got != testWhatsAppMediaPhone {
 		t.Fatalf("expected phone fallback, got %q", got)
+	}
+}
+
+func TestWhatsAppMediaDownloadTargetDetailsReportsSource(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"payload":{"from_lid":"212450775417035@lid"}}`)
+
+	target, source := whatsAppMediaDownloadTargetDetails(raw, testWhatsAppMediaPhone)
+	if target != "212450775417035@lid" {
+		t.Fatalf("expected from_lid target, got %q", target)
+	}
+	if source != "payload.from_lid" {
+		t.Fatalf("expected payload.from_lid source, got %q", source)
+	}
+}
+
+func TestNormalizeWhatsAppCachedContentTypeCanonicalizesApplicationOgg(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeWhatsAppCachedContentType("application/ogg", "audio", "voice-note.ogg", "")
+	if got != testAudioOggContentType {
+		t.Fatalf("expected application/ogg to normalize to %s, got %q", testAudioOggContentType, got)
 	}
 }
