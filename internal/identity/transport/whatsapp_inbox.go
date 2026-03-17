@@ -2,6 +2,7 @@ package transport
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"portal_final_backend/internal/identity/repository"
@@ -11,6 +12,7 @@ import (
 
 type WhatsAppConversationResponse struct {
 	ID                   string                    `json:"id"`
+	ChatJID              *string                   `json:"chatJid,omitempty"`
 	LeadID               *string                   `json:"leadId,omitempty"`
 	LinkedLead           *LeadInboxSummaryResponse `json:"linkedLead,omitempty"`
 	SuggestedLead        *LeadInboxSummaryResponse `json:"suggestedLead,omitempty"`
@@ -58,6 +60,13 @@ type ListWhatsAppConversationsResponse struct {
 type ListWhatsAppMessagesResponse struct {
 	Conversation WhatsAppConversationResponse `json:"conversation"`
 	Messages     []WhatsAppMessageResponse    `json:"messages"`
+	Pagination   WhatsAppPaginationResponse   `json:"pagination"`
+}
+
+type WhatsAppPaginationResponse struct {
+	Total  int `json:"total"`
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
 }
 
 type SendWhatsAppConversationAttachmentRequest struct {
@@ -244,6 +253,16 @@ func ToWhatsAppConversationResponse(item repository.WhatsAppConversation) WhatsA
 func WithWhatsAppConversationLeadState(item WhatsAppConversationResponse, linkedLead, suggestedLead *LeadInboxSummaryResponse) WhatsAppConversationResponse {
 	item.LinkedLead = linkedLead
 	item.SuggestedLead = suggestedLead
+	return item
+}
+
+func WithWhatsAppConversationChatJID(item WhatsAppConversationResponse, chatJID string) WhatsAppConversationResponse {
+	trimmed := strings.TrimSpace(chatJID)
+	if trimmed == "" {
+		item.ChatJID = nil
+		return item
+	}
+	item.ChatJID = &trimmed
 	return item
 }
 

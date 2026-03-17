@@ -85,6 +85,12 @@ type GatekeeperRunPayload struct {
 	Fingerprint   string `json:"fingerprint,omitempty"`
 }
 
+type gatekeeperRunTaskPayload struct {
+	TenantID      string `json:"tenantId"`
+	LeadID        string `json:"leadId"`
+	LeadServiceID string `json:"leadServiceId"`
+}
+
 type EstimatorRunPayload struct {
 	TenantID      string `json:"tenantId"`
 	LeadID        string `json:"leadId"`
@@ -254,7 +260,14 @@ func ParsePartnerOfferSummaryPayload(task *asynq.Task) (PartnerOfferSummaryPaylo
 }
 
 func NewGatekeeperRunTask(payload GatekeeperRunPayload) (*asynq.Task, error) {
-	data, err := json.Marshal(payload)
+	// Exclude the semantic fingerprint from the queued task body so queue-level
+	// uniqueness collapses short bursts per service, even when multiple trigger
+	// sources produce slightly different snapshots during intake.
+	data, err := json.Marshal(gatekeeperRunTaskPayload{
+		TenantID:      payload.TenantID,
+		LeadID:        payload.LeadID,
+		LeadServiceID: payload.LeadServiceID,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -10,8 +10,58 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/logger"
 )
+
+const testGatekeeperConsumerPhone = "+31612345678"
+const testGatekeeperLeadCreatedSource = "lead created"
+
+type queueUniqueGatekeeperScheduler struct {
+	gatekeeperPayloads []scheduler.GatekeeperRunPayload
+	seenPayloads       map[string]struct{}
+}
+
+func (q *queueUniqueGatekeeperScheduler) EnqueueGatekeeperRun(_ context.Context, payload scheduler.GatekeeperRunPayload) error {
+	if q.seenPayloads == nil {
+		q.seenPayloads = make(map[string]struct{})
+	}
+	task, err := scheduler.NewGatekeeperRunTask(payload)
+	if err != nil {
+		return err
+	}
+	key := string(task.Payload())
+	if _, exists := q.seenPayloads[key]; exists {
+		return nil
+	}
+	q.seenPayloads[key] = struct{}{}
+	q.gatekeeperPayloads = append(q.gatekeeperPayloads, payload)
+	return nil
+}
+
+func (q *queueUniqueGatekeeperScheduler) EnqueueEstimatorRun(context.Context, scheduler.EstimatorRunPayload) error {
+	return nil
+}
+
+func (q *queueUniqueGatekeeperScheduler) EnqueueDispatcherRun(context.Context, scheduler.DispatcherRunPayload) error {
+	return nil
+}
+
+func (q *queueUniqueGatekeeperScheduler) EnqueuePhotoAnalysis(context.Context, scheduler.PhotoAnalysisPayload) error {
+	return nil
+}
+
+func (q *queueUniqueGatekeeperScheduler) EnqueuePhotoAnalysisIn(context.Context, scheduler.PhotoAnalysisPayload, time.Duration) error {
+	return nil
+}
+
+func (q *queueUniqueGatekeeperScheduler) EnqueueAuditVisitReport(context.Context, scheduler.AuditVisitReportPayload) error {
+	return nil
+}
+
+func (q *queueUniqueGatekeeperScheduler) EnqueueAuditCallLog(context.Context, scheduler.AuditCallLogPayload) error {
+	return nil
+}
 
 type gatekeeperFingerprintRepoStub struct {
 	lead        repository.Lead
@@ -63,7 +113,7 @@ func TestMaybeEnqueueGatekeeperRunSkipsUnchangedFingerprintAfterStageOnlyChange(
 			ID:                 leadID,
 			ConsumerFirstName:  "Jane",
 			ConsumerLastName:   "Doe",
-			ConsumerPhone:      "+31612345678",
+			ConsumerPhone:      testGatekeeperConsumerPhone,
 			AddressStreet:      "Voorbeeldstraat",
 			AddressHouseNumber: "12",
 			AddressZipCode:     "1234AB",
@@ -80,7 +130,7 @@ func TestMaybeEnqueueGatekeeperRunSkipsUnchangedFingerprintAfterStageOnlyChange(
 	}
 	deduper := newInMemoryGatekeeperTriggerDeduper(time.Hour)
 
-	if !maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "lead created"}) {
+	if !maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: testGatekeeperLeadCreatedSource}) {
 		t.Fatalf("expected enqueue helper to handle trigger")
 	}
 	if len(queue.gatekeeperPayloads) != 1 {
@@ -110,7 +160,7 @@ func TestMaybeEnqueueGatekeeperRunAllowsMaterialChange(t *testing.T) {
 			ID:                 leadID,
 			ConsumerFirstName:  "Jane",
 			ConsumerLastName:   "Doe",
-			ConsumerPhone:      "+31612345678",
+			ConsumerPhone:      testGatekeeperConsumerPhone,
 			AddressStreet:      "Voorbeeldstraat",
 			AddressHouseNumber: "12",
 			AddressZipCode:     "1234AB",
@@ -127,7 +177,7 @@ func TestMaybeEnqueueGatekeeperRunAllowsMaterialChange(t *testing.T) {
 	}
 	deduper := newInMemoryGatekeeperTriggerDeduper(time.Hour)
 
-	maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "lead created"})
+	maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: testGatekeeperLeadCreatedSource})
 	repo.notes = []repository.LeadNote{{ID: uuid.New(), LeadID: leadID, OrganizationID: tenantID, Type: "note", Body: "Klant stuurde extra details"}}
 	maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, deduper: deduper, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "note"})
 
@@ -136,6 +186,47 @@ func TestMaybeEnqueueGatekeeperRunAllowsMaterialChange(t *testing.T) {
 	}
 	if queue.gatekeeperPayloads[0].Fingerprint == queue.gatekeeperPayloads[1].Fingerprint {
 		t.Fatalf("expected fingerprints to differ after material change")
+	}
+}
+
+func TestMaybeEnqueueGatekeeperRunBurstCollapsesAtQueueLayerAcrossFingerprints(t *testing.T) {
+	ctx := context.Background()
+	leadID := uuid.New()
+	serviceID := uuid.New()
+	tenantID := uuid.New()
+	queue := &queueUniqueGatekeeperScheduler{}
+	repo := &gatekeeperFingerprintRepoStub{
+		lead: repository.Lead{
+			ID:                 leadID,
+			ConsumerFirstName:  "Jane",
+			ConsumerLastName:   "Doe",
+			ConsumerPhone:      testGatekeeperConsumerPhone,
+			AddressStreet:      "Voorbeeldstraat",
+			AddressHouseNumber: "12",
+			AddressZipCode:     "1234AB",
+			AddressCity:        "Amsterdam",
+			WhatsAppOptedIn:    true,
+		},
+		service: repository.LeadService{
+			ID:             serviceID,
+			LeadID:         leadID,
+			OrganizationID: tenantID,
+			PipelineStage:  "Triage",
+			ServiceType:    "Algemeen",
+		},
+	}
+
+	if !maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: testGatekeeperLeadCreatedSource}) {
+		t.Fatalf("expected first intake trigger to be handled")
+	}
+
+	repo.notes = []repository.LeadNote{{ID: uuid.New(), LeadID: leadID, OrganizationID: tenantID, Type: "note", Body: "Klant stuurde extra details"}}
+	if !maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{ctx: ctx, repo: repo, queue: queue, log: logger.New("development"), leadID: leadID, serviceID: serviceID, tenantID: tenantID, source: "note"}) {
+		t.Fatalf("expected follow-up intake trigger to be handled")
+	}
+
+	if len(queue.gatekeeperPayloads) != 1 {
+		t.Fatalf("expected queue-level gatekeeper uniqueness to collapse the burst to one entry, got %d", len(queue.gatekeeperPayloads))
 	}
 }
 

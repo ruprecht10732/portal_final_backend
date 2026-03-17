@@ -26,6 +26,7 @@ const (
 	offerSummaryTaskMaxRetry     = 3
 	leadAutomationTaskTimeout    = 5 * time.Minute
 	leadAutomationTaskUniqueTTL  = leadAutomationTaskTimeout
+	gatekeeperTaskUniqueTTL      = 45 * time.Second
 	leadAutomationTaskMaxRetry   = 3
 	autoPhotoAnalysisDelay       = 30 * time.Second
 	waAgentVoiceTaskTimeout      = 5 * time.Minute
@@ -227,7 +228,7 @@ func (c *Client) EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRun
 		return err
 	}
 
-	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
+	_, err = c.client.EnqueueContext(ctx, task, gatekeeperTaskOptions(c.queue)...)
 	return normalizeEnqueueError(err)
 }
 
@@ -371,6 +372,15 @@ func offerSummaryTaskOptions(queue string) []asynq.Option {
 		asynq.MaxRetry(offerSummaryTaskMaxRetry),
 		asynq.Timeout(offerSummaryTaskTimeout),
 		asynq.Unique(offerSummaryTaskUniqueTTL),
+	}
+}
+
+func gatekeeperTaskOptions(queue string) []asynq.Option {
+	return []asynq.Option{
+		asynq.Queue(queue),
+		asynq.MaxRetry(leadAutomationTaskMaxRetry),
+		asynq.Timeout(leadAutomationTaskTimeout),
+		asynq.Unique(gatekeeperTaskUniqueTTL),
 	}
 }
 

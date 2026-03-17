@@ -20,6 +20,7 @@ import (
 func (h *Handler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/whatsapp/conversations", h.ListWhatsAppConversations)
 	rg.GET("/whatsapp/conversations/unread-count", h.GetWhatsAppUnreadConversationCount)
+	rg.GET("/chat/:chatJID/messages", h.ListWhatsAppMessagesByChatJID)
 	rg.GET("/whatsapp/conversations/:conversationID/messages", h.ListWhatsAppMessages)
 	rg.POST("/whatsapp/conversations/:conversationID/lead", h.LinkWhatsAppConversationLead)
 	rg.POST("/whatsapp/conversations/:conversationID/create-lead", h.CreateLeadFromWhatsAppConversation)
@@ -88,6 +89,10 @@ func (h *Handler) ListWhatsAppConversations(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
+	chatJIDs, err := h.svc.ResolveWhatsAppConversationChatJIDs(c.Request.Context(), *tenantID, items)
+	if httpkit.HandleError(c, err) {
+		return
+	}
 
 	response := make([]transport.WhatsAppConversationResponse, 0, len(items))
 	for _, item := range items {
@@ -96,7 +101,7 @@ func (h *Handler) ListWhatsAppConversations(c *gin.Context) {
 			return
 		}
 		response = append(response, transport.WithWhatsAppConversationLeadState(
-			transport.ToWhatsAppConversationResponse(item),
+			transport.WithWhatsAppConversationChatJID(transport.ToWhatsAppConversationResponse(item), chatJIDs[item.ID]),
 			toLeadInboxSummaryResponse(linkedLead),
 			toLeadInboxSummaryResponse(suggestedLead),
 		))
@@ -122,38 +127,99 @@ func (h *Handler) ListWhatsAppMessages(c *gin.Context) {
 		return
 	}
 
-	limit := 200
-	if rawLimit := c.Query("limit"); rawLimit != "" {
-		parsed, parseErr := strconv.Atoi(rawLimit)
-		if parseErr != nil || parsed < 1 || parsed > 500 {
-			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid limit")
-			return
-		}
-		limit = parsed
+	limit, offset, ok := parseWhatsAppMessagePagination(c)
+	if !ok {
+		return
 	}
 
-	conversation, messages, err := h.svc.GetWhatsAppConversationMessages(c.Request.Context(), *tenantID, conversationID, limit)
+	history, err := h.svc.GetWhatsAppConversationMessageHistory(c.Request.Context(), *tenantID, conversationID, limit, offset)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	response := make([]transport.WhatsAppMessageResponse, 0, len(messages))
-	for _, item := range messages {
+	response := make([]transport.WhatsAppMessageResponse, 0, len(history.Messages))
+	for _, item := range history.Messages {
 		response = append(response, transport.ToWhatsAppMessageResponse(item))
 	}
-	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, &conversation)
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, &history.Conversation)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
 	httpkit.OK(c, transport.ListWhatsAppMessagesResponse{
 		Conversation: transport.WithWhatsAppConversationLeadState(
-			transport.ToWhatsAppConversationResponse(conversation),
+			transport.WithWhatsAppConversationChatJID(transport.ToWhatsAppConversationResponse(history.Conversation), history.ChatJID),
 			toLeadInboxSummaryResponse(linkedLead),
 			toLeadInboxSummaryResponse(suggestedLead),
 		),
-		Messages: response,
+		Messages:   response,
+		Pagination: transport.WhatsAppPaginationResponse{Total: history.Total, Limit: history.Limit, Offset: history.Offset},
 	})
+}
+
+func (h *Handler) ListWhatsAppMessagesByChatJID(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID := identity.TenantID()
+	if tenantID == nil {
+		httpkit.Error(c, http.StatusBadRequest, msgTenantNotSet, nil)
+		return
+	}
+
+	limit, offset, ok := parseWhatsAppMessagePagination(c)
+	if !ok {
+		return
+	}
+
+	history, err := h.svc.GetWhatsAppChatMessageHistory(c.Request.Context(), *tenantID, c.Param("chatJID"), limit, offset)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	response := make([]transport.WhatsAppMessageResponse, 0, len(history.Messages))
+	for _, item := range history.Messages {
+		response = append(response, transport.ToWhatsAppMessageResponse(item))
+	}
+	linkedLead, suggestedLead, err := h.svc.GetWhatsAppConversationLeadState(c.Request.Context(), *tenantID, &history.Conversation)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.ListWhatsAppMessagesResponse{
+		Conversation: transport.WithWhatsAppConversationLeadState(
+			transport.WithWhatsAppConversationChatJID(transport.ToWhatsAppConversationResponse(history.Conversation), history.ChatJID),
+			toLeadInboxSummaryResponse(linkedLead),
+			toLeadInboxSummaryResponse(suggestedLead),
+		),
+		Messages:   response,
+		Pagination: transport.WhatsAppPaginationResponse{Total: history.Total, Limit: history.Limit, Offset: history.Offset},
+	})
+}
+
+func parseWhatsAppMessagePagination(c *gin.Context) (int, int, bool) {
+	limit := 200
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 || parsed > 500 {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid limit")
+			return 0, 0, false
+		}
+		limit = parsed
+	}
+
+	offset := 0
+	if rawOffset := c.Query("offset"); rawOffset != "" {
+		parsed, err := strconv.Atoi(rawOffset)
+		if err != nil || parsed < 0 {
+			httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid offset")
+			return 0, 0, false
+		}
+		offset = parsed
+	}
+
+	return limit, offset, true
 }
 
 func (h *Handler) LinkWhatsAppConversationLead(c *gin.Context) {

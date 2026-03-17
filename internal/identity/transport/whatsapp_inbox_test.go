@@ -55,3 +55,27 @@ func TestToWhatsAppMessageResponseMapsLeadID(t *testing.T) {
 		t.Fatalf("expected lead ID %s, got %s", leadID.String(), *response.LeadID)
 	}
 }
+
+func TestWithWhatsAppConversationChatJIDSetsTrimmedValue(t *testing.T) {
+	conversation := WhatsAppConversationResponse{ID: uuid.New().String()}
+
+	response := WithWhatsAppConversationChatJID(conversation, " 31612345678@s.whatsapp.net ")
+
+	if response.ChatJID == nil {
+		t.Fatal("expected chatJid to be set")
+	}
+	if *response.ChatJID != "31612345678@s.whatsapp.net" {
+		t.Fatalf("expected trimmed chatJid, got %q", *response.ChatJID)
+	}
+}
+
+func TestWithWhatsAppConversationChatJIDClearsEmptyValue(t *testing.T) {
+	chatJID := "31612345678@s.whatsapp.net"
+	conversation := WhatsAppConversationResponse{ID: uuid.New().String(), ChatJID: &chatJID}
+
+	response := WithWhatsAppConversationChatJID(conversation, "   ")
+
+	if response.ChatJID != nil {
+		t.Fatalf("expected empty chatJid to clear existing value, got %q", *response.ChatJID)
+	}
+}

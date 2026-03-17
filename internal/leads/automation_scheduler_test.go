@@ -136,6 +136,66 @@ func TestMaybeRunGatekeeperForDataChangeEnqueuesGatekeeperWhenSchedulerConfigure
 	}
 }
 
+func TestInitialGatekeeperBurstCollapsesWithFollowUpDataChange(t *testing.T) {
+	leadID := uuid.New()
+	serviceID := uuid.New()
+	tenantID := uuid.New()
+	queue := &queueUniqueGatekeeperScheduler{}
+	repo := &gatekeeperFingerprintRepoStub{
+		lead: repository.Lead{
+			ID:                 leadID,
+			ConsumerFirstName:  "Jane",
+			ConsumerLastName:   "Doe",
+			ConsumerPhone:      "+31612345678",
+			AddressStreet:      "Voorbeeldstraat",
+			AddressHouseNumber: "12",
+			AddressZipCode:     "1234AB",
+			AddressCity:        "Amsterdam",
+			WhatsAppOptedIn:    true,
+		},
+		service: repository.LeadService{
+			ID:             serviceID,
+			LeadID:         leadID,
+			OrganizationID: tenantID,
+			PipelineStage:  domain.PipelineStageTriage,
+			ServiceType:    "Algemeen",
+		},
+	}
+
+	if !maybeEnqueueGatekeeperRun(gatekeeperEnqueueRequest{
+		ctx:       context.Background(),
+		repo:      repo,
+		queue:     queue,
+		log:       logger.New("development"),
+		leadID:    leadID,
+		serviceID: serviceID,
+		tenantID:  tenantID,
+		source:    "lead created",
+	}) {
+		t.Fatalf("expected initial gatekeeper enqueue helper to handle lead-created trigger")
+	}
+
+	o := &Orchestrator{
+		automationQueue: queue,
+		log:             logger.New("development"),
+	}
+	repo.notes = []repository.LeadNote{{ID: uuid.New(), LeadID: leadID, OrganizationID: tenantID, Type: "note", Body: "Klant stuurde extra details"}}
+	o.maybeRunGatekeeperForDataChange(repository.LeadService{PipelineStage: domain.PipelineStageTriage}, events.LeadDataChanged{
+		BaseEvent:     events.NewBaseEvent(),
+		LeadID:        leadID,
+		LeadServiceID: serviceID,
+		TenantID:      tenantID,
+		Source:        "user_update",
+	})
+
+	if len(queue.gatekeeperPayloads) != 1 {
+		t.Fatalf("expected lead-created enqueue plus immediate data-change follow-up to collapse into one queue entry, got %d", len(queue.gatekeeperPayloads))
+	}
+	if queue.gatekeeperPayloads[0].LeadServiceID != serviceID.String() {
+		t.Fatalf("unexpected gatekeeper payload after burst collapse: %#v", queue.gatekeeperPayloads[0])
+	}
+}
+
 func TestMaybeRunGatekeeperForDataChangeSkipsManualIntervention(t *testing.T) {
 	queue := &fakeAutomationScheduler{}
 	o := &Orchestrator{

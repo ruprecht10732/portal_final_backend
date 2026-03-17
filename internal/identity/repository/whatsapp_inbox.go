@@ -179,9 +179,29 @@ func (r *Repository) GetWhatsAppConversation(ctx context.Context, organizationID
 	return item, nil
 }
 
+func (r *Repository) CountWhatsAppMessages(ctx context.Context, organizationID, conversationID uuid.UUID) (int, error) {
+	const query = `
+		SELECT COUNT(*)
+		FROM RAC_whatsapp_messages
+		WHERE organization_id = $1 AND conversation_id = $2`
+
+	var total int
+	if err := r.pool.QueryRow(ctx, query, organizationID, conversationID).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 func (r *Repository) ListWhatsAppMessages(ctx context.Context, organizationID, conversationID uuid.UUID, limit int) ([]WhatsAppMessage, error) {
+	return r.ListWhatsAppMessagesPage(ctx, organizationID, conversationID, limit, 0)
+}
+
+func (r *Repository) ListWhatsAppMessagesPage(ctx context.Context, organizationID, conversationID uuid.UUID, limit, offset int) ([]WhatsAppMessage, error) {
 	if limit <= 0 {
 		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	const query = `
@@ -194,12 +214,12 @@ func (r *Repository) ListWhatsAppMessages(ctx context.Context, organizationID, c
 			       sent_at, read_at, failed_at, created_at
 			FROM RAC_whatsapp_messages
 			WHERE organization_id = $1 AND conversation_id = $2
-			ORDER BY created_at DESC
-			LIMIT $3
+			ORDER BY created_at DESC, id DESC
+			LIMIT $3 OFFSET $4
 		) AS recent
-		ORDER BY created_at ASC`
+		ORDER BY created_at ASC, id ASC`
 
-	rows, err := r.pool.Query(ctx, query, organizationID, conversationID, limit)
+	rows, err := r.pool.Query(ctx, query, organizationID, conversationID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +235,63 @@ func (r *Repository) ListWhatsAppMessages(ctx context.Context, organizationID, c
 	}
 
 	return items, rows.Err()
+}
+
+func (r *Repository) GetWhatsAppConversationByChatJID(ctx context.Context, organizationID uuid.UUID, chatJID string) (WhatsAppConversation, error) {
+	trimmedChatJID := strings.TrimSpace(chatJID)
+	if trimmedChatJID == "" {
+		return WhatsAppConversation{}, ErrNotFound
+	}
+
+	const byMessageChatIDQuery = `
+		SELECT id, organization_id, lead_id, phone_number, display_name,
+		       last_message_preview, last_message_at, last_message_direction,
+		       last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at
+		FROM RAC_whatsapp_conversations
+		WHERE organization_id = $1
+		  AND deleted_at IS NULL
+		  AND id = (
+			SELECT conversation_id
+			FROM RAC_whatsapp_messages
+			WHERE organization_id = $1
+			  AND metadata IS NOT NULL
+			  AND TRIM(metadata->'payload'->>'chat_id') = $2
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+		  )`
+
+	conversation, err := scanWhatsAppConversationRow(r.pool.QueryRow(ctx, byMessageChatIDQuery, organizationID, trimmedChatJID))
+	if err == nil {
+		return conversation, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppConversation{}, err
+	}
+
+	normalizedPhone := normalizeWhatsAppPhoneNumber(trimmedChatJID)
+	if normalizedPhone == "" {
+		return WhatsAppConversation{}, ErrNotFound
+	}
+
+	const byPhoneQuery = `
+		SELECT id, organization_id, lead_id, phone_number, display_name,
+		       last_message_preview, last_message_at, last_message_direction,
+		       last_message_status, unread_count, archived_at, deleted_at, created_at, updated_at
+		FROM RAC_whatsapp_conversations
+		WHERE organization_id = $1
+		  AND phone_number = $2
+		  AND deleted_at IS NULL
+		ORDER BY updated_at DESC, created_at DESC
+		LIMIT 1`
+
+	conversation, err = scanWhatsAppConversationRow(r.pool.QueryRow(ctx, byPhoneQuery, organizationID, normalizedPhone))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WhatsAppConversation{}, ErrNotFound
+	}
+	if err != nil {
+		return WhatsAppConversation{}, err
+	}
+	return conversation, nil
 }
 
 func (r *Repository) GetLatestUnreadWhatsAppReadSyncTarget(ctx context.Context, organizationID, conversationID uuid.UUID) (*WhatsAppReadSyncTarget, error) {
@@ -1486,6 +1563,46 @@ func (r *Repository) LookupWhatsAppConversationChatJID(ctx context.Context, orga
 		return "", err
 	}
 	return strings.TrimSpace(chatJID), nil
+}
+
+func (r *Repository) LookupWhatsAppConversationChatJIDs(ctx context.Context, organizationID uuid.UUID, conversationIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	result := make(map[uuid.UUID]string, len(conversationIDs))
+	if len(conversationIDs) == 0 {
+		return result, nil
+	}
+
+	const query = `
+		SELECT DISTINCT ON (conversation_id)
+			conversation_id,
+			TRIM(metadata->'payload'->>'chat_id') AS chat_jid
+		FROM RAC_whatsapp_messages
+		WHERE organization_id = $1
+		  AND conversation_id = ANY($2)
+		  AND metadata IS NOT NULL
+		  AND metadata->'payload'->>'chat_id' IS NOT NULL
+		  AND TRIM(metadata->'payload'->>'chat_id') != ''
+		ORDER BY conversation_id, created_at DESC, id DESC`
+
+	rows, err := r.pool.Query(ctx, query, organizationID, conversationIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var conversationID uuid.UUID
+		var chatJID string
+		if scanErr := rows.Scan(&conversationID, &chatJID); scanErr != nil {
+			return nil, scanErr
+		}
+		result[conversationID] = strings.TrimSpace(chatJID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 var _ = (*pgxpool.Pool)(nil)

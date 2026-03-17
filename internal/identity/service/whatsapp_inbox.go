@@ -28,6 +28,7 @@ import (
 const conversationNotFoundMsg = "conversation not found"
 const whatsappDeviceNotLinkedMsg = "er is geen verbonden WhatsApp-apparaat voor deze organisatie"
 const whatsappMessageNotFoundMsg = "message not found"
+const whatsappDirectChatOnlyMsg = "alleen directe WhatsApp-chats worden ondersteund"
 
 type SendWhatsAppConversationAttachmentInput struct {
 	Filename   string
@@ -76,6 +77,15 @@ type WhatsAppReplySuggestionResult struct {
 	EffectiveScenario string
 }
 
+type WhatsAppConversationHistoryResult struct {
+	Conversation repository.WhatsAppConversation
+	Messages     []repository.WhatsAppMessage
+	Total        int
+	Limit        int
+	Offset       int
+	ChatJID      string
+}
+
 type AttachWhatsAppMessageToLeadResult struct {
 	AttachmentID uuid.UUID
 	LeadID       uuid.UUID
@@ -106,21 +116,134 @@ func (s *Service) ListWhatsAppConversations(ctx context.Context, organizationID 
 }
 
 func (s *Service) GetWhatsAppConversationMessages(ctx context.Context, organizationID, conversationID uuid.UUID, limit int) (repository.WhatsAppConversation, []repository.WhatsAppMessage, error) {
+	history, err := s.GetWhatsAppConversationMessageHistory(ctx, organizationID, conversationID, limit, 0)
+	if err != nil {
+		return repository.WhatsAppConversation{}, nil, err
+	}
+	return history.Conversation, history.Messages, nil
+}
+
+func (s *Service) GetWhatsAppConversationMessageHistory(ctx context.Context, organizationID, conversationID uuid.UUID, limit, offset int) (WhatsAppConversationHistoryResult, error) {
 	conversation, err := s.repo.GetWhatsAppConversation(ctx, organizationID, conversationID)
 	if err != nil {
 		if err == repository.ErrNotFound {
-			return repository.WhatsAppConversation{}, nil, apperr.NotFound(conversationNotFoundMsg)
+			return WhatsAppConversationHistoryResult{}, apperr.NotFound(conversationNotFoundMsg)
 		}
-		return repository.WhatsAppConversation{}, nil, err
+		return WhatsAppConversationHistoryResult{}, err
+	}
+	return s.getWhatsAppConversationHistory(ctx, organizationID, conversation, limit, offset, "")
+}
+
+func (s *Service) GetWhatsAppChatMessageHistory(ctx context.Context, organizationID uuid.UUID, chatJID string, limit, offset int) (WhatsAppConversationHistoryResult, error) {
+	trimmedChatJID := strings.TrimSpace(chatJID)
+	if !isDirectWhatsAppChatJID(trimmedChatJID) {
+		return WhatsAppConversationHistoryResult{}, apperr.Validation(whatsappDirectChatOnlyMsg)
 	}
 
-	messages, err := s.repo.ListWhatsAppMessages(ctx, organizationID, conversationID, limit)
+	conversation, err := s.repo.GetWhatsAppConversationByChatJID(ctx, organizationID, trimmedChatJID)
 	if err != nil {
-		return repository.WhatsAppConversation{}, nil, err
+		if err == repository.ErrNotFound {
+			return WhatsAppConversationHistoryResult{}, apperr.NotFound(conversationNotFoundMsg)
+		}
+		return WhatsAppConversationHistoryResult{}, err
+	}
+
+	return s.getWhatsAppConversationHistory(ctx, organizationID, conversation, limit, offset, trimmedChatJID)
+}
+
+func (s *Service) ResolveWhatsAppConversationChatJID(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation) (string, error) {
+	if s.repo != nil {
+		chatJID, err := s.repo.LookupWhatsAppConversationChatJID(ctx, organizationID, conversation.ID)
+		if err != nil {
+			return "", err
+		}
+		if chatJID != "" {
+			return chatJID, nil
+		}
+	}
+	return directWhatsAppChatJIDFromPhoneNumber(conversation.PhoneNumber), nil
+}
+
+func (s *Service) ResolveWhatsAppConversationChatJIDs(ctx context.Context, organizationID uuid.UUID, conversations []repository.WhatsAppConversation) (map[uuid.UUID]string, error) {
+	resolved := make(map[uuid.UUID]string, len(conversations))
+	if len(conversations) == 0 {
+		return resolved, nil
+	}
+
+	conversationIDs := make([]uuid.UUID, 0, len(conversations))
+	for _, conversation := range conversations {
+		conversationIDs = append(conversationIDs, conversation.ID)
+	}
+
+	if s.repo != nil {
+		storedChatJIDs, err := s.repo.LookupWhatsAppConversationChatJIDs(ctx, organizationID, conversationIDs)
+		if err != nil {
+			return nil, err
+		}
+		for conversationID, chatJID := range storedChatJIDs {
+			trimmedChatJID := strings.TrimSpace(chatJID)
+			if trimmedChatJID != "" {
+				resolved[conversationID] = trimmedChatJID
+			}
+		}
+	}
+
+	for _, conversation := range conversations {
+		if _, ok := resolved[conversation.ID]; ok {
+			continue
+		}
+		if fallbackChatJID := directWhatsAppChatJIDFromPhoneNumber(conversation.PhoneNumber); fallbackChatJID != "" {
+			resolved[conversation.ID] = fallbackChatJID
+		}
+	}
+
+	return resolved, nil
+}
+
+func (s *Service) getWhatsAppConversationHistory(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	conversation repository.WhatsAppConversation,
+	limit int,
+	offset int,
+	fallbackChatJID string,
+) (WhatsAppConversationHistoryResult, error) {
+	total, err := s.repo.CountWhatsAppMessages(ctx, organizationID, conversation.ID)
+	if err != nil {
+		return WhatsAppConversationHistoryResult{}, err
+	}
+
+	messages, err := s.repo.ListWhatsAppMessagesPage(ctx, organizationID, conversation.ID, limit, offset)
+	if err != nil {
+		return WhatsAppConversationHistoryResult{}, err
 	}
 	messages = s.preResolveWhatsAppMessageMedia(ctx, organizationID, conversation, messages)
 
-	return conversation, messages, nil
+	chatJID := strings.TrimSpace(fallbackChatJID)
+	if chatJID == "" {
+		chatJID, err = s.ResolveWhatsAppConversationChatJID(ctx, organizationID, conversation)
+		if err != nil {
+			return WhatsAppConversationHistoryResult{}, err
+		}
+	}
+
+	resolvedLimit := limit
+	if resolvedLimit <= 0 {
+		resolvedLimit = 200
+	}
+	resolvedOffset := offset
+	if resolvedOffset < 0 {
+		resolvedOffset = 0
+	}
+
+	return WhatsAppConversationHistoryResult{
+		Conversation: conversation,
+		Messages:     messages,
+		Total:        total,
+		Limit:        resolvedLimit,
+		Offset:       resolvedOffset,
+		ChatJID:      chatJID,
+	}, nil
 }
 
 func (s *Service) preResolveWhatsAppMessageMedia(ctx context.Context, organizationID uuid.UUID, conversation repository.WhatsAppConversation, messages []repository.WhatsAppMessage) []repository.WhatsAppMessage {
@@ -1592,6 +1715,40 @@ func whatsAppMediaDownloadTargetDetails(raw json.RawMessage, fallback string) (s
 
 func isWhatsAppLID(s string) bool {
 	return strings.HasSuffix(strings.TrimSpace(s), "@lid")
+}
+
+func isDirectWhatsAppChatJID(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	return strings.HasSuffix(trimmed, "@s.whatsapp.net") || strings.HasSuffix(trimmed, "@lid")
+}
+
+func directWhatsAppChatJIDFromPhoneNumber(phoneNumber string) string {
+	normalizedPhone := normalizeDirectWhatsAppChatPhone(phoneNumber)
+	if normalizedPhone == "" {
+		return ""
+	}
+	return strings.TrimPrefix(normalizedPhone, "+") + "@s.whatsapp.net"
+}
+
+func normalizeDirectWhatsAppChatPhone(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if at := strings.Index(trimmed, "@"); at >= 0 {
+		trimmed = trimmed[:at]
+	}
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.HasPrefix(trimmed, "+") {
+		trimmed = "+" + trimmed
+	}
+	return strings.TrimSpace(phone.NormalizeE164(trimmed))
 }
 
 func whatsAppMetadataLID(raw json.RawMessage) string {
