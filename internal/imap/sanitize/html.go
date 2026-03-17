@@ -79,55 +79,85 @@ func appendCleanNode(parent, node *html.Node) {
 }
 
 func sanitizeAttrs(tag string, attrs []html.Attribute) []html.Attribute {
+	switch tag {
+	case "a":
+		return sanitizeAnchorAttrs(attrs)
+	case "img":
+		return sanitizeImageAttrs(attrs)
+	default:
+		// Keep no generic attributes on other tags to reduce attack surface.
+		return nil
+	}
+}
+
+func sanitizeAnchorAttrs(attrs []html.Attribute) []html.Attribute {
 	out := make([]html.Attribute, 0, len(attrs))
 	hasRel := false
 	hasTargetBlank := false
 
 	for _, attr := range attrs {
-		key := strings.ToLower(strings.TrimSpace(attr.Key))
-		val := strings.TrimSpace(attr.Val)
-
-		if key == "" || strings.HasPrefix(key, "on") {
+		key, val, ok := normalizedAttr(attr)
+		if !ok {
 			continue
 		}
 
-		switch tag {
-		case "a":
-			if key == "href" {
-				if !isSafeHref(val) {
-					continue
-				}
-				out = append(out, html.Attribute{Key: "href", Val: val})
-			} else if key == "title" {
-				out = append(out, html.Attribute{Key: "title", Val: val})
-			} else if key == "target" {
-				if val == "_blank" {
-					hasTargetBlank = true
-					out = append(out, html.Attribute{Key: "target", Val: "_blank"})
-				}
-			} else if key == "rel" {
-				hasRel = true
-				out = append(out, html.Attribute{Key: "rel", Val: val})
+		switch key {
+		case "href":
+			if !isSafeHref(val) {
+				continue
 			}
-		case "img":
-			if key == "src" {
-				if !isSafeImageSrc(val) {
-					continue
-				}
-				out = append(out, html.Attribute{Key: "src", Val: val})
-			} else if key == "alt" || key == "title" || key == "width" || key == "height" {
-				out = append(out, html.Attribute{Key: key, Val: val})
+			out = append(out, html.Attribute{Key: "href", Val: val})
+		case "title":
+			out = append(out, html.Attribute{Key: "title", Val: val})
+		case "target":
+			if val != "_blank" {
+				continue
 			}
-		default:
-			// Keep no generic attributes on other tags to reduce attack surface.
+			hasTargetBlank = true
+			out = append(out, html.Attribute{Key: "target", Val: "_blank"})
+		case "rel":
+			hasRel = true
+			out = append(out, html.Attribute{Key: "rel", Val: val})
 		}
 	}
 
-	if tag == "a" && hasTargetBlank && !hasRel {
+	if hasTargetBlank && !hasRel {
 		out = append(out, html.Attribute{Key: "rel", Val: "noopener noreferrer"})
 	}
 
 	return out
+}
+
+func sanitizeImageAttrs(attrs []html.Attribute) []html.Attribute {
+	out := make([]html.Attribute, 0, len(attrs))
+
+	for _, attr := range attrs {
+		key, val, ok := normalizedAttr(attr)
+		if !ok {
+			continue
+		}
+
+		switch key {
+		case "src":
+			if !isSafeImageSrc(val) {
+				continue
+			}
+			out = append(out, html.Attribute{Key: "src", Val: val})
+		case "alt", "title", "width", "height":
+			out = append(out, html.Attribute{Key: key, Val: val})
+		}
+	}
+
+	return out
+}
+
+func normalizedAttr(attr html.Attribute) (key, val string, ok bool) {
+	key = strings.ToLower(strings.TrimSpace(attr.Key))
+	val = strings.TrimSpace(attr.Val)
+	if key == "" || strings.HasPrefix(key, "on") {
+		return "", "", false
+	}
+	return key, val, true
 }
 
 func isSafeHref(raw string) bool {
