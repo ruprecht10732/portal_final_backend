@@ -826,19 +826,12 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 	if err != nil {
 		return WhatsAppMediaDownloadResult{}, err
 	}
-	if override := whatsAppMessageDeviceOverride(message.Metadata); override != "" {
-		deviceID = override
-	}
 	if cached, ok := s.cachedWhatsAppMediaDownloadURL(ctx, message); ok {
 		return cached, nil
 	}
 
-	deviceSource := "organization_settings"
-	if resolvedDeviceID, resolvedSource := resolveWhatsAppMessageDeviceID(message.Metadata, deviceID); resolvedDeviceID != "" {
-		deviceID = resolvedDeviceID
-		deviceSource = resolvedSource
-	}
-	downloadTarget, downloadTargetSource := whatsAppMediaDownloadTargetDetails(message.Metadata, conversation.PhoneNumber)
+	deviceID, deviceSource := resolveWhatsAppMessageDeviceID(message.Metadata, deviceID)
+	downloadTarget, downloadTargetSource := s.resolveWhatsAppMediaDownloadTarget(ctx, organizationID, conversationID, message, conversation)
 	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, downloadTarget)
 	if err != nil {
 		log.Printf("whatsapp inbox: media download failed organization=%s conversation=%s message=%s device=%s deviceSource=%s target=%s targetSource=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, deviceSource, downloadTarget, downloadTargetSource, conversation.PhoneNumber, err)
@@ -1608,6 +1601,19 @@ func isWhatsAppImageMessage(message repository.WhatsAppMessage) bool {
 	return false
 }
 
+func (s *Service) resolveWhatsAppMediaDownloadTarget(ctx context.Context, organizationID, conversationID uuid.UUID, message repository.WhatsAppMessage, conversation repository.WhatsAppConversation) (string, string) {
+	target, source := whatsAppMediaDownloadTargetDetails(message.Metadata, "")
+	if target != "" {
+		return target, source
+	}
+	if s.repo != nil {
+		if chatJID, err := s.repo.LookupWhatsAppConversationChatJID(ctx, organizationID, conversationID); err == nil && chatJID != "" {
+			return chatJID, "sibling_message_chat_id"
+		}
+	}
+	return strings.TrimSpace(conversation.PhoneNumber), "conversation_phone"
+}
+
 func normalizeWhatsAppImportContentType(contentType string, mediaType string) string {
 	trimmed := strings.TrimSpace(strings.Split(contentType, ";")[0])
 	if trimmed != "" {
@@ -1836,7 +1842,7 @@ func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID
 		return WhatsAppMediaDownloadResult{}, false
 	}
 	_, deviceSource := resolveWhatsAppMessageDeviceID(message.Metadata, deviceID)
-	downloadTarget, downloadTargetSource := whatsAppMediaDownloadTargetDetails(message.Metadata, conversation.PhoneNumber)
+	downloadTarget, downloadTargetSource := s.resolveWhatsAppMediaDownloadTarget(ctx, organizationID, conversationID, message, conversation)
 	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, downloadTarget)
 	if err != nil {
 		log.Printf("whatsapp inbox: media file download failed organization=%s conversation=%s message=%s device=%s deviceSource=%s target=%s targetSource=%s fallbackPhone=%s err=%v", organizationID, conversationID, externalMessageID, deviceID, deviceSource, downloadTarget, downloadTargetSource, conversation.PhoneNumber, err)

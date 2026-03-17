@@ -16,6 +16,7 @@ import (
 
 const testWhatsAppMediaPhone = "+31686261598"
 const testAudioOggContentType = "audio/ogg"
+const testWhatsAppChatLID = "212450775417035@lid"
 
 func TestClearStaleWhatsAppConversationLeadRemovesLeadIDAndPersistsCleanup(t *testing.T) {
 	t.Parallel()
@@ -154,10 +155,10 @@ func TestMergeWhatsAppMediaResponseMetadataOverridesRenderableURL(t *testing.T) 
 func TestWhatsAppMediaDownloadTargetPrefersChatIdentifiersFromMetadata(t *testing.T) {
 	t.Parallel()
 
-	raw := json.RawMessage(`{"payload":{"chat_id":"212450775417035@lid","from_lid":"212450775417035@lid","from":"31686261598@s.whatsapp.net"}}`)
+	raw := json.RawMessage(`{"payload":{"chat_id":"` + testWhatsAppChatLID + `","from_lid":"` + testWhatsAppChatLID + `","from":"31686261598@s.whatsapp.net"}}`)
 
 	got := whatsAppMediaDownloadTarget(raw, testWhatsAppMediaPhone)
-	if got != "212450775417035@lid" {
+	if got != testWhatsAppChatLID {
 		t.Fatalf("expected chat_id to be used for linked-device media download, got %q", got)
 	}
 }
@@ -179,10 +180,10 @@ func TestWhatsAppMediaDownloadTargetFallsBackToSenderAndPhone(t *testing.T) {
 func TestWhatsAppMediaDownloadTargetDetailsReportsSource(t *testing.T) {
 	t.Parallel()
 
-	raw := json.RawMessage(`{"payload":{"from_lid":"212450775417035@lid"}}`)
+	raw := json.RawMessage(`{"payload":{"from_lid":"` + testWhatsAppChatLID + `"}}`)
 
 	target, source := whatsAppMediaDownloadTargetDetails(raw, testWhatsAppMediaPhone)
-	if target != "212450775417035@lid" {
+	if target != testWhatsAppChatLID {
 		t.Fatalf("expected from_lid target, got %q", target)
 	}
 	if source != "payload.from_lid" {
@@ -224,5 +225,41 @@ func TestResolveWhatsAppMessageDeviceIDIgnoresJIDOverride(t *testing.T) {
 	}
 	if source != "message_metadata_ignored_jid" {
 		t.Fatalf("expected message_metadata_ignored_jid source, got %q", source)
+	}
+}
+
+func TestResolveWhatsAppMediaDownloadTargetUsesMetadataWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	s := &Service{}
+	message := repository.WhatsAppMessage{
+		Metadata: json.RawMessage(`{"payload":{"chat_id":"` + testWhatsAppChatLID + `"}}`),
+	}
+	conversation := repository.WhatsAppConversation{PhoneNumber: testWhatsAppMediaPhone}
+
+	target, source := s.resolveWhatsAppMediaDownloadTarget(context.Background(), uuid.New(), uuid.New(), message, conversation)
+	if target != testWhatsAppChatLID {
+		t.Fatalf("expected metadata chat_id target, got %q", target)
+	}
+	if source != "payload.chat_id" {
+		t.Fatalf("expected payload.chat_id source, got %q", source)
+	}
+}
+
+func TestResolveWhatsAppMediaDownloadTargetFallsBackToPhoneWithoutRepo(t *testing.T) {
+	t.Parallel()
+
+	s := &Service{}
+	message := repository.WhatsAppMessage{
+		Metadata: nil,
+	}
+	conversation := repository.WhatsAppConversation{PhoneNumber: testWhatsAppMediaPhone}
+
+	target, source := s.resolveWhatsAppMediaDownloadTarget(context.Background(), uuid.New(), uuid.New(), message, conversation)
+	if target != testWhatsAppMediaPhone {
+		t.Fatalf("expected conversation phone fallback, got %q", target)
+	}
+	if source != "conversation_phone" {
+		t.Fatalf("expected conversation_phone source, got %q", source)
 	}
 }

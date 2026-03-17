@@ -1466,4 +1466,26 @@ func (r *Repository) updateReceiptConversationStatuses(ctx context.Context, tx p
 	return items, rows.Err()
 }
 
+func (r *Repository) LookupWhatsAppConversationChatJID(ctx context.Context, organizationID, conversationID uuid.UUID) (string, error) {
+	const query = `
+		SELECT metadata->'payload'->>'chat_id'
+		FROM RAC_whatsapp_messages
+		WHERE organization_id = $1
+		  AND conversation_id = $2
+		  AND metadata IS NOT NULL
+		  AND metadata->'payload'->>'chat_id' IS NOT NULL
+		  AND TRIM(metadata->'payload'->>'chat_id') != ''
+		ORDER BY created_at DESC
+		LIMIT 1`
+
+	var chatJID string
+	if err := r.pool.QueryRow(ctx, query, organizationID, conversationID).Scan(&chatJID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(chatJID), nil
+}
+
 var _ = (*pgxpool.Pool)(nil)
