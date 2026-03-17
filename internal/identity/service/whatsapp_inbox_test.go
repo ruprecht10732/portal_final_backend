@@ -158,8 +158,8 @@ func TestWhatsAppMediaDownloadTargetPrefersChatIdentifiersFromMetadata(t *testin
 	raw := json.RawMessage(`{"payload":{"chat_id":"` + testWhatsAppChatLID + `","from_lid":"` + testWhatsAppChatLID + `","from":"31686261598@s.whatsapp.net"}}`)
 
 	got := whatsAppMediaDownloadTarget(raw, testWhatsAppMediaPhone)
-	if got != testWhatsAppChatLID {
-		t.Fatalf("expected chat_id to be used for linked-device media download, got %q", got)
+	if got != "31686261598@s.whatsapp.net" {
+		t.Fatalf("expected LID values to be skipped in favor of from JID, got %q", got)
 	}
 }
 
@@ -183,11 +183,11 @@ func TestWhatsAppMediaDownloadTargetDetailsReportsSource(t *testing.T) {
 	raw := json.RawMessage(`{"payload":{"from_lid":"` + testWhatsAppChatLID + `"}}`)
 
 	target, source := whatsAppMediaDownloadTargetDetails(raw, testWhatsAppMediaPhone)
-	if target != testWhatsAppChatLID {
-		t.Fatalf("expected from_lid target, got %q", target)
+	if target != testWhatsAppMediaPhone {
+		t.Fatalf("expected LID from_lid to be skipped with fallback to phone, got %q", target)
 	}
-	if source != "payload.from_lid" {
-		t.Fatalf("expected payload.from_lid source, got %q", source)
+	if source != "conversation_phone" {
+		t.Fatalf("expected conversation_phone source when LID is skipped, got %q", source)
 	}
 }
 
@@ -233,12 +233,12 @@ func TestResolveWhatsAppMediaDownloadTargetUsesMetadataWhenPresent(t *testing.T)
 
 	s := &Service{}
 	message := repository.WhatsAppMessage{
-		Metadata: json.RawMessage(`{"payload":{"chat_id":"` + testWhatsAppChatLID + `"}}`),
+		Metadata: json.RawMessage(`{"payload":{"chat_id":"31686261598@s.whatsapp.net"}}`),
 	}
 	conversation := repository.WhatsAppConversation{PhoneNumber: testWhatsAppMediaPhone}
 
 	target, source := s.resolveWhatsAppMediaDownloadTarget(context.Background(), uuid.New(), uuid.New(), message, conversation)
-	if target != testWhatsAppChatLID {
+	if target != "31686261598@s.whatsapp.net" {
 		t.Fatalf("expected metadata chat_id target, got %q", target)
 	}
 	if source != "payload.chat_id" {
@@ -261,5 +261,40 @@ func TestResolveWhatsAppMediaDownloadTargetFallsBackToPhoneWithoutRepo(t *testin
 	}
 	if source != "conversation_phone" {
 		t.Fatalf("expected conversation_phone source, got %q", source)
+	}
+}
+
+func TestResolveWhatsAppMediaDownloadTargetSkipsLIDFallsBackToPhone(t *testing.T) {
+	t.Parallel()
+
+	s := &Service{}
+	message := repository.WhatsAppMessage{
+		Metadata: json.RawMessage(`{"payload":{"chat_id":"` + testWhatsAppChatLID + `","from_lid":"` + testWhatsAppChatLID + `"}}`),
+	}
+	conversation := repository.WhatsAppConversation{PhoneNumber: testWhatsAppMediaPhone}
+
+	target, source := s.resolveWhatsAppMediaDownloadTarget(context.Background(), uuid.New(), uuid.New(), message, conversation)
+	if target != testWhatsAppMediaPhone {
+		t.Fatalf("expected LID targets to be skipped with fallback to phone, got %q", target)
+	}
+	if source != "conversation_phone" {
+		t.Fatalf("expected conversation_phone source, got %q", source)
+	}
+}
+
+func TestIsWhatsAppLID(t *testing.T) {
+	t.Parallel()
+
+	if !isWhatsAppLID("212450775417035@lid") {
+		t.Fatal("expected @lid suffix to be recognized as LID")
+	}
+	if isWhatsAppLID("31686261598@s.whatsapp.net") {
+		t.Fatal("expected @s.whatsapp.net to not be recognized as LID")
+	}
+	if isWhatsAppLID("+31686261598") {
+		t.Fatal("expected phone number to not be recognized as LID")
+	}
+	if isWhatsAppLID("") {
+		t.Fatal("expected empty string to not be recognized as LID")
 	}
 }

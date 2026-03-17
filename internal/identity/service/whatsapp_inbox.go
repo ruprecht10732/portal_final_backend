@@ -1583,11 +1583,15 @@ func whatsAppMediaDownloadTargetDetails(raw json.RawMessage, fallback string) (s
 		{value: strings.TrimSpace(envelope.Payload.FromLID), source: "payload.from_lid"},
 		{value: strings.TrimSpace(envelope.Payload.From), source: "payload.from"},
 	} {
-		if candidate.value != "" {
+		if candidate.value != "" && !isWhatsAppLID(candidate.value) {
 			return candidate.value, candidate.source
 		}
 	}
 	return trimmedFallback, "conversation_phone"
+}
+
+func isWhatsAppLID(s string) bool {
+	return strings.HasSuffix(strings.TrimSpace(s), "@lid")
 }
 
 func isWhatsAppImageMessage(message repository.WhatsAppMessage) bool {
@@ -1607,7 +1611,7 @@ func (s *Service) resolveWhatsAppMediaDownloadTarget(ctx context.Context, organi
 		return target, source
 	}
 	if s.repo != nil {
-		if chatJID, err := s.repo.LookupWhatsAppConversationChatJID(ctx, organizationID, conversationID); err == nil && chatJID != "" {
+		if chatJID, err := s.repo.LookupWhatsAppConversationChatJID(ctx, organizationID, conversationID); err == nil && chatJID != "" && !isWhatsAppLID(chatJID) {
 			return chatJID, "sibling_message_chat_id"
 		}
 	}
