@@ -14,6 +14,14 @@ type SignInRequest struct {
 	Password string `json:"password" validate:"required"`
 }
 
+type RefreshRequest struct {
+	RefreshToken string `json:"refreshToken" validate:"required"`
+}
+
+type SignOutRequest struct {
+	RefreshToken string `json:"refreshToken"`
+}
+
 type ForgotPasswordRequest struct {
 	Email string `json:"email" validate:"required,email"`
 }
@@ -42,7 +50,14 @@ type RoleUpdateResponse struct {
 }
 
 type AuthResponse struct {
-	AccessToken string `json:"accessToken"`
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+}
+
+type VerifyResponse struct {
+	Valid  bool   `json:"valid"`
+	UserID string `json:"userId"`
+	Email  string `json:"email"`
 }
 
 type ProfileResponse struct {

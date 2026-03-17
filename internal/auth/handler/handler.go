@@ -210,30 +210,77 @@ func (h *Handler) SignIn(c *gin.Context) {
 	}
 
 	h.setRefreshCookie(c, refreshToken)
-	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
+	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken, RefreshToken: refreshToken})
 }
 
 func (h *Handler) Refresh(c *gin.Context) {
-	refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName())
-	if err != nil || refreshToken == "" {
-		httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
-		return
+	refreshToken := ""
+	usedCookie := false
+
+	var req transport.RefreshRequest
+	if err := c.ShouldBindJSON(&req); err == nil {
+		refreshToken = strings.TrimSpace(req.RefreshToken)
+	}
+
+	if refreshToken == "" {
+		cookieValue, err := c.Cookie(h.cfg.GetRefreshCookieName())
+		if err != nil || cookieValue == "" {
+			httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
+			return
+		}
+		refreshToken = cookieValue
+		usedCookie = true
 	}
 
 	accessToken, newRefreshToken, err := h.svc.Refresh(c.Request.Context(), refreshToken)
 	if httpkit.HandleError(c, err) {
-		h.clearRefreshCookie(c)
+		if usedCookie {
+			h.clearRefreshCookie(c)
+		}
 		return
 	}
 
-	h.setRefreshCookie(c, newRefreshToken)
-	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken})
+	if usedCookie {
+		h.setRefreshCookie(c, newRefreshToken)
+	}
+	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken, RefreshToken: newRefreshToken})
+}
+
+func (h *Handler) Verify(c *gin.Context) {
+	id := httpkit.GetIdentity(c)
+	if id == nil || !id.IsAuthenticated() {
+		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+
+	profile, err := h.svc.GetMe(c.Request.Context(), id.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, transport.VerifyResponse{
+		Valid:  true,
+		UserID: profile.ID.String(),
+		Email:  profile.Email,
+	})
 }
 
 func (h *Handler) SignOut(c *gin.Context) {
 	accessToken, _ := extractBearerToken(c.GetHeader("Authorization"))
+	refreshToken := ""
 
-	if refreshToken, err := c.Cookie(h.cfg.GetRefreshCookieName()); err == nil && refreshToken != "" {
+	var req transport.SignOutRequest
+	if err := c.ShouldBindJSON(&req); err == nil {
+		refreshToken = strings.TrimSpace(req.RefreshToken)
+	}
+
+	if refreshToken == "" {
+		if cookieValue, err := c.Cookie(h.cfg.GetRefreshCookieName()); err == nil && cookieValue != "" {
+			refreshToken = cookieValue
+		}
+	}
+
+	if refreshToken != "" {
 		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken, accessToken)) {
 			return
 		}

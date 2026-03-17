@@ -190,7 +190,7 @@ func (s *Service) SignIn(ctx context.Context, email, plainPassword string) (stri
 		return "", "", err
 	}
 
-	return s.issueTokens(ctx, user.ID)
+	return s.issueTokens(ctx, user.ID, user.Email)
 }
 
 func (s *Service) ensureBootstrapSuperAdmin(ctx context.Context, userID uuid.UUID, email string) error {
@@ -239,7 +239,16 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, str
 	}
 
 	_ = s.repo.RevokeRefreshToken(ctx, hash)
-	return s.issueTokens(ctx, userID)
+
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", "", apperr.Unauthorized(invalidCredentialsMessage)
+		}
+		return "", "", err
+	}
+
+	return s.issueTokens(ctx, userID, user.Email)
 }
 
 func (s *Service) SignOut(ctx context.Context, refreshToken string, accessToken string) error {
@@ -328,7 +337,7 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 	return nil
 }
 
-func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
+func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID, email string) (string, string, error) {
 	roles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
 		return "", "", err
@@ -346,7 +355,7 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 		tenantID = &orgID
 	}
 
-	accessToken, err := s.signJWT(userID, tenantID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
+	accessToken, err := s.signJWT(userID, email, tenantID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
 	if err != nil {
 		return "", "", err
 	}
@@ -365,9 +374,10 @@ func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID) (string, st
 	return accessToken, refreshToken, nil
 }
 
-func (s *Service) signJWT(userID uuid.UUID, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
+func (s *Service) signJWT(userID uuid.UUID, email string, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":   userID.String(),
+		"email": email,
 		"type":  tokenType,
 		"roles": roles,
 		"jti":   uuid.NewString(),

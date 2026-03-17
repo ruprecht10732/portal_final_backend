@@ -69,6 +69,7 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	authGroup := ctx.V1.Group("/auth")
 	authGroup.Use(ctx.AuthRateLimiter.RateLimit())
 	m.handler.RegisterRoutes(authGroup)
+	ctx.Protected.GET("/auth/verify", m.handler.Verify)
 
 	// Protected user routes
 	ctx.Protected.GET("/users/me", m.handler.GetMe)
