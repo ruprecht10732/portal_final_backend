@@ -1576,17 +1576,16 @@ func whatsAppMediaDownloadTargetDetails(raw json.RawMessage, fallback string) (s
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return trimmedFallback, "conversation_phone"
 	}
-	for _, candidate := range []struct {
-		value  string
-		source string
-	}{
-		{value: strings.TrimSpace(envelope.Payload.ChatID), source: "payload.chat_id"},
-		{value: strings.TrimSpace(envelope.Payload.FromLID), source: "payload.from_lid"},
-		{value: strings.TrimSpace(envelope.Payload.From), source: "payload.from"},
-	} {
-		if candidate.value != "" && !isWhatsAppLID(candidate.value) {
-			return candidate.value, candidate.source
-		}
+	// chat_id is the definitive chat identifier — use it even for LID-based chats.
+	if chatID := strings.TrimSpace(envelope.Payload.ChatID); chatID != "" {
+		return chatID, "payload.chat_id"
+	}
+	// For sender-based fields, prefer phone over LID.
+	if from := strings.TrimSpace(envelope.Payload.From); from != "" && !isWhatsAppLID(from) {
+		return from, "payload.from"
+	}
+	if fromLID := strings.TrimSpace(envelope.Payload.FromLID); fromLID != "" {
+		return fromLID, "payload.from_lid"
 	}
 	return trimmedFallback, "conversation_phone"
 }
@@ -1616,6 +1615,21 @@ func whatsAppMetadataLID(raw json.RawMessage) string {
 	return ""
 }
 
+func whatsAppMetadataFrom(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var envelope struct {
+		Payload struct {
+			From string `json:"from"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Payload.From)
+}
+
 func isWhatsAppImageMessage(message repository.WhatsAppMessage) bool {
 	metadata := parseWhatsAppPortalMetadata(message.Metadata)
 	if strings.EqualFold(strings.TrimSpace(metadata.MessageType), "image") {
@@ -1641,6 +1655,7 @@ func whatsAppMediaDownloadFallbackPhones(raw json.RawMessage, conversationPhone 
 		fallbacks = append(fallbacks, v)
 	}
 	add(whatsAppMetadataLID(raw))
+	add(whatsAppMetadataFrom(raw))
 	add(strings.TrimSpace(conversationPhone))
 	return fallbacks
 }
@@ -1651,7 +1666,7 @@ func (s *Service) resolveWhatsAppMediaDownloadTarget(ctx context.Context, organi
 		return target, source
 	}
 	if s.repo != nil {
-		if chatJID, err := s.repo.LookupWhatsAppConversationChatJID(ctx, organizationID, conversationID); err == nil && chatJID != "" && !isWhatsAppLID(chatJID) {
+		if chatJID, err := s.repo.LookupWhatsAppConversationChatJID(ctx, organizationID, conversationID); err == nil && chatJID != "" {
 			return chatJID, "sibling_message_chat_id"
 		}
 	}

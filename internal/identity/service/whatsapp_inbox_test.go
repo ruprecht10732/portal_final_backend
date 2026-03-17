@@ -158,8 +158,8 @@ func TestWhatsAppMediaDownloadTargetPrefersChatIdentifiersFromMetadata(t *testin
 	raw := json.RawMessage(`{"payload":{"chat_id":"` + testWhatsAppChatLID + `","from_lid":"` + testWhatsAppChatLID + `","from":"31686261598@s.whatsapp.net"}}`)
 
 	got := whatsAppMediaDownloadTarget(raw, testWhatsAppMediaPhone)
-	if got != "31686261598@s.whatsapp.net" {
-		t.Fatalf("expected LID values to be skipped in favor of from JID, got %q", got)
+	if got != testWhatsAppChatLID {
+		t.Fatalf("expected LID chat_id to be used as definitive chat identifier, got %q", got)
 	}
 }
 
@@ -183,11 +183,11 @@ func TestWhatsAppMediaDownloadTargetDetailsReportsSource(t *testing.T) {
 	raw := json.RawMessage(`{"payload":{"from_lid":"` + testWhatsAppChatLID + `"}}`)
 
 	target, source := whatsAppMediaDownloadTargetDetails(raw, testWhatsAppMediaPhone)
-	if target != testWhatsAppMediaPhone {
-		t.Fatalf("expected LID from_lid to be skipped with fallback to phone, got %q", target)
+	if target != testWhatsAppChatLID {
+		t.Fatalf("expected from_lid to be used when no phone-based target available, got %q", target)
 	}
-	if source != "conversation_phone" {
-		t.Fatalf("expected conversation_phone source when LID is skipped, got %q", source)
+	if source != "payload.from_lid" {
+		t.Fatalf("expected payload.from_lid source, got %q", source)
 	}
 }
 
@@ -264,7 +264,7 @@ func TestResolveWhatsAppMediaDownloadTargetFallsBackToPhoneWithoutRepo(t *testin
 	}
 }
 
-func TestResolveWhatsAppMediaDownloadTargetSkipsLIDFallsBackToPhone(t *testing.T) {
+func TestResolveWhatsAppMediaDownloadTargetUsesLIDChatID(t *testing.T) {
 	t.Parallel()
 
 	s := &Service{}
@@ -274,11 +274,11 @@ func TestResolveWhatsAppMediaDownloadTargetSkipsLIDFallsBackToPhone(t *testing.T
 	conversation := repository.WhatsAppConversation{PhoneNumber: testWhatsAppMediaPhone}
 
 	target, source := s.resolveWhatsAppMediaDownloadTarget(context.Background(), uuid.New(), uuid.New(), message, conversation)
-	if target != testWhatsAppMediaPhone {
-		t.Fatalf("expected LID targets to be skipped with fallback to phone, got %q", target)
+	if target != testWhatsAppChatLID {
+		t.Fatalf("expected LID chat_id to be used as primary target, got %q", target)
 	}
-	if source != "conversation_phone" {
-		t.Fatalf("expected conversation_phone source, got %q", source)
+	if source != "payload.chat_id" {
+		t.Fatalf("expected payload.chat_id source, got %q", source)
 	}
 }
 

@@ -446,19 +446,16 @@ func (c *Client) DownloadMedia(ctx context.Context, deviceID string, messageID s
 	if len(phones) == 0 {
 		return DownloadMediaResult{}, errors.New(errPhoneNumberRequired)
 	}
-	var lastErr error
+	candidateErrors := make([]candidateError, 0, len(phones))
 	for _, phone := range phones {
 		parsed, err := c.fetchDownloadMediaResponse(ctx, deviceID, messageID, phone)
 		if err != nil {
-			lastErr = err
+			candidateErrors = append(candidateErrors, candidateError{phone: phone, err: err})
 			continue
 		}
 		return c.downloadMediaResultFromProvider(parsed), nil
 	}
-	if lastErr == nil {
-		lastErr = errors.New(errMediaDownloadNoUsableResponse)
-	}
-	return DownloadMediaResult{}, mediaDownloadCandidateError(phones, lastErr)
+	return DownloadMediaResult{}, mediaDownloadCandidateErrorFromAll(phones, candidateErrors)
 }
 
 func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, messageID string, phoneNumber string, fallbackPhones ...string) (DownloadMediaFileResult, error) {
@@ -466,11 +463,11 @@ func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, message
 	if len(phones) == 0 {
 		return DownloadMediaFileResult{}, errors.New(errPhoneNumberRequired)
 	}
-	var lastErr error
+	candidateErrors := make([]candidateError, 0, len(phones))
 	for _, phone := range phones {
 		parsed, err := c.fetchDownloadMediaResponse(ctx, deviceID, messageID, phone)
 		if err != nil {
-			lastErr = err
+			candidateErrors = append(candidateErrors, candidateError{phone: phone, err: err})
 			continue
 		}
 		result := c.downloadMediaResultFromProvider(parsed)
@@ -480,10 +477,7 @@ func (c *Client) DownloadMediaFile(ctx context.Context, deviceID string, message
 		}
 		return c.downloadMediaFromURL(ctx, result)
 	}
-	if lastErr == nil {
-		lastErr = errors.New(errMediaDownloadNoUsableResponse)
-	}
-	return DownloadMediaFileResult{}, mediaDownloadCandidateError(phones, lastErr)
+	return DownloadMediaFileResult{}, mediaDownloadCandidateErrorFromAll(phones, candidateErrors)
 }
 
 func (c *Client) fetchDownloadMediaResponse(ctx context.Context, deviceID string, messageID string, phone string) (providerDownloadMediaResponse, error) {
@@ -591,14 +585,27 @@ func combineCandidatePhones(primary string, fallbacks []string) []string {
 	return candidates
 }
 
-func mediaDownloadCandidateError(phones []string, lastErr error) error {
-	if lastErr == nil {
-		lastErr = errors.New(errMediaDownloadNoUsableResponse)
+type candidateError struct {
+	phone string
+	err   error
+}
+
+func mediaDownloadCandidateErrorFromAll(phones []string, errs []candidateError) error {
+	if len(errs) == 0 {
+		return fmt.Errorf("media download failed for candidate phones [%s]: %s", strings.Join(phones, ", "), errMediaDownloadNoUsableResponse)
 	}
-	if len(phones) == 0 {
-		return lastErr
+	var sb strings.Builder
+	sb.WriteString("media download failed for candidate phones [")
+	sb.WriteString(strings.Join(phones, ", "))
+	sb.WriteString("]:")
+	for _, ce := range errs {
+		sb.WriteString(" [")
+		sb.WriteString(ce.phone)
+		sb.WriteString("] ")
+		sb.WriteString(ce.err.Error())
+		sb.WriteString(";")
 	}
-	return fmt.Errorf("media download failed for candidate phones [%s]: %w", strings.Join(phones, ", "), lastErr)
+	return errors.New(sb.String())
 }
 
 func decodeInlineMediaData(rawData string, mediaType string, result DownloadMediaResult) (DownloadMediaFileResult, bool) {
