@@ -147,7 +147,7 @@ func (s *Service) preResolveWhatsAppMessage(ctx context.Context, organizationID 
 		if s.whatsapp == nil {
 			return message
 		}
-		deviceID := whatsAppMessageDeviceOverride(message.Metadata)
+		deviceID, _ := resolveWhatsAppMessageDeviceID(message.Metadata, "")
 		if deviceID == "" {
 			resolvedDeviceID, err := s.getRequiredWhatsAppDeviceID(ctx, organizationID)
 			if err != nil {
@@ -834,9 +834,9 @@ func (s *Service) DownloadWhatsAppMessageMedia(ctx context.Context, organization
 	}
 
 	deviceSource := "organization_settings"
-	if override := whatsAppMessageDeviceOverride(message.Metadata); override != "" {
-		deviceID = override
-		deviceSource = "message_metadata"
+	if resolvedDeviceID, resolvedSource := resolveWhatsAppMessageDeviceID(message.Metadata, deviceID); resolvedDeviceID != "" {
+		deviceID = resolvedDeviceID
+		deviceSource = resolvedSource
 	}
 	downloadTarget, downloadTargetSource := whatsAppMediaDownloadTargetDetails(message.Metadata, conversation.PhoneNumber)
 	result, err := s.whatsapp.DownloadMedia(ctx, deviceID, externalMessageID, downloadTarget)
@@ -1531,6 +1531,18 @@ func whatsAppMessageDeviceOverride(raw json.RawMessage) string {
 	return strings.TrimSpace(envelope.DeviceID)
 }
 
+func resolveWhatsAppMessageDeviceID(raw json.RawMessage, fallback string) (string, string) {
+	trimmedFallback := strings.TrimSpace(fallback)
+	override := whatsAppMessageDeviceOverride(raw)
+	if override == "" {
+		return trimmedFallback, "organization_settings"
+	}
+	if strings.Contains(override, "@") {
+		return trimmedFallback, "message_metadata_ignored_jid"
+	}
+	return override, "message_metadata"
+}
+
 func parseWhatsAppPortalMetadata(raw json.RawMessage) whatsappPortalMetadata {
 	if len(raw) == 0 {
 		return whatsappPortalMetadata{}
@@ -1823,10 +1835,7 @@ func (s *Service) cacheWhatsAppMediaDownload(ctx context.Context, organizationID
 	if s == nil || s.storage == nil || strings.TrimSpace(s.attachmentsBucket) == "" {
 		return WhatsAppMediaDownloadResult{}, false
 	}
-	deviceSource := "organization_settings"
-	if override := whatsAppMessageDeviceOverride(message.Metadata); override != "" && strings.TrimSpace(override) == strings.TrimSpace(deviceID) {
-		deviceSource = "message_metadata"
-	}
+	_, deviceSource := resolveWhatsAppMessageDeviceID(message.Metadata, deviceID)
 	downloadTarget, downloadTargetSource := whatsAppMediaDownloadTargetDetails(message.Metadata, conversation.PhoneNumber)
 	fileResult, err := s.whatsapp.DownloadMediaFile(ctx, deviceID, externalMessageID, downloadTarget)
 	if err != nil {

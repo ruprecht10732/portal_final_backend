@@ -198,3 +198,31 @@ func TestNormalizeWhatsAppCachedContentTypeCanonicalizesApplicationOgg(t *testin
 		t.Fatalf("expected application/ogg to normalize to %s, got %q", testAudioOggContentType, got)
 	}
 }
+
+func TestResolveWhatsAppMessageDeviceIDPrefersNonJIDOverride(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"device_id":"org_3578b0f5-727a-46b2-8d1e-d7b9820587de"}`)
+
+	deviceID, source := resolveWhatsAppMessageDeviceID(raw, "org_fallback")
+	if deviceID != "org_3578b0f5-727a-46b2-8d1e-d7b9820587de" {
+		t.Fatalf("expected metadata device id to be used, got %q", deviceID)
+	}
+	if source != "message_metadata" {
+		t.Fatalf("expected message_metadata source, got %q", source)
+	}
+}
+
+func TestResolveWhatsAppMessageDeviceIDIgnoresJIDOverride(t *testing.T) {
+	t.Parallel()
+
+	raw := json.RawMessage(`{"device_id":"31686388589@s.whatsapp.net"}`)
+
+	deviceID, source := resolveWhatsAppMessageDeviceID(raw, "org_fallback")
+	if deviceID != "org_fallback" {
+		t.Fatalf("expected fallback device id when metadata contains jid, got %q", deviceID)
+	}
+	if source != "message_metadata_ignored_jid" {
+		t.Fatalf("expected message_metadata_ignored_jid source, got %q", source)
+	}
+}
