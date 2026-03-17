@@ -380,6 +380,8 @@ INSERT INTO RAC_partner_offers (
 	pricing_source,
 	customer_price_cents,
 	vakman_price_cents,
+	margin_basis_points,
+	offer_line_items,
 	job_summary_short,
 	builder_summary,
 	status
@@ -392,8 +394,10 @@ INSERT INTO RAC_partner_offers (
 	$6::pricing_source,
 	$7::bigint,
 	$8::bigint,
-	$9::text,
-	$10::text,
+	$9::int,
+	$10::jsonb,
+	$11::text,
+	$12::text,
 	'pending'
 )
 RETURNING id,
@@ -405,6 +409,8 @@ RETURNING id,
 	pricing_source::text AS pricing_source,
 	customer_price_cents,
 	vakman_price_cents,
+	margin_basis_points,
+	offer_line_items,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
@@ -426,6 +432,8 @@ type CreatePartnerOfferParams struct {
 	PricingSource      PricingSource      `json:"pricing_source"`
 	CustomerPriceCents int64              `json:"customer_price_cents"`
 	VakmanPriceCents   int64              `json:"vakman_price_cents"`
+	MarginBasisPoints  int32              `json:"margin_basis_points"`
+	OfferLineItems     []byte             `json:"offer_line_items"`
 	JobSummaryShort    pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary     pgtype.Text        `json:"builder_summary"`
 }
@@ -440,6 +448,8 @@ type CreatePartnerOfferRow struct {
 	PricingSource          string             `json:"pricing_source"`
 	CustomerPriceCents     int64              `json:"customer_price_cents"`
 	VakmanPriceCents       int64              `json:"vakman_price_cents"`
+	MarginBasisPoints      int32              `json:"margin_basis_points"`
+	OfferLineItems         []byte             `json:"offer_line_items"`
 	JobSummaryShort        pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary         pgtype.Text        `json:"builder_summary"`
 	Status                 string             `json:"status"`
@@ -462,6 +472,8 @@ func (q *Queries) CreatePartnerOffer(ctx context.Context, arg CreatePartnerOffer
 		arg.PricingSource,
 		arg.CustomerPriceCents,
 		arg.VakmanPriceCents,
+		arg.MarginBasisPoints,
+		arg.OfferLineItems,
 		arg.JobSummaryShort,
 		arg.BuilderSummary,
 	)
@@ -476,6 +488,8 @@ func (q *Queries) CreatePartnerOffer(ctx context.Context, arg CreatePartnerOffer
 		&i.PricingSource,
 		&i.CustomerPriceCents,
 		&i.VakmanPriceCents,
+		&i.MarginBasisPoints,
+		&i.OfferLineItems,
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
@@ -618,6 +632,98 @@ func (q *Queries) GetLeadIDForService(ctx context.Context, arg GetLeadIDForServi
 	return lead_id, err
 }
 
+const getLeadServiceImageAttachmentByID = `-- name: GetLeadServiceImageAttachmentByID :one
+SELECT id,
+	lead_service_id,
+	organization_id,
+	file_key,
+	file_name,
+	content_type,
+	size_bytes,
+	uploaded_by,
+	created_at
+FROM RAC_lead_service_attachments
+WHERE id = $1::uuid
+  AND lead_service_id = $2::uuid
+  AND organization_id = $3::uuid
+  AND content_type LIKE 'image/%'
+`
+
+type GetLeadServiceImageAttachmentByIDParams struct {
+	AttachmentID   pgtype.UUID `json:"attachment_id"`
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLeadServiceImageAttachmentByID(ctx context.Context, arg GetLeadServiceImageAttachmentByIDParams) (RacLeadServiceAttachment, error) {
+	row := q.db.QueryRow(ctx, getLeadServiceImageAttachmentByID, arg.AttachmentID, arg.LeadServiceID, arg.OrganizationID)
+	var i RacLeadServiceAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.LeadServiceID,
+		&i.OrganizationID,
+		&i.FileKey,
+		&i.FileName,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.UploadedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getLeadServiceImageAttachments = `-- name: GetLeadServiceImageAttachments :many
+SELECT id,
+	lead_service_id,
+	organization_id,
+	file_key,
+	file_name,
+	content_type,
+	size_bytes,
+	uploaded_by,
+	created_at
+FROM RAC_lead_service_attachments
+WHERE lead_service_id = $1::uuid
+  AND organization_id = $2::uuid
+  AND content_type LIKE 'image/%'
+ORDER BY created_at ASC
+`
+
+type GetLeadServiceImageAttachmentsParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetLeadServiceImageAttachments(ctx context.Context, arg GetLeadServiceImageAttachmentsParams) ([]RacLeadServiceAttachment, error) {
+	rows, err := q.db.Query(ctx, getLeadServiceImageAttachments, arg.LeadServiceID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacLeadServiceAttachment
+	for rows.Next() {
+		var i RacLeadServiceAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadServiceID,
+			&i.OrganizationID,
+			&i.FileKey,
+			&i.FileName,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.UploadedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLeadServiceSummaryContext = `-- name: GetLeadServiceSummaryContext :one
 SELECT ls.lead_id,
 	st.name AS service_type,
@@ -719,6 +825,8 @@ SELECT id,
 	pricing_source::text AS pricing_source,
 	customer_price_cents,
 	vakman_price_cents,
+	margin_basis_points,
+	offer_line_items,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
@@ -749,6 +857,8 @@ type GetPartnerOfferByIDRow struct {
 	PricingSource          string             `json:"pricing_source"`
 	CustomerPriceCents     int64              `json:"customer_price_cents"`
 	VakmanPriceCents       int64              `json:"vakman_price_cents"`
+	MarginBasisPoints      int32              `json:"margin_basis_points"`
+	OfferLineItems         []byte             `json:"offer_line_items"`
 	JobSummaryShort        pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary         pgtype.Text        `json:"builder_summary"`
 	Status                 string             `json:"status"`
@@ -774,6 +884,8 @@ func (q *Queries) GetPartnerOfferByID(ctx context.Context, arg GetPartnerOfferBy
 		&i.PricingSource,
 		&i.CustomerPriceCents,
 		&i.VakmanPriceCents,
+		&i.MarginBasisPoints,
+		&i.OfferLineItems,
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
@@ -798,6 +910,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
@@ -848,6 +962,8 @@ type GetPartnerOfferByIDWithContextRow struct {
 	PricingSource           string             `json:"pricing_source"`
 	CustomerPriceCents      int64              `json:"customer_price_cents"`
 	VakmanPriceCents        int64              `json:"vakman_price_cents"`
+	MarginBasisPoints       int32              `json:"margin_basis_points"`
+	OfferLineItems          []byte             `json:"offer_line_items"`
 	JobSummaryShort         pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary          pgtype.Text        `json:"builder_summary"`
 	Status                  string             `json:"status"`
@@ -881,6 +997,8 @@ func (q *Queries) GetPartnerOfferByIDWithContext(ctx context.Context, arg GetPar
 		&i.PricingSource,
 		&i.CustomerPriceCents,
 		&i.VakmanPriceCents,
+		&i.MarginBasisPoints,
+		&i.OfferLineItems,
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
@@ -913,6 +1031,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
@@ -957,6 +1077,8 @@ type GetPartnerOfferByTokenWithContextRow struct {
 	PricingSource           string             `json:"pricing_source"`
 	CustomerPriceCents      int64              `json:"customer_price_cents"`
 	VakmanPriceCents        int64              `json:"vakman_price_cents"`
+	MarginBasisPoints       int32              `json:"margin_basis_points"`
+	OfferLineItems          []byte             `json:"offer_line_items"`
 	JobSummaryShort         pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary          pgtype.Text        `json:"builder_summary"`
 	Status                  string             `json:"status"`
@@ -990,6 +1112,8 @@ func (q *Queries) GetPartnerOfferByTokenWithContext(ctx context.Context, publicT
 		&i.PricingSource,
 		&i.CustomerPriceCents,
 		&i.VakmanPriceCents,
+		&i.MarginBasisPoints,
+		&i.OfferLineItems,
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
@@ -1145,7 +1269,10 @@ WITH latest_quote AS (
 	LIMIT 1
 )
 SELECT qi.description,
-	qi.quantity::text AS quantity
+	qi.quantity::text AS quantity,
+	qi.id,
+	qi.unit_price_cents,
+	ROUND((qi.quantity_numeric * qi.unit_price_cents::numeric) * (1 + qi.tax_rate::numeric / 10000))::bigint AS line_total_cents
 FROM RAC_quote_items qi
 JOIN latest_quote lq ON lq.id = qi.quote_id
 WHERE qi.is_optional = FALSE OR qi.is_selected = TRUE
@@ -1158,8 +1285,11 @@ type ListLatestQuoteItemsForServiceParams struct {
 }
 
 type ListLatestQuoteItemsForServiceRow struct {
-	Description string `json:"description"`
-	Quantity    string `json:"quantity"`
+	Description    string      `json:"description"`
+	Quantity       string      `json:"quantity"`
+	ID             pgtype.UUID `json:"id"`
+	UnitPriceCents int64       `json:"unit_price_cents"`
+	LineTotalCents int64       `json:"line_total_cents"`
 }
 
 func (q *Queries) ListLatestQuoteItemsForService(ctx context.Context, arg ListLatestQuoteItemsForServiceParams) ([]ListLatestQuoteItemsForServiceRow, error) {
@@ -1171,7 +1301,13 @@ func (q *Queries) ListLatestQuoteItemsForService(ctx context.Context, arg ListLa
 	var items []ListLatestQuoteItemsForServiceRow
 	for rows.Next() {
 		var i ListLatestQuoteItemsForServiceRow
-		if err := rows.Scan(&i.Description, &i.Quantity); err != nil {
+		if err := rows.Scan(
+			&i.Description,
+			&i.Quantity,
+			&i.ID,
+			&i.UnitPriceCents,
+			&i.LineTotalCents,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1296,6 +1432,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
@@ -1371,6 +1509,8 @@ type ListPartnerOffersRow struct {
 	PricingSource          string             `json:"pricing_source"`
 	CustomerPriceCents     int64              `json:"customer_price_cents"`
 	VakmanPriceCents       int64              `json:"vakman_price_cents"`
+	MarginBasisPoints      int32              `json:"margin_basis_points"`
+	OfferLineItems         []byte             `json:"offer_line_items"`
 	JobSummaryShort        pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary         pgtype.Text        `json:"builder_summary"`
 	Status                 string             `json:"status"`
@@ -1418,6 +1558,8 @@ func (q *Queries) ListPartnerOffers(ctx context.Context, arg ListPartnerOffersPa
 			&i.PricingSource,
 			&i.CustomerPriceCents,
 			&i.VakmanPriceCents,
+			&i.MarginBasisPoints,
+			&i.OfferLineItems,
 			&i.JobSummaryShort,
 			&i.BuilderSummary,
 			&i.Status,
@@ -1454,6 +1596,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.status::text AS status,
 	o.accepted_at,
 	o.rejected_at,
@@ -1493,6 +1637,8 @@ type ListPartnerOffersByPartnerRow struct {
 	PricingSource          string             `json:"pricing_source"`
 	CustomerPriceCents     int64              `json:"customer_price_cents"`
 	VakmanPriceCents       int64              `json:"vakman_price_cents"`
+	MarginBasisPoints      int32              `json:"margin_basis_points"`
+	OfferLineItems         []byte             `json:"offer_line_items"`
 	Status                 string             `json:"status"`
 	AcceptedAt             pgtype.Timestamptz `json:"accepted_at"`
 	RejectedAt             pgtype.Timestamptz `json:"rejected_at"`
@@ -1527,6 +1673,8 @@ func (q *Queries) ListPartnerOffersByPartner(ctx context.Context, arg ListPartne
 			&i.PricingSource,
 			&i.CustomerPriceCents,
 			&i.VakmanPriceCents,
+			&i.MarginBasisPoints,
+			&i.OfferLineItems,
 			&i.Status,
 			&i.AcceptedAt,
 			&i.RejectedAt,
@@ -1561,6 +1709,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.status::text AS status,
 	o.accepted_at,
 	o.rejected_at,
@@ -1592,6 +1742,8 @@ type ListPartnerOffersForServiceRow struct {
 	PricingSource          string             `json:"pricing_source"`
 	CustomerPriceCents     int64              `json:"customer_price_cents"`
 	VakmanPriceCents       int64              `json:"vakman_price_cents"`
+	MarginBasisPoints      int32              `json:"margin_basis_points"`
+	OfferLineItems         []byte             `json:"offer_line_items"`
 	Status                 string             `json:"status"`
 	AcceptedAt             pgtype.Timestamptz `json:"accepted_at"`
 	RejectedAt             pgtype.Timestamptz `json:"rejected_at"`
@@ -1622,6 +1774,8 @@ func (q *Queries) ListPartnerOffersForService(ctx context.Context, arg ListPartn
 			&i.PricingSource,
 			&i.CustomerPriceCents,
 			&i.VakmanPriceCents,
+			&i.MarginBasisPoints,
+			&i.OfferLineItems,
 			&i.Status,
 			&i.AcceptedAt,
 			&i.RejectedAt,
@@ -1764,7 +1918,10 @@ func (q *Queries) ListPartners(ctx context.Context, arg ListPartnersParams) ([]R
 
 const listQuoteItemsForQuote = `-- name: ListQuoteItemsForQuote :many
 SELECT qi.description,
-	qi.quantity::text AS quantity
+	qi.quantity::text AS quantity,
+	qi.id,
+	qi.unit_price_cents,
+	ROUND((qi.quantity_numeric * qi.unit_price_cents::numeric) * (1 + qi.tax_rate::numeric / 10000))::bigint AS line_total_cents
 FROM RAC_quote_items qi
 WHERE qi.quote_id = $1::uuid
   AND qi.organization_id = $2::uuid
@@ -1778,8 +1935,11 @@ type ListQuoteItemsForQuoteParams struct {
 }
 
 type ListQuoteItemsForQuoteRow struct {
-	Description string `json:"description"`
-	Quantity    string `json:"quantity"`
+	Description    string      `json:"description"`
+	Quantity       string      `json:"quantity"`
+	ID             pgtype.UUID `json:"id"`
+	UnitPriceCents int64       `json:"unit_price_cents"`
+	LineTotalCents int64       `json:"line_total_cents"`
 }
 
 func (q *Queries) ListQuoteItemsForQuote(ctx context.Context, arg ListQuoteItemsForQuoteParams) ([]ListQuoteItemsForQuoteRow, error) {
@@ -1791,7 +1951,13 @@ func (q *Queries) ListQuoteItemsForQuote(ctx context.Context, arg ListQuoteItems
 	var items []ListQuoteItemsForQuoteRow
 	for rows.Next() {
 		var i ListQuoteItemsForQuoteRow
-		if err := rows.Scan(&i.Description, &i.Quantity); err != nil {
+		if err := rows.Scan(
+			&i.Description,
+			&i.Quantity,
+			&i.ID,
+			&i.UnitPriceCents,
+			&i.LineTotalCents,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -25,6 +25,8 @@ type Querier interface {
 	DeletePartnerServiceTypes(ctx context.Context, partnerID pgtype.UUID) error
 	ExpirePartnerOffers(ctx context.Context) ([]ExpirePartnerOffersRow, error)
 	GetLeadIDForService(ctx context.Context, arg GetLeadIDForServiceParams) (pgtype.UUID, error)
+	GetLeadServiceImageAttachmentByID(ctx context.Context, arg GetLeadServiceImageAttachmentByIDParams) (RacLeadServiceAttachment, error)
+	GetLeadServiceImageAttachments(ctx context.Context, arg GetLeadServiceImageAttachmentsParams) ([]RacLeadServiceAttachment, error)
 	GetLeadServiceSummaryContext(ctx context.Context, arg GetLeadServiceSummaryContextParams) (GetLeadServiceSummaryContextRow, error)
 	GetOrganizationName(ctx context.Context, organizationID pgtype.UUID) (string, error)
 	GetPartnerByID(ctx context.Context, arg GetPartnerByIDParams) (RacPartner, error)

@@ -57,6 +57,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/services/:serviceId/offers", h.ListServiceOffers)
 	rg.DELETE("/offers/:offerId", h.DeleteOffer)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
+	rg.GET("/offers/:offerId/photos/:attachmentId", h.PreviewOfferPhoto)
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -530,6 +531,36 @@ func (h *Handler) PreviewOffer(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+func (h *Handler) PreviewOfferPhoto(c *gin.Context) {
+	offerID, err := uuid.Parse(c.Param("offerId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	attachment, reader, err := h.svc.GetOfferPhotoPreview(c.Request.Context(), tenantID, offerID, attachmentID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	defer closeQuietly(reader)
+
+	streamAttachment(c, attachment.ContentType, attachment.FileName, reader)
 }
 
 func (h *Handler) ListPartnerOffers(c *gin.Context) {

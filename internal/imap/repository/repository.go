@@ -226,6 +226,29 @@ type Message struct {
 	UpdatedAt      time.Time
 }
 
+type OutboundMessageStatus string
+
+const (
+	OutboundMessageStatusPending OutboundMessageStatus = "pending"
+	OutboundMessageStatusSent    OutboundMessageStatus = "sent"
+	OutboundMessageStatusFailed  OutboundMessageStatus = "failed"
+)
+
+type OutboundMessage struct {
+	ID           uuid.UUID
+	AccountID    uuid.UUID
+	ToAddresses  []string
+	CcAddresses  []string
+	FromName     *string
+	FromAddress  string
+	Subject      string
+	Status       OutboundMessageStatus
+	ErrorMessage *string
+	SentAt       *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
 type MessageLeadLink struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID
@@ -270,6 +293,28 @@ type ListMessagesResult struct {
 	Page       int
 	PageSize   int
 	TotalPages int
+}
+
+type CreateOutboundMessageInput struct {
+	AccountID   uuid.UUID
+	ToAddresses []string
+	CcAddresses []string
+	FromName    *string
+	FromAddress string
+	Subject     string
+}
+
+type UpdateOutboundMessageStatusInput struct {
+	ID           uuid.UUID
+	Status       OutboundMessageStatus
+	ErrorMessage *string
+	SentAt       *time.Time
+}
+
+type ListOutboundMessagesParams struct {
+	UserID    uuid.UUID
+	AccountID uuid.UUID
+	Limit     int
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, input CreateAccountInput) (Account, error) {
@@ -490,6 +535,134 @@ func (r *Repository) ListMessagesByUser(ctx context.Context, params ListMessages
 		PageSize:   pageSize,
 		TotalPages: totalPages,
 	}, nil
+}
+
+func (r *Repository) CreateOutboundMessage(ctx context.Context, input CreateOutboundMessageInput) (OutboundMessage, error) {
+	const query = `
+		INSERT INTO RAC_user_imap_outbound_messages (
+			account_id,
+			to_addresses,
+			cc_addresses,
+			from_name,
+			from_address,
+			subject,
+			status,
+			created_at,
+			updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+		RETURNING id, account_id, to_addresses, cc_addresses, from_name, from_address, subject, status, error_message, sent_at, created_at, updated_at`
+
+	row := r.pool.QueryRow(
+		ctx,
+		query,
+		input.AccountID,
+		input.ToAddresses,
+		input.CcAddresses,
+		input.FromName,
+		input.FromAddress,
+		input.Subject,
+		string(OutboundMessageStatusPending),
+	)
+
+	return scanOutboundMessage(row)
+}
+
+func (r *Repository) UpdateOutboundMessageStatus(ctx context.Context, input UpdateOutboundMessageStatusInput) error {
+	const query = `
+		UPDATE RAC_user_imap_outbound_messages
+		SET status = $2,
+			error_message = $3,
+			sent_at = $4,
+			updated_at = now()
+		WHERE id = $1`
+
+	commandTag, err := r.pool.Exec(ctx, query, input.ID, string(input.Status), input.ErrorMessage, input.SentAt)
+	if err != nil {
+		return fmt.Errorf("update outbound message status: %w", err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return apperr.NotFound("imap outbound message not found")
+	}
+	return nil
+}
+
+func (r *Repository) ListOutboundMessagesByUser(ctx context.Context, params ListOutboundMessagesParams) ([]OutboundMessage, error) {
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	const query = `
+		SELECT o.id,
+		       o.account_id,
+		       o.to_addresses,
+		       o.cc_addresses,
+		       o.from_name,
+		       o.from_address,
+		       o.subject,
+		       o.status,
+		       o.error_message,
+		       o.sent_at,
+		       o.created_at,
+		       o.updated_at
+		FROM RAC_user_imap_outbound_messages o
+		JOIN RAC_user_imap_accounts a ON a.id = o.account_id
+		WHERE a.user_id = $1
+		  AND o.account_id = $2
+		ORDER BY COALESCE(o.sent_at, o.created_at) DESC, o.created_at DESC
+		LIMIT $3`
+
+	rows, err := r.pool.Query(ctx, query, params.UserID, params.AccountID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list outbound messages: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]OutboundMessage, 0)
+	for rows.Next() {
+		item, scanErr := scanOutboundMessage(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate outbound messages: %w", err)
+	}
+	return items, nil
+}
+
+type outboundMessageScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanOutboundMessage(scanner outboundMessageScanner) (OutboundMessage, error) {
+	var item OutboundMessage
+	var fromName pgtype.Text
+	var status string
+	var errorMessage pgtype.Text
+	var sentAt pgtype.Timestamptz
+	if err := scanner.Scan(
+		&item.ID,
+		&item.AccountID,
+		&item.ToAddresses,
+		&item.CcAddresses,
+		&fromName,
+		&item.FromAddress,
+		&item.Subject,
+		&status,
+		&errorMessage,
+		&sentAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return OutboundMessage{}, fmt.Errorf("scan outbound message: %w", err)
+	}
+	item.FromName = optionalString(fromName)
+	item.Status = OutboundMessageStatus(status)
+	item.ErrorMessage = optionalString(errorMessage)
+	item.SentAt = optionalTime(sentAt)
+	return item, nil
 }
 
 // CountUnreadMessagesByUser returns the exact unread IMAP message count across all accounts for a user.

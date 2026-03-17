@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -26,6 +27,8 @@ type PartnerOffer struct {
 	PricingSource          string
 	CustomerPriceCents     int64
 	VakmanPriceCents       int64
+	MarginBasisPoints      int
+	OfferLineItems         []OfferLineItem
 	JobSummaryShort        *string
 	BuilderSummary         *string
 	Status                 string
@@ -54,8 +57,27 @@ type PartnerOfferWithContext struct {
 
 // QuoteItemSummary is a minimal view of a quote line item for summary generation.
 type QuoteItemSummary struct {
-	Description string
-	Quantity    string
+	ID             uuid.UUID
+	Description    string
+	Quantity       string
+	UnitPriceCents int64
+	LineTotalCents int64
+}
+
+type OfferLineItem struct {
+	QuoteItemID    uuid.UUID `json:"quoteItemId"`
+	Description    string    `json:"description"`
+	Quantity       string    `json:"quantity"`
+	UnitPriceCents int64     `json:"unitPriceCents"`
+	LineTotalCents int64     `json:"lineTotalCents"`
+}
+
+type PhotoAttachment struct {
+	ID            uuid.UUID
+	LeadServiceID uuid.UUID
+	FileKey       string
+	FileName      string
+	ContentType   string
 }
 
 // LeadServiceSummaryContext captures non-PII fields for summary generation.
@@ -140,6 +162,8 @@ type offerSnapshot struct {
 	PricingSource          string
 	CustomerPriceCents     int64
 	VakmanPriceCents       int64
+	MarginBasisPoints      int32
+	OfferLineItems         []byte
 	JobSummaryShort        pgtype.Text
 	BuilderSummary         pgtype.Text
 	Status                 string
@@ -163,6 +187,8 @@ func offerFromSnapshot(data offerSnapshot) PartnerOffer {
 		PricingSource:          data.PricingSource,
 		CustomerPriceCents:     data.CustomerPriceCents,
 		VakmanPriceCents:       data.VakmanPriceCents,
+		MarginBasisPoints:      int(data.MarginBasisPoints),
+		OfferLineItems:         unmarshalOfferLineItems(data.OfferLineItems),
 		JobSummaryShort:        optionalString(data.JobSummaryShort),
 		BuilderSummary:         optionalString(data.BuilderSummary),
 		Status:                 data.Status,
@@ -209,6 +235,11 @@ func offerWithContext(data offerContext) PartnerOfferWithContext {
 
 // CreateOffer inserts a new partner offer.
 func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (PartnerOffer, error) {
+	offerLineItems, err := json.Marshal(offer.OfferLineItems)
+	if err != nil {
+		return PartnerOffer{}, fmt.Errorf("marshal offer line items: %w", err)
+	}
+
 	row, err := r.queries.CreatePartnerOffer(ctx, partnersdb.CreatePartnerOfferParams{
 		OrganizationID:     toPgUUID(offer.OrganizationID),
 		PartnerID:          toPgUUID(offer.PartnerID),
@@ -218,6 +249,8 @@ func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (Partn
 		PricingSource:      partnersdb.PricingSource(offer.PricingSource),
 		CustomerPriceCents: offer.CustomerPriceCents,
 		VakmanPriceCents:   offer.VakmanPriceCents,
+		MarginBasisPoints:  int32(offer.MarginBasisPoints),
+		OfferLineItems:     offerLineItems,
 		JobSummaryShort:    toPgText(offer.JobSummaryShort),
 		BuilderSummary:     toPgText(offer.BuilderSummary),
 	})
@@ -235,6 +268,8 @@ func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (Partn
 		PricingSource:          row.PricingSource,
 		CustomerPriceCents:     row.CustomerPriceCents,
 		VakmanPriceCents:       row.VakmanPriceCents,
+		MarginBasisPoints:      row.MarginBasisPoints,
+		OfferLineItems:         row.OfferLineItems,
 		JobSummaryShort:        row.JobSummaryShort,
 		BuilderSummary:         row.BuilderSummary,
 		Status:                 row.Status,
@@ -258,7 +293,7 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 		return PartnerOfferWithContext{}, fmt.Errorf("get offer by token: %w", err)
 	}
 
-	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
 
 	return offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, LeadPostcode4: row.LeadEnrichmentPostcode4, LeadBuurtcode: row.LeadEnrichmentBuurtcode, LeadEnergyBouwjaar: row.EnergyBouwjaar, UrgencyLevel: row.UrgencyLevel}), nil
 }
@@ -276,7 +311,7 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 		return PartnerOffer{}, fmt.Errorf("get offer by id: %w", err)
 	}
 
-	return offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 // DeleteOffer deletes an offer within a tenant if it is still in a deletable state.
@@ -330,7 +365,7 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 		return PartnerOfferWithContext{}, fmt.Errorf("get offer by id with context: %w", err)
 	}
 
-	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
 
 	return offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, LeadPostcode4: row.LeadEnrichmentPostcode4, LeadBuurtcode: row.LeadEnrichmentBuurtcode, LeadEnergyBouwjaar: row.EnergyBouwjaar, UrgencyLevel: row.UrgencyLevel}), nil
 }
@@ -372,7 +407,7 @@ func (r *Repository) GetLatestQuoteItemsForService(ctx context.Context, leadServ
 
 	items := make([]QuoteItemSummary, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, QuoteItemSummary{Description: row.Description, Quantity: row.Quantity})
+		items = append(items, QuoteItemSummary{ID: uuid.UUID(row.ID.Bytes), Description: row.Description, Quantity: row.Quantity, UnitPriceCents: row.UnitPriceCents, LineTotalCents: row.LineTotalCents})
 	}
 	return items, nil
 }
@@ -412,9 +447,63 @@ func (r *Repository) GetQuoteItemsForQuote(ctx context.Context, quoteID uuid.UUI
 
 	items := make([]QuoteItemSummary, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, QuoteItemSummary{Description: row.Description, Quantity: row.Quantity})
+		items = append(items, QuoteItemSummary{ID: uuid.UUID(row.ID.Bytes), Description: row.Description, Quantity: row.Quantity, UnitPriceCents: row.UnitPriceCents, LineTotalCents: row.LineTotalCents})
 	}
 	return items, nil
+}
+
+func (r *Repository) GetLeadServiceImageAttachments(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]PhotoAttachment, error) {
+	rows, err := r.queries.GetLeadServiceImageAttachments(ctx, partnersdb.GetLeadServiceImageAttachmentsParams{
+		LeadServiceID:  toPgUUID(leadServiceID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query lead service image attachments: %w", err)
+	}
+
+	attachments := make([]PhotoAttachment, 0, len(rows))
+	for _, row := range rows {
+		contentType := ""
+		if value := optionalString(row.ContentType); value != nil {
+			contentType = *value
+		}
+		attachments = append(attachments, PhotoAttachment{
+			ID:            uuid.UUID(row.ID.Bytes),
+			LeadServiceID: uuid.UUID(row.LeadServiceID.Bytes),
+			FileKey:       row.FileKey,
+			FileName:      row.FileName,
+			ContentType:   contentType,
+		})
+	}
+
+	return attachments, nil
+}
+
+func (r *Repository) GetLeadServiceImageAttachmentByID(ctx context.Context, attachmentID, leadServiceID, organizationID uuid.UUID) (PhotoAttachment, error) {
+	row, err := r.queries.GetLeadServiceImageAttachmentByID(ctx, partnersdb.GetLeadServiceImageAttachmentByIDParams{
+		AttachmentID:   toPgUUID(attachmentID),
+		LeadServiceID:  toPgUUID(leadServiceID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PhotoAttachment{}, apperr.NotFound("attachment not found")
+	}
+	if err != nil {
+		return PhotoAttachment{}, fmt.Errorf("get lead service image attachment: %w", err)
+	}
+
+	contentType := ""
+	if value := optionalString(row.ContentType); value != nil {
+		contentType = *value
+	}
+
+	return PhotoAttachment{
+		ID:            uuid.UUID(row.ID.Bytes),
+		LeadServiceID: uuid.UUID(row.LeadServiceID.Bytes),
+		FileKey:       row.FileKey,
+		FileName:      row.FileName,
+		ContentType:   contentType,
+	}, nil
 }
 
 // ListOffersForService returns all offers for a given lead service.
@@ -429,7 +518,7 @@ func (r *Repository) ListOffersForService(ctx context.Context, leadServiceID uui
 
 	offers := make([]PartnerOfferWithContext, 0, len(rows))
 	for _, row := range rows {
-		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
 		offers = append(offers, PartnerOfferWithContext{PartnerOffer: offer, PartnerName: row.BusinessName})
 	}
 
@@ -448,7 +537,7 @@ func (r *Repository) ListOffersByPartner(ctx context.Context, partnerID uuid.UUI
 
 	offers := make([]PartnerOfferWithContext, 0, len(rows))
 	for _, row := range rows {
-		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
 		offers = append(offers, offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, ServiceTypeID: row.ServiceTypeID}))
 	}
 
@@ -609,7 +698,7 @@ func (r *Repository) ListOffers(ctx context.Context, params OfferListParams) (Of
 
 	offers := make([]PartnerOfferWithContext, 0, len(rows))
 	for _, row := range rows {
-		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+		offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
 		offers = append(offers, offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, ServiceTypeID: row.ServiceTypeID}))
 	}
 
@@ -638,4 +727,16 @@ func resolveOfferSortOrder(value string) (string, error) {
 	default:
 		return "", apperr.BadRequest("invalid sort order")
 	}
+}
+
+func unmarshalOfferLineItems(raw []byte) []OfferLineItem {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	items := make([]OfferLineItem, 0)
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil
+	}
+	return items
 }

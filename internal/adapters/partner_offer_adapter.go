@@ -21,10 +21,13 @@ func NewPartnerOfferAdapter(s *service.Service) *PartnerOfferAdapter {
 
 func (a *PartnerOfferAdapter) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, req ports.CreateOfferFromQuoteParams) (*ports.CreateOfferResult, error) {
 	transportReq := transport.CreateOfferFromQuoteRequest{
-		PartnerID:       req.PartnerID,
-		QuoteID:         req.QuoteID,
-		ExpiresInHours:  req.ExpiresInHours,
-		JobSummaryShort: req.JobSummaryShort,
+		PartnerID:         req.PartnerID,
+		QuoteID:           req.QuoteID,
+		ExpiresInHours:    req.ExpiresInHours,
+		JobSummaryShort:   req.JobSummaryShort,
+		MarginBasisPoints: req.MarginBasisPoints,
+		VakmanPriceCents:  req.VakmanPriceCents,
+		SelectedItemIDs:   req.SelectedItemIDs,
 	}
 
 	resp, err := a.service.CreateOfferFromQuote(ctx, tenantID, transportReq)

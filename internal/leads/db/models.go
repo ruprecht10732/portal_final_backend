@@ -922,6 +922,7 @@ type RacOrganizationSetting struct {
 	EmailDefaultReplyScenario                         string             `json:"email_default_reply_scenario"`
 	QuoteRelatedReplyScenario                         string             `json:"quote_related_reply_scenario"`
 	AppointmentRelatedReplyScenario                   string             `json:"appointment_related_reply_scenario"`
+	OfferMarginBasisPoints                            int32              `json:"offer_margin_basis_points"`
 }
 
 type RacPartner struct {
@@ -992,6 +993,8 @@ type RacPartnerOffer struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	JobSummaryShort        pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary         pgtype.Text        `json:"builder_summary"`
+	MarginBasisPoints      int32              `json:"margin_basis_points"`
+	OfferLineItems         []byte             `json:"offer_line_items"`
 }
 
 type RacPartnerServiceType struct {
@@ -1350,6 +1353,21 @@ type RacUserImapMessageLead struct {
 	CreatedBy      pgtype.UUID        `json:"created_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacUserImapOutboundMessage struct {
+	ID           pgtype.UUID        `json:"id"`
+	AccountID    pgtype.UUID        `json:"account_id"`
+	ToAddresses  []string           `json:"to_addresses"`
+	CcAddresses  []string           `json:"cc_addresses"`
+	FromName     pgtype.Text        `json:"from_name"`
+	FromAddress  string             `json:"from_address"`
+	Subject      string             `json:"subject"`
+	Status       string             `json:"status"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	SentAt       pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RacUserRole struct {

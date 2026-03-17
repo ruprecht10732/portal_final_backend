@@ -26,13 +26,21 @@ const (
 
 // Service provides business logic for partners.
 type Service struct {
-	repo             *repository.Repository
-	eventBus         events.Bus
-	storage          storage.StorageService
-	logoBucket       string
-	summaryGenerator OfferSummaryGenerator
-	summaryQueue     OfferSummaryJobQueue
+	repo              *repository.Repository
+	eventBus          events.Bus
+	storage           storage.StorageService
+	logoBucket        string
+	attachmentsBucket string
+	summaryGenerator  OfferSummaryGenerator
+	summaryQueue      OfferSummaryJobQueue
+	settingsReader    OrganizationSettingsReader
 }
+
+type OrganizationOfferSettings struct {
+	OfferMarginBasisPoints int
+}
+
+type OrganizationSettingsReader func(ctx context.Context, organizationID uuid.UUID) (OrganizationOfferSettings, error)
 
 type OfferSummaryJobQueue interface {
 	EnqueuePartnerOfferSummary(ctx context.Context, payload scheduler.PartnerOfferSummaryPayload) error
@@ -107,6 +115,14 @@ func (s *Service) SetOfferSummaryGenerator(generator OfferSummaryGenerator) {
 
 func (s *Service) SetOfferSummaryJobQueue(queue OfferSummaryJobQueue) {
 	s.summaryQueue = queue
+}
+
+func (s *Service) SetOrganizationSettingsReader(reader OrganizationSettingsReader) {
+	s.settingsReader = reader
+}
+
+func (s *Service) SetAttachmentsBucket(bucket string) {
+	s.attachmentsBucket = strings.TrimSpace(bucket)
 }
 
 func (s *Service) ProcessPartnerOfferSummaryJob(ctx context.Context, payload scheduler.PartnerOfferSummaryPayload) error {

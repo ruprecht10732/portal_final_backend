@@ -97,6 +97,21 @@ type MessageResponse struct {
 	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
+type OutboundMessageResponse struct {
+	ID           string     `json:"id"`
+	AccountID    string     `json:"accountId"`
+	ToAddresses  []string   `json:"toAddresses"`
+	CcAddresses  []string   `json:"ccAddresses"`
+	FromName     *string    `json:"fromName,omitempty"`
+	FromAddress  string     `json:"fromAddress"`
+	Subject      string     `json:"subject"`
+	Status       string     `json:"status"`
+	ErrorMessage *string    `json:"errorMessage,omitempty"`
+	SentAt       *time.Time `json:"sentAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
+}
+
 type MessageContentResponse struct {
 	AccountID     string                    `json:"accountId"`
 	UID           int64                     `json:"uid"`
@@ -177,6 +192,10 @@ type ListMessagesResponse struct {
 	Page       int               `json:"page"`
 	PageSize   int               `json:"pageSize"`
 	TotalPages int               `json:"totalPages"`
+}
+
+type ListOutboundMessagesResponse struct {
+	Items []OutboundMessageResponse `json:"items"`
 }
 
 type UnreadCountResponse struct {

@@ -336,6 +336,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays:                                  settings.QuotePaymentDays,
 		QuoteValidDays:                                    settings.QuoteValidDays,
+		OfferMarginBasisPoints:                            settings.OfferMarginBasisPoints,
 		AIAutoDisqualifyJunk:                              settings.AIAutoDisqualifyJunk,
 		AIAutoDispatch:                                    settings.AIAutoDispatch,
 		AIAutoEstimate:                                    settings.AIAutoEstimate,
@@ -405,6 +406,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 	settings, err := h.svc.UpdateOrganizationSettings(c.Request.Context(), *tenantID, repository.OrganizationSettingsUpdate{
 		QuotePaymentDays:                                  req.QuotePaymentDays,
 		QuoteValidDays:                                    req.QuoteValidDays,
+		OfferMarginBasisPoints:                            req.OfferMarginBasisPoints,
 		AIAutoDisqualifyJunk:                              req.AIAutoDisqualifyJunk,
 		AIAutoDispatch:                                    req.AIAutoDispatch,
 		AIAutoEstimate:                                    req.AIAutoEstimate,
@@ -438,6 +440,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 	httpkit.OK(c, transport.OrganizationSettingsResponse{
 		QuotePaymentDays:                                  settings.QuotePaymentDays,
 		QuoteValidDays:                                    settings.QuoteValidDays,
+		OfferMarginBasisPoints:                            settings.OfferMarginBasisPoints,
 		AIAutoDisqualifyJunk:                              settings.AIAutoDisqualifyJunk,
 		AIAutoDispatch:                                    settings.AIAutoDispatch,
 		AIAutoEstimate:                                    settings.AIAutoEstimate,

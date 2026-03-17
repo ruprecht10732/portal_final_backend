@@ -96,6 +96,7 @@ type OrgLogoDownloadResponse struct {
 type OrganizationSettingsResponse struct {
 	QuotePaymentDays                                  int      `json:"quotePaymentDays"`
 	QuoteValidDays                                    int      `json:"quoteValidDays"`
+	OfferMarginBasisPoints                            int      `json:"offerMarginBasisPoints"`
 	AIAutoDisqualifyJunk                              bool     `json:"aiAutoDisqualifyJunk"`
 	AIAutoDispatch                                    bool     `json:"aiAutoDispatch"`
 	AIAutoEstimate                                    bool     `json:"aiAutoEstimate"`
@@ -130,6 +131,7 @@ type OrganizationSettingsResponse struct {
 type UpdateOrganizationSettingsRequest struct {
 	QuotePaymentDays                                  *int      `json:"quotePaymentDays" validate:"omitempty,min=1,max=365"`
 	QuoteValidDays                                    *int      `json:"quoteValidDays" validate:"omitempty,min=1,max=365"`
+	OfferMarginBasisPoints                            *int      `json:"offerMarginBasisPoints" validate:"omitempty,min=0,max=5000"`
 	NotificationEmail                                 *string   `json:"notificationEmail" validate:"omitempty,email,max=255"`
 	AIAutoDisqualifyJunk                              *bool     `json:"aiAutoDisqualifyJunk"`
 	AIAutoDispatch                                    *bool     `json:"aiAutoDispatch"`

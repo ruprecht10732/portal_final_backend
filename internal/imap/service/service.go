@@ -284,6 +284,14 @@ func (s *Service) ListMessages(ctx context.Context, userID, accountID uuid.UUID,
 	})
 }
 
+func (s *Service) ListOutboundMessages(ctx context.Context, userID, accountID uuid.UUID) ([]repository.OutboundMessage, error) {
+	return s.repo.ListOutboundMessagesByUser(ctx, repository.ListOutboundMessagesParams{
+		UserID:    userID,
+		AccountID: accountID,
+		Limit:     10,
+	})
+}
+
 func (s *Service) GetUnreadCount(ctx context.Context, userID uuid.UUID) (int, error) {
 	return s.repo.CountUnreadMessagesByUser(ctx, userID)
 }
@@ -757,15 +765,19 @@ func (s *Service) sendViaAccountSMTP(
 	if err != nil {
 		return err
 	}
+	outboundID := s.recordPendingOutboundMessage(ctx, account, env, req)
 	msg := gomail.NewMsg()
 	if err := msg.FromFormat(env.FromName, env.FromEmail); err != nil {
+		s.finalizeOutboundMessage(ctx, outboundID, repository.OutboundMessageStatusFailed, stringPtr("invalid smtp from address"))
 		return apperr.Validation("invalid smtp from address")
 	}
 	if err := msg.To(req.To...); err != nil {
+		s.finalizeOutboundMessage(ctx, outboundID, repository.OutboundMessageStatusFailed, stringPtr("invalid recipient list"))
 		return apperr.Validation("invalid recipient list")
 	}
 	if len(req.Cc) > 0 {
 		if err := msg.Cc(req.Cc...); err != nil {
+			s.finalizeOutboundMessage(ctx, outboundID, repository.OutboundMessageStatusFailed, stringPtr("invalid cc recipient list"))
 			return apperr.Validation("invalid cc recipient list")
 		}
 	}
@@ -797,12 +809,63 @@ func (s *Service) sendViaAccountSMTP(
 		}),
 	)
 	if err != nil {
+		s.finalizeOutboundMessage(ctx, outboundID, repository.OutboundMessageStatusFailed, stringPtr("failed to create smtp client"))
 		return apperr.Internal("failed to create smtp client")
 	}
 	if err := clientSMTP.DialAndSendWithContext(ctx, msg); err != nil {
+		s.finalizeOutboundMessage(ctx, outboundID, repository.OutboundMessageStatusFailed, stringPtr(limitError(err.Error())))
 		return apperr.BadRequest("failed to send email")
 	}
+	s.finalizeOutboundMessage(ctx, outboundID, repository.OutboundMessageStatusSent, nil)
 	return nil
+}
+
+func (s *Service) recordPendingOutboundMessage(
+	ctx context.Context,
+	account repository.Account,
+	env smtpEnvelope,
+	req smtpSendRequest,
+) *uuid.UUID {
+	if s.repo == nil {
+		return nil
+	}
+	item, err := s.repo.CreateOutboundMessage(ctx, repository.CreateOutboundMessageInput{
+		AccountID:   account.ID,
+		ToAddresses: append([]string(nil), req.To...),
+		CcAddresses: append([]string(nil), req.Cc...),
+		FromName:    stringPtr(env.FromName),
+		FromAddress: strings.TrimSpace(env.FromEmail),
+		Subject:     strings.TrimSpace(req.Subject),
+	})
+	if err != nil {
+		s.logWarn("failed to persist pending outbound email", "accountId", account.ID, "error", err.Error())
+		return nil
+	}
+	return &item.ID
+}
+
+func (s *Service) finalizeOutboundMessage(
+	ctx context.Context,
+	outboundID *uuid.UUID,
+	status repository.OutboundMessageStatus,
+	errorMessage *string,
+) {
+	if s.repo == nil || outboundID == nil {
+		return
+	}
+	var sentAt *time.Time
+	if status == repository.OutboundMessageStatusSent {
+		now := time.Now().UTC()
+		sentAt = &now
+	}
+	if err := s.repo.UpdateOutboundMessageStatus(ctx, repository.UpdateOutboundMessageStatusInput{
+		ID:           *outboundID,
+		Status:       status,
+		ErrorMessage: errorMessage,
+		SentAt:       sentAt,
+	}); err != nil {
+		s.logWarn("failed to finalize outbound email", "outboundMessageId", outboundID.String(), "status", string(status), "error", err.Error())
+	}
 }
 
 func (s *Service) loadSMTPSender(account repository.Account) (smtpEnvelope, error) {
@@ -1207,6 +1270,14 @@ func (s *Service) getMaxUIDOrZero(ctx context.Context, accountID uuid.UUID, fold
 		return 0
 	}
 	return uid
+}
+
+func stringPtr(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func (s *Service) publishNewEmailEvent(ctx context.Context, account repository.Account, item client.MessageMetadata, maxUID int64) {

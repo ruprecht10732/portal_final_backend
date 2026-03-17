@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -40,10 +41,9 @@ type OfferSummaryGenerator interface {
 }
 
 const (
-	offerTokenBytes = 32
-	// platformFeeMultiplier: vakman receives 90% of customer price (10% platform fee).
-	platformFeeMultiplier = 0.90
-	maxOfferExpiryHours   = 12
+	offerTokenBytes               = 32
+	defaultOfferMarginBasisPoints = 1000
+	maxOfferExpiryHours           = 12
 )
 
 // CreateOfferFromQuote creates an offer based on a specific quote.
@@ -79,7 +79,6 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 		return transport.CreateOfferResponse{}, err
 	}
 
-	vakmanPrice := calculateVakmanPrice(q.TotalCents)
 	effectiveExpiryHours := req.ExpiresInHours
 	if effectiveExpiryHours <= 0 {
 		effectiveExpiryHours = maxOfferExpiryHours
@@ -93,9 +92,22 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 	if itemsErr != nil {
 		items = nil
 	}
+	items = selectOfferItems(items, req.SelectedItemIDs)
+	if len(items) == 0 {
+		return transport.CreateOfferResponse{}, apperr.Validation("offer must include at least one quote item")
+	}
+
+	customerPrice := calculateCustomerPrice(items)
+	if customerPrice <= 0 {
+		return transport.CreateOfferResponse{}, apperr.Validation("offer total must be greater than 0")
+	}
+
+	marginBasisPoints := s.resolveOfferMarginBasisPoints(ctx, tenantID, req.MarginBasisPoints)
+	vakmanPrice := resolveVakmanPrice(customerPrice, marginBasisPoints, req.VakmanPriceCents)
 
 	scopeAssessment := buildScopeAssessment(items)
 	jobSummaryPtr := sanitizeJobSummary(req.JobSummaryShort)
+	offerLineItems := buildOfferLineItems(items)
 
 	offer, err := s.repo.CreateOffer(ctx, repository.PartnerOffer{
 		OrganizationID:     tenantID,
@@ -104,8 +116,10 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 		PublicToken:        rawToken,
 		ExpiresAt:          expiry,
 		PricingSource:      "quote",
-		CustomerPriceCents: q.TotalCents,
+		CustomerPriceCents: customerPrice,
 		VakmanPriceCents:   vakmanPrice,
+		MarginBasisPoints:  marginBasisPoints,
+		OfferLineItems:     offerLineItems,
 		JobSummaryShort:    jobSummaryPtr,
 	})
 	if err != nil {
@@ -145,10 +159,7 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 		return transport.PublicOfferResponse{}, err
 	}
 
-	items, itemsErr := s.repo.GetLatestQuoteItemsForService(ctx, oc.LeadServiceID, oc.OrganizationID)
-	if itemsErr != nil {
-		items = nil
-	}
+	items, photos := s.resolveOfferViewData(ctx, oc)
 	scopeAssessment := buildScopeAssessment(items)
 	builderSummary := oc.BuilderSummary
 	if builderSummary == nil {
@@ -172,6 +183,8 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 		Status:           oc.Status,
 		ExpiresAt:        oc.ExpiresAt,
 		CreatedAt:        oc.CreatedAt,
+		LineItems:        mapPublicOfferLineItems(items),
+		Photos:           mapOfferPhotos(photos),
 	}, nil
 }
 
@@ -279,10 +292,7 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 		return transport.PublicOfferResponse{}, err
 	}
 
-	items, itemsErr := s.repo.GetLatestQuoteItemsForService(ctx, oc.LeadServiceID, oc.OrganizationID)
-	if itemsErr != nil {
-		items = nil
-	}
+	items, photos := s.resolveOfferViewData(ctx, oc)
 	scopeAssessment := buildScopeAssessment(items)
 	builderSummary := oc.BuilderSummary
 	if builderSummary == nil {
@@ -306,7 +316,27 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 		Status:           oc.Status,
 		ExpiresAt:        oc.ExpiresAt,
 		CreatedAt:        oc.CreatedAt,
+		LineItems:        mapPublicOfferLineItems(items),
+		Photos:           mapOfferPhotos(photos),
 	}, nil
+}
+
+func (s *Service) GetOfferPhotoByToken(ctx context.Context, publicToken string, attachmentID uuid.UUID) (repository.PhotoAttachment, io.ReadCloser, error) {
+	oc, err := s.repo.GetOfferByToken(ctx, publicToken)
+	if err != nil {
+		return repository.PhotoAttachment{}, nil, err
+	}
+
+	return s.getOfferPhotoStream(ctx, oc.LeadServiceID, oc.OrganizationID, attachmentID)
+}
+
+func (s *Service) GetOfferPhotoPreview(ctx context.Context, tenantID, offerID, attachmentID uuid.UUID) (repository.PhotoAttachment, io.ReadCloser, error) {
+	oc, err := s.repo.GetOfferByIDWithContext(ctx, offerID, tenantID)
+	if err != nil {
+		return repository.PhotoAttachment{}, nil, err
+	}
+
+	return s.getOfferPhotoStream(ctx, oc.LeadServiceID, oc.OrganizationID, attachmentID)
 }
 
 func buildBuilderSummary(items []repository.QuoteItemSummary, scopeAssessment *string, urgencyLevel *string) *string {
@@ -366,6 +396,57 @@ func (s *Service) buildOfferSummaryPayload(offerID, tenantID, leadServiceID uuid
 	}
 
 	return payload, true
+}
+
+func (s *Service) resolveOfferMarginBasisPoints(ctx context.Context, tenantID uuid.UUID, override *int) int {
+	if override != nil {
+		return clampMarginBasisPoints(*override)
+	}
+	if s != nil && s.settingsReader != nil {
+		settings, err := s.settingsReader(ctx, tenantID)
+		if err == nil {
+			return clampMarginBasisPoints(settings.OfferMarginBasisPoints)
+		}
+	}
+	return defaultOfferMarginBasisPoints
+}
+
+func (s *Service) resolveOfferViewData(ctx context.Context, oc repository.PartnerOfferWithContext) ([]repository.QuoteItemSummary, []repository.PhotoAttachment) {
+	items := cloneQuoteItemsFromOffer(oc.OfferLineItems)
+	if len(items) == 0 {
+		latest, err := s.repo.GetLatestQuoteItemsForService(ctx, oc.LeadServiceID, oc.OrganizationID)
+		if err == nil {
+			items = latest
+		}
+	}
+
+	photos, err := s.repo.GetLeadServiceImageAttachments(ctx, oc.LeadServiceID, oc.OrganizationID)
+	if err != nil {
+		photos = nil
+	}
+
+	return items, photos
+}
+
+func (s *Service) getOfferPhotoStream(ctx context.Context, leadServiceID, organizationID, attachmentID uuid.UUID) (repository.PhotoAttachment, io.ReadCloser, error) {
+	if s == nil || s.storage == nil {
+		return repository.PhotoAttachment{}, nil, apperr.Internal("photo storage is unavailable")
+	}
+	if strings.TrimSpace(s.attachmentsBucket) == "" {
+		return repository.PhotoAttachment{}, nil, apperr.Internal("photo storage bucket is not configured")
+	}
+
+	attachment, err := s.repo.GetLeadServiceImageAttachmentByID(ctx, attachmentID, leadServiceID, organizationID)
+	if err != nil {
+		return repository.PhotoAttachment{}, nil, err
+	}
+
+	reader, err := s.storage.DownloadFile(ctx, s.attachmentsBucket, attachment.FileKey)
+	if err != nil {
+		return repository.PhotoAttachment{}, nil, apperr.Internal("failed to load offer photo")
+	}
+
+	return attachment, reader, nil
 }
 
 func sanitizeJobSummary(value string) *string {
@@ -736,5 +817,121 @@ func mapOfferResponse(oc repository.PartnerOfferWithContext) transport.OfferResp
 }
 
 func calculateVakmanPrice(customerPriceCents int64) int64 {
-	return int64(float64(customerPriceCents) * platformFeeMultiplier)
+	return resolveVakmanPrice(customerPriceCents, defaultOfferMarginBasisPoints, nil)
+}
+
+func resolveVakmanPrice(customerPriceCents int64, marginBasisPoints int, override *int64) int64 {
+	if override != nil {
+		if *override < 0 {
+			return 0
+		}
+		return *override
+	}
+
+	margin := int64(clampMarginBasisPoints(marginBasisPoints))
+	price := customerPriceCents - (customerPriceCents*margin)/10000
+	if price < 0 {
+		return 0
+	}
+	return price
+}
+
+func clampMarginBasisPoints(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 5000 {
+		return 5000
+	}
+	return value
+}
+
+func calculateCustomerPrice(items []repository.QuoteItemSummary) int64 {
+	var total int64
+	for _, item := range items {
+		total += item.LineTotalCents
+	}
+	return total
+}
+
+func buildOfferLineItems(items []repository.QuoteItemSummary) []repository.OfferLineItem {
+	lineItems := make([]repository.OfferLineItem, 0, len(items))
+	for _, item := range items {
+		lineItems = append(lineItems, repository.OfferLineItem{
+			QuoteItemID:    item.ID,
+			Description:    item.Description,
+			Quantity:       item.Quantity,
+			UnitPriceCents: item.UnitPriceCents,
+			LineTotalCents: item.LineTotalCents,
+		})
+	}
+	return lineItems
+}
+
+func cloneQuoteItemsFromOffer(items []repository.OfferLineItem) []repository.QuoteItemSummary {
+	if len(items) == 0 {
+		return nil
+	}
+
+	result := make([]repository.QuoteItemSummary, 0, len(items))
+	for _, item := range items {
+		result = append(result, repository.QuoteItemSummary{
+			ID:             item.QuoteItemID,
+			Description:    item.Description,
+			Quantity:       item.Quantity,
+			UnitPriceCents: item.UnitPriceCents,
+			LineTotalCents: item.LineTotalCents,
+		})
+	}
+	return result
+}
+
+func selectOfferItems(items []repository.QuoteItemSummary, selectedItemIDs []uuid.UUID) []repository.QuoteItemSummary {
+	if len(selectedItemIDs) == 0 {
+		return items
+	}
+
+	selected := make(map[uuid.UUID]struct{}, len(selectedItemIDs))
+	for _, id := range selectedItemIDs {
+		selected[id] = struct{}{}
+	}
+
+	filtered := make([]repository.QuoteItemSummary, 0, len(items))
+	for _, item := range items {
+		if _, ok := selected[item.ID]; ok {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func mapPublicOfferLineItems(items []repository.QuoteItemSummary) []transport.PublicOfferLineItem {
+	if len(items) == 0 {
+		return nil
+	}
+
+	result := make([]transport.PublicOfferLineItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, transport.PublicOfferLineItem{
+			Description: item.Description,
+			Quantity:    item.Quantity,
+		})
+	}
+	return result
+}
+
+func mapOfferPhotos(photos []repository.PhotoAttachment) []transport.OfferPhotoRef {
+	if len(photos) == 0 {
+		return nil
+	}
+
+	result := make([]transport.OfferPhotoRef, 0, len(photos))
+	for _, photo := range photos {
+		result = append(result, transport.OfferPhotoRef{
+			ID:          photo.ID,
+			FileName:    photo.FileName,
+			ContentType: photo.ContentType,
+		})
+	}
+	return result
 }

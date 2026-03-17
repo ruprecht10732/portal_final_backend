@@ -43,6 +43,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/test", h.TestAccount)
 	rg.POST("/:id/sync", h.SyncAccount)
 	rg.GET("/:id/messages", h.ListMessages)
+	rg.GET("/:id/outbox", h.ListOutboundMessages)
 	rg.POST("/:id/messages/send", h.SendMessage)
 	rg.POST("/:id/messages/:uid/reply", h.ReplyMessage)
 	rg.POST("/:id/messages/:uid/reply-all", h.ReplyAllMessage)
@@ -54,6 +55,43 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/messages/:uid/create-lead", h.CreateLeadFromMessage)
 	rg.DELETE("/:id/messages/:uid/lead", h.UnlinkMessageLead)
 	rg.POST("/:id/messages/:uid/delete", h.DeleteMessage)
+}
+
+func (h *Handler) ListOutboundMessages(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	accountID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	items, err := h.svc.ListOutboundMessages(c.Request.Context(), identity.UserID(), accountID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	response := make([]transport.OutboundMessageResponse, 0, len(items))
+	for _, item := range items {
+		response = append(response, transport.OutboundMessageResponse{
+			ID:           item.ID.String(),
+			AccountID:    item.AccountID.String(),
+			ToAddresses:  append([]string(nil), item.ToAddresses...),
+			CcAddresses:  append([]string(nil), item.CcAddresses...),
+			FromName:     item.FromName,
+			FromAddress:  item.FromAddress,
+			Subject:      item.Subject,
+			Status:       string(item.Status),
+			ErrorMessage: item.ErrorMessage,
+			SentAt:       item.SentAt,
+			CreatedAt:    item.CreatedAt,
+			UpdatedAt:    item.UpdatedAt,
+		})
+	}
+
+	httpkit.OK(c, transport.ListOutboundMessagesResponse{Items: response})
 }
 
 func (h *Handler) GetUnreadCount(c *gin.Context) {

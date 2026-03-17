@@ -279,6 +279,8 @@ INSERT INTO RAC_partner_offers (
 	pricing_source,
 	customer_price_cents,
 	vakman_price_cents,
+	margin_basis_points,
+	offer_line_items,
 	job_summary_short,
 	builder_summary,
 	status
@@ -291,6 +293,8 @@ INSERT INTO RAC_partner_offers (
 	sqlc.arg(pricing_source)::pricing_source,
 	sqlc.arg(customer_price_cents)::bigint,
 	sqlc.arg(vakman_price_cents)::bigint,
+	sqlc.arg(margin_basis_points)::int,
+	sqlc.arg(offer_line_items)::jsonb,
 	sqlc.narg(job_summary_short)::text,
 	sqlc.narg(builder_summary)::text,
 	'pending'
@@ -304,6 +308,8 @@ RETURNING id,
 	pricing_source::text AS pricing_source,
 	customer_price_cents,
 	vakman_price_cents,
+	margin_basis_points,
+	offer_line_items,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
@@ -325,6 +331,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
@@ -368,6 +376,8 @@ SELECT id,
 	pricing_source::text AS pricing_source,
 	customer_price_cents,
 	vakman_price_cents,
+	margin_basis_points,
+	offer_line_items,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
@@ -414,6 +424,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
@@ -459,7 +471,10 @@ WITH latest_quote AS (
 	LIMIT 1
 )
 SELECT qi.description,
-	qi.quantity::text AS quantity
+	qi.quantity::text AS quantity,
+	qi.id,
+	qi.unit_price_cents,
+	ROUND((qi.quantity_numeric * qi.unit_price_cents::numeric) * (1 + qi.tax_rate::numeric / 10000))::bigint AS line_total_cents
 FROM RAC_quote_items qi
 JOIN latest_quote lq ON lq.id = qi.quote_id
 WHERE qi.is_optional = FALSE OR qi.is_selected = TRUE
@@ -478,12 +493,47 @@ WHERE id = sqlc.arg(quote_id)::uuid
 
 -- name: ListQuoteItemsForQuote :many
 SELECT qi.description,
-	qi.quantity::text AS quantity
+	qi.quantity::text AS quantity,
+	qi.id,
+	qi.unit_price_cents,
+	ROUND((qi.quantity_numeric * qi.unit_price_cents::numeric) * (1 + qi.tax_rate::numeric / 10000))::bigint AS line_total_cents
 FROM RAC_quote_items qi
 WHERE qi.quote_id = sqlc.arg(quote_id)::uuid
   AND qi.organization_id = sqlc.arg(organization_id)::uuid
   AND (qi.is_optional = FALSE OR qi.is_selected = TRUE)
 ORDER BY qi.sort_order ASC;
+
+-- name: GetLeadServiceImageAttachments :many
+SELECT id,
+	lead_service_id,
+	organization_id,
+	file_key,
+	file_name,
+	content_type,
+	size_bytes,
+	uploaded_by,
+	created_at
+FROM RAC_lead_service_attachments
+WHERE lead_service_id = sqlc.arg(lead_service_id)::uuid
+  AND organization_id = sqlc.arg(organization_id)::uuid
+  AND content_type LIKE 'image/%'
+ORDER BY created_at ASC;
+
+-- name: GetLeadServiceImageAttachmentByID :one
+SELECT id,
+	lead_service_id,
+	organization_id,
+	file_key,
+	file_name,
+	content_type,
+	size_bytes,
+	uploaded_by,
+	created_at
+FROM RAC_lead_service_attachments
+WHERE id = sqlc.arg(attachment_id)::uuid
+  AND lead_service_id = sqlc.arg(lead_service_id)::uuid
+  AND organization_id = sqlc.arg(organization_id)::uuid
+  AND content_type LIKE 'image/%';
 
 -- name: ListPartnerOffersForService :many
 SELECT o.id,
@@ -495,6 +545,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.status::text AS status,
 	o.accepted_at,
 	o.rejected_at,
@@ -520,6 +572,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.status::text AS status,
 	o.accepted_at,
 	o.rejected_at,
@@ -608,6 +662,8 @@ SELECT o.id,
 	o.pricing_source::text AS pricing_source,
 	o.customer_price_cents,
 	o.vakman_price_cents,
+	o.margin_basis_points,
+	o.offer_line_items,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,

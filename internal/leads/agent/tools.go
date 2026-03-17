@@ -2243,10 +2243,12 @@ func createCreatePartnerOfferTool() (tool.Tool, error) {
 
 		summary := truncateRunes(strings.TrimSpace(input.JobSummaryShort), 200)
 		result, err := deps.OfferCreator.CreateOfferFromQuote(ctx, tenantID, ports.CreateOfferFromQuoteParams{
-			PartnerID:       partnerID,
-			QuoteID:         quoteID,
-			ExpiresInHours:  hours,
-			JobSummaryShort: summary,
+			PartnerID:         partnerID,
+			QuoteID:           quoteID,
+			ExpiresInHours:    hours,
+			JobSummaryShort:   summary,
+			MarginBasisPoints: input.MarginBasisPoints,
+			VakmanPriceCents:  input.VakmanPriceCents,
 		})
 		if err != nil {
 			return CreatePartnerOfferOutput{Success: false, Message: err.Error()}, err

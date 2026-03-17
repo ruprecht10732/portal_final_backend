@@ -33,6 +33,7 @@ import (
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/partners"
+	partnersvc "portal_final_backend/internal/partners/service"
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
@@ -413,6 +414,14 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
 	catalogModule.RegisterHandlers(eventBus)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
+	partnersModule.Service().SetAttachmentsBucket(cfg.GetMinioBucketLeadServiceAttachments())
+	partnersModule.Service().SetOrganizationSettingsReader(func(ctx context.Context, organizationID uuid.UUID) (partnersvc.OrganizationOfferSettings, error) {
+		settings, err := identityModule.Service().GetOrganizationSettings(ctx, organizationID)
+		if err != nil {
+			return partnersvc.OrganizationOfferSettings{}, err
+		}
+		return partnersvc.OrganizationOfferSettings{OfferMarginBasisPoints: settings.OfferMarginBasisPoints}, nil
+	})
 	leadsModule.ManagementService().SetPartnerPhoneResolver(leadsmgmt.PartnerPhoneResolverFunc(func(ctx context.Context, organizationID uuid.UUID, partnerID uuid.UUID) (string, error) {
 		partner, err := partnersModule.Service().GetByID(ctx, organizationID, partnerID)
 		if err != nil {

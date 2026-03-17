@@ -7,10 +7,13 @@ import (
 )
 
 type CreateOfferFromQuoteParams struct {
-	PartnerID       uuid.UUID
-	QuoteID         uuid.UUID
-	ExpiresInHours  int
-	JobSummaryShort string
+	PartnerID         uuid.UUID
+	QuoteID           uuid.UUID
+	ExpiresInHours    int
+	JobSummaryShort   string
+	MarginBasisPoints *int
+	VakmanPriceCents  *int64
+	SelectedItemIDs   []uuid.UUID
 }
 
 type CreateOfferResult struct {

@@ -83,6 +83,7 @@ type OrganizationSettings struct {
 	OrganizationID                                    uuid.UUID
 	QuotePaymentDays                                  int
 	QuoteValidDays                                    int
+	OfferMarginBasisPoints                            int
 	AIAutoDisqualifyJunk                              bool
 	AIAutoDispatch                                    bool
 	AIAutoEstimate                                    bool
@@ -123,6 +124,7 @@ type OrganizationSettings struct {
 type OrganizationSettingsUpdate struct {
 	QuotePaymentDays                                  *int
 	QuoteValidDays                                    *int
+	OfferMarginBasisPoints                            *int
 	AIAutoDisqualifyJunk                              *bool
 	AIAutoDispatch                                    *bool
 	AIAutoEstimate                                    *bool
@@ -210,6 +212,7 @@ type settingsSnapshot struct {
 	OrganizationID                                    pgtype.UUID
 	QuotePaymentDays                                  int32
 	QuoteValidDays                                    int32
+	OfferMarginBasisPoints                            int32
 	AIAutoDisqualifyJunk                              bool
 	AIAutoDispatch                                    bool
 	AIAutoEstimate                                    bool
@@ -418,6 +421,7 @@ func (r *Repository) ClearOrganizationLogo(ctx context.Context, organizationID u
 func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID uuid.UUID) (OrganizationSettings, error) {
 	const query = `
 		SELECT organization_id, quote_payment_days, quote_valid_days,
+		       offer_margin_basis_points,
 		       ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
 		       ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
 		       ai_council_consensus_mode, whatsapp_tone_of_voice,
@@ -441,6 +445,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&row.OrganizationID,
 		&row.QuotePaymentDays,
 		&row.QuoteValidDays,
+		&row.OfferMarginBasisPoints,
 		&row.AIAutoDisqualifyJunk,
 		&row.AIAutoDispatch,
 		&row.AIAutoEstimate,
@@ -482,6 +487,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			OrganizationID:                                    organizationID,
 			QuotePaymentDays:                                  7,
 			QuoteValidDays:                                    14,
+			OfferMarginBasisPoints:                            1000,
 			AIAutoDisqualifyJunk:                              true,
 			AIAutoDispatch:                                    false,
 			AIAutoEstimate:                                    true,
@@ -522,6 +528,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  organization_id,
 		  quote_payment_days,
 		  quote_valid_days,
+		  offer_margin_basis_points,
 		  ai_auto_disqualify_junk,
 		  ai_auto_dispatch,
 		  ai_auto_estimate,
@@ -554,66 +561,69 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  $1,
 		  COALESCE($2::int, 7),
 		  COALESCE($3::int, 14),
-		  COALESCE($4::boolean, true),
-		  COALESCE($5::boolean, false),
-		  COALESCE($6::boolean, true),
-		  COALESCE($7::boolean, false),
-		  COALESCE($8::boolean, true),
+		  COALESCE($4::int, 1000),
+		  COALESCE($5::boolean, true),
+		  COALESCE($6::boolean, false),
+		  COALESCE($7::boolean, true),
+		  COALESCE($8::boolean, false),
 		  COALESCE($9::boolean, true),
 		  COALESCE($10::boolean, true),
-		  COALESCE(NULLIF($11::text, ''), 'weighted'),
-		  COALESCE(NULLIF($12::text, ''), 'warm, practical, and professional'),
-		  COALESCE($13::int, 3),
-		  COALESCE($14::int, 30),
-		  COALESCE($15::boolean, true),
-		  COALESCE($16::boolean, false),
-		  COALESCE($17::text[], '{}'::text[]),
-		  COALESCE($18::boolean, false),
-		  COALESCE($19::text[], '{}'::text[]),
-		  COALESCE($20::boolean, false),
-		  COALESCE($21::text[], '{}'::text[]),
-		  NULLIF($22::text, ''),
+		  COALESCE($11::boolean, true),
+		  COALESCE(NULLIF($12::text, ''), 'weighted'),
+		  COALESCE(NULLIF($13::text, ''), 'warm, practical, and professional'),
+		  COALESCE($14::int, 3),
+		  COALESCE($15::int, 30),
+		  COALESCE($16::boolean, true),
+		  COALESCE($17::boolean, false),
+		  COALESCE($18::text[], '{}'::text[]),
+		  COALESCE($19::boolean, false),
+		  COALESCE($20::text[], '{}'::text[]),
+		  COALESCE($21::boolean, false),
+		  COALESCE($22::text[], '{}'::text[]),
 		  NULLIF($23::text, ''),
 		  NULLIF($24::text, ''),
-		  COALESCE(NULLIF($25::text, ''), 'available'),
-		  COALESCE($26::int, 2),
-		  COALESCE(NULLIF($27::text, ''), 'generic'),
+		  NULLIF($25::text, ''),
+		  COALESCE(NULLIF($26::text, ''), 'available'),
+		  COALESCE($27::int, 2),
 		  COALESCE(NULLIF($28::text, ''), 'generic'),
-		  COALESCE(NULLIF($29::text, ''), 'quote_reminder'),
-		  COALESCE(NULLIF($30::text, ''), 'appointment_reminder')
+		  COALESCE(NULLIF($29::text, ''), 'generic'),
+		  COALESCE(NULLIF($30::text, ''), 'quote_reminder'),
+		  COALESCE(NULLIF($31::text, ''), 'appointment_reminder')
 		)
 		ON CONFLICT (organization_id) DO UPDATE SET
 		  quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
 		  quote_valid_days = COALESCE($3::int, RAC_organization_settings.quote_valid_days),
-		  ai_auto_disqualify_junk = COALESCE($4::boolean, RAC_organization_settings.ai_auto_disqualify_junk),
-		  ai_auto_dispatch = COALESCE($5::boolean, RAC_organization_settings.ai_auto_dispatch),
-		  ai_auto_estimate = COALESCE($6::boolean, RAC_organization_settings.ai_auto_estimate),
-		  ai_confidence_gate_enabled = COALESCE($7::boolean, RAC_organization_settings.ai_confidence_gate_enabled),
-		  ai_adaptive_reasoning_enabled = COALESCE($8::boolean, RAC_organization_settings.ai_adaptive_reasoning_enabled),
-		  ai_experience_memory_enabled = COALESCE($9::boolean, RAC_organization_settings.ai_experience_memory_enabled),
-		  ai_council_enabled = COALESCE($10::boolean, RAC_organization_settings.ai_council_enabled),
-		  ai_council_consensus_mode = COALESCE(NULLIF($11::text, ''), RAC_organization_settings.ai_council_consensus_mode),
-		  whatsapp_tone_of_voice = COALESCE(NULLIF($12::text, ''), RAC_organization_settings.whatsapp_tone_of_voice),
-		  catalog_gap_threshold = COALESCE($13::int, RAC_organization_settings.catalog_gap_threshold),
-		  catalog_gap_lookback_days = COALESCE($14::int, RAC_organization_settings.catalog_gap_lookback_days),
-		  photo_analysis_preprocessing_enabled = COALESCE($15::boolean, RAC_organization_settings.photo_analysis_preprocessing_enabled),
-		  photo_analysis_ocr_assist_enabled = COALESCE($16::boolean, RAC_organization_settings.photo_analysis_ocr_assist_enabled),
-		  photo_analysis_ocr_assist_service_types = COALESCE($17::text[], RAC_organization_settings.photo_analysis_ocr_assist_service_types),
-		  photo_analysis_lens_correction_enabled = COALESCE($18::boolean, RAC_organization_settings.photo_analysis_lens_correction_enabled),
-		  photo_analysis_lens_correction_service_types = COALESCE($19::text[], RAC_organization_settings.photo_analysis_lens_correction_service_types),
-		  photo_analysis_perspective_normalization_enabled = COALESCE($20::boolean, RAC_organization_settings.photo_analysis_perspective_normalization_enabled),
-		  photo_analysis_perspective_normalization_service_types = COALESCE($21::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
-		  notification_email = CASE WHEN $22::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($22::text, '') END,
-		  whatsapp_device_id = CASE WHEN $23::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($23::text, '') END,
-		  whatsapp_account_jid = CASE WHEN $24::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($24::text, '') END,
-		  whatsapp_presence = COALESCE(NULLIF($25::text, ''), RAC_organization_settings.whatsapp_presence),
-		  whatsapp_welcome_delay_minutes = COALESCE($26::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
-		  whatsapp_default_reply_scenario = COALESCE(NULLIF($27::text, ''), RAC_organization_settings.whatsapp_default_reply_scenario),
-		  email_default_reply_scenario = COALESCE(NULLIF($28::text, ''), RAC_organization_settings.email_default_reply_scenario),
-		  quote_related_reply_scenario = COALESCE(NULLIF($29::text, ''), RAC_organization_settings.quote_related_reply_scenario),
-		  appointment_related_reply_scenario = COALESCE(NULLIF($30::text, ''), RAC_organization_settings.appointment_related_reply_scenario),
+		  offer_margin_basis_points = COALESCE($4::int, RAC_organization_settings.offer_margin_basis_points),
+		  ai_auto_disqualify_junk = COALESCE($5::boolean, RAC_organization_settings.ai_auto_disqualify_junk),
+		  ai_auto_dispatch = COALESCE($6::boolean, RAC_organization_settings.ai_auto_dispatch),
+		  ai_auto_estimate = COALESCE($7::boolean, RAC_organization_settings.ai_auto_estimate),
+		  ai_confidence_gate_enabled = COALESCE($8::boolean, RAC_organization_settings.ai_confidence_gate_enabled),
+		  ai_adaptive_reasoning_enabled = COALESCE($9::boolean, RAC_organization_settings.ai_adaptive_reasoning_enabled),
+		  ai_experience_memory_enabled = COALESCE($10::boolean, RAC_organization_settings.ai_experience_memory_enabled),
+		  ai_council_enabled = COALESCE($11::boolean, RAC_organization_settings.ai_council_enabled),
+		  ai_council_consensus_mode = COALESCE(NULLIF($12::text, ''), RAC_organization_settings.ai_council_consensus_mode),
+		  whatsapp_tone_of_voice = COALESCE(NULLIF($13::text, ''), RAC_organization_settings.whatsapp_tone_of_voice),
+		  catalog_gap_threshold = COALESCE($14::int, RAC_organization_settings.catalog_gap_threshold),
+		  catalog_gap_lookback_days = COALESCE($15::int, RAC_organization_settings.catalog_gap_lookback_days),
+		  photo_analysis_preprocessing_enabled = COALESCE($16::boolean, RAC_organization_settings.photo_analysis_preprocessing_enabled),
+		  photo_analysis_ocr_assist_enabled = COALESCE($17::boolean, RAC_organization_settings.photo_analysis_ocr_assist_enabled),
+		  photo_analysis_ocr_assist_service_types = COALESCE($18::text[], RAC_organization_settings.photo_analysis_ocr_assist_service_types),
+		  photo_analysis_lens_correction_enabled = COALESCE($19::boolean, RAC_organization_settings.photo_analysis_lens_correction_enabled),
+		  photo_analysis_lens_correction_service_types = COALESCE($20::text[], RAC_organization_settings.photo_analysis_lens_correction_service_types),
+		  photo_analysis_perspective_normalization_enabled = COALESCE($21::boolean, RAC_organization_settings.photo_analysis_perspective_normalization_enabled),
+		  photo_analysis_perspective_normalization_service_types = COALESCE($22::text[], RAC_organization_settings.photo_analysis_perspective_normalization_service_types),
+		  notification_email = CASE WHEN $23::text IS NULL THEN RAC_organization_settings.notification_email ELSE NULLIF($23::text, '') END,
+		  whatsapp_device_id = CASE WHEN $24::text IS NULL THEN RAC_organization_settings.whatsapp_device_id ELSE NULLIF($24::text, '') END,
+		  whatsapp_account_jid = CASE WHEN $25::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($25::text, '') END,
+		  whatsapp_presence = COALESCE(NULLIF($26::text, ''), RAC_organization_settings.whatsapp_presence),
+		  whatsapp_welcome_delay_minutes = COALESCE($27::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+		  whatsapp_default_reply_scenario = COALESCE(NULLIF($28::text, ''), RAC_organization_settings.whatsapp_default_reply_scenario),
+		  email_default_reply_scenario = COALESCE(NULLIF($29::text, ''), RAC_organization_settings.email_default_reply_scenario),
+		  quote_related_reply_scenario = COALESCE(NULLIF($30::text, ''), RAC_organization_settings.quote_related_reply_scenario),
+		  appointment_related_reply_scenario = COALESCE(NULLIF($31::text, ''), RAC_organization_settings.appointment_related_reply_scenario),
 		  updated_at = now()
 		RETURNING organization_id, quote_payment_days, quote_valid_days,
+		  offer_margin_basis_points,
 		  ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
 		  ai_adaptive_reasoning_enabled, ai_experience_memory_enabled, ai_council_enabled,
 		  ai_council_consensus_mode, whatsapp_tone_of_voice,
@@ -635,6 +645,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		organizationID,
 		update.QuotePaymentDays,
 		update.QuoteValidDays,
+		update.OfferMarginBasisPoints,
 		update.AIAutoDisqualifyJunk,
 		update.AIAutoDispatch,
 		update.AIAutoEstimate,
@@ -666,6 +677,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		&row.OrganizationID,
 		&row.QuotePaymentDays,
 		&row.QuoteValidDays,
+		&row.OfferMarginBasisPoints,
 		&row.AIAutoDisqualifyJunk,
 		&row.AIAutoDispatch,
 		&row.AIAutoEstimate,
@@ -923,6 +935,7 @@ func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSet
 		OrganizationID:                                    uuidFromPg(snapshot.OrganizationID),
 		QuotePaymentDays:                                  int(snapshot.QuotePaymentDays),
 		QuoteValidDays:                                    int(snapshot.QuoteValidDays),
+		OfferMarginBasisPoints:                            int(snapshot.OfferMarginBasisPoints),
 		AIAutoDisqualifyJunk:                              snapshot.AIAutoDisqualifyJunk,
 		AIAutoDispatch:                                    snapshot.AIAutoDispatch,
 		AIAutoEstimate:                                    snapshot.AIAutoEstimate,

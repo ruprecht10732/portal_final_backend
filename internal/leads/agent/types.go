@@ -104,9 +104,11 @@ type FindMatchingPartnersOutput struct {
 
 // CreatePartnerOfferInput creates a partner offer for the selected match.
 type CreatePartnerOfferInput struct {
-	PartnerID       string `json:"partnerId"`
-	ExpirationHours int    `json:"expirationHours"`
-	JobSummaryShort string `json:"jobSummaryShort,omitempty"`
+	PartnerID         string `json:"partnerId"`
+	ExpirationHours   int    `json:"expirationHours"`
+	JobSummaryShort   string `json:"jobSummaryShort,omitempty"`
+	MarginBasisPoints *int   `json:"marginBasisPoints,omitempty"`
+	VakmanPriceCents  *int64 `json:"vakmanPriceCents,omitempty"`
 }
 
 type CreatePartnerOfferOutput struct {

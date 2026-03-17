@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"io"
 	"net/http"
 
 	"portal_final_backend/internal/partners/service"
@@ -9,6 +10,7 @@ import (
 	"portal_final_backend/platform/validator"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // PublicHandler handles unauthenticated, token-based partner offer endpoints.
@@ -24,6 +26,7 @@ func NewPublicHandler(svc *service.Service, val *validator.Validator) *PublicHan
 
 // RegisterRoutes mounts public partner offer routes (no auth middleware).
 func (h *PublicHandler) RegisterRoutes(rg *gin.RouterGroup) {
+	rg.GET("/:token/photos/:attachmentId", h.GetOfferPhoto)
 	rg.GET("/:token", h.GetOffer)
 	rg.POST("/:token/accept", h.AcceptOffer)
 	rg.POST("/:token/reject", h.RejectOffer)
@@ -89,4 +92,37 @@ func (h *PublicHandler) RejectOffer(c *gin.Context) {
 	}
 
 	httpkit.OK(c, gin.H{"status": "rejected"})
+}
+
+func (h *PublicHandler) GetOfferPhoto(c *gin.Context) {
+	token := c.Param("token")
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if token == "" || err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	attachment, reader, err := h.svc.GetOfferPhotoByToken(c.Request.Context(), token, attachmentID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	defer closeQuietly(reader)
+
+	streamAttachment(c, attachment.ContentType, attachment.FileName, reader)
+}
+
+func closeQuietly(reader io.ReadCloser) {
+	if reader != nil {
+		_ = reader.Close()
+	}
+}
+
+func streamAttachment(c *gin.Context, contentType string, fileName string, reader io.Reader) {
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Type", contentType)
+	c.Header("Cache-Control", "public, max-age=3600")
+	c.Header("Content-Disposition", "inline; filename=\""+fileName+"\"")
+	_, _ = io.Copy(c.Writer, reader)
 }

@@ -11,10 +11,13 @@ import (
 // CreateOfferFromQuoteRequest creates a partner offer from a specific quote.
 // The backend derives leadServiceId and customerPriceCents from the quote.
 type CreateOfferFromQuoteRequest struct {
-	PartnerID       uuid.UUID `json:"partnerId" validate:"required"`
-	QuoteID         uuid.UUID `json:"quoteId" validate:"required"`
-	ExpiresInHours  int       `json:"expiresInHours" validate:"required,min=1,max=12"`
-	JobSummaryShort string    `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
+	PartnerID         uuid.UUID   `json:"partnerId" validate:"required"`
+	QuoteID           uuid.UUID   `json:"quoteId" validate:"required"`
+	ExpiresInHours    int         `json:"expiresInHours" validate:"required,min=1,max=12"`
+	JobSummaryShort   string      `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
+	MarginBasisPoints *int        `json:"marginBasisPoints,omitempty" validate:"omitempty,min=0,max=5000"`
+	VakmanPriceCents  *int64      `json:"vakmanPriceCents,omitempty" validate:"omitempty,min=0"`
+	SelectedItemIDs   []uuid.UUID `json:"selectedItemIds,omitempty" validate:"omitempty,dive,uuid"`
 }
 
 // CreateOfferResponse is returned after successfully creating an offer.
@@ -78,22 +81,35 @@ type OfferListResponse struct {
 
 // PublicOfferResponse is the Vakman's view. Hides customer markup.
 type PublicOfferResponse struct {
-	OfferID          uuid.UUID `json:"offerId"`
-	OrganizationName string    `json:"organizationName"`
-	JobSummary       string    `json:"jobSummary"`
-	JobSummaryShort  *string   `json:"jobSummaryShort,omitempty"`
-	BuilderSummary   *string   `json:"builderSummary,omitempty"`
-	City             string    `json:"city"`
-	Postcode4        *string   `json:"postcode4,omitempty"`
-	Buurtcode        *string   `json:"buurtcode,omitempty"`
-	ConstructionYear *int      `json:"constructionYear,omitempty"`
-	ScopeAssessment  *string   `json:"scopeAssessment,omitempty"`
-	UrgencyLevel     *string   `json:"urgencyLevel,omitempty"`
-	VakmanPriceCents int64     `json:"vakmanPriceCents"`
-	PricingSource    string    `json:"pricingSource"`
-	Status           string    `json:"status"`
-	ExpiresAt        time.Time `json:"expiresAt"`
-	CreatedAt        time.Time `json:"createdAt"`
+	OfferID          uuid.UUID             `json:"offerId"`
+	OrganizationName string                `json:"organizationName"`
+	JobSummary       string                `json:"jobSummary"`
+	JobSummaryShort  *string               `json:"jobSummaryShort,omitempty"`
+	BuilderSummary   *string               `json:"builderSummary,omitempty"`
+	City             string                `json:"city"`
+	Postcode4        *string               `json:"postcode4,omitempty"`
+	Buurtcode        *string               `json:"buurtcode,omitempty"`
+	ConstructionYear *int                  `json:"constructionYear,omitempty"`
+	ScopeAssessment  *string               `json:"scopeAssessment,omitempty"`
+	UrgencyLevel     *string               `json:"urgencyLevel,omitempty"`
+	VakmanPriceCents int64                 `json:"vakmanPriceCents"`
+	PricingSource    string                `json:"pricingSource"`
+	Status           string                `json:"status"`
+	ExpiresAt        time.Time             `json:"expiresAt"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	LineItems        []PublicOfferLineItem `json:"lineItems,omitempty"`
+	Photos           []OfferPhotoRef       `json:"photos,omitempty"`
+}
+
+type PublicOfferLineItem struct {
+	Description string `json:"description"`
+	Quantity    string `json:"quantity"`
+}
+
+type OfferPhotoRef struct {
+	ID          uuid.UUID `json:"id"`
+	FileName    string    `json:"fileName"`
+	ContentType string    `json:"contentType"`
 }
 
 // AcceptOfferRequest is the vakman's acceptance payload.
