@@ -34,11 +34,12 @@ type WhatsAppAgentHandler interface {
 
 // Handler handles webhook HTTP requests.
 type Handler struct {
-	service       *Service
-	repo          *Repository
-	val           *validator.Validator
-	whatsappInbox WhatsAppInboxIngester
-	agentHandler  WhatsAppAgentHandler
+	service          *Service
+	repo             *Repository
+	val              *validator.Validator
+	whatsappInbox    WhatsAppInboxIngester
+	agentHandler     WhatsAppAgentHandler
+	accountJIDSyncer whatsAppAccountJIDSyncer
 }
 
 func isNilWhatsAppAgentHandler(handler WhatsAppAgentHandler) bool {

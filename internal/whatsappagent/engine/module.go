@@ -90,6 +90,10 @@ type LeadMutationWriter interface {
 	UpdateLeadStatus(ctx context.Context, orgID uuid.UUID, input UpdateStatusInput) (string, error)
 }
 
+type TaskWriter interface {
+	CreateTask(ctx context.Context, orgID uuid.UUID, input CreateTaskInput) (CreateTaskOutput, error)
+}
+
 type CurrentInboundMessage struct {
 	ExternalMessageID string
 	PhoneNumber       string
@@ -222,6 +226,7 @@ type ModuleDependencies struct {
 	NavigationLinkReader         NavigationLinkReader
 	CatalogSearchReader          CatalogSearchReader
 	LeadMutationWriter           LeadMutationWriter
+	TaskWriter                   TaskWriter
 	QuoteWorkflowWriter          QuoteWorkflowWriter
 	CurrentInboundPhotoAttacher  CurrentInboundPhotoAttacher
 	Storage                      ObjectStorage
@@ -273,6 +278,7 @@ func collectRuntimeDependencyErrors(cfg ModuleConfig, deps ModuleDependencies) [
 	missing = appendMissingDependency(missing, deps.NavigationLinkReader == nil, "navigation link reader")
 	missing = appendMissingDependency(missing, deps.CatalogSearchReader == nil, "catalog search reader")
 	missing = appendMissingDependency(missing, deps.LeadMutationWriter == nil, "lead mutation writer")
+	missing = appendMissingDependency(missing, deps.TaskWriter == nil, "task writer")
 	missing = appendMissingDependency(missing, deps.QuoteWorkflowWriter == nil, "quote workflow writer")
 	missing = appendMissingDependency(missing, deps.CurrentInboundPhotoAttacher == nil, "current inbound photo attacher")
 	missing = appendMissingDependency(missing, deps.InboxMessageSync == nil, "inbox message sync")
@@ -364,6 +370,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		navigationLinkReader:         deps.NavigationLinkReader,
 		catalogSearchReader:          deps.CatalogSearchReader,
 		leadMutationWriter:           deps.LeadMutationWriter,
+		taskWriter:                   deps.TaskWriter,
 		quoteWorkflowWriter:          deps.QuoteWorkflowWriter,
 		currentInboundPhotoAttacher:  deps.CurrentInboundPhotoAttacher,
 		sender:                       sender,

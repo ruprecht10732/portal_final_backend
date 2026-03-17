@@ -12,6 +12,7 @@ import (
 	"time"
 
 	webhookdb "portal_final_backend/internal/webhook/db"
+	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -233,6 +234,67 @@ func (r *Repository) IsAgentDevice(ctx context.Context, deviceID string) (bool, 
 		return false, err
 	}
 	return true, nil
+}
+
+func (r *Repository) GetOrganizationWhatsAppBinding(ctx context.Context, organizationID uuid.UUID) (whatsAppDeviceBinding, error) {
+	const query = `
+		SELECT COALESCE(whatsapp_device_id, ''), COALESCE(whatsapp_account_jid, '')
+		FROM RAC_organization_settings
+		WHERE organization_id = $1
+		LIMIT 1`
+
+	var binding whatsAppDeviceBinding
+	if err := r.pool.QueryRow(ctx, query, organizationID).Scan(&binding.DeviceID, &binding.AccountJID); errors.Is(err, pgx.ErrNoRows) {
+		return whatsAppDeviceBinding{}, ErrWhatsAppDeviceNotFound
+	} else if err != nil {
+		return whatsAppDeviceBinding{}, err
+	}
+	return binding, nil
+}
+
+func (r *Repository) UpdateOrganizationWhatsAppAccountJID(ctx context.Context, organizationID uuid.UUID, accountJID string) error {
+	trimmed := strings.TrimSpace(accountJID)
+	if trimmed == "" {
+		return nil
+	}
+
+	const query = `
+		UPDATE RAC_organization_settings
+		SET whatsapp_account_jid = $2,
+		    updated_at = now()
+		WHERE organization_id = $1`
+
+	_, err := r.pool.Exec(ctx, query, organizationID, trimmed)
+	return err
+}
+
+func (r *Repository) GetAgentWhatsAppBinding(ctx context.Context) (whatsAppDeviceBinding, error) {
+	row, err := whatsappagentdb.New(r.pool).GetAgentConfig(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return whatsAppDeviceBinding{}, ErrWhatsAppDeviceNotFound
+	}
+	if err != nil {
+		return whatsAppDeviceBinding{}, err
+	}
+
+	return whatsAppDeviceBinding{
+		DeviceID:   strings.TrimSpace(row.DeviceID),
+		AccountJID: strings.TrimSpace(row.AccountJid.String),
+	}, nil
+}
+
+func (r *Repository) UpdateAgentWhatsAppAccountJID(ctx context.Context, deviceID string, accountJID string) error {
+	trimmedDeviceID := strings.TrimSpace(deviceID)
+	trimmedAccountJID := strings.TrimSpace(accountJID)
+	if trimmedDeviceID == "" || trimmedAccountJID == "" {
+		return nil
+	}
+
+	_, err := whatsappagentdb.New(r.pool).UpsertAgentConfig(ctx, whatsappagentdb.UpsertAgentConfigParams{
+		DeviceID:   trimmedDeviceID,
+		AccountJid: pgtype.Text{String: trimmedAccountJID, Valid: true},
+	})
+	return err
 }
 
 // ListByOrganization returns all API keys for an organization.

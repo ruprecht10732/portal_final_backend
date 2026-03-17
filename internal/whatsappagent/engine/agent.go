@@ -122,6 +122,25 @@ var (
 	reQuoteNumber    = regexp.MustCompile(`(?i)^[a-z]{2,}[a-z0-9-]*\d[a-z0-9-]*$`)
 )
 
+var appointmentContextKeywords = []string{
+	"afspraak",
+	"afspraken",
+	"bezoek",
+	"bezoeken",
+	"ingepland",
+	"inplannen",
+	"gepland",
+	"planning",
+	"monteur",
+	"tijd",
+	"tijdvak",
+	"slot",
+	"sloten",
+	"locatie",
+	"route",
+	"navigatie",
+}
+
 var dutchMonthNumbers = map[string]string{
 	"januari":   "01",
 	"februari":  "02",
@@ -219,6 +238,7 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		buildGenerateQuoteTool,
 		buildSendQuotePDFTool,
 		buildGetAppointmentsTool,
+		buildCreateTaskTool,
 		buildUpdateLeadDetailsTool,
 		buildAskCustomerClarificationTool,
 		buildSaveNoteTool,
@@ -309,6 +329,20 @@ func buildCreateLeadTool(toolHandler *ToolHandler) (tool.Tool, error) {
 		return nil, fmt.Errorf("whatsappagent: failed to build CreateLead tool: %w", err)
 	}
 	return createLeadTool, nil
+}
+
+func buildCreateTaskTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	createTaskTool, err := apptools.NewCreateTaskTool(func(ctx tool.Context, input CreateTaskInput) (CreateTaskOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return CreateTaskOutput{}, err
+		}
+		return toolHandler.HandleCreateTask(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("whatsappagent: failed to build CreateTask tool: %w", err)
+	}
+	return createTaskTool, nil
 }
 
 func buildSearchProductMaterialsTool(toolHandler *ToolHandler) (tool.Tool, error) {
@@ -1081,12 +1115,25 @@ func extractQuoteFacts(reply string) []string {
 }
 
 func extractAppointmentFacts(reply string) []string {
+	if !hasAppointmentContext(reply) {
+		return nil
+	}
 	facts := make([]string, 0, 4)
 	facts = append(facts, reClockTime.FindAllString(reply, -1)...)
 	facts = append(facts, reISODate.FindAllString(reply, -1)...)
 	facts = append(facts, reNumericDate.FindAllString(reply, -1)...)
 	facts = append(facts, reDutchDate.FindAllString(reply, -1)...)
 	return uniqueStrings(facts)
+}
+
+func hasAppointmentContext(reply string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(reply, "*", ""))
+	for _, keyword := range appointmentContextKeywords {
+		if strings.Contains(normalized, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractLeadFacts(reply string) []string {

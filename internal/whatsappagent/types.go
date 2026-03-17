@@ -53,6 +53,10 @@ type LeadMutationWriter interface {
 	UpdateLeadStatus(ctx context.Context, orgID uuid.UUID, input UpdateStatusInput) (string, error)
 }
 
+type TaskWriter interface {
+	CreateTask(ctx context.Context, orgID uuid.UUID, input CreateTaskInput) (CreateTaskOutput, error)
+}
+
 type CurrentInboundPhotoAttacher interface {
 	AttachCurrentWhatsAppPhoto(ctx context.Context, orgID uuid.UUID, input AttachCurrentWhatsAppPhotoInput, message CurrentInboundMessage) (AttachCurrentWhatsAppPhotoOutput, error)
 }
@@ -132,6 +136,7 @@ type ModuleDependencies struct {
 	NavigationLinkReader         NavigationLinkReader
 	CatalogSearchReader          CatalogSearchReader
 	LeadMutationWriter           LeadMutationWriter
+	TaskWriter                   TaskWriter
 	QuoteWorkflowWriter          QuoteWorkflowWriter
 	CurrentInboundPhotoAttacher  CurrentInboundPhotoAttacher
 	Storage                      ObjectStorage

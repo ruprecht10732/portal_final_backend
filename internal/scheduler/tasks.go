@@ -7,6 +7,7 @@ import (
 )
 
 const TaskAppointmentReminder = "appointments.reminder"
+const TaskTaskReminder = "tasks.reminder_due"
 
 const TaskNotificationOutboxDue = "notification.outbox.due"
 
@@ -28,6 +29,11 @@ const TaskApplyHumanFeedbackMemory = "leads.human_feedback.apply_memory"
 type AppointmentReminderPayload struct {
 	AppointmentID  string `json:"appointmentId"`
 	OrganizationID string `json:"organizationId"`
+}
+
+type TaskReminderPayload struct {
+	ReminderID   string `json:"reminderId"`
+	ScheduledFor string `json:"scheduledFor"`
 }
 
 type NotificationOutboxDuePayload struct {
@@ -155,10 +161,26 @@ func NewAppointmentReminderTask(payload AppointmentReminderPayload) (*asynq.Task
 	return asynq.NewTask(TaskAppointmentReminder, data), nil
 }
 
+func NewTaskReminderTask(payload TaskReminderPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskTaskReminder, data), nil
+}
+
 func ParseAppointmentReminderPayload(task *asynq.Task) (AppointmentReminderPayload, error) {
 	var payload AppointmentReminderPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return AppointmentReminderPayload{}, err
+	}
+	return payload, nil
+}
+
+func ParseTaskReminderPayload(task *asynq.Task) (TaskReminderPayload, error) {
+	var payload TaskReminderPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return TaskReminderPayload{}, err
 	}
 	return payload, nil
 }

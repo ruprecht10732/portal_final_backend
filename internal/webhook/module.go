@@ -43,6 +43,12 @@ func (m *Module) SetWhatsAppWebhookSecret(secret string) {
 	m.whatsAppWebhookSecret = secret
 }
 
+func (m *Module) SetWhatsAppClient(client whatsAppDeviceInfoReader) {
+	if m.handler != nil {
+		m.handler.accountJIDSyncer = newWhatsAppAccountJIDSyncer(m.repo, client, m.log)
+	}
+}
+
 func (m *Module) SetAgentHandler(handler WhatsAppAgentHandler) {
 	if m.handler != nil {
 		if isNilWhatsAppAgentHandler(handler) {

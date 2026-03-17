@@ -2,8 +2,8 @@ package whatsappagent
 
 import (
 	apphttp "portal_final_backend/internal/http"
-	"portal_final_backend/internal/whatsappagent/engine"
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
+	"portal_final_backend/internal/whatsappagent/engine"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -35,6 +35,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		NavigationLinkReader:         adaptNavigationLinkReader(deps.NavigationLinkReader),
 		CatalogSearchReader:          adaptCatalogSearchReader(deps.CatalogSearchReader),
 		LeadMutationWriter:           adaptLeadMutationWriter(deps.LeadMutationWriter),
+		TaskWriter:                   adaptTaskWriter(deps.TaskWriter),
 		QuoteWorkflowWriter:          adaptQuoteWorkflowWriter(deps.QuoteWorkflowWriter),
 		CurrentInboundPhotoAttacher:  adaptCurrentInboundPhotoAttacher(deps.CurrentInboundPhotoAttacher),
 		Storage:                      deps.Storage,

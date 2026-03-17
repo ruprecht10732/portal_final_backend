@@ -28,8 +28,9 @@ type webhookAuthRepository interface {
 }
 
 type whatsAppWebhookDeviceResolution struct {
-	organizationID uuid.UUID
-	isAgentDevice  bool
+	organizationID   uuid.UUID
+	isAgentDevice    bool
+	matchedCandidate string
 }
 
 // APIKeyAuthMiddleware validates the X-Webhook-API-Key header
@@ -55,6 +56,7 @@ func WhatsAppAPIKeyAuthMiddleware(repo webhookAuthRepository, webhookSecret stri
 
 			c.Set("webhookOrgID", key.OrganizationID)
 			c.Set("webhookKeyID", key.ID)
+			logWhatsAppWebhookAuthSuccess(c, log, "api_key", key.OrganizationID, false)
 			c.Next()
 			return
 		}
@@ -152,10 +154,47 @@ func authenticateSecretBackedWhatsAppWebhook(c *gin.Context, repo webhookAuthRep
 	}
 	if resolution.isAgentDevice {
 		c.Set("isAgentDevice", true)
+		logWhatsAppWebhookAuthSuccess(c, log, whatsAppWebhookAuthMethod(signature, sharedSecret), uuid.Nil, true,
+			slog.String("device_id", deviceID),
+			slog.String("matched_candidate", resolution.matchedCandidate))
 		return uuid.UUID{}, true
 	}
 
+	logWhatsAppWebhookAuthSuccess(c, log, whatsAppWebhookAuthMethod(signature, sharedSecret), resolution.organizationID, false,
+		slog.String("device_id", deviceID),
+		slog.String("matched_candidate", resolution.matchedCandidate))
+
 	return resolution.organizationID, true
+}
+
+func whatsAppWebhookAuthMethod(signature string, sharedSecret string) string {
+	if strings.TrimSpace(signature) != "" {
+		return "signature"
+	}
+	if strings.TrimSpace(sharedSecret) != "" {
+		return "shared_secret"
+	}
+	return "unknown"
+}
+
+func logWhatsAppWebhookAuthSuccess(c *gin.Context, log *logger.Logger, method string, organizationID uuid.UUID, isAgentDevice bool, attrs ...slog.Attr) {
+	if log == nil {
+		return
+	}
+	fields := []any{
+		slog.String("path", c.FullPath()),
+		slog.String("method", c.Request.Method),
+		slog.String("auth_method", strings.TrimSpace(method)),
+		slog.Bool("is_agent_device", isAgentDevice),
+		slog.String("client_ip", c.ClientIP()),
+	}
+	if organizationID != uuid.Nil {
+		fields = append(fields, slog.String("organization_id", organizationID.String()))
+	}
+	for _, attr := range attrs {
+		fields = append(fields, attr)
+	}
+	log.WithContext(c.Request.Context()).Info("whatsapp webhook authenticated", fields...)
 }
 
 func abortWhatsAppWebhookAuth(c *gin.Context, log *logger.Logger, status int, message string, reason string, attrs ...slog.Attr) {
@@ -238,7 +277,7 @@ func resolveWhatsAppWebhookDevice(ctx context.Context, repo webhookAuthRepositor
 	for _, candidate := range whatsAppWebhookDeviceCandidates(rawDeviceID) {
 		organizationID, err := repo.GetOrganizationIDByWhatsAppDeviceID(ctx, candidate)
 		if err == nil {
-			return whatsAppWebhookDeviceResolution{organizationID: organizationID}, nil
+			return whatsAppWebhookDeviceResolution{organizationID: organizationID, matchedCandidate: candidate}, nil
 		}
 		if !errors.Is(err, ErrWhatsAppDeviceNotFound) {
 			return whatsAppWebhookDeviceResolution{}, err
@@ -251,7 +290,7 @@ func resolveWhatsAppWebhookDevice(ctx context.Context, repo webhookAuthRepositor
 			return whatsAppWebhookDeviceResolution{}, err
 		}
 		if isAgent {
-			return whatsAppWebhookDeviceResolution{isAgentDevice: true}, nil
+			return whatsAppWebhookDeviceResolution{isAgentDevice: true, matchedCandidate: candidate}, nil
 		}
 	}
 

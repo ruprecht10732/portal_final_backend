@@ -43,6 +43,10 @@ type ReminderScheduler interface {
 	ScheduleAppointmentReminder(ctx context.Context, payload AppointmentReminderPayload, runAt time.Time) error
 }
 
+type TaskReminderScheduler interface {
+	ScheduleTaskReminder(ctx context.Context, payload TaskReminderPayload, runAt time.Time) error
+}
+
 type QuoteJobScheduler interface {
 	EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQuoteJobPayload) error
 }
@@ -154,6 +158,20 @@ func (c *Client) ScheduleAppointmentReminder(ctx context.Context, payload Appoin
 	}
 
 	task, err := NewAppointmentReminderTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, asynq.ProcessAt(runAt), asynq.Queue(c.queue))
+	return err
+}
+
+func (c *Client) ScheduleTaskReminder(ctx context.Context, payload TaskReminderPayload, runAt time.Time) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewTaskReminderTask(payload)
 	if err != nil {
 		return err
 	}

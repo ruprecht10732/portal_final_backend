@@ -29,6 +29,7 @@ import (
 	"portal_final_backend/internal/partners"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
+	"portal_final_backend/internal/tasks"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/internal/whatsappagent"
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
@@ -197,6 +198,7 @@ func main() {
 	}
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	quotesModule := quotes.NewModule(pool, eventBus, val)
+	tasksModule := tasks.NewModule(pool, val, reminderScheduler, leadsModule.Repository(), log)
 	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
 
 	catalogReader := adapters.NewCatalogProductReader(catalogModule.Repository())
@@ -258,6 +260,7 @@ func main() {
 	worker.SetCallLogProcessor(leadsModule)
 	worker.SetLeadAutomationProcessor(leadsModule)
 	worker.SetOfferSummaryProcessor(partnersModule.Service())
+	worker.SetTaskReminderProcessor(tasksModule.Service())
 	imapModule := imap.NewModule(pool, val, eventBus, log)
 	worker.SetIMAPSyncProcessor(imapModule.Service())
 	wireSchedulerIMAPEncryptionKey(cfg, log, imapModule.Service())
@@ -283,6 +286,7 @@ func main() {
 		NavigationLinkReader:         adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		CatalogSearchReader:          adapters.NewWhatsAppAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
 		LeadMutationWriter:           adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		TaskWriter:                   adapters.NewWhatsAppAgentTaskWriterAdapter(tasksModule.Service(), leadsModule.Repository()),
 		QuoteWorkflowWriter:          adapters.NewWhatsAppAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
 		CurrentInboundPhotoAttacher:  adapters.NewWhatsAppAgentCurrentInboundPhotoAdapter(whatsAppClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), inboxLeadActions, whatsappagentdb.New(pool)),
 		Storage:                      storageSvc,

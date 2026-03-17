@@ -157,6 +157,8 @@ func (h *Handler) HandleWhatsAppWebhook(c *gin.Context) {
 		return
 	}
 
+	h.maybeRefreshWhatsAppAccountJID(c.Request.Context(), orgID, request.DeviceID, c.GetBool("isAgentDevice"))
+
 	// Global agent device — only handle messages, route directly to agent.
 	if c.GetBool("isAgentDevice") {
 		if request.Event == "message" {
@@ -182,6 +184,20 @@ func (h *Handler) HandleWhatsAppWebhook(c *gin.Context) {
 	default:
 		httpkit.OK(c, WhatsAppWebhookResponse{Status: "ignored", Reason: "unsupported event"})
 	}
+}
+
+func (h *Handler) maybeRefreshWhatsAppAccountJID(ctx context.Context, orgID uuid.UUID, observedDeviceID string, isAgentDevice bool) {
+	if h == nil || h.accountJIDSyncer == nil {
+		return
+	}
+	if isAgentDevice {
+		_ = h.accountJIDSyncer.RefreshAgentAccountJID(ctx, observedDeviceID)
+		return
+	}
+	if orgID == uuid.Nil {
+		return
+	}
+	_ = h.accountJIDSyncer.RefreshOrganizationAccountJID(ctx, orgID, observedDeviceID)
 }
 
 func (h *Handler) handleIncomingWhatsAppMessage(c *gin.Context, orgID uuid.UUID, request WhatsAppWebhookEnvelope) {

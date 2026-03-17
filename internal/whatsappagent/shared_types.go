@@ -224,6 +224,28 @@ type SaveNoteInput struct {
 	Body          string `json:"body"`
 }
 
+type CreateTaskInput struct {
+	Title          string  `json:"title"`
+	Description    string  `json:"description,omitempty"`
+	LeadID         string  `json:"lead_id,omitempty"`
+	LeadServiceID  string  `json:"lead_service_id,omitempty"`
+	AssignedUserID string  `json:"assigned_user_id,omitempty"`
+	DueAt          string  `json:"due_at,omitempty"`
+	ReminderAt     string  `json:"reminder_at,omitempty"`
+	RepeatDaily    *bool   `json:"repeat_daily,omitempty"`
+	SendEmail      *bool   `json:"send_email,omitempty"`
+	SendWhatsApp   *bool   `json:"send_whatsapp,omitempty"`
+	Priority       string  `json:"priority,omitempty"`
+}
+
+type CreateTaskOutput struct {
+	Success        bool     `json:"success"`
+	Message        string   `json:"message"`
+	TaskID         string   `json:"task_id,omitempty"`
+	AssignedUserID string   `json:"assigned_user_id,omitempty"`
+	MissingFields  []string `json:"missing_fields,omitempty"`
+}
+
 type UpdateStatusInput struct {
 	LeadID        string `json:"lead_id"`
 	LeadServiceID string `json:"lead_service_id,omitempty"`

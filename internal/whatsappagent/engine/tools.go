@@ -51,6 +51,7 @@ type ToolHandler struct {
 	navigationLinkReader         NavigationLinkReader
 	catalogSearchReader          CatalogSearchReader
 	leadMutationWriter           LeadMutationWriter
+	taskWriter                   TaskWriter
 	quoteWorkflowWriter          QuoteWorkflowWriter
 	currentInboundPhotoAttacher  CurrentInboundPhotoAttacher
 	sender                       *Sender

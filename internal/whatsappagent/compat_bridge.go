@@ -25,6 +25,8 @@ type catalogSearchReaderAdapter struct{ inner CatalogSearchReader }
 
 type leadMutationWriterAdapter struct{ inner LeadMutationWriter }
 
+type taskWriterAdapter struct{ inner TaskWriter }
+
 type currentInboundPhotoAttacherAdapter struct{ inner CurrentInboundPhotoAttacher }
 
 type visitSlotReaderAdapter struct{ inner VisitSlotReader }
@@ -93,6 +95,13 @@ func adaptLeadMutationWriter(inner LeadMutationWriter) engine.LeadMutationWriter
 		return nil
 	}
 	return leadMutationWriterAdapter{inner: inner}
+}
+
+func adaptTaskWriter(inner TaskWriter) engine.TaskWriter {
+	if inner == nil {
+		return nil
+	}
+	return taskWriterAdapter{inner: inner}
 }
 
 func adaptCurrentInboundPhotoAttacher(inner CurrentInboundPhotoAttacher) engine.CurrentInboundPhotoAttacher {
@@ -259,6 +268,14 @@ func (a leadMutationWriterAdapter) SaveNote(ctx context.Context, orgID uuid.UUID
 
 func (a leadMutationWriterAdapter) UpdateLeadStatus(ctx context.Context, orgID uuid.UUID, input engine.UpdateStatusInput) (string, error) {
 	return a.inner.UpdateLeadStatus(ctx, orgID, UpdateStatusInput(input))
+}
+
+func (a taskWriterAdapter) CreateTask(ctx context.Context, orgID uuid.UUID, input engine.CreateTaskInput) (engine.CreateTaskOutput, error) {
+	output, err := a.inner.CreateTask(ctx, orgID, CreateTaskInput(input))
+	if err != nil {
+		return engine.CreateTaskOutput{}, err
+	}
+	return engine.CreateTaskOutput(output), nil
 }
 
 func (a currentInboundPhotoAttacherAdapter) AttachCurrentWhatsAppPhoto(ctx context.Context, orgID uuid.UUID, input engine.AttachCurrentWhatsAppPhotoInput, message engine.CurrentInboundMessage) (engine.AttachCurrentWhatsAppPhotoOutput, error) {

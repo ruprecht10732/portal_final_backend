@@ -13,6 +13,7 @@ import (
 
 const (
 	errLeadMutationsNotConfigured  = "lead mutations not configured"
+	errTaskWriterNotConfigured     = "task writer is not configured"
 	errPhotoAttachNotConfigured    = "whatsapp photo attachment not configured"
 	errQuoteWorkflowNotConfigured  = "quote workflow not configured"
 	errVisitMutationsNotConfigured = "visit mutations not configured"
@@ -276,6 +277,28 @@ type SaveNoteInput struct {
 type SaveNoteOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+}
+
+type CreateTaskInput struct {
+	Title          string `json:"title"`
+	Description    string `json:"description,omitempty"`
+	LeadID         string `json:"lead_id,omitempty"`
+	LeadServiceID  string `json:"lead_service_id,omitempty"`
+	AssignedUserID string `json:"assigned_user_id,omitempty"`
+	DueAt          string `json:"due_at,omitempty"`
+	ReminderAt     string `json:"reminder_at,omitempty"`
+	RepeatDaily    *bool  `json:"repeat_daily,omitempty"`
+	SendEmail      *bool  `json:"send_email,omitempty"`
+	SendWhatsApp   *bool  `json:"send_whatsapp,omitempty"`
+	Priority       string `json:"priority,omitempty"`
+}
+
+type CreateTaskOutput struct {
+	Success        bool     `json:"success"`
+	Message        string   `json:"message"`
+	TaskID         string   `json:"task_id,omitempty"`
+	AssignedUserID string   `json:"assigned_user_id,omitempty"`
+	MissingFields  []string `json:"missing_fields,omitempty"`
 }
 
 type UpdateStatusInput struct {
@@ -550,6 +573,11 @@ func (h *ToolHandler) HandleSendQuotePDF(ctx tool.Context, orgID uuid.UUID, inpu
 	if !ok {
 		return SendQuotePDFOutput{Success: false, Message: "Klantcontext ontbreekt voor het verzenden van de PDF"}, fmt.Errorf("phone context unavailable")
 	}
+	quoteID, quoteNumber, err := h.resolveQuoteForPDF(orgID, phoneKey, input.QuoteID)
+	if err != nil {
+		return SendQuotePDFOutput{Success: false, Message: err.Error(), QuoteID: strings.TrimSpace(input.QuoteID)}, nil
+	}
+	input.QuoteID = quoteID
 	pdfResult, err := h.quoteWorkflowWriter.GetQuotePDF(context.Background(), orgID, input)
 	if err != nil {
 		return SendQuotePDFOutput{Success: false, Message: "Ik kan de offerte-pdf nu niet ophalen. Probeer het later opnieuw."}, err
@@ -557,11 +585,37 @@ func (h *ToolHandler) HandleSendQuotePDF(ctx tool.Context, orgID uuid.UUID, inpu
 	caption := strings.TrimSpace(input.Caption)
 	if caption == "" {
 		caption = fmt.Sprintf("Offerte %s als pdf.", pdfResult.QuoteNumber)
+		if strings.TrimSpace(pdfResult.QuoteNumber) == "" && quoteNumber != "" {
+			caption = fmt.Sprintf("Offerte %s als pdf.", quoteNumber)
+		}
 	}
 	if err := h.sender.SendFileReply(context.Background(), orgID, phoneKey, caption, pdfResult.FileName, pdfResult.Data); err != nil {
 		return SendQuotePDFOutput{Success: false, Message: "Ik kan de offerte-pdf nu niet via WhatsApp versturen. Probeer het later opnieuw.", QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, err
 	}
 	return SendQuotePDFOutput{Success: true, Message: "Offerte-pdf verzonden", QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, nil
+}
+
+func (h *ToolHandler) resolveQuoteForPDF(orgID uuid.UUID, phoneKey string, quoteIDRaw string) (string, string, error) {
+	quoteID := strings.TrimSpace(quoteIDRaw)
+	if quoteID != "" {
+		return quoteID, "", nil
+	}
+	if h == nil || h.leadHintStore == nil {
+		return "", "", fmt.Errorf("Noem het offertenummer dat ik moet sturen.")
+	}
+	hint, ok := h.leadHintStore.Get(orgID.String(), phoneKey)
+	if !ok || len(hint.RecentQuotes) == 0 {
+		return "", "", fmt.Errorf("Noem het offertenummer dat ik moet sturen.")
+	}
+	if len(hint.RecentQuotes) != 1 {
+		return "", "", fmt.Errorf("Noem het offertenummer van de offerte die ik moet sturen.")
+	}
+	quote := hint.RecentQuotes[0]
+	resolvedQuoteID := strings.TrimSpace(quote.QuoteID)
+	if resolvedQuoteID == "" {
+		return "", "", fmt.Errorf("Noem het offertenummer van de offerte die ik moet sturen.")
+	}
+	return resolvedQuoteID, strings.TrimSpace(quote.QuoteNumber), nil
 }
 
 func (h *ToolHandler) HandleUpdateLeadDetails(_ tool.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
@@ -597,6 +651,17 @@ func (h *ToolHandler) HandleSaveNote(_ tool.Context, orgID uuid.UUID, input Save
 		return SaveNoteOutput{Success: false, Message: err.Error()}, err
 	}
 	return SaveNoteOutput{Success: true, Message: "Notitie opgeslagen"}, nil
+}
+
+func (h *ToolHandler) HandleCreateTask(_ tool.Context, orgID uuid.UUID, input CreateTaskInput) (CreateTaskOutput, error) {
+	if h.taskWriter == nil {
+		return CreateTaskOutput{}, errors.New(errTaskWriterNotConfigured)
+	}
+	output, err := h.taskWriter.CreateTask(context.Background(), orgID, input)
+	if err != nil {
+		return CreateTaskOutput{Success: false, Message: err.Error(), MissingFields: output.MissingFields}, err
+	}
+	return output, nil
 }
 
 func (h *ToolHandler) HandleUpdateStatus(_ tool.Context, orgID uuid.UUID, input UpdateStatusInput) (UpdateStatusOutput, error) {

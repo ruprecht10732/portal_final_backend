@@ -28,6 +28,10 @@ func NewCreateLeadTool[In any, Out any](handler func(tool.Context, In) (Out, err
 	return newDomainTool("CreateLead", "Creates a new lead in the current organization after collecting the required customer and address details. If required fields are missing, it should return which fields are still needed. Do NOT provide a tenant or organization identifier.", handler)
 }
 
+func NewCreateTaskTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("CreateTask", "Creates a follow-up task in the current organization. Use this for internal follow-up items. For lead-related tasks, provide lead_id and lead_service_id. If assigned_user_id is omitted, the system only defaults to the current lead assignee when that is already known.", handler)
+}
+
 func NewUpdatePipelineStageTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("UpdatePipelineStage", "Updates the pipeline stage for the lead service and records a timeline event.", handler)
 }

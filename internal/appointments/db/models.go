@@ -1247,6 +1247,41 @@ type RacServiceType struct {
 	EstimationGuidelines pgtype.Text        `json:"estimation_guidelines"`
 }
 
+type RacTask struct {
+	ID              pgtype.UUID        `json:"id"`
+	TenantID        pgtype.UUID        `json:"tenant_id"`
+	ScopeType       string             `json:"scope_type"`
+	LeadID          pgtype.UUID        `json:"lead_id"`
+	LeadServiceID   pgtype.UUID        `json:"lead_service_id"`
+	AssignedUserID  pgtype.UUID        `json:"assigned_user_id"`
+	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	DueAt           pgtype.Timestamptz `json:"due_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	CancelledAt     pgtype.Timestamptz `json:"cancelled_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacTaskReminder struct {
+	ID              pgtype.UUID        `json:"id"`
+	TaskID          pgtype.UUID        `json:"task_id"`
+	TenantID        pgtype.UUID        `json:"tenant_id"`
+	Enabled         bool               `json:"enabled"`
+	SendEmail       bool               `json:"send_email"`
+	SendWhatsapp    bool               `json:"send_whatsapp"`
+	NextRunAt       pgtype.Timestamptz `json:"next_run_at"`
+	RepeatDaily     bool               `json:"repeat_daily"`
+	LastSentAt      pgtype.Timestamptz `json:"last_sent_at"`
+	LastTriggeredAt pgtype.Timestamptz `json:"last_triggered_at"`
+	LastError       pgtype.Text        `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacUser struct {
 	ID                    pgtype.UUID        `json:"id"`
 	Email                 string             `json:"email"`
@@ -1257,6 +1292,7 @@ type RacUser struct {
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
 	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	Phone                 pgtype.Text        `json:"phone"`
 }
 
 type RacUserImapAccount struct {

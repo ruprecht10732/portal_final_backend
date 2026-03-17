@@ -38,6 +38,7 @@ import (
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/search"
 	"portal_final_backend/internal/services"
+	"portal_final_backend/internal/tasks"
 	"portal_final_backend/internal/webhook"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/internal/whatsappagent"
@@ -423,6 +424,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
 	leadsModule.ManagementService().SetLeadDetailQuotesReader(adapters.NewLeadDetailQuoteReader(quotesModule.Service()))
 	leadsModule.ManagementService().SetLeadDetailAppointmentsReader(adapters.NewLeadDetailAppointmentReader(appointmentsModule.Service))
+	tasksModule := tasks.NewModule(pool, val, reminderScheduler, leadsModule.Repository(), log)
 	searchModule := search.NewModule(pool, val)
 	quotesModule.SetGenerateQuoteJobQueue(reminderScheduler)
 	if cfg.IsEmbeddingEnabled() && cfg.IsQdrantEnabled() {
@@ -475,6 +477,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	defer closeTranscriber()
 
 	webhookModule := webhook.NewModule(pool, leadsModule.ManagementService(), storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), eventBus, val, log)
+	webhookModule.SetWhatsAppClient(whatsappClient)
 	webhookModule.SetWhatsAppWebhookSecret(cfg.GetWhatsAppWebhookSecret())
 	webhookModule.SetWhatsAppInboxIngester(identityModule.Service())
 
@@ -491,6 +494,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		NavigationLinkReader:         adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
 		CatalogSearchReader:          adapters.NewWhatsAppAgentCatalogSearchAdapter(catalogModule.Service(), catalogReader),
 		LeadMutationWriter:           adapters.NewWhatsAppAgentLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository()),
+		TaskWriter:                   adapters.NewWhatsAppAgentTaskWriterAdapter(tasksModule.Service(), leadsModule.Repository()),
 		QuoteWorkflowWriter:          adapters.NewWhatsAppAgentQuoteWorkflowAdapter(quotesModule.Service(), quotePDFProcessor, storageSvc, cfg.GetMinioBucketQuotePDFs()),
 		CurrentInboundPhotoAttacher:  adapters.NewWhatsAppAgentCurrentInboundPhotoAdapter(whatsappClient, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), inboxLeadActions, whatsappagentdb.New(pool)),
 		Storage:                      storageSvc,
@@ -532,6 +536,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		appointmentsModule,
 		partnersModule,
 		quotesModule,
+		tasksModule,
 		searchModule,
 		webhookModule,
 		exportsModule,

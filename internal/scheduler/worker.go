@@ -32,6 +32,7 @@ type Worker struct {
 	pdf     QuoteAcceptedPDFProcessor
 	call    CallLogProcessor
 	offer   OfferSummaryProcessor
+	tasks   TaskReminderProcessor
 	leadsAI LeadAutomationProcessor
 	voice   WAAgentVoiceTranscriptionProcessor
 	imap    IMAPSyncProcessor
@@ -61,6 +62,10 @@ type CallLogProcessor interface {
 
 type OfferSummaryProcessor interface {
 	ProcessPartnerOfferSummaryJob(ctx context.Context, payload PartnerOfferSummaryPayload) error
+}
+
+type TaskReminderProcessor interface {
+	ProcessTaskReminder(ctx context.Context, reminderID uuid.UUID, scheduledFor time.Time) error
 }
 
 type LeadAutomationProcessor interface {
@@ -139,6 +144,7 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	}
 
 	mux.HandleFunc(TaskAppointmentReminder, w.handleAppointmentReminder)
+	mux.HandleFunc(TaskTaskReminder, w.handleTaskReminder)
 	mux.HandleFunc(TaskNotificationOutboxDue, w.handleNotificationOutboxDue)
 	mux.HandleFunc(TaskGenerateQuoteJob, w.handleGenerateQuoteJob)
 	mux.HandleFunc(TaskGenerateAcceptedQuotePDF, w.handleGenerateAcceptedQuotePDF)
@@ -178,6 +184,10 @@ func (w *Worker) SetOfferSummaryProcessor(processor OfferSummaryProcessor) {
 	w.offer = processor
 }
 
+func (w *Worker) SetTaskReminderProcessor(processor TaskReminderProcessor) {
+	w.tasks = processor
+}
+
 func (w *Worker) SetLeadAutomationProcessor(processor LeadAutomationProcessor) {
 	w.leadsAI = processor
 }
@@ -211,6 +221,27 @@ func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Ta
 		OutboxID:  outboxID,
 		TenantID:  tenantID,
 	})
+}
+
+func (w *Worker) handleTaskReminder(ctx context.Context, task *asynq.Task) error {
+	if w.tasks == nil {
+		return fmt.Errorf("task reminder processor is not configured")
+	}
+
+	payload, err := ParseTaskReminderPayload(task)
+	if err != nil {
+		return err
+	}
+
+	reminderID, err := uuid.Parse(payload.ReminderID)
+	if err != nil {
+		return err
+	}
+	scheduledFor, err := time.Parse(time.RFC3339Nano, payload.ScheduledFor)
+	if err != nil {
+		return err
+	}
+	return w.tasks.ProcessTaskReminder(ctx, reminderID, scheduledFor.UTC())
 }
 
 func (w *Worker) handleApplyHumanFeedbackMemory(ctx context.Context, task *asynq.Task) error {
