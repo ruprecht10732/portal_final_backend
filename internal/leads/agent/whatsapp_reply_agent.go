@@ -281,7 +281,7 @@ func (a *WhatsAppReplyAgent) loadRequester(ctx context.Context, requesterUserID 
 	}
 	requester, err := a.userReader.GetUserProfile(ctx, requesterUserID)
 	if err != nil {
-		if apperr.Is(err, apperr.KindNotFound) {
+		if isIgnorableReplyUserLookupError(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("whatsapp reply: load requester: %w", err)

@@ -420,7 +420,7 @@ func (a *EmailReplyAgent) loadRequester(ctx context.Context, requesterUserID uui
 	}
 	requester, err := a.userReader.GetUserProfile(ctx, requesterUserID)
 	if err != nil {
-		if apperr.Is(err, apperr.KindNotFound) {
+		if isIgnorableReplyUserLookupError(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("email reply: load requester: %w", err)

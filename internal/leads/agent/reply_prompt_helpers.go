@@ -89,7 +89,7 @@ func shouldSkipAppointmentAssignee(appointment *ports.PublicAppointmentSummary) 
 func resolveAppointmentAssigneeName(ctx context.Context, userReader ports.ReplyUserReader, userID uuid.UUID) (string, error) {
 	profile, err := userReader.GetUserProfile(ctx, userID)
 	if err != nil {
-		if apperr.Is(err, apperr.KindNotFound) {
+		if isIgnorableReplyUserLookupError(err) {
 			return "", nil
 		}
 		return "", err
@@ -105,6 +105,10 @@ func resolveAppointmentAssigneeName(ctx context.Context, userReader ports.ReplyU
 		return "", nil
 	}
 	return name, nil
+}
+
+func isIgnorableReplyUserLookupError(err error) bool {
+	return apperr.Is(err, apperr.KindNotFound) || apperr.Is(err, apperr.KindUnauthorized)
 }
 
 func replyLocalNow() time.Time {
