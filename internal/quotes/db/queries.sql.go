@@ -12,7 +12,7 @@ import (
 )
 
 const acceptQuote = `-- name: AcceptQuote :execrows
-UPDATE RAC_quotes SET status = 'Accepted', accepted_at = $2, signature_name = $3, signature_data = $4, signature_ip = $5, updated_at = $2
+UPDATE RAC_quotes SET status = 'Accepted', accepted_at = $2, signature_name = $3, signature_data = $4, signature_ip = $5, pdf_file_key = NULL, updated_at = $2
 WHERE id = $1 AND status = 'Sent'
 `
 
