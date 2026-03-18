@@ -279,6 +279,31 @@ func (s *Service) GetOfferPDFByToken(ctx context.Context, publicToken string) (s
 	return fileName, reader, nil
 }
 
+func (s *Service) GetOfferPDF(ctx context.Context, tenantID, offerID uuid.UUID) (string, io.ReadCloser, error) {
+	if s.storage == nil || strings.TrimSpace(s.pdfBucket) == "" {
+		return "", nil, apperr.NotFound("offer pdf not available")
+	}
+
+	oc, err := s.repo.GetOfferByIDWithContext(ctx, offerID, tenantID)
+	if err != nil {
+		return "", nil, err
+	}
+	if oc.Status != "accepted" {
+		return "", nil, apperr.Conflict("offer pdf is only available after acceptance")
+	}
+	if oc.PDFFileKey == nil || strings.TrimSpace(*oc.PDFFileKey) == "" {
+		return "", nil, apperr.NotFound("offer pdf is not ready yet")
+	}
+
+	reader, err := s.storage.DownloadFile(ctx, s.pdfBucket, *oc.PDFFileKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("download offer pdf: %w", err)
+	}
+
+	fileName := fmt.Sprintf("offer-%s-signed.pdf", oc.ID.String()[:8])
+	return fileName, reader, nil
+}
+
 // AcceptOffer processes a vakman's acceptance, locks the job via the unique index.
 func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req transport.AcceptOfferRequest) error {
 	oc, err := s.repo.GetOfferByToken(ctx, publicToken)

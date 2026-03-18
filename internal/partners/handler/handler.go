@@ -57,6 +57,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/services/:serviceId/offers", h.ListServiceOffers)
 	rg.DELETE("/offers/:offerId", h.DeleteOffer)
 	rg.GET("/offers/:offerId/detail", h.GetOfferDetail)
+	rg.GET("/offers/:offerId/pdf", h.GetOfferPDF)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 	rg.GET("/offers/:offerId/photos/:attachmentId", h.PreviewOfferPhoto)
 	rg.GET("/offer-terms", h.GetOfferTerms)
@@ -623,6 +624,31 @@ func (h *Handler) GetOfferDetail(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+func (h *Handler) GetOfferPDF(c *gin.Context) {
+	offerID, err := uuid.Parse(c.Param("offerId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	fileName, reader, err := h.svc.GetOfferPDF(c.Request.Context(), tenantID, offerID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+	defer closeQuietly(reader)
+
+	streamDownload(c, "application/pdf", fileName, reader)
 }
 
 func (h *Handler) PreviewOfferPhoto(c *gin.Context) {

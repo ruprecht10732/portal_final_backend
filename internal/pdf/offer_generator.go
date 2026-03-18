@@ -146,7 +146,7 @@ type offerAcceptanceViewModel struct {
 }
 
 type offerItemViewModel struct {
-	Description        string
+	Description        template.HTML
 	Quantity           string
 	UnitFormatted      string
 	LineTotalFormatted string
@@ -156,7 +156,7 @@ func buildOfferItemVMs(items []OfferLineItemPDF) []offerItemViewModel {
 	vms := make([]offerItemViewModel, len(items))
 	for i, it := range items {
 		vms[i] = offerItemViewModel{
-			Description:        it.Description,
+			Description:        template.HTML(it.Description), //nolint:gosec // content comes from trusted quote editors
 			Quantity:           it.Quantity,
 			UnitFormatted:      formatCurrency(it.UnitPriceCents),
 			LineTotalFormatted: formatCurrency(it.LineTotalCents),
