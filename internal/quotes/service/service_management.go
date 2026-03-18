@@ -292,8 +292,26 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 			return nil, fmt.Errorf(errSaveURLsFmt, err)
 		}
 	}
+	if err := s.invalidatePDFOnAssetUpdates(ctx, quote, req); err != nil {
+		return nil, err
+	}
 
 	return s.buildResponse(ctx, quote, items)
+}
+
+func (s *Service) invalidatePDFOnAssetUpdates(ctx context.Context, quote *repository.Quote, req transport.UpdateQuoteRequest) error {
+	if req.Attachments == nil && req.URLs == nil {
+		return nil
+	}
+	if quote.PDFFileKey == nil || strings.TrimSpace(*quote.PDFFileKey) == "" {
+		return nil
+	}
+	if err := s.repo.SetPDFFileKey(ctx, quote.ID, ""); err != nil {
+		return fmt.Errorf("invalidate quote pdf: %w", err)
+	}
+	emptyKey := ""
+	quote.PDFFileKey = &emptyKey
+	return nil
 }
 
 func (s *Service) AddExtraWorkToQuote(ctx context.Context, quoteID uuid.UUID, organizationID uuid.UUID, actorID uuid.UUID, amountCents int64, notes *string) error {
