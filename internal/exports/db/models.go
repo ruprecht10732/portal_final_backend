@@ -1003,6 +1003,16 @@ type RacPartnerOffer struct {
 	PdfFileKey             pgtype.Text        `json:"pdf_file_key"`
 }
 
+type RacPartnerOfferTerm struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Content        string             `json:"content"`
+	Version        int32              `json:"version"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	IsActive       bool               `json:"is_active"`
+}
+
 type RacPartnerServiceType struct {
 	PartnerID     pgtype.UUID        `json:"partner_id"`
 	ServiceTypeID pgtype.UUID        `json:"service_type_id"`

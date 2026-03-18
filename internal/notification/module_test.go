@@ -115,7 +115,7 @@ func (s *testSender) SendQuoteAcceptedThankYouEmail(context.Context, string, str
 func (s *testSender) SendPartnerOfferAcceptedEmail(context.Context, string, string, string) error {
 	return nil
 }
-func (s *testSender) SendPartnerOfferAcceptedConfirmationEmail(context.Context, string, string) error {
+func (s *testSender) SendPartnerOfferAcceptedConfirmationEmail(context.Context, string, string, ...email.Attachment) error {
 	return nil
 }
 func (s *testSender) SendPartnerOfferRejectedEmail(context.Context, string, string, string, string) error {

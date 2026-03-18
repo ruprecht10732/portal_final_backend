@@ -53,12 +53,29 @@ type PartnerOfferWithContext struct {
 	PartnerName        string
 	OrganizationName   string
 	LeadCity           string
+	LeadFirstName      string
+	LeadLastName       string
+	LeadPhone          string
+	LeadEmail          string
+	LeadStreet         string
+	LeadHouseNumber    string
+	LeadZipCode        string
 	ServiceType        string
 	ServiceTypeID      uuid.UUID
 	LeadPostcode4      *string
 	LeadBuurtcode      *string
 	LeadEnergyBouwjaar *int
 	UrgencyLevel       *string
+}
+
+type PartnerOfferTerms struct {
+	ID              uuid.UUID
+	OrganizationID  uuid.UUID
+	Content         string
+	Version         int
+	CreatedAt       time.Time
+	CreatedByUserID *uuid.UUID
+	IsActive        bool
 }
 
 // QuoteItemSummary is a minimal view of a quote line item for summary generation.
@@ -289,6 +306,13 @@ type offerContext struct {
 	PartnerName        string
 	OrganizationName   string
 	LeadCity           string
+	LeadFirstName      string
+	LeadLastName       string
+	LeadPhone          string
+	LeadEmail          string
+	LeadStreet         string
+	LeadHouseNumber    string
+	LeadZipCode        string
 	ServiceType        string
 	ServiceTypeID      pgtype.UUID
 	LeadPostcode4      pgtype.Text
@@ -303,6 +327,13 @@ func offerWithContext(data offerContext) PartnerOfferWithContext {
 		PartnerName:        data.PartnerName,
 		OrganizationName:   data.OrganizationName,
 		LeadCity:           data.LeadCity,
+		LeadFirstName:      data.LeadFirstName,
+		LeadLastName:       data.LeadLastName,
+		LeadPhone:          data.LeadPhone,
+		LeadEmail:          data.LeadEmail,
+		LeadStreet:         data.LeadStreet,
+		LeadHouseNumber:    data.LeadHouseNumber,
+		LeadZipCode:        data.LeadZipCode,
 		ServiceType:        data.ServiceType,
 		LeadPostcode4:      optionalString(data.LeadPostcode4),
 		LeadBuurtcode:      optionalString(data.LeadBuurtcode),
@@ -382,54 +413,65 @@ func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (Partn
 
 // GetOfferByToken retrieves an offer by its public token with context info.
 func (r *Repository) GetOfferByToken(ctx context.Context, token string) (PartnerOfferWithContext, error) {
-	row, err := r.queries.GetPartnerOfferByTokenWithContext(ctx, token)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
-	}
-	if err != nil {
-		return PartnerOfferWithContext{}, fmt.Errorf("get offer by token: %w", err)
-	}
-	offer := offerFromSnapshot(offerSnapshot{
-		ID:                     row.ID,
-		OrganizationID:         row.OrganizationID,
-		PartnerID:              row.PartnerID,
-		LeadServiceID:          row.LeadServiceID,
-		PublicToken:            row.PublicToken,
-		ExpiresAt:              row.ExpiresAt,
-		PricingSource:          row.PricingSource,
-		CustomerPriceCents:     row.CustomerPriceCents,
-		VakmanPriceCents:       row.VakmanPriceCents,
-		MarginBasisPoints:      row.MarginBasisPoints,
-		OfferLineItems:         row.OfferLineItems,
-		JobSummaryShort:        row.JobSummaryShort,
-		BuilderSummary:         row.BuilderSummary,
-		Status:                 row.Status,
-		RequiresInspection:     row.RequiresInspection,
-		AcceptedAt:             row.AcceptedAt,
-		RejectedAt:             row.RejectedAt,
-		RejectionReason:        row.RejectionReason,
-		InspectionAvailability: row.InspectionAvailability,
-		JobAvailability:        row.JobAvailability,
-		SignerName:             row.SignerName,
-		SignerBusinessName:     row.SignerBusinessName,
-		SignerAddress:          row.SignerAddress,
-		SignatureData:          row.SignatureData,
-		PDFFileKey:             row.PdfFileKey,
-		CreatedAt:              row.CreatedAt,
-		UpdatedAt:              row.UpdatedAt,
-	})
-	return offerWithContext(offerContext{
-		Offer:              offer,
-		PartnerName:        row.BusinessName,
-		OrganizationName:   row.Name,
-		LeadCity:           row.AddressCity,
-		ServiceType:        row.ServiceType,
-		ServiceTypeID:      row.ServiceTypeID,
-		LeadPostcode4:      row.LeadEnrichmentPostcode4,
-		LeadBuurtcode:      row.LeadEnrichmentBuurtcode,
-		LeadEnergyBouwjaar: row.EnergyBouwjaar,
-		UrgencyLevel:       row.UrgencyLevel,
-	}), nil
+	const query = `
+		SELECT o.id,
+			o.organization_id,
+			o.partner_id,
+			o.lead_service_id,
+			o.public_token,
+			o.expires_at,
+			o.pricing_source::text AS pricing_source,
+			o.customer_price_cents,
+			o.vakman_price_cents,
+			o.margin_basis_points,
+			o.offer_line_items,
+			o.job_summary_short,
+			o.builder_summary,
+			o.status::text AS status,
+			o.requires_inspection,
+			o.accepted_at,
+			o.rejected_at,
+			o.rejection_reason,
+			o.inspection_availability,
+			o.job_availability,
+			o.signer_name,
+			o.signer_business_name,
+			o.signer_address,
+			o.signature_data,
+			o.pdf_file_key,
+			o.created_at,
+			o.updated_at,
+			p.business_name,
+			org.name,
+			l.address_city,
+			l.consumer_first_name,
+			l.consumer_last_name,
+			COALESCE(l.consumer_phone, '')::text,
+			COALESCE(l.consumer_email, '')::text,
+			COALESCE(l.address_street, '')::text,
+			COALESCE(l.address_house_number, '')::text,
+			COALESCE(l.address_zip_code, '')::text,
+			st.name AS service_type,
+			st.id AS service_type_id,
+			l.lead_enrichment_postcode4,
+			l.lead_enrichment_buurtcode,
+			l.energy_bouwjaar,
+			COALESCE(ai.urgency_level::text, '') AS urgency_level
+		FROM RAC_partner_offers o
+		JOIN RAC_partners p ON p.id = o.partner_id
+		JOIN RAC_organizations org ON org.id = o.organization_id
+		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+		JOIN RAC_leads l ON l.id = ls.lead_id
+		LEFT JOIN LATERAL (
+			SELECT urgency_level
+			FROM RAC_lead_ai_analysis
+			WHERE lead_service_id = ls.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) ai ON true
+		WHERE o.public_token = $1::text`
+	return r.getOfferWithContext(ctx, query, token)
 }
 
 // GetOfferByID retrieves an offer by its ID within a tenant.
@@ -487,57 +529,244 @@ func (r *Repository) GetLeadServiceSummaryContext(ctx context.Context, leadServi
 
 // GetOfferByIDWithContext retrieves an offer by ID with display context.
 func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.UUID, organizationID uuid.UUID) (PartnerOfferWithContext, error) {
-	row, err := r.queries.GetPartnerOfferByIDWithContext(ctx, partnersdb.GetPartnerOfferByIDWithContextParams{
-		OfferID:        toPgUUID(offerID),
-		OrganizationID: toPgUUID(organizationID),
-	})
+	const query = `
+		SELECT o.id,
+			o.organization_id,
+			o.partner_id,
+			o.lead_service_id,
+			o.public_token,
+			o.expires_at,
+			o.pricing_source::text AS pricing_source,
+			o.customer_price_cents,
+			o.vakman_price_cents,
+			o.margin_basis_points,
+			o.offer_line_items,
+			o.job_summary_short,
+			o.builder_summary,
+			o.status::text AS status,
+			o.requires_inspection,
+			o.accepted_at,
+			o.rejected_at,
+			o.rejection_reason,
+			o.inspection_availability,
+			o.job_availability,
+			o.signer_name,
+			o.signer_business_name,
+			o.signer_address,
+			o.signature_data,
+			o.pdf_file_key,
+			o.created_at,
+			o.updated_at,
+			p.business_name,
+			org.name,
+			l.address_city,
+			l.consumer_first_name,
+			l.consumer_last_name,
+			COALESCE(l.consumer_phone, '')::text,
+			COALESCE(l.consumer_email, '')::text,
+			COALESCE(l.address_street, '')::text,
+			COALESCE(l.address_house_number, '')::text,
+			COALESCE(l.address_zip_code, '')::text,
+			st.name AS service_type,
+			st.id AS service_type_id,
+			l.lead_enrichment_postcode4,
+			l.lead_enrichment_buurtcode,
+			l.energy_bouwjaar,
+			COALESCE(ai.urgency_level::text, '') AS urgency_level
+		FROM RAC_partner_offers o
+		JOIN RAC_partners p ON p.id = o.partner_id
+		JOIN RAC_organizations org ON org.id = o.organization_id
+		JOIN RAC_lead_services ls ON ls.id = o.lead_service_id
+		JOIN RAC_service_types st ON st.id = ls.service_type_id AND st.organization_id = ls.organization_id
+		JOIN RAC_leads l ON l.id = ls.lead_id
+		LEFT JOIN LATERAL (
+			SELECT urgency_level
+			FROM RAC_lead_ai_analysis
+			WHERE lead_service_id = ls.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) ai ON true
+		WHERE o.id = $1::uuid
+		  AND o.organization_id = $2::uuid`
+	return r.getOfferWithContext(ctx, query, offerID, organizationID)
+}
+
+func (r *Repository) getOfferWithContext(ctx context.Context, query string, args ...any) (PartnerOfferWithContext, error) {
+	var snapshot offerSnapshot
+	var contextRow offerContext
+	err := r.pool.QueryRow(ctx, query, args...).Scan(
+		&snapshot.ID,
+		&snapshot.OrganizationID,
+		&snapshot.PartnerID,
+		&snapshot.LeadServiceID,
+		&snapshot.PublicToken,
+		&snapshot.ExpiresAt,
+		&snapshot.PricingSource,
+		&snapshot.CustomerPriceCents,
+		&snapshot.VakmanPriceCents,
+		&snapshot.MarginBasisPoints,
+		&snapshot.OfferLineItems,
+		&snapshot.JobSummaryShort,
+		&snapshot.BuilderSummary,
+		&snapshot.Status,
+		&snapshot.RequiresInspection,
+		&snapshot.AcceptedAt,
+		&snapshot.RejectedAt,
+		&snapshot.RejectionReason,
+		&snapshot.InspectionAvailability,
+		&snapshot.JobAvailability,
+		&snapshot.SignerName,
+		&snapshot.SignerBusinessName,
+		&snapshot.SignerAddress,
+		&snapshot.SignatureData,
+		&snapshot.PDFFileKey,
+		&snapshot.CreatedAt,
+		&snapshot.UpdatedAt,
+		&contextRow.PartnerName,
+		&contextRow.OrganizationName,
+		&contextRow.LeadCity,
+		&contextRow.LeadFirstName,
+		&contextRow.LeadLastName,
+		&contextRow.LeadPhone,
+		&contextRow.LeadEmail,
+		&contextRow.LeadStreet,
+		&contextRow.LeadHouseNumber,
+		&contextRow.LeadZipCode,
+		&contextRow.ServiceType,
+		&contextRow.ServiceTypeID,
+		&contextRow.LeadPostcode4,
+		&contextRow.LeadBuurtcode,
+		&contextRow.LeadEnergyBouwjaar,
+		&contextRow.UrgencyLevel,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
 	}
 	if err != nil {
-		return PartnerOfferWithContext{}, fmt.Errorf("get offer by id with context: %w", err)
+		return PartnerOfferWithContext{}, err
 	}
-	offer := offerFromSnapshot(offerSnapshot{
-		ID:                     row.ID,
-		OrganizationID:         row.OrganizationID,
-		PartnerID:              row.PartnerID,
-		LeadServiceID:          row.LeadServiceID,
-		PublicToken:            row.PublicToken,
-		ExpiresAt:              row.ExpiresAt,
-		PricingSource:          row.PricingSource,
-		CustomerPriceCents:     row.CustomerPriceCents,
-		VakmanPriceCents:       row.VakmanPriceCents,
-		MarginBasisPoints:      row.MarginBasisPoints,
-		OfferLineItems:         row.OfferLineItems,
-		JobSummaryShort:        row.JobSummaryShort,
-		BuilderSummary:         row.BuilderSummary,
-		Status:                 row.Status,
-		RequiresInspection:     row.RequiresInspection,
-		AcceptedAt:             row.AcceptedAt,
-		RejectedAt:             row.RejectedAt,
-		RejectionReason:        row.RejectionReason,
-		InspectionAvailability: row.InspectionAvailability,
-		JobAvailability:        row.JobAvailability,
-		SignerName:             row.SignerName,
-		SignerBusinessName:     row.SignerBusinessName,
-		SignerAddress:          row.SignerAddress,
-		SignatureData:          row.SignatureData,
-		PDFFileKey:             row.PdfFileKey,
-		CreatedAt:              row.CreatedAt,
-		UpdatedAt:              row.UpdatedAt,
-	})
-	return offerWithContext(offerContext{
-		Offer:              offer,
-		PartnerName:        row.BusinessName,
-		OrganizationName:   row.Name,
-		LeadCity:           row.AddressCity,
-		ServiceType:        row.ServiceType,
-		ServiceTypeID:      row.ServiceTypeID,
-		LeadPostcode4:      row.LeadEnrichmentPostcode4,
-		LeadBuurtcode:      row.LeadEnrichmentBuurtcode,
-		LeadEnergyBouwjaar: row.EnergyBouwjaar,
-		UrgencyLevel:       row.UrgencyLevel,
-	}), nil
+	contextRow.Offer = offerFromSnapshot(snapshot)
+	return offerWithContext(contextRow), nil
+}
+
+func (r *Repository) GetActivePartnerOfferTerms(ctx context.Context, organizationID uuid.UUID) (PartnerOfferTerms, error) {
+	const query = `
+		SELECT id, organization_id, content, version, created_by, created_at, is_active
+		FROM RAC_partner_offer_terms
+		WHERE organization_id = $1
+		  AND is_active = TRUE
+		ORDER BY version DESC
+		LIMIT 1`
+
+	var item PartnerOfferTerms
+	var createdBy pgtype.UUID
+	err := r.pool.QueryRow(ctx, query, organizationID).Scan(
+		&item.ID,
+		&item.OrganizationID,
+		&item.Content,
+		&item.Version,
+		&createdBy,
+		&item.CreatedAt,
+		&item.IsActive,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PartnerOfferTerms{}, apperr.NotFound("partner offer terms not found")
+	}
+	if err != nil {
+		return PartnerOfferTerms{}, fmt.Errorf("get active partner offer terms: %w", err)
+	}
+	item.CreatedByUserID = optionalTermsUUID(createdBy)
+	return item, nil
+}
+
+func (r *Repository) UpsertPartnerOfferTerms(ctx context.Context, organizationID uuid.UUID, content string, createdByUserID uuid.UUID) (PartnerOfferTerms, error) {
+	const deactivateQuery = `
+		UPDATE RAC_partner_offer_terms
+		SET is_active = FALSE
+		WHERE organization_id = $1
+		  AND is_active = TRUE`
+	const insertQuery = `
+		INSERT INTO RAC_partner_offer_terms (organization_id, content, version, created_by, is_active)
+		VALUES (
+			$1,
+			$2,
+			COALESCE((SELECT MAX(version) FROM RAC_partner_offer_terms WHERE organization_id = $1), 0) + 1,
+			$3,
+			TRUE
+		)
+		RETURNING id, organization_id, content, version, created_by, created_at, is_active`
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return PartnerOfferTerms{}, fmt.Errorf("begin partner offer terms tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, deactivateQuery, organizationID); err != nil {
+		return PartnerOfferTerms{}, fmt.Errorf("deactivate partner offer terms: %w", err)
+	}
+
+	var item PartnerOfferTerms
+	var createdBy pgtype.UUID
+	var createdByArg any
+	if createdByUserID != uuid.Nil {
+		createdByArg = createdByUserID
+	}
+	if err := tx.QueryRow(ctx, insertQuery, organizationID, strings.TrimSpace(content), createdByArg).Scan(
+		&item.ID,
+		&item.OrganizationID,
+		&item.Content,
+		&item.Version,
+		&createdBy,
+		&item.CreatedAt,
+		&item.IsActive,
+	); err != nil {
+		return PartnerOfferTerms{}, fmt.Errorf("insert partner offer terms: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return PartnerOfferTerms{}, fmt.Errorf("commit partner offer terms tx: %w", err)
+	}
+
+	item.CreatedByUserID = optionalTermsUUID(createdBy)
+	return item, nil
+}
+
+func (r *Repository) ListPartnerOfferTermsHistory(ctx context.Context, organizationID uuid.UUID) ([]PartnerOfferTerms, error) {
+	const query = `
+		SELECT id, organization_id, content, version, created_by, created_at, is_active
+		FROM RAC_partner_offer_terms
+		WHERE organization_id = $1
+		ORDER BY version DESC, created_at DESC`
+
+	rows, err := r.pool.Query(ctx, query, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list partner offer terms history: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]PartnerOfferTerms, 0)
+	for rows.Next() {
+		var item PartnerOfferTerms
+		var createdBy pgtype.UUID
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Content, &item.Version, &createdBy, &item.CreatedAt, &item.IsActive); err != nil {
+			return nil, fmt.Errorf("scan partner offer terms history: %w", err)
+		}
+		item.CreatedByUserID = optionalTermsUUID(createdBy)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate partner offer terms history: %w", err)
+	}
+	return items, nil
+}
+
+func optionalTermsUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	parsed := uuid.UUID(value.Bytes)
+	return &parsed
 }
 
 func (r *Repository) UpdateOfferBuilderSummaryIfEmpty(ctx context.Context, offerID, organizationID uuid.UUID, summary string) error {

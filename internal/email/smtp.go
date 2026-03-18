@@ -224,18 +224,19 @@ func (s *SMTPSender) SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail,
 	return s.send(ctx, toEmail, subject, content)
 }
 
-func (s *SMTPSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error {
+func (s *SMTPSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string, attachments ...Attachment) error {
 	content, err := renderEmailTemplate("partner_offer_confirmation.html", partnerOfferAcceptedConfirmationEmailData{
 		baseEmailData: baseEmailData{
 			Title:   "Acceptatie bevestigd",
 			Heading: "Acceptatie bevestigd",
 		},
-		PartnerName: partnerName,
+		PartnerName:    partnerName,
+		HasAttachments: len(attachments) > 0,
 	})
 	if err != nil {
 		return err
 	}
-	return s.send(ctx, toEmail, subjectPartnerOfferAcceptedConfirmation, content)
+	return s.send(ctx, toEmail, subjectPartnerOfferAcceptedConfirmation, content, attachments...)
 }
 
 func (s *SMTPSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error {

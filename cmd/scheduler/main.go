@@ -274,7 +274,7 @@ func main() {
 	notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
 	worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
 
-	offerPDFProcessor := adapters.NewPartnerOfferPDFProcessor(partnersrepo.New(pool), identitySvc, storageSvc, cfg)
+	offerPDFProcessor := adapters.NewPartnerOfferPDFProcessor(partnersrepo.New(pool), identitySvc, storageSvc, cfg, sender)
 	worker.SetOfferPDFProcessor(offerPDFProcessor)
 	audioTranscriber, closeTranscriber := initAudioTranscriber(log)
 	defer closeTranscriber()

@@ -75,7 +75,8 @@ type partnerOfferAcceptedEmailData struct {
 
 type partnerOfferAcceptedConfirmationEmailData struct {
 	baseEmailData
-	PartnerName string
+	PartnerName    string
+	HasAttachments bool
 }
 
 type partnerOfferRejectedEmailData struct {

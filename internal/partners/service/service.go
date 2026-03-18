@@ -31,6 +31,7 @@ type Service struct {
 	storage           storage.StorageService
 	logoBucket        string
 	attachmentsBucket string
+	pdfBucket         string
 	summaryGenerator  OfferSummaryGenerator
 	summaryQueue      OfferSummaryJobQueue
 	settingsReader    OrganizationSettingsReader
@@ -128,6 +129,10 @@ func (s *Service) SetOrganizationSettingsReader(reader OrganizationSettingsReade
 
 func (s *Service) SetAttachmentsBucket(bucket string) {
 	s.attachmentsBucket = strings.TrimSpace(bucket)
+}
+
+func (s *Service) SetPDFBucket(bucket string) {
+	s.pdfBucket = strings.TrimSpace(bucket)
 }
 
 func (s *Service) ProcessPartnerOfferSummaryJob(ctx context.Context, payload scheduler.PartnerOfferSummaryPayload) error {

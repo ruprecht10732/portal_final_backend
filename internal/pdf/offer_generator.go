@@ -29,6 +29,10 @@ type OfferAcceptancePDFData struct {
 	ServiceType string
 	JobSummary  string
 	LeadCity    string
+	LeadName    string
+	LeadPhone   string
+	LeadEmail   string
+	LeadAddress string
 
 	// Line items
 	Items      []OfferLineItemPDF
@@ -83,6 +87,10 @@ func GenerateOfferAcceptancePDF(data OfferAcceptancePDFData) ([]byte, error) {
 		ServiceType:         data.ServiceType,
 		JobSummary:          template.HTML(clampPDFText(data.JobSummary, maxPDFLongText)), //nolint:gosec
 		LeadCity:            data.LeadCity,
+		LeadName:            data.LeadName,
+		LeadPhone:           data.LeadPhone,
+		LeadEmail:           data.LeadEmail,
+		LeadAddress:         data.LeadAddress,
 		TotalFormatted:      formatCurrency(data.TotalCents),
 		SignerName:          data.SignerName,
 		SignerBusinessName:  data.SignerBusinessName,
@@ -124,6 +132,10 @@ type offerAcceptanceViewModel struct {
 	ServiceType         string
 	JobSummary          template.HTML
 	LeadCity            string
+	LeadName            string
+	LeadPhone           string
+	LeadEmail           string
+	LeadAddress         string
 	Items               []offerItemViewModel
 	TotalFormatted      string
 	SignerName          string

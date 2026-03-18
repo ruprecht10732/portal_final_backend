@@ -233,6 +233,38 @@
             color: #78716C;
             font-size: 7.5pt;
         }
+
+        .page-break {
+            break-before: page;
+            page-break-before: always;
+        }
+
+        .lead-contact-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-top: 12px;
+        }
+
+        .lead-contact-card {
+            border: 1px solid #E7E5E4;
+            background: #FAFAF9;
+            padding: 16px;
+        }
+
+        .lead-contact-card .label {
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #78716C;
+            margin-bottom: 4px;
+        }
+
+        .lead-contact-card .value {
+            font-size: 10pt;
+            font-weight: 600;
+            color: #1C1917;
+        }
     </style>
 </head>
 <body>
@@ -365,6 +397,53 @@
         <span>Ref: {{.OfferRef}} &bull; {{.AcceptedAtFormatted}}</span>
     </div>
 
+</div>
+
+<div class="container page-break">
+    <div class="header">
+        <div class="logo-box">
+            {{if .LogoBase64}}
+                <img src="data:{{.LogoMimeType}};base64,{{.LogoBase64}}" alt="{{.OrganizationName}}">
+            {{else}}
+                <span class="fallback">{{.OrganizationName}}</span>
+            {{end}}
+        </div>
+        <div class="doc-title">
+            <h1>Klantgegevens</h1>
+            <div class="subtitle">Na acceptatie vrijgegeven</div>
+        </div>
+    </div>
+
+    <div class="job-context">
+        <h2 class="section-heading">Contactgegevens lead</h2>
+        <div class="job-summary-text">
+            Deze pagina bevat de contactgegevens van de lead die na acceptatie van het werkaanbod zijn vrijgegeven aan de vakman.
+        </div>
+    </div>
+
+    <div class="lead-contact-grid">
+        <div class="lead-contact-card">
+            <div class="label">Naam</div>
+            <div class="value">{{if .LeadName}}{{.LeadName}}{{else}}-{{end}}</div>
+        </div>
+        <div class="lead-contact-card">
+            <div class="label">Telefoon</div>
+            <div class="value">{{if .LeadPhone}}{{.LeadPhone}}{{else}}-{{end}}</div>
+        </div>
+        <div class="lead-contact-card">
+            <div class="label">E-mail</div>
+            <div class="value">{{if .LeadEmail}}{{.LeadEmail}}{{else}}-{{end}}</div>
+        </div>
+        <div class="lead-contact-card">
+            <div class="label">Adres</div>
+            <div class="value">{{if .LeadAddress}}{{.LeadAddress}}{{else}}-{{end}}</div>
+        </div>
+    </div>
+
+    <div class="doc-footer">
+        <span>{{.OrganizationName}}</span>
+        <span>Ref: {{.OfferRef}} &bull; {{.AcceptedAtFormatted}}</span>
+    </div>
 </div>
 </body>
 </html>

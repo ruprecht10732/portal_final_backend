@@ -59,6 +59,73 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/offers/:offerId/detail", h.GetOfferDetail)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 	rg.GET("/offers/:offerId/photos/:attachmentId", h.PreviewOfferPhoto)
+	rg.GET("/offer-terms", h.GetOfferTerms)
+	rg.PUT("/offer-terms", h.UpdateOfferTerms)
+	rg.GET("/offer-terms/history", h.ListOfferTermsHistory)
+}
+
+func (h *Handler) GetOfferTerms(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetOfferTerms(c.Request.Context(), tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) UpdateOfferTerms(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	var req transport.UpdatePartnerOfferTermsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	result, err := h.svc.UpdateOfferTerms(c.Request.Context(), tenantID, identity.UserID(), req)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) ListOfferTermsHistory(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.ListOfferTermsHistory(c.Request.Context(), tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 func (h *Handler) List(c *gin.Context) {

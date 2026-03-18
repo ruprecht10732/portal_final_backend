@@ -415,6 +415,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	catalogModule.RegisterHandlers(eventBus)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	partnersModule.Service().SetAttachmentsBucket(cfg.GetMinioBucketLeadServiceAttachments())
+	partnersModule.Service().SetPDFBucket(cfg.GetMinioBucketQuotePDFs())
 	partnersModule.Service().SetOrganizationSettingsReader(func(ctx context.Context, organizationID uuid.UUID) (partnersvc.OrganizationOfferSettings, error) {
 		settings, err := identityModule.Service().GetOrganizationSettings(ctx, organizationID)
 		if err != nil {

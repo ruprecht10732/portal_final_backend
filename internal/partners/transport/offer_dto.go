@@ -82,25 +82,56 @@ type OfferListResponse struct {
 
 // PublicOfferResponse is the Vakman's view. Hides customer markup.
 type PublicOfferResponse struct {
-	OfferID            uuid.UUID             `json:"offerId"`
-	OrganizationName   string                `json:"organizationName"`
-	JobSummary         string                `json:"jobSummary"`
-	JobSummaryShort    *string               `json:"jobSummaryShort,omitempty"`
-	BuilderSummary     *string               `json:"builderSummary,omitempty"`
-	City               string                `json:"city"`
-	Postcode4          *string               `json:"postcode4,omitempty"`
-	Buurtcode          *string               `json:"buurtcode,omitempty"`
-	ConstructionYear   *int                  `json:"constructionYear,omitempty"`
-	ScopeAssessment    *string               `json:"scopeAssessment,omitempty"`
-	UrgencyLevel       *string               `json:"urgencyLevel,omitempty"`
-	VakmanPriceCents   int64                 `json:"vakmanPriceCents"`
-	PricingSource      string                `json:"pricingSource"`
-	Status             string                `json:"status"`
-	RequiresInspection bool                  `json:"requiresInspection"`
-	ExpiresAt          time.Time             `json:"expiresAt"`
-	CreatedAt          time.Time             `json:"createdAt"`
-	LineItems          []PublicOfferLineItem `json:"lineItems,omitempty"`
-	Photos             []OfferPhotoRef       `json:"photos,omitempty"`
+	OfferID            uuid.UUID               `json:"offerId"`
+	OrganizationName   string                  `json:"organizationName"`
+	JobSummary         string                  `json:"jobSummary"`
+	JobSummaryShort    *string                 `json:"jobSummaryShort,omitempty"`
+	BuilderSummary     *string                 `json:"builderSummary,omitempty"`
+	City               string                  `json:"city"`
+	Postcode4          *string                 `json:"postcode4,omitempty"`
+	Buurtcode          *string                 `json:"buurtcode,omitempty"`
+	ConstructionYear   *int                    `json:"constructionYear,omitempty"`
+	ScopeAssessment    *string                 `json:"scopeAssessment,omitempty"`
+	UrgencyLevel       *string                 `json:"urgencyLevel,omitempty"`
+	VakmanPriceCents   int64                   `json:"vakmanPriceCents"`
+	PricingSource      string                  `json:"pricingSource"`
+	Status             string                  `json:"status"`
+	RequiresInspection bool                    `json:"requiresInspection"`
+	ExpiresAt          time.Time               `json:"expiresAt"`
+	CreatedAt          time.Time               `json:"createdAt"`
+	LeadContact        *PublicOfferLeadContact `json:"leadContact,omitempty"`
+	LineItems          []PublicOfferLineItem   `json:"lineItems,omitempty"`
+	Photos             []OfferPhotoRef         `json:"photos,omitempty"`
+}
+
+type PublicOfferLeadContact struct {
+	Name    string `json:"name"`
+	Phone   string `json:"phone,omitempty"`
+	Email   string `json:"email,omitempty"`
+	Address string `json:"address,omitempty"`
+}
+
+type PartnerOfferTermsResponse struct {
+	Content         string     `json:"content"`
+	Version         int        `json:"version"`
+	CreatedAt       *time.Time `json:"createdAt,omitempty"`
+	CreatedByUserID *uuid.UUID `json:"createdByUserId,omitempty"`
+}
+
+type PartnerOfferTermsHistoryItem struct {
+	ID              uuid.UUID  `json:"id"`
+	Content         string     `json:"content"`
+	Version         int        `json:"version"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	CreatedByUserID *uuid.UUID `json:"createdByUserId,omitempty"`
+}
+
+type PartnerOfferTermsHistoryResponse struct {
+	Items []PartnerOfferTermsHistoryItem `json:"items"`
+}
+
+type UpdatePartnerOfferTermsRequest struct {
+	Content string `json:"content" validate:"required,max=50000"`
 }
 
 type PublicOfferLineItem struct {

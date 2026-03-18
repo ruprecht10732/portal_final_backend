@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"portal_final_backend/internal/adapters/storage"
+	"portal_final_backend/internal/email"
 	identityrepo "portal_final_backend/internal/identity/repository"
 	partnersrepo "portal_final_backend/internal/partners/repository"
 	"portal_final_backend/internal/pdf"
@@ -21,6 +22,7 @@ import (
 type PartnerOfferPDFReader interface {
 	GetOfferByIDWithContext(ctx context.Context, offerID uuid.UUID, organizationID uuid.UUID) (partnersrepo.PartnerOfferWithContext, error)
 	SetOfferPDFFileKey(ctx context.Context, offerID uuid.UUID, fileKey string) error
+	GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (partnersrepo.Partner, error)
 }
 
 // PartnerOfferPDFBucketConfig is the narrow config interface for bucket names.
@@ -41,6 +43,7 @@ type PartnerOfferPDFProcessor struct {
 	orgReader OfferPDFOrgReader
 	storage   storage.StorageService
 	cfg       PartnerOfferPDFBucketConfig
+	sender    email.Sender
 }
 
 // NewPartnerOfferPDFProcessor creates a new processor.
@@ -49,12 +52,14 @@ func NewPartnerOfferPDFProcessor(
 	orgReader OfferPDFOrgReader,
 	storageSvc storage.StorageService,
 	cfg PartnerOfferPDFBucketConfig,
+	sender email.Sender,
 ) *PartnerOfferPDFProcessor {
 	return &PartnerOfferPDFProcessor{
 		repo:      repo,
 		orgReader: orgReader,
 		storage:   storageSvc,
 		cfg:       cfg,
+		sender:    sender,
 	}
 }
 
@@ -80,54 +85,7 @@ func (p *PartnerOfferPDFProcessor) GenerateAndStoreOfferPDF(ctx context.Context,
 	}
 
 	// 5. Build PDF data
-	data := pdf.OfferAcceptancePDFData{
-		OfferRef:       offer.ID.String()[:8],
-		OrgLogo:        logoBytes,
-		ServiceType:    offer.ServiceType,
-		JobSummary:     derefStr(offer.BuilderSummary),
-		LeadCity:       offer.LeadCity,
-		TotalCents:     offer.VakmanPriceCents,
-		SignatureImage: sigBytes,
-	}
-
-	// Accepted time
-	if offer.AcceptedAt != nil {
-		data.AcceptedAt = *offer.AcceptedAt
-	}
-
-	// Signer fields
-	if offer.SignerName != nil {
-		data.SignerName = *offer.SignerName
-	}
-	if offer.SignerBusinessName != nil {
-		data.SignerBusinessName = *offer.SignerBusinessName
-	}
-	if offer.SignerAddress != nil {
-		data.SignerAddress = *offer.SignerAddress
-	}
-
-	// Org info
-	if orgErr == nil {
-		data.OrganizationName = org.Name
-		data.OrgEmail = derefStr(org.Email)
-		data.OrgPhone = derefStr(org.Phone)
-		data.OrgVatNumber = derefStr(org.VatNumber)
-		data.OrgKvkNumber = derefStr(org.KvkNumber)
-		data.OrgAddressLine1 = derefStr(org.AddressLine1)
-		data.OrgPostalCode = derefStr(org.PostalCode)
-		data.OrgCity = derefStr(org.City)
-	}
-
-	// Line items
-	data.Items = make([]pdf.OfferLineItemPDF, len(offer.OfferLineItems))
-	for i, it := range offer.OfferLineItems {
-		data.Items[i] = pdf.OfferLineItemPDF{
-			Description:    it.Description,
-			Quantity:       it.Quantity,
-			UnitPriceCents: it.UnitPriceCents,
-			LineTotalCents: it.LineTotalCents,
-		}
-	}
+	data := buildOfferAcceptancePDFData(offer, org, orgErr, logoBytes, sigBytes)
 
 	// 6. Generate PDF
 	pdfBytes, err := pdf.GenerateOfferAcceptancePDF(data)
@@ -151,7 +109,102 @@ func (p *PartnerOfferPDFProcessor) GenerateAndStoreOfferPDF(ctx context.Context,
 		return "", fmt.Errorf("persist offer PDF file key: %w", err)
 	}
 
+	p.sendOfferPDFEmail(ctx, offer, tenantID, pdfBytes, fileName)
+
 	return fileKey, nil
+}
+
+func buildOfferAcceptancePDFData(
+	offer partnersrepo.PartnerOfferWithContext,
+	org identityrepo.Organization,
+	orgErr error,
+	logoBytes []byte,
+	sigBytes []byte,
+) pdf.OfferAcceptancePDFData {
+	data := pdf.OfferAcceptancePDFData{
+		OfferRef:       offer.ID.String()[:8],
+		OrgLogo:        logoBytes,
+		ServiceType:    offer.ServiceType,
+		JobSummary:     derefStr(offer.BuilderSummary),
+		LeadCity:       offer.LeadCity,
+		LeadName:       strings.TrimSpace(strings.TrimSpace(offer.LeadFirstName + " " + offer.LeadLastName)),
+		LeadPhone:      strings.TrimSpace(offer.LeadPhone),
+		LeadEmail:      strings.TrimSpace(offer.LeadEmail),
+		LeadAddress:    formatOfferLeadAddress(offer),
+		TotalCents:     offer.VakmanPriceCents,
+		SignatureImage: sigBytes,
+	}
+
+	if offer.AcceptedAt != nil {
+		data.AcceptedAt = *offer.AcceptedAt
+	}
+	if offer.SignerName != nil {
+		data.SignerName = *offer.SignerName
+	}
+	if offer.SignerBusinessName != nil {
+		data.SignerBusinessName = *offer.SignerBusinessName
+	}
+	if offer.SignerAddress != nil {
+		data.SignerAddress = *offer.SignerAddress
+	}
+	if orgErr == nil {
+		data.OrganizationName = org.Name
+		data.OrgEmail = derefStr(org.Email)
+		data.OrgPhone = derefStr(org.Phone)
+		data.OrgVatNumber = derefStr(org.VatNumber)
+		data.OrgKvkNumber = derefStr(org.KvkNumber)
+		data.OrgAddressLine1 = derefStr(org.AddressLine1)
+		data.OrgPostalCode = derefStr(org.PostalCode)
+		data.OrgCity = derefStr(org.City)
+	}
+
+	data.Items = make([]pdf.OfferLineItemPDF, len(offer.OfferLineItems))
+	for i, it := range offer.OfferLineItems {
+		data.Items[i] = pdf.OfferLineItemPDF{
+			Description:    it.Description,
+			Quantity:       it.Quantity,
+			UnitPriceCents: it.UnitPriceCents,
+			LineTotalCents: it.LineTotalCents,
+		}
+	}
+
+	return data
+}
+
+func formatOfferLeadAddress(offer partnersrepo.PartnerOfferWithContext) string {
+	streetLine := strings.TrimSpace(strings.Join([]string{offer.LeadStreet, offer.LeadHouseNumber}, " "))
+	cityLine := strings.TrimSpace(strings.Join([]string{offer.LeadZipCode, offer.LeadCity}, " "))
+	return strings.TrimSpace(strings.Join([]string{streetLine, cityLine}, ", "))
+}
+
+func (p *PartnerOfferPDFProcessor) sendOfferPDFEmail(
+	ctx context.Context,
+	offer partnersrepo.PartnerOfferWithContext,
+	tenantID uuid.UUID,
+	pdfBytes []byte,
+	fileName string,
+) {
+	if p == nil || p.sender == nil {
+		return
+	}
+
+	partner, err := p.repo.GetByID(ctx, offer.PartnerID, tenantID)
+	if err != nil {
+		slog.Warn("could not fetch partner for offer pdf email", "offerId", offer.ID, "error", err)
+		return
+	}
+	if strings.TrimSpace(partner.ContactEmail) == "" {
+		return
+	}
+
+	attachment := email.Attachment{
+		Content:  pdfBytes,
+		FileName: fileName,
+		MIMEType: "application/pdf",
+	}
+	if err := p.sender.SendPartnerOfferAcceptedConfirmationEmail(ctx, partner.ContactEmail, partner.ContactName, attachment); err != nil {
+		slog.Warn("failed to send partner offer confirmation email with pdf", "offerId", offer.ID, "partnerId", partner.ID, "error", err)
+	}
 }
 
 // downloadOrgLogo fetches the logo from MinIO, returning nil on any failure.

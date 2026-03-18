@@ -1654,23 +1654,6 @@ func (m *Module) handlePartnerOfferAccepted(ctx context.Context, e events.Partne
 		"toEmail", notificationEmail,
 	)
 
-	// 3. Send confirmation email to the vakman
-	if e.PartnerEmail != "" {
-		sender := m.resolveSender(ctx, e.OrganizationID)
-		if err := sender.SendPartnerOfferAcceptedConfirmationEmail(ctx, e.PartnerEmail, e.PartnerName); err != nil {
-			m.log.Error("failed to send partner offer accepted confirmation to vakman",
-				"offerId", e.OfferID,
-				"partnerEmail", e.PartnerEmail,
-				"error", err,
-			)
-		} else {
-			m.log.Info("partner offer accepted confirmation sent to vakman",
-				"offerId", e.OfferID,
-				"partnerEmail", e.PartnerEmail,
-			)
-		}
-	}
-
 	if e.PartnerPhone != "" && e.PartnerWhatsAppOptedIn {
 		msg := fmt.Sprintf(
 			"Bedankt %s! 🔨\n\nU heeft de klus geaccepteerd (Offer ID: %s). We hebben de klant geïnformeerd.\n\nWe sturen u zo snel mogelijk de definitieve details voor de inspectie.",

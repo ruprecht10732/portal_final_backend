@@ -30,7 +30,7 @@ type Sender interface {
 	SendQuoteAcceptedEmail(ctx context.Context, toEmail, agentName, quoteNumber, consumerName string, totalCents int64) error
 	SendQuoteAcceptedThankYouEmail(ctx context.Context, toEmail, consumerName, organizationName, quoteNumber string, attachments ...Attachment) error
 	SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail, partnerName, offerID string) error
-	SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error
+	SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string, attachments ...Attachment) error
 	SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error
 	SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error
 }
@@ -73,7 +73,7 @@ func (NoopSender) SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail, pa
 	return nil
 }
 
-func (NoopSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error {
+func (NoopSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string, attachments ...Attachment) error {
 	return nil
 }
 
@@ -281,19 +281,20 @@ func (b *BrevoSender) SendPartnerOfferAcceptedEmail(ctx context.Context, toEmail
 	return b.send(ctx, toEmail, subject, content)
 }
 
-func (b *BrevoSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string) error {
+func (b *BrevoSender) SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string, attachments ...Attachment) error {
 	subject := subjectPartnerOfferAcceptedConfirmation
 	content, err := renderEmailTemplate("partner_offer_confirmation.html", partnerOfferAcceptedConfirmationEmailData{
 		baseEmailData: baseEmailData{
 			Title:   "Acceptatie bevestigd",
 			Heading: "Acceptatie bevestigd",
 		},
-		PartnerName: partnerName,
+		PartnerName:    partnerName,
+		HasAttachments: len(attachments) > 0,
 	})
 	if err != nil {
 		return err
 	}
-	return b.send(ctx, toEmail, subject, content)
+	return b.sendWithAttachments(ctx, toEmail, subject, content, attachments...)
 }
 
 func (b *BrevoSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error {

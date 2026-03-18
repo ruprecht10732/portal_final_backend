@@ -185,9 +185,97 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 		RequiresInspection: oc.RequiresInspection,
 		ExpiresAt:          oc.ExpiresAt,
 		CreatedAt:          oc.CreatedAt,
+		LeadContact:        mapPublicOfferLeadContact(oc),
 		LineItems:          mapPublicOfferLineItems(items),
 		Photos:             mapOfferPhotos(photos),
 	}, nil
+}
+
+func (s *Service) GetPublicOfferTerms(ctx context.Context, publicToken string) (transport.PartnerOfferTermsResponse, error) {
+	oc, err := s.repo.GetOfferByToken(ctx, publicToken)
+	if err != nil {
+		return transport.PartnerOfferTermsResponse{}, err
+	}
+
+	terms, err := s.repo.GetActivePartnerOfferTerms(ctx, oc.OrganizationID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return transport.PartnerOfferTermsResponse{}, nil
+		}
+		return transport.PartnerOfferTermsResponse{}, err
+	}
+
+	return mapPartnerOfferTermsResponse(terms), nil
+}
+
+func (s *Service) GetOfferTerms(ctx context.Context, tenantID uuid.UUID) (transport.PartnerOfferTermsResponse, error) {
+	terms, err := s.repo.GetActivePartnerOfferTerms(ctx, tenantID)
+	if err != nil {
+		if apperr.Is(err, apperr.KindNotFound) {
+			return transport.PartnerOfferTermsResponse{}, nil
+		}
+		return transport.PartnerOfferTermsResponse{}, err
+	}
+	return mapPartnerOfferTermsResponse(terms), nil
+}
+
+func (s *Service) UpdateOfferTerms(ctx context.Context, tenantID, userID uuid.UUID, req transport.UpdatePartnerOfferTermsRequest) (transport.PartnerOfferTermsResponse, error) {
+	terms, err := s.repo.UpsertPartnerOfferTerms(ctx, tenantID, req.Content, userID)
+	if err != nil {
+		return transport.PartnerOfferTermsResponse{}, err
+	}
+	return mapPartnerOfferTermsResponse(terms), nil
+}
+
+func (s *Service) ListOfferTermsHistory(ctx context.Context, tenantID uuid.UUID) (transport.PartnerOfferTermsHistoryResponse, error) {
+	items, err := s.repo.ListPartnerOfferTermsHistory(ctx, tenantID)
+	if err != nil {
+		return transport.PartnerOfferTermsHistoryResponse{}, err
+	}
+	result := make([]transport.PartnerOfferTermsHistoryItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, transport.PartnerOfferTermsHistoryItem{
+			ID:              item.ID,
+			Content:         item.Content,
+			Version:         item.Version,
+			CreatedAt:       item.CreatedAt,
+			CreatedByUserID: item.CreatedByUserID,
+		})
+	}
+	return transport.PartnerOfferTermsHistoryResponse{Items: result}, nil
+}
+
+func (s *Service) IsOfferPDFReady(ctx context.Context, publicToken string) (bool, error) {
+	oc, err := s.repo.GetOfferByToken(ctx, publicToken)
+	if err != nil {
+		return false, err
+	}
+	return oc.Status == "accepted" && oc.PDFFileKey != nil && strings.TrimSpace(*oc.PDFFileKey) != "", nil
+}
+
+func (s *Service) GetOfferPDFByToken(ctx context.Context, publicToken string) (string, io.ReadCloser, error) {
+	if s.storage == nil || strings.TrimSpace(s.pdfBucket) == "" {
+		return "", nil, apperr.NotFound("offer pdf not available")
+	}
+
+	oc, err := s.repo.GetOfferByToken(ctx, publicToken)
+	if err != nil {
+		return "", nil, err
+	}
+	if oc.Status != "accepted" {
+		return "", nil, apperr.Conflict("offer pdf is only available after acceptance")
+	}
+	if oc.PDFFileKey == nil || strings.TrimSpace(*oc.PDFFileKey) == "" {
+		return "", nil, apperr.NotFound("offer pdf is not ready yet")
+	}
+
+	reader, err := s.storage.DownloadFile(ctx, s.pdfBucket, *oc.PDFFileKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("download offer pdf: %w", err)
+	}
+
+	fileName := fmt.Sprintf("offer-%s-signed.pdf", oc.ID.String()[:8])
+	return fileName, reader, nil
 }
 
 // AcceptOffer processes a vakman's acceptance, locks the job via the unique index.
@@ -371,9 +459,39 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 		RequiresInspection: oc.RequiresInspection,
 		ExpiresAt:          oc.ExpiresAt,
 		CreatedAt:          oc.CreatedAt,
+		LeadContact:        mapPublicOfferLeadContact(oc),
 		LineItems:          mapPublicOfferLineItems(items),
 		Photos:             mapOfferPhotos(photos),
 	}, nil
+}
+
+func mapPublicOfferLeadContact(offer repository.PartnerOfferWithContext) *transport.PublicOfferLeadContact {
+	if offer.Status != "accepted" {
+		return nil
+	}
+	name := strings.TrimSpace(strings.TrimSpace(offer.LeadFirstName + " " + offer.LeadLastName))
+	addressParts := []string{strings.TrimSpace(offer.LeadStreet), strings.TrimSpace(offer.LeadHouseNumber)}
+	streetLine := strings.TrimSpace(strings.Join(addressParts, " "))
+	cityLine := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(offer.LeadZipCode), strings.TrimSpace(offer.LeadCity)}, " "))
+	address := strings.TrimSpace(strings.Join([]string{streetLine, cityLine}, ", "))
+	if name == "" && strings.TrimSpace(offer.LeadPhone) == "" && strings.TrimSpace(offer.LeadEmail) == "" && address == "" {
+		return nil
+	}
+	return &transport.PublicOfferLeadContact{
+		Name:    name,
+		Phone:   strings.TrimSpace(offer.LeadPhone),
+		Email:   strings.TrimSpace(offer.LeadEmail),
+		Address: address,
+	}
+}
+
+func mapPartnerOfferTermsResponse(item repository.PartnerOfferTerms) transport.PartnerOfferTermsResponse {
+	return transport.PartnerOfferTermsResponse{
+		Content:         item.Content,
+		Version:         item.Version,
+		CreatedAt:       &item.CreatedAt,
+		CreatedByUserID: item.CreatedByUserID,
+	}
 }
 
 func (s *Service) GetOfferPhotoByToken(ctx context.Context, publicToken string, attachmentID uuid.UUID) (repository.PhotoAttachment, io.ReadCloser, error) {
