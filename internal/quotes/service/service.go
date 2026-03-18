@@ -53,11 +53,15 @@ type TimelineEventParams struct {
 	Visibility     string
 }
 
-// QuoteContactData holds the consumer/organization/agent info needed for quote emails.
+// QuoteContactData holds the consumer/organization/agent info needed for quote workflows.
 type QuoteContactData struct {
 	ConsumerEmail    string
 	ConsumerName     string
 	ConsumerPhone    string
+	ConsumerAddress1 string
+	ConsumerAddress2 string
+	ConsumerPostal   string
+	ConsumerCity     string
 	OrganizationName string
 	AgentEmail       string
 	AgentName        string
@@ -280,6 +284,6 @@ func (s *Service) SetGenerateQuoteJobQueue(queue GenerateQuoteJobQueue) { s.jobQ
 func (s *Service) SetHumanFeedbackMemoryQueue(queue HumanFeedbackMemoryQueue) {
 	s.feedbackQueue = queue
 }
-func (s *Service) SetLogoPresigner(lp LogoPresigner) { s.logoPresigner = lp }
-func (s *Service) SetLeadTransferCreator(creator LeadTransferCreator) { s.leadCreator = creator }
+func (s *Service) SetLogoPresigner(lp LogoPresigner)                     { s.logoPresigner = lp }
+func (s *Service) SetLeadTransferCreator(creator LeadTransferCreator)    { s.leadCreator = creator }
 func (s *Service) SetLeadTransferRepository(repo LeadTransferRepository) { s.leadRepo = repo }

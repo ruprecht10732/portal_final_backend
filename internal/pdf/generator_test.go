@@ -1,7 +1,10 @@
 package pdf
 
 import (
+	"html"
+	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -61,5 +64,40 @@ func TestDedupeAttachmentPDFsPreservesFirstOccurrenceAndOrder(t *testing.T) {
 
 	if string(actual[1].PDFBytes) != differentPDFBytes {
 		t.Fatalf("second attachment bytes changed unexpectedly")
+	}
+}
+
+func TestQuotePDFTemplatesIncludeCustomerContactDetails(t *testing.T) {
+	data := QuotePDFData{
+		QuoteNumber:          "OFF-2026-0042",
+		Status:               "Sent",
+		CreatedAt:            time.Date(2026, time.March, 18, 10, 30, 0, 0, time.UTC),
+		OrganizationName:     "Salestainable",
+		CustomerName:         "Robin Janssen",
+		CustomerEmail:        "robin@example.com",
+		CustomerPhone:        "+31612345678",
+		CustomerAddressLine1: "Voorbeeldstraat 12",
+		CustomerPostalCode:   "1234AB",
+		CustomerCity:         "Amsterdam",
+		OrgEmail:             "info@example.com",
+		OrgPhone:             "+31101234567",
+	}
+
+	coverHTML, err := renderTemplate("templates/cover.html", buildCoverVM(data, "", ""))
+	if err != nil {
+		t.Fatalf("render cover template: %v", err)
+	}
+	quoteHTML, err := renderTemplate("templates/quote.html", buildQuoteVM(data, "", ""))
+	if err != nil {
+		t.Fatalf("render quote template: %v", err)
+	}
+
+	for _, renderedHTML := range []string{string(coverHTML), string(quoteHTML)} {
+		decoded := html.UnescapeString(renderedHTML)
+		for _, expected := range []string{"Voorbeeldstraat 12", "1234AB Amsterdam", "+31612345678", "robin@example.com"} {
+			if !strings.Contains(decoded, expected) {
+				t.Fatalf("template output missing %q: %s", expected, renderedHTML)
+			}
+		}
 	}
 }

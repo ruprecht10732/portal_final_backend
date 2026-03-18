@@ -84,13 +84,27 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		return "", nil, fmt.Errorf("fetch quote items for PDF: %w", err)
 	}
 
-	// 2. Fetch full organization profile
+	// 2. Resolve contact data and override names when available
+	var contactData *service.QuoteContactData
+	if p.contactReader != nil {
+		if resolved, contactErr := p.contactReader.GetQuoteContactData(ctx, quote.LeadID, organizationID); contactErr == nil {
+			contactData = &resolved
+			if resolved.OrganizationName != "" {
+				orgName = resolved.OrganizationName
+			}
+			if resolved.ConsumerName != "" {
+				customerName = resolved.ConsumerName
+			}
+		}
+	}
+
+	// 3. Fetch full organization profile
 	org, orgErr := p.orgReader.GetOrganization(ctx, organizationID)
 
-	// 3. Calculate totals + VAT breakdown using the service calculator
+	// 4. Calculate totals + VAT breakdown using the service calculator
 	calc := service.CalculateQuote(buildCalcRequest(items, quote))
 
-	// 4. Build PDF data
+	// 5. Build PDF data
 	bc := pdfBuildContext{
 		org:            org,
 		orgErr:         orgErr,
@@ -98,6 +112,7 @@ func (p *QuoteAcceptanceProcessor) GenerateAndStorePDF(
 		orgName:        orgName,
 		customerName:   customerName,
 		signatureName:  signatureName,
+		contactData:    contactData,
 	}
 	pdfData := p.buildPDFData(ctx, quote, items, calc, bc)
 
@@ -140,6 +155,7 @@ type pdfBuildContext struct {
 	orgName        string
 	customerName   string
 	signatureName  string
+	contactData    *service.QuoteContactData
 }
 
 // buildPDFData assembles the full QuotePDFData struct from all gathered data.
@@ -181,6 +197,15 @@ func (p *QuoteAcceptanceProcessor) buildPDFData(
 		PaymentDays:         7,
 		QuoteValidDays:      14,
 		FinancingDisclaimer: quote.FinancingDisclaimer,
+	}
+
+	if bc.contactData != nil {
+		data.CustomerEmail = bc.contactData.ConsumerEmail
+		data.CustomerPhone = bc.contactData.ConsumerPhone
+		data.CustomerAddressLine1 = bc.contactData.ConsumerAddress1
+		data.CustomerAddressLine2 = bc.contactData.ConsumerAddress2
+		data.CustomerPostalCode = bc.contactData.ConsumerPostal
+		data.CustomerCity = bc.contactData.ConsumerCity
 	}
 
 	if p.termsResolver != nil {
@@ -459,7 +484,8 @@ func (p *QuoteAcceptanceProcessor) RegeneratePDF(
 	ctx context.Context,
 	quoteID, organizationID uuid.UUID,
 ) (string, []byte, error) {
-	// Fetch quote to get LeadID & SignatureName
+	// Fetch quote to get SignatureName for the initial call; GenerateAndStorePDF
+	// will re-fetch the quote and resolve all contact/org names internally.
 	quote, err := p.repo.GetByID(ctx, quoteID, organizationID)
 	if err != nil {
 		return "", nil, fmt.Errorf("fetch quote for PDF regeneration: %w", err)
@@ -470,28 +496,7 @@ func (p *QuoteAcceptanceProcessor) RegeneratePDF(
 		signatureName = *quote.SignatureName
 	}
 
-	// Resolve org name and customer name from the lead contact data
-	orgName := ""
-	customerName := signatureName // fallback to signature name
-	if p.contactReader != nil {
-		contactData, contactErr := p.contactReader.GetQuoteContactData(ctx, quote.LeadID, organizationID)
-		if contactErr == nil {
-			orgName = contactData.OrganizationName
-			if contactData.ConsumerName != "" {
-				customerName = contactData.ConsumerName
-			}
-		}
-	}
-
-	// Fallback: get org name from org reader if contact reader didn't provide it
-	if orgName == "" {
-		org, orgErr := p.orgReader.GetOrganization(ctx, organizationID)
-		if orgErr == nil {
-			orgName = org.Name
-		}
-	}
-
-	return p.GenerateAndStorePDF(ctx, quoteID, organizationID, orgName, customerName, signatureName)
+	return p.GenerateAndStorePDF(ctx, quoteID, organizationID, "", signatureName, signatureName)
 }
 
 // decodeSignatureDataURL strips the "data:image/png;base64," prefix from

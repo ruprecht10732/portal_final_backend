@@ -332,6 +332,12 @@
             <div class="col">
                 <span class="label">Voor</span>
                 <div class="value-primary">{{.CustomerName}}</div>
+                <div class="value-details">
+                    {{if .CustomerAddressLine1}}{{.CustomerAddressLine1}}<br>{{end}}
+                    {{if or .CustomerPostalCode .CustomerCity}}{{.CustomerPostalCode}} {{.CustomerCity}}<br>{{end}}
+                    {{if .CustomerPhone}}{{.CustomerPhone}}<br>{{end}}
+                    {{if .CustomerEmail}}{{.CustomerEmail}}{{end}}
+                </div>
             </div>
 
             <div class="col col-right">

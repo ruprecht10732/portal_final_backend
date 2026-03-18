@@ -37,7 +37,7 @@ func NewQuotesContactReader(leads leadsrepo.LeadReader, orgs OrgNameReader, user
 	return &QuotesContactReader{leads: leads, orgs: orgs, users: users}
 }
 
-// GetQuoteContactData retrieves consumer email, consumer name, organization name,
+// GetQuoteContactData retrieves consumer contact details, organization name,
 // and the assigned agent's email and name.
 func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (quotesvc.QuoteContactData, error) {
 	lead, err := a.leads.GetByID(ctx, leadID, organizationID)
@@ -45,7 +45,7 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 		return quotesvc.QuoteContactData{}, fmt.Errorf("look up lead for quote email: %w", err)
 	}
 
-	consumerEmail, consumerName, consumerPhone := extractConsumerContact(lead)
+	consumerEmail, consumerName, consumerPhone, consumerAddress1, consumerAddress2, consumerPostal, consumerCity := extractConsumerContact(lead)
 
 	org, err := a.orgs.GetOrganization(ctx, organizationID)
 	if err != nil {
@@ -58,6 +58,10 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 		ConsumerEmail:    consumerEmail,
 		ConsumerName:     consumerName,
 		ConsumerPhone:    consumerPhone,
+		ConsumerAddress1: consumerAddress1,
+		ConsumerAddress2: consumerAddress2,
+		ConsumerPostal:   consumerPostal,
+		ConsumerCity:     consumerCity,
 		OrganizationName: org.Name,
 		LogoFileKey:      org.LogoFileKey,
 		AgentEmail:       agentEmail,
@@ -65,7 +69,7 @@ func (a *QuotesContactReader) GetQuoteContactData(ctx context.Context, leadID uu
 	}, nil
 }
 
-func extractConsumerContact(lead leadsrepo.Lead) (string, string, string) {
+func extractConsumerContact(lead leadsrepo.Lead) (string, string, string, string, string, string, string) {
 	consumerEmail := ""
 	if lead.ConsumerEmail != nil {
 		consumerEmail = *lead.ConsumerEmail
@@ -76,7 +80,12 @@ func extractConsumerContact(lead leadsrepo.Lead) (string, string, string) {
 		consumerName = lead.ConsumerFirstName
 	}
 
-	return consumerEmail, consumerName, lead.ConsumerPhone
+	consumerAddress1 := strings.TrimSpace(strings.TrimSpace(lead.AddressStreet) + " " + strings.TrimSpace(lead.AddressHouseNumber))
+	if consumerAddress1 == "" {
+		consumerAddress1 = strings.TrimSpace(lead.AddressStreet)
+	}
+
+	return consumerEmail, consumerName, lead.ConsumerPhone, consumerAddress1, "", strings.TrimSpace(lead.AddressZipCode), strings.TrimSpace(lead.AddressCity)
 }
 
 func (a *QuotesContactReader) lookupAgentContact(ctx context.Context, agentID *uuid.UUID) (string, string) {

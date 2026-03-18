@@ -70,7 +70,13 @@ type QuotePDFData struct {
 	OrgLogo          []byte // raw image bytes (PNG or JPEG)
 
 	// Customer
-	CustomerName string
+	CustomerName         string
+	CustomerEmail        string
+	CustomerPhone        string
+	CustomerAddressLine1 string
+	CustomerAddressLine2 string
+	CustomerPostalCode   string
+	CustomerCity         string
 
 	// Signature (populated when accepted)
 	SignatureName  *string
@@ -112,51 +118,63 @@ type QuoteURLEntry struct {
 // ── Template view models ────────────────────────────────────────────────
 
 type coverViewModel struct {
-	LogoBase64          string
-	LogoMimeType        string
-	OrganizationName    string
-	CustomerName        string
-	QuoteNumber         string
-	QuoteSequenceNumber string
-	CreatedAtFormatted  string
-	ValidUntilFormatted string
-	OrgAddressLine1     string
-	OrgPostalCode       string
-	OrgCity             string
-	OrgPhone            string
-	OrgEmail            string
+	LogoBase64           string
+	LogoMimeType         string
+	OrganizationName     string
+	CustomerName         string
+	CustomerEmail        string
+	CustomerPhone        string
+	CustomerAddressLine1 string
+	CustomerAddressLine2 string
+	CustomerPostalCode   string
+	CustomerCity         string
+	QuoteNumber          string
+	QuoteSequenceNumber  string
+	CreatedAtFormatted   string
+	ValidUntilFormatted  string
+	OrgAddressLine1      string
+	OrgPostalCode        string
+	OrgCity              string
+	OrgPhone             string
+	OrgEmail             string
 }
 
 type quoteViewModel struct {
-	LogoBase64          string
-	LogoMimeType        string
-	OrganizationName    string
-	CustomerName        string
-	QuoteNumber         string
-	CreatedAtFormatted  string
-	ValidUntilFormatted string
-	Status              string
-	StatusLabel         string
-	StatusClass         string
-	FinancingDisclaimer bool
-	OrgAddressLine1     string
-	OrgAddressLine2     string
-	OrgPostalCode       string
-	OrgCity             string
-	OrgEmail            string
-	OrgPhone            string
-	OrgKvkNumber        string
-	OrgVatNumber        string
-	AcceptedAtFormatted string
-	Items               []itemViewModel
-	SubtotalFormatted   string
-	HasDiscount         bool
-	DiscountFormatted   string
-	VatBreakdown        []vatLineViewModel
-	TotalFormatted      string
-	Notes               template.HTML
-	PaymentDays         int
-	QuoteValidDays      int
+	LogoBase64           string
+	LogoMimeType         string
+	OrganizationName     string
+	CustomerName         string
+	CustomerEmail        string
+	CustomerPhone        string
+	CustomerAddressLine1 string
+	CustomerAddressLine2 string
+	CustomerPostalCode   string
+	CustomerCity         string
+	QuoteNumber          string
+	CreatedAtFormatted   string
+	ValidUntilFormatted  string
+	Status               string
+	StatusLabel          string
+	StatusClass          string
+	FinancingDisclaimer  bool
+	OrgAddressLine1      string
+	OrgAddressLine2      string
+	OrgPostalCode        string
+	OrgCity              string
+	OrgEmail             string
+	OrgPhone             string
+	OrgKvkNumber         string
+	OrgVatNumber         string
+	AcceptedAtFormatted  string
+	Items                []itemViewModel
+	SubtotalFormatted    string
+	HasDiscount          bool
+	DiscountFormatted    string
+	VatBreakdown         []vatLineViewModel
+	TotalFormatted       string
+	Notes                template.HTML
+	PaymentDays          int
+	QuoteValidDays       int
 }
 
 type itemViewModel struct {
@@ -330,17 +348,23 @@ func addSignaturePageIfNeeded(mergeMap map[string][]byte, data QuotePDFData, log
 
 func buildCoverVM(data QuotePDFData, logoB64, logoMime string) coverViewModel {
 	vm := coverViewModel{
-		LogoBase64:         logoB64,
-		LogoMimeType:       logoMime,
-		OrganizationName:   clampPDFText(data.OrganizationName, maxPDFShortText),
-		CustomerName:       clampPDFText(data.CustomerName, maxPDFShortText),
-		QuoteNumber:        clampPDFText(data.QuoteNumber, maxPDFShortText),
-		CreatedAtFormatted: data.CreatedAt.Format(dateFormatDMY),
-		OrgAddressLine1:    clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
-		OrgPostalCode:      clampPDFText(data.OrgPostalCode, maxPDFShortText),
-		OrgCity:            clampPDFText(data.OrgCity, maxPDFShortText),
-		OrgPhone:           clampPDFText(data.OrgPhone, maxPDFShortText),
-		OrgEmail:           clampPDFText(data.OrgEmail, maxPDFShortText),
+		LogoBase64:           logoB64,
+		LogoMimeType:         logoMime,
+		OrganizationName:     clampPDFText(data.OrganizationName, maxPDFShortText),
+		CustomerName:         clampPDFText(data.CustomerName, maxPDFShortText),
+		CustomerEmail:        clampPDFText(data.CustomerEmail, maxPDFShortText),
+		CustomerPhone:        clampPDFText(data.CustomerPhone, maxPDFShortText),
+		CustomerAddressLine1: clampPDFText(data.CustomerAddressLine1, maxPDFMediumText),
+		CustomerAddressLine2: clampPDFText(data.CustomerAddressLine2, maxPDFMediumText),
+		CustomerPostalCode:   clampPDFText(data.CustomerPostalCode, maxPDFShortText),
+		CustomerCity:         clampPDFText(data.CustomerCity, maxPDFShortText),
+		QuoteNumber:          clampPDFText(data.QuoteNumber, maxPDFShortText),
+		CreatedAtFormatted:   data.CreatedAt.Format(dateFormatDMY),
+		OrgAddressLine1:      clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
+		OrgPostalCode:        clampPDFText(data.OrgPostalCode, maxPDFShortText),
+		OrgCity:              clampPDFText(data.OrgCity, maxPDFShortText),
+		OrgPhone:             clampPDFText(data.OrgPhone, maxPDFShortText),
+		OrgEmail:             clampPDFText(data.OrgEmail, maxPDFShortText),
 	}
 	if data.ValidUntil != nil {
 		vm.ValidUntilFormatted = data.ValidUntil.Format(dateFormatDMY)
@@ -351,28 +375,34 @@ func buildCoverVM(data QuotePDFData, logoB64, logoMime string) coverViewModel {
 
 func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 	vm := quoteViewModel{
-		LogoBase64:          logoB64,
-		LogoMimeType:        logoMime,
-		OrganizationName:    clampPDFText(data.OrganizationName, maxPDFShortText),
-		CustomerName:        clampPDFText(data.CustomerName, maxPDFShortText),
-		QuoteNumber:         clampPDFText(data.QuoteNumber, maxPDFShortText),
-		CreatedAtFormatted:  data.CreatedAt.Format(dateFormatDMY),
-		Status:              data.Status,
-		StatusLabel:         translateStatus(data.Status),
-		StatusClass:         statusCSSClass(data.Status),
-		FinancingDisclaimer: data.FinancingDisclaimer,
-		OrgAddressLine1:     clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
-		OrgAddressLine2:     clampPDFText(data.OrgAddressLine2, maxPDFMediumText),
-		OrgPostalCode:       clampPDFText(data.OrgPostalCode, maxPDFShortText),
-		OrgCity:             clampPDFText(data.OrgCity, maxPDFShortText),
-		OrgEmail:            clampPDFText(data.OrgEmail, maxPDFShortText),
-		OrgPhone:            clampPDFText(data.OrgPhone, maxPDFShortText),
-		OrgKvkNumber:        clampPDFText(data.OrgKvkNumber, maxPDFShortText),
-		OrgVatNumber:        clampPDFText(data.OrgVatNumber, maxPDFShortText),
-		SubtotalFormatted:   formatCurrency(data.SubtotalCents),
-		HasDiscount:         data.DiscountAmount > 0,
-		DiscountFormatted:   formatCurrency(data.DiscountAmount),
-		TotalFormatted:      formatCurrency(data.TotalCents),
+		LogoBase64:           logoB64,
+		LogoMimeType:         logoMime,
+		OrganizationName:     clampPDFText(data.OrganizationName, maxPDFShortText),
+		CustomerName:         clampPDFText(data.CustomerName, maxPDFShortText),
+		CustomerEmail:        clampPDFText(data.CustomerEmail, maxPDFShortText),
+		CustomerPhone:        clampPDFText(data.CustomerPhone, maxPDFShortText),
+		CustomerAddressLine1: clampPDFText(data.CustomerAddressLine1, maxPDFMediumText),
+		CustomerAddressLine2: clampPDFText(data.CustomerAddressLine2, maxPDFMediumText),
+		CustomerPostalCode:   clampPDFText(data.CustomerPostalCode, maxPDFShortText),
+		CustomerCity:         clampPDFText(data.CustomerCity, maxPDFShortText),
+		QuoteNumber:          clampPDFText(data.QuoteNumber, maxPDFShortText),
+		CreatedAtFormatted:   data.CreatedAt.Format(dateFormatDMY),
+		Status:               data.Status,
+		StatusLabel:          translateStatus(data.Status),
+		StatusClass:          statusCSSClass(data.Status),
+		FinancingDisclaimer:  data.FinancingDisclaimer,
+		OrgAddressLine1:      clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
+		OrgAddressLine2:      clampPDFText(data.OrgAddressLine2, maxPDFMediumText),
+		OrgPostalCode:        clampPDFText(data.OrgPostalCode, maxPDFShortText),
+		OrgCity:              clampPDFText(data.OrgCity, maxPDFShortText),
+		OrgEmail:             clampPDFText(data.OrgEmail, maxPDFShortText),
+		OrgPhone:             clampPDFText(data.OrgPhone, maxPDFShortText),
+		OrgKvkNumber:         clampPDFText(data.OrgKvkNumber, maxPDFShortText),
+		OrgVatNumber:         clampPDFText(data.OrgVatNumber, maxPDFShortText),
+		SubtotalFormatted:    formatCurrency(data.SubtotalCents),
+		HasDiscount:          data.DiscountAmount > 0,
+		DiscountFormatted:    formatCurrency(data.DiscountAmount),
+		TotalFormatted:       formatCurrency(data.TotalCents),
 	}
 	if data.ValidUntil != nil {
 		vm.ValidUntilFormatted = data.ValidUntil.Format(dateFormatDMY)

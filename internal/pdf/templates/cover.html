@@ -207,6 +207,22 @@
             <div class="client-block">
                 <span class="label-gold">Exclusief voor</span>
                 <div class="client-name">{{.CustomerName}}</div>
+                <div class="meta-grid" style="margin-top: 18px; width: 100%;">
+                    <div class="meta-item">
+                        <span class="meta-label">Adres</span>
+                        <span class="meta-val">
+                            {{if .CustomerAddressLine1}}{{.CustomerAddressLine1}}{{end}}<br>
+                            {{if or .CustomerPostalCode .CustomerCity}}{{.CustomerPostalCode}} {{.CustomerCity}}{{end}}
+                        </span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Contact</span>
+                        <span class="meta-val">
+                            {{if .CustomerPhone}}{{.CustomerPhone}}<br>{{end}}
+                            {{if .CustomerEmail}}{{.CustomerEmail}}{{end}}
+                        </span>
+                    </div>
+                </div>
             </div>
 
             <div class="meta-grid">
