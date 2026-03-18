@@ -68,6 +68,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/offers/:offerId", h.DeleteOffer)
 	rg.GET("/offers/:offerId/detail", h.GetOfferDetail)
 	rg.GET("/offers/:offerId/pdf", h.GetOfferPDF)
+	rg.POST("/offers/:offerId/resend", h.ResendOffer)
 	rg.POST("/offers/:offerId/pdf/regenerate", h.RegenerateOfferPDF)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 	rg.GET("/offers/:offerId/photos/:attachmentId", h.PreviewOfferPhoto)
@@ -660,6 +661,29 @@ func (h *Handler) GetOfferPDF(c *gin.Context) {
 	defer closeQuietly(reader)
 
 	streamDownload(c, "application/pdf", fileName, reader)
+}
+
+func (h *Handler) ResendOffer(c *gin.Context) {
+	offerID, err := uuid.Parse(c.Param("offerId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	if err := h.svc.ResendOffer(c.Request.Context(), tenantID, offerID); httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "offer resent"})
 }
 
 func (h *Handler) RegenerateOfferPDF(c *gin.Context) {

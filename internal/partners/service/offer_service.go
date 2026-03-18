@@ -495,6 +495,47 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 	}, nil
 }
 
+func (s *Service) ResendOffer(ctx context.Context, tenantID, offerID uuid.UUID) error {
+	oc, err := s.repo.GetOfferByIDWithContext(ctx, offerID, tenantID)
+	if err != nil {
+		return err
+	}
+
+	status := strings.ToLower(strings.TrimSpace(oc.Status))
+	if status != "pending" && status != "sent" {
+		return apperr.Conflict("offer cannot be resent").WithDetails(map[string]any{"status": oc.Status})
+	}
+	if time.Now().After(oc.ExpiresAt) {
+		return apperr.Gone("this offer has expired")
+	}
+
+	partner, err := s.repo.GetByID(ctx, oc.PartnerID, tenantID)
+	if err != nil {
+		return err
+	}
+
+	leadID, err := s.repo.GetLeadIDForService(ctx, oc.LeadServiceID, tenantID)
+	if err != nil {
+		return err
+	}
+
+	organizationName, _ := s.repo.GetOrganizationName(ctx, tenantID)
+
+	s.publishOfferCreated(ctx, offerCreatedParams{
+		offerID:       oc.ID,
+		tenantID:      tenantID,
+		orgName:       organizationName,
+		partnerID:     oc.PartnerID,
+		leadServiceID: oc.LeadServiceID,
+		leadID:        leadID,
+		vakmanPrice:   oc.VakmanPriceCents,
+		rawToken:      oc.PublicToken,
+		partner:       partner,
+	})
+
+	return nil
+}
+
 func mapPublicOfferLeadContact(offer repository.PartnerOfferWithContext) *transport.PublicOfferLeadContact {
 	if offer.Status != "accepted" {
 		return nil
