@@ -33,6 +33,7 @@ import (
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/partners"
+	partnersrepo "portal_final_backend/internal/partners/repository"
 	partnersvc "portal_final_backend/internal/partners/service"
 	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
@@ -416,6 +417,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
 	partnersModule.Service().SetAttachmentsBucket(cfg.GetMinioBucketLeadServiceAttachments())
 	partnersModule.Service().SetPDFBucket(cfg.GetMinioBucketQuotePDFs())
+	partnersOfferPDFProcessor := adapters.NewPartnerOfferPDFProcessor(partnersrepo.New(pool), identityModule.Service(), storageSvc, cfg, sender)
+	partnersModule.SetOfferPDFRegenerator(partnersOfferPDFProcessor)
 	partnersModule.Service().SetOrganizationSettingsReader(func(ctx context.Context, organizationID uuid.UUID) (partnersvc.OrganizationOfferSettings, error) {
 		settings, err := identityModule.Service().GetOrganizationSettings(ctx, organizationID)
 		if err != nil {

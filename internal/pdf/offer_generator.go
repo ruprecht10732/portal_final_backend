@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html/template"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -35,8 +37,10 @@ type OfferAcceptancePDFData struct {
 	LeadAddress string
 
 	// Line items
-	Items      []OfferLineItemPDF
-	TotalCents int64
+	Items        []OfferLineItemPDF
+	TotalCents   int64
+	Photos       []OfferPhotoPDF
+	TermsContent string
 
 	// Signer (vakman / partner who accepted)
 	SignerName         string
@@ -53,6 +57,12 @@ type OfferLineItemPDF struct {
 	Quantity       string
 	UnitPriceCents int64
 	LineTotalCents int64
+}
+
+type OfferPhotoPDF struct {
+	FileName    string
+	ContentType string
+	Bytes       []byte
 }
 
 // GenerateOfferAcceptancePDF produces a signed PDF confirming acceptance of a partner offer.
@@ -92,6 +102,9 @@ func GenerateOfferAcceptancePDF(data OfferAcceptancePDFData) ([]byte, error) {
 		LeadEmail:           data.LeadEmail,
 		LeadAddress:         data.LeadAddress,
 		TotalFormatted:      formatCurrency(data.TotalCents),
+		Photos:              buildOfferPhotoVMs(data.Photos),
+		TermsContent:        template.HTML(formatOfferTermsHTML(data.TermsContent)), //nolint:gosec // sanitized plain-text formatting
+		HasTerms:            data.TermsContent != "",
 		SignerName:          data.SignerName,
 		SignerBusinessName:  data.SignerBusinessName,
 		SignerAddress:       data.SignerAddress,
@@ -138,6 +151,9 @@ type offerAcceptanceViewModel struct {
 	LeadAddress         string
 	Items               []offerItemViewModel
 	TotalFormatted      string
+	Photos              []offerPhotoViewModel
+	TermsContent        template.HTML
+	HasTerms            bool
 	SignerName          string
 	SignerBusinessName  string
 	SignerAddress       string
@@ -152,6 +168,11 @@ type offerItemViewModel struct {
 	LineTotalFormatted string
 }
 
+type offerPhotoViewModel struct {
+	FileName string
+	DataURL  string
+}
+
 func buildOfferItemVMs(items []OfferLineItemPDF) []offerItemViewModel {
 	vms := make([]offerItemViewModel, len(items))
 	for i, it := range items {
@@ -163,4 +184,34 @@ func buildOfferItemVMs(items []OfferLineItemPDF) []offerItemViewModel {
 		}
 	}
 	return vms
+}
+
+func buildOfferPhotoVMs(items []OfferPhotoPDF) []offerPhotoViewModel {
+	vms := make([]offerPhotoViewModel, 0, len(items))
+	for _, item := range items {
+		if len(item.Bytes) == 0 {
+			continue
+		}
+		mime := item.ContentType
+		if mime == "" {
+			mime = http.DetectContentType(item.Bytes)
+		}
+		vms = append(vms, offerPhotoViewModel{
+			FileName: item.FileName,
+			DataURL:  fmt.Sprintf("data:%s;base64,%s", mime, base64.StdEncoding.EncodeToString(item.Bytes)),
+		})
+	}
+	return vms
+}
+
+func formatOfferTermsHTML(source string) string {
+	trimmed := clampPDFText(source, maxPDFLongText*4)
+	if trimmed == "" {
+		return ""
+	}
+	escaped := template.HTMLEscapeString(trimmed)
+	escaped = strings.ReplaceAll(escaped, "\r\n", "\n")
+	escaped = strings.ReplaceAll(escaped, "\r", "\n")
+	escaped = strings.ReplaceAll(escaped, "\n", "<br>")
+	return escaped
 }

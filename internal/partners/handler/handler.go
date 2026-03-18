@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"portal_final_backend/internal/partners/service"
@@ -19,13 +20,22 @@ const (
 
 // Handler handles HTTP requests for partners.
 type Handler struct {
-	svc *service.Service
-	val *validator.Validator
+	svc    *service.Service
+	val    *validator.Validator
+	pdfGen OfferPDFRegenerator
+}
+
+type OfferPDFRegenerator interface {
+	RegeneratePDF(ctx context.Context, offerID, tenantID uuid.UUID) (string, []byte, error)
 }
 
 // New creates a new partners handler.
 func New(svc *service.Service, val *validator.Validator) *Handler {
 	return &Handler{svc: svc, val: val}
+}
+
+func (h *Handler) SetOfferPDFRegenerator(pdfGen OfferPDFRegenerator) {
+	h.pdfGen = pdfGen
 }
 
 // RegisterRoutes registers partner routes.
@@ -58,6 +68,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/offers/:offerId", h.DeleteOffer)
 	rg.GET("/offers/:offerId/detail", h.GetOfferDetail)
 	rg.GET("/offers/:offerId/pdf", h.GetOfferPDF)
+	rg.POST("/offers/:offerId/pdf/regenerate", h.RegenerateOfferPDF)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 	rg.GET("/offers/:offerId/photos/:attachmentId", h.PreviewOfferPhoto)
 	rg.GET("/offer-terms", h.GetOfferTerms)
@@ -649,6 +660,36 @@ func (h *Handler) GetOfferPDF(c *gin.Context) {
 	defer closeQuietly(reader)
 
 	streamDownload(c, "application/pdf", fileName, reader)
+}
+
+func (h *Handler) RegenerateOfferPDF(c *gin.Context) {
+	offerID, err := uuid.Parse(c.Param("offerId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if h.pdfGen == nil {
+		httpkit.Error(c, http.StatusServiceUnavailable, "offer pdf generator is unavailable", nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	if _, _, err := h.pdfGen.RegeneratePDF(c.Request.Context(), offerID, tenantID); err != nil {
+		if httpkit.HandleError(c, err) {
+			return
+		}
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "offer pdf regenerated"})
 }
 
 func (h *Handler) PreviewOfferPhoto(c *gin.Context) {

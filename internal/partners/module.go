@@ -46,6 +46,10 @@ func (m *Module) Service() *service.Service {
 	return m.service
 }
 
+func (m *Module) SetOfferPDFRegenerator(pdfGen handler.OfferPDFRegenerator) {
+	m.handler.SetOfferPDFRegenerator(pdfGen)
+}
+
 // RegisterRoutes mounts partner routes on the provided router context.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	partnersGroup := ctx.Protected.Group("/partners")

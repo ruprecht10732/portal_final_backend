@@ -282,6 +282,43 @@
             font-weight: 600;
             color: #1C1917;
         }
+
+        .photo-page {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            min-height: calc(100vh - 120px);
+        }
+
+        .photo-frame {
+            flex: 1;
+            border: 1px solid #E7E5E4;
+            background: #FAFAF9;
+            padding: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .photo-frame img {
+            max-width: 100%;
+            max-height: 620px;
+            object-fit: contain;
+        }
+
+        .photo-caption {
+            font-size: 8pt;
+            color: #57534E;
+        }
+
+        .terms-body {
+            border: 1px solid #E7E5E4;
+            background: #FAFAF9;
+            padding: 18px;
+            font-size: 8pt;
+            line-height: 1.7;
+            color: #44403C;
+        }
     </style>
 </head>
 <body>
@@ -458,5 +495,66 @@
         <span>Ref: {{.OfferRef}} &bull; {{.AcceptedAtFormatted}}</span>
     </div>
 </div>
+
+{{range .Photos}}
+<div class="container page-break">
+    <div class="header">
+        <div class="logo-box">
+            {{if $.LogoBase64}}
+                <img src="data:{{$.LogoMimeType}};base64,{{$.LogoBase64}}" alt="{{$.OrganizationName}}">
+            {{else}}
+                <span class="fallback">{{$.OrganizationName}}</span>
+            {{end}}
+        </div>
+        <div class="doc-title">
+            <h1>Foto</h1>
+            <div class="subtitle">Bijlage bij werkaanbod</div>
+        </div>
+    </div>
+
+    <div class="photo-page">
+        <div>
+            <h2 class="section-heading">Leadfoto</h2>
+            <div class="photo-caption">{{if .FileName}}{{.FileName}}{{else}}Foto{{end}}</div>
+        </div>
+        <div class="photo-frame">
+            <img src="{{.DataURL}}" alt="{{.FileName}}">
+        </div>
+    </div>
+
+    <div class="doc-footer">
+        <span>{{$.OrganizationName}}</span>
+        <span>Ref: {{$.OfferRef}} &bull; {{$.AcceptedAtFormatted}}</span>
+    </div>
+</div>
+{{end}}
+
+{{if .HasTerms}}
+<div class="container page-break">
+    <div class="header">
+        <div class="logo-box">
+            {{if .LogoBase64}}
+                <img src="data:{{.LogoMimeType}};base64,{{.LogoBase64}}" alt="{{.OrganizationName}}">
+            {{else}}
+                <span class="fallback">{{.OrganizationName}}</span>
+            {{end}}
+        </div>
+        <div class="doc-title">
+            <h1>Voorwaarden</h1>
+            <div class="subtitle">Algemene voorwaarden</div>
+        </div>
+    </div>
+
+    <div class="job-context">
+        <h2 class="section-heading">Voorwaarden en afspraken</h2>
+        <div class="terms-body">{{.TermsContent}}</div>
+    </div>
+
+    <div class="doc-footer">
+        <span>{{.OrganizationName}}</span>
+        <span>Ref: {{.OfferRef}} &bull; {{.AcceptedAtFormatted}}</span>
+    </div>
+</div>
+{{end}}
 </body>
 </html>
