@@ -28,6 +28,7 @@ import (
 	"portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/partners"
 	partnersrepo "portal_final_backend/internal/partners/repository"
+	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/tasks"
@@ -88,6 +89,15 @@ func initStorageOrPanic(ctx context.Context, cfg *config.Config, log *logger.Log
 	return storageSvc
 }
 
+func initGotenbergIfEnabled(cfg *config.Config, log *logger.Logger) {
+	if !cfg.IsGotenbergEnabled() {
+		return
+	}
+
+	pdf.Init(cfg.GetGotenbergURL(), cfg.GetGotenbergUsername(), cfg.GetGotenbergPassword())
+	log.Info("gotenberg PDF generator initialized", "url", cfg.GetGotenbergURL())
+}
+
 type whatsappagentTranscriberAdapter struct {
 	client *transcription.Client
 }
@@ -131,6 +141,7 @@ func main() {
 
 	log := logger.New(cfg.Env)
 	log.Info("starting scheduler", "env", cfg.Env)
+	initGotenbergIfEnabled(cfg, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
