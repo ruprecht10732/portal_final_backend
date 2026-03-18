@@ -100,6 +100,7 @@ type PublicOfferResponse struct {
 	ExpiresAt          time.Time               `json:"expiresAt"`
 	CreatedAt          time.Time               `json:"createdAt"`
 	LeadContact        *PublicOfferLeadContact `json:"leadContact,omitempty"`
+	PartnerPrefill     *PublicOfferPartnerPrefill `json:"partnerPrefill,omitempty"`
 	LineItems          []PublicOfferLineItem   `json:"lineItems,omitempty"`
 	Photos             []OfferPhotoRef         `json:"photos,omitempty"`
 }
@@ -109,6 +110,12 @@ type PublicOfferLeadContact struct {
 	Phone   string `json:"phone,omitempty"`
 	Email   string `json:"email,omitempty"`
 	Address string `json:"address,omitempty"`
+}
+
+type PublicOfferPartnerPrefill struct {
+	FullName     string `json:"fullName,omitempty"`
+	BusinessName string `json:"businessName,omitempty"`
+	Address      string `json:"address,omitempty"`
 }
 
 type PartnerOfferTermsResponse struct {

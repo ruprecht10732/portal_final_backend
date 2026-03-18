@@ -186,6 +186,7 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 		ExpiresAt:          oc.ExpiresAt,
 		CreatedAt:          oc.CreatedAt,
 		LeadContact:        mapPublicOfferLeadContact(oc),
+		PartnerPrefill:     mapPublicOfferPartnerPrefill(oc),
 		LineItems:          mapPublicOfferLineItems(items),
 		Photos:             mapOfferPhotos(photos),
 	}, nil
@@ -460,6 +461,7 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 		ExpiresAt:          oc.ExpiresAt,
 		CreatedAt:          oc.CreatedAt,
 		LeadContact:        mapPublicOfferLeadContact(oc),
+		PartnerPrefill:     mapPublicOfferPartnerPrefill(oc),
 		LineItems:          mapPublicOfferLineItems(items),
 		Photos:             mapOfferPhotos(photos),
 	}, nil
@@ -482,6 +484,31 @@ func mapPublicOfferLeadContact(offer repository.PartnerOfferWithContext) *transp
 		Phone:   strings.TrimSpace(offer.LeadPhone),
 		Email:   strings.TrimSpace(offer.LeadEmail),
 		Address: address,
+	}
+}
+
+func mapPublicOfferPartnerPrefill(offer repository.PartnerOfferWithContext) *transport.PublicOfferPartnerPrefill {
+	fullName := strings.TrimSpace(offer.PartnerContactName)
+	businessName := strings.TrimSpace(offer.PartnerName)
+	addressParts := []string{
+		strings.TrimSpace(strings.Join([]string{strings.TrimSpace(offer.PartnerAddressLine1), strings.TrimSpace(offer.PartnerHouseNumber)}, " ")),
+		strings.TrimSpace(offer.PartnerAddressLine2),
+		strings.TrimSpace(strings.Join([]string{strings.TrimSpace(offer.PartnerPostalCode), strings.TrimSpace(offer.PartnerCity)}, " ")),
+	}
+	filtered := make([]string, 0, len(addressParts))
+	for _, part := range addressParts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	address := strings.TrimSpace(strings.Join(filtered, ", "))
+	if fullName == "" && businessName == "" && address == "" {
+		return nil
+	}
+	return &transport.PublicOfferPartnerPrefill{
+		FullName:     fullName,
+		BusinessName: businessName,
+		Address:      address,
 	}
 }
 
@@ -563,7 +590,7 @@ func (s *Service) buildOfferSummaryPayload(offerID, tenantID, leadServiceID uuid
 
 	for _, item := range items {
 		payload.Items = append(payload.Items, scheduler.PartnerOfferSummaryItemPayload{
-			Description: item.Description,
+			Description: sanitizeSummaryText(item.Description),
 			Quantity:    item.Quantity,
 		})
 	}
@@ -721,6 +748,10 @@ func buildSummaryItems(items []repository.QuoteItemSummary) []string {
 func buildSummaryItem(item repository.QuoteItemSummary, isLast bool, remaining int) (string, []string) {
 	quantity := strings.TrimSpace(item.Quantity)
 	main, inclusions := splitInclusions(item.Description)
+	main = sanitizeSummaryText(main)
+	for index := range inclusions {
+		inclusions[index] = sanitizeSummaryText(inclusions[index])
+	}
 	main = strings.TrimSpace(main)
 	if main == "" {
 		return "", nil
@@ -736,6 +767,11 @@ func buildSummaryItem(item repository.QuoteItemSummary, isLast bool, remaining i
 	}
 
 	return main, inclusions
+}
+
+func sanitizeSummaryText(value string) string {
+	clean := sanitize.Text(value)
+	return strings.TrimSpace(strings.Join(strings.Fields(clean), " "))
 }
 
 func buildScopeAssessment(items []repository.QuoteItemSummary) *string {

@@ -51,6 +51,12 @@ type PartnerOffer struct {
 type PartnerOfferWithContext struct {
 	PartnerOffer
 	PartnerName        string
+	PartnerContactName string
+	PartnerAddressLine1 string
+	PartnerAddressLine2 string
+	PartnerHouseNumber string
+	PartnerPostalCode  string
+	PartnerCity        string
 	OrganizationName   string
 	LeadCity           string
 	LeadFirstName      string
@@ -304,6 +310,12 @@ func offerFromCreatePartnerOfferRow(row partnersdb.CreatePartnerOfferRow) Partne
 type offerContext struct {
 	Offer              PartnerOffer
 	PartnerName        string
+	PartnerContactName string
+	PartnerAddressLine1 string
+	PartnerAddressLine2 string
+	PartnerHouseNumber string
+	PartnerPostalCode  string
+	PartnerCity        string
 	OrganizationName   string
 	LeadCity           string
 	LeadFirstName      string
@@ -325,6 +337,12 @@ func offerWithContext(data offerContext) PartnerOfferWithContext {
 	result := PartnerOfferWithContext{
 		PartnerOffer:       data.Offer,
 		PartnerName:        data.PartnerName,
+		PartnerContactName: data.PartnerContactName,
+		PartnerAddressLine1: data.PartnerAddressLine1,
+		PartnerAddressLine2: data.PartnerAddressLine2,
+		PartnerHouseNumber: data.PartnerHouseNumber,
+		PartnerPostalCode:  data.PartnerPostalCode,
+		PartnerCity:        data.PartnerCity,
 		OrganizationName:   data.OrganizationName,
 		LeadCity:           data.LeadCity,
 		LeadFirstName:      data.LeadFirstName,
@@ -442,6 +460,12 @@ func (r *Repository) GetOfferByToken(ctx context.Context, token string) (Partner
 			o.created_at,
 			o.updated_at,
 			p.business_name,
+			COALESCE(p.contact_name, '')::text,
+			COALESCE(p.address_line1, '')::text,
+			COALESCE(p.address_line2, '')::text,
+			COALESCE(p.house_number, '')::text,
+			COALESCE(p.postal_code, '')::text,
+			COALESCE(p.city, '')::text,
 			org.name,
 			l.address_city,
 			l.consumer_first_name,
@@ -558,6 +582,12 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 			o.created_at,
 			o.updated_at,
 			p.business_name,
+			COALESCE(p.contact_name, '')::text,
+			COALESCE(p.address_line1, '')::text,
+			COALESCE(p.address_line2, '')::text,
+			COALESCE(p.house_number, '')::text,
+			COALESCE(p.postal_code, '')::text,
+			COALESCE(p.city, '')::text,
 			org.name,
 			l.address_city,
 			l.consumer_first_name,
@@ -623,6 +653,12 @@ func (r *Repository) getOfferWithContext(ctx context.Context, query string, args
 		&snapshot.CreatedAt,
 		&snapshot.UpdatedAt,
 		&contextRow.PartnerName,
+		&contextRow.PartnerContactName,
+		&contextRow.PartnerAddressLine1,
+		&contextRow.PartnerAddressLine2,
+		&contextRow.PartnerHouseNumber,
+		&contextRow.PartnerPostalCode,
+		&contextRow.PartnerCity,
 		&contextRow.OrganizationName,
 		&contextRow.LeadCity,
 		&contextRow.LeadFirstName,
