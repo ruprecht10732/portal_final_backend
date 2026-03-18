@@ -162,7 +162,7 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 
 	items, photos := s.resolveOfferViewData(ctx, oc)
 	scopeAssessment := buildScopeAssessment(items)
-	builderSummary := oc.BuilderSummary
+	builderSummary := normalizeBuilderSummary(oc.BuilderSummary)
 	if builderSummary == nil {
 		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel)
 	}
@@ -437,7 +437,7 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 
 	items, photos := s.resolveOfferViewData(ctx, oc)
 	scopeAssessment := buildScopeAssessment(items)
-	builderSummary := oc.BuilderSummary
+	builderSummary := normalizeBuilderSummary(oc.BuilderSummary)
 	if builderSummary == nil {
 		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel)
 	}
@@ -772,6 +772,21 @@ func buildSummaryItem(item repository.QuoteItemSummary, isLast bool, remaining i
 func sanitizeSummaryText(value string) string {
 	clean := sanitize.Text(value)
 	return strings.TrimSpace(strings.Join(strings.Fields(clean), " "))
+}
+
+func normalizeBuilderSummary(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	clean := sanitize.Text(*value)
+	clean = strings.ReplaceAll(clean, "\r\n", "\n")
+	clean = strings.ReplaceAll(clean, "\r", "\n")
+	clean = strings.ReplaceAll(clean, "\u00a0", " ")
+	clean = strings.TrimSpace(clean)
+	if clean == "" {
+		return nil
+	}
+	return &clean
 }
 
 func buildScopeAssessment(items []repository.QuoteItemSummary) *string {

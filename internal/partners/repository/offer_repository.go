@@ -50,28 +50,28 @@ type PartnerOffer struct {
 // PartnerOfferWithContext enriches a PartnerOffer with display information.
 type PartnerOfferWithContext struct {
 	PartnerOffer
-	PartnerName        string
-	PartnerContactName string
+	PartnerName         string
+	PartnerContactName  string
 	PartnerAddressLine1 string
 	PartnerAddressLine2 string
-	PartnerHouseNumber string
-	PartnerPostalCode  string
-	PartnerCity        string
-	OrganizationName   string
-	LeadCity           string
-	LeadFirstName      string
-	LeadLastName       string
-	LeadPhone          string
-	LeadEmail          string
-	LeadStreet         string
-	LeadHouseNumber    string
-	LeadZipCode        string
-	ServiceType        string
-	ServiceTypeID      uuid.UUID
-	LeadPostcode4      *string
-	LeadBuurtcode      *string
-	LeadEnergyBouwjaar *int
-	UrgencyLevel       *string
+	PartnerHouseNumber  string
+	PartnerPostalCode   string
+	PartnerCity         string
+	OrganizationName    string
+	LeadCity            string
+	LeadFirstName       string
+	LeadLastName        string
+	LeadPhone           string
+	LeadEmail           string
+	LeadStreet          string
+	LeadHouseNumber     string
+	LeadZipCode         string
+	ServiceType         string
+	ServiceTypeID       uuid.UUID
+	LeadPostcode4       *string
+	LeadBuurtcode       *string
+	LeadEnergyBouwjaar  *int
+	UrgencyLevel        *string
 }
 
 type PartnerOfferTerms struct {
@@ -308,55 +308,55 @@ func offerFromCreatePartnerOfferRow(row partnersdb.CreatePartnerOfferRow) Partne
 }
 
 type offerContext struct {
-	Offer              PartnerOffer
-	PartnerName        string
-	PartnerContactName string
+	Offer               PartnerOffer
+	PartnerName         string
+	PartnerContactName  string
 	PartnerAddressLine1 string
 	PartnerAddressLine2 string
-	PartnerHouseNumber string
-	PartnerPostalCode  string
-	PartnerCity        string
-	OrganizationName   string
-	LeadCity           string
-	LeadFirstName      string
-	LeadLastName       string
-	LeadPhone          string
-	LeadEmail          string
-	LeadStreet         string
-	LeadHouseNumber    string
-	LeadZipCode        string
-	ServiceType        string
-	ServiceTypeID      pgtype.UUID
-	LeadPostcode4      pgtype.Text
-	LeadBuurtcode      pgtype.Text
-	LeadEnergyBouwjaar pgtype.Int4
-	UrgencyLevel       interface{}
+	PartnerHouseNumber  string
+	PartnerPostalCode   string
+	PartnerCity         string
+	OrganizationName    string
+	LeadCity            string
+	LeadFirstName       string
+	LeadLastName        string
+	LeadPhone           string
+	LeadEmail           string
+	LeadStreet          string
+	LeadHouseNumber     string
+	LeadZipCode         string
+	ServiceType         string
+	ServiceTypeID       pgtype.UUID
+	LeadPostcode4       pgtype.Text
+	LeadBuurtcode       pgtype.Text
+	LeadEnergyBouwjaar  pgtype.Int4
+	UrgencyLevel        interface{}
 }
 
 func offerWithContext(data offerContext) PartnerOfferWithContext {
 	result := PartnerOfferWithContext{
-		PartnerOffer:       data.Offer,
-		PartnerName:        data.PartnerName,
-		PartnerContactName: data.PartnerContactName,
+		PartnerOffer:        data.Offer,
+		PartnerName:         data.PartnerName,
+		PartnerContactName:  data.PartnerContactName,
 		PartnerAddressLine1: data.PartnerAddressLine1,
 		PartnerAddressLine2: data.PartnerAddressLine2,
-		PartnerHouseNumber: data.PartnerHouseNumber,
-		PartnerPostalCode:  data.PartnerPostalCode,
-		PartnerCity:        data.PartnerCity,
-		OrganizationName:   data.OrganizationName,
-		LeadCity:           data.LeadCity,
-		LeadFirstName:      data.LeadFirstName,
-		LeadLastName:       data.LeadLastName,
-		LeadPhone:          data.LeadPhone,
-		LeadEmail:          data.LeadEmail,
-		LeadStreet:         data.LeadStreet,
-		LeadHouseNumber:    data.LeadHouseNumber,
-		LeadZipCode:        data.LeadZipCode,
-		ServiceType:        data.ServiceType,
-		LeadPostcode4:      optionalString(data.LeadPostcode4),
-		LeadBuurtcode:      optionalString(data.LeadBuurtcode),
-		LeadEnergyBouwjaar: optionalInt(data.LeadEnergyBouwjaar),
-		UrgencyLevel:       optionalUnknownString(data.UrgencyLevel),
+		PartnerHouseNumber:  data.PartnerHouseNumber,
+		PartnerPostalCode:   data.PartnerPostalCode,
+		PartnerCity:         data.PartnerCity,
+		OrganizationName:    data.OrganizationName,
+		LeadCity:            data.LeadCity,
+		LeadFirstName:       data.LeadFirstName,
+		LeadLastName:        data.LeadLastName,
+		LeadPhone:           data.LeadPhone,
+		LeadEmail:           data.LeadEmail,
+		LeadStreet:          data.LeadStreet,
+		LeadHouseNumber:     data.LeadHouseNumber,
+		LeadZipCode:         data.LeadZipCode,
+		ServiceType:         data.ServiceType,
+		LeadPostcode4:       optionalString(data.LeadPostcode4),
+		LeadBuurtcode:       optionalString(data.LeadBuurtcode),
+		LeadEnergyBouwjaar:  optionalInt(data.LeadEnergyBouwjaar),
+		UrgencyLevel:        optionalUnknownString(data.UrgencyLevel),
 	}
 	if data.ServiceTypeID.Valid {
 		result.ServiceTypeID = uuid.UUID(data.ServiceTypeID.Bytes)
