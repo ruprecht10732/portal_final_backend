@@ -420,6 +420,7 @@ type PartnerOfferCreated struct {
 	BaseEvent
 	OfferID          uuid.UUID `json:"offerId"`
 	OrganizationID   uuid.UUID `json:"organizationId"`
+	OrganizationName string    `json:"organizationName"`
 	PartnerID        uuid.UUID `json:"partnerId"`
 	LeadServiceID    uuid.UUID `json:"leadServiceId"`
 	LeadID           uuid.UUID `json:"leadId"`

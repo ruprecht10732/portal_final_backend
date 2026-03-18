@@ -133,9 +133,12 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 		}
 	}
 
+	organizationName, _ := s.repo.GetOrganizationName(ctx, tenantID)
+
 	s.publishOfferCreated(ctx, offerCreatedParams{
 		offerID:       offer.ID,
 		tenantID:      tenantID,
+		orgName:       organizationName,
 		partnerID:     req.PartnerID,
 		leadServiceID: leadServiceID,
 		leadID:        serviceCtx.LeadID,
@@ -699,6 +702,7 @@ func validateQuoteForOffer(q repository.QuoteForOffer) error {
 type offerCreatedParams struct {
 	offerID       uuid.UUID
 	tenantID      uuid.UUID
+	orgName       string
 	partnerID     uuid.UUID
 	leadServiceID uuid.UUID
 	leadID        uuid.UUID
@@ -715,6 +719,7 @@ func (s *Service) publishOfferCreated(ctx context.Context, params offerCreatedPa
 		BaseEvent:        events.NewBaseEvent(),
 		OfferID:          params.offerID,
 		OrganizationID:   params.tenantID,
+		OrganizationName: params.orgName,
 		PartnerID:        params.partnerID,
 		LeadServiceID:    params.leadServiceID,
 		LeadID:           params.leadID,

@@ -1412,6 +1412,9 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 		"links": map[string]any{
 			"accept": acceptURL,
 		},
+		"org": map[string]any{
+			"name": defaultName(strings.TrimSpace(e.OrganizationName), defaultOrgNameFallback),
+		},
 	}
 
 	emailRule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "partner_offer_created", "email", "partner", nil)
