@@ -459,6 +459,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	leadsModule.SetPartnerOfferCreator(adapters.NewPartnerOfferAdapter(partnersModule.Service()))
 	partnersModule.Service().SetOfferSummaryGenerator(adapters.NewOfferSummaryGeneratorAdapter(leadsModule.OfferSummaryGenerator()))
 	partnersModule.Service().SetOfferSummaryJobQueue(reminderScheduler)
+	partnersModule.Service().WithPDFQueue(reminderScheduler)
 
 	quotesModule.SetSSE(leadsModule.SSE())
 	quotesModule.SetStorageForPDF(storageSvc, cfg.GetMinioBucketQuotePDFs())

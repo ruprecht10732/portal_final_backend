@@ -27,6 +27,7 @@ import (
 	"portal_final_backend/internal/notification"
 	"portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/partners"
+	partnersrepo "portal_final_backend/internal/partners/repository"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/tasks"
@@ -272,6 +273,9 @@ func main() {
 	quotePDFProcessor := adapters.NewQuoteAcceptanceProcessor(quotesModule.Repository(), identitySvc, nil, storageSvc, cfg, quoteTermsResolver)
 	notificationModule.SetQuotePDFGenerator(quotePDFProcessor)
 	worker.SetAcceptedQuotePDFProcessor(quotePDFProcessor)
+
+	offerPDFProcessor := adapters.NewPartnerOfferPDFProcessor(partnersrepo.New(pool), identitySvc, storageSvc, cfg)
+	worker.SetOfferPDFProcessor(offerPDFProcessor)
 	audioTranscriber, closeTranscriber := initAudioTranscriber(log)
 	defer closeTranscriber()
 	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository(), eventBus)

@@ -11,13 +11,14 @@ import (
 // CreateOfferFromQuoteRequest creates a partner offer from a specific quote.
 // The backend derives leadServiceId and customerPriceCents from the quote.
 type CreateOfferFromQuoteRequest struct {
-	PartnerID         uuid.UUID   `json:"partnerId" validate:"required"`
-	QuoteID           uuid.UUID   `json:"quoteId" validate:"required"`
-	ExpiresInHours    int         `json:"expiresInHours" validate:"required,min=1,max=12"`
-	JobSummaryShort   string      `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
-	MarginBasisPoints *int        `json:"marginBasisPoints,omitempty" validate:"omitempty,min=0,max=5000"`
-	VakmanPriceCents  *int64      `json:"vakmanPriceCents,omitempty" validate:"omitempty,min=0"`
-	SelectedItemIDs   []uuid.UUID `json:"selectedItemIds,omitempty" validate:"omitempty,dive,uuid"`
+	PartnerID          uuid.UUID   `json:"partnerId" validate:"required"`
+	QuoteID            uuid.UUID   `json:"quoteId" validate:"required"`
+	ExpiresInHours     int         `json:"expiresInHours" validate:"required,min=1,max=12"`
+	JobSummaryShort    string      `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
+	MarginBasisPoints  *int        `json:"marginBasisPoints,omitempty" validate:"omitempty,min=0,max=5000"`
+	VakmanPriceCents   *int64      `json:"vakmanPriceCents,omitempty" validate:"omitempty,min=0"`
+	SelectedItemIDs    []uuid.UUID `json:"selectedItemIds,omitempty" validate:"omitempty,dive,uuid"`
+	RequiresInspection *bool       `json:"requiresInspection,omitempty"`
 }
 
 // CreateOfferResponse is returned after successfully creating an offer.
@@ -81,24 +82,25 @@ type OfferListResponse struct {
 
 // PublicOfferResponse is the Vakman's view. Hides customer markup.
 type PublicOfferResponse struct {
-	OfferID          uuid.UUID             `json:"offerId"`
-	OrganizationName string                `json:"organizationName"`
-	JobSummary       string                `json:"jobSummary"`
-	JobSummaryShort  *string               `json:"jobSummaryShort,omitempty"`
-	BuilderSummary   *string               `json:"builderSummary,omitempty"`
-	City             string                `json:"city"`
-	Postcode4        *string               `json:"postcode4,omitempty"`
-	Buurtcode        *string               `json:"buurtcode,omitempty"`
-	ConstructionYear *int                  `json:"constructionYear,omitempty"`
-	ScopeAssessment  *string               `json:"scopeAssessment,omitempty"`
-	UrgencyLevel     *string               `json:"urgencyLevel,omitempty"`
-	VakmanPriceCents int64                 `json:"vakmanPriceCents"`
-	PricingSource    string                `json:"pricingSource"`
-	Status           string                `json:"status"`
-	ExpiresAt        time.Time             `json:"expiresAt"`
-	CreatedAt        time.Time             `json:"createdAt"`
-	LineItems        []PublicOfferLineItem `json:"lineItems,omitempty"`
-	Photos           []OfferPhotoRef       `json:"photos,omitempty"`
+	OfferID            uuid.UUID             `json:"offerId"`
+	OrganizationName   string                `json:"organizationName"`
+	JobSummary         string                `json:"jobSummary"`
+	JobSummaryShort    *string               `json:"jobSummaryShort,omitempty"`
+	BuilderSummary     *string               `json:"builderSummary,omitempty"`
+	City               string                `json:"city"`
+	Postcode4          *string               `json:"postcode4,omitempty"`
+	Buurtcode          *string               `json:"buurtcode,omitempty"`
+	ConstructionYear   *int                  `json:"constructionYear,omitempty"`
+	ScopeAssessment    *string               `json:"scopeAssessment,omitempty"`
+	UrgencyLevel       *string               `json:"urgencyLevel,omitempty"`
+	VakmanPriceCents   int64                 `json:"vakmanPriceCents"`
+	PricingSource      string                `json:"pricingSource"`
+	Status             string                `json:"status"`
+	RequiresInspection bool                  `json:"requiresInspection"`
+	ExpiresAt          time.Time             `json:"expiresAt"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	LineItems          []PublicOfferLineItem `json:"lineItems,omitempty"`
+	Photos             []OfferPhotoRef       `json:"photos,omitempty"`
 }
 
 type PublicOfferLineItem struct {
@@ -114,8 +116,12 @@ type OfferPhotoRef struct {
 
 // AcceptOfferRequest is the vakman's acceptance payload.
 type AcceptOfferRequest struct {
-	InspectionSlots []TimeSlot `json:"inspectionSlots" validate:"required,min=1,dive"`
-	JobSlots        []TimeSlot `json:"jobSlots,omitempty" validate:"omitempty,dive"`
+	InspectionSlots    []TimeSlot `json:"inspectionSlots" validate:"omitempty,dive"`
+	JobSlots           []TimeSlot `json:"jobSlots,omitempty" validate:"omitempty,dive"`
+	SignerFullName     string     `json:"signerFullName,omitempty" validate:"omitempty,max=200"`
+	SignerBusinessName string     `json:"signerBusinessName,omitempty" validate:"omitempty,max=200"`
+	SignerAddress      string     `json:"signerAddress,omitempty" validate:"omitempty,max=500"`
+	SignatureData      string     `json:"signatureData,omitempty"`
 }
 
 // RejectOfferRequest is the vakman's rejection payload.
@@ -127,4 +133,46 @@ type RejectOfferRequest struct {
 type TimeSlot struct {
 	Start time.Time `json:"start" validate:"required"`
 	End   time.Time `json:"end" validate:"required,gtfield=Start"`
+}
+
+// OfferDetailResponse is the full admin view of an accepted/rejected offer.
+// It includes what was sent (line items, photos) and what was received (availability, signer).
+type OfferDetailResponse struct {
+	ID                 uuid.UUID `json:"id"`
+	PartnerID          uuid.UUID `json:"partnerId"`
+	PartnerName        string    `json:"partnerName"`
+	LeadServiceID      uuid.UUID `json:"leadServiceId"`
+	ServiceType        string    `json:"serviceType,omitempty"`
+	LeadCity           string    `json:"leadCity,omitempty"`
+	Status             string    `json:"status"`
+	RequiresInspection bool      `json:"requiresInspection"`
+	PublicToken        string    `json:"publicToken"`
+	// What was sent
+	VakmanPriceCents   int64                 `json:"vakmanPriceCents"`
+	CustomerPriceCents int64                 `json:"customerPriceCents"`
+	JobSummaryShort    *string               `json:"jobSummaryShort,omitempty"`
+	BuilderSummary     *string               `json:"builderSummary,omitempty"`
+	LineItems          []OfferDetailLineItem `json:"lineItems,omitempty"`
+	Photos             []OfferPhotoRef       `json:"photos,omitempty"`
+	ExpiresAt          time.Time             `json:"expiresAt"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	// What was received (acceptance)
+	AcceptedAt         *time.Time `json:"acceptedAt,omitempty"`
+	RejectedAt         *time.Time `json:"rejectedAt,omitempty"`
+	RejectionReason    *string    `json:"rejectionReason,omitempty"`
+	InspectionSlots    []TimeSlot `json:"inspectionSlots,omitempty"`
+	JobSlots           []TimeSlot `json:"jobSlots,omitempty"`
+	SignerName         *string    `json:"signerName,omitempty"`
+	SignerBusinessName *string    `json:"signerBusinessName,omitempty"`
+	SignerAddress      *string    `json:"signerAddress,omitempty"`
+	// Document
+	PDFFileKey *string `json:"pdfFileKey,omitempty"`
+}
+
+// OfferDetailLineItem is a full line item in the detail view (includes pricing).
+type OfferDetailLineItem struct {
+	Description    string `json:"description"`
+	Quantity       string `json:"quantity"`
+	UnitPriceCents int64  `json:"unitPriceCents"`
+	LineTotalCents int64  `json:"lineTotalCents"`
 }

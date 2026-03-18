@@ -15,6 +15,7 @@ const TaskGenerateQuoteJob = "quotes.generate"
 const TaskGenerateAcceptedQuotePDF = "quotes.generate_accepted_pdf"
 const TaskLogCall = "leads.log_call"
 const TaskGeneratePartnerOfferSummary = "partners.offer.generate_summary"
+const TaskGeneratePartnerOfferPDF = "partners.offer.generate_pdf"
 const TaskRunGatekeeper = "leads.gatekeeper.run"
 const TaskRunEstimator = "leads.estimator.run"
 const TaskRunDispatcher = "leads.dispatcher.run"
@@ -82,6 +83,11 @@ type PartnerOfferSummaryPayload struct {
 	Scope         *string                          `json:"scope,omitempty"`
 	UrgencyLevel  *string                          `json:"urgencyLevel,omitempty"`
 	Items         []PartnerOfferSummaryItemPayload `json:"items,omitempty"`
+}
+
+type PartnerOfferPDFPayload struct {
+	OfferID  string `json:"offerId"`
+	TenantID string `json:"tenantId"`
 }
 
 type GatekeeperRunPayload struct {
@@ -277,6 +283,22 @@ func ParsePartnerOfferSummaryPayload(task *asynq.Task) (PartnerOfferSummaryPaylo
 	var payload PartnerOfferSummaryPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return PartnerOfferSummaryPayload{}, err
+	}
+	return payload, nil
+}
+
+func NewPartnerOfferPDFTask(payload PartnerOfferPDFPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskGeneratePartnerOfferPDF, data), nil
+}
+
+func ParsePartnerOfferPDFPayload(task *asynq.Task) (PartnerOfferPDFPayload, error) {
+	var payload PartnerOfferPDFPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return PartnerOfferPDFPayload{}, err
 	}
 	return payload, nil
 }

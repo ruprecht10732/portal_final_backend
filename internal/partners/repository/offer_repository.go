@@ -32,11 +32,17 @@ type PartnerOffer struct {
 	JobSummaryShort        *string
 	BuilderSummary         *string
 	Status                 string
+	RequiresInspection     bool
 	AcceptedAt             *time.Time
 	RejectedAt             *time.Time
 	RejectionReason        *string
 	InspectionAvailability []byte
 	JobAvailability        []byte
+	SignerName             *string
+	SignerBusinessName     *string
+	SignerAddress          *string
+	SignatureData          *string
+	PDFFileKey             *string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }
@@ -167,11 +173,17 @@ type offerSnapshot struct {
 	JobSummaryShort        pgtype.Text
 	BuilderSummary         pgtype.Text
 	Status                 string
+	RequiresInspection     bool
 	AcceptedAt             pgtype.Timestamptz
 	RejectedAt             pgtype.Timestamptz
 	RejectionReason        pgtype.Text
 	InspectionAvailability []byte
 	JobAvailability        []byte
+	SignerName             pgtype.Text
+	SignerBusinessName     pgtype.Text
+	SignerAddress          pgtype.Text
+	SignatureData          pgtype.Text
+	PDFFileKey             pgtype.Text
 	CreatedAt              pgtype.Timestamptz
 	UpdatedAt              pgtype.Timestamptz
 }
@@ -192,14 +204,84 @@ func offerFromSnapshot(data offerSnapshot) PartnerOffer {
 		JobSummaryShort:        optionalString(data.JobSummaryShort),
 		BuilderSummary:         optionalString(data.BuilderSummary),
 		Status:                 data.Status,
+		RequiresInspection:     data.RequiresInspection,
 		AcceptedAt:             optionalTime(data.AcceptedAt),
 		RejectedAt:             optionalTime(data.RejectedAt),
 		RejectionReason:        optionalString(data.RejectionReason),
 		InspectionAvailability: data.InspectionAvailability,
 		JobAvailability:        data.JobAvailability,
+		SignerName:             optionalString(data.SignerName),
+		SignerBusinessName:     optionalString(data.SignerBusinessName),
+		SignerAddress:          optionalString(data.SignerAddress),
+		SignatureData:          optionalString(data.SignatureData),
+		PDFFileKey:             optionalString(data.PDFFileKey),
 		CreatedAt:              data.CreatedAt.Time,
 		UpdatedAt:              data.UpdatedAt.Time,
 	}
+}
+
+func offerFromGetPartnerOfferByIDRow(row partnersdb.GetPartnerOfferByIDRow) PartnerOffer {
+	return offerFromSnapshot(offerSnapshot{
+		ID:                     row.ID,
+		OrganizationID:         row.OrganizationID,
+		PartnerID:              row.PartnerID,
+		LeadServiceID:          row.LeadServiceID,
+		PublicToken:            row.PublicToken,
+		ExpiresAt:              row.ExpiresAt,
+		PricingSource:          row.PricingSource,
+		CustomerPriceCents:     row.CustomerPriceCents,
+		VakmanPriceCents:       row.VakmanPriceCents,
+		MarginBasisPoints:      row.MarginBasisPoints,
+		OfferLineItems:         row.OfferLineItems,
+		JobSummaryShort:        row.JobSummaryShort,
+		BuilderSummary:         row.BuilderSummary,
+		Status:                 row.Status,
+		RequiresInspection:     row.RequiresInspection,
+		AcceptedAt:             row.AcceptedAt,
+		RejectedAt:             row.RejectedAt,
+		RejectionReason:        row.RejectionReason,
+		InspectionAvailability: row.InspectionAvailability,
+		JobAvailability:        row.JobAvailability,
+		SignerName:             row.SignerName,
+		SignerBusinessName:     row.SignerBusinessName,
+		SignerAddress:          row.SignerAddress,
+		SignatureData:          row.SignatureData,
+		PDFFileKey:             row.PdfFileKey,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
+	})
+}
+
+func offerFromCreatePartnerOfferRow(row partnersdb.CreatePartnerOfferRow) PartnerOffer {
+	return offerFromSnapshot(offerSnapshot{
+		ID:                     row.ID,
+		OrganizationID:         row.OrganizationID,
+		PartnerID:              row.PartnerID,
+		LeadServiceID:          row.LeadServiceID,
+		PublicToken:            row.PublicToken,
+		ExpiresAt:              row.ExpiresAt,
+		PricingSource:          row.PricingSource,
+		CustomerPriceCents:     row.CustomerPriceCents,
+		VakmanPriceCents:       row.VakmanPriceCents,
+		MarginBasisPoints:      row.MarginBasisPoints,
+		OfferLineItems:         row.OfferLineItems,
+		JobSummaryShort:        row.JobSummaryShort,
+		BuilderSummary:         row.BuilderSummary,
+		Status:                 row.Status,
+		RequiresInspection:     row.RequiresInspection,
+		AcceptedAt:             row.AcceptedAt,
+		RejectedAt:             row.RejectedAt,
+		RejectionReason:        row.RejectionReason,
+		InspectionAvailability: row.InspectionAvailability,
+		JobAvailability:        row.JobAvailability,
+		SignerName:             row.SignerName,
+		SignerBusinessName:     row.SignerBusinessName,
+		SignerAddress:          row.SignerAddress,
+		SignatureData:          row.SignatureData,
+		PDFFileKey:             row.PdfFileKey,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
+	})
 }
 
 type offerContext struct {
@@ -233,19 +315,56 @@ func offerWithContext(data offerContext) PartnerOfferWithContext {
 	return result
 }
 
+// offerBaseColumns is the standard SELECT column list for a single RAC_partner_offers row.
+// Use offerPrefixedColumns when joining other tables to avoid ambiguity.
+const offerBaseColumns = `
+	id, organization_id, partner_id, lead_service_id, public_token, expires_at,
+	pricing_source, customer_price_cents, vakman_price_cents, margin_basis_points,
+	offer_line_items, job_summary_short, builder_summary, status, requires_inspection,
+	accepted_at, rejected_at, rejection_reason, inspection_availability, job_availability,
+	signer_name, signer_business_name, signer_address, signature_data, pdf_file_key,
+	created_at, updated_at`
+
+const offerPrefixedColumns = `
+	o.id, o.organization_id, o.partner_id, o.lead_service_id, o.public_token, o.expires_at,
+	o.pricing_source, o.customer_price_cents, o.vakman_price_cents, o.margin_basis_points,
+	o.offer_line_items, o.job_summary_short, o.builder_summary, o.status, o.requires_inspection,
+	o.accepted_at, o.rejected_at, o.rejection_reason, o.inspection_availability, o.job_availability,
+	o.signer_name, o.signer_business_name, o.signer_address, o.signature_data, o.pdf_file_key,
+	o.created_at, o.updated_at`
+
+func (r *Repository) scanOfferRow(row interface {
+	Scan(dest ...any) error
+}) (PartnerOffer, error) {
+	var s offerSnapshot
+	var lineItemsRaw []byte
+	err := row.Scan(
+		&s.ID, &s.OrganizationID, &s.PartnerID, &s.LeadServiceID, &s.PublicToken, &s.ExpiresAt,
+		&s.PricingSource, &s.CustomerPriceCents, &s.VakmanPriceCents, &s.MarginBasisPoints,
+		&lineItemsRaw, &s.JobSummaryShort, &s.BuilderSummary, &s.Status, &s.RequiresInspection,
+		&s.AcceptedAt, &s.RejectedAt, &s.RejectionReason, &s.InspectionAvailability, &s.JobAvailability,
+		&s.SignerName, &s.SignerBusinessName, &s.SignerAddress, &s.SignatureData, &s.PDFFileKey,
+		&s.CreatedAt, &s.UpdatedAt,
+	)
+	if err != nil {
+		return PartnerOffer{}, err
+	}
+	s.OfferLineItems = lineItemsRaw
+	return offerFromSnapshot(s), nil
+}
+
 // CreateOffer inserts a new partner offer.
 func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (PartnerOffer, error) {
 	offerLineItems, err := json.Marshal(offer.OfferLineItems)
 	if err != nil {
 		return PartnerOffer{}, fmt.Errorf("marshal offer line items: %w", err)
 	}
-
-	row, err := r.queries.CreatePartnerOffer(ctx, partnersdb.CreatePartnerOfferParams{
+	created, err := r.queries.CreatePartnerOffer(ctx, partnersdb.CreatePartnerOfferParams{
 		OrganizationID:     toPgUUID(offer.OrganizationID),
 		PartnerID:          toPgUUID(offer.PartnerID),
 		LeadServiceID:      toPgUUID(offer.LeadServiceID),
 		PublicToken:        offer.PublicToken,
-		ExpiresAt:          toPgTimestamp(offer.ExpiresAt),
+		ExpiresAt:          pgtype.Timestamptz{Time: offer.ExpiresAt, Valid: true},
 		PricingSource:      partnersdb.PricingSource(offer.PricingSource),
 		CustomerPriceCents: offer.CustomerPriceCents,
 		VakmanPriceCents:   offer.VakmanPriceCents,
@@ -253,12 +372,24 @@ func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (Partn
 		OfferLineItems:     offerLineItems,
 		JobSummaryShort:    toPgText(offer.JobSummaryShort),
 		BuilderSummary:     toPgText(offer.BuilderSummary),
+		RequiresInspection: offer.RequiresInspection,
 	})
 	if err != nil {
 		return PartnerOffer{}, fmt.Errorf("create partner offer: %w", err)
 	}
+	return offerFromCreatePartnerOfferRow(created), nil
+}
 
-	return offerFromSnapshot(offerSnapshot{
+// GetOfferByToken retrieves an offer by its public token with context info.
+func (r *Repository) GetOfferByToken(ctx context.Context, token string) (PartnerOfferWithContext, error) {
+	row, err := r.queries.GetPartnerOfferByTokenWithContext(ctx, token)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
+	}
+	if err != nil {
+		return PartnerOfferWithContext{}, fmt.Errorf("get offer by token: %w", err)
+	}
+	offer := offerFromSnapshot(offerSnapshot{
 		ID:                     row.ID,
 		OrganizationID:         row.OrganizationID,
 		PartnerID:              row.PartnerID,
@@ -273,29 +404,32 @@ func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (Partn
 		JobSummaryShort:        row.JobSummaryShort,
 		BuilderSummary:         row.BuilderSummary,
 		Status:                 row.Status,
+		RequiresInspection:     row.RequiresInspection,
 		AcceptedAt:             row.AcceptedAt,
 		RejectedAt:             row.RejectedAt,
 		RejectionReason:        row.RejectionReason,
 		InspectionAvailability: row.InspectionAvailability,
 		JobAvailability:        row.JobAvailability,
+		SignerName:             row.SignerName,
+		SignerBusinessName:     row.SignerBusinessName,
+		SignerAddress:          row.SignerAddress,
+		SignatureData:          row.SignatureData,
+		PDFFileKey:             row.PdfFileKey,
 		CreatedAt:              row.CreatedAt,
 		UpdatedAt:              row.UpdatedAt,
+	})
+	return offerWithContext(offerContext{
+		Offer:              offer,
+		PartnerName:        row.BusinessName,
+		OrganizationName:   row.Name,
+		LeadCity:           row.AddressCity,
+		ServiceType:        row.ServiceType,
+		ServiceTypeID:      row.ServiceTypeID,
+		LeadPostcode4:      row.LeadEnrichmentPostcode4,
+		LeadBuurtcode:      row.LeadEnrichmentBuurtcode,
+		LeadEnergyBouwjaar: row.EnergyBouwjaar,
+		UrgencyLevel:       row.UrgencyLevel,
 	}), nil
-}
-
-// GetOfferByToken retrieves an offer by its public token with context info.
-func (r *Repository) GetOfferByToken(ctx context.Context, token string) (PartnerOfferWithContext, error) {
-	row, err := r.queries.GetPartnerOfferByTokenWithContext(ctx, token)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return PartnerOfferWithContext{}, apperr.NotFound(offerNotFoundMsg)
-	}
-	if err != nil {
-		return PartnerOfferWithContext{}, fmt.Errorf("get offer by token: %w", err)
-	}
-
-	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
-
-	return offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, LeadPostcode4: row.LeadEnrichmentPostcode4, LeadBuurtcode: row.LeadEnrichmentBuurtcode, LeadEnergyBouwjaar: row.EnergyBouwjaar, UrgencyLevel: row.UrgencyLevel}), nil
 }
 
 // GetOfferByID retrieves an offer by its ID within a tenant.
@@ -310,8 +444,7 @@ func (r *Repository) GetOfferByID(ctx context.Context, offerID uuid.UUID, organi
 	if err != nil {
 		return PartnerOffer{}, fmt.Errorf("get offer by id: %w", err)
 	}
-
-	return offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return offerFromGetPartnerOfferByIDRow(row), nil
 }
 
 // DeleteOffer deletes an offer within a tenant if it is still in a deletable state.
@@ -364,10 +497,47 @@ func (r *Repository) GetOfferByIDWithContext(ctx context.Context, offerID uuid.U
 	if err != nil {
 		return PartnerOfferWithContext{}, fmt.Errorf("get offer by id with context: %w", err)
 	}
-
-	offer := offerFromSnapshot(offerSnapshot{ID: row.ID, OrganizationID: row.OrganizationID, PartnerID: row.PartnerID, LeadServiceID: row.LeadServiceID, PublicToken: row.PublicToken, ExpiresAt: row.ExpiresAt, PricingSource: row.PricingSource, CustomerPriceCents: row.CustomerPriceCents, VakmanPriceCents: row.VakmanPriceCents, MarginBasisPoints: row.MarginBasisPoints, OfferLineItems: row.OfferLineItems, JobSummaryShort: row.JobSummaryShort, BuilderSummary: row.BuilderSummary, Status: row.Status, AcceptedAt: row.AcceptedAt, RejectedAt: row.RejectedAt, RejectionReason: row.RejectionReason, InspectionAvailability: row.InspectionAvailability, JobAvailability: row.JobAvailability, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
-
-	return offerWithContext(offerContext{Offer: offer, PartnerName: row.BusinessName, OrganizationName: row.Name, LeadCity: row.AddressCity, ServiceType: row.ServiceType, LeadPostcode4: row.LeadEnrichmentPostcode4, LeadBuurtcode: row.LeadEnrichmentBuurtcode, LeadEnergyBouwjaar: row.EnergyBouwjaar, UrgencyLevel: row.UrgencyLevel}), nil
+	offer := offerFromSnapshot(offerSnapshot{
+		ID:                     row.ID,
+		OrganizationID:         row.OrganizationID,
+		PartnerID:              row.PartnerID,
+		LeadServiceID:          row.LeadServiceID,
+		PublicToken:            row.PublicToken,
+		ExpiresAt:              row.ExpiresAt,
+		PricingSource:          row.PricingSource,
+		CustomerPriceCents:     row.CustomerPriceCents,
+		VakmanPriceCents:       row.VakmanPriceCents,
+		MarginBasisPoints:      row.MarginBasisPoints,
+		OfferLineItems:         row.OfferLineItems,
+		JobSummaryShort:        row.JobSummaryShort,
+		BuilderSummary:         row.BuilderSummary,
+		Status:                 row.Status,
+		RequiresInspection:     row.RequiresInspection,
+		AcceptedAt:             row.AcceptedAt,
+		RejectedAt:             row.RejectedAt,
+		RejectionReason:        row.RejectionReason,
+		InspectionAvailability: row.InspectionAvailability,
+		JobAvailability:        row.JobAvailability,
+		SignerName:             row.SignerName,
+		SignerBusinessName:     row.SignerBusinessName,
+		SignerAddress:          row.SignerAddress,
+		SignatureData:          row.SignatureData,
+		PDFFileKey:             row.PdfFileKey,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
+	})
+	return offerWithContext(offerContext{
+		Offer:              offer,
+		PartnerName:        row.BusinessName,
+		OrganizationName:   row.Name,
+		LeadCity:           row.AddressCity,
+		ServiceType:        row.ServiceType,
+		ServiceTypeID:      row.ServiceTypeID,
+		LeadPostcode4:      row.LeadEnrichmentPostcode4,
+		LeadBuurtcode:      row.LeadEnrichmentBuurtcode,
+		LeadEnergyBouwjaar: row.EnergyBouwjaar,
+		UrgencyLevel:       row.UrgencyLevel,
+	}), nil
 }
 
 func (r *Repository) UpdateOfferBuilderSummaryIfEmpty(ctx context.Context, offerID, organizationID uuid.UUID, summary string) error {
@@ -380,14 +550,11 @@ func (r *Repository) UpdateOfferBuilderSummaryIfEmpty(ctx context.Context, offer
 		return nil
 	}
 
-	_, err := r.pool.Exec(ctx, `
-		UPDATE RAC_partner_offers
-		SET builder_summary = $1,
-		    updated_at = NOW()
-		WHERE id = $2
-		  AND organization_id = $3
-		  AND builder_summary IS NULL
-	`, trimmed, offerID, organizationID)
+	_, err := r.queries.UpdatePartnerOfferBuilderSummaryIfEmpty(ctx, partnersdb.UpdatePartnerOfferBuilderSummaryIfEmptyParams{
+		Summary:        trimmed,
+		OfferID:        toPgUUID(offerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return fmt.Errorf("update offer builder summary: %w", err)
 	}
@@ -553,12 +720,27 @@ func (r *Repository) HasActiveOffer(ctx context.Context, leadServiceID uuid.UUID
 	return exists, nil
 }
 
-// AcceptOffer atomically accepts an offer and records availability.
-func (r *Repository) AcceptOffer(ctx context.Context, offerID uuid.UUID, inspectionSlots []byte, jobSlots []byte) error {
+// AcceptOfferParams groups the acceptance data to avoid a long parameter list.
+type AcceptOfferParams struct {
+	OfferID            uuid.UUID
+	InspectionSlots    []byte
+	JobSlots           []byte
+	SignerName         *string
+	SignerBusinessName *string
+	SignerAddress      *string
+	SignatureData      *string
+}
+
+// AcceptOffer atomically accepts an offer and records availability + signer data.
+func (r *Repository) AcceptOffer(ctx context.Context, p AcceptOfferParams) error {
 	rowsAffected, err := r.queries.AcceptPartnerOffer(ctx, partnersdb.AcceptPartnerOfferParams{
-		InspectionSlots: inspectionSlots,
-		JobSlots:        jobSlots,
-		OfferID:         toPgUUID(offerID),
+		InspectionSlots:    p.InspectionSlots,
+		JobSlots:           p.JobSlots,
+		SignerName:         toPgText(p.SignerName),
+		SignerBusinessName: toPgText(p.SignerBusinessName),
+		SignerAddress:      toPgText(p.SignerAddress),
+		SignatureData:      toPgText(p.SignatureData),
+		OfferID:            toPgUUID(p.OfferID),
 	})
 	if err != nil {
 		errMsg := err.Error()
@@ -571,6 +753,18 @@ func (r *Repository) AcceptOffer(ctx context.Context, offerID uuid.UUID, inspect
 		return apperr.Conflict("offer is not in a valid state to be accepted")
 	}
 
+	return nil
+}
+
+// SetOfferPDFFileKey persists the generated PDF file key on the offer record.
+func (r *Repository) SetOfferPDFFileKey(ctx context.Context, offerID uuid.UUID, fileKey string) error {
+	_, err := r.queries.SetPartnerOfferPDFFileKey(ctx, partnersdb.SetPartnerOfferPDFFileKeyParams{
+		FileKey: fileKey,
+		OfferID: toPgUUID(offerID),
+	})
+	if err != nil {
+		return fmt.Errorf("set offer pdf file key: %w", err)
+	}
 	return nil
 }
 

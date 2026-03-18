@@ -17,19 +17,35 @@ SET status = 'accepted',
 	accepted_at = now(),
 	inspection_availability = $1::jsonb,
 	job_availability = $2::jsonb,
+	signer_name = $3::text,
+	signer_business_name = $4::text,
+	signer_address = $5::text,
+	signature_data = $6::text,
 	updated_at = now()
-WHERE id = $3::uuid
+WHERE id = $7::uuid
   AND status IN ('pending', 'sent')
 `
 
 type AcceptPartnerOfferParams struct {
-	InspectionSlots []byte      `json:"inspection_slots"`
-	JobSlots        []byte      `json:"job_slots"`
-	OfferID         pgtype.UUID `json:"offer_id"`
+	InspectionSlots    []byte      `json:"inspection_slots"`
+	JobSlots           []byte      `json:"job_slots"`
+	SignerName         pgtype.Text `json:"signer_name"`
+	SignerBusinessName pgtype.Text `json:"signer_business_name"`
+	SignerAddress      pgtype.Text `json:"signer_address"`
+	SignatureData      pgtype.Text `json:"signature_data"`
+	OfferID            pgtype.UUID `json:"offer_id"`
 }
 
 func (q *Queries) AcceptPartnerOffer(ctx context.Context, arg AcceptPartnerOfferParams) (int64, error) {
-	result, err := q.db.Exec(ctx, acceptPartnerOffer, arg.InspectionSlots, arg.JobSlots, arg.OfferID)
+	result, err := q.db.Exec(ctx, acceptPartnerOffer,
+		arg.InspectionSlots,
+		arg.JobSlots,
+		arg.SignerName,
+		arg.SignerBusinessName,
+		arg.SignerAddress,
+		arg.SignatureData,
+		arg.OfferID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -384,6 +400,7 @@ INSERT INTO RAC_partner_offers (
 	offer_line_items,
 	job_summary_short,
 	builder_summary,
+	requires_inspection,
 	status
 ) VALUES (
 	$1::uuid,
@@ -398,6 +415,7 @@ INSERT INTO RAC_partner_offers (
 	$10::jsonb,
 	$11::text,
 	$12::text,
+	$13::bool,
 	'pending'
 )
 RETURNING id,
@@ -414,11 +432,17 @@ RETURNING id,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
+	requires_inspection,
 	accepted_at,
 	rejected_at,
 	rejection_reason,
 	inspection_availability,
 	job_availability,
+	signer_name,
+	signer_business_name,
+	signer_address,
+	signature_data,
+	pdf_file_key,
 	created_at,
 	updated_at
 `
@@ -436,6 +460,7 @@ type CreatePartnerOfferParams struct {
 	OfferLineItems     []byte             `json:"offer_line_items"`
 	JobSummaryShort    pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary     pgtype.Text        `json:"builder_summary"`
+	RequiresInspection bool               `json:"requires_inspection"`
 }
 
 type CreatePartnerOfferRow struct {
@@ -453,11 +478,17 @@ type CreatePartnerOfferRow struct {
 	JobSummaryShort        pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary         pgtype.Text        `json:"builder_summary"`
 	Status                 string             `json:"status"`
+	RequiresInspection     bool               `json:"requires_inspection"`
 	AcceptedAt             pgtype.Timestamptz `json:"accepted_at"`
 	RejectedAt             pgtype.Timestamptz `json:"rejected_at"`
 	RejectionReason        pgtype.Text        `json:"rejection_reason"`
 	InspectionAvailability []byte             `json:"inspection_availability"`
 	JobAvailability        []byte             `json:"job_availability"`
+	SignerName             pgtype.Text        `json:"signer_name"`
+	SignerBusinessName     pgtype.Text        `json:"signer_business_name"`
+	SignerAddress          pgtype.Text        `json:"signer_address"`
+	SignatureData          pgtype.Text        `json:"signature_data"`
+	PdfFileKey             pgtype.Text        `json:"pdf_file_key"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -476,6 +507,7 @@ func (q *Queries) CreatePartnerOffer(ctx context.Context, arg CreatePartnerOffer
 		arg.OfferLineItems,
 		arg.JobSummaryShort,
 		arg.BuilderSummary,
+		arg.RequiresInspection,
 	)
 	var i CreatePartnerOfferRow
 	err := row.Scan(
@@ -493,11 +525,17 @@ func (q *Queries) CreatePartnerOffer(ctx context.Context, arg CreatePartnerOffer
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
+		&i.RequiresInspection,
 		&i.AcceptedAt,
 		&i.RejectedAt,
 		&i.RejectionReason,
 		&i.InspectionAvailability,
 		&i.JobAvailability,
+		&i.SignerName,
+		&i.SignerBusinessName,
+		&i.SignerAddress,
+		&i.SignatureData,
+		&i.PdfFileKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -545,7 +583,7 @@ const deletePartnerOffer = `-- name: DeletePartnerOffer :execrows
 DELETE FROM RAC_partner_offers
 WHERE id = $1::uuid
   AND organization_id = $2::uuid
-  AND status = ANY($3::text[])
+	AND status::text = ANY($3::text[])
 `
 
 type DeletePartnerOfferParams struct {
@@ -830,11 +868,17 @@ SELECT id,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
+	requires_inspection,
 	accepted_at,
 	rejected_at,
 	rejection_reason,
 	inspection_availability,
 	job_availability,
+	signer_name,
+	signer_business_name,
+	signer_address,
+	signature_data,
+	pdf_file_key,
 	created_at,
 	updated_at
 FROM RAC_partner_offers
@@ -862,11 +906,17 @@ type GetPartnerOfferByIDRow struct {
 	JobSummaryShort        pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary         pgtype.Text        `json:"builder_summary"`
 	Status                 string             `json:"status"`
+	RequiresInspection     bool               `json:"requires_inspection"`
 	AcceptedAt             pgtype.Timestamptz `json:"accepted_at"`
 	RejectedAt             pgtype.Timestamptz `json:"rejected_at"`
 	RejectionReason        pgtype.Text        `json:"rejection_reason"`
 	InspectionAvailability []byte             `json:"inspection_availability"`
 	JobAvailability        []byte             `json:"job_availability"`
+	SignerName             pgtype.Text        `json:"signer_name"`
+	SignerBusinessName     pgtype.Text        `json:"signer_business_name"`
+	SignerAddress          pgtype.Text        `json:"signer_address"`
+	SignatureData          pgtype.Text        `json:"signature_data"`
+	PdfFileKey             pgtype.Text        `json:"pdf_file_key"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -889,11 +939,17 @@ func (q *Queries) GetPartnerOfferByID(ctx context.Context, arg GetPartnerOfferBy
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
+		&i.RequiresInspection,
 		&i.AcceptedAt,
 		&i.RejectedAt,
 		&i.RejectionReason,
 		&i.InspectionAvailability,
 		&i.JobAvailability,
+		&i.SignerName,
+		&i.SignerBusinessName,
+		&i.SignerAddress,
+		&i.SignatureData,
+		&i.PdfFileKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -915,17 +971,24 @@ SELECT o.id,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
+	o.requires_inspection,
 	o.accepted_at,
 	o.rejected_at,
 	o.rejection_reason,
 	o.inspection_availability,
 	o.job_availability,
+	o.signer_name,
+	o.signer_business_name,
+	o.signer_address,
+	o.signature_data,
+	o.pdf_file_key,
 	o.created_at,
 	o.updated_at,
 	p.business_name,
 	org.name,
 	l.address_city,
 	st.name AS service_type,
+	st.id AS service_type_id,
 	l.lead_enrichment_postcode4,
 	l.lead_enrichment_buurtcode,
 	l.energy_bouwjaar,
@@ -967,17 +1030,24 @@ type GetPartnerOfferByIDWithContextRow struct {
 	JobSummaryShort         pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary          pgtype.Text        `json:"builder_summary"`
 	Status                  string             `json:"status"`
+	RequiresInspection      bool               `json:"requires_inspection"`
 	AcceptedAt              pgtype.Timestamptz `json:"accepted_at"`
 	RejectedAt              pgtype.Timestamptz `json:"rejected_at"`
 	RejectionReason         pgtype.Text        `json:"rejection_reason"`
 	InspectionAvailability  []byte             `json:"inspection_availability"`
 	JobAvailability         []byte             `json:"job_availability"`
+	SignerName              pgtype.Text        `json:"signer_name"`
+	SignerBusinessName      pgtype.Text        `json:"signer_business_name"`
+	SignerAddress           pgtype.Text        `json:"signer_address"`
+	SignatureData           pgtype.Text        `json:"signature_data"`
+	PdfFileKey              pgtype.Text        `json:"pdf_file_key"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	BusinessName            string             `json:"business_name"`
 	Name                    string             `json:"name"`
 	AddressCity             string             `json:"address_city"`
 	ServiceType             string             `json:"service_type"`
+	ServiceTypeID           pgtype.UUID        `json:"service_type_id"`
 	LeadEnrichmentPostcode4 pgtype.Text        `json:"lead_enrichment_postcode4"`
 	LeadEnrichmentBuurtcode pgtype.Text        `json:"lead_enrichment_buurtcode"`
 	EnergyBouwjaar          pgtype.Int4        `json:"energy_bouwjaar"`
@@ -1002,17 +1072,24 @@ func (q *Queries) GetPartnerOfferByIDWithContext(ctx context.Context, arg GetPar
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
+		&i.RequiresInspection,
 		&i.AcceptedAt,
 		&i.RejectedAt,
 		&i.RejectionReason,
 		&i.InspectionAvailability,
 		&i.JobAvailability,
+		&i.SignerName,
+		&i.SignerBusinessName,
+		&i.SignerAddress,
+		&i.SignatureData,
+		&i.PdfFileKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BusinessName,
 		&i.Name,
 		&i.AddressCity,
 		&i.ServiceType,
+		&i.ServiceTypeID,
 		&i.LeadEnrichmentPostcode4,
 		&i.LeadEnrichmentBuurtcode,
 		&i.EnergyBouwjaar,
@@ -1036,17 +1113,24 @@ SELECT o.id,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
+	o.requires_inspection,
 	o.accepted_at,
 	o.rejected_at,
 	o.rejection_reason,
 	o.inspection_availability,
 	o.job_availability,
+	o.signer_name,
+	o.signer_business_name,
+	o.signer_address,
+	o.signature_data,
+	o.pdf_file_key,
 	o.created_at,
 	o.updated_at,
 	p.business_name,
 	org.name,
 	l.address_city,
 	st.name AS service_type,
+	st.id AS service_type_id,
 	l.lead_enrichment_postcode4,
 	l.lead_enrichment_buurtcode,
 	l.energy_bouwjaar,
@@ -1082,17 +1166,24 @@ type GetPartnerOfferByTokenWithContextRow struct {
 	JobSummaryShort         pgtype.Text        `json:"job_summary_short"`
 	BuilderSummary          pgtype.Text        `json:"builder_summary"`
 	Status                  string             `json:"status"`
+	RequiresInspection      bool               `json:"requires_inspection"`
 	AcceptedAt              pgtype.Timestamptz `json:"accepted_at"`
 	RejectedAt              pgtype.Timestamptz `json:"rejected_at"`
 	RejectionReason         pgtype.Text        `json:"rejection_reason"`
 	InspectionAvailability  []byte             `json:"inspection_availability"`
 	JobAvailability         []byte             `json:"job_availability"`
+	SignerName              pgtype.Text        `json:"signer_name"`
+	SignerBusinessName      pgtype.Text        `json:"signer_business_name"`
+	SignerAddress           pgtype.Text        `json:"signer_address"`
+	SignatureData           pgtype.Text        `json:"signature_data"`
+	PdfFileKey              pgtype.Text        `json:"pdf_file_key"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	BusinessName            string             `json:"business_name"`
 	Name                    string             `json:"name"`
 	AddressCity             string             `json:"address_city"`
 	ServiceType             string             `json:"service_type"`
+	ServiceTypeID           pgtype.UUID        `json:"service_type_id"`
 	LeadEnrichmentPostcode4 pgtype.Text        `json:"lead_enrichment_postcode4"`
 	LeadEnrichmentBuurtcode pgtype.Text        `json:"lead_enrichment_buurtcode"`
 	EnergyBouwjaar          pgtype.Int4        `json:"energy_bouwjaar"`
@@ -1117,17 +1208,24 @@ func (q *Queries) GetPartnerOfferByTokenWithContext(ctx context.Context, publicT
 		&i.JobSummaryShort,
 		&i.BuilderSummary,
 		&i.Status,
+		&i.RequiresInspection,
 		&i.AcceptedAt,
 		&i.RejectedAt,
 		&i.RejectionReason,
 		&i.InspectionAvailability,
 		&i.JobAvailability,
+		&i.SignerName,
+		&i.SignerBusinessName,
+		&i.SignerAddress,
+		&i.SignatureData,
+		&i.PdfFileKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BusinessName,
 		&i.Name,
 		&i.AddressCity,
 		&i.ServiceType,
+		&i.ServiceTypeID,
 		&i.LeadEnrichmentPostcode4,
 		&i.LeadEnrichmentBuurtcode,
 		&i.EnergyBouwjaar,
@@ -2046,6 +2144,26 @@ func (q *Queries) RevokePartnerInvite(ctx context.Context, arg RevokePartnerInvi
 	return i, err
 }
 
+const setPartnerOfferPDFFileKey = `-- name: SetPartnerOfferPDFFileKey :execrows
+UPDATE RAC_partner_offers
+SET pdf_file_key = $1::text,
+	updated_at = now()
+WHERE id = $2::uuid
+`
+
+type SetPartnerOfferPDFFileKeyParams struct {
+	FileKey string      `json:"file_key"`
+	OfferID pgtype.UUID `json:"offer_id"`
+}
+
+func (q *Queries) SetPartnerOfferPDFFileKey(ctx context.Context, arg SetPartnerOfferPDFFileKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPartnerOfferPDFFileKey, arg.FileKey, arg.OfferID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const unlinkPartnerLead = `-- name: UnlinkPartnerLead :execrows
 DELETE FROM RAC_partner_leads
 WHERE organization_id = $1::uuid
@@ -2216,4 +2334,27 @@ func (q *Queries) UpdatePartnerLogo(ctx context.Context, arg UpdatePartnerLogoPa
 		&i.WhatsappOptedIn,
 	)
 	return i, err
+}
+
+const updatePartnerOfferBuilderSummaryIfEmpty = `-- name: UpdatePartnerOfferBuilderSummaryIfEmpty :execrows
+UPDATE RAC_partner_offers
+SET builder_summary = $1::text,
+	updated_at = now()
+WHERE id = $2::uuid
+	AND organization_id = $3::uuid
+	AND builder_summary IS NULL
+`
+
+type UpdatePartnerOfferBuilderSummaryIfEmptyParams struct {
+	Summary        string      `json:"summary"`
+	OfferID        pgtype.UUID `json:"offer_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) UpdatePartnerOfferBuilderSummaryIfEmpty(ctx context.Context, arg UpdatePartnerOfferBuilderSummaryIfEmptyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePartnerOfferBuilderSummaryIfEmpty, arg.Summary, arg.OfferID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -68,6 +68,10 @@ type PartnerOfferSummaryScheduler interface {
 	EnqueuePartnerOfferSummary(ctx context.Context, payload PartnerOfferSummaryPayload) error
 }
 
+type PartnerOfferPDFScheduler interface {
+	EnqueuePartnerOfferPDF(ctx context.Context, payload PartnerOfferPDFPayload) error
+}
+
 type GatekeeperScheduler interface {
 	EnqueueGatekeeperRun(ctx context.Context, payload GatekeeperRunPayload) error
 }
@@ -233,6 +237,20 @@ func (c *Client) EnqueuePartnerOfferSummary(ctx context.Context, payload Partner
 	}
 
 	_, err = c.client.EnqueueContext(ctx, task, offerSummaryTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueuePartnerOfferPDF(ctx context.Context, payload PartnerOfferPDFPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewPartnerOfferPDFTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
 	return normalizeEnqueueError(err)
 }
 

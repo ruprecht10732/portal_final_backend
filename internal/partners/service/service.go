@@ -34,6 +34,7 @@ type Service struct {
 	summaryGenerator  OfferSummaryGenerator
 	summaryQueue      OfferSummaryJobQueue
 	settingsReader    OrganizationSettingsReader
+	pdfQueue          OfferPDFJobQueue
 }
 
 type OrganizationOfferSettings struct {
@@ -44,6 +45,10 @@ type OrganizationSettingsReader func(ctx context.Context, organizationID uuid.UU
 
 type OfferSummaryJobQueue interface {
 	EnqueuePartnerOfferSummary(ctx context.Context, payload scheduler.PartnerOfferSummaryPayload) error
+}
+
+type OfferPDFJobQueue interface {
+	EnqueuePartnerOfferPDF(ctx context.Context, payload scheduler.PartnerOfferPDFPayload) error
 }
 
 // New creates a new partners service.

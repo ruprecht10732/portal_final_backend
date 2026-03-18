@@ -56,6 +56,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/offers", h.ListOffers)
 	rg.GET("/services/:serviceId/offers", h.ListServiceOffers)
 	rg.DELETE("/offers/:offerId", h.DeleteOffer)
+	rg.GET("/offers/:offerId/detail", h.GetOfferDetail)
 	rg.GET("/offers/:offerId/preview", h.PreviewOffer)
 	rg.GET("/offers/:offerId/photos/:attachmentId", h.PreviewOfferPhoto)
 }
@@ -526,6 +527,30 @@ func (h *Handler) PreviewOffer(c *gin.Context) {
 	}
 
 	result, err := h.svc.GetOfferPreview(c.Request.Context(), tenantID, offerID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
+}
+
+func (h *Handler) GetOfferDetail(c *gin.Context) {
+	offerID, err := uuid.Parse(c.Param("offerId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetOfferDetail(c.Request.Context(), tenantID, offerID)
 	if httpkit.HandleError(c, err) {
 		return
 	}

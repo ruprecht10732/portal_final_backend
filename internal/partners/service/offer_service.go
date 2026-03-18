@@ -121,6 +121,7 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 		MarginBasisPoints:  marginBasisPoints,
 		OfferLineItems:     offerLineItems,
 		JobSummaryShort:    jobSummaryPtr,
+		RequiresInspection: resolveRequiresInspection(req.RequiresInspection),
 	})
 	if err != nil {
 		return transport.CreateOfferResponse{}, err
@@ -167,24 +168,25 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 	}
 
 	return transport.PublicOfferResponse{
-		OfferID:          oc.ID,
-		OrganizationName: oc.OrganizationName,
-		JobSummary:       oc.ServiceType,
-		JobSummaryShort:  oc.JobSummaryShort,
-		BuilderSummary:   builderSummary,
-		City:             oc.LeadCity,
-		Postcode4:        oc.LeadPostcode4,
-		Buurtcode:        oc.LeadBuurtcode,
-		ConstructionYear: oc.LeadEnergyBouwjaar,
-		ScopeAssessment:  scopeAssessment,
-		UrgencyLevel:     oc.UrgencyLevel,
-		VakmanPriceCents: oc.VakmanPriceCents,
-		PricingSource:    oc.PricingSource,
-		Status:           oc.Status,
-		ExpiresAt:        oc.ExpiresAt,
-		CreatedAt:        oc.CreatedAt,
-		LineItems:        mapPublicOfferLineItems(items),
-		Photos:           mapOfferPhotos(photos),
+		OfferID:            oc.ID,
+		OrganizationName:   oc.OrganizationName,
+		JobSummary:         oc.ServiceType,
+		JobSummaryShort:    oc.JobSummaryShort,
+		BuilderSummary:     builderSummary,
+		City:               oc.LeadCity,
+		Postcode4:          oc.LeadPostcode4,
+		Buurtcode:          oc.LeadBuurtcode,
+		ConstructionYear:   oc.LeadEnergyBouwjaar,
+		ScopeAssessment:    scopeAssessment,
+		UrgencyLevel:       oc.UrgencyLevel,
+		VakmanPriceCents:   oc.VakmanPriceCents,
+		PricingSource:      oc.PricingSource,
+		Status:             oc.Status,
+		RequiresInspection: oc.RequiresInspection,
+		ExpiresAt:          oc.ExpiresAt,
+		CreatedAt:          oc.CreatedAt,
+		LineItems:          mapPublicOfferLineItems(items),
+		Photos:             mapOfferPhotos(photos),
 	}, nil
 }
 
@@ -203,39 +205,86 @@ func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req trans
 		return apperr.Conflict("offer cannot be accepted in current state")
 	}
 
-	// Serialize availability slots
-	inspectionJSON, err := json.Marshal(req.InspectionSlots)
+	// When inspection is required we need at least one inspection slot
+	if oc.RequiresInspection && len(req.InspectionSlots) == 0 {
+		return apperr.Validation("at least one inspection slot is required")
+	}
+
+	inspectionJSON, jobJSON, err := marshalOfferSlots(req.InspectionSlots, req.JobSlots)
 	if err != nil {
-		return apperr.Validation("invalid inspection slots")
-	}
-
-	var jobJSON []byte
-	if len(req.JobSlots) > 0 {
-		jobJSON, err = json.Marshal(req.JobSlots)
-		if err != nil {
-			return apperr.Validation("invalid job slots")
-		}
-	}
-
-	// Atomic update (unique index enforces exclusivity)
-	if err := s.repo.AcceptOffer(ctx, oc.ID, inspectionJSON, jobJSON); err != nil {
 		return err
 	}
 
-	// Resolve lead ID for timeline/notification handlers
+	// Normalise optional signer fields
+	signerName := nilIfEmpty(req.SignerFullName)
+	signerBusiness := nilIfEmpty(req.SignerBusinessName)
+	signerAddress := nilIfEmpty(req.SignerAddress)
+	signatureData := nilIfEmpty(req.SignatureData)
+
+	// Atomic update (unique index enforces exclusivity)
+	if err := s.repo.AcceptOffer(ctx, repository.AcceptOfferParams{
+		OfferID:            oc.ID,
+		InspectionSlots:    inspectionJSON,
+		JobSlots:           jobJSON,
+		SignerName:         signerName,
+		SignerBusinessName: signerBusiness,
+		SignerAddress:      signerAddress,
+		SignatureData:      signatureData,
+	}); err != nil {
+		return err
+	}
+
+	s.enqueueAcceptedOfferPDF(ctx, oc)
+	s.publishAcceptedOfferEvent(ctx, oc)
+
+	return nil
+}
+
+func marshalOfferSlots(inspectionSlots, jobSlots []transport.TimeSlot) ([]byte, []byte, error) {
+	var inspectionJSON []byte
+	var err error
+	if len(inspectionSlots) > 0 {
+		inspectionJSON, err = json.Marshal(inspectionSlots)
+		if err != nil {
+			return nil, nil, apperr.Validation("invalid inspection slots")
+		}
+	}
+
+	var jobJSON []byte
+	if len(jobSlots) > 0 {
+		jobJSON, err = json.Marshal(jobSlots)
+		if err != nil {
+			return nil, nil, apperr.Validation("invalid job slots")
+		}
+	}
+
+	return inspectionJSON, jobJSON, nil
+}
+
+func (s *Service) enqueueAcceptedOfferPDF(ctx context.Context, oc repository.PartnerOfferWithContext) {
+	if s.pdfQueue == nil {
+		return
+	}
+	if qErr := s.pdfQueue.EnqueuePartnerOfferPDF(ctx, scheduler.PartnerOfferPDFPayload{
+		OfferID:  oc.ID.String(),
+		TenantID: oc.OrganizationID.String(),
+	}); qErr != nil {
+		log.Printf("partners: failed to enqueue offer PDF generation for offer=%s tenant=%s: %v", oc.ID, oc.OrganizationID, qErr)
+	}
+}
+
+func (s *Service) publishAcceptedOfferEvent(ctx context.Context, oc repository.PartnerOfferWithContext) {
 	leadID, _ := s.repo.GetLeadIDForService(ctx, oc.LeadServiceID, oc.OrganizationID)
 
-	// Resolve partner details for confirmation
 	var partnerEmail string
 	var partnerPhone string
 	var partnerWhatsAppOptedIn bool
-	if partner, pErr := s.repo.GetByID(ctx, oc.PartnerID, oc.OrganizationID); pErr == nil {
+	if partner, err := s.repo.GetByID(ctx, oc.PartnerID, oc.OrganizationID); err == nil {
 		partnerEmail = partner.ContactEmail
 		partnerPhone = partner.ContactPhone
 		partnerWhatsAppOptedIn = partner.WhatsAppOptedIn
 	}
 
-	// Publish event
 	s.eventBus.Publish(ctx, events.PartnerOfferAccepted{
 		BaseEvent:              events.NewBaseEvent(),
 		OfferID:                oc.ID,
@@ -248,8 +297,13 @@ func (s *Service) AcceptOffer(ctx context.Context, publicToken string, req trans
 		PartnerPhone:           partnerPhone,
 		PartnerWhatsAppOptedIn: partnerWhatsAppOptedIn,
 	})
+}
 
-	return nil
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // RejectOffer processes a vakman's rejection of an offer.
@@ -300,24 +354,25 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 	}
 
 	return transport.PublicOfferResponse{
-		OfferID:          oc.ID,
-		OrganizationName: oc.OrganizationName,
-		JobSummary:       oc.ServiceType,
-		JobSummaryShort:  oc.JobSummaryShort,
-		BuilderSummary:   builderSummary,
-		City:             oc.LeadCity,
-		Postcode4:        oc.LeadPostcode4,
-		Buurtcode:        oc.LeadBuurtcode,
-		ConstructionYear: oc.LeadEnergyBouwjaar,
-		ScopeAssessment:  scopeAssessment,
-		UrgencyLevel:     oc.UrgencyLevel,
-		VakmanPriceCents: oc.VakmanPriceCents,
-		PricingSource:    oc.PricingSource,
-		Status:           oc.Status,
-		ExpiresAt:        oc.ExpiresAt,
-		CreatedAt:        oc.CreatedAt,
-		LineItems:        mapPublicOfferLineItems(items),
-		Photos:           mapOfferPhotos(photos),
+		OfferID:            oc.ID,
+		OrganizationName:   oc.OrganizationName,
+		JobSummary:         oc.ServiceType,
+		JobSummaryShort:    oc.JobSummaryShort,
+		BuilderSummary:     builderSummary,
+		City:               oc.LeadCity,
+		Postcode4:          oc.LeadPostcode4,
+		Buurtcode:          oc.LeadBuurtcode,
+		ConstructionYear:   oc.LeadEnergyBouwjaar,
+		ScopeAssessment:    scopeAssessment,
+		UrgencyLevel:       oc.UrgencyLevel,
+		VakmanPriceCents:   oc.VakmanPriceCents,
+		PricingSource:      oc.PricingSource,
+		Status:             oc.Status,
+		RequiresInspection: oc.RequiresInspection,
+		ExpiresAt:          oc.ExpiresAt,
+		CreatedAt:          oc.CreatedAt,
+		LineItems:          mapPublicOfferLineItems(items),
+		Photos:             mapOfferPhotos(photos),
 	}, nil
 }
 
@@ -934,4 +989,75 @@ func mapOfferPhotos(photos []repository.PhotoAttachment) []transport.OfferPhotoR
 		})
 	}
 	return result
+}
+
+func resolveRequiresInspection(v *bool) bool {
+	if v == nil {
+		return true // default: inspection required
+	}
+	return *v
+}
+
+// WithPDFQueue attaches a PDF job queue to the service.
+func (s *Service) WithPDFQueue(q OfferPDFJobQueue) {
+	s.pdfQueue = q
+}
+
+// GetOfferDetail returns the full detail view of an offer for admins.
+func (s *Service) GetOfferDetail(ctx context.Context, tenantID, offerID uuid.UUID) (transport.OfferDetailResponse, error) {
+	oc, err := s.repo.GetOfferByIDWithContext(ctx, offerID, tenantID)
+	if err != nil {
+		return transport.OfferDetailResponse{}, err
+	}
+
+	items, photos := s.resolveOfferViewData(ctx, oc)
+
+	var inspectionSlots []transport.TimeSlot
+	if len(oc.InspectionAvailability) > 0 {
+		_ = json.Unmarshal(oc.InspectionAvailability, &inspectionSlots)
+	}
+
+	var jobSlots []transport.TimeSlot
+	if len(oc.JobAvailability) > 0 {
+		_ = json.Unmarshal(oc.JobAvailability, &jobSlots)
+	}
+
+	lineItems := make([]transport.OfferDetailLineItem, 0, len(items))
+	for _, item := range items {
+		lineItems = append(lineItems, transport.OfferDetailLineItem{
+			Description:    item.Description,
+			Quantity:       item.Quantity,
+			UnitPriceCents: item.UnitPriceCents,
+			LineTotalCents: item.LineTotalCents,
+		})
+	}
+
+	return transport.OfferDetailResponse{
+		ID:                 oc.ID,
+		PartnerID:          oc.PartnerID,
+		PartnerName:        oc.PartnerName,
+		LeadServiceID:      oc.LeadServiceID,
+		ServiceType:        oc.ServiceType,
+		LeadCity:           oc.LeadCity,
+		Status:             oc.Status,
+		RequiresInspection: oc.RequiresInspection,
+		PublicToken:        oc.PublicToken,
+		VakmanPriceCents:   oc.VakmanPriceCents,
+		CustomerPriceCents: oc.CustomerPriceCents,
+		JobSummaryShort:    oc.JobSummaryShort,
+		BuilderSummary:     oc.BuilderSummary,
+		LineItems:          lineItems,
+		Photos:             mapOfferPhotos(photos),
+		ExpiresAt:          oc.ExpiresAt,
+		CreatedAt:          oc.CreatedAt,
+		AcceptedAt:         oc.AcceptedAt,
+		RejectedAt:         oc.RejectedAt,
+		RejectionReason:    oc.RejectionReason,
+		InspectionSlots:    inspectionSlots,
+		JobSlots:           jobSlots,
+		SignerName:         oc.SignerName,
+		SignerBusinessName: oc.SignerBusinessName,
+		SignerAddress:      oc.SignerAddress,
+		PDFFileKey:         oc.PDFFileKey,
+	}, nil
 }

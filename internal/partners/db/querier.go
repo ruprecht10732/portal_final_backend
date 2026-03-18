@@ -50,9 +50,11 @@ type Querier interface {
 	PartnerExists(ctx context.Context, arg PartnerExistsParams) (bool, error)
 	RejectPartnerOffer(ctx context.Context, arg RejectPartnerOfferParams) (int64, error)
 	RevokePartnerInvite(ctx context.Context, arg RevokePartnerInviteParams) (RacPartnerInvite, error)
+	SetPartnerOfferPDFFileKey(ctx context.Context, arg SetPartnerOfferPDFFileKeyParams) (int64, error)
 	UnlinkPartnerLead(ctx context.Context, arg UnlinkPartnerLeadParams) (int64, error)
 	UpdatePartner(ctx context.Context, arg UpdatePartnerParams) (RacPartner, error)
 	UpdatePartnerLogo(ctx context.Context, arg UpdatePartnerLogoParams) (RacPartner, error)
+	UpdatePartnerOfferBuilderSummaryIfEmpty(ctx context.Context, arg UpdatePartnerOfferBuilderSummaryIfEmptyParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

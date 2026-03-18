@@ -995,6 +995,12 @@ type RacPartnerOffer struct {
 	BuilderSummary         pgtype.Text        `json:"builder_summary"`
 	MarginBasisPoints      int32              `json:"margin_basis_points"`
 	OfferLineItems         []byte             `json:"offer_line_items"`
+	RequiresInspection     bool               `json:"requires_inspection"`
+	SignerName             pgtype.Text        `json:"signer_name"`
+	SignerBusinessName     pgtype.Text        `json:"signer_business_name"`
+	SignerAddress          pgtype.Text        `json:"signer_address"`
+	SignatureData          pgtype.Text        `json:"signature_data"`
+	PdfFileKey             pgtype.Text        `json:"pdf_file_key"`
 }
 
 type RacPartnerServiceType struct {

@@ -283,6 +283,7 @@ INSERT INTO RAC_partner_offers (
 	offer_line_items,
 	job_summary_short,
 	builder_summary,
+	requires_inspection,
 	status
 ) VALUES (
 	sqlc.arg(organization_id)::uuid,
@@ -297,6 +298,7 @@ INSERT INTO RAC_partner_offers (
 	sqlc.arg(offer_line_items)::jsonb,
 	sqlc.narg(job_summary_short)::text,
 	sqlc.narg(builder_summary)::text,
+	sqlc.arg(requires_inspection)::bool,
 	'pending'
 )
 RETURNING id,
@@ -313,13 +315,27 @@ RETURNING id,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
+	requires_inspection,
 	accepted_at,
 	rejected_at,
 	rejection_reason,
 	inspection_availability,
 	job_availability,
+	signer_name,
+	signer_business_name,
+	signer_address,
+	signature_data,
+	pdf_file_key,
 	created_at,
 	updated_at;
+
+-- name: UpdatePartnerOfferBuilderSummaryIfEmpty :execrows
+UPDATE RAC_partner_offers
+SET builder_summary = sqlc.arg(summary)::text,
+	updated_at = now()
+WHERE id = sqlc.arg(offer_id)::uuid
+	AND organization_id = sqlc.arg(organization_id)::uuid
+	AND builder_summary IS NULL;
 
 -- name: GetPartnerOfferByTokenWithContext :one
 SELECT o.id,
@@ -336,17 +352,24 @@ SELECT o.id,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
+	o.requires_inspection,
 	o.accepted_at,
 	o.rejected_at,
 	o.rejection_reason,
 	o.inspection_availability,
 	o.job_availability,
+	o.signer_name,
+	o.signer_business_name,
+	o.signer_address,
+	o.signature_data,
+	o.pdf_file_key,
 	o.created_at,
 	o.updated_at,
 	p.business_name,
 	org.name,
 	l.address_city,
 	st.name AS service_type,
+	st.id AS service_type_id,
 	l.lead_enrichment_postcode4,
 	l.lead_enrichment_buurtcode,
 	l.energy_bouwjaar,
@@ -381,11 +404,17 @@ SELECT id,
 	job_summary_short,
 	builder_summary,
 	status::text AS status,
+	requires_inspection,
 	accepted_at,
 	rejected_at,
 	rejection_reason,
 	inspection_availability,
 	job_availability,
+	signer_name,
+	signer_business_name,
+	signer_address,
+	signature_data,
+	pdf_file_key,
 	created_at,
 	updated_at
 FROM RAC_partner_offers
@@ -396,7 +425,7 @@ WHERE id = sqlc.arg(offer_id)::uuid
 DELETE FROM RAC_partner_offers
 WHERE id = sqlc.arg(offer_id)::uuid
   AND organization_id = sqlc.arg(organization_id)::uuid
-  AND status = ANY(sqlc.arg(statuses)::text[]);
+	AND status::text = ANY(sqlc.arg(statuses)::text[]);
 
 -- name: GetLeadServiceSummaryContext :one
 SELECT ls.lead_id,
@@ -429,17 +458,24 @@ SELECT o.id,
 	o.job_summary_short,
 	o.builder_summary,
 	o.status::text AS status,
+	o.requires_inspection,
 	o.accepted_at,
 	o.rejected_at,
 	o.rejection_reason,
 	o.inspection_availability,
 	o.job_availability,
+	o.signer_name,
+	o.signer_business_name,
+	o.signer_address,
+	o.signature_data,
+	o.pdf_file_key,
 	o.created_at,
 	o.updated_at,
 	p.business_name,
 	org.name,
 	l.address_city,
 	st.name AS service_type,
+	st.id AS service_type_id,
 	l.lead_enrichment_postcode4,
 	l.lead_enrichment_buurtcode,
 	l.energy_bouwjaar,
@@ -611,9 +647,19 @@ SET status = 'accepted',
 	accepted_at = now(),
 	inspection_availability = sqlc.arg(inspection_slots)::jsonb,
 	job_availability = sqlc.arg(job_slots)::jsonb,
+	signer_name = sqlc.narg(signer_name)::text,
+	signer_business_name = sqlc.narg(signer_business_name)::text,
+	signer_address = sqlc.narg(signer_address)::text,
+	signature_data = sqlc.narg(signature_data)::text,
 	updated_at = now()
 WHERE id = sqlc.arg(offer_id)::uuid
   AND status IN ('pending', 'sent');
+
+-- name: SetPartnerOfferPDFFileKey :execrows
+UPDATE RAC_partner_offers
+SET pdf_file_key = sqlc.arg(file_key)::text,
+	updated_at = now()
+WHERE id = sqlc.arg(offer_id)::uuid;
 
 -- name: RejectPartnerOffer :execrows
 UPDATE RAC_partner_offers

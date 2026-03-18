@@ -22,22 +22,23 @@ import (
 )
 
 type Worker struct {
-	server  *asynq.Server
-	mux     *asynq.ServeMux
-	repo    *repository.Repository
-	leads   *leadrepo.Repository
-	bus     events.Bus
-	log     *logger.Logger
-	quotes  QuoteJobProcessor
-	pdf     QuoteAcceptedPDFProcessor
-	call    CallLogProcessor
-	offer   OfferSummaryProcessor
-	tasks   TaskReminderProcessor
-	leadsAI LeadAutomationProcessor
-	voice   WAAgentVoiceTranscriptionProcessor
-	imap    IMAPSyncProcessor
-	embed   *embeddings.Client
-	qdrant  *qdrant.Client
+	server   *asynq.Server
+	mux      *asynq.ServeMux
+	repo     *repository.Repository
+	leads    *leadrepo.Repository
+	bus      events.Bus
+	log      *logger.Logger
+	quotes   QuoteJobProcessor
+	pdf      QuoteAcceptedPDFProcessor
+	call     CallLogProcessor
+	offer    OfferSummaryProcessor
+	offerPDF OfferPDFProcessor
+	tasks    TaskReminderProcessor
+	leadsAI  LeadAutomationProcessor
+	voice    WAAgentVoiceTranscriptionProcessor
+	imap     IMAPSyncProcessor
+	embed    *embeddings.Client
+	qdrant   *qdrant.Client
 }
 
 const errLeadAutomationProcessorNotConfigured = "lead automation processor is not configured"
@@ -62,6 +63,10 @@ type CallLogProcessor interface {
 
 type OfferSummaryProcessor interface {
 	ProcessPartnerOfferSummaryJob(ctx context.Context, payload PartnerOfferSummaryPayload) error
+}
+
+type OfferPDFProcessor interface {
+	GenerateAndStoreOfferPDF(ctx context.Context, offerID, tenantID uuid.UUID) (string, error)
 }
 
 type TaskReminderProcessor interface {
@@ -150,6 +155,7 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskGenerateAcceptedQuotePDF, w.handleGenerateAcceptedQuotePDF)
 	mux.HandleFunc(TaskLogCall, w.handleLogCall)
 	mux.HandleFunc(TaskGeneratePartnerOfferSummary, w.handlePartnerOfferSummary)
+	mux.HandleFunc(TaskGeneratePartnerOfferPDF, w.handlePartnerOfferPDF)
 	mux.HandleFunc(TaskRunGatekeeper, w.handleGatekeeperRun)
 	mux.HandleFunc(TaskRunEstimator, w.handleEstimatorRun)
 	mux.HandleFunc(TaskRunDispatcher, w.handleDispatcherRun)
@@ -182,6 +188,10 @@ func (w *Worker) SetCallLogProcessor(processor CallLogProcessor) {
 
 func (w *Worker) SetOfferSummaryProcessor(processor OfferSummaryProcessor) {
 	w.offer = processor
+}
+
+func (w *Worker) SetOfferPDFProcessor(processor OfferPDFProcessor) {
+	w.offerPDF = processor
 }
 
 func (w *Worker) SetTaskReminderProcessor(processor TaskReminderProcessor) {
@@ -594,6 +604,37 @@ func (w *Worker) handleLogCall(ctx context.Context, task *asynq.Task) error {
 		"durationMs", time.Since(start).Milliseconds(),
 	)
 
+	return nil
+}
+
+func (w *Worker) handlePartnerOfferPDF(ctx context.Context, task *asynq.Task) error {
+	if w.offerPDF == nil {
+		return fmt.Errorf("offer pdf processor is not configured")
+	}
+
+	payload, err := ParsePartnerOfferPDFPayload(task)
+	if err != nil {
+		return err
+	}
+
+	offerID, err := uuid.Parse(payload.OfferID)
+	if err != nil {
+		return err
+	}
+
+	tenantID, err := uuid.Parse(payload.TenantID)
+	if err != nil {
+		return err
+	}
+
+	start := time.Now()
+	w.log.Info("scheduler: starting partner offer PDF generation", "offerId", payload.OfferID, "tenantId", payload.TenantID)
+	fileKey, err := w.offerPDF.GenerateAndStoreOfferPDF(ctx, offerID, tenantID)
+	if err != nil {
+		w.log.Error("scheduler: partner offer PDF generation failed", "offerId", payload.OfferID, "tenantId", payload.TenantID, "durationMs", time.Since(start).Milliseconds(), "error", err)
+		return err
+	}
+	w.log.Info("scheduler: partner offer PDF generation completed", "offerId", payload.OfferID, "tenantId", payload.TenantID, "fileKey", fileKey, "durationMs", time.Since(start).Milliseconds())
 	return nil
 }
 

@@ -141,7 +141,7 @@ sql:
         emit_exact_table_names: false
 
   # Partners Domain – partners, invites, service types, and offers
-  - schema: "migrations"
+  - schema: "docs/baseline_schema.sql"
     queries: "internal/partners/sql"
     engine: "postgresql"
     gen:

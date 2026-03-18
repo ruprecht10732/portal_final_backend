@@ -2,8 +2,6 @@
 -- PostgreSQL database dump
 --
 
-\restrict PclGHKpeDjdAKzBAEeRKQ7fzUJf12jv7pYMGseckg4mTiVvfVTryyuOBeSzDQi2
-
 -- Dumped from database version 17.7
 -- Dumped by pg_dump version 18.1
 
@@ -803,12 +801,20 @@ CREATE TABLE public.rac_partner_offers (
     pricing_source public.pricing_source NOT NULL,
     customer_price_cents bigint NOT NULL,
     vakman_price_cents bigint NOT NULL,
+    margin_basis_points integer DEFAULT 1000 NOT NULL,
+    offer_line_items jsonb,
     status public.offer_status DEFAULT 'pending'::public.offer_status NOT NULL,
+    requires_inspection boolean DEFAULT true NOT NULL,
     accepted_at timestamp with time zone,
     rejected_at timestamp with time zone,
     rejection_reason text,
     inspection_availability jsonb,
     job_availability jsonb,
+    signer_name text,
+    signer_business_name text,
+    signer_address text,
+    signature_data text,
+    pdf_file_key text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     job_summary_short text,
@@ -837,8 +843,8 @@ CREATE TABLE public.rac_partners (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     organization_id uuid NOT NULL,
     business_name text NOT NULL,
-    kvk_number text NOT NULL,
-    vat_number text NOT NULL,
+    kvk_number text,
+    vat_number text,
     address_line1 text NOT NULL,
     address_line2 text,
     postal_code text NOT NULL,
@@ -3536,6 +3542,4 @@ ALTER TABLE ONLY public.rac_webhook_api_keys
 --
 -- PostgreSQL database dump complete
 --
-
-\unrestrict PclGHKpeDjdAKzBAEeRKQ7fzUJf12jv7pYMGseckg4mTiVvfVTryyuOBeSzDQi2
 

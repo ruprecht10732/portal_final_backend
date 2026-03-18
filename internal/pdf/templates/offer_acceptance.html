@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Werkaanbod Acceptatie</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&family=Cormorant+Garamond:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        @page { margin: 0; size: A4; }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #FDFBF7;
+            color: #1C1917;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 8.5pt;
+            line-height: 1.6;
+        }
+
+        h1, h2, h3 { margin: 0; font-family: 'Cormorant Garamond', serif; }
+
+        .container { padding: 40px; }
+
+        /* ─── HEADER ───────────────────────────────────────── */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-bottom: 1px solid #1C1917;
+            padding-bottom: 20px;
+            margin-bottom: 36px;
+        }
+
+        .logo-box img {
+            max-height: 70px;
+            max-width: 220px;
+            mix-blend-mode: multiply;
+        }
+        .logo-box .fallback {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 22pt;
+            font-weight: 700;
+        }
+
+        .doc-title { text-align: right; }
+        .doc-title h1 {
+            font-size: 30pt;
+            font-weight: 400;
+            letter-spacing: 0.08em;
+            line-height: 1;
+            color: #1C1917;
+        }
+        .doc-title .subtitle {
+            font-size: 8pt;
+            color: #C5A065;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        /* ─── META ROW ─────────────────────────────────────── */
+        .meta-row {
+            display: flex;
+            gap: 32px;
+            margin-bottom: 32px;
+        }
+        .meta-block {
+            flex: 1;
+        }
+        .meta-label {
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: #78716C;
+            margin-bottom: 2px;
+        }
+        .meta-value {
+            font-weight: 600;
+            font-size: 9pt;
+        }
+
+        /* ─── ORG DETAILS ──────────────────────────────────── */
+        .org-block {
+            background: #F5F5F4;
+            border-left: 3px solid #C5A065;
+            padding: 12px 16px;
+            margin-bottom: 28px;
+        }
+        .org-block .org-name {
+            font-weight: 700;
+            font-size: 10pt;
+            margin-bottom: 4px;
+        }
+        .org-block .org-details {
+            color: #57534E;
+            font-size: 8pt;
+        }
+
+        /* ─── SECTION HEADING ──────────────────────────────── */
+        .section-heading {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 14pt;
+            font-weight: 700;
+            border-bottom: 1px solid #E5E5E5;
+            padding-bottom: 6px;
+            margin: 0 0 14px 0;
+        }
+
+        /* ─── JOB CONTEXT ──────────────────────────────────── */
+        .job-context {
+            margin-bottom: 28px;
+        }
+        .job-summary-text {
+            background: #FAFAF9;
+            border: 1px solid #E5E5E5;
+            padding: 14px 16px;
+            font-size: 8pt;
+            color: #44403C;
+            line-height: 1.7;
+        }
+
+        /* ─── ITEMS TABLE ──────────────────────────────────── */
+        .items-section { margin-bottom: 28px; }
+
+        table.items {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        table.items thead th {
+            background: #1C1917;
+            color: #FDFBF7;
+            font-size: 7.5pt;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 8px 10px;
+            text-align: left;
+        }
+        table.items thead th:last-child { text-align: right; }
+        table.items thead th.right { text-align: right; }
+
+        table.items tbody tr:nth-child(even) { background: #F5F5F4; }
+        table.items tbody td {
+            padding: 7px 10px;
+            font-size: 8pt;
+            border-bottom: 1px solid #E7E5E4;
+        }
+        table.items tbody td.right { text-align: right; }
+
+        .total-row {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+        .total-box {
+            background: #1C1917;
+            color: #FDFBF7;
+            padding: 10px 20px;
+            text-align: right;
+        }
+        .total-box .label {
+            font-size: 7.5pt;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            opacity: 0.75;
+        }
+        .total-box .amount {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 16pt;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        /* ─── SIGNER BLOCK ─────────────────────────────────── */
+        .signer-section { margin-bottom: 28px; }
+        .signer-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .signer-field .label {
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #78716C;
+            margin-bottom: 2px;
+        }
+        .signer-field .value {
+            font-weight: 600;
+            font-size: 9pt;
+        }
+
+        /* ─── SIGNATURE IMAGE ──────────────────────────────── */
+        .signature-box {
+            border: 1px solid #E5E5E5;
+            padding: 12px;
+            background: #FAFAF9;
+            display: inline-block;
+            margin-top: 8px;
+        }
+        .signature-box img {
+            max-height: 80px;
+            max-width: 280px;
+        }
+        .signature-placeholder {
+            width: 280px;
+            height: 80px;
+            border-bottom: 1px solid #78716C;
+            display: flex;
+            align-items: flex-end;
+            padding-bottom: 4px;
+            color: #A8A29E;
+            font-size: 8pt;
+            font-style: italic;
+        }
+
+        /* ─── FOOTER ───────────────────────────────────────── */
+        .doc-footer {
+            margin-top: 32px;
+            padding-top: 16px;
+            border-top: 1px solid #E5E5E5;
+            display: flex;
+            justify-content: space-between;
+            color: #78716C;
+            font-size: 7.5pt;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- HEADER -->
+    <div class="header">
+        <div class="logo-box">
+            {{if .LogoBase64}}
+                <img src="data:{{.LogoMimeType}};base64,{{.LogoBase64}}" alt="{{.OrganizationName}}">
+            {{else}}
+                <span class="fallback">{{.OrganizationName}}</span>
+            {{end}}
+        </div>
+        <div class="doc-title">
+            <h1>Werkaanbod</h1>
+            <div class="subtitle">Acceptatiebevestiging</div>
+        </div>
+    </div>
+
+    <!-- META: ref + date -->
+    <div class="meta-row">
+        <div class="meta-block">
+            <div class="meta-label">Referentie</div>
+            <div class="meta-value">{{.OfferRef}}</div>
+        </div>
+        <div class="meta-block">
+            <div class="meta-label">Geaccepteerd op</div>
+            <div class="meta-value">{{.AcceptedAtFormatted}}</div>
+        </div>
+        <div class="meta-block">
+            <div class="meta-label">Werksoort</div>
+            <div class="meta-value">{{.ServiceType}}</div>
+        </div>
+        {{if .LeadCity}}
+        <div class="meta-block">
+            <div class="meta-label">Locatie</div>
+            <div class="meta-value">{{.LeadCity}}</div>
+        </div>
+        {{end}}
+    </div>
+
+    <!-- ORG DETAILS -->
+    <div class="org-block">
+        <div class="org-name">{{.OrganizationName}}</div>
+        <div class="org-details">
+            {{if .OrgAddressLine1}}{{.OrgAddressLine1}}{{if .OrgPostalCode}}, {{.OrgPostalCode}} {{.OrgCity}}{{end}} &nbsp;|&nbsp; {{end}}
+            {{if .OrgPhone}}Tel: {{.OrgPhone}} &nbsp;|&nbsp; {{end}}
+            {{if .OrgEmail}}{{.OrgEmail}}{{end}}
+            {{if .OrgKvkNumber}}&nbsp;|&nbsp; KvK: {{.OrgKvkNumber}}{{end}}
+            {{if .OrgVatNumber}}&nbsp;|&nbsp; BTW: {{.OrgVatNumber}}{{end}}
+        </div>
+    </div>
+
+    <!-- JOB SUMMARY -->
+    {{if .JobSummary}}
+    <div class="job-context">
+        <h2 class="section-heading">Omschrijving werkzaamheden</h2>
+        <div class="job-summary-text">{{.JobSummary}}</div>
+    </div>
+    {{end}}
+
+    <!-- LINE ITEMS -->
+    {{if .Items}}
+    <div class="items-section">
+        <h2 class="section-heading">Specificatie</h2>
+        <table class="items">
+            <thead>
+                <tr>
+                    <th>Omschrijving</th>
+                    <th class="right">Aantal</th>
+                    <th class="right">Stuksprijs</th>
+                    <th class="right">Totaal</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Items}}
+                <tr>
+                    <td>{{.Description}}</td>
+                    <td class="right">{{.Quantity}}</td>
+                    <td class="right">{{.UnitFormatted}}</td>
+                    <td class="right">{{.LineTotalFormatted}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        <div class="total-row">
+            <div class="total-box">
+                <div class="label">Totaalbedrag</div>
+                <div class="amount">{{.TotalFormatted}}</div>
+            </div>
+        </div>
+    </div>
+    {{end}}
+
+    <!-- SIGNER -->
+    <div class="signer-section">
+        <h2 class="section-heading">Handtekening vakman</h2>
+        <div class="signer-grid">
+            <div class="signer-field">
+                <div class="label">Naam</div>
+                <div class="value">{{.SignerName}}</div>
+            </div>
+            {{if .SignerBusinessName}}
+            <div class="signer-field">
+                <div class="label">Bedrijfsnaam</div>
+                <div class="value">{{.SignerBusinessName}}</div>
+            </div>
+            {{end}}
+            {{if .SignerAddress}}
+            <div class="signer-field">
+                <div class="label">Adres</div>
+                <div class="value">{{.SignerAddress}}</div>
+            </div>
+            {{end}}
+        </div>
+
+        {{if .HasSignature}}
+        <div class="signature-box">
+            <img src="{{.SignatureBase64}}" alt="Handtekening">
+        </div>
+        {{else}}
+        <div class="signature-placeholder">Handtekening</div>
+        {{end}}
+    </div>
+
+    <!-- FOOTER -->
+    <div class="doc-footer">
+        <span>{{.OrganizationName}}</span>
+        <span>Ref: {{.OfferRef}} &bull; {{.AcceptedAtFormatted}}</span>
+    </div>
+
+</div>
+</body>
+</html>
