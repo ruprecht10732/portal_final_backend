@@ -30,6 +30,7 @@ import (
 	"portal_final_backend/internal/notification/inapp"
 	notificationoutbox "portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/notification/sse"
+	"portal_final_backend/internal/pdf"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
 	"portal_final_backend/platform/apperr"
@@ -60,6 +61,18 @@ type QuoteAcceptedPDFScheduler interface {
 
 type QuotePDFFileStorage interface {
 	DownloadFile(ctx context.Context, bucket, fileKey string) (io.ReadCloser, error)
+}
+
+type SubsidyPDFGenerator interface {
+	GenerateSubsidyPDF(data isdeSubsidyPDFAttachmentPayload) ([]byte, error)
+}
+
+type subsidyPDFGeneratorFunc func(data isdeSubsidyPDFAttachmentPayload) ([]byte, error)
+
+const pdfMIMEType = "application/pdf"
+
+func (f subsidyPDFGeneratorFunc) GenerateSubsidyPDF(data isdeSubsidyPDFAttachmentPayload) ([]byte, error) {
+	return f(data)
 }
 
 // PartnerOfferTimelineEventParams describes the payload for a partner-offer timeline event.
@@ -177,6 +190,7 @@ type Module struct {
 	quotePDFStorage     QuotePDFFileStorage
 	quotePDFBucket      string
 	quotePDFScheduler   QuoteAcceptedPDFScheduler
+	subsidyPDFGen       SubsidyPDFGenerator
 	whatsapp            WhatsAppSender
 	whatsAppInboxWriter WhatsAppInboxWriter
 	leadTimeline        LeadTimelineWriter
@@ -206,13 +220,14 @@ func New(pool *pgxpool.Pool, sender email.Sender, cfg config.NotificationConfig,
 	}
 
 	return &Module{
-		pool:         pool,
-		sender:       sender,
-		cfg:          cfg,
-		log:          log,
-		queries:      queries,
-		inAppService: inAppSvc,
-		inAppHandler: notifhandler.NewHTTPHandler(inAppSvc),
+		pool:          pool,
+		sender:        sender,
+		cfg:           cfg,
+		log:           log,
+		queries:       queries,
+		subsidyPDFGen: subsidyPDFGeneratorFunc(generateISDESubsidyPDF),
+		inAppService:  inAppSvc,
+		inAppHandler:  notifhandler.NewHTTPHandler(inAppSvc),
 	}
 }
 
@@ -393,6 +408,9 @@ func (m *Module) SetQuotePDFStorage(storage QuotePDFFileStorage, bucket string) 
 func (m *Module) SetQuoteAcceptedPDFScheduler(scheduler QuoteAcceptedPDFScheduler) {
 	m.quotePDFScheduler = scheduler
 }
+
+// SetSubsidyPDFGenerator injects the generator for ISDE subsidy summary attachments.
+func (m *Module) SetSubsidyPDFGenerator(gen SubsidyPDFGenerator) { m.subsidyPDFGen = gen }
 
 func (m *Module) SendLeadWhatsApp(ctx context.Context, params SendLeadWhatsAppParams) error {
 	if m.whatsapp == nil {
@@ -696,11 +714,33 @@ type emailSendOutboxPayload struct {
 }
 
 type emailSendAttachmentSpec struct {
-	Kind     string  `json:"kind,omitempty"`
-	QuoteID  *string `json:"quoteId,omitempty"`
-	FileKey  string  `json:"fileKey,omitempty"`
-	FileName string  `json:"fileName,omitempty"`
-	MIMEType string  `json:"mimeType,omitempty"`
+	Kind        string                           `json:"kind,omitempty"`
+	QuoteID     *string                          `json:"quoteId,omitempty"`
+	FileKey     string                           `json:"fileKey,omitempty"`
+	FileName    string                           `json:"fileName,omitempty"`
+	MIMEType    string                           `json:"mimeType,omitempty"`
+	ISDESubsidy *isdeSubsidyPDFAttachmentPayload `json:"isdeSubsidy,omitempty"`
+}
+
+type isdeSubsidyPDFAttachmentPayload struct {
+	QuoteNumber          string                   `json:"quoteNumber,omitempty"`
+	OrganizationName     string                   `json:"organizationName,omitempty"`
+	LeadName             string                   `json:"leadName,omitempty"`
+	LeadAddress          string                   `json:"leadAddress,omitempty"`
+	TotalAmountCents     int64                    `json:"totalAmountCents"`
+	IsDoubled            bool                     `json:"isDoubled,omitempty"`
+	EligibleMeasureCount int                      `json:"eligibleMeasureCount,omitempty"`
+	InsulationBreakdown  []isdeSubsidyPDFLineItem `json:"insulationBreakdown,omitempty"`
+	GlassBreakdown       []isdeSubsidyPDFLineItem `json:"glassBreakdown,omitempty"`
+	Installations        []isdeSubsidyPDFLineItem `json:"installations,omitempty"`
+	UnknownMeasureIDs    []string                 `json:"unknownMeasureIds,omitempty"`
+	UnknownMeldcodes     []string                 `json:"unknownMeldcodes,omitempty"`
+}
+
+type isdeSubsidyPDFLineItem struct {
+	Description string  `json:"description"`
+	AreaM2      float64 `json:"areaM2,omitempty"`
+	AmountCents int64   `json:"amountCents"`
 }
 
 type workflowRule struct {
@@ -1079,13 +1119,24 @@ func (m *Module) buildEmailAttachmentSpecs(dispatchCtx workflowStepDispatchConte
 	}
 
 	fileKey, _ := quoteMap["pdfFileKey"].(string)
-	return []emailSendAttachmentSpec{{
+	attachments := []emailSendAttachmentSpec{{
 		Kind:     "quote_pdf",
 		QuoteID:  &quoteIDText,
 		FileKey:  strings.TrimSpace(fileKey),
 		FileName: buildQuotePDFAttachmentFileName(quoteNumber),
-		MIMEType: "application/pdf",
+		MIMEType: pdfMIMEType,
 	}}
+
+	if subsidy := buildISDESubsidyAttachmentPayload(dispatchCtx.Exec.Variables, quoteMap); subsidy != nil {
+		attachments = append(attachments, emailSendAttachmentSpec{
+			Kind:        "isde_subsidy_pdf",
+			FileName:    buildISDESubsidyPDFAttachmentFileName(quoteNumber),
+			MIMEType:    pdfMIMEType,
+			ISDESubsidy: subsidy,
+		})
+	}
+
+	return attachments
 }
 
 func buildQuotePDFAttachmentFileName(quoteNumber string) string {
@@ -1094,6 +1145,142 @@ func buildQuotePDFAttachmentFileName(quoteNumber string) string {
 		return "offerte.pdf"
 	}
 	return fmt.Sprintf("offerte-%s.pdf", trimmed)
+}
+
+func buildISDESubsidyPDFAttachmentFileName(quoteNumber string) string {
+	trimmed := strings.TrimSpace(quoteNumber)
+	if trimmed == "" {
+		return "isde-subsidie.pdf"
+	}
+	return fmt.Sprintf("isde-subsidie-%s.pdf", trimmed)
+}
+
+func buildISDESubsidyAttachmentPayload(vars map[string]any, quoteMap map[string]any) *isdeSubsidyPDFAttachmentPayload {
+	payload, ok := extractISDESubsidyAttachmentPayload(vars, quoteMap)
+	if !ok || payload.TotalAmountCents <= 0 {
+		return nil
+	}
+
+	if payload.QuoteNumber == "" {
+		payload.QuoteNumber = strings.TrimSpace(stringFromMap(quoteMap, "number"))
+	}
+	if payload.OrganizationName == "" {
+		payload.OrganizationName = strings.TrimSpace(stringFromNestedMap(vars, "org", "name"))
+	}
+	if payload.LeadName == "" {
+		payload.LeadName = strings.TrimSpace(stringFromNestedMap(vars, "lead", "name"))
+	}
+	if payload.LeadAddress == "" {
+		payload.LeadAddress = buildLeadAddressFromWorkflowVars(vars)
+	}
+
+	return &payload
+}
+
+func extractISDESubsidyAttachmentPayload(vars map[string]any, quoteMap map[string]any) (isdeSubsidyPDFAttachmentPayload, bool) {
+	candidates := []any{
+		vars["isdeSubsidy"],
+		vars["subsidy"],
+		vars["isde"],
+		quoteMap["isdeSubsidy"],
+		quoteMap["subsidy"],
+		quoteMap["isde"],
+	}
+
+	for _, candidate := range candidates {
+		payload, ok := decodeISDESubsidyAttachmentPayload(candidate)
+		if ok {
+			return payload, true
+		}
+	}
+
+	return isdeSubsidyPDFAttachmentPayload{}, false
+}
+
+func decodeISDESubsidyAttachmentPayload(candidate any) (isdeSubsidyPDFAttachmentPayload, bool) {
+	switch value := candidate.(type) {
+	case nil:
+		return isdeSubsidyPDFAttachmentPayload{}, false
+	case isdeSubsidyPDFAttachmentPayload:
+		return value, true
+	case *isdeSubsidyPDFAttachmentPayload:
+		if value == nil {
+			return isdeSubsidyPDFAttachmentPayload{}, false
+		}
+		return *value, true
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return isdeSubsidyPDFAttachmentPayload{}, false
+		}
+		var payload isdeSubsidyPDFAttachmentPayload
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return decodeQuoteSubsidySnapshotPayload(data)
+		}
+		if payload.TotalAmountCents <= 0 {
+			return decodeQuoteSubsidySnapshotPayload(data)
+		}
+		return payload, true
+	}
+}
+
+func decodeQuoteSubsidySnapshotPayload(data []byte) (isdeSubsidyPDFAttachmentPayload, bool) {
+	var snapshot struct {
+		Result *isdeSubsidyPDFAttachmentPayload `json:"result"`
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil || snapshot.Result == nil {
+		return isdeSubsidyPDFAttachmentPayload{}, false
+	}
+	return *snapshot.Result, true
+}
+
+func injectQuoteSubsidyTemplateVars(templateVars map[string]any, subsidy map[string]any) {
+	if len(subsidy) == 0 {
+		return
+	}
+	templateVars["isdeSubsidy"] = subsidy
+	quoteMap, ok := templateVars["quote"].(map[string]any)
+	if !ok {
+		return
+	}
+	quoteMap["isdeSubsidy"] = subsidy
+}
+
+func stringFromMap(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	text, _ := values[key].(string)
+	return text
+}
+
+func stringFromNestedMap(values map[string]any, key string, nestedKey string) string {
+	nested, ok := values[key].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return stringFromMap(nested, nestedKey)
+}
+
+func buildLeadAddressFromWorkflowVars(vars map[string]any) string {
+	leadMap, ok := vars["lead"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	if address := strings.TrimSpace(stringFromMap(leadMap, "address")); address != "" {
+		return address
+	}
+	parts := []string{
+		strings.TrimSpace(strings.Join([]string{stringFromMap(leadMap, "street"), stringFromMap(leadMap, "houseNumber")}, " ")),
+		strings.TrimSpace(strings.Join([]string{stringFromMap(leadMap, "zipCode"), stringFromMap(leadMap, "city")}, " ")),
+	}
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	return strings.Join(filtered, ", ")
 }
 
 func buildWorkflowStepVariables(execCtx workflowStepExecutionContext) map[string]any {
@@ -2141,6 +2328,8 @@ func (m *Module) resolveEmailAttachment(ctx context.Context, orgID uuid.UUID, sp
 	switch strings.TrimSpace(spec.Kind) {
 	case "", "quote_pdf":
 		return m.resolveQuotePDFAttachment(ctx, orgID, spec)
+	case "isde_subsidy_pdf":
+		return m.resolveISDESubsidyPDFAttachment(spec)
 	default:
 		return email.Attachment{}, fmt.Errorf("%w: unsupported attachment kind %q", errInvalidOutboxPayload, spec.Kind)
 	}
@@ -2161,7 +2350,7 @@ func (m *Module) resolveQuotePDFAttachment(ctx context.Context, orgID uuid.UUID,
 	}
 	mimeType := strings.TrimSpace(spec.MIMEType)
 	if mimeType == "" {
-		mimeType = "application/pdf"
+		mimeType = pdfMIMEType
 	}
 
 	if m.quotePDFStorage != nil && m.quotePDFBucket != "" && strings.TrimSpace(spec.FileKey) != "" {
@@ -2187,6 +2376,60 @@ func (m *Module) resolveQuotePDFAttachment(ctx context.Context, orgID uuid.UUID,
 		return email.Attachment{}, fmt.Errorf("generate quote pdf attachment: %w", err)
 	}
 	return email.Attachment{Content: data, FileName: fileName, MIMEType: mimeType}, nil
+}
+
+func (m *Module) resolveISDESubsidyPDFAttachment(spec emailSendAttachmentSpec) (email.Attachment, error) {
+	if spec.ISDESubsidy == nil {
+		return email.Attachment{}, fmt.Errorf("%w: isde subsidy attachment missing payload", errInvalidOutboxPayload)
+	}
+	if m.subsidyPDFGen == nil {
+		return email.Attachment{}, fmt.Errorf("isde subsidy pdf generator not configured")
+	}
+
+	fileName := strings.TrimSpace(spec.FileName)
+	if fileName == "" {
+		fileName = buildISDESubsidyPDFAttachmentFileName(spec.ISDESubsidy.QuoteNumber)
+	}
+	mimeType := strings.TrimSpace(spec.MIMEType)
+	if mimeType == "" {
+		mimeType = pdfMIMEType
+	}
+
+	pdfData, err := m.subsidyPDFGen.GenerateSubsidyPDF(*spec.ISDESubsidy)
+	if err != nil {
+		return email.Attachment{}, err
+	}
+
+	return email.Attachment{Content: pdfData, FileName: fileName, MIMEType: mimeType}, nil
+}
+
+func generateISDESubsidyPDF(data isdeSubsidyPDFAttachmentPayload) ([]byte, error) {
+	return pdf.GenerateISDESummaryPDF(pdf.ISDESummaryPDFData{
+		QuoteNumber:          data.QuoteNumber,
+		OrganizationName:     data.OrganizationName,
+		LeadName:             data.LeadName,
+		LeadAddress:          data.LeadAddress,
+		TotalAmountCents:     data.TotalAmountCents,
+		IsDoubled:            data.IsDoubled,
+		EligibleMeasureCount: data.EligibleMeasureCount,
+		InsulationBreakdown:  toPDFISDELineItems(data.InsulationBreakdown),
+		GlassBreakdown:       toPDFISDELineItems(data.GlassBreakdown),
+		Installations:        toPDFISDELineItems(data.Installations),
+		UnknownMeasureIDs:    append([]string(nil), data.UnknownMeasureIDs...),
+		UnknownMeldcodes:     append([]string(nil), data.UnknownMeldcodes...),
+	})
+}
+
+func toPDFISDELineItems(items []isdeSubsidyPDFLineItem) []pdf.ISDESummaryLineItem {
+	result := make([]pdf.ISDESummaryLineItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, pdf.ISDESummaryLineItem{
+			Description: item.Description,
+			AreaM2:      item.AreaM2,
+			AmountCents: item.AmountCents,
+		})
+	}
+	return result
 }
 
 func (m *Module) markOutboxUnsupported(ctx context.Context, rec notificationoutbox.Record) {
@@ -2572,6 +2815,7 @@ func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e event
 		"quote": map[string]any{"id": e.QuoteID.String(), "number": e.QuoteNumber, "previewUrl": proposalURL, "downloadUrl": downloadURL, "pdfFileKey": strings.TrimSpace(pdfFileKey)},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
+	injectQuoteSubsidyTemplateVars(templateVars, e.ISDESubsidy)
 	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_sent", "email", "lead", nil)
 
@@ -3076,6 +3320,7 @@ func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e e
 		"links": map[string]any{"view": viewURL, "download": downloadURL},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
+	injectQuoteSubsidyTemplateVars(templateVars, e.ISDESubsidy)
 	enrichLeadVars(templateVars, details)
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_accepted", "email", "lead", nil)
 	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{

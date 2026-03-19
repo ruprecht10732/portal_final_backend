@@ -419,7 +419,7 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 	for i, it := range data.Items {
 		vm.Items[i] = itemViewModel{
 			Title:              clampPDFText(it.Title, maxPDFShortText),
-			Description:        template.HTML(it.Description), //nolint:gosec // content from trusted org editors
+			Description:        formatDescriptionHTML(it.Description),
 			Quantity:           clampPDFText(normalizePDFQuantity(it.Quantity), maxPDFShortText),
 			UnitPriceFormatted: formatCurrency(it.UnitPriceCents),
 			VatPctFormatted:    fmt.Sprintf("%.0f%%", float64(it.TaxRateBps)/100.0),
@@ -624,4 +624,16 @@ func clampPDFText(value string, maxLen int) string {
 		return trimmed
 	}
 	return string(runes[:maxLen]) + "…"
+}
+
+// formatDescriptionHTML returns item descriptions for PDF rendering.
+// Descriptions are stored as rich HTML authored by org editors (catalog items,
+// manual entries) and must be passed through as trusted HTML so the template
+// renders them identically to the frontend [innerHTML] binding.
+func formatDescriptionHTML(value string) template.HTML {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	return template.HTML(trimmed) //nolint:gosec // content from trusted org editors
 }

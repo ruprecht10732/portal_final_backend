@@ -108,6 +108,9 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
+	if err := applyQuoteSubsidySnapshot(&quote, req.ISDESubsidy); err != nil {
+		return nil, err
+	}
 
 	items := make([]repository.QuoteItem, len(req.Items))
 	for i, it := range req.Items {
@@ -214,6 +217,58 @@ func applyQuoteUpdates(quote *repository.Quote, req transport.UpdateQuoteRequest
 	}
 }
 
+func marshalQuoteSubsidySnapshot(snapshot *transport.QuoteISDESubsidy) ([]byte, error) {
+	if snapshot == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("marshal quote subsidy snapshot: %w", err)
+	}
+	return data, nil
+}
+
+func unmarshalQuoteSubsidySnapshot(data []byte) (*transport.QuoteISDESubsidy, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var snapshot transport.QuoteISDESubsidy
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return nil, fmt.Errorf("unmarshal quote subsidy snapshot: %w", err)
+	}
+	return &snapshot, nil
+}
+
+func quoteSubsidyEventPayload(data []byte) map[string]any {
+	if len(data) == 0 {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil
+	}
+	return payload
+}
+
+func applyQuoteSubsidySnapshot(quote *repository.Quote, snapshot *transport.QuoteISDESubsidy) error {
+	if snapshot == nil {
+		return nil
+	}
+	data, err := marshalQuoteSubsidySnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	quote.SubsidyData = data
+	return nil
+}
+
+func (s *Service) resolveQuoteUpdateItems(ctx context.Context, quoteID, tenantID uuid.UUID, req transport.UpdateQuoteRequest) ([]repository.QuoteItem, error) {
+	if req.Items != nil {
+		return buildItemsFromRequest(quoteID, tenantID, *req.Items), nil
+	}
+	return s.repo.GetItemsByQuoteID(ctx, quoteID, tenantID)
+}
+
 func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteItemRequest) []repository.QuoteItem {
 	now := time.Now()
 	result := make([]repository.QuoteItem, len(items))
@@ -242,15 +297,13 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 		return nil, err
 	}
 	applyQuoteUpdates(quote, req)
+	if err := applyQuoteSubsidySnapshot(quote, req.ISDESubsidy); err != nil {
+		return nil, err
+	}
 
-	var items []repository.QuoteItem
-	if req.Items != nil {
-		items = buildItemsFromRequest(quote.ID, tenantID, *req.Items)
-	} else {
-		items, err = s.repo.GetItemsByQuoteID(ctx, id, tenantID)
-		if err != nil {
-			return nil, err
-		}
+	items, err := s.resolveQuoteUpdateItems(ctx, quote.ID, tenantID, req)
+	if err != nil {
+		return nil, err
 	}
 
 	itemReqs := toItemRequests(items)
@@ -506,6 +559,7 @@ func (s *Service) prepareClonedQuote(ctx context.Context, tenantID uuid.UUID, ac
 		TotalCents:          source.TotalCents,
 		ValidUntil:          validUntil,
 		Notes:               source.Notes,
+		SubsidyData:         append([]byte(nil), source.SubsidyData...),
 		FinancingDisclaimer: source.FinancingDisclaimer,
 		CreatedAt:           now,
 		UpdatedAt:           now,
@@ -1054,6 +1108,9 @@ func buildTransferredQuoteRequest(transfer quoteTransferContext, createdLead lea
 		Attachments:         cloneAttachmentRequests(transfer.attachments),
 		URLs:                cloneURLRequests(transfer.urls),
 	}
+	if subsidySnapshot, err := unmarshalQuoteSubsidySnapshot(transfer.sourceQuote.SubsidyData); err == nil {
+		request.ISDESubsidy = subsidySnapshot
+	}
 	if createdLead.CurrentService != nil {
 		request.LeadServiceID = &createdLead.CurrentService.ID
 	}
@@ -1195,6 +1252,7 @@ func (s *Service) publishQuoteSentEvent(ctx context.Context, quote *repository.Q
 		OrganizationID: tenantID,
 		LeadID:         quote.LeadID,
 		LeadServiceID:  quote.LeadServiceID,
+		ISDESubsidy:    quoteSubsidyEventPayload(quote.SubsidyData),
 		PublicToken:    token,
 		QuoteNumber:    quote.QuoteNumber,
 		AgentID:        agentID,
@@ -1323,8 +1381,12 @@ func (s *Service) buildResponse(ctx context.Context, q *repository.Quote, items 
 	if err != nil {
 		return nil, err
 	}
+	isdeSubsidy, err := unmarshalQuoteSubsidySnapshot(q.SubsidyData)
+	if err != nil {
+		return nil, err
+	}
 
-	return &transport.QuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, DuplicatedFromQuoteID: q.DuplicatedFromQuoteID, DuplicatedFromQuoteNumber: duplicatedFromQuoteNumber, PreviousVersionQuoteID: q.PreviousVersionQuoteID, PreviousVersionQuoteNumber: previousVersionQuoteNumber, VersionRootQuoteID: q.VersionRootQuoteID, VersionNumber: q.VersionNumber, LeadID: q.LeadID, LeadServiceID: q.LeadServiceID, CreatedByID: q.CreatedByID, CreatedByFirstName: q.CreatedByFirstName, CreatedByLastName: q.CreatedByLastName, CreatedByEmail: q.CreatedByEmail, CustomerFirstName: q.CustomerFirstName, CustomerLastName: q.CustomerLastName, CustomerPhone: q.CustomerPhone, CustomerEmail: q.CustomerEmail, CustomerAddressStreet: q.CustomerAddressStreet, CustomerAddressHouseNumber: q.CustomerAddressHouseNumber, CustomerAddressZipCode: q.CustomerAddressZipCode, CustomerAddressCity: q.CustomerAddressCity, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: q.SubtotalCents, DiscountAmountCents: q.DiscountAmountCents, TaxTotalCents: q.TaxTotalCents, TotalCents: q.TotalCents, ValidUntil: q.ValidUntil, Notes: q.Notes, Items: respItems, Attachments: attachments, URLs: urls, ViewedAt: q.ViewedAt, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, PDFFileKey: q.PDFFileKey, FinancingDisclaimer: q.FinancingDisclaimer, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}, nil
+	return &transport.QuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, DuplicatedFromQuoteID: q.DuplicatedFromQuoteID, DuplicatedFromQuoteNumber: duplicatedFromQuoteNumber, PreviousVersionQuoteID: q.PreviousVersionQuoteID, PreviousVersionQuoteNumber: previousVersionQuoteNumber, VersionRootQuoteID: q.VersionRootQuoteID, VersionNumber: q.VersionNumber, LeadID: q.LeadID, LeadServiceID: q.LeadServiceID, CreatedByID: q.CreatedByID, CreatedByFirstName: q.CreatedByFirstName, CreatedByLastName: q.CreatedByLastName, CreatedByEmail: q.CreatedByEmail, CustomerFirstName: q.CustomerFirstName, CustomerLastName: q.CustomerLastName, CustomerPhone: q.CustomerPhone, CustomerEmail: q.CustomerEmail, CustomerAddressStreet: q.CustomerAddressStreet, CustomerAddressHouseNumber: q.CustomerAddressHouseNumber, CustomerAddressZipCode: q.CustomerAddressZipCode, CustomerAddressCity: q.CustomerAddressCity, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: q.SubtotalCents, DiscountAmountCents: q.DiscountAmountCents, TaxTotalCents: q.TaxTotalCents, TotalCents: q.TotalCents, ValidUntil: q.ValidUntil, Notes: q.Notes, ISDESubsidy: isdeSubsidy, Items: respItems, Attachments: attachments, URLs: urls, ViewedAt: q.ViewedAt, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, PDFFileKey: q.PDFFileKey, FinancingDisclaimer: q.FinancingDisclaimer, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}, nil
 }
 
 func (s *Service) loadQuoteLineageNumbers(ctx context.Context, q *repository.Quote) (*string, *string, error) {
@@ -1480,20 +1542,19 @@ func ptrToString(value *string) string {
 }
 
 func parseDateRange(from string, to string, fromField string, toField string) (*time.Time, *time.Time, error) {
-	const dateLayout = "2006-01-02"
 	trimmedFrom := strings.TrimSpace(from)
 	trimmedTo := strings.TrimSpace(to)
 	var start *time.Time
 	var end *time.Time
 	if trimmedFrom != "" {
-		parsed, err := time.Parse(dateLayout, trimmedFrom)
+		parsed, err := time.Parse("2006-01-02", trimmedFrom)
 		if err != nil {
 			return nil, nil, apperr.Validation(msgInvalidField + fromField)
 		}
 		start = &parsed
 	}
 	if trimmedTo != "" {
-		parsed, err := time.Parse(dateLayout, trimmedTo)
+		parsed, err := time.Parse("2006-01-02", trimmedTo)
 		if err != nil {
 			return nil, nil, apperr.Validation(msgInvalidField + toField)
 		}

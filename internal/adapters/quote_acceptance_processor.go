@@ -208,6 +208,26 @@ func (p *QuoteAcceptanceProcessor) buildPDFData(
 		data.CustomerCity = bc.contactData.ConsumerCity
 	}
 
+	// Fallback to quote denormalized customer fields if contact data is empty
+	if data.CustomerEmail == "" && quote.CustomerEmail != nil {
+		data.CustomerEmail = *quote.CustomerEmail
+	}
+	if data.CustomerPhone == "" && quote.CustomerPhone != nil {
+		data.CustomerPhone = *quote.CustomerPhone
+	}
+	if data.CustomerAddressLine1 == "" && quote.CustomerAddressStreet != nil && quote.CustomerAddressHouseNumber != nil {
+		data.CustomerAddressLine1 = strings.TrimSpace(*quote.CustomerAddressStreet + " " + *quote.CustomerAddressHouseNumber)
+	}
+	if data.CustomerAddressLine1 == "" && quote.CustomerAddressStreet != nil {
+		data.CustomerAddressLine1 = *quote.CustomerAddressStreet
+	}
+	if data.CustomerPostalCode == "" && quote.CustomerAddressZipCode != nil {
+		data.CustomerPostalCode = *quote.CustomerAddressZipCode
+	}
+	if data.CustomerCity == "" && quote.CustomerAddressCity != nil {
+		data.CustomerCity = *quote.CustomerAddressCity
+	}
+
 	if p.termsResolver != nil {
 		paymentDays, validDays, termsErr := p.termsResolver.ResolveQuoteTerms(ctx, bc.organizationID, quote.LeadID, quote.LeadServiceID)
 		if termsErr == nil {

@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <title>ISDE Subsidieoverzicht</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm;
+    }
+
+    :root {
+      --ink: #17313b;
+      --muted: #617680;
+      --line: #d7e0e3;
+      --accent: #0d7a6f;
+      --accent-soft: #e7f5f2;
+      --surface: #f7faf8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+	  margin: 0;
+	  font-family: Helvetica, Arial, sans-serif;
+	  color: var(--ink);
+	  font-size: 12px;
+	  line-height: 1.45;
+	  background: white;
+    }
+
+    .hero {
+	  border: 1px solid var(--line);
+	  background: linear-gradient(135deg, #f2faf8 0%, #ffffff 72%);
+	  padding: 18px 20px;
+	  border-radius: 14px;
+	  margin-bottom: 16px;
+    }
+
+    .eyebrow {
+	  text-transform: uppercase;
+	  letter-spacing: 0.12em;
+	  font-size: 10px;
+	  color: var(--muted);
+	  margin-bottom: 8px;
+    }
+
+    h1 {
+	  margin: 0 0 8px;
+	  font-size: 26px;
+	  line-height: 1.1;
+    }
+
+    .hero-grid {
+	  display: grid;
+	  grid-template-columns: 1.3fr 0.9fr;
+	  gap: 18px;
+	  align-items: start;
+    }
+
+    .meta-card {
+	  background: var(--surface);
+	  border: 1px solid var(--line);
+	  border-radius: 12px;
+	  padding: 14px;
+    }
+
+    .meta-row { margin-bottom: 8px; }
+    .meta-row:last-child { margin-bottom: 0; }
+
+    .label {
+	  display: block;
+	  font-size: 10px;
+	  color: var(--muted);
+	  text-transform: uppercase;
+	  letter-spacing: 0.08em;
+	  margin-bottom: 2px;
+    }
+
+    .total-box {
+	  margin-top: 14px;
+	  display: inline-block;
+	  background: var(--accent-soft);
+	  color: var(--accent);
+	  padding: 10px 14px;
+	  border-radius: 999px;
+	  font-weight: 700;
+	  font-size: 18px;
+    }
+
+    .summary-strip {
+	  display: grid;
+	  grid-template-columns: repeat(2, 1fr);
+	  gap: 12px;
+	  margin-bottom: 18px;
+    }
+
+    .summary-pill {
+	  border: 1px solid var(--line);
+	  border-radius: 12px;
+	  padding: 12px 14px;
+	  background: white;
+    }
+
+    .summary-pill strong {
+	  display: block;
+	  font-size: 15px;
+	  margin-top: 3px;
+    }
+
+    .section {
+	  margin-bottom: 16px;
+	  page-break-inside: avoid;
+    }
+
+    .section-title {
+	  font-size: 16px;
+	  margin: 0 0 8px;
+    }
+
+    table {
+	  width: 100%;
+	  border-collapse: collapse;
+	  border: 1px solid var(--line);
+	  border-radius: 12px;
+	  overflow: hidden;
+    }
+
+    th,
+    td {
+	  padding: 10px 12px;
+	  border-bottom: 1px solid var(--line);
+	  text-align: left;
+	  vertical-align: top;
+    }
+
+    th {
+	  background: #f3f7f8;
+	  font-size: 10px;
+	  text-transform: uppercase;
+	  letter-spacing: 0.08em;
+	  color: var(--muted);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .amount {
+	  text-align: right;
+	  white-space: nowrap;
+	  font-weight: 700;
+    }
+
+    .empty {
+	  border: 1px dashed var(--line);
+	  border-radius: 12px;
+	  padding: 12px 14px;
+	  color: var(--muted);
+	  background: #fbfcfc;
+    }
+
+    .footnote {
+	  font-size: 10px;
+	  color: var(--muted);
+	  margin-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <div class="eyebrow">ISDE Subsidieoverzicht</div>
+    <div class="hero-grid">
+      <div>
+        <h1>Subsidiesamenvatting voor de offerte</h1>
+        <div>{{if .OrganizationName}}{{.OrganizationName}}{{else}}Uw organisatie{{end}}</div>
+        <div class="total-box">Totaal indicatieve subsidie: {{.TotalFormatted}}</div>
+      </div>
+      <div class="meta-card">
+        <div class="meta-row">
+          <span class="label">Offerte</span>
+          <span>{{if .QuoteNumber}}{{.QuoteNumber}}{{else}}Niet gekoppeld{{end}}</span>
+        </div>
+        <div class="meta-row">
+          <span class="label">Lead</span>
+          <span>{{if .LeadName}}{{.LeadName}}{{else}}Onbekend{{end}}</span>
+        </div>
+        <div class="meta-row">
+          <span class="label">Adres</span>
+          <span>{{if .LeadAddress}}{{.LeadAddress}}{{else}}Niet opgegeven{{end}}</span>
+        </div>
+        <div class="meta-row">
+          <span class="label">Gegenereerd op</span>
+          <span>{{.GeneratedAtFormatted}}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="summary-strip">
+    <div class="summary-pill">
+      <span class="label">Tariefstatus</span>
+      <strong>{{.DoublingLabel}}</strong>
+    </div>
+    <div class="summary-pill">
+      <span class="label">Meetellende maatregelen</span>
+      <strong>{{.EligibleMeasureCount}}</strong>
+    </div>
+  </section>
+
+  {{if .HasInsulation}}
+  <section class="section">
+    <h2 class="section-title">Isolatiemaatregelen</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Omschrijving</th>
+          <th>Oppervlakte</th>
+          <th class="amount">Bedrag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .InsulationBreakdown}}
+        <tr>
+          <td>{{.Description}}</td>
+          <td>{{if .HasArea}}{{.AreaFormatted}}{{else}}-{{end}}</td>
+          <td class="amount">{{.AmountFormatted}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
+  {{if .HasGlass}}
+  <section class="section">
+    <h2 class="section-title">Glasmaatregelen</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Omschrijving</th>
+          <th>Oppervlakte</th>
+          <th class="amount">Bedrag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .GlassBreakdown}}
+        <tr>
+          <td>{{.Description}}</td>
+          <td>{{if .HasArea}}{{.AreaFormatted}}{{else}}-{{end}}</td>
+          <td class="amount">{{.AmountFormatted}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
+  {{if .HasInstallations}}
+  <section class="section">
+    <h2 class="section-title">Installaties</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Omschrijving</th>
+          <th>Oppervlakte</th>
+          <th class="amount">Bedrag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Installations}}
+        <tr>
+          <td>{{.Description}}</td>
+          <td>{{if .HasArea}}{{.AreaFormatted}}{{else}}-{{end}}</td>
+          <td class="amount">{{.AmountFormatted}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
+  {{if .HasUnknownMeasures}}
+  <section class="section">
+    <div class="empty">Niet herkende maatregelcodes: {{.UnknownMeasureIDs}}</div>
+  </section>
+  {{end}}
+
+  {{if .HasUnknownMeldcodes}}
+  <section class="section">
+    <div class="empty">Niet herkende meldcodes: {{.UnknownMeldcodes}}</div>
+  </section>
+  {{end}}
+
+  <div class="footnote">
+    Dit document is een samenvatting van de huidige ISDE-berekening in het portaal en dient als indicatieve bijlage bij de offerte.
+  </div>
+</body>
+</html>

@@ -257,6 +257,7 @@ func quoteAnnotationItemDescription(item *repository.QuoteItem) string {
 		return ""
 	}
 	if trimmed := strings.TrimSpace(item.Title); trimmed != "" {
+
 		return trimmed
 	}
 	return strings.TrimSpace(item.Description)
@@ -264,9 +265,36 @@ func quoteAnnotationItemDescription(item *repository.QuoteItem) string {
 
 func ptrStringValue(value *string) string {
 	if value == nil {
+
 		return ""
 	}
 	return *value
+}
+
+func (s *Service) reloadAcceptedQuote(ctx context.Context, quote *repository.Quote) *repository.Quote {
+	fullQuote, err := s.repo.GetByID(ctx, quote.ID, quote.OrganizationID)
+	if err == nil {
+		return fullQuote
+	}
+	return quote
+}
+
+func (s *Service) publishQuoteAcceptedEvent(ctx context.Context, quote *repository.Quote, signatureName, token string) {
+	if s.eventBus == nil {
+		return
+	}
+	evt := events.QuoteAccepted{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID, LeadServiceID: quote.LeadServiceID, ISDESubsidy: quoteSubsidyEventPayload(quote.SubsidyData), SignatureName: signatureName, TotalCents: quote.TotalCents, QuoteNumber: quote.QuoteNumber, PublicToken: token}
+	if s.contacts != nil {
+		if contactData, lookupErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, quote.OrganizationID); lookupErr == nil {
+			evt.ConsumerEmail = contactData.ConsumerEmail
+			evt.ConsumerName = contactData.ConsumerName
+			evt.ConsumerPhone = contactData.ConsumerPhone
+			evt.OrganizationName = contactData.OrganizationName
+			evt.AgentEmail = contactData.AgentEmail
+			evt.AgentName = contactData.AgentName
+		}
+	}
+	s.eventBus.Publish(ctx, evt)
 }
 
 func (s *Service) Accept(ctx context.Context, token string, req transport.AcceptQuoteRequest, clientIP string) (*transport.PublicQuoteResponse, error) {
@@ -293,24 +321,12 @@ func (s *Service) Accept(ctx context.Context, token string, req transport.Accept
 	if err != nil {
 		return nil, err
 	}
+	quote = s.reloadAcceptedQuote(ctx, quote)
 	items, err := s.repo.GetItemsByQuoteIDNoOrg(ctx, quote.ID)
 	if err != nil {
 		return nil, err
 	}
-	if s.eventBus != nil {
-		evt := events.QuoteAccepted{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, LeadID: quote.LeadID, LeadServiceID: quote.LeadServiceID, SignatureName: req.SignatureName, TotalCents: quote.TotalCents, QuoteNumber: quote.QuoteNumber, PublicToken: token}
-		if s.contacts != nil {
-			if contactData, lookupErr := s.contacts.GetQuoteContactData(ctx, quote.LeadID, quote.OrganizationID); lookupErr == nil {
-				evt.ConsumerEmail = contactData.ConsumerEmail
-				evt.ConsumerName = contactData.ConsumerName
-				evt.ConsumerPhone = contactData.ConsumerPhone
-				evt.OrganizationName = contactData.OrganizationName
-				evt.AgentEmail = contactData.AgentEmail
-				evt.AgentName = contactData.AgentName
-			}
-		}
-		s.eventBus.Publish(ctx, evt)
-	}
+	s.publishQuoteAcceptedEvent(ctx, quote, req.SignatureName, token)
 
 	orgName, customerName, logoFileKey := s.lookupContactNames(ctx, quote.LeadID, quote.OrganizationID)
 	drafts := buildQuoteAcceptedDrafts(quote.QuoteNumber, orgName, customerName, req.SignatureName, quote.TotalCents)

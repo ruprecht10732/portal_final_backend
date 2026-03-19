@@ -3,6 +3,8 @@ package transport
 import (
 	"time"
 
+	isdetransport "portal_final_backend/internal/isde/transport"
+
 	"github.com/google/uuid"
 )
 
@@ -48,6 +50,12 @@ type QuoteURLRequest struct {
 	CatalogProductID *uuid.UUID `json:"catalogProductId,omitempty"`
 }
 
+type QuoteISDESubsidy struct {
+	IncludeInSummary bool                                   `json:"includeInSummary"`
+	Input            *isdetransport.ISDECalculationRequest  `json:"input,omitempty"`
+	Result           *isdetransport.ISDECalculationResponse `json:"result,omitempty"`
+}
+
 // CreateQuoteRequest is the request body for creating a new quote
 type CreateQuoteRequest struct {
 	LeadID              uuid.UUID                `json:"leadId" validate:"required"`
@@ -60,6 +68,7 @@ type CreateQuoteRequest struct {
 	Items               []QuoteItemRequest       `json:"items" validate:"required,dive"`
 	Attachments         []QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
 	URLs                []QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	ISDESubsidy         *QuoteISDESubsidy        `json:"isdeSubsidy,omitempty"`
 	FinancingDisclaimer bool                     `json:"financingDisclaimer"`
 }
 
@@ -73,6 +82,7 @@ type UpdateQuoteRequest struct {
 	Items               *[]QuoteItemRequest       `json:"items" validate:"omitempty,dive"`
 	Attachments         *[]QuoteAttachmentRequest `json:"attachments" validate:"omitempty,dive"`
 	URLs                *[]QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
+	ISDESubsidy         *QuoteISDESubsidy         `json:"isdeSubsidy,omitempty"`
 	FinancingDisclaimer *bool                     `json:"financingDisclaimer"`
 }
 
@@ -235,6 +245,7 @@ type QuoteResponse struct {
 	TotalCents                 int64                     `json:"totalCents"`
 	ValidUntil                 *time.Time                `json:"validUntil,omitempty"`
 	Notes                      *string                   `json:"notes,omitempty"`
+	ISDESubsidy                *QuoteISDESubsidy         `json:"isdeSubsidy,omitempty"`
 	Items                      []QuoteItemResponse       `json:"items"`
 	Attachments                []QuoteAttachmentResponse `json:"attachments"`
 	URLs                       []QuoteURLResponse        `json:"urls"`

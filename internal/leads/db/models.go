@@ -573,6 +573,72 @@ type RacInAppNotification struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type RacIsdeInstallationMeldcode struct {
+	Meldcode           string             `json:"meldcode"`
+	Category           string             `json:"category"`
+	Brand              pgtype.Text        `json:"brand"`
+	ProductName        pgtype.Text        `json:"product_name"`
+	SubsidyAmountCents int64              `json:"subsidy_amount_cents"`
+	IsActive           bool               `json:"is_active"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacIsdeMeasureDefinition struct {
+	MeasureID            string             `json:"measure_id"`
+	DisplayName          string             `json:"display_name"`
+	Category             string             `json:"category"`
+	QualifyingGroup      string             `json:"qualifying_group"`
+	MinM2                pgtype.Numeric     `json:"min_m2"`
+	PerformanceRule      string             `json:"performance_rule"`
+	PerformanceThreshold pgtype.Numeric     `json:"performance_threshold"`
+	RateMode             string             `json:"rate_mode"`
+	RequiresPrimaryGlass bool               `json:"requires_primary_glass"`
+	LegacyMaxFrameUValue pgtype.Numeric     `json:"legacy_max_frame_u_value"`
+	IsActive             bool               `json:"is_active"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacIsdeMeasureRule struct {
+	MeasureID            string             `json:"measure_id"`
+	DisplayName          string             `json:"display_name"`
+	Category             string             `json:"category"`
+	MinM2                pgtype.Numeric     `json:"min_m2"`
+	PerformanceRule      string             `json:"performance_rule"`
+	PerformanceThreshold pgtype.Numeric     `json:"performance_threshold"`
+	BaseRateCentsPerM2   int64              `json:"base_rate_cents_per_m2"`
+	DoubleRateCentsPerM2 int64              `json:"double_rate_cents_per_m2"`
+	MkiBonusCentsPerM2   int64              `json:"mki_bonus_cents_per_m2"`
+	IsActive             bool               `json:"is_active"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacIsdeMeasureYearRule struct {
+	MeasureID              string             `json:"measure_id"`
+	ExecutionYear          int32              `json:"execution_year"`
+	BaseRateCentsPerM2     int64              `json:"base_rate_cents_per_m2"`
+	UpgradedRateCentsPerM2 pgtype.Int8        `json:"upgraded_rate_cents_per_m2"`
+	MaxM2                  pgtype.Numeric     `json:"max_m2"`
+	MkiBonusCentsPerM2     int64              `json:"mki_bonus_cents_per_m2"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RacIsdeProgramYearRule struct {
+	ExecutionYear                   int32              `json:"execution_year"`
+	VentilationAmountCents          int64              `json:"ventilation_amount_cents"`
+	WarmtenetAmountCents            int64              `json:"warmtenet_amount_cents"`
+	ElectricCookingAmountCents      int64              `json:"electric_cooking_amount_cents"`
+	AirWaterStartAmountCents        int64              `json:"air_water_start_amount_cents"`
+	AirWaterAmountPerKwCents        int64              `json:"air_water_amount_per_kw_cents"`
+	AirWaterAplusplusplusBonusCents int64              `json:"air_water_aplusplusplus_bonus_cents"`
+	AirWaterKwOffset                pgtype.Numeric     `json:"air_water_kw_offset"`
+	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacLead struct {
 	ID                  pgtype.UUID        `json:"id"`
 	ConsumerFirstName   string             `json:"consumer_first_name"`
@@ -1070,6 +1136,7 @@ type RacQuote struct {
 	PreviousVersionQuoteID pgtype.UUID        `json:"previous_version_quote_id"`
 	VersionRootQuoteID     pgtype.UUID        `json:"version_root_quote_id"`
 	VersionNumber          int32              `json:"version_number"`
+	SubsidyPayload         []byte             `json:"subsidy_payload"`
 }
 
 type RacQuoteActivity struct {

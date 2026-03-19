@@ -65,6 +65,7 @@ type Quote struct {
 	SignatureData              *string    `db:"signature_data"`
 	SignatureIP                *string    `db:"signature_ip"`
 	PDFFileKey                 *string    `db:"pdf_file_key"`
+	SubsidyData                []byte     `db:"subsidy_payload"`
 	FinancingDisclaimer        bool       `db:"financing_disclaimer"`
 	CreatedAt                  time.Time  `db:"created_at"`
 	UpdatedAt                  time.Time  `db:"updated_at"`
@@ -235,20 +236,8 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 		return apperr.NotFound(quoteNotFoundMsg)
 	}
 
-	if replaceItems {
-		existingItems, err := r.listQuoteItemsByQuoteID(ctx, qtx, quote.ID, quote.OrganizationID)
-		if err != nil {
-			return err
-		}
-		if err := r.insertItems(ctx, qtx, items); err != nil {
-			return err
-		}
-		if err := r.reassignAnnotationsToReplacementItems(ctx, tx, quote.OrganizationID, existingItems, items); err != nil {
-			return err
-		}
-		if err := r.deleteQuoteItemsByID(ctx, tx, quote.OrganizationID, existingItems); err != nil {
-			return err
-		}
+	if err := r.replaceQuoteItems(ctx, tx, qtx, quote, items, replaceItems); err != nil {
+		return err
 	}
 	if err := r.insertPricingSnapshot(ctx, qtx, quote, items, pricingSnapshot); err != nil {
 		return err
@@ -256,8 +245,28 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 	if err := r.insertPricingCorrections(ctx, qtx, quote, items, previousPricingSnapshot, pricingSnapshot); err != nil {
 		return err
 	}
+	if err := r.updateQuoteSubsidyData(ctx, tx, quote.ID, quote.OrganizationID, quote.SubsidyData, quote.UpdatedAt); err != nil {
+		return err
+	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *Repository) replaceQuoteItems(ctx context.Context, tx pgx.Tx, qtx *quotesdb.Queries, quote *Quote, items []QuoteItem, replaceItems bool) error {
+	if !replaceItems {
+		return nil
+	}
+	existingItems, err := r.listQuoteItemsByQuoteID(ctx, qtx, quote.ID, quote.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if err := r.insertItems(ctx, qtx, items); err != nil {
+		return err
+	}
+	if err := r.reassignAnnotationsToReplacementItems(ctx, tx, quote.OrganizationID, existingItems, items); err != nil {
+		return err
+	}
+	return r.deleteQuoteItemsByID(ctx, tx, quote.OrganizationID, existingItems)
 }
 
 func (r *Repository) listQuoteItemsByQuoteID(ctx context.Context, queries *quotesdb.Queries, quoteID, orgID uuid.UUID) ([]QuoteItem, error) {
@@ -1592,15 +1601,15 @@ func (r *Repository) insertQuote(ctx context.Context, tx pgx.Tx, quote *Quote) e
 			previous_version_quote_id, version_root_quote_id, version_number,
 			created_by_id, quote_number, status, pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, financing_disclaimer, created_at, updated_at,
+			valid_until, notes, subsidy_payload, financing_disclaimer, created_at, updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8,
 			$9, $10, $11, $12, $13, $14,
 			$15, $16, $17, $18,
-			$19, $20, $21, $22, $23,
-			$24, $25, $26, $27
+			$19, $20, $21, $22, $23, $24,
+			$25, $26, $27, $28
 		)
 	`,
 		toPgUUID(quote.ID),
@@ -1623,6 +1632,7 @@ func (r *Repository) insertQuote(ctx context.Context, tx pgx.Tx, quote *Quote) e
 		quote.TotalCents,
 		toPgTimestampPtr(quote.ValidUntil),
 		toPgTextPtr(quote.Notes),
+		quote.SubsidyData,
 		quote.FinancingDisclaimer,
 		toPgTimestamp(quote.CreatedAt),
 		toPgTimestamp(quote.UpdatedAt),
@@ -1634,6 +1644,22 @@ func (r *Repository) insertQuote(ctx context.Context, tx pgx.Tx, quote *Quote) e
 	return err
 }
 
+func (r *Repository) updateQuoteSubsidyData(ctx context.Context, tx pgx.Tx, quoteID, orgID uuid.UUID, subsidyData []byte, updatedAt time.Time) error {
+	result, err := tx.Exec(ctx, `
+		UPDATE RAC_quotes
+		SET subsidy_payload = $3,
+		    updated_at = $4
+		WHERE id = $1 AND organization_id = $2
+	`, quoteID, orgID, subsidyData, updatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to update quote subsidy payload: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound(quoteNotFoundMsg)
+	}
+	return nil
+}
+
 func (r *Repository) loadQuoteLineage(ctx context.Context, quote *Quote) error {
 	var duplicatedFrom pgtype.UUID
 	var previousVersion pgtype.UUID
@@ -1641,10 +1667,10 @@ func (r *Repository) loadQuoteLineage(ctx context.Context, quote *Quote) error {
 	var versionNumber int32
 
 	err := r.pool.QueryRow(ctx, `
-		SELECT duplicated_from_quote_id, previous_version_quote_id, version_root_quote_id, version_number
+		SELECT duplicated_from_quote_id, previous_version_quote_id, version_root_quote_id, version_number, subsidy_payload
 		FROM RAC_quotes
 		WHERE id = $1
-	`, quote.ID).Scan(&duplicatedFrom, &previousVersion, &versionRoot, &versionNumber)
+	`, quote.ID).Scan(&duplicatedFrom, &previousVersion, &versionRoot, &versionNumber, &quote.SubsidyData)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound(quoteNotFoundMsg)

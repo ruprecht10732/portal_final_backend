@@ -25,6 +25,7 @@ import (
 	"portal_final_backend/internal/http/router"
 	"portal_final_backend/internal/identity"
 	"portal_final_backend/internal/imap"
+	"portal_final_backend/internal/isde"
 	"portal_final_backend/internal/leadenrichment"
 	"portal_final_backend/internal/leads"
 	leadsmgmt "portal_final_backend/internal/leads/management"
@@ -410,6 +411,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	leadsModule.SetLeadEnricher(adapters.NewLeadEnrichmentAdapter(leadEnrichmentModule.Service()))
 
 	mapsModule := maps.NewModule(log)
+	isdeModule := isde.NewModule(pool, val, log)
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
@@ -548,6 +550,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		imapModule,
 		leadsModule,
 		mapsModule,
+		isdeModule,
 		servicesModule,
 		catalogModule,
 		appointmentsModule,

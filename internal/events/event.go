@@ -276,17 +276,18 @@ func (e PartnerInviteCreated) EventName() string { return "partners.invite.creat
 // QuoteSent is published when an agent sends a quote proposal to a lead via magic link.
 type QuoteSent struct {
 	BaseEvent
-	QuoteID          uuid.UUID  `json:"quoteId"`
-	OrganizationID   uuid.UUID  `json:"organizationId"`
-	LeadID           uuid.UUID  `json:"leadId"`
-	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
-	PublicToken      string     `json:"publicToken"`
-	QuoteNumber      string     `json:"quoteNumber"`
-	AgentID          uuid.UUID  `json:"agentId"`
-	ConsumerEmail    string     `json:"consumerEmail"`
-	ConsumerName     string     `json:"consumerName"`
-	ConsumerPhone    string     `json:"consumerPhone"`
-	OrganizationName string     `json:"organizationName"`
+	QuoteID          uuid.UUID      `json:"quoteId"`
+	OrganizationID   uuid.UUID      `json:"organizationId"`
+	LeadID           uuid.UUID      `json:"leadId"`
+	LeadServiceID    *uuid.UUID     `json:"leadServiceId,omitempty"`
+	ISDESubsidy      map[string]any `json:"isdeSubsidy,omitempty"`
+	PublicToken      string         `json:"publicToken"`
+	QuoteNumber      string         `json:"quoteNumber"`
+	AgentID          uuid.UUID      `json:"agentId"`
+	ConsumerEmail    string         `json:"consumerEmail"`
+	ConsumerName     string         `json:"consumerName"`
+	ConsumerPhone    string         `json:"consumerPhone"`
+	OrganizationName string         `json:"organizationName"`
 }
 
 func (e QuoteSent) EventName() string { return "quotes.quote.sent" }
@@ -389,20 +390,21 @@ func (e QuoteStatusChanged) EventName() string { return "quotes.quote.status_cha
 // QuoteAccepted is published when a lead accepts and signs the quote.
 type QuoteAccepted struct {
 	BaseEvent
-	QuoteID          uuid.UUID  `json:"quoteId"`
-	OrganizationID   uuid.UUID  `json:"organizationId"`
-	LeadID           uuid.UUID  `json:"leadId"`
-	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
-	SignatureName    string     `json:"signatureName"`
-	TotalCents       int64      `json:"totalCents"`
-	QuoteNumber      string     `json:"quoteNumber"`
-	ConsumerEmail    string     `json:"consumerEmail"`
-	ConsumerName     string     `json:"consumerName"`
-	ConsumerPhone    string     `json:"consumerPhone"`
-	OrganizationName string     `json:"organizationName"`
-	AgentEmail       string     `json:"agentEmail"`
-	AgentName        string     `json:"agentName"`
-	PublicToken      string     `json:"publicToken"`
+	QuoteID          uuid.UUID      `json:"quoteId"`
+	OrganizationID   uuid.UUID      `json:"organizationId"`
+	LeadID           uuid.UUID      `json:"leadId"`
+	LeadServiceID    *uuid.UUID     `json:"leadServiceId,omitempty"`
+	ISDESubsidy      map[string]any `json:"isdeSubsidy,omitempty"`
+	SignatureName    string         `json:"signatureName"`
+	TotalCents       int64          `json:"totalCents"`
+	QuoteNumber      string         `json:"quoteNumber"`
+	ConsumerEmail    string         `json:"consumerEmail"`
+	ConsumerName     string         `json:"consumerName"`
+	ConsumerPhone    string         `json:"consumerPhone"`
+	OrganizationName string         `json:"organizationName"`
+	AgentEmail       string         `json:"agentEmail"`
+	AgentName        string         `json:"agentName"`
+	PublicToken      string         `json:"publicToken"`
 }
 
 func (e QuoteAccepted) EventName() string { return "quotes.quote.accepted" }

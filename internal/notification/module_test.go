@@ -72,6 +72,13 @@ type testQuotePDFStorage struct {
 	calls int
 }
 
+type testSubsidyPDFGenerator struct {
+	pdfData []byte
+	err     error
+	calls   int
+	last    *isdeSubsidyPDFAttachmentPayload
+}
+
 func (s *testQuotePDFStorage) DownloadFile(_ context.Context, _ string, _ string) (io.ReadCloser, error) {
 	s.calls++
 	if s.err != nil {
@@ -80,12 +87,28 @@ func (s *testQuotePDFStorage) DownloadFile(_ context.Context, _ string, _ string
 	return io.NopCloser(strings.NewReader(string(s.data))), nil
 }
 
+func (g *testSubsidyPDFGenerator) GenerateSubsidyPDF(data isdeSubsidyPDFAttachmentPayload) ([]byte, error) {
+	g.calls++
+	copyData := data
+	g.last = &copyData
+	if g.err != nil {
+		return nil, g.err
+	}
+	return append([]byte(nil), g.pdfData...), nil
+}
+
 const testLeadEmail = "lead@example.com"
 const testOrgName = "Vakman Portal"
 const testSMTPFromEmail = "mailer@example.com"
 const errUnexpectedRenderedText = "unexpected rendered text: %q"
 const generatedPDFContent = "generated-pdf"
 const errMarshalPayloadFmt = "marshal payload: %v"
+const testEmailHTMLBody = "<p>Body</p>"
+const testLeadAddress = "Hoofdstraat 1, 1234 AB Utrecht"
+const testUnsignedQuotePDFKey = "quotes/unsigned.pdf"
+const errProcessGenericEmailOutboxFmt = "processGenericEmailOutbox returned error: %v"
+const errExpectedOneAttachmentFmt = "expected 1 attachment, got %d"
+const testPDFMIMEType = "application/pdf"
 const expectedLeadOptInLookupFmt = "expected one lead opt-in lookup, got %d"
 const testWhatsAppPhoneNumber = "+31612345678"
 const testQuoteNumber0042 = "OFF-2026-0042"
@@ -464,13 +487,13 @@ func TestProcessGenericEmailOutboxAttachesQuotePDFFromStorage(t *testing.T) {
 		OrgID:    orgID.String(),
 		ToEmail:  testLeadEmail,
 		Subject:  "Onderwerp",
-		BodyHTML: "<p>Body</p>",
+		BodyHTML: testEmailHTMLBody,
 		Attachments: []emailSendAttachmentSpec{{
 			Kind:     "quote_pdf",
 			QuoteID:  &quoteID,
 			FileKey:  "quotes/file.pdf",
 			FileName: "offerte-test.pdf",
-			MIMEType: "application/pdf",
+			MIMEType: testPDFMIMEType,
 		}},
 	})
 	if err != nil {
@@ -479,13 +502,13 @@ func TestProcessGenericEmailOutboxAttachesQuotePDFFromStorage(t *testing.T) {
 
 	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
 	if err != nil {
-		t.Fatalf("processGenericEmailOutbox returned error: %v", err)
+		t.Fatalf(errProcessGenericEmailOutboxFmt, err)
 	}
 	if sender.customEmailCalls != 1 {
 		t.Fatalf("expected 1 custom email call, got %d", sender.customEmailCalls)
 	}
 	if len(sender.lastCustomAttachments) != 1 {
-		t.Fatalf("expected 1 attachment, got %d", len(sender.lastCustomAttachments))
+		t.Fatalf(errExpectedOneAttachmentFmt, len(sender.lastCustomAttachments))
 	}
 	if string(sender.lastCustomAttachments[0].Content) != "stored-pdf" {
 		t.Fatalf("expected stored pdf content, got %q", string(sender.lastCustomAttachments[0].Content))
@@ -510,7 +533,7 @@ func TestProcessGenericEmailOutboxRegeneratesQuotePDFAfterStorageFailure(t *test
 		OrgID:    orgID.String(),
 		ToEmail:  testLeadEmail,
 		Subject:  "Onderwerp",
-		BodyHTML: "<p>Body</p>",
+		BodyHTML: testEmailHTMLBody,
 		Attachments: []emailSendAttachmentSpec{{
 			Kind:    "quote_pdf",
 			QuoteID: &quoteID,
@@ -522,16 +545,75 @@ func TestProcessGenericEmailOutboxRegeneratesQuotePDFAfterStorageFailure(t *test
 
 	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
 	if err != nil {
-		t.Fatalf("processGenericEmailOutbox returned error: %v", err)
+		t.Fatalf(errProcessGenericEmailOutboxFmt, err)
 	}
 	if len(sender.lastCustomAttachments) != 1 {
-		t.Fatalf("expected 1 attachment, got %d", len(sender.lastCustomAttachments))
+		t.Fatalf(errExpectedOneAttachmentFmt, len(sender.lastCustomAttachments))
 	}
 	if string(sender.lastCustomAttachments[0].Content) != generatedPDFContent {
 		t.Fatalf("expected generated pdf content, got %q", string(sender.lastCustomAttachments[0].Content))
 	}
 	if generator.calls != 1 {
 		t.Fatalf("expected 1 generator call, got %d", generator.calls)
+	}
+}
+
+func TestProcessGenericEmailOutboxAttachesISDESubsidyPDF(t *testing.T) {
+	sender := &testSender{}
+	generator := &testSubsidyPDFGenerator{pdfData: []byte("subsidy-pdf")}
+	orgID := uuid.New()
+
+	m := New(nil, sender, testNotificationConfig{}, logger.New("development"))
+	m.SetSubsidyPDFGenerator(generator)
+
+	payloadBytes, err := json.Marshal(emailSendOutboxPayload{
+		OrgID:    orgID.String(),
+		ToEmail:  testLeadEmail,
+		Subject:  "Onderwerp",
+		BodyHTML: testEmailHTMLBody,
+		Attachments: []emailSendAttachmentSpec{{
+			Kind:     "isde_subsidy_pdf",
+			FileName: "isde-subsidie-test.pdf",
+			MIMEType: testPDFMIMEType,
+			ISDESubsidy: &isdeSubsidyPDFAttachmentPayload{
+				QuoteNumber:          testQuoteNumber0042,
+				OrganizationName:     testOrgName,
+				LeadName:             "Lead",
+				LeadAddress:          testLeadAddress,
+				TotalAmountCents:     1336000,
+				IsDoubled:            true,
+				EligibleMeasureCount: 2,
+				GlassBreakdown: []isdeSubsidyPDFLineItem{{
+					Description: "HR++ glas",
+					AreaM2:      10,
+					AmountCents: 460000,
+				}},
+				Installations: []isdeSubsidyPDFLineItem{{
+					Description: "Warmtepomp KA00001",
+					AmountCents: 876000,
+				}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf(errMarshalPayloadFmt, err)
+	}
+
+	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
+	if err != nil {
+		t.Fatalf(errProcessGenericEmailOutboxFmt, err)
+	}
+	if len(sender.lastCustomAttachments) != 1 {
+		t.Fatalf(errExpectedOneAttachmentFmt, len(sender.lastCustomAttachments))
+	}
+	if string(sender.lastCustomAttachments[0].Content) != "subsidy-pdf" {
+		t.Fatalf("expected subsidy pdf content, got %q", string(sender.lastCustomAttachments[0].Content))
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected 1 subsidy generator call, got %d", generator.calls)
+	}
+	if generator.last == nil || generator.last.TotalAmountCents != 1336000 {
+		t.Fatalf("expected subsidy payload to be forwarded, got %#v", generator.last)
 	}
 }
 
@@ -575,7 +657,7 @@ func TestBuildEmailAttachmentSpecsIncludesQuoteSentPDF(t *testing.T) {
 				"quote": map[string]any{
 					"id":         quoteID,
 					"number":     "OFF-2026-0004",
-					"pdfFileKey": "quotes/unsigned.pdf",
+					"pdfFileKey": testUnsignedQuotePDFKey,
 				},
 			},
 		},
@@ -592,14 +674,67 @@ func TestBuildEmailAttachmentSpecsIncludesQuoteSentPDF(t *testing.T) {
 	if attachments[0].QuoteID == nil || *attachments[0].QuoteID != quoteID {
 		t.Fatalf("expected quote id %q, got %#v", quoteID, attachments[0].QuoteID)
 	}
-	if attachments[0].FileKey != "quotes/unsigned.pdf" {
+	if attachments[0].FileKey != testUnsignedQuotePDFKey {
 		t.Fatalf("expected unsigned file key, got %q", attachments[0].FileKey)
 	}
 	if attachments[0].FileName != "offerte-OFF-2026-0004.pdf" {
 		t.Fatalf("expected attachment filename to be derived from quote number, got %q", attachments[0].FileName)
 	}
-	if attachments[0].MIMEType != "application/pdf" {
-		t.Fatalf("expected application/pdf mime type, got %q", attachments[0].MIMEType)
+	if attachments[0].MIMEType != testPDFMIMEType {
+		t.Fatalf("expected %s mime type, got %q", testPDFMIMEType, attachments[0].MIMEType)
+	}
+}
+
+func TestBuildEmailAttachmentSpecsIncludesISDESubsidyPDFWhenPresent(t *testing.T) {
+	quoteID := uuid.New().String()
+	dispatchCtx := workflowStepDispatchContext{
+		Exec: workflowStepExecutionContext{
+			Trigger: "quote_sent",
+			Variables: map[string]any{
+				"lead": map[string]any{
+					"name":    "Robin",
+					"address": testLeadAddress,
+				},
+				"org": map[string]any{
+					"name": testOrgName,
+				},
+				"quote": map[string]any{
+					"id":         quoteID,
+					"number":     testQuoteNumber0042,
+					"pdfFileKey": testUnsignedQuotePDFKey,
+				},
+				"subsidy": map[string]any{
+					"totalAmountCents":     250000,
+					"eligibleMeasureCount": 1,
+					"insulationBreakdown": []map[string]any{{
+						"description": "Dakisolatie",
+						"areaM2":      25,
+						"amountCents": 250000,
+					}},
+				},
+			},
+		},
+	}
+
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	attachments := m.buildEmailAttachmentSpecs(dispatchCtx)
+	if len(attachments) != 2 {
+		t.Fatalf("expected 2 attachment specs, got %d", len(attachments))
+	}
+	if attachments[1].Kind != "isde_subsidy_pdf" {
+		t.Fatalf("expected isde_subsidy_pdf kind, got %q", attachments[1].Kind)
+	}
+	if attachments[1].ISDESubsidy == nil {
+		t.Fatal("expected isde subsidy payload to be included")
+	}
+	if attachments[1].ISDESubsidy.OrganizationName != testOrgName {
+		t.Fatalf("expected org name %q, got %q", testOrgName, attachments[1].ISDESubsidy.OrganizationName)
+	}
+	if attachments[1].ISDESubsidy.LeadAddress != testLeadAddress {
+		t.Fatalf("expected lead address to be propagated, got %q", attachments[1].ISDESubsidy.LeadAddress)
+	}
+	if attachments[1].FileName != "isde-subsidie-OFF-2026-0042.pdf" {
+		t.Fatalf("expected subsidy attachment filename, got %q", attachments[1].FileName)
 	}
 }
 
