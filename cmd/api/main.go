@@ -447,6 +447,9 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	if cfg.IsEmbeddingEnabled() && cfg.IsQdrantEnabled() {
 		quotesModule.SetHumanFeedbackMemoryQueue(reminderScheduler)
 	}
+	leadsModule.GetSubsidyAnalyzerService().SetSchedulerClient(*reminderScheduler)
+	leadsModule.GetSubsidyAnalyzerService().SetQuoteRepo(*quotesModule.Repository())
+	quotesModule.SetSubsidyAnalyzerService(leadsModule.GetSubsidyAnalyzerService())
 	wireMoneybirdConfig(cfg, log, quotesModule.Service())
 
 	quoteViewer := adapters.NewQuotePublicAdapter(quotesModule.Service(), leadsModule.Repository(), quotesModule.Repository())

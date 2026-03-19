@@ -59,6 +59,7 @@ type Module struct {
 	offerSummaryGenerator *agent.OfferSummaryGenerator
 	whatsAppReplyAgent    *agent.WhatsAppReplyAgent
 	emailReplyAgent       *agent.EmailReplyAgent
+	subsidyAnalyzerSvc    *SubsidyAnalyzerService
 	sse                   *sse.Service
 	eventBus              events.Bus
 	repo                  repository.LeadsRepository
@@ -213,6 +214,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		offerSummaryGenerator: offerSummaryGenerator,
 		whatsAppReplyAgent:    whatsAppReplyAgent,
 		emailReplyAgent:       emailReplyAgent,
+		subsidyAnalyzerSvc:    nil, // Will be set after instantiation
 		sse:                   sseService,
 		eventBus:              eventBus,
 		repo:                  repo,
@@ -225,6 +227,19 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		dispatcherDeduper:     dispatcherDeduper,
 	}
 
+	// Subsidy analyzer service (no ADK agent instantiation here; done lazily when needed)
+	subsidyAnalyzerSvc := NewSubsidyAnalyzerService(SubsidyAnalyzerServiceConfig{
+		Repo:            repo,
+		QuoteRepo:       nil, // Will be injected from quotes module
+		EventBus:        eventBus,
+		SSEService:      sseService,
+		SchedulerClient: nil, // Will be injected from main.go/quotes module
+		Log:             log,
+		MoonshotAPIKey:  cfg.MoonshotAPIKey,
+		LLMModel:        cfg.ResolveLLMModel(config.LLMModelAgentQuoteGenerator),
+	})
+	module.subsidyAnalyzerSvc = subsidyAnalyzerSvc
+
 	subscribeLeadCreated(eventBus, repo, module, log)
 	subscribeLeadServiceAdded(eventBus, repo, module, log)
 	subscribeAttachmentUploaded(eventBus, repo, module, log)
@@ -233,6 +248,14 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	}
 
 	return module, nil
+}
+
+// GetSubsidyAnalyzerService returns the subsidy analyzer service for external wiring.
+func (m *Module) GetSubsidyAnalyzerService() *SubsidyAnalyzerService {
+	if m == nil {
+		return nil
+	}
+	return m.subsidyAnalyzerSvc
 }
 
 func (m *Module) VerifyWiring() error {

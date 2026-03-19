@@ -22,23 +22,24 @@ import (
 )
 
 type Worker struct {
-	server   *asynq.Server
-	mux      *asynq.ServeMux
-	repo     *repository.Repository
-	leads    *leadrepo.Repository
-	bus      events.Bus
-	log      *logger.Logger
-	quotes   QuoteJobProcessor
-	pdf      QuoteAcceptedPDFProcessor
-	call     CallLogProcessor
-	offer    OfferSummaryProcessor
-	offerPDF OfferPDFProcessor
-	tasks    TaskReminderProcessor
-	leadsAI  LeadAutomationProcessor
-	voice    WAAgentVoiceTranscriptionProcessor
-	imap     IMAPSyncProcessor
-	embed    *embeddings.Client
-	qdrant   *qdrant.Client
+	server          *asynq.Server
+	mux             *asynq.ServeMux
+	repo            *repository.Repository
+	leads           *leadrepo.Repository
+	bus             events.Bus
+	log             *logger.Logger
+	quotes          QuoteJobProcessor
+	pdf             QuoteAcceptedPDFProcessor
+	call            CallLogProcessor
+	offer           OfferSummaryProcessor
+	offerPDF        OfferPDFProcessor
+	tasks           TaskReminderProcessor
+	leadsAI         LeadAutomationProcessor
+	voice           WAAgentVoiceTranscriptionProcessor
+	imap            IMAPSyncProcessor
+	subsidyAnalyzer SubsidyAnalyzerProcessor
+	embed           *embeddings.Client
+	qdrant          *qdrant.Client
 }
 
 const errLeadAutomationProcessorNotConfigured = "lead automation processor is not configured"
@@ -59,6 +60,10 @@ type QuoteAcceptedPDFProcessor interface {
 
 type CallLogProcessor interface {
 	ProcessLogCallJob(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) error
+}
+
+type SubsidyAnalyzerProcessor interface {
+	ProcessSubsidyAnalysisJob(ctx context.Context, jobID uuid.UUID, quoteID uuid.UUID, organizationID uuid.UUID) error
 }
 
 type OfferSummaryProcessor interface {
@@ -154,6 +159,7 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskGenerateQuoteJob, w.handleGenerateQuoteJob)
 	mux.HandleFunc(TaskGenerateAcceptedQuotePDF, w.handleGenerateAcceptedQuotePDF)
 	mux.HandleFunc(TaskLogCall, w.handleLogCall)
+	mux.HandleFunc(TaskAnalyzeSubsidy, w.handleSubsidyAnalyzerJob)
 	mux.HandleFunc(TaskGeneratePartnerOfferSummary, w.handlePartnerOfferSummary)
 	mux.HandleFunc(TaskGeneratePartnerOfferPDF, w.handlePartnerOfferPDF)
 	mux.HandleFunc(TaskRunGatekeeper, w.handleGatekeeperRun)
@@ -184,6 +190,10 @@ func (w *Worker) SetIMAPSyncProcessor(processor IMAPSyncProcessor) {
 
 func (w *Worker) SetCallLogProcessor(processor CallLogProcessor) {
 	w.call = processor
+}
+
+func (w *Worker) SetSubsidyAnalyzerProcessor(processor SubsidyAnalyzerProcessor) {
+	w.subsidyAnalyzer = processor
 }
 
 func (w *Worker) SetOfferSummaryProcessor(processor OfferSummaryProcessor) {
@@ -601,6 +611,61 @@ func (w *Worker) handleLogCall(ctx context.Context, task *asynq.Task) error {
 		"leadId", leadID,
 		"serviceId", serviceID,
 		"tenantId", tenantID,
+		"durationMs", time.Since(start).Milliseconds(),
+	)
+
+	return nil
+}
+
+func (w *Worker) handleSubsidyAnalyzerJob(ctx context.Context, task *asynq.Task) error {
+	if w.subsidyAnalyzer == nil {
+		return fmt.Errorf("subsidy analyzer processor is not configured")
+	}
+
+	payload, err := ParseSubsidyAnalyzerJobPayload(task)
+	if err != nil {
+		return err
+	}
+
+	jobID, err := uuid.Parse(payload.JobID)
+	if err != nil {
+		return err
+	}
+
+	quoteID, err := uuid.Parse(payload.QuoteID)
+	if err != nil {
+		return err
+	}
+
+	organizationID, err := uuid.Parse(payload.OrganizationID)
+	if err != nil {
+		return err
+	}
+
+	start := time.Now()
+	w.log.Info(
+		"scheduler: starting subsidy analyzer job",
+		"jobId", jobID,
+		"quoteId", quoteID,
+		"organizationId", organizationID,
+	)
+
+	err = w.subsidyAnalyzer.ProcessSubsidyAnalysisJob(ctx, jobID, quoteID, organizationID)
+	if err != nil {
+		w.log.Error(
+			"scheduler: subsidy analyzer job failed",
+			"jobId", jobID,
+			"quoteId", quoteID,
+			"durationMs", time.Since(start).Milliseconds(),
+			"error", err,
+		)
+		return err
+	}
+
+	w.log.Info(
+		"scheduler: subsidy analyzer job completed",
+		"jobId", jobID,
+		"quoteId", quoteID,
 		"durationMs", time.Since(start).Milliseconds(),
 	)
 

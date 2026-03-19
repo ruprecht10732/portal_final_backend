@@ -13,6 +13,7 @@ const TaskNotificationOutboxDue = "notification.outbox.due"
 
 const TaskGenerateQuoteJob = "quotes.generate"
 const TaskGenerateAcceptedQuotePDF = "quotes.generate_accepted_pdf"
+const TaskAnalyzeSubsidy = "quotes.analyze_subsidy"
 const TaskLogCall = "leads.log_call"
 const TaskGeneratePartnerOfferSummary = "partners.offer.generate_summary"
 const TaskGeneratePartnerOfferPDF = "partners.offer.generate_pdf"
@@ -59,6 +60,14 @@ type GenerateAcceptedQuotePDFPayload struct {
 	OrgName       string `json:"orgName"`
 	CustomerName  string `json:"customerName"`
 	SignatureName string `json:"signatureName"`
+}
+
+type SubsidyAnalyzerJobPayload struct {
+	JobID          string `json:"jobId"`
+	TenantID       string `json:"tenantId"`
+	UserID         string `json:"userId"`
+	QuoteID        string `json:"quoteId"`
+	OrganizationID string `json:"organizationId"`
 }
 
 type LogCallPayload struct {
@@ -251,6 +260,22 @@ func ParseLogCallPayload(task *asynq.Task) (LogCallPayload, error) {
 	var payload LogCallPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return LogCallPayload{}, err
+	}
+	return payload, nil
+}
+
+func NewSubsidyAnalyzerJobTask(payload SubsidyAnalyzerJobPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskAnalyzeSubsidy, data), nil
+}
+
+func ParseSubsidyAnalyzerJobPayload(task *asynq.Task) (SubsidyAnalyzerJobPayload, error) {
+	var payload SubsidyAnalyzerJobPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return SubsidyAnalyzerJobPayload{}, err
 	}
 	return payload, nil
 }

@@ -110,6 +110,10 @@ type QuoteCalculationRequest struct {
 	DiscountValue int64              `json:"discountValue" validate:"min=0"`
 }
 
+type AnalyzeSubsidyDraftRequest struct {
+	Items []QuoteItemRequest `json:"items" validate:"required,min=1,dive"`
+}
+
 // CreateHumanFeedbackRequest captures a human correction over an AI-generated quote field.
 type CreateHumanFeedbackRequest struct {
 	LeadServiceID *uuid.UUID     `json:"leadServiceId,omitempty"`

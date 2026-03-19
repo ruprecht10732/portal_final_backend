@@ -226,6 +226,20 @@ func (c *Client) EnqueueLogCall(ctx context.Context, payload LogCallPayload) err
 	return err
 }
 
+func (c *Client) EnqueueSubsidyAnalyzerJob(ctx context.Context, payload SubsidyAnalyzerJobPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewSubsidyAnalyzerJobTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	return err
+}
+
 func (c *Client) EnqueuePartnerOfferSummary(ctx context.Context, payload PartnerOfferSummaryPayload) error {
 	if c == nil || c.client == nil {
 		return nil

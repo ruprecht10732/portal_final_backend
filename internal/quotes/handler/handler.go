@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -17,20 +18,29 @@ import (
 )
 
 const (
-	msgInvalidRequest      = "invalid request"
-	msgValidationFailed    = "validation failed"
-	msgPDFGenerationFailed = "PDF generation failed"
+	msgInvalidRequest               = "invalid request"
+	msgValidationFailed             = "validation failed"
+	msgPDFGenerationFailed          = "PDF generation failed"
+	msgSubsidyAnalyzerNotConfigured = "subsidy analyzer service not configured"
 )
+
+// SubsidyAnalyzerService is the interface for subsidy analysis operations.
+type SubsidyAnalyzerService interface {
+	StartSubsidyAnalysisJob(ctx context.Context, quoteID uuid.UUID, userID uuid.UUID, tenantID uuid.UUID, organizationID uuid.UUID) (uuid.UUID, error)
+	GetSubsidyAnalysisJob(ctx context.Context, jobID uuid.UUID, organizationID uuid.UUID) (interface{}, error)
+	AnalyzeDraftSubsidy(ctx context.Context, organizationID uuid.UUID, items []transport.QuoteItemRequest) (map[string]interface{}, error)
+}
 
 // Handler handles HTTP requests for quotes
 type Handler struct {
-	svc              *service.Service
-	val              *validator.Validator
-	storageSvc       storage.StorageService
-	pdfBucket        string
-	attachmentBucket string
-	catalogBucket    string
-	pdfGen           PDFOnDemandGenerator
+	svc                *service.Service
+	val                *validator.Validator
+	storageSvc         storage.StorageService
+	pdfBucket          string
+	attachmentBucket   string
+	catalogBucket      string
+	pdfGen             PDFOnDemandGenerator
+	subsidyAnalyzerSvc SubsidyAnalyzerService
 }
 
 // New creates a new quotes handler
@@ -59,6 +69,11 @@ func (h *Handler) SetPDFGenerator(gen PDFOnDemandGenerator) {
 	h.pdfGen = gen
 }
 
+// SetSubsidyAnalyzerService injects the subsidy analyzer service.
+func (h *Handler) SetSubsidyAnalyzerService(svc SubsidyAnalyzerService) {
+	h.subsidyAnalyzerSvc = svc
+}
+
 // RegisterRoutes registers the quote routes
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
@@ -67,6 +82,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/pending-approval", h.ListPendingApprovals)
 	rg.POST("", h.Create)
 	rg.POST("/calculate", h.PreviewCalculation)
+	rg.POST("/analyze-subsidy-preview", h.AnalyzeSubsidyPreview)
 	rg.POST("/generate", h.Generate)
 	rg.GET("/debug/pricing-intelligence/summary", h.GetPricingIntelligenceSummary)
 	rg.GET("/debug/pricing-intelligence/records", h.GetPricingIntelligenceRecords)
@@ -95,9 +111,43 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/items/:itemId/annotations/draft-reply", h.SuggestAnnotationReplyDraft)
 	rg.GET("/:id/activities", h.ListActivities)
 	rg.GET("/:id/pdf", h.DownloadPDF)
+	rg.POST("/:id/analyze-subsidy", h.StartAnalyzeSubsidy)
 	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
 	rg.GET("/:id/attachments/:attachmentId/download", h.GetAttachmentDownloadURL)
 	rg.DELETE("/:id", h.Delete)
+	rg.GET("/subsidy-analysis-jobs/:id", h.GetAnalyzeSubsidyJob)
+}
+
+// AnalyzeSubsidyPreview handles POST /api/v1/quotes/analyze-subsidy-preview
+func (h *Handler) AnalyzeSubsidyPreview(c *gin.Context) {
+	if h.subsidyAnalyzerSvc == nil {
+		httpkit.Error(c, http.StatusInternalServerError, msgSubsidyAnalyzerNotConfigured, nil)
+		return
+	}
+
+	var req transport.AnalyzeSubsidyDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, err.Error())
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.subsidyAnalyzerSvc.AnalyzeDraftSubsidy(c.Request.Context(), tenantID, req.Items)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusOK, map[string]interface{}{
+		"result": result,
+	})
 }
 
 func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
@@ -1185,6 +1235,66 @@ func (h *Handler) GetAttachmentDownloadURL(c *gin.Context) {
 		DownloadURL: presigned.URL,
 		ExpiresAt:   presigned.ExpiresAt.Unix(),
 	})
+}
+
+// StartAnalyzeSubsidy handles POST /api/v1/quotes/:id/analyze-subsidy
+func (h *Handler) StartAnalyzeSubsidy(c *gin.Context) {
+	if h.subsidyAnalyzerSvc == nil {
+		httpkit.Error(c, http.StatusInternalServerError, msgSubsidyAnalyzerNotConfigured, nil)
+		return
+	}
+
+	quoteID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	jobID, err := h.subsidyAnalyzerSvc.StartSubsidyAnalysisJob(c.Request.Context(), quoteID, identity.UserID(), tenantID, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusAccepted, map[string]interface{}{
+		"jobId":  jobID.String(),
+		"status": "pending",
+	})
+}
+
+// GetAnalyzeSubsidyJob handles GET /api/v1/quotes/subsidy-analysis-jobs/:id
+func (h *Handler) GetAnalyzeSubsidyJob(c *gin.Context) {
+	if h.subsidyAnalyzerSvc == nil {
+		httpkit.Error(c, http.StatusInternalServerError, msgSubsidyAnalyzerNotConfigured, nil)
+		return
+	}
+
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	job, err := h.subsidyAnalyzerSvc.GetSubsidyAnalysisJob(c.Request.Context(), jobID, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.JSON(c, http.StatusOK, job)
 }
 
 // mustGetTenantID extracts the tenant ID from identity.

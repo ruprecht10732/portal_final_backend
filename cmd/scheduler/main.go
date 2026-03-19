@@ -212,6 +212,9 @@ func main() {
 	quotesModule := quotes.NewModule(pool, eventBus, val)
 	quotesModule.Service().SetLeadTransferCreator(leadsModule.ManagementService())
 	quotesModule.Service().SetLeadTransferRepository(leadsModule.Repository())
+	leadsModule.GetSubsidyAnalyzerService().SetSchedulerClient(*reminderScheduler)
+	leadsModule.GetSubsidyAnalyzerService().SetQuoteRepo(*quotesModule.Repository())
+	quotesModule.SetSubsidyAnalyzerService(leadsModule.GetSubsidyAnalyzerService())
 	tasksModule := tasks.NewModule(pool, val, reminderScheduler, leadsModule.Repository(), log)
 	leadsModule.ManagementService().SetAcceptedQuoteUpdater(quotesModule.Service())
 
@@ -273,6 +276,7 @@ func main() {
 	worker.SetQuoteJobProcessor(quotesModule.Service())
 	worker.SetCallLogProcessor(leadsModule)
 	worker.SetLeadAutomationProcessor(leadsModule)
+	worker.SetSubsidyAnalyzerProcessor(leadsModule.GetSubsidyAnalyzerService())
 	worker.SetOfferSummaryProcessor(partnersModule.Service())
 	worker.SetTaskReminderProcessor(tasksModule.Service())
 	imapModule := imap.NewModule(pool, val, eventBus, log)

@@ -1333,6 +1333,22 @@ type RacServiceType struct {
 	EstimationGuidelines pgtype.Text        `json:"estimation_guidelines"`
 }
 
+type RacSubsidyAnalyzerJob struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	QuoteID         pgtype.UUID        `json:"quote_id"`
+	Status          string             `json:"status"`
+	Step            string             `json:"step"`
+	ProgressPercent int32              `json:"progress_percent"`
+	Error           pgtype.Text        `json:"error"`
+	Result          []byte             `json:"result"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
+}
+
 type RacTask struct {
 	ID              pgtype.UUID        `json:"id"`
 	TenantID        pgtype.UUID        `json:"tenant_id"`

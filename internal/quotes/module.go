@@ -93,6 +93,11 @@ func (m *Module) SetPDFGenerator(gen handler.PDFOnDemandGenerator) {
 	m.publicHandler.SetPDFGenerator(gen)
 }
 
+// SetSubsidyAnalyzerService injects subsidy analysis support into quote handlers.
+func (m *Module) SetSubsidyAnalyzerService(svc handler.SubsidyAnalyzerService) {
+	m.handler.SetSubsidyAnalyzerService(svc)
+}
+
 // SetLogoPresigner injects a presigner for organization logo download URLs in public responses.
 func (m *Module) SetLogoPresigner(lp service.LogoPresigner) {
 	m.service.SetLogoPresigner(lp)
