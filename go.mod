@@ -29,6 +29,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20260305053642-30c5194c9691
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/net v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
 )

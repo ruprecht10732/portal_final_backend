@@ -101,3 +101,39 @@ func TestQuotePDFTemplatesIncludeCustomerContactDetails(t *testing.T) {
 		}
 	}
 }
+
+func TestISDESummaryTemplateIncludesEmbeddedQRCodes(t *testing.T) {
+	vm, err := buildISDESummaryViewModel(ISDESummaryPDFData{
+		QuoteNumber:          "OFF-2026-0042",
+		OrganizationName:     "Salestainable",
+		LeadName:             "Robin Janssen",
+		LeadAddress:          "Voorbeeldstraat 12, Amsterdam",
+		TotalAmountCents:     275000,
+		IsDoubled:            true,
+		EligibleMeasureCount: 3,
+		InsulationBreakdown: []ISDESummaryLineItem{
+			{Description: "Dakisolatie", AreaM2: 42.5, AmountCents: 125000},
+		},
+	}, time.Date(2026, time.March, 19, 15, 4, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("build ISDE summary view model: %v", err)
+	}
+
+	renderedHTML, err := renderTemplate("templates/isde_subsidy_summary.html", vm)
+	if err != nil {
+		t.Fatalf("render ISDE summary template: %v", err)
+	}
+
+	decoded := html.UnescapeString(string(renderedHTML))
+	for _, expected := range []string{
+		"data:image/png;base64,",
+		isdeRVOURL,
+		isdeKlimaatrouteURL,
+		"Subsidie aanvragen & extra informatie",
+		"Salestainable",
+	} {
+		if !strings.Contains(decoded, expected) {
+			t.Fatalf("ISDE summary template output missing %q", expected)
+		}
+	}
+}
