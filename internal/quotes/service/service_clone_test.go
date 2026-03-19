@@ -10,8 +10,8 @@ import (
 	"portal_final_backend/platform/apperr"
 )
 
-func TestValidateVersionSourceStatusAcceptsAcceptedAndRejected(t *testing.T) {
-	for _, status := range []string{"Accepted", "Rejected"} {
+func TestValidateVersionSourceStatusAcceptsDraftAndSent(t *testing.T) {
+	for _, status := range []string{"Draft", "Sent"} {
 		if err := validateVersionSourceStatus(status); err != nil {
 			t.Fatalf("validateVersionSourceStatus(%q) returned error: %v", status, err)
 		}
@@ -19,7 +19,7 @@ func TestValidateVersionSourceStatusAcceptsAcceptedAndRejected(t *testing.T) {
 }
 
 func TestValidateVersionSourceStatusRejectsNonTerminalStatuses(t *testing.T) {
-	for _, status := range []string{"Draft", "Sent", "Expired"} {
+	for _, status := range []string{"Accepted", "Rejected", "Expired"} {
 		if err := validateVersionSourceStatus(status); err == nil {
 			t.Fatalf("expected error for status %q", status)
 		} else if !apperr.Is(err, apperr.KindBadRequest) {
@@ -94,5 +94,21 @@ func TestCloneQuoteItemsCopiesFieldsAndAssignsNewIDs(t *testing.T) {
 	}
 	if cloned[0].CatalogProductID == nil || *cloned[0].CatalogProductID != productID {
 		t.Fatal("expected catalog product id to be preserved")
+	}
+}
+
+func TestResolveQuoteVersionRootIDPrefersExistingRoot(t *testing.T) {
+	rootID := uuid.New()
+	quote := &repository.Quote{ID: uuid.New(), VersionRootQuoteID: &rootID}
+	if resolved := resolveQuoteVersionRootID(quote); resolved != rootID {
+		t.Fatalf("expected root id %s, got %s", rootID, resolved)
+	}
+}
+
+func TestResolveQuoteVersionRootIDFallsBackToQuoteID(t *testing.T) {
+	quoteID := uuid.New()
+	quote := &repository.Quote{ID: quoteID}
+	if resolved := resolveQuoteVersionRootID(quote); resolved != quoteID {
+		t.Fatalf("expected quote id %s, got %s", quoteID, resolved)
 	}
 }

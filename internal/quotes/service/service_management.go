@@ -25,7 +25,7 @@ const (
 	errSaveURLsFmt        = "save urls: %w"
 	extraWorkTitle        = "Extra work"
 	extraWorkFallbackDesc = "Additional work completed during fulfillment"
-	defaultTaxRateBps    = 2100
+	defaultTaxRateBps     = 2100
 )
 
 func inferExtraWorkTaxRate(items []repository.QuoteItem) int {
@@ -296,7 +296,12 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 		return nil, err
 	}
 
-	return s.buildResponse(ctx, quote, items)
+	annotations, err := s.repo.ListAnnotationsByQuoteID(ctx, quote.ID)
+	if err != nil {
+		annotations = nil
+	}
+
+	return s.buildResponse(ctx, quote, items, annotations)
 }
 
 func (s *Service) invalidatePDFOnAssetUpdates(ctx context.Context, quote *repository.Quote, req transport.UpdateQuoteRequest) error {
@@ -426,10 +431,23 @@ func (s *Service) cloneQuote(ctx context.Context, id uuid.UUID, tenantID uuid.UU
 	if err := s.persistClonedQuote(ctx, tenantID, actorID, payload); err != nil {
 		return nil, err
 	}
+	if mode == quoteCloneModeVersion {
+		if err := s.repo.CopyAnnotationsToQuoteVersion(ctx, source.ID, clone.ID, tenantID); err != nil {
+			return nil, err
+		}
+		if err := s.transferPreviewLinkToClone(ctx, source, clone, tenantID); err != nil {
+			return nil, err
+		}
+	}
 
 	s.emitCloneTimelineEvent(ctx, tenantID, actorID, source, clone, mode)
 
-	return s.buildResponse(ctx, clone, clonedItems)
+	annotations, err := s.repo.ListAnnotationsByQuoteID(ctx, clone.ID)
+	if err != nil {
+		annotations = nil
+	}
+
+	return s.buildResponse(ctx, clone, clonedItems, annotations)
 }
 
 func validateCloneSourceStatus(source *repository.Quote, mode quoteCloneMode) error {
@@ -568,10 +586,30 @@ func (s *Service) emitCloneTimelineEvent(ctx context.Context, tenantID uuid.UUID
 }
 
 func validateVersionSourceStatus(status string) error {
-	if status != string(transport.QuoteStatusAccepted) && status != string(transport.QuoteStatusRejected) {
-		return apperr.BadRequest("new version can only be created from accepted or rejected quotes")
+	if status != string(transport.QuoteStatusDraft) && status != string(transport.QuoteStatusSent) {
+		return apperr.BadRequest("new version can only be created from draft or sent quotes")
 	}
 	return nil
+}
+
+func (s *Service) transferPreviewLinkToClone(ctx context.Context, source *repository.Quote, clone *repository.Quote, tenantID uuid.UUID) error {
+	token := strings.TrimSpace(ptrToString(source.PreviewToken))
+	if token == "" {
+		return nil
+	}
+	if err := s.repo.MovePreviewToken(ctx, source.ID, clone.ID, tenantID); err != nil {
+		return err
+	}
+	clone.PreviewToken = source.PreviewToken
+	clone.PreviewTokenExpAt = source.PreviewTokenExpAt
+	return nil
+}
+
+func resolveQuoteVersionRootID(q *repository.Quote) uuid.UUID {
+	if q.VersionRootQuoteID != nil && *q.VersionRootQuoteID != uuid.Nil {
+		return *q.VersionRootQuoteID
+	}
+	return q.ID
 }
 
 func cloneQuoteValidUntil(now time.Time, sourceValidUntil *time.Time) *time.Time {
@@ -834,24 +872,24 @@ func (s *Service) TransferToOrganization(ctx context.Context, id uuid.UUID, tena
 		return nil, err
 	}
 	s.recordQuoteTransferAudit(ctx, quoteTransferAuditParams{
-		quoteID:                context.sourceQuote.ID,
-		leadID:                 context.sourceQuote.LeadID,
-		serviceID:              nil,
-		tenantID:               tenantID,
-		relatedOrganizationID:  destinationTenantID,
-		actorID:                actorID,
-		action:                 "transferred_out",
-		message:                "Quote transferred to another organization",
+		quoteID:               context.sourceQuote.ID,
+		leadID:                context.sourceQuote.LeadID,
+		serviceID:             nil,
+		tenantID:              tenantID,
+		relatedOrganizationID: destinationTenantID,
+		actorID:               actorID,
+		action:                "transferred_out",
+		message:               "Quote transferred to another organization",
 	})
 	s.recordQuoteTransferAudit(ctx, quoteTransferAuditParams{
-		quoteID:                createdQuote.ID,
-		leadID:                 createdQuote.LeadID,
-		serviceID:              createdQuote.LeadServiceID,
-		tenantID:               destinationTenantID,
-		relatedOrganizationID:  tenantID,
-		actorID:                actorID,
-		action:                 "transferred_in",
-		message:                "Quote received from another organization",
+		quoteID:               createdQuote.ID,
+		leadID:                createdQuote.LeadID,
+		serviceID:             createdQuote.LeadServiceID,
+		tenantID:              destinationTenantID,
+		relatedOrganizationID: tenantID,
+		actorID:               actorID,
+		action:                "transferred_in",
+		message:               "Quote received from another organization",
 	})
 
 	if err := s.Delete(ctx, id, tenantID, actorID); err != nil {
@@ -929,7 +967,7 @@ func (s *Service) recordQuoteTransferAudit(ctx context.Context, params quoteTran
 			"action":                params.action,
 			"relatedOrganizationId": params.relatedOrganizationID,
 		},
-		Visibility:     "internal",
+		Visibility: "internal",
 	})
 }
 
@@ -1107,6 +1145,14 @@ func (s *Service) ensureQuotePublicToken(ctx context.Context, quote *repository.
 		return token, nil
 	}
 
+	if reusedToken, reusedExpAt, reused, err := s.tryReuseVersionChainPublicToken(ctx, quote, tenantID); err != nil {
+		return "", err
+	} else if reused {
+		quote.PublicToken = &reusedToken
+		quote.PublicTokenExpAt = reusedExpAt
+		return reusedToken, nil
+	}
+
 	generatedToken, err := generatePublicToken()
 	if err != nil {
 		return "", err
@@ -1121,6 +1167,14 @@ func (s *Service) ensureQuotePublicToken(ctx context.Context, quote *repository.
 	}
 
 	return generatedToken, nil
+}
+
+func (s *Service) tryReuseVersionChainPublicToken(ctx context.Context, quote *repository.Quote, tenantID uuid.UUID) (string, *time.Time, bool, error) {
+	versionRootID := resolveQuoteVersionRootID(quote)
+	if versionRootID == uuid.Nil || versionRootID == quote.ID {
+		return "", nil, false, nil
+	}
+	return s.repo.MoveChainPublicToken(ctx, versionRootID, quote.ID, tenantID)
 }
 
 func (s *Service) ensureQuoteStatusSent(ctx context.Context, quoteID, tenantID uuid.UUID, currentStatus string) error {
@@ -1208,9 +1262,6 @@ func (s *Service) GetPreviewLink(ctx context.Context, id uuid.UUID, tenantID uui
 	quote, err := s.repo.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
-	}
-	if quote.Status == string(transport.QuoteStatusDraft) {
-		return nil, apperr.BadRequest("preview link is not available for draft quotes")
 	}
 	now := time.Now()
 	if quote.PreviewToken != nil && quote.PreviewTokenExpAt != nil && quote.PreviewTokenExpAt.After(now) {

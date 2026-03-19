@@ -247,6 +247,53 @@ type QuoteResponse struct {
 	UpdatedAt                  time.Time                 `json:"updatedAt"`
 }
 
+type QuoteVersionHistoryResponse struct {
+	Versions []QuoteVersionSummaryResponse `json:"versions"`
+	Diff     *QuoteVersionDiffResponse     `json:"diff,omitempty"`
+}
+
+type QuoteVersionSummaryResponse struct {
+	QuoteID       uuid.UUID   `json:"quoteId"`
+	QuoteNumber   string      `json:"quoteNumber"`
+	VersionNumber int         `json:"versionNumber"`
+	Status        QuoteStatus `json:"status"`
+	TotalCents    int64       `json:"totalCents"`
+	CreatedAt     time.Time   `json:"createdAt"`
+	UpdatedAt     time.Time   `json:"updatedAt"`
+	IsCurrent     bool        `json:"isCurrent"`
+}
+
+type QuoteVersionDiffResponse struct {
+	PreviousQuoteID       uuid.UUID                      `json:"previousQuoteId"`
+	PreviousQuoteNumber   string                         `json:"previousQuoteNumber"`
+	PreviousVersionNumber int                            `json:"previousVersionNumber"`
+	CurrentQuoteID        uuid.UUID                      `json:"currentQuoteId"`
+	CurrentQuoteNumber    string                         `json:"currentQuoteNumber"`
+	CurrentVersionNumber  int                            `json:"currentVersionNumber"`
+	AddedCount            int                            `json:"addedCount"`
+	RemovedCount          int                            `json:"removedCount"`
+	ChangedCount          int                            `json:"changedCount"`
+	TotalDeltaCents       int64                          `json:"totalDeltaCents"`
+	Items                 []QuoteVersionDiffItemResponse `json:"items"`
+}
+
+type QuoteVersionDiffItemResponse struct {
+	ChangeType string                    `json:"changeType"`
+	Previous   *QuoteVersionItemResponse `json:"previous,omitempty"`
+	Current    *QuoteVersionItemResponse `json:"current,omitempty"`
+}
+
+type QuoteVersionItemResponse struct {
+	Title          string `json:"title"`
+	Description    string `json:"description"`
+	Quantity       string `json:"quantity"`
+	UnitPriceCents int64  `json:"unitPriceCents"`
+	TaxRateBps     int    `json:"taxRateBps"`
+	IsOptional     bool   `json:"isOptional"`
+	IsSelected     bool   `json:"isSelected"`
+	LineTotalCents int64  `json:"lineTotalCents"`
+}
+
 // QuoteListResponse is the paginated list response
 type QuoteListResponse struct {
 	Items      []QuoteResponse `json:"items"`

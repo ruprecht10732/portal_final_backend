@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	quotesdb "portal_final_backend/internal/quotes/db"
@@ -235,13 +236,17 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 	}
 
 	if replaceItems {
-		if err := qtx.DeleteQuoteItemsByQuote(ctx, quotesdb.DeleteQuoteItemsByQuoteParams{
-			QuoteID:        toPgUUID(quote.ID),
-			OrganizationID: toPgUUID(quote.OrganizationID),
-		}); err != nil {
-			return fmt.Errorf("failed to delete old quote items: %w", err)
+		existingItems, err := r.listQuoteItemsByQuoteID(ctx, qtx, quote.ID, quote.OrganizationID)
+		if err != nil {
+			return err
 		}
 		if err := r.insertItems(ctx, qtx, items); err != nil {
+			return err
+		}
+		if err := r.reassignAnnotationsToReplacementItems(ctx, tx, quote.OrganizationID, existingItems, items); err != nil {
+			return err
+		}
+		if err := r.deleteQuoteItemsByID(ctx, tx, quote.OrganizationID, existingItems); err != nil {
 			return err
 		}
 	}
@@ -253,6 +258,52 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *Repository) listQuoteItemsByQuoteID(ctx context.Context, queries *quotesdb.Queries, quoteID, orgID uuid.UUID) ([]QuoteItem, error) {
+	rows, err := queries.ListQuoteItemsByQuoteID(ctx, quotesdb.ListQuoteItemsByQuoteIDParams{
+		QuoteID:        toPgUUID(quoteID),
+		OrganizationID: toPgUUID(orgID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query quote items: %w", err)
+	}
+
+	items := make([]QuoteItem, 0, len(rows))
+	for _, row := range rows {
+		item, mapErr := quoteItemFromListRow(row)
+		if mapErr != nil {
+			return nil, fmt.Errorf(errScanQuoteItemFmt, mapErr)
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (r *Repository) deleteQuoteItemsByID(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, items []QuoteItem) error {
+	for _, item := range items {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM RAC_quote_items
+			WHERE id = $1 AND organization_id = $2
+		`, item.ID, orgID); err != nil {
+			return fmt.Errorf("failed to delete old quote item: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *Repository) reassignAnnotationsToReplacementItems(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, existingItems, replacementItems []QuoteItem) error {
+	itemMapping := mapQuoteItemsForAnnotationCarryover(existingItems, replacementItems)
+	for fromItemID, toItemID := range itemMapping {
+		if _, err := tx.Exec(ctx, `
+			UPDATE RAC_quote_annotations
+			SET quote_item_id = $1
+			WHERE quote_item_id = $2 AND organization_id = $3
+		`, toItemID, fromItemID, orgID); err != nil {
+			return fmt.Errorf("failed to reassign quote annotations: %w", err)
+		}
+	}
+	return nil
 }
 
 func (r *Repository) insertItems(ctx context.Context, queries *quotesdb.Queries, items []QuoteItem) error {
@@ -325,6 +376,33 @@ func (r *Repository) NextQuoteVersionNumber(ctx context.Context, orgID, rootQuot
 	return nextVersion, nil
 }
 
+func (r *Repository) ListVersionChainQuoteIDs(ctx context.Context, orgID, rootQuoteID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id
+		FROM RAC_quotes
+		WHERE organization_id = $1
+		  AND (id = $2 OR version_root_quote_id = $2)
+		ORDER BY version_number DESC, created_at DESC, updated_at DESC
+	`, orgID, rootQuoteID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list quote version chain: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan quote version id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate quote version chain: %w", err)
+	}
+	return ids, nil
+}
+
 // GetLatestNonDraftByLead returns the most recent non-draft quote for a lead.
 func (r *Repository) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UUID, orgID uuid.UUID) (*Quote, error) {
 	row, err := r.queries.GetLatestNonDraftByLead(ctx, quotesdb.GetLatestNonDraftByLeadParams{
@@ -343,23 +421,7 @@ func (r *Repository) GetLatestNonDraftByLead(ctx context.Context, leadID uuid.UU
 
 // GetItemsByQuoteID retrieves all items for a quote
 func (r *Repository) GetItemsByQuoteID(ctx context.Context, quoteID uuid.UUID, orgID uuid.UUID) ([]QuoteItem, error) {
-	rows, err := r.queries.ListQuoteItemsByQuoteID(ctx, quotesdb.ListQuoteItemsByQuoteIDParams{
-		QuoteID:        toPgUUID(quoteID),
-		OrganizationID: toPgUUID(orgID),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to query quote items: %w", err)
-	}
-
-	items := make([]QuoteItem, 0, len(rows))
-	for _, row := range rows {
-		item, mapErr := quoteItemFromListRow(row)
-		if mapErr != nil {
-			return nil, fmt.Errorf(errScanQuoteItemFmt, mapErr)
-		}
-		items = append(items, item)
-	}
-	return items, nil
+	return r.listQuoteItemsByQuoteID(ctx, r.queries, quoteID, orgID)
 }
 
 // GetItemsByQuoteIDs retrieves all items for the provided quotes in a single query,
@@ -643,6 +705,134 @@ func (r *Repository) SetPreviewToken(ctx context.Context, quoteID, orgID uuid.UU
 	return nil
 }
 
+// MovePreviewToken transfers the preview token from one quote to another in a single transaction.
+func (r *Repository) MovePreviewToken(ctx context.Context, sourceQuoteID, targetQuoteID, orgID uuid.UUID) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf(errBeginTransactionFmt, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var token pgtype.Text
+	var expiresAt pgtype.Timestamptz
+	err = tx.QueryRow(ctx, `
+		SELECT preview_token, preview_token_expires_at
+		FROM RAC_quotes
+		WHERE id = $1 AND organization_id = $2
+		FOR UPDATE
+	`, sourceQuoteID, orgID).Scan(&token, &expiresAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.NotFound(quoteNotFoundMsg)
+		}
+		return fmt.Errorf("load preview token: %w", err)
+	}
+	if !token.Valid || strings.TrimSpace(token.String) == "" {
+		return nil
+	}
+
+	now := time.Now()
+	if _, err := tx.Exec(ctx, `
+		UPDATE RAC_quotes
+		SET preview_token = NULL,
+		    preview_token_expires_at = NULL,
+		    updated_at = $3
+		WHERE id = $1 AND organization_id = $2
+	`, sourceQuoteID, orgID, now); err != nil {
+		return fmt.Errorf("clear preview token: %w", err)
+	}
+
+	var expiresValue any
+	if expiresAt.Valid {
+		expiresValue = expiresAt.Time
+	}
+	result, err := tx.Exec(ctx, `
+		UPDATE RAC_quotes
+		SET preview_token = $3,
+		    preview_token_expires_at = $4,
+		    updated_at = $5
+		WHERE id = $1 AND organization_id = $2
+	`, targetQuoteID, orgID, token.String, expiresValue, now)
+	if err != nil {
+		return fmt.Errorf("set preview token: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return apperr.NotFound(quoteNotFoundMsg)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// MoveChainPublicToken transfers the existing public token within a version chain to a new target quote.
+func (r *Repository) MoveChainPublicToken(ctx context.Context, versionRootID, targetQuoteID, orgID uuid.UUID) (string, *time.Time, bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", nil, false, fmt.Errorf(errBeginTransactionFmt, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var sourceQuoteID uuid.UUID
+	var token string
+	var expiresAt pgtype.Timestamptz
+	err = tx.QueryRow(ctx, `
+		SELECT id, public_token, public_token_expires_at
+		FROM RAC_quotes
+		WHERE organization_id = $1
+		  AND (id = $2 OR version_root_quote_id = $2)
+		  AND id <> $3
+		  AND public_token IS NOT NULL
+		ORDER BY version_number DESC, updated_at DESC
+		LIMIT 1
+		FOR UPDATE
+	`, orgID, versionRootID, targetQuoteID).Scan(&sourceQuoteID, &token, &expiresAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, false, nil
+		}
+		return "", nil, false, fmt.Errorf("load public token holder: %w", err)
+	}
+	if strings.TrimSpace(token) == "" {
+		return "", nil, false, nil
+	}
+
+	now := time.Now()
+	if _, err := tx.Exec(ctx, `
+		UPDATE RAC_quotes
+		SET public_token = NULL,
+		    public_token_expires_at = NULL,
+		    updated_at = $3
+		WHERE id = $1 AND organization_id = $2
+	`, sourceQuoteID, orgID, now); err != nil {
+		return "", nil, false, fmt.Errorf("clear public token: %w", err)
+	}
+
+	var expiresValue any
+	var expiresPtr *time.Time
+	if expiresAt.Valid {
+		expiresValue = expiresAt.Time
+		expiresCopy := expiresAt.Time
+		expiresPtr = &expiresCopy
+	}
+	result, err := tx.Exec(ctx, `
+		UPDATE RAC_quotes
+		SET public_token = $3,
+		    public_token_expires_at = $4,
+		    updated_at = $5
+		WHERE id = $1 AND organization_id = $2
+	`, targetQuoteID, orgID, token, expiresValue, now)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("set public token: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return "", nil, false, apperr.NotFound(quoteNotFoundMsg)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", nil, false, err
+	}
+	return token, expiresPtr, true, nil
+}
+
 // SetViewedAt sets the viewed_at timestamp if it's currently NULL (first view).
 func (r *Repository) SetViewedAt(ctx context.Context, quoteID uuid.UUID) error {
 	if err := r.queries.SetQuoteViewedAt(ctx, quotesdb.SetQuoteViewedAtParams{
@@ -825,7 +1015,11 @@ func (r *Repository) CreateAnnotation(ctx context.Context, a *QuoteAnnotation) e
 
 // ListAnnotationsByQuoteID retrieves all annotations for items belonging to a quote.
 func (r *Repository) ListAnnotationsByQuoteID(ctx context.Context, quoteID uuid.UUID) ([]QuoteAnnotation, error) {
-	rows, err := r.queries.ListQuoteAnnotationsByQuoteID(ctx, toPgUUID(quoteID))
+	return r.listAnnotationsByQuoteID(ctx, r.queries, quoteID)
+}
+
+func (r *Repository) listAnnotationsByQuoteID(ctx context.Context, queries *quotesdb.Queries, quoteID uuid.UUID) ([]QuoteAnnotation, error) {
+	rows, err := queries.ListQuoteAnnotationsByQuoteID(ctx, toPgUUID(quoteID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list annotations: %w", err)
 	}
@@ -835,6 +1029,154 @@ func (r *Repository) ListAnnotationsByQuoteID(ctx context.Context, quoteID uuid.
 		annotations = append(annotations, quoteAnnotationFromModel(row))
 	}
 	return annotations, nil
+}
+
+func (r *Repository) CopyAnnotationsToQuoteVersion(ctx context.Context, sourceQuoteID, targetQuoteID, orgID uuid.UUID) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf(errBeginTransactionFmt, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := r.queries.WithTx(tx)
+	sourceItems, err := r.listQuoteItemsByQuoteID(ctx, qtx, sourceQuoteID, orgID)
+	if err != nil {
+		return err
+	}
+	targetItems, err := r.listQuoteItemsByQuoteID(ctx, qtx, targetQuoteID, orgID)
+	if err != nil {
+		return err
+	}
+	annotations, err := r.listAnnotationsByQuoteID(ctx, qtx, sourceQuoteID)
+	if err != nil {
+		return err
+	}
+
+	itemMapping := mapQuoteItemsForAnnotationCarryover(sourceItems, targetItems)
+	for _, annotation := range cloneQuoteAnnotationsForCarryover(annotations, itemMapping) {
+		if err := qtx.CreateQuoteAnnotation(ctx, quotesdb.CreateQuoteAnnotationParams{
+			ID:             toPgUUID(annotation.ID),
+			QuoteItemID:    toPgUUID(annotation.QuoteItemID),
+			OrganizationID: toPgUUID(annotation.OrganizationID),
+			AuthorType:     annotation.AuthorType,
+			AuthorID:       toPgUUIDPtr(annotation.AuthorID),
+			Text:           annotation.Text,
+			IsResolved:     annotation.IsResolved,
+			CreatedAt:      toPgTimestamp(annotation.CreatedAt),
+		}); err != nil {
+			return fmt.Errorf("failed to copy annotation to quote version: %w", err)
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+func mapQuoteItemsForAnnotationCarryover(existingItems, replacementItems []QuoteItem) map[uuid.UUID]uuid.UUID {
+	mapping := make(map[uuid.UUID]uuid.UUID)
+	usedTargets := make(map[uuid.UUID]struct{})
+	matchers := []func(QuoteItem, QuoteItem) bool{
+		quoteItemsExactlyMatchForCarryover,
+		quoteItemsMatchCatalogIdentity,
+		quoteItemsMatchTextIdentity,
+		quoteItemsMatchSortIdentity,
+	}
+
+	for _, matcher := range matchers {
+		for _, existing := range existingItems {
+			if _, alreadyMapped := mapping[existing.ID]; alreadyMapped {
+				continue
+			}
+			targetID, ok := findQuoteItemCarryoverTarget(existing, replacementItems, usedTargets, matcher)
+			if ok {
+				mapping[existing.ID] = targetID
+				usedTargets[targetID] = struct{}{}
+			}
+		}
+	}
+
+	return mapping
+}
+
+func findQuoteItemCarryoverTarget(existing QuoteItem, replacementItems []QuoteItem, usedTargets map[uuid.UUID]struct{}, matcher func(QuoteItem, QuoteItem) bool) (uuid.UUID, bool) {
+	for _, replacement := range replacementItems {
+		if _, alreadyUsed := usedTargets[replacement.ID]; alreadyUsed {
+			continue
+		}
+		if matcher(existing, replacement) {
+			return replacement.ID, true
+		}
+	}
+	return uuid.Nil, false
+}
+
+func cloneQuoteAnnotationsForCarryover(annotations []QuoteAnnotation, itemMapping map[uuid.UUID]uuid.UUID) []QuoteAnnotation {
+	cloned := make([]QuoteAnnotation, 0, len(annotations))
+	for _, annotation := range annotations {
+		targetItemID, ok := itemMapping[annotation.QuoteItemID]
+		if !ok {
+			continue
+		}
+		cloned = append(cloned, QuoteAnnotation{
+			ID:             uuid.New(),
+			QuoteItemID:    targetItemID,
+			OrganizationID: annotation.OrganizationID,
+			AuthorType:     annotation.AuthorType,
+			AuthorID:       annotation.AuthorID,
+			Text:           annotation.Text,
+			IsResolved:     annotation.IsResolved,
+			CreatedAt:      annotation.CreatedAt,
+		})
+	}
+	return cloned
+}
+
+func quoteItemsExactlyMatchForCarryover(left, right QuoteItem) bool {
+	return quoteCatalogIDsMatch(left.CatalogProductID, right.CatalogProductID) &&
+		normalizeQuoteItemCarryoverText(left.Title) == normalizeQuoteItemCarryoverText(right.Title) &&
+		normalizeQuoteItemCarryoverText(left.Description) == normalizeQuoteItemCarryoverText(right.Description) &&
+		normalizeQuoteItemCarryoverText(left.Quantity) == normalizeQuoteItemCarryoverText(right.Quantity) &&
+		left.UnitPriceCents == right.UnitPriceCents &&
+		left.TaxRateBps == right.TaxRateBps &&
+		left.IsOptional == right.IsOptional &&
+		left.SortOrder == right.SortOrder
+}
+
+func quoteItemsMatchCatalogIdentity(left, right QuoteItem) bool {
+	return left.CatalogProductID != nil && right.CatalogProductID != nil &&
+		*left.CatalogProductID == *right.CatalogProductID &&
+		left.IsOptional == right.IsOptional
+}
+
+func quoteItemsMatchTextIdentity(left, right QuoteItem) bool {
+	leftLabel := normalizeQuoteItemCarryoverLabel(left)
+	rightLabel := normalizeQuoteItemCarryoverLabel(right)
+	return leftLabel != "" && leftLabel == rightLabel && left.IsOptional == right.IsOptional
+}
+
+func quoteItemsMatchSortIdentity(left, right QuoteItem) bool {
+	return left.SortOrder == right.SortOrder && left.IsOptional == right.IsOptional
+}
+
+func normalizeQuoteItemCarryoverLabel(item QuoteItem) string {
+	if title := normalizeQuoteItemCarryoverText(item.Title); title != "" {
+		return title
+	}
+	return normalizeQuoteItemCarryoverText(item.Description)
+}
+
+func normalizeQuoteItemCarryoverText(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(trimmed), " ")
+}
+
+func quoteCatalogIDsMatch(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 // UpdateAnnotationText updates the text for a single annotation (scoped to item and author type).

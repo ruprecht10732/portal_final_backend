@@ -85,6 +85,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/export/:provider", h.ExportToProvider)
 	rg.POST("/:id/duplicate", h.Duplicate)
 	rg.POST("/:id/version", h.CreateVersion)
+	rg.GET("/:id/version-history", h.GetVersionHistory)
 	rg.PUT("/:id", h.Update)
 	rg.PATCH("/:id/status", h.UpdateStatus)
 	rg.PATCH("/:id/lead-service", h.SetLeadService)
@@ -725,6 +726,27 @@ func (h *Handler) CreateVersion(c *gin.Context) {
 	}
 
 	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// GetVersionHistory handles GET /api/v1/quotes/:id/version-history.
+func (h *Handler) GetVersionHistory(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GetVersionHistory(c.Request.Context(), id, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // UpdateStatus handles PATCH /api/v1/quotes/:id/status

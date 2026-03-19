@@ -88,6 +88,7 @@ const generatedPDFContent = "generated-pdf"
 const errMarshalPayloadFmt = "marshal payload: %v"
 const expectedLeadOptInLookupFmt = "expected one lead opt-in lookup, got %d"
 const testWhatsAppPhoneNumber = "+31612345678"
+const testQuoteNumber0042 = "OFF-2026-0042"
 
 func (s *testSender) SendVerificationEmail(context.Context, string, string) error  { return nil }
 func (s *testSender) SendPasswordResetEmail(context.Context, string, string) error { return nil }
@@ -321,12 +322,12 @@ func TestRenderTemplateTextAcceptsFrontendSyntax(t *testing.T) {
 func TestRenderTemplateTextAcceptsUppercasePlaceholders(t *testing.T) {
 	rendered, err := renderTemplateText("Beste {{LEAD.NAME}}, bekijk {{QUOTE.NUMBER}}", map[string]any{
 		"lead":  map[string]any{"name": "Robin"},
-		"quote": map[string]any{"number": "OFF-2026-0042"},
+		"quote": map[string]any{"number": testQuoteNumber0042},
 	})
 	if err != nil {
 		t.Fatalf("expected uppercase placeholders to render, got error: %v", err)
 	}
-	if rendered != "Beste Robin, bekijk OFF-2026-0042" {
+	if rendered != "Beste Robin, bekijk "+testQuoteNumber0042 {
 		t.Fatalf(errUnexpectedRenderedText, rendered)
 	}
 }
@@ -402,7 +403,7 @@ func TestRenderWorkflowTemplateSubjectAndBodyFromRule(t *testing.T) {
 	}
 	vars := map[string]any{
 		"lead":  map[string]any{"name": "Robin"},
-		"quote": map[string]any{"number": "OFF-2026-0042"},
+		"quote": map[string]any{"number": testQuoteNumber0042},
 		"links": map[string]any{"track": "https://app.example.com/track/abc"},
 	}
 
@@ -415,7 +416,7 @@ func TestRenderWorkflowTemplateSubjectAndBodyFromRule(t *testing.T) {
 		t.Fatalf("unexpected body render error: %v", err)
 	}
 
-	if subject != "Offerte OFF-2026-0042 voor Robin" {
+	if subject != "Offerte "+testQuoteNumber0042+" voor Robin" {
 		t.Fatalf("unexpected rendered subject: %q", subject)
 	}
 	if body != "Hoi Robin, bekijk https://app.example.com/track/abc" {
@@ -727,7 +728,7 @@ func TestBuildQuoteAnnotationTemplateVarsIncludesPreviewAndAnnotation(t *testing
 		QuoteID:          quoteID,
 		OrganizationID:   uuid.New(),
 		LeadID:           leadID,
-		QuoteNumber:      "OFF-2026-0042",
+		QuoteNumber:      testQuoteNumber0042,
 		PublicToken:      "public-token-42",
 		ItemID:           itemID,
 		ItemDescription:  "Warmtepomp installatie",
@@ -745,7 +746,7 @@ func TestBuildQuoteAnnotationTemplateVarsIncludesPreviewAndAnnotation(t *testing
 	if !ok {
 		t.Fatal("expected quote vars map")
 	}
-	if quoteVars["number"] != "OFF-2026-0042" {
+	if quoteVars["number"] != testQuoteNumber0042 {
 		t.Fatalf("expected quote number, got %#v", quoteVars["number"])
 	}
 	if quoteVars["previewUrl"] != "https://public.example.com/quote/public-token-42" {
