@@ -510,6 +510,10 @@ type AnnotateItemRequest struct {
 	Text string `json:"text" validate:"required,min=1,max=2000"`
 }
 
+type SuggestAnnotationReplyDraftResponse struct {
+	Text string `json:"text"`
+}
+
 // AcceptQuoteRequest is the request body for accepting a quote.
 type AcceptQuoteRequest struct {
 	SignatureName string `json:"signatureName" validate:"required,min=1,max=255"`

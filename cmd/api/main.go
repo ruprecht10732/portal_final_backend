@@ -470,6 +470,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	quotesModule.SetAttachmentBucket(cfg.GetMinioBucketQuoteAttachments())
 	quotesModule.SetCatalogBucket(cfg.GetMinioBucketCatalogAssets())
 	quotesModule.Service().SetTimelineWriter(adapters.NewQuotesTimelineWriter(leadsModule.Repository()))
+	quotesModule.Service().SetQuoteAnnotationReplyDraftSuggester(adapters.NewQuoteAnnotationReplyDraftAdapter(leadsModule.WhatsAppReplyGenerator()))
 
 	quotesContacts := adapters.NewQuotesContactReader(leadsModule.Repository(), identityModule.Service(), authModule.Repository())
 	quotesModule.Service().SetQuoteContactReader(quotesContacts)

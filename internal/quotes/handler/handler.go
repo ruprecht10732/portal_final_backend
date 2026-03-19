@@ -92,6 +92,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/send", h.Send)
 	rg.GET("/:id/preview-link", h.GetPreviewLink)
 	rg.POST("/:id/items/:itemId/annotations", h.AgentAnnotate)
+	rg.POST("/:id/items/:itemId/annotations/draft-reply", h.SuggestAnnotationReplyDraft)
 	rg.GET("/:id/activities", h.ListActivities)
 	rg.GET("/:id/pdf", h.DownloadPDF)
 	rg.POST("/:id/attachments/presign", h.PresignAttachmentUpload)
@@ -970,6 +971,34 @@ func (h *Handler) AgentAnnotate(c *gin.Context) {
 	}
 
 	httpkit.JSON(c, http.StatusCreated, result)
+}
+
+// SuggestAnnotationReplyDraft handles POST /api/v1/quotes/:id/items/:itemId/annotations/draft-reply.
+func (h *Handler) SuggestAnnotationReplyDraft(c *gin.Context) {
+	quoteID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	itemID, err := uuid.Parse(c.Param("itemId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "invalid item ID", nil)
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c)
+	if !ok {
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	result, err := h.svc.SuggestAnnotationReplyDraft(c.Request.Context(), quoteID, itemID, tenantID, identity.UserID())
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, result)
 }
 
 // ListActivities handles GET /api/v1/quotes/:id/activities

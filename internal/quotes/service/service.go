@@ -106,6 +106,33 @@ type LeadTransferRepository interface {
 	Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
 }
 
+type QuoteAnnotationReplyDraftMessage struct {
+	AuthorType string
+	Text       string
+	CreatedAt  time.Time
+}
+
+type SuggestQuoteAnnotationReplyDraftInput struct {
+	OrganizationID  uuid.UUID
+	RequesterUserID uuid.UUID
+	QuoteID         uuid.UUID
+	LeadID          uuid.UUID
+	LeadServiceID   *uuid.UUID
+	QuoteNumber     string
+	CustomerName    string
+	ItemTitle       string
+	ItemDescription string
+	Messages        []QuoteAnnotationReplyDraftMessage
+}
+
+type QuoteAnnotationReplyDraft struct {
+	Text string
+}
+
+type QuoteAnnotationReplyDraftSuggester interface {
+	SuggestReplyDraft(ctx context.Context, input SuggestQuoteAnnotationReplyDraftInput) (QuoteAnnotationReplyDraft, error)
+}
+
 // Service provides business logic for quotes.
 type Service struct {
 	repo          *repository.Repository
@@ -121,6 +148,7 @@ type Service struct {
 	logoPresigner LogoPresigner
 	leadCreator   LeadTransferCreator
 	leadRepo      LeadTransferRepository
+	replyDrafter  QuoteAnnotationReplyDraftSuggester
 }
 
 // GenerateQuoteJobQueue enqueues async quote generation tasks.
@@ -287,3 +315,6 @@ func (s *Service) SetHumanFeedbackMemoryQueue(queue HumanFeedbackMemoryQueue) {
 func (s *Service) SetLogoPresigner(lp LogoPresigner)                     { s.logoPresigner = lp }
 func (s *Service) SetLeadTransferCreator(creator LeadTransferCreator)    { s.leadCreator = creator }
 func (s *Service) SetLeadTransferRepository(repo LeadTransferRepository) { s.leadRepo = repo }
+func (s *Service) SetQuoteAnnotationReplyDraftSuggester(drafter QuoteAnnotationReplyDraftSuggester) {
+	s.replyDrafter = drafter
+}
