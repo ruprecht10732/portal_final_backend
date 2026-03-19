@@ -16,25 +16,25 @@ import (
 )
 
 const (
-	historicalCategoryID              = "historical_within_24_months"
-	measureCategoryRoofAttic          = "insulation_roof_attic"
-	measureCategoryFloorCrawl         = "insulation_floor_crawl_space"
-	measureCategoryFacade             = "insulation_facade"
-	measureCategoryCavity             = "insulation_cavity_wall"
-	measureCategoryGlass              = "glass"
-	installationCategoryHeatPump      = "installation_heat_pump"
-	installationCategorySolarBoiler   = "installation_solar_boiler"
-	installationCategoryWarmtenet     = "installation_warmtenet"
-	installationKindMeldcode          = "meldcode"
-	installationKindVentilation       = "ventilation"
-	installationKindHeatPump          = "heat_pump"
-	installationKindWarmtenet         = "warmtenet"
-	installationKindElectricCooking   = "electric_cooking"
-	heatPumpTypeAirWater              = "air_water"
-	heatPumpEnergyLabelAPlusPlus      = "A++"
-	heatPumpEnergyLabelAPlusPlusPlus  = "A+++"
-	rateModeStandard                  = "standard"
-	rateModeUpgradedFrame             = "upgraded_frame"
+	historicalCategoryID             = "historical_within_24_months"
+	measureCategoryRoofAttic         = "insulation_roof_attic"
+	measureCategoryFloorCrawl        = "insulation_floor_crawl_space"
+	measureCategoryFacade            = "insulation_facade"
+	measureCategoryCavity            = "insulation_cavity_wall"
+	measureCategoryGlass             = "glass"
+	installationCategoryHeatPump     = "installation_heat_pump"
+	installationCategorySolarBoiler  = "installation_solar_boiler"
+	installationCategoryWarmtenet    = "installation_warmtenet"
+	installationKindMeldcode         = "meldcode"
+	installationKindVentilation      = "ventilation"
+	installationKindHeatPump         = "heat_pump"
+	installationKindWarmtenet        = "warmtenet"
+	installationKindElectricCooking  = "electric_cooking"
+	heatPumpTypeAirWater             = "air_water"
+	heatPumpEnergyLabelAPlusPlus     = "A++"
+	heatPumpEnergyLabelAPlusPlusPlus = "A+++"
+	rateModeStandard                 = "standard"
+	rateModeUpgradedFrame            = "upgraded_frame"
 )
 
 type performanceKind string
@@ -46,18 +46,18 @@ const (
 )
 
 type measureRule struct {
-	ID              string
-	DisplayName     string
-	Category        string
-	QualifyingGroup string
-	PerformanceKind performanceKind
-	MinM2           float64
-	Threshold       float64
-	MaxM2           float64
-	RateMode        string
-	BaseRateCents   int64
-	UpgradedRateCents *int64
-	MKIBonusCents   int64
+	ID                   string
+	DisplayName          string
+	Category             string
+	QualifyingGroup      string
+	PerformanceKind      performanceKind
+	MinM2                float64
+	Threshold            float64
+	MaxM2                float64
+	RateMode             string
+	BaseRateCents        int64
+	UpgradedRateCents    *int64
+	MKIBonusCents        int64
 	RequiresPrimaryGlass bool
 	LegacyMaxFrameUValue *float64
 }
@@ -554,7 +554,6 @@ func mapMeasureConfig(config repository.MeasureConfig) measureRule {
 	}
 	return rule
 }
-
 
 func measureRateCents(rule measureRule, year int, doubled bool, requested transport.RequestedMeasure) int64 {
 	rate := rule.BaseRateCents

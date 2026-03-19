@@ -115,7 +115,7 @@ func TestCalculatePreviousSubsidyWithin24MonthsTriggersDoubling(t *testing.T) {
 	svc := New(repo, logger.New("development"))
 
 	resp, err := svc.Calculate(context.Background(), uuid.New(), transport.ISDECalculationRequest{
-		ExecutionYear:                    intPtr(2025),
+		ExecutionYear:                   intPtr(2025),
 		PreviousSubsidiesWithin24Months: true,
 		Measures: []transport.RequestedMeasure{{
 			MeasureID:        "roof",

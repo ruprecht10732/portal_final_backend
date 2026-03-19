@@ -258,8 +258,9 @@ func seedAppliedMigrations(
 }
 
 type migrationRequirement struct {
-	Table  string
-	Column string // optional
+	Table                   string
+	Column                  string // optional
+	IsConstraintReplacement bool   // idempotent DROP...IF EXISTS + ADD CONSTRAINT: never assume already applied
 }
 
 func shouldSeedMigration(ctx context.Context, db *sql.DB, m *goose.Migration) (bool, string, error) {
@@ -314,6 +315,11 @@ func requirementsSatisfied(ctx context.Context, db *sql.DB, upSQL string) (bool,
 }
 
 func requirementSatisfied(ctx context.Context, db *sql.DB, r migrationRequirement) (bool, string, error) {
+	if r.IsConstraintReplacement {
+		// The migration uses DROP CONSTRAINT IF EXISTS followed by ADD CONSTRAINT, making it
+		// safe to re-run. Never assume it was already applied during bootstrap seeding.
+		return false, "constraint-replacement", nil
+	}
 	if strings.TrimSpace(r.Table) == "" {
 		return true, "empty-table", nil
 	}
@@ -360,6 +366,17 @@ func parseMigrationRequirements(sqlText string) []migrationRequirement {
 		appendUniqueRequirement(&reqs, seen, migrationRequirement{Table: normalizeIdent(table), Column: normalizeIdent(column)})
 	}
 
+	// Detect idempotent constraint-replacement migrations: ones that only modify a
+	// constraint via DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT (no table/column additions).
+	// These cannot be detected by table/column presence, so we must not assume they were
+	// already applied — but since the DROP is conditional they are safe to re-run.
+	if len(reqs) == 0 {
+		dropConstraintRe := regexp.MustCompile(`(?im)\bdrop\s+constraint\s+if\s+exists\b`)
+		if dropConstraintRe.MatchString(text) {
+			appendUniqueRequirement(&reqs, seen, migrationRequirement{IsConstraintReplacement: true})
+		}
+	}
+
 	return reqs
 }
 
@@ -371,10 +388,15 @@ func submatch(match []string, idx int) string {
 }
 
 func appendUniqueRequirement(reqs *[]migrationRequirement, seen map[string]struct{}, r migrationRequirement) {
-	if r.Table == "" {
+	if r.Table == "" && !r.IsConstraintReplacement {
 		return
 	}
-	key := r.Table + "|" + r.Column
+	var key string
+	if r.IsConstraintReplacement {
+		key = "__constraint_replacement__"
+	} else {
+		key = r.Table + "|" + r.Column
+	}
 	if _, ok := seen[key]; ok {
 		return
 	}
