@@ -25,6 +25,9 @@ type testNotificationConfig struct{}
 
 func (testNotificationConfig) GetAppBaseURL() string    { return "https://app.example.com" }
 func (testNotificationConfig) GetPublicBaseURL() string { return "https://public.example.com" }
+func (testNotificationConfig) GetPublicAPIBaseURL() string {
+	return "https://api.example.com"
+}
 
 type testWorkflowResolver struct {
 	result identityservice.ResolveLeadWorkflowResult
@@ -645,6 +648,15 @@ func TestBuildEmailAttachmentSpecsIncludesQuoteAcceptedPDF(t *testing.T) {
 	}
 	if attachments[0].FileKey != "quotes/signed.pdf" {
 		t.Fatalf("expected signed file key, got %q", attachments[0].FileKey)
+	}
+}
+
+func TestBuildPublicQuotePDFURLUsesPublicAPIBaseURL(t *testing.T) {
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	got := m.buildPublicQuotePDFURL("quote-token")
+	want := "https://api.example.com/api/v1/public/quotes/quote-token/pdf"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 

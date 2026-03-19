@@ -1663,6 +1663,11 @@ func (m *Module) buildPublicURL(path string, tokenValue string) string {
 	return base + path + "/" + tokenValue
 }
 
+func (m *Module) buildPublicQuotePDFURL(tokenValue string) string {
+	base := strings.TrimRight(m.cfg.GetPublicAPIBaseURL(), "/")
+	return fmt.Sprintf(quotePDFPathFmt, base, tokenValue)
+}
+
 // ── Partner offer event handlers ────────────────────────────────────────
 
 const (
@@ -2778,7 +2783,7 @@ func (m *Module) dispatchQuoteSentLeadWhatsAppWorkflow(ctx context.Context, e ev
 
 	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_sent", "whatsapp", "lead", nil)
 	proposalURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
-	downloadURL := fmt.Sprintf(quotePDFPathFmt, strings.TrimRight(m.cfg.GetPublicBaseURL(), "/"), e.PublicToken)
+	downloadURL := m.buildPublicQuotePDFURL(e.PublicToken)
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
@@ -2807,7 +2812,7 @@ func (m *Module) dispatchQuoteSentLeadEmailWorkflow(ctx context.Context, e event
 	}
 
 	proposalURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/") + quotePublicPathPrefix + e.PublicToken
-	downloadURL := fmt.Sprintf(quotePDFPathFmt, strings.TrimRight(m.cfg.GetPublicBaseURL(), "/"), e.PublicToken)
+	downloadURL := m.buildPublicQuotePDFURL(e.PublicToken)
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{
@@ -3310,7 +3315,7 @@ func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted
 func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e events.QuoteAccepted, pdfFileKey string) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
 	baseURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
-	downloadURL := fmt.Sprintf(quotePDFPathFmt, baseURL, e.PublicToken)
+	downloadURL := m.buildPublicQuotePDFURL(e.PublicToken)
 	viewURL := baseURL + quotePublicPathPrefix + e.PublicToken
 	formattedPrice := formatCurrencyEURCents(e.TotalCents)
 	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
@@ -3363,8 +3368,7 @@ func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e 
 
 func (m *Module) dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteAccepted) bool {
 	name := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
-	baseURL := strings.TrimRight(m.cfg.GetPublicBaseURL(), "/")
-	downloadURL := fmt.Sprintf(quotePDFPathFmt, baseURL, e.PublicToken)
+	downloadURL := m.buildPublicQuotePDFURL(e.PublicToken)
 	formattedPrice := formatCurrencyEURCents(e.TotalCents)
 	details := m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID)
 	templateVars := map[string]any{

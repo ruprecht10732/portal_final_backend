@@ -77,6 +77,7 @@ type EmailConfig interface {
 type NotificationConfig interface {
 	GetAppBaseURL() string
 	GetPublicBaseURL() string
+	GetPublicAPIBaseURL() string
 }
 
 // WhatsAppConfig provides settings for the WhatsApp HTTP client.
@@ -176,6 +177,7 @@ type Config struct {
 	CORSAllowCreds                    bool
 	AppBaseURL                        string
 	PublicBaseURL                     string
+	PublicAPIBaseURL                  string
 	EmailEnabled                      bool
 	BrevoAPIKey                       string
 	EmailFromName                     string
@@ -275,6 +277,9 @@ func (c *Config) GetEmailFromAddress() string { return c.EmailFromAddress }
 func (c *Config) GetAppBaseURL() string { return c.AppBaseURL }
 func (c *Config) GetPublicBaseURL() string {
 	return c.PublicBaseURL
+}
+func (c *Config) GetPublicAPIBaseURL() string {
+	return c.PublicAPIBaseURL
 }
 
 // WhatsAppConfig implementation
@@ -440,6 +445,7 @@ func Load() (*Config, error) {
 	appBaseURL := getEnv("APP_BASE_URL", defaultFrontendBaseURL)
 	// NOTE(compat): remove APP_BASE_URL fallback once PUBLIC_BASE_URL is configured in all environments.
 	publicBaseURL := getEnv("PUBLIC_BASE_URL", appBaseURL)
+	publicAPIBaseURL := getEnv("PUBLIC_API_BASE_URL", publicBaseURL)
 
 	cfg := &Config{
 		Env:                               getEnv("APP_ENV", "development"),
@@ -456,6 +462,7 @@ func Load() (*Config, error) {
 		CORSAllowCreds:                    strings.EqualFold(getEnv("CORS_ALLOW_CREDENTIALS", "true"), "true"),
 		AppBaseURL:                        appBaseURL,
 		PublicBaseURL:                     publicBaseURL,
+		PublicAPIBaseURL:                  publicAPIBaseURL,
 		EmailEnabled:                      emailEnabled && brevoAPIKey != "",
 		BrevoAPIKey:                       brevoAPIKey,
 		EmailFromName:                     getEnv("EMAIL_FROM_NAME", "Salestainable"),

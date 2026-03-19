@@ -51,7 +51,7 @@ func buildDefaultWorkflowSteps() []repository.WorkflowStepUpsert {
 			"Bedankt {{lead.name}}! Je hebt offerte {{quote.number}} geaccepteerd. Je downloadlink: {{links.download}}"),
 		newDefaultWorkflowStep(6, "quote_accepted", "email", "lead", leadRecipients,
 			stringPtr("Bevestiging offerte {{quote.number}}"),
-			"Hallo {{lead.name}},\n\nBedankt voor je akkoord op offerte {{quote.number}}. Je kunt de documenten downloaden via {{links.download}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
+			"Hallo {{lead.name}},\n\nBedankt voor je akkoord op offerte {{quote.number}}. De getekende offerte is als pdf-bijlage toegevoegd voor je administratie. Je kunt de offerte ook online bekijken via {{links.view}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
 		newDefaultWorkflowStep(7, "quote_accepted", "email", "partner", partnerRecipients,
 			stringPtr("Offerte {{quote.number}} is geaccepteerd"),
 			"Hallo {{partner.name}},\n\nOfferte {{quote.number}} voor {{lead.name}} is geaccepteerd.\n\nMet vriendelijke groet,\n{{org.name}}"),
