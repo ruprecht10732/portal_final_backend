@@ -2855,11 +2855,161 @@ func (m *Module) handleQuoteAnnotated(ctx context.Context, e events.QuoteAnnotat
 		"authorType": e.AuthorType,
 		"text":       e.Text,
 	})
+	activityMessage := "Nieuwe vraag: \"" + truncate(e.Text, 80) + "\""
+	if strings.EqualFold(e.AuthorType, "agent") {
+		activityMessage = "Nieuw antwoord: \"" + truncate(e.Text, 80) + "\""
+	}
 	m.logQuoteActivity(ctx, e.QuoteID, e.OrganizationID, "quote_annotated",
-		"Nieuwe vraag: \""+truncate(e.Text, 80)+"\"",
+		activityMessage,
 		map[string]interface{}{"itemId": e.ItemID.String(), "authorType": e.AuthorType, "text": e.Text})
+	if strings.EqualFold(e.AuthorType, "customer") {
+		_ = m.dispatchQuoteQuestionAskedPartnerEmailWorkflow(ctx, e)
+		_ = m.dispatchQuoteQuestionAskedPartnerWhatsAppWorkflow(ctx, e)
+	} else if strings.EqualFold(e.AuthorType, "agent") {
+		_ = m.dispatchQuoteQuestionAnsweredLeadEmailWorkflow(ctx, e)
+		_ = m.dispatchQuoteQuestionAnsweredLeadWhatsAppWorkflow(ctx, e)
+	}
 	m.log.Info("quote annotated event processed", "quoteId", e.QuoteID, "itemId", e.ItemID)
 	return nil
+}
+
+func (m *Module) buildQuoteAnnotationTemplateVars(ctx context.Context, e events.QuoteAnnotated) map[string]any {
+	previewURL := ""
+	if strings.TrimSpace(e.PublicToken) != "" {
+		previewURL = strings.TrimRight(m.cfg.GetPublicBaseURL(), "/") + quotePublicPathPrefix + strings.TrimSpace(e.PublicToken)
+	}
+
+	leadName := defaultName(strings.TrimSpace(e.ConsumerName), "klant")
+	partnerName := defaultName(strings.TrimSpace(e.CreatorName), "adviseur")
+	templateVars := map[string]any{
+		"lead": map[string]any{
+			"name":  leadName,
+			"phone": e.ConsumerPhone,
+			"email": e.ConsumerEmail,
+		},
+		"partner": map[string]any{
+			"name":  partnerName,
+			"phone": e.CreatorPhone,
+			"email": e.CreatorEmail,
+		},
+		"quote": map[string]any{
+			"id":         e.QuoteID.String(),
+			"number":     e.QuoteNumber,
+			"previewUrl": previewURL,
+		},
+		"annotation": map[string]any{
+			"text":            e.Text,
+			"authorType":      e.AuthorType,
+			"itemId":          e.ItemID.String(),
+			"itemDescription": e.ItemDescription,
+		},
+		"links": map[string]any{
+			"view": previewURL,
+		},
+		"org": map[string]any{
+			"name": defaultName(strings.TrimSpace(e.OrganizationName), defaultOrgNameFallback),
+		},
+	}
+	enrichLeadVars(templateVars, m.resolveLeadDetails(ctx, e.LeadID, e.OrganizationID))
+	return templateVars
+}
+
+func (m *Module) dispatchQuoteQuestionAskedPartnerEmailWorkflow(ctx context.Context, e events.QuoteAnnotated) bool {
+	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_question_asked", "email", "partner", nil)
+	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+		Rule:         rule,
+		OrgID:        e.OrganizationID,
+		LeadID:       &e.LeadID,
+		ServiceID:    e.LeadServiceID,
+		PartnerEmail: e.CreatorEmail,
+		Trigger:      "quote_question_asked",
+		TemplateVars: m.buildQuoteAnnotationTemplateVars(ctx, e),
+		Summary:      fmt.Sprintf("Email offertevraag verstuurd naar %s", defaultName(strings.TrimSpace(e.CreatorName), "adviseur")),
+		FallbackNote: "failed to enqueue quote_question_asked partner email workflow",
+	})
+}
+
+func (m *Module) dispatchQuoteQuestionAskedPartnerWhatsAppWorkflow(ctx context.Context, e events.QuoteAnnotated) bool {
+	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_question_asked", "whatsapp", "partner", nil)
+	if rule == nil {
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", e.OrganizationID, "trigger", "quote_question_asked", "reason", "rule_not_found")
+		return false
+	}
+	if !rule.Enabled {
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", e.OrganizationID, "trigger", "quote_question_asked", "reason", "rule_disabled")
+		return true
+	}
+	if strings.TrimSpace(e.CreatorPhone) == "" {
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", e.OrganizationID, "trigger", "quote_question_asked", "reason", "missing_phone")
+		return true
+	}
+	templateVars := m.buildQuoteAnnotationTemplateVars(ctx, e)
+	messageText, err := renderWorkflowTemplateTextWithError(rule, templateVars)
+	if err != nil {
+		m.log.Warn(msgWorkflowWhatsAppTemplateRenderFailed, "orgId", e.OrganizationID, "trigger", "quote_question_asked", "audience", "partner", "error", err)
+		return true
+	}
+	messageText = normalizeWhatsAppMessage(messageText)
+	if strings.TrimSpace(messageText) == "" {
+		m.log.Info(msgWorkflowWhatsAppDispatchSkipped, "orgId", e.OrganizationID, "trigger", "quote_question_asked", "reason", "empty_message_body")
+		return true
+	}
+	steps := []repository.WorkflowStep{{
+		Enabled:      true,
+		Channel:      "whatsapp",
+		Audience:     "partner",
+		DelayMinutes: rule.DelayMinutes,
+		TemplateBody: &messageText,
+		RecipientConfig: map[string]any{
+			"includePartner": true,
+		},
+	}}
+	if err := m.enqueueWorkflowSteps(ctx, steps, workflowStepExecutionContext{
+		OrgID:          e.OrganizationID,
+		LeadID:         nil,
+		ServiceID:      e.LeadServiceID,
+		PartnerPhone:   e.CreatorPhone,
+		PartnerEmail:   e.CreatorEmail,
+		Trigger:        "quote_question_asked",
+		DefaultSummary: fmt.Sprintf("WhatsApp offertevraag verstuurd naar %s", defaultName(strings.TrimSpace(e.CreatorName), "adviseur")),
+		DefaultActor:   "System",
+		DefaultOrigin:  workflowEngineActorName,
+		Variables:      templateVars,
+	}); err != nil {
+		m.log.Warn("failed to enqueue quote_question_asked partner whatsapp workflow", "error", err, "orgId", e.OrganizationID)
+		return false
+	}
+	return true
+}
+
+func (m *Module) dispatchQuoteQuestionAnsweredLeadEmailWorkflow(ctx context.Context, e events.QuoteAnnotated) bool {
+	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_question_answered", "email", "lead", nil)
+	return m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+		Rule:         rule,
+		OrgID:        e.OrganizationID,
+		LeadID:       &e.LeadID,
+		ServiceID:    e.LeadServiceID,
+		LeadEmail:    e.ConsumerEmail,
+		Trigger:      "quote_question_answered",
+		TemplateVars: m.buildQuoteAnnotationTemplateVars(ctx, e),
+		Summary:      fmt.Sprintf("Email antwoord op offertevraag verstuurd naar %s", defaultName(strings.TrimSpace(e.ConsumerName), "klant")),
+		FallbackNote: "failed to enqueue quote_question_answered lead email workflow",
+	})
+}
+
+func (m *Module) dispatchQuoteQuestionAnsweredLeadWhatsAppWorkflow(ctx context.Context, e events.QuoteAnnotated) bool {
+	rule := m.resolveWorkflowRule(ctx, e.OrganizationID, e.LeadID, "quote_question_answered", "whatsapp", "lead", nil)
+	return m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
+		Rule:         rule,
+		OrgID:        e.OrganizationID,
+		LeadID:       &e.LeadID,
+		ServiceID:    e.LeadServiceID,
+		LeadPhone:    e.ConsumerPhone,
+		Trigger:      "quote_question_answered",
+		TemplateVars: m.buildQuoteAnnotationTemplateVars(ctx, e),
+		Summary:      fmt.Sprintf("WhatsApp antwoord op offertevraag verstuurd naar %s", defaultName(strings.TrimSpace(e.ConsumerName), "klant")),
+		FallbackNote: "failed to enqueue quote_question_answered lead whatsapp workflow",
+	})
 }
 
 func (m *Module) handleQuoteAccepted(ctx context.Context, e events.QuoteAccepted) error {

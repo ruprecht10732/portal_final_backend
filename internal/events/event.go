@@ -319,12 +319,25 @@ func (e QuoteUpdatedByCustomer) EventName() string { return "quotes.quote.update
 // QuoteAnnotated is published when a customer or agent adds an annotation to a line item.
 type QuoteAnnotated struct {
 	BaseEvent
-	QuoteID        uuid.UUID `json:"quoteId"`
-	OrganizationID uuid.UUID `json:"organizationId"`
-	ItemID         uuid.UUID `json:"itemId"`
-	AuthorType     string    `json:"authorType"` // "customer" or "agent"
-	AuthorID       string    `json:"authorId"`
-	Text           string    `json:"text"`
+	QuoteID          uuid.UUID  `json:"quoteId"`
+	OrganizationID   uuid.UUID  `json:"organizationId"`
+	LeadID           uuid.UUID  `json:"leadId"`
+	LeadServiceID    *uuid.UUID `json:"leadServiceId,omitempty"`
+	QuoteNumber      string     `json:"quoteNumber"`
+	PublicToken      string     `json:"publicToken"`
+	ItemID           uuid.UUID  `json:"itemId"`
+	ItemDescription  string     `json:"itemDescription"`
+	AuthorType       string     `json:"authorType"` // "customer" or "agent"
+	AuthorID         string     `json:"authorId"`
+	Text             string     `json:"text"`
+	ConsumerEmail    string     `json:"consumerEmail"`
+	ConsumerName     string     `json:"consumerName"`
+	ConsumerPhone    string     `json:"consumerPhone"`
+	OrganizationName string     `json:"organizationName"`
+	CreatorID        *uuid.UUID `json:"creatorId,omitempty"`
+	CreatorEmail     string     `json:"creatorEmail"`
+	CreatorName      string     `json:"creatorName"`
+	CreatorPhone     string     `json:"creatorPhone"`
 }
 
 func (e QuoteAnnotated) EventName() string { return "quotes.quote.annotated" }

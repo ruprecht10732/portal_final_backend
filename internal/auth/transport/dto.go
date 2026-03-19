@@ -66,6 +66,7 @@ type ProfileResponse struct {
 	EmailVerified       bool      `json:"emailVerified"`
 	FirstName           *string   `json:"firstName"`
 	LastName            *string   `json:"lastName"`
+	Phone               *string   `json:"phone"`
 	PreferredLang       string    `json:"preferredLanguage"`
 	Roles               []string  `json:"roles"`
 	HasOrganization     bool      `json:"hasOrganization"`
@@ -78,6 +79,7 @@ type UpdateProfileRequest struct {
 	Email             *string `json:"email" validate:"omitempty,email"`
 	FirstName         *string `json:"firstName" validate:"omitempty,max=100"`
 	LastName          *string `json:"lastName" validate:"omitempty,max=100"`
+	Phone             *string `json:"phone" validate:"omitempty,max=50"`
 	PreferredLanguage *string `json:"preferredLanguage" validate:"omitempty,oneof=en nl"`
 }
 

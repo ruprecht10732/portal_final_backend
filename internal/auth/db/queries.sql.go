@@ -31,7 +31,7 @@ const createUser = `-- name: CreateUser :one
 
 INSERT INTO RAC_users (email, password_hash, is_email_verified)
 VALUES ($1, $2, false)
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -46,6 +46,7 @@ type CreateUserRow struct {
 	IsEmailVerified       bool               `json:"is_email_verified"`
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
+	Phone                 pgtype.Text        `json:"phone"`
 	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
@@ -62,6 +63,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.Phone,
 		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -129,7 +131,7 @@ func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (GetRef
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE email = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE email = $1
 `
 
 type GetUserByEmailRow struct {
@@ -139,6 +141,7 @@ type GetUserByEmailRow struct {
 	IsEmailVerified       bool               `json:"is_email_verified"`
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
+	Phone                 pgtype.Text        `json:"phone"`
 	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
@@ -154,6 +157,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.Phone,
 		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -162,7 +166,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE id = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE id = $1
 `
 
 type GetUserByIDRow struct {
@@ -172,6 +176,7 @@ type GetUserByIDRow struct {
 	IsEmailVerified       bool               `json:"is_email_verified"`
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
+	Phone                 pgtype.Text        `json:"phone"`
 	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
@@ -187,6 +192,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.Phone,
 		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -459,7 +465,7 @@ const updateUserEmail = `-- name: UpdateUserEmail :one
 UPDATE RAC_users
 SET email = $2, is_email_verified = false, updated_at = now()
 WHERE id = $1
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at
 `
 
 type UpdateUserEmailParams struct {
@@ -474,6 +480,7 @@ type UpdateUserEmailRow struct {
 	IsEmailVerified       bool               `json:"is_email_verified"`
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
+	Phone                 pgtype.Text        `json:"phone"`
 	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
@@ -489,6 +496,7 @@ func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.Phone,
 		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -500,7 +508,7 @@ const updateUserNames = `-- name: UpdateUserNames :one
 UPDATE RAC_users
 SET first_name = $2, last_name = $3, updated_at = now()
 WHERE id = $1
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at
 `
 
 type UpdateUserNamesParams struct {
@@ -516,6 +524,7 @@ type UpdateUserNamesRow struct {
 	IsEmailVerified       bool               `json:"is_email_verified"`
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
+	Phone                 pgtype.Text        `json:"phone"`
 	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
@@ -531,6 +540,54 @@ func (q *Queries) UpdateUserNames(ctx context.Context, arg UpdateUserNamesParams
 		&i.IsEmailVerified,
 		&i.FirstName,
 		&i.LastName,
+		&i.Phone,
+		&i.OnboardingCompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateUserPhone = `-- name: UpdateUserPhone :one
+UPDATE RAC_users
+SET phone = CASE
+		WHEN NULLIF(BTRIM($2::text), '') IS NULL THEN NULL
+		ELSE $2::text
+	END,
+	updated_at = now()
+WHERE id = $1
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at
+`
+
+type UpdateUserPhoneParams struct {
+	ID    pgtype.UUID `json:"id"`
+	Phone string      `json:"phone"`
+}
+
+type UpdateUserPhoneRow struct {
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	Phone                 pgtype.Text        `json:"phone"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateUserPhone(ctx context.Context, arg UpdateUserPhoneParams) (UpdateUserPhoneRow, error) {
+	row := q.db.QueryRow(ctx, updateUserPhone, arg.ID, arg.Phone)
+	var i UpdateUserPhoneRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsEmailVerified,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
 		&i.OnboardingCompletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,

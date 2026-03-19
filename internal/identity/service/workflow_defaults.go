@@ -75,6 +75,16 @@ func buildDefaultWorkflowSteps() []repository.WorkflowStepUpsert {
 		newDefaultWorkflowStep(15, "partner_offer_created", "email", "partner", partnerRecipients,
 			stringPtr("Nieuw werkaanbod beschikbaar"),
 			"Hallo {{partner.name}},\n\nEr staat een nieuw werkaanbod voor je klaar. Bekijk het aanbod via {{links.accept}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
+		newDefaultWorkflowStep(16, "quote_question_asked", "whatsapp", "partner", partnerRecipients, nil,
+			"Hallo {{partner.name}}, {{lead.name}} heeft een vraag gesteld over offerte {{quote.number}}: \"{{annotation.text}}\". Bekijk de offerte via {{quote.previewUrl}}."),
+		newDefaultWorkflowStep(17, "quote_question_asked", "email", "partner", partnerRecipients,
+			stringPtr("Nieuwe vraag over offerte {{quote.number}}"),
+			"Hallo {{partner.name}},\n\n{{lead.name}} heeft een vraag gesteld over offerte {{quote.number}}.\n\nVraag: {{annotation.text}}\n\nBekijk de offerte via {{quote.previewUrl}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
+		newDefaultWorkflowStep(18, "quote_question_answered", "whatsapp", "lead", leadRecipients, nil,
+			"Hallo {{lead.name}}, je vraag over offerte {{quote.number}} is beantwoord: \"{{annotation.text}}\". Bekijk de offerte via {{quote.previewUrl}}."),
+		newDefaultWorkflowStep(19, "quote_question_answered", "email", "lead", leadRecipients,
+			stringPtr("Antwoord op je vraag over offerte {{quote.number}}"),
+			"Hallo {{lead.name}},\n\nJe vraag over offerte {{quote.number}} is beantwoord.\n\nAntwoord: {{annotation.text}}\n\nBekijk de offerte via {{quote.previewUrl}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
 	}
 }
 

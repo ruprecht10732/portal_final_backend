@@ -3,13 +3,13 @@
 -- name: CreateUser :one
 INSERT INTO RAC_users (email, password_hash, is_email_verified)
 VALUES ($1, $2, false)
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at;
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at;
 
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE email = $1;
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE email = $1;
 
 -- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE id = $1;
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE id = $1;
 
 -- name: MarkEmailVerified :exec
 UPDATE RAC_users SET is_email_verified = true, updated_at = now() WHERE id = $1;
@@ -21,13 +21,23 @@ UPDATE RAC_users SET password_hash = $2, updated_at = now() WHERE id = $1;
 UPDATE RAC_users
 SET email = $2, is_email_verified = false, updated_at = now()
 WHERE id = $1
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at;
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at;
 
 -- name: UpdateUserNames :one
 UPDATE RAC_users
 SET first_name = $2, last_name = $3, updated_at = now()
 WHERE id = $1
-RETURNING id, email, password_hash, is_email_verified, first_name, last_name, onboarding_completed_at, created_at, updated_at;
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at;
+
+-- name: UpdateUserPhone :one
+UPDATE RAC_users
+SET phone = CASE
+		WHEN NULLIF(BTRIM(sqlc.arg(phone)::text), '') IS NULL THEN NULL
+		ELSE sqlc.arg(phone)::text
+	END,
+	updated_at = now()
+WHERE id = $1
+RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at;
 
 -- name: CreateUserToken :exec
 INSERT INTO RAC_user_tokens (user_id, token_hash, type, expires_at)

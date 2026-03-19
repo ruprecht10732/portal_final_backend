@@ -716,3 +716,83 @@ func TestProcessGenericWhatsAppOutboxTransientReaderErrorIsRetryable(t *testing.
 		t.Fatalf("expected no whatsapp send when reader fails, got %d calls", sender.calls)
 	}
 }
+
+func TestBuildQuoteAnnotationTemplateVarsIncludesPreviewAndAnnotation(t *testing.T) {
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	quoteID := uuid.New()
+	itemID := uuid.New()
+	leadID := uuid.New()
+
+	vars := m.buildQuoteAnnotationTemplateVars(context.Background(), events.QuoteAnnotated{
+		QuoteID:          quoteID,
+		OrganizationID:   uuid.New(),
+		LeadID:           leadID,
+		QuoteNumber:      "OFF-2026-0042",
+		PublicToken:      "public-token-42",
+		ItemID:           itemID,
+		ItemDescription:  "Warmtepomp installatie",
+		AuthorType:       "agent",
+		Text:             "We plannen dit in week 14.",
+		ConsumerEmail:    testLeadEmail,
+		ConsumerName:     "Robin",
+		ConsumerPhone:    testWhatsAppPhoneNumber,
+		OrganizationName: testOrgName,
+		CreatorEmail:     "agent@example.com",
+		CreatorName:      "Agent Example",
+	})
+
+	quoteVars, ok := vars["quote"].(map[string]any)
+	if !ok {
+		t.Fatal("expected quote vars map")
+	}
+	if quoteVars["number"] != "OFF-2026-0042" {
+		t.Fatalf("expected quote number, got %#v", quoteVars["number"])
+	}
+	if quoteVars["previewUrl"] != "https://public.example.com/quote/public-token-42" {
+		t.Fatalf("expected preview url, got %#v", quoteVars["previewUrl"])
+	}
+
+	annotationVars, ok := vars["annotation"].(map[string]any)
+	if !ok {
+		t.Fatal("expected annotation vars map")
+	}
+	if annotationVars["text"] != "We plannen dit in week 14." {
+		t.Fatalf("expected annotation text, got %#v", annotationVars["text"])
+	}
+	if annotationVars["itemDescription"] != "Warmtepomp installatie" {
+		t.Fatalf("expected item description, got %#v", annotationVars["itemDescription"])
+	}
+}
+
+func TestDispatchQuoteQuestionAskedPartnerWhatsAppWorkflowSkipsWithoutPhone(t *testing.T) {
+	workflowID := uuid.New()
+	stepID := uuid.New()
+	m := New(nil, &testSender{}, testNotificationConfig{}, logger.New("development"))
+	m.SetWorkflowResolver(testWorkflowResolver{result: identityservice.ResolveLeadWorkflowResult{
+		Workflow: &identityrepo.Workflow{
+			ID: workflowID,
+			Steps: []identityrepo.WorkflowStep{{
+				ID:           stepID,
+				Trigger:      "quote_question_asked",
+				Channel:      "whatsapp",
+				Audience:     "partner",
+				Enabled:      true,
+				DelayMinutes: 0,
+			}},
+		},
+		ResolutionSource: "manual_override",
+	}})
+
+	ok := m.dispatchQuoteQuestionAskedPartnerWhatsAppWorkflow(context.Background(), events.QuoteAnnotated{
+		OrganizationID: uuid.New(),
+		LeadID:         uuid.New(),
+		QuoteNumber:    "OFF-2026-0099",
+		ConsumerName:   "Robin",
+		CreatorName:    "Agent Example",
+		Text:           "Kan dit sneller?",
+	})
+
+	if !ok {
+		t.Fatal("expected missing partner phone to skip cleanly")
+	}
+}

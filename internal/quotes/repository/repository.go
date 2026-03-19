@@ -32,6 +32,7 @@ type Quote struct {
 	CreatedByFirstName         *string    `db:"created_by_first_name"`
 	CreatedByLastName          *string    `db:"created_by_last_name"`
 	CreatedByEmail             *string    `db:"created_by_email"`
+	CreatedByPhone             *string    `db:"created_by_phone"`
 	CustomerFirstName          *string    `db:"consumer_first_name"`
 	CustomerLastName           *string    `db:"consumer_last_name"`
 	CustomerPhone              *string    `db:"consumer_phone"`
@@ -1474,6 +1475,7 @@ func quoteFromGetByIDRow(row quotesdb.GetQuoteByIDRow) Quote {
 		CreatedByFirstName:         optionalString(row.FirstName),
 		CreatedByLastName:          optionalString(row.LastName),
 		CreatedByEmail:             optionalString(row.Email),
+		CreatedByPhone:             optionalString(row.Phone),
 		CustomerFirstName:          optionalString(row.ConsumerFirstName),
 		CustomerLastName:           optionalString(row.ConsumerLastName),
 		CustomerPhone:              optionalString(row.ConsumerPhone),
@@ -1609,6 +1611,7 @@ func quoteFromListRow(row quotesdb.ListQuotesRow) Quote {
 		CreatedByFirstName:         optionalString(row.FirstName),
 		CreatedByLastName:          optionalString(row.LastName),
 		CreatedByEmail:             optionalString(row.Email),
+		CreatedByPhone:             optionalString(row.Phone),
 		CustomerFirstName:          optionalString(row.ConsumerFirstName),
 		CustomerLastName:           optionalString(row.ConsumerLastName),
 		CustomerPhone:              optionalString(row.ConsumerPhone),

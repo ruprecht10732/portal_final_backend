@@ -41,7 +41,7 @@ INSERT INTO RAC_quote_items (
 
 -- name: GetQuoteByID :one
 SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id, q.created_by_id,
-  u.first_name, u.last_name, u.email,
+  u.first_name, u.last_name, u.email, u.phone,
   l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
   l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
   q.quote_number, q.status,
@@ -137,7 +137,7 @@ WHERE q.organization_id = sqlc.arg('organization_id')::uuid
 
 -- name: ListQuotes :many
 SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id,
-  q.created_by_id, u.first_name, u.last_name, u.email,
+  q.created_by_id, u.first_name, u.last_name, u.email, u.phone,
   l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
   l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
   q.quote_number, q.status, q.pricing_mode, q.discount_type, q.discount_value,

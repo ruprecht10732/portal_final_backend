@@ -121,7 +121,8 @@ func (s *Service) AnnotateItem(ctx context.Context, token string, itemID uuid.UU
 	if expAt := tokenExpiresAt(quote, tokenKind); expAt != nil && expAt.Before(time.Now()) {
 		return nil, apperr.Gone(msgLinkExpired)
 	}
-	if _, err := s.repo.GetItemByID(ctx, itemID, quote.ID); err != nil {
+	item, err := s.repo.GetItemByID(ctx, itemID, quote.ID)
+	if err != nil {
 		return nil, err
 	}
 	var authorUUID *uuid.UUID
@@ -135,7 +136,7 @@ func (s *Service) AnnotateItem(ctx context.Context, token string, itemID uuid.UU
 		return nil, err
 	}
 	if s.eventBus != nil {
-		s.eventBus.Publish(ctx, events.QuoteAnnotated{BaseEvent: events.NewBaseEvent(), QuoteID: quote.ID, OrganizationID: quote.OrganizationID, ItemID: itemID, AuthorType: authorType, AuthorID: authorID, Text: text})
+		s.eventBus.Publish(ctx, s.buildQuoteAnnotatedEvent(ctx, quote, item, authorType, authorID, text, token))
 	}
 	return &transport.AnnotationResponse{ID: annotation.ID, ItemID: annotation.QuoteItemID, AuthorType: annotation.AuthorType, AuthorID: annotation.AuthorID, Text: annotation.Text, IsResolved: annotation.IsResolved, CreatedAt: annotation.CreatedAt}, nil
 }
@@ -192,7 +193,8 @@ func (s *Service) AgentAnnotateItem(ctx context.Context, quoteID, itemID, tenant
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.repo.GetItemByID(ctx, itemID, quote.ID); err != nil {
+	item, err := s.repo.GetItemByID(ctx, itemID, quote.ID)
+	if err != nil {
 		return nil, err
 	}
 	annotation := repository.QuoteAnnotation{ID: uuid.New(), QuoteItemID: itemID, OrganizationID: tenantID, AuthorType: "agent", AuthorID: &agentID, Text: text, IsResolved: false, CreatedAt: time.Now()}
@@ -200,9 +202,71 @@ func (s *Service) AgentAnnotateItem(ctx context.Context, quoteID, itemID, tenant
 		return nil, err
 	}
 	if s.eventBus != nil {
-		s.eventBus.Publish(ctx, events.QuoteAnnotated{BaseEvent: events.NewBaseEvent(), QuoteID: quoteID, OrganizationID: tenantID, ItemID: itemID, AuthorType: "agent", AuthorID: agentID.String(), Text: text})
+		s.eventBus.Publish(ctx, s.buildQuoteAnnotatedEvent(ctx, quote, item, "agent", agentID.String(), text, ""))
 	}
 	return &transport.AnnotationResponse{ID: annotation.ID, ItemID: annotation.QuoteItemID, AuthorType: annotation.AuthorType, AuthorID: annotation.AuthorID, Text: annotation.Text, IsResolved: annotation.IsResolved, CreatedAt: annotation.CreatedAt}, nil
+}
+
+func (s *Service) buildQuoteAnnotatedEvent(ctx context.Context, quote *repository.Quote, item *repository.QuoteItem, authorType, authorID, text, fallbackPublicToken string) events.QuoteAnnotated {
+	evt := events.QuoteAnnotated{
+		BaseEvent:        events.NewBaseEvent(),
+		QuoteID:          quote.ID,
+		OrganizationID:   quote.OrganizationID,
+		LeadID:           quote.LeadID,
+		LeadServiceID:    quote.LeadServiceID,
+		QuoteNumber:      quote.QuoteNumber,
+		PublicToken:      strings.TrimSpace(fallbackPublicToken),
+		ItemID:           item.ID,
+		ItemDescription:  quoteAnnotationItemDescription(item),
+		AuthorType:       authorType,
+		AuthorID:         authorID,
+		Text:             text,
+		CreatorID:        quote.CreatedByID,
+		CreatorEmail:     strings.TrimSpace(ptrStringValue(quote.CreatedByEmail)),
+		CreatorName:      buildQuoteCreatorName(quote.CreatedByFirstName, quote.CreatedByLastName, quote.CreatedByEmail),
+		CreatorPhone:     strings.TrimSpace(ptrStringValue(quote.CreatedByPhone)),
+		OrganizationName: "",
+	}
+
+	if quote.PublicToken != nil && strings.TrimSpace(*quote.PublicToken) != "" {
+		evt.PublicToken = strings.TrimSpace(*quote.PublicToken)
+	}
+
+	if s.contacts != nil {
+		if contactData, err := s.contacts.GetQuoteContactData(ctx, quote.LeadID, quote.OrganizationID); err == nil {
+			evt.ConsumerEmail = strings.TrimSpace(contactData.ConsumerEmail)
+			evt.ConsumerName = strings.TrimSpace(contactData.ConsumerName)
+			evt.ConsumerPhone = strings.TrimSpace(contactData.ConsumerPhone)
+			evt.OrganizationName = strings.TrimSpace(contactData.OrganizationName)
+		}
+	}
+
+	return evt
+}
+
+func buildQuoteCreatorName(firstName, lastName, email *string) string {
+	fullName := strings.TrimSpace(strings.TrimSpace(ptrStringValue(firstName)) + " " + strings.TrimSpace(ptrStringValue(lastName)))
+	if fullName != "" {
+		return fullName
+	}
+	return strings.TrimSpace(ptrStringValue(email))
+}
+
+func quoteAnnotationItemDescription(item *repository.QuoteItem) string {
+	if item == nil {
+		return ""
+	}
+	if trimmed := strings.TrimSpace(item.Title); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(item.Description)
+}
+
+func ptrStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (s *Service) Accept(ctx context.Context, token string, req transport.AcceptQuoteRequest, clientIP string) (*transport.PublicQuoteResponse, error) {

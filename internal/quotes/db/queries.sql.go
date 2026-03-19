@@ -1486,7 +1486,7 @@ func (q *Queries) GetQuoteAttachmentByID(ctx context.Context, arg GetQuoteAttach
 
 const getQuoteByID = `-- name: GetQuoteByID :one
 SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id, q.created_by_id,
-  u.first_name, u.last_name, u.email,
+  u.first_name, u.last_name, u.email, u.phone,
   l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
   l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
   q.quote_number, q.status,
@@ -1517,6 +1517,7 @@ type GetQuoteByIDRow struct {
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
 	Email                 pgtype.Text        `json:"email"`
+	Phone                 pgtype.Text        `json:"phone"`
 	ConsumerFirstName     pgtype.Text        `json:"consumer_first_name"`
 	ConsumerLastName      pgtype.Text        `json:"consumer_last_name"`
 	ConsumerPhone         pgtype.Text        `json:"consumer_phone"`
@@ -1565,6 +1566,7 @@ func (q *Queries) GetQuoteByID(ctx context.Context, arg GetQuoteByIDParams) (Get
 		&i.FirstName,
 		&i.LastName,
 		&i.Email,
+		&i.Phone,
 		&i.ConsumerFirstName,
 		&i.ConsumerLastName,
 		&i.ConsumerPhone,
@@ -2540,7 +2542,7 @@ func (q *Queries) ListQuoteURLsByQuoteIDNoOrg(ctx context.Context, quoteID pgtyp
 
 const listQuotes = `-- name: ListQuotes :many
 SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id,
-  q.created_by_id, u.first_name, u.last_name, u.email,
+  q.created_by_id, u.first_name, u.last_name, u.email, u.phone,
   l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
   l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
   q.quote_number, q.status, q.pricing_mode, q.discount_type, q.discount_value,
@@ -2627,6 +2629,7 @@ type ListQuotesRow struct {
 	FirstName             pgtype.Text        `json:"first_name"`
 	LastName              pgtype.Text        `json:"last_name"`
 	Email                 pgtype.Text        `json:"email"`
+	Phone                 pgtype.Text        `json:"phone"`
 	ConsumerFirstName     pgtype.Text        `json:"consumer_first_name"`
 	ConsumerLastName      pgtype.Text        `json:"consumer_last_name"`
 	ConsumerPhone         pgtype.Text        `json:"consumer_phone"`
@@ -2696,6 +2699,7 @@ func (q *Queries) ListQuotes(ctx context.Context, arg ListQuotesParams) ([]ListQ
 			&i.FirstName,
 			&i.LastName,
 			&i.Email,
+			&i.Phone,
 			&i.ConsumerFirstName,
 			&i.ConsumerLastName,
 			&i.ConsumerPhone,

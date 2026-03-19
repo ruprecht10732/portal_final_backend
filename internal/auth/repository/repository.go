@@ -71,6 +71,7 @@ type User struct {
 	EmailVerified         bool
 	FirstName             *string
 	LastName              *string
+	Phone                 *string
 	OnboardingCompletedAt *time.Time
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
@@ -91,6 +92,7 @@ type authUserFields struct {
 	EmailVerified         bool
 	FirstName             pgtype.Text
 	LastName              pgtype.Text
+	Phone                 pgtype.Text
 	OnboardingCompletedAt pgtype.Timestamptz
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
@@ -128,6 +130,7 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 		EmailVerified:         row.IsEmailVerified,
 		FirstName:             row.FirstName,
 		LastName:              row.LastName,
+		Phone:                 row.Phone,
 		OnboardingCompletedAt: row.OnboardingCompletedAt,
 		CreatedAt:             row.CreatedAt,
 		UpdatedAt:             row.UpdatedAt,
@@ -152,6 +155,7 @@ func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwor
 		EmailVerified:         row.IsEmailVerified,
 		FirstName:             row.FirstName,
 		LastName:              row.LastName,
+		Phone:                 row.Phone,
 		OnboardingCompletedAt: row.OnboardingCompletedAt,
 		CreatedAt:             row.CreatedAt,
 		UpdatedAt:             row.UpdatedAt,
@@ -166,7 +170,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, er
 	if err != nil {
 		return User{}, err
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, error) {
@@ -177,7 +181,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, e
 	if err != nil {
 		return User{}, err
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) MarkEmailVerified(ctx context.Context, userID uuid.UUID) error {
@@ -193,7 +197,7 @@ func (r *Repository) UpdateUserEmail(ctx context.Context, userID uuid.UUID, emai
 	if err != nil {
 		return User{}, err
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firstName, lastName *string) (User, error) {
@@ -201,7 +205,21 @@ func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firs
 	if err != nil {
 		return User{}, err
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+
+}
+
+func (r *Repository) UpdateUserPhone(ctx context.Context, userID uuid.UUID, phone *string) (User, error) {
+	phoneValue := ""
+	if phone != nil {
+		phoneValue = *phone
+	}
+
+	row, err := r.queries.UpdateUserPhone(ctx, authdb.UpdateUserPhoneParams{ID: toPgUUID(userID), Phone: phoneValue})
+	if err != nil {
+		return User{}, err
+	}
+	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
 }
 
 func (r *Repository) EnsureUserSettings(ctx context.Context, userID uuid.UUID) error {
@@ -469,6 +487,7 @@ func userFromAuthRow(fields authUserFields) User {
 		EmailVerified:         fields.EmailVerified,
 		FirstName:             optionalString(fields.FirstName),
 		LastName:              optionalString(fields.LastName),
+		Phone:                 optionalString(fields.Phone),
 		OnboardingCompletedAt: optionalTime(fields.OnboardingCompletedAt),
 		CreatedAt:             fields.CreatedAt.Time,
 		UpdatedAt:             fields.UpdatedAt.Time,

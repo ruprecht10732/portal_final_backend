@@ -16,6 +16,7 @@ import (
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/logger"
+	"portal_final_backend/platform/phone"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -49,6 +50,7 @@ type Profile struct {
 	EmailVerified       bool
 	FirstName           *string
 	LastName            *string
+	Phone               *string
 	PreferredLang       string
 	Roles               []string
 	HasOrganization     bool
@@ -566,6 +568,7 @@ func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) 
 		EmailVerified:       user.EmailVerified,
 		FirstName:           user.FirstName,
 		LastName:            user.LastName,
+		Phone:               user.Phone,
 		PreferredLang:       preferredLang,
 		Roles:               roles,
 		HasOrganization:     hasOrganization,
@@ -582,6 +585,11 @@ func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.
 	}
 
 	updatedUser, err := s.applyNameUpdates(ctx, userID, current, req)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	updatedUser, err = s.applyPhoneUpdate(ctx, userID, current.Phone, updatedUser, req)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -643,6 +651,29 @@ func (s *Service) applyPreferredLanguage(ctx context.Context, userID uuid.UUID, 
 	return preferredLang, nil
 }
 
+func (s *Service) applyPhoneUpdate(ctx context.Context, userID uuid.UUID, currentPhone *string, updatedUser repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
+	if req.Phone == nil {
+		return updatedUser, nil
+	}
+
+	normalizedPhone := strings.TrimSpace(phone.NormalizeE164(*req.Phone))
+	if normalizedPhone == strings.TrimSpace(ptrString(currentPhone)) {
+		return updatedUser, nil
+	}
+
+	phoneValue := &normalizedPhone
+	if normalizedPhone == "" {
+		phoneValue = nil
+	}
+
+	updated, err := s.repo.UpdateUserPhone(ctx, userID, phoneValue)
+	if err != nil {
+		return repository.User{}, err
+	}
+
+	return updated, nil
+}
+
 func (s *Service) applyEmailUpdate(ctx context.Context, userID uuid.UUID, currentEmail string, updatedUser repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
 	if req.Email == nil || strings.EqualFold(strings.TrimSpace(*req.Email), currentEmail) {
 		return updatedUser, nil
@@ -697,12 +728,20 @@ func (s *Service) buildProfile(user repository.User, roles []string, preferredLa
 		EmailVerified:       user.EmailVerified,
 		FirstName:           user.FirstName,
 		LastName:            user.LastName,
+		Phone:               user.Phone,
 		PreferredLang:       preferredLang,
 		Roles:               roles,
 		OnboardingCompleted: user.OnboardingCompletedAt != nil,
 		CreatedAt:           user.CreatedAt,
 		UpdatedAt:           user.UpdatedAt,
 	}
+}
+
+func ptrString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {

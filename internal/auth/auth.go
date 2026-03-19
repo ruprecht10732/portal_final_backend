@@ -17,6 +17,7 @@ type Profile struct {
 	EmailVerified bool
 	FirstName     *string
 	LastName      *string
+	Phone         *string
 	PreferredLang string
 	Roles         []string
 	CreatedAt     time.Time
