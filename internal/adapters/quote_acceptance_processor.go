@@ -200,16 +200,29 @@ func (p *QuoteAcceptanceProcessor) buildPDFData(
 		PagePerItem:         quote.PagePerItem,
 	}
 
-	if bc.contactData != nil {
-		data.CustomerEmail = bc.contactData.ConsumerEmail
-		data.CustomerPhone = bc.contactData.ConsumerPhone
-		data.CustomerAddressLine1 = bc.contactData.ConsumerAddress1
-		data.CustomerAddressLine2 = bc.contactData.ConsumerAddress2
-		data.CustomerPostalCode = bc.contactData.ConsumerPostal
-		data.CustomerCity = bc.contactData.ConsumerCity
+	applyContactData(&data, bc.contactData, quote)
+	p.applyQuoteTerms(ctx, &data, bc.organizationID, quote.LeadID, quote.LeadServiceID)
+	applyOrgFields(&data, bc.org, bc.orgErr)
+
+	// Load document attachments and download enabled PDFs from MinIO
+	data.AttachmentPDFs = p.downloadEnabledAttachments(ctx, quote.ID, quote.OrganizationID)
+	data.URLs = p.loadURLEntries(ctx, quote.ID, quote.OrganizationID)
+
+	return data
+}
+
+// applyContactData populates customer fields from contact data with fallback to
+// denormalized quote fields.
+func applyContactData(data *pdf.QuotePDFData, cd *service.QuoteContactData, quote *repository.Quote) {
+	if cd != nil {
+		data.CustomerEmail = cd.ConsumerEmail
+		data.CustomerPhone = cd.ConsumerPhone
+		data.CustomerAddressLine1 = cd.ConsumerAddress1
+		data.CustomerAddressLine2 = cd.ConsumerAddress2
+		data.CustomerPostalCode = cd.ConsumerPostal
+		data.CustomerCity = cd.ConsumerCity
 	}
 
-	// Fallback to quote denormalized customer fields if contact data is empty
 	if data.CustomerEmail == "" && quote.CustomerEmail != nil {
 		data.CustomerEmail = *quote.CustomerEmail
 	}
@@ -228,36 +241,39 @@ func (p *QuoteAcceptanceProcessor) buildPDFData(
 	if data.CustomerCity == "" && quote.CustomerAddressCity != nil {
 		data.CustomerCity = *quote.CustomerAddressCity
 	}
+}
 
-	if p.termsResolver != nil {
-		paymentDays, validDays, termsErr := p.termsResolver.ResolveQuoteTerms(ctx, bc.organizationID, quote.LeadID, quote.LeadServiceID)
-		if termsErr == nil {
-			if paymentDays > 0 {
-				data.PaymentDays = paymentDays
-			}
-			if validDays > 0 {
-				data.QuoteValidDays = validDays
-			}
-		}
+// applyQuoteTerms resolves payment/validity terms and applies them to the PDF data.
+func (p *QuoteAcceptanceProcessor) applyQuoteTerms(ctx context.Context, data *pdf.QuotePDFData, orgID, leadID uuid.UUID, leadServiceID *uuid.UUID) {
+	if p.termsResolver == nil {
+		return
 	}
-
-	if bc.orgErr == nil {
-		data.OrgEmail = derefStr(bc.org.Email)
-		data.OrgPhone = derefStr(bc.org.Phone)
-		data.OrgVatNumber = derefStr(bc.org.VatNumber)
-		data.OrgKvkNumber = derefStr(bc.org.KvkNumber)
-		data.OrgAddressLine1 = derefStr(bc.org.AddressLine1)
-		data.OrgAddressLine2 = derefStr(bc.org.AddressLine2)
-		data.OrgPostalCode = derefStr(bc.org.PostalCode)
-		data.OrgCity = derefStr(bc.org.City)
-		data.OrgCountry = derefStr(bc.org.Country)
+	paymentDays, validDays, err := p.termsResolver.ResolveQuoteTerms(ctx, orgID, leadID, leadServiceID)
+	if err != nil {
+		return
 	}
+	if paymentDays > 0 {
+		data.PaymentDays = paymentDays
+	}
+	if validDays > 0 {
+		data.QuoteValidDays = validDays
+	}
+}
 
-	// Load document attachments and download enabled PDFs from MinIO
-	data.AttachmentPDFs = p.downloadEnabledAttachments(ctx, quote.ID, quote.OrganizationID)
-	data.URLs = p.loadURLEntries(ctx, quote.ID, quote.OrganizationID)
-
-	return data
+// applyOrgFields populates organization fields on the PDF data when available.
+func applyOrgFields(data *pdf.QuotePDFData, org identityrepo.Organization, orgErr error) {
+	if orgErr != nil {
+		return
+	}
+	data.OrgEmail = derefStr(org.Email)
+	data.OrgPhone = derefStr(org.Phone)
+	data.OrgVatNumber = derefStr(org.VatNumber)
+	data.OrgKvkNumber = derefStr(org.KvkNumber)
+	data.OrgAddressLine1 = derefStr(org.AddressLine1)
+	data.OrgAddressLine2 = derefStr(org.AddressLine2)
+	data.OrgPostalCode = derefStr(org.PostalCode)
+	data.OrgCity = derefStr(org.City)
+	data.OrgCountry = derefStr(org.Country)
 }
 
 // downloadOrgLogo fetches the organization logo from storage, returning nil on any failure.
