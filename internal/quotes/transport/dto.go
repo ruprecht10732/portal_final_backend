@@ -70,6 +70,7 @@ type CreateQuoteRequest struct {
 	URLs                []QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
 	ISDESubsidy         *QuoteISDESubsidy        `json:"isdeSubsidy,omitempty"`
 	FinancingDisclaimer bool                     `json:"financingDisclaimer"`
+	PagePerItem         bool                     `json:"pagePerItem"`
 }
 
 // UpdateQuoteRequest is the request body for updating a quote
@@ -84,6 +85,7 @@ type UpdateQuoteRequest struct {
 	URLs                *[]QuoteURLRequest        `json:"urls" validate:"omitempty,dive"`
 	ISDESubsidy         *QuoteISDESubsidy         `json:"isdeSubsidy,omitempty"`
 	FinancingDisclaimer *bool                     `json:"financingDisclaimer"`
+	PagePerItem         *bool                     `json:"pagePerItem"`
 }
 
 // UpdateQuoteStatusRequest is the request body for updating a quote's status
@@ -258,6 +260,7 @@ type QuoteResponse struct {
 	RejectedAt                 *time.Time                `json:"rejectedAt,omitempty"`
 	PDFFileKey                 *string                   `json:"pdfFileKey,omitempty"`
 	FinancingDisclaimer        bool                      `json:"financingDisclaimer"`
+	PagePerItem                bool                      `json:"pagePerItem"`
 	CreatedAt                  time.Time                 `json:"createdAt"`
 	UpdatedAt                  time.Time                 `json:"updatedAt"`
 }
@@ -503,6 +506,7 @@ type PublicQuoteResponse struct {
 	AcceptedAt          *time.Time                `json:"acceptedAt,omitempty"`
 	RejectedAt          *time.Time                `json:"rejectedAt,omitempty"`
 	FinancingDisclaimer bool                      `json:"financingDisclaimer"`
+	PagePerItem         bool                      `json:"pagePerItem"`
 	IsReadOnly          bool                      `json:"isReadOnly,omitempty"`
 }
 

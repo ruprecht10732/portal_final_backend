@@ -1137,6 +1137,7 @@ type RacQuote struct {
 	VersionRootQuoteID     pgtype.UUID        `json:"version_root_quote_id"`
 	VersionNumber          int32              `json:"version_number"`
 	SubsidyPayload         []byte             `json:"subsidy_payload"`
+	PagePerItem            bool               `json:"page_per_item"`
 }
 
 type RacQuoteActivity struct {

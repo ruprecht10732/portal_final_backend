@@ -105,6 +105,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, actorID uuid.U
 		ValidUntil:          validUntil,
 		Notes:               nilIfEmpty(req.Notes),
 		FinancingDisclaimer: req.FinancingDisclaimer,
+		PagePerItem:         req.PagePerItem,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -214,6 +215,9 @@ func applyQuoteUpdates(quote *repository.Quote, req transport.UpdateQuoteRequest
 	}
 	if req.FinancingDisclaimer != nil {
 		quote.FinancingDisclaimer = *req.FinancingDisclaimer
+	}
+	if req.PagePerItem != nil {
+		quote.PagePerItem = *req.PagePerItem
 	}
 }
 
@@ -1386,7 +1390,7 @@ func (s *Service) buildResponse(ctx context.Context, q *repository.Quote, items 
 		return nil, err
 	}
 
-	return &transport.QuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, DuplicatedFromQuoteID: q.DuplicatedFromQuoteID, DuplicatedFromQuoteNumber: duplicatedFromQuoteNumber, PreviousVersionQuoteID: q.PreviousVersionQuoteID, PreviousVersionQuoteNumber: previousVersionQuoteNumber, VersionRootQuoteID: q.VersionRootQuoteID, VersionNumber: q.VersionNumber, LeadID: q.LeadID, LeadServiceID: q.LeadServiceID, CreatedByID: q.CreatedByID, CreatedByFirstName: q.CreatedByFirstName, CreatedByLastName: q.CreatedByLastName, CreatedByEmail: q.CreatedByEmail, CustomerFirstName: q.CustomerFirstName, CustomerLastName: q.CustomerLastName, CustomerPhone: q.CustomerPhone, CustomerEmail: q.CustomerEmail, CustomerAddressStreet: q.CustomerAddressStreet, CustomerAddressHouseNumber: q.CustomerAddressHouseNumber, CustomerAddressZipCode: q.CustomerAddressZipCode, CustomerAddressCity: q.CustomerAddressCity, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: q.SubtotalCents, DiscountAmountCents: q.DiscountAmountCents, TaxTotalCents: q.TaxTotalCents, TotalCents: q.TotalCents, ValidUntil: q.ValidUntil, Notes: q.Notes, ISDESubsidy: isdeSubsidy, Items: respItems, Attachments: attachments, URLs: urls, ViewedAt: q.ViewedAt, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, PDFFileKey: q.PDFFileKey, FinancingDisclaimer: q.FinancingDisclaimer, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}, nil
+	return &transport.QuoteResponse{ID: q.ID, QuoteNumber: q.QuoteNumber, DuplicatedFromQuoteID: q.DuplicatedFromQuoteID, DuplicatedFromQuoteNumber: duplicatedFromQuoteNumber, PreviousVersionQuoteID: q.PreviousVersionQuoteID, PreviousVersionQuoteNumber: previousVersionQuoteNumber, VersionRootQuoteID: q.VersionRootQuoteID, VersionNumber: q.VersionNumber, LeadID: q.LeadID, LeadServiceID: q.LeadServiceID, CreatedByID: q.CreatedByID, CreatedByFirstName: q.CreatedByFirstName, CreatedByLastName: q.CreatedByLastName, CreatedByEmail: q.CreatedByEmail, CustomerFirstName: q.CustomerFirstName, CustomerLastName: q.CustomerLastName, CustomerPhone: q.CustomerPhone, CustomerEmail: q.CustomerEmail, CustomerAddressStreet: q.CustomerAddressStreet, CustomerAddressHouseNumber: q.CustomerAddressHouseNumber, CustomerAddressZipCode: q.CustomerAddressZipCode, CustomerAddressCity: q.CustomerAddressCity, Status: transport.QuoteStatus(q.Status), PricingMode: q.PricingMode, DiscountType: q.DiscountType, DiscountValue: q.DiscountValue, SubtotalCents: q.SubtotalCents, DiscountAmountCents: q.DiscountAmountCents, TaxTotalCents: q.TaxTotalCents, TotalCents: q.TotalCents, ValidUntil: q.ValidUntil, Notes: q.Notes, ISDESubsidy: isdeSubsidy, Items: respItems, Attachments: attachments, URLs: urls, ViewedAt: q.ViewedAt, AcceptedAt: q.AcceptedAt, RejectedAt: q.RejectedAt, PDFFileKey: q.PDFFileKey, FinancingDisclaimer: q.FinancingDisclaimer, PagePerItem: q.PagePerItem, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}, nil
 }
 
 func (s *Service) loadQuoteLineageNumbers(ctx context.Context, q *repository.Quote) (*string, *string, error) {

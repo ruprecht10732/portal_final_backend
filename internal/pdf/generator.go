@@ -95,6 +95,7 @@ type QuotePDFData struct {
 	PaymentDays         int
 	QuoteValidDays      int
 	FinancingDisclaimer bool
+	PagePerItem         bool
 
 	// Document attachments: pre-downloaded PDF bytes to merge after the content page.
 	AttachmentPDFs []AttachmentPDFEntry
@@ -175,6 +176,7 @@ type quoteViewModel struct {
 	Notes                template.HTML
 	PaymentDays          int
 	QuoteValidDays       int
+	PagePerItem          bool
 }
 
 type itemViewModel struct {
@@ -243,7 +245,11 @@ func GenerateQuotePDF(data QuotePDFData) ([]byte, error) {
 		return nil, fmt.Errorf("render cover template: %w", err)
 	}
 
-	quoteHTML, err := renderTemplate("templates/quote.html", quote)
+	quoteTemplateName := "templates/quote.html"
+	if data.PagePerItem && len(data.Items) > 0 {
+		quoteTemplateName = "templates/quote_page_per_item.html"
+	}
+	quoteHTML, err := renderTemplate(quoteTemplateName, quote)
 	if err != nil {
 		return nil, fmt.Errorf("render quote template: %w", err)
 	}
@@ -391,6 +397,7 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 		StatusLabel:          translateStatus(data.Status),
 		StatusClass:          statusCSSClass(data.Status),
 		FinancingDisclaimer:  data.FinancingDisclaimer,
+		PagePerItem:          data.PagePerItem,
 		OrgAddressLine1:      clampPDFText(data.OrgAddressLine1, maxPDFMediumText),
 		OrgAddressLine2:      clampPDFText(data.OrgAddressLine2, maxPDFMediumText),
 		OrgPostalCode:        clampPDFText(data.OrgPostalCode, maxPDFShortText),
@@ -522,13 +529,18 @@ func buildFooterVM(data QuotePDFData) footerViewModel {
 
 // ── Template rendering ──────────────────────────────────────────────────
 
+// templateFuncs provides custom functions available in all PDF templates.
+var templateFuncs = template.FuncMap{
+	"add": func(a, b int) int { return a + b },
+}
+
 func renderTemplate(name string, data any) ([]byte, error) {
 	raw, err := templateFS.ReadFile(name)
 	if err != nil {
 		return nil, fmt.Errorf("read embedded template %s: %w", name, err)
 	}
 
-	tmpl, err := template.New(name).Parse(string(raw))
+	tmpl, err := template.New(name).Funcs(templateFuncs).Parse(string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parse template %s: %w", name, err)
 	}

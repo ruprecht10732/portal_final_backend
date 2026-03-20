@@ -67,6 +67,7 @@ type Quote struct {
 	PDFFileKey                 *string    `db:"pdf_file_key"`
 	SubsidyData                []byte     `db:"subsidy_payload"`
 	FinancingDisclaimer        bool       `db:"financing_disclaimer"`
+	PagePerItem                bool       `db:"page_per_item"`
 	CreatedAt                  time.Time  `db:"created_at"`
 	UpdatedAt                  time.Time  `db:"updated_at"`
 }

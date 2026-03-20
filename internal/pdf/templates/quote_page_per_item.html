@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Offerte</title>
+
+    <style>
+        /* ─── RESET & BASE ─────────────────────────────────── */
+        @page { margin: 0; size: A4; }
+        
+        *, *::before, *::after {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #FDFBF7;
+            color: #1C1917;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 8.5pt;
+            line-height: 1.6;
+            max-width: 100%;
+            overflow-wrap: anywhere;
+        }
+
+        /* ─── TYPOGRAPHY ───────────────────────────────────── */
+        h1, h2, h3 { margin: 0; font-family: 'Cormorant Garamond', serif; }
+        
+        .serif { font-family: 'Cormorant Garamond', serif; }
+        .sans { font-family: 'Montserrat', sans-serif; }
+        
+        .uppercase { text-transform: uppercase; letter-spacing: 0.15em; }
+        .gold { color: #C5A065; }
+        .bold { font-weight: 600; }
+        .text-right { text-align: right; }
+
+        /* ─── LAYOUT UTILS ─────────────────────────────────── */
+        .container {
+            width: 100%;
+            padding: 40px;
+        }
+
+        .page-break {
+            page-break-after: always;
+        }
+
+        .gold-line {
+            height: 2px;
+            background-color: #C5A065;
+            width: 60px;
+            margin-bottom: 20px;
+        }
+
+        /* ─── COMPACT HEADER (per page) ────────────────────── */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #E5E5E5;
+        }
+
+        .page-header .logo-box img {
+            max-height: 50px;
+            max-width: 180px;
+            mix-blend-mode: multiply;
+        }
+
+        .page-header .fallback {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 16pt;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .page-header .ref {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 8pt;
+            color: #C5A065;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+        }
+
+        /* ─── FULL HEADER (first page) ─────────────────────── */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: 60px;
+            border-bottom: 1px solid #1C1917;
+            padding-bottom: 20px;
+        }
+
+        .header .logo-box img {
+            max-height: 80px;
+            max-width: 250px;
+            mix-blend-mode: multiply;
+        }
+
+        .header .logo-box .fallback {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 24pt;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .doc-title { text-align: right; }
+
+        .doc-title h1 {
+            font-size: 36pt;
+            font-weight: 400;
+            letter-spacing: 0.1em;
+            line-height: 1;
+        }
+
+        .doc-title .ref {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 9pt;
+            color: #C5A065;
+            margin-top: 5px;
+            font-weight: 500;
+        }
+
+        /* ─── ADDRESS GRID ─────────────────────────────────── */
+        .address-grid {
+            display: flex;
+            gap: 40px;
+            margin-bottom: 50px;
+        }
+
+        .col { flex: 1; }
+        .col-right { text-align: right; }
+
+        .label {
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: #C5A065;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .value-primary {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 12.5pt;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #1C1917;
+        }
+
+        .value-details {
+            color: #57534E;
+            font-size: 8pt;
+            line-height: 1.8;
+        }
+
+        /* ─── STATUS STAMP ─────────────────────────────────── */
+        .status-text {
+            display: inline-block;
+            margin-top: 10px;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 7.5pt;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 4px 0;
+            border-bottom: 1px solid transparent;
+        }
+        
+        .status-Accepted { color: #15803d; border-color: #15803d; }
+        .status-Rejected { color: #b91c1c; border-color: #b91c1c; }
+        .status-Pending  { color: #C5A065; border-color: #C5A065; }
+
+        /* ─── ITEM PAGE INDICATOR ──────────────────────────── */
+        .item-page-indicator {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: #78716C;
+            margin-bottom: 20px;
+        }
+
+        /* ─── LUXURY TABLE ─────────────────────────────────── */
+        .table-container {
+            margin-bottom: 40px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        th, td {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        th {
+            text-align: left;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: #78716C;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #E7E5E4;
+        }
+
+        td {
+            padding: 12px 0;
+            border-bottom: 1px solid #F0EFEA;
+            vertical-align: top;
+            color: #1C1917;
+            font-size: 8pt;
+        }
+
+        .nums {
+            font-feature-settings: "tnum";
+            font-variant-numeric: tabular-nums;
+        }
+
+        .item-desc {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 8pt;
+            font-weight: 400;
+            line-height: 1.4;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .item-title {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 7.5pt;
+            font-weight: 700;
+            color: #18181b;
+            margin-bottom: 2px;
+        }
+
+        .item-desc p {
+            margin: 1px 0;
+        }
+        .item-desc h1, .item-desc h2, .item-desc h3,
+        .item-desc h4, .item-desc h5, .item-desc h6 {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 8pt;
+            font-weight: 700;
+            margin: 2px 0 1px;
+            line-height: 1.3;
+        }
+        .item-desc strong, .item-desc b { font-weight: 700; }
+        .item-desc em, .item-desc i { font-style: italic; }
+        .item-desc ul, .item-desc ol {
+            margin: 2px 0 2px 14px;
+            padding: 0;
+        }
+        .item-desc li { margin: 1px 0; }
+
+        .item-meta {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 6.5pt;
+            color: #C5A065;
+            margin-top: 1px;
+            font-style: italic;
+        }
+
+        tr.deselected { opacity: 0.3; }
+
+        /* ─── ITEM TOTALS (per-item page) ──────────────────── */
+        .item-totals {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 30px;
+        }
+
+        .item-totals-box {
+            width: 40%;
+            min-width: 250px;
+        }
+
+        .item-total-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 8.5pt;
+        }
+
+        .item-total-row.grand {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 2px solid #1C1917;
+            align-items: baseline;
+        }
+
+        .item-total-row.grand .label {
+            font-size: 9pt;
+            color: #1C1917;
+            font-weight: 700;
+        }
+
+        .item-total-row.grand .value {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 14pt;
+            font-weight: 700;
+        }
+
+        /* ─── TOTALS SECTION (summary page) ────────────────── */
+        .totals-section {
+            display: flex;
+            justify-content: flex-end;
+            page-break-inside: avoid;
+        }
+
+        .totals-box {
+            width: 40%;
+            min-width: 250px;
+        }
+
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 8.5pt;
+        }
+
+        .total-row.grand {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 3px double #1C1917;
+            align-items: baseline;
+        }
+
+        .total-row.grand .label {
+            font-size: 9pt;
+            color: #1C1917;
+            font-weight: 700;
+        }
+
+        .total-row.grand .value {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 16pt;
+            font-weight: 700;
+        }
+
+        /* ─── SUMMARY TABLE ────────────────────────────────── */
+        .summary-title {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 18pt;
+            font-weight: 600;
+            margin-bottom: 30px;
+            color: #1C1917;
+        }
+
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 40px;
+        }
+
+        .summary-table th {
+            text-align: left;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: #78716C;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #E7E5E4;
+        }
+
+        .summary-table td {
+            padding: 10px 0;
+            border-bottom: 1px solid #F0EFEA;
+            font-size: 8pt;
+            color: #1C1917;
+        }
+
+        /* ─── FOOTER & TERMS ───────────────────────────────── */
+        .footer {
+            margin-top: 80px;
+            display: flex;
+            gap: 40px;
+            border-top: 1px solid #1C1917;
+            padding-top: 20px;
+        }
+
+        .footer-col { flex: 1; }
+
+        .footer-title {
+            font-size: 7pt;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: #C5A065;
+            margin-bottom: 10px;
+        }
+
+        .footer-text {
+            font-size: 7.5pt;
+            color: #57534E;
+            line-height: 1.8;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .footer-text p {
+            margin: 1px 0;
+        }
+
+        .footer-text ul, .footer-text ol {
+            margin: 2px 0 2px 14px;
+            padding: 0;
+        }
+
+        .footer-text ol {
+            padding-left: 15px;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+
+    {{$itemCount := len .Items}}
+
+    <!-- ════════════════════════════════════════════════════════
+         ITEM PAGES — One line item per page
+         ════════════════════════════════════════════════════════ -->
+    {{range $index, $item := .Items}}
+    <div class="container{{if lt (add $index 1) $itemCount}} page-break{{end}}">
+
+        {{if eq $index 0}}
+        <!-- First page: full header with addresses -->
+        <header class="header">
+            <div class="logo-box">
+                {{if $.LogoBase64}}
+                    <img src="data:{{$.LogoMimeType}};base64,{{$.LogoBase64}}" alt="Logo">
+                {{else}}
+                    <div class="fallback">{{$.OrganizationName}}</div>
+                {{end}}
+            </div>
+            <div class="doc-title">
+                <h1 class="uppercase">Offerte</h1>
+                <div class="ref uppercase">REF. {{$.QuoteNumber}}</div>
+            </div>
+        </header>
+
+        <div class="address-grid">
+            <div class="col">
+                <span class="label">Van</span>
+                <div class="value-primary">{{$.OrganizationName}}</div>
+                <div class="value-details">
+                    {{if $.OrgAddressLine1}}{{$.OrgAddressLine1}}{{end}}{{if $.OrgAddressLine2}}, {{$.OrgAddressLine2}}{{end}}<br>
+                    {{if or $.OrgPostalCode $.OrgCity}}{{$.OrgPostalCode}} {{$.OrgCity}}<br>{{end}}
+                    {{if $.OrgEmail}}{{$.OrgEmail}}<br>{{end}}
+                    {{if $.OrgKvkNumber}}KVK {{$.OrgKvkNumber}}{{end}}
+                </div>
+            </div>
+
+            <div class="col">
+                <span class="label">Voor</span>
+                <div class="value-primary">{{$.CustomerName}}</div>
+                <div class="value-details">
+                    {{if $.CustomerAddressLine1}}{{$.CustomerAddressLine1}}<br>{{end}}
+                    {{if or $.CustomerPostalCode $.CustomerCity}}{{$.CustomerPostalCode}} {{$.CustomerCity}}<br>{{end}}
+                    {{if $.CustomerPhone}}{{$.CustomerPhone}}<br>{{end}}
+                    {{if $.CustomerEmail}}{{$.CustomerEmail}}{{end}}
+                </div>
+            </div>
+
+            <div class="col col-right">
+                <span class="label">Details</span>
+                <div class="value-details">
+                    <span class="bold">Datum:</span> {{$.CreatedAtFormatted}}<br>
+                    {{if $.ValidUntilFormatted}}<span class="bold">Geldig tot:</span> {{$.ValidUntilFormatted}}<br>{{end}}
+                </div>
+                
+                <div class="status-text status-{{$.Status}}">
+                    {{if eq $.Status "Accepted"}}
+                        {{if $.FinancingDisclaimer}}Geaccepteerd onder voorbehoud van financiering{{else}}Geaccepteerd{{end}}
+                    {{else if eq $.Status "Rejected"}}Afgewezen{{else}}{{$.StatusLabel}}{{end}}
+                </div>
+            </div>
+        </div>
+        {{else}}
+        <!-- Subsequent pages: compact header -->
+        <div class="page-header">
+            <div class="logo-box">
+                {{if $.LogoBase64}}
+                    <img src="data:{{$.LogoMimeType}};base64,{{$.LogoBase64}}" alt="Logo">
+                {{else}}
+                    <div class="fallback">{{$.OrganizationName}}</div>
+                {{end}}
+            </div>
+            <div class="ref">REF. {{$.QuoteNumber}}</div>
+        </div>
+        {{end}}
+
+        <div class="item-page-indicator">Regelitem {{add $index 1}} van {{$itemCount}}</div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 50%">Omschrijving</th>
+                        <th style="width: 10%" class="text-right">Aantal</th>
+                        <th style="width: 20%" class="text-right">Prijs</th>
+                        <th style="width: 20%" class="text-right">Totaal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="{{if and $item.IsOptional (not $item.IsSelected)}}deselected{{end}}">
+                        <td>
+                            {{if $item.Title}}<div class="item-title">{{$item.Title}}</div>{{end}}
+                            <div class="item-desc">{{$item.Description}}</div>
+                            {{if $item.IsOptional}}
+                                <div class="item-meta">
+                                    {{if $item.IsSelected}}Optioneel (Geselecteerd){{else}}Optioneel (Niet geselecteerd){{end}}
+                                </div>
+                            {{end}}
+                        </td>
+                        <td class="text-right nums">{{$item.Quantity}}</td>
+                        <td class="text-right nums">{{$item.UnitPriceFormatted}}</td>
+                        <td class="text-right nums bold">{{$item.LineTotalFormatted}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="item-totals">
+            <div class="item-totals-box">
+                <div class="item-total-row">
+                    <span class="label">Regelitem totaal</span>
+                    <span class="value nums bold">{{$item.LineTotalFormatted}}</span>
+                </div>
+                <div class="item-total-row" style="color: #78716C;">
+                    <span class="label">BTW {{$item.VatPctFormatted}}</span>
+                    <span class="value nums" style="font-size: 8pt;">(inbegrepen)</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    {{end}}
+
+    <!-- ════════════════════════════════════════════════════════
+         SUMMARY PAGE — Grand totals + notes + terms
+         ════════════════════════════════════════════════════════ -->
+    <div class="container page-break">
+
+        <div class="page-header">
+            <div class="logo-box">
+                {{if .LogoBase64}}
+                    <img src="data:{{.LogoMimeType}};base64,{{.LogoBase64}}" alt="Logo">
+                {{else}}
+                    <div class="fallback">{{.OrganizationName}}</div>
+                {{end}}
+            </div>
+            <div class="ref">REF. {{.QuoteNumber}}</div>
+        </div>
+
+        <div class="summary-title">Overzicht</div>
+
+        <table class="summary-table">
+            <thead>
+                <tr>
+                    <th style="width: 60%">Omschrijving</th>
+                    <th style="width: 20%" class="text-right">Aantal</th>
+                    <th style="width: 20%" class="text-right">Totaal</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Items}}
+                <tr class="{{if and .IsOptional (not .IsSelected)}}deselected{{end}}">
+                    <td>
+                        {{if .Title}}<span class="bold">{{.Title}}</span>{{else}}<span class="item-desc">{{.Description}}</span>{{end}}
+                    </td>
+                    <td class="text-right nums">{{.Quantity}}</td>
+                    <td class="text-right nums bold">{{.LineTotalFormatted}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+
+        <div class="totals-section">
+            <div class="totals-box">
+                <div class="total-row">
+                    <span class="label">Subtotaal</span>
+                    <span class="value nums">{{.SubtotalFormatted}}</span>
+                </div>
+                {{if .HasDiscount}}
+                <div class="total-row" style="color: #15803d;">
+                    <span class="label">Korting</span>
+                    <span class="value nums">-{{.DiscountFormatted}}</span>
+                </div>
+                {{end}}
+                {{range .VatBreakdown}}
+                <div class="total-row">
+                    <span class="label">BTW {{.PctFormatted}}</span>
+                    <span class="value nums">{{.AmountFormatted}}</span>
+                </div>
+                {{end}}
+                
+                <div class="total-row grand">
+                    <span class="label uppercase">Totaal</span>
+                    <span class="value nums">{{.TotalFormatted}}</span>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            {{if .Notes}}
+            <div class="footer-col">
+                <div class="footer-title">Opmerkingen</div>
+                <div class="footer-text">{{.Notes}}</div>
+            </div>
+            {{end}}
+            
+            <div class="footer-col">
+                <div class="footer-title">Voorwaarden</div>
+                <div class="footer-text">
+                    <ol>
+                        <li>Betaling binnen {{.PaymentDays}} dagen.</li>
+                        <li>Offerte is {{.QuoteValidDays}} dagen geldig.</li>
+                        <li>Algemene voorwaarden zijn van toepassing.</li>
+                    </ol>
+                </div>
+            </div>
+        </footer>
+
+    </div>
+
+</body>
+</html>

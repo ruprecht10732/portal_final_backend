@@ -197,6 +197,7 @@ func (p *QuoteAcceptanceProcessor) buildPDFData(
 		PaymentDays:         7,
 		QuoteValidDays:      14,
 		FinancingDisclaimer: quote.FinancingDisclaimer,
+		PagePerItem:         quote.PagePerItem,
 	}
 
 	if bc.contactData != nil {
