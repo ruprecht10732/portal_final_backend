@@ -162,11 +162,25 @@ func (s *Service) ProcessGenerateQuoteJob(ctx context.Context, jobID uuid.UUID, 
 		return err
 	}
 
-	stored, err := s.repo.GetGenerateQuoteJobByID(ctx, jobID)
-	if err != nil {
-		return err
-	}
-	s.publishJobProgress(repositoryJobToServiceJob(stored))
+	// Build SSE payload from known completion data instead of re-fetching.
+	// This avoids a silent SSE miss when the secondary DB read fails.
+	now := time.Now()
+	s.publishJobProgress(&GenerateQuoteJob{
+		JobID:           jobID,
+		TenantID:        claimed.OrganizationID,
+		UserID:          claimed.UserID,
+		LeadID:          claimed.LeadID,
+		LeadServiceID:   claimed.LeadServiceID,
+		Status:          GenerateQuoteJobStatusCompleted,
+		Step:            jobStepCompleted,
+		ProgressPercent: 100,
+		QuoteID:         &result.QuoteID,
+		QuoteNumber:     &result.QuoteNumber,
+		ItemCount:       &result.ItemCount,
+		StartedAt:       claimed.StartedAt,
+		UpdatedAt:       now,
+		FinishedAt:      &now,
+	})
 	return nil
 }
 
