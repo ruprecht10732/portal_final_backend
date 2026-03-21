@@ -47,6 +47,9 @@ const (
 	// AI job progress events
 	EventAIJobProgress EventType = "ai_job_progress"
 
+	// Subsidy analysis progress events
+	EventSubsidyAnalysisProgress EventType = "subsidy_analysis_progress"
+
 	// WhatsApp inbox events
 	EventWhatsAppConversationUpdated EventType = "whatsapp_conversation_updated"
 	EventWhatsAppMessageReceived     EventType = "whatsapp_message_received"

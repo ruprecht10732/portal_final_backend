@@ -296,15 +296,29 @@ func (s *SubsidyAnalyzerService) publishJobProgress(jobID uuid.UUID, status stri
 		return
 	}
 
-	event := map[string]interface{}{
-		"jobId":    jobID.String(),
-		"status":   status,
-		"step":     step,
-		"progress": progress,
+	s.jobsMu.RLock()
+	job, exists := s.jobs[jobID]
+	s.jobsMu.RUnlock()
+	if !exists {
+		return
 	}
 
-	// Event published through SSE service when it's available
-	_ = event // Use event to avoid unused variable warning
+	data := map[string]interface{}{
+		"job": map[string]interface{}{
+			"jobId":           jobID.String(),
+			"status":          status,
+			"step":            step,
+			"progressPercent": progress,
+			"updatedAt":       job.UpdatedAt,
+			"startedAt":       job.CreatedAt,
+		},
+	}
+
+	s.sseService.Publish(job.UserID, sse.Event{
+		Type:    sse.EventSubsidyAnalysisProgress,
+		Message: "Subsidy analysis progress",
+		Data:    data,
+	})
 }
 
 // StoreSubsidyResult saves the AI result to the job record.
