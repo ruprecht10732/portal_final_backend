@@ -227,6 +227,7 @@ func (r *Repository) UpdateWithItems(ctx context.Context, quote *Quote, items []
 		ValidUntil:          toPgTimestampPtr(quote.ValidUntil),
 		Notes:               toPgTextPtr(quote.Notes),
 		FinancingDisclaimer: quote.FinancingDisclaimer,
+		PagePerItem:         quote.PagePerItem,
 		UpdatedAt:           toPgTimestamp(quote.UpdatedAt),
 		OrganizationID:      toPgUUID(quote.OrganizationID),
 	})
@@ -1602,15 +1603,15 @@ func (r *Repository) insertQuote(ctx context.Context, tx pgx.Tx, quote *Quote) e
 			previous_version_quote_id, version_root_quote_id, version_number,
 			created_by_id, quote_number, status, pricing_mode, discount_type, discount_value,
 			subtotal_cents, discount_amount_cents, tax_total_cents, total_cents,
-			valid_until, notes, subsidy_payload, financing_disclaimer, created_at, updated_at,
+			valid_until, notes, subsidy_payload, financing_disclaimer, page_per_item, created_at, updated_at,
 			public_token, public_token_expires_at, preview_token, preview_token_expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8,
 			$9, $10, $11, $12, $13, $14,
 			$15, $16, $17, $18,
-			$19, $20, $21, $22, $23, $24,
-			$25, $26, $27, $28
+			$19, $20, $21, $22, $23, $24, $25,
+			$26, $27, $28, $29
 		)
 	`,
 		toPgUUID(quote.ID),
@@ -1635,6 +1636,7 @@ func (r *Repository) insertQuote(ctx context.Context, tx pgx.Tx, quote *Quote) e
 		toPgTextPtr(quote.Notes),
 		quote.SubsidyData,
 		quote.FinancingDisclaimer,
+		quote.PagePerItem,
 		toPgTimestamp(quote.CreatedAt),
 		toPgTimestamp(quote.UpdatedAt),
 		toPgTextPtr(quote.PublicToken),
@@ -1877,6 +1879,7 @@ func quoteFromGetByIDRow(row quotesdb.GetQuoteByIDRow) Quote {
 		SignatureIP:                optionalString(row.SignatureIp),
 		PDFFileKey:                 optionalString(row.PdfFileKey),
 		FinancingDisclaimer:        row.FinancingDisclaimer,
+		PagePerItem:                row.PagePerItem,
 		CreatedAt:                  timeFromPg(row.CreatedAt),
 		UpdatedAt:                  timeFromPg(row.UpdatedAt),
 	}
@@ -1928,6 +1931,7 @@ func quoteFromPublicTokenRow(row quotesdb.GetQuoteByPublicTokenRow) Quote {
 		SignatureIP:         optionalString(row.SignatureIp),
 		PDFFileKey:          optionalString(row.PdfFileKey),
 		FinancingDisclaimer: row.FinancingDisclaimer,
+		PagePerItem:         row.PagePerItem,
 		CreatedAt:           timeFromPg(row.CreatedAt),
 		UpdatedAt:           timeFromPg(row.UpdatedAt),
 	}
@@ -1964,6 +1968,7 @@ func quoteFromTokenRow(row quotesdb.GetQuoteByTokenRow) Quote {
 		SignatureIP:         optionalString(row.SignatureIp),
 		PDFFileKey:          optionalString(row.PdfFileKey),
 		FinancingDisclaimer: row.FinancingDisclaimer,
+		PagePerItem:         row.PagePerItem,
 		CreatedAt:           timeFromPg(row.CreatedAt),
 		UpdatedAt:           timeFromPg(row.UpdatedAt),
 	}
@@ -2013,6 +2018,7 @@ func quoteFromListRow(row quotesdb.ListQuotesRow) Quote {
 		SignatureIP:                optionalString(row.SignatureIp),
 		PDFFileKey:                 optionalString(row.PdfFileKey),
 		FinancingDisclaimer:        row.FinancingDisclaimer,
+		PagePerItem:                row.PagePerItem,
 		CreatedAt:                  timeFromPg(row.CreatedAt),
 		UpdatedAt:                  timeFromPg(row.UpdatedAt),
 	}

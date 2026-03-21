@@ -1496,7 +1496,7 @@ SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id, q.created_by_id,
   q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
   q.viewed_at, q.accepted_at, q.rejected_at,
   q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
-  q.financing_disclaimer
+  q.financing_disclaimer, q.page_per_item
 FROM RAC_quotes q
 LEFT JOIN RAC_users u ON u.id = q.created_by_id
 LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
@@ -1552,6 +1552,7 @@ type GetQuoteByIDRow struct {
 	SignatureIp           pgtype.Text        `json:"signature_ip"`
 	PdfFileKey            pgtype.Text        `json:"pdf_file_key"`
 	FinancingDisclaimer   bool               `json:"financing_disclaimer"`
+	PagePerItem           bool               `json:"page_per_item"`
 }
 
 func (q *Queries) GetQuoteByID(ctx context.Context, arg GetQuoteByIDParams) (GetQuoteByIDRow, error) {
@@ -1601,6 +1602,7 @@ func (q *Queries) GetQuoteByID(ctx context.Context, arg GetQuoteByIDParams) (Get
 		&i.SignatureIp,
 		&i.PdfFileKey,
 		&i.FinancingDisclaimer,
+		&i.PagePerItem,
 	)
 	return i, err
 }
@@ -1613,7 +1615,7 @@ SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
   public_token, public_token_expires_at, preview_token, preview_token_expires_at,
   viewed_at, accepted_at, rejected_at,
   rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
-  financing_disclaimer
+  financing_disclaimer, page_per_item
 FROM RAC_quotes WHERE public_token = $1
 `
 
@@ -1648,6 +1650,7 @@ type GetQuoteByPublicTokenRow struct {
 	SignatureIp           pgtype.Text        `json:"signature_ip"`
 	PdfFileKey            pgtype.Text        `json:"pdf_file_key"`
 	FinancingDisclaimer   bool               `json:"financing_disclaimer"`
+	PagePerItem           bool               `json:"page_per_item"`
 }
 
 func (q *Queries) GetQuoteByPublicToken(ctx context.Context, publicToken pgtype.Text) (GetQuoteByPublicTokenRow, error) {
@@ -1684,6 +1687,7 @@ func (q *Queries) GetQuoteByPublicToken(ctx context.Context, publicToken pgtype.
 		&i.SignatureIp,
 		&i.PdfFileKey,
 		&i.FinancingDisclaimer,
+		&i.PagePerItem,
 	)
 	return i, err
 }
@@ -1696,7 +1700,7 @@ SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
   public_token, public_token_expires_at, preview_token, preview_token_expires_at,
   viewed_at, accepted_at, rejected_at,
   rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
-  financing_disclaimer,
+  financing_disclaimer, page_per_item,
   CASE WHEN public_token = $1 THEN 'public' ELSE 'preview' END AS token_kind
 FROM RAC_quotes
 WHERE public_token = $1 OR preview_token = $1
@@ -1733,6 +1737,7 @@ type GetQuoteByTokenRow struct {
 	SignatureIp           pgtype.Text        `json:"signature_ip"`
 	PdfFileKey            pgtype.Text        `json:"pdf_file_key"`
 	FinancingDisclaimer   bool               `json:"financing_disclaimer"`
+	PagePerItem           bool               `json:"page_per_item"`
 	TokenKind             string             `json:"token_kind"`
 }
 
@@ -1770,6 +1775,7 @@ func (q *Queries) GetQuoteByToken(ctx context.Context, publicToken pgtype.Text) 
 		&i.SignatureIp,
 		&i.PdfFileKey,
 		&i.FinancingDisclaimer,
+		&i.PagePerItem,
 		&i.TokenKind,
 	)
 	return i, err
@@ -2551,7 +2557,7 @@ SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id,
   q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
   q.viewed_at, q.accepted_at, q.rejected_at,
   q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
-  q.financing_disclaimer
+  q.financing_disclaimer, q.page_per_item
 FROM RAC_quotes q
 LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
 LEFT JOIN RAC_users u ON u.id = q.created_by_id
@@ -2664,6 +2670,7 @@ type ListQuotesRow struct {
 	SignatureIp           pgtype.Text        `json:"signature_ip"`
 	PdfFileKey            pgtype.Text        `json:"pdf_file_key"`
 	FinancingDisclaimer   bool               `json:"financing_disclaimer"`
+	PagePerItem           bool               `json:"page_per_item"`
 }
 
 func (q *Queries) ListQuotes(ctx context.Context, arg ListQuotesParams) ([]ListQuotesRow, error) {
@@ -2734,6 +2741,7 @@ func (q *Queries) ListQuotes(ctx context.Context, arg ListQuotesParams) ([]ListQ
 			&i.SignatureIp,
 			&i.PdfFileKey,
 			&i.FinancingDisclaimer,
+			&i.PagePerItem,
 		); err != nil {
 			return nil, err
 		}
@@ -3401,8 +3409,9 @@ UPDATE RAC_quotes SET
   valid_until = $9,
   notes = $10,
   financing_disclaimer = $11,
-  updated_at = $12
-WHERE id = $1 AND organization_id = $13
+  page_per_item = $12,
+  updated_at = $13
+WHERE id = $1 AND organization_id = $14
 `
 
 type UpdateQuoteWithItemsParams struct {
@@ -3417,6 +3426,7 @@ type UpdateQuoteWithItemsParams struct {
 	ValidUntil          pgtype.Timestamptz `json:"valid_until"`
 	Notes               pgtype.Text        `json:"notes"`
 	FinancingDisclaimer bool               `json:"financing_disclaimer"`
+	PagePerItem         bool               `json:"page_per_item"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 	OrganizationID      pgtype.UUID        `json:"organization_id"`
 }
@@ -3434,6 +3444,7 @@ func (q *Queries) UpdateQuoteWithItems(ctx context.Context, arg UpdateQuoteWithI
 		arg.ValidUntil,
 		arg.Notes,
 		arg.FinancingDisclaimer,
+		arg.PagePerItem,
 		arg.UpdatedAt,
 		arg.OrganizationID,
 	)

@@ -27,8 +27,9 @@ UPDATE RAC_quotes SET
   valid_until = $9,
   notes = $10,
   financing_disclaimer = $11,
-  updated_at = $12
-WHERE id = $1 AND organization_id = $13;
+  page_per_item = $12,
+  updated_at = $13
+WHERE id = $1 AND organization_id = $14;
 
 -- name: DeleteQuoteItemsByQuote :exec
 DELETE FROM RAC_quote_items WHERE quote_id = $1 AND organization_id = $2;
@@ -51,7 +52,7 @@ SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id, q.created_by_id,
   q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
   q.viewed_at, q.accepted_at, q.rejected_at,
   q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
-  q.financing_disclaimer
+  q.financing_disclaimer, q.page_per_item
 FROM RAC_quotes q
 LEFT JOIN RAC_users u ON u.id = q.created_by_id
 LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
@@ -146,7 +147,7 @@ SELECT q.id, q.organization_id, q.lead_id, q.lead_service_id,
   q.public_token, q.public_token_expires_at, q.preview_token, q.preview_token_expires_at,
   q.viewed_at, q.accepted_at, q.rejected_at,
   q.rejection_reason, q.signature_name, q.signature_data, q.signature_ip, q.pdf_file_key,
-  q.financing_disclaimer
+  q.financing_disclaimer, q.page_per_item
 FROM RAC_quotes q
 LEFT JOIN RAC_leads l ON l.id = q.lead_id AND l.organization_id = q.organization_id
 LEFT JOIN RAC_users u ON u.id = q.created_by_id
@@ -461,7 +462,7 @@ SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
   public_token, public_token_expires_at, preview_token, preview_token_expires_at,
   viewed_at, accepted_at, rejected_at,
   rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
-  financing_disclaimer
+  financing_disclaimer, page_per_item
 FROM RAC_quotes WHERE public_token = $1;
 
 -- name: GetQuoteByToken :one
@@ -472,7 +473,7 @@ SELECT id, organization_id, lead_id, lead_service_id, quote_number, status,
   public_token, public_token_expires_at, preview_token, preview_token_expires_at,
   viewed_at, accepted_at, rejected_at,
   rejection_reason, signature_name, signature_data, signature_ip, pdf_file_key,
-  financing_disclaimer,
+  financing_disclaimer, page_per_item,
   CASE WHEN public_token = $1 THEN 'public' ELSE 'preview' END AS token_kind
 FROM RAC_quotes
 WHERE public_token = $1 OR preview_token = $1;

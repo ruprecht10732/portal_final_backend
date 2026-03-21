@@ -362,7 +362,9 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 }
 
 func (s *Service) invalidatePDFOnAssetUpdates(ctx context.Context, quote *repository.Quote, req transport.UpdateQuoteRequest) error {
-	if req.Attachments == nil && req.URLs == nil {
+	hasAssetChange := req.Attachments != nil || req.URLs != nil
+	hasPagePerItemChange := req.PagePerItem != nil && *req.PagePerItem != quote.PagePerItem
+	if !hasAssetChange && !hasPagePerItemChange {
 		return nil
 	}
 	if quote.PDFFileKey == nil || strings.TrimSpace(*quote.PDFFileKey) == "" {
