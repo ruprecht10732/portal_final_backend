@@ -576,7 +576,7 @@
                 {{range .Items}}
                 <tr class="{{if and .IsOptional (not .IsSelected)}}deselected{{end}}">
                     <td>
-                        {{if .Title}}<span class="bold">{{.Title}}</span>{{else}}<span class="item-desc">{{.Description}}</span>{{end}}
+                        {{if .Title}}<span class="bold">{{.Title}}</span>{{end}}
                     </td>
                     <td class="text-right nums">{{.Quantity}}</td>
                     <td class="text-right nums bold">{{.LineTotalFormatted}}</td>
