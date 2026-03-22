@@ -232,6 +232,9 @@ func buildWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		buildAttachCurrentWhatsAppPhotoTool,
 		buildGetAvailableVisitSlotsTool,
 		buildGetLeadDetailsTool,
+		buildGetEnergyLabelTool,
+		buildGetLeadTasksTool,
+		buildGetISDETool,
 		buildGetNavigationLinkTool,
 		buildGetQuotesTool,
 		buildDraftQuoteTool,
@@ -260,6 +263,8 @@ func buildPartnerWhatsAppTools(toolHandler *ToolHandler) ([]tool.Tool, error) {
 		buildUpdateAppointmentStatusTool,
 		buildRescheduleVisitTool,
 		buildCancelVisitTool,
+		buildSaveNoteTool,
+		buildSearchProductMaterialsTool,
 	)
 }
 
@@ -287,6 +292,48 @@ func buildGetLeadDetailsTool(toolHandler *ToolHandler) (tool.Tool, error) {
 		return nil, fmt.Errorf("whatsappagent: failed to build GetLeadDetails tool: %w", err)
 	}
 	return leadDetailsTool, nil
+}
+
+func buildGetEnergyLabelTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	energyLabelTool, err := apptools.NewGetEnergyLabelTool(func(ctx tool.Context, input GetEnergyLabelInput) (GetEnergyLabelOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetEnergyLabelOutput{}, err
+		}
+		return toolHandler.HandleGetEnergyLabel(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("whatsappagent: failed to build GetEnergyLabel tool: %w", err)
+	}
+	return energyLabelTool, nil
+}
+
+func buildGetLeadTasksTool(toolHandler *ToolHandler) (tool.Tool, error) {
+	leadTasksTool, err := apptools.NewGetLeadTasksTool(func(ctx tool.Context, input GetLeadTasksInput) (GetLeadTasksOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetLeadTasksOutput{}, err
+		}
+		return toolHandler.HandleGetLeadTasks(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("whatsappagent: failed to build GetLeadTasks tool: %w", err)
+	}
+	return leadTasksTool, nil
+}
+
+func buildGetISDETool(toolHandler *ToolHandler) (tool.Tool, error) {
+	isdeTool, err := apptools.NewGetISDETool(func(ctx tool.Context, input GetISDEInput) (GetISDEOutput, error) {
+		orgID, err := orgIDFromToolContext(ctx)
+		if err != nil {
+			return GetISDEOutput{}, err
+		}
+		return toolHandler.HandleGetISDE(ctx, orgID, input)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("whatsappagent: failed to build GetISDE tool: %w", err)
+	}
+	return isdeTool, nil
 }
 
 func buildGetMyJobsTool(toolHandler *ToolHandler) (tool.Tool, error) {
@@ -1003,7 +1050,7 @@ func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) ground
 			return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
-	leadTools := []string{"SearchLeads", "GetLeadDetails", "CreateLead", "UpdateLeadDetails", "GetNavigationLink", "GetMyJobs", "GetPartnerJobDetails", "GetQuotes"}
+	leadTools := []string{"SearchLeads", "GetLeadDetails", "GetEnergyLabel", "GetLeadTasks", "CreateLead", "UpdateLeadDetails", "GetNavigationLink", "GetMyJobs", "GetPartnerJobDetails", "GetQuotes"}
 	if leadFacts := extractLeadFacts(reply); len(leadFacts) > 0 {
 		if !evidence.hasToolResponse(leadTools...) {
 			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: leadFacts}
@@ -1231,23 +1278,23 @@ func leadFactVariants(fact string) []string {
 // statusTranslations maps Dutch status labels used in LLM replies to their
 // English counterparts in tool response payloads, and vice versa.
 var statusTranslations = map[string][]string{
-	"concept":         {"Draft"},
-	"draft":           {"Concept"},
-	"verstuurd":       {"Sent"},
-	"sent":            {"Verstuurd"},
-	"openstaand":      {"Sent", "Pending"},
-	"pending":         {"Openstaand"},
-	"geaccepteerd":    {"Accepted"},
-	"accepted":        {"Geaccepteerd", "Akkoord"},
-	"akkoord":         {"Accepted"},
-	"afgewezen":       {"Rejected"},
-	"rejected":        {"Afgewezen"},
-	"verlopen":        {"Expired"},
-	"expired":         {"Verlopen"},
-	"nieuw":           {"New"},
-	"new":             {"Nieuw"},
-	"in behandeling":  {"In_Progress"},
-	"in_progress":     {"In behandeling"},
+	"concept":        {"Draft"},
+	"draft":          {"Concept"},
+	"verstuurd":      {"Sent"},
+	"sent":           {"Verstuurd"},
+	"openstaand":     {"Sent", "Pending"},
+	"pending":        {"Openstaand"},
+	"geaccepteerd":   {"Accepted"},
+	"accepted":       {"Geaccepteerd", "Akkoord"},
+	"akkoord":        {"Accepted"},
+	"afgewezen":      {"Rejected"},
+	"rejected":       {"Afgewezen"},
+	"verlopen":       {"Expired"},
+	"expired":        {"Verlopen"},
+	"nieuw":          {"New"},
+	"new":            {"Nieuw"},
+	"in behandeling": {"In_Progress"},
+	"in_progress":    {"In behandeling"},
 }
 
 func looksLikeQuoteNumber(value string) bool {

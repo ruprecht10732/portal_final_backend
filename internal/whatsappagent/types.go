@@ -57,6 +57,18 @@ type TaskWriter interface {
 	CreateTask(ctx context.Context, orgID uuid.UUID, input CreateTaskInput) (CreateTaskOutput, error)
 }
 
+type TaskReader interface {
+	GetLeadTasks(ctx context.Context, orgID uuid.UUID, input GetLeadTasksInput) (GetLeadTasksOutput, error)
+}
+
+type EnergyLabelReader interface {
+	GetEnergyLabel(ctx context.Context, orgID uuid.UUID, input GetEnergyLabelInput) (GetEnergyLabelOutput, error)
+}
+
+type ISDECalculator interface {
+	GetISDE(ctx context.Context, orgID uuid.UUID, input GetISDEInput) (GetISDEOutput, error)
+}
+
 type CurrentInboundPhotoAttacher interface {
 	AttachCurrentWhatsAppPhoto(ctx context.Context, orgID uuid.UUID, input AttachCurrentWhatsAppPhotoInput, message CurrentInboundMessage) (AttachCurrentWhatsAppPhotoOutput, error)
 }
@@ -137,6 +149,9 @@ type ModuleDependencies struct {
 	CatalogSearchReader          CatalogSearchReader
 	LeadMutationWriter           LeadMutationWriter
 	TaskWriter                   TaskWriter
+	TaskReader                   TaskReader
+	EnergyLabelReader            EnergyLabelReader
+	ISDECalculator               ISDECalculator
 	QuoteWorkflowWriter          QuoteWorkflowWriter
 	CurrentInboundPhotoAttacher  CurrentInboundPhotoAttacher
 	Storage                      ObjectStorage

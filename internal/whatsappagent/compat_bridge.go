@@ -27,6 +27,12 @@ type leadMutationWriterAdapter struct{ inner LeadMutationWriter }
 
 type taskWriterAdapter struct{ inner TaskWriter }
 
+type taskReaderAdapter struct{ inner TaskReader }
+
+type energyLabelReaderAdapter struct{ inner EnergyLabelReader }
+
+type isdeCalculatorAdapter struct{ inner ISDECalculator }
+
 type currentInboundPhotoAttacherAdapter struct{ inner CurrentInboundPhotoAttacher }
 
 type visitSlotReaderAdapter struct{ inner VisitSlotReader }
@@ -102,6 +108,27 @@ func adaptTaskWriter(inner TaskWriter) engine.TaskWriter {
 		return nil
 	}
 	return taskWriterAdapter{inner: inner}
+}
+
+func adaptTaskReader(inner TaskReader) engine.TaskReader {
+	if inner == nil {
+		return nil
+	}
+	return taskReaderAdapter{inner: inner}
+}
+
+func adaptEnergyLabelReader(inner EnergyLabelReader) engine.EnergyLabelReader {
+	if inner == nil {
+		return nil
+	}
+	return energyLabelReaderAdapter{inner: inner}
+}
+
+func adaptISDECalculator(inner ISDECalculator) engine.ISDECalculator {
+	if inner == nil {
+		return nil
+	}
+	return isdeCalculatorAdapter{inner: inner}
 }
 
 func adaptCurrentInboundPhotoAttacher(inner CurrentInboundPhotoAttacher) engine.CurrentInboundPhotoAttacher {
@@ -276,6 +303,105 @@ func (a taskWriterAdapter) CreateTask(ctx context.Context, orgID uuid.UUID, inpu
 		return engine.CreateTaskOutput{}, err
 	}
 	return engine.CreateTaskOutput(output), nil
+}
+
+func (a taskReaderAdapter) GetLeadTasks(ctx context.Context, orgID uuid.UUID, input engine.GetLeadTasksInput) (engine.GetLeadTasksOutput, error) {
+	output, err := a.inner.GetLeadTasks(ctx, orgID, GetLeadTasksInput(input))
+	if err != nil {
+		return engine.GetLeadTasksOutput{}, err
+	}
+	result := engine.GetLeadTasksOutput{Count: output.Count}
+	if len(output.Tasks) > 0 {
+		result.Tasks = make([]engine.LeadTaskSummary, 0, len(output.Tasks))
+		for _, item := range output.Tasks {
+			result.Tasks = append(result.Tasks, engine.LeadTaskSummary(item))
+		}
+	}
+	return result, nil
+}
+
+func (a energyLabelReaderAdapter) GetEnergyLabel(ctx context.Context, orgID uuid.UUID, input engine.GetEnergyLabelInput) (engine.GetEnergyLabelOutput, error) {
+	output, err := a.inner.GetEnergyLabel(ctx, orgID, GetEnergyLabelInput(input))
+	if err != nil {
+		return engine.GetEnergyLabelOutput{}, err
+	}
+	result := engine.GetEnergyLabelOutput{Success: output.Success, Message: output.Message, Found: output.Found}
+	if output.Label != nil {
+		label := engine.EnergyLabelSummary(*output.Label)
+		result.Label = &label
+	}
+	return result, nil
+}
+
+func (a isdeCalculatorAdapter) GetISDE(ctx context.Context, orgID uuid.UUID, input engine.GetISDEInput) (engine.GetISDEOutput, error) {
+	convertedInput := GetISDEInput{
+		ExecutionYear:                   input.ExecutionYear,
+		PreviousSubsidiesWithin24Months: input.PreviousSubsidiesWithin24Months,
+		HasExistingWarmtenetConnection:  input.HasExistingWarmtenetConnection,
+		HasReceivedWarmtenetSubsidy:     input.HasReceivedWarmtenetSubsidy,
+	}
+	if len(input.Measures) > 0 {
+		convertedInput.Measures = make([]ISDERequestedMeasure, 0, len(input.Measures))
+		for _, measure := range input.Measures {
+			convertedInput.Measures = append(convertedInput.Measures, ISDERequestedMeasure{
+				MeasureID:                measure.MeasureID,
+				AreaM2:                   measure.AreaM2,
+				PerformanceValue:         measure.PerformanceValue,
+				FramePerformanceValue:    measure.FramePerformanceValue,
+				HasMKIBonus:              measure.HasMKIBonus,
+				FrameReplaced:            measure.FrameReplaced,
+				StackedWithPairedMeasure: measure.StackedWithPairedMeasure,
+			})
+		}
+	}
+	if len(input.Installations) > 0 {
+		convertedInput.Installations = make([]ISDERequestedInstallation, 0, len(input.Installations))
+		for _, installation := range input.Installations {
+			convertedInput.Installations = append(convertedInput.Installations, ISDERequestedInstallation{
+				Kind:                installation.Kind,
+				Meldcode:            installation.Meldcode,
+				HeatPumpType:        installation.HeatPumpType,
+				HeatPumpEnergyLabel: installation.HeatPumpEnergyLabel,
+				ThermalPowerKW:      installation.ThermalPowerKW,
+				IsAdditionalUnit:    installation.IsAdditionalUnit,
+				IsSplitSystem:       installation.IsSplitSystem,
+				RefrigerantChargeKg: installation.RefrigerantChargeKg,
+				RefrigerantGWP:      installation.RefrigerantGWP,
+			})
+		}
+	}
+
+	output, err := a.inner.GetISDE(ctx, orgID, convertedInput)
+	if err != nil {
+		return engine.GetISDEOutput{}, err
+	}
+	result := engine.GetISDEOutput{
+		TotalAmountCents:     output.TotalAmountCents,
+		IsDoubled:            output.IsDoubled,
+		EligibleMeasureCount: output.EligibleMeasureCount,
+		ValidationMessages:   output.ValidationMessages,
+		UnknownMeasureIDs:    output.UnknownMeasureIDs,
+		UnknownMeldcodes:     output.UnknownMeldcodes,
+	}
+	if len(output.InsulationBreakdown) > 0 {
+		result.InsulationBreakdown = make([]engine.ISDELineItem, 0, len(output.InsulationBreakdown))
+		for _, item := range output.InsulationBreakdown {
+			result.InsulationBreakdown = append(result.InsulationBreakdown, engine.ISDELineItem(item))
+		}
+	}
+	if len(output.GlassBreakdown) > 0 {
+		result.GlassBreakdown = make([]engine.ISDELineItem, 0, len(output.GlassBreakdown))
+		for _, item := range output.GlassBreakdown {
+			result.GlassBreakdown = append(result.GlassBreakdown, engine.ISDELineItem(item))
+		}
+	}
+	if len(output.Installations) > 0 {
+		result.Installations = make([]engine.ISDELineItem, 0, len(output.Installations))
+		for _, item := range output.Installations {
+			result.Installations = append(result.Installations, engine.ISDELineItem(item))
+		}
+	}
+	return result, nil
 }
 
 func (a currentInboundPhotoAttacherAdapter) AttachCurrentWhatsAppPhoto(ctx context.Context, orgID uuid.UUID, input engine.AttachCurrentWhatsAppPhotoInput, message engine.CurrentInboundMessage) (engine.AttachCurrentWhatsAppPhotoOutput, error) {

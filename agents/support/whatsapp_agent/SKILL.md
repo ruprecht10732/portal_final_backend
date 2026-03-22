@@ -13,11 +13,15 @@ metadata:
     - AttachCurrentWhatsAppPhoto
     - GetAvailableVisitSlots
     - GetNavigationLink
+    - GetEnergyLabel
+    - GetLeadTasks
+    - GetISDE
     - GetQuotes
     - DraftQuote
     - GenerateQuote
     - SendQuotePDF
     - GetAppointments
+    - CreateTask
     - UpdateLeadDetails
     - AskCustomerClarification
     - SaveNote

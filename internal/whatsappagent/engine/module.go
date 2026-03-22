@@ -94,6 +94,18 @@ type TaskWriter interface {
 	CreateTask(ctx context.Context, orgID uuid.UUID, input CreateTaskInput) (CreateTaskOutput, error)
 }
 
+type TaskReader interface {
+	GetLeadTasks(ctx context.Context, orgID uuid.UUID, input GetLeadTasksInput) (GetLeadTasksOutput, error)
+}
+
+type EnergyLabelReader interface {
+	GetEnergyLabel(ctx context.Context, orgID uuid.UUID, input GetEnergyLabelInput) (GetEnergyLabelOutput, error)
+}
+
+type ISDECalculator interface {
+	GetISDE(ctx context.Context, orgID uuid.UUID, input GetISDEInput) (GetISDEOutput, error)
+}
+
 type CurrentInboundMessage struct {
 	ExternalMessageID string
 	PhoneNumber       string
@@ -227,6 +239,9 @@ type ModuleDependencies struct {
 	CatalogSearchReader          CatalogSearchReader
 	LeadMutationWriter           LeadMutationWriter
 	TaskWriter                   TaskWriter
+	TaskReader                   TaskReader
+	EnergyLabelReader            EnergyLabelReader
+	ISDECalculator               ISDECalculator
 	QuoteWorkflowWriter          QuoteWorkflowWriter
 	CurrentInboundPhotoAttacher  CurrentInboundPhotoAttacher
 	Storage                      ObjectStorage
@@ -371,6 +386,9 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		catalogSearchReader:          deps.CatalogSearchReader,
 		leadMutationWriter:           deps.LeadMutationWriter,
 		taskWriter:                   deps.TaskWriter,
+		taskReader:                   deps.TaskReader,
+		energyLabelReader:            deps.EnergyLabelReader,
+		isdeCalculator:               deps.ISDECalculator,
 		quoteWorkflowWriter:          deps.QuoteWorkflowWriter,
 		currentInboundPhotoAttacher:  deps.CurrentInboundPhotoAttacher,
 		sender:                       sender,

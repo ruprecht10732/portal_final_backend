@@ -77,7 +77,7 @@ candidates AS (
 					SELECT 1 FROM RAC_quotes q
 					WHERE q.lead_service_id = s.id
 						AND q.organization_id = s.organization_id
-						AND q.status = 'sent'
+						AND q.status = 'Sent'
 				)
 				AND s.updated_at < NOW() - INTERVAL '14 days'
 				THEN 'no_quote_sent'
@@ -85,7 +85,7 @@ candidates AS (
 					SELECT 1 FROM RAC_quotes q
 					WHERE q.lead_service_id = s.id
 						AND q.organization_id = s.organization_id
-						AND q.status = 'draft'
+						AND q.status = 'Draft'
 						AND q.created_at < NOW() - INTERVAL '30 days'
 				)
 				THEN 'stale_draft'
@@ -103,11 +103,13 @@ candidates AS (
 		l.consumer_last_name,
 		l.consumer_phone,
 		l.consumer_email,
-		s.service_type
+		st.name AS service_type
 	FROM RAC_lead_services s
 	JOIN RAC_leads l ON l.id = s.lead_id
+	JOIN RAC_service_types st ON st.id = s.service_type_id AND st.organization_id = s.organization_id
 	LEFT JOIN last_activity la ON la.service_id = s.id
 	WHERE s.organization_id = $1
+		AND l.deleted_at IS NULL
 		AND s.pipeline_stage NOT IN ('Completed', 'Lost')
 )
 SELECT lead_id, service_id, organization_id, stale_reason,

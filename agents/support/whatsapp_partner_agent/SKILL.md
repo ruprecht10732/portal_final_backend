@@ -15,6 +15,8 @@ metadata:
     - UpdateAppointmentStatus
     - RescheduleVisit
     - CancelVisit
+    - SaveNote
+    - SearchProductMaterials
 ---
 
 # WhatsApp Partner Agent

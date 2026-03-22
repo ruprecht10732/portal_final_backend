@@ -225,17 +225,17 @@ type SaveNoteInput struct {
 }
 
 type CreateTaskInput struct {
-	Title          string  `json:"title"`
-	Description    string  `json:"description,omitempty"`
-	LeadID         string  `json:"lead_id,omitempty"`
-	LeadServiceID  string  `json:"lead_service_id,omitempty"`
-	AssignedUserID string  `json:"assigned_user_id,omitempty"`
-	DueAt          string  `json:"due_at,omitempty"`
-	ReminderAt     string  `json:"reminder_at,omitempty"`
-	RepeatDaily    *bool   `json:"repeat_daily,omitempty"`
-	SendEmail      *bool   `json:"send_email,omitempty"`
-	SendWhatsApp   *bool   `json:"send_whatsapp,omitempty"`
-	Priority       string  `json:"priority,omitempty"`
+	Title          string `json:"title"`
+	Description    string `json:"description,omitempty"`
+	LeadID         string `json:"lead_id,omitempty"`
+	LeadServiceID  string `json:"lead_service_id,omitempty"`
+	AssignedUserID string `json:"assigned_user_id,omitempty"`
+	DueAt          string `json:"due_at,omitempty"`
+	ReminderAt     string `json:"reminder_at,omitempty"`
+	RepeatDaily    *bool  `json:"repeat_daily,omitempty"`
+	SendEmail      *bool  `json:"send_email,omitempty"`
+	SendWhatsApp   *bool  `json:"send_whatsapp,omitempty"`
+	Priority       string `json:"priority,omitempty"`
 }
 
 type CreateTaskOutput struct {
@@ -244,6 +244,110 @@ type CreateTaskOutput struct {
 	TaskID         string   `json:"task_id,omitempty"`
 	AssignedUserID string   `json:"assigned_user_id,omitempty"`
 	MissingFields  []string `json:"missing_fields,omitempty"`
+}
+
+type GetEnergyLabelInput struct {
+	LeadID      string `json:"lead_id,omitempty"`
+	Postcode    string `json:"postcode,omitempty"`
+	HouseNumber string `json:"house_number,omitempty"`
+	HouseLetter string `json:"house_letter,omitempty"`
+	Addition    string `json:"addition,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+}
+
+type EnergyLabelSummary struct {
+	EnergyClass        string `json:"energy_class,omitempty"`
+	EnergyIndex        string `json:"energy_index,omitempty"`
+	RegistrationDate   string `json:"registration_date,omitempty"`
+	ValidUntil         string `json:"valid_until,omitempty"`
+	BuildYear          int    `json:"build_year,omitempty"`
+	BuildingType       string `json:"building_type,omitempty"`
+	BuildingSubType    string `json:"building_sub_type,omitempty"`
+	AddressPostcode    string `json:"address_postcode,omitempty"`
+	AddressHouseNo     int    `json:"address_house_number,omitempty"`
+	AddressHouseLetter string `json:"address_house_letter,omitempty"`
+	AddressAddition    string `json:"address_addition,omitempty"`
+}
+
+type GetEnergyLabelOutput struct {
+	Success bool                `json:"success"`
+	Message string              `json:"message"`
+	Found   bool                `json:"found"`
+	Label   *EnergyLabelSummary `json:"label,omitempty"`
+}
+
+type GetLeadTasksInput struct {
+	LeadID        string `json:"lead_id"`
+	LeadServiceID string `json:"lead_service_id,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+}
+
+type LeadTaskSummary struct {
+	TaskID         string `json:"task_id"`
+	LeadID         string `json:"lead_id,omitempty"`
+	LeadServiceID  string `json:"lead_service_id,omitempty"`
+	Title          string `json:"title"`
+	Description    string `json:"description,omitempty"`
+	Status         string `json:"status"`
+	Priority       string `json:"priority,omitempty"`
+	AssignedUserID string `json:"assigned_user_id,omitempty"`
+	DueAt          string `json:"due_at,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+}
+
+type GetLeadTasksOutput struct {
+	Tasks []LeadTaskSummary `json:"tasks"`
+	Count int               `json:"count"`
+}
+
+type GetISDEInput struct {
+	ExecutionYear                   *int                        `json:"execution_year,omitempty"`
+	PreviousSubsidiesWithin24Months bool                        `json:"previous_subsidies_within_24_months"`
+	HasExistingWarmtenetConnection  bool                        `json:"has_existing_warmtenet_connection"`
+	HasReceivedWarmtenetSubsidy     bool                        `json:"has_received_warmtenet_subsidy"`
+	Measures                        []ISDERequestedMeasure      `json:"measures,omitempty"`
+	Installations                   []ISDERequestedInstallation `json:"installations,omitempty"`
+}
+
+type ISDERequestedMeasure struct {
+	MeasureID                string   `json:"measure_id"`
+	AreaM2                   float64  `json:"area_m2"`
+	PerformanceValue         *float64 `json:"performance_value,omitempty"`
+	FramePerformanceValue    *float64 `json:"frame_performance_value,omitempty"`
+	HasMKIBonus              bool     `json:"has_mki_bonus"`
+	FrameReplaced            bool     `json:"frame_replaced"`
+	StackedWithPairedMeasure bool     `json:"stacked_with_paired_measure"`
+}
+
+type ISDERequestedInstallation struct {
+	Kind                string   `json:"kind,omitempty"`
+	Meldcode            string   `json:"meldcode,omitempty"`
+	HeatPumpType        string   `json:"heat_pump_type,omitempty"`
+	HeatPumpEnergyLabel string   `json:"heat_pump_energy_label,omitempty"`
+	ThermalPowerKW      *float64 `json:"thermal_power_kw,omitempty"`
+	IsAdditionalUnit    bool     `json:"is_additional_unit"`
+	IsSplitSystem       bool     `json:"is_split_system"`
+	RefrigerantChargeKg *float64 `json:"refrigerant_charge_kg,omitempty"`
+	RefrigerantGWP      *float64 `json:"refrigerant_gwp,omitempty"`
+}
+
+type ISDELineItem struct {
+	Description string  `json:"description"`
+	AreaM2      float64 `json:"area_m2,omitempty"`
+	AmountCents int64   `json:"amount_cents"`
+}
+
+type GetISDEOutput struct {
+	TotalAmountCents     int64          `json:"total_amount_cents"`
+	IsDoubled            bool           `json:"is_doubled"`
+	EligibleMeasureCount int            `json:"eligible_measure_count"`
+	InsulationBreakdown  []ISDELineItem `json:"insulation_breakdown"`
+	GlassBreakdown       []ISDELineItem `json:"glass_breakdown"`
+	Installations        []ISDELineItem `json:"installations"`
+	ValidationMessages   []string       `json:"validation_messages,omitempty"`
+	UnknownMeasureIDs    []string       `json:"unknown_measure_ids,omitempty"`
+	UnknownMeldcodes     []string       `json:"unknown_meldcodes,omitempty"`
 }
 
 type UpdateStatusInput struct {

@@ -12,12 +12,15 @@ import (
 )
 
 const (
-	errLeadMutationsNotConfigured  = "lead mutations not configured"
-	errTaskWriterNotConfigured     = "task writer is not configured"
-	errPhotoAttachNotConfigured    = "whatsapp photo attachment not configured"
-	errQuoteWorkflowNotConfigured  = "quote workflow not configured"
-	errVisitMutationsNotConfigured = "visit mutations not configured"
-	errPartnerJobsUnavailable      = "Partner-opdrachten zijn niet beschikbaar"
+	errLeadMutationsNotConfigured     = "lead mutations not configured"
+	errTaskWriterNotConfigured        = "task writer is not configured"
+	errTaskReaderNotConfigured        = "task reader is not configured"
+	errEnergyLabelReaderNotConfigured = "energy label reader is not configured"
+	errISDECalculatorNotConfigured    = "isde calculator is not configured"
+	errPhotoAttachNotConfigured       = "whatsapp photo attachment not configured"
+	errQuoteWorkflowNotConfigured     = "quote workflow not configured"
+	errVisitMutationsNotConfigured    = "visit mutations not configured"
+	errPartnerJobsUnavailable         = "Partner-opdrachten zijn niet beschikbaar"
 )
 
 type CreateLeadInput struct {

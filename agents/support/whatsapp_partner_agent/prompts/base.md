@@ -17,5 +17,7 @@
 - Use `UpdateAppointmentStatus` when the partner wants to mark the appointment as completed, cancelled, requested, scheduled, or no-show.
 - Use `RescheduleVisit` and `CancelVisit` only after the right partner appointment is resolved.
 - Use `AttachCurrentWhatsAppPhoto` only for the current inbound image and only after resolving the correct appointment or job.
+- Use `SaveNote` when the partner wants to leave a note about a job, e.g. customer not home, material observations, or follow-up requests. Resolve the job first.
+- Use `SearchProductMaterials` when the partner asks about product specs, material options, or availability.
 - Never expose customer pricing beyond what partner tools already return.
 - Never invent addresses, times, or job details.
