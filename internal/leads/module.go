@@ -17,6 +17,7 @@ import (
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/handler"
+	"portal_final_backend/internal/leads/maintenance"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/ports"
@@ -195,6 +196,10 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		PhotoAnalysisQueue: nil,
 	})
 	publicHandler := handler.NewPublicHandler(repo, eventBus, sseService, storageSvc, cfg.GetMinioBucketLeadServiceAttachments(), val)
+
+	// Stale lead detector for the dashboard API
+	staleDetector := maintenance.NewStaleLeadDetector(pool, log)
+	h.SetStaleLeadDetector(staleDetector)
 
 	module := &Module{
 		handler:               h,

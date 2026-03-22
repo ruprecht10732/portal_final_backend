@@ -10,6 +10,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/domain"
+	"portal_final_backend/internal/leads/maintenance"
 	"portal_final_backend/internal/leads/management"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
@@ -35,6 +36,7 @@ type Handler struct {
 	val             *validator.Validator
 	callLogQueue    scheduler.CallLogScheduler
 	gatekeeperQueue scheduler.GatekeeperScheduler
+	staleDetector   *maintenance.StaleLeadDetector
 }
 
 // HandlerDeps bundles dependencies for Handler construction.
@@ -94,11 +96,16 @@ func (h *Handler) SetGatekeeperScheduler(queue scheduler.GatekeeperScheduler) {
 	h.gatekeeperQueue = queue
 }
 
+func (h *Handler) SetStaleLeadDetector(d *maintenance.StaleLeadDetector) {
+	h.staleDetector = d
+}
+
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("", h.List)
 	rg.POST("", h.Create)
 	rg.GET("/metrics", h.GetMetrics)
 	rg.GET("/heatmap", h.GetHeatmap)
+	rg.GET("/stale", h.ListStaleLeads)
 	rg.GET("/action-items", h.GetActionItems)
 	rg.GET("/activity-feed", h.GetActivityFeed)
 	rg.GET("/activity-feed/members", h.ListOrgMembers)
@@ -243,6 +250,57 @@ func (h *Handler) GetHeatmap(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+func (h *Handler) ListStaleLeads(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	if h.staleDetector == nil {
+		httpkit.Error(c, http.StatusServiceUnavailable, "stale detection not configured", nil)
+		return
+	}
+
+	limit := 20
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+
+	items, err := h.staleDetector.ListStaleLeadServices(c.Request.Context(), tenantID, limit)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	resp := make([]transport.StaleLeadItemResponse, 0, len(items))
+	for _, item := range items {
+		r := transport.StaleLeadItemResponse{
+			LeadID:            item.LeadID.String(),
+			ServiceID:         item.ServiceID.String(),
+			StaleReason:       string(item.StaleReason),
+			PipelineStage:     item.PipelineStage,
+			Status:            item.Status,
+			ConsumerFirstName: item.ConsumerFirstName,
+			ConsumerLastName:  item.ConsumerLastName,
+			ConsumerPhone:     item.ConsumerPhone,
+			ConsumerEmail:     item.ConsumerEmail,
+			ServiceType:       item.ServiceType,
+		}
+		if item.LastActivityAt != nil {
+			v := item.LastActivityAt.UTC().Format(time.RFC3339)
+			r.LastActivityAt = &v
+		}
+		resp = append(resp, r)
+	}
+
+	httpkit.OK(c, transport.StaleLeadsResponse{Items: resp})
 }
 
 func (h *Handler) GetActionItems(c *gin.Context) {

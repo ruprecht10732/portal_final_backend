@@ -34,6 +34,7 @@ type OrganizationAISettings struct {
 	PhotoAnalysisLensCorrectionServiceTypes           []string
 	PhotoAnalysisPerspectiveNormalizationEnabled      bool
 	PhotoAnalysisPerspectiveNormalizationServiceTypes []string
+	DailyDigestEnabled                                bool
 }
 
 // DefaultOrganizationAISettings must match the identity repository defaults.
@@ -61,6 +62,7 @@ func DefaultOrganizationAISettings() OrganizationAISettings {
 		PhotoAnalysisLensCorrectionServiceTypes:           []string{},
 		PhotoAnalysisPerspectiveNormalizationEnabled:      false,
 		PhotoAnalysisPerspectiveNormalizationServiceTypes: []string{},
+		DailyDigestEnabled:                                true,
 	}
 }
 

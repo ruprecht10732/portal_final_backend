@@ -153,6 +153,9 @@ func (s *testSender) SendCustomEmail(_ context.Context, _ string, _ string, _ st
 	s.lastCustomAttachments = append([]email.Attachment(nil), attachments...)
 	return nil
 }
+func (s *testSender) SendDailyDigestEmail(_ context.Context, _ string, _ email.DailyDigestInput) error {
+	return nil
+}
 
 type testLeadWhatsAppReader struct {
 	optedIn bool

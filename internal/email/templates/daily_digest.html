@@ -1,0 +1,158 @@
+{{define "content"}}
+<p style="font-size: 16px; margin-bottom: 24px;">
+  Hier is uw dagelijks overzicht van <strong>{{.OrganizationName}}</strong> — {{.Date}}.
+</p>
+
+<!-- AI Activity Summary -->
+<div style="border: 4px solid #000000; margin-bottom: 24px; background-color: #ffffff;">
+  <div style="background-color: #00ffff; border-bottom: 4px solid #000000; padding: 12px 15px;">
+    <span style="font-family: 'Arial Black', sans-serif; font-size: 14px; font-weight: 900; text-transform: uppercase;">
+      AI Activiteit (24u)
+    </span>
+  </div>
+  <table border="0" cellpadding="0" cellspacing="0" width="100%">
+    {{if gt .AIActivity.GatekeeperRuns 0}}
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-family: monospace; font-size: 13px;">
+        <span style="background-color: #000; color: #fff; padding: 2px 6px; font-size: 11px; text-transform: uppercase;">Gatekeeper</span>
+      </td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold; font-size: 14px;">
+        {{.AIActivity.GatekeeperRuns}} leads beoordeeld
+      </td>
+    </tr>
+    {{end}}
+    {{if gt .AIActivity.EstimatorRuns 0}}
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-family: monospace; font-size: 13px;">
+        <span style="background-color: #000; color: #fff; padding: 2px 6px; font-size: 11px; text-transform: uppercase;">Estimator</span>
+      </td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold; font-size: 14px;">
+        {{.AIActivity.EstimatorRuns}} schattingen gemaakt
+      </td>
+    </tr>
+    {{end}}
+    {{if gt .AIActivity.DispatcherRuns 0}}
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-family: monospace; font-size: 13px;">
+        <span style="background-color: #000; color: #fff; padding: 2px 6px; font-size: 11px; text-transform: uppercase;">Dispatcher</span>
+      </td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold; font-size: 14px;">
+        {{.AIActivity.DispatcherRuns}} leads toegewezen
+      </td>
+    </tr>
+    {{end}}
+    {{if gt .AIActivity.QuotesGenerated 0}}
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-family: monospace; font-size: 13px;">
+        <span style="background-color: #000; color: #fff; padding: 2px 6px; font-size: 11px; text-transform: uppercase;">Offertes</span>
+      </td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold; font-size: 14px;">
+        {{.AIActivity.QuotesGenerated}} offertes gegenereerd
+      </td>
+    </tr>
+    {{end}}
+    {{if gt .AIActivity.PhotosAnalyzed 0}}
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-family: monospace; font-size: 13px;">
+        <span style="background-color: #000; color: #fff; padding: 2px 6px; font-size: 11px; text-transform: uppercase;">Foto's</span>
+      </td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold; font-size: 14px;">
+        {{.AIActivity.PhotosAnalyzed}} foto's geanalyseerd
+      </td>
+    </tr>
+    {{end}}
+    {{if gt .AIActivity.OffersProcessed 0}}
+    <tr>
+      <td style="padding: 10px 15px; font-family: monospace; font-size: 13px;">
+        <span style="background-color: #000; color: #fff; padding: 2px 6px; font-size: 11px; text-transform: uppercase;">Partners</span>
+      </td>
+      <td style="padding: 10px 15px; text-align: right; font-weight: bold; font-size: 14px;">
+        {{.AIActivity.OffersProcessed}} aanbiedingen verwerkt
+      </td>
+    </tr>
+    {{end}}
+    {{if and (eq .AIActivity.GatekeeperRuns 0) (eq .AIActivity.EstimatorRuns 0) (eq .AIActivity.DispatcherRuns 0) (eq .AIActivity.QuotesGenerated 0) (eq .AIActivity.PhotosAnalyzed 0) (eq .AIActivity.OffersProcessed 0)}}
+    <tr>
+      <td colspan="2" style="padding: 15px; text-align: center; color: #888; font-size: 13px;">
+        Geen AI activiteit in de afgelopen 24 uur.
+      </td>
+    </tr>
+    {{end}}
+  </table>
+</div>
+
+<!-- Stale Leads -->
+{{if gt .StaleLeadCount 0}}
+<div style="border: 4px solid #000000; margin-bottom: 24px; background-color: #ffffff;">
+  <div style="background-color: #ff00ff; border-bottom: 4px solid #000000; padding: 12px 15px;">
+    <span style="font-family: 'Arial Black', sans-serif; font-size: 14px; font-weight: 900; text-transform: uppercase; color: #ffffff;">
+      ⚠ {{.StaleLeadCount}} leads hebben aandacht nodig
+    </span>
+  </div>
+  <table border="0" cellpadding="0" cellspacing="0" width="100%">
+    {{range .StaleLeads}}
+    <tr>
+      <td style="padding: 12px 15px; border-bottom: 2px solid #eee;">
+        <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px;">
+          {{.ConsumerFirstName}} {{.ConsumerLastName}}
+        </div>
+        <div style="font-family: monospace; font-size: 11px; color: #666; margin-bottom: 4px;">
+          {{.ServiceType}} · {{.PipelineStage}}
+        </div>
+        <div>
+          {{if eq (printf "%s" .StaleReason) "no_activity"}}
+            <span style="background-color: #FEF3C7; color: #92400E; padding: 2px 8px; font-size: 11px; font-weight: bold; text-transform: uppercase;">Geen activiteit 7+ dagen</span>
+          {{else if eq (printf "%s" .StaleReason) "stuck_nurturing"}}
+            <span style="background-color: #FEE2E2; color: #991B1B; padding: 2px 8px; font-size: 11px; font-weight: bold; text-transform: uppercase;">Vast in nurturing</span>
+          {{else if eq (printf "%s" .StaleReason) "no_quote_sent"}}
+            <span style="background-color: #DBEAFE; color: #1E40AF; padding: 2px 8px; font-size: 11px; font-weight: bold; text-transform: uppercase;">Geen offerte verstuurd 14+ dagen</span>
+          {{else if eq (printf "%s" .StaleReason) "stale_draft"}}
+            <span style="background-color: #E0E7FF; color: #3730A3; padding: 2px 8px; font-size: 11px; font-weight: bold; text-transform: uppercase;">Concept offerte 30+ dagen</span>
+          {{else if eq (printf "%s" .StaleReason) "needs_rescheduling"}}
+            <span style="background-color: #FCE7F3; color: #9D174D; padding: 2px 8px; font-size: 11px; font-weight: bold; text-transform: uppercase;">Moet opnieuw ingepland worden</span>
+          {{end}}
+        </div>
+      </td>
+    </tr>
+    {{end}}
+  </table>
+</div>
+{{end}}
+
+<!-- Pipeline Snapshot -->
+<div style="border: 4px solid #000000; margin-bottom: 24px; background-color: #ffffff;">
+  <div style="background-color: #000000; padding: 12px 15px;">
+    <span style="font-family: 'Arial Black', sans-serif; font-size: 14px; font-weight: 900; text-transform: uppercase; color: #ffffff;">
+      Pipeline overzicht
+    </span>
+  </div>
+  <table border="0" cellpadding="0" cellspacing="0" width="100%">
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-size: 13px;">Triage</td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold;">{{.PipelineSnapshot.Triage}}</td>
+    </tr>
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-size: 13px;">Nurturing</td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold;">{{.PipelineSnapshot.Nurturing}}</td>
+    </tr>
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-size: 13px;">Estimation</td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold;">{{.PipelineSnapshot.Estimation}}</td>
+    </tr>
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-size: 13px;">Proposal</td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold;">{{.PipelineSnapshot.Proposal}}</td>
+    </tr>
+    <tr>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; font-size: 13px;">Fulfillment</td>
+      <td style="padding: 10px 15px; border-bottom: 2px solid #eee; text-align: right; font-weight: bold;">{{.PipelineSnapshot.Fulfillment}}</td>
+    </tr>
+    {{if gt .PipelineSnapshot.ManualIntervention 0}}
+    <tr>
+      <td style="padding: 10px 15px; font-size: 13px;">Handmatige interventie</td>
+      <td style="padding: 10px 15px; text-align: right; font-weight: bold; color: #DC2626;">{{.PipelineSnapshot.ManualIntervention}}</td>
+    </tr>
+    {{end}}
+  </table>
+</div>
+{{end}}

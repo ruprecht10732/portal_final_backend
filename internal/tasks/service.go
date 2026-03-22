@@ -17,11 +17,11 @@ import (
 )
 
 type Service struct {
-	repo              *Repository
+	repo               *Repository
 	notificationOutbox *notificationoutbox.Repository
-	reminderScheduler scheduler.TaskReminderScheduler
+	reminderScheduler  scheduler.TaskReminderScheduler
 	timeline           leadrepo.TimelineEventStore
-	log               *logger.Logger
+	log                *logger.Logger
 }
 
 func NewService(repo *Repository, reminderScheduler scheduler.TaskReminderScheduler, timeline leadrepo.TimelineEventStore, log *logger.Logger) *Service {
@@ -136,6 +136,30 @@ func (s *Service) Cancel(ctx context.Context, tenantID, taskID uuid.UUID) (TaskR
 	}
 	s.writeTimelineBestEffort(ctx, task, leadrepo.EventTitleLeadDetailsUpdated, "Taak geannuleerd")
 	return task, nil
+}
+
+func (s *Service) Reopen(ctx context.Context, tenantID, taskID uuid.UUID) (TaskRecord, error) {
+	if _, err := s.repo.pool.Exec(ctx, `UPDATE RAC_tasks SET status = $3, completed_at = NULL, cancelled_at = NULL, updated_at = now() WHERE tenant_id = $1 AND id = $2`, tenantID, taskID, StatusOpen); err != nil {
+		return TaskRecord{}, err
+	}
+	task, err := s.repo.getTask(ctx, tenantID, taskID)
+	if err != nil {
+		return TaskRecord{}, err
+	}
+	s.writeTimelineBestEffort(ctx, task, leadrepo.EventTitleLeadDetailsUpdated, "Taak heropend")
+	return task, nil
+}
+
+func (s *Service) Delete(ctx context.Context, tenantID, taskID uuid.UUID) error {
+	task, err := s.repo.getTask(ctx, tenantID, taskID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.repo.pool.Exec(ctx, `DELETE FROM RAC_tasks WHERE tenant_id = $1 AND id = $2`, tenantID, taskID); err != nil {
+		return err
+	}
+	s.writeTimelineBestEffort(ctx, task, leadrepo.EventTitleLeadDetailsUpdated, "Taak verwijderd")
+	return nil
 }
 
 func (s *Service) ProcessTaskReminder(ctx context.Context, reminderID uuid.UUID, scheduledFor time.Time) error {
@@ -433,7 +457,7 @@ func (s *Service) appendAssignedUserMutation(ctx context.Context, tx pgx.Tx, ten
 	*argIndex++
 	return nil
 }
- 
+
 func (s *Service) applyTaskFieldUpdates(ctx context.Context, tx pgx.Tx, setClauses []string, args []any) error {
 	if len(setClauses) == 0 {
 		return nil

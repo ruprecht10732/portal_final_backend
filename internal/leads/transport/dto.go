@@ -46,6 +46,26 @@ const (
 	PipelineStageLost               PipelineStage = "Lost"
 )
 
+// StaleLeadItemResponse is an API representation of a stale lead service.
+type StaleLeadItemResponse struct {
+	LeadID            string  `json:"leadId"`
+	ServiceID         string  `json:"serviceId"`
+	StaleReason       string  `json:"staleReason"`
+	PipelineStage     string  `json:"pipelineStage"`
+	Status            string  `json:"status"`
+	LastActivityAt    *string `json:"lastActivityAt,omitempty"`
+	ConsumerFirstName string  `json:"consumerFirstName"`
+	ConsumerLastName  string  `json:"consumerLastName"`
+	ConsumerPhone     string  `json:"consumerPhone"`
+	ConsumerEmail     *string `json:"consumerEmail,omitempty"`
+	ServiceType       string  `json:"serviceType"`
+}
+
+// StaleLeadsResponse wraps the list of stale lead services.
+type StaleLeadsResponse struct {
+	Items []StaleLeadItemResponse `json:"items"`
+}
+
 // Request DTOs
 type CreateLeadRequest struct {
 	FirstName       string       `json:"firstName" validate:"required,min=1,max=100"`

@@ -33,3 +33,45 @@ func TestDetectGroundingIssueStillRequiresAppointmentToolsForAppointmentDates(t 
 		t.Fatalf("expected unsupported appointment date, got %#v", decision.UnsupportedFacts)
 	}
 }
+
+func TestDetectGroundingIssueAllowsQuoteListWithLongNumbersContainingZero(t *testing.T) {
+	t.Parallel()
+
+	// Reproduces the production bug: quote numbers like OFF-2026-0047 contain
+	// "026-0047 -" which the phone regex used to match as a phone number.
+	// The grounding checker then flagged "lead_details_without_lead_tool"
+	// even though the data came from GetQuotes.
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0047","consumer_name":"Klant A","status":"concept"},{"quote_number":"OFF-2026-0045","consumer_name":"Klant B","status":"sent"},{"quote_number":"OFF-2026-0044","consumer_name":"Klant C","status":"concept"},{"quote_number":"OFF-2026-0042","consumer_name":"Klant D","status":"accepted"},{"quote_number":"OFF-2026-0019","consumer_name":"Klant E","status":"sent"}],"count":5}`,
+		}},
+	}
+
+	reply := "Hoi! Ik zie de volgende offertes:\n- OFF-2026-0047 - Klant A\n- OFF-2026-0045 - Klant B\n- OFF-2026-0044 - Klant C\n- OFF-2026-0042 - Klant D\n- OFF-2026-0019 - Klant E"
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected quote listing to pass grounding, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+	}
+}
+
+func TestExtractLeadFactsIgnoresPhoneMatchesEmbeddedInQuoteNumbers(t *testing.T) {
+	t.Parallel()
+
+	reply := "OFF-2026-0047 - Klant A\nOFF-2026-0019 - Klant B"
+	facts := extractLeadFacts(reply)
+	for _, f := range facts {
+		t.Errorf("unexpected lead fact extracted from quote listing: %q", f)
+	}
+}
+
+func TestExtractLeadFactsStillMatchesRealPhoneNumbers(t *testing.T) {
+	t.Parallel()
+
+	reply := "Bel mij op 0612345678 of +31687654321."
+	facts := extractLeadFacts(reply)
+	if len(facts) != 2 {
+		t.Fatalf("expected 2 phone facts, got %d: %v", len(facts), facts)
+	}
+}

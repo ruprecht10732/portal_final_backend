@@ -33,6 +33,36 @@ type Sender interface {
 	SendPartnerOfferAcceptedConfirmationEmail(ctx context.Context, toEmail, partnerName string, attachments ...Attachment) error
 	SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, partnerName, offerID, reason string) error
 	SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error
+	SendDailyDigestEmail(ctx context.Context, toEmail string, data DailyDigestInput) error
+}
+
+// DailyDigestStaleLeadInput is a single stale lead for the digest email.
+type DailyDigestStaleLeadInput struct {
+	ConsumerFirstName string
+	ConsumerLastName  string
+	ServiceType       string
+	PipelineStage     string
+	StaleReason       string
+}
+
+// DailyDigestInput holds the data needed to render and send a daily digest email.
+type DailyDigestInput struct {
+	OrganizationName           string
+	Date                       string
+	GatekeeperRuns             int
+	EstimatorRuns              int
+	DispatcherRuns             int
+	QuotesGenerated            int
+	PhotosAnalyzed             int
+	OffersProcessed            int
+	StaleLeads                 []DailyDigestStaleLeadInput
+	PipelineTriage             int
+	PipelineNurturing          int
+	PipelineEstimation         int
+	PipelineProposal           int
+	PipelineFulfillment        int
+	PipelineManualIntervention int
+	DashboardURL               string
 }
 
 type NoopSender struct{}
@@ -82,6 +112,10 @@ func (NoopSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail, pa
 }
 
 func (NoopSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error {
+	return nil
+}
+
+func (NoopSender) SendDailyDigestEmail(ctx context.Context, toEmail string, data DailyDigestInput) error {
 	return nil
 }
 
@@ -316,6 +350,15 @@ func (b *BrevoSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail
 
 func (b *BrevoSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error {
 	return b.sendWithAttachments(ctx, toEmail, subject, htmlContent, attachments...)
+}
+
+func (b *BrevoSender) SendDailyDigestEmail(ctx context.Context, toEmail string, data DailyDigestInput) error {
+	content, err := renderDailyDigestEmail(data)
+	if err != nil {
+		return err
+	}
+	subject := "Dagelijks overzicht — " + data.OrganizationName
+	return b.send(ctx, toEmail, subject, content)
 }
 
 func (b *BrevoSender) send(ctx context.Context, toEmail, subject, htmlContent string) error {

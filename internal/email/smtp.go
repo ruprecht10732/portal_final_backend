@@ -259,3 +259,12 @@ func (s *SMTPSender) SendPartnerOfferRejectedEmail(ctx context.Context, toEmail,
 func (s *SMTPSender) SendCustomEmail(ctx context.Context, toEmail, subject, htmlContent string, attachments ...Attachment) error {
 	return s.send(ctx, toEmail, subject, htmlContent, attachments...)
 }
+
+func (s *SMTPSender) SendDailyDigestEmail(ctx context.Context, toEmail string, data DailyDigestInput) error {
+	content, err := renderDailyDigestEmail(data)
+	if err != nil {
+		return err
+	}
+	subject := "Dagelijks overzicht — " + data.OrganizationName
+	return s.send(ctx, toEmail, subject, content)
+}

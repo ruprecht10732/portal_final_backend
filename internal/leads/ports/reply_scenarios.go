@@ -21,6 +21,7 @@ const (
 	ReplySuggestionScenarioAcceptedQuoteNext   ReplySuggestionScenario = "accepted_quote_next_steps"
 	ReplySuggestionScenarioDelayUpdate         ReplySuggestionScenario = "delay_update"
 	ReplySuggestionScenarioComplaintRecovery   ReplySuggestionScenario = "complaint_recovery"
+	ReplySuggestionScenarioStaleFollowUp       ReplySuggestionScenario = "stale_follow_up"
 )
 
 func NormalizeReplySuggestionScenario(value string) ReplySuggestionScenario {
@@ -36,7 +37,8 @@ func NormalizeReplySuggestionScenario(value string) ReplySuggestionScenario {
 		ReplySuggestionScenarioPostVisitFollowUp,
 		ReplySuggestionScenarioAcceptedQuoteNext,
 		ReplySuggestionScenarioDelayUpdate,
-		ReplySuggestionScenarioComplaintRecovery:
+		ReplySuggestionScenarioComplaintRecovery,
+		ReplySuggestionScenarioStaleFollowUp:
 		return ReplySuggestionScenario(value)
 	default:
 		return ReplySuggestionScenarioGeneric

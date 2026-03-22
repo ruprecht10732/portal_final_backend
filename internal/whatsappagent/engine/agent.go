@@ -1003,7 +1003,7 @@ func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) ground
 			return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
-	leadTools := []string{"SearchLeads", "GetLeadDetails", "CreateLead", "UpdateLeadDetails", "GetNavigationLink", "GetMyJobs", "GetPartnerJobDetails"}
+	leadTools := []string{"SearchLeads", "GetLeadDetails", "CreateLead", "UpdateLeadDetails", "GetNavigationLink", "GetMyJobs", "GetPartnerJobDetails", "GetQuotes"}
 	if leadFacts := extractLeadFacts(reply); len(leadFacts) > 0 {
 		if !evidence.hasToolResponse(leadTools...) {
 			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: leadFacts}
@@ -1139,7 +1139,12 @@ func hasAppointmentContext(reply string) bool {
 func extractLeadFacts(reply string) []string {
 	facts := make([]string, 0, 4)
 	facts = append(facts, reEmail.FindAllString(reply, -1)...)
-	facts = append(facts, rePhone.FindAllString(reply, -1)...)
+	for _, loc := range rePhone.FindAllStringIndex(reply, -1) {
+		if loc[0] > 0 && reply[loc[0]-1] >= '0' && reply[loc[0]-1] <= '9' {
+			continue // skip: "0" is part of a larger number (e.g. quote number OFF-2026-0047)
+		}
+		facts = append(facts, strings.TrimSpace(reply[loc[0]:loc[1]]))
+	}
 	cleanReply := strings.ReplaceAll(reply, "*", "")
 	for _, match := range reAddressLine.FindAllStringSubmatch(cleanReply, -1) {
 		if len(match) < 2 {
@@ -1208,7 +1213,34 @@ func leadFactVariants(fact string) []string {
 		}, trimmed)
 		variants = append(variants, digitsOnly)
 	}
+	// Add Dutch↔English status translations so the grounding checker accepts
+	// the LLM translating tool response statuses (e.g. "Draft" → "Concept").
+	if translations, ok := statusTranslations[strings.ToLower(trimmed)]; ok {
+		variants = append(variants, translations...)
+	}
 	return uniqueStrings(variants)
+}
+
+// statusTranslations maps Dutch status labels used in LLM replies to their
+// English counterparts in tool response payloads, and vice versa.
+var statusTranslations = map[string][]string{
+	"concept":      {"Draft", "draft"},
+	"draft":        {"Concept", "concept"},
+	"verstuurd":    {"Sent", "sent"},
+	"sent":         {"Verstuurd", "verstuurd"},
+	"openstaand":   {"Sent", "sent", "Pending", "pending"},
+	"pending":      {"Openstaand", "openstaand"},
+	"geaccepteerd": {"Accepted", "accepted"},
+	"accepted":     {"Geaccepteerd", "geaccepteerd", "Akkoord", "akkoord"},
+	"akkoord":      {"Accepted", "accepted"},
+	"afgewezen":    {"Rejected", "rejected"},
+	"rejected":     {"Afgewezen", "afgewezen"},
+	"verlopen":     {"Expired", "expired"},
+	"expired":      {"Verlopen", "verlopen"},
+	"nieuw":        {"New", "new"},
+	"new":          {"Nieuw", "nieuw"},
+	"in behandeling": {"In_Progress", "in_progress"},
+	"in_progress":    {"In behandeling", "in behandeling"},
 }
 
 func looksLikeQuoteNumber(value string) bool {

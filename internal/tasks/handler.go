@@ -34,6 +34,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/assign", h.Assign)
 	rg.POST("/:id/complete", h.Complete)
 	rg.POST("/:id/cancel", h.Cancel)
+	rg.POST("/:id/reopen", h.Reopen)
+	rg.DELETE("/:id", h.Delete)
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -182,6 +184,33 @@ func (h *Handler) Cancel(c *gin.Context) {
 	h.handleStatusMutation(c, func(ctx *gin.Context, tenantID, taskID uuid.UUID) (TaskRecord, error) {
 		return h.svc.Cancel(ctx.Request.Context(), tenantID, taskID)
 	})
+}
+
+func (h *Handler) Reopen(c *gin.Context) {
+	h.handleStatusMutation(c, func(ctx *gin.Context, tenantID, taskID uuid.UUID) (TaskRecord, error) {
+		return h.svc.Reopen(ctx.Request.Context(), tenantID, taskID)
+	})
+}
+
+func (h *Handler) Delete(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	if identity.TenantID() == nil {
+		httpkit.Error(c, http.StatusForbidden, errOrganizationRequired, nil)
+		return
+	}
+	taskID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, errInvalidRequest, errInvalidTaskID)
+		return
+	}
+	if err := h.svc.Delete(c.Request.Context(), *identity.TenantID(), taskID); err != nil {
+		httpkit.HandleError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *Handler) handleStatusMutation(c *gin.Context, action func(*gin.Context, uuid.UUID, uuid.UUID) (TaskRecord, error)) {

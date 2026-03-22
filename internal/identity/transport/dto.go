@@ -124,6 +124,7 @@ type OrganizationSettingsResponse struct {
 	AppointmentRelatedReplyScenario                   string   `json:"appointmentRelatedReplyScenario"`
 	WhatsAppPresence                                  string   `json:"whatsAppPresence"`
 	WhatsAppWelcomeDelayMinutes                       int      `json:"whatsAppWelcomeDelayMinutes"`
+	DailyDigestEnabled                                bool     `json:"dailyDigestEnabled"`
 	SMTPConfigured                                    bool     `json:"smtpConfigured"`
 }
 
@@ -151,13 +152,14 @@ type UpdateOrganizationSettingsRequest struct {
 	PhotoAnalysisPerspectiveNormalizationEnabled      *bool     `json:"photoAnalysisPerspectiveNormalizationEnabled"`
 	PhotoAnalysisPerspectiveNormalizationServiceTypes *[]string `json:"photoAnalysisPerspectiveNormalizationServiceTypes"`
 	WhatsAppToneOfVoice                               *string   `json:"whatsAppToneOfVoice" validate:"omitempty,min=3,max=255"`
-	WhatsAppDefaultReplyScenario                      *string   `json:"whatsAppDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
-	EmailDefaultReplyScenario                         *string   `json:"emailDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
-	QuoteRelatedReplyScenario                         *string   `json:"quoteRelatedReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
-	AppointmentRelatedReplyScenario                   *string   `json:"appointmentRelatedReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery"`
+	WhatsAppDefaultReplyScenario                      *string   `json:"whatsAppDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery stale_follow_up"`
+	EmailDefaultReplyScenario                         *string   `json:"emailDefaultReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery stale_follow_up"`
+	QuoteRelatedReplyScenario                         *string   `json:"quoteRelatedReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery stale_follow_up"`
+	AppointmentRelatedReplyScenario                   *string   `json:"appointmentRelatedReplyScenario" validate:"omitempty,oneof=generic follow_up appointment_reminder appointment_confirmation reschedule_request quote_reminder quote_expiry missing_information photos_or_documents post_visit_follow_up accepted_quote_next_steps delay_update complaint_recovery stale_follow_up"`
 	// 0 = send immediately, otherwise delay before sending the automated WhatsApp welcome.
 	WhatsAppWelcomeDelayMinutes *int    `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
 	WhatsAppPresence            *string `json:"whatsAppPresence" validate:"omitempty,oneof=available unavailable"`
+	DailyDigestEnabled          *bool   `json:"dailyDigestEnabled"`
 }
 
 type ReplyScenarioAnalyticsItemResponse struct {

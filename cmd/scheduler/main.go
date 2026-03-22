@@ -268,6 +268,12 @@ func main() {
 	gapAnalyzer := maintenance.NewCatalogGapAnalyzer(leadrepo.New(pool), catalogModule.Repository(), log)
 	go runCatalogGapAnalyzerLoop(ctx, pool, gapAnalyzer, gapInterval, maxDrafts, log)
 
+	// Morning daily digest: sends a summary email to admin users each morning.
+	digestHour := getPositiveIntEnv("DAILY_DIGEST_HOUR", 7)
+	staleDetector := maintenance.NewStaleLeadDetector(pool, log)
+	digestService := maintenance.NewDailyDigestService(pool, staleDetector, log)
+	go runDailyDigestLoop(ctx, pool, digestService, sender, digestHour, cfg, log)
+
 	worker, err := scheduler.NewWorker(cfg, pool, eventBus, log)
 	if err != nil {
 		log.Error("failed to initialize scheduler worker", "error", err)
@@ -546,4 +552,187 @@ func wireSchedulerSMTPEncryptionKey(cfg *config.Config, log *logger.Logger, iden
 	identitySvc.SetSMTPEncryptionKey(key)
 	notificationMod.SetSMTPEncryptionKey(key)
 	log.Info("scheduler smtp encryption key configured")
+}
+
+type digestOrg struct {
+	OrganizationID uuid.UUID
+	Name           string
+	DigestEnabled  bool
+}
+
+type digestAdminUser struct {
+	Email string
+}
+
+func runDailyDigestLoop(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	digestService *maintenance.DailyDigestService,
+	sender email.Sender,
+	targetHour int,
+	cfg *config.Config,
+	log *logger.Logger,
+) {
+	loc, _ := time.LoadLocation("Europe/Amsterdam")
+
+	// Check every 15 minutes if it's time to send.
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+
+	var lastSentDate string
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now().In(loc)
+			todayStr := now.Format("2006-01-02")
+			if now.Hour() == targetHour && lastSentDate != todayStr {
+				lastSentDate = todayStr
+				runDailyDigestOnce(ctx, pool, digestService, sender, cfg, log)
+			}
+		}
+	}
+}
+
+func runDailyDigestOnce(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	digestService *maintenance.DailyDigestService,
+	sender email.Sender,
+	cfg *config.Config,
+	log *logger.Logger,
+) {
+	orgs, err := listDigestEnabledOrganizations(ctx, pool)
+	if err != nil {
+		log.Warn("daily digest: failed to list organizations", "error", err)
+		return
+	}
+
+	dashboardURL := cfg.GetAppBaseURL() + "/dashboard"
+
+	for _, org := range orgs {
+		if ctx.Err() != nil {
+			return
+		}
+		sendDigestForOrg(ctx, pool, digestService, sender, org, dashboardURL, log)
+	}
+}
+
+func sendDigestForOrg(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	digestService *maintenance.DailyDigestService,
+	sender email.Sender,
+	org digestOrg,
+	dashboardURL string,
+	log *logger.Logger,
+) {
+	if !org.DigestEnabled {
+		return
+	}
+
+	digest, err := digestService.GenerateDigest(ctx, org.OrganizationID, org.Name, dashboardURL)
+	if err != nil {
+		log.Warn("daily digest: generation failed", "orgId", org.OrganizationID, "error", err)
+		return
+	}
+
+	admins, err := listOrganizationAdmins(ctx, pool, org.OrganizationID)
+	if err != nil {
+		log.Warn("daily digest: failed to list admins", "orgId", org.OrganizationID, "error", err)
+		return
+	}
+
+	staleLeadInputs := make([]email.DailyDigestStaleLeadInput, len(digest.StaleLeads))
+	for i, sl := range digest.StaleLeads {
+		staleLeadInputs[i] = email.DailyDigestStaleLeadInput{
+			ConsumerFirstName: sl.ConsumerFirstName,
+			ConsumerLastName:  sl.ConsumerLastName,
+			ServiceType:       sl.ServiceType,
+			PipelineStage:     sl.PipelineStage,
+			StaleReason:       string(sl.StaleReason),
+		}
+	}
+
+	input := email.DailyDigestInput{
+		OrganizationName:           digest.OrganizationName,
+		Date:                       digest.Date,
+		GatekeeperRuns:             digest.AIActivity.GatekeeperRuns,
+		EstimatorRuns:              digest.AIActivity.EstimatorRuns,
+		DispatcherRuns:             digest.AIActivity.DispatcherRuns,
+		QuotesGenerated:            digest.AIActivity.QuotesGenerated,
+		PhotosAnalyzed:             digest.AIActivity.PhotosAnalyzed,
+		OffersProcessed:            digest.AIActivity.OffersProcessed,
+		StaleLeads:                 staleLeadInputs,
+		PipelineTriage:             digest.PipelineSnapshot.Triage,
+		PipelineNurturing:          digest.PipelineSnapshot.Nurturing,
+		PipelineEstimation:         digest.PipelineSnapshot.Estimation,
+		PipelineProposal:           digest.PipelineSnapshot.Proposal,
+		PipelineFulfillment:        digest.PipelineSnapshot.Fulfillment,
+		PipelineManualIntervention: digest.PipelineSnapshot.ManualIntervention,
+		DashboardURL:               dashboardURL,
+	}
+
+	sentCount := 0
+	for _, admin := range admins {
+		if err := sender.SendDailyDigestEmail(ctx, admin.Email, input); err != nil {
+			log.Warn("daily digest: send failed", "orgId", org.OrganizationID, "email", admin.Email, "error", err)
+			continue
+		}
+		sentCount++
+	}
+
+	if sentCount > 0 {
+		log.Info("daily digest: sent", "orgId", org.OrganizationID, "recipients", sentCount, "staleLeads", digest.StaleLeadCount)
+	}
+}
+
+func listDigestEnabledOrganizations(ctx context.Context, pool *pgxpool.Pool) ([]digestOrg, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT o.id, o.name, COALESCE(s.daily_digest_enabled, true)
+		FROM RAC_organizations o
+		LEFT JOIN RAC_organization_settings s ON s.organization_id = o.id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []digestOrg
+	for rows.Next() {
+		var it digestOrg
+		if err := rows.Scan(&it.OrganizationID, &it.Name, &it.DigestEnabled); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func listOrganizationAdmins(ctx context.Context, pool *pgxpool.Pool, organizationID uuid.UUID) ([]digestAdminUser, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT u.email
+		FROM RAC_users u
+		JOIN RAC_organization_members m ON m.user_id = u.id
+		WHERE m.organization_id = $1
+			AND m.role = 'admin'
+			AND u.email IS NOT NULL
+			AND u.email <> ''
+	`, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []digestAdminUser
+	for rows.Next() {
+		var it digestAdminUser
+		if err := rows.Scan(&it.Email); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	return items, rows.Err()
 }

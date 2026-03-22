@@ -372,6 +372,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 			PhotoAnalysisLensCorrectionServiceTypes:           settings.PhotoAnalysisLensCorrectionServiceTypes,
 			PhotoAnalysisPerspectiveNormalizationEnabled:      settings.PhotoAnalysisPerspectiveNormalizationEnabled,
 			PhotoAnalysisPerspectiveNormalizationServiceTypes: settings.PhotoAnalysisPerspectiveNormalizationServiceTypes,
+			DailyDigestEnabled:                                settings.DailyDigestEnabled,
 		}, nil
 	})
 	notificationModule.SetLeadWhatsAppReader(leadsModule.Repository())

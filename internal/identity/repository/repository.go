@@ -111,6 +111,7 @@ type OrganizationSettings struct {
 	EmailDefaultReplyScenario                         string
 	QuoteRelatedReplyScenario                         string
 	AppointmentRelatedReplyScenario                   string
+	DailyDigestEnabled                                bool
 	SMTPHost                                          *string
 	SMTPPort                                          *int
 	SMTPUsername                                      *string
@@ -152,6 +153,7 @@ type OrganizationSettingsUpdate struct {
 	EmailDefaultReplyScenario                         *string
 	QuoteRelatedReplyScenario                         *string
 	AppointmentRelatedReplyScenario                   *string
+	DailyDigestEnabled                                *bool
 }
 
 type ReplyScenarioAnalyticsItem struct {
@@ -240,6 +242,7 @@ type settingsSnapshot struct {
 	EmailDefaultReplyScenario                         string
 	QuoteRelatedReplyScenario                         string
 	AppointmentRelatedReplyScenario                   string
+	DailyDigestEnabled                                bool
 	SMTPHost                                          pgtype.Text
 	SMTPPort                                          pgtype.Int4
 	SMTPUsername                                      pgtype.Text
@@ -435,6 +438,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		       photo_analysis_perspective_normalization_service_types,
 		       notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
 		       whatsapp_default_reply_scenario, email_default_reply_scenario, quote_related_reply_scenario, appointment_related_reply_scenario,
+		       daily_digest_enabled,
 		       smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		       created_at, updated_at
 		FROM RAC_organization_settings
@@ -473,6 +477,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&row.EmailDefaultReplyScenario,
 		&row.QuoteRelatedReplyScenario,
 		&row.AppointmentRelatedReplyScenario,
+		&row.DailyDigestEnabled,
 		&row.SMTPHost,
 		&row.SMTPPort,
 		&row.SMTPUsername,
@@ -514,6 +519,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 			EmailDefaultReplyScenario:                         "generic",
 			QuoteRelatedReplyScenario:                         "quote_reminder",
 			AppointmentRelatedReplyScenario:                   "appointment_reminder",
+			DailyDigestEnabled:                                true,
 		}, nil
 	}
 	if err != nil {
@@ -555,7 +561,8 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  whatsapp_default_reply_scenario,
 		  email_default_reply_scenario,
 		  quote_related_reply_scenario,
-		  appointment_related_reply_scenario
+		  appointment_related_reply_scenario,
+		  daily_digest_enabled
 		)
 		VALUES (
 		  $1,
@@ -588,7 +595,8 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  COALESCE(NULLIF($28::text, ''), 'generic'),
 		  COALESCE(NULLIF($29::text, ''), 'generic'),
 		  COALESCE(NULLIF($30::text, ''), 'quote_reminder'),
-		  COALESCE(NULLIF($31::text, ''), 'appointment_reminder')
+		  COALESCE(NULLIF($31::text, ''), 'appointment_reminder'),
+		  COALESCE($32::boolean, true)
 		)
 		ON CONFLICT (organization_id) DO UPDATE SET
 		  quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
@@ -621,6 +629,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  email_default_reply_scenario = COALESCE(NULLIF($29::text, ''), RAC_organization_settings.email_default_reply_scenario),
 		  quote_related_reply_scenario = COALESCE(NULLIF($30::text, ''), RAC_organization_settings.quote_related_reply_scenario),
 		  appointment_related_reply_scenario = COALESCE(NULLIF($31::text, ''), RAC_organization_settings.appointment_related_reply_scenario),
+		  daily_digest_enabled = COALESCE($32::boolean, RAC_organization_settings.daily_digest_enabled),
 		  updated_at = now()
 		RETURNING organization_id, quote_payment_days, quote_valid_days,
 		  offer_margin_basis_points,
@@ -637,6 +646,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  photo_analysis_perspective_normalization_service_types,
 		  notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
 		  whatsapp_default_reply_scenario, email_default_reply_scenario, quote_related_reply_scenario, appointment_related_reply_scenario,
+		  daily_digest_enabled,
 		  smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		  created_at, updated_at`
 
@@ -673,6 +683,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		normalizedTextValue(update.EmailDefaultReplyScenario),
 		normalizedTextValue(update.QuoteRelatedReplyScenario),
 		normalizedTextValue(update.AppointmentRelatedReplyScenario),
+		update.DailyDigestEnabled,
 	).Scan(
 		&row.OrganizationID,
 		&row.QuotePaymentDays,
@@ -705,6 +716,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		&row.EmailDefaultReplyScenario,
 		&row.QuoteRelatedReplyScenario,
 		&row.AppointmentRelatedReplyScenario,
+		&row.DailyDigestEnabled,
 		&row.SMTPHost,
 		&row.SMTPPort,
 		&row.SMTPUsername,
@@ -963,6 +975,7 @@ func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSet
 		EmailDefaultReplyScenario:                         strings.TrimSpace(snapshot.EmailDefaultReplyScenario),
 		QuoteRelatedReplyScenario:                         strings.TrimSpace(snapshot.QuoteRelatedReplyScenario),
 		AppointmentRelatedReplyScenario:                   strings.TrimSpace(snapshot.AppointmentRelatedReplyScenario),
+		DailyDigestEnabled:                                snapshot.DailyDigestEnabled,
 		SMTPHost:                                          optionalString(snapshot.SMTPHost),
 		SMTPPort:                                          optionalInt(snapshot.SMTPPort),
 		SMTPUsername:                                      optionalString(snapshot.SMTPUsername),
