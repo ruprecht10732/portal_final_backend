@@ -2371,8 +2371,8 @@ func resolveOfferContext(deps *ToolDependencies, partnerIDRaw string, expiration
 	if hours <= 0 {
 		hours = 12
 	}
-	if hours > 12 {
-		hours = 12
+	if hours > 72 {
+		hours = 72
 	}
 
 	return tenantID, serviceID, partnerID, hours, "", nil

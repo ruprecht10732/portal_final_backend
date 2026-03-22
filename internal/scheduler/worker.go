@@ -38,6 +38,7 @@ type Worker struct {
 	voice           WAAgentVoiceTranscriptionProcessor
 	imap            IMAPSyncProcessor
 	subsidyAnalyzer SubsidyAnalyzerProcessor
+	staleNotifier   StaleLeadNotifyProcessor
 	embed           *embeddings.Client
 	qdrant          *qdrant.Client
 }
@@ -89,6 +90,10 @@ type LeadAutomationProcessor interface {
 
 type WAAgentVoiceTranscriptionProcessor interface {
 	ProcessVoiceTranscription(ctx context.Context, payload WAAgentVoiceTranscriptionPayload) error
+}
+
+type StaleLeadNotifyProcessor interface {
+	Notify(ctx context.Context, orgID, leadID, serviceID uuid.UUID, staleReason, consumerName, serviceType string) error
 }
 
 func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, log *logger.Logger) (*Worker, error) {
@@ -172,6 +177,7 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskIMAPSyncAccount, w.handleIMAPSyncAccount)
 	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
 	mux.HandleFunc(TaskApplyHumanFeedbackMemory, w.handleApplyHumanFeedbackMemory)
+	mux.HandleFunc(TaskStaleLeadNotify, w.handleStaleLeadNotify)
 
 	return w, nil
 }
@@ -214,6 +220,10 @@ func (w *Worker) SetLeadAutomationProcessor(processor LeadAutomationProcessor) {
 
 func (w *Worker) SetWAAgentVoiceTranscriptionProcessor(processor WAAgentVoiceTranscriptionProcessor) {
 	w.voice = processor
+}
+
+func (w *Worker) SetStaleLeadNotifyProcessor(processor StaleLeadNotifyProcessor) {
+	w.staleNotifier = processor
 }
 
 func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
@@ -356,6 +366,33 @@ func buildHumanFeedbackMemoryDocument(feedback leadrepo.HumanFeedback) string {
 	sb.WriteString("\n")
 
 	return sb.String()
+}
+
+func (w *Worker) handleStaleLeadNotify(ctx context.Context, task *asynq.Task) error {
+	if w.staleNotifier == nil {
+		return nil
+	}
+
+	payload, err := ParseStaleLeadNotifyPayload(task)
+	if err != nil {
+		return err
+	}
+
+	orgID, err := uuid.Parse(payload.OrganizationID)
+	if err != nil {
+		return err
+	}
+	leadID, err := uuid.Parse(payload.LeadID)
+	if err != nil {
+		return err
+	}
+	serviceID, err := uuid.Parse(payload.LeadServiceID)
+	if err != nil {
+		return err
+	}
+
+	consumerName := strings.TrimSpace(payload.ConsumerFirstName + " " + payload.ConsumerLastName)
+	return w.staleNotifier.Notify(ctx, orgID, leadID, serviceID, payload.StaleReason, consumerName, payload.ServiceType)
 }
 
 func (w *Worker) handleWAAgentVoiceTranscription(ctx context.Context, task *asynq.Task) error {

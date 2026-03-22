@@ -27,6 +27,7 @@ type OrganizationAISettings struct {
 	AppointmentRelatedReplyScenario                   ReplySuggestionScenario
 	CatalogGapThreshold                               int
 	CatalogGapLookbackDays                            int
+	AIStaleLeadReEngagementEnabled                    bool
 	PhotoAnalysisPreprocessingEnabled                 bool
 	PhotoAnalysisOCRAssistEnabled                     bool
 	PhotoAnalysisOCRAssistServiceTypes                []string
@@ -55,6 +56,7 @@ func DefaultOrganizationAISettings() OrganizationAISettings {
 		AppointmentRelatedReplyScenario:                   ReplySuggestionScenarioAppointmentReminder,
 		CatalogGapThreshold:                               3,
 		CatalogGapLookbackDays:                            30,
+		AIStaleLeadReEngagementEnabled:                    false,
 		PhotoAnalysisPreprocessingEnabled:                 true,
 		PhotoAnalysisOCRAssistEnabled:                     false,
 		PhotoAnalysisOCRAssistServiceTypes:                []string{},

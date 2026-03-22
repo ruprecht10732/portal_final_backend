@@ -334,6 +334,16 @@ func (a energyLabelReaderAdapter) GetEnergyLabel(ctx context.Context, orgID uuid
 }
 
 func (a isdeCalculatorAdapter) GetISDE(ctx context.Context, orgID uuid.UUID, input engine.GetISDEInput) (engine.GetISDEOutput, error) {
+	convertedInput := toCompatGetISDEInput(input)
+
+	output, err := a.inner.GetISDE(ctx, orgID, convertedInput)
+	if err != nil {
+		return engine.GetISDEOutput{}, err
+	}
+	return toEngineGetISDEOutput(output), nil
+}
+
+func toCompatGetISDEInput(input engine.GetISDEInput) GetISDEInput {
 	convertedInput := GetISDEInput{
 		ExecutionYear:                   input.ExecutionYear,
 		PreviousSubsidiesWithin24Months: input.PreviousSubsidiesWithin24Months,
@@ -370,11 +380,10 @@ func (a isdeCalculatorAdapter) GetISDE(ctx context.Context, orgID uuid.UUID, inp
 			})
 		}
 	}
+	return convertedInput
+}
 
-	output, err := a.inner.GetISDE(ctx, orgID, convertedInput)
-	if err != nil {
-		return engine.GetISDEOutput{}, err
-	}
+func toEngineGetISDEOutput(output GetISDEOutput) engine.GetISDEOutput {
 	result := engine.GetISDEOutput{
 		TotalAmountCents:     output.TotalAmountCents,
 		IsDoubled:            output.IsDoubled,
@@ -383,25 +392,21 @@ func (a isdeCalculatorAdapter) GetISDE(ctx context.Context, orgID uuid.UUID, inp
 		UnknownMeasureIDs:    output.UnknownMeasureIDs,
 		UnknownMeldcodes:     output.UnknownMeldcodes,
 	}
-	if len(output.InsulationBreakdown) > 0 {
-		result.InsulationBreakdown = make([]engine.ISDELineItem, 0, len(output.InsulationBreakdown))
-		for _, item := range output.InsulationBreakdown {
-			result.InsulationBreakdown = append(result.InsulationBreakdown, engine.ISDELineItem(item))
-		}
+	result.InsulationBreakdown = toEngineISDELineItems(output.InsulationBreakdown)
+	result.GlassBreakdown = toEngineISDELineItems(output.GlassBreakdown)
+	result.Installations = toEngineISDELineItems(output.Installations)
+	return result
+}
+
+func toEngineISDELineItems(items []ISDELineItem) []engine.ISDELineItem {
+	if len(items) == 0 {
+		return nil
 	}
-	if len(output.GlassBreakdown) > 0 {
-		result.GlassBreakdown = make([]engine.ISDELineItem, 0, len(output.GlassBreakdown))
-		for _, item := range output.GlassBreakdown {
-			result.GlassBreakdown = append(result.GlassBreakdown, engine.ISDELineItem(item))
-		}
+	result := make([]engine.ISDELineItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, engine.ISDELineItem(item))
 	}
-	if len(output.Installations) > 0 {
-		result.Installations = make([]engine.ISDELineItem, 0, len(output.Installations))
-		for _, item := range output.Installations {
-			result.Installations = append(result.Installations, engine.ISDELineItem(item))
-		}
-	}
-	return result, nil
+	return result
 }
 
 func (a currentInboundPhotoAttacherAdapter) AttachCurrentWhatsAppPhoto(ctx context.Context, orgID uuid.UUID, input engine.AttachCurrentWhatsAppPhotoInput, message engine.CurrentInboundMessage) (engine.AttachCurrentWhatsAppPhotoOutput, error) {

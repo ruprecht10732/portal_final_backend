@@ -1186,14 +1186,27 @@ func hasAppointmentContext(reply string) bool {
 func extractLeadFacts(reply string) []string {
 	facts := make([]string, 0, 4)
 	facts = append(facts, reEmail.FindAllString(reply, -1)...)
+	facts = append(facts, extractPhoneFacts(reply)...)
+	cleanReply := strings.ReplaceAll(reply, "*", "")
+	facts = append(facts, extractAddressFacts(cleanReply)...)
+	facts = append(facts, extractStatusFacts(cleanReply)...)
+	return uniqueStrings(facts)
+}
+
+func extractPhoneFacts(reply string) []string {
+	facts := make([]string, 0, 2)
 	for _, loc := range rePhone.FindAllStringIndex(reply, -1) {
 		if loc[0] > 0 && reply[loc[0]-1] >= '0' && reply[loc[0]-1] <= '9' {
-			continue // skip: "0" is part of a larger number (e.g. quote number OFF-2026-0047)
+			continue
 		}
 		facts = append(facts, strings.TrimSpace(reply[loc[0]:loc[1]]))
 	}
-	cleanReply := strings.ReplaceAll(reply, "*", "")
-	for _, match := range reAddressLine.FindAllStringSubmatch(cleanReply, -1) {
+	return facts
+}
+
+func extractAddressFacts(reply string) []string {
+	facts := make([]string, 0, 2)
+	for _, match := range reAddressLine.FindAllStringSubmatch(reply, -1) {
 		if len(match) < 2 {
 			continue
 		}
@@ -1202,23 +1215,37 @@ func extractLeadFacts(reply string) []string {
 			facts = append(facts, address)
 		}
 	}
-	for _, match := range reStatusLine.FindAllStringSubmatch(cleanReply, -1) {
+	return facts
+}
+
+func extractStatusFacts(reply string) []string {
+	facts := make([]string, 0, 2)
+	for _, match := range reStatusLine.FindAllStringSubmatch(reply, -1) {
 		if len(match) < 2 {
 			continue
 		}
-		status := strings.TrimSpace(match[1])
-		// Trim at common list-item delimiters the LLM uses after a status word.
-		for _, sep := range []string{" – ", " — ", " - "} {
-			if idx := strings.Index(status, sep); idx > 0 {
-				status = strings.TrimSpace(status[:idx])
-				break
-			}
-		}
+		status := trimStatusFact(match[1])
 		if status != "" {
 			facts = append(facts, status)
 		}
 	}
-	return uniqueStrings(facts)
+	return facts
+}
+
+func trimStatusFact(status string) string {
+	trimmed := strings.TrimSpace(status)
+	for _, stringToTrim := range []string{" (", ", "} {
+		if idx := strings.Index(trimmed, stringToTrim); idx > 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+	}
+	for _, sep := range []string{" – ", " — ", " - "} {
+		if idx := strings.Index(trimmed, sep); idx > 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+	}
+	trimmed = strings.TrimRight(trimmed, ".,;):")
+	return strings.TrimSpace(trimmed)
 }
 
 func currencyFactVariants(fact string) []string {

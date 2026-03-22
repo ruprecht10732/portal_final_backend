@@ -43,7 +43,8 @@ type OfferSummaryGenerator interface {
 const (
 	offerTokenBytes               = 32
 	defaultOfferMarginBasisPoints = 1000
-	maxOfferExpiryHours           = 12
+	defaultOfferExpiryHours       = 12
+	maxOfferExpiryHours           = 72
 )
 
 // CreateOfferFromQuote creates an offer based on a specific quote.
@@ -81,7 +82,7 @@ func (s *Service) CreateOfferFromQuote(ctx context.Context, tenantID uuid.UUID, 
 
 	effectiveExpiryHours := req.ExpiresInHours
 	if effectiveExpiryHours <= 0 {
-		effectiveExpiryHours = maxOfferExpiryHours
+		effectiveExpiryHours = defaultOfferExpiryHours
 	}
 	if effectiveExpiryHours > maxOfferExpiryHours {
 		effectiveExpiryHours = maxOfferExpiryHours

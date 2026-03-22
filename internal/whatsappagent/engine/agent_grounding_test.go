@@ -126,3 +126,26 @@ func TestDetectGroundingIssuePassesDutchStatusFromEnglishPayload(t *testing.T) {
 		t.Fatalf("expected Dutch status translation to pass grounding, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
 	}
 }
+func TestDetectGroundingIssueStripsStatusDetailsAndPunctuation(t *testing.T) {
+        t.Parallel()
+
+        evidence := &replyGroundingEvidence{
+                toolResponseNames: map[string]int{"GetQuotes": 1},
+                toolResponses: []toolResponseObservation{{
+                        Name:    "GetQuotes",
+                        Payload: `{"quotes":[{"quote_number":"OFF-2026-0001","status":"Sent","consumer_name":"Jan Jansen"}],"count":1}`,
+                }},
+        }
+
+        reply := "Offerte 1, Status: verstuurd, nog niet geaccepteerd):"
+        decision := detectGroundingIssue(reply, evidence)
+        if decision.Code != "" {
+                t.Fatalf("expected status to pass grounding, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+        }
+        
+        reply2 := "Offerte 1, Status: verstuurd (nog niet geaccepteerd)"
+        decision2 := detectGroundingIssue(reply2, evidence)
+        if decision2.Code != "" {
+                t.Fatalf("expected status 2 to pass grounding, got code=%q unsupported=%v", decision2.Code, decision2.UnsupportedFacts)
+        }
+}

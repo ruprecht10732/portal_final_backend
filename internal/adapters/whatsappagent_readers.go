@@ -175,6 +175,16 @@ func (a *WhatsAppAgentISDEAdapter) GetISDE(ctx context.Context, orgID uuid.UUID,
 		return whatsappagent.GetISDEOutput{}, fmt.Errorf("isde service not configured")
 	}
 
+	req := toISDECalculationRequest(input)
+
+	resp, err := a.svc.Calculate(ctx, orgID, req)
+	if err != nil {
+		return whatsappagent.GetISDEOutput{}, err
+	}
+	return toWhatsAppISDEOutput(resp), nil
+}
+
+func toISDECalculationRequest(input whatsappagent.GetISDEInput) isdetransport.ISDECalculationRequest {
 	req := isdetransport.ISDECalculationRequest{
 		ExecutionYear:                   input.ExecutionYear,
 		PreviousSubsidiesWithin24Months: input.PreviousSubsidiesWithin24Months,
@@ -211,12 +221,10 @@ func (a *WhatsAppAgentISDEAdapter) GetISDE(ctx context.Context, orgID uuid.UUID,
 			})
 		}
 	}
+	return req
+}
 
-	resp, err := a.svc.Calculate(ctx, orgID, req)
-	if err != nil {
-		return whatsappagent.GetISDEOutput{}, err
-	}
-
+func toWhatsAppISDEOutput(resp isdetransport.ISDECalculationResponse) whatsappagent.GetISDEOutput {
 	result := whatsappagent.GetISDEOutput{
 		TotalAmountCents:     resp.TotalAmountCents,
 		IsDoubled:            resp.IsDoubled,
@@ -225,25 +233,21 @@ func (a *WhatsAppAgentISDEAdapter) GetISDE(ctx context.Context, orgID uuid.UUID,
 		UnknownMeasureIDs:    resp.UnknownMeasureIDs,
 		UnknownMeldcodes:     resp.UnknownMeldcodes,
 	}
-	if len(resp.InsulationBreakdown) > 0 {
-		result.InsulationBreakdown = make([]whatsappagent.ISDELineItem, 0, len(resp.InsulationBreakdown))
-		for _, item := range resp.InsulationBreakdown {
-			result.InsulationBreakdown = append(result.InsulationBreakdown, whatsappagent.ISDELineItem(item))
-		}
+	result.InsulationBreakdown = toWhatsAppISDELineItems(resp.InsulationBreakdown)
+	result.GlassBreakdown = toWhatsAppISDELineItems(resp.GlassBreakdown)
+	result.Installations = toWhatsAppISDELineItems(resp.Installations)
+	return result
+}
+
+func toWhatsAppISDELineItems(items []isdetransport.ISDELineItem) []whatsappagent.ISDELineItem {
+	if len(items) == 0 {
+		return nil
 	}
-	if len(resp.GlassBreakdown) > 0 {
-		result.GlassBreakdown = make([]whatsappagent.ISDELineItem, 0, len(resp.GlassBreakdown))
-		for _, item := range resp.GlassBreakdown {
-			result.GlassBreakdown = append(result.GlassBreakdown, whatsappagent.ISDELineItem(item))
-		}
+	result := make([]whatsappagent.ISDELineItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, whatsappagent.ISDELineItem(item))
 	}
-	if len(resp.Installations) > 0 {
-		result.Installations = make([]whatsappagent.ISDELineItem, 0, len(resp.Installations))
-		for _, item := range resp.Installations {
-			result.Installations = append(result.Installations, whatsappagent.ISDELineItem(item))
-		}
-	}
-	return result, nil
+	return result
 }
 
 var _ whatsappagent.TaskReader = (*WhatsAppAgentTaskReaderAdapter)(nil)

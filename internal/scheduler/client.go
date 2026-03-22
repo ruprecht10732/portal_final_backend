@@ -32,6 +32,7 @@ const (
 	waAgentVoiceTaskTimeout      = 5 * time.Minute
 	waAgentVoiceTaskUniqueTTL    = 15 * time.Minute
 	waAgentVoiceTaskMaxRetry     = 3
+	staleLeadNotifyTaskUniqueTTL = 24 * time.Hour
 )
 
 type Client struct {

@@ -13,7 +13,7 @@ import (
 type CreateOfferFromQuoteRequest struct {
 	PartnerID          uuid.UUID   `json:"partnerId" validate:"required"`
 	QuoteID            uuid.UUID   `json:"quoteId" validate:"required"`
-	ExpiresInHours     int         `json:"expiresInHours" validate:"required,min=1,max=12"`
+	ExpiresInHours     int         `json:"expiresInHours" validate:"required,min=1,max=72"`
 	JobSummaryShort    string      `json:"jobSummaryShort,omitempty" validate:"omitempty,max=200"`
 	MarginBasisPoints  *int        `json:"marginBasisPoints,omitempty" validate:"omitempty,min=0,max=5000"`
 	VakmanPriceCents   *int64      `json:"vakmanPriceCents,omitempty" validate:"omitempty,min=0"`

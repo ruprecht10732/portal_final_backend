@@ -27,6 +27,7 @@ const TaskWAAgentVoiceTranscription = "whatsappagent.voice_transcription.run"
 const TaskIMAPSyncAccount = "imap.sync.account"
 const TaskIMAPSyncSweep = "imap.sync.sweep"
 const TaskApplyHumanFeedbackMemory = "leads.human_feedback.apply_memory"
+const TaskStaleLeadNotify = "leads.stale.notify"
 
 type AppointmentReminderPayload struct {
 	AppointmentID  string `json:"appointmentId"`
@@ -166,6 +167,20 @@ type IMAPSyncSweepPayload struct{}
 type ApplyHumanFeedbackMemoryPayload struct {
 	TenantID   string `json:"tenantId"`
 	FeedbackID string `json:"feedbackId"`
+}
+
+// StaleLeadNotifyPayload carries the context needed to create re-engagement
+// notifications for a single stale lead service.
+type StaleLeadNotifyPayload struct {
+	OrganizationID    string `json:"organizationId"`
+	LeadID            string `json:"leadId"`
+	LeadServiceID     string `json:"leadServiceId"`
+	StaleReason       string `json:"staleReason"`
+	ConsumerFirstName string `json:"consumerFirstName"`
+	ConsumerLastName  string `json:"consumerLastName"`
+	ConsumerPhone     string `json:"consumerPhone"`
+	ServiceType       string `json:"serviceType"`
+	PipelineStage     string `json:"pipelineStage"`
 }
 
 func NewAppointmentReminderTask(payload AppointmentReminderPayload) (*asynq.Task, error) {
@@ -467,6 +482,22 @@ func ParseApplyHumanFeedbackMemoryPayload(task *asynq.Task) (ApplyHumanFeedbackM
 	var payload ApplyHumanFeedbackMemoryPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return ApplyHumanFeedbackMemoryPayload{}, err
+	}
+	return payload, nil
+}
+
+func NewStaleLeadNotifyTask(payload StaleLeadNotifyPayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskStaleLeadNotify, data), nil
+}
+
+func ParseStaleLeadNotifyPayload(task *asynq.Task) (StaleLeadNotifyPayload, error) {
+	var payload StaleLeadNotifyPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return StaleLeadNotifyPayload{}, err
 	}
 	return payload, nil
 }

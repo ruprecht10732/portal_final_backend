@@ -74,6 +74,12 @@ type Service struct {
 	log  *logger.Logger
 }
 
+type calculationData struct {
+	measureRuleByID    map[string]measureRule
+	programRule        repository.ProgramYearRule
+	installationByCode map[string]repository.InstallationMeldcode
+}
+
 // New creates a new ISDE service.
 func New(repo repository.Repository, log *logger.Logger) *Service {
 	return &Service{repo: repo, log: log}
@@ -85,28 +91,9 @@ func (s *Service) Calculate(ctx context.Context, tenantID uuid.UUID, req transpo
 	year := resolveCalculationYear(req.ExecutionYear)
 	ruleYear := nearestRuleYear(year)
 
-	measureRuleConfigs, err := s.repo.ListMeasureConfigsByIDsAndYear(ctx, collectMeasureIDs(req.Measures), ruleYear)
+	data, err := s.loadCalculationData(ctx, req, ruleYear)
 	if err != nil {
 		return transport.ISDECalculationResponse{}, err
-	}
-	measureRuleByID := make(map[string]measureRule, len(measureRuleConfigs))
-	for _, config := range measureRuleConfigs {
-		measureRuleByID[normalizeMeasureID(config.MeasureID)] = mapMeasureConfig(config)
-	}
-
-	programRule, err := s.repo.GetProgramYearRule(ctx, ruleYear)
-	if err != nil {
-		return transport.ISDECalculationResponse{}, err
-	}
-
-	meldcodes := collectMeldcodes(req.Installations)
-	installations, err := s.repo.ListInstallationMeldcodesByCodes(ctx, meldcodes)
-	if err != nil {
-		return transport.ISDECalculationResponse{}, err
-	}
-	installationByCode := make(map[string]repository.InstallationMeldcode, len(installations))
-	for _, installation := range installations {
-		installationByCode[normalizeMeldcode(installation.Meldcode)] = installation
 	}
 
 	resp := transport.ISDECalculationResponse{
@@ -115,34 +102,78 @@ func (s *Service) Calculate(ctx context.Context, tenantID uuid.UUID, req transpo
 		Installations:       make([]transport.ISDELineItem, 0),
 	}
 
-	qualifiedMeasures := buildQualifiedMeasures(req.Measures, measureRuleByID, year, &resp)
+	qualifiedMeasures := buildQualifiedMeasures(req.Measures, data.measureRuleByID, year, &resp)
+	qualifyingCategoryIDs, hasWarmtenetInRequest := collectQualifyingCategoryIDs(req, qualifiedMeasures, data.installationByCode, year, &resp)
+
+	resp.EligibleMeasureCount = len(qualifyingCategoryIDs)
+	resp.IsDoubled = resp.EligibleMeasureCount >= 2
+
+	appendQualifiedMeasureLines(year, qualifiedMeasures, resp.IsDoubled, &resp)
+	appendInstallationLines(req, qualifiedMeasures, data.installationByCode, data.programRule, year, hasWarmtenetInRequest, &resp)
+
+	return resp, nil
+}
+
+func (s *Service) loadCalculationData(ctx context.Context, req transport.ISDECalculationRequest, ruleYear int) (calculationData, error) {
+	measureRuleConfigs, err := s.repo.ListMeasureConfigsByIDsAndYear(ctx, collectMeasureIDs(req.Measures), ruleYear)
+	if err != nil {
+		return calculationData{}, err
+	}
+	measureRuleByID := make(map[string]measureRule, len(measureRuleConfigs))
+	for _, config := range measureRuleConfigs {
+		measureRuleByID[normalizeMeasureID(config.MeasureID)] = mapMeasureConfig(config)
+	}
+
+	programRule, err := s.repo.GetProgramYearRule(ctx, ruleYear)
+	if err != nil {
+		return calculationData{}, err
+	}
+
+	installations, err := s.repo.ListInstallationMeldcodesByCodes(ctx, collectMeldcodes(req.Installations))
+	if err != nil {
+		return calculationData{}, err
+	}
+	installationByCode := make(map[string]repository.InstallationMeldcode, len(installations))
+	for _, installation := range installations {
+		installationByCode[normalizeMeldcode(installation.Meldcode)] = installation
+	}
+
+	return calculationData{
+		measureRuleByID:    measureRuleByID,
+		programRule:        programRule,
+		installationByCode: installationByCode,
+	}, nil
+}
+
+func collectQualifyingCategoryIDs(req transport.ISDECalculationRequest, qualifiedMeasures []qualifiedMeasure, installationByCode map[string]repository.InstallationMeldcode, year int, resp *transport.ISDECalculationResponse) (map[string]struct{}, bool) {
 	qualifyingCategoryIDs := make(map[string]struct{}, len(qualifiedMeasures)+len(req.Installations)+1)
 	if req.PreviousSubsidiesWithin24Months {
 		qualifyingCategoryIDs[historicalCategoryID] = struct{}{}
 	}
-
 	for _, measure := range qualifiedMeasures {
 		if measure.Rule.QualifyingGroup != "" {
 			qualifyingCategoryIDs[measure.Rule.QualifyingGroup] = struct{}{}
 		}
 	}
+	return addInstallationQualifyingCategories(req.Installations, installationByCode, year, qualifyingCategoryIDs, resp)
+}
 
-	qualifyingInstallationCodes := make(map[string]struct{}, len(req.Installations))
+func addInstallationQualifyingCategories(installations []transport.RequestedInstallation, installationByCode map[string]repository.InstallationMeldcode, year int, qualifyingCategoryIDs map[string]struct{}, resp *transport.ISDECalculationResponse) (map[string]struct{}, bool) {
+	qualifyingInstallationCodes := make(map[string]struct{}, len(installations))
 	hasWarmtenetInRequest := false
-	for _, requested := range req.Installations {
+	for _, requested := range installations {
 		kind := normalizeInstallationKind(requested.Kind, requested.Meldcode)
-		if kind == installationKindWarmtenet {
+		switch kind {
+		case installationKindWarmtenet:
 			hasWarmtenetInRequest = true
 			qualifyingCategoryIDs[installationCategoryWarmtenet] = struct{}{}
 			continue
-		}
-		if kind == installationKindHeatPump {
+		case installationKindHeatPump:
 			if qualifiesHeatPumpFormula(year, requested) {
 				qualifyingCategoryIDs[installationCategoryHeatPump] = struct{}{}
 			}
 			continue
-		}
-		if kind == installationKindVentilation || kind == installationKindElectricCooking {
+		case installationKindVentilation, installationKindElectricCooking:
 			continue
 		}
 
@@ -156,73 +187,48 @@ func (s *Service) Calculate(ctx context.Context, tenantID uuid.UUID, req transpo
 			continue
 		}
 		qualifyingInstallationCodes[normalizedCode] = struct{}{}
-		categoryID := normalizeInstallationCategoryID(installation.Category)
-		if categoryID != "" {
+		if categoryID := normalizeInstallationCategoryID(installation.Category); categoryID != "" {
 			qualifyingCategoryIDs[categoryID] = struct{}{}
 		}
 	}
+	return qualifyingCategoryIDs, hasWarmtenetInRequest
+}
 
-	resp.EligibleMeasureCount = len(qualifyingCategoryIDs)
-	resp.IsDoubled = resp.EligibleMeasureCount >= 2
-
+func appendQualifiedMeasureLines(year int, qualifiedMeasures []qualifiedMeasure, isDoubled bool, resp *transport.ISDECalculationResponse) {
 	for _, measure := range qualifiedMeasures {
-		ratePerM2 := measureRateCents(measure.Rule, year, resp.IsDoubled, measure.Requested)
-		description := measure.Rule.DisplayName
-		baseAmountCents := areaTimesRateCents(measure.QualifiedArea, ratePerM2)
-		mkiAmountCents := int64(0)
-		if measure.Requested.HasMKIBonus {
-			mkiAmountCents = areaTimesRateCents(measure.QualifiedArea, measure.Rule.MKIBonusCents)
-			if mkiAmountCents > 0 {
-				description += " (incl. MKI-bonus)"
-			}
-		}
-		amountCents := baseAmountCents + mkiAmountCents
-		line := transport.ISDELineItem{
-			Description: description,
-			AreaM2:      measure.QualifiedArea,
-			AmountCents: amountCents,
-		}
-
-		switch strings.TrimSpace(strings.ToLower(measure.Rule.Category)) {
-		case "glass":
+		line := buildQualifiedMeasureLine(year, measure, isDoubled)
+		if strings.TrimSpace(strings.ToLower(measure.Rule.Category)) == "glass" {
 			resp.GlassBreakdown = append(resp.GlassBreakdown, line)
-		default:
+		} else {
 			resp.InsulationBreakdown = append(resp.InsulationBreakdown, line)
 		}
-		resp.TotalAmountCents += amountCents
+		resp.TotalAmountCents += line.AmountCents
 	}
+}
 
+func buildQualifiedMeasureLine(year int, measure qualifiedMeasure, isDoubled bool) transport.ISDELineItem {
+	ratePerM2 := measureRateCents(measure.Rule, year, isDoubled, measure.Requested)
+	description := measure.Rule.DisplayName
+	baseAmountCents := areaTimesRateCents(measure.QualifiedArea, ratePerM2)
+	mkiAmountCents := int64(0)
+	if measure.Requested.HasMKIBonus {
+		mkiAmountCents = areaTimesRateCents(measure.QualifiedArea, measure.Rule.MKIBonusCents)
+		if mkiAmountCents > 0 {
+			description += " (incl. MKI-bonus)"
+		}
+	}
+	return transport.ISDELineItem{
+		Description: description,
+		AreaM2:      measure.QualifiedArea,
+		AmountCents: baseAmountCents + mkiAmountCents,
+	}
+}
+
+func appendInstallationLines(req transport.ISDECalculationRequest, qualifiedMeasures []qualifiedMeasure, installationByCode map[string]repository.InstallationMeldcode, programRule repository.ProgramYearRule, year int, hasWarmtenetInRequest bool, resp *transport.ISDECalculationResponse) {
 	processedInstallationCodes := make(map[string]struct{}, len(req.Installations))
 	for _, requested := range req.Installations {
-		kind := normalizeInstallationKind(requested.Kind, requested.Meldcode)
-		switch kind {
-		case installationKindVentilation:
-			if year < 2026 || len(qualifiedMeasures) == 0 {
-				continue
-			}
-			line := transport.ISDELineItem{Description: "Ventilatie", AmountCents: programRule.VentilationAmountCents}
-			resp.Installations = append(resp.Installations, line)
-			resp.TotalAmountCents += line.AmountCents
-			continue
-		case installationKindWarmtenet:
-			line := transport.ISDELineItem{Description: "Aansluiting warmtenet", AmountCents: programRule.WarmtenetAmountCents}
-			resp.Installations = append(resp.Installations, line)
-			resp.TotalAmountCents += line.AmountCents
-			continue
-		case installationKindElectricCooking:
-			if hasWarmtenetInRequest || req.HasReceivedWarmtenetSubsidy || !req.HasExistingWarmtenetConnection {
-				continue
-			}
-			line := transport.ISDELineItem{Description: "Elektrische kookvoorziening", AmountCents: programRule.ElectricCookingAmountCents}
-			resp.Installations = append(resp.Installations, line)
-			resp.TotalAmountCents += line.AmountCents
-			continue
-		case installationKindHeatPump:
-			amountCents, description, ok := calculateHeatPumpFormula(programRule, year, requested)
-			if !ok {
-				continue
-			}
-			line := transport.ISDELineItem{Description: description, AmountCents: amountCents}
+		line, ok := installationLineItem(req, qualifiedMeasures, programRule, year, hasWarmtenetInRequest, requested)
+		if ok {
 			resp.Installations = append(resp.Installations, line)
 			resp.TotalAmountCents += line.AmountCents
 			continue
@@ -232,20 +238,43 @@ func (s *Service) Calculate(ctx context.Context, tenantID uuid.UUID, req transpo
 		if _, alreadyProcessed := processedInstallationCodes[normalizedCode]; alreadyProcessed {
 			continue
 		}
-		installation, ok := installationByCode[normalizedCode]
-		if !ok {
+		installation, found := installationByCode[normalizedCode]
+		if !found {
 			continue
 		}
 		processedInstallationCodes[normalizedCode] = struct{}{}
-		line := transport.ISDELineItem{
+		line = transport.ISDELineItem{
 			Description: installationDescription(installation),
 			AmountCents: installation.SubsidyAmountCents,
 		}
 		resp.Installations = append(resp.Installations, line)
-		resp.TotalAmountCents += installation.SubsidyAmountCents
+		resp.TotalAmountCents += line.AmountCents
 	}
+}
 
-	return resp, nil
+func installationLineItem(req transport.ISDECalculationRequest, qualifiedMeasures []qualifiedMeasure, programRule repository.ProgramYearRule, year int, hasWarmtenetInRequest bool, requested transport.RequestedInstallation) (transport.ISDELineItem, bool) {
+	switch normalizeInstallationKind(requested.Kind, requested.Meldcode) {
+	case installationKindVentilation:
+		if year < 2026 || len(qualifiedMeasures) == 0 {
+			return transport.ISDELineItem{}, false
+		}
+		return transport.ISDELineItem{Description: "Ventilatie", AmountCents: programRule.VentilationAmountCents}, true
+	case installationKindWarmtenet:
+		return transport.ISDELineItem{Description: "Aansluiting warmtenet", AmountCents: programRule.WarmtenetAmountCents}, true
+	case installationKindElectricCooking:
+		if hasWarmtenetInRequest || req.HasReceivedWarmtenetSubsidy || !req.HasExistingWarmtenetConnection {
+			return transport.ISDELineItem{}, false
+		}
+		return transport.ISDELineItem{Description: "Elektrische kookvoorziening", AmountCents: programRule.ElectricCookingAmountCents}, true
+	case installationKindHeatPump:
+		amountCents, description, ok := calculateHeatPumpFormula(programRule, year, requested)
+		if !ok {
+			return transport.ISDELineItem{}, false
+		}
+		return transport.ISDELineItem{Description: description, AmountCents: amountCents}, true
+	default:
+		return transport.ISDELineItem{}, false
+	}
 }
 
 func buildQualifiedMeasures(requestedMeasures []transport.RequestedMeasure, ruleByID map[string]measureRule, year int, resp *transport.ISDECalculationResponse) []qualifiedMeasure {

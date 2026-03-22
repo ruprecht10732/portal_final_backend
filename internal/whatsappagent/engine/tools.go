@@ -263,32 +263,12 @@ func (h *ToolHandler) HandleGetEnergyLabel(_ tool.Context, orgID uuid.UUID, inpu
 		return GetEnergyLabelOutput{}, fmt.Errorf(errEnergyLabelReaderNotConfigured)
 	}
 
-	resolved := input
-	resolved.Postcode = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(resolved.Postcode), " ", ""))
-	if strings.TrimSpace(resolved.HouseNumber) == "" || strings.TrimSpace(resolved.Postcode) == "" {
-		leadID := strings.TrimSpace(resolved.LeadID)
-		if leadID == "" {
-			return GetEnergyLabelOutput{Success: false, Message: "lead_id of adresgegevens ontbreken", Found: false}, fmt.Errorf("lead_id or address fields are required")
+	resolved, failure, err := h.resolveEnergyLabelInput(orgID, input)
+	if err != nil {
+		if failure != nil {
+			return *failure, err
 		}
-		if h.leadDetailsReader == nil {
-			return GetEnergyLabelOutput{}, fmt.Errorf("lead details reader is not configured")
-		}
-		details, err := h.leadDetailsReader.GetLeadDetails(context.Background(), orgID, leadID)
-		if err != nil {
-			return GetEnergyLabelOutput{Success: false, Message: err.Error(), Found: false}, err
-		}
-		if details == nil {
-			return GetEnergyLabelOutput{Success: false, Message: "lead niet gevonden", Found: false}, fmt.Errorf("lead not found")
-		}
-		resolved.Postcode = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(details.ZipCode), " ", ""))
-		number, letter, addition := parseHouseNumberParts(details.HouseNumber)
-		resolved.HouseNumber = number
-		if strings.TrimSpace(resolved.HouseLetter) == "" {
-			resolved.HouseLetter = letter
-		}
-		if strings.TrimSpace(resolved.Addition) == "" {
-			resolved.Addition = addition
-		}
+		return GetEnergyLabelOutput{}, err
 	}
 
 	if strings.TrimSpace(resolved.Postcode) == "" || strings.TrimSpace(resolved.HouseNumber) == "" {
@@ -296,6 +276,51 @@ func (h *ToolHandler) HandleGetEnergyLabel(_ tool.Context, orgID uuid.UUID, inpu
 	}
 
 	return h.energyLabelReader.GetEnergyLabel(context.Background(), orgID, resolved)
+}
+
+func (h *ToolHandler) resolveEnergyLabelInput(orgID uuid.UUID, input GetEnergyLabelInput) (GetEnergyLabelInput, *GetEnergyLabelOutput, error) {
+	resolved := input
+	resolved.Postcode = normalizeEnergyLabelPostcode(resolved.Postcode)
+	if strings.TrimSpace(resolved.HouseNumber) != "" && strings.TrimSpace(resolved.Postcode) != "" {
+		return resolved, nil, nil
+	}
+
+	leadID := strings.TrimSpace(resolved.LeadID)
+	if leadID == "" {
+		return GetEnergyLabelInput{}, energyLabelFailure("lead_id of adresgegevens ontbreken", false), fmt.Errorf("lead_id or address fields are required")
+	}
+	if h.leadDetailsReader == nil {
+		return GetEnergyLabelInput{}, nil, fmt.Errorf("lead details reader is not configured")
+	}
+	details, err := h.leadDetailsReader.GetLeadDetails(context.Background(), orgID, leadID)
+	if err != nil {
+		return GetEnergyLabelInput{}, energyLabelFailure(err.Error(), false), err
+	}
+	if details == nil {
+		return GetEnergyLabelInput{}, energyLabelFailure("lead niet gevonden", false), fmt.Errorf("lead not found")
+	}
+	applyLeadAddressToEnergyLabelInput(&resolved, details.ZipCode, details.HouseNumber)
+	return resolved, nil, nil
+}
+
+func normalizeEnergyLabelPostcode(value string) string {
+	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(value), " ", ""))
+}
+
+func applyLeadAddressToEnergyLabelInput(input *GetEnergyLabelInput, zipCode, houseNumber string) {
+	input.Postcode = normalizeEnergyLabelPostcode(zipCode)
+	number, letter, addition := parseHouseNumberParts(houseNumber)
+	input.HouseNumber = number
+	if strings.TrimSpace(input.HouseLetter) == "" {
+		input.HouseLetter = letter
+	}
+	if strings.TrimSpace(input.Addition) == "" {
+		input.Addition = addition
+	}
+}
+
+func energyLabelFailure(message string, found bool) *GetEnergyLabelOutput {
+	return &GetEnergyLabelOutput{Success: false, Message: message, Found: found}
 }
 
 func (h *ToolHandler) HandleGetLeadTasks(_ tool.Context, orgID uuid.UUID, input GetLeadTasksInput) (GetLeadTasksOutput, error) {

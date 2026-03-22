@@ -1,0 +1,10 @@
+--- internal/scheduler/client.go
++++ internal/scheduler/client.go
+@@ -34,6 +34,7 @@
+ waAgentVoiceTaskTimeout      = 5 * time.Minute
+ waAgentVoiceTaskUniqueTTL    = 15 * time.Minute
+ waAgentVoiceTaskMaxRetry     = 3
++staleLeadNotifyTaskUniqueTTL = 24 * time.Hour
+ )
+ 
+ type Client struct {
