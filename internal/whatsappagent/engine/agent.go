@@ -1033,12 +1033,22 @@ func validateGroundedReply(reply string, evidence *replyGroundingEvidence) (stri
 
 func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) groundingDecision {
 	quoteTools := []string{"GetQuotes", "DraftQuote", "GenerateQuote", "SendQuotePDF"}
+	// quoteDataTools are the tools that return financial quote data in their payload.
+	// Action-only tools (SendQuotePDF, GenerateQuote, DraftQuote) confirm operations but
+	// do not return amounts, so they cannot be used to verify currency facts.
+	quoteDataTools := []string{"GetQuotes"}
 	if quoteFacts := extractQuoteFacts(reply); len(quoteFacts) > 0 {
 		if !evidence.hasToolResponse(quoteTools...) {
 			return groundingDecision{Code: "quote_details_without_quote_tool", UnsupportedFacts: quoteFacts}
 		}
-		if unsupported := unsupportedQuoteFacts(reply, evidence.payloadsForTools(quoteTools...)); len(unsupported) > 0 {
-			return groundingDecision{Code: "quote_fact_not_in_tool_result", UnsupportedFacts: unsupported}
+		// Only run the payload fact-check when a data-retrieval tool was called this turn.
+		// If only action tools (SendQuotePDF, GenerateQuote, DraftQuote) were called, the
+		// agent's financial knowledge comes from a prior GetQuotes call in the same run, which
+		// is legitimate and cannot be re-verified against this turn's payloads alone.
+		if evidence.hasToolResponse(quoteDataTools...) {
+			if unsupported := unsupportedQuoteFacts(reply, evidence.payloadsForTools(quoteDataTools...)); len(unsupported) > 0 {
+				return groundingDecision{Code: "quote_fact_not_in_tool_result", UnsupportedFacts: unsupported}
+			}
 		}
 	}
 	appointmentTools := []string{"GetAppointments", "GetAvailableVisitSlots", "ScheduleVisit", "RescheduleVisit", "CancelVisit", "GetMyJobs", "GetPartnerJobDetails", "UpdateAppointmentStatus"}
