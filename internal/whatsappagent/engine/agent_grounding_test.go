@@ -75,3 +75,54 @@ func TestExtractLeadFactsStillMatchesRealPhoneNumbers(t *testing.T) {
 		t.Fatalf("expected 2 phone facts, got %d: %v", len(facts), facts)
 	}
 }
+
+func TestLeadFactVariantsIncludesStatusTranslations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		fact     string
+		contains string
+	}{
+		{"Concept", "Draft"},
+		{"Draft", "Concept"},
+		{"Verstuurd", "Sent"},
+		{"Sent", "Verstuurd"},
+		{"Geaccepteerd", "Accepted"},
+		{"Accepted", "Geaccepteerd"},
+		{"Afgewezen", "Rejected"},
+		{"Rejected", "Afgewezen"},
+		{"Verlopen", "Expired"},
+		{"Expired", "Verlopen"},
+	}
+	for _, tt := range tests {
+		var found bool
+		for _, v := range leadFactVariants(tt.fact) {
+			if v == tt.contains {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("leadFactVariants(%q) should contain %q, got %v", tt.fact, tt.contains, leadFactVariants(tt.fact))
+		}
+	}
+}
+
+func TestDetectGroundingIssuePassesDutchStatusFromEnglishPayload(t *testing.T) {
+	t.Parallel()
+
+	// GetQuotes returns English status "Draft" but the LLM replies in Dutch "Concept".
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0001","status":"Draft","consumer_name":"Jan Jansen","total_cents":150000}],"count":1}`,
+		}},
+	}
+
+	reply := "Ik zie 1 offerte:\n- OFF-2026-0001 – Jan Jansen – Status: Concept – €1.500,00"
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected Dutch status translation to pass grounding, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+	}
+}

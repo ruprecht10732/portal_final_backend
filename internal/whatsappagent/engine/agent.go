@@ -1160,6 +1160,13 @@ func extractLeadFacts(reply string) []string {
 			continue
 		}
 		status := strings.TrimSpace(match[1])
+		// Trim at common list-item delimiters the LLM uses after a status word.
+		for _, sep := range []string{" – ", " — ", " - "} {
+			if idx := strings.Index(status, sep); idx > 0 {
+				status = strings.TrimSpace(status[:idx])
+				break
+			}
+		}
 		if status != "" {
 			facts = append(facts, status)
 		}
@@ -1224,23 +1231,23 @@ func leadFactVariants(fact string) []string {
 // statusTranslations maps Dutch status labels used in LLM replies to their
 // English counterparts in tool response payloads, and vice versa.
 var statusTranslations = map[string][]string{
-	"concept":      {"Draft", "draft"},
-	"draft":        {"Concept", "concept"},
-	"verstuurd":    {"Sent", "sent"},
-	"sent":         {"Verstuurd", "verstuurd"},
-	"openstaand":   {"Sent", "sent", "Pending", "pending"},
-	"pending":      {"Openstaand", "openstaand"},
-	"geaccepteerd": {"Accepted", "accepted"},
-	"accepted":     {"Geaccepteerd", "geaccepteerd", "Akkoord", "akkoord"},
-	"akkoord":      {"Accepted", "accepted"},
-	"afgewezen":    {"Rejected", "rejected"},
-	"rejected":     {"Afgewezen", "afgewezen"},
-	"verlopen":     {"Expired", "expired"},
-	"expired":      {"Verlopen", "verlopen"},
-	"nieuw":        {"New", "new"},
-	"new":          {"Nieuw", "nieuw"},
-	"in behandeling": {"In_Progress", "in_progress"},
-	"in_progress":    {"In behandeling", "in behandeling"},
+	"concept":         {"Draft"},
+	"draft":           {"Concept"},
+	"verstuurd":       {"Sent"},
+	"sent":            {"Verstuurd"},
+	"openstaand":      {"Sent", "Pending"},
+	"pending":         {"Openstaand"},
+	"geaccepteerd":    {"Accepted"},
+	"accepted":        {"Geaccepteerd", "Akkoord"},
+	"akkoord":         {"Accepted"},
+	"afgewezen":       {"Rejected"},
+	"rejected":        {"Afgewezen"},
+	"verlopen":        {"Expired"},
+	"expired":         {"Verlopen"},
+	"nieuw":           {"New"},
+	"new":             {"Nieuw"},
+	"in behandeling":  {"In_Progress"},
+	"in_progress":     {"In behandeling"},
 }
 
 func looksLikeQuoteNumber(value string) bool {
