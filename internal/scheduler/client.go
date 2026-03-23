@@ -99,6 +99,10 @@ type WAAgentVoiceTranscriptionScheduler interface {
 	EnqueueWAAgentVoiceTranscription(ctx context.Context, payload WAAgentVoiceTranscriptionPayload) error
 }
 
+type StaleLeadNotifyScheduler interface {
+	EnqueueStaleLeadNotify(ctx context.Context, payload StaleLeadNotifyPayload) error
+}
+
 type QuoteJobRunner interface {
 	EnqueueGenerateQuoteJobRequest(ctx context.Context, req GenerateQuoteJobRequest) error
 }
@@ -372,6 +376,24 @@ func (c *Client) EnqueueWAAgentVoiceTranscription(ctx context.Context, payload W
 	}
 
 	_, err = c.client.EnqueueContext(ctx, task, waAgentVoiceTaskOptions(c.queue)...)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueueStaleLeadNotify(ctx context.Context, payload StaleLeadNotifyPayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewStaleLeadNotifyTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task,
+		asynq.Queue(c.queue),
+		asynq.MaxRetry(2),
+		asynq.Unique(staleLeadNotifyTaskUniqueTTL),
+	)
 	return normalizeEnqueueError(err)
 }
 

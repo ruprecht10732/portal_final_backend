@@ -274,6 +274,11 @@ func main() {
 	digestService := maintenance.NewDailyDigestService(pool, staleDetector, log)
 	go runDailyDigestLoop(ctx, pool, digestService, sender, digestHour, cfg, log)
 
+	// Stale lead in-app notification sweep: enqueues per-lead notifications for
+	// all organisations so agents are nudged about leads that have gone quiet.
+	staleNotifier := maintenance.NewStaleLeadNotifier(pool, notificationModule.InAppService(), log)
+	staleLeadSweepInterval := getDurationEnv("STALE_LEAD_SWEEP_INTERVAL", 4*time.Hour)
+
 	worker, err := scheduler.NewWorker(cfg, pool, eventBus, log)
 	if err != nil {
 		log.Error("failed to initialize scheduler worker", "error", err)
@@ -283,6 +288,7 @@ func main() {
 	worker.SetCallLogProcessor(leadsModule)
 	worker.SetLeadAutomationProcessor(leadsModule)
 	worker.SetSubsidyAnalyzerProcessor(leadsModule.GetSubsidyAnalyzerService())
+	worker.SetStaleLeadNotifyProcessor(staleNotifier)
 	worker.SetOfferSummaryProcessor(partnersModule.Service())
 	worker.SetTaskReminderProcessor(tasksModule.Service())
 	imapModule := imap.NewModule(pool, val, eventBus, log)
@@ -339,6 +345,8 @@ func main() {
 		panic("failed to initialize whatsappagent module: " + err.Error())
 	}
 	worker.SetWAAgentVoiceTranscriptionProcessor(whatsappagentModule.Service())
+
+	go runStaleLeadSweepLoop(ctx, pool, staleDetector, reminderScheduler, staleLeadSweepInterval, log)
 
 	worker.Run(ctx)
 }
@@ -621,6 +629,109 @@ func runDailyDigestOnce(
 		}
 		sendDigestForOrg(ctx, pool, digestService, sender, org, dashboardURL, log)
 	}
+}
+
+// runStaleLeadSweepLoop periodically detects stale lead services across all
+// organisations and enqueues a per-service notification task. Tasks are
+// deduplicated by asynq (unique TTL = 24 h) so duplicate runs are safe.
+func runStaleLeadSweepLoop(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	detector *maintenance.StaleLeadDetector,
+	sched scheduler.StaleLeadNotifyScheduler,
+	interval time.Duration,
+	log *logger.Logger,
+) {
+	if interval <= 0 {
+		interval = 4 * time.Hour
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Small startup delay so the worker is fully up before the first sweep.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+	}
+
+	runStaleLeadSweepOnce(ctx, pool, detector, sched, log)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runStaleLeadSweepOnce(ctx, pool, detector, sched, log)
+		}
+	}
+}
+
+func runStaleLeadSweepOnce(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	detector *maintenance.StaleLeadDetector,
+	sched scheduler.StaleLeadNotifyScheduler,
+	log *logger.Logger,
+) {
+	orgs, err := listAllOrganizations(ctx, pool)
+	if err != nil {
+		log.Warn("stale lead sweep: failed to list organizations", "error", err)
+		return
+	}
+	if len(orgs) == 0 {
+		return
+	}
+
+	enqueued := 0
+	for _, orgID := range orgs {
+		if ctx.Err() != nil {
+			return
+		}
+		items, err := detector.ListStaleLeadServices(ctx, orgID, 100)
+		if err != nil {
+			log.Warn("stale lead sweep: detector failed", "orgId", orgID, "error", err)
+			continue
+		}
+		for _, item := range items {
+			payload := scheduler.StaleLeadNotifyPayload{
+				OrganizationID:    item.OrganizationID.String(),
+				LeadID:            item.LeadID.String(),
+				LeadServiceID:     item.ServiceID.String(),
+				StaleReason:       string(item.StaleReason),
+				ConsumerFirstName: item.ConsumerFirstName,
+				ConsumerLastName:  item.ConsumerLastName,
+				ServiceType:       item.ServiceType,
+				PipelineStage:     item.PipelineStage,
+			}
+			if err := sched.EnqueueStaleLeadNotify(ctx, payload); err != nil {
+				log.Warn("stale lead sweep: enqueue failed", "serviceId", item.ServiceID, "error", err)
+				continue
+			}
+			enqueued++
+		}
+	}
+	if enqueued > 0 {
+		log.Info("stale lead sweep: completed", "enqueued", enqueued)
+	}
+}
+
+func listAllOrganizations(ctx context.Context, pool *pgxpool.Pool) ([]uuid.UUID, error) {
+	rows, err := pool.Query(ctx, `SELECT id FROM RAC_organizations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func sendDigestForOrg(
