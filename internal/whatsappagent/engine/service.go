@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"portal_final_backend/internal/scheduler"
-	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
 	"portal_final_backend/internal/whatsapp"
+	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
@@ -219,17 +219,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		recent = nil
 	}
 
-	messages := make([]ConversationMessage, 0, len(recent))
-	for i := len(recent) - 1; i >= 0; i-- {
-		msg := recent[i]
-		if shouldSkipReplayedMessage(msg.Role, msg.Content) {
-			continue
-		}
-		if msg.Role == "user" && strings.TrimSpace(msg.Content) == voiceMessagePlaceholder {
-			continue
-		}
-		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content, SentAt: timestamptzPtr(msg.CreatedAt)})
-	}
+	messages := buildReplayableMessages(recent)
 
 	if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresenceComposing); err != nil {
 		s.logWarn(ctx, "whatsappagent: send chat presence start error", "phone", replyTarget, "organization_id", orgID.String(), "error", err)
@@ -252,17 +242,13 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		return
 	}
 	if runResult.GroundingFailure != "" {
-		s.logWarn(ctx, "whatsappagent: grounding failure blocked reply",
-			"phone", phoneKey,
-			"organization_id", orgID.String(),
-			"mode", string(decision.mode),
-			"decision_reason", decision.reason,
-			"grounding_reason", runResult.GroundingFailure,
-			"unsupported_facts", runResult.GroundingFacts,
-			"tool_response_names", runResult.ToolResponseNames,
-			"tool_response_count", runResult.ToolResponseCount)
-		s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgGroundingFallback)
-		return
+		runResult, err = s.retryOnGroundingFailure(ctx, agentRunArgs{
+			orgID: orgID, phoneKey: phoneKey, replyTarget: replyTarget,
+			messages: messages, leadHint: leadHint, inbound: inbound, decision: decision,
+		}, runResult)
+		if err != nil {
+			return // fallback already sent inside retryOnGroundingFailure
+		}
 	}
 
 	reply := sanitizeWhatsAppReply(strings.TrimSpace(runResult.Reply))
@@ -273,6 +259,75 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	}
 
 	s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, reply)
+}
+
+// agentRunArgs groups the arguments needed to invoke the agent, used to reduce
+// parameter counts on helper methods.
+type agentRunArgs struct {
+	orgID       uuid.UUID
+	phoneKey    string
+	replyTarget string
+	messages    []ConversationMessage
+	leadHint    *ConversationLeadHint
+	inbound     *CurrentInboundMessage
+	decision    agentModeDecision
+}
+
+// retryOnGroundingFailure performs a single retry when the initial agent reply
+// fails grounding validation. It appends a repair directive and re-runs the
+// agent. On success, it returns the retry result. On failure it sends a
+// domain-specific fallback reply and returns an error to signal the caller.
+func (s *Service) retryOnGroundingFailure(
+	ctx context.Context,
+	args agentRunArgs,
+	firstResult AgentRunResult,
+) (AgentRunResult, error) {
+	s.logWarn(ctx, "whatsappagent: grounding failure, attempting retry",
+		"phone", args.phoneKey,
+		"organization_id", args.orgID.String(),
+		"mode", string(args.decision.mode),
+		"decision_reason", args.decision.reason,
+		"grounding_reason", firstResult.GroundingFailure,
+		"unsupported_facts", firstResult.GroundingFacts,
+		"tool_response_names", firstResult.ToolResponseNames,
+		"tool_response_count", firstResult.ToolResponseCount)
+
+	repairDirective := buildGroundingRepairDirective(firstResult.GroundingFailure, firstResult.GroundingFacts)
+	retryMessages := append(args.messages, ConversationMessage{Role: "user", Content: repairDirective})
+	retryResult, retryErr := s.agent.Run(ctx, args.orgID, args.phoneKey, retryMessages, args.leadHint, args.inbound, args.decision.mode)
+	if retryErr != nil {
+		s.logError(ctx, "whatsappagent: retry agent run error", "phone", args.phoneKey, "organization_id", args.orgID.String(), "error", retryErr)
+		s.sendAssistantReply(ctx, args.orgID, args.phoneKey, args.replyTarget, groundingFallbackReply(firstResult))
+		return AgentRunResult{}, retryErr
+	}
+	if retryResult.GroundingFailure != "" {
+		s.logWarn(ctx, "whatsappagent: retry also failed grounding",
+			"phone", args.phoneKey,
+			"organization_id", args.orgID.String(),
+			"grounding_reason", retryResult.GroundingFailure,
+			"unsupported_facts", retryResult.GroundingFacts)
+		s.sendAssistantReply(ctx, args.orgID, args.phoneKey, args.replyTarget, groundingFallbackReply(retryResult))
+		return AgentRunResult{}, fmt.Errorf("grounding retry failed: %s", retryResult.GroundingFailure)
+	}
+	return retryResult, nil
+}
+
+// buildReplayableMessages converts the raw DB rows (newest-first) into the
+// chronological message slice that can be fed back to the agent, skipping
+// messages that should not be replayed (system fallbacks, voice placeholders).
+func buildReplayableMessages(recent []whatsappagentdb.GetRecentAgentMessagesRow) []ConversationMessage {
+	messages := make([]ConversationMessage, 0, len(recent))
+	for i := len(recent) - 1; i >= 0; i-- {
+		msg := recent[i]
+		if shouldSkipReplayedMessage(msg.Role, msg.Content) {
+			continue
+		}
+		if msg.Role == "user" && strings.TrimSpace(msg.Content) == voiceMessagePlaceholder {
+			continue
+		}
+		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content, SentAt: timestamptzPtr(msg.CreatedAt)})
+	}
+	return messages
 }
 
 func shouldResetConversation(message string) bool {
@@ -290,8 +345,77 @@ func shouldSkipReplayedMessage(role, content string) bool {
 		if strings.Contains(lower, "ik kan die klantgegevens nu niet betrouwbaar bevestigen") {
 			return true
 		}
+		// Skip domain-specific grounding fallback messages so the LLM does not
+		// see its own failure messages when replaying conversation history.
+		for _, fallback := range groundingFallbackMessages {
+			if trimmed == fallback {
+				return true
+			}
+		}
 	}
 	return false
+}
+
+// groundingFallbackMessages contains all domain-specific grounding fallback
+// messages that should be filtered from conversation history replay.
+var groundingFallbackMessages = []string{
+	"Noem de klantnaam of het offertenummer, dan pak ik de juiste offerte erbij.",
+	"Ik kan dat offertedetail zo niet bevestigen. Noem de klantnaam of het offertenummer, dan controleer ik het meteen.",
+	"Noem de datum, periode of klant, dan pak ik de juiste afspraak erbij.",
+	"Ik kan dat afspraakdetail zo niet bevestigen. Noem de datum, periode of klant, dan controleer ik het meteen.",
+	"Noem de klantnaam of het dossier waar het over gaat, dan controleer ik de gegevens.",
+	"Ik kan dat klantdetail zo niet bevestigen. Noem de klantnaam of het dossier, dan controleer ik het meteen.",
+	"Noem even welk onderdeel ik moet controleren, dan pak ik het gericht erbij.",
+}
+
+// groundingFallbackReply returns the domain-specific fallback message from
+// the run result, or the generic grounding fallback if none is available.
+func groundingFallbackReply(result AgentRunResult) string {
+	if strings.TrimSpace(result.GroundingFallbackReply) != "" {
+		return result.GroundingFallbackReply
+	}
+	return msgGroundingFallback
+}
+
+// buildGroundingRepairDirective constructs a repair instruction that tells the
+// LLM to re-run the relevant tools and avoid the specific unsupported facts
+// that caused the grounding failure. This is injected as a synthetic user
+// message for the retry attempt.
+func buildGroundingRepairDirective(groundingCode string, unsupportedFacts []string) string {
+	var b bytes.Buffer
+	b.WriteString("[Systeeminstructie — niet zichtbaar voor de klant]\n")
+	b.WriteString("Je vorige antwoord is geblokkeerd door de kwaliteitscontrole.\n")
+	b.WriteString("Reden: ")
+	switch groundingCode {
+	case "quote_details_without_quote_tool":
+		b.WriteString("je noemde offertedetails zonder eerst GetQuotes aan te roepen.\n")
+		b.WriteString("Roep GetQuotes aan voordat je antwoord geeft.\n")
+	case "quote_fact_not_in_tool_result":
+		b.WriteString("je antwoord bevatte offertegegevens die niet overeenkomen met het GetQuotes-resultaat.\n")
+		b.WriteString("Roep GetQuotes opnieuw aan en gebruik alleen de exacte gegevens uit het resultaat.\n")
+	case "appointment_details_without_appointment_tool":
+		b.WriteString("je noemde afspraakdetails zonder eerst GetAppointments aan te roepen.\n")
+		b.WriteString("Roep GetAppointments aan voordat je antwoord geeft.\n")
+	case "appointment_fact_not_in_tool_result":
+		b.WriteString("je antwoord bevatte afspraakgegevens die niet overeenkomen met het GetAppointments-resultaat.\n")
+		b.WriteString("Roep GetAppointments opnieuw aan en gebruik alleen de exacte gegevens uit het resultaat.\n")
+	case "lead_details_without_lead_tool":
+		b.WriteString("je noemde klantgegevens zonder eerst SearchLeads of GetLeadDetails aan te roepen.\n")
+		b.WriteString("Roep de juiste tool aan voordat je antwoord geeft.\n")
+	case "lead_fact_not_in_tool_result":
+		b.WriteString("je antwoord bevatte klantgegevens die niet overeenkomen met het toolresultaat.\n")
+		b.WriteString("Roep SearchLeads of GetLeadDetails opnieuw aan en gebruik alleen de exacte gegevens uit het resultaat.\n")
+	default:
+		b.WriteString("je antwoord bevatte gegevens die niet geverifieerd konden worden.\n")
+		b.WriteString("Gebruik de juiste tools om de gegevens op te halen en baseer je antwoord alleen daarop.\n")
+	}
+	if len(unsupportedFacts) > 0 {
+		b.WriteString("Niet-verifieerbare feiten: ")
+		b.WriteString(strings.Join(unsupportedFacts, ", "))
+		b.WriteString("\n")
+	}
+	b.WriteString("Beantwoord nu de oorspronkelijke vraag van de klant opnieuw.")
+	return b.String()
 }
 
 func (s *Service) resetConversation(ctx context.Context, orgID uuid.UUID, phoneKey, replyTarget string) {

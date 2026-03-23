@@ -1,6 +1,11 @@
 package engine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+const testCurrencyEuro1500 = "€1.500"
 
 func TestDetectGroundingIssueAllowsQuoteRepliesWithDatesWithoutAppointmentContext(t *testing.T) {
 	t.Parallel()
@@ -148,4 +153,231 @@ func TestDetectGroundingIssueStripsStatusDetailsAndPunctuation(t *testing.T) {
         if decision2.Code != "" {
                 t.Fatalf("expected status 2 to pass grounding, got code=%q unsupported=%v", decision2.Code, decision2.UnsupportedFacts)
         }
+}
+
+func TestDetectGroundingIssueAllowsQuoteWithGeplandKeyword(t *testing.T) {
+	t.Parallel()
+
+	// "gepland" used to be an appointment keyword, triggering false-positive
+	// appointment grounding on quote replies containing the word.
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0010","status":"Sent","consumer_name":"Lisa Smit","created_at":"2026-03-15T10:00:00Z"}],"count":1}`,
+		}},
+	}
+
+	reply := "De offerte OFF-2026-0010 is gepland verstuurd op 15 maart 2026 aan Lisa Smit."
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected quote reply with 'gepland' to pass grounding, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+	}
+}
+
+func TestDetectGroundingIssueAllowsQuoteDatesExplainedByQuotePayload(t *testing.T) {
+	t.Parallel()
+
+	// When the reply mentions an appointment keyword AND dates from quote
+	// metadata, the dates should be filtered out if they appear in quote
+	// payloads — preventing false appointment grounding.
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0020","status":"Draft","created_at":"2026-04-01T08:00:00Z","consumer_name":"Piet de Vries"}],"count":1}`,
+		}},
+	}
+
+	// "afspraak" triggers appointment context; "2026-04-01" is a quote date
+	reply := "Ik zie 1 offerte (OFF-2026-0020) van 2026-04-01. Wilt u ook een afspraak inplannen?"
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected quote date explained by payload to pass, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+	}
+}
+
+func TestDetectGroundingIssueStillCatchesUnexplainedAppointmentDates(t *testing.T) {
+	t.Parallel()
+
+	// A date NOT in the quote payload should still trigger appointment grounding
+	// when appointment keywords are present.
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0020","status":"Draft","created_at":"2026-04-01T08:00:00Z"}],"count":1}`,
+		}},
+	}
+
+	reply := "De afspraak staat op 15 april 2026 om 10:00."
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "appointment_details_without_appointment_tool" {
+		t.Fatalf("expected appointment grounding failure for unexplained date, got %#v", decision)
+	}
+}
+
+func TestStatusTranslationsVerzonden(t *testing.T) {
+	t.Parallel()
+
+	// "Verzonden" is a common Dutch synonym for "Verstuurd" (both mean "Sent").
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0001","status":"Sent","consumer_name":"Jan Jansen"}],"count":1}`,
+		}},
+	}
+
+	reply := "Offerte OFF-2026-0001, Status: verzonden"
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected 'verzonden' to match 'Sent' via translations, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+	}
+}
+
+func TestStatusTranslationsGoedgekeurd(t *testing.T) {
+	t.Parallel()
+
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0002","status":"Accepted","consumer_name":"Lisa Smit"}],"count":1}`,
+		}},
+	}
+
+	reply := "Offerte OFF-2026-0002, Status: goedgekeurd"
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected 'goedgekeurd' to match 'Accepted', got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+	}
+}
+
+func TestCurrencyVariantsWithoutCentsSuffix(t *testing.T) {
+	t.Parallel()
+
+	// When the LLM writes €1.500 without the ,00 cents suffix, the digit-only
+	// form "1500" should still match "total_cents": 150000 via the "150000"
+	// cent variant (digits + "00").
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0003","total_cents":150000,"consumer_name":"Piet"}],"count":1}`,
+		}},
+	}
+
+	reply := "Offerte: OFF-2026-0003 – Piet – " + testCurrencyEuro1500
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected %s without cents to pass grounding, got code=%q unsupported=%v", testCurrencyEuro1500, decision.Code, decision.UnsupportedFacts)
+	}
+}
+
+func TestCurrencyVariantsGeneratesCentForm(t *testing.T) {
+	t.Parallel()
+
+	variants := currencyFactVariants(testCurrencyEuro1500)
+	wantCents := "150000"
+	found := false
+	for _, v := range variants {
+		if v == wantCents {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected cent variant %q in currencyFactVariants(%q), got %v", wantCents, testCurrencyEuro1500, variants)
+	}
+}
+
+func TestHasAppointmentContextRejectsGenericKeywords(t *testing.T) {
+	t.Parallel()
+
+	// These keywords were removed because they triggered false positives.
+	genericPhrases := []string{
+		"De offerte is gepland voor volgende week.",
+		"Dit is de planning voor het project.",
+		"Op deze locatie wordt gewerkt.",
+		"De route naar de klant.",
+		"Ik heb even de tijd nodig.",
+		"Er is een slot beschikbaar.",
+	}
+	for _, reply := range genericPhrases {
+		if hasAppointmentContext(reply) {
+			t.Errorf("expected hasAppointmentContext to return false for %q", reply)
+		}
+	}
+}
+
+func TestHasAppointmentContextAcceptsRealKeywords(t *testing.T) {
+	t.Parallel()
+
+	realPhrases := []string{
+		"De afspraak is op dinsdag.",
+		"Ik heb het bezoek ingepland.",
+		"De monteur komt morgen langs.",
+		"Kunt u de inspectie inplannen?",
+	}
+	for _, reply := range realPhrases {
+		if !hasAppointmentContext(reply) {
+			t.Errorf("expected hasAppointmentContext to return true for %q", reply)
+		}
+	}
+}
+
+func TestShouldSkipReplayedMessageFiltersGroundingFallbacks(t *testing.T) {
+	t.Parallel()
+
+	fallbacks := []string{
+		"Noem de klantnaam of het offertenummer, dan pak ik de juiste offerte erbij.",
+		"Ik kan dat offertedetail zo niet bevestigen. Noem de klantnaam of het offertenummer, dan controleer ik het meteen.",
+		"Noem de datum, periode of klant, dan pak ik de juiste afspraak erbij.",
+		"Noem de klantnaam of het dossier waar het over gaat, dan controleer ik de gegevens.",
+		"Noem even welk onderdeel ik moet controleren, dan pak ik het gericht erbij.",
+	}
+	for _, msg := range fallbacks {
+		if !shouldSkipReplayedMessage("assistant", msg) {
+			t.Errorf("expected shouldSkipReplayedMessage to skip %q", msg)
+		}
+	}
+}
+
+func TestBuildGroundingRepairDirective(t *testing.T) {
+	t.Parallel()
+
+	directive := buildGroundingRepairDirective("quote_details_without_quote_tool", []string{testCurrencyEuro1500})
+	if directive == "" {
+		t.Fatal("expected non-empty repair directive")
+	}
+	if !strings.Contains(directive, "GetQuotes") {
+		t.Error("expected directive to mention GetQuotes")
+	}
+	if !strings.Contains(directive, testCurrencyEuro1500) {
+		t.Error("expected directive to contain unsupported fact")
+	}
+}
+
+func TestGroundingFallbackReplyPrefersDomainSpecific(t *testing.T) {
+	t.Parallel()
+
+	result := AgentRunResult{
+		GroundingFailure:       "quote_details_without_quote_tool",
+		GroundingFallbackReply: "Noem de klantnaam of het offertenummer, dan pak ik de juiste offerte erbij.",
+	}
+	got := groundingFallbackReply(result)
+	if got != result.GroundingFallbackReply {
+		t.Fatalf("expected domain-specific fallback, got %q", got)
+	}
+}
+
+func TestGroundingFallbackReplyFallsBackToGeneric(t *testing.T) {
+	t.Parallel()
+
+	result := AgentRunResult{GroundingFailure: "unknown", GroundingFallbackReply: ""}
+	got := groundingFallbackReply(result)
+	if got != msgGroundingFallback {
+		t.Fatalf("expected generic fallback, got %q", got)
+	}
 }

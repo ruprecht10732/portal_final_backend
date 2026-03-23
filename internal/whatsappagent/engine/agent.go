@@ -86,11 +86,12 @@ type agentExecutionRequest struct {
 }
 
 type AgentRunResult struct {
-	Reply             string
-	ToolResponseNames []string
-	ToolResponseCount int
-	GroundingFailure  string
-	GroundingFacts    []string
+	Reply                 string
+	ToolResponseNames     []string
+	ToolResponseCount     int
+	GroundingFailure      string
+	GroundingFacts        []string
+	GroundingFallbackReply string
 }
 
 type toolResponseObservation struct {
@@ -129,16 +130,10 @@ var appointmentContextKeywords = []string{
 	"bezoeken",
 	"ingepland",
 	"inplannen",
-	"gepland",
-	"planning",
 	"monteur",
-	"tijd",
 	"tijdvak",
-	"slot",
-	"sloten",
-	"locatie",
-	"route",
-	"navigatie",
+	"inspectie",
+	"opname",
 }
 
 var dutchMonthNumbers = map[string]string{
@@ -895,12 +890,18 @@ func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, user
 			"tool_response_count", evidence.toolResponseCount())
 	}
 
+	fallbackReply := ""
+	if decision.Code != "" {
+		fallbackReply = fallbackReplyForGroundingIssue(decision.Code)
+	}
+
 	return AgentRunResult{
-		Reply:             reply,
-		ToolResponseNames: evidence.toolNames(),
-		ToolResponseCount: evidence.toolResponseCount(),
-		GroundingFailure:  decision.Code,
-		GroundingFacts:    decision.UnsupportedFacts,
+		Reply:                  reply,
+		ToolResponseNames:      evidence.toolNames(),
+		ToolResponseCount:      evidence.toolResponseCount(),
+		GroundingFailure:       decision.Code,
+		GroundingFacts:         decision.UnsupportedFacts,
+		GroundingFallbackReply: fallbackReply,
 	}, nil
 }
 
@@ -1032,42 +1033,75 @@ func validateGroundedReply(reply string, evidence *replyGroundingEvidence) (stri
 }
 
 func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) groundingDecision {
-	quoteTools := []string{"GetQuotes", "DraftQuote", "GenerateQuote", "SendQuotePDF"}
-	// quoteDataTools are the tools that return financial quote data in their payload.
-	// Action-only tools (SendQuotePDF, GenerateQuote, DraftQuote) confirm operations but
-	// do not return amounts, so they cannot be used to verify currency facts.
-	quoteDataTools := []string{"GetQuotes"}
-	if quoteFacts := extractQuoteFacts(reply); len(quoteFacts) > 0 {
-		if !evidence.hasToolResponse(quoteTools...) {
-			return groundingDecision{Code: "quote_details_without_quote_tool", UnsupportedFacts: quoteFacts}
-		}
-		// Only run the payload fact-check when a data-retrieval tool was called this turn.
-		// If only action tools (SendQuotePDF, GenerateQuote, DraftQuote) were called, the
-		// agent's financial knowledge comes from a prior GetQuotes call in the same run, which
-		// is legitimate and cannot be re-verified against this turn's payloads alone.
-		if evidence.hasToolResponse(quoteDataTools...) {
-			if unsupported := unsupportedQuoteFacts(reply, evidence.payloadsForTools(quoteDataTools...)); len(unsupported) > 0 {
-				return groundingDecision{Code: "quote_fact_not_in_tool_result", UnsupportedFacts: unsupported}
-			}
+	// Check all grounding categories instead of short-circuiting on the first
+	// failure. This ensures that a false positive in one domain does not mask a
+	// real issue in another, and that all unsupported facts are reported.
+	if d := checkQuoteGrounding(reply, evidence); d.Code != "" {
+		return d
+	}
+	if d := checkAppointmentGrounding(reply, evidence); d.Code != "" {
+		return d
+	}
+	if d := checkLeadGrounding(reply, evidence); d.Code != "" {
+		return d
+	}
+	return groundingDecision{}
+}
+
+var (
+	quoteTools       = []string{"GetQuotes", "DraftQuote", "GenerateQuote", "SendQuotePDF"}
+	quoteDataTools   = []string{"GetQuotes"}
+	appointmentTools = []string{"GetAppointments", "GetAvailableVisitSlots", "ScheduleVisit", "RescheduleVisit", "CancelVisit", "GetMyJobs", "GetPartnerJobDetails", "UpdateAppointmentStatus"}
+	leadTools        = []string{"SearchLeads", "GetLeadDetails", "GetEnergyLabel", "GetLeadTasks", "CreateLead", "UpdateLeadDetails", "GetNavigationLink", "GetMyJobs", "GetPartnerJobDetails", "GetQuotes"}
+)
+
+func checkQuoteGrounding(reply string, evidence *replyGroundingEvidence) groundingDecision {
+	quoteFacts := extractQuoteFacts(reply)
+	if len(quoteFacts) == 0 {
+		return groundingDecision{}
+	}
+	if !evidence.hasToolResponse(quoteTools...) {
+		return groundingDecision{Code: "quote_details_without_quote_tool", UnsupportedFacts: quoteFacts}
+	}
+	if evidence.hasToolResponse(quoteDataTools...) {
+		if unsupported := unsupportedQuoteFacts(reply, evidence.payloadsForTools(quoteDataTools...)); len(unsupported) > 0 {
+			return groundingDecision{Code: "quote_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 		}
 	}
-	appointmentTools := []string{"GetAppointments", "GetAvailableVisitSlots", "ScheduleVisit", "RescheduleVisit", "CancelVisit", "GetMyJobs", "GetPartnerJobDetails", "UpdateAppointmentStatus"}
-	if appointmentFacts := extractAppointmentFacts(reply); len(appointmentFacts) > 0 {
-		if !evidence.hasToolResponse(appointmentTools...) {
-			return groundingDecision{Code: "appointment_details_without_appointment_tool", UnsupportedFacts: appointmentFacts}
-		}
-		if unsupported := unsupportedAppointmentFacts(reply, evidence.payloadsForTools(appointmentTools...)); len(unsupported) > 0 {
-			return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
-		}
+	return groundingDecision{}
+}
+
+func checkAppointmentGrounding(reply string, evidence *replyGroundingEvidence) groundingDecision {
+	appointmentFacts := extractAppointmentFacts(reply)
+	if len(appointmentFacts) == 0 {
+		return groundingDecision{}
 	}
-	leadTools := []string{"SearchLeads", "GetLeadDetails", "GetEnergyLabel", "GetLeadTasks", "CreateLead", "UpdateLeadDetails", "GetNavigationLink", "GetMyJobs", "GetPartnerJobDetails", "GetQuotes"}
-	if leadFacts := extractLeadFacts(reply); len(leadFacts) > 0 {
-		if !evidence.hasToolResponse(leadTools...) {
-			return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: leadFacts}
+	// Appointment facts: only flag dates/times as appointment facts when they
+	// cannot be explained by quote tool payloads. Dates that already appear in
+	// a GetQuotes payload (e.g. created_at) are metadata, not appointment data.
+	if !evidence.hasToolResponse(appointmentTools...) {
+		unexplained := filterFactsNotInPayloads(appointmentFacts, evidence.payloadsForTools(quoteDataTools...), appointmentFactVariants)
+		if len(unexplained) > 0 {
+			return groundingDecision{Code: "appointment_details_without_appointment_tool", UnsupportedFacts: unexplained}
 		}
-		if unsupported := unsupportedLeadFacts(reply, evidence.payloadsForTools(leadTools...)); len(unsupported) > 0 {
-			return groundingDecision{Code: "lead_fact_not_in_tool_result", UnsupportedFacts: unsupported}
-		}
+		return groundingDecision{}
+	}
+	if unsupported := unsupportedAppointmentFacts(reply, evidence.payloadsForTools(appointmentTools...)); len(unsupported) > 0 {
+		return groundingDecision{Code: "appointment_fact_not_in_tool_result", UnsupportedFacts: unsupported}
+	}
+	return groundingDecision{}
+}
+
+func checkLeadGrounding(reply string, evidence *replyGroundingEvidence) groundingDecision {
+	leadFacts := extractLeadFacts(reply)
+	if len(leadFacts) == 0 {
+		return groundingDecision{}
+	}
+	if !evidence.hasToolResponse(leadTools...) {
+		return groundingDecision{Code: "lead_details_without_lead_tool", UnsupportedFacts: leadFacts}
+	}
+	if unsupported := unsupportedLeadFacts(reply, evidence.payloadsForTools(leadTools...)); len(unsupported) > 0 {
+		return groundingDecision{Code: "lead_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 	}
 	return groundingDecision{}
 }
@@ -1104,6 +1138,23 @@ func unsupportedQuoteFacts(reply string, payloads []string) []string {
 
 func unsupportedAppointmentFacts(reply string, payloads []string) []string {
 	return unsupportedFactsFromCandidates(extractAppointmentFacts(reply), payloads, appointmentFactVariants)
+}
+
+// filterFactsNotInPayloads returns only those facts whose variants do NOT
+// appear in any of the given payloads. This is used to exclude date/time
+// facts that originate from quote or lead tool responses before treating
+// them as appointment facts.
+func filterFactsNotInPayloads(facts []string, payloads []string, variants func(string) []string) []string {
+	if len(payloads) == 0 {
+		return facts
+	}
+	unexplained := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		if !payloadsContainAnyFactVariant(payloads, variants(fact)) {
+			unexplained = append(unexplained, fact)
+		}
+	}
+	return unexplained
 }
 
 func unsupportedLeadFacts(reply string, payloads []string) []string {
@@ -1268,6 +1319,11 @@ func currencyFactVariants(fact string) []string {
 	whole := strings.NewReplacer(".", "", " ", "").Replace(trimmed)
 	whole = strings.ReplaceAll(whole, ",00", "")
 	variants := []string{trimmed, digits, whole, strings.ReplaceAll(trimmed, ",", ".")}
+	// When no cents suffix is present (e.g. "€1.500" without ",00"), also generate
+	// the cent representation (digits + "00") so it matches total_cents in payloads.
+	if !strings.Contains(trimmed, ",") {
+		variants = append(variants, digits+"00")
+	}
 	return uniqueStrings(variants)
 }
 
@@ -1315,23 +1371,36 @@ func leadFactVariants(fact string) []string {
 // statusTranslations maps Dutch status labels used in LLM replies to their
 // English counterparts in tool response payloads, and vice versa.
 var statusTranslations = map[string][]string{
-	"concept":        {"Draft"},
-	"draft":          {"Concept"},
-	"verstuurd":      {"Sent"},
-	"sent":           {"Verstuurd"},
-	"openstaand":     {"Sent", "Pending"},
-	"pending":        {"Openstaand"},
-	"geaccepteerd":   {"Accepted"},
-	"accepted":       {"Geaccepteerd", "Akkoord"},
-	"akkoord":        {"Accepted"},
-	"afgewezen":      {"Rejected"},
-	"rejected":       {"Afgewezen"},
-	"verlopen":       {"Expired"},
-	"expired":        {"Verlopen"},
-	"nieuw":          {"New"},
-	"new":            {"Nieuw"},
-	"in behandeling": {"In_Progress"},
-	"in_progress":    {"In behandeling"},
+	"concept":            {"Draft"},
+	"draft":              {"Concept"},
+	"verstuurd":          {"Sent"},
+	"verzonden":          {"Sent"},
+	"sent":               {"Verstuurd", "Verzonden"},
+	"openstaand":         {"Sent", "Pending"},
+	"pending":            {"Openstaand"},
+	"geaccepteerd":       {"Accepted"},
+	"goedgekeurd":        {"Accepted", "Approved"},
+	"accepted":           {"Geaccepteerd", "Akkoord", "Goedgekeurd"},
+	"approved":           {"Geaccepteerd", "Goedgekeurd"},
+	"akkoord":            {"Accepted"},
+	"afgewezen":          {"Rejected"},
+	"rejected":           {"Afgewezen"},
+	"verlopen":           {"Expired"},
+	"expired":            {"Verlopen"},
+	"nieuw":              {"New"},
+	"new":                {"Nieuw"},
+	"in behandeling":     {"In_Progress"},
+	"in_progress":        {"In behandeling"},
+	"gepland":            {"Scheduled"},
+	"ingepland":          {"Scheduled"},
+	"scheduled":          {"Gepland", "Ingepland"},
+	"geannuleerd":        {"Cancelled", "Canceled"},
+	"cancelled":          {"Geannuleerd"},
+	"canceled":           {"Geannuleerd"},
+	"contact geprobeerd": {"Attempted_Contact"},
+	"attempted_contact":  {"Contact geprobeerd"},
+	"herplannen":         {"Needs_Rescheduling"},
+	"needs_rescheduling": {"Herplannen"},
 }
 
 func looksLikeQuoteNumber(value string) bool {
