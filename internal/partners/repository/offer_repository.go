@@ -827,6 +827,28 @@ func (r *Repository) UpdateOfferBuilderSummaryIfEmpty(ctx context.Context, offer
 	return nil
 }
 
+func (r *Repository) UpdateOfferJobSummaryShortIfEmpty(ctx context.Context, offerID, organizationID uuid.UUID, summary string) error {
+	if r == nil || r.pool == nil {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(summary)
+	if trimmed == "" {
+		return nil
+	}
+
+	_, err := r.queries.UpdatePartnerOfferJobSummaryShortIfEmpty(ctx, partnersdb.UpdatePartnerOfferJobSummaryShortIfEmptyParams{
+		Summary:        trimmed,
+		OfferID:        toPgUUID(offerID),
+		OrganizationID: toPgUUID(organizationID),
+	})
+	if err != nil {
+		return fmt.Errorf("update offer job summary short: %w", err)
+	}
+
+	return nil
+}
+
 // GetLatestQuoteItemsForService returns line items from the latest non-draft quote for a lead service.
 func (r *Repository) GetLatestQuoteItemsForService(ctx context.Context, leadServiceID uuid.UUID, organizationID uuid.UUID) ([]QuoteItemSummary, error) {
 	rows, err := r.queries.ListLatestQuoteItemsForService(ctx, partnersdb.ListLatestQuoteItemsForServiceParams{

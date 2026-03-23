@@ -116,14 +116,21 @@ Line items:
 %s
 
 Task:
-Write a short summary for a professional contractor.
+Write TWO summaries for a professional contractor.
+
+PART 1 – Short summary (one plain-text line, max 150 characters, no markdown):
+A compact description of the job a vakman can scan at a glance.
+Example: "Dakreparatie: 2 dakpannen vervangen, goot herstellen"
+
+Then write a line containing exactly: ---
+
+PART 2 – Detailed summary (markdown, max 5 lines):
 Rules:
 - Output only markdown, no extra commentary.
 - Use Dutch.
 - Do NOT include any personal data: no names, addresses, phone numbers, emails.
 - Only use the provided service type, scope, urgency, and line items.
 - If scope or urgency is missing, omit that label.
-- Keep it concise (max 5 lines).
 - Preferred structure:
 	1) Optional line with **Omvang** and **Urgentie**.
 	2) One short sentence describing the job.

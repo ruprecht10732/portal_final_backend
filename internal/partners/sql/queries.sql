@@ -337,6 +337,14 @@ WHERE id = sqlc.arg(offer_id)::uuid
 	AND organization_id = sqlc.arg(organization_id)::uuid
 	AND builder_summary IS NULL;
 
+-- name: UpdatePartnerOfferJobSummaryShortIfEmpty :execrows
+UPDATE RAC_partner_offers
+SET job_summary_short = sqlc.arg(summary)::text,
+	updated_at = now()
+WHERE id = sqlc.arg(offer_id)::uuid
+	AND organization_id = sqlc.arg(organization_id)::uuid
+	AND job_summary_short IS NULL;
+
 -- name: GetPartnerOfferByTokenWithContext :one
 SELECT o.id,
 	o.organization_id,

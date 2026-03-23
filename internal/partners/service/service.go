@@ -177,12 +177,21 @@ func (s *Service) ProcessPartnerOfferSummaryJob(ctx context.Context, payload sch
 		return err
 	}
 
-	clean := strings.TrimSpace(sanitize.Text(summary))
-	if clean == "" {
-		return nil
+	shortSummary, fullSummary := splitOfferSummary(summary)
+
+	if fullSummary != "" {
+		if err := s.repo.UpdateOfferBuilderSummaryIfEmpty(ctx, offerID, tenantID, fullSummary); err != nil {
+			return err
+		}
 	}
 
-	return s.repo.UpdateOfferBuilderSummaryIfEmpty(ctx, offerID, tenantID, clean)
+	if shortSummary != "" {
+		if err := s.repo.UpdateOfferJobSummaryShortIfEmpty(ctx, offerID, tenantID, shortSummary); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) GetByID(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) (transport.PartnerResponse, error) {

@@ -2358,3 +2358,26 @@ func (q *Queries) UpdatePartnerOfferBuilderSummaryIfEmpty(ctx context.Context, a
 	}
 	return result.RowsAffected(), nil
 }
+
+const updatePartnerOfferJobSummaryShortIfEmpty = `-- name: UpdatePartnerOfferJobSummaryShortIfEmpty :execrows
+UPDATE RAC_partner_offers
+SET job_summary_short = $1::text,
+	updated_at = now()
+WHERE id = $2::uuid
+	AND organization_id = $3::uuid
+	AND job_summary_short IS NULL
+`
+
+type UpdatePartnerOfferJobSummaryShortIfEmptyParams struct {
+	Summary        string      `json:"summary"`
+	OfferID        pgtype.UUID `json:"offer_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) UpdatePartnerOfferJobSummaryShortIfEmpty(ctx context.Context, arg UpdatePartnerOfferJobSummaryShortIfEmptyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePartnerOfferJobSummaryShortIfEmpty, arg.Summary, arg.OfferID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

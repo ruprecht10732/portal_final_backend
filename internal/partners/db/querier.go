@@ -55,6 +55,7 @@ type Querier interface {
 	UpdatePartner(ctx context.Context, arg UpdatePartnerParams) (RacPartner, error)
 	UpdatePartnerLogo(ctx context.Context, arg UpdatePartnerLogoParams) (RacPartner, error)
 	UpdatePartnerOfferBuilderSummaryIfEmpty(ctx context.Context, arg UpdatePartnerOfferBuilderSummaryIfEmptyParams) (int64, error)
+	UpdatePartnerOfferJobSummaryShortIfEmpty(ctx context.Context, arg UpdatePartnerOfferJobSummaryShortIfEmptyParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -846,6 +846,30 @@ func sanitizeSummaryText(value string) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(clean), " "))
 }
 
+// splitOfferSummary splits AI output into short + full parts separated by "---".
+// If no separator is found, the entire text is returned as the full summary.
+func splitOfferSummary(raw string) (short string, full string) {
+	clean := strings.TrimSpace(sanitize.Text(raw))
+	if clean == "" {
+		return "", ""
+	}
+
+	parts := strings.SplitN(clean, "---", 2)
+	if len(parts) == 2 {
+		s := strings.TrimSpace(parts[0])
+		f := strings.TrimSpace(parts[1])
+		if f != "" {
+			runes := []rune(s)
+			if len(runes) > 200 {
+				s = string(runes[:200])
+			}
+			return s, f
+		}
+	}
+
+	return "", clean
+}
+
 func normalizeBuilderSummary(value *string) *string {
 	if value == nil {
 		return nil
