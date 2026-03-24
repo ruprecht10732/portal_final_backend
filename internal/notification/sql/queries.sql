@@ -6,6 +6,7 @@ WHERE id = $1;
 -- name: GetNotificationLeadDetails :one
 SELECT l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
 	l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
+	l.public_token,
 	COALESCE(st.name, '') AS service_type
 FROM rac_leads l
 LEFT JOIN LATERAL (

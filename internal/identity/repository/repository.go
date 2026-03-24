@@ -112,6 +112,7 @@ type OrganizationSettings struct {
 	QuoteRelatedReplyScenario                         string
 	AppointmentRelatedReplyScenario                   string
 	DailyDigestEnabled                                bool
+	ReviewURL                                         *string
 	SMTPHost                                          *string
 	SMTPPort                                          *int
 	SMTPUsername                                      *string
@@ -154,6 +155,7 @@ type OrganizationSettingsUpdate struct {
 	QuoteRelatedReplyScenario                         *string
 	AppointmentRelatedReplyScenario                   *string
 	DailyDigestEnabled                                *bool
+	ReviewURL                                         *string
 }
 
 type ReplyScenarioAnalyticsItem struct {
@@ -243,6 +245,7 @@ type settingsSnapshot struct {
 	QuoteRelatedReplyScenario                         string
 	AppointmentRelatedReplyScenario                   string
 	DailyDigestEnabled                                bool
+	ReviewURL                                         pgtype.Text
 	SMTPHost                                          pgtype.Text
 	SMTPPort                                          pgtype.Int4
 	SMTPUsername                                      pgtype.Text
@@ -438,7 +441,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		       photo_analysis_perspective_normalization_service_types,
 		       notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
 		       whatsapp_default_reply_scenario, email_default_reply_scenario, quote_related_reply_scenario, appointment_related_reply_scenario,
-		       daily_digest_enabled,
+		       daily_digest_enabled, review_url,
 		       smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		       created_at, updated_at
 		FROM RAC_organization_settings
@@ -478,6 +481,7 @@ func (r *Repository) GetOrganizationSettings(ctx context.Context, organizationID
 		&row.QuoteRelatedReplyScenario,
 		&row.AppointmentRelatedReplyScenario,
 		&row.DailyDigestEnabled,
+		&row.ReviewURL,
 		&row.SMTPHost,
 		&row.SMTPPort,
 		&row.SMTPUsername,
@@ -562,7 +566,8 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  email_default_reply_scenario,
 		  quote_related_reply_scenario,
 		  appointment_related_reply_scenario,
-		  daily_digest_enabled
+		  daily_digest_enabled,
+		  review_url
 		)
 		VALUES (
 		  $1,
@@ -596,7 +601,8 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  COALESCE(NULLIF($29::text, ''), 'generic'),
 		  COALESCE(NULLIF($30::text, ''), 'quote_reminder'),
 		  COALESCE(NULLIF($31::text, ''), 'appointment_reminder'),
-		  COALESCE($32::boolean, true)
+		  COALESCE($32::boolean, true),
+		  NULLIF($33::text, '')
 		)
 		ON CONFLICT (organization_id) DO UPDATE SET
 		  quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
@@ -630,6 +636,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  quote_related_reply_scenario = COALESCE(NULLIF($30::text, ''), RAC_organization_settings.quote_related_reply_scenario),
 		  appointment_related_reply_scenario = COALESCE(NULLIF($31::text, ''), RAC_organization_settings.appointment_related_reply_scenario),
 		  daily_digest_enabled = COALESCE($32::boolean, RAC_organization_settings.daily_digest_enabled),
+		  review_url = CASE WHEN $33::text IS NULL THEN RAC_organization_settings.review_url ELSE NULLIF($33::text, '') END,
 		  updated_at = now()
 		RETURNING organization_id, quote_payment_days, quote_valid_days,
 		  offer_margin_basis_points,
@@ -646,7 +653,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		  photo_analysis_perspective_normalization_service_types,
 		  notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
 		  whatsapp_default_reply_scenario, email_default_reply_scenario, quote_related_reply_scenario, appointment_related_reply_scenario,
-		  daily_digest_enabled,
+		  daily_digest_enabled, review_url,
 		  smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
 		  created_at, updated_at`
 
@@ -684,6 +691,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		normalizedTextValue(update.QuoteRelatedReplyScenario),
 		normalizedTextValue(update.AppointmentRelatedReplyScenario),
 		update.DailyDigestEnabled,
+		normalizedTextValue(update.ReviewURL),
 	).Scan(
 		&row.OrganizationID,
 		&row.QuotePaymentDays,
@@ -717,6 +725,7 @@ func (r *Repository) UpsertOrganizationSettings(ctx context.Context, organizatio
 		&row.QuoteRelatedReplyScenario,
 		&row.AppointmentRelatedReplyScenario,
 		&row.DailyDigestEnabled,
+		&row.ReviewURL,
 		&row.SMTPHost,
 		&row.SMTPPort,
 		&row.SMTPUsername,
@@ -976,6 +985,7 @@ func organizationSettingsFromSnapshot(snapshot settingsSnapshot) OrganizationSet
 		QuoteRelatedReplyScenario:                         strings.TrimSpace(snapshot.QuoteRelatedReplyScenario),
 		AppointmentRelatedReplyScenario:                   strings.TrimSpace(snapshot.AppointmentRelatedReplyScenario),
 		DailyDigestEnabled:                                snapshot.DailyDigestEnabled,
+		ReviewURL:                                         optionalString(snapshot.ReviewURL),
 		SMTPHost:                                          optionalString(snapshot.SMTPHost),
 		SMTPPort:                                          optionalInt(snapshot.SMTPPort),
 		SMTPUsername:                                      optionalString(snapshot.SMTPUsername),

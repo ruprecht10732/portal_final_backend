@@ -48,10 +48,10 @@ func buildDefaultWorkflowSteps() []repository.WorkflowStepUpsert {
 			stringPtr("Je offerte {{quote.number}} staat klaar"),
 			"Hallo {{lead.name}},\n\nJe offerte {{quote.number}} staat klaar. Je kunt deze bekijken via {{quote.previewUrl}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
 		newDefaultWorkflowStep(5, "quote_accepted", "whatsapp", "lead", leadRecipients, nil,
-			"Bedankt {{lead.name}}! Je hebt offerte {{quote.number}} geaccepteerd. Je downloadlink: {{links.download}}"),
+			"Bedankt {{lead.name}}! Je hebt offerte {{quote.number}} geaccepteerd. Je downloadlink: {{links.download}}\n\nPlan hier een afspraak in: {{links.scheduling}}"),
 		newDefaultWorkflowStep(6, "quote_accepted", "email", "lead", leadRecipients,
 			stringPtr("Bevestiging offerte {{quote.number}}"),
-			"Hallo {{lead.name}},\n\nBedankt voor je akkoord op offerte {{quote.number}}. De getekende offerte is als pdf-bijlage toegevoegd voor je administratie. Je kunt de offerte ook online bekijken via {{links.view}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
+			"Hallo {{lead.name}},\n\nBedankt voor je akkoord op offerte {{quote.number}}. De getekende offerte is als pdf-bijlage toegevoegd voor je administratie. Je kunt de offerte ook online bekijken via {{links.view}}.\n\nPlan hier een afspraak in voor de vakman: {{links.scheduling}}\n\nMet vriendelijke groet,\n{{org.name}}"),
 		newDefaultWorkflowStep(7, "quote_accepted", "email", "partner", partnerRecipients,
 			stringPtr("Offerte {{quote.number}} is geaccepteerd"),
 			"Hallo {{partner.name}},\n\nOfferte {{quote.number}} voor {{lead.name}} is geaccepteerd.\n\nMet vriendelijke groet,\n{{org.name}}"),
@@ -85,6 +85,11 @@ func buildDefaultWorkflowSteps() []repository.WorkflowStepUpsert {
 		newDefaultWorkflowStep(19, "quote_question_answered", "email", "lead", leadRecipients,
 			stringPtr("Antwoord op je vraag over offerte {{quote.number}}"),
 			"Hallo {{lead.name}},\n\nJe vraag over offerte {{quote.number}} is beantwoord.\n\nAntwoord: {{annotation.text}}\n\nBekijk de offerte via {{quote.previewUrl}}.\n\nMet vriendelijke groet,\n{{org.name}}"),
+		newDefaultWorkflowStep(20, "job_completed", "whatsapp", "lead", leadRecipients, nil,
+			"Hallo {{lead.name}}, het werk is afgerond! We horen graag hoe je de ervaring vond. Laat je review achter via: {{org.reviewUrl}}"),
+		newDefaultWorkflowStep(21, "job_completed", "email", "lead", leadRecipients,
+			stringPtr("Het werk is afgerond – laat een review achter"),
+			"Hallo {{lead.name}},\n\nHet werk is afgerond! We hopen dat je tevreden bent met het resultaat.\n\nWe zouden het erg waarderen als je een review achterlaat via: {{org.reviewUrl}}\n\nMet vriendelijke groet,\n{{org.name}}"),
 	}
 }
 

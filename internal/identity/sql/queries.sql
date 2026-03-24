@@ -73,6 +73,7 @@ SELECT organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
       notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
+       review_url,
        smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
        created_at, updated_at
 FROM RAC_organization_settings
@@ -105,7 +106,8 @@ INSERT INTO RAC_organization_settings (
   whatsapp_device_id,
   whatsapp_account_jid,
   whatsapp_presence,
-  whatsapp_welcome_delay_minutes
+  whatsapp_welcome_delay_minutes,
+  review_url
 )
 VALUES (
   sqlc.arg('organization_id')::uuid,
@@ -133,7 +135,8 @@ VALUES (
   NULLIF(sqlc.narg('whatsapp_device_id')::text, ''),
   NULLIF(sqlc.narg('whatsapp_account_jid')::text, ''),
   COALESCE(NULLIF(sqlc.narg('whatsapp_presence')::text, ''), 'available'),
-  COALESCE(sqlc.narg('whatsapp_welcome_delay_minutes')::int, 2)
+  COALESCE(sqlc.narg('whatsapp_welcome_delay_minutes')::int, 2),
+  NULLIF(sqlc.narg('review_url')::text, '')
 )
 ON CONFLICT (organization_id) DO UPDATE SET
   quote_payment_days = COALESCE(sqlc.narg('quote_payment_days')::int, RAC_organization_settings.quote_payment_days),
@@ -161,6 +164,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
   whatsapp_account_jid = CASE WHEN sqlc.narg('whatsapp_account_jid')::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF(sqlc.narg('whatsapp_account_jid')::text, '') END,
   whatsapp_presence = COALESCE(NULLIF(sqlc.narg('whatsapp_presence')::text, ''), RAC_organization_settings.whatsapp_presence),
   whatsapp_welcome_delay_minutes = COALESCE(sqlc.narg('whatsapp_welcome_delay_minutes')::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+  review_url = CASE WHEN sqlc.narg('review_url')::text IS NULL THEN RAC_organization_settings.review_url ELSE NULLIF(sqlc.narg('review_url')::text, '') END,
   updated_at = now()
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
@@ -175,6 +179,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
   notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
+  review_url,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at;
 
@@ -202,6 +207,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
   notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
+  review_url,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at;
 

@@ -96,6 +96,7 @@ type Lead struct {
 	LeadScoreFactors                        []byte
 	LeadScoreVersion                        *string
 	LeadScoreUpdatedAt                      *time.Time
+	PublicToken                             *string
 	ViewedByID                              *uuid.UUID
 	ViewedAt                                *time.Time
 	CreatedAt                               time.Time
@@ -394,6 +395,7 @@ func leadFromDB(row leadsdb.RacLead) Lead {
 		LeadScoreUpdatedAt:                      optionalTime(row.LeadScoreUpdatedAt),
 		ViewedByID:                              optionalUUID(row.ViewedByID),
 		ViewedAt:                                optionalTime(row.ViewedAt),
+		PublicToken:                             optionalString(row.PublicToken),
 		CreatedAt:                               row.CreatedAt.Time,
 		UpdatedAt:                               row.UpdatedAt.Time,
 	}

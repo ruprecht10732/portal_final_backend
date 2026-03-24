@@ -279,6 +279,7 @@ type leadDetails struct {
 	ZipCode     string
 	City        string
 	ServiceType string
+	PublicToken string
 }
 
 // resolveLeadDetails fetches first/last name, address and service type for a lead.
@@ -303,6 +304,7 @@ func (m *Module) resolveLeadDetails(ctx context.Context, leadID uuid.UUID, orgID
 		ZipCode:     row.AddressZipCode,
 		City:        row.AddressCity,
 		ServiceType: row.ServiceType,
+		PublicToken: optionalTextValue(row.PublicToken),
 	}
 }
 
@@ -2465,6 +2467,14 @@ func (m *Module) buildLeadTrackLink(publicToken string) string {
 	return fmt.Sprintf("%s/track/%s", base, publicToken)
 }
 
+// buildSchedulingLink builds a /track/:token link from leadDetails.
+func (m *Module) buildSchedulingLink(d *leadDetails) string {
+	if d == nil {
+		return ""
+	}
+	return m.buildLeadTrackLink(d.PublicToken)
+}
+
 func (m *Module) handleLeadDataChanged(ctx context.Context, e events.LeadDataChanged) error {
 	var eventType sse.EventType
 	var message string
@@ -2551,22 +2561,91 @@ func (m *Module) handleManualInterventionRequired(ctx context.Context, e events.
 	return nil
 }
 
-func (m *Module) handlePipelineStageChanged(_ context.Context, e events.PipelineStageChanged) error {
-	if m.sse == nil {
-		return nil
+func (m *Module) handlePipelineStageChanged(ctx context.Context, e events.PipelineStageChanged) error {
+	if m.sse != nil {
+		m.sse.PublishToLead(e.LeadID, sse.Event{
+			Type:      sse.EventLeadStatusChanged,
+			LeadID:    e.LeadID,
+			ServiceID: e.LeadServiceID,
+			Data: map[string]interface{}{
+				"oldStage": e.OldStage,
+				"newStage": e.NewStage,
+			},
+		})
 	}
 
-	m.sse.PublishToLead(e.LeadID, sse.Event{
-		Type:      sse.EventLeadStatusChanged,
-		LeadID:    e.LeadID,
-		ServiceID: e.LeadServiceID,
-		Data: map[string]interface{}{
-			"oldStage": e.OldStage,
-			"newStage": e.NewStage,
-		},
-	})
+	if strings.EqualFold(e.NewStage, "Completed") {
+		m.dispatchJobCompletedWorkflows(ctx, e)
+	}
 
 	return nil
+}
+
+// ── Job-completed event dispatch ────────────────────────────────────────
+
+func (m *Module) dispatchJobCompletedWorkflows(ctx context.Context, e events.PipelineStageChanged) {
+	details := m.resolveLeadDetails(ctx, e.LeadID, e.TenantID)
+	orgName := m.resolveOrganizationName(ctx, e.TenantID)
+
+	// Load org settings to get the review URL.
+	var reviewURL string
+	if m.settingsReader != nil {
+		settings, err := m.settingsReader.GetOrganizationSettings(ctx, e.TenantID)
+		if err != nil {
+			m.log.Warn("job_completed: failed to load org settings", "orgId", e.TenantID, "error", err)
+		} else if settings.ReviewURL != nil {
+			reviewURL = *settings.ReviewURL
+		}
+	}
+
+	leadName := "klant"
+	leadPhone := ""
+	leadEmail := ""
+	if details != nil {
+		if n := strings.TrimSpace(details.FirstName + " " + details.LastName); n != "" {
+			leadName = n
+		}
+		leadPhone = details.Phone
+		leadEmail = details.Email
+	}
+
+	templateVars := map[string]any{
+		"lead": map[string]any{"name": leadName, "phone": leadPhone, "email": leadEmail},
+		"org":  map[string]any{"name": orgName, "reviewUrl": reviewURL},
+	}
+	enrichLeadVars(templateVars, details)
+
+	serviceID := e.LeadServiceID
+
+	// WhatsApp dispatch
+	whatsAppRule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "job_completed", "whatsapp", "lead", nil)
+	m.dispatchQuoteWhatsAppWorkflow(ctx, dispatchQuoteWhatsAppWorkflowParams{
+		Rule:         whatsAppRule,
+		OrgID:        e.TenantID,
+		LeadID:       &e.LeadID,
+		ServiceID:    &serviceID,
+		LeadPhone:    leadPhone,
+		Trigger:      "job_completed",
+		TemplateVars: templateVars,
+		Summary:      fmt.Sprintf("WhatsApp review-verzoek verstuurd naar %s", leadName),
+		FallbackNote: "failed to enqueue job_completed lead whatsapp workflow",
+	})
+
+	// Email dispatch
+	emailRule := m.resolveWorkflowRule(ctx, e.TenantID, e.LeadID, "job_completed", "email", "lead", nil)
+	m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
+		Rule:         emailRule,
+		OrgID:        e.TenantID,
+		LeadID:       &e.LeadID,
+		ServiceID:    &serviceID,
+		LeadEmail:    leadEmail,
+		Trigger:      "job_completed",
+		TemplateVars: templateVars,
+		Summary:      fmt.Sprintf("Email review-verzoek verstuurd naar %s", leadName),
+		FallbackNote: "failed to enqueue job_completed lead email workflow",
+	})
+
+	m.log.Info("job_completed workflows dispatched", "leadId", e.LeadID, "orgId", e.TenantID)
 }
 
 // ── Quote event handlers ────────────────────────────────────────────────
@@ -3322,7 +3401,7 @@ func (m *Module) dispatchQuoteAcceptedLeadEmailWorkflow(ctx context.Context, e e
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
 		"quote": map[string]any{"id": e.QuoteID.String(), "number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL, "pdfFileKey": strings.TrimSpace(pdfFileKey)},
-		"links": map[string]any{"view": viewURL, "download": downloadURL},
+		"links": map[string]any{"view": viewURL, "download": downloadURL, "scheduling": m.buildSchedulingLink(details)},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
 	injectQuoteSubsidyTemplateVars(templateVars, e.ISDESubsidy)
@@ -3349,6 +3428,7 @@ func (m *Module) dispatchQuoteAcceptedAgentEmailWorkflow(ctx context.Context, e 
 		"partner": map[string]any{"name": name, "email": e.AgentEmail},
 		"lead":    map[string]any{"name": defaultName(strings.TrimSpace(e.ConsumerName), "de klant")},
 		"quote":   map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice},
+		"links":   map[string]any{"scheduling": m.buildSchedulingLink(details)},
 		"org":     map[string]any{"name": e.OrganizationName},
 	}
 	enrichLeadVars(templateVars, details)
@@ -3374,7 +3454,7 @@ func (m *Module) dispatchQuoteAcceptedLeadWhatsAppWorkflow(ctx context.Context, 
 	templateVars := map[string]any{
 		"lead":  map[string]any{"name": name, "phone": e.ConsumerPhone, "email": e.ConsumerEmail},
 		"quote": map[string]any{"number": e.QuoteNumber, "totalCents": e.TotalCents, "total": formattedPrice, "totalFormatted": formattedPrice, "downloadUrl": downloadURL},
-		"links": map[string]any{"download": downloadURL},
+		"links": map[string]any{"download": downloadURL, "scheduling": m.buildSchedulingLink(details)},
 		"org":   map[string]any{"name": e.OrganizationName},
 	}
 	enrichLeadVars(templateVars, details)

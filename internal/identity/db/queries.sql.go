@@ -554,6 +554,7 @@ SELECT organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
       notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
+       review_url,
        smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
        created_at, updated_at
 FROM RAC_organization_settings
@@ -587,6 +588,7 @@ type GetOrganizationSettingsRow struct {
 	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
+	ReviewUrl                                         pgtype.Text        `json:"review_url"`
 	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
 	SmtpPort                                          pgtype.Int4        `json:"smtp_port"`
 	SmtpUsername                                      pgtype.Text        `json:"smtp_username"`
@@ -627,6 +629,7 @@ func (q *Queries) GetOrganizationSettings(ctx context.Context, organizationID pg
 		&i.WhatsappAccountJid,
 		&i.WhatsappPresence,
 		&i.WhatsappWelcomeDelayMinutes,
+		&i.ReviewUrl,
 		&i.SmtpHost,
 		&i.SmtpPort,
 		&i.SmtpUsername,
@@ -1241,6 +1244,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
   notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
+  review_url,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at
 `
@@ -1282,6 +1286,7 @@ type UpsertOrganizationSMTPRow struct {
 	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
+	ReviewUrl                                         pgtype.Text        `json:"review_url"`
 	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
 	SmtpPort                                          pgtype.Int4        `json:"smtp_port"`
 	SmtpUsername                                      pgtype.Text        `json:"smtp_username"`
@@ -1330,6 +1335,7 @@ func (q *Queries) UpsertOrganizationSMTP(ctx context.Context, arg UpsertOrganiza
 		&i.WhatsappAccountJid,
 		&i.WhatsappPresence,
 		&i.WhatsappWelcomeDelayMinutes,
+		&i.ReviewUrl,
 		&i.SmtpHost,
 		&i.SmtpPort,
 		&i.SmtpUsername,
@@ -1369,7 +1375,8 @@ INSERT INTO RAC_organization_settings (
   whatsapp_device_id,
   whatsapp_account_jid,
   whatsapp_presence,
-  whatsapp_welcome_delay_minutes
+  whatsapp_welcome_delay_minutes,
+  review_url
 )
 VALUES (
   $1::uuid,
@@ -1397,7 +1404,8 @@ VALUES (
   NULLIF($23::text, ''),
   NULLIF($24::text, ''),
   COALESCE(NULLIF($25::text, ''), 'available'),
-  COALESCE($26::int, 2)
+  COALESCE($26::int, 2),
+  NULLIF($27::text, '')
 )
 ON CONFLICT (organization_id) DO UPDATE SET
   quote_payment_days = COALESCE($2::int, RAC_organization_settings.quote_payment_days),
@@ -1425,6 +1433,7 @@ ON CONFLICT (organization_id) DO UPDATE SET
   whatsapp_account_jid = CASE WHEN $24::text IS NULL THEN RAC_organization_settings.whatsapp_account_jid ELSE NULLIF($24::text, '') END,
   whatsapp_presence = COALESCE(NULLIF($25::text, ''), RAC_organization_settings.whatsapp_presence),
   whatsapp_welcome_delay_minutes = COALESCE($26::int, RAC_organization_settings.whatsapp_welcome_delay_minutes),
+  review_url = CASE WHEN $27::text IS NULL THEN RAC_organization_settings.review_url ELSE NULLIF($27::text, '') END,
   updated_at = now()
 RETURNING organization_id, quote_payment_days, quote_valid_days,
   ai_auto_disqualify_junk, ai_auto_dispatch, ai_auto_estimate, ai_confidence_gate_enabled,
@@ -1439,6 +1448,7 @@ RETURNING organization_id, quote_payment_days, quote_valid_days,
   photo_analysis_perspective_normalization_enabled,
   photo_analysis_perspective_normalization_service_types,
   notification_email, whatsapp_device_id, whatsapp_account_jid, whatsapp_presence, whatsapp_welcome_delay_minutes,
+  review_url,
   smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_from_name,
   created_at, updated_at
 `
@@ -1470,6 +1480,7 @@ type UpsertOrganizationSettingsParams struct {
 	WhatsappAccountJid                                pgtype.Text `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  pgtype.Text `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       pgtype.Int4 `json:"whatsapp_welcome_delay_minutes"`
+	ReviewUrl                                         pgtype.Text `json:"review_url"`
 }
 
 type UpsertOrganizationSettingsRow struct {
@@ -1499,6 +1510,7 @@ type UpsertOrganizationSettingsRow struct {
 	WhatsappAccountJid                                pgtype.Text        `json:"whatsapp_account_jid"`
 	WhatsappPresence                                  string             `json:"whatsapp_presence"`
 	WhatsappWelcomeDelayMinutes                       int32              `json:"whatsapp_welcome_delay_minutes"`
+	ReviewUrl                                         pgtype.Text        `json:"review_url"`
 	SmtpHost                                          pgtype.Text        `json:"smtp_host"`
 	SmtpPort                                          pgtype.Int4        `json:"smtp_port"`
 	SmtpUsername                                      pgtype.Text        `json:"smtp_username"`
@@ -1537,6 +1549,7 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		arg.WhatsappAccountJid,
 		arg.WhatsappPresence,
 		arg.WhatsappWelcomeDelayMinutes,
+		arg.ReviewUrl,
 	)
 	var i UpsertOrganizationSettingsRow
 	err := row.Scan(
@@ -1566,6 +1579,7 @@ func (q *Queries) UpsertOrganizationSettings(ctx context.Context, arg UpsertOrga
 		&i.WhatsappAccountJid,
 		&i.WhatsappPresence,
 		&i.WhatsappWelcomeDelayMinutes,
+		&i.ReviewUrl,
 		&i.SmtpHost,
 		&i.SmtpPort,
 		&i.SmtpUsername,

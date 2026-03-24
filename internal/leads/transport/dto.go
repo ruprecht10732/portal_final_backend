@@ -366,6 +366,7 @@ type LeadResponse struct {
 	ViewedByID      *uuid.UUID              `json:"viewedById,omitempty"`
 	ViewedAt        *time.Time              `json:"viewedAt,omitempty"`
 	Source          *string                 `json:"source,omitempty"`
+	PublicToken     *string                 `json:"publicToken,omitempty"`
 	WhatsAppOptedIn bool                    `json:"whatsappOptedIn"`
 	CreatedAt       time.Time               `json:"createdAt"`
 	UpdatedAt       time.Time               `json:"updatedAt"`

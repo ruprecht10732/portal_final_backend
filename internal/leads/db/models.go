@@ -990,6 +990,7 @@ type RacOrganizationSetting struct {
 	AppointmentRelatedReplyScenario                   string             `json:"appointment_related_reply_scenario"`
 	OfferMarginBasisPoints                            int32              `json:"offer_margin_basis_points"`
 	DailyDigestEnabled                                bool               `json:"daily_digest_enabled"`
+	ReviewUrl                                         pgtype.Text        `json:"review_url"`
 }
 
 type RacPartner struct {

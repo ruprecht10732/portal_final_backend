@@ -88,6 +88,7 @@ func ToLeadResponse(lead repository.Lead) transport.LeadResponse {
 		ViewedByID:      lead.ViewedByID,
 		ViewedAt:        lead.ViewedAt,
 		Source:          lead.Source,
+		PublicToken:     lead.PublicToken,
 		WhatsAppOptedIn: lead.WhatsAppOptedIn,
 		CreatedAt:       lead.CreatedAt,
 		UpdatedAt:       lead.UpdatedAt,

@@ -125,6 +125,7 @@ type OrganizationSettingsResponse struct {
 	WhatsAppPresence                                  string   `json:"whatsAppPresence"`
 	WhatsAppWelcomeDelayMinutes                       int      `json:"whatsAppWelcomeDelayMinutes"`
 	DailyDigestEnabled                                bool     `json:"dailyDigestEnabled"`
+	ReviewURL                                         *string  `json:"reviewUrl,omitempty"`
 	SMTPConfigured                                    bool     `json:"smtpConfigured"`
 }
 
@@ -160,6 +161,7 @@ type UpdateOrganizationSettingsRequest struct {
 	WhatsAppWelcomeDelayMinutes *int    `json:"whatsAppWelcomeDelayMinutes" validate:"omitempty,min=0,max=1440"`
 	WhatsAppPresence            *string `json:"whatsAppPresence" validate:"omitempty,oneof=available unavailable"`
 	DailyDigestEnabled          *bool   `json:"dailyDigestEnabled"`
+	ReviewURL                   *string `json:"reviewUrl" validate:"omitempty,url,max=2048"`
 }
 
 type ReplyScenarioAnalyticsItemResponse struct {

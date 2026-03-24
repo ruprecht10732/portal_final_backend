@@ -365,6 +365,7 @@ func (h *Handler) GetOrganizationSettings(c *gin.Context) {
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		DailyDigestEnabled:                                settings.DailyDigestEnabled,
+		ReviewURL:                                         settings.ReviewURL,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
 }
@@ -434,6 +435,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		WhatsAppPresence:                                  req.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       req.WhatsAppWelcomeDelayMinutes,
 		DailyDigestEnabled:                                req.DailyDigestEnabled,
+		ReviewURL:                                         req.ReviewURL,
 	})
 	if httpkit.HandleError(c, err) {
 		return
@@ -471,6 +473,7 @@ func (h *Handler) UpdateOrganizationSettings(c *gin.Context) {
 		WhatsAppPresence:                                  settings.WhatsAppPresence,
 		WhatsAppWelcomeDelayMinutes:                       settings.WhatsAppWelcomeDelayMinutes,
 		DailyDigestEnabled:                                settings.DailyDigestEnabled,
+		ReviewURL:                                         settings.ReviewURL,
 		SMTPConfigured:                                    settings.SMTPHost != nil && *settings.SMTPHost != "",
 	})
 }

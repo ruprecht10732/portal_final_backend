@@ -215,6 +215,7 @@ func (q *Queries) DeleteInAppNotification(ctx context.Context, arg DeleteInAppNo
 const getNotificationLeadDetails = `-- name: GetNotificationLeadDetails :one
 SELECT l.consumer_first_name, l.consumer_last_name, l.consumer_phone, l.consumer_email,
 	l.address_street, l.address_house_number, l.address_zip_code, l.address_city,
+	l.public_token,
 	COALESCE(st.name, '') AS service_type
 FROM rac_leads l
 LEFT JOIN LATERAL (
@@ -242,6 +243,7 @@ type GetNotificationLeadDetailsRow struct {
 	AddressHouseNumber string      `json:"address_house_number"`
 	AddressZipCode     string      `json:"address_zip_code"`
 	AddressCity        string      `json:"address_city"`
+	PublicToken        pgtype.Text `json:"public_token"`
 	ServiceType        string      `json:"service_type"`
 }
 
@@ -257,6 +259,7 @@ func (q *Queries) GetNotificationLeadDetails(ctx context.Context, arg GetNotific
 		&i.AddressHouseNumber,
 		&i.AddressZipCode,
 		&i.AddressCity,
+		&i.PublicToken,
 		&i.ServiceType,
 	)
 	return i, err
