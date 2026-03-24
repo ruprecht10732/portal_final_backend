@@ -25,7 +25,7 @@ func NewUpdateLeadDetailsTool[In any, Out any](description string, handler func(
 }
 
 func NewCreateLeadTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("CreateLead", "Creates a new lead in the current organization after collecting the required customer and address details. If required fields are missing, it should return which fields are still needed. Do NOT provide a tenant or organization identifier.", handler)
+	return newDomainTool("CreateLead", "Creates a new lead in the current organization after collecting the required customer and address details. Required fields: first_name, last_name, phone, consumer_role (must be exactly one of: Owner, Tenant, Landlord), street, house_number, zip_code, city, service_type (the product/service name as known in the organization catalog, e.g. Zonnepanelen, Warmtepomp, Isolatie). Optional: email, consumer_note. If required fields are missing, returns which fields are still needed. Do NOT provide a tenant or organization identifier. When the caller's own phone number is known and no other phone is provided, use the caller's phone.", handler)
 }
 
 func NewCreateTaskTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {

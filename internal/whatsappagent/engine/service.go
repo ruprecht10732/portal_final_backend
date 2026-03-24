@@ -37,6 +37,7 @@ type Service struct {
 	agent                  agentRunner
 	sender                 *Sender
 	rateLimiter            *RateLimiter
+	debouncer              *MessageDebouncer
 	leadHintStore          LeadHintStore
 	leadDetailsReader      LeadDetailsReader
 	storage                ObjectStorage
@@ -124,6 +125,17 @@ func (s *Service) handleAIMessage(ctx context.Context, orgID uuid.UUID, phoneKey
 		s.logError(ctx, "whatsappagent: failed to persist user message", "phone", phoneKey, "organization_id", orgID.String(), "error", err)
 	}
 	s.syncInboundInboxMessage(ctx, orgID, replyTarget, inbound)
+
+	// Debounce: when multiple messages arrive in quick succession only the
+	// last handler runs the agent. Earlier handlers exit after the wait.
+	nonce := s.debouncer.Claim(ctx, phoneKey)
+	if nonce != "" {
+		s.debouncer.Wait()
+		if !s.debouncer.ShouldProceed(ctx, phoneKey, nonce) {
+			return
+		}
+	}
+
 	decision := s.selectAgentRunMode(ctx, orgID, phoneKey, text)
 	if partnerID, ok := partnerIDFromAgentUser(agentUser); ok {
 		decision.mode = agentRunModePartner
@@ -255,6 +267,8 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 // buildReplayableMessages converts the raw DB rows (newest-first) into the
 // chronological message slice that can be fed back to the agent, skipping
 // messages that should not be replayed (system fallbacks, voice placeholders).
+// Consecutive trailing user messages (from a rapid-fire burst) are merged into
+// a single turn so the LLM treats them as one coherent instruction.
 func buildReplayableMessages(recent []whatsappagentdb.GetRecentAgentMessagesRow) []ConversationMessage {
 	messages := make([]ConversationMessage, 0, len(recent))
 	for i := len(recent) - 1; i >= 0; i-- {
@@ -267,7 +281,58 @@ func buildReplayableMessages(recent []whatsappagentdb.GetRecentAgentMessagesRow)
 		}
 		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content, SentAt: timestamptzPtr(msg.CreatedAt)})
 	}
-	return messages
+	return MergeTrailingUserMessages(messages)
+}
+
+// MergeTrailingUserMessages combines consecutive user messages at the end of
+// the conversation into a single turn. This happens when a user sends multiple
+// WhatsApp messages in quick succession before the agent replies — each message
+// is persisted individually but should be presented to the LLM as one coherent
+// instruction so that multi-part requests and tool chaining work correctly.
+//
+// Example: ["create lead with X", "oh and the service type is Y"] becomes a
+// single user turn "create lead with X\n\noh and the service type is Y".
+func MergeTrailingUserMessages(messages []ConversationMessage) []ConversationMessage {
+	if len(messages) < 2 {
+		return messages
+	}
+
+	// Find where the trailing user-message streak begins.
+	streakStart := len(messages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			break
+		}
+		streakStart = i
+	}
+
+	// Nothing to merge if the streak is 0 or 1 messages.
+	if len(messages)-streakStart <= 1 {
+		return messages
+	}
+
+	// Combine the streak into one message.
+	parts := make([]string, 0, len(messages)-streakStart)
+	var latestSentAt *time.Time
+	for _, m := range messages[streakStart:] {
+		if text := strings.TrimSpace(m.Content); text != "" {
+			parts = append(parts, text)
+		}
+		if m.SentAt != nil {
+			latestSentAt = m.SentAt
+		}
+	}
+
+	merged := ConversationMessage{
+		Role:    "user",
+		Content: strings.Join(parts, "\n\n"),
+		SentAt:  latestSentAt,
+	}
+
+	result := make([]ConversationMessage, streakStart+1)
+	copy(result, messages[:streakStart])
+	result[streakStart] = merged
+	return result
 }
 
 func shouldResetConversation(message string) bool {

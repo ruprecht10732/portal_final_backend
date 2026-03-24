@@ -922,6 +922,9 @@ func extractContentText(content *genai.Content) string {
 	}
 	var b strings.Builder
 	for _, part := range content.Parts {
+		if part.Thought {
+			continue
+		}
 		b.WriteString(part.Text)
 	}
 	return b.String()

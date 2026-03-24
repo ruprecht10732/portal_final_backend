@@ -198,6 +198,10 @@ func (a *WhatsAppAgentLeadActionsAdapter) CreateLead(ctx context.Context, orgID 
 	if a.mgmt == nil {
 		return whatsappagent.CreateLeadOutput{}, errors.New(errLeadManagementNotConfigured)
 	}
+	if input.ConsumerRole != nil {
+		normalized := normalizeConsumerRole(*input.ConsumerRole)
+		input.ConsumerRole = &normalized
+	}
 	missing := missingCreateLeadFields(input)
 	if len(missing) > 0 {
 		return whatsappagent.CreateLeadOutput{
@@ -287,13 +291,28 @@ func missingCreateLeadFields(input whatsappagent.CreateLeadInput) []string {
 	appendMissing("voornaam", input.FirstName)
 	appendMissing("achternaam", input.LastName)
 	appendMissing("telefoonnummer", input.Phone)
-	appendMissing("rol van de klant", input.ConsumerRole)
+	appendMissing("rol van de klant (Owner, Tenant of Landlord)", input.ConsumerRole)
 	appendMissing("straat", input.Street)
 	appendMissing("huisnummer", input.HouseNumber)
 	appendMissing("postcode", input.ZipCode)
 	appendMissing("plaats", input.City)
 	appendMissing("dienst", input.ServiceType)
 	return missing
+}
+
+// normalizeConsumerRole maps common LLM-generated role values to the valid
+// enum values expected by the lead creation API (Owner, Tenant, Landlord).
+func normalizeConsumerRole(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "owner", "eigenaar":
+		return "Owner"
+	case "tenant", "huurder":
+		return "Tenant"
+	case "landlord", "verhuurder":
+		return "Landlord"
+	default:
+		return strings.TrimSpace(raw)
+	}
 }
 
 func (a *WhatsAppAgentLeadActionsAdapter) GetNavigationLink(ctx context.Context, orgID uuid.UUID, leadIDRaw string) (*whatsappagent.NavigationLinkResult, error) {

@@ -103,7 +103,15 @@ WHERE organization_id = $1
 -- name: GetAgentUserByPhone :one
 SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
 FROM RAC_whatsapp_agent_users
-WHERE phone_number = $1;
+WHERE phone_number = $1
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: GetAllAgentUsersByPhone :many
+SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
+FROM RAC_whatsapp_agent_users
+WHERE phone_number = $1
+ORDER BY created_at DESC;
 
 -- name: ListAgentUsersByOrganization :many
 SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at

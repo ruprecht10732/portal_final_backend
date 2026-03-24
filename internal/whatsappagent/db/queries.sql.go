@@ -157,6 +157,8 @@ const getAgentUserByPhone = `-- name: GetAgentUserByPhone :one
 SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
 FROM RAC_whatsapp_agent_users
 WHERE phone_number = $1
+ORDER BY created_at DESC
+LIMIT 1
 `
 
 type GetAgentUserByPhoneRow struct {
@@ -217,6 +219,49 @@ func (q *Queries) GetAgentVoiceTranscriptionByExternalID(ctx context.Context, ar
 		&i.CompletedAt,
 	)
 	return i, err
+}
+
+const getAllAgentUsersByPhone = `-- name: GetAllAgentUsersByPhone :many
+SELECT phone_number, organization_id, display_name, user_type, partner_id, created_at
+FROM RAC_whatsapp_agent_users
+WHERE phone_number = $1
+ORDER BY created_at DESC
+`
+
+type GetAllAgentUsersByPhoneRow struct {
+	PhoneNumber    string             `json:"phone_number"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	DisplayName    string             `json:"display_name"`
+	UserType       string             `json:"user_type"`
+	PartnerID      pgtype.UUID        `json:"partner_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetAllAgentUsersByPhone(ctx context.Context, phoneNumber string) ([]GetAllAgentUsersByPhoneRow, error) {
+	rows, err := q.db.Query(ctx, getAllAgentUsersByPhone, phoneNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllAgentUsersByPhoneRow
+	for rows.Next() {
+		var i GetAllAgentUsersByPhoneRow
+		if err := rows.Scan(
+			&i.PhoneNumber,
+			&i.OrganizationID,
+			&i.DisplayName,
+			&i.UserType,
+			&i.PartnerID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getRecentAgentMessages = `-- name: GetRecentAgentMessages :many

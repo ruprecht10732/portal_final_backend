@@ -153,7 +153,7 @@ func TestWhatsAppAPIKeyAuthMiddlewareRejectsMissingSignature(t *testing.T) {
 	}
 }
 
-func TestWhatsAppAPIKeyAuthMiddlewareRejectsUnknownDeviceForSignedWebhook(t *testing.T) {
+func TestWhatsAppAPIKeyAuthMiddlewareIgnoresUnknownDeviceForSignedWebhook(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &fakeWebhookAuthRepository{orgByDeviceID: map[string]uuid.UUID{"other-device": uuid.New()}}
 	body := []byte(`{"device_id":"device-123","event":"message","payload":{"id":"MSG-1"}}`)
@@ -169,8 +169,10 @@ func TestWhatsAppAPIKeyAuthMiddlewareRejectsUnknownDeviceForSignedWebhook(t *tes
 	req.Header.Set(signatureHeader, signedWebhookHeader(testWebhookSecret, body))
 	engine.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf(expected401Format, recorder.Code, recorder.Body.String())
+	// Signed webhook with unknown device_id is accepted (200) but ignored,
+	// preventing GoWA from retrying delivery receipts for customer JIDs.
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -329,7 +331,7 @@ func TestWhatsAppAPIKeyAuthMiddlewareAcceptsSignedWebhookForAgentDeviceBarePhone
 	}
 }
 
-func TestWhatsAppAPIKeyAuthMiddlewareRejectsSignedWebhookForAgentMemberPhoneCandidate(t *testing.T) {
+func TestWhatsAppAPIKeyAuthMiddlewareIgnoresSignedWebhookForUnknownPhoneCandidate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &fakeWebhookAuthRepository{}
 	body := []byte(`{"device_id":"31612345678@s.whatsapp.net","event":"message","payload":{"id":"MSG-1"}}`)
@@ -345,8 +347,9 @@ func TestWhatsAppAPIKeyAuthMiddlewareRejectsSignedWebhookForAgentMemberPhoneCand
 	req.Header.Set(signatureHeader, signedWebhookHeader(testWebhookSecret, body))
 	engine.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf(expected401Format, recorder.Code, recorder.Body.String())
+	// Signed webhook with unrecognised phone is accepted but ignored.
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(expected200Format, recorder.Code, recorder.Body.String())
 	}
 }
 

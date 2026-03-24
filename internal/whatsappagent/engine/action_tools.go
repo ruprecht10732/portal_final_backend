@@ -450,6 +450,12 @@ func (h *ToolHandler) HandleCreateLead(ctx tool.Context, orgID uuid.UUID, input 
 	if h.leadMutationWriter == nil {
 		return CreateLeadOutput{}, errors.New(errLeadMutationsNotConfigured)
 	}
+	// Auto-fill the caller's phone when no phone is provided.
+	if input.Phone == nil || strings.TrimSpace(*input.Phone) == "" {
+		if callerPhone, ok := phoneKeyFromToolContext(ctx); ok {
+			input.Phone = &callerPhone
+		}
+	}
 	output, err := h.leadMutationWriter.CreateLead(context.Background(), orgID, input)
 	if err == nil && output.Success && output.Lead != nil {
 		h.recordLeadHint(ctx, orgID, output.Lead.LeadID, output.Lead.CustomerName, output.Lead.LeadServiceID)

@@ -74,6 +74,7 @@ type Service struct {
 	transcriber            AudioTranscriber
 	inboxSync              InboxMessageSync
 	rateLimiter            *engine.RateLimiter
+	debouncer              *engine.MessageDebouncer
 	leadHintStore          LeadHintStore
 	log                    *logger.Logger
 }
@@ -100,6 +101,7 @@ func newService(pool *pgxpool.Pool, deps ModuleDependencies, inner *engine.Servi
 	}
 	service.transcriptionScheduler = deps.TranscriptionScheduler
 	service.rateLimiter = engine.NewRateLimiter(deps.RedisClient, deps.Logger)
+	service.debouncer = engine.NewMessageDebouncer(deps.RedisClient, deps.Logger)
 	service.leadHintStore = NewRedisConversationLeadHintStore(deps.RedisClient, deps.Logger)
 	return service
 }
@@ -152,6 +154,17 @@ func (s *Service) HandleIncomingMessage(ctx context.Context, inbound CurrentInbo
 		s.logError(ctx, "whatsappagent: failed to persist user message", "phone", lookupPhone, "organization_id", orgID.String(), "error", err)
 	}
 	s.syncInboundInboxMessage(ctx, orgID, replyTarget, &inbound)
+
+	// Debounce: when multiple messages arrive in quick succession only the
+	// last handler runs the agent. Earlier handlers exit after the wait.
+	nonce := s.debouncer.Claim(ctx, lookupPhone)
+	if nonce != "" {
+		s.debouncer.Wait()
+		if !s.debouncer.ShouldProceed(ctx, lookupPhone, nonce) {
+			return
+		}
+	}
+
 	inboundCopy := inbound
 	var partnerID *uuid.UUID
 	if resolvedPartnerID, ok := partnerIDFromAgentUser(user); ok {
@@ -684,6 +697,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		}
 		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content, SentAt: timestamptzPtr(msg.CreatedAt)})
 	}
+	messages = engine.MergeTrailingUserMessages(messages)
 
 	if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresenceComposing); err != nil {
 		s.logWarn(ctx, "whatsappagent: send chat presence start error", "phone", replyTarget, "organization_id", orgID.String(), "error", err)

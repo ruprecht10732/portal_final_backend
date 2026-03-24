@@ -149,7 +149,20 @@ func authenticateSecretBackedWhatsAppWebhook(c *gin.Context, repo webhookAuthRep
 
 	resolution, err := resolveWhatsAppWebhookDevice(c.Request.Context(), repo, deviceID)
 	if err != nil {
-		abortWhatsAppWebhookAuth(c, log, http.StatusUnauthorized, "unknown whatsapp device", "unknown_device", slog.String("device_id", deviceID))
+		// Signature is valid (GoWA is authentic) but device_id is not a
+		// registered org or agent device.  This typically happens for
+		// delivery-receipt / read-receipt webhooks where GoWA uses the
+		// chat-partner's JID as device_id.  Returning 401 would make GoWA
+		// retry indefinitely, so we accept the webhook and let the handler
+		// skip it gracefully.
+		if log != nil {
+			log.WithContext(c.Request.Context()).Info("whatsapp webhook from verified source with unrecognised device_id, ignoring",
+				slog.String("device_id", deviceID),
+				slog.String("path", c.FullPath()),
+			)
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ignored", "reason": "unrecognised_device"})
+		c.Abort()
 		return uuid.UUID{}, false
 	}
 	if resolution.isAgentDevice {

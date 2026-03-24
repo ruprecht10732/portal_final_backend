@@ -20,6 +20,7 @@ type Querier interface {
 	GetAgentMessageByExternalID(ctx context.Context, arg GetAgentMessageByExternalIDParams) (GetAgentMessageByExternalIDRow, error)
 	GetAgentUserByPhone(ctx context.Context, phoneNumber string) (GetAgentUserByPhoneRow, error)
 	GetAgentVoiceTranscriptionByExternalID(ctx context.Context, arg GetAgentVoiceTranscriptionByExternalIDParams) (RacWhatsappAgentVoiceTranscription, error)
+	GetAllAgentUsersByPhone(ctx context.Context, phoneNumber string) ([]GetAllAgentUsersByPhoneRow, error)
 	GetRecentAgentMessages(ctx context.Context, arg GetRecentAgentMessagesParams) ([]GetRecentAgentMessagesRow, error)
 	GetRecentInboundAgentMessages(ctx context.Context, arg GetRecentInboundAgentMessagesParams) ([]GetRecentInboundAgentMessagesRow, error)
 	InsertAgentMessage(ctx context.Context, arg InsertAgentMessageParams) error
