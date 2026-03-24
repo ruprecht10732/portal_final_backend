@@ -71,6 +71,7 @@ var workspaceDefinitions = map[string]workspaceDefinition{
 	"whatsapp-agent":         {workspaceDir: "agents/support/whatsapp_agent"},
 	"whatsapp_partner_agent": {workspaceDir: "agents/support/whatsapp_partner_agent"},
 	"email-reply":            {workspaceDir: "agents/support/email_reply"},
+	"stale-reengagement":     {workspaceDir: "agents/support/stale-reengagement"},
 }
 
 var loggedWorkspaceLoads sync.Map

@@ -1510,3 +1510,38 @@ GROUP BY qnorm
 HAVING COUNT(*) >= $3
 ORDER BY cnt DESC, last_seen DESC
 LIMIT $4;
+
+-- name: UpsertStaleLeadSuggestion :exec
+INSERT INTO RAC_stale_lead_suggestions (
+    lead_id, lead_service_id, organization_id,
+    stale_reason, recommended_action, suggested_contact_message,
+    preferred_contact_channel, summary
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (lead_service_id, organization_id)
+DO UPDATE SET
+    lead_id = EXCLUDED.lead_id,
+    stale_reason = EXCLUDED.stale_reason,
+    recommended_action = EXCLUDED.recommended_action,
+    suggested_contact_message = EXCLUDED.suggested_contact_message,
+    preferred_contact_channel = EXCLUDED.preferred_contact_channel,
+    summary = EXCLUDED.summary,
+    created_at = now();
+
+-- name: GetStaleLeadSuggestion :one
+SELECT id, lead_id, lead_service_id, organization_id,
+       stale_reason, recommended_action, suggested_contact_message,
+       preferred_contact_channel, summary, created_at
+FROM RAC_stale_lead_suggestions
+WHERE lead_service_id = $1 AND organization_id = $2;
+
+-- name: ListStaleLeadSuggestionsByOrg :many
+SELECT id, lead_id, lead_service_id, organization_id,
+       stale_reason, recommended_action, suggested_contact_message,
+       preferred_contact_channel, summary, created_at
+FROM RAC_stale_lead_suggestions
+WHERE organization_id = $1
+ORDER BY created_at DESC;
+
+-- name: DeleteStaleLeadSuggestion :exec
+DELETE FROM RAC_stale_lead_suggestions
+WHERE lead_service_id = $1 AND organization_id = $2;

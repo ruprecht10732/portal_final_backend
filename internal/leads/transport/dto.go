@@ -59,6 +59,12 @@ type StaleLeadItemResponse struct {
 	ConsumerPhone     string  `json:"consumerPhone"`
 	ConsumerEmail     *string `json:"consumerEmail,omitempty"`
 	ServiceType       string  `json:"serviceType"`
+
+	// AI re-engagement suggestion fields (populated when available).
+	RecommendedAction       *string `json:"recommendedAction,omitempty"`
+	SuggestedContactMessage *string `json:"suggestedContactMessage,omitempty"`
+	PreferredContactChannel *string `json:"preferredContactChannel,omitempty"`
+	AISummary               *string `json:"aiSummary,omitempty"`
 }
 
 // StaleLeadsResponse wraps the list of stale lead services.

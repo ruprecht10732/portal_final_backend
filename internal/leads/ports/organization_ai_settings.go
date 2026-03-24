@@ -56,7 +56,7 @@ func DefaultOrganizationAISettings() OrganizationAISettings {
 		AppointmentRelatedReplyScenario:                   ReplySuggestionScenarioAppointmentReminder,
 		CatalogGapThreshold:                               3,
 		CatalogGapLookbackDays:                            30,
-		AIStaleLeadReEngagementEnabled:                    false,
+		AIStaleLeadReEngagementEnabled:                    true,
 		PhotoAnalysisPreprocessingEnabled:                 true,
 		PhotoAnalysisOCRAssistEnabled:                     false,
 		PhotoAnalysisOCRAssistServiceTypes:                []string{},

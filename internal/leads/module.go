@@ -60,6 +60,7 @@ type Module struct {
 	offerSummaryGenerator *agent.OfferSummaryGenerator
 	whatsAppReplyAgent    *agent.WhatsAppReplyAgent
 	emailReplyAgent       *agent.EmailReplyAgent
+	staleReEngagement     *maintenance.StaleLeadReEngagementService
 	subsidyAnalyzerSvc    *SubsidyAnalyzerService
 	sse                   *sse.Service
 	eventBus              events.Bus
@@ -118,6 +119,9 @@ func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISett
 	}
 	if m.photoAnalysisHandler != nil {
 		m.photoAnalysisHandler.SetOrganizationAISettingsReader(reader)
+	}
+	if m.staleReEngagement != nil {
+		m.staleReEngagement.SetOrganizationAISettingsReader(reader)
 	}
 }
 
@@ -201,6 +205,11 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	staleDetector := maintenance.NewStaleLeadDetector(pool, log)
 	h.SetStaleLeadDetector(staleDetector)
 
+	// Stale lead AI-powered re-engagement suggestion generator
+	staleReEngagementAgent := agent.NewStaleReEngagementAgent(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentStaleReEngagement), repo)
+	staleReEngagement := maintenance.NewStaleLeadReEngagementService(pool, staleReEngagementAgent, nil, log)
+	h.SetStaleSuggester(staleReEngagement)
+
 	module := &Module{
 		handler:               h,
 		attachmentsHandler:    attachmentsHandler,
@@ -219,6 +228,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		offerSummaryGenerator: offerSummaryGenerator,
 		whatsAppReplyAgent:    whatsAppReplyAgent,
 		emailReplyAgent:       emailReplyAgent,
+		staleReEngagement:     staleReEngagement,
 		subsidyAnalyzerSvc:    nil, // Will be set after instantiation
 		sse:                   sseService,
 		eventBus:              eventBus,
@@ -261,6 +271,14 @@ func (m *Module) GetSubsidyAnalyzerService() *SubsidyAnalyzerService {
 		return nil
 	}
 	return m.subsidyAnalyzerSvc
+}
+
+// StaleLeadReEngagement returns the AI re-engagement service for scheduler wiring.
+func (m *Module) StaleLeadReEngagement() *maintenance.StaleLeadReEngagementService {
+	if m == nil {
+		return nil
+	}
+	return m.staleReEngagement
 }
 
 func (m *Module) VerifyWiring() error {

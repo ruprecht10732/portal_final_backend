@@ -15,24 +15,27 @@ import (
 )
 
 const (
-	imapSyncAccountTaskTimeout   = 90 * time.Second
-	imapSyncAccountTaskUniqueTTL = 2 * time.Minute
-	imapSyncAccountTaskMaxRetry  = 3
-	imapSyncSweepTaskTimeout     = 5 * time.Minute
-	imapSyncSweepTaskUniqueTTL   = 9 * time.Minute
-	imapSyncSweepTaskMaxRetry    = 1
-	offerSummaryTaskTimeout      = 2 * time.Minute
-	offerSummaryTaskUniqueTTL    = 10 * time.Minute
-	offerSummaryTaskMaxRetry     = 3
-	leadAutomationTaskTimeout    = 5 * time.Minute
-	leadAutomationTaskUniqueTTL  = leadAutomationTaskTimeout
-	gatekeeperTaskUniqueTTL      = 45 * time.Second
-	leadAutomationTaskMaxRetry   = 3
-	autoPhotoAnalysisDelay       = 30 * time.Second
-	waAgentVoiceTaskTimeout      = 5 * time.Minute
-	waAgentVoiceTaskUniqueTTL    = 15 * time.Minute
-	waAgentVoiceTaskMaxRetry     = 3
-	staleLeadNotifyTaskUniqueTTL = 24 * time.Hour
+	imapSyncAccountTaskTimeout     = 90 * time.Second
+	imapSyncAccountTaskUniqueTTL   = 2 * time.Minute
+	imapSyncAccountTaskMaxRetry    = 3
+	imapSyncSweepTaskTimeout       = 5 * time.Minute
+	imapSyncSweepTaskUniqueTTL     = 9 * time.Minute
+	imapSyncSweepTaskMaxRetry      = 1
+	offerSummaryTaskTimeout        = 2 * time.Minute
+	offerSummaryTaskUniqueTTL      = 10 * time.Minute
+	offerSummaryTaskMaxRetry       = 3
+	leadAutomationTaskTimeout      = 5 * time.Minute
+	leadAutomationTaskUniqueTTL    = leadAutomationTaskTimeout
+	gatekeeperTaskUniqueTTL        = 45 * time.Second
+	leadAutomationTaskMaxRetry     = 3
+	autoPhotoAnalysisDelay         = 30 * time.Second
+	waAgentVoiceTaskTimeout        = 5 * time.Minute
+	waAgentVoiceTaskUniqueTTL      = 15 * time.Minute
+	waAgentVoiceTaskMaxRetry       = 3
+	staleLeadNotifyTaskUniqueTTL   = 24 * time.Hour
+	staleLeadReEngageTaskTimeout   = 3 * time.Minute
+	staleLeadReEngageTaskUniqueTTL = 24 * time.Hour
+	staleLeadReEngageTaskMaxRetry  = 2
 )
 
 type Client struct {
@@ -101,6 +104,10 @@ type WAAgentVoiceTranscriptionScheduler interface {
 
 type StaleLeadNotifyScheduler interface {
 	EnqueueStaleLeadNotify(ctx context.Context, payload StaleLeadNotifyPayload) error
+}
+
+type StaleLeadReEngageScheduler interface {
+	EnqueueStaleLeadReEngage(ctx context.Context, payload StaleLeadReEngagePayload) error
 }
 
 type QuoteJobRunner interface {
@@ -393,6 +400,25 @@ func (c *Client) EnqueueStaleLeadNotify(ctx context.Context, payload StaleLeadNo
 		asynq.Queue(c.queue),
 		asynq.MaxRetry(2),
 		asynq.Unique(staleLeadNotifyTaskUniqueTTL),
+	)
+	return normalizeEnqueueError(err)
+}
+
+func (c *Client) EnqueueStaleLeadReEngage(ctx context.Context, payload StaleLeadReEngagePayload) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+
+	task, err := NewStaleLeadReEngageTask(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.client.EnqueueContext(ctx, task,
+		asynq.Queue(c.queue),
+		asynq.MaxRetry(staleLeadReEngageTaskMaxRetry),
+		asynq.Timeout(staleLeadReEngageTaskTimeout),
+		asynq.Unique(staleLeadReEngageTaskUniqueTTL),
 	)
 	return normalizeEnqueueError(err)
 }

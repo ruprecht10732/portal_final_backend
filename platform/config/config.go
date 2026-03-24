@@ -29,6 +29,7 @@ const (
 	LLMModelAgentOfferSummaryGenerator = "offer_summary_generator"
 	LLMModelAgentWhatsAppReply         = "whatsapp_reply"
 	LLMModelAgentWhatsAppAgent         = "whatsapp_agent"
+	LLMModelAgentStaleReEngagement     = "stale_reengagement"
 )
 
 // =============================================================================

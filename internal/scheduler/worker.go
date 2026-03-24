@@ -39,6 +39,7 @@ type Worker struct {
 	imap            IMAPSyncProcessor
 	subsidyAnalyzer SubsidyAnalyzerProcessor
 	staleNotifier   StaleLeadNotifyProcessor
+	staleReEngage   StaleLeadReEngageProcessor
 	embed           *embeddings.Client
 	qdrant          *qdrant.Client
 }
@@ -94,6 +95,10 @@ type WAAgentVoiceTranscriptionProcessor interface {
 
 type StaleLeadNotifyProcessor interface {
 	Notify(ctx context.Context, orgID, leadID, serviceID uuid.UUID, staleReason, consumerName, serviceType string) error
+}
+
+type StaleLeadReEngageProcessor interface {
+	ProcessReEngagement(ctx context.Context, orgID, leadID, serviceID uuid.UUID, staleReason string) error
 }
 
 func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, log *logger.Logger) (*Worker, error) {
@@ -178,6 +183,7 @@ func NewWorker(cfg config.SchedulerConfig, pool *pgxpool.Pool, bus events.Bus, l
 	mux.HandleFunc(TaskIMAPSyncSweep, w.handleIMAPSyncSweep)
 	mux.HandleFunc(TaskApplyHumanFeedbackMemory, w.handleApplyHumanFeedbackMemory)
 	mux.HandleFunc(TaskStaleLeadNotify, w.handleStaleLeadNotify)
+	mux.HandleFunc(TaskStaleLeadReEngage, w.handleStaleLeadReEngage)
 
 	return w, nil
 }
@@ -224,6 +230,10 @@ func (w *Worker) SetWAAgentVoiceTranscriptionProcessor(processor WAAgentVoiceTra
 
 func (w *Worker) SetStaleLeadNotifyProcessor(processor StaleLeadNotifyProcessor) {
 	w.staleNotifier = processor
+}
+
+func (w *Worker) SetStaleLeadReEngageProcessor(processor StaleLeadReEngageProcessor) {
+	w.staleReEngage = processor
 }
 
 func (w *Worker) handleNotificationOutboxDue(ctx context.Context, task *asynq.Task) error {
@@ -393,6 +403,32 @@ func (w *Worker) handleStaleLeadNotify(ctx context.Context, task *asynq.Task) er
 
 	consumerName := strings.TrimSpace(payload.ConsumerFirstName + " " + payload.ConsumerLastName)
 	return w.staleNotifier.Notify(ctx, orgID, leadID, serviceID, payload.StaleReason, consumerName, payload.ServiceType)
+}
+
+func (w *Worker) handleStaleLeadReEngage(ctx context.Context, task *asynq.Task) error {
+	if w.staleReEngage == nil {
+		return nil
+	}
+
+	payload, err := ParseStaleLeadReEngagePayload(task)
+	if err != nil {
+		return err
+	}
+
+	orgID, err := uuid.Parse(payload.OrganizationID)
+	if err != nil {
+		return err
+	}
+	leadID, err := uuid.Parse(payload.LeadID)
+	if err != nil {
+		return err
+	}
+	serviceID, err := uuid.Parse(payload.LeadServiceID)
+	if err != nil {
+		return err
+	}
+
+	return w.staleReEngage.ProcessReEngagement(ctx, orgID, leadID, serviceID, payload.StaleReason)
 }
 
 func (w *Worker) handleWAAgentVoiceTranscription(ctx context.Context, task *asynq.Task) error {

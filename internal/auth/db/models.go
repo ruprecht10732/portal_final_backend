@@ -1336,6 +1336,19 @@ type RacServiceType struct {
 	EstimationGuidelines pgtype.Text        `json:"estimation_guidelines"`
 }
 
+type RacStaleLeadSuggestion struct {
+	ID                      pgtype.UUID        `json:"id"`
+	LeadID                  pgtype.UUID        `json:"lead_id"`
+	LeadServiceID           pgtype.UUID        `json:"lead_service_id"`
+	OrganizationID          pgtype.UUID        `json:"organization_id"`
+	StaleReason             string             `json:"stale_reason"`
+	RecommendedAction       string             `json:"recommended_action"`
+	SuggestedContactMessage string             `json:"suggested_contact_message"`
+	PreferredContactChannel string             `json:"preferred_contact_channel"`
+	Summary                 string             `json:"summary"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+}
+
 type RacSubsidyAnalyzerJob struct {
 	ID              pgtype.UUID        `json:"id"`
 	OrganizationID  pgtype.UUID        `json:"organization_id"`

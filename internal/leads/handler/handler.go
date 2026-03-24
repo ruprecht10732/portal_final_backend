@@ -37,6 +37,7 @@ type Handler struct {
 	callLogQueue    scheduler.CallLogScheduler
 	gatekeeperQueue scheduler.GatekeeperScheduler
 	staleDetector   *maintenance.StaleLeadDetector
+	staleSuggester  *maintenance.StaleLeadReEngagementService
 }
 
 // HandlerDeps bundles dependencies for Handler construction.
@@ -98,6 +99,10 @@ func (h *Handler) SetGatekeeperScheduler(queue scheduler.GatekeeperScheduler) {
 
 func (h *Handler) SetStaleLeadDetector(d *maintenance.StaleLeadDetector) {
 	h.staleDetector = d
+}
+
+func (h *Handler) SetStaleSuggester(s *maintenance.StaleLeadReEngagementService) {
+	h.staleSuggester = s
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -279,6 +284,12 @@ func (h *Handler) ListStaleLeads(c *gin.Context) {
 		return
 	}
 
+	// Load AI re-engagement suggestions (best-effort).
+	var suggMap map[uuid.UUID]maintenance.SuggestionLookup
+	if h.staleSuggester != nil {
+		suggMap, _ = h.staleSuggester.ListSuggestionsByOrg(c.Request.Context(), tenantID)
+	}
+
 	resp := make([]transport.StaleLeadItemResponse, 0, len(items))
 	for _, item := range items {
 		r := transport.StaleLeadItemResponse{
@@ -296,6 +307,12 @@ func (h *Handler) ListStaleLeads(c *gin.Context) {
 		if item.LastActivityAt != nil {
 			v := item.LastActivityAt.UTC().Format(time.RFC3339)
 			r.LastActivityAt = &v
+		}
+		if sugg, ok := suggMap[item.ServiceID]; ok {
+			r.RecommendedAction = strPtr(sugg.RecommendedAction)
+			r.SuggestedContactMessage = strPtr(sugg.SuggestedContactMessage)
+			r.PreferredContactChannel = strPtr(sugg.PreferredContactChannel)
+			r.AISummary = strPtr(sugg.Summary)
 		}
 		resp = append(resp, r)
 	}
@@ -1414,4 +1431,11 @@ func (h *Handler) ListOrgMembers(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

@@ -1173,6 +1173,21 @@ func (q *Queries) DeleteLead(ctx context.Context, arg DeleteLeadParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const deleteStaleLeadSuggestion = `-- name: DeleteStaleLeadSuggestion :exec
+DELETE FROM RAC_stale_lead_suggestions
+WHERE lead_service_id = $1 AND organization_id = $2
+`
+
+type DeleteStaleLeadSuggestionParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) DeleteStaleLeadSuggestion(ctx context.Context, arg DeleteStaleLeadSuggestionParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleLeadSuggestion, arg.LeadServiceID, arg.OrganizationID)
+	return err
+}
+
 const findMatchingPartnersByCoordinates = `-- name: FindMatchingPartnersByCoordinates :many
 SELECT p.id, p.business_name, p.contact_email,
 	CAST(earth_distance(ll_to_earth($2, $1), ll_to_earth(p.latitude, p.longitude)) / 1000.0 AS double precision) AS dist_km
@@ -2684,6 +2699,37 @@ func (q *Queries) GetServiceStateAggregates(ctx context.Context, arg GetServiceS
 		&i.HasReport,
 		&i.RecommendedAction,
 		&i.TerminalAt,
+	)
+	return i, err
+}
+
+const getStaleLeadSuggestion = `-- name: GetStaleLeadSuggestion :one
+SELECT id, lead_id, lead_service_id, organization_id,
+       stale_reason, recommended_action, suggested_contact_message,
+       preferred_contact_channel, summary, created_at
+FROM RAC_stale_lead_suggestions
+WHERE lead_service_id = $1 AND organization_id = $2
+`
+
+type GetStaleLeadSuggestionParams struct {
+	LeadServiceID  pgtype.UUID `json:"lead_service_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) GetStaleLeadSuggestion(ctx context.Context, arg GetStaleLeadSuggestionParams) (RacStaleLeadSuggestion, error) {
+	row := q.db.QueryRow(ctx, getStaleLeadSuggestion, arg.LeadServiceID, arg.OrganizationID)
+	var i RacStaleLeadSuggestion
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.LeadServiceID,
+		&i.OrganizationID,
+		&i.StaleReason,
+		&i.RecommendedAction,
+		&i.SuggestedContactMessage,
+		&i.PreferredContactChannel,
+		&i.Summary,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -4578,6 +4624,46 @@ func (q *Queries) ListRecentAppliedHumanFeedbackByServiceType(ctx context.Contex
 	return items, nil
 }
 
+const listStaleLeadSuggestionsByOrg = `-- name: ListStaleLeadSuggestionsByOrg :many
+SELECT id, lead_id, lead_service_id, organization_id,
+       stale_reason, recommended_action, suggested_contact_message,
+       preferred_contact_channel, summary, created_at
+FROM RAC_stale_lead_suggestions
+WHERE organization_id = $1
+ORDER BY created_at DESC
+`
+
+func (q *Queries) ListStaleLeadSuggestionsByOrg(ctx context.Context, organizationID pgtype.UUID) ([]RacStaleLeadSuggestion, error) {
+	rows, err := q.db.Query(ctx, listStaleLeadSuggestionsByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacStaleLeadSuggestion
+	for rows.Next() {
+		var i RacStaleLeadSuggestion
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.LeadServiceID,
+			&i.OrganizationID,
+			&i.StaleReason,
+			&i.RecommendedAction,
+			&i.SuggestedContactMessage,
+			&i.PreferredContactChannel,
+			&i.Summary,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTimelineEvents = `-- name: ListTimelineEvents :many
 SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
@@ -5588,4 +5674,46 @@ func (q *Queries) UpdateServiceStatusAndPipelineStage(ctx context.Context, arg U
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertStaleLeadSuggestion = `-- name: UpsertStaleLeadSuggestion :exec
+INSERT INTO RAC_stale_lead_suggestions (
+    lead_id, lead_service_id, organization_id,
+    stale_reason, recommended_action, suggested_contact_message,
+    preferred_contact_channel, summary
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (lead_service_id, organization_id)
+DO UPDATE SET
+    lead_id = EXCLUDED.lead_id,
+    stale_reason = EXCLUDED.stale_reason,
+    recommended_action = EXCLUDED.recommended_action,
+    suggested_contact_message = EXCLUDED.suggested_contact_message,
+    preferred_contact_channel = EXCLUDED.preferred_contact_channel,
+    summary = EXCLUDED.summary,
+    created_at = now()
+`
+
+type UpsertStaleLeadSuggestionParams struct {
+	LeadID                  pgtype.UUID `json:"lead_id"`
+	LeadServiceID           pgtype.UUID `json:"lead_service_id"`
+	OrganizationID          pgtype.UUID `json:"organization_id"`
+	StaleReason             string      `json:"stale_reason"`
+	RecommendedAction       string      `json:"recommended_action"`
+	SuggestedContactMessage string      `json:"suggested_contact_message"`
+	PreferredContactChannel string      `json:"preferred_contact_channel"`
+	Summary                 string      `json:"summary"`
+}
+
+func (q *Queries) UpsertStaleLeadSuggestion(ctx context.Context, arg UpsertStaleLeadSuggestionParams) error {
+	_, err := q.db.Exec(ctx, upsertStaleLeadSuggestion,
+		arg.LeadID,
+		arg.LeadServiceID,
+		arg.OrganizationID,
+		arg.StaleReason,
+		arg.RecommendedAction,
+		arg.SuggestedContactMessage,
+		arg.PreferredContactChannel,
+		arg.Summary,
+	)
+	return err
 }

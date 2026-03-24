@@ -28,6 +28,7 @@ const TaskIMAPSyncAccount = "imap.sync.account"
 const TaskIMAPSyncSweep = "imap.sync.sweep"
 const TaskApplyHumanFeedbackMemory = "leads.human_feedback.apply_memory"
 const TaskStaleLeadNotify = "leads.stale.notify"
+const TaskStaleLeadReEngage = "leads.stale.reengage"
 
 type AppointmentReminderPayload struct {
 	AppointmentID  string `json:"appointmentId"`
@@ -482,6 +483,31 @@ func ParseApplyHumanFeedbackMemoryPayload(task *asynq.Task) (ApplyHumanFeedbackM
 	var payload ApplyHumanFeedbackMemoryPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return ApplyHumanFeedbackMemoryPayload{}, err
+	}
+	return payload, nil
+}
+
+// StaleLeadReEngagePayload carries context for AI-powered re-engagement
+// suggestion generation for a single stale lead service.
+type StaleLeadReEngagePayload struct {
+	OrganizationID string `json:"organizationId"`
+	LeadID         string `json:"leadId"`
+	LeadServiceID  string `json:"leadServiceId"`
+	StaleReason    string `json:"staleReason"`
+}
+
+func NewStaleLeadReEngageTask(payload StaleLeadReEngagePayload) (*asynq.Task, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TaskStaleLeadReEngage, data), nil
+}
+
+func ParseStaleLeadReEngagePayload(task *asynq.Task) (StaleLeadReEngagePayload, error) {
+	var payload StaleLeadReEngagePayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return StaleLeadReEngagePayload{}, err
 	}
 	return payload, nil
 }

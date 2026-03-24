@@ -37,6 +37,7 @@ type Querier interface {
 	DeleteFeedComment(ctx context.Context, arg DeleteFeedCommentParams) (int64, error)
 	DeleteFeedReaction(ctx context.Context, arg DeleteFeedReactionParams) (int64, error)
 	DeleteLead(ctx context.Context, arg DeleteLeadParams) (int64, error)
+	DeleteStaleLeadSuggestion(ctx context.Context, arg DeleteStaleLeadSuggestionParams) error
 	FindMatchingPartnersByCoordinates(ctx context.Context, arg FindMatchingPartnersByCoordinatesParams) ([]FindMatchingPartnersByCoordinatesRow, error)
 	FindPartnersByServiceType(ctx context.Context, arg FindPartnersByServiceTypeParams) ([]FindPartnersByServiceTypeRow, error)
 	FindPartnersByServiceTypeAndCity(ctx context.Context, arg FindPartnersByServiceTypeAndCityParams) ([]FindPartnersByServiceTypeAndCityRow, error)
@@ -67,6 +68,7 @@ type Querier interface {
 	GetPartnerOfferStatsSince(ctx context.Context, arg GetPartnerOfferStatsSinceParams) ([]GetPartnerOfferStatsSinceRow, error)
 	GetPhotoAnalysisByID(ctx context.Context, arg GetPhotoAnalysisByIDParams) (GetPhotoAnalysisByIDRow, error)
 	GetServiceStateAggregates(ctx context.Context, arg GetServiceStateAggregatesParams) (GetServiceStateAggregatesRow, error)
+	GetStaleLeadSuggestion(ctx context.Context, arg GetStaleLeadSuggestionParams) (RacStaleLeadSuggestion, error)
 	GetZipCoordinates(ctx context.Context, arg GetZipCoordinatesParams) (GetZipCoordinatesRow, error)
 	HasLinkedPartners(ctx context.Context, arg HasLinkedPartnersParams) (bool, error)
 	HasNonDraftQuote(ctx context.Context, arg HasNonDraftQuoteParams) (bool, error)
@@ -98,6 +100,7 @@ type Querier interface {
 	ListRecentAIDecisionMemories(ctx context.Context, arg ListRecentAIDecisionMemoriesParams) ([]RacAiDecisionMemory, error)
 	ListRecentActivity(ctx context.Context, arg ListRecentActivityParams) ([]ListRecentActivityRow, error)
 	ListRecentAppliedHumanFeedbackByServiceType(ctx context.Context, arg ListRecentAppliedHumanFeedbackByServiceTypeParams) ([]RacHumanFeedback, error)
+	ListStaleLeadSuggestionsByOrg(ctx context.Context, organizationID pgtype.UUID) ([]RacStaleLeadSuggestion, error)
 	ListTimelineEvents(ctx context.Context, arg ListTimelineEventsParams) ([]ListTimelineEventsRow, error)
 	ListTimelineEventsByService(ctx context.Context, arg ListTimelineEventsByServiceParams) ([]ListTimelineEventsByServiceRow, error)
 	ListUpcomingAppointments(ctx context.Context, arg ListUpcomingAppointmentsParams) ([]ListUpcomingAppointmentsRow, error)
@@ -116,6 +119,7 @@ type Querier interface {
 	UpdateServicePreferences(ctx context.Context, arg UpdateServicePreferencesParams) error
 	UpdateServiceStatus(ctx context.Context, arg UpdateServiceStatusParams) (UpdateServiceStatusRow, error)
 	UpdateServiceStatusAndPipelineStage(ctx context.Context, arg UpdateServiceStatusAndPipelineStageParams) (UpdateServiceStatusAndPipelineStageRow, error)
+	UpsertStaleLeadSuggestion(ctx context.Context, arg UpsertStaleLeadSuggestionParams) error
 }
 
 var _ Querier = (*Queries)(nil)

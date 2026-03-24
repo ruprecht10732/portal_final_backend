@@ -289,6 +289,7 @@ func main() {
 	worker.SetLeadAutomationProcessor(leadsModule)
 	worker.SetSubsidyAnalyzerProcessor(leadsModule.GetSubsidyAnalyzerService())
 	worker.SetStaleLeadNotifyProcessor(staleNotifier)
+	worker.SetStaleLeadReEngageProcessor(leadsModule.StaleLeadReEngagement())
 	worker.SetOfferSummaryProcessor(partnersModule.Service())
 	worker.SetTaskReminderProcessor(tasksModule.Service())
 	imapModule := imap.NewModule(pool, val, eventBus, log)
@@ -346,7 +347,7 @@ func main() {
 	}
 	worker.SetWAAgentVoiceTranscriptionProcessor(whatsappagentModule.Service())
 
-	go runStaleLeadSweepLoop(ctx, pool, staleDetector, reminderScheduler, staleLeadSweepInterval, log)
+	go runStaleLeadSweepLoop(ctx, pool, staleDetector, reminderScheduler, reminderScheduler, staleLeadSweepInterval, log)
 
 	worker.Run(ctx)
 }
@@ -634,11 +635,13 @@ func runDailyDigestOnce(
 // runStaleLeadSweepLoop periodically detects stale lead services across all
 // organisations and enqueues a per-service notification task. Tasks are
 // deduplicated by asynq (unique TTL = 24 h) so duplicate runs are safe.
+// It also enqueues AI re-engagement suggestion tasks.
 func runStaleLeadSweepLoop(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	detector *maintenance.StaleLeadDetector,
-	sched scheduler.StaleLeadNotifyScheduler,
+	notifySched scheduler.StaleLeadNotifyScheduler,
+	reEngageSched scheduler.StaleLeadReEngageScheduler,
 	interval time.Duration,
 	log *logger.Logger,
 ) {
@@ -656,13 +659,13 @@ func runStaleLeadSweepLoop(
 	case <-time.After(30 * time.Second):
 	}
 
-	runStaleLeadSweepOnce(ctx, pool, detector, sched, log)
+	runStaleLeadSweepOnce(ctx, pool, detector, notifySched, reEngageSched, log)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runStaleLeadSweepOnce(ctx, pool, detector, sched, log)
+			runStaleLeadSweepOnce(ctx, pool, detector, notifySched, reEngageSched, log)
 		}
 	}
 }
@@ -671,7 +674,8 @@ func runStaleLeadSweepOnce(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	detector *maintenance.StaleLeadDetector,
-	sched scheduler.StaleLeadNotifyScheduler,
+	notifySched scheduler.StaleLeadNotifyScheduler,
+	reEngageSched scheduler.StaleLeadReEngageScheduler,
 	log *logger.Logger,
 ) {
 	orgs, err := listAllOrganizations(ctx, pool)
@@ -684,6 +688,7 @@ func runStaleLeadSweepOnce(
 	}
 
 	enqueued := 0
+	reEngaged := 0
 	for _, orgID := range orgs {
 		if ctx.Err() != nil {
 			return
@@ -693,6 +698,7 @@ func runStaleLeadSweepOnce(
 			log.Warn("stale lead sweep: detector failed", "orgId", orgID, "error", err)
 			continue
 		}
+		orgReEngaged := 0
 		for _, item := range items {
 			payload := scheduler.StaleLeadNotifyPayload{
 				OrganizationID:    item.OrganizationID.String(),
@@ -704,15 +710,31 @@ func runStaleLeadSweepOnce(
 				ServiceType:       item.ServiceType,
 				PipelineStage:     item.PipelineStage,
 			}
-			if err := sched.EnqueueStaleLeadNotify(ctx, payload); err != nil {
+			if err := notifySched.EnqueueStaleLeadNotify(ctx, payload); err != nil {
 				log.Warn("stale lead sweep: enqueue failed", "serviceId", item.ServiceID, "error", err)
 				continue
 			}
 			enqueued++
+
+			// Also enqueue an AI re-engagement suggestion task (capped at 20 per org).
+			if reEngageSched != nil && orgReEngaged < 20 {
+				rePayload := scheduler.StaleLeadReEngagePayload{
+					OrganizationID: item.OrganizationID.String(),
+					LeadID:         item.LeadID.String(),
+					LeadServiceID:  item.ServiceID.String(),
+					StaleReason:    string(item.StaleReason),
+				}
+				if err := reEngageSched.EnqueueStaleLeadReEngage(ctx, rePayload); err != nil {
+					log.Warn("stale lead sweep: re-engage enqueue failed", "serviceId", item.ServiceID, "error", err)
+				} else {
+					orgReEngaged++
+					reEngaged++
+				}
+			}
 		}
 	}
 	if enqueued > 0 {
-		log.Info("stale lead sweep: completed", "enqueued", enqueued)
+		log.Info("stale lead sweep: completed", "enqueued", enqueued, "reEngaged", reEngaged)
 	}
 }
 
