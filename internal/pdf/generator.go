@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"portal_final_backend/internal/quotes/transport"
+	"portal_final_backend/platform/sanitize"
 )
 
 const (
@@ -188,6 +189,8 @@ type itemViewModel struct {
 	LineTotalFormatted string
 	IsOptional         bool
 	IsSelected         bool
+	SummaryLabel       string
+	HasTitle           bool
 }
 
 type vatLineViewModel struct {
@@ -424,8 +427,15 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 	// Items
 	vm.Items = make([]itemViewModel, len(data.Items))
 	for i, it := range data.Items {
+		title := clampPDFText(it.Title, maxPDFShortText)
+		hasTitle := strings.TrimSpace(title) != ""
+		summaryLabel := title
+		if !hasTitle {
+			plain := collapseWhitespace(sanitize.StripHTML(it.Description))
+			summaryLabel = clampPDFText(plain, 80)
+		}
 		vm.Items[i] = itemViewModel{
-			Title:              clampPDFText(it.Title, maxPDFShortText),
+			Title:              title,
 			Description:        formatDescriptionHTML(it.Description),
 			Quantity:           clampPDFText(normalizePDFQuantity(it.Quantity), maxPDFShortText),
 			UnitPriceFormatted: formatCurrency(it.UnitPriceCents),
@@ -433,6 +443,8 @@ func buildQuoteVM(data QuotePDFData, logoB64, logoMime string) quoteViewModel {
 			LineTotalFormatted: formatCurrency(it.LineTotalCents),
 			IsOptional:         it.IsOptional,
 			IsSelected:         it.IsSelected,
+			SummaryLabel:       summaryLabel,
+			HasTitle:           hasTitle,
 		}
 	}
 
@@ -624,6 +636,13 @@ func translateStatus(status string) string {
 
 func formatCurrency(cents int64) string {
 	return fmt.Sprintf("€ %.2f", float64(cents)/100.0)
+}
+
+// collapseWhitespace replaces runs of whitespace (including newlines) with a single space.
+var multiSpaceRegex = regexp.MustCompile(`\s+`)
+
+func collapseWhitespace(s string) string {
+	return strings.TrimSpace(multiSpaceRegex.ReplaceAllString(s, " "))
 }
 
 func clampPDFText(value string, maxLen int) string {

@@ -430,7 +430,7 @@
          ITEM PAGES — One line item per page
          ════════════════════════════════════════════════════════ -->
     {{range $index, $item := .Items}}
-    <div class="container{{if lt (add $index 1) $itemCount}} page-break{{end}}">
+    <div class="container page-break">
 
         {{if eq $index 0}}
         <!-- First page: full header with addresses -->
@@ -576,7 +576,7 @@
                 {{range .Items}}
                 <tr class="{{if and .IsOptional (not .IsSelected)}}deselected{{end}}">
                     <td>
-                        {{if .Title}}<span class="bold">{{.Title}}</span>{{end}}
+                        {{if .HasTitle}}<span class="bold">{{.SummaryLabel}}</span>{{else}}<span style="color: #78716C;">{{.SummaryLabel}}</span>{{end}}
                     </td>
                     <td class="text-right nums">{{.Quantity}}</td>
                     <td class="text-right nums bold">{{.LineTotalFormatted}}</td>
