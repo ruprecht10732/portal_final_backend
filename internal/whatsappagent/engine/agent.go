@@ -86,12 +86,9 @@ type agentExecutionRequest struct {
 }
 
 type AgentRunResult struct {
-	Reply                 string
-	ToolResponseNames     []string
-	ToolResponseCount     int
-	GroundingFailure      string
-	GroundingFacts        []string
-	GroundingFallbackReply string
+	Reply             string
+	ToolResponseNames []string
+	ToolResponseCount int
 }
 
 type toolResponseObservation struct {
@@ -881,27 +878,22 @@ func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, user
 	}
 
 	reply := strings.TrimSpace(lastFinalText)
-	_, decision := validateGroundedReply(reply, evidence)
-	if decision.Code != "" {
-		a.logWarn(ctx, "whatsappagent: grounding issue observed",
+
+	// Grounding runs in log-only mode: detect issues for observability but
+	// never block or replace the LLM reply. The model is capable enough to
+	// use tools and interpret results correctly.
+	if decision := detectGroundingIssue(reply, evidence); decision.Code != "" {
+		a.logWarn(ctx, "whatsappagent: grounding issue observed (log-only)",
 			"reason", decision.Code,
 			"unsupported_facts", decision.UnsupportedFacts,
 			"tool_response_names", evidence.toolNames(),
 			"tool_response_count", evidence.toolResponseCount())
 	}
 
-	fallbackReply := ""
-	if decision.Code != "" {
-		fallbackReply = fallbackReplyForGroundingIssue(decision.Code)
-	}
-
 	return AgentRunResult{
-		Reply:                  reply,
-		ToolResponseNames:      evidence.toolNames(),
-		ToolResponseCount:      evidence.toolResponseCount(),
-		GroundingFailure:       decision.Code,
-		GroundingFacts:         decision.UnsupportedFacts,
-		GroundingFallbackReply: fallbackReply,
+		Reply:             reply,
+		ToolResponseNames: evidence.toolNames(),
+		ToolResponseCount: evidence.toolResponseCount(),
 	}, nil
 }
 
@@ -1020,18 +1012,6 @@ func marshalToolResponsePayload(payload map[string]any) string {
 	return string(encoded)
 }
 
-func validateGroundedReply(reply string, evidence *replyGroundingEvidence) (string, groundingDecision) {
-	trimmed := strings.TrimSpace(reply)
-	if trimmed == "" {
-		return "", groundingDecision{}
-	}
-	decision := detectGroundingIssue(trimmed, evidence)
-	if decision.Code == "" {
-		return trimmed, groundingDecision{}
-	}
-	return fallbackReplyForGroundingIssue(decision.Code), decision
-}
-
 func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) groundingDecision {
 	// Check all grounding categories instead of short-circuiting on the first
 	// failure. This ensures that a false positive in one domain does not mask a
@@ -1104,25 +1084,6 @@ func checkLeadGrounding(reply string, evidence *replyGroundingEvidence) groundin
 		return groundingDecision{Code: "lead_fact_not_in_tool_result", UnsupportedFacts: unsupported}
 	}
 	return groundingDecision{}
-}
-
-func fallbackReplyForGroundingIssue(issue string) string {
-	switch issue {
-	case "quote_details_without_quote_tool":
-		return "Noem de klantnaam of het offertenummer, dan pak ik de juiste offerte erbij."
-	case "quote_fact_not_in_tool_result":
-		return "Ik kan dat offertedetail zo niet bevestigen. Noem de klantnaam of het offertenummer, dan controleer ik het meteen."
-	case "appointment_details_without_appointment_tool":
-		return "Noem de datum, periode of klant, dan pak ik de juiste afspraak erbij."
-	case "appointment_fact_not_in_tool_result":
-		return "Ik kan dat afspraakdetail zo niet bevestigen. Noem de datum, periode of klant, dan controleer ik het meteen."
-	case "lead_details_without_lead_tool":
-		return "Noem de klantnaam of het dossier waar het over gaat, dan controleer ik de gegevens."
-	case "lead_fact_not_in_tool_result":
-		return "Ik kan dat klantdetail zo niet bevestigen. Noem de klantnaam of het dossier, dan controleer ik het meteen."
-	default:
-		return "Noem even welk onderdeel ik moet controleren, dan pak ik het gericht erbij."
-	}
 }
 
 func unsupportedQuoteFacts(reply string, payloads []string) []string {

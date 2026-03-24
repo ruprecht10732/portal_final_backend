@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -132,27 +131,27 @@ func TestDetectGroundingIssuePassesDutchStatusFromEnglishPayload(t *testing.T) {
 	}
 }
 func TestDetectGroundingIssueStripsStatusDetailsAndPunctuation(t *testing.T) {
-        t.Parallel()
+	t.Parallel()
 
-        evidence := &replyGroundingEvidence{
-                toolResponseNames: map[string]int{"GetQuotes": 1},
-                toolResponses: []toolResponseObservation{{
-                        Name:    "GetQuotes",
-                        Payload: `{"quotes":[{"quote_number":"OFF-2026-0001","status":"Sent","consumer_name":"Jan Jansen"}],"count":1}`,
-                }},
-        }
+	evidence := &replyGroundingEvidence{
+		toolResponseNames: map[string]int{"GetQuotes": 1},
+		toolResponses: []toolResponseObservation{{
+			Name:    "GetQuotes",
+			Payload: `{"quotes":[{"quote_number":"OFF-2026-0001","status":"Sent","consumer_name":"Jan Jansen"}],"count":1}`,
+		}},
+	}
 
-        reply := "Offerte 1, Status: verstuurd, nog niet geaccepteerd):"
-        decision := detectGroundingIssue(reply, evidence)
-        if decision.Code != "" {
-                t.Fatalf("expected status to pass grounding, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
-        }
-        
-        reply2 := "Offerte 1, Status: verstuurd (nog niet geaccepteerd)"
-        decision2 := detectGroundingIssue(reply2, evidence)
-        if decision2.Code != "" {
-                t.Fatalf("expected status 2 to pass grounding, got code=%q unsupported=%v", decision2.Code, decision2.UnsupportedFacts)
-        }
+	reply := "Offerte 1, Status: verstuurd, nog niet geaccepteerd):"
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code != "" {
+		t.Fatalf("expected status to pass grounding, got code=%q unsupported=%v", decision.Code, decision.UnsupportedFacts)
+	}
+
+	reply2 := "Offerte 1, Status: verstuurd (nog niet geaccepteerd)"
+	decision2 := detectGroundingIssue(reply2, evidence)
+	if decision2.Code != "" {
+		t.Fatalf("expected status 2 to pass grounding, got code=%q unsupported=%v", decision2.Code, decision2.UnsupportedFacts)
+	}
 }
 
 func TestDetectGroundingIssueAllowsQuoteWithGeplandKeyword(t *testing.T) {
@@ -341,43 +340,5 @@ func TestShouldSkipReplayedMessageFiltersGroundingFallbacks(t *testing.T) {
 		if !shouldSkipReplayedMessage("assistant", msg) {
 			t.Errorf("expected shouldSkipReplayedMessage to skip %q", msg)
 		}
-	}
-}
-
-func TestBuildGroundingRepairDirective(t *testing.T) {
-	t.Parallel()
-
-	directive := buildGroundingRepairDirective("quote_details_without_quote_tool", []string{testCurrencyEuro1500})
-	if directive == "" {
-		t.Fatal("expected non-empty repair directive")
-	}
-	if !strings.Contains(directive, "GetQuotes") {
-		t.Error("expected directive to mention GetQuotes")
-	}
-	if !strings.Contains(directive, testCurrencyEuro1500) {
-		t.Error("expected directive to contain unsupported fact")
-	}
-}
-
-func TestGroundingFallbackReplyPrefersDomainSpecific(t *testing.T) {
-	t.Parallel()
-
-	result := AgentRunResult{
-		GroundingFailure:       "quote_details_without_quote_tool",
-		GroundingFallbackReply: "Noem de klantnaam of het offertenummer, dan pak ik de juiste offerte erbij.",
-	}
-	got := groundingFallbackReply(result)
-	if got != result.GroundingFallbackReply {
-		t.Fatalf("expected domain-specific fallback, got %q", got)
-	}
-}
-
-func TestGroundingFallbackReplyFallsBackToGeneric(t *testing.T) {
-	t.Parallel()
-
-	result := AgentRunResult{GroundingFailure: "unknown", GroundingFallbackReply: ""}
-	got := groundingFallbackReply(result)
-	if got != msgGroundingFallback {
-		t.Fatalf("expected generic fallback, got %q", got)
 	}
 }

@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"portal_final_backend/internal/scheduler"
-	"portal_final_backend/internal/whatsappagent/engine"
 	"portal_final_backend/internal/whatsapp"
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
+	"portal_final_backend/internal/whatsappagent/engine"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
@@ -64,18 +64,18 @@ type storedVoiceNote struct {
 }
 
 type Service struct {
-	inner            *engine.Service
-	replyRunner      legacyVoiceReplyRunner
-	queries          voiceTranscriptionQuerier
-	sender           *Sender
-	storage          ObjectStorage
-	attachmentBucket string
+	inner                  *engine.Service
+	replyRunner            legacyVoiceReplyRunner
+	queries                voiceTranscriptionQuerier
+	sender                 *Sender
+	storage                ObjectStorage
+	attachmentBucket       string
 	transcriptionScheduler AudioTranscriptionScheduler
-	transcriber      AudioTranscriber
-	inboxSync        InboxMessageSync
-	rateLimiter      *engine.RateLimiter
-	leadHintStore    LeadHintStore
-	log              *logger.Logger
+	transcriber            AudioTranscriber
+	inboxSync              InboxMessageSync
+	rateLimiter            *engine.RateLimiter
+	leadHintStore          LeadHintStore
+	log                    *logger.Logger
 }
 
 func newService(pool *pgxpool.Pool, deps ModuleDependencies, inner *engine.Service) *Service {
@@ -707,18 +707,6 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	if err != nil {
 		s.logError(ctx, "whatsappagent: agent run error", "phone", phoneKey, "organization_id", orgID.String(), "reason", reason, "error", err)
 		s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgSystemUnavailable)
-		return
-	}
-	if runResult.GroundingFailure != "" {
-		s.logWarn(ctx, "whatsappagent: grounding failure blocked reply",
-			"phone", phoneKey,
-			"organization_id", orgID.String(),
-			"reason", reason,
-			"grounding_reason", runResult.GroundingFailure,
-			"unsupported_facts", runResult.GroundingFacts,
-			"tool_response_names", runResult.ToolResponseNames,
-			"tool_response_count", runResult.ToolResponseCount)
-		s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgGroundingFallback)
 		return
 	}
 
