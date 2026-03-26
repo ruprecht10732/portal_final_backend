@@ -300,6 +300,7 @@ func (pa *PhotoAnalyzer) runAnalysis(ctx context.Context, userID, sessionID stri
 		CreateSessionMessage: "failed to create session",
 		RunFailureMessage:    "photo analysis failed",
 		TraceLabel:           photoAnalyzerTraceLabel,
+		SkipSessionLifecycle: true,
 	},
 		func(event *session.Event) {
 			output.WriteString(collectContentText(event.Content))
@@ -351,6 +352,7 @@ func (pa *PhotoAnalyzer) retryForResult(ctx context.Context, userID, sessionID s
 		CreateSessionMessage: "failed to create session",
 		RunFailureMessage:    "photo analysis retry failed",
 		TraceLabel:           photoAnalyzerRetryTraceLabel,
+		SkipSessionLifecycle: true,
 	},
 		func(event *session.Event) {
 			output += collectContentText(event.Content)

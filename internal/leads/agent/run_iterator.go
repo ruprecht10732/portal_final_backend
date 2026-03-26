@@ -50,28 +50,34 @@ type promptRunRequest struct {
 	CreateSessionMessage string
 	RunFailureMessage    string
 	TraceLabel           string
+	// SkipSessionLifecycle skips session creation and deletion when the
+	// caller manages the session lifecycle externally (e.g. photo analyzer
+	// that reuses a session across analysis + retry).
+	SkipSessionLifecycle bool
 }
 
 func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*session.Event)) error {
-	_, err := req.SessionService.Create(ctx, &session.CreateRequest{
-		AppName:   req.AppName,
-		UserID:    req.UserID,
-		SessionID: req.SessionID,
-	})
-	if err != nil {
-		return fmt.Errorf("%s: %w", req.CreateSessionMessage, err)
-	}
-	defer func() {
-		_ = req.SessionService.Delete(ctx, &session.DeleteRequest{
+	if !req.SkipSessionLifecycle {
+		_, err := req.SessionService.Create(ctx, &session.CreateRequest{
 			AppName:   req.AppName,
 			UserID:    req.UserID,
 			SessionID: req.SessionID,
 		})
-	}()
+		if err != nil {
+			return fmt.Errorf("%s: %w", req.CreateSessionMessage, err)
+		}
+		defer func() {
+			_ = req.SessionService.Delete(ctx, &session.DeleteRequest{
+				AppName:   req.AppName,
+				UserID:    req.UserID,
+				SessionID: req.SessionID,
+			})
+		}()
+	}
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var toolTrace []observedToolTrace
-	err = consumeRunEvents(req.Runner.Run(ctx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace))
+	err := consumeRunEvents(req.Runner.Run(ctx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace))
 	logObservedToolTrace(req.TraceLabel, req.UserID, req.SessionID, toolTrace)
 	return err
 }
