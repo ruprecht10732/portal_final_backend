@@ -93,12 +93,67 @@ func (q *Queries) CreateUserToken(ctx context.Context, arg CreateUserTokenParams
 	return err
 }
 
+const createWebAuthnCredential = `-- name: CreateWebAuthnCredential :exec
+
+INSERT INTO RAC_webauthn_credentials (
+    id, user_id, public_key, attestation_type, transport,
+    flags_json, aaguid, sign_count, clone_warning, nickname
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+`
+
+type CreateWebAuthnCredentialParams struct {
+	ID              []byte      `json:"id"`
+	UserID          pgtype.UUID `json:"user_id"`
+	PublicKey       []byte      `json:"public_key"`
+	AttestationType string      `json:"attestation_type"`
+	Transport       []string    `json:"transport"`
+	FlagsJson       []byte      `json:"flags_json"`
+	Aaguid          []byte      `json:"aaguid"`
+	SignCount       int64       `json:"sign_count"`
+	CloneWarning    bool        `json:"clone_warning"`
+	Nickname        string      `json:"nickname"`
+}
+
+// ============================================================================
+// WebAuthn Credential Queries
+// ============================================================================
+func (q *Queries) CreateWebAuthnCredential(ctx context.Context, arg CreateWebAuthnCredentialParams) error {
+	_, err := q.db.Exec(ctx, createWebAuthnCredential,
+		arg.ID,
+		arg.UserID,
+		arg.PublicKey,
+		arg.AttestationType,
+		arg.Transport,
+		arg.FlagsJson,
+		arg.Aaguid,
+		arg.SignCount,
+		arg.CloneWarning,
+		arg.Nickname,
+	)
+	return err
+}
+
 const deleteUserRoles = `-- name: DeleteUserRoles :exec
 DELETE FROM RAC_user_roles WHERE user_id = $1
 `
 
 func (q *Queries) DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteUserRoles, userID)
+	return err
+}
+
+const deleteWebAuthnCredential = `-- name: DeleteWebAuthnCredential :exec
+DELETE FROM RAC_webauthn_credentials
+WHERE id = $1 AND user_id = $2
+`
+
+type DeleteWebAuthnCredentialParams struct {
+	ID     []byte      `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteWebAuthnCredential(ctx context.Context, arg DeleteWebAuthnCredentialParams) error {
+	_, err := q.db.Exec(ctx, deleteWebAuthnCredential, arg.ID, arg.UserID)
 	return err
 }
 
@@ -200,6 +255,46 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 	return i, err
 }
 
+const getUserByWebAuthnCredentialID = `-- name: GetUserByWebAuthnCredentialID :one
+SELECT u.id, u.email, u.password_hash, u.is_email_verified,
+       u.first_name, u.last_name, u.phone, u.onboarding_completed_at,
+       u.created_at, u.updated_at
+FROM RAC_users u
+JOIN RAC_webauthn_credentials wc ON wc.user_id = u.id
+WHERE wc.id = $1
+`
+
+type GetUserByWebAuthnCredentialIDRow struct {
+	ID                    pgtype.UUID        `json:"id"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsEmailVerified       bool               `json:"is_email_verified"`
+	FirstName             pgtype.Text        `json:"first_name"`
+	LastName              pgtype.Text        `json:"last_name"`
+	Phone                 pgtype.Text        `json:"phone"`
+	OnboardingCompletedAt pgtype.Timestamptz `json:"onboarding_completed_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetUserByWebAuthnCredentialID(ctx context.Context, id []byte) (GetUserByWebAuthnCredentialIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserByWebAuthnCredentialID, id)
+	var i GetUserByWebAuthnCredentialIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.IsEmailVerified,
+		&i.FirstName,
+		&i.LastName,
+		&i.Phone,
+		&i.OnboardingCompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getUserRoles = `-- name: GetUserRoles :many
 SELECT r.name FROM RAC_roles r
 JOIN RAC_user_roles ur ON ur.role_id = r.id
@@ -284,6 +379,34 @@ func (q *Queries) GetValidRoles(ctx context.Context, rolenames []string) ([]stri
 		return nil, err
 	}
 	return items, nil
+}
+
+const getWebAuthnCredential = `-- name: GetWebAuthnCredential :one
+SELECT id, user_id, public_key, attestation_type, transport,
+       flags_json, aaguid, sign_count, clone_warning, nickname,
+       created_at, last_used_at
+FROM RAC_webauthn_credentials
+WHERE id = $1
+`
+
+func (q *Queries) GetWebAuthnCredential(ctx context.Context, id []byte) (RacWebauthnCredential, error) {
+	row := q.db.QueryRow(ctx, getWebAuthnCredential, id)
+	var i RacWebauthnCredential
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.PublicKey,
+		&i.AttestationType,
+		&i.Transport,
+		&i.FlagsJson,
+		&i.Aaguid,
+		&i.SignCount,
+		&i.CloneWarning,
+		&i.Nickname,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
 }
 
 const insertUserRoles = `-- name: InsertUserRoles :exec
@@ -388,6 +511,48 @@ func (q *Queries) ListUsersByOrganization(ctx context.Context, organizationID pg
 			&i.FirstName,
 			&i.LastName,
 			&i.Roles,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWebAuthnCredentialsByUser = `-- name: ListWebAuthnCredentialsByUser :many
+SELECT id, user_id, public_key, attestation_type, transport,
+       flags_json, aaguid, sign_count, clone_warning, nickname,
+       created_at, last_used_at
+FROM RAC_webauthn_credentials
+WHERE user_id = $1
+ORDER BY created_at
+`
+
+func (q *Queries) ListWebAuthnCredentialsByUser(ctx context.Context, userID pgtype.UUID) ([]RacWebauthnCredential, error) {
+	rows, err := q.db.Query(ctx, listWebAuthnCredentialsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RacWebauthnCredential
+	for rows.Next() {
+		var i RacWebauthnCredential
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.PublicKey,
+			&i.AttestationType,
+			&i.Transport,
+			&i.FlagsJson,
+			&i.Aaguid,
+			&i.SignCount,
+			&i.CloneWarning,
+			&i.Nickname,
+			&i.CreatedAt,
+			&i.LastUsedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -593,6 +758,40 @@ func (q *Queries) UpdateUserPhone(ctx context.Context, arg UpdateUserPhoneParams
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updateWebAuthnCredentialNickname = `-- name: UpdateWebAuthnCredentialNickname :exec
+UPDATE RAC_webauthn_credentials
+SET nickname = $2
+WHERE id = $1 AND user_id = $3
+`
+
+type UpdateWebAuthnCredentialNicknameParams struct {
+	ID       []byte      `json:"id"`
+	Nickname string      `json:"nickname"`
+	UserID   pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) UpdateWebAuthnCredentialNickname(ctx context.Context, arg UpdateWebAuthnCredentialNicknameParams) error {
+	_, err := q.db.Exec(ctx, updateWebAuthnCredentialNickname, arg.ID, arg.Nickname, arg.UserID)
+	return err
+}
+
+const updateWebAuthnCredentialSignCount = `-- name: UpdateWebAuthnCredentialSignCount :exec
+UPDATE RAC_webauthn_credentials
+SET sign_count = $2, clone_warning = $3, last_used_at = now()
+WHERE id = $1
+`
+
+type UpdateWebAuthnCredentialSignCountParams struct {
+	ID           []byte `json:"id"`
+	SignCount    int64  `json:"sign_count"`
+	CloneWarning bool   `json:"clone_warning"`
+}
+
+func (q *Queries) UpdateWebAuthnCredentialSignCount(ctx context.Context, arg UpdateWebAuthnCredentialSignCountParams) error {
+	_, err := q.db.Exec(ctx, updateWebAuthnCredentialSignCount, arg.ID, arg.SignCount, arg.CloneWarning)
+	return err
 }
 
 const upsertUserSettings = `-- name: UpsertUserSettings :exec

@@ -503,3 +503,115 @@ func userWithRolesFromAuthRow(id pgtype.UUID, email string, firstName, lastName 
 		Roles:     roles,
 	}
 }
+
+// =============================================================================
+// WebAuthn Credential Repository Methods
+// =============================================================================
+
+type WebAuthnCredential struct {
+	ID              []byte
+	UserID          uuid.UUID
+	PublicKey       []byte
+	AttestationType string
+	Transport       []string
+	FlagsJSON       []byte
+	AAGUID          []byte
+	SignCount       uint32
+	CloneWarning    bool
+	Nickname        string
+	CreatedAt       time.Time
+	LastUsedAt      *time.Time
+}
+
+func (r *Repository) CreateWebAuthnCredential(ctx context.Context, cred WebAuthnCredential) error {
+	return r.queries.CreateWebAuthnCredential(ctx, authdb.CreateWebAuthnCredentialParams{
+		ID:              cred.ID,
+		UserID:          toPgUUID(cred.UserID),
+		PublicKey:       cred.PublicKey,
+		AttestationType: cred.AttestationType,
+		Transport:       cred.Transport,
+		FlagsJson:       cred.FlagsJSON,
+		Aaguid:          cred.AAGUID,
+		SignCount:       int64(cred.SignCount),
+		CloneWarning:    cred.CloneWarning,
+		Nickname:        cred.Nickname,
+	})
+}
+
+func (r *Repository) ListWebAuthnCredentialsByUser(ctx context.Context, userID uuid.UUID) ([]WebAuthnCredential, error) {
+	rows, err := r.queries.ListWebAuthnCredentialsByUser(ctx, toPgUUID(userID))
+	if err != nil {
+		return nil, err
+	}
+	creds := make([]WebAuthnCredential, len(rows))
+	for i, row := range rows {
+		creds[i] = webauthnCredFromRow(row)
+	}
+	return creds, nil
+}
+
+func (r *Repository) UpdateWebAuthnCredentialSignCount(ctx context.Context, credID []byte, signCount uint32, cloneWarning bool) error {
+	return r.queries.UpdateWebAuthnCredentialSignCount(ctx, authdb.UpdateWebAuthnCredentialSignCountParams{
+		ID:           credID,
+		SignCount:    int64(signCount),
+		CloneWarning: cloneWarning,
+	})
+}
+
+func (r *Repository) UpdateWebAuthnCredentialNickname(ctx context.Context, credID []byte, userID uuid.UUID, nickname string) error {
+	return r.queries.UpdateWebAuthnCredentialNickname(ctx, authdb.UpdateWebAuthnCredentialNicknameParams{
+		ID:       credID,
+		UserID:   toPgUUID(userID),
+		Nickname: nickname,
+	})
+}
+
+func (r *Repository) DeleteWebAuthnCredential(ctx context.Context, credID []byte, userID uuid.UUID) error {
+	return r.queries.DeleteWebAuthnCredential(ctx, authdb.DeleteWebAuthnCredentialParams{
+		ID:     credID,
+		UserID: toPgUUID(userID),
+	})
+}
+
+func (r *Repository) GetUserByWebAuthnCredentialID(ctx context.Context, credID []byte) (User, error) {
+	row, err := r.queries.GetUserByWebAuthnCredentialID(ctx, credID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	if err != nil {
+		return User{}, err
+	}
+	return userFromAuthRow(authUserFields{
+		ID:                    row.ID,
+		Email:                 row.Email,
+		PasswordHash:          row.PasswordHash,
+		EmailVerified:         row.IsEmailVerified,
+		FirstName:             row.FirstName,
+		LastName:              row.LastName,
+		Phone:                 row.Phone,
+		OnboardingCompletedAt: row.OnboardingCompletedAt,
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
+	}), nil
+}
+
+func webauthnCredFromRow(row authdb.RacWebauthnCredential) WebAuthnCredential {
+	cred := WebAuthnCredential{
+		ID:              row.ID,
+		UserID:          row.UserID.Bytes,
+		PublicKey:       row.PublicKey,
+		AttestationType: row.AttestationType,
+		Transport:       row.Transport,
+		FlagsJSON:       row.FlagsJson,
+		AAGUID:          row.Aaguid,
+		SignCount:        uint32(row.SignCount),
+		CloneWarning:    row.CloneWarning,
+		Nickname:        row.Nickname,
+		CreatedAt:       row.CreatedAt.Time,
+	}
+	if row.LastUsedAt.Valid {
+		t := row.LastUsedAt.Time
+		cred.LastUsedAt = &t
+	}
+	return cred
+}

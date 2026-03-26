@@ -1,6 +1,6 @@
 module portal_final_backend
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/gin-contrib/cors v1.7.6
@@ -16,9 +16,9 @@ require (
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/wneessen/go-mail v0.7.2
-	golang.org/x/crypto v0.48.0
-	golang.org/x/sync v0.19.0
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/crypto v0.49.0
+	golang.org/x/sync v0.20.0
+	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.14.0
 	google.golang.org/adk v0.4.0
 	google.golang.org/genai v1.43.0
@@ -28,9 +28,10 @@ require (
 	github.com/BrianLeishman/go-imap v0.1.21
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20260305053642-30c5194c9691
+	github.com/go-webauthn/webauthn v0.16.1
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
-	golang.org/x/net v0.50.0
+	golang.org/x/net v0.51.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -51,6 +52,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
@@ -58,10 +60,13 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-webauthn/x v0.2.2 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/jsonschema-go v0.3.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/safehtml v0.1.0 // indirect
@@ -105,6 +110,7 @@ require (
 	github.com/tinylib/msgp v1.6.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0 // indirect
@@ -116,7 +122,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/arch v0.20.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251014184007-4626949a642f // indirect
 	google.golang.org/grpc v1.76.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

@@ -66,6 +66,13 @@ type CookieConfig interface {
 	GetRefreshTokenTTL() time.Duration
 }
 
+// WebAuthnConfig provides settings for WebAuthn / passkey authentication.
+type WebAuthnConfig interface {
+	GetWebAuthnRPID() string
+	GetWebAuthnRPDisplayName() string
+	GetWebAuthnRPOrigins() []string
+}
+
 // EmailConfig provides settings for email sending.
 type EmailConfig interface {
 	GetEmailEnabled() bool
@@ -242,6 +249,9 @@ type Config struct {
 	MoneybirdEncryptionKey            string
 	LeadsReconciliationEnabled        bool
 	BootstrapSuperAdminEmail          string
+	WebAuthnRPID                      string
+	WebAuthnRPDisplayName             string
+	WebAuthnRPOrigins                 []string
 }
 
 // =============================================================================
@@ -260,6 +270,11 @@ func (c *Config) GetRefreshTokenTTL() time.Duration   { return c.RefreshTokenTTL
 func (c *Config) GetVerifyTokenTTL() time.Duration    { return c.VerifyTokenTTL }
 func (c *Config) GetResetTokenTTL() time.Duration     { return c.ResetTokenTTL }
 func (c *Config) GetBootstrapSuperAdminEmail() string { return c.BootstrapSuperAdminEmail }
+
+// WebAuthnConfig implementation
+func (c *Config) GetWebAuthnRPID() string          { return c.WebAuthnRPID }
+func (c *Config) GetWebAuthnRPDisplayName() string { return c.WebAuthnRPDisplayName }
+func (c *Config) GetWebAuthnRPOrigins() []string   { return c.WebAuthnRPOrigins }
 
 // CookieConfig implementation
 func (c *Config) GetRefreshCookieName() string            { return c.RefreshCookieName }
@@ -527,6 +542,9 @@ func Load() (*Config, error) {
 		MoneybirdEncryptionKey:            getEnv("MONEYBIRD_ENCRYPTION_KEY", ""),
 		LeadsReconciliationEnabled:        strings.EqualFold(getEnv("LEADS_RECONCILIATION_ENABLED", "true"), "true"),
 		BootstrapSuperAdminEmail:          strings.TrimSpace(getEnv("BOOTSTRAP_SUPERADMIN_EMAIL", "")),
+		WebAuthnRPID:                      getEnv("WEBAUTHN_RP_ID", "localhost"),
+		WebAuthnRPDisplayName:             getEnv("WEBAUTHN_RP_DISPLAY_NAME", "Portal"),
+		WebAuthnRPOrigins:                 splitCSV(getEnv("WEBAUTHN_RP_ORIGINS", appBaseURL)),
 	}
 
 	if cfg.DatabaseURL == "" {

@@ -133,3 +133,50 @@ ORDER BY u.email;
 -- name: MarkOnboardingComplete :exec
 UPDATE RAC_users SET onboarding_completed_at = now(), updated_at = now()
 WHERE id = $1 AND onboarding_completed_at IS NULL;
+
+-- ============================================================================
+-- WebAuthn Credential Queries
+-- ============================================================================
+
+-- name: CreateWebAuthnCredential :exec
+INSERT INTO RAC_webauthn_credentials (
+    id, user_id, public_key, attestation_type, transport,
+    flags_json, aaguid, sign_count, clone_warning, nickname
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+
+-- name: ListWebAuthnCredentialsByUser :many
+SELECT id, user_id, public_key, attestation_type, transport,
+       flags_json, aaguid, sign_count, clone_warning, nickname,
+       created_at, last_used_at
+FROM RAC_webauthn_credentials
+WHERE user_id = $1
+ORDER BY created_at;
+
+-- name: GetWebAuthnCredential :one
+SELECT id, user_id, public_key, attestation_type, transport,
+       flags_json, aaguid, sign_count, clone_warning, nickname,
+       created_at, last_used_at
+FROM RAC_webauthn_credentials
+WHERE id = $1;
+
+-- name: UpdateWebAuthnCredentialSignCount :exec
+UPDATE RAC_webauthn_credentials
+SET sign_count = $2, clone_warning = $3, last_used_at = now()
+WHERE id = $1;
+
+-- name: UpdateWebAuthnCredentialNickname :exec
+UPDATE RAC_webauthn_credentials
+SET nickname = $2
+WHERE id = $1 AND user_id = $3;
+
+-- name: DeleteWebAuthnCredential :exec
+DELETE FROM RAC_webauthn_credentials
+WHERE id = $1 AND user_id = $2;
+
+-- name: GetUserByWebAuthnCredentialID :one
+SELECT u.id, u.email, u.password_hash, u.is_email_verified,
+       u.first_name, u.last_name, u.phone, u.onboarding_completed_at,
+       u.created_at, u.updated_at
+FROM RAC_users u
+JOIN RAC_webauthn_credentials wc ON wc.user_id = u.id
+WHERE wc.id = $1;

@@ -110,3 +110,28 @@ type UserSummary struct {
 	LastName  *string  `json:"lastName"`
 	Roles     []string `json:"roles"`
 }
+
+// ---------------------------------------------------------------------------
+// WebAuthn / Passkey DTOs
+// ---------------------------------------------------------------------------
+
+type FinishPasskeyRegistrationRequest struct {
+	Nickname   string `json:"nickname" validate:"required,max=64"`
+	Credential any    `json:"credential" validate:"required"`
+}
+
+type FinishPasskeyLoginRequest struct {
+	Challenge  string `json:"challenge" validate:"required"`
+	Credential any    `json:"credential" validate:"required"`
+}
+
+type RenamePasskeyRequest struct {
+	Nickname string `json:"nickname" validate:"required,max=64"`
+}
+
+type PasskeyResponse struct {
+	ID         string     `json:"id"`
+	Nickname   string     `json:"nickname"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+}

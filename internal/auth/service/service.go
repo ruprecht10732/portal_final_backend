@@ -22,6 +22,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const (
@@ -42,6 +44,7 @@ type Service struct {
 	eventBus events.Bus
 	log      *logger.Logger
 	redis    *redis.Client
+	webauthn *webauthn.WebAuthn
 }
 
 type Profile struct {

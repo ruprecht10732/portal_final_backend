@@ -15,18 +15,26 @@ type Querier interface {
 	// Auth Domain SQL Queries
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
 	CreateUserToken(ctx context.Context, arg CreateUserTokenParams) error
+	// ============================================================================
+	// WebAuthn Credential Queries
+	// ============================================================================
+	CreateWebAuthnCredential(ctx context.Context, arg CreateWebAuthnCredentialParams) error
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
+	DeleteWebAuthnCredential(ctx context.Context, arg DeleteWebAuthnCredentialParams) error
 	EnsureUserSettings(ctx context.Context, userID pgtype.UUID) error
 	GetRefreshToken(ctx context.Context, tokenHash string) (GetRefreshTokenRow, error)
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error)
+	GetUserByWebAuthnCredentialID(ctx context.Context, id []byte) (GetUserByWebAuthnCredentialIDRow, error)
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	GetUserSettings(ctx context.Context, userID pgtype.UUID) (string, error)
 	GetUserToken(ctx context.Context, arg GetUserTokenParams) (GetUserTokenRow, error)
 	GetValidRoles(ctx context.Context, rolenames []string) ([]string, error)
+	GetWebAuthnCredential(ctx context.Context, id []byte) (RacWebauthnCredential, error)
 	InsertUserRoles(ctx context.Context, arg InsertUserRolesParams) error
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
 	ListUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]ListUsersByOrganizationRow, error)
+	ListWebAuthnCredentialsByUser(ctx context.Context, userID pgtype.UUID) ([]RacWebauthnCredential, error)
 	MarkEmailVerified(ctx context.Context, id pgtype.UUID) error
 	MarkOnboardingComplete(ctx context.Context, id pgtype.UUID) error
 	RevokeAllRefreshTokens(ctx context.Context, userID pgtype.UUID) error
@@ -36,6 +44,8 @@ type Querier interface {
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (UpdateUserEmailRow, error)
 	UpdateUserNames(ctx context.Context, arg UpdateUserNamesParams) (UpdateUserNamesRow, error)
 	UpdateUserPhone(ctx context.Context, arg UpdateUserPhoneParams) (UpdateUserPhoneRow, error)
+	UpdateWebAuthnCredentialNickname(ctx context.Context, arg UpdateWebAuthnCredentialNicknameParams) error
+	UpdateWebAuthnCredentialSignCount(ctx context.Context, arg UpdateWebAuthnCredentialSignCountParams) error
 	UpsertUserSettings(ctx context.Context, arg UpsertUserSettingsParams) error
 	UseUserToken(ctx context.Context, arg UseUserTokenParams) error
 }

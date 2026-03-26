@@ -1508,6 +1508,21 @@ type RacUserToken struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type RacWebauthnCredential struct {
+	ID              []byte             `json:"id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	PublicKey       []byte             `json:"public_key"`
+	AttestationType string             `json:"attestation_type"`
+	Transport       []string           `json:"transport"`
+	FlagsJson       []byte             `json:"flags_json"`
+	Aaguid          []byte             `json:"aaguid"`
+	SignCount       int64              `json:"sign_count"`
+	CloneWarning    bool               `json:"clone_warning"`
+	Nickname        string             `json:"nickname"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+}
+
 type RacWebhookApiKey struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrganizationID pgtype.UUID        `json:"organization_id"`
