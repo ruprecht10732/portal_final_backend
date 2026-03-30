@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -34,6 +35,10 @@ type OfferSummaryInput struct {
 	UrgencyLevel  *string
 	Items         []OfferSummaryItem
 }
+
+var emptyMarkdownHeadingPattern = regexp.MustCompile(`(?m)^\s*#{1,6}\s*$`)
+var markdownHeadingPrefixPattern = regexp.MustCompile(`(?m)^\s*#{1,6}\s*`)
+var markdownBulletPrefixPattern = regexp.MustCompile(`(?m)^\s*(?:-|\*|\d+\.)\s+`)
 
 // OfferSummaryGenerator generates a markdown summary for partner offers.
 type OfferSummaryGenerator interface {
@@ -937,11 +942,41 @@ func normalizeBuilderSummary(value *string) *string {
 	clean = strings.ReplaceAll(clean, "\r\n", "\n")
 	clean = strings.ReplaceAll(clean, "\r", "\n")
 	clean = strings.ReplaceAll(clean, "\u00a0", " ")
+	clean = emptyMarkdownHeadingPattern.ReplaceAllString(clean, "")
+	clean = markdownHeadingPrefixPattern.ReplaceAllString(clean, "")
+	clean = markdownBulletPrefixPattern.ReplaceAllString(clean, "")
+	clean = strings.ReplaceAll(clean, "**", "")
+	clean = strings.ReplaceAll(clean, "__", "")
+	clean = strings.ReplaceAll(clean, "`", "")
+	clean = normalizeSummaryLines(clean)
 	clean = strings.TrimSpace(clean)
 	if clean == "" {
 		return nil
 	}
 	return &clean
+}
+
+func normalizeSummaryLines(value string) string {
+	lines := strings.Split(value, "\n")
+	normalized := make([]string, 0, len(lines))
+	previousBlank := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if previousBlank {
+				continue
+			}
+			normalized = append(normalized, "")
+			previousBlank = true
+			continue
+		}
+
+		normalized = append(normalized, trimmed)
+		previousBlank = false
+	}
+
+	return strings.TrimSpace(strings.Join(normalized, "\n"))
 }
 
 func buildScopeAssessment(items []repository.QuoteItemSummary) *string {

@@ -155,3 +155,23 @@ func TestSplitOfferSummarySeparatesShortAndDetailedOutput(t *testing.T) {
 		t.Fatalf("unexpected detailed summary: %q", full)
 	}
 }
+
+func TestNormalizeBuilderSummaryStripsEmptyMarkdownHeadings(t *testing.T) {
+	value := "###\nWerkzaamheden\n- Glas plaatsen\n\n###\nLet op\n- Steiger nodig"
+	normalized := normalizeBuilderSummary(&value)
+	if normalized == nil {
+		t.Fatal("expected normalized summary")
+	}
+	if strings.Contains(*normalized, "###") {
+		t.Fatalf("expected stray markdown headings to be removed, got %q", *normalized)
+	}
+	if strings.Contains(*normalized, "- Glas plaatsen") {
+		t.Fatalf("expected markdown bullets to be removed, got %q", *normalized)
+	}
+	if !strings.Contains(*normalized, "Werkzaamheden") {
+		t.Fatalf("expected summary content to remain, got %q", *normalized)
+	}
+	if !strings.Contains(*normalized, "Glas plaatsen") {
+		t.Fatalf("expected bullet text to remain, got %q", *normalized)
+	}
+}

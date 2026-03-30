@@ -16,7 +16,7 @@ import (
 	"portal_final_backend/platform/ai/moonshot"
 )
 
-// OfferSummaryGenerator produces short, markdown summaries for partner offers.
+// OfferSummaryGenerator produces short, readable summaries for partner offers.
 type OfferSummaryGenerator struct {
 	agent          agent.Agent
 	runner         *runner.Runner
@@ -35,7 +35,7 @@ func NewOfferSummaryGenerator(apiKey string, modelName string) (*OfferSummaryGen
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "OfferSummaryGenerator",
 		Model:       kimi,
-		Description: "Generates concise, markdown summaries for partner offers.",
+		Description: "Generates concise, readable summaries for partner offers.",
 		Instruction: workspace.Instruction,
 	})
 	if err != nil {
@@ -60,7 +60,7 @@ func NewOfferSummaryGenerator(apiKey string, modelName string) (*OfferSummaryGen
 	}, nil
 }
 
-// GenerateOfferSummary renders a markdown summary using only allowed fields.
+// GenerateOfferSummary renders a readable summary using only allowed fields.
 func (g *OfferSummaryGenerator) GenerateOfferSummary(ctx context.Context, tenantID uuid.UUID, input ports.OfferSummaryInput) (string, error) {
 	_ = tenantID
 
@@ -124,9 +124,9 @@ Example: "Dakreparatie: 2 dakpannen vervangen, goot herstellen"
 
 Then write a line containing exactly: ---
 
-PART 2 – Detailed summary (markdown, max 8 lines):
+PART 2 – Detailed summary (plain text, max 8 lines):
 Rules:
-- Output only markdown, no extra commentary.
+- Output only plain text, no extra commentary.
 - Use Dutch.
 - Write as text that is shown directly to a vakman deciding whether to accept the job.
 - Use natural, readable Dutch. Prefer concrete work language over generic wording.
@@ -134,13 +134,14 @@ Rules:
 - Do NOT include any personal data: no names, addresses, phone numbers, emails.
 - Only use the provided service type, scope, urgency, and line items.
 - If scope or urgency is missing, omit that label.
+- Do not use markdown syntax such as ###, **, -, * or numbered lists.
 - Preferred structure:
-	1) Optional line with **Omvang** and **Urgentie**.
-	2) One short sentence that explains in plain Dutch what kind of klus this is and what the vakman mainly does.
-	3) Heading: ### Werkzaamheden
-	4) Bullet list with up to 3 main werkzaamheden or inbegrepen onderdelen.
-	5) Optional heading: ### Let op
-	6) Bullet list with up to 2 concrete aandachtspunten for inspectie, planning, bereikbaarheid or omvang.
+	1) Optional line like: Omvang: Groot | Urgentie: Hoog.
+	2) One short sentence that explains in plain Dutch what kind of klus this is and what the vakman mainly doet.
+	3) A line containing exactly: Werkzaamheden
+	4) Up to 3 short lines with the main werkzaamheden or inbegrepen onderdelen.
+	5) Optional line containing exactly: Let op
+	6) Up to 2 short lines with concrete aandachtspunten for inspectie, planning, bereikbaarheid or omvang.
 - Avoid vague filler like "werkzaamheden uitvoeren" when the line items are more specific.
 - Keep the tone practical and easy to scan on mobile.
 `, strings.TrimSpace(input.ServiceType), scope, urgency, strings.Join(lines, "\n"))
