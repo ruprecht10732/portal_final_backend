@@ -130,12 +130,13 @@ Rules:
 - Use Dutch.
 - Write as text that is shown directly to a vakman deciding whether to accept the job.
 - Use natural, readable Dutch. Prefer concrete work language over generic wording.
+- The first sentence must read like a human-written klusomschrijving, not like a label list or internal note.
 - Do NOT include any personal data: no names, addresses, phone numbers, emails.
 - Only use the provided service type, scope, urgency, and line items.
 - If scope or urgency is missing, omit that label.
 - Preferred structure:
 	1) Optional line with **Omvang** and **Urgentie**.
-	2) One short sentence that explains what kind of klus this is and what the vakman mainly does.
+	2) One short sentence that explains in plain Dutch what kind of klus this is and what the vakman mainly does.
 	3) Heading: ### Werkzaamheden
 	4) Bullet list with up to 3 main werkzaamheden or inbegrepen onderdelen.
 	5) Optional heading: ### Let op
