@@ -383,7 +383,6 @@
                     {{range .Items}}
                     <tr class="{{if and .IsOptional (not .IsSelected)}}deselected{{end}}">
                         <td>
-                            {{if .Title}}<div class="item-title">{{.Title}}</div>{{end}}
                             <div class="item-desc">{{.Description}}</div>
                             {{if .IsOptional}}
                                 <div class="item-meta">

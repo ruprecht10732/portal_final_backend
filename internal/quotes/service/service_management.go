@@ -290,7 +290,7 @@ func buildItemsFromRequest(quoteID, tenantID uuid.UUID, items []transport.QuoteI
 func toItemRequests(items []repository.QuoteItem) []transport.QuoteItemRequest {
 	reqs := make([]transport.QuoteItemRequest, len(items))
 	for i, it := range items {
-		reqs[i] = transport.QuoteItemRequest{Title: it.Title, Description: it.Description, Quantity: normalizeQuantityString(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
+		reqs[i] = transport.QuoteItemRequest{Title: "", Description: it.Description, Quantity: normalizeQuantityString(it.Quantity), UnitPriceCents: it.UnitPriceCents, TaxRateBps: it.TaxRateBps, IsOptional: it.IsOptional, IsSelected: it.IsSelected, CatalogProductID: it.CatalogProductID}
 	}
 	return reqs
 }
