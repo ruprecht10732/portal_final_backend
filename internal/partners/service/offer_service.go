@@ -168,7 +168,7 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 	scopeAssessment := buildScopeAssessment(items)
 	builderSummary := normalizeBuilderSummary(oc.BuilderSummary)
 	if builderSummary == nil {
-		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel)
+		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel, oc.RequiresInspection)
 	}
 
 	return transport.PublicOfferResponse{
@@ -468,7 +468,7 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 	scopeAssessment := buildScopeAssessment(items)
 	builderSummary := normalizeBuilderSummary(oc.BuilderSummary)
 	if builderSummary == nil {
-		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel)
+		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel, oc.RequiresInspection)
 	}
 
 	return transport.PublicOfferResponse{
@@ -609,13 +609,23 @@ func (s *Service) GetOfferPhotoPreview(ctx context.Context, tenantID, offerID, a
 	return s.getOfferPhotoStream(ctx, oc.LeadServiceID, oc.OrganizationID, attachmentID)
 }
 
-func buildBuilderSummary(items []repository.QuoteItemSummary, scopeAssessment *string, urgencyLevel *string) *string {
+func buildBuilderSummary(items []repository.QuoteItemSummary, scopeAssessment *string, urgencyLevel *string, requiresInspection bool) *string {
 	if len(items) == 0 {
 		return nil
 	}
 
 	lines := buildSummaryHeader(scopeAssessment, urgencyLevel)
-	lines = append(lines, buildSummaryItems(items)...)
+	if intro := buildSummaryIntro(items); intro != "" {
+		lines = append(lines, intro, "")
+	}
+	if workItems := buildSummaryItems(items); len(workItems) > 0 {
+		lines = append(lines, "### Werkzaamheden")
+		lines = append(lines, workItems...)
+	}
+	if attentionItems := buildSummaryAttentionPoints(items, scopeAssessment, urgencyLevel, requiresInspection); len(attentionItems) > 0 {
+		lines = append(lines, "", "### Let op")
+		lines = append(lines, attentionItems...)
+	}
 	if len(lines) == 0 {
 		return nil
 	}
@@ -792,6 +802,50 @@ func buildSummaryHeader(scopeAssessment *string, urgencyLevel *string) []string 
 	}
 }
 
+func buildSummaryAttentionPoints(items []repository.QuoteItemSummary, scopeAssessment *string, urgencyLevel *string, requiresInspection bool) []string {
+	points := make([]string, 0, 3)
+
+	if requiresInspection {
+		points = append(points, "- Plan eerst een schouw of eerste opname om de situatie, maatvoering en bereikbaarheid te controleren.")
+	}
+
+	if mapUrgencyLabel(urgencyLevel) == "Hoog" {
+		points = append(points, "- Deze aanvraag staat als urgent gemarkeerd, dus snelle terugkoppeling en planning liggen voor de hand.")
+	}
+
+	if mapScopeLabel(scopeAssessment) == "Groot" || len(items) > 4 {
+		points = append(points, "- Houd rekening met extra afstemming over materiaal, tijdsduur of fasering omdat dit geen kleine klus lijkt.")
+	}
+
+	if len(points) == 0 && len(items) > 0 {
+		points = append(points, "- Controleer vooraf of de inbegrepen posten volledig aansluiten op wat u op locatie verwacht aan te treffen.")
+	}
+
+	if len(points) > 2 {
+		return points[:2]
+	}
+
+	return points
+}
+
+func buildSummaryIntro(items []repository.QuoteItemSummary) string {
+	if len(items) == 0 {
+		return ""
+	}
+
+	main, _ := buildSummaryItem(items[0], false, 0)
+	main = strings.TrimSpace(main)
+	if main == "" {
+		return ""
+	}
+
+	if len(items) == 1 {
+		return fmt.Sprintf("Deze klus draait vooral om %s.", lowerFirst(main))
+	}
+
+	return fmt.Sprintf("Deze klus draait vooral om %s, met nog %d aanvullende werkzaamheden.", lowerFirst(main), len(items)-1)
+}
+
 func buildSummaryItems(items []repository.QuoteItemSummary) []string {
 	const maxItems = 3
 	remaining := len(items) - maxItems
@@ -808,7 +862,7 @@ func buildSummaryItems(items []repository.QuoteItemSummary) []string {
 		if main == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s", i+1, main))
+		lines = append(lines, fmt.Sprintf("- %s", main))
 		for _, inc := range inclusions {
 			lines = append(lines, "   - "+inc)
 		}
@@ -844,6 +898,17 @@ func buildSummaryItem(item repository.QuoteItemSummary, isLast bool, remaining i
 func sanitizeSummaryText(value string) string {
 	clean := sanitize.Text(value)
 	return strings.TrimSpace(strings.Join(strings.Fields(clean), " "))
+}
+
+func lowerFirst(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	runes := []rune(trimmed)
+	runes[0] = []rune(strings.ToLower(string(runes[0])))[0]
+	return string(runes)
 }
 
 // splitOfferSummary splits AI output into short + full parts separated by "---".

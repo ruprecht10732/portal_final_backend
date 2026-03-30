@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"portal_final_backend/internal/partners/repository"
@@ -113,5 +114,44 @@ func TestProcessPartnerOfferSummaryJobUsesGeneratorAndSanitizesOutput(t *testing
 	}
 	if len(generator.input.Items) != 1 || generator.input.Items[0].Quantity != "1x" {
 		t.Fatalf("unexpected generator input items: %#v", generator.input.Items)
+	}
+}
+
+func TestBuildBuilderSummaryProducesReadableFallback(t *testing.T) {
+	scope := "Medium"
+	urgency := "High"
+	summary := buildBuilderSummary([]repository.QuoteItemSummary{
+		{Description: "Dakpannen vervangen", Quantity: "2x"},
+		{Description: "Goot herstellen", Quantity: "1x"},
+	}, &scope, &urgency, true)
+	if summary == nil {
+		t.Fatal("expected fallback summary")
+	}
+
+	text := *summary
+	if !strings.Contains(text, "Deze klus draait vooral om") {
+		t.Fatalf("expected readable intro, got %q", text)
+	}
+	if !strings.Contains(text, "### Werkzaamheden") {
+		t.Fatalf("expected work heading, got %q", text)
+	}
+	if !strings.Contains(text, "- 2x Dakpannen vervangen") {
+		t.Fatalf("expected bullet work item, got %q", text)
+	}
+	if !strings.Contains(text, "**Omvang** Middel  **Urgentie** Hoog") {
+		t.Fatalf("expected header labels, got %q", text)
+	}
+	if !strings.Contains(text, "### Let op") {
+		t.Fatalf("expected attention heading, got %q", text)
+	}
+}
+
+func TestSplitOfferSummarySeparatesShortAndDetailedOutput(t *testing.T) {
+	short, full := splitOfferSummary("Dakklus: 2 pannen vervangen --- **Omvang** Klein\n\nDeze klus draait om dakherstel.")
+	if short != "Dakklus: 2 pannen vervangen" {
+		t.Fatalf("unexpected short summary: %q", short)
+	}
+	if !strings.Contains(full, "Deze klus draait om dakherstel.") {
+		t.Fatalf("unexpected detailed summary: %q", full)
 	}
 }

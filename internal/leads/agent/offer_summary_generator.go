@@ -124,16 +124,23 @@ Example: "Dakreparatie: 2 dakpannen vervangen, goot herstellen"
 
 Then write a line containing exactly: ---
 
-PART 2 – Detailed summary (markdown, max 5 lines):
+PART 2 – Detailed summary (markdown, max 8 lines):
 Rules:
 - Output only markdown, no extra commentary.
 - Use Dutch.
+- Write as text that is shown directly to a vakman deciding whether to accept the job.
+- Use natural, readable Dutch. Prefer concrete work language over generic wording.
 - Do NOT include any personal data: no names, addresses, phone numbers, emails.
 - Only use the provided service type, scope, urgency, and line items.
 - If scope or urgency is missing, omit that label.
 - Preferred structure:
 	1) Optional line with **Omvang** and **Urgentie**.
-	2) One short sentence describing the job.
-	3) Numbered list of up to 3 main items.
+	2) One short sentence that explains what kind of klus this is and what the vakman mainly does.
+	3) Heading: ### Werkzaamheden
+	4) Bullet list with up to 3 main werkzaamheden or inbegrepen onderdelen.
+	5) Optional heading: ### Let op
+	6) Bullet list with up to 2 concrete aandachtspunten for inspectie, planning, bereikbaarheid or omvang.
+- Avoid vague filler like "werkzaamheden uitvoeren" when the line items are more specific.
+- Keep the tone practical and easy to scan on mobile.
 `, strings.TrimSpace(input.ServiceType), scope, urgency, strings.Join(lines, "\n"))
 }
