@@ -167,9 +167,6 @@ func (s *Service) GetPublicOffer(ctx context.Context, publicToken string) (trans
 	items, photos := s.resolveOfferViewData(ctx, oc)
 	scopeAssessment := buildScopeAssessment(items)
 	builderSummary := normalizeBuilderSummary(oc.BuilderSummary)
-	if builderSummary == nil {
-		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel, oc.RequiresInspection)
-	}
 
 	return transport.PublicOfferResponse{
 		OfferID:            oc.ID,
@@ -467,9 +464,6 @@ func (s *Service) GetOfferPreview(ctx context.Context, tenantID uuid.UUID, offer
 	items, photos := s.resolveOfferViewData(ctx, oc)
 	scopeAssessment := buildScopeAssessment(items)
 	builderSummary := normalizeBuilderSummary(oc.BuilderSummary)
-	if builderSummary == nil {
-		builderSummary = buildBuilderSummary(items, scopeAssessment, oc.UrgencyLevel, oc.RequiresInspection)
-	}
 
 	return transport.PublicOfferResponse{
 		OfferID:            oc.ID,
