@@ -2360,20 +2360,6 @@ func (m *Module) resolveQuotePDFAttachment(ctx context.Context, orgID uuid.UUID,
 		mimeType = pdfMIMEType
 	}
 
-	if m.quotePDFStorage != nil && m.quotePDFBucket != "" && strings.TrimSpace(spec.FileKey) != "" {
-		reader, err := m.quotePDFStorage.DownloadFile(ctx, m.quotePDFBucket, strings.TrimSpace(spec.FileKey))
-		if err == nil {
-			defer func() { _ = reader.Close() }()
-			data, readErr := io.ReadAll(reader)
-			if readErr == nil {
-				return email.Attachment{Content: data, FileName: fileName, MIMEType: mimeType}, nil
-			}
-			m.log.Warn("failed to read stored quote pdf attachment; regenerating", "quoteId", quoteID, "error", readErr)
-		} else {
-			m.log.Warn("failed to download stored quote pdf attachment; regenerating", "quoteId", quoteID, "fileKey", strings.TrimSpace(spec.FileKey), "error", err)
-		}
-	}
-
 	if m.quotePDFGen == nil {
 		return email.Attachment{}, fmt.Errorf("quote pdf generator not configured")
 	}

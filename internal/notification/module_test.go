@@ -478,7 +478,7 @@ func TestRenderWorkflowTemplateTextConvertsEscapedLineBreaks(t *testing.T) {
 	}
 }
 
-func TestProcessGenericEmailOutboxAttachesQuotePDFFromStorage(t *testing.T) {
+func TestProcessGenericEmailOutboxRegeneratesQuotePDFFromCurrentQuoteState(t *testing.T) {
 	sender := &testSender{}
 	storage := &testQuotePDFStorage{data: []byte("stored-pdf")}
 	generator := &testQuotePDFGenerator{pdfData: []byte(generatedPDFContent)}
@@ -516,23 +516,24 @@ func TestProcessGenericEmailOutboxAttachesQuotePDFFromStorage(t *testing.T) {
 	if len(sender.lastCustomAttachments) != 1 {
 		t.Fatalf(errExpectedOneAttachmentFmt, len(sender.lastCustomAttachments))
 	}
-	if string(sender.lastCustomAttachments[0].Content) != "stored-pdf" {
-		t.Fatalf("expected stored pdf content, got %q", string(sender.lastCustomAttachments[0].Content))
+	if string(sender.lastCustomAttachments[0].Content) != generatedPDFContent {
+		t.Fatalf("expected generated pdf content, got %q", string(sender.lastCustomAttachments[0].Content))
 	}
-	if generator.calls != 0 {
-		t.Fatalf("expected storage hit to avoid regeneration, got %d generator calls", generator.calls)
+	if generator.calls != 1 {
+		t.Fatalf("expected 1 generator call, got %d", generator.calls)
+	}
+	if storage.calls != 0 {
+		t.Fatalf("expected stored pdf key to be ignored, got %d storage calls", storage.calls)
 	}
 }
 
-func TestProcessGenericEmailOutboxRegeneratesQuotePDFAfterStorageFailure(t *testing.T) {
+func TestProcessGenericEmailOutboxRegeneratesQuotePDFWithoutStoredFileKey(t *testing.T) {
 	sender := &testSender{}
-	storage := &testQuotePDFStorage{err: errors.New("storage unavailable")}
 	generator := &testQuotePDFGenerator{pdfData: []byte(generatedPDFContent)}
 	orgID := uuid.New()
 	quoteID := uuid.New().String()
 
 	m := New(nil, sender, testNotificationConfig{}, logger.New("development"))
-	m.SetQuotePDFStorage(storage, "quote-pdfs")
 	m.SetQuotePDFGenerator(generator)
 
 	payloadBytes, err := json.Marshal(emailSendOutboxPayload{
@@ -561,6 +562,45 @@ func TestProcessGenericEmailOutboxRegeneratesQuotePDFAfterStorageFailure(t *test
 	}
 	if generator.calls != 1 {
 		t.Fatalf("expected 1 generator call, got %d", generator.calls)
+	}
+}
+
+func TestProcessGenericEmailOutboxReturnsErrorWhenQuotePDFRegenerationFails(t *testing.T) {
+	sender := &testSender{}
+	generator := &testQuotePDFGenerator{err: errors.New("generator unavailable")}
+	orgID := uuid.New()
+	quoteID := uuid.New().String()
+
+	m := New(nil, sender, testNotificationConfig{}, logger.New("development"))
+	m.SetQuotePDFStorage(&testQuotePDFStorage{data: []byte("stored-pdf")}, "quote-pdfs")
+	m.SetQuotePDFGenerator(generator)
+
+	payloadBytes, err := json.Marshal(emailSendOutboxPayload{
+		OrgID:    orgID.String(),
+		ToEmail:  testLeadEmail,
+		Subject:  "Onderwerp",
+		BodyHTML: testEmailHTMLBody,
+		Attachments: []emailSendAttachmentSpec{{
+			Kind:     "quote_pdf",
+			QuoteID:  &quoteID,
+			FileKey:  "quotes/file.pdf",
+			FileName: "offerte-test.pdf",
+			MIMEType: testPDFMIMEType,
+		}},
+	})
+	if err != nil {
+		t.Fatalf(errMarshalPayloadFmt, err)
+	}
+
+	err = m.processGenericEmailOutbox(context.Background(), events.NotificationOutboxDue{TenantID: orgID}, notificationoutbox.Record{Payload: payloadBytes})
+	if err == nil {
+		t.Fatal("expected regeneration error, got nil")
+	}
+	if !strings.Contains(err.Error(), "generate quote pdf attachment") {
+		t.Fatalf("expected quote pdf attachment error, got %v", err)
+	}
+	if sender.customEmailCalls != 0 {
+		t.Fatalf("expected no email send on regeneration error, got %d", sender.customEmailCalls)
 	}
 }
 

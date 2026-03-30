@@ -300,6 +300,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
+	pdfShouldInvalidate := quoteUpdateAffectsRenderedPDF(req)
 	applyQuoteUpdates(quote, req)
 	if err := applyQuoteSubsidySnapshot(quote, req.ISDESubsidy); err != nil {
 		return nil, err
@@ -349,7 +350,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 			return nil, fmt.Errorf(errSaveURLsFmt, err)
 		}
 	}
-	if err := s.invalidatePDFOnAssetUpdates(ctx, quote, req); err != nil {
+	if err := s.invalidateRenderedPDF(ctx, quote, pdfShouldInvalidate); err != nil {
 		return nil, err
 	}
 
@@ -361,10 +362,22 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 	return s.buildResponse(ctx, quote, items, annotations)
 }
 
-func (s *Service) invalidatePDFOnAssetUpdates(ctx context.Context, quote *repository.Quote, req transport.UpdateQuoteRequest) error {
-	hasAssetChange := req.Attachments != nil || req.URLs != nil
-	hasPagePerItemChange := req.PagePerItem != nil && *req.PagePerItem != quote.PagePerItem
-	if !hasAssetChange && !hasPagePerItemChange {
+func quoteUpdateAffectsRenderedPDF(req transport.UpdateQuoteRequest) bool {
+	return req.PricingMode != nil ||
+		req.DiscountType != nil ||
+		req.DiscountValue != nil ||
+		req.ValidUntil != nil ||
+		req.Notes != nil ||
+		req.Items != nil ||
+		req.Attachments != nil ||
+		req.URLs != nil ||
+		req.ISDESubsidy != nil ||
+		req.FinancingDisclaimer != nil ||
+		req.PagePerItem != nil
+}
+
+func (s *Service) invalidateRenderedPDF(ctx context.Context, quote *repository.Quote, shouldInvalidate bool) error {
+	if !shouldInvalidate {
 		return nil
 	}
 	if quote.PDFFileKey == nil || strings.TrimSpace(*quote.PDFFileKey) == "" {
