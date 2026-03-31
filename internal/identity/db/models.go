@@ -353,13 +353,14 @@ type RacAppointmentAvailabilityRule struct {
 }
 
 type RacAppointmentVisitReport struct {
-	AppointmentID    pgtype.UUID        `json:"appointment_id"`
-	Measurements     pgtype.Text        `json:"measurements"`
-	AccessDifficulty pgtype.Text        `json:"access_difficulty"`
-	Notes            pgtype.Text        `json:"notes"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	OrganizationID   pgtype.UUID        `json:"organization_id"`
+	AppointmentID       pgtype.UUID        `json:"appointment_id"`
+	Measurements        pgtype.Text        `json:"measurements"`
+	AccessDifficulty    pgtype.Text        `json:"access_difficulty"`
+	Notes               pgtype.Text        `json:"notes"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	MeasurementProducts []byte             `json:"measurement_products"`
 }
 
 type RacCatalogProduct struct {

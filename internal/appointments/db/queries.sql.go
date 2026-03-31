@@ -493,7 +493,7 @@ func (q *Queries) GetAppointmentLeadInfo(ctx context.Context, arg GetAppointment
 }
 
 const getAppointmentVisitReport = `-- name: GetAppointmentVisitReport :one
-SELECT appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at
+SELECT appointment_id, organization_id, measurements, measurement_products, access_difficulty, notes, created_at, updated_at
 FROM RAC_appointment_visit_reports
 WHERE appointment_id = $1 AND organization_id = $2
 `
@@ -504,13 +504,14 @@ type GetAppointmentVisitReportParams struct {
 }
 
 type GetAppointmentVisitReportRow struct {
-	AppointmentID    pgtype.UUID        `json:"appointment_id"`
-	OrganizationID   pgtype.UUID        `json:"organization_id"`
-	Measurements     pgtype.Text        `json:"measurements"`
-	AccessDifficulty pgtype.Text        `json:"access_difficulty"`
-	Notes            pgtype.Text        `json:"notes"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	AppointmentID       pgtype.UUID        `json:"appointment_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	Measurements        pgtype.Text        `json:"measurements"`
+	MeasurementProducts []byte             `json:"measurement_products"`
+	AccessDifficulty    pgtype.Text        `json:"access_difficulty"`
+	Notes               pgtype.Text        `json:"notes"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetAppointmentVisitReport(ctx context.Context, arg GetAppointmentVisitReportParams) (GetAppointmentVisitReportRow, error) {
@@ -520,6 +521,7 @@ func (q *Queries) GetAppointmentVisitReport(ctx context.Context, arg GetAppointm
 		&i.AppointmentID,
 		&i.OrganizationID,
 		&i.Measurements,
+		&i.MeasurementProducts,
 		&i.AccessDifficulty,
 		&i.Notes,
 		&i.CreatedAt,
@@ -1491,34 +1493,37 @@ func (q *Queries) UpdateAvailabilityRule(ctx context.Context, arg UpdateAvailabi
 
 const upsertAppointmentVisitReport = `-- name: UpsertAppointmentVisitReport :one
 INSERT INTO RAC_appointment_visit_reports
-	(appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at)
+	(appointment_id, organization_id, measurements, measurement_products, access_difficulty, notes, created_at, updated_at)
 VALUES
-	($1, $2, $3, $4, $5, now(), now())
+	($1, $2, $3, $4, $5, $6, now(), now())
 ON CONFLICT (appointment_id)
 DO UPDATE SET
 	measurements = EXCLUDED.measurements,
+	measurement_products = EXCLUDED.measurement_products,
 	access_difficulty = EXCLUDED.access_difficulty,
 	notes = EXCLUDED.notes,
 	updated_at = now()
-RETURNING appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at
+RETURNING appointment_id, organization_id, measurements, measurement_products, access_difficulty, notes, created_at, updated_at
 `
 
 type UpsertAppointmentVisitReportParams struct {
-	AppointmentID    pgtype.UUID `json:"appointment_id"`
-	OrganizationID   pgtype.UUID `json:"organization_id"`
-	Measurements     pgtype.Text `json:"measurements"`
-	AccessDifficulty pgtype.Text `json:"access_difficulty"`
-	Notes            pgtype.Text `json:"notes"`
+	AppointmentID       pgtype.UUID `json:"appointment_id"`
+	OrganizationID      pgtype.UUID `json:"organization_id"`
+	Measurements        pgtype.Text `json:"measurements"`
+	MeasurementProducts []byte      `json:"measurement_products"`
+	AccessDifficulty    pgtype.Text `json:"access_difficulty"`
+	Notes               pgtype.Text `json:"notes"`
 }
 
 type UpsertAppointmentVisitReportRow struct {
-	AppointmentID    pgtype.UUID        `json:"appointment_id"`
-	OrganizationID   pgtype.UUID        `json:"organization_id"`
-	Measurements     pgtype.Text        `json:"measurements"`
-	AccessDifficulty pgtype.Text        `json:"access_difficulty"`
-	Notes            pgtype.Text        `json:"notes"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	AppointmentID       pgtype.UUID        `json:"appointment_id"`
+	OrganizationID      pgtype.UUID        `json:"organization_id"`
+	Measurements        pgtype.Text        `json:"measurements"`
+	MeasurementProducts []byte             `json:"measurement_products"`
+	AccessDifficulty    pgtype.Text        `json:"access_difficulty"`
+	Notes               pgtype.Text        `json:"notes"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpsertAppointmentVisitReport(ctx context.Context, arg UpsertAppointmentVisitReportParams) (UpsertAppointmentVisitReportRow, error) {
@@ -1526,6 +1531,7 @@ func (q *Queries) UpsertAppointmentVisitReport(ctx context.Context, arg UpsertAp
 		arg.AppointmentID,
 		arg.OrganizationID,
 		arg.Measurements,
+		arg.MeasurementProducts,
 		arg.AccessDifficulty,
 		arg.Notes,
 	)
@@ -1534,6 +1540,7 @@ func (q *Queries) UpsertAppointmentVisitReport(ctx context.Context, arg UpsertAp
 		&i.AppointmentID,
 		&i.OrganizationID,
 		&i.Measurements,
+		&i.MeasurementProducts,
 		&i.AccessDifficulty,
 		&i.Notes,
 		&i.CreatedAt,

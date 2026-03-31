@@ -226,22 +226,23 @@ WHERE id = $1 AND organization_id = $2
 RETURNING id, organization_id, user_id, date, is_available, start_time, end_time, timezone, created_at, updated_at;
 
 -- name: GetAppointmentVisitReport :one
-SELECT appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at
+SELECT appointment_id, organization_id, measurements, measurement_products, access_difficulty, notes, created_at, updated_at
 FROM RAC_appointment_visit_reports
 WHERE appointment_id = $1 AND organization_id = $2;
 
 -- name: UpsertAppointmentVisitReport :one
 INSERT INTO RAC_appointment_visit_reports
-	(appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at)
+	(appointment_id, organization_id, measurements, measurement_products, access_difficulty, notes, created_at, updated_at)
 VALUES
-	($1, $2, $3, $4, $5, now(), now())
+	($1, $2, $3, $4, $5, $6, now(), now())
 ON CONFLICT (appointment_id)
 DO UPDATE SET
 	measurements = EXCLUDED.measurements,
+	measurement_products = EXCLUDED.measurement_products,
 	access_difficulty = EXCLUDED.access_difficulty,
 	notes = EXCLUDED.notes,
 	updated_at = now()
-RETURNING appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at;
+RETURNING appointment_id, organization_id, measurements, measurement_products, access_difficulty, notes, created_at, updated_at;
 
 -- name: CreateAppointmentAttachment :one
 INSERT INTO RAC_appointment_attachments

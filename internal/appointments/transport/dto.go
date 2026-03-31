@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -123,18 +124,20 @@ type AppointmentListResponse struct {
 
 // Visit report DTOs
 type UpsertVisitReportRequest struct {
-	Measurements     *string           `json:"measurements,omitempty" validate:"omitempty,max=5000"`
-	AccessDifficulty *AccessDifficulty `json:"accessDifficulty,omitempty" validate:"omitempty,oneof=Low Medium High"`
-	Notes            *string           `json:"notes,omitempty" validate:"omitempty,max=5000"`
+	Measurements        *string           `json:"measurements,omitempty" validate:"omitempty,max=5000"`
+	MeasurementProducts json.RawMessage   `json:"measurementProducts,omitempty"`
+	AccessDifficulty    *AccessDifficulty `json:"accessDifficulty,omitempty" validate:"omitempty,oneof=Low Medium High"`
+	Notes               *string           `json:"notes,omitempty" validate:"omitempty,max=5000"`
 }
 
 type AppointmentVisitReportResponse struct {
-	AppointmentID    uuid.UUID         `json:"appointmentId"`
-	Measurements     *string           `json:"measurements,omitempty"`
-	AccessDifficulty *AccessDifficulty `json:"accessDifficulty,omitempty"`
-	Notes            *string           `json:"notes,omitempty"`
-	CreatedAt        time.Time         `json:"createdAt"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
+	AppointmentID       uuid.UUID         `json:"appointmentId"`
+	Measurements        *string           `json:"measurements,omitempty"`
+	MeasurementProducts json.RawMessage   `json:"measurementProducts,omitempty"`
+	AccessDifficulty    *AccessDifficulty `json:"accessDifficulty,omitempty"`
+	Notes               *string           `json:"notes,omitempty"`
+	CreatedAt           time.Time         `json:"createdAt"`
+	UpdatedAt           time.Time         `json:"updatedAt"`
 }
 
 // Attachment DTOs

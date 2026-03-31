@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -15,13 +16,14 @@ import (
 )
 
 type VisitReport struct {
-	AppointmentID    uuid.UUID
-	OrganizationID   uuid.UUID
-	Measurements     *string
-	AccessDifficulty *string
-	Notes            *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	AppointmentID       uuid.UUID
+	OrganizationID      uuid.UUID
+	Measurements        *string
+	MeasurementProducts json.RawMessage
+	AccessDifficulty    *string
+	Notes               *string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type AppointmentAttachment struct {
@@ -52,13 +54,14 @@ func toPgInt64(value *int64) pgtype.Int8 {
 
 func visitReportFromModel(model appointmentsdb.RacAppointmentVisitReport) VisitReport {
 	return VisitReport{
-		AppointmentID:    uuid.UUID(model.AppointmentID.Bytes),
-		OrganizationID:   uuid.UUID(model.OrganizationID.Bytes),
-		Measurements:     optionalString(model.Measurements),
-		AccessDifficulty: optionalString(model.AccessDifficulty),
-		Notes:            optionalString(model.Notes),
-		CreatedAt:        model.CreatedAt.Time,
-		UpdatedAt:        model.UpdatedAt.Time,
+		AppointmentID:       uuid.UUID(model.AppointmentID.Bytes),
+		OrganizationID:      uuid.UUID(model.OrganizationID.Bytes),
+		Measurements:        optionalString(model.Measurements),
+		MeasurementProducts: model.MeasurementProducts,
+		AccessDifficulty:    optionalString(model.AccessDifficulty),
+		Notes:               optionalString(model.Notes),
+		CreatedAt:           model.CreatedAt.Time,
+		UpdatedAt:           model.UpdatedAt.Time,
 	}
 }
 
@@ -87,23 +90,24 @@ func (r *Repository) GetVisitReport(ctx context.Context, appointmentID uuid.UUID
 		return nil, fmt.Errorf("failed to get visit report: %w", err)
 	}
 
-	report := visitReportFromModel(appointmentsdb.RacAppointmentVisitReport{AppointmentID: row.AppointmentID, Measurements: row.Measurements, AccessDifficulty: row.AccessDifficulty, Notes: row.Notes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
+	report := visitReportFromModel(appointmentsdb.RacAppointmentVisitReport{AppointmentID: row.AppointmentID, Measurements: row.Measurements, MeasurementProducts: row.MeasurementProducts, AccessDifficulty: row.AccessDifficulty, Notes: row.Notes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &report, nil
 }
 
 func (r *Repository) UpsertVisitReport(ctx context.Context, report VisitReport) (*VisitReport, error) {
 	row, err := r.queries.UpsertAppointmentVisitReport(ctx, appointmentsdb.UpsertAppointmentVisitReportParams{
-		AppointmentID:    toPgUUID(report.AppointmentID),
-		OrganizationID:   toPgUUID(report.OrganizationID),
-		Measurements:     toPgText(report.Measurements),
-		AccessDifficulty: toPgText(report.AccessDifficulty),
-		Notes:            toPgText(report.Notes),
+		AppointmentID:       toPgUUID(report.AppointmentID),
+		OrganizationID:      toPgUUID(report.OrganizationID),
+		Measurements:        toPgText(report.Measurements),
+		MeasurementProducts: report.MeasurementProducts,
+		AccessDifficulty:    toPgText(report.AccessDifficulty),
+		Notes:               toPgText(report.Notes),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to upsert visit report: %w", err)
 	}
 
-	saved := visitReportFromModel(appointmentsdb.RacAppointmentVisitReport{AppointmentID: row.AppointmentID, Measurements: row.Measurements, AccessDifficulty: row.AccessDifficulty, Notes: row.Notes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
+	saved := visitReportFromModel(appointmentsdb.RacAppointmentVisitReport{AppointmentID: row.AppointmentID, Measurements: row.Measurements, MeasurementProducts: row.MeasurementProducts, AccessDifficulty: row.AccessDifficulty, Notes: row.Notes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
 	return &saved, nil
 }
 

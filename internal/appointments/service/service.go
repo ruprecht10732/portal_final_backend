@@ -697,12 +697,13 @@ func (s *Service) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, u
 	}
 
 	return &transport.AppointmentVisitReportResponse{
-		AppointmentID:    report.AppointmentID,
-		Measurements:     report.Measurements,
-		AccessDifficulty: toAccessDifficulty(report.AccessDifficulty),
-		Notes:            report.Notes,
-		CreatedAt:        report.CreatedAt,
-		UpdatedAt:        report.UpdatedAt,
+		AppointmentID:       report.AppointmentID,
+		Measurements:        report.Measurements,
+		MeasurementProducts: report.MeasurementProducts,
+		AccessDifficulty:    toAccessDifficulty(report.AccessDifficulty),
+		Notes:               report.Notes,
+		CreatedAt:           report.CreatedAt,
+		UpdatedAt:           report.UpdatedAt,
 	}, nil
 }
 
@@ -717,12 +718,18 @@ func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID
 	accessDifficulty := mergeString(existing, func(r *repository.VisitReport) *string { return r.AccessDifficulty }, toAccessDifficultyString(req.AccessDifficulty))
 	notes := mergeString(existing, func(r *repository.VisitReport) *string { return r.Notes }, sanitize.TextPtr(req.Notes))
 
+	measurementProducts := req.MeasurementProducts
+	if measurementProducts == nil && existing != nil {
+		measurementProducts = existing.MeasurementProducts
+	}
+
 	saved, err := s.repo.UpsertVisitReport(ctx, repository.VisitReport{
-		AppointmentID:    appointmentID,
-		OrganizationID:   tenantID,
-		Measurements:     measurements,
-		AccessDifficulty: accessDifficulty,
-		Notes:            notes,
+		AppointmentID:       appointmentID,
+		OrganizationID:      tenantID,
+		Measurements:        measurements,
+		MeasurementProducts: measurementProducts,
+		AccessDifficulty:    accessDifficulty,
+		Notes:               notes,
 	})
 	if err != nil {
 		return nil, err
@@ -749,12 +756,13 @@ func (s *Service) UpsertVisitReport(ctx context.Context, appointmentID uuid.UUID
 	}
 
 	return &transport.AppointmentVisitReportResponse{
-		AppointmentID:    saved.AppointmentID,
-		Measurements:     saved.Measurements,
-		AccessDifficulty: toAccessDifficulty(saved.AccessDifficulty),
-		Notes:            saved.Notes,
-		CreatedAt:        saved.CreatedAt,
-		UpdatedAt:        saved.UpdatedAt,
+		AppointmentID:       saved.AppointmentID,
+		Measurements:        saved.Measurements,
+		MeasurementProducts: saved.MeasurementProducts,
+		AccessDifficulty:    toAccessDifficulty(saved.AccessDifficulty),
+		Notes:               saved.Notes,
+		CreatedAt:           saved.CreatedAt,
+		UpdatedAt:           saved.UpdatedAt,
 	}, nil
 }
 
