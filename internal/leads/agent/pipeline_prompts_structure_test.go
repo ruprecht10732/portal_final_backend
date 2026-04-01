@@ -139,8 +139,8 @@ func TestBuildScopeAnalyzerPromptRequiresVerifiedDimensions(t *testing.T) {
 
 	checks := []string{
 		"Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.",
-		"If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension.",
-		"For repair, adjustment, diagnosis, or inspection work, measurements needed only for final on-site verification or exact replacement-part selection are NOT automatically critical when trusted context already supports a bounded preliminary estimate.",
+		"If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension UNLESS that dimension is already verified through a non-photo source such as an appointment measurement or an explicit user note.",
+		"For repair, adjustment, diagnosis, inspection, or replacement work, measurements needed only for final on-site verification or exact part selection are NOT automatically critical when trusted context already supports a bounded preliminary estimate.",
 	}
 
 	for _, token := range checks {
@@ -468,8 +468,8 @@ func TestBuildEstimatorPromptAllowsPreliminaryRepairEstimateWhenMeasurementsAreC
 	prompt := buildQuoteBuilderPrompt(lead, service, notes, photo, estimatorPromptInstruction, nil)
 
 	checks := []string{
-		"For repair, adjustment, diagnosis, or inspection work, missing exact measurements are not critical blockers when the quote can be framed as a bounded preliminary estimate with clear assumptions and on-site confirmation notes.",
-		"In that repair scenario, prefer a preliminary estimate with explicit Dutch notes about the assumptions over moving the lead back to Nurturing for confirmatory measurements only.",
+		"For repair, adjustment, diagnosis, inspection, or replacement work, missing secondary measurements are not critical blockers when the primary dimensions come from a trusted source (e.g. appointment measurement) and the quote can be framed as a bounded preliminary estimate with clear assumptions and on-site confirmation notes.",
+		"In that scenario, prefer a preliminary estimate with explicit Dutch notes about the assumptions over moving the lead back to Nurturing for confirmatory measurements only.",
 	}
 
 	for _, token := range checks {
@@ -493,8 +493,8 @@ func TestBuildGatekeeperPromptKeepsRepairConfirmationDetailsOutOfMissingInformat
 	})
 
 	checks := []string{
-		"For repair, adjustment, diagnosis, or inspection work, measurements needed only for final on-site verification or exact replacement-part selection are not automatically critical blockers when trusted context already supports a bounded preliminary estimate.",
-		"In those repair cases, do not set RecommendedAction=RequestInfo solely for confirmatory measurements; keep them out of missingInformation unless they block even a bounded preliminary estimate.",
+		"For repair, adjustment, diagnosis, inspection, or replacement work, measurements needed only for final on-site verification or exact part selection are not automatically critical blockers when trusted context already supports a bounded preliminary estimate.",
+		"In those cases, do not set RecommendedAction=RequestInfo solely for confirmatory measurements; keep them out of missingInformation unless they block even a bounded preliminary estimate.",
 	}
 
 	for _, token := range checks {
