@@ -17,7 +17,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 )
 
 // Dispatcher finds partner matches and advances pipeline stage.
@@ -31,8 +31,8 @@ type Dispatcher struct {
 }
 
 // NewDispatcher creates a Dispatcher agent.
-func NewDispatcher(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus) (*Dispatcher, error) {
-	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus) (*Dispatcher, error) {
+	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("matchmaker")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load matchmaker workspace context: %w", err)

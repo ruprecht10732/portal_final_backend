@@ -8,6 +8,7 @@ import (
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
@@ -134,9 +135,8 @@ type AudioTranscriptionScheduler interface {
 }
 
 type ModuleConfig struct {
-	MoonshotAPIKey string
-	LLMModel       string
-	WebhookSecret  string
+	ModelConfig   openaicompat.Config
+	WebhookSecret string
 }
 
 type ModuleDependencies struct {

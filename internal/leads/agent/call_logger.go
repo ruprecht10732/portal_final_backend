@@ -23,7 +23,7 @@ import (
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
 )
@@ -253,8 +253,8 @@ func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
 }
 
 // NewCallLogger creates a new CallLogger agent
-func NewCallLogger(apiKey string, modelName string, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
-	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+func NewCallLogger(modelCfg openaicompat.Config, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
+	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("call-logger")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load call logger workspace context: %w", err)

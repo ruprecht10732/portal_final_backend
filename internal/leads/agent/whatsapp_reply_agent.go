@@ -18,7 +18,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/apperr"
 )
 
@@ -32,7 +32,7 @@ const (
 
 type WhatsAppReplyAgent struct {
 	repo                         repository.LeadsRepository
-	modelConfig                  moonshot.Config
+	modelConfig                  openaicompat.Config
 	appName                      string
 	organizationAISettingsReader ports.OrganizationAISettingsReader
 	quoteReader                  ports.ReplyQuoteReader
@@ -54,10 +54,10 @@ type whatsAppReplyContext struct {
 	requester      *ports.ReplyUserProfile
 }
 
-func NewWhatsAppReplyAgent(apiKey string, modelName string, repo repository.LeadsRepository) (*WhatsAppReplyAgent, error) {
+func NewWhatsAppReplyAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository) (*WhatsAppReplyAgent, error) {
 	return &WhatsAppReplyAgent{
 		repo:        repo,
-		modelConfig: newMoonshotModelConfig(apiKey, modelName),
+		modelConfig: modelCfg,
 		appName:     whatsAppReplyAppName,
 	}, nil
 }
@@ -122,7 +122,7 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 }
 
 func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
-	kimi := moonshot.NewModel(a.modelConfig)
+	kimi := openaicompat.NewModel(a.modelConfig)
 	instruction, err := orchestration.BuildAgentInstruction("whatsapp-reply", whatsappReplySystemPrompt(toneOfVoice))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load whatsapp reply workspace context: %w", err)

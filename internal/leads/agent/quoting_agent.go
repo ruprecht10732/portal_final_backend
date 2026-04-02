@@ -21,7 +21,7 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/platform/ai/embeddings"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/qdrant"
 )
 
@@ -64,7 +64,7 @@ type QuotingAgent struct {
 	runner         *runner.Runner
 	sessionService session.Service
 	appName        string
-	modelConfig    moonshot.Config
+	modelConfig    openaicompat.Config
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
 	mode           quotingAgentMode
@@ -101,8 +101,7 @@ type quotingAgentProfile struct {
 
 // QuotingAgentConfig holds shared dependencies for both quoting modes.
 type QuotingAgentConfig struct {
-	APIKey               string
-	Model                string
+	ModelConfig          openaicompat.Config
 	Repo                 repository.LeadsRepository
 	EventBus             events.Bus
 	EmbeddingClient      *embeddings.Client
@@ -126,11 +125,8 @@ func NewQuoteGeneratorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
 
 func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAgent, error) {
 	profile := mode.profile()
-	modelConfig := newMoonshotModelConfig(cfg.APIKey, cfg.Model)
-	if profile.reasoning {
-		modelConfig = newMoonshotReasoningModelConfig(cfg.APIKey, cfg.Model)
-	}
-	kimi := moonshot.NewModel(modelConfig)
+	modelConfig := cfg.ModelConfig
+	kimi := openaicompat.NewModel(modelConfig)
 	workspace, err := orchestration.LoadAgentWorkspace(profile.workspace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load %s workspace context: %w", profile.workspace, err)
@@ -1168,7 +1164,7 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 	activeAppName := q.appName
 
 	if len(tools) > 0 {
-		kimi := moonshot.NewModel(q.modelConfig)
+		kimi := openaicompat.NewModel(q.modelConfig)
 		workspace, err := orchestration.LoadAgentWorkspace("calculator")
 		if err != nil {
 			return fmt.Errorf("failed to load calculator workspace context: %w", err)

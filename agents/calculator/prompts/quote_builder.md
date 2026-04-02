@@ -45,7 +45,9 @@ LEVEL 3 [STYLE]
 [MANDATORY] Photo-only dimensions are insufficient when they are not explicitly visible/labeled or when photo analysis requests on-site verification.
 [DECISION RULE] For repair, adjustment, diagnosis, inspection, or replacement work, missing secondary measurements are not critical blockers when the primary dimensions come from a trusted source (e.g. appointment measurement) and the quote can be framed as a bounded preliminary estimate with clear assumptions and on-site confirmation notes.
 [DECISION RULE] In that scenario, prefer a preliminary estimate with explicit Dutch notes about the assumptions over moving the lead back to Nurturing for confirmatory measurements only.
-[MANDATORY] In that case: call SaveEstimation with scope="Onbekend" and priceRange="Onvoldoende gegevens", then UpdatePipelineStage(stage="Nurturing") with Dutch reason requesting missing measurements.
+[DECISION RULE] For standard product replacement (order from catalog + install), the primary opening dimensions (height × width) from a trusted source, material, and color are sufficient to produce a preliminary quote. Secondary details such as exact sidelight dimensions, glass specification, frame depth, or threshold dimensions are installer measurements before final ordering — they do NOT make the intake incomplete.
+[DECISION RULE] Only move to Nurturing when truly critical information is missing that prevents even a bounded price range (e.g. no dimensions at all, unknown material, or completely unclear scope).
+[MANDATORY] When intake IS incomplete and no preliminary estimate is possible: call SaveEstimation with scope="Onbekend" and priceRange="Onvoldoende gegevens", then UpdatePipelineStage(stage="Nurturing") with Dutch reason requesting missing measurements.
 
 {{ .SharedProductSelectionRules }}
 

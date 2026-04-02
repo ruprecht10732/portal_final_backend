@@ -17,6 +17,7 @@ import (
 	quoterepo "portal_final_backend/internal/quotes/repository"
 	quotetransport "portal_final_backend/internal/quotes/transport"
 	"portal_final_backend/internal/scheduler"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/logger"
 )
 
@@ -50,8 +51,7 @@ type SubsidyAnalyzerService struct {
 	sseService      *sse.Service
 	schedulerClient *scheduler.Client
 	log             *logger.Logger
-	moonshotAPIKey  string
-	llmModel        string
+	modelConfig     openaicompat.Config
 
 	// In-memory job store (temporary; should be persisted to DB)
 	jobsMu sync.RWMutex
@@ -66,8 +66,7 @@ type SubsidyAnalyzerServiceConfig struct {
 	SSEService      *sse.Service
 	SchedulerClient *scheduler.Client
 	Log             *logger.Logger
-	MoonshotAPIKey  string
-	LLMModel        string
+	ModelConfig     openaicompat.Config
 }
 
 // NewSubsidyAnalyzerService creates a new subsidy analyzer service.
@@ -80,8 +79,7 @@ func NewSubsidyAnalyzerService(cfg SubsidyAnalyzerServiceConfig) *SubsidyAnalyze
 		sseService:      cfg.SSEService,
 		schedulerClient: cfg.SchedulerClient,
 		log:             cfg.Log,
-		moonshotAPIKey:  cfg.MoonshotAPIKey,
-		llmModel:        cfg.LLMModel,
+		modelConfig:     cfg.ModelConfig,
 		jobs:            make(map[uuid.UUID]*SubsidyAnalyzerJob),
 	}
 }
@@ -105,14 +103,13 @@ func (s *SubsidyAnalyzerService) ensureAnalyzer() (*leadagent.SubsidyAnalyzer, e
 	if s.analyzer != nil {
 		return s.analyzer, nil
 	}
-	if s.moonshotAPIKey == "" {
-		return nil, fmt.Errorf("moonshot api key not configured for subsidy analyzer")
+	if s.modelConfig.APIKey == "" {
+		return nil, fmt.Errorf("llm api key not configured for subsidy analyzer")
 	}
 
 	analyzer, err := leadagent.NewSubsidyAnalyzerAgent(leadagent.SubsidyAnalyzerConfig{
-		APIKey: s.moonshotAPIKey,
-		Model:  s.llmModel,
-		Repo:   s.repo,
+		ModelConfig: s.modelConfig,
+		Repo:        s.repo,
 	})
 	if err != nil {
 		return nil, err

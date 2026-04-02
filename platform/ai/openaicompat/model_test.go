@@ -1,4 +1,4 @@
-package moonshot
+package openaicompat
 
 import (
 	"encoding/json"

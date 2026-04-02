@@ -11,7 +11,7 @@ import (
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
@@ -223,9 +223,8 @@ type AgentConfigReader interface {
 
 // ModuleConfig holds whatsappagent configuration.
 type ModuleConfig struct {
-	MoonshotAPIKey string
-	LLMModel       string
-	WebhookSecret  string
+	ModelConfig   openaicompat.Config
+	WebhookSecret string
 }
 
 // ModuleDependencies groups external whatsappagent dependencies to keep constructor size manageable.
@@ -283,8 +282,8 @@ func collectCoreDependencyErrors(pool *pgxpool.Pool, deps ModuleDependencies) []
 
 func collectRuntimeDependencyErrors(cfg ModuleConfig, deps ModuleDependencies) []string {
 	missing := make([]string, 0, 20)
-	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.MoonshotAPIKey) == "", "moonshot api key")
-	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.LLMModel) == "", "llm model")
+	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.ModelConfig.APIKey) == "", "llm api key")
+	missing = appendMissingDependency(missing, strings.TrimSpace(cfg.ModelConfig.Model) == "", "llm model")
 	missing = appendMissingDependency(missing, deps.WhatsAppClient == nil, "whatsapp client")
 	missing = appendMissingDependency(missing, deps.QuotesReader == nil, "quotes reader")
 	missing = appendMissingDependency(missing, deps.AppointmentsReader == nil, "appointments reader")
@@ -399,11 +398,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		appointmentStatusWriter:      deps.AppointmentStatusWriter,
 	}
 
-	agent, err := NewAgent(moonshot.Config{
-		APIKey:          cfg.MoonshotAPIKey,
-		Model:           cfg.LLMModel,
-		DisableThinking: false,
-	}, toolHandler, deps.Logger)
+	agent, err := NewAgent(cfg.ModelConfig, toolHandler, deps.Logger)
 	if err != nil {
 		if deps.Logger != nil {
 			deps.Logger.Warn("whatsappagent: failed to initialize AI runtime; admin membership routes remain enabled", "error", err)

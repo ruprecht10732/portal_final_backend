@@ -29,6 +29,7 @@ import (
 	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/platform/ai/embeddings"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/config"
 	"portal_final_backend/platform/httpkit"
 	"portal_final_backend/platform/logger"
@@ -206,7 +207,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	h.SetStaleLeadDetector(staleDetector)
 
 	// Stale lead AI-powered re-engagement suggestion generator
-	staleReEngagementAgent := agent.NewStaleReEngagementAgent(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentStaleReEngagement), repo)
+	staleReEngagementAgent := agent.NewStaleReEngagementAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentStaleReEngagement, false), repo)
 	staleReEngagement := maintenance.NewStaleLeadReEngagementService(pool, staleReEngagementAgent, nil, log)
 	h.SetStaleSuggester(staleReEngagement)
 
@@ -250,8 +251,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		SSEService:      sseService,
 		SchedulerClient: nil, // Will be injected from main.go/quotes module
 		Log:             log,
-		MoonshotAPIKey:  cfg.MoonshotAPIKey,
-		LLMModel:        cfg.ResolveLLMModel(config.LLMModelAgentQuoteGenerator),
+		ModelConfig:     resolveAgentModelConfig(cfg, config.LLMModelAgentQuoteGenerator, false),
 	})
 	module.subsidyAnalyzerSvc = subsidyAnalyzerSvc
 
@@ -318,22 +318,22 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	photoAnalyzer, err := agent.NewPhotoAnalyzer(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentPhotoAnalyzer), repo)
+	photoAnalyzer, err := agent.NewPhotoAnalyzer(resolveAgentModelConfig(cfg, config.LLMModelAgentPhotoAnalyzer, true), repo)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	callLogger, err := agent.NewCallLogger(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentCallLogger), repo, nil, eventBus)
+	callLogger, err := agent.NewCallLogger(resolveAgentModelConfig(cfg, config.LLMModelAgentCallLogger, true), repo, nil, eventBus)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	gatekeeper, err := agent.NewGatekeeper(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentGatekeeper), repo, eventBus, scorer)
+	gatekeeper, err := agent.NewGatekeeper(resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, true), repo, eventBus, scorer)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	auditor, err := agent.NewAuditor(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentAuditor), repo, eventBus)
+	auditor, err := agent.NewAuditor(resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, true), repo, eventBus)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -341,8 +341,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 	aiClients := buildAIClients(cfg)
 
 	estimator, err := agent.NewEstimatorAgent(agent.QuotingAgentConfig{
-		APIKey:               cfg.MoonshotAPIKey,
-		Model:                cfg.ResolveLLMModel(config.LLMModelAgentEstimator),
+		ModelConfig:          resolveAgentModelConfig(cfg, config.LLMModelAgentEstimator, true),
 		Repo:                 repo,
 		EventBus:             eventBus,
 		EmbeddingClient:      aiClients.embeddingClient,
@@ -355,14 +354,13 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	dispatcher, err := agent.NewDispatcher(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentDispatcher), repo, eventBus)
+	dispatcher, err := agent.NewDispatcher(resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, true), repo, eventBus)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
-		APIKey:               cfg.MoonshotAPIKey,
-		Model:                cfg.ResolveLLMModel(config.LLMModelAgentQuoteGenerator),
+		ModelConfig:          resolveAgentModelConfig(cfg, config.LLMModelAgentQuoteGenerator, true),
 		Repo:                 repo,
 		EventBus:             eventBus,
 		EmbeddingClient:      aiClients.embeddingClient,
@@ -375,7 +373,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentOfferSummaryGenerator))
+	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(resolveAgentModelConfig(cfg, config.LLMModelAgentOfferSummaryGenerator, false))
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -411,6 +409,14 @@ func buildAIClients(cfg *config.Config) aiClients {
 	}
 }
 
+// resolveAgentModelConfig builds an openaicompat.Config for the given agent,
+// combining the active provider preset with any per-agent model override.
+func resolveAgentModelConfig(cfg *config.Config, agentName string, reasoning bool) openaicompat.Config {
+	providerCfg := cfg.ResolveProviderConfig(cfg.LLMProvider)
+	modelOverride := cfg.ResolveLLMModel(agentName)
+	return agent.NewProviderModelConfig(providerCfg, reasoning, modelOverride)
+}
+
 func buildEmbeddingClient(cfg *config.Config) *embeddings.Client {
 	if !cfg.IsEmbeddingEnabled() {
 		return nil
@@ -444,12 +450,12 @@ func buildScopedQdrantClient(cfg *config.Config, collection string) *qdrant.Clie
 }
 
 func buildReplyAgents(cfg *config.Config, repo repository.LeadsRepository) (*agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
-	whatsAppReplyAgent, err := agent.NewWhatsAppReplyAgent(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppReply), repo)
+	whatsAppReplyAgent, err := agent.NewWhatsAppReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	emailReplyAgent, err := agent.NewEmailReplyAgent(cfg.MoonshotAPIKey, cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppReply), repo)
+	emailReplyAgent, err := agent.NewEmailReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo)
 	if err != nil {
 		return nil, nil, err
 	}

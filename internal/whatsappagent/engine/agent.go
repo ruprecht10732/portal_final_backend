@@ -22,7 +22,7 @@ import (
 
 	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/logger"
 )
 
@@ -149,7 +149,7 @@ var dutchMonthNumbers = map[string]string{
 }
 
 // NewAgent creates a new WhatsApp agent with function-calling tools.
-func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler, log *logger.Logger) (*Agent, error) {
+func NewAgent(modelCfg openaicompat.Config, toolHandler *ToolHandler, log *logger.Logger) (*Agent, error) {
 	workspace, err := orchestration.LoadAgentWorkspace(agentWorkspaceName)
 	if err != nil {
 		return nil, fmt.Errorf("whatsappagent: failed to load workspace: %w", err)
@@ -189,8 +189,8 @@ func NewAgent(modelCfg moonshot.Config, toolHandler *ToolHandler, log *logger.Lo
 	}, nil
 }
 
-func newAgentRuntime(modelCfg moonshot.Config, workspace orchestration.Workspace, sessionService session.Service, toolHandler *ToolHandler, cfg agentRuntimeConfig) (agentRuntime, error) {
-	kimi := moonshot.NewModel(modelCfg)
+func newAgentRuntime(modelCfg openaicompat.Config, workspace orchestration.Workspace, sessionService session.Service, toolHandler *ToolHandler, cfg agentRuntimeConfig) (agentRuntime, error) {
+	kimi := openaicompat.NewModel(modelCfg)
 	tools, err := cfg.toolBuilder(toolHandler)
 	if err != nil {
 		return agentRuntime{}, err

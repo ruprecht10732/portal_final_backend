@@ -13,7 +13,7 @@ import (
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/orchestration"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 )
 
 // OfferSummaryGenerator produces short, readable summaries for partner offers.
@@ -25,8 +25,8 @@ type OfferSummaryGenerator struct {
 }
 
 // NewOfferSummaryGenerator creates a summary generator agent without tools.
-func NewOfferSummaryGenerator(apiKey string, modelName string) (*OfferSummaryGenerator, error) {
-	kimi := moonshot.NewModel(newMoonshotModelConfig(apiKey, modelName))
+func NewOfferSummaryGenerator(modelCfg openaicompat.Config) (*OfferSummaryGenerator, error) {
+	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("offer-summary")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load offer summary workspace context: %w", err)

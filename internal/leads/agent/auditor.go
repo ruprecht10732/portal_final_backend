@@ -20,7 +20,7 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 )
 
 type Auditor struct {
@@ -139,8 +139,8 @@ func (d *AuditorToolDeps) handleSubmitAuditResult(ctx tool.Context, input Submit
 	return SubmitAuditResultOutput{Status: "ok", Message: "audit stored"}, nil
 }
 
-func NewAuditor(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus) (*Auditor, error) {
-	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus) (*Auditor, error) {
+	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("auditor")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load auditor workspace context: %w", err)

@@ -1,4 +1,4 @@
-package moonshot
+package openaicompat
 
 import (
 	"bytes"
@@ -14,39 +14,43 @@ import (
 	"google.golang.org/genai"
 )
 
-// Config for Kimi
+// Config for an OpenAI-compatible LLM provider (Kimi, DeepSeek, etc.).
 type Config struct {
 	APIKey          string
 	BaseURL         string
 	Model           string
-	DisableThinking bool // Disable thinking mode for kimi-k2.5 (uses temp 0.6 instead of 1.0)
+	Provider        string // "kimi" or "deepseek" — controls thinking-mode payload
+	DisableThinking bool   // For Kimi: toggles thinking payload. For DeepSeek: ignored (reasoning via model name).
 }
 
-// KimiModel adapts Moonshot to the ADK model.LLM interface
-type KimiModel struct {
+// Model adapts an OpenAI-compatible provider to the ADK model.LLM interface.
+type Model struct {
 	config Config
 	client *http.Client
 }
 
-func NewModel(cfg Config) *KimiModel {
+func NewModel(cfg Config) *Model {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "https://api.moonshot.ai/v1"
 	}
 	if cfg.Model == "" {
 		cfg.Model = "kimi-k2-turbo-preview"
 	}
-	return &KimiModel{
+	if cfg.Provider == "" {
+		cfg.Provider = "kimi"
+	}
+	return &Model{
 		config: cfg,
 		client: &http.Client{},
 	}
 }
 
-func (m *KimiModel) Name() string {
+func (m *Model) Name() string {
 	return m.config.Model
 }
 
-// GenerateContent adapts ADK requests to Kimi's OpenAI-compatible API
-func (m *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+// GenerateContent adapts ADK requests to an OpenAI-compatible chat completions API.
+func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		resp, err := m.generate(ctx, req)
 		yield(resp, err)
@@ -112,7 +116,7 @@ type openAIChoiceMessage struct {
 	ReasoningContent string           `json:"reasoning_content,omitempty"`
 }
 
-func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
+func (m *Model) generate(ctx context.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
 	payload := m.buildPayload(req)
 
 	result, err := m.doRequest(ctx, payload)
@@ -131,7 +135,7 @@ func (m *KimiModel) generate(ctx context.Context, req *model.LLMRequest) (*model
 	}, nil
 }
 
-func (m *KimiModel) buildPayload(req *model.LLMRequest) map[string]interface{} {
+func (m *Model) buildPayload(req *model.LLMRequest) map[string]interface{} {
 	messages := m.convertMessages(req.Contents)
 	tools := m.convertTools(req)
 
@@ -140,12 +144,15 @@ func (m *KimiModel) buildPayload(req *model.LLMRequest) map[string]interface{} {
 		"messages": messages,
 	}
 
-	// Handle thinking mode for kimi-k2.5
-	if m.config.DisableThinking {
-		payload["thinking"] = map[string]string{"type": "disabled"}
-		// Non-thinking mode uses fixed temperature 0.6
-	} else if req.Config != nil && req.Config.Temperature != nil {
-		payload["temperature"] = float64(*req.Config.Temperature)
+	// Thinking mode is provider-specific:
+	// - Kimi: uses a "thinking" payload field to toggle reasoning on the same model.
+	// - DeepSeek: reasoning is selected via model name (deepseek-reasoner), no payload field needed.
+	if m.config.Provider == "kimi" {
+		if m.config.DisableThinking {
+			payload["thinking"] = map[string]string{"type": "disabled"}
+		} else if req.Config != nil && req.Config.Temperature != nil {
+			payload["temperature"] = float64(*req.Config.Temperature)
+		}
 	}
 
 	if len(tools) > 0 {
@@ -156,7 +163,7 @@ func (m *KimiModel) buildPayload(req *model.LLMRequest) map[string]interface{} {
 	return payload
 }
 
-func (m *KimiModel) doRequest(ctx context.Context, payload map[string]interface{}) (*openAIResponse, error) {
+func (m *Model) doRequest(ctx context.Context, payload map[string]interface{}) (*openAIResponse, error) {
 	jsonBody, _ := json.Marshal(payload)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", m.config.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	httpReq.Header.Set("Authorization", "Bearer "+m.config.APIKey)
@@ -170,23 +177,23 @@ func (m *KimiModel) doRequest(ctx context.Context, payload map[string]interface{
 		_ = resp.Body.Close()
 	}()
 
-	result, err := decodeResponse(resp)
+	result, err := m.decodeResponse(resp)
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func decodeResponse(resp *http.Response) (*openAIResponse, error) {
+func (m *Model) decodeResponse(resp *http.Response) (*openAIResponse, error) {
 	var result openAIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode kimi response: %v", err)
+		return nil, fmt.Errorf("llm api error (%s): failed to decode response: %v", m.config.Provider, err)
 	}
 	if result.Error != nil {
-		return nil, fmt.Errorf("kimi api error: %v", result.Error)
+		return nil, fmt.Errorf("llm api error (%s): %v", m.config.Provider, result.Error)
 	}
 	if len(result.Choices) == 0 {
-		return nil, fmt.Errorf("kimi api error: empty choices")
+		return nil, fmt.Errorf("llm api error (%s): empty choices", m.config.Provider)
 	}
 	return &result, nil
 }
@@ -221,7 +228,7 @@ func buildToolCallPart(tc openAIToolCall) *genai.Part {
 	}
 }
 
-func (m *KimiModel) convertMessages(contents []*genai.Content) []openAIMessage {
+func (m *Model) convertMessages(contents []*genai.Content) []openAIMessage {
 	messages := make([]openAIMessage, 0, len(contents))
 	for _, content := range contents {
 		if content == nil {
@@ -359,7 +366,7 @@ func appendText(builder *strings.Builder, text string) {
 	builder.WriteString(text)
 }
 
-func (m *KimiModel) convertTools(req *model.LLMRequest) []openAIToolDef {
+func (m *Model) convertTools(req *model.LLMRequest) []openAIToolDef {
 	if req == nil || req.Config == nil || len(req.Config.Tools) == 0 {
 		return nil
 	}

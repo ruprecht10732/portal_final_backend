@@ -16,7 +16,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 )
 
 const (
@@ -34,7 +34,7 @@ const (
 // message that the operator can send directly.
 type StaleReEngagementAgent struct {
 	repo                         repository.LeadsRepository
-	modelConfig                  moonshot.Config
+	modelConfig                  openaicompat.Config
 	appName                      string
 	organizationAISettingsReader ports.OrganizationAISettingsReader
 }
@@ -48,10 +48,10 @@ type StaleReEngagementResult struct {
 }
 
 // NewStaleReEngagementAgent creates a new agent instance.
-func NewStaleReEngagementAgent(apiKey, modelName string, repo repository.LeadsRepository) *StaleReEngagementAgent {
+func NewStaleReEngagementAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository) *StaleReEngagementAgent {
 	return &StaleReEngagementAgent{
 		repo:        repo,
-		modelConfig: newMoonshotModelConfig(apiKey, modelName),
+		modelConfig: modelCfg,
 		appName:     staleReEngagementAppName,
 	}
 }
@@ -106,7 +106,7 @@ func (a *StaleReEngagementAgent) GenerateSuggestion(
 }
 
 func (a *StaleReEngagementAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
-	kimi := moonshot.NewModel(a.modelConfig)
+	kimi := openaicompat.NewModel(a.modelConfig)
 	instruction, err := orchestration.BuildAgentInstruction(staleReEngagementAppName, staleReEngagementSystemPrompt(toneOfVoice))
 	if err != nil {
 		return nil, nil, fmt.Errorf("stale reengagement: load workspace: %w", err)

@@ -14,7 +14,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/apperr"
 
 	"github.com/google/uuid"
@@ -29,7 +29,7 @@ const (
 
 type EmailReplyAgent struct {
 	repo                         repository.LeadsRepository
-	modelConfig                  moonshot.Config
+	modelConfig                  openaicompat.Config
 	appName                      string
 	organizationAISettingsReader ports.OrganizationAISettingsReader
 	quoteReader                  ports.ReplyQuoteReader
@@ -58,10 +58,10 @@ type emailReplyContext struct {
 	requester      *ports.ReplyUserProfile
 }
 
-func NewEmailReplyAgent(apiKey string, modelName string, repo repository.LeadsRepository) (*EmailReplyAgent, error) {
+func NewEmailReplyAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository) (*EmailReplyAgent, error) {
 	return &EmailReplyAgent{
 		repo:        repo,
-		modelConfig: newMoonshotModelConfig(apiKey, modelName),
+		modelConfig: modelCfg,
 		appName:     emailReplyAppName,
 	}, nil
 }
@@ -122,7 +122,7 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 }
 
 func (a *EmailReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
-	kimi := moonshot.NewModel(a.modelConfig)
+	kimi := openaicompat.NewModel(a.modelConfig)
 	instruction, err := orchestration.BuildAgentInstruction("email-reply", emailReplySystemPrompt(toneOfVoice))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load email reply workspace context: %w", err)

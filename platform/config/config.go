@@ -15,8 +15,10 @@ import (
 
 const defaultFrontendBaseURL = "http://localhost:4200"
 
+const defaultKimiModel = "kimi-k2.5"
+
 const (
-	DefaultLLMModel             = "kimi-k2.5"
+	DefaultLLMModel             = defaultKimiModel
 	DefaultOfferSummaryLLMModel = "moonshot-v1-8k"
 
 	LLMModelAgentPhotoAnalyzer         = "photo_analyzer"
@@ -30,7 +32,40 @@ const (
 	LLMModelAgentWhatsAppReply         = "whatsapp_reply"
 	LLMModelAgentWhatsAppAgent         = "whatsapp_agent"
 	LLMModelAgentStaleReEngagement     = "stale_reengagement"
+
+	// LLM provider identifiers.
+	LLMProviderKimi     = "kimi"
+	LLMProviderDeepSeek = "deepseek"
 )
+
+// LLMProviderPreset holds the default endpoint and model names for a provider.
+type LLMProviderPreset struct {
+	BaseURL        string
+	DefaultModel   string
+	ReasoningModel string
+}
+
+// LLMProviderConfig is the resolved configuration for an LLM provider ready to create a model.
+type LLMProviderConfig struct {
+	Provider       string
+	APIKey         string
+	BaseURL        string
+	Model          string
+	ReasoningModel string
+}
+
+var llmProviderPresets = map[string]LLMProviderPreset{
+	LLMProviderKimi: {
+		BaseURL:        "https://api.moonshot.ai/v1",
+		DefaultModel:   defaultKimiModel,
+		ReasoningModel: defaultKimiModel,
+	},
+	LLMProviderDeepSeek: {
+		BaseURL:        "https://api.deepseek.com/v1",
+		DefaultModel:   "deepseek-chat",
+		ReasoningModel: "deepseek-reasoner",
+	},
+}
 
 // =============================================================================
 // Module-Specific Config Interfaces (Principle of Least Privilege)
@@ -196,6 +231,9 @@ type Config struct {
 	RefreshCookieSecure               bool
 	RefreshCookieSameSite             http.SameSite
 	MoonshotAPIKey                    string
+	DeepSeekAPIKey                    string
+	LLMProvider                       string // "kimi" (default) or "deepseek"
+	LLMFallbackProvider               string // optional fallback provider name
 	LLMModelDefault                   string
 	LLMModelPhotoAnalyzer             string
 	LLMModelCallLogger                string
@@ -414,6 +452,41 @@ func (c *Config) llmModelOverride(agentName string) string {
 	}
 }
 
+// ResolveProviderConfig returns the full LLMProviderConfig for the given provider name.
+// It resolves the API key, base URL, and default/reasoning model names.
+func (c *Config) ResolveProviderConfig(providerName string) LLMProviderConfig {
+	preset, ok := llmProviderPresets[providerName]
+	if !ok {
+		preset = llmProviderPresets[LLMProviderKimi]
+	}
+	apiKey := c.resolveAPIKey(providerName)
+	return LLMProviderConfig{
+		Provider:       providerName,
+		APIKey:         apiKey,
+		BaseURL:        preset.BaseURL,
+		Model:          preset.DefaultModel,
+		ReasoningModel: preset.ReasoningModel,
+	}
+}
+
+// HasFallbackProvider returns true when a fallback provider is configured and has an API key.
+func (c *Config) HasFallbackProvider() bool {
+	fp := strings.TrimSpace(c.LLMFallbackProvider)
+	if fp == "" {
+		return false
+	}
+	return c.resolveAPIKey(fp) != ""
+}
+
+func (c *Config) resolveAPIKey(provider string) string {
+	switch provider {
+	case LLMProviderDeepSeek:
+		return c.DeepSeekAPIKey
+	default:
+		return c.MoonshotAPIKey
+	}
+}
+
 // QdrantConfig implementation
 func (c *Config) GetQdrantURL() string        { return c.QdrantURL }
 func (c *Config) GetQdrantAPIKey() string     { return c.QdrantAPIKey }
@@ -489,6 +562,9 @@ func Load() (*Config, error) {
 		RefreshCookieSecure:               refreshCookieSecure,
 		RefreshCookieSameSite:             parseSameSite(getEnv("REFRESH_COOKIE_SAMESITE", "Lax")),
 		MoonshotAPIKey:                    getEnv("MOONSHOT_API_KEY", ""),
+		DeepSeekAPIKey:                    getEnv("DEEPSEEK_API_KEY", ""),
+		LLMProvider:                       strings.ToLower(getEnv("LLM_PROVIDER", LLMProviderKimi)),
+		LLMFallbackProvider:               strings.ToLower(getEnv("LLM_FALLBACK_PROVIDER", "")),
 		LLMModelDefault:                   getEnv("LLM_MODEL_DEFAULT", ""),
 		LLMModelPhotoAnalyzer:             getEnv("LLM_MODEL_PHOTO_ANALYZER", ""),
 		LLMModelCallLogger:                getEnv("LLM_MODEL_CALL_LOGGER", ""),

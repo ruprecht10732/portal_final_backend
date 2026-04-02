@@ -21,7 +21,7 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/orchestration"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 )
 
 // Gatekeeper validates intake requirements and advances pipeline stage.
@@ -35,8 +35,8 @@ type Gatekeeper struct {
 }
 
 // NewGatekeeper creates a Gatekeeper agent.
-func NewGatekeeper(apiKey string, modelName string, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
-	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+func NewGatekeeper(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
+	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("gatekeeper")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load gatekeeper workspace context: %w", err)

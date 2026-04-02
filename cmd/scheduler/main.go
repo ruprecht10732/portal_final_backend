@@ -22,6 +22,7 @@ import (
 	identityservice "portal_final_backend/internal/identity/service"
 	"portal_final_backend/internal/imap"
 	"portal_final_backend/internal/leads"
+	leadagent "portal_final_backend/internal/leads/agent"
 	"portal_final_backend/internal/leads/maintenance"
 	leadrepo "portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/notification"
@@ -308,9 +309,8 @@ func main() {
 	defer closeTranscriber()
 	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository(), eventBus)
 	whatsappagentModule, err := whatsappagent.NewModule(pool, whatsappagent.ModuleConfig{
-		MoonshotAPIKey: cfg.MoonshotAPIKey,
-		LLMModel:       cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent),
-		WebhookSecret:  cfg.GetWhatsAppWebhookSecret(),
+		ModelConfig:   leadagent.NewProviderModelConfig(cfg.ResolveProviderConfig(cfg.LLMProvider), true, cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent)),
+		WebhookSecret: cfg.GetWhatsAppWebhookSecret(),
 	}, whatsappagent.ModuleDependencies{
 		WhatsAppClient:               whatsAppClient,
 		QuotesReader:                 adapters.NewWhatsAppAgentQuotesAdapter(quotesModule.Service()),

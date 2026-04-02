@@ -23,9 +23,8 @@ type Module struct {
 
 func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*Module, error) {
 	inner, err := engine.NewModule(pool, engine.ModuleConfig{
-		MoonshotAPIKey: cfg.MoonshotAPIKey,
-		LLMModel:       cfg.LLMModel,
-		WebhookSecret:  cfg.WebhookSecret,
+		ModelConfig:   cfg.ModelConfig,
+		WebhookSecret: cfg.WebhookSecret,
 	}, engine.ModuleDependencies{
 		WhatsAppClient:               deps.WhatsAppClient,
 		QuotesReader:                 adaptQuotesReader(deps.QuotesReader),

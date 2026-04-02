@@ -18,7 +18,7 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 )
 
 const (
@@ -127,8 +127,8 @@ type PhotoAnalyzer struct {
 }
 
 // NewPhotoAnalyzer creates a new photo analyzer agent
-func NewPhotoAnalyzer(apiKey string, modelName string, repo repository.LeadsRepository) (*PhotoAnalyzer, error) {
-	kimi := moonshot.NewModel(newMoonshotReasoningModelConfig(apiKey, modelName))
+func NewPhotoAnalyzer(modelCfg openaicompat.Config, repo repository.LeadsRepository) (*PhotoAnalyzer, error) {
+	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace(photoAnalyzerWorkspaceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load photo analyzer workspace context: %w", err)

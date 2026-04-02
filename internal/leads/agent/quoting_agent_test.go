@@ -6,13 +6,14 @@ import (
 
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/platform/ai/embeddings"
+	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/qdrant"
 
 	"google.golang.org/adk/tool"
 )
 
 func TestNewEstimatorAgentUsesEstimatorProfile(t *testing.T) {
-	agent, err := NewEstimatorAgent(QuotingAgentConfig{Model: "kimi-test-estimator"})
+	agent, err := NewEstimatorAgent(QuotingAgentConfig{ModelConfig: openaicompat.Config{Model: "kimi-test-estimator"}})
 	if err != nil {
 		t.Fatalf("NewEstimatorAgent returned error: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestNewEstimatorAgentUsesEstimatorProfile(t *testing.T) {
 }
 
 func TestNewQuoteGeneratorAgentUsesQuoteGeneratorProfile(t *testing.T) {
-	agent, err := NewQuoteGeneratorAgent(QuotingAgentConfig{Model: "kimi-test-quote"})
+	agent, err := NewQuoteGeneratorAgent(QuotingAgentConfig{ModelConfig: openaicompat.Config{Model: "kimi-test-quote"}})
 	if err != nil {
 		t.Fatalf("NewQuoteGeneratorAgent returned error: %v", err)
 	}

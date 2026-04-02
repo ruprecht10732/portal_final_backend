@@ -12,7 +12,7 @@ import (
 	"google.golang.org/adk/session"
 
 	"portal_final_backend/internal/leads/repository"
-	"portal_final_backend/platform/ai/moonshot"
+	"portal_final_backend/platform/ai/openaicompat"
 )
 
 const subsidyAnalyzerAppName = "subsidy-analyzer"
@@ -21,22 +21,21 @@ const subsidyAnalyzerAppName = "subsidy-analyzer"
 type SubsidyAnalyzer struct {
 	runner         *runner.Runner
 	sessionService session.Service
-	modelConfig    moonshot.Config
+	modelConfig    openaicompat.Config
 	repo           repository.LeadsRepository
 	appName        string
 }
 
 // SubsidyAnalyzerConfig holds dependencies for subsidy analyzer agent.
 type SubsidyAnalyzerConfig struct {
-	APIKey string
-	Model  string
-	Repo   repository.LeadsRepository
+	ModelConfig openaicompat.Config
+	Repo        repository.LeadsRepository
 }
 
 // NewSubsidyAnalyzerAgent creates a new subsidy analyzer agent.
 func NewSubsidyAnalyzerAgent(cfg SubsidyAnalyzerConfig) (*SubsidyAnalyzer, error) {
-	modelConfig := newMoonshotModelConfig(cfg.APIKey, cfg.Model)
-	kimi := moonshot.NewModel(modelConfig)
+	modelConfig := cfg.ModelConfig
+	kimi := openaicompat.NewModel(modelConfig)
 
 	// Create ADK agent with LLM (no tools for now, agent will respond with structured text)
 	adkAgent, err := llmagent.New(llmagent.Config{

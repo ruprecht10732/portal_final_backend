@@ -28,6 +28,7 @@ import (
 	"portal_final_backend/internal/isde"
 	"portal_final_backend/internal/leadenrichment"
 	"portal_final_backend/internal/leads"
+	leadagent "portal_final_backend/internal/leads/agent"
 	leadsmgmt "portal_final_backend/internal/leads/management"
 	leadsports "portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/maps"
@@ -505,9 +506,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	webhookModule.SetWhatsAppInboxIngester(identityModule.Service())
 
 	whatsappagentModule, err := whatsappagent.NewModule(pool, whatsappagent.ModuleConfig{
-		MoonshotAPIKey: cfg.MoonshotAPIKey,
-		LLMModel:       cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent),
-		WebhookSecret:  cfg.GetWhatsAppWebhookSecret(),
+		ModelConfig:   leadagent.NewProviderModelConfig(cfg.ResolveProviderConfig(cfg.LLMProvider), true, cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent)),
+		WebhookSecret: cfg.GetWhatsAppWebhookSecret(),
 	}, whatsappagent.ModuleDependencies{
 		WhatsAppClient:               whatsappClient,
 		QuotesReader:                 adapters.NewWhatsAppAgentQuotesAdapter(quotesModule.Service()),

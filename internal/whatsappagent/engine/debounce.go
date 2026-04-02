@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -75,7 +74,7 @@ func (d *MessageDebouncer) ShouldProceed(ctx context.Context, phoneKey, nonce st
 	}
 	if current != nonce {
 		if d.log != nil {
-			d.log.WithContext(ctx).Info(fmt.Sprintf("whatsappagent: debounce superseded; skipping reply"), "phone", phoneKey)
+			d.log.WithContext(ctx).Info("whatsappagent: debounce superseded; skipping reply", "phone", phoneKey)
 		}
 		return false
 	}
