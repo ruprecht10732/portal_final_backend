@@ -7,6 +7,7 @@ type ProductFlowResponse struct {
 	ID             uuid.UUID `json:"id"`
 	ProductGroupID string    `json:"productGroupId"`
 	Version        int       `json:"version"`
+	IsGlobal       bool      `json:"isGlobal"`
 	Definition     any       `json:"definition"`
 }
 

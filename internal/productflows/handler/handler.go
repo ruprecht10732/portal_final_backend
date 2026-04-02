@@ -12,6 +12,8 @@ import (
 	"portal_final_backend/platform/validator"
 )
 
+const errInvalidFlowID = "invalid flow ID"
+
 // Handler handles HTTP requests for product flows.
 type Handler struct {
 	svc *service.Service
@@ -107,7 +109,7 @@ func (h *Handler) Create(c *gin.Context) {
 func (h *Handler) Update(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, "invalid flow ID", nil)
+		httpkit.Error(c, http.StatusBadRequest, errInvalidFlowID, nil)
 		return
 	}
 
@@ -137,6 +139,59 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 
 	httpkit.OK(c, result)
+}
+
+// Delete soft-deletes a product flow.
+// DELETE /api/v1/admin/product-flows/:id
+func (h *Handler) Delete(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, errInvalidFlowID, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	if err := h.svc.Delete(c.Request.Context(), tenantID, id); httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// Duplicate copies a product flow into a new row.
+// POST /api/v1/admin/product-flows/:id/duplicate
+func (h *Handler) Duplicate(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, errInvalidFlowID, nil)
+		return
+	}
+
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.Duplicate(c.Request.Context(), tenantID, id)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	c.JSON(http.StatusCreated, result)
 }
 
 func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {

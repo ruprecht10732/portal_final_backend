@@ -72,6 +72,20 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, flowID uuid.UU
 	return toResponse(flow), nil
 }
 
+// Delete soft-deletes a flow owned by the tenant.
+func (s *Service) Delete(ctx context.Context, tenantID uuid.UUID, flowID uuid.UUID) error {
+	return s.repo.Delete(ctx, flowID, tenantID)
+}
+
+// Duplicate copies an existing flow into a new row for the tenant.
+func (s *Service) Duplicate(ctx context.Context, tenantID uuid.UUID, flowID uuid.UUID) (transport.ProductFlowResponse, error) {
+	flow, err := s.repo.Duplicate(ctx, flowID, tenantID)
+	if err != nil {
+		return transport.ProductFlowResponse{}, err
+	}
+	return toResponse(flow), nil
+}
+
 func toResponse(f repository.ProductFlow) transport.ProductFlowResponse {
 	var def any
 	_ = json.Unmarshal(f.Definition, &def)
@@ -79,6 +93,7 @@ func toResponse(f repository.ProductFlow) transport.ProductFlowResponse {
 		ID:             f.ID,
 		ProductGroupID: f.ProductGroupID,
 		Version:        f.Version,
+		IsGlobal:       f.OrganizationID == nil,
 		Definition:     def,
 	}
 }

@@ -37,6 +37,10 @@ type Repository interface {
 	Create(ctx context.Context, organizationID uuid.UUID, productGroupID string, definition json.RawMessage) (ProductFlow, error)
 	// Update replaces the definition of an existing flow.
 	Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, definition json.RawMessage) (ProductFlow, error)
+	// Delete soft-deletes a flow by setting is_active = false.
+	Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
+	// Duplicate copies an existing flow into a new row for the given tenant.
+	Duplicate(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (ProductFlow, error)
 }
 
 // Repo is the PostgreSQL implementation of Repository.
@@ -108,6 +112,34 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUI
 		WHERE id = $2 AND (organization_id = $3 OR organization_id IS NULL)
 		RETURNING id, organization_id, product_group_id, version, is_active, definition, created_at, updated_at`
 	row := r.pool.QueryRow(ctx, query, definition, id, organizationID)
+	return scanFlow(row)
+}
+
+// Delete soft-deletes a flow by setting is_active = false.
+func (r *Repo) Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
+	const query = `
+	UPDATE rac_product_flows
+		SET is_active = false, updated_at = NOW()
+		WHERE id = $1 AND organization_id = $2 AND is_active = true`
+	tag, err := r.pool.Exec(ctx, query, id, organizationID)
+	if err != nil {
+		return fmt.Errorf("delete product flow: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("product flow not found")
+	}
+	return nil
+}
+
+// Duplicate copies an existing flow into a new row for the given tenant.
+func (r *Repo) Duplicate(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (ProductFlow, error) {
+	const query = `
+	INSERT INTO rac_product_flows (organization_id, product_group_id, definition)
+		SELECT $2, product_group_id || '-copy', definition
+		FROM rac_product_flows
+		WHERE id = $1 AND (organization_id = $2 OR organization_id IS NULL) AND is_active = true
+		RETURNING id, organization_id, product_group_id, version, is_active, definition, created_at, updated_at`
+	row := r.pool.QueryRow(ctx, query, id, organizationID)
 	return scanFlow(row)
 }
 

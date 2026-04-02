@@ -48,4 +48,6 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	adminGroup.GET("", m.handler.List)
 	adminGroup.POST("", m.handler.Create)
 	adminGroup.PUT("/:id", m.handler.Update)
+	adminGroup.DELETE("/:id", m.handler.Delete)
+	adminGroup.POST("/:id/duplicate", m.handler.Duplicate)
 }
