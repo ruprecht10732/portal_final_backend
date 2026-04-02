@@ -38,6 +38,7 @@ import (
 	partnersrepo "portal_final_backend/internal/partners/repository"
 	partnersvc "portal_final_backend/internal/partners/service"
 	"portal_final_backend/internal/pdf"
+	"portal_final_backend/internal/productflows"
 	"portal_final_backend/internal/quotes"
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/search"
@@ -416,6 +417,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	isdeModule := isde.NewModule(pool, val, log)
 	servicesModule := services.NewModule(pool, val, log)
 	servicesModule.RegisterHandlers(eventBus)
+	productflowsModule := productflows.NewModule(pool, val, log)
 	catalogModule := catalog.NewModule(pool, storageSvc, cfg.GetMinioBucketCatalogAssets(), val, cfg, log)
 	catalogModule.RegisterHandlers(eventBus)
 	partnersModule := partners.NewModule(pool, eventBus, storageSvc, cfg.GetMinioBucketPartnerLogos(), val)
@@ -559,6 +561,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		mapsModule,
 		isdeModule,
 		servicesModule,
+		productflowsModule,
 		catalogModule,
 		appointmentsModule,
 		partnersModule,

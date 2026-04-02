@@ -1088,6 +1088,20 @@ type RacPartnerServiceType struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+// Server-driven UI flow definitions for product intake wizards
+type RacProductFlow struct {
+	ID pgtype.UUID `json:"id"`
+	// NULL = global default, non-NULL = tenant override
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ProductGroupID string      `json:"product_group_id"`
+	Version        int32       `json:"version"`
+	IsActive       bool        `json:"is_active"`
+	// Full FlowDefinition JSON: steps, reviewTemplate, payloadSchema
+	Definition []byte             `json:"definition"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RacProviderIntegration struct {
 	ID               pgtype.UUID        `json:"id"`
 	OrganizationID   pgtype.UUID        `json:"organization_id"`
