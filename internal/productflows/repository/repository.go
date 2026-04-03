@@ -16,14 +16,15 @@ import (
 
 // ProductFlow is the domain model stored in rac_product_flows.
 type ProductFlow struct {
-	ID             uuid.UUID
-	OrganizationID *uuid.UUID
-	ProductGroupID string
-	Version        int
-	IsActive       bool
-	Definition     json.RawMessage
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               uuid.UUID
+	OrganizationID   *uuid.UUID
+	ProductGroupID   string
+	Version          int
+	IsActive         bool
+	Definition       json.RawMessage
+	EditorDefinition json.RawMessage // V2 FlowDefinition for admin editor; may be NULL.
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // Repository provides data access for product flows.
@@ -34,9 +35,9 @@ type Repository interface {
 	// ListAll returns every active flow visible to the tenant (admin).
 	ListAll(ctx context.Context, organizationID uuid.UUID) ([]ProductFlow, error)
 	// Create inserts a new flow definition.
-	Create(ctx context.Context, organizationID uuid.UUID, productGroupID string, definition json.RawMessage) (ProductFlow, error)
+	Create(ctx context.Context, organizationID uuid.UUID, productGroupID string, definition json.RawMessage, editorDefinition json.RawMessage) (ProductFlow, error)
 	// Update replaces the definition of an existing flow.
-	Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, definition json.RawMessage) (ProductFlow, error)
+	Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, definition json.RawMessage, editorDefinition json.RawMessage) (ProductFlow, error)
 	// Delete soft-deletes a flow by setting is_active = false.
 	Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
 	// Duplicate copies an existing flow into a new row for the given tenant.
@@ -59,7 +60,7 @@ var _ Repository = (*Repo)(nil)
 // Priority: tenant override → global default (organization_id IS NULL).
 func (r *Repo) GetActiveFlow(ctx context.Context, organizationID uuid.UUID, productGroupID string) (ProductFlow, error) {
 	const query = `
-	SELECT id, organization_id, product_group_id, version, is_active, definition, created_at, updated_at
+	SELECT id, organization_id, product_group_id, version, is_active, definition, editor_definition, created_at, updated_at
 		FROM rac_product_flows
 		WHERE (organization_id = $1 OR organization_id IS NULL)
 		  AND product_group_id = $2
@@ -73,7 +74,7 @@ func (r *Repo) GetActiveFlow(ctx context.Context, organizationID uuid.UUID, prod
 // ListAll returns all active flows visible to the given tenant.
 func (r *Repo) ListAll(ctx context.Context, organizationID uuid.UUID) ([]ProductFlow, error) {
 	const query = `
-	SELECT id, organization_id, product_group_id, version, is_active, definition, created_at, updated_at
+	SELECT id, organization_id, product_group_id, version, is_active, definition, editor_definition, created_at, updated_at
 		FROM rac_product_flows
 		WHERE (organization_id = $1 OR organization_id IS NULL)
 		  AND is_active = true
@@ -95,23 +96,23 @@ func (r *Repo) ListAll(ctx context.Context, organizationID uuid.UUID) ([]Product
 }
 
 // Create inserts a new global flow definition (organization_id = NULL).
-func (r *Repo) Create(ctx context.Context, organizationID uuid.UUID, productGroupID string, definition json.RawMessage) (ProductFlow, error) {
+func (r *Repo) Create(ctx context.Context, organizationID uuid.UUID, productGroupID string, definition json.RawMessage, editorDefinition json.RawMessage) (ProductFlow, error) {
 	const query = `
-	INSERT INTO rac_product_flows (organization_id, product_group_id, definition)
-		VALUES ($1, $2, $3)
-		RETURNING id, organization_id, product_group_id, version, is_active, definition, created_at, updated_at`
-	row := r.pool.QueryRow(ctx, query, organizationID, productGroupID, definition)
+	INSERT INTO rac_product_flows (organization_id, product_group_id, definition, editor_definition)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, organization_id, product_group_id, version, is_active, definition, editor_definition, created_at, updated_at`
+	row := r.pool.QueryRow(ctx, query, organizationID, productGroupID, definition, editorDefinition)
 	return scanFlow(row)
 }
 
 // Update replaces the definition JSONB for a specific flow.
-func (r *Repo) Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, definition json.RawMessage) (ProductFlow, error) {
+func (r *Repo) Update(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, definition json.RawMessage, editorDefinition json.RawMessage) (ProductFlow, error) {
 	const query = `
 	UPDATE rac_product_flows
-		SET definition = $1, version = version + 1, updated_at = NOW()
-		WHERE id = $2 AND (organization_id = $3 OR organization_id IS NULL)
-		RETURNING id, organization_id, product_group_id, version, is_active, definition, created_at, updated_at`
-	row := r.pool.QueryRow(ctx, query, definition, id, organizationID)
+		SET definition = $1, editor_definition = $2, version = version + 1, updated_at = NOW()
+		WHERE id = $3 AND (organization_id = $4 OR organization_id IS NULL)
+		RETURNING id, organization_id, product_group_id, version, is_active, definition, editor_definition, created_at, updated_at`
+	row := r.pool.QueryRow(ctx, query, definition, editorDefinition, id, organizationID)
 	return scanFlow(row)
 }
 
@@ -134,18 +135,18 @@ func (r *Repo) Delete(ctx context.Context, id uuid.UUID, organizationID uuid.UUI
 // Duplicate copies an existing flow into a new row for the given tenant.
 func (r *Repo) Duplicate(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (ProductFlow, error) {
 	const query = `
-	INSERT INTO rac_product_flows (organization_id, product_group_id, definition)
-		SELECT $2, product_group_id || '-copy', definition
+	INSERT INTO rac_product_flows (organization_id, product_group_id, definition, editor_definition)
+		SELECT $2, product_group_id || '-copy', definition, editor_definition
 		FROM rac_product_flows
 		WHERE id = $1 AND (organization_id = $2 OR organization_id IS NULL) AND is_active = true
-		RETURNING id, organization_id, product_group_id, version, is_active, definition, created_at, updated_at`
+		RETURNING id, organization_id, product_group_id, version, is_active, definition, editor_definition, created_at, updated_at`
 	row := r.pool.QueryRow(ctx, query, id, organizationID)
 	return scanFlow(row)
 }
 
 func scanFlow(row pgx.Row) (ProductFlow, error) {
 	var f ProductFlow
-	err := row.Scan(&f.ID, &f.OrganizationID, &f.ProductGroupID, &f.Version, &f.IsActive, &f.Definition, &f.CreatedAt, &f.UpdatedAt)
+	err := row.Scan(&f.ID, &f.OrganizationID, &f.ProductGroupID, &f.Version, &f.IsActive, &f.Definition, &f.EditorDefinition, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ProductFlow{}, apperr.NotFound("product flow not found")
@@ -157,7 +158,7 @@ func scanFlow(row pgx.Row) (ProductFlow, error) {
 
 func scanFlowFromRows(rows pgx.Rows) (ProductFlow, error) {
 	var f ProductFlow
-	err := rows.Scan(&f.ID, &f.OrganizationID, &f.ProductGroupID, &f.Version, &f.IsActive, &f.Definition, &f.CreatedAt, &f.UpdatedAt)
+	err := rows.Scan(&f.ID, &f.OrganizationID, &f.ProductGroupID, &f.Version, &f.IsActive, &f.Definition, &f.EditorDefinition, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		return ProductFlow{}, fmt.Errorf("scan product flow row: %w", err)
 	}

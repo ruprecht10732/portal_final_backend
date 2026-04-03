@@ -52,7 +52,14 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, req transport.
 	if err != nil {
 		return transport.ProductFlowResponse{}, fmt.Errorf("marshal definition: %w", err)
 	}
-	flow, err := s.repo.Create(ctx, tenantID, req.ProductGroupID, defJSON)
+	var edJSON json.RawMessage
+	if req.EditorDefinition != nil {
+		edJSON, err = json.Marshal(req.EditorDefinition)
+		if err != nil {
+			return transport.ProductFlowResponse{}, fmt.Errorf("marshal editor definition: %w", err)
+		}
+	}
+	flow, err := s.repo.Create(ctx, tenantID, req.ProductGroupID, defJSON, edJSON)
 	if err != nil {
 		return transport.ProductFlowResponse{}, err
 	}
@@ -65,7 +72,14 @@ func (s *Service) Update(ctx context.Context, tenantID uuid.UUID, flowID uuid.UU
 	if err != nil {
 		return transport.ProductFlowResponse{}, fmt.Errorf("marshal definition: %w", err)
 	}
-	flow, err := s.repo.Update(ctx, flowID, tenantID, defJSON)
+	var edJSON json.RawMessage
+	if req.EditorDefinition != nil {
+		edJSON, err = json.Marshal(req.EditorDefinition)
+		if err != nil {
+			return transport.ProductFlowResponse{}, fmt.Errorf("marshal editor definition: %w", err)
+		}
+	}
+	flow, err := s.repo.Update(ctx, flowID, tenantID, defJSON, edJSON)
 	if err != nil {
 		return transport.ProductFlowResponse{}, err
 	}
@@ -89,11 +103,18 @@ func (s *Service) Duplicate(ctx context.Context, tenantID uuid.UUID, flowID uuid
 func toResponse(f repository.ProductFlow) transport.ProductFlowResponse {
 	var def any
 	_ = json.Unmarshal(f.Definition, &def)
+
+	var edDef any
+	if len(f.EditorDefinition) > 0 {
+		_ = json.Unmarshal(f.EditorDefinition, &edDef)
+	}
+
 	return transport.ProductFlowResponse{
-		ID:             f.ID,
-		ProductGroupID: f.ProductGroupID,
-		Version:        f.Version,
-		IsGlobal:       f.OrganizationID == nil,
-		Definition:     def,
+		ID:               f.ID,
+		ProductGroupID:   f.ProductGroupID,
+		Version:          f.Version,
+		IsGlobal:         f.OrganizationID == nil,
+		Definition:       def,
+		EditorDefinition: edDef,
 	}
 }

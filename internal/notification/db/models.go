@@ -1100,6 +1100,8 @@ type RacProductFlow struct {
 	Definition []byte             `json:"definition"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	// V2 FlowDefinition JSON for the admin flow builder editor. NULL = not yet converted.
+	EditorDefinition []byte `json:"editor_definition"`
 }
 
 type RacProviderIntegration struct {
