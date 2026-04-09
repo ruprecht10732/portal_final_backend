@@ -29,6 +29,8 @@ const (
 	gatekeeperTaskUniqueTTL        = 45 * time.Second
 	leadAutomationTaskMaxRetry     = 3
 	autoPhotoAnalysisDelay         = 30 * time.Second
+	estimatorTaskTimeout           = 10 * time.Minute
+	estimatorTaskUniqueTTL         = estimatorTaskTimeout
 	waAgentVoiceTaskTimeout        = 5 * time.Minute
 	waAgentVoiceTaskUniqueTTL      = 15 * time.Minute
 	waAgentVoiceTaskMaxRetry       = 3
@@ -206,7 +208,7 @@ func (c *Client) EnqueueGenerateQuoteJob(ctx context.Context, payload GenerateQu
 		return err
 	}
 
-	_, err = c.client.EnqueueContext(ctx, task, asynq.Queue(c.queue))
+	_, err = c.client.EnqueueContext(ctx, task, estimatorTaskOptions(c.queue)...)
 	return err
 }
 
@@ -304,7 +306,7 @@ func (c *Client) EnqueueEstimatorRun(ctx context.Context, payload EstimatorRunPa
 		return err
 	}
 
-	_, err = c.client.EnqueueContext(ctx, task, leadAutomationTaskOptions(c.queue)...)
+	_, err = c.client.EnqueueContext(ctx, task, estimatorTaskOptions(c.queue)...)
 	return normalizeEnqueueError(err)
 }
 
@@ -489,6 +491,15 @@ func leadAutomationTaskOptions(queue string) []asynq.Option {
 		asynq.MaxRetry(leadAutomationTaskMaxRetry),
 		asynq.Timeout(leadAutomationTaskTimeout),
 		asynq.Unique(leadAutomationTaskUniqueTTL),
+	}
+}
+
+func estimatorTaskOptions(queue string) []asynq.Option {
+	return []asynq.Option{
+		asynq.Queue(queue),
+		asynq.MaxRetry(leadAutomationTaskMaxRetry),
+		asynq.Timeout(estimatorTaskTimeout),
+		asynq.Unique(estimatorTaskUniqueTTL),
 	}
 }
 

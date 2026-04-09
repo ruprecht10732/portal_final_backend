@@ -9,9 +9,16 @@ import (
 	"iter"
 	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
+)
+
+const (
+	// httpRequestTimeout is the per-request timeout for LLM API calls.
+	// Reasoning models (deepseek-reasoner, kimi-k2.5) can take 60-90s.
+	httpRequestTimeout = 120 * time.Second
 )
 
 // Config for an OpenAI-compatible LLM provider (Kimi, DeepSeek, etc.).
@@ -41,7 +48,7 @@ func NewModel(cfg Config) *Model {
 	}
 	return &Model{
 		config: cfg,
-		client: &http.Client{},
+		client: &http.Client{Timeout: httpRequestTimeout},
 	}
 }
 

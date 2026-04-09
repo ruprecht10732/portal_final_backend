@@ -89,6 +89,11 @@ func (m *Model) generateWithFallback(ctx context.Context, req *model.LLMRequest,
 		return nil, fmt.Errorf("llm fallback: primary failed and no secondary configured")
 	}
 
+	// If context is already done, don't attempt secondary at all.
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("llm fallback: context already cancelled before secondary attempt: %w", ctx.Err())
+	}
+
 	var lastErr error
 	for attempt := 0; attempt <= secondaryMaxRetries; attempt++ {
 		if attempt > 0 {

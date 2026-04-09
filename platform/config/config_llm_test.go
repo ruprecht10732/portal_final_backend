@@ -2,7 +2,13 @@ package config
 
 import "testing"
 
-const globalModelName = "kimi-global"
+const (
+	globalModelName    = "kimi-global"
+	testDeepSeekChat   = "deepseek-chat"
+	testDeepSeekReason = "deepseek-reasoner"
+	testKeyDeepSeek    = "sk-deepseek"
+	testKeyMoonshot    = "sk-moonshot"
+)
 
 func TestResolveLLMModelUsesAgentOverrideFirst(t *testing.T) {
 	cfg := &Config{
@@ -43,9 +49,9 @@ func TestResolveLLMModelReturnsEmptyWhenNoOverride(t *testing.T) {
 
 func TestResolveAgentModelPreventsCrossProviderMismatch(t *testing.T) {
 	cfg := &Config{
-		LLMProvider:    "deepseek-reasoner",
-		DeepSeekAPIKey: "sk-deepseek",
-		MoonshotAPIKey: "sk-moonshot",
+		LLMProvider:    testDeepSeekReason,
+		DeepSeekAPIKey: testKeyDeepSeek,
+		MoonshotAPIKey: testKeyMoonshot,
 	}
 
 	// No per-agent override: should use DeepSeek provider with empty override.
@@ -72,16 +78,16 @@ func TestResolveAgentModelPreventsCrossProviderMismatch(t *testing.T) {
 
 func TestResolveAgentModelKeepsSameProviderOverride(t *testing.T) {
 	cfg := &Config{
-		LLMProvider:     "deepseek-reasoner",
-		DeepSeekAPIKey:  "sk-deepseek",
-		LLMModelDefault: "deepseek-chat",
+		LLMProvider:     testDeepSeekReason,
+		DeepSeekAPIKey:  testKeyDeepSeek,
+		LLMModelDefault: testDeepSeekChat,
 	}
 
 	provCfg, modelOvr := cfg.ResolveAgentModel(LLMModelAgentEstimator)
 	if provCfg.Provider != LLMProviderDeepSeek {
 		t.Fatalf("expected deepseek provider, got %q", provCfg.Provider)
 	}
-	if modelOvr != "deepseek-chat" {
-		t.Fatalf("expected model override %q, got %q", "deepseek-chat", modelOvr)
+	if modelOvr != testDeepSeekChat {
+		t.Fatalf("expected model override %q, got %q", testDeepSeekChat, modelOvr)
 	}
 }
