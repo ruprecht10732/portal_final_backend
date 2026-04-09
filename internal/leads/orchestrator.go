@@ -398,6 +398,7 @@ func (o *Orchestrator) OnDataChange(ctx context.Context, evt events.LeadDataChan
 		return
 	}
 
+	o.maybeReRunEstimatorForNote(svc, evt)
 	o.maybeRunGatekeeperForDataChange(svc, evt)
 }
 
@@ -416,6 +417,46 @@ func (o *Orchestrator) maybeRunAuditorForCallLog(evt events.LeadDataChanged) {
 		LeadServiceID: evt.LeadServiceID.String(),
 	}); err != nil {
 		o.log.Error("orchestrator: failed to enqueue call log audit", "error", err, "serviceId", evt.LeadServiceID)
+	}
+}
+
+func (o *Orchestrator) maybeReRunEstimatorForNote(svc repository.LeadService, evt events.LeadDataChanged) {
+	if !strings.EqualFold(strings.TrimSpace(evt.Source), "note") {
+		return
+	}
+	if svc.PipelineStage != domain.PipelineStageEstimation && svc.PipelineStage != domain.PipelineStageManualIntervention {
+		return
+	}
+
+	settings, err := o.loadOrgAISettings(context.Background(), evt.TenantID)
+	if err != nil {
+		o.log.Warn("orchestrator: skipping estimator re-run for note (settings load failed)", "tenantId", evt.TenantID, "error", err)
+		return
+	}
+	if !settings.AIAutoEstimate {
+		o.log.Info(orchestratorAutomationLog, "agent", "calculator", "decision", "skip", "reason", "auto_estimate_disabled", "tenantId", evt.TenantID, "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	if o.automationQueue == nil {
+		o.log.Error("orchestrator: automation queue not configured for estimator re-run", "serviceId", evt.LeadServiceID)
+		return
+	}
+
+	o.log.Info(orchestratorAutomationLog, "agent", "calculator", "decision", "enqueue", "reason", "note_added_in_estimation", "leadId", evt.LeadID, "serviceId", evt.LeadServiceID, "stage", svc.PipelineStage)
+	if !maybeEnqueueEstimatorRun(estimatorEnqueueRequest{
+		ctx:       context.Background(),
+		repo:      o.repo,
+		deduper:   o.estimatorDeduper,
+		queue:     o.automationQueue,
+		log:       o.log,
+		leadID:    evt.LeadID,
+		serviceID: evt.LeadServiceID,
+		tenantID:  evt.TenantID,
+		force:     false,
+		source:    "note_in_estimation",
+	}) {
+		o.log.Error("orchestrator: estimator re-run failed to enqueue", "serviceId", evt.LeadServiceID)
 	}
 }
 
