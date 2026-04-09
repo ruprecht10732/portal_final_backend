@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
+	"google.golang.org/adk/model"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -21,7 +22,6 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/orchestration"
-	"portal_final_backend/platform/ai/openaicompat"
 )
 
 // Gatekeeper validates intake requirements and advances pipeline stage.
@@ -35,8 +35,7 @@ type Gatekeeper struct {
 }
 
 // NewGatekeeper creates a Gatekeeper agent.
-func NewGatekeeper(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
-	kimi := openaicompat.NewModel(modelCfg)
+func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
 	workspace, err := orchestration.LoadAgentWorkspace("gatekeeper")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load gatekeeper workspace context: %w", err)
@@ -69,7 +68,7 @@ func NewGatekeeper(modelCfg openaicompat.Config, repo repository.LeadsRepository
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Gatekeeper",
-		Model:       kimi,
+		Model:       llm,
 		Description: "Validates intake requirements and advances the lead pipeline.",
 		Instruction: workspace.Instruction,
 		Toolsets:    toolsets,

@@ -62,7 +62,7 @@ func normalizeUrgencyLevel(level string) (string, error) {
 	switch normalized {
 	case "high", "hoog", "urgent", "spoed", "spoedeisend", "critical":
 		return "High", nil
-	case "medium", "mid", "moderate", "matig", "gemiddeld", "normal":
+	case "medium", "mid", "moderate", "matig", "gemiddeld", "normal", "standard", "standaard":
 		return "Medium", nil
 	case "low", "laag", "non-urgent", "niet-urgent", "minor":
 		return "Low", nil
@@ -84,7 +84,7 @@ func normalizeLeadQuality(quality string) string {
 		return "Low"
 	case "potential", "potentieel", "medium", "gemiddeld", "moderate", "mid":
 		return "Potential"
-	case "high", "hoog", "good", "goed":
+	case "high", "hoog", "good", "goed", "qualified", "gekwalificeerd":
 		return "High"
 	case "urgent", "spoed", "critical", "kritiek":
 		return "Urgent"
