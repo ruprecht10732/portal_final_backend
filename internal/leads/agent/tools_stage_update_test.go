@@ -251,3 +251,81 @@ func TestApplyPipelineStageUpdateResetsLoopCountWhenMissingInformationChanges(t 
 		t.Fatalf("expected fingerprint to change, got %#v", repo.service.GatekeeperNurturingLoopFingerprint)
 	}
 }
+
+// TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession
+// verifies that within a single gatekeeper run, calling UpdatePipelineStage
+// ("Nurturing") multiple times only increments the loop counter once.
+// This prevents the LLM's retry behaviour from prematurely tripping the
+// nurturing-loop threshold within a single session.
+func TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession(t *testing.T) {
+	tenantID := uuid.New()
+	leadID := uuid.New()
+	serviceID := uuid.New()
+	bus := &stageUpdateBusStub{}
+	repo := &stageUpdateRepoStub{
+		service: repository.LeadService{
+			ID:             serviceID,
+			LeadID:         leadID,
+			OrganizationID: tenantID,
+			Status:         domain.LeadStatusNew,
+			PipelineStage:  domain.PipelineStageTriage,
+		},
+		hasAnalysis: true,
+		analysis: repository.AIAnalysis{
+			RecommendedAction:  "RequestInfo",
+			MissingInformation: []string{"Duidelijke foto"},
+		},
+	}
+	deps := newStageUpdateDeps(repo, bus, tenantID, leadID, serviceID)
+
+	// First call: Triage -> Nurturing (count=1) should succeed.
+	out, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
+		Stage:  domain.PipelineStageNurturing,
+		Reason: "Vraag een duidelijke foto op.",
+	})
+	if err != nil {
+		t.Fatalf(expectedNoErrorMessage, err)
+	}
+	if !out.Success {
+		t.Fatalf(expectedSuccessMessage, out)
+	}
+	if repo.service.GatekeeperNurturingLoopCount != 1 {
+		t.Fatalf("expected loop count 1 after first call, got %d", repo.service.GatekeeperNurturingLoopCount)
+	}
+
+	// Second call in the SAME session: Nurturing -> Nurturing should be a no-op
+	// and must NOT increment the loop counter.
+	out2, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
+		Stage:  domain.PipelineStageNurturing,
+		Reason: "Vraag een duidelijke foto op.",
+	})
+	if err != nil {
+		t.Fatalf(expectedNoErrorMessage, err)
+	}
+	if out2.Success {
+		t.Fatalf("expected Success=false for same-stage retry, got %+v", out2)
+	}
+	if repo.service.GatekeeperNurturingLoopCount != 1 {
+		t.Fatalf("expected loop count to stay at 1 after same-session retry, got %d", repo.service.GatekeeperNurturingLoopCount)
+	}
+
+	// Third call in the SAME session: still should not increment.
+	out3, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
+		Stage:  domain.PipelineStageNurturing,
+		Reason: "Vraag een duidelijke foto op.",
+	})
+	if err != nil {
+		t.Fatalf(expectedNoErrorMessage, err)
+	}
+	if out3.Success {
+		t.Fatalf("expected Success=false for same-stage retry, got %+v", out3)
+	}
+	if repo.service.GatekeeperNurturingLoopCount != 1 {
+		t.Fatalf("expected loop count still 1 after third same-session call, got %d", repo.service.GatekeeperNurturingLoopCount)
+	}
+
+	// Only one actual stage write should have occurred (the first Triage -> Nurturing).
+	if len(repo.updatedStages) != 1 || repo.updatedStages[0] != domain.PipelineStageNurturing {
+		t.Fatalf("expected single Nurturing stage write, got %v", repo.updatedStages)
+	}
+}

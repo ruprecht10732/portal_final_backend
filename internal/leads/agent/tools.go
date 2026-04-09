@@ -1947,6 +1947,15 @@ func applyGatekeeperNurturingLoopPolicy(ctx context.Context, deps *ToolDependenc
 		return gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{}, false, nil
 	}
 
+	// Prevent the loop counter from incrementing more than once per session.
+	// Within a single gatekeeper run the LLM may call UpdatePipelineStage
+	// repeatedly; only the first call should count toward the nurturing-loop
+	// threshold. Cross-run detection still works because each run starts with
+	// fresh ToolDependencies (stageUpdateCalled = false).
+	if deps.WasStageUpdateCalled() {
+		return gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{}, false, nil
+	}
+
 	fingerprint, missingInformation := resolveGatekeeperLoopFingerprint(ctx, deps, state.serviceID, state.tenantID, input.Reason)
 	if fingerprint == "" {
 		return gatekeeperNurturingLoopResult{}, UpdatePipelineStageOutput{}, false, nil
