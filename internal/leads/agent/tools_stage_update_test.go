@@ -12,8 +12,11 @@ import (
 )
 
 const (
-	expectedNoErrorMessage = "expected no error, got %v"
-	expectedSuccessMessage = "expected success, got %+v"
+	expectedNoErrorMessage       = "expected no error, got %v"
+	expectedSuccessMessage       = "expected success, got %+v"
+	testMissingInfoPhoto         = "Duidelijke foto"
+	testNurturingReasonPhoto     = "Vraag een duidelijke foto op."
+	testFingerprintDuidelijkFoto = "duidelijke foto"
 )
 
 type stageUpdateRepoStub struct {
@@ -100,7 +103,7 @@ func TestApplyPipelineStageUpdateCountsRepeatedGatekeeperNurturingWithoutStageCh
 	tenantID := uuid.New()
 	leadID := uuid.New()
 	serviceID := uuid.New()
-	fingerprint := "duidelijke foto"
+	fingerprint := testFingerprintDuidelijkFoto
 	repo := &stageUpdateRepoStub{
 		service: repository.LeadService{
 			ID:                                 serviceID,
@@ -114,14 +117,14 @@ func TestApplyPipelineStageUpdateCountsRepeatedGatekeeperNurturingWithoutStageCh
 		hasAnalysis: true,
 		analysis: repository.AIAnalysis{
 			RecommendedAction:  "RequestInfo",
-			MissingInformation: []string{"Duidelijke foto"},
+			MissingInformation: []string{testMissingInfoPhoto},
 		},
 	}
 	deps := newStageUpdateDeps(repo, nil, tenantID, leadID, serviceID)
 
 	out, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
 		Stage:  domain.PipelineStageNurturing,
-		Reason: "Vraag een duidelijke foto op.",
+		Reason: testNurturingReasonPhoto,
 	})
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
@@ -147,7 +150,7 @@ func TestApplyPipelineStageUpdateTripsLoopBreakerAtThreshold(t *testing.T) {
 	tenantID := uuid.New()
 	leadID := uuid.New()
 	serviceID := uuid.New()
-	fingerprint := "duidelijke foto"
+	fingerprint := testFingerprintDuidelijkFoto
 	bus := &stageUpdateBusStub{}
 	repo := &stageUpdateRepoStub{
 		service: repository.LeadService{
@@ -162,14 +165,14 @@ func TestApplyPipelineStageUpdateTripsLoopBreakerAtThreshold(t *testing.T) {
 		hasAnalysis: true,
 		analysis: repository.AIAnalysis{
 			RecommendedAction:  "RequestInfo",
-			MissingInformation: []string{"Duidelijke foto"},
+			MissingInformation: []string{testMissingInfoPhoto},
 		},
 	}
 	deps := newStageUpdateDeps(repo, bus, tenantID, leadID, serviceID)
 
 	out, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
 		Stage:  domain.PipelineStageNurturing,
-		Reason: "Vraag een duidelijke foto op.",
+		Reason: testNurturingReasonPhoto,
 	})
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
@@ -273,7 +276,7 @@ func TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession(
 		hasAnalysis: true,
 		analysis: repository.AIAnalysis{
 			RecommendedAction:  "RequestInfo",
-			MissingInformation: []string{"Duidelijke foto"},
+			MissingInformation: []string{testMissingInfoPhoto},
 		},
 	}
 	deps := newStageUpdateDeps(repo, bus, tenantID, leadID, serviceID)
@@ -281,7 +284,7 @@ func TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession(
 	// First call: Triage -> Nurturing (count=1) should succeed.
 	out, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
 		Stage:  domain.PipelineStageNurturing,
-		Reason: "Vraag een duidelijke foto op.",
+		Reason: testNurturingReasonPhoto,
 	})
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
@@ -297,7 +300,7 @@ func TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession(
 	// and must NOT increment the loop counter.
 	out2, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
 		Stage:  domain.PipelineStageNurturing,
-		Reason: "Vraag een duidelijke foto op.",
+		Reason: testNurturingReasonPhoto,
 	})
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
@@ -312,7 +315,7 @@ func TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession(
 	// Third call in the SAME session: still should not increment.
 	out3, err := applyPipelineStageUpdate(context.Background(), deps, UpdatePipelineStageInput{
 		Stage:  domain.PipelineStageNurturing,
-		Reason: "Vraag een duidelijke foto op.",
+		Reason: testNurturingReasonPhoto,
 	})
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
