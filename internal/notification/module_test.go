@@ -478,6 +478,45 @@ func TestRenderWorkflowTemplateTextConvertsEscapedLineBreaks(t *testing.T) {
 	}
 }
 
+func TestRenderWorkflowTemplateTextProvidesSafeNestedMaps(t *testing.T) {
+	bodyTpl := "Met vriendelijke groet, {{org.name}}"
+	rule := &workflowRule{
+		Enabled:      true,
+		DelayMinutes: 0,
+		TemplateText: &bodyTpl,
+	}
+
+	body, err := renderWorkflowTemplateTextWithError(rule, map[string]any{
+		"lead": map[string]any{"name": "Robin"},
+	})
+	if err != nil {
+		t.Fatalf("expected missing nested maps to render safely, got error: %v", err)
+	}
+	if body != "Met vriendelijke groet," {
+		t.Fatalf("unexpected rendered body: %q", body)
+	}
+}
+
+func TestBuildAppointmentTemplateVarsIncludesOrganizationName(t *testing.T) {
+	vars := buildAppointmentTemplateVars(
+		"Robin",
+		testWhatsAppPhoneNumber,
+		testLeadEmail,
+		"09-04-2026",
+		"14:30",
+		"Utrecht",
+		testOrgName,
+	)
+
+	orgVars, ok := vars["org"].(map[string]any)
+	if !ok {
+		t.Fatal("expected org template vars map")
+	}
+	if orgVars["name"] != testOrgName {
+		t.Fatalf("expected org name %q, got %#v", testOrgName, orgVars["name"])
+	}
+}
+
 func TestProcessGenericEmailOutboxRegeneratesQuotePDFFromCurrentQuoteState(t *testing.T) {
 	sender := &testSender{}
 	storage := &testQuotePDFStorage{data: []byte("stored-pdf")}

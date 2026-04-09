@@ -1325,14 +1325,46 @@ func buildWorkflowStepVariables(execCtx workflowStepExecutionContext) map[string
 		},
 	}
 
-	if execCtx.Variables == nil {
-		return vars
+	return mergeWorkflowTemplateVars(vars, execCtx.Variables)
+}
+
+func mergeWorkflowTemplateVars(base map[string]any, overrides map[string]any) map[string]any {
+	if len(overrides) == 0 {
+		return base
 	}
-	for key, value := range execCtx.Variables {
-		vars[key] = value
+	for key, value := range overrides {
+		if value == nil {
+			continue
+		}
+		if merged, ok := mergeWorkflowTemplateNestedMap(base[key], value); ok {
+			base[key] = merged
+			continue
+		}
+		base[key] = value
 	}
 
-	return vars
+	return base
+}
+
+func mergeWorkflowTemplateNestedMap(baseValue any, overrideValue any) (map[string]any, bool) {
+	baseMap, baseIsMap := baseValue.(map[string]any)
+	overrideMap, overrideIsMap := overrideValue.(map[string]any)
+	if !baseIsMap || !overrideIsMap {
+		return nil, false
+	}
+
+	merged := make(map[string]any, len(baseMap)+len(overrideMap))
+	for nestedKey, nestedValue := range baseMap {
+		merged[nestedKey] = nestedValue
+	}
+	for nestedKey, nestedValue := range overrideMap {
+		if nestedValue == nil {
+			continue
+		}
+		merged[nestedKey] = nestedValue
+	}
+
+	return merged, true
 }
 
 func renderStepTemplate(raw *string, vars map[string]any) (string, error) {
@@ -1343,7 +1375,7 @@ func renderStepTemplate(raw *string, vars map[string]any) (string, error) {
 	if text == "" {
 		return "", nil
 	}
-	rendered, err := renderTemplateText(text, vars)
+	rendered, err := renderTemplateText(text, mergeWorkflowTemplateVars(buildWorkflowStepVariables(workflowStepExecutionContext{}), vars))
 	if err != nil {
 		return "", err
 	}
@@ -2982,10 +3014,8 @@ func (m *Module) handleAppointmentWhatsApp(ctx context.Context, p appointmentWha
 	dateStr := localStart.Format("02-01-2006")
 	timeStr := localStart.Format("15:04")
 	details := m.resolveLeadDetails(ctx, *p.LeadID, p.OrgID)
-	templateVars := map[string]any{
-		"lead":        map[string]any{"name": name, "phone": p.ConsumerPhone, "email": p.ConsumerEmail},
-		"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(p.Location)},
-	}
+	orgName := defaultName(strings.TrimSpace(m.resolveOrganizationName(ctx, p.OrgID)), defaultOrgNameFallback)
+	templateVars := buildAppointmentTemplateVars(name, p.ConsumerPhone, p.ConsumerEmail, dateStr, timeStr, strings.TrimSpace(p.Location), orgName)
 	enrichLeadVars(templateVars, details)
 	bodyText, err := renderWorkflowTemplateTextWithError(rule, templateVars)
 	if err != nil {
@@ -3015,10 +3045,8 @@ func (m *Module) handleAppointmentEmail(ctx context.Context, p appointmentWhatsA
 	dateStr := localStart.Format("02-01-2006")
 	timeStr := localStart.Format("15:04")
 	details := m.resolveLeadDetails(ctx, *p.LeadID, p.OrgID)
-	templateVars := map[string]any{
-		"lead":        map[string]any{"name": name, "phone": p.ConsumerPhone, "email": p.ConsumerEmail},
-		"appointment": map[string]any{"date": dateStr, "time": timeStr, "location": strings.TrimSpace(p.Location)},
-	}
+	orgName := defaultName(strings.TrimSpace(m.resolveOrganizationName(ctx, p.OrgID)), defaultOrgNameFallback)
+	templateVars := buildAppointmentTemplateVars(name, p.ConsumerPhone, p.ConsumerEmail, dateStr, timeStr, strings.TrimSpace(p.Location), orgName)
 	enrichLeadVars(templateVars, details)
 
 	_ = m.dispatchQuoteEmailWorkflow(ctx, dispatchQuoteEmailWorkflowParams{
@@ -3034,6 +3062,24 @@ func (m *Module) handleAppointmentEmail(ctx context.Context, p appointmentWhatsA
 	})
 
 	return nil
+}
+
+func buildAppointmentTemplateVars(consumerName, consumerPhone, consumerEmail, date, timeText, location, orgName string) map[string]any {
+	return map[string]any{
+		"lead": map[string]any{
+			"name":  consumerName,
+			"phone": consumerPhone,
+			"email": consumerEmail,
+		},
+		"appointment": map[string]any{
+			"date":     date,
+			"time":     timeText,
+			"location": location,
+		},
+		"org": map[string]any{
+			"name": orgName,
+		},
+	}
 }
 
 func (m *Module) enqueueAppointmentOutbox(ctx context.Context, p appointmentWhatsAppParams, rule *workflowRule, message, name string) bool {
