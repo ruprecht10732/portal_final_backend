@@ -444,7 +444,9 @@ func (c *Config) IsGotenbergEnabled() bool     { return c.GotenbergURL != "" }
 func (c *Config) GetEPOnlineAPIKey() string  { return c.EPOnlineAPIKey }
 func (c *Config) IsEnergyLabelEnabled() bool { return c.EPOnlineAPIKey != "" }
 
-// ResolveLLMModel returns the per-agent override, then the global default, then the legacy fallback.
+// ResolveLLMModel returns an explicit per-agent or global model override.
+// When no explicit override is configured it returns "" so the caller can
+// fall back to the provider preset's own default model.
 func (c *Config) ResolveLLMModel(agentName string) string {
 	if model := strings.TrimSpace(c.llmModelOverride(agentName)); model != "" {
 		return model
@@ -455,7 +457,31 @@ func (c *Config) ResolveLLMModel(agentName string) string {
 	if agentName == LLMModelAgentOfferSummaryGenerator {
 		return DefaultOfferSummaryLLMModel
 	}
-	return DefaultLLMModel
+	return ""
+}
+
+// ResolveAgentModel returns the provider config and model override for the
+// given agent. When a per-agent model override belongs to a different provider
+// than the primary (e.g. a Kimi model while LLM_PROVIDER is DeepSeek) the
+// provider config is re-resolved to match the model, preventing
+// cross-provider mismatches that would send the wrong model name to the
+// wrong API.
+func (c *Config) ResolveAgentModel(agentName string) (LLMProviderConfig, string) {
+	providerCfg := c.ResolveProviderConfig(c.LLMProvider)
+	modelOverride := c.ResolveLLMModel(agentName)
+
+	if modelOverride == "" {
+		return providerCfg, ""
+	}
+
+	overrideCfg := c.ResolveProviderConfig(modelOverride)
+	if overrideCfg.Provider != providerCfg.Provider {
+		// The override model belongs to a different provider — use that
+		// provider's base URL and API key so the model name matches.
+		return overrideCfg, ""
+	}
+
+	return providerCfg, modelOverride
 }
 
 func (c *Config) llmModelOverride(agentName string) string {

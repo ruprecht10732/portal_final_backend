@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	secondaryMaxRetries    = 2
-	secondaryBaseBackoff   = 500 * time.Millisecond
+	secondaryMaxRetries    = 4
+	secondaryBaseBackoff   = 2 * time.Second
 	secondaryBackoffFactor = 2.0
 	jitterFraction         = 0.3
 )

@@ -308,8 +308,9 @@ func main() {
 	audioTranscriber, closeTranscriber := initAudioTranscriber(log)
 	defer closeTranscriber()
 	inboxLeadActions := adapters.NewInboxLeadActionsAdapter(leadsModule.ManagementService(), leadsModule.Repository(), eventBus)
+	waProvCfg, waModelOvr := cfg.ResolveAgentModel(config.LLMModelAgentWhatsAppAgent)
 	whatsappagentModule, err := whatsappagent.NewModule(pool, whatsappagent.ModuleConfig{
-		ModelConfig:   leadagent.NewProviderModelConfig(cfg.ResolveProviderConfig(cfg.LLMProvider), true, cfg.ResolveLLMModel(config.LLMModelAgentWhatsAppAgent)),
+		ModelConfig:   leadagent.NewProviderModelConfig(waProvCfg, true, waModelOvr),
 		WebhookSecret: cfg.GetWhatsAppWebhookSecret(),
 	}, whatsappagent.ModuleDependencies{
 		WhatsAppClient:               whatsAppClient,

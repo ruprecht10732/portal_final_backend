@@ -30,13 +30,58 @@ func TestResolveLLMModelUsesGlobalDefaultBeforeLegacyFallback(t *testing.T) {
 	}
 }
 
-func TestResolveLLMModelFallsBackToLegacyDefaults(t *testing.T) {
+func TestResolveLLMModelReturnsEmptyWhenNoOverride(t *testing.T) {
 	cfg := &Config{}
 
-	if got := cfg.ResolveLLMModel(LLMModelAgentDispatcher); got != DefaultLLMModel {
-		t.Fatalf("expected dispatcher fallback model %q, got %q", DefaultLLMModel, got)
+	if got := cfg.ResolveLLMModel(LLMModelAgentDispatcher); got != "" {
+		t.Fatalf("expected empty model override, got %q", got)
 	}
 	if got := cfg.ResolveLLMModel(LLMModelAgentOfferSummaryGenerator); got != DefaultOfferSummaryLLMModel {
 		t.Fatalf("expected offer summary fallback model %q, got %q", DefaultOfferSummaryLLMModel, got)
+	}
+}
+
+func TestResolveAgentModelPreventsCrossProviderMismatch(t *testing.T) {
+	cfg := &Config{
+		LLMProvider:    "deepseek-reasoner",
+		DeepSeekAPIKey: "sk-deepseek",
+		MoonshotAPIKey: "sk-moonshot",
+	}
+
+	// No per-agent override: should use DeepSeek provider with empty override.
+	provCfg, modelOvr := cfg.ResolveAgentModel(LLMModelAgentGatekeeper)
+	if provCfg.Provider != LLMProviderDeepSeek {
+		t.Fatalf("expected deepseek provider, got %q", provCfg.Provider)
+	}
+	if modelOvr != "" {
+		t.Fatalf("expected empty model override, got %q", modelOvr)
+	}
+
+	// Offer summary has hardcoded moonshot-v1-8k default: should re-resolve to Kimi.
+	provCfg, modelOvr = cfg.ResolveAgentModel(LLMModelAgentOfferSummaryGenerator)
+	if provCfg.Provider != LLMProviderKimi {
+		t.Fatalf("expected kimi provider for offer summary, got %q", provCfg.Provider)
+	}
+	if modelOvr != "" {
+		t.Fatalf("expected empty model override after re-resolve, got %q", modelOvr)
+	}
+	if provCfg.Model != DefaultOfferSummaryLLMModel {
+		t.Fatalf("expected model %q, got %q", DefaultOfferSummaryLLMModel, provCfg.Model)
+	}
+}
+
+func TestResolveAgentModelKeepsSameProviderOverride(t *testing.T) {
+	cfg := &Config{
+		LLMProvider:     "deepseek-reasoner",
+		DeepSeekAPIKey:  "sk-deepseek",
+		LLMModelDefault: "deepseek-chat",
+	}
+
+	provCfg, modelOvr := cfg.ResolveAgentModel(LLMModelAgentEstimator)
+	if provCfg.Provider != LLMProviderDeepSeek {
+		t.Fatalf("expected deepseek provider, got %q", provCfg.Provider)
+	}
+	if modelOvr != "deepseek-chat" {
+		t.Fatalf("expected model override %q, got %q", "deepseek-chat", modelOvr)
 	}
 }

@@ -417,8 +417,7 @@ func buildAIClients(cfg *config.Config) aiClients {
 // resolveAgentModelConfig builds an openaicompat.Config for the given agent,
 // combining the active provider preset with any per-agent model override.
 func resolveAgentModelConfig(cfg *config.Config, agentName string, reasoning bool) openaicompat.Config {
-	providerCfg := cfg.ResolveProviderConfig(cfg.LLMProvider)
-	modelOverride := cfg.ResolveLLMModel(agentName)
+	providerCfg, modelOverride := cfg.ResolveAgentModel(agentName)
 	return agent.NewProviderModelConfig(providerCfg, reasoning, modelOverride)
 }
 
