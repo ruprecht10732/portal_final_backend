@@ -38,11 +38,15 @@ const (
 	LLMProviderDeepSeek = "deepseek"
 )
 
-// LLMProviderPreset holds the default endpoint and model names for a provider.
+// LLMProviderPreset holds the default endpoint, model names, and API-key
+// environment variable for a provider. To add a new provider (e.g. Claude)
+// you only need to add an entry here — no other code changes required.
 type LLMProviderPreset struct {
 	BaseURL        string
 	DefaultModel   string
 	ReasoningModel string
+	Models         []string // all model names served by this provider
+	APIKeyEnv      string   // env var name, e.g. "DEEPSEEK_API_KEY"
 }
 
 // LLMProviderConfig is the resolved configuration for an LLM provider ready to create a model.
@@ -59,12 +63,41 @@ var llmProviderPresets = map[string]LLMProviderPreset{
 		BaseURL:        "https://api.moonshot.ai/v1",
 		DefaultModel:   defaultKimiModel,
 		ReasoningModel: defaultKimiModel,
+		Models:         []string{"kimi-k2.5", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
+		APIKeyEnv:      "MOONSHOT_API_KEY",
 	},
 	LLMProviderDeepSeek: {
 		BaseURL:        "https://api.deepseek.com/v1",
 		DefaultModel:   "deepseek-chat",
 		ReasoningModel: "deepseek-reasoner",
+		Models:         []string{"deepseek-chat", "deepseek-reasoner"},
+		APIKeyEnv:      "DEEPSEEK_API_KEY",
 	},
+}
+
+// resolveProvider determines the provider name and optional model override from
+// a free-form input string. The input may be a provider name ("deepseek") or a
+// model name ("deepseek-reasoner"). Returns the provider name and, when the
+// input was a model name, that specific model as override (empty otherwise).
+func resolveProvider(input string) (provider string, modelOverride string) {
+	input = strings.TrimSpace(strings.ToLower(input))
+	if input == "" {
+		return LLMProviderKimi, ""
+	}
+	// Exact provider-name match.
+	if _, ok := llmProviderPresets[input]; ok {
+		return input, ""
+	}
+	// Scan presets for a matching model name.
+	for name, preset := range llmProviderPresets {
+		for _, m := range preset.Models {
+			if strings.EqualFold(m, input) {
+				return name, m
+			}
+		}
+	}
+	// Unknown input — fall back to default provider, treat input as model.
+	return LLMProviderKimi, input
 }
 
 // =============================================================================
@@ -452,21 +485,27 @@ func (c *Config) llmModelOverride(agentName string) string {
 	}
 }
 
-// ResolveProviderConfig returns the full LLMProviderConfig for the given provider name.
-// It resolves the API key, base URL, and default/reasoning model names.
-func (c *Config) ResolveProviderConfig(providerName string) LLMProviderConfig {
-	preset, ok := llmProviderPresets[providerName]
-	if !ok {
-		preset = llmProviderPresets[LLMProviderKimi]
-	}
-	apiKey := c.resolveAPIKey(providerName)
-	return LLMProviderConfig{
-		Provider:       providerName,
+// ResolveProviderConfig returns the full LLMProviderConfig for the given input.
+// The input may be a provider name ("deepseek") or a model name
+// ("deepseek-reasoner", "kimi-k2.5"). When a model name is given both
+// Model and ReasoningModel are locked to that specific model.
+func (c *Config) ResolveProviderConfig(input string) LLMProviderConfig {
+	provider, modelOverride := resolveProvider(input)
+	preset := llmProviderPresets[provider]
+	apiKey := c.resolveAPIKey(provider)
+
+	cfg := LLMProviderConfig{
+		Provider:       provider,
 		APIKey:         apiKey,
 		BaseURL:        preset.BaseURL,
 		Model:          preset.DefaultModel,
 		ReasoningModel: preset.ReasoningModel,
 	}
+	if modelOverride != "" {
+		cfg.Model = modelOverride
+		cfg.ReasoningModel = modelOverride
+	}
+	return cfg
 }
 
 // HasFallbackProvider returns true when a fallback provider is configured and has an API key.
@@ -475,15 +514,28 @@ func (c *Config) HasFallbackProvider() bool {
 	if fp == "" {
 		return false
 	}
-	return c.resolveAPIKey(fp) != ""
+	provider, _ := resolveProvider(fp)
+	return c.resolveAPIKey(provider) != ""
 }
 
+// resolveAPIKey returns the API key for the given provider. For providers in
+// llmProviderPresets with an APIKeyEnv, it reads from the process environment
+// (already populated by godotenv during Load). This means newly-added providers
+// work without adding Config struct fields.
 func (c *Config) resolveAPIKey(provider string) string {
-	switch provider {
-	case LLMProviderDeepSeek:
+	preset, ok := llmProviderPresets[provider]
+	if !ok || preset.APIKeyEnv == "" {
+		return ""
+	}
+	// Use loaded struct fields when available for testability;
+	// fall through to os.Getenv for providers added later.
+	switch preset.APIKeyEnv {
+	case "MOONSHOT_API_KEY":
+		return c.MoonshotAPIKey
+	case "DEEPSEEK_API_KEY":
 		return c.DeepSeekAPIKey
 	default:
-		return c.MoonshotAPIKey
+		return os.Getenv(preset.APIKeyEnv)
 	}
 }
 
