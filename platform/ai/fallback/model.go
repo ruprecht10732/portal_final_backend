@@ -16,6 +16,7 @@ const (
 	secondaryBaseBackoff   = 2 * time.Second
 	secondaryBackoffFactor = 2.0
 	jitterFraction         = 0.3
+	secondaryTimeout       = 120 * time.Second
 )
 
 // Model wraps a primary and secondary model.LLM with circuit-breaker-based
@@ -64,24 +65,8 @@ func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stre
 }
 
 func (m *Model) generateWithFallback(ctx context.Context, req *model.LLMRequest, stream bool) (*model.LLMResponse, error) {
-	// Try primary if circuit allows it.
-	if m.breaker.AllowRequest() {
-		resp, err := m.callModel(ctx, m.primary, req, stream)
-		if err == nil {
-			m.breaker.RecordSuccess()
-			return resp, nil
-		}
-		m.breaker.RecordFailure()
-		m.logger.Warn("llm fallback: primary provider failed",
-			"provider", m.primary.Name(),
-			"error", err,
-			"circuit_state", m.breaker.State(),
-		)
-	} else {
-		m.logger.Info("llm fallback: circuit open, skipping primary",
-			"provider", m.primary.Name(),
-			"circuit_state", m.breaker.State(),
-		)
+	if resp := m.tryPrimary(ctx, req, stream); resp != nil {
+		return resp, nil
 	}
 
 	// Fallback to secondary with exponential backoff + retries.
@@ -89,11 +74,62 @@ func (m *Model) generateWithFallback(ctx context.Context, req *model.LLMRequest,
 		return nil, fmt.Errorf("llm fallback: primary failed and no secondary configured")
 	}
 
-	// If context is already done, don't attempt secondary at all.
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("llm fallback: context already cancelled before secondary attempt: %w", ctx.Err())
+	// Use a fresh context for the secondary provider so that an expired
+	// parent deadline (e.g. from a long primary attempt or tool-call loop)
+	// does not prevent the fallback from running.
+	secondaryCtx, secondaryCancel := context.WithTimeout(context.Background(), secondaryTimeout)
+	defer secondaryCancel()
+	// Propagate parent cancellation (e.g. explicit cancel, not deadline)
+	// so that a deliberate shutdown still stops the secondary.
+	go func() {
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == context.Canceled {
+				secondaryCancel()
+			}
+		case <-secondaryCtx.Done():
+		}
+	}()
+
+	if ctx.Err() == context.Canceled {
+		return nil, fmt.Errorf("llm fallback: context explicitly cancelled before secondary attempt: %w", ctx.Err())
 	}
 
+	m.logger.Info("llm fallback: attempting secondary with fresh context",
+		"provider", m.secondary.Name(),
+		"parent_ctx_err", ctx.Err(),
+		"secondary_timeout", secondaryTimeout,
+	)
+
+	return m.retrySecondary(secondaryCtx, req, stream)
+}
+
+// tryPrimary attempts the primary provider if the circuit breaker allows it.
+// Returns a non-nil response on success, or nil if the primary was skipped or failed.
+func (m *Model) tryPrimary(ctx context.Context, req *model.LLMRequest, stream bool) *model.LLMResponse {
+	if !m.breaker.AllowRequest() {
+		m.logger.Info("llm fallback: circuit open, skipping primary",
+			"provider", m.primary.Name(),
+			"circuit_state", m.breaker.State(),
+		)
+		return nil
+	}
+	resp, err := m.callModel(ctx, m.primary, req, stream)
+	if err == nil {
+		m.breaker.RecordSuccess()
+		return resp
+	}
+	m.breaker.RecordFailure()
+	m.logger.Warn("llm fallback: primary provider failed",
+		"provider", m.primary.Name(),
+		"error", err,
+		"circuit_state", m.breaker.State(),
+	)
+	return nil
+}
+
+// retrySecondary attempts the secondary provider with exponential backoff.
+func (m *Model) retrySecondary(ctx context.Context, req *model.LLMRequest, stream bool) (*model.LLMResponse, error) {
 	var lastErr error
 	for attempt := 0; attempt <= secondaryMaxRetries; attempt++ {
 		if attempt > 0 {
@@ -104,7 +140,7 @@ func (m *Model) generateWithFallback(ctx context.Context, req *model.LLMRequest,
 				"backoff", backoff,
 			)
 			if err := sleepWithContext(ctx, backoff); err != nil {
-				return nil, fmt.Errorf("llm fallback: context cancelled during backoff: %w", err)
+				return nil, fmt.Errorf("llm fallback: secondary context cancelled during backoff: %w", err)
 			}
 		}
 

@@ -1936,7 +1936,7 @@ func prepareStageUpdate(ctx context.Context, deps *ToolDependencies, input *Upda
 		deps.MarkStageUpdateCalled(input.Stage)
 		log.Printf("agent stage transition skipped (run=%s actor=%s/%s lead=%s service=%s stage=%s): no change",
 			state.runID, state.actorType, state.actorName, state.leadID, state.serviceID, input.Stage)
-		return state, loopResult, UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage unchanged"}, true, nil
+		return state, loopResult, UpdatePipelineStageOutput{Success: false, Message: fmt.Sprintf("Stage is already %s – no action needed. Do not retry.", input.Stage)}, true, nil
 	}
 
 	return state, loopResult, UpdatePipelineStageOutput{}, false, nil

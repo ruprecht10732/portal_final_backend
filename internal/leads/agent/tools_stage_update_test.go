@@ -126,8 +126,8 @@ func TestApplyPipelineStageUpdateCountsRepeatedGatekeeperNurturingWithoutStageCh
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
 	}
-	if !out.Success {
-		t.Fatalf(expectedSuccessMessage, out)
+	if out.Success {
+		t.Fatalf("expected Success=false for same-stage transition, got %+v", out)
 	}
 	if repo.service.GatekeeperNurturingLoopCount != 2 {
 		t.Fatalf("expected loop count to increment to 2, got %d", repo.service.GatekeeperNurturingLoopCount)
@@ -241,8 +241,8 @@ func TestApplyPipelineStageUpdateResetsLoopCountWhenMissingInformationChanges(t 
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
 	}
-	if !out.Success {
-		t.Fatalf(expectedSuccessMessage, out)
+	if out.Success {
+		t.Fatalf("expected Success=false for same-stage transition, got %+v", out)
 	}
 	if repo.service.GatekeeperNurturingLoopCount != 1 {
 		t.Fatalf("expected loop count reset to 1 for a new blocker, got %d", repo.service.GatekeeperNurturingLoopCount)

@@ -14,6 +14,8 @@ import (
 	"google.golang.org/genai"
 )
 
+const maxToolCallsPerSession = 30
+
 type observedToolTrace struct {
 	Kind     string
 	Name     string
@@ -77,8 +79,24 @@ func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*se
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var toolTrace []observedToolTrace
-	err := consumeRunEvents(req.Runner.Run(ctx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace))
+	toolCallCount := 0
+	enforceToolCallLimit := func(event *session.Event) {
+		if event == nil || event.Content == nil {
+			return
+		}
+		for _, part := range event.Content.Parts {
+			if part != nil && part.FunctionCall != nil {
+				toolCallCount++
+			}
+		}
+	}
+	err := consumeRunEvents(req.Runner.Run(ctx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace), enforceToolCallLimit)
 	logObservedToolTrace(req.TraceLabel, req.UserID, req.SessionID, toolTrace)
+	if err == nil && toolCallCount > maxToolCallsPerSession {
+		log.Printf("%s: session aborted after %d tool calls (limit %d) user=%s session=%s",
+			req.TraceLabel, toolCallCount, maxToolCallsPerSession, req.UserID, req.SessionID)
+		return fmt.Errorf("%s: tool call limit exceeded (%d > %d)", req.TraceLabel, toolCallCount, maxToolCallsPerSession)
+	}
 	return err
 }
 
