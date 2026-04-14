@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"portal_final_backend/internal/adapters/storage"
@@ -74,6 +75,8 @@ type Module struct {
 	gatekeeperDeduper     gatekeeperTriggerDeduper
 	estimatorDeduper      triggerFingerprintDeduper
 	dispatcherDeduper     triggerFingerprintDeduper
+	gatekeeperRunMu       sync.Mutex
+	gatekeeperRunActive   map[uuid.UUID]bool
 }
 
 type AutomationScheduler interface {
@@ -857,6 +860,19 @@ func (m *Module) ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, te
 	if m == nil || m.gatekeeper == nil {
 		return nil
 	}
+
+	// Prevent concurrent gatekeeper runs on the same service. The asynq
+	// uniqueness window (45s) can expire while a slow LLM call is still in
+	// progress, allowing a second task to start. This mutex ensures only
+	// one run executes per service at a time.
+	if !m.tryAcquireGatekeeperRun(serviceID) {
+		if m.log != nil {
+			m.log.Info("gatekeeper: skipping concurrent run for service", "serviceId", serviceID, "leadId", leadID)
+		}
+		return nil
+	}
+	defer m.releaseGatekeeperRun(serviceID)
+
 	if err := m.gatekeeper.Run(ctx, leadID, serviceID, tenantID); err != nil {
 		return err
 	}
@@ -864,6 +880,25 @@ func (m *Module) ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, te
 		m.orchestrator.maybeAutoDisqualifyJunk(ctx, leadID, serviceID, tenantID)
 	}
 	return nil
+}
+
+func (m *Module) tryAcquireGatekeeperRun(serviceID uuid.UUID) bool {
+	m.gatekeeperRunMu.Lock()
+	defer m.gatekeeperRunMu.Unlock()
+	if m.gatekeeperRunActive == nil {
+		m.gatekeeperRunActive = make(map[uuid.UUID]bool)
+	}
+	if m.gatekeeperRunActive[serviceID] {
+		return false
+	}
+	m.gatekeeperRunActive[serviceID] = true
+	return true
+}
+
+func (m *Module) releaseGatekeeperRun(serviceID uuid.UUID) {
+	m.gatekeeperRunMu.Lock()
+	defer m.gatekeeperRunMu.Unlock()
+	delete(m.gatekeeperRunActive, serviceID)
 }
 
 func (m *Module) ProcessEstimatorRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, force bool) error {

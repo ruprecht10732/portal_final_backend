@@ -129,8 +129,8 @@ func TestApplyPipelineStageUpdateCountsRepeatedGatekeeperNurturingWithoutStageCh
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
 	}
-	if out.Success {
-		t.Fatalf("expected Success=false for same-stage transition, got %+v", out)
+	if !out.Success {
+		t.Fatalf("expected Success=true for idempotent same-stage transition, got %+v", out)
 	}
 	if repo.service.GatekeeperNurturingLoopCount != 2 {
 		t.Fatalf("expected loop count to increment to 2, got %d", repo.service.GatekeeperNurturingLoopCount)
@@ -244,8 +244,8 @@ func TestApplyPipelineStageUpdateResetsLoopCountWhenMissingInformationChanges(t 
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
 	}
-	if out.Success {
-		t.Fatalf("expected Success=false for same-stage transition, got %+v", out)
+	if !out.Success {
+		t.Fatalf("expected Success=true for idempotent same-stage transition, got %+v", out)
 	}
 	if repo.service.GatekeeperNurturingLoopCount != 1 {
 		t.Fatalf("expected loop count reset to 1 for a new blocker, got %d", repo.service.GatekeeperNurturingLoopCount)
@@ -305,8 +305,8 @@ func TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession(
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
 	}
-	if out2.Success {
-		t.Fatalf("expected Success=false for same-stage retry, got %+v", out2)
+	if !out2.Success {
+		t.Fatalf("expected Success=true for idempotent same-stage retry, got %+v", out2)
 	}
 	if repo.service.GatekeeperNurturingLoopCount != 1 {
 		t.Fatalf("expected loop count to stay at 1 after same-session retry, got %d", repo.service.GatekeeperNurturingLoopCount)
@@ -320,8 +320,8 @@ func TestApplyPipelineStageUpdateDoesNotDoubleIncrementLoopCounterInSameSession(
 	if err != nil {
 		t.Fatalf(expectedNoErrorMessage, err)
 	}
-	if out3.Success {
-		t.Fatalf("expected Success=false for same-stage retry, got %+v", out3)
+	if !out3.Success {
+		t.Fatalf("expected Success=true for idempotent same-stage retry, got %+v", out3)
 	}
 	if repo.service.GatekeeperNurturingLoopCount != 1 {
 		t.Fatalf("expected loop count still 1 after third same-session call, got %d", repo.service.GatekeeperNurturingLoopCount)

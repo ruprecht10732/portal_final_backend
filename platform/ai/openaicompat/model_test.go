@@ -91,7 +91,7 @@ func TestConvertMessagesIncludesReasoningContentForAssistantToolCalls(t *testing
 func TestConvertMessagesPreservesToolResponsesAndMultimodalInputs(t *testing.T) {
 	t.Parallel()
 
-	model := NewModel(Config{APIKey: "test-key", Model: "kimi-k2.5"})
+	model := NewModel(Config{APIKey: "test-key", Model: "kimi-k2.5", SupportsVision: true})
 	messages := model.convertMessages([]*genai.Content{{
 		Role: genai.RoleUser,
 		Parts: []*genai.Part{
