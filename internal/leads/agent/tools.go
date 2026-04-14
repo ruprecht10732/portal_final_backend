@@ -157,48 +157,49 @@ func normalizeConsumerRole(role string) (string, error) {
 
 // ToolDependencies contains the dependencies needed by tools
 type ToolDependencies struct {
-	Repo                   repository.LeadsRepository
-	Scorer                 *scoring.Service
-	EventBus               events.Bus
-	EmbeddingClient        *embeddings.Client
-	QdrantClient           *qdrant.Client
-	BouwmaatQdrantClient   *qdrant.Client
-	CatalogQdrantClient    *qdrant.Client
-	CatalogReader          ports.CatalogReader // optional: hydrate search results from DB
-	QuoteDrafter           ports.QuoteDrafter  // optional: draft quotes from agent
-	PricingIntelligence    ports.PricingIntelligenceReader
-	OfferCreator           ports.PartnerOfferCreator
-	CouncilService         MultiAgentCouncil
-	OrgSettingsReader      ports.OrganizationAISettingsReader
-	mu                     sync.RWMutex
-	tenantID               *uuid.UUID
-	leadID                 *uuid.UUID
-	serviceID              *uuid.UUID
-	actorType              string
-	actorName              string
-	orgSettings            *ports.OrganizationAISettings
-	existingQuoteID        *uuid.UUID     // If set, DraftQuote updates this quote instead of creating new
-	lastAnalysisMetadata   map[string]any // Populated by SaveAnalysis for use in stage_change events
-	lastEstimationMetadata map[string]any // Populated by SaveEstimation for use in stage_change events
-	lastEstimateSnapshot   *EstimateComputationSnapshot
-	lastCouncilMetadata    map[string]any          // Populated by council evaluation for stage/quote governance events
-	saveAnalysisCalled     bool                    // Track if SaveAnalysis was called
-	saveEstimationCalled   bool                    // Track if SaveEstimation was called
-	stageUpdateCalled      bool                    // Track if UpdatePipelineStage was called
-	lastStageUpdated       string                  // Track last pipeline stage written
-	draftQuoteCalled       bool                    // Track if DraftQuote was called
-	offerCreated           bool                    // Track if CreatePartnerOffer was called
-	lastDraftResult        *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
-	lastDraftInput         *DraftQuoteInput        // Snapshot of the latest drafted line items for downstream review
-	lastQuoteReviewResult  *ports.QuoteAIReviewResult
-	lastQuoteCritiqueInput *SubmitQuoteCritiqueInput
-	quoteCriticAttempt     int
-	scopeArtifact          *ScopeArtifact // Produced by Scope Analyzer and consumed by Quote Builder
-	clarificationAsked     bool           // Track if AskCustomerClarification was called in investigative mode
-	runID                  string         // Correlates all tool calls within one agent run
-	forceDraftQuote        bool           // Allows manual runs to bypass draft governance (intake + council)
-	searchCache            map[string]SearchProductMaterialsOutput
-	emittedAlertKeys       map[string]struct{} // Dedupe identical alerts within a single agent run
+	Repo                        repository.LeadsRepository
+	Scorer                      *scoring.Service
+	EventBus                    events.Bus
+	EmbeddingClient             *embeddings.Client
+	QdrantClient                *qdrant.Client
+	BouwmaatQdrantClient        *qdrant.Client
+	CatalogQdrantClient         *qdrant.Client
+	CatalogReader               ports.CatalogReader // optional: hydrate search results from DB
+	QuoteDrafter                ports.QuoteDrafter  // optional: draft quotes from agent
+	PricingIntelligence         ports.PricingIntelligenceReader
+	OfferCreator                ports.PartnerOfferCreator
+	CouncilService              MultiAgentCouncil
+	OrgSettingsReader           ports.OrganizationAISettingsReader
+	mu                          sync.RWMutex
+	tenantID                    *uuid.UUID
+	leadID                      *uuid.UUID
+	serviceID                   *uuid.UUID
+	actorType                   string
+	actorName                   string
+	orgSettings                 *ports.OrganizationAISettings
+	existingQuoteID             *uuid.UUID     // If set, DraftQuote updates this quote instead of creating new
+	lastAnalysisMetadata        map[string]any // Populated by SaveAnalysis for use in stage_change events
+	lastEstimationMetadata      map[string]any // Populated by SaveEstimation for use in stage_change events
+	lastEstimateSnapshot        *EstimateComputationSnapshot
+	lastCouncilMetadata         map[string]any          // Populated by council evaluation for stage/quote governance events
+	saveAnalysisCalled          bool                    // Track if SaveAnalysis was called
+	saveEstimationCalled        bool                    // Track if SaveEstimation was called
+	stageUpdateCalled           bool                    // Track if UpdatePipelineStage was called
+	lastStageUpdated            string                  // Track last pipeline stage written
+	draftQuoteCalled            bool                    // Track if DraftQuote was called
+	offerCreated                bool                    // Track if CreatePartnerOffer was called
+	lastDraftResult             *ports.DraftQuoteResult // Captured by handleDraftQuote for generate endpoint
+	lastDraftInput              *DraftQuoteInput        // Snapshot of the latest drafted line items for downstream review
+	lastQuoteReviewResult       *ports.QuoteAIReviewResult
+	lastQuoteCritiqueInput      *SubmitQuoteCritiqueInput
+	quoteCriticAttempt          int
+	quoteCritiqueSubmittedForAt int            // tracks the attempt number for which SubmitQuoteCritique was already called
+	scopeArtifact               *ScopeArtifact // Produced by Scope Analyzer and consumed by Quote Builder
+	clarificationAsked          bool           // Track if AskCustomerClarification was called in investigative mode
+	runID                       string         // Correlates all tool calls within one agent run
+	forceDraftQuote             bool           // Allows manual runs to bypass draft governance (intake + council)
+	searchCache                 map[string]SearchProductMaterialsOutput
+	emittedAlertKeys            map[string]struct{} // Dedupe identical alerts within a single agent run
 }
 
 // NewRequestDeps creates a request-scoped ToolDependencies that shares the
@@ -566,6 +567,7 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 	d.lastQuoteReviewResult = nil
 	d.lastQuoteCritiqueInput = nil
 	d.quoteCriticAttempt = 0
+	d.quoteCritiqueSubmittedForAt = 0
 	d.scopeArtifact = nil
 	d.clarificationAsked = false
 	d.existingQuoteID = nil
@@ -666,6 +668,7 @@ func (d *ToolDependencies) SetQuoteCriticAttempt(attempt int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.quoteCriticAttempt = attempt
+	d.quoteCritiqueSubmittedForAt = 0 // reset on new attempt
 }
 
 func (d *ToolDependencies) GetQuoteCriticAttempt() int {
@@ -4125,6 +4128,27 @@ func createSubmitQuoteCritiqueTool(_ *ToolDependencies) (tool.Tool, error) {
 func handleSubmitQuoteCritique(ctx tool.Context, deps *ToolDependencies, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
 	if deps.QuoteDrafter == nil {
 		return SubmitQuoteCritiqueOutput{Success: false, Message: "Quote drafting is not configured"}, nil
+	}
+
+	// Guard: prevent duplicate SubmitQuoteCritique calls within the same critic attempt.
+	deps.mu.Lock()
+	currentAttempt := deps.quoteCriticAttempt
+	alreadySubmitted := deps.quoteCritiqueSubmittedForAt == currentAttempt && currentAttempt > 0
+	if !alreadySubmitted {
+		deps.quoteCritiqueSubmittedForAt = currentAttempt
+	}
+	deps.mu.Unlock()
+	if alreadySubmitted {
+		log.Printf("SubmitQuoteCritique: duplicate call blocked for attempt=%d", currentAttempt)
+		if last := deps.GetLastQuoteReviewResult(); last != nil {
+			return SubmitQuoteCritiqueOutput{
+				Success:  true,
+				Message:  "Already submitted for this attempt",
+				Decision: last.Decision,
+				ReviewID: last.ReviewID.String(),
+			}, nil
+		}
+		return SubmitQuoteCritiqueOutput{Success: true, Message: "Already submitted for this attempt"}, nil
 	}
 
 	tenantID, ok := deps.GetTenantID()
