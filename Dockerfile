@@ -1,11 +1,8 @@
-# Build stage
-FROM golang:1.25-alpine AS builder
-
+# Whisper.cpp stage — isolated so its cache is never busted by code changes.
+# Only rebuilds when WHISPER_CPP_COMMIT changes.
+FROM alpine:3.20 AS whisper
 ARG WHISPER_CPP_COMMIT=30c5194c9691
-
 RUN apk add --no-cache cmake make g++ git linux-headers
-
-# Build whisper.cpp static libraries
 # Limit make parallelism to -j2 to avoid OOM on memory-constrained build servers.
 RUN git clone https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp \
     && cd /tmp/whisper.cpp \
@@ -17,6 +14,14 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp \
     && cp src/libwhisper.a ggml/src/libggml*.a /usr/local/lib/whisper/ \
     && cp /tmp/whisper.cpp/include/whisper.h /tmp/whisper.cpp/ggml/include/ggml*.h /usr/local/include/whisper/ \
     && rm -rf /tmp/whisper.cpp
+
+# Build stage
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache cmake make g++ git linux-headers
+
+COPY --from=whisper /usr/local/lib/whisper /usr/local/lib/whisper
+COPY --from=whisper /usr/local/include/whisper /usr/local/include/whisper
 
 WORKDIR /app
 
