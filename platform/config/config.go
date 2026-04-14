@@ -47,6 +47,7 @@ type LLMProviderPreset struct {
 	ReasoningModel string
 	Models         []string // all model names served by this provider
 	APIKeyEnv      string   // env var name, e.g. "DEEPSEEK_API_KEY"
+	SupportsVision bool     // whether the provider accepts image_url content parts
 }
 
 // LLMProviderConfig is the resolved configuration for an LLM provider ready to create a model.
@@ -65,6 +66,7 @@ var llmProviderPresets = map[string]LLMProviderPreset{
 		ReasoningModel: defaultKimiModel,
 		Models:         []string{"kimi-k2.5", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
 		APIKeyEnv:      "MOONSHOT_API_KEY",
+		SupportsVision: true,
 	},
 	LLMProviderDeepSeek: {
 		BaseURL:        "https://api.deepseek.com/v1",
@@ -72,6 +74,7 @@ var llmProviderPresets = map[string]LLMProviderPreset{
 		ReasoningModel: "deepseek-reasoner",
 		Models:         []string{"deepseek-chat", "deepseek-reasoner"},
 		APIKeyEnv:      "DEEPSEEK_API_KEY",
+		SupportsVision: false,
 	},
 }
 
@@ -532,6 +535,29 @@ func (c *Config) ResolveProviderConfig(input string) LLMProviderConfig {
 		cfg.ReasoningModel = modelOverride
 	}
 	return cfg
+}
+
+// ProviderSupportsVision returns whether the given provider supports image_url
+// content parts (multimodal vision). Unknown providers are assumed non-vision.
+func ProviderSupportsVision(provider string) bool {
+	preset, ok := llmProviderPresets[provider]
+	return ok && preset.SupportsVision
+}
+
+// ResolveVisionProvider returns a provider config that supports vision.
+// If the primary provider already supports vision, it is returned as-is.
+// Otherwise, the first vision-capable provider with a configured API key is used.
+func (c *Config) ResolveVisionProvider() (LLMProviderConfig, bool) {
+	primary := c.ResolveProviderConfig(c.LLMProvider)
+	if ProviderSupportsVision(primary.Provider) {
+		return primary, true
+	}
+	for name, preset := range llmProviderPresets {
+		if preset.SupportsVision && c.resolveAPIKey(name) != "" {
+			return c.ResolveProviderConfig(name), true
+		}
+	}
+	return LLMProviderConfig{}, false
 }
 
 // HasFallbackProvider returns true when a fallback provider is configured and has an API key.

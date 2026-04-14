@@ -318,7 +318,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	photoAnalyzer, err := agent.NewPhotoAnalyzer(resolveAgentModelConfig(cfg, config.LLMModelAgentPhotoAnalyzer, true), repo)
+	photoAnalyzer, err := agent.NewPhotoAnalyzer(resolveVisionModelConfig(cfg, config.LLMModelAgentPhotoAnalyzer, true), repo)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -418,6 +418,22 @@ func buildAIClients(cfg *config.Config) aiClients {
 // combining the active provider preset with any per-agent model override.
 func resolveAgentModelConfig(cfg *config.Config, agentName string, reasoning bool) openaicompat.Config {
 	providerCfg, modelOverride := cfg.ResolveAgentModel(agentName)
+	return agent.NewProviderModelConfig(providerCfg, reasoning, modelOverride)
+}
+
+// resolveVisionModelConfig is like resolveAgentModelConfig but ensures the
+// resolved provider supports vision (multimodal image input). If the primary
+// provider lacks vision support the first vision-capable provider with a
+// configured API key is used instead. This is required for photo analysis
+// which sends image_url content parts that non-vision providers reject.
+func resolveVisionModelConfig(cfg *config.Config, agentName string, reasoning bool) openaicompat.Config {
+	providerCfg, modelOverride := cfg.ResolveAgentModel(agentName)
+	if !config.ProviderSupportsVision(providerCfg.Provider) {
+		if visionCfg, ok := cfg.ResolveVisionProvider(); ok {
+			providerCfg = visionCfg
+			modelOverride = "" // override doesn't apply cross-provider
+		}
+	}
 	return agent.NewProviderModelConfig(providerCfg, reasoning, modelOverride)
 }
 

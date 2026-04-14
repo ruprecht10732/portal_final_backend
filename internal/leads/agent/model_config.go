@@ -49,6 +49,7 @@ func newModelConfig(providerCfg config.LLMProviderConfig, reasoning bool) openai
 		Model:           modelName,
 		Provider:        providerCfg.Provider,
 		DisableThinking: disableThinking,
+		SupportsVision:  config.ProviderSupportsVision(providerCfg.Provider),
 	}
 }
 

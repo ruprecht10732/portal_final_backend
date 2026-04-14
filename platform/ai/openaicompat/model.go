@@ -28,6 +28,7 @@ type Config struct {
 	Model           string
 	Provider        string // "kimi" or "deepseek" — controls thinking-mode payload
 	DisableThinking bool   // For Kimi: toggles thinking payload. For DeepSeek: ignored (reasoning via model name).
+	SupportsVision  bool   // Whether this provider accepts image_url content parts.
 }
 
 // Model adapts an OpenAI-compatible provider to the ADK model.LLM interface.
@@ -243,7 +244,7 @@ func (m *Model) convertMessages(contents []*genai.Content) []openAIMessage {
 		}
 
 		role := roleForContent(content.Role)
-		contentBody, reasoningContent, toolCalls, toolMessages := extractContentMessages(content)
+		contentBody, reasoningContent, toolCalls, toolMessages := m.extractContentMessages(content)
 		messages = append(messages, toolMessages...)
 
 		// Check if we have content to add
@@ -274,7 +275,7 @@ func roleForContent(role string) string {
 	return "user"
 }
 
-func extractContentMessages(content *genai.Content) (interface{}, string, []openAIToolCall, []openAIMessage) {
+func (m *Model) extractContentMessages(content *genai.Content) (interface{}, string, []openAIToolCall, []openAIMessage) {
 	var toolCalls []openAIToolCall
 	var toolMessages []openAIMessage
 	var textBuilder strings.Builder
@@ -300,6 +301,11 @@ func extractContentMessages(content *genai.Content) (interface{}, string, []open
 		}
 		// Check for inline image data (multimodal)
 		if part.InlineData != nil && strings.HasPrefix(part.InlineData.MIMEType, "image/") {
+			if !m.config.SupportsVision {
+				// Safety guard: skip image parts for providers that don't
+				// support multimodal input to avoid deserialization errors.
+				continue
+			}
 			hasImages = true
 			dataURL := fmt.Sprintf("data:%s;base64,%s",
 				part.InlineData.MIMEType,
