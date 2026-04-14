@@ -6,12 +6,13 @@ ARG WHISPER_CPP_COMMIT=30c5194c9691
 RUN apk add --no-cache cmake make g++ git linux-headers
 
 # Build whisper.cpp static libraries
+# Limit make parallelism to -j2 to avoid OOM on memory-constrained build servers.
 RUN git clone https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp \
     && cd /tmp/whisper.cpp \
     && git checkout "$WHISPER_CPP_COMMIT" \
     && mkdir build && cd build \
     && cmake .. -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF \
-    && make -j$(nproc) \
+    && make -j2 \
     && mkdir -p /usr/local/lib/whisper /usr/local/include/whisper \
     && cp src/libwhisper.a ggml/src/libggml*.a /usr/local/lib/whisper/ \
     && cp /tmp/whisper.cpp/include/whisper.h /tmp/whisper.cpp/ggml/include/ggml*.h /usr/local/include/whisper/ \
