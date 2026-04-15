@@ -322,14 +322,12 @@ func finalizeBucketMeasures(measures []qualifiedMeasure, year int, bucket string
 		return measures
 	}
 
-	totalArea := sumAreas(bucketMeasures)
-	if totalArea < minArea {
+	if sumAreas(bucketMeasures) < minArea {
 		return others
 	}
 	if hasStackedPair(bucketMeasures) {
 		bestIdx := highestRateIndex(bucketMeasures, year)
 		bucketMeasures = []qualifiedMeasure{bucketMeasures[bestIdx]}
-		totalArea = sumAreas(bucketMeasures)
 	}
 	bucketMeasures = scaleAreasToCap(bucketMeasures, maxArea)
 	return append(others, bucketMeasures...)
@@ -399,11 +397,6 @@ func areaTimesRateCents(areaM2 float64, centsPerM2 int64) int64 {
 		return 0
 	}
 	return int64(math.Round(areaM2 * float64(centsPerM2)))
-}
-
-func measureQualifies(rule measureRule, requested transport.RequestedMeasure) bool {
-	_, ok := measureQualificationFailure(rule, requested)
-	return ok
 }
 
 func measureQualificationFailure(rule measureRule, requested transport.RequestedMeasure) (string, bool) {

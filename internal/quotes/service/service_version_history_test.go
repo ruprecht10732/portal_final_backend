@@ -22,16 +22,17 @@ func TestBuildQuoteVersionDiffMarksChangedAddedAndRemovedItems(t *testing.T) {
 	}
 
 	diff := buildQuoteVersionDiff(previousQuote, previousItems, currentQuote, currentItems)
-	if diff == nil {
-		t.Fatal("expected diff response")
+	if diff != nil {
+		if diff.ChangedCount != 1 || diff.RemovedCount != 1 || diff.AddedCount != 1 {
+			t.Fatalf("unexpected change counts: %+v", diff)
+		}
+		if diff.TotalDeltaCents != 40000 {
+			t.Fatalf("expected total delta 40000, got %d", diff.TotalDeltaCents)
+		}
+		if len(diff.Items) != 3 {
+			t.Fatalf("expected 3 diff items, got %d", len(diff.Items))
+		}
+		return
 	}
-	if diff.ChangedCount != 1 || diff.RemovedCount != 1 || diff.AddedCount != 1 {
-		t.Fatalf("unexpected change counts: %+v", diff)
-	}
-	if diff.TotalDeltaCents != 40000 {
-		t.Fatalf("expected total delta 40000, got %d", diff.TotalDeltaCents)
-	}
-	if len(diff.Items) != 3 {
-		t.Fatalf("expected 3 diff items, got %d", len(diff.Items))
-	}
+	t.Fatal("expected diff response")
 }

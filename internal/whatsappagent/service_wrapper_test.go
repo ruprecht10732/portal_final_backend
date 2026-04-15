@@ -29,7 +29,6 @@ type serviceWrapperTestReplyRunner struct {
 	partnerCalled bool
 	orgID         uuid.UUID
 	phoneKey      string
-	replyTarget   string
 	inbound       *engine.CurrentInboundMessage
 	partnerID     uuid.UUID
 	messages      []ConversationMessage

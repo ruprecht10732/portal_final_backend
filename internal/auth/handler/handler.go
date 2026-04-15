@@ -250,7 +250,7 @@ func (h *Handler) Refresh(c *gin.Context) {
 
 func (h *Handler) Verify(c *gin.Context) {
 	id := httpkit.GetIdentity(c)
-	if id == nil || !id.IsAuthenticated() {
+	if !id.IsAuthenticated() {
 		httpkit.Error(c, http.StatusUnauthorized, "unauthorized", nil)
 		return
 	}

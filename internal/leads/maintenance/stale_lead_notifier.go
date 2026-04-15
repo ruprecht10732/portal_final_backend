@@ -12,14 +12,12 @@ import (
 	"portal_final_backend/platform/logger"
 )
 
-const staleLeadNotifyCooldownHours = 48
-
 // StaleLeadNotifier creates in-app notifications for the assigned agents of
 // stale lead services, prompting proactive re-engagement.
 //
 // Notifications are deduplicated: a new notification is only created when no
 // stale-lead notification was created for the same service within the last
-// staleLeadNotifyCooldownHours hours.
+// 48 hours.
 type StaleLeadNotifier struct {
 	pool  *pgxpool.Pool
 	notif *inapp.Service

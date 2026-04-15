@@ -146,13 +146,7 @@ func formatCurrencyEUR(cents int64) string {
 func renderDailyDigestEmail(data DailyDigestInput) (string, error) {
 	staleLeads := make([]dailyDigestStaleLeadItem, len(data.StaleLeads))
 	for i, sl := range data.StaleLeads {
-		staleLeads[i] = dailyDigestStaleLeadItem{
-			ConsumerFirstName: sl.ConsumerFirstName,
-			ConsumerLastName:  sl.ConsumerLastName,
-			ServiceType:       sl.ServiceType,
-			PipelineStage:     sl.PipelineStage,
-			StaleReason:       sl.StaleReason,
-		}
+		staleLeads[i] = dailyDigestStaleLeadItem(sl)
 	}
 
 	templateData := dailyDigestEmailData{

@@ -40,15 +40,16 @@ func TestCloneQuoteValidUntilPreservesFutureDate(t *testing.T) {
 	now := time.Date(2026, time.March, 10, 12, 0, 0, 0, time.UTC)
 	future := now.Add(24 * time.Hour)
 	result := cloneQuoteValidUntil(now, &future)
-	if result == nil {
-		t.Fatal("expected future validUntil to be preserved")
+	if result != nil {
+		if !result.Equal(future) {
+			t.Fatalf("expected %v, got %v", future, *result)
+		}
+		if result == &future {
+			t.Fatal("expected cloneQuoteValidUntil to return a copied time pointer")
+		}
+		return
 	}
-	if !result.Equal(future) {
-		t.Fatalf("expected %v, got %v", future, *result)
-	}
-	if result == &future {
-		t.Fatal("expected cloneQuoteValidUntil to return a copied time pointer")
-	}
+	t.Fatal("expected future validUntil to be preserved")
 }
 
 func TestCloneQuoteItemsCopiesFieldsAndAssignsNewIDs(t *testing.T) {

@@ -21,6 +21,8 @@ const (
 	errQuoteWorkflowNotConfigured     = "quote workflow not configured"
 	errVisitMutationsNotConfigured    = "visit mutations not configured"
 	errPartnerJobsUnavailable         = "Partner-opdrachten zijn niet beschikbaar"
+	errQuotePDFNeedNumber             = "noem het offertenummer dat ik moet sturen"
+	errQuotePDFNeedSpecificNumber     = "noem het offertenummer van de offerte die ik moet sturen"
 )
 
 type CreateLeadInput struct {
@@ -426,7 +428,7 @@ func (h *ToolHandler) HandleGetNavigationLink(ctx tool.Context, orgID uuid.UUID,
 	}
 	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
 		if h.partnerJobReader == nil {
-			return GetNavigationLinkOutput{Success: false, Message: errPartnerJobsUnavailable}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+			return GetNavigationLinkOutput{Success: false, Message: errPartnerJobsUnavailable}, errors.New(errPartnerJobReaderNotConfigured)
 		}
 		parsedLeadID, err := uuid.Parse(leadID)
 		if err != nil {
@@ -584,7 +586,7 @@ func (h *ToolHandler) HandleSendQuotePDF(ctx tool.Context, orgID uuid.UUID, inpu
 	}
 	quoteID, quoteNumber, err := h.resolveQuoteForPDF(orgID, phoneKey, input.QuoteID)
 	if err != nil {
-		return SendQuotePDFOutput{Success: false, Message: err.Error(), QuoteID: strings.TrimSpace(input.QuoteID)}, nil
+		return SendQuotePDFOutput{Success: false, Message: quotePDFClarificationMessage(err), QuoteID: strings.TrimSpace(input.QuoteID)}, nil
 	}
 	input.QuoteID = quoteID
 	pdfResult, err := h.quoteWorkflowWriter.GetQuotePDF(context.Background(), orgID, input)
@@ -610,21 +612,36 @@ func (h *ToolHandler) resolveQuoteForPDF(orgID uuid.UUID, phoneKey string, quote
 		return quoteID, "", nil
 	}
 	if h == nil || h.leadHintStore == nil {
-		return "", "", fmt.Errorf("Noem het offertenummer dat ik moet sturen.")
+		return "", "", errors.New(errQuotePDFNeedNumber)
 	}
 	hint, ok := h.leadHintStore.Get(orgID.String(), phoneKey)
 	if !ok || len(hint.RecentQuotes) == 0 {
-		return "", "", fmt.Errorf("Noem het offertenummer dat ik moet sturen.")
+		return "", "", errors.New(errQuotePDFNeedNumber)
 	}
 	if len(hint.RecentQuotes) != 1 {
-		return "", "", fmt.Errorf("Noem het offertenummer van de offerte die ik moet sturen.")
+		return "", "", errors.New(errQuotePDFNeedSpecificNumber)
 	}
 	quote := hint.RecentQuotes[0]
 	resolvedQuoteID := strings.TrimSpace(quote.QuoteID)
 	if resolvedQuoteID == "" {
-		return "", "", fmt.Errorf("Noem het offertenummer van de offerte die ik moet sturen.")
+		return "", "", errors.New(errQuotePDFNeedSpecificNumber)
 	}
 	return resolvedQuoteID, strings.TrimSpace(quote.QuoteNumber), nil
+}
+
+func quotePDFClarificationMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	switch message {
+	case errQuotePDFNeedNumber:
+		return "Noem het offertenummer dat ik moet sturen."
+	case errQuotePDFNeedSpecificNumber:
+		return "Noem het offertenummer van de offerte die ik moet sturen."
+	default:
+		return message
+	}
 }
 
 func (h *ToolHandler) HandleUpdateLeadDetails(_ tool.Context, orgID uuid.UUID, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
@@ -706,7 +723,7 @@ func (h *ToolHandler) HandleRescheduleVisit(ctx tool.Context, orgID uuid.UUID, i
 	}
 	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
 		if h.partnerJobReader == nil {
-			return RescheduleVisitOutput{Success: false, Message: errPartnerJobsUnavailable}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+			return RescheduleVisitOutput{Success: false, Message: errPartnerJobsUnavailable}, errors.New(errPartnerJobReaderNotConfigured)
 		}
 		appointmentID, err := uuid.Parse(strings.TrimSpace(input.AppointmentID))
 		if err != nil {
@@ -729,7 +746,7 @@ func (h *ToolHandler) HandleCancelVisit(ctx tool.Context, orgID uuid.UUID, input
 	}
 	if partnerID, ok := partnerIDFromToolContext(ctx); ok {
 		if h.partnerJobReader == nil {
-			return CancelVisitOutput{Success: false, Message: errPartnerJobsUnavailable}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+			return CancelVisitOutput{Success: false, Message: errPartnerJobsUnavailable}, errors.New(errPartnerJobReaderNotConfigured)
 		}
 		appointmentID, err := uuid.Parse(strings.TrimSpace(input.AppointmentID))
 		if err != nil {

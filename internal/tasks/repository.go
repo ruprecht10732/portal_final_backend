@@ -260,7 +260,6 @@ func (r *Repository) listTasks(ctx context.Context, tenantID uuid.UUID, filter l
 	if filter.DueTo != nil {
 		base += fmt.Sprintf(" AND t.due_at <= $%d", index)
 		args = append(args, *filter.DueTo)
-		index++
 	}
 	base += ` ORDER BY t.due_at NULLS LAST, t.created_at DESC`
 

@@ -364,44 +364,6 @@ func offerWithContext(data offerContext) PartnerOfferWithContext {
 	return result
 }
 
-// offerBaseColumns is the standard SELECT column list for a single RAC_partner_offers row.
-// Use offerPrefixedColumns when joining other tables to avoid ambiguity.
-const offerBaseColumns = `
-	id, organization_id, partner_id, lead_service_id, public_token, expires_at,
-	pricing_source, customer_price_cents, vakman_price_cents, margin_basis_points,
-	offer_line_items, job_summary_short, builder_summary, status, requires_inspection,
-	accepted_at, rejected_at, rejection_reason, inspection_availability, job_availability,
-	signer_name, signer_business_name, signer_address, signature_data, pdf_file_key,
-	created_at, updated_at`
-
-const offerPrefixedColumns = `
-	o.id, o.organization_id, o.partner_id, o.lead_service_id, o.public_token, o.expires_at,
-	o.pricing_source, o.customer_price_cents, o.vakman_price_cents, o.margin_basis_points,
-	o.offer_line_items, o.job_summary_short, o.builder_summary, o.status, o.requires_inspection,
-	o.accepted_at, o.rejected_at, o.rejection_reason, o.inspection_availability, o.job_availability,
-	o.signer_name, o.signer_business_name, o.signer_address, o.signature_data, o.pdf_file_key,
-	o.created_at, o.updated_at`
-
-func (r *Repository) scanOfferRow(row interface {
-	Scan(dest ...any) error
-}) (PartnerOffer, error) {
-	var s offerSnapshot
-	var lineItemsRaw []byte
-	err := row.Scan(
-		&s.ID, &s.OrganizationID, &s.PartnerID, &s.LeadServiceID, &s.PublicToken, &s.ExpiresAt,
-		&s.PricingSource, &s.CustomerPriceCents, &s.VakmanPriceCents, &s.MarginBasisPoints,
-		&lineItemsRaw, &s.JobSummaryShort, &s.BuilderSummary, &s.Status, &s.RequiresInspection,
-		&s.AcceptedAt, &s.RejectedAt, &s.RejectionReason, &s.InspectionAvailability, &s.JobAvailability,
-		&s.SignerName, &s.SignerBusinessName, &s.SignerAddress, &s.SignatureData, &s.PDFFileKey,
-		&s.CreatedAt, &s.UpdatedAt,
-	)
-	if err != nil {
-		return PartnerOffer{}, err
-	}
-	s.OfferLineItems = lineItemsRaw
-	return offerFromSnapshot(s), nil
-}
-
 // CreateOffer inserts a new partner offer.
 func (r *Repository) CreateOffer(ctx context.Context, offer PartnerOffer) (PartnerOffer, error) {
 	offerLineItems, err := json.Marshal(offer.OfferLineItems)

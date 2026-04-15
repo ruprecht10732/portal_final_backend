@@ -124,26 +124,26 @@ func TestBuildBuilderSummaryProducesReadableFallback(t *testing.T) {
 		{Description: "Dakpannen vervangen", Quantity: "2x"},
 		{Description: "Goot herstellen", Quantity: "1x"},
 	}, &scope, &urgency, true)
-	if summary == nil {
-		t.Fatal("expected fallback summary")
+	if summary != nil {
+		text := *summary
+		if !strings.Contains(text, "Deze klus draait vooral om") {
+			t.Fatalf("expected readable intro, got %q", text)
+		}
+		if !strings.Contains(text, "### Werkzaamheden") {
+			t.Fatalf("expected work heading, got %q", text)
+		}
+		if !strings.Contains(text, "- 2x Dakpannen vervangen") {
+			t.Fatalf("expected bullet work item, got %q", text)
+		}
+		if !strings.Contains(text, "**Omvang** Middel  **Urgentie** Hoog") {
+			t.Fatalf("expected header labels, got %q", text)
+		}
+		if !strings.Contains(text, "### Let op") {
+			t.Fatalf("expected attention heading, got %q", text)
+		}
+		return
 	}
-
-	text := *summary
-	if !strings.Contains(text, "Deze klus draait vooral om") {
-		t.Fatalf("expected readable intro, got %q", text)
-	}
-	if !strings.Contains(text, "### Werkzaamheden") {
-		t.Fatalf("expected work heading, got %q", text)
-	}
-	if !strings.Contains(text, "- 2x Dakpannen vervangen") {
-		t.Fatalf("expected bullet work item, got %q", text)
-	}
-	if !strings.Contains(text, "**Omvang** Middel  **Urgentie** Hoog") {
-		t.Fatalf("expected header labels, got %q", text)
-	}
-	if !strings.Contains(text, "### Let op") {
-		t.Fatalf("expected attention heading, got %q", text)
-	}
+	t.Fatal("expected fallback summary")
 }
 
 func TestSplitOfferSummarySeparatesShortAndDetailedOutput(t *testing.T) {
@@ -159,19 +159,20 @@ func TestSplitOfferSummarySeparatesShortAndDetailedOutput(t *testing.T) {
 func TestNormalizeBuilderSummaryStripsEmptyMarkdownHeadings(t *testing.T) {
 	value := "###\nWerkzaamheden\n- Glas plaatsen\n\n###\nLet op\n- Steiger nodig"
 	normalized := normalizeBuilderSummary(&value)
-	if normalized == nil {
-		t.Fatal("expected normalized summary")
+	if normalized != nil {
+		if strings.Contains(*normalized, "###") {
+			t.Fatalf("expected stray markdown headings to be removed, got %q", *normalized)
+		}
+		if strings.Contains(*normalized, "- Glas plaatsen") {
+			t.Fatalf("expected markdown bullets to be removed, got %q", *normalized)
+		}
+		if !strings.Contains(*normalized, "Werkzaamheden") {
+			t.Fatalf("expected summary content to remain, got %q", *normalized)
+		}
+		if !strings.Contains(*normalized, "Glas plaatsen") {
+			t.Fatalf("expected bullet text to remain, got %q", *normalized)
+		}
+		return
 	}
-	if strings.Contains(*normalized, "###") {
-		t.Fatalf("expected stray markdown headings to be removed, got %q", *normalized)
-	}
-	if strings.Contains(*normalized, "- Glas plaatsen") {
-		t.Fatalf("expected markdown bullets to be removed, got %q", *normalized)
-	}
-	if !strings.Contains(*normalized, "Werkzaamheden") {
-		t.Fatalf("expected summary content to remain, got %q", *normalized)
-	}
-	if !strings.Contains(*normalized, "Glas plaatsen") {
-		t.Fatalf("expected bullet text to remain, got %q", *normalized)
-	}
+	t.Fatal("expected normalized summary")
 }

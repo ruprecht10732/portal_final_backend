@@ -1230,10 +1230,6 @@ func mapOfferResponse(oc repository.PartnerOfferWithContext) transport.OfferResp
 	return resp
 }
 
-func calculateVakmanPrice(customerPriceCents int64) int64 {
-	return resolveVakmanPrice(customerPriceCents, defaultOfferMarginBasisPoints, nil)
-}
-
 func resolveVakmanPrice(customerPriceCents int64, marginBasisPoints int, override *int64) int64 {
 	if override != nil {
 		if *override < 0 {

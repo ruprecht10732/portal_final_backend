@@ -2,7 +2,7 @@ package engine
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
@@ -64,11 +64,11 @@ type UpdateAppointmentStatusOutput struct {
 
 func (h *ToolHandler) HandleGetMyJobs(ctx tool.Context, orgID uuid.UUID, input GetMyJobsInput) (GetMyJobsOutput, error) {
 	if h.partnerJobReader == nil {
-		return GetMyJobsOutput{}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		return GetMyJobsOutput{}, errors.New(errPartnerJobReaderNotConfigured)
 	}
 	partnerID, ok := partnerIDFromToolContext(ctx)
 	if !ok {
-		return GetMyJobsOutput{}, fmt.Errorf(errPartnerContextUnavailable)
+		return GetMyJobsOutput{}, errors.New(errPartnerContextUnavailable)
 	}
 	jobs, err := h.partnerJobReader.ListPartnerJobs(context.Background(), orgID, partnerID)
 	if err != nil {
@@ -82,25 +82,25 @@ func (h *ToolHandler) HandleGetMyJobs(ctx tool.Context, orgID uuid.UUID, input G
 
 func (h *ToolHandler) HandleSaveMeasurement(ctx tool.Context, orgID uuid.UUID, input SaveMeasurementInput) (SaveMeasurementOutput, error) {
 	if h.partnerJobReader == nil {
-		return SaveMeasurementOutput{}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		return SaveMeasurementOutput{}, errors.New(errPartnerJobReaderNotConfigured)
 	}
 	if h.appointmentVisitReportWriter == nil {
-		return SaveMeasurementOutput{}, fmt.Errorf(errVisitReportWriterNotConfigured)
+		return SaveMeasurementOutput{}, errors.New(errVisitReportWriterNotConfigured)
 	}
 	partnerID, ok := partnerIDFromToolContext(ctx)
 	if !ok {
-		return SaveMeasurementOutput{}, fmt.Errorf(errPartnerContextUnavailable)
+		return SaveMeasurementOutput{}, errors.New(errPartnerContextUnavailable)
 	}
 	appointmentIDText := strings.TrimSpace(input.AppointmentID)
 	if appointmentIDText == "" {
-		return SaveMeasurementOutput{Success: false, Message: "appointment_id is verplicht"}, fmt.Errorf("appointment_id is required")
+		return SaveMeasurementOutput{Success: false, Message: "appointment_id is verplicht"}, errors.New("appointment_id is required")
 	}
 	appointmentID, err := uuid.Parse(appointmentIDText)
 	if err != nil {
 		return SaveMeasurementOutput{Success: false, Message: errInvalidAppointmentID}, err
 	}
 	if strings.TrimSpace(input.Measurements) == "" && strings.TrimSpace(input.AccessDifficulty) == "" && strings.TrimSpace(input.Notes) == "" {
-		return SaveMeasurementOutput{Success: false, Message: "Voeg minimaal metingen, toegankelijkheid of notities toe"}, fmt.Errorf("empty measurement payload")
+		return SaveMeasurementOutput{Success: false, Message: "Voeg minimaal metingen, toegankelijkheid of notities toe"}, errors.New("empty measurement payload")
 	}
 	if _, err := h.partnerJobReader.GetPartnerJobByAppointment(context.Background(), orgID, partnerID, appointmentID); err != nil {
 		return SaveMeasurementOutput{Success: false, Message: err.Error()}, err
@@ -113,11 +113,11 @@ func (h *ToolHandler) HandleSaveMeasurement(ctx tool.Context, orgID uuid.UUID, i
 
 func (h *ToolHandler) HandleGetPartnerJobDetails(ctx tool.Context, orgID uuid.UUID, input GetPartnerJobDetailsInput) (GetPartnerJobDetailsOutput, error) {
 	if h.partnerJobReader == nil {
-		return GetPartnerJobDetailsOutput{}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		return GetPartnerJobDetailsOutput{}, errors.New(errPartnerJobReaderNotConfigured)
 	}
 	partnerID, ok := partnerIDFromToolContext(ctx)
 	if !ok {
-		return GetPartnerJobDetailsOutput{}, fmt.Errorf(errPartnerContextUnavailable)
+		return GetPartnerJobDetailsOutput{}, errors.New(errPartnerContextUnavailable)
 	}
 	job, err := h.resolvePartnerJob(ctx, orgID, partnerID, input.AppointmentID, input.LeadServiceID, input.LeadID)
 	if err != nil {
@@ -128,18 +128,18 @@ func (h *ToolHandler) HandleGetPartnerJobDetails(ctx tool.Context, orgID uuid.UU
 
 func (h *ToolHandler) HandleUpdateAppointmentStatus(ctx tool.Context, orgID uuid.UUID, input UpdateAppointmentStatusInput) (UpdateAppointmentStatusOutput, error) {
 	if h.partnerJobReader == nil {
-		return UpdateAppointmentStatusOutput{}, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		return UpdateAppointmentStatusOutput{}, errors.New(errPartnerJobReaderNotConfigured)
 	}
 	if h.appointmentStatusWriter == nil {
-		return UpdateAppointmentStatusOutput{}, fmt.Errorf(errAppointmentStatusWriterNotConfigured)
+		return UpdateAppointmentStatusOutput{}, errors.New(errAppointmentStatusWriterNotConfigured)
 	}
 	partnerID, ok := partnerIDFromToolContext(ctx)
 	if !ok {
-		return UpdateAppointmentStatusOutput{}, fmt.Errorf(errPartnerContextUnavailable)
+		return UpdateAppointmentStatusOutput{}, errors.New(errPartnerContextUnavailable)
 	}
 	appointmentIDText := strings.TrimSpace(input.AppointmentID)
 	if appointmentIDText == "" {
-		return UpdateAppointmentStatusOutput{Success: false, Message: "appointment_id is verplicht"}, fmt.Errorf("appointment_id is required")
+		return UpdateAppointmentStatusOutput{Success: false, Message: "appointment_id is verplicht"}, errors.New("appointment_id is required")
 	}
 	appointmentID, err := uuid.Parse(appointmentIDText)
 	if err != nil {
@@ -150,7 +150,7 @@ func (h *ToolHandler) HandleUpdateAppointmentStatus(ctx tool.Context, orgID uuid
 	}
 	input.Status = normalizeAppointmentStatus(input.Status)
 	if input.Status == "" {
-		return UpdateAppointmentStatusOutput{Success: false, Message: "status is ongeldig"}, fmt.Errorf("invalid appointment status")
+		return UpdateAppointmentStatusOutput{Success: false, Message: "status is ongeldig"}, errors.New("invalid appointment status")
 	}
 	appointment, err := h.appointmentStatusWriter.UpdateAppointmentStatus(context.Background(), orgID, appointmentID, input)
 	if err != nil {
@@ -180,23 +180,23 @@ func (h *ToolHandler) resolvePartnerJob(_ tool.Context, orgID, partnerID uuid.UU
 	if appointmentIDText := strings.TrimSpace(appointmentIDRaw); appointmentIDText != "" {
 		appointmentID, err := uuid.Parse(appointmentIDText)
 		if err != nil {
-			return nil, fmt.Errorf(errInvalidAppointmentID)
+			return nil, errors.New(errInvalidAppointmentID)
 		}
 		return h.partnerJobReader.GetPartnerJobByAppointment(context.Background(), orgID, partnerID, appointmentID)
 	}
 	if leadServiceIDText := strings.TrimSpace(leadServiceIDRaw); leadServiceIDText != "" {
 		leadServiceID, err := uuid.Parse(leadServiceIDText)
 		if err != nil {
-			return nil, fmt.Errorf("lead_service_id is ongeldig")
+			return nil, errors.New("lead_service_id is ongeldig")
 		}
 		return h.partnerJobReader.GetPartnerJobByService(context.Background(), orgID, partnerID, leadServiceID)
 	}
 	if leadIDText := strings.TrimSpace(leadIDRaw); leadIDText != "" {
 		leadID, err := uuid.Parse(leadIDText)
 		if err != nil {
-			return nil, fmt.Errorf("lead_id is ongeldig")
+			return nil, errors.New("lead_id is ongeldig")
 		}
 		return h.partnerJobReader.GetPartnerJobByLead(context.Background(), orgID, partnerID, leadID)
 	}
-	return nil, fmt.Errorf("appointment_id, lead_service_id of lead_id is verplicht")
+	return nil, errors.New("appointment_id, lead_service_id of lead_id is verplicht")
 }

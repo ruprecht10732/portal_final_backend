@@ -392,11 +392,11 @@ func formatReEngageTimeline(events []repository.TimelineEvent) string {
 		if sb.Len() > 0 {
 			sb.WriteString("\n")
 		}
-		sb.WriteString(fmt.Sprintf("- [%s] %s: %s",
+		fmt.Fprintf(&sb, "- [%s] %s: %s",
 			e.CreatedAt.Format(dateTimeLayout),
 			sanitizePromptField(e.EventType, 50),
 			sanitizePromptField(e.Title, 200),
-		))
+		)
 	}
 	return sb.String()
 }
@@ -416,7 +416,7 @@ func formatReEngageNotes(notes []repository.LeadNote) string {
 			sb.WriteString("\n")
 		}
 		content := sanitizePromptField(n.Body, maxReEngageNoteChars)
-		sb.WriteString(fmt.Sprintf("- [%s] %s", n.CreatedAt.Format(dateTimeLayout), content))
+		fmt.Fprintf(&sb, "- [%s] %s", n.CreatedAt.Format(dateTimeLayout), content)
 	}
 	return sb.String()
 }

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -103,7 +104,7 @@ func (a *WhatsAppAgentPartnerAdapter) GetPartnerJobByService(ctx context.Context
 
 func (a *WhatsAppAgentPartnerAdapter) GetPartnerJobByAppointment(ctx context.Context, orgID, partnerID, appointmentID uuid.UUID) (*whatsappagent.PartnerJobSummary, error) {
 	if a == nil || a.appointments == nil {
-		return nil, fmt.Errorf(errAppointmentsServiceNotConfigured)
+		return nil, errors.New(errAppointmentsServiceNotConfigured)
 	}
 	appointment, err := a.appointments.GetByID(ctx, appointmentID, uuid.Nil, true, orgID)
 	if err != nil {
@@ -134,7 +135,7 @@ func (a *WhatsAppAgentPartnerAdapter) GetPartnerJobByAppointment(ctx context.Con
 
 func (a *WhatsAppAgentPartnerAdapter) UpsertVisitReport(ctx context.Context, orgID, appointmentID uuid.UUID, input whatsappagent.SaveMeasurementInput) error {
 	if a == nil || a.appointments == nil {
-		return fmt.Errorf(errAppointmentsServiceNotConfigured)
+		return errors.New(errAppointmentsServiceNotConfigured)
 	}
 	request := appointmenttransport.UpsertVisitReportRequest{}
 	if value := strings.TrimSpace(input.Measurements); value != "" {
@@ -152,7 +153,7 @@ func (a *WhatsAppAgentPartnerAdapter) UpsertVisitReport(ctx context.Context, org
 
 func (a *WhatsAppAgentPartnerAdapter) UpdateAppointmentStatus(ctx context.Context, orgID, appointmentID uuid.UUID, input whatsappagent.UpdateAppointmentStatusInput) (*whatsappagent.AppointmentSummary, error) {
 	if a == nil || a.appointments == nil {
-		return nil, fmt.Errorf(errAppointmentsServiceNotConfigured)
+		return nil, errors.New(errAppointmentsServiceNotConfigured)
 	}
 	updated, err := a.appointments.UpdateStatus(ctx, appointmentID, uuid.Nil, true, orgID, appointmenttransport.UpdateAppointmentStatusRequest{
 		Status: appointmenttransport.AppointmentStatus(input.Status),

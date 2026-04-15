@@ -33,12 +33,7 @@ func NewRedisConversationLeadHintStore(client *redis.Client, log *logger.Logger)
 	if client == nil {
 		return NewConversationLeadHintStore()
 	}
-	return &RedisConversationLeadHintStore{
-		redis: client,
-		log:   log,
-		ttl:   conversationLeadHintTTL,
-		now:   time.Now,
-	}
+	return newRedisConversationLeadHintStore(client, log, conversationLeadHintTTL, time.Now)
 }
 
 func newRedisConversationLeadHintStore(client *redis.Client, log *logger.Logger, ttl time.Duration, now conversationLeadHintClock) *RedisConversationLeadHintStore {

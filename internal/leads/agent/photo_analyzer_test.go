@@ -38,34 +38,34 @@ func TestPhotoAnalyzerDepsSetResultClonesInput(t *testing.T) {
 	result.SuggestedSearchTerms[0] = "gewijzigd"
 
 	stored := deps.GetResult()
-	if stored == nil {
-		t.Fatal("expected stored result")
+	if stored != nil {
+		if got := stored.Observations[0]; got != "obs-1" {
+			t.Fatalf("expected stored observations to stay isolated, got %q", got)
+		}
+		if got := stored.SafetyConcerns[0]; got != "veiligheid-1" {
+			t.Fatalf("expected stored safety concerns to stay isolated, got %q", got)
+		}
+		if got := stored.AdditionalInfo[0]; got != "info-1" {
+			t.Fatalf("expected stored additional info to stay isolated, got %q", got)
+		}
+		if got := stored.Measurements[0].Description; got != "breedte" {
+			t.Fatalf("expected stored measurements to stay isolated, got %q", got)
+		}
+		if got := stored.NeedsOnsiteMeasurement[0]; got != "maat ontbreekt" {
+			t.Fatalf("expected stored onsite flags to stay isolated, got %q", got)
+		}
+		if got := stored.Discrepancies[0]; got != "verschil-1" {
+			t.Fatalf("expected stored discrepancies to stay isolated, got %q", got)
+		}
+		if got := stored.ExtractedText[0]; got != "tekst-1" {
+			t.Fatalf("expected stored extracted text to stay isolated, got %q", got)
+		}
+		if got := stored.SuggestedSearchTerms[0]; got != "term-1" {
+			t.Fatalf("expected stored search terms to stay isolated, got %q", got)
+		}
+		return
 	}
-
-	if got := stored.Observations[0]; got != "obs-1" {
-		t.Fatalf("expected stored observations to stay isolated, got %q", got)
-	}
-	if got := stored.SafetyConcerns[0]; got != "veiligheid-1" {
-		t.Fatalf("expected stored safety concerns to stay isolated, got %q", got)
-	}
-	if got := stored.AdditionalInfo[0]; got != "info-1" {
-		t.Fatalf("expected stored additional info to stay isolated, got %q", got)
-	}
-	if got := stored.Measurements[0].Description; got != "breedte" {
-		t.Fatalf("expected stored measurements to stay isolated, got %q", got)
-	}
-	if got := stored.NeedsOnsiteMeasurement[0]; got != "maat ontbreekt" {
-		t.Fatalf("expected stored onsite flags to stay isolated, got %q", got)
-	}
-	if got := stored.Discrepancies[0]; got != "verschil-1" {
-		t.Fatalf("expected stored discrepancies to stay isolated, got %q", got)
-	}
-	if got := stored.ExtractedText[0]; got != "tekst-1" {
-		t.Fatalf("expected stored extracted text to stay isolated, got %q", got)
-	}
-	if got := stored.SuggestedSearchTerms[0]; got != "term-1" {
-		t.Fatalf("expected stored search terms to stay isolated, got %q", got)
-	}
+	t.Fatal("expected stored result")
 }
 
 func TestPhotoAnalyzerDepsGetResultReturnsClone(t *testing.T) {
@@ -82,28 +82,28 @@ func TestPhotoAnalyzerDepsGetResultReturnsClone(t *testing.T) {
 	})
 
 	first := deps.GetResult()
-	if first == nil {
+	if first != nil {
+		first.Observations[0] = "mutated"
+		first.Measurements[0].Description = "mutated"
+		first.NeedsOnsiteMeasurement[0] = "mutated"
+	} else {
 		t.Fatal("expected result")
 	}
 
-	first.Observations[0] = "mutated"
-	first.Measurements[0].Description = "mutated"
-	first.NeedsOnsiteMeasurement[0] = "mutated"
-
 	second := deps.GetResult()
-	if second == nil {
-		t.Fatal("expected second result")
+	if second != nil {
+		if got := second.Observations[0]; got != "obs-1" {
+			t.Fatalf("expected observations clone, got %q", got)
+		}
+		if got := second.Measurements[0].Description; got != "hoogte" {
+			t.Fatalf("expected measurements clone, got %q", got)
+		}
+		if got := second.NeedsOnsiteMeasurement[0]; got != "diepte nodig" {
+			t.Fatalf("expected onsite measurement clone, got %q", got)
+		}
+		return
 	}
-
-	if got := second.Observations[0]; got != "obs-1" {
-		t.Fatalf("expected observations clone, got %q", got)
-	}
-	if got := second.Measurements[0].Description; got != "hoogte" {
-		t.Fatalf("expected measurements clone, got %q", got)
-	}
-	if got := second.NeedsOnsiteMeasurement[0]; got != "diepte nodig" {
-		t.Fatalf("expected onsite measurement clone, got %q", got)
-	}
+	t.Fatal("expected second result")
 }
 
 func TestPhotoAnalyzerDepsGetOnsiteFlagsReturnsClone(t *testing.T) {

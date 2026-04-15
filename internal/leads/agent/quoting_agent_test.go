@@ -17,21 +17,22 @@ func TestNewEstimatorAgentUsesEstimatorProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEstimatorAgent returned error: %v", err)
 	}
-	if agent == nil {
-		t.Fatal("expected estimator agent instance")
+	if agent != nil {
+		if agent.mode != quotingAgentModeEstimator {
+			t.Fatalf("expected estimator mode, got %q", agent.mode)
+		}
+		if agent.appName != "estimator" {
+			t.Fatalf("expected estimator app name, got %q", agent.appName)
+		}
+		if agent.modelConfig.Model != "kimi-test-estimator" {
+			t.Fatalf("expected estimator model config to use configured model, got %q", agent.modelConfig.Model)
+		}
+		if agent.modelConfig.DisableThinking {
+			t.Fatal("expected estimator to keep Moonshot thinking enabled")
+		}
+		return
 	}
-	if agent.mode != quotingAgentModeEstimator {
-		t.Fatalf("expected estimator mode, got %q", agent.mode)
-	}
-	if agent.appName != "estimator" {
-		t.Fatalf("expected estimator app name, got %q", agent.appName)
-	}
-	if agent.modelConfig.Model != "kimi-test-estimator" {
-		t.Fatalf("expected estimator model config to use configured model, got %q", agent.modelConfig.Model)
-	}
-	if agent.modelConfig.DisableThinking {
-		t.Fatal("expected estimator to keep Moonshot thinking enabled")
-	}
+	t.Fatal("expected estimator agent instance")
 }
 
 func TestNewQuoteGeneratorAgentUsesQuoteGeneratorProfile(t *testing.T) {
@@ -39,21 +40,22 @@ func TestNewQuoteGeneratorAgentUsesQuoteGeneratorProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewQuoteGeneratorAgent returned error: %v", err)
 	}
-	if agent == nil {
-		t.Fatal("expected quote generator agent instance")
+	if agent != nil {
+		if agent.mode != quotingAgentModeQuoteGenerator {
+			t.Fatalf("expected quote-generator mode, got %q", agent.mode)
+		}
+		if agent.appName != "quote-generator" {
+			t.Fatalf("expected quote-generator app name, got %q", agent.appName)
+		}
+		if agent.modelConfig.Model != "kimi-test-quote" {
+			t.Fatalf("expected quote-generator model config to use configured model, got %q", agent.modelConfig.Model)
+		}
+		if agent.modelConfig.DisableThinking {
+			t.Fatal("expected quote-generator to keep Moonshot thinking enabled")
+		}
+		return
 	}
-	if agent.mode != quotingAgentModeQuoteGenerator {
-		t.Fatalf("expected quote-generator mode, got %q", agent.mode)
-	}
-	if agent.appName != "quote-generator" {
-		t.Fatalf("expected quote-generator app name, got %q", agent.appName)
-	}
-	if agent.modelConfig.Model != "kimi-test-quote" {
-		t.Fatalf("expected quote-generator model config to use configured model, got %q", agent.modelConfig.Model)
-	}
-	if agent.modelConfig.DisableThinking {
-		t.Fatal("expected quote-generator to keep Moonshot thinking enabled")
-	}
+	t.Fatal("expected quote generator agent instance")
 }
 
 func TestBuildQuotingToolsEstimatorIncludesAutonomousTools(t *testing.T) {

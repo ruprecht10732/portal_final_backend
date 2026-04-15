@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -260,7 +261,7 @@ func (h *ToolHandler) HandleGetAppointments(ctx tool.Context, orgID uuid.UUID, i
 
 func (h *ToolHandler) HandleGetEnergyLabel(_ tool.Context, orgID uuid.UUID, input GetEnergyLabelInput) (GetEnergyLabelOutput, error) {
 	if h.energyLabelReader == nil {
-		return GetEnergyLabelOutput{}, fmt.Errorf(errEnergyLabelReaderNotConfigured)
+		return GetEnergyLabelOutput{}, errors.New(errEnergyLabelReaderNotConfigured)
 	}
 
 	resolved, failure, err := h.resolveEnergyLabelInput(orgID, input)
@@ -325,7 +326,7 @@ func energyLabelFailure(message string, found bool) *GetEnergyLabelOutput {
 
 func (h *ToolHandler) HandleGetLeadTasks(_ tool.Context, orgID uuid.UUID, input GetLeadTasksInput) (GetLeadTasksOutput, error) {
 	if h.taskReader == nil {
-		return GetLeadTasksOutput{}, fmt.Errorf(errTaskReaderNotConfigured)
+		return GetLeadTasksOutput{}, errors.New(errTaskReaderNotConfigured)
 	}
 	if strings.TrimSpace(input.LeadID) == "" {
 		return GetLeadTasksOutput{}, fmt.Errorf("lead_id is required")
@@ -338,7 +339,7 @@ func (h *ToolHandler) HandleGetLeadTasks(_ tool.Context, orgID uuid.UUID, input 
 
 func (h *ToolHandler) HandleGetISDE(_ tool.Context, orgID uuid.UUID, input GetISDEInput) (GetISDEOutput, error) {
 	if h.isdeCalculator == nil {
-		return GetISDEOutput{}, fmt.Errorf(errISDECalculatorNotConfigured)
+		return GetISDEOutput{}, errors.New(errISDECalculatorNotConfigured)
 	}
 	return h.isdeCalculator.GetISDE(context.Background(), orgID, input)
 }
@@ -357,7 +358,7 @@ func parseHouseNumberParts(raw string) (number, letter, addition string) {
 
 func (h *ToolHandler) filterPartnerAppointments(orgID, partnerID uuid.UUID, appointments []AppointmentSummary) ([]AppointmentSummary, error) {
 	if h.partnerJobReader == nil {
-		return nil, fmt.Errorf(errPartnerJobReaderNotConfigured)
+		return nil, errors.New(errPartnerJobReaderNotConfigured)
 	}
 	jobs, err := h.partnerJobReader.ListPartnerJobs(context.Background(), orgID, partnerID)
 	if err != nil {

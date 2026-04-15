@@ -21,10 +21,6 @@ import (
 	"portal_final_backend/platform/logger"
 )
 
-const (
-	errMsgFailedToUpdateJobProgress = "failed to update job progress"
-)
-
 // SubsidyAnalyzerJob represents a subsidy analysis job.
 type SubsidyAnalyzerJob struct {
 	ID              uuid.UUID              `json:"id"`
@@ -123,13 +119,13 @@ func buildDraftQuoteContext(items []quotetransport.QuoteItemRequest) string {
 	var builder strings.Builder
 	builder.WriteString("Quote line items:\n")
 	for index, item := range items {
-		builder.WriteString(fmt.Sprintf("%d. ", index+1))
+		fmt.Fprintf(&builder, "%d. ", index+1)
 		if item.Title != "" {
 			builder.WriteString(item.Title)
 			builder.WriteString(" - ")
 		}
 		builder.WriteString(item.Description)
-		builder.WriteString(fmt.Sprintf(" | quantity: %s", item.Quantity))
+		fmt.Fprintf(&builder, " | quantity: %s", item.Quantity)
 		if item.IsOptional {
 			builder.WriteString(" | optional")
 		}
@@ -278,13 +274,6 @@ func (s *SubsidyAnalyzerService) updateJobStatus(jobID uuid.UUID, status string,
 	job.FinishedAt = &now
 
 	s.publishJobProgress(jobID, status, step, job.ProgressPercent)
-}
-
-// failJob marks a job as failed.
-func (s *SubsidyAnalyzerService) failJob(jobID uuid.UUID, step string, err error) error {
-	errMsg := err.Error()
-	s.updateJobStatus(jobID, "failed", step, &errMsg)
-	return err
 }
 
 // publishJobProgress publishes job progress via SSE.
