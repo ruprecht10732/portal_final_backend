@@ -7,11 +7,15 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
+
+	"portal_final_backend/internal/leads/repository"
 )
 
 const maxToolCallsPerSession = 30
@@ -56,9 +60,22 @@ type promptRunRequest struct {
 	// caller manages the session lifecycle externally (e.g. photo analyzer
 	// that reuses a session across analysis + retry).
 	SkipSessionLifecycle bool
+	// OnSessionComplete is an optional callback invoked at the end of a
+	// session with the accumulated run metrics. Callers that persist
+	// agent_runs records use this to capture tool-call counts, durations,
+	// and trace data without changing the return signature.
+	OnSessionComplete func(SessionResult)
+}
+
+// SessionResult captures per-session metrics collected during runPromptSession.
+type SessionResult struct {
+	ToolCallCount int
+	DurationMs    int
+	ToolTraces    []observedToolTrace
 }
 
 func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*session.Event)) error {
+	sessionStart := time.Now()
 	if !req.SkipSessionLifecycle {
 		_, err := req.SessionService.Create(ctx, &session.CreateRequest{
 			AppName:   req.AppName,
@@ -80,6 +97,8 @@ func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*se
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var toolTrace []observedToolTrace
 	toolCallCount := 0
+	budgetCtx, budgetCancel := context.WithCancel(ctx)
+	defer budgetCancel()
 	enforceToolCallLimit := func(event *session.Event) {
 		if event == nil || event.Content == nil {
 			return
@@ -89,13 +108,28 @@ func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*se
 				toolCallCount++
 			}
 		}
+		if toolCallCount >= maxToolCallsPerSession {
+			log.Printf("%s: cancelling session at %d tool calls (limit %d) user=%s session=%s",
+				req.TraceLabel, toolCallCount, maxToolCallsPerSession, req.UserID, req.SessionID)
+			budgetCancel()
+		}
 	}
-	err := consumeRunEvents(req.Runner.Run(ctx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace), enforceToolCallLimit)
+	err := consumeRunEvents(req.Runner.Run(budgetCtx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace), enforceToolCallLimit)
 	logObservedToolTrace(req.TraceLabel, req.UserID, req.SessionID, toolTrace)
-	if err == nil && toolCallCount > maxToolCallsPerSession {
+
+	durationMs := int(time.Since(sessionStart).Milliseconds())
+	if req.OnSessionComplete != nil {
+		req.OnSessionComplete(SessionResult{
+			ToolCallCount: toolCallCount,
+			DurationMs:    durationMs,
+			ToolTraces:    toolTrace,
+		})
+	}
+
+	if err != nil && toolCallCount >= maxToolCallsPerSession {
 		log.Printf("%s: session aborted after %d tool calls (limit %d) user=%s session=%s",
 			req.TraceLabel, toolCallCount, maxToolCallsPerSession, req.UserID, req.SessionID)
-		return fmt.Errorf("%s: tool call limit exceeded (%d > %d)", req.TraceLabel, toolCallCount, maxToolCallsPerSession)
+		return fmt.Errorf("%s: tool call limit exceeded (%d >= %d)", req.TraceLabel, toolCallCount, maxToolCallsPerSession)
 	}
 	return err
 }
@@ -210,4 +244,32 @@ func hasResponseError(response *genai.FunctionResponse) bool {
 	}
 	_, ok := response.Response["error"]
 	return ok
+}
+
+// persistToolTraces writes the observed tool traces of a session to the
+// agent_tool_calls table so that every individual tool invocation is
+// queryable later. It is fire-and-forget; errors are logged but do not
+// propagate.
+func persistToolTraces(ctx context.Context, repo interface {
+	InsertAgentToolCall(ctx context.Context, params repository.InsertAgentToolCallParams) error
+}, agentRunID uuid.UUID, traces []observedToolTrace, label string) {
+	if len(traces) == 0 || agentRunID == uuid.Nil {
+		return
+	}
+	seq := 0
+	for _, t := range traces {
+		if t.Kind != "call" && t.Kind != "response" {
+			continue
+		}
+		seq++
+		params := repository.InsertAgentToolCallParams{
+			AgentRunID:  agentRunID,
+			SequenceNum: seq,
+			ToolName:    t.Name,
+			HasError:    t.HasError,
+		}
+		if err := repo.InsertAgentToolCall(ctx, params); err != nil {
+			log.Printf("%s: failed to persist tool trace seq=%d tool=%s: %v", label, seq, t.Name, err)
+		}
+	}
 }

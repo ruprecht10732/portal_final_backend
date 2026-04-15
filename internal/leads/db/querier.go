@@ -14,6 +14,7 @@ type Querier interface {
 	AddLeadActivity(ctx context.Context, arg AddLeadActivityParams) error
 	BulkDeleteLeads(ctx context.Context, arg BulkDeleteLeadsParams) (int64, error)
 	CloseAllActiveServices(ctx context.Context, arg CloseAllActiveServicesParams) error
+	CompleteAgentRun(ctx context.Context, arg CompleteAgentRunParams) error
 	// Completes a service that is currently in the Fulfillment pipeline stage.
 	// Optionally records extra work amount (in cents) and notes.
 	// Returns no rows if the service does not exist or is not in Fulfillment stage.
@@ -42,6 +43,7 @@ type Querier interface {
 	FindPartnersByServiceType(ctx context.Context, arg FindPartnersByServiceTypeParams) ([]FindPartnersByServiceTypeRow, error)
 	FindPartnersByServiceTypeAndCity(ctx context.Context, arg FindPartnersByServiceTypeAndCityParams) ([]FindPartnersByServiceTypeAndCityRow, error)
 	FindRecentDuplicateTimelineEvent(ctx context.Context, arg FindRecentDuplicateTimelineEventParams) (FindRecentDuplicateTimelineEventRow, error)
+	GetAgentHealthStats(ctx context.Context, arg GetAgentHealthStatsParams) (GetAgentHealthStatsRow, error)
 	GetAppointmentVisitReport(ctx context.Context, arg GetAppointmentVisitReportParams) (GetAppointmentVisitReportRow, error)
 	GetAttachmentByID(ctx context.Context, arg GetAttachmentByIDParams) (RacLeadServiceAttachment, error)
 	GetCurrentActiveLeadService(ctx context.Context, arg GetCurrentActiveLeadServiceParams) (GetCurrentActiveLeadServiceRow, error)
@@ -72,11 +74,17 @@ type Querier interface {
 	GetZipCoordinates(ctx context.Context, arg GetZipCoordinatesParams) (GetZipCoordinatesRow, error)
 	HasLinkedPartners(ctx context.Context, arg HasLinkedPartnersParams) (bool, error)
 	HasNonDraftQuote(ctx context.Context, arg HasNonDraftQuoteParams) (bool, error)
+	// ============================================================
+	// Agent Observability
+	// ============================================================
+	InsertAgentRun(ctx context.Context, arg InsertAgentRunParams) (InsertAgentRunRow, error)
+	InsertAgentToolCall(ctx context.Context, arg InsertAgentToolCallParams) error
 	InsertLeadServiceEvent(ctx context.Context, arg InsertLeadServiceEventParams) error
 	ListAIAnalyses(ctx context.Context, arg ListAIAnalysesParams) ([]ListAIAnalysesRow, error)
 	ListActionItems(ctx context.Context, arg ListActionItemsParams) ([]ListActionItemsRow, error)
 	ListActiveLeadsTrend(ctx context.Context, arg ListActiveLeadsTrendParams) ([]int32, error)
 	ListActiveServiceTypes(ctx context.Context, organizationID pgtype.UUID) ([]ListActiveServiceTypesRow, error)
+	ListAgentRunsByService(ctx context.Context, arg ListAgentRunsByServiceParams) ([]AgentRun, error)
 	ListAttachmentsByService(ctx context.Context, arg ListAttachmentsByServiceParams) ([]RacLeadServiceAttachment, error)
 	ListAvgQuoteValueTrend(ctx context.Context, arg ListAvgQuoteValueTrendParams) ([]int64, error)
 	ListCommentCountsByEvents(ctx context.Context, arg ListCommentCountsByEventsParams) ([]ListCommentCountsByEventsRow, error)
@@ -105,7 +113,9 @@ type Querier interface {
 	ListTimelineEventsByService(ctx context.Context, arg ListTimelineEventsByServiceParams) ([]ListTimelineEventsByServiceRow, error)
 	ListUpcomingAppointments(ctx context.Context, arg ListUpcomingAppointmentsParams) ([]ListUpcomingAppointmentsRow, error)
 	MarkHumanFeedbackApplied(ctx context.Context, arg MarkHumanFeedbackAppliedParams) (RacHumanFeedback, error)
+	ResetAgentCycleState(ctx context.Context, arg ResetAgentCycleStateParams) error
 	ResetGatekeeperNurturingLoopState(ctx context.Context, arg ResetGatekeeperNurturingLoopStateParams) error
+	SetAgentCycleState(ctx context.Context, arg SetAgentCycleStateParams) error
 	SetGatekeeperNurturingLoopState(ctx context.Context, arg SetGatekeeperNurturingLoopStateParams) error
 	SetLeadPublicToken(ctx context.Context, arg SetLeadPublicTokenParams) error
 	SetLeadViewedBy(ctx context.Context, arg SetLeadViewedByParams) error

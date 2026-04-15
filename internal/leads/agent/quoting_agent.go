@@ -6,6 +6,8 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -69,6 +71,9 @@ type QuotingAgent struct {
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
 	mode           quotingAgentMode
+
+	mu             sync.Mutex
+	sessionResults []SessionResult
 }
 
 type quotingAgentMode string
@@ -365,6 +370,8 @@ func (q *QuotingAgent) Execute(ctx context.Context, leadID, serviceID, tenantID 
 }
 
 func (q *QuotingAgent) executeAutonomousRun(ctx context.Context, reqDeps *ToolDependencies, leadID, serviceID, tenantID uuid.UUID, force bool) error {
+	runStart := time.Now()
+	q.resetAndGetSessionResults() // clear any stale results
 	runID := q.startAutonomousRun(ctx, reqDeps, leadID, serviceID, tenantID)
 	lead, service, notes, photo, ok := q.loadAutonomousRunContext(ctx, leadID, serviceID, tenantID)
 	if !ok {
@@ -393,6 +400,45 @@ func (q *QuotingAgent) executeAutonomousRun(ctx context.Context, reqDeps *ToolDe
 	q.persistEstimatorDecisionMemory(ctx, reqDeps, leadID, serviceID, tenantID, service)
 
 	log.Printf("quoting-agent[%s]: run finished runID=%s lead=%s service=%s", q.mode, runID, leadID, serviceID)
+
+	// Persist agent run observability record.
+	outcome := "success"
+	detail := ""
+	if insufficientIntake {
+		outcome = "fallback"
+		detail = insufficientReason
+	}
+	if !reqDeps.WasDraftQuoteCalled() && !reqDeps.WasClarificationAsked() && !insufficientIntake {
+		outcome = "fallback"
+		detail = "no draft quote or clarification produced"
+	}
+	durationMs := int(time.Since(runStart).Milliseconds())
+	sessionResults := q.resetAndGetSessionResults()
+	totalToolCalls := 0
+	var allTraces []observedToolTrace
+	for _, sr := range sessionResults {
+		totalToolCalls += sr.ToolCallCount
+		allTraces = append(allTraces, sr.ToolTraces...)
+	}
+	if agentRunID, err := q.repo.InsertAgentRun(ctx, repository.InsertAgentRunParams{
+		LeadID:        leadID,
+		ServiceID:     serviceID,
+		TenantID:      tenantID,
+		AgentName:     string(q.mode),
+		RunID:         runID,
+		SessionLabel:  string(q.mode),
+		StartedAt:     runStart,
+		DurationMs:    durationMs,
+		ToolCallCount: totalToolCalls,
+		Outcome:       outcome,
+		OutcomeDetail: detail,
+		CycleCount:    service.AgentCycleCount,
+	}); err != nil {
+		log.Printf("quoting-agent[%s]: failed to persist agent run record: %v", q.mode, err)
+	} else {
+		persistToolTraces(ctx, q.repo, agentRunID, allTraces, "quoting-agent["+string(q.mode)+"]")
+	}
+
 	return nil
 }
 
@@ -487,15 +533,13 @@ func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead reposit
 	}
 
 	scopePrompt := buildScopeAnalyzerPrompt(lead, service, notes, photo)
+	var scopeArtifact *ScopeArtifact
 	if err := q.runWithPromptUsingTools(ctx, scopePrompt, "estimator-scope-"+lead.ID.String(), "ScopeAnalyzer", "Analyzes scope and commits artifact", scopeTools); err != nil {
-		log.Printf("quoting-agent: error from scope analyzer run: %v", err)
-		return false
-	}
-
-	scopeArtifact, ok := GetDependencies(ctx).GetScopeArtifact()
-	if !ok {
-		log.Printf("quoting-agent: scope analyzer did not commit artifact for lead=%s service=%s", lead.ID, service.ID)
-		return false
+		log.Printf("quoting-agent: scope analyzer run failed, continuing in degraded mode: %v", err)
+	} else if sa, ok := GetDependencies(ctx).GetScopeArtifact(); ok {
+		scopeArtifact = sa
+	} else {
+		log.Printf("quoting-agent: scope analyzer did not commit artifact for lead=%s service=%s, continuing in degraded mode", lead.ID, service.ID)
 	}
 
 	quoteBuilderTools, err := buildQuotingTools(GetDependencies(ctx), q.mode)
@@ -1157,6 +1201,20 @@ func (q *QuotingAgent) fetchEstimationGuidelines(ctx context.Context, tenantID u
 	return fetchServiceTypeEstimationGuidelines(ctx, q.repo, tenantID, serviceType)
 }
 
+func (q *QuotingAgent) accumulateSessionResult(result SessionResult) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.sessionResults = append(q.sessionResults, result)
+}
+
+func (q *QuotingAgent) resetAndGetSessionResults() []SessionResult {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	results := q.sessionResults
+	q.sessionResults = nil
+	return results
+}
+
 func (q *QuotingAgent) runWithPrompt(ctx context.Context, promptText, userID string) error {
 	return q.runWithPromptUsingTools(ctx, promptText, userID, "EstimatorRunner", "Runs the configured estimator agent", nil)
 }
@@ -1211,6 +1269,7 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 		CreateSessionMessage: "failed to create quoting session",
 		RunFailureMessage:    "quoting agent run failed",
 		TraceLabel:           strings.ToLower(agentName),
+		OnSessionComplete:    q.accumulateSessionResult,
 	},
 		func(event *session.Event) {
 			_ = event
@@ -1226,13 +1285,15 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 func (q *QuotingAgent) hasInsufficientIntakeForDraft(ctx context.Context, serviceID, tenantID uuid.UUID) (bool, string) {
 	analysis, err := q.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
 	if err != nil {
-		return true, "gatekeeper_analysis_unavailable"
+		// No gatekeeper analysis at all — let the estimator attempt with what's available.
+		return false, ""
 	}
-	if strings.EqualFold(strings.TrimSpace(analysis.RecommendedAction), "RequestInfo") {
-		return true, "gatekeeper_request_info"
-	}
-	if domain.HasNonEmptyMissingInformation(analysis.MissingInformation) {
-		return true, "gatekeeper_missing_information"
+	// Only block when the Gatekeeper explicitly flagged the scope as completely unknown
+	// (quality = "Junk" or "Disqualified"). Missing information alone is not a blocker;
+	// the Calculator is allowed to make assumptions using its estimation guidelines.
+	quality := strings.ToLower(strings.TrimSpace(analysis.LeadQuality))
+	if quality == "junk" || quality == "disqualified" {
+		return true, "gatekeeper_disqualified"
 	}
 	return false, ""
 }

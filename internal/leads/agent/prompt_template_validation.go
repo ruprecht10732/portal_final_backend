@@ -22,6 +22,7 @@ func ValidatePromptTemplates() error {
 				CommunicationContract:     "communication",
 				PreferredChannel:          "WhatsApp",
 				RecoveryModeSection:       "recovery",
+				CycleAwarenessSection:     "cycle awareness",
 				LeadID:                    uuid.New(),
 				ServiceID:                 uuid.New(),
 				ServiceType:               "Test service",

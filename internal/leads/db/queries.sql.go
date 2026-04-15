@@ -78,6 +78,41 @@ func (q *Queries) CloseAllActiveServices(ctx context.Context, arg CloseAllActive
 	return err
 }
 
+const completeAgentRun = `-- name: CompleteAgentRun :exec
+UPDATE agent_runs
+SET finished_at = now(),
+    duration_ms = $2,
+    tool_call_count = $3,
+    token_input = $4,
+    token_output = $5,
+    outcome = $6,
+    outcome_detail = $7
+WHERE id = $1
+`
+
+type CompleteAgentRunParams struct {
+	ID            pgtype.UUID `json:"id"`
+	DurationMs    pgtype.Int4 `json:"duration_ms"`
+	ToolCallCount int32       `json:"tool_call_count"`
+	TokenInput    int32       `json:"token_input"`
+	TokenOutput   int32       `json:"token_output"`
+	Outcome       string      `json:"outcome"`
+	OutcomeDetail string      `json:"outcome_detail"`
+}
+
+func (q *Queries) CompleteAgentRun(ctx context.Context, arg CompleteAgentRunParams) error {
+	_, err := q.db.Exec(ctx, completeAgentRun,
+		arg.ID,
+		arg.DurationMs,
+		arg.ToolCallCount,
+		arg.TokenInput,
+		arg.TokenOutput,
+		arg.Outcome,
+		arg.OutcomeDetail,
+	)
+	return err
+}
+
 const completeLeadService = `-- name: CompleteLeadService :one
 WITH current AS (
 	SELECT status AS old_status, pipeline_stage AS old_stage
@@ -93,7 +128,7 @@ WITH current AS (
 	WHERE ls.id = $1
 	  AND ls.organization_id = $2
 	  AND ls.pipeline_stage = 'Fulfillment'
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes, agent_cycle_count, agent_cycle_fingerprint, agent_cycle_last_transition
 ), status_event AS (
 	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
 	SELECT u.organization_id, u.lead_id, u.id, 'status_changed', u.status, u.pipeline_stage, u.updated_at
@@ -107,6 +142,7 @@ WITH current AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM updated u
@@ -132,6 +168,9 @@ type CompleteLeadServiceRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -161,6 +200,9 @@ func (q *Queries) CompleteLeadService(ctx context.Context, arg CompleteLeadServi
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -841,7 +883,7 @@ WITH resolved_service_type AS (
 	SELECT $1, $2, id, 'New', $4, $5
 	FROM resolved_service_type
 	WHERE id IS NOT NULL
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes, agent_cycle_count, agent_cycle_fingerprint, agent_cycle_last_transition
 ), event AS (
 	INSERT INTO RAC_lead_service_events (organization_id, lead_id, lead_service_id, event_type, status, pipeline_stage, occurred_at)
 	SELECT i.organization_id, i.lead_id, i.id, 'service_created', i.status, i.pipeline_stage, i.created_at
@@ -849,6 +891,7 @@ WITH resolved_service_type AS (
 )
 SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
 	i.customer_preferences, i.gatekeeper_nurturing_loop_count, i.gatekeeper_nurturing_loop_fingerprint,
+	i.agent_cycle_count, i.agent_cycle_fingerprint, i.agent_cycle_last_transition,
 	i.extra_work_amount_cents, i.extra_work_notes,
 	i.created_at, i.updated_at
 FROM inserted i
@@ -875,6 +918,9 @@ type CreateLeadServiceRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -902,6 +948,9 @@ func (q *Queries) CreateLeadService(ctx context.Context, arg CreateLeadServicePa
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -1451,6 +1500,62 @@ func (q *Queries) FindRecentDuplicateTimelineEvent(ctx context.Context, arg Find
 	return i, err
 }
 
+const getAgentHealthStats = `-- name: GetAgentHealthStats :one
+SELECT
+    COUNT(*) AS total_runs,
+    COUNT(*) FILTER (WHERE outcome = 'success') AS success_count,
+    COUNT(*) FILTER (WHERE outcome = 'fallback') AS fallback_count,
+    COUNT(*) FILTER (WHERE outcome = 'escalation') AS escalation_count,
+    COUNT(*) FILTER (WHERE outcome = 'loop_detected') AS loop_count,
+    COUNT(*) FILTER (WHERE outcome = 'error') AS error_count,
+    COUNT(*) FILTER (WHERE outcome = 'timeout') AS timeout_count,
+    COALESCE(AVG(tool_call_count), 0)::INTEGER AS avg_tool_calls,
+    COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_duration_ms,
+    COALESCE(SUM(token_input), 0)::BIGINT AS total_token_input,
+    COALESCE(SUM(token_output), 0)::BIGINT AS total_token_output
+FROM agent_runs
+WHERE tenant_id = $1
+  AND created_at >= $2
+`
+
+type GetAgentHealthStatsParams struct {
+	TenantID  pgtype.UUID        `json:"tenant_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type GetAgentHealthStatsRow struct {
+	TotalRuns        int64 `json:"total_runs"`
+	SuccessCount     int64 `json:"success_count"`
+	FallbackCount    int64 `json:"fallback_count"`
+	EscalationCount  int64 `json:"escalation_count"`
+	LoopCount        int64 `json:"loop_count"`
+	ErrorCount       int64 `json:"error_count"`
+	TimeoutCount     int64 `json:"timeout_count"`
+	AvgToolCalls     int32 `json:"avg_tool_calls"`
+	AvgDurationMs    int32 `json:"avg_duration_ms"`
+	TotalTokenInput  int64 `json:"total_token_input"`
+	TotalTokenOutput int64 `json:"total_token_output"`
+}
+
+func (q *Queries) GetAgentHealthStats(ctx context.Context, arg GetAgentHealthStatsParams) (GetAgentHealthStatsRow, error) {
+	row := q.db.QueryRow(ctx, getAgentHealthStats, arg.TenantID, arg.CreatedAt)
+	var i GetAgentHealthStatsRow
+	err := row.Scan(
+		&i.TotalRuns,
+		&i.SuccessCount,
+		&i.FallbackCount,
+		&i.EscalationCount,
+		&i.LoopCount,
+		&i.ErrorCount,
+		&i.TimeoutCount,
+		&i.AvgToolCalls,
+		&i.AvgDurationMs,
+		&i.TotalTokenInput,
+		&i.TotalTokenOutput,
+	)
+	return i, err
+}
+
 const getAppointmentVisitReport = `-- name: GetAppointmentVisitReport :one
 SELECT appointment_id, organization_id, measurements, access_difficulty, notes, created_at, updated_at
 FROM RAC_appointment_visit_reports
@@ -1518,6 +1623,7 @@ func (q *Queries) GetAttachmentByID(ctx context.Context, arg GetAttachmentByIDPa
 const getCurrentActiveLeadService = `-- name: GetCurrentActiveLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -1544,6 +1650,9 @@ type GetCurrentActiveLeadServiceRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -1565,6 +1674,9 @@ func (q *Queries) GetCurrentActiveLeadService(ctx context.Context, arg GetCurren
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -1780,6 +1892,7 @@ func (q *Queries) GetLatestDraftQuoteID(ctx context.Context, arg GetLatestDraftQ
 const getLatestLeadService = `-- name: GetLatestLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -1806,6 +1919,9 @@ type GetLatestLeadServiceRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -1827,6 +1943,9 @@ func (q *Queries) GetLatestLeadService(ctx context.Context, arg GetLatestLeadSer
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -2321,6 +2440,7 @@ func (q *Queries) GetLeadMetricsSummary(ctx context.Context, organizationID pgty
 const getLeadServiceByID = `-- name: GetLeadServiceByID :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -2345,6 +2465,9 @@ type GetLeadServiceByIDRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -2366,6 +2489,9 @@ func (q *Queries) GetLeadServiceByID(ctx context.Context, arg GetLeadServiceByID
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -2805,6 +2931,103 @@ func (q *Queries) HasNonDraftQuote(ctx context.Context, arg HasNonDraftQuotePara
 	return exists, err
 }
 
+const insertAgentRun = `-- name: InsertAgentRun :one
+
+INSERT INTO agent_runs (
+    lead_id, service_id, tenant_id, agent_name, run_id, session_label,
+    model_used, reasoning_mode, started_at, finished_at, duration_ms,
+    tool_call_count, token_input, token_output, outcome, outcome_detail, cycle_count
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9, now(), $10,
+    $11, $12, $13, $14, $15, $16
+) RETURNING id, finished_at, created_at
+`
+
+type InsertAgentRunParams struct {
+	LeadID        pgtype.UUID        `json:"lead_id"`
+	ServiceID     pgtype.UUID        `json:"service_id"`
+	TenantID      pgtype.UUID        `json:"tenant_id"`
+	AgentName     string             `json:"agent_name"`
+	RunID         string             `json:"run_id"`
+	SessionLabel  string             `json:"session_label"`
+	ModelUsed     string             `json:"model_used"`
+	ReasoningMode string             `json:"reasoning_mode"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	DurationMs    pgtype.Int4        `json:"duration_ms"`
+	ToolCallCount int32              `json:"tool_call_count"`
+	TokenInput    int32              `json:"token_input"`
+	TokenOutput   int32              `json:"token_output"`
+	Outcome       string             `json:"outcome"`
+	OutcomeDetail string             `json:"outcome_detail"`
+	CycleCount    int32              `json:"cycle_count"`
+}
+
+type InsertAgentRunRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+// ============================================================
+// Agent Observability
+// ============================================================
+func (q *Queries) InsertAgentRun(ctx context.Context, arg InsertAgentRunParams) (InsertAgentRunRow, error) {
+	row := q.db.QueryRow(ctx, insertAgentRun,
+		arg.LeadID,
+		arg.ServiceID,
+		arg.TenantID,
+		arg.AgentName,
+		arg.RunID,
+		arg.SessionLabel,
+		arg.ModelUsed,
+		arg.ReasoningMode,
+		arg.StartedAt,
+		arg.DurationMs,
+		arg.ToolCallCount,
+		arg.TokenInput,
+		arg.TokenOutput,
+		arg.Outcome,
+		arg.OutcomeDetail,
+		arg.CycleCount,
+	)
+	var i InsertAgentRunRow
+	err := row.Scan(&i.ID, &i.FinishedAt, &i.CreatedAt)
+	return i, err
+}
+
+const insertAgentToolCall = `-- name: InsertAgentToolCall :exec
+INSERT INTO agent_tool_calls (
+    agent_run_id, sequence_num, tool_name, arguments_json,
+    response_json, has_error, error_message, duration_ms
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`
+
+type InsertAgentToolCallParams struct {
+	AgentRunID    pgtype.UUID `json:"agent_run_id"`
+	SequenceNum   int32       `json:"sequence_num"`
+	ToolName      string      `json:"tool_name"`
+	ArgumentsJson []byte      `json:"arguments_json"`
+	ResponseJson  []byte      `json:"response_json"`
+	HasError      bool        `json:"has_error"`
+	ErrorMessage  string      `json:"error_message"`
+	DurationMs    int32       `json:"duration_ms"`
+}
+
+func (q *Queries) InsertAgentToolCall(ctx context.Context, arg InsertAgentToolCallParams) error {
+	_, err := q.db.Exec(ctx, insertAgentToolCall,
+		arg.AgentRunID,
+		arg.SequenceNum,
+		arg.ToolName,
+		arg.ArgumentsJson,
+		arg.ResponseJson,
+		arg.HasError,
+		arg.ErrorMessage,
+		arg.DurationMs,
+	)
+	return err
+}
+
 const insertLeadServiceEvent = `-- name: InsertLeadServiceEvent :exec
 INSERT INTO RAC_lead_service_events (
 	organization_id, lead_id, lead_service_id,
@@ -3053,6 +3276,59 @@ func (q *Queries) ListActiveServiceTypes(ctx context.Context, organizationID pgt
 			&i.Description,
 			&i.IntakeGuidelines,
 			&i.EstimationGuidelines,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentRunsByService = `-- name: ListAgentRunsByService :many
+SELECT id, lead_id, service_id, tenant_id, agent_name, run_id, session_label, model_used, reasoning_mode, started_at, finished_at, duration_ms, tool_call_count, token_input, token_output, outcome, outcome_detail, cycle_count, created_at FROM agent_runs
+WHERE service_id = $1 AND tenant_id = $2
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type ListAgentRunsByServiceParams struct {
+	ServiceID pgtype.UUID `json:"service_id"`
+	TenantID  pgtype.UUID `json:"tenant_id"`
+	Limit     int32       `json:"limit"`
+}
+
+func (q *Queries) ListAgentRunsByService(ctx context.Context, arg ListAgentRunsByServiceParams) ([]AgentRun, error) {
+	rows, err := q.db.Query(ctx, listAgentRunsByService, arg.ServiceID, arg.TenantID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentRun
+	for rows.Next() {
+		var i AgentRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.ServiceID,
+			&i.TenantID,
+			&i.AgentName,
+			&i.RunID,
+			&i.SessionLabel,
+			&i.ModelUsed,
+			&i.ReasoningMode,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.DurationMs,
+			&i.ToolCallCount,
+			&i.TokenInput,
+			&i.TokenOutput,
+			&i.Outcome,
+			&i.OutcomeDetail,
+			&i.CycleCount,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -3546,6 +3822,7 @@ func (q *Queries) ListLeadOrgMembers(ctx context.Context, organizationID pgtype.
 const listLeadServices = `-- name: ListLeadServices :many
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -3571,6 +3848,9 @@ type ListLeadServicesRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -3598,6 +3878,9 @@ func (q *Queries) ListLeadServices(ctx context.Context, arg ListLeadServicesPara
 			&i.CustomerPreferences,
 			&i.GatekeeperNurturingLoopCount,
 			&i.GatekeeperNurturingLoopFingerprint,
+			&i.AgentCycleCount,
+			&i.AgentCycleFingerprint,
+			&i.AgentCycleLastTransition,
 			&i.ExtraWorkAmountCents,
 			&i.ExtraWorkNotes,
 			&i.CreatedAt,
@@ -4931,6 +5214,26 @@ func (q *Queries) MarkHumanFeedbackApplied(ctx context.Context, arg MarkHumanFee
 	return i, err
 }
 
+const resetAgentCycleState = `-- name: ResetAgentCycleState :exec
+UPDATE RAC_lead_services
+SET agent_cycle_count = 0,
+	agent_cycle_fingerprint = NULL,
+	agent_cycle_last_transition = NULL,
+	updated_at = now()
+WHERE id = $1 AND organization_id = $2
+	AND (agent_cycle_count <> 0 OR agent_cycle_fingerprint IS NOT NULL)
+`
+
+type ResetAgentCycleStateParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) ResetAgentCycleState(ctx context.Context, arg ResetAgentCycleStateParams) error {
+	_, err := q.db.Exec(ctx, resetAgentCycleState, arg.ID, arg.OrganizationID)
+	return err
+}
+
 const resetGatekeeperNurturingLoopState = `-- name: ResetGatekeeperNurturingLoopState :exec
 UPDATE RAC_lead_services
 SET gatekeeper_nurturing_loop_count = 0,
@@ -4947,6 +5250,34 @@ type ResetGatekeeperNurturingLoopStateParams struct {
 
 func (q *Queries) ResetGatekeeperNurturingLoopState(ctx context.Context, arg ResetGatekeeperNurturingLoopStateParams) error {
 	_, err := q.db.Exec(ctx, resetGatekeeperNurturingLoopState, arg.ID, arg.OrganizationID)
+	return err
+}
+
+const setAgentCycleState = `-- name: SetAgentCycleState :exec
+UPDATE RAC_lead_services
+SET agent_cycle_count = $3,
+	agent_cycle_fingerprint = $4,
+	agent_cycle_last_transition = $5,
+	updated_at = now()
+WHERE id = $1 AND organization_id = $2
+`
+
+type SetAgentCycleStateParams struct {
+	ID                       pgtype.UUID `json:"id"`
+	OrganizationID           pgtype.UUID `json:"organization_id"`
+	AgentCycleCount          int32       `json:"agent_cycle_count"`
+	AgentCycleFingerprint    pgtype.Text `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition pgtype.Text `json:"agent_cycle_last_transition"`
+}
+
+func (q *Queries) SetAgentCycleState(ctx context.Context, arg SetAgentCycleStateParams) error {
+	_, err := q.db.Exec(ctx, setAgentCycleState,
+		arg.ID,
+		arg.OrganizationID,
+		arg.AgentCycleCount,
+		arg.AgentCycleFingerprint,
+		arg.AgentCycleLastTransition,
+	)
 	return err
 }
 
@@ -5351,10 +5682,11 @@ WITH target AS (
 	UPDATE RAC_lead_services ls
 	SET service_type_id = (SELECT target.id FROM target), updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND EXISTS (SELECT 1 FROM target)
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes, agent_cycle_count, agent_cycle_fingerprint, agent_cycle_last_transition
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM updated u
@@ -5379,6 +5711,9 @@ type UpdateLeadServiceTypeRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -5400,6 +5735,9 @@ func (q *Queries) UpdateLeadServiceType(ctx context.Context, arg UpdateLeadServi
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -5412,11 +5750,11 @@ const updatePipelineStage = `-- name: UpdatePipelineStage :one
 WITH updated AS (
 	UPDATE RAC_lead_services ls SET pipeline_stage = $3, updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND ls.pipeline_stage IS DISTINCT FROM $3
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes, agent_cycle_count, agent_cycle_fingerprint, agent_cycle_last_transition
 ), selected AS (
-	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint, updated.extra_work_amount_cents, updated.extra_work_notes FROM updated
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint, updated.extra_work_amount_cents, updated.extra_work_notes, updated.agent_cycle_count, updated.agent_cycle_fingerprint, updated.agent_cycle_last_transition FROM updated
 	UNION ALL
-	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint, ls.extra_work_amount_cents, ls.extra_work_notes
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint, ls.extra_work_amount_cents, ls.extra_work_notes, ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition
 	FROM RAC_lead_services ls
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 ), event AS (
@@ -5426,6 +5764,7 @@ WITH updated AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
@@ -5450,6 +5789,9 @@ type UpdatePipelineStageRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -5471,6 +5813,9 @@ func (q *Queries) UpdatePipelineStage(ctx context.Context, arg UpdatePipelineSta
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -5520,11 +5865,11 @@ const updateServiceStatus = `-- name: UpdateServiceStatus :one
 WITH updated AS (
 	UPDATE RAC_lead_services ls SET status = $3, updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND ls.status IS DISTINCT FROM $3
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes, agent_cycle_count, agent_cycle_fingerprint, agent_cycle_last_transition
 ), selected AS (
-	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint, updated.extra_work_amount_cents, updated.extra_work_notes FROM updated
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint, updated.extra_work_amount_cents, updated.extra_work_notes, updated.agent_cycle_count, updated.agent_cycle_fingerprint, updated.agent_cycle_last_transition FROM updated
 	UNION ALL
-	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint, ls.extra_work_amount_cents, ls.extra_work_notes
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint, ls.extra_work_amount_cents, ls.extra_work_notes, ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition
 	FROM RAC_lead_services ls
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 ), event AS (
@@ -5534,6 +5879,7 @@ WITH updated AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
@@ -5558,6 +5904,9 @@ type UpdateServiceStatusRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -5579,6 +5928,9 @@ func (q *Queries) UpdateServiceStatus(ctx context.Context, arg UpdateServiceStat
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,
@@ -5597,11 +5949,11 @@ WITH current AS (
 	SET status = $3, pipeline_stage = $4, updated_at = now()
 	WHERE ls.id = $1 AND ls.organization_id = $2
 		AND (status IS DISTINCT FROM $3 OR pipeline_stage IS DISTINCT FROM $4)
-	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes
+	RETURNING id, lead_id, status, created_at, updated_at, service_type_id, consumer_note, source, organization_id, pipeline_stage, customer_preferences, gatekeeper_nurturing_loop_count, gatekeeper_nurturing_loop_fingerprint, extra_work_amount_cents, extra_work_notes, agent_cycle_count, agent_cycle_fingerprint, agent_cycle_last_transition
 ), selected AS (
-	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint, updated.extra_work_amount_cents, updated.extra_work_notes FROM updated
+	SELECT updated.id, updated.lead_id, updated.status, updated.created_at, updated.updated_at, updated.service_type_id, updated.consumer_note, updated.source, updated.organization_id, updated.pipeline_stage, updated.customer_preferences, updated.gatekeeper_nurturing_loop_count, updated.gatekeeper_nurturing_loop_fingerprint, updated.extra_work_amount_cents, updated.extra_work_notes, updated.agent_cycle_count, updated.agent_cycle_fingerprint, updated.agent_cycle_last_transition FROM updated
 	UNION ALL
-	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint, ls.extra_work_amount_cents, ls.extra_work_notes
+	SELECT ls.id, ls.lead_id, ls.status, ls.created_at, ls.updated_at, ls.service_type_id, ls.consumer_note, ls.source, ls.organization_id, ls.pipeline_stage, ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint, ls.extra_work_amount_cents, ls.extra_work_notes, ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition
 	FROM RAC_lead_services ls
 	WHERE ls.id = $1 AND ls.organization_id = $2 AND NOT EXISTS (SELECT 1 FROM updated)
 ), status_event AS (
@@ -5617,6 +5969,7 @@ WITH current AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
@@ -5642,6 +5995,9 @@ type UpdateServiceStatusAndPipelineStageRow struct {
 	CustomerPreferences                []byte             `json:"customer_preferences"`
 	GatekeeperNurturingLoopCount       int32              `json:"gatekeeper_nurturing_loop_count"`
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
 	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
@@ -5668,6 +6024,9 @@ func (q *Queries) UpdateServiceStatusAndPipelineStage(ctx context.Context, arg U
 		&i.CustomerPreferences,
 		&i.GatekeeperNurturingLoopCount,
 		&i.GatekeeperNurturingLoopFingerprint,
+		&i.AgentCycleCount,
+		&i.AgentCycleFingerprint,
+		&i.AgentCycleLastTransition,
 		&i.ExtraWorkAmountCents,
 		&i.ExtraWorkNotes,
 		&i.CreatedAt,

@@ -36,6 +36,7 @@ WITH resolved_service_type AS (
 )
 SELECT i.id, i.lead_id, i.organization_id, st.name AS service_type, i.status, i.pipeline_stage, i.consumer_note, i.source,
 	i.customer_preferences, i.gatekeeper_nurturing_loop_count, i.gatekeeper_nurturing_loop_fingerprint,
+	i.agent_cycle_count, i.agent_cycle_fingerprint, i.agent_cycle_last_transition,
 	i.extra_work_amount_cents, i.extra_work_notes,
 	i.created_at, i.updated_at
 FROM inserted i
@@ -44,6 +45,7 @@ JOIN RAC_service_types st ON st.id = i.service_type_id AND st.organization_id = 
 -- name: GetLeadServiceByID :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -53,6 +55,7 @@ WHERE ls.id = $1 AND ls.organization_id = $2;
 -- name: ListLeadServices :many
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -63,6 +66,7 @@ ORDER BY ls.created_at DESC;
 -- name: GetCurrentActiveLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -74,6 +78,7 @@ LIMIT 1;
 -- name: GetLatestLeadService :one
 SELECT ls.id, ls.lead_id, ls.organization_id, st.name AS service_type, ls.status, ls.pipeline_stage, ls.consumer_note, ls.source,
 	ls.customer_preferences, ls.gatekeeper_nurturing_loop_count, ls.gatekeeper_nurturing_loop_fingerprint,
+	ls.agent_cycle_count, ls.agent_cycle_fingerprint, ls.agent_cycle_last_transition,
 	ls.extra_work_amount_cents, ls.extra_work_notes,
 	ls.created_at, ls.updated_at
 FROM RAC_lead_services ls
@@ -112,6 +117,7 @@ WITH current AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
@@ -132,6 +138,7 @@ WITH target AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM updated u
@@ -155,6 +162,7 @@ WITH updated AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
@@ -178,6 +186,7 @@ WITH updated AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM selected u
@@ -197,6 +206,23 @@ SET gatekeeper_nurturing_loop_count = 0,
 	updated_at = now()
 WHERE id = $1 AND organization_id = $2
 	AND (gatekeeper_nurturing_loop_count <> 0 OR gatekeeper_nurturing_loop_fingerprint IS NOT NULL);
+
+-- name: SetAgentCycleState :exec
+UPDATE RAC_lead_services
+SET agent_cycle_count = $3,
+	agent_cycle_fingerprint = $4,
+	agent_cycle_last_transition = $5,
+	updated_at = now()
+WHERE id = $1 AND organization_id = $2;
+
+-- name: ResetAgentCycleState :exec
+UPDATE RAC_lead_services
+SET agent_cycle_count = 0,
+	agent_cycle_fingerprint = NULL,
+	agent_cycle_last_transition = NULL,
+	updated_at = now()
+WHERE id = $1 AND organization_id = $2
+	AND (agent_cycle_count <> 0 OR agent_cycle_fingerprint IS NOT NULL);
 
 -- name: CloseAllActiveServices :exec
 WITH updated AS (
@@ -241,6 +267,7 @@ WITH current AS (
 )
 SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.pipeline_stage, u.consumer_note, u.source,
 	u.customer_preferences, u.gatekeeper_nurturing_loop_count, u.gatekeeper_nurturing_loop_fingerprint,
+	u.agent_cycle_count, u.agent_cycle_fingerprint, u.agent_cycle_last_transition,
 	u.extra_work_amount_cents, u.extra_work_notes,
 	u.created_at, u.updated_at
 FROM updated u
@@ -1545,3 +1572,58 @@ ORDER BY created_at DESC;
 -- name: DeleteStaleLeadSuggestion :exec
 DELETE FROM RAC_stale_lead_suggestions
 WHERE lead_service_id = $1 AND organization_id = $2;
+
+-- ============================================================
+-- Agent Observability
+-- ============================================================
+
+-- name: InsertAgentRun :one
+INSERT INTO agent_runs (
+    lead_id, service_id, tenant_id, agent_name, run_id, session_label,
+    model_used, reasoning_mode, started_at, finished_at, duration_ms,
+    tool_call_count, token_input, token_output, outcome, outcome_detail, cycle_count
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9, now(), $10,
+    $11, $12, $13, $14, $15, $16
+) RETURNING id, finished_at, created_at;
+
+-- name: CompleteAgentRun :exec
+UPDATE agent_runs
+SET finished_at = now(),
+    duration_ms = $2,
+    tool_call_count = $3,
+    token_input = $4,
+    token_output = $5,
+    outcome = $6,
+    outcome_detail = $7
+WHERE id = $1;
+
+-- name: InsertAgentToolCall :exec
+INSERT INTO agent_tool_calls (
+    agent_run_id, sequence_num, tool_name, arguments_json,
+    response_json, has_error, error_message, duration_ms
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+
+-- name: ListAgentRunsByService :many
+SELECT * FROM agent_runs
+WHERE service_id = $1 AND tenant_id = $2
+ORDER BY created_at DESC
+LIMIT $3;
+
+-- name: GetAgentHealthStats :one
+SELECT
+    COUNT(*) AS total_runs,
+    COUNT(*) FILTER (WHERE outcome = 'success') AS success_count,
+    COUNT(*) FILTER (WHERE outcome = 'fallback') AS fallback_count,
+    COUNT(*) FILTER (WHERE outcome = 'escalation') AS escalation_count,
+    COUNT(*) FILTER (WHERE outcome = 'loop_detected') AS loop_count,
+    COUNT(*) FILTER (WHERE outcome = 'error') AS error_count,
+    COUNT(*) FILTER (WHERE outcome = 'timeout') AS timeout_count,
+    COALESCE(AVG(tool_call_count), 0)::INTEGER AS avg_tool_calls,
+    COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_duration_ms,
+    COALESCE(SUM(token_input), 0)::BIGINT AS total_token_input,
+    COALESCE(SUM(token_output), 0)::BIGINT AS total_token_output
+FROM agent_runs
+WHERE tenant_id = $1
+  AND created_at >= $2;

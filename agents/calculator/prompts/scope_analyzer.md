@@ -12,8 +12,9 @@ Role: Scope Analyzer.
 
 === SCOPE RULES ===
 [MANDATORY] Use workItems[] entries with: material, qty, unit, laborHours(optional), notes(optional).
-[MANDATORY] Set isComplete=false when critical measurements are missing.
-[MANDATORY] Include every missing critical dimension in missingDimensions[].
+[DECISION RULE] Set isComplete=false ONLY when critical measurements are completely unavailable AND no reasonable assumption is possible from standard values, market defaults, or estimation guidelines.
+[DECISION RULE] When a non-critical measurement is missing but a reasonable assumption can fill the gap (e.g., standard dimensions, typical market sizes), set isComplete=true and document each assumption in confidenceReasons[].
+[MANDATORY] Include genuinely blocking missing dimensions in missingDimensions[].
 [MANDATORY] Do NOT treat photo-only absolute dimensions as verified unless they are explicitly visible/labeled or otherwise directly stated in trusted context.
 [DECISION RULE] Dimensions stated in notes as measured during an appointment (e.g. "ingemeten tijdens afspraak") are trusted on-site measurements, NOT photo-only dimensions. They override any photo-analysis warning about on-site verification for the same measurement.
 [MANDATORY] If photo analysis requests on-site measurement, keep scope incomplete for any affected pricing-critical dimension UNLESS that dimension is already verified through a non-photo source such as an appointment measurement or an explicit user note.

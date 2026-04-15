@@ -233,6 +233,41 @@ func (ns NullRacQuoteAttachmentSource) Value() (driver.Value, error) {
 	return string(ns.RacQuoteAttachmentSource), nil
 }
 
+type AgentRun struct {
+	ID            pgtype.UUID        `json:"id"`
+	LeadID        pgtype.UUID        `json:"lead_id"`
+	ServiceID     pgtype.UUID        `json:"service_id"`
+	TenantID      pgtype.UUID        `json:"tenant_id"`
+	AgentName     string             `json:"agent_name"`
+	RunID         string             `json:"run_id"`
+	SessionLabel  string             `json:"session_label"`
+	ModelUsed     string             `json:"model_used"`
+	ReasoningMode string             `json:"reasoning_mode"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	DurationMs    pgtype.Int4        `json:"duration_ms"`
+	ToolCallCount int32              `json:"tool_call_count"`
+	TokenInput    int32              `json:"token_input"`
+	TokenOutput   int32              `json:"token_output"`
+	Outcome       string             `json:"outcome"`
+	OutcomeDetail string             `json:"outcome_detail"`
+	CycleCount    int32              `json:"cycle_count"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentToolCall struct {
+	ID            pgtype.UUID        `json:"id"`
+	AgentRunID    pgtype.UUID        `json:"agent_run_id"`
+	SequenceNum   int32              `json:"sequence_num"`
+	ToolName      string             `json:"tool_name"`
+	ArgumentsJson []byte             `json:"arguments_json"`
+	ResponseJson  []byte             `json:"response_json"`
+	HasError      bool               `json:"has_error"`
+	ErrorMessage  string             `json:"error_message"`
+	DurationMs    int32              `json:"duration_ms"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type LeadTimelineEvent struct {
 	ID             pgtype.UUID        `json:"id"`
 	LeadID         pgtype.UUID        `json:"lead_id"`
@@ -844,6 +879,9 @@ type RacLeadService struct {
 	GatekeeperNurturingLoopFingerprint pgtype.Text        `json:"gatekeeper_nurturing_loop_fingerprint"`
 	ExtraWorkAmountCents               pgtype.Int8        `json:"extra_work_amount_cents"`
 	ExtraWorkNotes                     pgtype.Text        `json:"extra_work_notes"`
+	AgentCycleCount                    int32              `json:"agent_cycle_count"`
+	AgentCycleFingerprint              pgtype.Text        `json:"agent_cycle_fingerprint"`
+	AgentCycleLastTransition           pgtype.Text        `json:"agent_cycle_last_transition"`
 }
 
 // Stores metadata for files uploaded to MinIO for lead services

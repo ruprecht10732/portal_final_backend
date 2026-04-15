@@ -43,6 +43,7 @@ const (
 	recentEquivalentAnalysisTTL      = 2 * time.Minute
 	divisionByZeroMessage            = "division by zero"
 	gatekeeperNurturingLoopThreshold = 3
+	agentCycleThreshold              = 3
 )
 
 const highConfidenceScoreThreshold = 0.45
@@ -53,6 +54,9 @@ const (
 	gatekeeperLoopDetectedTrigger = "ai_loop_detected"
 	gatekeeperLoopReasonCode      = "nurturing_loop_threshold"
 	gatekeeperLoopDetectedSummary = "Systeem: AI zat in een lus. Menselijke controle vereist."
+	agentCycleDetectedTrigger     = "agent_cycle_detected"
+	agentCycleReasonCode          = "cross_agent_cycle_threshold"
+	agentCycleDetectedSummary     = "Systeem: Service pingpongt tussen Gatekeeper en Estimator. Menselijke controle vereist."
 )
 
 // normalizeUrgencyLevel converts various urgency level formats to the required values: High, Medium, Low
@@ -577,6 +581,24 @@ func (d *ToolDependencies) ResetToolCallTracking() {
 }
 
 func (d *ToolDependencies) getSearchCache(key string) (SearchProductMaterialsOutput, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.searchCache == nil {
+		return SearchProductMaterialsOutput{}, false
+	}
+	output, ok := d.searchCache[key]
+	return output, ok
+}
+
+// normalizedSearchCacheKey creates a word-order-independent cache key to catch
+// slight query variations like "kunststof deur wit" vs "witte kunststof deur".
+func normalizedSearchCacheKey(query string, limit int, useCatalog bool, scoreThreshold float64) string {
+	words := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	sort.Strings(words)
+	return fmt.Sprintf("~%s|%d|%t|%.4f", strings.Join(words, " "), limit, useCatalog, scoreThreshold)
+}
+
+func (d *ToolDependencies) getSearchCacheNormalized(key string) (SearchProductMaterialsOutput, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.searchCache == nil {
@@ -1843,6 +1865,11 @@ func applyPipelineStageUpdate(ctx context.Context, deps *ToolDependencies, input
 			log.Printf("gatekeeper nurturing loop reset failed for service=%s tenant=%s: %v", state.serviceID, state.tenantID, resetErr)
 		}
 	}
+	if shouldResetAgentCycleState(state.service, input.Stage, loopResult.Trigger) {
+		if resetErr := deps.Repo.ResetAgentCycleState(ctx, state.serviceID, state.tenantID); resetErr != nil {
+			log.Printf("agent cycle state reset failed for service=%s tenant=%s: %v", state.serviceID, state.tenantID, resetErr)
+		}
+	}
 
 	recordPipelineStageChange(ctx, deps, stageChangeParams{
 		leadID:             state.leadID,
@@ -1933,6 +1960,15 @@ func prepareStageUpdate(ctx context.Context, deps *ToolDependencies, input *Upda
 	loopResult, out, done, err := applyGatekeeperNurturingLoopPolicy(ctx, deps, state, input)
 	if done || err != nil {
 		return state, loopResult, out, done, err
+	}
+
+	cycleResult, out, done, err := applyAgentCyclePolicy(ctx, deps, state, input)
+	if done || err != nil {
+		return state, loopResult, out, done, err
+	}
+	if cycleResult.Trigger != "" {
+		loopResult.Trigger = cycleResult.Trigger
+		loopResult.ReasonCode = cycleResult.ReasonCode
 	}
 
 	if state.oldStage == input.Stage {
@@ -2038,6 +2074,69 @@ func normalizeGatekeeperLoopItems(values []string) []string {
 	}
 	sort.Strings(normalized)
 	return normalized
+}
+
+// --- Cross-agent cycle detection ---
+
+type agentCycleResult struct {
+	Trigger    string
+	ReasonCode string
+	Count      int
+}
+
+// applyAgentCyclePolicy detects cross-agent ping-pong between Gatekeeper and Estimator.
+// When the Estimator sends a service back to Nurturing, we increment the cycle counter.
+// When the Gatekeeper then advances to Estimation and the counter >= threshold, we force Manual_Intervention.
+func applyAgentCyclePolicy(ctx context.Context, deps *ToolDependencies, state stageUpdateState, input *UpdatePipelineStageInput) (agentCycleResult, UpdatePipelineStageOutput, bool, error) {
+	actorName := state.actorName
+
+	// Track: Estimator sending to Nurturing (the "bounce-back" half of the cycle)
+	if actorName == repository.ActorNameEstimator && input.Stage == domain.PipelineStageNurturing {
+		if deps.WasStageUpdateCalled() {
+			return agentCycleResult{}, UpdatePipelineStageOutput{}, false, nil
+		}
+		count := state.service.AgentCycleCount + 1
+		transition := "Estimation→Nurturing"
+		fingerprint := "estimator-bounce"
+		if input.Reason != "" {
+			parts := normalizeGatekeeperLoopItems([]string{input.Reason})
+			if len(parts) > 0 {
+				fingerprint = strings.Join(parts, " | ")
+			}
+		}
+		if err := deps.Repo.SetAgentCycleState(ctx, state.serviceID, state.tenantID, count, fingerprint, transition); err != nil {
+			log.Printf("agent cycle state update failed for service=%s: %v", state.serviceID, err)
+		}
+		return agentCycleResult{Count: count}, UpdatePipelineStageOutput{}, false, nil
+	}
+
+	// Enforce: Gatekeeper advancing to Estimation while cycle counter is high
+	if actorName == repository.ActorNameGatekeeper && input.Stage == domain.PipelineStageEstimation && state.service.AgentCycleCount >= agentCycleThreshold {
+		input.Stage = domain.PipelineStageManualIntervention
+		input.Reason = agentCycleDetectedSummary
+		return agentCycleResult{
+			Trigger:    agentCycleDetectedTrigger,
+			ReasonCode: agentCycleReasonCode,
+			Count:      state.service.AgentCycleCount,
+		}, UpdatePipelineStageOutput{}, false, nil
+	}
+
+	return agentCycleResult{}, UpdatePipelineStageOutput{}, false, nil
+}
+
+func shouldResetAgentCycleState(service repository.LeadService, targetStage, trigger string) bool {
+	if service.AgentCycleCount == 0 && service.AgentCycleFingerprint == nil {
+		return false
+	}
+	// Don't reset while in Nurturing or Estimation (cycle is still active)
+	if targetStage == domain.PipelineStageNurturing || targetStage == domain.PipelineStageEstimation {
+		return false
+	}
+	// Don't reset when we just triggered the cycle breaker
+	if targetStage == domain.PipelineStageManualIntervention && trigger == agentCycleDetectedTrigger {
+		return false
+	}
+	return true
 }
 
 func applyCouncilDecision(ctx context.Context, deps *ToolDependencies, eval CouncilEvaluation, state stageUpdateState, input *UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
@@ -3124,6 +3223,12 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return cached, nil
 	}
 
+	normKey := normalizedSearchCacheKey(query, limit, useCatalog, scoreThreshold)
+	if cached, ok := deps.getSearchCacheNormalized(normKey); ok {
+		log.Printf("SearchProductMaterials: normalized cache hit query=%q limit=%d useCatalog=%t minScore=%.2f", query, limit, useCatalog, scoreThreshold)
+		return cached, nil
+	}
+
 	vector, err := deps.EmbeddingClient.Embed(ctx, query)
 	if err != nil {
 		log.Printf("SearchProductMaterials: embedding failed: %v", err)
@@ -3131,8 +3236,13 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	}
 
 	catalogOutput, foundInCatalog := tryCatalogSearchFlow(ctx, deps, query, limit, scoreThreshold, useCatalog, vector)
+	setBothCaches := func(output SearchProductMaterialsOutput) {
+		deps.setSearchCache(cacheKey, output)
+		deps.setSearchCache(normKey, output)
+	}
+
 	if foundInCatalog && hasStrongCatalogMatch(catalogOutput.Products) {
-		deps.setSearchCache(cacheKey, catalogOutput)
+		setBothCaches(catalogOutput)
 		return catalogOutput, nil
 	}
 
@@ -3140,7 +3250,7 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 	if fallbackErr != nil {
 		if foundInCatalog && len(catalogOutput.Products) > 0 {
 			log.Printf("SearchProductMaterials: fallback search failed, returning catalog-only low-confidence results: %v", fallbackErr)
-			deps.setSearchCache(cacheKey, catalogOutput)
+			setBothCaches(catalogOutput)
 			return catalogOutput, nil
 		}
 		return fallbackOutput, fallbackErr
@@ -3148,17 +3258,17 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 
 	if foundInCatalog && len(catalogOutput.Products) > 0 {
 		if len(fallbackOutput.Products) == 0 {
-			deps.setSearchCache(cacheKey, catalogOutput)
+			setBothCaches(catalogOutput)
 			return catalogOutput, nil
 		}
 
 		log.Printf("SearchProductMaterials: catalog had no high-confidence matches, adding fallback collections")
 		combinedOutput := combineCatalogAndFallbackResults(catalogOutput, fallbackOutput, query, scoreThreshold, limit)
-		deps.setSearchCache(cacheKey, combinedOutput)
+		setBothCaches(combinedOutput)
 		return combinedOutput, nil
 	}
 
-	deps.setSearchCache(cacheKey, fallbackOutput)
+	setBothCaches(fallbackOutput)
 	return fallbackOutput, nil
 }
 

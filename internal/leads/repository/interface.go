@@ -80,6 +80,8 @@ type LeadServiceWriter interface {
 	UpdatePipelineStage(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, stage string) (LeadService, error)
 	SetGatekeeperNurturingLoopState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, count int, fingerprint string) error
 	ResetGatekeeperNurturingLoopState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
+	SetAgentCycleState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, count int, fingerprint string, lastTransition string) error
+	ResetAgentCycleState(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
 	InsertLeadServiceEvent(ctx context.Context, params InsertServiceEventParams) error
 	UpdateServicePreferences(ctx context.Context, serviceID uuid.UUID, organizationID uuid.UUID, prefs []byte) error
 	CloseAllActiveServices(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) error
@@ -252,6 +254,15 @@ type CatalogGapReader interface {
 	ListFrequentAdHocQuoteItems(ctx context.Context, organizationID uuid.UUID, lookbackDays int, minCount int, limit int) ([]AdHocQuoteItemSummary, error)
 }
 
+// AgentRunStore provides observability for agent runs and tool calls.
+type AgentRunStore interface {
+	InsertAgentRun(ctx context.Context, params InsertAgentRunParams) (uuid.UUID, error)
+	CompleteAgentRun(ctx context.Context, params CompleteAgentRunParams) error
+	InsertAgentToolCall(ctx context.Context, params InsertAgentToolCallParams) error
+	ListAgentRunsByService(ctx context.Context, serviceID, tenantID uuid.UUID, limit int) ([]AgentRun, error)
+	GetAgentHealthStats(ctx context.Context, tenantID uuid.UUID, since time.Time) (AgentHealthStats, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -293,6 +304,7 @@ type LeadsRepository interface {
 	OrgMemberReader
 	CatalogSearchLogStore
 	CatalogGapReader
+	AgentRunStore
 	LeadFuzzySearcher
 }
 

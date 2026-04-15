@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ const defaultCustomerCommunicationGuideline = "Customer communication note: Avoi
 func fetchServiceTypeEstimationGuidelines(ctx context.Context, repo repository.LeadsRepository, tenantID uuid.UUID, serviceType string) string {
 	serviceTypes, err := repo.ListActiveServiceTypes(ctx, tenantID)
 	if err != nil {
+		log.Printf("guidelines: estimation guidelines load failed tenant=%s serviceType=%s: %v", tenantID, serviceType, err)
 		return defaultCustomerCommunicationGuideline
 	}
 	for _, serviceDefinition := range serviceTypes {
@@ -22,9 +24,12 @@ func fetchServiceTypeEstimationGuidelines(ctx context.Context, repo repository.L
 		}
 		guidelines := strings.TrimSpace(*serviceDefinition.EstimationGuidelines)
 		if guidelines == "" {
+			log.Printf("guidelines: estimation guidelines empty tenant=%s serviceType=%s", tenantID, serviceType)
 			return defaultCustomerCommunicationGuideline
 		}
+		log.Printf("guidelines: estimation guidelines loaded tenant=%s serviceType=%s len=%d", tenantID, serviceType, len(guidelines))
 		return guidelines + "\n\n" + defaultCustomerCommunicationGuideline
 	}
+	log.Printf("guidelines: estimation guidelines not found tenant=%s serviceType=%s", tenantID, serviceType)
 	return defaultCustomerCommunicationGuideline
 }

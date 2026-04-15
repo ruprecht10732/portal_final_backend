@@ -121,7 +121,7 @@ func TestBuildGatekeeperPromptWarnsPhotoMeasurementsAreAdvisory(t *testing.T) {
 	})
 
 	checks := []string{
-		"Photo-derived measurements are advisory only unless explicitly visible/labeled in the image context; on-site measurement flags override them.",
+		"Photo-derived measurements are advisory only unless explicitly visible/labeled; on-site measurement flags override them.",
 		"Measurement guardrail: Treat photo-derived dimensions as advisory only unless they are explicitly visible, labeled, or OCR-backed.",
 		"Needs on-site measurement: Exacte dagmaat ontbreekt",
 	}
@@ -284,8 +284,8 @@ func TestGatekeeperPromptKeepsEstimatorBlockersAfterCustomerReplyWithoutMeasurem
 	checks := []string{
 		"Ik heb geen meetlint.",
 		"Eerder ontbrekende intakegegevens: dagmaat van het kozijn, hoogte van de opening",
-		"you MUST NOT move to Estimation until that exact information is explicitly present in trusted context",
-		"If the latest customer message shows inability, lack of tools, or frustration about measuring, do NOT repeat the same ask.",
+		"do NOT move to Estimation until that exact information is explicitly present",
+		"If the customer shows frustration or inability to measure, do NOT repeat the same ask.",
 	}
 
 	for _, token := range checks {
@@ -395,7 +395,7 @@ func TestBuildGatekeeperPromptFlagsDocumentReviewAttachments(t *testing.T) {
 		"Attachment Awareness:",
 		"plattegrond.pdf [document/pdf]",
 		"Human document review recommended: true",
-		"If Attachment Awareness indicates a non-image document likely contains plans, measurements, or competitor quotes, do NOT ask the customer to restate those dimensions.",
+		"If Attachment Awareness indicates a document likely contains plans/measurements/quotes, do NOT re-ask for those details.",
 	}
 
 	for _, token := range checks {
@@ -429,7 +429,7 @@ func TestBuildEstimatorPromptUsesCanonicalToolOrder(t *testing.T) {
 		"=== EXECUTION PRIORITY ===",
 		toolOrderMandatoryHeader,
 		"1. ListCatalogGaps (once)",
-		"2. SearchProductMaterials (repeat as needed)",
+		"2. SearchProductMaterials (limit calls: one broad search per material category, reuse results across quote lines)",
 		"3. Calculator",
 		"4. CalculateEstimate",
 		"5. DraftQuote",
@@ -493,8 +493,8 @@ func TestBuildGatekeeperPromptKeepsRepairConfirmationDetailsOutOfMissingInformat
 	})
 
 	checks := []string{
-		"For repair, adjustment, diagnosis, inspection, or replacement work, measurements needed only for final on-site verification or exact part selection are not automatically critical blockers when trusted context already supports a bounded preliminary estimate.",
-		"In those cases, do not set RecommendedAction=RequestInfo solely for confirmatory measurements; keep them out of missingInformation unless they block even a bounded preliminary estimate.",
+		"For repair/adjustment/replacement work, measurements needed only for final on-site verification are NOT automatic blockers when a bounded preliminary estimate is possible.",
+		"Do NOT set RecommendedAction=RequestInfo solely for confirmatory measurements.",
 	}
 
 	for _, token := range checks {

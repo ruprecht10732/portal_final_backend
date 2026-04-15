@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -26,12 +28,14 @@ import (
 
 // Gatekeeper validates intake requirements and advances pipeline stage.
 type Gatekeeper struct {
-	agent          agent.Agent
-	runner         *runner.Runner
-	sessionService session.Service
-	appName        string
-	repo           repository.LeadsRepository
-	toolDeps       *ToolDependencies
+	agent             agent.Agent
+	runner            *runner.Runner
+	sessionService    session.Service
+	appName           string
+	repo              repository.LeadsRepository
+	toolDeps          *ToolDependencies
+	mu                sync.Mutex
+	lastSessionResult *SessionResult
 }
 
 // NewGatekeeper creates a Gatekeeper agent.
@@ -108,6 +112,7 @@ func (g *Gatekeeper) SetOrganizationAISettingsReader(reader ports.OrganizationAI
 
 // Run executes the gatekeeper for a lead service.
 func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) error {
+	runStart := time.Now()
 	reqDeps := g.toolDeps.NewRequestDeps()
 	reqDeps.SetTenantID(tenantID)
 	reqDeps.SetLeadContext(leadID, serviceID)
@@ -115,6 +120,10 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	reqDeps.ResetToolCallTracking() // Reset before each run
 	runID := reqDeps.GetRunID()
 	log.Printf("gatekeeper: run started runID=%s lead=%s service=%s tenant=%s", runID, leadID, serviceID, tenantID)
+
+	g.mu.Lock()
+	g.lastSessionResult = nil
+	g.mu.Unlock()
 
 	ctx = WithDependencies(ctx, reqDeps)
 
@@ -150,6 +159,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 		photoAnalysis:      photoAnalysis,
 		priorAnalysis:      priorAnalysis,
 		nurturingLoopCount: service.GatekeeperNurturingLoopCount,
+		agentCycleCount:    service.AgentCycleCount,
 	}); err != nil {
 		return err
 	}
@@ -171,7 +181,54 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	g.maybeAutoDisqualifyJunk(ctx, leadID, serviceID, tenantID, service)
 	log.Printf("gatekeeper: run finished runID=%s lead=%s service=%s", runID, leadID, serviceID)
 
+	g.persistAgentRun(ctx, leadID, serviceID, tenantID, runID, runStart, reqDeps, service)
+
 	return nil
+}
+
+func (g *Gatekeeper) persistAgentRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, runID string, runStart time.Time, reqDeps *ToolDependencies, service repository.LeadService) {
+	outcome := "success"
+	detail := ""
+	if !reqDeps.WasSaveAnalysisCalled() {
+		outcome = "fallback"
+		detail = "SaveAnalysis not called"
+	}
+	if !reqDeps.WasStageUpdateCalled() {
+		if outcome == "fallback" {
+			detail += "; StageUpdate not called"
+		} else {
+			outcome = "fallback"
+			detail = "StageUpdate not called"
+		}
+	}
+
+	toolCallCount := 0
+	g.mu.Lock()
+	sr := g.lastSessionResult
+	g.mu.Unlock()
+	if sr != nil {
+		toolCallCount = sr.ToolCallCount
+	}
+	durationMs := int(time.Since(runStart).Milliseconds())
+
+	if agentRunID, err := g.repo.InsertAgentRun(ctx, repository.InsertAgentRunParams{
+		LeadID:        leadID,
+		ServiceID:     serviceID,
+		TenantID:      tenantID,
+		AgentName:     "gatekeeper",
+		RunID:         runID,
+		SessionLabel:  "gatekeeper",
+		StartedAt:     runStart,
+		DurationMs:    durationMs,
+		ToolCallCount: toolCallCount,
+		Outcome:       outcome,
+		OutcomeDetail: detail,
+		CycleCount:    service.AgentCycleCount,
+	}); err != nil {
+		log.Printf("gatekeeper: failed to persist agent run record: %v", err)
+	} else if sr != nil {
+		persistToolTraces(ctx, g.repo, agentRunID, sr.ToolTraces, "gatekeeper")
+	}
 }
 
 func (g *Gatekeeper) fetchLeadAndService(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) (repository.Lead, repository.LeadService, error) {
@@ -213,14 +270,25 @@ func (g *Gatekeeper) applyFallbackNurturingStage(ctx context.Context, leadID, se
 		log.Printf("gatekeeper: skipping fallback stage update (already Nurturing) runID=%s lead=%s service=%s", runID, leadID, serviceID)
 		return
 	}
-	if out, err := applyPipelineStageUpdate(ctx, GetDependencies(ctx), UpdatePipelineStageInput{Stage: domain.PipelineStageNurturing, Reason: reason}); err != nil {
-		log.Printf("gatekeeper: fallback stage update to Nurturing failed (runID=%s lead=%s service=%s): %v", runID, leadID, serviceID, err)
+
+	// If the service is already in a cross-agent cycle, escalate to Manual_Intervention
+	// instead of creating another Nurturing loop iteration.
+	targetStage := domain.PipelineStageNurturing
+	if currentService.AgentCycleCount >= agentCycleThreshold {
+		targetStage = domain.PipelineStageManualIntervention
+		reason = "Systeem: herhaalde AI-fallbacks en cross-agent cyclus. Menselijke controle vereist."
+		log.Printf("gatekeeper: fallback escalating to Manual_Intervention due to agent cycle count=%d runID=%s lead=%s service=%s",
+			currentService.AgentCycleCount, runID, leadID, serviceID)
+	}
+
+	if out, err := applyPipelineStageUpdate(ctx, GetDependencies(ctx), UpdatePipelineStageInput{Stage: targetStage, Reason: reason}); err != nil {
+		log.Printf("gatekeeper: fallback stage update to %s failed (runID=%s lead=%s service=%s): %v", targetStage, runID, leadID, serviceID, err)
 		return
 	} else if !out.Success {
 		log.Printf("gatekeeper: fallback stage update rejected (runID=%s lead=%s service=%s): %s", runID, leadID, serviceID, out.Message)
 		return
 	}
-	log.Printf("gatekeeper: applied fallback stage update to Nurturing (runID=%s lead=%s service=%s)", runID, leadID, serviceID)
+	log.Printf("gatekeeper: applied fallback stage update to %s (runID=%s lead=%s service=%s)", targetStage, runID, leadID, serviceID)
 }
 
 func (g *Gatekeeper) fetchServiceContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) ([]repository.LeadNote, []repository.Attachment, *repository.PhotoAnalysis, *repository.AppointmentVisitReport) {
@@ -266,6 +334,7 @@ type gatekeeperPromptRequest struct {
 	photoAnalysis      *repository.PhotoAnalysis
 	priorAnalysis      *repository.AIAnalysis
 	nurturingLoopCount int
+	agentCycleCount    int
 }
 
 func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperPromptRequest) error {
@@ -280,6 +349,7 @@ func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperProm
 		photoAnalysis:      req.photoAnalysis,
 		priorAnalysis:      req.priorAnalysis,
 		nurturingLoopCount: req.nurturingLoopCount,
+		agentCycleCount:    req.agentCycleCount,
 	})
 
 	log.Printf("gatekeeper: starting runWithPrompt for lead=%s service=%s", req.leadID, req.serviceID)
@@ -455,6 +525,7 @@ func (g *Gatekeeper) buildServiceContext(ctx context.Context, tenantID uuid.UUID
 	_, _ = fmt.Fprintf(&sb, "Selected service type (current): %s\n\n", currentServiceType)
 
 	if selected == nil {
+		log.Printf("guidelines: intake guidelines not found tenant=%s serviceType=%s", tenantID, currentServiceType)
 		sb.WriteString("Intake Requirements for selected service type: Not found (service type may be inactive or renamed).\n")
 		sb.WriteString("If intake requirements are missing, move to Nurturing and request the missing details.\n")
 		return sb.String()
@@ -464,9 +535,12 @@ func (g *Gatekeeper) buildServiceContext(ctx context.Context, tenantID uuid.UUID
 		sb.WriteString("Description: " + strings.TrimSpace(*selected.Description) + "\n")
 	}
 	if selected.IntakeGuidelines != nil && strings.TrimSpace(*selected.IntakeGuidelines) != "" {
+		intakeLen := len(strings.TrimSpace(*selected.IntakeGuidelines))
+		log.Printf("guidelines: intake guidelines loaded tenant=%s serviceType=%s len=%d", tenantID, currentServiceType, intakeLen)
 		sb.WriteString("Intake Requirements (includes any heuristics/checklist text configured by tenant):\n")
 		sb.WriteString(strings.TrimSpace(*selected.IntakeGuidelines) + "\n")
 	} else {
+		log.Printf("guidelines: intake guidelines empty tenant=%s serviceType=%s", tenantID, currentServiceType)
 		sb.WriteString("Intake Requirements: Not specified.\n")
 	}
 	sb.WriteString("Customer communication note: Avoid technical jargon in customer-facing clarification messages. Translate trade terms into simple consumer language with concrete examples of what to measure or photograph.\n")
@@ -495,9 +569,16 @@ func (g *Gatekeeper) runWithPrompt(ctx context.Context, promptText string, leadI
 		CreateSessionMessage: "failed to create gatekeeper session",
 		RunFailureMessage:    "gatekeeper run failed",
 		TraceLabel:           "gatekeeper",
+		OnSessionComplete:    g.captureSessionResult,
 	},
 		func(event *session.Event) {
 			_ = event
 		},
 	)
+}
+
+func (g *Gatekeeper) captureSessionResult(result SessionResult) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.lastSessionResult = &result
 }

@@ -29,6 +29,7 @@ const (
 	maxEstimatorNotesChars       = 3000
 	maxEstimatorPreferencesChars = 1200
 	maxEstimatorPhotoChars       = 3500
+	maxEstimatorContextChars     = 6000
 
 	maxQuoteServiceNoteChars = 2000
 	maxQuoteNotesChars       = 2500
@@ -55,6 +56,7 @@ type gatekeeperPromptInput struct {
 	photoAnalysis      *repository.PhotoAnalysis
 	priorAnalysis      *repository.AIAnalysis
 	nurturingLoopCount int
+	agentCycleCount    int
 }
 
 type quotePromptInput struct {
@@ -71,6 +73,7 @@ type gatekeeperPromptTemplateData struct {
 	CommunicationContract     string
 	PreferredChannel          string
 	RecoveryModeSection       string
+	CycleAwarenessSection     string
 	LeadID                    uuid.UUID
 	ServiceID                 uuid.UUID
 	ServiceType               string
@@ -122,11 +125,24 @@ func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 `, input.nurturingLoopCount)
 	}
 
+	cycleAwarenessSection := ""
+	if input.agentCycleCount > 0 {
+		cycleAwarenessSection = fmt.Sprintf(`
+
+=== CROSS-AGENT CYCLE WARNING ===
+[MANDATORY] This service has bounced between Gatekeeper and Estimator %d time(s).
+[MANDATORY] The Estimator has previously returned this service to Nurturing because it could not produce an estimate.
+[MANDATORY] Do NOT advance to Estimation UNLESS the specific blockers listed in "Previous Estimator Blockers" are explicitly resolved with new information.
+[MANDATORY] If blockers cannot be resolved with available information, set stage to Manual_Intervention with a clear explanation.
+`, input.agentCycleCount)
+	}
+
 	return renderPromptTemplate(gatekeeperPromptTemplate, gatekeeperPromptTemplateData{
 		ExecutionContract:         sharedExecutionContract,
 		CommunicationContract:     sharedCommunicationContract,
 		PreferredChannel:          preferredChannel,
 		RecoveryModeSection:       recoveryModeSection,
+		CycleAwarenessSection:     cycleAwarenessSection,
 		LeadID:                    input.lead.ID,
 		ServiceID:                 input.service.ID,
 		ServiceType:               input.service.ServiceType,
@@ -301,8 +317,8 @@ func buildQuoteBuilderPrompt(lead repository.Lead, service repository.LeadServic
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxEstimatorPreferencesChars)
 	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
-	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
-	scopeSummary := truncatePromptSection(formatScopeArtifact(scopeArtifact), maxGatekeeperIntakeChars)
+	estimationContextSummary := truncatePromptSection(estimationContext, maxEstimatorContextChars)
+	scopeSummary := truncatePromptSection(formatScopeArtifact(scopeArtifact), maxEstimatorContextChars)
 	consumerSummary := buildPromptConsumerSection(lead)
 	locationSummary := buildPromptLocationLine(lead)
 
@@ -348,7 +364,7 @@ func buildInvestigativePrompt(lead repository.Lead, service repository.LeadServi
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxEstimatorPreferencesChars)
 	photoSummary := truncatePromptSection(buildPhotoSummary(photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxEstimatorServiceNoteChars)
-	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
+	estimationContextSummary := truncatePromptSection(estimationContext, maxEstimatorContextChars)
 	houseContextSummary := truncatePromptSection(buildHouseContextSection(lead), maxGatekeeperLeadCtxChars)
 
 	missing := "- Geen expliciete lijst ontvangen"
@@ -717,7 +733,7 @@ func buildQuoteGeneratePrompt(lead repository.Lead, service repository.LeadServi
 	preferencesSummary := buildPreferencesSummary(service.CustomerPreferences, maxQuotePreferencesChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
 	userPromptSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(userPrompt, 2000)), maxQuoteUserPromptChars)
-	estimationContextSummary := truncatePromptSection(estimationContext, maxGatekeeperIntakeChars)
+	estimationContextSummary := truncatePromptSection(estimationContext, maxEstimatorContextChars)
 	consumerSummary := buildPromptConsumerSection(lead)
 	locationSummary := buildPromptLocationLine(lead)
 	referenceData := wrapReferenceBlock(fmt.Sprintf(`Lead:
@@ -774,8 +790,8 @@ func buildQuoteCriticPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxQuotePreferencesChars)
 	photoSummary := truncatePromptSection(buildPhotoSummary(input.photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
-	estimationContextSummary := truncatePromptSection(input.estimationContext, maxGatekeeperIntakeChars)
-	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxGatekeeperIntakeChars)
+	estimationContextSummary := truncatePromptSection(input.estimationContext, maxEstimatorContextChars)
+	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxEstimatorContextChars)
 	consumerSummary := buildPromptConsumerSection(input.lead)
 	locationSummary := buildPromptLocationLine(input.lead)
 	draftJSON := formatDraftQuoteForCritic(draftInput)
@@ -821,8 +837,8 @@ func buildQuoteRepairPrompt(input quotePromptInput, draftInput DraftQuoteInput, 
 	preferencesSummary := buildPreferencesSummary(input.service.CustomerPreferences, maxQuotePreferencesChars)
 	photoSummary := truncatePromptSection(buildPhotoSummary(input.photoAnalysis), maxEstimatorPhotoChars)
 	serviceNoteSummary := truncatePromptSection(wrapUserData(sanitizeUserInput(serviceNote, maxConsumerNote)), maxQuoteServiceNoteChars)
-	estimationContextSummary := truncatePromptSection(input.estimationContext, maxGatekeeperIntakeChars)
-	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxGatekeeperIntakeChars)
+	estimationContextSummary := truncatePromptSection(input.estimationContext, maxEstimatorContextChars)
+	scopeSummary := truncatePromptSection(formatScopeArtifact(input.scopeArtifact), maxEstimatorContextChars)
 	consumerSummary := buildPromptConsumerSection(input.lead)
 	locationSummary := buildPromptLocationLine(input.lead)
 	draftJSON := formatDraftQuoteForCritic(draftInput)

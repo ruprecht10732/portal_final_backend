@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -135,6 +136,10 @@ func (m *Model) generate(ctx context.Context, req *model.LLMRequest) (*model.LLM
 	choice := result.Choices[0].Message
 	parts := buildResponseParts(choice)
 
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("llm api error (%s): model returned empty response (no content, no tool calls)", m.config.Provider)
+	}
+
 	return &model.LLMResponse{
 		Content: &genai.Content{
 			Role:  genai.RoleModel,
@@ -215,6 +220,10 @@ func buildResponseParts(choice openAIChoiceMessage) []*genai.Part {
 		parts = append(parts, genai.NewPartFromText(choice.Content))
 	}
 	for _, tc := range choice.ToolCalls {
+		if strings.TrimSpace(tc.Function.Name) == "" {
+			log.Printf("llm: skipping tool call with empty name (id=%s)", tc.ID)
+			continue
+		}
 		parts = append(parts, buildToolCallPart(tc))
 	}
 	return parts
@@ -224,6 +233,7 @@ func buildToolCallPart(tc openAIToolCall) *genai.Part {
 	args := map[string]any{}
 	if tc.Function.Arguments != "" {
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			log.Printf("llm: tool call %q has unparseable arguments, falling back to raw string (id=%s)", tc.Function.Name, tc.ID)
 			args = map[string]any{"_raw": tc.Function.Arguments}
 		}
 	}

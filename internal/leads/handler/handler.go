@@ -148,6 +148,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/transfer", h.Transfer)
+	rg.GET("/agent-health", h.AgentHealth)
 }
 
 func (h *Handler) Transfer(c *gin.Context) {
@@ -1438,4 +1439,46 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// AgentHealth returns aggregate agent run statistics for the tenant.
+// GET /api/v1/admin/leads/agent-health?hours=24
+func (h *Handler) AgentHealth(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	hours := 24
+	if h := c.Query("hours"); h != "" {
+		if v, err := strconv.Atoi(h); err == nil && v > 0 && v <= 720 {
+			hours = v
+		}
+	}
+	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	stats, err := h.repo.GetAgentHealthStats(c.Request.Context(), tenantID, since)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to fetch agent health stats", nil)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"periodHours":      hours,
+		"totalRuns":        stats.TotalRuns,
+		"successCount":     stats.SuccessCount,
+		"fallbackCount":    stats.FallbackCount,
+		"escalationCount":  stats.EscalationCount,
+		"loopCount":        stats.LoopCount,
+		"errorCount":       stats.ErrorCount,
+		"timeoutCount":     stats.TimeoutCount,
+		"avgToolCalls":     stats.AvgToolCalls,
+		"avgDurationMs":    stats.AvgDurationMs,
+		"totalTokenInput":  stats.TotalTokenInput,
+		"totalTokenOutput": stats.TotalTokenOutput,
+	})
 }
