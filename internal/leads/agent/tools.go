@@ -44,6 +44,11 @@ const (
 	divisionByZeroMessage            = "division by zero"
 	gatekeeperNurturingLoopThreshold = 3
 	agentCycleThreshold              = 3
+
+	// toolIOTimeout is the independent timeout for network I/O operations
+	// inside tool handlers (embeddings, vector search, catalog reads). It
+	// prevents an expired parent deadline from cascading to tool execution.
+	toolIOTimeout = 30 * time.Second
 )
 
 const highConfidenceScoreThreshold = 0.45
@@ -3181,7 +3186,9 @@ func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []
 		log.Printf("SearchProductMaterials: catalog search without tenant filter (missing tenant context)")
 	}
 
-	results, err := deps.CatalogQdrantClient.SearchWithFilter(ctx, vector, limit, scoreThreshold, filter)
+	searchCtx, searchCancel := detachedTimeout(ctx, toolIOTimeout)
+	defer searchCancel()
+	results, err := deps.CatalogQdrantClient.SearchWithFilter(searchCtx, vector, limit, scoreThreshold, filter)
 	if err != nil {
 		log.Printf("SearchProductMaterials: catalog search failed: %v", err)
 		recordCatalogSearch(ctx, deps, query, "catalog", 0, nil)
@@ -3229,7 +3236,9 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return cached, nil
 	}
 
-	vector, err := deps.EmbeddingClient.Embed(ctx, query)
+	embedCtx, embedCancel := detachedTimeout(ctx, toolIOTimeout)
+	defer embedCancel()
+	vector, err := deps.EmbeddingClient.Embed(embedCtx, query)
 	if err != nil {
 		log.Printf("SearchProductMaterials: embedding failed: %v", err)
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to generate embedding for query"}, err
@@ -3282,7 +3291,9 @@ func searchFallbackReferenceCollections(ctx tool.Context, deps *ToolDependencies
 	batchClient := resolveFallbackBatchClient(deps)
 	batchRequests, requestCollections := buildFallbackBatchRequests(deps, vector, limit, scoreThreshold)
 
-	batchResults, err := batchClient.BatchSearch(ctx, batchRequests)
+	batchCtx, batchCancel := detachedTimeout(ctx, toolIOTimeout)
+	defer batchCancel()
+	batchResults, err := batchClient.BatchSearch(batchCtx, batchRequests)
 	if err != nil {
 		log.Printf("SearchProductMaterials: fallback batch search failed: %v", err)
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to search product catalog"}, err
@@ -3513,7 +3524,9 @@ func runCatalogRetries(ctx tool.Context, deps *ToolDependencies, query string, l
 }
 
 func searchCatalogRetryQuery(ctx tool.Context, deps *ToolDependencies, retryQuery string, limit int, scoreThreshold float64) []ProductResult {
-	retryVector, retryErr := deps.EmbeddingClient.Embed(ctx, retryQuery)
+	retryEmbedCtx, retryEmbedCancel := detachedTimeout(ctx, toolIOTimeout)
+	defer retryEmbedCancel()
+	retryVector, retryErr := deps.EmbeddingClient.Embed(retryEmbedCtx, retryQuery)
 	if retryErr != nil {
 		log.Printf("SearchProductMaterials: catalog retry embedding failed query=%q: %v", retryQuery, retryErr)
 		return nil
@@ -3992,7 +4005,9 @@ func hydrateProductResults(ctx context.Context, deps *ToolDependencies, products
 		return products
 	}
 
-	details, err := deps.CatalogReader.GetProductDetails(ctx, *tenantID, ids)
+	hydrateCtx, hydrateCancel := detachedTimeout(ctx, toolIOTimeout)
+	defer hydrateCancel()
+	details, err := deps.CatalogReader.GetProductDetails(hydrateCtx, *tenantID, ids)
 	if err != nil {
 		log.Printf("hydrateProductResults: catalog reader failed: %v", err)
 		return products
