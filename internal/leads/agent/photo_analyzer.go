@@ -372,6 +372,9 @@ func collectContentText(content *genai.Content) string {
 
 	var output string
 	for _, part := range content.Parts {
+		if part == nil || part.Thought {
+			continue
+		}
 		output += part.Text
 	}
 

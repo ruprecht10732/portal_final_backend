@@ -93,3 +93,20 @@ func TestExtractSessionToolTraceCollectsCallsAndResponses(t *testing.T) {
 		t.Fatalf("expected third trace item to be failed UpdatePipelineStage response, got %#v", trace[2])
 	}
 }
+
+func TestCollectContentTextSkipsThoughtParts(t *testing.T) {
+	t.Parallel()
+
+	content := &genai.Content{Parts: []*genai.Part{
+		{Text: "OK, I need to draft a WhatsApp reply.", Thought: true},
+		{Text: "Beste Caroline,\n\nDank voor je bericht."},
+		{Text: "I should keep this concise.", Thought: true},
+		{Text: "\n\nGroet,\nRobin"},
+	}}
+
+	got := collectContentText(content)
+	want := "Beste Caroline,\n\nDank voor je bericht.\n\nGroet,\nRobin"
+	if got != want {
+		t.Fatalf("expected non-thought content only, got %q", got)
+	}
+}
