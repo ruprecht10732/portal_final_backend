@@ -1412,6 +1412,72 @@ func (q *Queries) FindPartnersByServiceTypeAndCity(ctx context.Context, arg Find
 	return items, nil
 }
 
+const findRecentDuplicateAlertByTitle = `-- name: FindRecentDuplicateAlertByTitle :one
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
+FROM lead_timeline_events
+WHERE lead_id = $1
+	AND organization_id = $2
+	AND (service_id = $3 OR (service_id IS NULL AND $3 IS NULL))
+	AND event_type = $4
+	AND title = $5
+	AND created_at >= now() - make_interval(secs => $6)
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type FindRecentDuplicateAlertByTitleParams struct {
+	LeadID         pgtype.UUID `json:"lead_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceID      pgtype.UUID `json:"service_id"`
+	EventType      string      `json:"event_type"`
+	Title          string      `json:"title"`
+	Secs           float64     `json:"secs"`
+}
+
+type FindRecentDuplicateAlertByTitleRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LeadID         pgtype.UUID        `json:"lead_id"`
+	ServiceID      pgtype.UUID        `json:"service_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorName      string             `json:"actor_name"`
+	EventType      string             `json:"event_type"`
+	Title          string             `json:"title"`
+	Summary        pgtype.Text        `json:"summary"`
+	Metadata       []byte             `json:"metadata"`
+	Visibility     string             `json:"visibility"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+// Relaxed dedup for alert events: matches on (lead, service, event_type, title)
+// regardless of actor_name or summary, within the given time window.
+func (q *Queries) FindRecentDuplicateAlertByTitle(ctx context.Context, arg FindRecentDuplicateAlertByTitleParams) (FindRecentDuplicateAlertByTitleRow, error) {
+	row := q.db.QueryRow(ctx, findRecentDuplicateAlertByTitle,
+		arg.LeadID,
+		arg.OrganizationID,
+		arg.ServiceID,
+		arg.EventType,
+		arg.Title,
+		arg.Secs,
+	)
+	var i FindRecentDuplicateAlertByTitleRow
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.OrganizationID,
+		&i.ActorType,
+		&i.ActorName,
+		&i.EventType,
+		&i.Title,
+		&i.Summary,
+		&i.Metadata,
+		&i.Visibility,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const findRecentDuplicateTimelineEvent = `-- name: FindRecentDuplicateTimelineEvent :one
 SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events

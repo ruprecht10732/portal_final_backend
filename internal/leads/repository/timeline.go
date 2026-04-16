@@ -74,7 +74,18 @@ func normalizeTimelineVisibility(value string) string {
 func (r *Repository) CreateTimelineEvent(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, error) {
 	params.Visibility = normalizeTimelineVisibility(params.Visibility)
 	if shouldAttemptTimelineDedup(params) {
-		if existing, found, dedupeErr := r.findRecentDuplicateTimelineEvent(ctx, params); dedupeErr == nil && found {
+		var existing TimelineEvent
+		var found bool
+		var dedupeErr error
+		if params.EventType == EventTypeAlert {
+			// Relaxed dedup for alerts: match on (lead, service, event_type, title)
+			// regardless of actor_name or summary, so Orchestrator and LoopDetector
+			// alerts for the same service are deduplicated.
+			existing, found, dedupeErr = r.findRecentDuplicateAlertByTitle(ctx, params)
+		} else {
+			existing, found, dedupeErr = r.findRecentDuplicateTimelineEvent(ctx, params)
+		}
+		if dedupeErr == nil && found {
 			return existing, nil
 		}
 	}
@@ -111,7 +122,7 @@ func shouldAttemptTimelineDedup(params CreateTimelineEventParams) bool {
 		return false
 	}
 	switch params.EventType {
-	case EventTypeAI, EventTypeAnalysis, EventTypePhotoAnalysisCompleted, EventTypeStageChange:
+	case EventTypeAI, EventTypeAnalysis, EventTypePhotoAnalysisCompleted, EventTypeStageChange, EventTypeAlert:
 		return true
 	default:
 		return false
@@ -127,6 +138,25 @@ func metadataStringValue(metadata map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func (r *Repository) findRecentDuplicateAlertByTitle(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, bool, error) {
+	windowSeconds := int(timelineDedupWindow / time.Second)
+	row, err := r.queries.FindRecentDuplicateAlertByTitle(ctx, leadsdb.FindRecentDuplicateAlertByTitleParams{
+		LeadID:         toPgUUID(params.LeadID),
+		OrganizationID: toPgUUID(params.OrganizationID),
+		ServiceID:      toPgUUIDPtr(params.ServiceID),
+		EventType:      params.EventType,
+		Title:          params.Title,
+		Secs:           float64(windowSeconds),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TimelineEvent{}, false, nil
+	}
+	if err != nil {
+		return TimelineEvent{}, false, err
+	}
+	return timelineEventFromAlertDuplicateRow(row), true, nil
 }
 
 func (r *Repository) findRecentDuplicateTimelineEvent(ctx context.Context, params CreateTimelineEventParams) (TimelineEvent, bool, error) {
@@ -219,6 +249,26 @@ func timelineEventFromCreateRow(row leadsdb.CreateTimelineEventRow) TimelineEven
 }
 
 func timelineEventFromDuplicateRow(row leadsdb.FindRecentDuplicateTimelineEventRow) TimelineEvent {
+	event := TimelineEvent{
+		ID:             row.ID.Bytes,
+		LeadID:         row.LeadID.Bytes,
+		ServiceID:      optionalUUID(row.ServiceID),
+		OrganizationID: row.OrganizationID.Bytes,
+		ActorType:      row.ActorType,
+		ActorName:      row.ActorName,
+		EventType:      row.EventType,
+		Title:          row.Title,
+		Summary:        optionalString(row.Summary),
+		Visibility:     normalizeTimelineVisibility(row.Visibility),
+		CreatedAt:      row.CreatedAt.Time,
+	}
+	if len(row.Metadata) > 0 {
+		_ = json.Unmarshal(row.Metadata, &event.Metadata)
+	}
+	return event
+}
+
+func timelineEventFromAlertDuplicateRow(row leadsdb.FindRecentDuplicateAlertByTitleRow) TimelineEvent {
 	event := TimelineEvent{
 		ID:             row.ID.Bytes,
 		LeadID:         row.LeadID.Bytes,

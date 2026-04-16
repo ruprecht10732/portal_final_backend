@@ -42,6 +42,9 @@ type Querier interface {
 	FindMatchingPartnersByCoordinates(ctx context.Context, arg FindMatchingPartnersByCoordinatesParams) ([]FindMatchingPartnersByCoordinatesRow, error)
 	FindPartnersByServiceType(ctx context.Context, arg FindPartnersByServiceTypeParams) ([]FindPartnersByServiceTypeRow, error)
 	FindPartnersByServiceTypeAndCity(ctx context.Context, arg FindPartnersByServiceTypeAndCityParams) ([]FindPartnersByServiceTypeAndCityRow, error)
+	// Relaxed dedup for alert events: matches on (lead, service, event_type, title)
+	// regardless of actor_name or summary, within the given time window.
+	FindRecentDuplicateAlertByTitle(ctx context.Context, arg FindRecentDuplicateAlertByTitleParams) (FindRecentDuplicateAlertByTitleRow, error)
 	FindRecentDuplicateTimelineEvent(ctx context.Context, arg FindRecentDuplicateTimelineEventParams) (FindRecentDuplicateTimelineEventRow, error)
 	GetAgentHealthStats(ctx context.Context, arg GetAgentHealthStatsParams) (GetAgentHealthStatsRow, error)
 	GetAppointmentVisitReport(ctx context.Context, arg GetAppointmentVisitReportParams) (GetAppointmentVisitReportRow, error)

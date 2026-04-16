@@ -1,3 +1,4 @@
+-- +goose Up
 -- Agent run and tool call observability tables.
 
 CREATE TABLE IF NOT EXISTS agent_runs (
@@ -42,3 +43,7 @@ CREATE TABLE IF NOT EXISTS agent_tool_calls (
 
 CREATE INDEX idx_agent_tool_calls_run ON agent_tool_calls (agent_run_id);
 CREATE INDEX idx_agent_tool_calls_name ON agent_tool_calls (tool_name, created_at DESC);
+
+-- +goose Down
+DROP TABLE IF EXISTS agent_tool_calls;
+DROP TABLE IF EXISTS agent_runs;

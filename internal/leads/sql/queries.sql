@@ -556,6 +556,20 @@ WHERE lead_id = $1
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: FindRecentDuplicateAlertByTitle :one
+-- Relaxed dedup for alert events: matches on (lead, service, event_type, title)
+-- regardless of actor_name or summary, within the given time window.
+SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
+FROM lead_timeline_events
+WHERE lead_id = $1
+	AND organization_id = $2
+	AND (service_id = $3 OR (service_id IS NULL AND $3 IS NULL))
+	AND event_type = $4
+	AND title = $5
+	AND created_at >= now() - make_interval(secs => $6)
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: ListTimelineEvents :many
 SELECT id, lead_id, service_id, organization_id, actor_type, actor_name, event_type, title, summary, metadata, visibility, created_at
 FROM lead_timeline_events
