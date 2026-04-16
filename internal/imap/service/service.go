@@ -36,6 +36,10 @@ const (
 	errIMAPKeyNotConfigured = "imap encryption key not configured"
 	errConnectIMAPServer    = "failed to connect to imap server"
 	errMessageTooLarge      = "message is too large to fetch content"
+
+	// maxConsecutiveAuthFailures is the number of consecutive authentication
+	// failures after which the account is auto-disabled to stop noisy retries.
+	maxConsecutiveAuthFailures = 3
 )
 
 type Service struct {
@@ -49,6 +53,7 @@ type Service struct {
 	eventBus      events.Bus
 	log           *logger.Logger
 	emailReplyer  EmailReplySuggester
+	authFailures  sync.Map // map[uuid.UUID]int — consecutive auth failure count per account
 }
 
 type IMAPSyncScheduler interface {
@@ -1177,9 +1182,15 @@ func (s *Service) syncAccount(ctx context.Context, account repository.Account) (
 	})
 	if err != nil {
 		s.recordSyncError(syncCtx, account.ID, err)
+		if isAuthError(err) {
+			s.recordAuthFailure(syncCtx, account.ID)
+		}
 		return err
 	}
 	defer func() { _ = imapClient.Close() }()
+
+	// Connection (incl. auth) succeeded — reset any accumulated auth failure count.
+	s.resetAuthFailures(account.ID)
 
 	metadata, err := imapClient.SyncFolderMetadataContext(syncCtx, account.FolderName, defaultSyncBatchSize)
 	if err != nil {
@@ -1237,6 +1248,45 @@ func (s *Service) recordSyncError(ctx context.Context, accountID uuid.UUID, err 
 	if setErr := s.repo.SetAccountSyncError(ctx, accountID, limitError(err.Error())); setErr != nil {
 		s.logWarn("failed to persist imap sync error", "accountId", accountID, "error", setErr.Error())
 	}
+}
+
+// isAuthError returns true when the error message suggests an IMAP
+// authentication/login failure rather than a transient network error.
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "authenticationfailed") ||
+		strings.Contains(msg, "authentication failed") ||
+		strings.Contains(msg, "login failed") ||
+		strings.Contains(msg, "invalid credentials") ||
+		strings.Contains(msg, "login") && strings.Contains(msg, "no") ||
+		strings.Contains(msg, "authenticate") && strings.Contains(msg, "failed")
+}
+
+// recordAuthFailure increments the consecutive auth failure counter for an
+// account and auto-disables it after maxConsecutiveAuthFailures.
+func (s *Service) recordAuthFailure(ctx context.Context, accountID uuid.UUID) {
+	countVal, _ := s.authFailures.LoadOrStore(accountID, 0)
+	count := countVal.(int) + 1
+	s.authFailures.Store(accountID, count)
+
+	if count >= maxConsecutiveAuthFailures {
+		s.logWarn("imap account auto-disabled after repeated auth failures",
+			"accountId", accountID, "consecutiveFailures", count)
+		if s.repo != nil {
+			if err := s.repo.DisableAccount(ctx, accountID); err != nil {
+				s.logWarn("failed to auto-disable imap account", "accountId", accountID, "error", err.Error())
+			}
+		}
+		s.authFailures.Delete(accountID)
+	}
+}
+
+// resetAuthFailures clears the consecutive auth failure counter on success.
+func (s *Service) resetAuthFailures(accountID uuid.UUID) {
+	s.authFailures.Delete(accountID)
 }
 
 func (s *Service) logInfo(msg string, args ...any) {

@@ -16,7 +16,7 @@ const (
 	secondaryBaseBackoff   = 2 * time.Second
 	secondaryBackoffFactor = 2.0
 	jitterFraction         = 0.3
-	secondaryTimeout       = 120 * time.Second
+	secondaryTimeout       = 60 * time.Second
 )
 
 // Model wraps a primary and secondary model.LLM with circuit-breaker-based

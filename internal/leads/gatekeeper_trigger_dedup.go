@@ -23,6 +23,11 @@ import (
 
 const gatekeeperTriggerFingerprintTTL = 24 * time.Hour
 
+// gatekeeperAbortCooldownTTL is the period after an aborted run during which
+// no new gatekeeper run will be enqueued for the same service, regardless of
+// data-fingerprint changes.
+const gatekeeperAbortCooldownTTL = 10 * time.Minute
+
 const gatekeeperTriggerFingerprintPrefix = "leads:orchestrator:gatekeeper:fingerprint"
 
 var compareAndStoreGatekeeperFingerprintScript = redis.NewScript(`
@@ -37,6 +42,11 @@ return 1
 
 type gatekeeperTriggerDeduper interface {
 	ShouldEnqueue(serviceID uuid.UUID, fingerprint string) (bool, error)
+	// RecordAbort records that a gatekeeper run for the given service was
+	// aborted (e.g. tool-call budget exceeded). Consecutive aborts for the
+	// same service trigger an abort cooldown that blocks re-enqueue for a
+	// short period, preventing rapid re-trigger loops.
+	RecordAbort(serviceID uuid.UUID)
 }
 
 type gatekeeperTriggerFingerprintRepo interface {
@@ -53,10 +63,15 @@ type gatekeeperTriggerFingerprintState struct {
 	expiresAt   time.Time
 }
 
+type gatekeeperAbortCooldownState struct {
+	expiresAt time.Time
+}
+
 type inMemoryGatekeeperTriggerDeduper struct {
-	mu     sync.Mutex
-	ttl    time.Duration
-	states map[uuid.UUID]gatekeeperTriggerFingerprintState
+	mu             sync.Mutex
+	ttl            time.Duration
+	states         map[uuid.UUID]gatekeeperTriggerFingerprintState
+	abortCooldowns map[uuid.UUID]gatekeeperAbortCooldownState
 }
 
 type redisGatekeeperTriggerDeduper struct {
@@ -150,8 +165,9 @@ func newInMemoryGatekeeperTriggerDeduper(ttl time.Duration) gatekeeperTriggerDed
 		ttl = gatekeeperTriggerFingerprintTTL
 	}
 	return &inMemoryGatekeeperTriggerDeduper{
-		ttl:    ttl,
-		states: make(map[uuid.UUID]gatekeeperTriggerFingerprintState),
+		ttl:            ttl,
+		states:         make(map[uuid.UUID]gatekeeperTriggerFingerprintState),
+		abortCooldowns: make(map[uuid.UUID]gatekeeperAbortCooldownState),
 	}
 }
 
@@ -160,6 +176,16 @@ func (d *inMemoryGatekeeperTriggerDeduper) ShouldEnqueue(serviceID uuid.UUID, fi
 	defer d.mu.Unlock()
 
 	now := time.Now()
+
+	// Check abort cooldown: if the service recently had an aborted run,
+	// block re-enqueue regardless of fingerprint changes.
+	if cooldown, ok := d.abortCooldowns[serviceID]; ok {
+		if now.Before(cooldown.expiresAt) {
+			return false, nil
+		}
+		delete(d.abortCooldowns, serviceID)
+	}
+
 	if state, ok := d.states[serviceID]; ok {
 		if now.Before(state.expiresAt) && state.fingerprint == fingerprint {
 			state.expiresAt = now.Add(d.ttl)
@@ -175,7 +201,26 @@ func (d *inMemoryGatekeeperTriggerDeduper) ShouldEnqueue(serviceID uuid.UUID, fi
 	return true, nil
 }
 
+func (d *inMemoryGatekeeperTriggerDeduper) RecordAbort(serviceID uuid.UUID) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.abortCooldowns[serviceID] = gatekeeperAbortCooldownState{
+		expiresAt: time.Now().Add(gatekeeperAbortCooldownTTL),
+	}
+}
+
 func (d *redisGatekeeperTriggerDeduper) ShouldEnqueue(serviceID uuid.UUID, fingerprint string) (bool, error) {
+	// Check abort cooldown first.
+	cooldownKey := gatekeeperAbortCooldownKey(serviceID)
+	exists, err := d.client.Exists(context.Background(), cooldownKey).Result()
+	if err != nil {
+		if d.log != nil {
+			d.log.Warn("gatekeeper: abort cooldown check failed; proceeding", "error", err, "serviceId", serviceID)
+		}
+	} else if exists > 0 {
+		return false, nil
+	}
+
 	result, err := compareAndStoreGatekeeperFingerprintScript.Run(
 		context.Background(),
 		d.client,
@@ -187,6 +232,19 @@ func (d *redisGatekeeperTriggerDeduper) ShouldEnqueue(serviceID uuid.UUID, finge
 		return false, err
 	}
 	return result == 1, nil
+}
+
+func (d *redisGatekeeperTriggerDeduper) RecordAbort(serviceID uuid.UUID) {
+	key := gatekeeperAbortCooldownKey(serviceID)
+	if err := d.client.Set(context.Background(), key, "1", gatekeeperAbortCooldownTTL).Err(); err != nil {
+		if d.log != nil {
+			d.log.Warn("gatekeeper: failed to record abort cooldown", "error", err, "serviceId", serviceID)
+		}
+	}
+}
+
+func gatekeeperAbortCooldownKey(serviceID uuid.UUID) string {
+	return fmt.Sprintf("%s:abort-cooldown:%s", gatekeeperTriggerFingerprintPrefix, serviceID)
 }
 
 func gatekeeperTriggerFingerprintKey(serviceID uuid.UUID) string {

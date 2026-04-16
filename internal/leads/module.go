@@ -874,6 +874,14 @@ func (m *Module) ProcessGatekeeperRun(ctx context.Context, leadID, serviceID, te
 	defer m.releaseGatekeeperRun(serviceID)
 
 	if err := m.gatekeeper.Run(ctx, leadID, serviceID, tenantID); err != nil {
+		// Record abort in deduper so the next data-change trigger respects a
+		// cooldown period instead of immediately re-enqueuing.
+		if m.gatekeeperDeduper != nil && strings.Contains(err.Error(), "tool call limit exceeded") {
+			m.gatekeeperDeduper.RecordAbort(serviceID)
+			if m.log != nil {
+				m.log.Warn("gatekeeper: run aborted (budget exceeded), cooldown applied", "serviceId", serviceID, "leadId", leadID)
+			}
+		}
 		return err
 	}
 	if m.orchestrator != nil {

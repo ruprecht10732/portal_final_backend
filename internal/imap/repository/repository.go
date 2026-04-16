@@ -489,6 +489,19 @@ func (r *Repository) ClearAccountSyncError(ctx context.Context, accountID uuid.U
 	return nil
 }
 
+// DisableAccount sets enabled=false for the given account. Used by the sync
+// service to auto-disable accounts after repeated authentication failures.
+func (r *Repository) DisableAccount(ctx context.Context, accountID uuid.UUID) error {
+	if r.pool == nil {
+		return fmt.Errorf("disable account: pool not configured")
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE imap_accounts SET enabled = false, updated_at = NOW() WHERE id = $1`, accountID)
+	if err != nil {
+		return fmt.Errorf("disable account: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) ListMessagesByUser(ctx context.Context, params ListMessagesParams) (ListMessagesResult, error) {
 	page := params.Page
 	if page < 1 {

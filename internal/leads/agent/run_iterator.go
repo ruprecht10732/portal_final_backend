@@ -99,6 +99,13 @@ func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*se
 	toolCallCount := 0
 	budgetCtx, budgetCancel := context.WithCancel(ctx)
 	defer budgetCancel()
+
+	// Wire the budget cancel into ToolDependencies so that a successful
+	// UpdatePipelineStage can end the session without burning more budget.
+	if deps, ok := ctx.Value(ctxKey{}).(*ToolDependencies); ok && deps != nil {
+		deps.SetSessionDoneFunc(budgetCancel)
+	}
+
 	enforceToolCallLimit := func(event *session.Event) {
 		if event == nil || event.Content == nil {
 			return

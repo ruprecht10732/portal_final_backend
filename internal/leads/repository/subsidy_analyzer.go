@@ -3,9 +3,13 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"portal_final_backend/platform/apperr"
 )
 
 // SubsidyAnalyzerJob represents a subsidy analysis job record.
@@ -69,7 +73,11 @@ func (r *Repository) GetSubsidyAnalyzerJob(ctx context.Context, jobID uuid.UUID,
 	`
 
 	row := r.pool.QueryRow(ctx, query, jobID, organizationID)
-	return scanSubsidyAnalyzerJob(row)
+	job, err := scanSubsidyAnalyzerJob(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SubsidyAnalyzerJob{}, apperr.NotFound("subsidy analyzer job not found")
+	}
+	return job, err
 }
 
 // UpdateSubsidyAnalyzerJobParams contains parameters for updating a subsidy analyzer job.
@@ -113,7 +121,11 @@ func (r *Repository) UpdateSubsidyAnalyzerJob(ctx context.Context, params Update
 		params.StartedAt, params.FinishedAt, params.ID,
 	)
 
-	return scanSubsidyAnalyzerJob(row)
+	job, err := scanSubsidyAnalyzerJob(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SubsidyAnalyzerJob{}, apperr.NotFound("subsidy analyzer job not found")
+	}
+	return job, err
 }
 
 // ListSubsidyAnalyzerJobsByUser lists subsidy analyzer jobs for a user.

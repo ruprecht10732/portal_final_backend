@@ -91,7 +91,8 @@ func normalizeLeadQuality(quality string) string {
 		return "Junk"
 	case "low", "laag":
 		return "Low"
-	case "potential", "potentieel", "medium", "gemiddeld", "moderate", "mid":
+	case "potential", "potentieel", "medium", "gemiddeld", "moderate", "mid",
+		"onbekend", "unknown", "niet bekend", "nvt", "n/a", "n.v.t.", "onbepaald":
 		return "Potential"
 	case "high", "hoog", "good", "goed", "qualified", "gekwalificeerd":
 		return "High"
@@ -209,6 +210,7 @@ type ToolDependencies struct {
 	forceDraftQuote             bool           // Allows manual runs to bypass draft governance (intake + council)
 	searchCache                 map[string]SearchProductMaterialsOutput
 	emittedAlertKeys            map[string]struct{} // Dedupe identical alerts within a single agent run
+	sessionDoneFunc             context.CancelFunc  // Optional: called after successful UpdatePipelineStage to end session early
 }
 
 // NewRequestDeps creates a request-scoped ToolDependencies that shares the
@@ -324,6 +326,17 @@ func (d *ToolDependencies) SetActor(actorType, actorName string) {
 	defer d.mu.Unlock()
 	d.actorType = actorType
 	d.actorName = actorName
+}
+
+// SetSessionDoneFunc sets an optional callback invoked after a successful
+// UpdatePipelineStage commit to signal that the agent session should end.
+// This is a defense-in-depth mechanism: the prompt instructs the LLM to stop
+// after the final tool, but if it doesn't, cancelling the context forces
+// termination without burning additional tool-call budget.
+func (d *ToolDependencies) SetSessionDoneFunc(fn context.CancelFunc) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.sessionDoneFunc = fn
 }
 
 func (d *ToolDependencies) SetCouncilMetadata(metadata map[string]any) {
@@ -1892,6 +1905,17 @@ func applyPipelineStageUpdate(ctx context.Context, deps *ToolDependencies, input
 	deps.MarkStageUpdateCalled(input.Stage)
 	log.Printf("agent stage transition committed (run=%s actor=%s/%s lead=%s service=%s from=%s to=%s)",
 		state.runID, state.actorType, state.actorName, state.leadID, state.serviceID, state.oldStage, input.Stage)
+
+	// Defense-in-depth: signal session to end after a successful stage commit.
+	// The prompt instructs the LLM to stop, but if it doesn't, this cancels the
+	// context so the ADK runner terminates the event loop without burning budget.
+	deps.mu.RLock()
+	doneFn := deps.sessionDoneFunc
+	deps.mu.RUnlock()
+	if doneFn != nil {
+		doneFn()
+	}
+
 	return UpdatePipelineStageOutput{Success: true, Message: "Pipeline stage updated"}, nil
 }
 
@@ -1980,7 +2004,7 @@ func prepareStageUpdate(ctx context.Context, deps *ToolDependencies, input *Upda
 		deps.MarkStageUpdateCalled(input.Stage)
 		log.Printf("agent stage transition skipped (run=%s actor=%s/%s lead=%s service=%s stage=%s): already at target stage",
 			state.runID, state.actorType, state.actorName, state.leadID, state.serviceID, input.Stage)
-		return state, loopResult, UpdatePipelineStageOutput{Success: true, Message: fmt.Sprintf("Stage is already %s – no action needed. Do not call this tool again.", input.Stage)}, true, nil
+		return state, loopResult, UpdatePipelineStageOutput{Success: false, Message: fmt.Sprintf("ERROR: Stage is already %s. Your task is complete. Do not call any more tools.", input.Stage)}, true, nil
 	}
 
 	return state, loopResult, UpdatePipelineStageOutput{}, false, nil
