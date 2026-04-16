@@ -516,8 +516,13 @@ func (c *Config) llmModelOverride(agentName string) string {
 
 // ResolveProviderConfig returns the full LLMProviderConfig for the given input.
 // The input may be a provider name ("deepseek") or a model name
-// ("deepseek-reasoner", "kimi-k2.5"). When a model name is given both
-// Model and ReasoningModel are locked to that specific model.
+// ("deepseek-reasoner", "kimi-k2.5"). When a dedicated reasoning model is
+// provided for a provider that separates chat and reasoning models (for
+// example DeepSeek), the default Model remains the provider's non-reasoning
+// model while ReasoningModel is locked to the requested reasoning model. This
+// prevents non-reasoning agents from accidentally inheriting the reasoning
+// model when the global provider is configured with a reasoning-capable model
+// name.
 func (c *Config) ResolveProviderConfig(input string) LLMProviderConfig {
 	provider, modelOverride := resolveProvider(input)
 	preset := llmProviderPresets[provider]
@@ -531,8 +536,15 @@ func (c *Config) ResolveProviderConfig(input string) LLMProviderConfig {
 		ReasoningModel: preset.ReasoningModel,
 	}
 	if modelOverride != "" {
-		cfg.Model = modelOverride
-		cfg.ReasoningModel = modelOverride
+		switch {
+		case modelOverride == preset.ReasoningModel && preset.DefaultModel != preset.ReasoningModel:
+			cfg.ReasoningModel = modelOverride
+		case modelOverride == preset.DefaultModel && preset.DefaultModel != preset.ReasoningModel:
+			cfg.Model = modelOverride
+		default:
+			cfg.Model = modelOverride
+			cfg.ReasoningModel = modelOverride
+		}
 	}
 	return cfg
 }

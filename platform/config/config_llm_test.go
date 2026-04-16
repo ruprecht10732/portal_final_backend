@@ -62,6 +62,12 @@ func TestResolveAgentModelPreventsCrossProviderMismatch(t *testing.T) {
 	if modelOvr != "" {
 		t.Fatalf("expected empty model override, got %q", modelOvr)
 	}
+	if provCfg.Model != testDeepSeekChat {
+		t.Fatalf("expected non-reasoning model %q, got %q", testDeepSeekChat, provCfg.Model)
+	}
+	if provCfg.ReasoningModel != testDeepSeekReason {
+		t.Fatalf("expected reasoning model %q, got %q", testDeepSeekReason, provCfg.ReasoningModel)
+	}
 
 	// Offer summary has hardcoded moonshot-v1-8k default: should re-resolve to Kimi.
 	provCfg, modelOvr = cfg.ResolveAgentModel(LLMModelAgentOfferSummaryGenerator)
@@ -89,5 +95,32 @@ func TestResolveAgentModelKeepsSameProviderOverride(t *testing.T) {
 	}
 	if modelOvr != testDeepSeekChat {
 		t.Fatalf("expected model override %q, got %q", testDeepSeekChat, modelOvr)
+	}
+}
+
+func TestResolveProviderConfigKeepsChatModelWhenProviderIsReasonerName(t *testing.T) {
+	cfg := &Config{LLMProvider: testDeepSeekReason, DeepSeekAPIKey: testKeyDeepSeek}
+
+	provCfg := cfg.ResolveProviderConfig(testDeepSeekReason)
+	if provCfg.Provider != LLMProviderDeepSeek {
+		t.Fatalf("expected deepseek provider, got %q", provCfg.Provider)
+	}
+	if provCfg.Model != testDeepSeekChat {
+		t.Fatalf("expected default chat model %q, got %q", testDeepSeekChat, provCfg.Model)
+	}
+	if provCfg.ReasoningModel != testDeepSeekReason {
+		t.Fatalf("expected reasoning model %q, got %q", testDeepSeekReason, provCfg.ReasoningModel)
+	}
+}
+
+func TestResolveProviderConfigLocksBothModelsForSingleModeProviderOverride(t *testing.T) {
+	cfg := &Config{MoonshotAPIKey: testKeyMoonshot}
+
+	provCfg := cfg.ResolveProviderConfig(defaultKimiModel)
+	if provCfg.Provider != LLMProviderKimi {
+		t.Fatalf("expected kimi provider, got %q", provCfg.Provider)
+	}
+	if provCfg.Model != defaultKimiModel || provCfg.ReasoningModel != defaultKimiModel {
+		t.Fatalf("expected both kimi models to be locked to %q, got model=%q reasoning=%q", defaultKimiModel, provCfg.Model, provCfg.ReasoningModel)
 	}
 }
