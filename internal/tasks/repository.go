@@ -26,38 +26,38 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 type assigneeContact struct {
-	UserID     uuid.UUID
-	Email      string
-	Phone      *string
-	FirstName  *string
-	LastName   *string
+	UserID    uuid.UUID
+	Email     string
+	Phone     *string
+	FirstName *string
+	LastName  *string
 }
 
 type taskScanResult struct {
-	Task         TaskRecord
+	Task          TaskRecord
 	AssigneePhone *string
 }
 
 type taskScanFields struct {
-	leadID                pgtype.UUID
-	leadServiceID         pgtype.UUID
-	dueAt                 pgtype.Timestamptz
-	completedAt           pgtype.Timestamptz
-	cancelledAt           pgtype.Timestamptz
-	assigneeFirstName     sql.NullString
-	assigneeLastName      sql.NullString
-	reminderID            pgtype.UUID
-	reminderEnabled       sql.NullBool
-	reminderSendEmail     sql.NullBool
-	reminderSendWhatsApp  sql.NullBool
-	reminderNextRunAt     pgtype.Timestamptz
-	reminderRepeatDaily   sql.NullBool
-	reminderLastSentAt    pgtype.Timestamptz
+	leadID                  pgtype.UUID
+	leadServiceID           pgtype.UUID
+	dueAt                   pgtype.Timestamptz
+	completedAt             pgtype.Timestamptz
+	cancelledAt             pgtype.Timestamptz
+	assigneeFirstName       sql.NullString
+	assigneeLastName        sql.NullString
+	reminderID              pgtype.UUID
+	reminderEnabled         sql.NullBool
+	reminderSendEmail       sql.NullBool
+	reminderSendWhatsApp    sql.NullBool
+	reminderNextRunAt       pgtype.Timestamptz
+	reminderRepeatDaily     sql.NullBool
+	reminderLastSentAt      pgtype.Timestamptz
 	reminderLastTriggeredAt pgtype.Timestamptz
-	reminderLastError     sql.NullString
-	reminderCreatedAt     pgtype.Timestamptz
-	reminderUpdatedAt     pgtype.Timestamptz
-	phone                 sql.NullString
+	reminderLastError       sql.NullString
+	reminderCreatedAt       pgtype.Timestamptz
+	reminderUpdatedAt       pgtype.Timestamptz
+	phone                   sql.NullString
 }
 
 func (r *Repository) requireAssignee(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID) (assigneeContact, error) {
@@ -95,7 +95,7 @@ func (r *Repository) validateLeadServiceScope(ctx context.Context, tx pgx.Tx, te
 		FROM RAC_leads l
 		JOIN RAC_lead_services s ON s.id = $3 AND s.lead_id = l.id
 		WHERE l.organization_id = $1 AND l.id = $2`
-		
+
 	var marker int
 	if err := tx.QueryRow(ctx, query, tenantID, leadID, leadServiceID).Scan(&marker); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
