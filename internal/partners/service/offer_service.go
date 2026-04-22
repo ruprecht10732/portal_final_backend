@@ -1235,6 +1235,9 @@ func resolveVakmanPrice(customerPriceCents int64, marginBasisPoints int, overrid
 		if *override < 0 {
 			return 0
 		}
+		if *override > customerPriceCents {
+			return customerPriceCents
+		}
 		return *override
 	}
 

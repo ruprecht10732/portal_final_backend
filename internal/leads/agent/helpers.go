@@ -56,7 +56,10 @@ func wrapReferenceBlock(content string) string {
 	if trimmed == "" {
 		return fmt.Sprintf("%s\n%s", referenceBlock, referenceBlock)
 	}
-	return fmt.Sprintf("%s\n%s\n%s", referenceBlock, trimmed, referenceBlock)
+	// Escape the reference block delimiter inside untrusted content to prevent
+	// prompt injection attacks that prematurely close the data block.
+	safe := strings.ReplaceAll(trimmed, referenceBlock, "\\\"\\\"\\\"")
+	return fmt.Sprintf("%s\n%s\n%s", referenceBlock, safe, referenceBlock)
 }
 
 func getValue(s *string) string {

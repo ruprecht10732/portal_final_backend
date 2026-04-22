@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,23 @@ const (
 	noteGroupAccess       = "Toegang/planning"
 	noteGroupOther        = "Overig"
 )
+
+var (
+	replyLocationOnce sync.Once
+	replyLocation     *time.Location
+)
+
+func getReplyLocation() *time.Location {
+	replyLocationOnce.Do(func() {
+		loc, err := time.LoadLocation(tenantReplyTimezone)
+		if err != nil {
+			replyLocation = time.UTC
+			return
+		}
+		replyLocation = loc
+	})
+	return replyLocation
+}
 
 type inferredIntent struct {
 	label   string
@@ -112,11 +130,7 @@ func isIgnorableReplyUserLookupError(err error) bool {
 }
 
 func replyLocalNow() time.Time {
-	loc, err := time.LoadLocation(tenantReplyTimezone)
-	if err != nil {
-		return time.Now()
-	}
-	return time.Now().In(loc)
+	return time.Now().In(getReplyLocation())
 }
 
 func formatCurrentDateTimeBlock() string {

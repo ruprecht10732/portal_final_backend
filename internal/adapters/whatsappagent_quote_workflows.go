@@ -131,7 +131,8 @@ func (a *WhatsAppAgentQuoteWorkflowAdapter) GetQuotePDF(ctx context.Context, org
 		reader, downloadErr := a.storage.DownloadFile(ctx, a.pdfBucket, *quote.PDFFileKey)
 		if downloadErr == nil {
 			defer func() { _ = reader.Close() }()
-			data, readErr := io.ReadAll(reader)
+			const maxPDFSize = 50 << 20 // 50 MB
+			data, readErr := io.ReadAll(io.LimitReader(reader, maxPDFSize))
 			if readErr == nil {
 				return whatsappagent.QuotePDFResult{QuoteID: quote.ID.String(), QuoteNumber: quote.QuoteNumber, FileName: fileName, Data: data}, nil
 			}

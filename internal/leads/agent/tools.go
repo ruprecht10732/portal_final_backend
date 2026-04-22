@@ -49,6 +49,9 @@ const (
 	// inside tool handlers (embeddings, vector search, catalog reads). It
 	// prevents an expired parent deadline from cascading to tool execution.
 	toolIOTimeout = 30 * time.Second
+
+	maxCalculatorExprLength = 1000
+	maxCalculatorDepth      = 100
 )
 
 const highConfidenceScoreThreshold = 0.45
@@ -2760,12 +2763,15 @@ func evaluateLegacyCalculatorOperation(input CalculatorInput) (CalculatorOutput,
 }
 
 func evaluateCalculatorExpression(raw string) (float64, error) {
+	if len(raw) > maxCalculatorExprLength {
+		return 0, fmt.Errorf("expression exceeds maximum length of %d characters", maxCalculatorExprLength)
+	}
 	expr, err := parser.ParseExpr(raw)
 	if err != nil {
 		return 0, fmt.Errorf("invalid expression: %w", err)
 	}
 
-	result, err := evaluateCalculatorAST(expr)
+	result, err := evaluateCalculatorAST(expr, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -2775,18 +2781,21 @@ func evaluateCalculatorExpression(raw string) (float64, error) {
 	return result, nil
 }
 
-func evaluateCalculatorAST(expr ast.Expr) (float64, error) {
+func evaluateCalculatorAST(expr ast.Expr, depth int) (float64, error) {
+	if depth > maxCalculatorDepth {
+		return 0, fmt.Errorf("expression nesting exceeds maximum depth of %d", maxCalculatorDepth)
+	}
 	switch node := expr.(type) {
 	case *ast.BasicLit:
 		return parseCalculatorLiteral(node)
 	case *ast.ParenExpr:
-		return evaluateCalculatorAST(node.X)
+		return evaluateCalculatorAST(node.X, depth+1)
 	case *ast.UnaryExpr:
-		return evaluateCalculatorUnary(node)
+		return evaluateCalculatorUnary(node, depth+1)
 	case *ast.BinaryExpr:
-		return evaluateCalculatorBinary(node)
+		return evaluateCalculatorBinary(node, depth+1)
 	case *ast.CallExpr:
-		return evaluateCalculatorCall(node)
+		return evaluateCalculatorCall(node, depth+1)
 	default:
 		return 0, fmt.Errorf("unsupported expression element %T", expr)
 	}
@@ -2803,8 +2812,8 @@ func parseCalculatorLiteral(node *ast.BasicLit) (float64, error) {
 	return value, nil
 }
 
-func evaluateCalculatorUnary(node *ast.UnaryExpr) (float64, error) {
-	value, err := evaluateCalculatorAST(node.X)
+func evaluateCalculatorUnary(node *ast.UnaryExpr, depth int) (float64, error) {
+	value, err := evaluateCalculatorAST(node.X, depth)
 	if err != nil {
 		return 0, err
 	}
@@ -2817,12 +2826,12 @@ func evaluateCalculatorUnary(node *ast.UnaryExpr) (float64, error) {
 	return 0, fmt.Errorf("unsupported unary operator %q", node.Op)
 }
 
-func evaluateCalculatorBinary(node *ast.BinaryExpr) (float64, error) {
-	left, err := evaluateCalculatorAST(node.X)
+func evaluateCalculatorBinary(node *ast.BinaryExpr, depth int) (float64, error) {
+	left, err := evaluateCalculatorAST(node.X, depth)
 	if err != nil {
 		return 0, err
 	}
-	right, err := evaluateCalculatorAST(node.Y)
+	right, err := evaluateCalculatorAST(node.Y, depth)
 	if err != nil {
 		return 0, err
 	}
@@ -2844,13 +2853,13 @@ func evaluateCalculatorBinary(node *ast.BinaryExpr) (float64, error) {
 	}
 }
 
-func evaluateCalculatorCall(node *ast.CallExpr) (float64, error) {
+func evaluateCalculatorCall(node *ast.CallExpr, depth int) (float64, error) {
 	name, ok := node.Fun.(*ast.Ident)
 	if !ok {
 		return 0, fmt.Errorf("unsupported function call")
 	}
 
-	args, err := evaluateCalculatorArgs(node.Args)
+	args, err := evaluateCalculatorArgs(node.Args, depth)
 	if err != nil {
 		return 0, err
 	}
@@ -2858,10 +2867,10 @@ func evaluateCalculatorCall(node *ast.CallExpr) (float64, error) {
 	return evaluateCalculatorFunction(name.Name, args)
 }
 
-func evaluateCalculatorArgs(expressions []ast.Expr) ([]float64, error) {
+func evaluateCalculatorArgs(expressions []ast.Expr, depth int) ([]float64, error) {
 	args := make([]float64, 0, len(expressions))
 	for _, expression := range expressions {
-		value, err := evaluateCalculatorAST(expression)
+		value, err := evaluateCalculatorAST(expression, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -2993,7 +3002,18 @@ func createCalculateEstimateTool() (tool.Tool, error) {
 	})
 }
 
+func isInvalidFloat(v float64) bool {
+	return math.IsNaN(v) || math.IsInf(v, 0)
+}
+
 func validateCalculateEstimateInput(input CalculateEstimateInput) error {
+	// Reject NaN/Inf inputs immediately — they bypass all comparative checks.
+	if isInvalidFloat(input.LaborHoursLow) || isInvalidFloat(input.LaborHoursHigh) ||
+		isInvalidFloat(input.HourlyRateLow) || isInvalidFloat(input.HourlyRateHigh) ||
+		isInvalidFloat(input.ExtraCosts) {
+		return fmt.Errorf("financial inputs must be valid finite numbers")
+	}
+
 	// Reject negative financial inputs (AI hallucination guard).
 	if input.LaborHoursLow < 0 || input.LaborHoursHigh < 0 ||
 		input.HourlyRateLow < 0 || input.HourlyRateHigh < 0 ||
@@ -3015,6 +3035,9 @@ func validateCalculateEstimateInput(input CalculateEstimateInput) error {
 	const maxSafeExtraCosts = 5_000_000.0
 
 	for _, item := range input.MaterialItems {
+		if isInvalidFloat(item.UnitPrice) || isInvalidFloat(item.Quantity) {
+			return fmt.Errorf("material item price and quantity must be valid finite numbers")
+		}
 		if item.UnitPrice < 0 || item.Quantity < 0 {
 			return fmt.Errorf("material item price and quantity cannot be negative")
 		}

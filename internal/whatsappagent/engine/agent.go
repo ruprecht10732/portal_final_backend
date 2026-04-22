@@ -721,7 +721,9 @@ func (a *Agent) runRuntimeConversation(ctx context.Context, runtime agentRuntime
 		return AgentRunResult{}, fmt.Errorf("whatsappagent: create session: %w", err)
 	}
 	defer func() {
-		_ = a.sessionService.Delete(ctx, &session.DeleteRequest{AppName: runtime.appName, UserID: userID, SessionID: sessionID})
+		// Use an uncancelled context so cleanup always runs even if the
+		// parent context was cancelled or timed out.
+		_ = a.sessionService.Delete(context.WithoutCancel(ctx), &session.DeleteRequest{AppName: runtime.appName, UserID: userID, SessionID: sessionID})
 	}()
 	historyMessages := request.messages[:len(request.messages)-1]
 	latestMessage := request.messages[len(request.messages)-1]
@@ -1017,16 +1019,29 @@ func detectGroundingIssue(reply string, evidence *replyGroundingEvidence) ground
 	// Check all grounding categories instead of short-circuiting on the first
 	// failure. This ensures that a false positive in one domain does not mask a
 	// real issue in another, and that all unsupported facts are reported.
+	var allFacts []string
+	var codes []string
+
 	if d := checkQuoteGrounding(reply, evidence); d.Code != "" {
-		return d
+		codes = append(codes, d.Code)
+		allFacts = append(allFacts, d.UnsupportedFacts...)
 	}
 	if d := checkAppointmentGrounding(reply, evidence); d.Code != "" {
-		return d
+		codes = append(codes, d.Code)
+		allFacts = append(allFacts, d.UnsupportedFacts...)
 	}
 	if d := checkLeadGrounding(reply, evidence); d.Code != "" {
-		return d
+		codes = append(codes, d.Code)
+		allFacts = append(allFacts, d.UnsupportedFacts...)
 	}
-	return groundingDecision{}
+
+	if len(codes) == 0 {
+		return groundingDecision{}
+	}
+	return groundingDecision{
+		Code:             strings.Join(codes, ","),
+		UnsupportedFacts: uniqueStrings(allFacts),
+	}
 }
 
 var (

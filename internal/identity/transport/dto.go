@@ -298,11 +298,11 @@ type UpsertWorkflowRequest struct {
 	Enabled                  bool                        `json:"enabled"`
 	QuoteValidDaysOverride   *int                        `json:"quoteValidDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
 	QuotePaymentDaysOverride *int                        `json:"quotePaymentDaysOverride,omitempty" validate:"omitempty,min=1,max=365"`
-	Steps                    []UpsertWorkflowStepRequest `json:"steps" validate:"required,min=1,dive"`
+	Steps                    []UpsertWorkflowStepRequest `json:"steps" validate:"required,min=1,max=50,dive"`
 }
 
 type ReplaceWorkflowsRequest struct {
-	Workflows []UpsertWorkflowRequest `json:"workflows" validate:"required,min=1,dive"`
+	Workflows []UpsertWorkflowRequest `json:"workflows" validate:"required,min=1,max=100,dive"`
 }
 
 type WorkflowAssignmentRuleResponse struct {
@@ -330,7 +330,7 @@ type UpsertWorkflowAssignmentRuleRequest struct {
 }
 
 type ReplaceWorkflowAssignmentRulesRequest struct {
-	Rules []UpsertWorkflowAssignmentRuleRequest `json:"rules" validate:"required,min=1,dive"`
+	Rules []UpsertWorkflowAssignmentRuleRequest `json:"rules" validate:"required,min=1,max=500,dive"`
 }
 
 type ListWorkflowAssignmentRulesResponse struct {

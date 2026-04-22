@@ -86,7 +86,9 @@ func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*se
 			return fmt.Errorf("%s: %w", req.CreateSessionMessage, err)
 		}
 		defer func() {
-			_ = req.SessionService.Delete(ctx, &session.DeleteRequest{
+			// Use an uncancelled context so cleanup always runs even if the
+			// parent context was cancelled or timed out.
+			_ = req.SessionService.Delete(context.WithoutCancel(ctx), &session.DeleteRequest{
 				AppName:   req.AppName,
 				UserID:    req.UserID,
 				SessionID: req.SessionID,
