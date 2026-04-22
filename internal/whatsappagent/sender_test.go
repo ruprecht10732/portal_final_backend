@@ -125,7 +125,7 @@ func TestSenderSendReplyPersistsOutgoingMessage(t *testing.T) {
 	}
 }
 
-func TestSenderSendReplyIgnoresInboxPersistenceFailure(t *testing.T) {
+func TestSenderSendReplyReturnsInboxPersistenceFailure(t *testing.T) {
 	t.Parallel()
 
 	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
@@ -133,8 +133,8 @@ func TestSenderSendReplyIgnoresInboxPersistenceFailure(t *testing.T) {
 	sender := newTestSender(transport, senderTestConfigReader{config: whatsappagentdb.RacWhatsappAgentConfig{DeviceID: testSenderDeviceID}}, inboxWriter)
 
 	err := sender.SendReply(context.Background(), uuid.New(), testSenderPhone, "Hallo")
-	if err != nil {
-		t.Fatalf("expected send to succeed despite inbox persist failure, got %v", err)
+	if err == nil {
+		t.Fatal("expected inbox persist error to be returned")
 	}
 	if inboxWriter.calls != 1 {
 		t.Fatalf("expected one inbox persist attempt, got %d", inboxWriter.calls)

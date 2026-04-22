@@ -1096,15 +1096,21 @@ func (o *Orchestrator) enforceFulfillmentInvariant(ctx context.Context, serviceI
 func (o *Orchestrator) enforceEstimationInvariants(ctx context.Context, serviceID, tenantID uuid.UUID, desired desiredServiceState) desiredServiceState {
 	analysis, err := o.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
 	if err != nil {
-		if !errors.Is(err, repository.ErrNotFound) {
-			o.log.Error("orchestrator: failed to load latest AI analysis for reconciliation", "serviceId", serviceID, "tenantId", tenantID, "error", err)
+		if errors.Is(err, repository.ErrNotFound) {
+			desired.Stage = domain.PipelineStageNurturing
+			desired.Status = domain.LeadStatusAttemptedContact
+			desired.ReasonCode = "artifact_guard_missing_analysis"
+			if strings.TrimSpace(desired.Reason) == "" {
+				desired.Reason = "Geen recente intake-analyse beschikbaar; service blijft in Nurturing."
+			}
 			return desired
 		}
+		o.log.Error("orchestrator: failed to load latest AI analysis for reconciliation", "serviceId", serviceID, "tenantId", tenantID, "error", err)
 		desired.Stage = domain.PipelineStageNurturing
 		desired.Status = domain.LeadStatusAttemptedContact
-		desired.ReasonCode = "artifact_guard_missing_analysis"
+		desired.ReasonCode = "artifact_guard_analysis_load_failed"
 		if strings.TrimSpace(desired.Reason) == "" {
-			desired.Reason = "Geen recente intake-analyse beschikbaar; service blijft in Nurturing."
+			desired.Reason = "Intake-analyse kon niet worden geladen; service blijft in Nurturing."
 		}
 		return desired
 	}

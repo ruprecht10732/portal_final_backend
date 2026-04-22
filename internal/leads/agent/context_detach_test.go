@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestDetachedTimeout_ParentDeadlineDoesNotCascade(t *testing.T) {
+func TestDetachedTimeout_ParentDeadlineCancelsChild(t *testing.T) {
 	// Simulate an already-expired parent context (e.g. after a long LLM call).
 	parent, parentCancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
 	defer parentCancel()
@@ -18,12 +18,15 @@ func TestDetachedTimeout_ParentDeadlineDoesNotCascade(t *testing.T) {
 	child, childCancel := detachedTimeout(parent, 5*time.Second)
 	defer childCancel()
 
-	// The child must NOT be immediately cancelled even though the parent is expired.
+	// The child should be cancelled promptly when the parent expires,
+	// so the timer is released and does not leak.
 	select {
 	case <-child.Done():
-		t.Fatal("detached child context should not inherit the expired parent deadline")
-	default:
-		// ok — child is still alive
+		if child.Err() != context.Canceled {
+			t.Fatalf("expected context.Canceled, got %v", child.Err())
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("detached child context should have been cancelled after parent deadline exceeded")
 	}
 }
 

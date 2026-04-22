@@ -369,18 +369,21 @@ ORDER BY created_at DESC;
 INSERT INTO RAC_lead_photo_analyses (
 	lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
-	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 RETURNING id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at;
 
 -- name: GetPhotoAnalysisByID :one
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE id = $1 AND org_id = $2;
@@ -389,6 +392,7 @@ WHERE id = $1 AND org_id = $2;
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE service_id = $1 AND org_id = $2
@@ -399,6 +403,7 @@ LIMIT 1;
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE service_id = $1 AND org_id = $2
@@ -408,6 +413,7 @@ ORDER BY created_at DESC;
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE lead_id = $1 AND org_id = $2

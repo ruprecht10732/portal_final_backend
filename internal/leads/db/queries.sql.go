@@ -963,12 +963,14 @@ const createPhotoAnalysis = `-- name: CreatePhotoAnalysis :one
 INSERT INTO RAC_lead_photo_analyses (
 	lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
-	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms
+	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 RETURNING id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 `
 
@@ -989,6 +991,7 @@ type CreatePhotoAnalysisParams struct {
 	Discrepancies          []byte      `json:"discrepancies"`
 	ExtractedText          []byte      `json:"extracted_text"`
 	SuggestedSearchTerms   []byte      `json:"suggested_search_terms"`
+	IsRelevant             pgtype.Bool `json:"is_relevant"`
 }
 
 type CreatePhotoAnalysisRow struct {
@@ -1009,6 +1012,7 @@ type CreatePhotoAnalysisRow struct {
 	Discrepancies          []byte             `json:"discrepancies"`
 	ExtractedText          []byte             `json:"extracted_text"`
 	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	IsRelevant             pgtype.Bool        `json:"is_relevant"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -1031,6 +1035,7 @@ func (q *Queries) CreatePhotoAnalysis(ctx context.Context, arg CreatePhotoAnalys
 		arg.Discrepancies,
 		arg.ExtractedText,
 		arg.SuggestedSearchTerms,
+		arg.IsRelevant,
 	)
 	var i CreatePhotoAnalysisRow
 	err := row.Scan(
@@ -1051,6 +1056,7 @@ func (q *Queries) CreatePhotoAnalysis(ctx context.Context, arg CreatePhotoAnalys
 		&i.Discrepancies,
 		&i.ExtractedText,
 		&i.SuggestedSearchTerms,
+		&i.IsRelevant,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -2024,6 +2030,7 @@ const getLatestPhotoAnalysis = `-- name: GetLatestPhotoAnalysis :one
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE service_id = $1 AND org_id = $2
@@ -2054,6 +2061,7 @@ type GetLatestPhotoAnalysisRow struct {
 	Discrepancies          []byte             `json:"discrepancies"`
 	ExtractedText          []byte             `json:"extracted_text"`
 	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	IsRelevant             pgtype.Bool        `json:"is_relevant"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -2079,6 +2087,7 @@ func (q *Queries) GetLatestPhotoAnalysis(ctx context.Context, arg GetLatestPhoto
 		&i.Discrepancies,
 		&i.ExtractedText,
 		&i.SuggestedSearchTerms,
+		&i.IsRelevant,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -2710,6 +2719,7 @@ const getPhotoAnalysisByID = `-- name: GetPhotoAnalysisByID :one
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE id = $1 AND org_id = $2
@@ -2738,6 +2748,7 @@ type GetPhotoAnalysisByIDRow struct {
 	Discrepancies          []byte             `json:"discrepancies"`
 	ExtractedText          []byte             `json:"extracted_text"`
 	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	IsRelevant             pgtype.Bool        `json:"is_relevant"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -2763,6 +2774,7 @@ func (q *Queries) GetPhotoAnalysisByID(ctx context.Context, arg GetPhotoAnalysis
 		&i.Discrepancies,
 		&i.ExtractedText,
 		&i.SuggestedSearchTerms,
+		&i.IsRelevant,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -4254,6 +4266,7 @@ const listPhotoAnalysesByLead = `-- name: ListPhotoAnalysesByLead :many
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE lead_id = $1 AND org_id = $2
@@ -4283,6 +4296,7 @@ type ListPhotoAnalysesByLeadRow struct {
 	Discrepancies          []byte             `json:"discrepancies"`
 	ExtractedText          []byte             `json:"extracted_text"`
 	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	IsRelevant             pgtype.Bool        `json:"is_relevant"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -4314,6 +4328,7 @@ func (q *Queries) ListPhotoAnalysesByLead(ctx context.Context, arg ListPhotoAnal
 			&i.Discrepancies,
 			&i.ExtractedText,
 			&i.SuggestedSearchTerms,
+			&i.IsRelevant,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -4331,6 +4346,7 @@ const listPhotoAnalysesByService = `-- name: ListPhotoAnalysesByService :many
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
 	measurements, needs_onsite_measurement, discrepancies, extracted_text, suggested_search_terms,
+	is_relevant,
 	created_at, updated_at
 FROM RAC_lead_photo_analyses
 WHERE service_id = $1 AND org_id = $2
@@ -4360,6 +4376,7 @@ type ListPhotoAnalysesByServiceRow struct {
 	Discrepancies          []byte             `json:"discrepancies"`
 	ExtractedText          []byte             `json:"extracted_text"`
 	SuggestedSearchTerms   []byte             `json:"suggested_search_terms"`
+	IsRelevant             pgtype.Bool        `json:"is_relevant"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -4391,6 +4408,7 @@ func (q *Queries) ListPhotoAnalysesByService(ctx context.Context, arg ListPhotoA
 			&i.Discrepancies,
 			&i.ExtractedText,
 			&i.SuggestedSearchTerms,
+			&i.IsRelevant,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

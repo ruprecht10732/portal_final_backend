@@ -1055,6 +1055,10 @@ func isPhotoAnalysisLikelyIrrelevant(photoAnalysis *repository.PhotoAnalysis) bo
 	if photoAnalysis == nil {
 		return false
 	}
+	// Prefer explicit structured signal from the LLM when available.
+	if photoAnalysis.IsRelevant != nil {
+		return !*photoAnalysis.IsRelevant
+	}
 	combined := strings.ToLower(strings.TrimSpace(photoAnalysis.Summary + " " + strings.Join(photoAnalysis.Discrepancies, " ")))
 	if containsAny(combined, []string{
 		"niet de betreffende",
@@ -1064,6 +1068,23 @@ func isPhotoAnalysisLikelyIrrelevant(photoAnalysis *repository.PhotoAnalysis) bo
 		"onverwant",
 		"does not match",
 		"not relevant",
+		"niets te maken met",
+		"geen betrekking",
+		"onduidelijk",
+		"niet zichtbaar",
+		"niet herkenbaar",
+		"verkeerde",
+		"andere ruimte",
+		"andere situatie",
+		"irrelevant",
+		"unrelated",
+		"wrong room",
+		"wrong area",
+		"unclear image",
+		" blurry",
+		"blurry ",
+		"too dark",
+		"te donker",
 	}) {
 		return true
 	}

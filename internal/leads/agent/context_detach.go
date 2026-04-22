@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
@@ -18,9 +17,7 @@ func detachedTimeout(parent context.Context, timeout time.Duration) (context.Con
 	go func() {
 		select {
 		case <-parent.Done():
-			if errors.Is(parent.Err(), context.Canceled) {
-				cancel()
-			}
+			cancel()
 		case <-child.Done():
 		}
 	}()

@@ -186,6 +186,13 @@ func toPgTimestampPtr(value *time.Time) pgtype.Timestamptz {
 	return toPgTimestamp(*value)
 }
 
+func toPgBoolPtr(value *bool) pgtype.Bool {
+	if value == nil {
+		return pgtype.Bool{}
+	}
+	return pgtype.Bool{Bool: *value, Valid: true}
+}
+
 func optionalString(value pgtype.Text) *string {
 	if !value.Valid {
 		return nil

@@ -861,6 +861,8 @@ type RacLeadPhotoAnalysis struct {
 	ExtractedText []byte `json:"extracted_text"`
 	// Array of strings: specific product/material names for catalog search
 	SuggestedSearchTerms []byte `json:"suggested_search_terms"`
+	// Explicit boolean set by the LLM indicating whether the photos are relevant to the service type
+	IsRelevant pgtype.Bool `json:"is_relevant"`
 }
 
 type RacLeadService struct {

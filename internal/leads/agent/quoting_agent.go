@@ -1282,8 +1282,8 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 func (q *QuotingAgent) hasInsufficientIntakeForDraft(ctx context.Context, serviceID, tenantID uuid.UUID) (bool, string) {
 	analysis, err := q.repo.GetLatestAIAnalysis(ctx, serviceID, tenantID)
 	if err != nil {
-		// No gatekeeper analysis at all — let the estimator attempt with what's available.
-		return false, ""
+		// Fail-closed: if we cannot verify intake quality, block drafting.
+		return true, "analysis_load_failed"
 	}
 	// Only block when the Gatekeeper explicitly flagged the scope as completely unknown
 	// (quality = "Junk" or "Disqualified"). Missing information alone is not a blocker;

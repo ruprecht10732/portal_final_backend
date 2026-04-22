@@ -159,17 +159,21 @@ func (r *Repository) ReplaceWorkflows(ctx context.Context, organizationID uuid.U
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	queries := r.queries.WithTx(tx)
+	result := make([]Workflow, 0, len(workflows))
 	keptWorkflowIDs := make([]uuid.UUID, 0, len(workflows))
 	for _, workflow := range workflows {
-		workflowID, err := upsertWorkflowTx(ctx, queries, organizationID, workflow)
+		wf, err := upsertWorkflowTx(ctx, queries, organizationID, workflow)
 		if err != nil {
 			return nil, err
 		}
-		keptWorkflowIDs = append(keptWorkflowIDs, workflowID)
+		keptWorkflowIDs = append(keptWorkflowIDs, wf.ID)
 
-		if err := upsertWorkflowStepsTx(ctx, queries, organizationID, workflowID, workflow.Steps); err != nil {
+		steps, err := upsertWorkflowStepsTx(ctx, queries, organizationID, wf.ID, workflow.Steps)
+		if err != nil {
 			return nil, err
 		}
+		wf.Steps = steps
+		result = append(result, wf)
 	}
 
 	if len(keptWorkflowIDs) == 0 {
@@ -188,7 +192,7 @@ func (r *Repository) ReplaceWorkflows(ctx context.Context, organizationID uuid.U
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return r.ListWorkflows(ctx, organizationID)
+	return result, nil
 }
 
 func (r *Repository) EnsureDefaultWorkflowSeed(ctx context.Context, organizationID uuid.UUID, workflow WorkflowUpsert, defaultRuleName string, defaultPriority int) error {
@@ -199,11 +203,11 @@ func (r *Repository) EnsureDefaultWorkflowSeed(ctx context.Context, organization
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	queries := r.queries.WithTx(tx)
-	workflowID, err := upsertWorkflowTx(ctx, queries, organizationID, workflow)
+	wf, err := upsertWorkflowTx(ctx, queries, organizationID, workflow)
 	if err != nil {
 		return err
 	}
-	if err := upsertWorkflowStepsTx(ctx, queries, organizationID, workflowID, workflow.Steps); err != nil {
+	if _, err := upsertWorkflowStepsTx(ctx, queries, organizationID, wf.ID, workflow.Steps); err != nil {
 		return err
 	}
 
@@ -214,7 +218,7 @@ func (r *Repository) EnsureDefaultWorkflowSeed(ctx context.Context, organization
 	if !defaultRuleExists {
 		if err := queries.CreateDefaultWorkflowAssignmentRule(ctx, identitydb.CreateDefaultWorkflowAssignmentRuleParams{
 			OrganizationID: toPgUUID(organizationID),
-			WorkflowID:     toPgUUID(workflowID),
+			WorkflowID:     toPgUUID(wf.ID),
 			Name:           defaultRuleName,
 			Priority:       int32(defaultPriority),
 		}); err != nil {
@@ -225,13 +229,13 @@ func (r *Repository) EnsureDefaultWorkflowSeed(ctx context.Context, organization
 	return tx.Commit(ctx)
 }
 
-func upsertWorkflowTx(ctx context.Context, queries *identitydb.Queries, organizationID uuid.UUID, workflow WorkflowUpsert) (uuid.UUID, error) {
+func upsertWorkflowTx(ctx context.Context, queries *identitydb.Queries, organizationID uuid.UUID, workflow WorkflowUpsert) (Workflow, error) {
 	workflowID := uuid.New()
 	if workflow.ID != nil && *workflow.ID != uuid.Nil {
 		workflowID = *workflow.ID
 	}
 
-	result, err := queries.UpsertWorkflow(ctx, identitydb.UpsertWorkflowParams{
+	_, err := queries.UpsertWorkflow(ctx, identitydb.UpsertWorkflowParams{
 		ID:                       toPgUUID(workflowID),
 		OrganizationID:           toPgUUID(organizationID),
 		WorkflowKey:              workflow.WorkflowKey,
@@ -242,13 +246,27 @@ func upsertWorkflowTx(ctx context.Context, queries *identitydb.Queries, organiza
 		QuotePaymentDaysOverride: toPgInt4Ptr(workflow.QuotePaymentDaysOverride),
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return Workflow{}, err
 	}
-	return uuidFromPg(result), nil
+	now := time.Now()
+	return Workflow{
+		ID:                       workflowID,
+		OrganizationID:           organizationID,
+		WorkflowKey:              workflow.WorkflowKey,
+		Name:                     workflow.Name,
+		Description:              workflow.Description,
+		Enabled:                  workflow.Enabled,
+		QuoteValidDaysOverride:   workflow.QuoteValidDaysOverride,
+		QuotePaymentDaysOverride: workflow.QuotePaymentDaysOverride,
+		CreatedAt:                now,
+		UpdatedAt:                now,
+	}, nil
 }
 
-func upsertWorkflowStepsTx(ctx context.Context, queries *identitydb.Queries, organizationID uuid.UUID, workflowID uuid.UUID, steps []WorkflowStepUpsert) error {
+func upsertWorkflowStepsTx(ctx context.Context, queries *identitydb.Queries, organizationID uuid.UUID, workflowID uuid.UUID, steps []WorkflowStepUpsert) ([]WorkflowStep, error) {
 	keptStepIDs := make([]uuid.UUID, 0, len(steps))
+	result := make([]WorkflowStep, 0, len(steps))
+	now := time.Now()
 	for _, step := range steps {
 		stepID := uuid.New()
 		if step.ID != nil && *step.ID != uuid.Nil {
@@ -257,10 +275,10 @@ func upsertWorkflowStepsTx(ctx context.Context, queries *identitydb.Queries, org
 
 		recipientConfigJSON, err := marshalRecipientConfig(step.RecipientConfig)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		result, err := queries.UpsertWorkflowStep(ctx, identitydb.UpsertWorkflowStepParams{
+		_, err = queries.UpsertWorkflowStep(ctx, identitydb.UpsertWorkflowStepParams{
 			ID:              toPgUUID(stepID),
 			OrganizationID:  toPgUUID(organizationID),
 			WorkflowID:      toPgUUID(workflowID),
@@ -277,23 +295,47 @@ func upsertWorkflowStepsTx(ctx context.Context, queries *identitydb.Queries, org
 			StopOnReply:     step.StopOnReply,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
-		keptStepIDs = append(keptStepIDs, uuidFromPg(result))
-	}
-
-	if len(keptStepIDs) == 0 {
-		return queries.DeleteWorkflowStepsByWorkflow(ctx, identitydb.DeleteWorkflowStepsByWorkflowParams{
-			OrganizationID: toPgUUID(organizationID),
-			WorkflowID:     toPgUUID(workflowID),
+		keptStepIDs = append(keptStepIDs, stepID)
+		result = append(result, WorkflowStep{
+			ID:              stepID,
+			OrganizationID:  organizationID,
+			WorkflowID:      workflowID,
+			Trigger:         step.Trigger,
+			Channel:         step.Channel,
+			Audience:        step.Audience,
+			Action:          step.Action,
+			StepOrder:       step.StepOrder,
+			DelayMinutes:    step.DelayMinutes,
+			Enabled:         step.Enabled,
+			RecipientConfig: step.RecipientConfig,
+			TemplateSubject: step.TemplateSubject,
+			TemplateBody:    step.TemplateBody,
+			StopOnReply:     step.StopOnReply,
+			CreatedAt:       now,
+			UpdatedAt:       now,
 		})
 	}
 
-	return queries.DeleteWorkflowStepsNotInList(ctx, identitydb.DeleteWorkflowStepsNotInListParams{
+	if len(keptStepIDs) == 0 {
+		if err := queries.DeleteWorkflowStepsByWorkflow(ctx, identitydb.DeleteWorkflowStepsByWorkflowParams{
+			OrganizationID: toPgUUID(organizationID),
+			WorkflowID:     toPgUUID(workflowID),
+		}); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	if err := queries.DeleteWorkflowStepsNotInList(ctx, identitydb.DeleteWorkflowStepsNotInListParams{
 		OrganizationID: toPgUUID(organizationID),
 		WorkflowID:     toPgUUID(workflowID),
 		Column3:        toPgUUIDSlice(keptStepIDs),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func marshalRecipientConfig(config map[string]any) ([]byte, error) {

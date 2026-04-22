@@ -73,13 +73,24 @@ func (a *WhatsAppAgentLeadActionsAdapter) SearchLeads(ctx context.Context, orgID
 	return results, nil
 }
 
+// commonDutchNamePrefixes (tussenvoegsels) that should not be treated as a first name.
+var commonDutchNamePrefixes = map[string]struct{}{
+	"van": {}, "de": {}, "der": {}, "den": {}, "het": {}, "te": {},
+	"ten": {}, "ter": {}, "'t": {}, "van de": {}, "van der": {}, "van den": {},
+}
+
+func isDutchPrefix(word string) bool {
+	_, ok := commonDutchNamePrefixes[strings.ToLower(word)]
+	return ok
+}
+
 // iLikeSearchLeads performs a standard ILIKE-based lead search via the management service.
 // For multi-word queries it first tries a split FirstName+LastName AND-match;
 // if that returns nothing it falls back to a combined OR-search across all fields.
 func (a *WhatsAppAgentLeadActionsAdapter) iLikeSearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) []whatsappagent.LeadSearchResult {
 	req := leadtransport.ListLeadsRequest{Page: 1, PageSize: limit}
 	parts := strings.Fields(query)
-	if len(parts) >= 2 {
+	if len(parts) >= 2 && !isDutchPrefix(parts[0]) {
 		req.FirstName = parts[0]
 		req.LastName = strings.Join(parts[1:], " ")
 	} else {

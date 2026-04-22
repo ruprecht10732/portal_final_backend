@@ -7,6 +7,31 @@ import (
 	"portal_final_backend/internal/leads/repository"
 )
 
+func TestIsPhotoAnalysisLikelyIrrelevantExplicitFalse(t *testing.T) {
+	f := false
+	analysis := &repository.PhotoAnalysis{
+		Summary:         "Foto toont een mooie tuin.",
+		ConfidenceLevel: "High",
+		IsRelevant:      &f,
+	}
+	if !isPhotoAnalysisLikelyIrrelevant(analysis) {
+		t.Fatalf("expected explicit IsRelevant=false to be flagged as irrelevant")
+	}
+}
+
+func TestIsPhotoAnalysisLikelyIrrelevantExplicitTrue(t *testing.T) {
+	tr := true
+	analysis := &repository.PhotoAnalysis{
+		Summary:         "Foto toont een mooie tuin.",
+		ConfidenceLevel: "Low",
+		Discrepancies:   []string{"Aanvraag en foto komen niet overeen"},
+		IsRelevant:      &tr,
+	}
+	if isPhotoAnalysisLikelyIrrelevant(analysis) {
+		t.Fatalf("expected explicit IsRelevant=true to override text heuristics")
+	}
+}
+
 func TestIsPhotoAnalysisLikelyIrrelevantMismatchInSummary(t *testing.T) {
 	analysis := &repository.PhotoAnalysis{
 		Summary:         "Bijgevoegde foto's tonen niet de betreffende trapopening.",

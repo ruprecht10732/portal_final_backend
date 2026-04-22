@@ -55,6 +55,7 @@ type PhotoAnalysis struct {
 	SuggestedSearchTerms   []string      `json:"suggestedSearchTerms,omitempty"`
 	PhotoCount             int           `json:"photoCount"`
 	ConfidenceLevel        string        `json:"confidenceLevel"` // High, Medium, Low
+	IsRelevant             *bool         `json:"isRelevant,omitempty"`
 }
 
 // PhotoAnalyzerDeps contains dependencies for the photo analyzer
@@ -338,7 +339,7 @@ func (pa *PhotoAnalyzer) retryForResult(ctx context.Context, userID, sessionID s
 	retryContent := &genai.Content{
 		Role: "user",
 		Parts: []*genai.Part{
-			genai.NewPartFromText("请选择一个工具（tool）来处理当前的问题。You MUST call the SavePhotoAnalysis tool now with your complete analysis."),
+			genai.NewPartFromText("You MUST call the SavePhotoAnalysis tool now with your complete analysis. Do not respond in plain text."),
 		},
 	}
 
@@ -448,6 +449,7 @@ type SavePhotoAnalysisInput struct {
 	Discrepancies        []string           `json:"discrepancies,omitempty" description:"Discrepancies between consumer claims and visible evidence"`
 	ExtractedText        []string           `json:"extractedText,omitempty" description:"Text, labels, model numbers, or serial numbers read from photos"`
 	SuggestedSearchTerms []string           `json:"suggestedSearchTerms,omitempty" description:"Product/material search terms for the Estimator to look up"`
+	IsRelevant           *bool              `json:"isRelevant,omitempty" description:"Explicit boolean indicating whether the photos are relevant to the requested service type"`
 }
 
 // MeasurementInput represents a single measurement from the AI tool
@@ -518,6 +520,7 @@ func buildPhotoAnalyzerTools() ([]tool.Tool, error) {
 			Discrepancies:        args.Discrepancies,
 			ExtractedText:        args.ExtractedText,
 			SuggestedSearchTerms: args.SuggestedSearchTerms,
+			IsRelevant:           args.IsRelevant,
 		}
 
 		deps.SetResult(result)

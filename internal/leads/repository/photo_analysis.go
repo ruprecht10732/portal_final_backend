@@ -44,6 +44,7 @@ type PhotoAnalysis struct {
 	Discrepancies          []string      `json:"discrepancies"`
 	ExtractedText          []string      `json:"extractedText"`
 	SuggestedSearchTerms   []string      `json:"suggestedSearchTerms"`
+	IsRelevant             *bool         `json:"isRelevant,omitempty"`
 	CreatedAt              time.Time     `json:"createdAt"`
 	UpdatedAt              time.Time     `json:"updatedAt"`
 }
@@ -66,6 +67,7 @@ type CreatePhotoAnalysisParams struct {
 	Discrepancies          []string
 	ExtractedText          []string
 	SuggestedSearchTerms   []string
+	IsRelevant             *bool
 }
 
 // CreatePhotoAnalysis inserts a new photo analysis record.
@@ -87,6 +89,7 @@ func (r *Repository) CreatePhotoAnalysis(ctx context.Context, params CreatePhoto
 		Discrepancies:          marshalJSONStrings(params.Discrepancies),
 		ExtractedText:          marshalJSONStrings(params.ExtractedText),
 		SuggestedSearchTerms:   marshalJSONStrings(params.SuggestedSearchTerms),
+		IsRelevant:             toPgBoolPtr(params.IsRelevant),
 	})
 	if err != nil {
 		return PhotoAnalysis{}, err
@@ -109,6 +112,7 @@ func (r *Repository) CreatePhotoAnalysis(ctx context.Context, params CreatePhoto
 		discrepancies:          row.Discrepancies,
 		extractedText:          row.ExtractedText,
 		suggestedSearchTerms:   row.SuggestedSearchTerms,
+		isRelevant:             row.IsRelevant,
 		createdAt:              row.CreatedAt,
 		updatedAt:              row.UpdatedAt,
 	}.toModel(), nil
@@ -141,6 +145,7 @@ func (r *Repository) GetPhotoAnalysisByID(ctx context.Context, id uuid.UUID, org
 		discrepancies:          row.Discrepancies,
 		extractedText:          row.ExtractedText,
 		suggestedSearchTerms:   row.SuggestedSearchTerms,
+		isRelevant:             row.IsRelevant,
 		createdAt:              row.CreatedAt,
 		updatedAt:              row.UpdatedAt,
 	}.toModel(), nil
@@ -173,6 +178,7 @@ func (r *Repository) GetLatestPhotoAnalysis(ctx context.Context, serviceID uuid.
 		discrepancies:          row.Discrepancies,
 		extractedText:          row.ExtractedText,
 		suggestedSearchTerms:   row.SuggestedSearchTerms,
+		isRelevant:             row.IsRelevant,
 		createdAt:              row.CreatedAt,
 		updatedAt:              row.UpdatedAt,
 	}.toModel(), nil
@@ -205,6 +211,7 @@ func (r *Repository) ListPhotoAnalysesByService(ctx context.Context, serviceID u
 			discrepancies:          row.Discrepancies,
 			extractedText:          row.ExtractedText,
 			suggestedSearchTerms:   row.SuggestedSearchTerms,
+			isRelevant:             row.IsRelevant,
 			createdAt:              row.CreatedAt,
 			updatedAt:              row.UpdatedAt,
 		}.toModel())
@@ -239,6 +246,7 @@ func (r *Repository) ListPhotoAnalysesByLead(ctx context.Context, leadID uuid.UU
 			discrepancies:          row.Discrepancies,
 			extractedText:          row.ExtractedText,
 			suggestedSearchTerms:   row.SuggestedSearchTerms,
+			isRelevant:             row.IsRelevant,
 			createdAt:              row.CreatedAt,
 			updatedAt:              row.UpdatedAt,
 		}.toModel())
@@ -264,6 +272,7 @@ type photoAnalysisSnapshot struct {
 	discrepancies          []byte
 	extractedText          []byte
 	suggestedSearchTerms   []byte
+	isRelevant             pgtype.Bool
 	createdAt              pgtype.Timestamptz
 	updatedAt              pgtype.Timestamptz
 }
@@ -283,6 +292,9 @@ func (snapshot photoAnalysisSnapshot) toModel() PhotoAnalysis {
 	}
 	if value := optionalString(snapshot.costIndicators); value != nil {
 		analysis.CostIndicators = *value
+	}
+	if snapshot.isRelevant.Valid {
+		analysis.IsRelevant = &snapshot.isRelevant.Bool
 	}
 	_ = json.Unmarshal(snapshot.observations, &analysis.Observations)
 	_ = json.Unmarshal(snapshot.safetyConcerns, &analysis.SafetyConcerns)

@@ -46,6 +46,7 @@ func (s *Sender) SendReply(ctx context.Context, orgID uuid.UUID, phone, text str
 
 		if persistErr := s.inboxWriter.PersistOutgoingWhatsAppMessage(ctx, orgID, nil, phone, text, msgID); persistErr != nil {
 			s.logWarn(ctx, "whatsappagent: inbox persist error", "phone", phone, "organization_id", orgID.String(), "error", persistErr)
+			return persistErr
 		}
 	}
 
