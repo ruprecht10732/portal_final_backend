@@ -42,15 +42,17 @@ func (r *RateLimiter) Allow(ctx context.Context, phone string) (bool, error) {
 
 	key := rateLimitPrefix + phone
 
-	pipe := r.redis.Pipeline()
-	incrCmd := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, rateLimitWindow)
-	_, err := pipe.Exec(ctx)
+	count, err := r.redis.Incr(ctx, key).Result()
 	if err != nil {
-		return true, fmt.Errorf("whatsappagent: rate limit pipeline error: %w", err)
+		return true, fmt.Errorf("whatsappagent: rate limit incr error: %w", err)
 	}
 
-	count := incrCmd.Val()
+	if count == 1 {
+		if err := r.redis.Expire(ctx, key, rateLimitWindow).Err(); err != nil {
+			return true, fmt.Errorf("whatsappagent: rate limit expire error: %w", err)
+		}
+	}
+
 	if count > rateLimitMax {
 		if r.log != nil {
 			r.log.Warn("whatsappagent: rate limit exceeded", "phone", phone, "count", count)

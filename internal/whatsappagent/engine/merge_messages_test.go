@@ -6,9 +6,6 @@ import (
 )
 
 func TestMergeTrailingUserMessages(t *testing.T) {
-	now := time.Now()
-	later := now.Add(2 * time.Second)
-
 	tests := []struct {
 		name     string
 		input    []ConversationMessage
@@ -39,8 +36,8 @@ func TestMergeTrailingUserMessages(t *testing.T) {
 			name: "two consecutive user messages merged",
 			input: []ConversationMessage{
 				{Role: "assistant", Content: "hoi"},
-				{Role: "user", Content: "maak een lead aan", SentAt: &now},
-				{Role: "user", Content: "service type is timmerwerken", SentAt: &later},
+				{Role: "user", Content: "maak een lead aan"},
+				{Role: "user", Content: "service type is timmerwerken"},
 			},
 			wantLen:  2, // assistant + merged user
 			wantLast: "maak een lead aan\n\nservice type is timmerwerken",
@@ -48,9 +45,9 @@ func TestMergeTrailingUserMessages(t *testing.T) {
 		{
 			name: "three consecutive user messages merged",
 			input: []ConversationMessage{
-				{Role: "user", Content: "eerste bericht", SentAt: &now},
+				{Role: "user", Content: "eerste bericht"},
 				{Role: "user", Content: "tweede bericht"},
-				{Role: "user", Content: "derde bericht", SentAt: &later},
+				{Role: "user", Content: "derde bericht"},
 			},
 			wantLen:  1,
 			wantLast: "eerste bericht\n\ntweede bericht\n\nderde bericht",
@@ -96,5 +93,9 @@ func TestMergeTrailingUserMessagesPreservesSentAt(t *testing.T) {
 	}
 	if got[0].SentAt == nil || !got[0].SentAt.Equal(t2) {
 		t.Fatalf("SentAt = %v, want %v", got[0].SentAt, t2)
+	}
+	wantContent := "[Berichttijd: 2025-01-01T10:00:00Z]\na\n\n[Berichttijd: 2025-01-01T10:00:03Z]\nb"
+	if got[0].Content != wantContent {
+		t.Fatalf("Content = %q, want %q", got[0].Content, wantContent)
 	}
 }

@@ -281,7 +281,12 @@ func (g *Gatekeeper) applyFallbackNurturingStage(ctx context.Context, leadID, se
 			currentService.AgentCycleCount, runID, leadID, serviceID)
 	}
 
-	if out, err := applyPipelineStageUpdate(ctx, GetDependencies(ctx), UpdatePipelineStageInput{Stage: targetStage, Reason: reason}); err != nil {
+	deps, err := GetDependencies(ctx)
+	if err != nil {
+		log.Printf("gatekeeper: failed to get dependencies: %v", err)
+		return
+	}
+	if out, err := applyPipelineStageUpdate(ctx, deps, UpdatePipelineStageInput{Stage: targetStage, Reason: reason}); err != nil {
 		log.Printf("gatekeeper: fallback stage update to %s failed (runID=%s lead=%s service=%s): %v", targetStage, runID, leadID, serviceID, err)
 		return
 	} else if !out.Success {
@@ -362,7 +367,11 @@ func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperProm
 }
 
 func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, service repository.LeadService) {
-	reqDeps := GetDependencies(ctx)
+	reqDeps, err := GetDependencies(ctx)
+	if err != nil {
+		log.Printf("gatekeeper: failed to get dependencies: %v", err)
+		return
+	}
 	// Respect tenant settings; do not perform autonomous disqualification when disabled.
 	settings, ok := reqDeps.GetOrganizationAISettings()
 	if !ok {
@@ -442,11 +451,15 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 	if strings.TrimSpace(lead.ConsumerPhone) != "" {
 		channel = "WhatsApp"
 	}
-	deps := GetDependencies(ctx)
+	deps, err := GetDependencies(ctx)
+	if err != nil {
+		log.Printf("gatekeeper: failed to get dependencies: %v", err)
+		return
+	}
 	resolvedInformation, extractedFacts := populateAnalysisFacts(ctx, deps, lead, tenantID, serviceID, nil, nil)
 
 	// Create a default analysis record
-	_, err := g.repo.CreateAIAnalysis(ctx, repository.CreateAIAnalysisParams{
+	_, err = g.repo.CreateAIAnalysis(ctx, repository.CreateAIAnalysisParams{
 		LeadID:                  leadID,
 		OrganizationID:          tenantID,
 		LeadServiceID:           serviceID,
@@ -496,7 +509,10 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 	})
 
 	// Store for stage_change event if needed
-	GetDependencies(ctx).SetLastAnalysisMetadata(analysisMetadata)
+	deps, err = GetDependencies(ctx)
+	if err == nil {
+		deps.SetLastAnalysisMetadata(analysisMetadata)
+	}
 	log.Printf("gatekeeper: created fallback analysis for lead=%s service=%s", leadID, serviceID)
 }
 

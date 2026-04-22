@@ -5,14 +5,22 @@ import (
 	"fmt"
 	"text/template"
 
-	"portal_final_backend/internal/orchestration"
+	"portal_final_backend/agents"
 )
 
-func mustLoadWorkspaceMarkdownText(relativePath string) string {
-	return orchestration.MustLoadWorkspaceMarkdownText(relativePath)
+func mustReadPromptFile(path string) string {
+	body, err := agents.ReadPromptFile(path)
+	if err != nil {
+		panic(fmt.Sprintf("load prompt file %s: %v", path, err))
+	}
+	return body
 }
 
-func mustParsePromptTemplate(name, body string) *template.Template {
+func mustLoadPromptTemplate(name, path string) *template.Template {
+	body, err := agents.ReadPromptFile(path)
+	if err != nil {
+		panic(fmt.Sprintf("load prompt template %s: %v", path, err))
+	}
 	return template.Must(template.New(name).Option("missingkey=error").Parse(body))
 }
 
@@ -24,18 +32,18 @@ func renderPromptTemplate(tmpl *template.Template, data any) string {
 	return buf.String()
 }
 
-var scopeAnalyzerPromptTemplate = mustParsePromptTemplate("scope-analyzer", mustLoadWorkspaceMarkdownText("agents/calculator/prompts/scope_analyzer.md"))
+var scopeAnalyzerPromptTemplate = mustLoadPromptTemplate("scope-analyzer", "calculator/prompts/scope_analyzer.md")
 
-var quoteBuilderPromptTemplate = mustParsePromptTemplate("quote-builder", mustLoadWorkspaceMarkdownText("agents/calculator/prompts/quote_builder.md"))
+var quoteBuilderPromptTemplate = mustLoadPromptTemplate("quote-builder", "calculator/prompts/quote_builder.md")
 
-var investigativePromptTemplate = mustParsePromptTemplate("investigative", mustLoadWorkspaceMarkdownText("agents/calculator/prompts/investigative.md"))
+var investigativePromptTemplate = mustLoadPromptTemplate("investigative", "calculator/prompts/investigative.md")
 
-var dispatcherPromptTemplate = mustParsePromptTemplate("dispatcher", mustLoadWorkspaceMarkdownText("agents/matchmaker/prompts/base.md"))
+var dispatcherPromptTemplate = mustLoadPromptTemplate("dispatcher", "matchmaker/prompts/base.md")
 
-var quoteGeneratePromptTemplate = mustParsePromptTemplate("quote-generate", mustLoadWorkspaceMarkdownText("agents/calculator/prompts/quote_generate.md"))
+var quoteGeneratePromptTemplate = mustLoadPromptTemplate("quote-generate", "calculator/prompts/quote_generate.md")
 
-var quoteCriticPromptTemplate = mustParsePromptTemplate("quote-critic", mustLoadWorkspaceMarkdownText("agents/calculator/prompts/quote_critic.md"))
+var quoteCriticPromptTemplate = mustLoadPromptTemplate("quote-critic", "calculator/prompts/quote_critic.md")
 
-var quoteRepairPromptTemplate = mustParsePromptTemplate("quote-repair", mustLoadWorkspaceMarkdownText("agents/calculator/prompts/quote_repair.md"))
+var quoteRepairPromptTemplate = mustLoadPromptTemplate("quote-repair", "calculator/prompts/quote_repair.md")
 
-var photoAnalysisPromptTemplate = mustParsePromptTemplate("photo-analysis", mustLoadWorkspaceMarkdownText("agents/support/photo_analyzer/prompts/request.md"))
+var photoAnalysisPromptTemplate = mustLoadPromptTemplate("photo-analysis", "support/photo_analyzer/prompts/request.md")

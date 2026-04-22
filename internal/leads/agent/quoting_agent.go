@@ -347,9 +347,10 @@ func (q *QuotingAgent) Run(ctx context.Context, leadID, serviceID, tenantID uuid
 	}
 	log.Printf("quoting-agent[%s]: scheduling run for lead=%s service=%s tenant=%s force=%t", q.mode, leadID, serviceID, tenantID, force)
 	reqDeps := q.toolDeps.NewRequestDeps()
-	ctx = WithDependencies(ctx, reqDeps)
+	bgCtx := context.WithoutCancel(ctx)
+	bgCtx = WithDependencies(bgCtx, reqDeps)
 	go func() {
-		if err := q.executeAutonomousRun(ctx, reqDeps, leadID, serviceID, tenantID, force); err != nil {
+		if err := q.executeAutonomousRun(bgCtx, reqDeps, leadID, serviceID, tenantID, force); err != nil {
 			log.Printf("quoting-agent[%s]: autonomous run failed lead=%s service=%s tenant=%s: %v", q.mode, leadID, serviceID, tenantID, err)
 		}
 	}()
@@ -533,13 +534,24 @@ func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead reposit
 	var scopeArtifact *ScopeArtifact
 	if err := q.runWithPromptUsingTools(ctx, scopePrompt, "estimator-scope-"+lead.ID.String(), "ScopeAnalyzer", "Analyzes scope and commits artifact", scopeTools); err != nil {
 		log.Printf("quoting-agent: scope analyzer run failed, continuing in degraded mode: %v", err)
-	} else if sa, ok := GetDependencies(ctx).GetScopeArtifact(); ok {
-		scopeArtifact = sa
 	} else {
-		log.Printf("quoting-agent: scope analyzer did not commit artifact for lead=%s service=%s, continuing in degraded mode", lead.ID, service.ID)
+		deps, err := GetDependencies(ctx)
+		if err == nil {
+			if sa, ok := deps.GetScopeArtifact(); ok {
+				scopeArtifact = sa
+			}
+		}
+		if scopeArtifact == nil {
+			log.Printf("quoting-agent: scope analyzer did not commit artifact for lead=%s service=%s, continuing in degraded mode", lead.ID, service.ID)
+		}
 	}
 
-	quoteBuilderTools, err := buildQuotingTools(GetDependencies(ctx), q.mode)
+	deps, err := GetDependencies(ctx)
+	if err != nil {
+		log.Printf("quoting-agent: failed to get dependencies: %v", err)
+		return false
+	}
+	quoteBuilderTools, err := buildQuotingTools(deps, q.mode)
 	if err != nil {
 		log.Printf("quoting-agent: failed to build quote builder tools: %v", err)
 		return false
@@ -554,7 +566,12 @@ func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead reposit
 }
 
 func (q *QuotingAgent) buildEnhancedEstimationContext(ctx context.Context, tenantID uuid.UUID, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, baseGuidelines string) (estimatorReasoningMode, string) {
-	settings := GetDependencies(ctx).GetOrganizationAISettingsOrDefault()
+	deps, err := GetDependencies(ctx)
+	if err != nil {
+		log.Printf("quoting-agent: failed to get dependencies: %v", err)
+		return reasoningModeBalanced, ""
+	}
+	settings := deps.GetOrganizationAISettingsOrDefault()
 	latestAnalysis := q.loadLatestAnalysis(ctx, tenantID, service.ID)
 	reasoningMode := chooseEstimatorReasoningMode(settings, latestAnalysis, photo)
 	councilAdvice := q.resolveEstimatorCouncilAdvice(settings, latestAnalysis, photo, notes)
@@ -591,8 +608,8 @@ func (q *QuotingAgent) loadPricingIntelligenceSection(ctx context.Context, setti
 	if !settings.AIExperienceMemory {
 		return ""
 	}
-	deps := GetDependencies(ctx)
-	if deps == nil || deps.PricingIntelligence == nil {
+	deps, err := GetDependencies(ctx)
+	if err != nil || deps == nil || deps.PricingIntelligence == nil {
 		return ""
 	}
 	report, err := deps.PricingIntelligence.GetPricingIntelligenceReport(ctx, tenantID, serviceType, postcodePrefix)

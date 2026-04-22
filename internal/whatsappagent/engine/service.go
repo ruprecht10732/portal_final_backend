@@ -311,13 +311,18 @@ func MergeTrailingUserMessages(messages []ConversationMessage) []ConversationMes
 		return messages
 	}
 
-	// Combine the streak into one message.
+	// Combine the streak into one message, preserving individual timestamps.
 	parts := make([]string, 0, len(messages)-streakStart)
 	var latestSentAt *time.Time
 	for _, m := range messages[streakStart:] {
-		if text := strings.TrimSpace(m.Content); text != "" {
-			parts = append(parts, text)
+		text := strings.TrimSpace(m.Content)
+		if text == "" {
+			continue
 		}
+		if m.SentAt != nil {
+			text = fmt.Sprintf("[Berichttijd: %s]\n%s", m.SentAt.UTC().Format(time.RFC3339), text)
+		}
+		parts = append(parts, text)
 		if m.SentAt != nil {
 			latestSentAt = m.SentAt
 		}

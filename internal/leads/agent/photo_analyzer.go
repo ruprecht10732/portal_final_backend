@@ -315,7 +315,10 @@ func (pa *PhotoAnalyzer) runAnalysis(ctx context.Context, userID, sessionID stri
 }
 
 func (pa *PhotoAnalyzer) getOrRetryResult(ctx context.Context, userID, sessionID string, output string) (*PhotoAnalysis, error) {
-	reqDeps := GetPhotoAnalyzerDeps(ctx)
+	reqDeps, err := GetPhotoAnalyzerDeps(ctx)
+	if err != nil {
+		return nil, err
+	}
 	result := reqDeps.GetResult()
 	if result != nil {
 		return result, nil
@@ -383,7 +386,10 @@ func collectContentText(content *genai.Content) string {
 }
 
 func (pa *PhotoAnalyzer) mergeOnsiteFlags(ctx context.Context, result *PhotoAnalysis) {
-	reqDeps := GetPhotoAnalyzerDeps(ctx)
+	reqDeps, err := GetPhotoAnalyzerDeps(ctx)
+	if err != nil {
+		return
+	}
 	if flags := reqDeps.GetOnsiteFlags(); len(flags) > 0 {
 		result.NeedsOnsiteMeasurement = append(result.NeedsOnsiteMeasurement, flags...)
 	}
@@ -476,7 +482,10 @@ type SavePhotoAnalysisOutput struct {
 
 func buildPhotoAnalyzerTools() ([]tool.Tool, error) {
 	savePhotoAnalysis, err := apptools.NewSavePhotoAnalysisTool(func(ctx tool.Context, args SavePhotoAnalysisInput) (SavePhotoAnalysisOutput, error) {
-		deps := GetPhotoAnalyzerDeps(ctx)
+		deps, err := GetPhotoAnalyzerDeps(ctx)
+		if err != nil {
+			return SavePhotoAnalysisOutput{Success: false, Message: "Internal error"}, err
+		}
 		leadID, err := uuid.Parse(args.LeadID)
 		if err != nil {
 			return SavePhotoAnalysisOutput{Success: false, Message: "Invalid leadId"}, err
@@ -546,7 +555,10 @@ func buildPhotoAnalyzerTools() ([]tool.Tool, error) {
 
 	// FlagOnsiteMeasurement accumulates reasons why on-site measurement is needed
 	flagOnsite, err := apptools.NewFlagOnsiteMeasurementTool(func(ctx tool.Context, args FlagOnsiteMeasurementInput) (map[string]any, error) {
-		deps := GetPhotoAnalyzerDeps(ctx)
+		deps, err := GetPhotoAnalyzerDeps(ctx)
+		if err != nil {
+			return map[string]any{"success": false, "message": "Internal error"}, err
+		}
 		if args.Reason == "" {
 			return map[string]any{"success": false, "message": "reason is required"}, nil
 		}

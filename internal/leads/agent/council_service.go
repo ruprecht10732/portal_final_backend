@@ -147,7 +147,7 @@ func applyDraftQuoteMajority(out CouncilEvaluation, intakeReady, lowConfidence b
 	} else {
 		out.RiskSignals = append(out.RiskSignals, "risk_vote=manual_review")
 	}
-	if intakeReady {
+	if !lowConfidence {
 		allowVotes++
 	} else {
 		out.ReadinessSignals = append(out.ReadinessSignals, "readiness_vote=manual_review")

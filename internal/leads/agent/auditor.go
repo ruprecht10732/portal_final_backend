@@ -149,7 +149,11 @@ func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, e
 	deps := &AuditorToolDeps{Repo: repo, EventBus: eventBus}
 
 	submitTool, err := apptools.NewSubmitAuditResultTool(func(ctx tool.Context, input SubmitAuditResultInput) (SubmitAuditResultOutput, error) {
-		return GetAuditorDeps(ctx).handleSubmitAuditResult(ctx, input)
+		deps, err := GetAuditorDeps(ctx)
+		if err != nil {
+			return SubmitAuditResultOutput{}, err
+		}
+		return deps.handleSubmitAuditResult(ctx, input)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SubmitAuditResult tool: %w", err)

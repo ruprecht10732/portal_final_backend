@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -170,7 +171,11 @@ func (d *Dispatcher) shouldSkipDispatch(ctx context.Context, leadID, tenantID uu
 }
 
 func (d *Dispatcher) ensureDispatchPostconditions(ctx context.Context, runID string, leadID, serviceID, tenantID uuid.UUID, stageAtStart string) {
-	reqDeps := GetDependencies(ctx)
+	reqDeps, err := GetDependencies(ctx)
+	if err != nil {
+		log.Printf("dispatcher: failed to get dependencies: %v", err)
+		return
+	}
 	// Re-read the current stage. If it changed since the run started a human
 	// (or another process) already acted — do not override their decision.
 	if current, err := d.repo.GetLeadServiceByID(ctx, serviceID, tenantID); err == nil {

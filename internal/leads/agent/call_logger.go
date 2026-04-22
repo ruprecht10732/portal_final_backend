@@ -412,7 +412,11 @@ Task:
 	}
 
 	// Get the result and build message
-	result := GetCallLoggerDeps(ctx).GetResult()
+	callDeps, err := GetCallLoggerDeps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := callDeps.GetResult()
 	result = enforceAppointmentSchedulingConsistency(result, reqDeps.HasAppointmentAvailable())
 	result.Message = buildResultMessage(result)
 
@@ -450,7 +454,10 @@ Task:
 }
 
 func (c *CallLogger) persistDraftedNote(ctx context.Context) error {
-	reqDeps := GetCallLoggerDeps(ctx)
+	reqDeps, err := GetCallLoggerDeps(ctx)
+	if err != nil {
+		return err
+	}
 	body, ok := reqDeps.GetNoteDraft()
 	if !ok {
 		return nil
@@ -637,7 +644,10 @@ func buildCallLoggerTools() ([]tool.Tool, error) {
 
 func buildSaveNoteTool() (tool.Tool, error) {
 	return apptools.NewSaveNoteTool(func(ctx tool.Context, input SaveNoteInput) (SaveNoteOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return SaveNoteOutput{Success: false, Message: errMsgMissingContext}, err
+		}
 		if _, _, _, _, ok := deps.GetContext(); !ok {
 			return SaveNoteOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
 		}
@@ -649,7 +659,10 @@ func buildSaveNoteTool() (tool.Tool, error) {
 
 func buildUpdateLeadDetailsTool() (tool.Tool, error) {
 	return apptools.NewUpdateLeadDetailsTool("Updates lead profile fields such as name, phone, email, address, consumer role, and WhatsApp preference when the caller provides corrections.", func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return UpdateLeadDetailsOutput{Success: false, Message: errMsgMissingContext}, err
+		}
 		tenantID, userID, leadID, _, ok := deps.GetContext()
 		if !ok {
 			return UpdateLeadDetailsOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -870,7 +883,10 @@ func enforceAppointmentSchedulingConsistency(result CallLogResult, appointmentAv
 
 func buildSetCallOutcomeTool() (tool.Tool, error) {
 	return apptools.NewSetCallOutcomeTool(func(ctx tool.Context, input SetCallOutcomeInput) (SetCallOutcomeOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return SetCallOutcomeOutput{Success: false, Message: errMsgMissingContext}, err
+		}
 		tenantID, userID, leadID, serviceID, ok := deps.GetContext()
 		if !ok {
 			return SetCallOutcomeOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -923,7 +939,10 @@ var validLeadStatuses = map[string]bool{
 
 func buildUpdateStatusTool() (tool.Tool, error) {
 	return apptools.NewUpdateStatusTool(func(ctx tool.Context, input UpdateStatusInput) (UpdateStatusOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return UpdateStatusOutput{Success: false, Message: errMsgMissingContext}, err
+		}
 		tenantID, _, _, serviceID, ok := deps.GetContext()
 		if !ok {
 			return UpdateStatusOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
@@ -961,21 +980,30 @@ func buildUpdateStatusTool() (tool.Tool, error) {
 
 func buildScheduleVisitTool() (tool.Tool, error) {
 	return apptools.NewScheduleVisitTool(func(ctx tool.Context, input ScheduleVisitInput) (ScheduleVisitOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return ScheduleVisitOutput{}, err
+		}
 		return executeScheduleVisit(deps, input)
 	})
 }
 
 func buildRescheduleVisitTool() (tool.Tool, error) {
 	return apptools.NewRescheduleVisitTool(func(ctx tool.Context, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return RescheduleVisitOutput{}, err
+		}
 		return executeRescheduleVisit(deps, input)
 	})
 }
 
 func buildCancelVisitTool() (tool.Tool, error) {
 	return apptools.NewCancelVisitTool(func(ctx tool.Context, input CancelVisitInput) (CancelVisitOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return CancelVisitOutput{}, err
+		}
 		return executeCancelVisit(deps, input)
 	})
 }
@@ -1117,7 +1145,10 @@ func publishCallLoggerStageChanged(deps *CallLoggerToolDeps, ctx tool.Context, t
 
 func buildCallLoggerUpdatePipelineStageTool() (tool.Tool, error) {
 	return apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		deps := GetCallLoggerDeps(ctx)
+		deps, err := GetCallLoggerDeps(ctx)
+		if err != nil {
+			return UpdatePipelineStageOutput{}, err
+		}
 		return handleCallLoggerUpdatePipelineStage(ctx, deps, input)
 	})
 }

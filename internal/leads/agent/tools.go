@@ -2332,25 +2332,41 @@ func recordPipelineStageChange(ctx context.Context, deps *ToolDependencies, p st
 
 func createUpdatePipelineStageTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewUpdatePipelineStageTool(func(ctx tool.Context, input UpdatePipelineStageInput) (UpdatePipelineStageOutput, error) {
-		return handleUpdatePipelineStage(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return UpdatePipelineStageOutput{}, err
+		}
+		return handleUpdatePipelineStage(ctx, deps, input)
 	})
 }
 
 func createSaveAnalysisTool() (tool.Tool, error) {
 	return apptools.NewSaveAnalysisTool(func(ctx tool.Context, input SaveAnalysisInput) (SaveAnalysisOutput, error) {
-		return handleSaveAnalysis(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return SaveAnalysisOutput{}, err
+		}
+		return handleSaveAnalysis(ctx, deps, input)
 	})
 }
 
 func createUpdateLeadServiceTypeTool() (tool.Tool, error) {
 	return apptools.NewUpdateLeadServiceTypeTool(func(ctx tool.Context, input UpdateLeadServiceTypeInput) (UpdateLeadServiceTypeOutput, error) {
-		return handleUpdateLeadServiceType(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return UpdateLeadServiceTypeOutput{}, err
+		}
+		return handleUpdateLeadServiceType(ctx, deps, input)
 	})
 }
 
 func createUpdateLeadDetailsTool(description string) (tool.Tool, error) {
 	return apptools.NewUpdateLeadDetailsTool(description, func(ctx tool.Context, input UpdateLeadDetailsInput) (UpdateLeadDetailsOutput, error) {
-		return handleUpdateLeadDetails(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return UpdateLeadDetailsOutput{}, err
+		}
+		return handleUpdateLeadDetails(ctx, deps, input)
 	})
 }
 
@@ -2387,13 +2403,20 @@ func stringifyAnySlice(items []any) []string {
 
 func createFindMatchingPartnersTool() (tool.Tool, error) {
 	return apptools.NewFindMatchingPartnersTool(func(ctx tool.Context, input FindMatchingPartnersInput) (FindMatchingPartnersOutput, error) {
-		return handleFindMatchingPartners(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return FindMatchingPartnersOutput{}, err
+		}
+		return handleFindMatchingPartners(ctx, deps, input)
 	})
 }
 
 func createCreatePartnerOfferTool() (tool.Tool, error) {
 	return apptools.NewCreatePartnerOfferTool(func(ctx tool.Context, input CreatePartnerOfferInput) (CreatePartnerOfferOutput, error) {
-		deps := GetDependencies(ctx)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return CreatePartnerOfferOutput{}, err
+		}
 		if deps.OfferCreator == nil {
 			return CreatePartnerOfferOutput{Success: false, Message: "Offer creation not configured"}, fmt.Errorf("offer creator not configured")
 		}
@@ -2546,7 +2569,10 @@ func resolveOfferContext(deps *ToolDependencies, partnerIDRaw string, expiration
 }
 func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewSaveEstimationTool(func(ctx tool.Context, input SaveEstimationInput) (SaveEstimationOutput, error) {
-		deps := GetDependencies(ctx)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return SaveEstimationOutput{}, err
+		}
 		tenantID, err := getTenantID(deps)
 		if err != nil {
 			return SaveEstimationOutput{Success: false, Message: missingTenantContextMessage}, err
@@ -2596,7 +2622,10 @@ func createSaveEstimationTool(_ *ToolDependencies) (tool.Tool, error) {
 
 func createCommitScopeArtifactTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewCommitScopeArtifactTool(func(ctx tool.Context, input CommitScopeArtifactInput) (CommitScopeArtifactOutput, error) {
-		deps := GetDependencies(ctx)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return CommitScopeArtifactOutput{}, err
+		}
 		artifact := input.Artifact
 		if len(artifact.MissingDimensions) > 0 {
 			artifact.IsComplete = false
@@ -2611,7 +2640,10 @@ func createCommitScopeArtifactTool(_ *ToolDependencies) (tool.Tool, error) {
 
 func createAskCustomerClarificationTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewAskCustomerClarificationTool(func(ctx tool.Context, input AskCustomerClarificationInput) (AskCustomerClarificationOutput, error) {
-		deps := GetDependencies(ctx)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return AskCustomerClarificationOutput{}, err
+		}
 		tenantID, err := getTenantID(deps)
 		if err != nil {
 			return AskCustomerClarificationOutput{Success: false, Message: missingTenantContextMessage}, err
@@ -2937,7 +2969,10 @@ const MaxSafeUnitPrice = 5_000_000.00
 
 func createCalculateEstimateTool() (tool.Tool, error) {
 	return apptools.NewCalculateEstimateTool(func(ctx tool.Context, input CalculateEstimateInput) (CalculateEstimateOutput, error) {
-		deps := GetDependencies(ctx)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return CalculateEstimateOutput{}, err
+		}
 		if err := validateCalculateEstimateInput(input); err != nil {
 			return CalculateEstimateOutput{}, err
 		}
@@ -3203,7 +3238,11 @@ func handleListCatalogGaps(ctx tool.Context, deps *ToolDependencies, input ListC
 
 func createListCatalogGapsTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewListCatalogGapsTool(func(ctx tool.Context, input ListCatalogGapsInput) (ListCatalogGapsOutput, error) {
-		return handleListCatalogGaps(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return ListCatalogGapsOutput{}, err
+		}
+		return handleListCatalogGaps(ctx, deps, input)
 	})
 }
 
@@ -4141,7 +4180,11 @@ func mergeOptionalString(dst *string, src string) {
 
 func createSearchProductMaterialsTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewSearchProductMaterialsTool(func(ctx tool.Context, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
-		return handleSearchProductMaterials(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return SearchProductMaterialsOutput{}, err
+		}
+		return handleSearchProductMaterials(ctx, deps, input)
 	})
 }
 
@@ -4297,7 +4340,11 @@ func nilIfEmptyString(value string) *string {
 
 func createSubmitQuoteCritiqueTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewSubmitQuoteCritiqueTool(func(ctx tool.Context, input SubmitQuoteCritiqueInput) (SubmitQuoteCritiqueOutput, error) {
-		return handleSubmitQuoteCritique(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return SubmitQuoteCritiqueOutput{}, err
+		}
+		return handleSubmitQuoteCritique(ctx, deps, input)
 	})
 }
 
@@ -4682,7 +4729,11 @@ func collectCatalogAssetsForDraft(ctx context.Context, deps *ToolDependencies, t
 
 func createDraftQuoteTool(_ *ToolDependencies) (tool.Tool, error) {
 	return apptools.NewDraftQuoteTool(func(ctx tool.Context, input DraftQuoteInput) (DraftQuoteOutput, error) {
-		return handleDraftQuote(ctx, GetDependencies(ctx), input)
+		deps, err := GetDependencies(ctx)
+		if err != nil {
+			return DraftQuoteOutput{}, err
+		}
+		return handleDraftQuote(ctx, deps, input)
 	})
 }
 

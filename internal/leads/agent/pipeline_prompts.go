@@ -39,11 +39,11 @@ const (
 
 const extraNotesLinePrefix = "\n- Extra notes: "
 
-var sharedExecutionContract = mustLoadWorkspaceMarkdownText("agents/shared/prompts/execution-contract.md")
+var sharedExecutionContract = mustReadPromptFile("shared/prompts/execution-contract.md")
 
-var sharedProductSelectionRules = mustLoadWorkspaceMarkdownText("agents/shared/prompts/product-selection.md")
+var sharedProductSelectionRules = mustReadPromptFile("shared/prompts/product-selection.md")
 
-var sharedCommunicationContract = mustLoadWorkspaceMarkdownText("agents/shared/prompts/communication-contract.md")
+var sharedCommunicationContract = mustReadPromptFile("shared/prompts/communication-contract.md")
 
 type gatekeeperPromptInput struct {
 	lead               repository.Lead
@@ -94,7 +94,7 @@ type gatekeeperPromptTemplateData struct {
 	EstimationContextSummary  string
 }
 
-var gatekeeperPromptTemplate = mustParsePromptTemplate("gatekeeper", mustLoadWorkspaceMarkdownText("agents/gatekeeper/prompts/base.md"))
+var gatekeeperPromptTemplate = mustLoadPromptTemplate("gatekeeper", "gatekeeper/prompts/base.md")
 
 func buildGatekeeperPrompt(input gatekeeperPromptInput) string {
 	notesSection := buildNotesSection(input.notes, maxGatekeeperNotesChars)
