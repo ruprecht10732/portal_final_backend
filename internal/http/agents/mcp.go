@@ -5,7 +5,9 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"portal_final_backend/platform/mcp"
+	"portal_final_backend/platform/mcp/toolbox"
 )
 
 // MCPHandler mounts the Model Context Protocol server on an HTTP route.
@@ -13,15 +15,24 @@ type MCPHandler struct {
 	server *mcp.Server
 }
 
-// NewMCPHandler creates an MCP handler with a basic set of registered tools.
-// In production, this should be wired with the full domain tool registry.
-func NewMCPHandler() *MCPHandler {
+func NewMCPHandler(pool *pgxpool.Pool) *MCPHandler {
+	var tbHandler mcp.ToolHandler
+
 	server := mcp.NewServer(func(ctx context.Context, name string, args map[string]any) (any, error) {
-		// This is intentionally a placeholder handler because actual wiring would require
-		// dependency injection that would create circular dependencies at this level.
-		return fmt.Sprintf("tool %s executed with args %+v", name, args), nil
+		if tbHandler != nil {
+			return tbHandler(ctx, name, args)
+		}
+		return fmt.Sprintf("tool %s executed with args %+v (placeholder)", name, args), nil
 	})
 
+	// Load declarative MCP toolbox tools from YAML
+	tb := toolbox.NewLoader(pool, server)
+	handler, err := tb.LoadAndRegister("agents/calculator/tools.yaml")
+	if err != nil {
+		fmt.Printf("Failed to load toolbox: %v\n", err)
+	} else {
+		tbHandler = handler
+	}
 	// Register placeholder tools matching the domain tool catalog so external
 	// agents can discover the API surface.
 	_ = server.RegisterTool("GetLeadDetails", "Returns contact and address details for a lead.", map[string]any{

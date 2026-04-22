@@ -575,7 +575,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	wireIMAPEncryptionKey(cfg, log, imapModule.Service())
 	wireSMTPEncryptionKeyForIMAP(cfg, log, imapModule.Service())
 
-	agentsModule := agents.NewModule()
+	agentsModule := agents.NewModule(pool)
 
 	modules := []apphttp.Module{
 		notificationModule,

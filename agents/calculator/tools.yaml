@@ -1,0 +1,12 @@
+tools:
+  - name: "LookupInstallationPricing"
+    description: "Looks up the base installation pricing for a specific service category."
+    sql: "SELECT category, base_price, unit, is_active FROM public.pricing_catalog WHERE category = @category AND is_active = true"
+    parameters:
+      type: "object"
+      properties:
+        category:
+          type: "string"
+          description: "The service category to lookup (e.g. 'solar', 'heatpump')"
+      required:
+        - "category"

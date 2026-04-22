@@ -22,8 +22,8 @@ All critical and high-priority gaps from the initial assessment have been **impl
 | ✅ Done | **Progressive Context Disclosure** | `load_skill_resource` auto-injected into every agent toolset | L3 resources fetched on demand |
 | ✅ Done | **Long-term Memory Pipeline** | Summarization, embedding, and `PreloadMemory` tool implemented | Wired into `runPromptSession` termination via `MemoryService` |
 | ✅ Done | **Retry & Reflect** | External API tools wrapped with exponential backoff | `GetEnergyLabel`, `GetISDE`, `SearchProductMaterials`, etc. wrapped |
+| ✅ Done | **MCP Toolbox (`tools.yaml`)** | YAML loader and dynamic SQL execution | `platform/mcp/toolbox/loader.go` implemented |
 | 🟡 Remaining | **Langfuse / OTLP Export** | Custom logger exporter only | No OTLP/HTTP or Langfuse plugin integration |
-| 🟢 Remaining | **MCP Toolbox (`tools.yaml`)** | Not implemented | No declarative SQL exposure for pricing/partner DB queries |
 | 🟢 Remaining | **A2A gRPC Delegation** | HTTP cards only | No gRPC agent-to-agent task delegation |
 | 🟢 Remaining | **RBAC Tool Filtering** | Workspace-based only | `AllowedTools` not scoped by user JWT roles |
 | 🟢 Remaining | **CI/CD Trajectory Evaluation** | Harness built, not gated | `eval/` package exists; not wired to deployment pipeline |
@@ -139,6 +139,14 @@ All critical and high-priority gaps from the initial assessment have been **impl
 | `WrapHandler` | ✅ Plugin refactored to support `tool.Context` and state injection |
 | External API Tools | ✅ Wrapped (`GetEnergyLabel`, `GetISDE`, `SearchProductMaterials`, `FindMatchingPartners`) |
 
+### 2.13 MCP Toolbox (`platform/mcp/toolbox/`)
+
+| Component | Status |
+|-----------|--------|
+| `toolbox.Loader` | ✅ Parses `tools.yaml` into dynamic SQL execution handler |
+| Server Integration | ✅ `NewMCPHandler` upgraded to pass DB connections via dynamic proxy |
+| `tools.yaml` | ✅ Scaffolded in `agents/calculator/tools.yaml` |
+
 ---
 
 ## 3. Remaining Gaps (Post-Hardening)
@@ -156,18 +164,6 @@ All critical and high-priority gaps from the initial assessment have been **impl
 - Add `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp` dependency.
 - Replace `loggerExporter` with `otlptracehttp.New` when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - Capture full prompt/response in span attributes for debugging (watch for PII).
-
-### 3.4 MCP Toolbox (`tools.yaml`) — 🟢 LOW
-
-**What's Missing:**
-- No declarative `tools.yaml` for database-heavy queries.
-- All SQL is handwritten in Go tool handlers.
-
-**Why It Matters:** For rapid iteration on pricing intelligence queries, a declarative config would let data analysts update queries without recompiling.
-
-**Recommended Path:**
-- Create `agents/calculator/tools.yaml` with pre-defined SQL templates for pricing lookups.
-- Load at startup and register as MCP tools.
 
 ### 3.5 A2A gRPC — 🟢 LOW
 
