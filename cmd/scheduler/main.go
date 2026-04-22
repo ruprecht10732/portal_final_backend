@@ -164,6 +164,8 @@ func main() {
 	eventBus := events.NewInMemoryBus(log)
 	orchestratorLockRedis, closeOrchestratorLockRedis := initOrchestratorLockRedis(cfg, log)
 	defer closeOrchestratorLockRedis()
+	sessionRedis, closeSessionRedis := initSessionRedis(cfg, log)
+	defer closeSessionRedis()
 	reminderScheduler, closeReminderScheduler := initReminderSchedulerWithCloser(cfg, log)
 	defer closeReminderScheduler()
 
@@ -204,6 +206,7 @@ func main() {
 		Config:                cfg,
 		Log:                   log,
 		OrchestratorLockRedis: orchestratorLockRedis,
+		SessionRedis:          sessionRedis,
 	})
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
@@ -362,6 +365,20 @@ func initOrchestratorLockRedis(cfg *config.Config, log *logger.Logger) (*redis.C
 	if err != nil {
 		log.Warn("failed to initialize redis orchestrator lock client", "error", err)
 		return nil, noOpRedisCloser
+	}
+
+	return redisClient, func() { _ = redisClient.Close() }
+}
+
+func initSessionRedis(cfg *config.Config, log *logger.Logger) (*redis.Client, func()) {
+	if cfg.GetRedisURL() == "" {
+		panic("REDIS_URL is required: sessions and agent memory depend on Redis")
+	}
+
+	redisClient, err := rediskit.NewClient(cfg.GetRedisURL(), cfg.GetRedisTLSInsecure())
+	if err != nil {
+		log.Error("failed to initialize session redis", "error", err)
+		panic("failed to initialize session redis: " + err.Error())
 	}
 
 	return redisClient, func() { _ = redisClient.Close() }
