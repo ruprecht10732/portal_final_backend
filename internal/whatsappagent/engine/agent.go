@@ -727,12 +727,31 @@ func (a *Agent) runRuntimeConversation(ctx context.Context, runtime agentRuntime
 		// parent context was cancelled or timed out.
 		_ = a.sessionService.Delete(context.WithoutCancel(ctx), &session.DeleteRequest{AppName: runtime.appName, UserID: userID, SessionID: sessionID})
 	}()
-	historyMessages := request.messages[:len(request.messages)-1]
-	latestMessage := request.messages[len(request.messages)-1]
+
+	// Find the last user message to use as the current turn input.
+	// The conversation history may end with assistant messages from previous turns,
+	// so we need to find the actual user input rather than just taking the last message.
+	lastUserIdx := -1
+	for i := len(request.messages) - 1; i >= 0; i-- {
+		if request.messages[i].Role == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
+
+	// If no user message found, return an error
+	if lastUserIdx == -1 {
+		return AgentRunResult{}, fmt.Errorf("whatsappagent: no user message found in conversation")
+	}
+
+	// History is everything before the last user message
+	historyMessages := request.messages[:lastUserIdx]
+	latestUserMessage := request.messages[lastUserIdx]
+
 	if err := a.seedSessionHistory(ctx, createResp.Session, historyMessages, request.leadHint); err != nil {
 		a.logWarn(ctx, "whatsappagent: failed to seed session history; continuing without seeded history", "error", err)
 	}
-	userMessage := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: latestMessage.Content}}}
+	userMessage := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: latestUserMessage.Content}}}
 	return a.collectRunOutput(ctx, runtime, userID, sessionID, userMessage)
 }
 
