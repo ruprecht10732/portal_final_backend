@@ -46,7 +46,7 @@ func newRedisConversationLeadHintStore(client *redis.Client, log *logger.Logger,
 	return &RedisConversationLeadHintStore{redis: client, log: log, ttl: ttl, now: now}
 }
 
-func (s *RedisConversationLeadHintStore) Get(orgID, phoneKey string) (*ConversationLeadHint, bool) {
+func (s *RedisConversationLeadHintStore) Get(ctx context.Context, orgID, phoneKey string) (*ConversationLeadHint, bool) {
 	if s == nil || s.redis == nil {
 		return nil, false
 	}
@@ -54,7 +54,7 @@ func (s *RedisConversationLeadHintStore) Get(orgID, phoneKey string) (*Conversat
 	if key == "" {
 		return nil, false
 	}
-	raw, err := s.redis.Get(context.Background(), key).Bytes()
+	raw, err := s.redis.Get(ctx, key).Bytes()
 	if err != nil {
 		if err != redis.Nil {
 			s.logWarn("whatsappagent: failed to load redis conversation hint", "key", key, "error", err)
@@ -76,13 +76,13 @@ func (s *RedisConversationLeadHintStore) Get(orgID, phoneKey string) (*Conversat
 		UpdatedAt:          record.UpdatedAt,
 	})
 	if hintIsEmpty(hint) {
-		_ = s.redis.Del(context.Background(), key).Err()
+		_ = s.redis.Del(ctx, key).Err()
 		return nil, false
 	}
 	return &hint, true
 }
 
-func (s *RedisConversationLeadHintStore) Set(orgID, phoneKey string, hint ConversationLeadHint) {
+func (s *RedisConversationLeadHintStore) Set(ctx context.Context, orgID, phoneKey string, hint ConversationLeadHint) {
 	if s == nil || s.redis == nil {
 		return
 	}
@@ -90,13 +90,13 @@ func (s *RedisConversationLeadHintStore) Set(orgID, phoneKey string, hint Conver
 	if key == "" {
 		return
 	}
-	existing, _ := s.Get(orgID, phoneKey)
+	existing, _ := s.Get(ctx, orgID, phoneKey)
 	if existing != nil {
 		hint = mergeConversationLeadHints(*existing, hint)
 	}
 	hint = normalizeConversationLeadHint(hint)
 	if hintIsEmpty(hint) {
-		_ = s.redis.Del(context.Background(), key).Err()
+		_ = s.redis.Del(ctx, key).Err()
 		return
 	}
 	record := redisConversationLeadHintRecord{
@@ -112,24 +112,24 @@ func (s *RedisConversationLeadHintStore) Set(orgID, phoneKey string, hint Conver
 		s.logWarn("whatsappagent: failed to encode redis conversation hint", "key", key, "error", err)
 		return
 	}
-	if err := s.redis.Set(context.Background(), key, payload, s.ttl).Err(); err != nil {
+	if err := s.redis.Set(ctx, key, payload, s.ttl).Err(); err != nil {
 		s.logWarn("whatsappagent: failed to store redis conversation hint", "key", key, "error", err)
 	}
 }
 
-func (s *RedisConversationLeadHintStore) RememberQuotes(orgID, phoneKey string, quotes []QuoteSummary) {
-	s.remember(orgID, phoneKey, func(hint *ConversationLeadHint) {
+func (s *RedisConversationLeadHintStore) RememberQuotes(ctx context.Context, orgID, phoneKey string, quotes []QuoteSummary) {
+	s.remember(ctx, orgID, phoneKey, func(hint *ConversationLeadHint) {
 		hint.RecentQuotes = summarizeRecentQuotes(quotes)
 	})
 }
 
-func (s *RedisConversationLeadHintStore) RememberAppointments(orgID, phoneKey string, appointments []AppointmentSummary) {
-	s.remember(orgID, phoneKey, func(hint *ConversationLeadHint) {
+func (s *RedisConversationLeadHintStore) RememberAppointments(ctx context.Context, orgID, phoneKey string, appointments []AppointmentSummary) {
+	s.remember(ctx, orgID, phoneKey, func(hint *ConversationLeadHint) {
 		hint.RecentAppointments = summarizeRecentAppointments(appointments)
 	})
 }
 
-func (s *RedisConversationLeadHintStore) Clear(orgID, phoneKey string) {
+func (s *RedisConversationLeadHintStore) Clear(ctx context.Context, orgID, phoneKey string) {
 	if s == nil || s.redis == nil {
 		return
 	}
@@ -137,12 +137,12 @@ func (s *RedisConversationLeadHintStore) Clear(orgID, phoneKey string) {
 	if key == "" {
 		return
 	}
-	if err := s.redis.Del(context.Background(), key).Err(); err != nil {
+	if err := s.redis.Del(ctx, key).Err(); err != nil {
 		s.logWarn("whatsappagent: failed to clear redis conversation hint", "key", key, "error", err)
 	}
 }
 
-func (s *RedisConversationLeadHintStore) remember(orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
+func (s *RedisConversationLeadHintStore) remember(ctx context.Context, orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
 	if s == nil || s.redis == nil || mutate == nil {
 		return
 	}
@@ -150,17 +150,17 @@ func (s *RedisConversationLeadHintStore) remember(orgID, phoneKey string, mutate
 	if key == "" {
 		return
 	}
-	hint, _ := s.Get(orgID, phoneKey)
+	hint, _ := s.Get(ctx, orgID, phoneKey)
 	merged := ConversationLeadHint{}
 	if hint != nil {
 		merged = *hint
 	}
 	mutate(&merged)
 	if hintIsEmpty(merged) {
-		_ = s.redis.Del(context.Background(), key).Err()
+		_ = s.redis.Del(ctx, key).Err()
 		return
 	}
-	s.Set(orgID, phoneKey, merged)
+	s.Set(ctx, orgID, phoneKey, merged)
 }
 
 func (s *RedisConversationLeadHintStore) redisKey(orgID, phoneKey string) string {

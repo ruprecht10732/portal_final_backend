@@ -27,9 +27,9 @@ func TestRedisConversationLeadHintStorePersistsAndLoadsHint(t *testing.T) {
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, func() time.Time { return now })
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, LeadServiceID: "svc-1", CustomerName: "Robin", PreloadedDetails: &LeadDetailsResult{LeadID: testHintLeadID}})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, LeadServiceID: "svc-1", CustomerName: "Robin", PreloadedDetails: &LeadDetailsResult{LeadID: testHintLeadID}})
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if !ok || hint == nil {
 		t.Fatal("expected redis-backed hint to be returned")
 	}
@@ -57,10 +57,10 @@ func TestRedisConversationLeadHintStoreExpiresHintsByTTL(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Minute, time.Now)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
 	redisServer.FastForward(2 * time.Minute)
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if ok || hint != nil {
 		t.Fatalf("expected redis hint to expire, got %#v", hint)
 	}
@@ -79,9 +79,9 @@ func TestRedisConversationLeadHintStoreIgnoresInvalidKeysAndBlankLeadID(t *testi
 	defer func() { _ = client.Close() }()
 
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, time.Now)
-	store.Set("", testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
-	store.Set(testHintOrgID, "", ConversationLeadHint{LeadID: testHintLeadID})
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: "   "})
+	store.Set(context.Background(), "", testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
+	store.Set(context.Background(), testHintOrgID, "", ConversationLeadHint{LeadID: testHintLeadID})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: "   "})
 
 	keys, keysErr := client.Keys(context.Background(), conversationLeadHintRedisPrefix+"*").Result()
 	if keysErr != nil {
@@ -110,7 +110,7 @@ func TestRedisConversationLeadHintStoreDropsCorruptPayloads(t *testing.T) {
 		t.Fatalf("failed to seed corrupt payload: %v", err)
 	}
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if ok || hint != nil {
 		t.Fatalf("expected corrupt redis hint to be ignored, got %#v", hint)
 	}
@@ -137,21 +137,21 @@ func TestRedisConversationLeadHintStorePersistsRecentQuoteAndAppointmentLists(t 
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, func() time.Time { return now })
-	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+	store.RememberQuotes(context.Background(), testHintOrgID, testHintPhoneKey, []QuoteSummary{{
 		QuoteID:     "quote-1",
 		QuoteNumber: testQuoteNumber,
 		ClientName:  testQuoteClientName,
 		Summary:     "Kogellagerscharnier RVS",
 	}})
 	now = now.Add(10 * time.Minute)
-	store.RememberAppointments(testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
+	store.RememberAppointments(context.Background(), testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
 		AppointmentID: testAppointmentID,
 		Title:         "Bezoek",
 		StartTime:     "2026-03-16T09:00:00Z",
 		Location:      "Alkmaar",
 	}})
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if !ok || hint == nil {
 		t.Fatal("expected redis-backed hint with recent lists to be returned")
 	}
@@ -180,14 +180,14 @@ func TestRedisConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, func() time.Time { return now })
-	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+	store.RememberQuotes(context.Background(), testHintOrgID, testHintPhoneKey, []QuoteSummary{{
 		QuoteNumber: testQuoteNumber,
 		ClientName:  testQuoteClientName,
 	}})
 	now = now.Add(time.Minute)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if !ok || hint == nil {
 		t.Fatal("expected merged redis hint to be returned")
 	}
@@ -212,10 +212,10 @@ func TestRedisConversationLeadHintStoreClearDeletesHint(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	store := newRedisConversationLeadHintStore(client, logger.New("development"), time.Hour, time.Now)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
-	store.Clear(testHintOrgID, testHintPhoneKey)
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Clear(context.Background(), testHintOrgID, testHintPhoneKey)
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if ok || hint != nil {
 		t.Fatalf("expected cleared redis hint to be removed, got %#v", hint)
 	}

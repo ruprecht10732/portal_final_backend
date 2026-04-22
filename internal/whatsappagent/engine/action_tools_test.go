@@ -151,7 +151,7 @@ func TestHandleSendQuotePDFReusesSingleRecentQuoteHint(t *testing.T) {
 	workflow := &actionToolsQuoteWorkflowWriterStub{pdfResult: QuotePDFResult{QuoteID: actionToolsTestQuoteID, QuoteNumber: actionToolsTestQuoteNumber, FileName: "offerte.pdf", Data: []byte("pdf")}}
 	transport := &actionToolsSenderTransportStub{}
 	store := NewConversationLeadHintStore()
-	store.Set(orgID.String(), actionToolsTestPhone, ConversationLeadHint{RecentQuotes: []RecentQuoteHint{{QuoteID: actionToolsTestQuoteID, QuoteNumber: actionToolsTestQuoteNumber}}})
+	store.Set(context.Background(), orgID.String(), actionToolsTestPhone, ConversationLeadHint{RecentQuotes: []RecentQuoteHint{{QuoteID: actionToolsTestQuoteID, QuoteNumber: actionToolsTestQuoteNumber}}})
 	handler := &ToolHandler{quoteWorkflowWriter: workflow, sender: newActionToolsTestSender(transport), leadHintStore: store}
 
 	output, err := handler.HandleSendQuotePDF(newActionToolsTestContext(actionToolsTestPhone), orgID, SendQuotePDFInput{})
@@ -174,7 +174,7 @@ func TestHandleSendQuotePDFRequestsClarificationForAmbiguousRecentQuotes(t *test
 
 	orgID := uuid.New()
 	store := NewConversationLeadHintStore()
-	store.Set(orgID.String(), actionToolsTestPhone, ConversationLeadHint{RecentQuotes: []RecentQuoteHint{{QuoteID: "quote-1", QuoteNumber: "OFF-1"}, {QuoteID: "quote-2", QuoteNumber: "OFF-2"}}})
+	store.Set(context.Background(), orgID.String(), actionToolsTestPhone, ConversationLeadHint{RecentQuotes: []RecentQuoteHint{{QuoteID: "quote-1", QuoteNumber: "OFF-1"}, {QuoteID: "quote-2", QuoteNumber: "OFF-2"}}})
 	handler := &ToolHandler{quoteWorkflowWriter: &actionToolsQuoteWorkflowWriterStub{}, sender: newActionToolsTestSender(&actionToolsSenderTransportStub{}), leadHintStore: store}
 
 	output, err := handler.HandleSendQuotePDF(newActionToolsTestContext(actionToolsTestPhone), orgID, SendQuotePDFInput{})

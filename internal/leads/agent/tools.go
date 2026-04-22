@@ -355,11 +355,7 @@ func (d *ToolDependencies) GetLastCouncilMetadata() map[string]any {
 	if d.lastCouncilMetadata == nil {
 		return nil
 	}
-	dup := make(map[string]any, len(d.lastCouncilMetadata))
-	for k, v := range d.lastCouncilMetadata {
-		dup[k] = v
-	}
-	return dup
+	return deepCopyMap(d.lastCouncilMetadata)
 }
 
 func (d *ToolDependencies) GetActor() (string, string) {
@@ -420,18 +416,53 @@ func (d *ToolDependencies) SetLastEstimateSnapshot(snapshot EstimateComputationS
 	d.lastEstimateSnapshot = &copySnapshot
 }
 
-// GetLastAnalysisMetadata retrieves a shallow copy of the analysis metadata saved by SaveAnalysis.
+// deepCopyMap recursively copies a map[string]any, creating new slices and maps
+// so that mutations in the returned value do not affect the original.
+func deepCopyMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	cp := make(map[string]any, len(src))
+	for k, v := range src {
+		cp[k] = deepCopyValue(v)
+	}
+	return cp
+}
+
+func deepCopyValue(v any) any {
+	switch val := v.(type) {
+	case []any:
+		cp := make([]any, len(val))
+		for i, item := range val {
+			cp[i] = deepCopyValue(item)
+		}
+		return cp
+	case []string:
+		cp := make([]string, len(val))
+		copy(cp, val)
+		return cp
+	case map[string]any:
+		return deepCopyMap(val)
+	case map[string]string:
+		cp := make(map[string]string, len(val))
+		for mk, mv := range val {
+			cp[mk] = mv
+		}
+		return cp
+	default:
+		// For primitives and other immutable types, return as-is.
+		return v
+	}
+}
+
+// GetLastAnalysisMetadata retrieves a deep copy of the analysis metadata saved by SaveAnalysis.
 func (d *ToolDependencies) GetLastAnalysisMetadata() map[string]any {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	if d.lastAnalysisMetadata == nil {
 		return nil
 	}
-	cp := make(map[string]any, len(d.lastAnalysisMetadata))
-	for k, v := range d.lastAnalysisMetadata {
-		cp[k] = v
-	}
-	return cp
+	return deepCopyMap(d.lastAnalysisMetadata)
 }
 
 func (d *ToolDependencies) GetLastEstimationMetadata() map[string]any {
@@ -440,11 +471,7 @@ func (d *ToolDependencies) GetLastEstimationMetadata() map[string]any {
 	if d.lastEstimationMetadata == nil {
 		return nil
 	}
-	cp := make(map[string]any, len(d.lastEstimationMetadata))
-	for k, v := range d.lastEstimationMetadata {
-		cp[k] = v
-	}
-	return cp
+	return deepCopyMap(d.lastEstimationMetadata)
 }
 
 func (d *ToolDependencies) GetLastEstimateSnapshot() (*EstimateComputationSnapshot, bool) {

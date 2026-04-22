@@ -384,7 +384,7 @@ func (s *Service) resetConversation(ctx context.Context, orgID uuid.UUID, phoneK
 		return
 	}
 	if s.leadHintStore != nil {
-		s.leadHintStore.Clear(orgID.String(), phoneKey)
+		s.leadHintStore.Clear(ctx, orgID.String(), phoneKey)
 	}
 	s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgConversationReset)
 }
@@ -609,7 +609,7 @@ func (s *Service) resolveLeadHint(ctx context.Context, orgID uuid.UUID, phoneKey
 	if s.leadHintStore == nil {
 		return nil
 	}
-	hint, _ := s.leadHintStore.Get(orgID.String(), phoneKey)
+	hint, _ := s.leadHintStore.Get(ctx, orgID.String(), phoneKey)
 	return hint
 }
 

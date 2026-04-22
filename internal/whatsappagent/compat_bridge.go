@@ -47,6 +47,18 @@ type appointmentVisitReportWriterAdapter struct{ inner AppointmentVisitReportWri
 
 type appointmentStatusWriterAdapter struct{ inner AppointmentStatusWriter }
 
+// adaptSlice converts a slice of one layout-compatible type to another.
+func adaptSlice[From, To any](items []From, cast func(From) To) []To {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]To, 0, len(items))
+	for _, item := range items {
+		result = append(result, cast(item))
+	}
+	return result
+}
+
 func adaptQuotesReader(inner QuotesReader) engine.QuotesReader {
 	if inner == nil {
 		return nil
@@ -182,14 +194,7 @@ func adaptAppointmentStatusWriter(inner AppointmentStatusWriter) engine.Appointm
 
 func (a quotesReaderAdapter) ListQuotesByOrganization(ctx context.Context, orgID uuid.UUID, status *string) ([]engine.QuoteSummary, error) {
 	items, err := a.inner.ListQuotesByOrganization(ctx, orgID, status)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]engine.QuoteSummary, 0, len(items))
-	for _, item := range items {
-		result = append(result, engine.QuoteSummary(item))
-	}
-	return result, nil
+	return adaptSlice(items, func(item QuoteSummary) engine.QuoteSummary { return engine.QuoteSummary(item) }), err
 }
 
 func (a quoteWorkflowWriterAdapter) DraftQuote(ctx context.Context, orgID uuid.UUID, input engine.DraftQuoteInput) (engine.DraftQuoteOutput, error) {
@@ -209,26 +214,12 @@ func (a quoteWorkflowWriterAdapter) GetQuotePDF(ctx context.Context, orgID uuid.
 
 func (a appointmentsReaderAdapter) ListAppointmentsByOrganization(ctx context.Context, orgID uuid.UUID, from, to *time.Time) ([]engine.AppointmentSummary, error) {
 	items, err := a.inner.ListAppointmentsByOrganization(ctx, orgID, from, to)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]engine.AppointmentSummary, 0, len(items))
-	for _, item := range items {
-		result = append(result, engine.AppointmentSummary(item))
-	}
-	return result, nil
+	return adaptSlice(items, func(item AppointmentSummary) engine.AppointmentSummary { return engine.AppointmentSummary(item) }), err
 }
 
 func (a leadSearchReaderAdapter) SearchLeads(ctx context.Context, orgID uuid.UUID, query string, limit int) ([]engine.LeadSearchResult, error) {
 	items, err := a.inner.SearchLeads(ctx, orgID, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]engine.LeadSearchResult, 0, len(items))
-	for _, item := range items {
-		result = append(result, engine.LeadSearchResult(item))
-	}
-	return result, nil
+	return adaptSlice(items, func(item LeadSearchResult) engine.LeadSearchResult { return engine.LeadSearchResult(item) }), err
 }
 
 func (a navigationLinkReaderAdapter) GetNavigationLink(ctx context.Context, orgID uuid.UUID, leadID string) (*engine.NavigationLinkResult, error) {
@@ -254,14 +245,10 @@ func (a catalogSearchReaderAdapter) SearchProductMaterials(ctx context.Context, 
 	if err != nil {
 		return engine.SearchProductMaterialsOutput{}, err
 	}
-	result := engine.SearchProductMaterialsOutput{Message: output.Message}
-	if len(output.Products) > 0 {
-		result.Products = make([]engine.ProductResult, 0, len(output.Products))
-		for _, item := range output.Products {
-			result.Products = append(result.Products, engine.ProductResult(item))
-		}
-	}
-	return result, nil
+	return engine.SearchProductMaterialsOutput{
+		Message:  output.Message,
+		Products: adaptSlice(output.Products, func(item ProductResult) engine.ProductResult { return engine.ProductResult(item) }),
+	}, nil
 }
 
 func (a leadMutationWriterAdapter) CreateLead(ctx context.Context, orgID uuid.UUID, input engine.CreateLeadInput) (engine.CreateLeadOutput, error) {
@@ -307,17 +294,10 @@ func (a taskWriterAdapter) CreateTask(ctx context.Context, orgID uuid.UUID, inpu
 
 func (a taskReaderAdapter) GetLeadTasks(ctx context.Context, orgID uuid.UUID, input engine.GetLeadTasksInput) (engine.GetLeadTasksOutput, error) {
 	output, err := a.inner.GetLeadTasks(ctx, orgID, GetLeadTasksInput(input))
-	if err != nil {
-		return engine.GetLeadTasksOutput{}, err
-	}
-	result := engine.GetLeadTasksOutput{Count: output.Count}
-	if len(output.Tasks) > 0 {
-		result.Tasks = make([]engine.LeadTaskSummary, 0, len(output.Tasks))
-		for _, item := range output.Tasks {
-			result.Tasks = append(result.Tasks, engine.LeadTaskSummary(item))
-		}
-	}
-	return result, nil
+	return engine.GetLeadTasksOutput{
+		Count: output.Count,
+		Tasks: adaptSlice(output.Tasks, func(item LeadTaskSummary) engine.LeadTaskSummary { return engine.LeadTaskSummary(item) }),
+	}, err
 }
 
 func (a energyLabelReaderAdapter) GetEnergyLabel(ctx context.Context, orgID uuid.UUID, input engine.GetEnergyLabelInput) (engine.GetEnergyLabelOutput, error) {
@@ -399,14 +379,7 @@ func toEngineGetISDEOutput(output GetISDEOutput) engine.GetISDEOutput {
 }
 
 func toEngineISDELineItems(items []ISDELineItem) []engine.ISDELineItem {
-	if len(items) == 0 {
-		return nil
-	}
-	result := make([]engine.ISDELineItem, 0, len(items))
-	for _, item := range items {
-		result = append(result, engine.ISDELineItem(item))
-	}
-	return result
+	return adaptSlice(items, func(item ISDELineItem) engine.ISDELineItem { return engine.ISDELineItem(item) })
 }
 
 func (a currentInboundPhotoAttacherAdapter) AttachCurrentWhatsAppPhoto(ctx context.Context, orgID uuid.UUID, input engine.AttachCurrentWhatsAppPhotoInput, message engine.CurrentInboundMessage) (engine.AttachCurrentWhatsAppPhotoOutput, error) {
@@ -416,14 +389,7 @@ func (a currentInboundPhotoAttacherAdapter) AttachCurrentWhatsAppPhoto(ctx conte
 
 func (a visitSlotReaderAdapter) GetAvailableVisitSlots(ctx context.Context, orgID uuid.UUID, startDate, endDate string, slotDuration int) ([]engine.VisitSlotSummary, error) {
 	items, err := a.inner.GetAvailableVisitSlots(ctx, orgID, startDate, endDate, slotDuration)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]engine.VisitSlotSummary, 0, len(items))
-	for _, item := range items {
-		result = append(result, engine.VisitSlotSummary(item))
-	}
-	return result, nil
+	return adaptSlice(items, func(item VisitSlotSummary) engine.VisitSlotSummary { return engine.VisitSlotSummary(item) }), err
 }
 
 func (a visitMutationWriterAdapter) ScheduleVisit(ctx context.Context, orgID uuid.UUID, input engine.ScheduleVisitInput) (*engine.AppointmentSummary, error) {
@@ -459,14 +425,7 @@ func (a partnerPhoneReaderAdapter) GetPartnerPhone(ctx context.Context, orgID, p
 
 func (a partnerJobReaderAdapter) ListPartnerJobs(ctx context.Context, orgID, partnerID uuid.UUID) ([]engine.PartnerJobSummary, error) {
 	items, err := a.inner.ListPartnerJobs(ctx, orgID, partnerID)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]engine.PartnerJobSummary, 0, len(items))
-	for _, item := range items {
-		result = append(result, engine.PartnerJobSummary(item))
-	}
-	return result, nil
+	return adaptSlice(items, func(item PartnerJobSummary) engine.PartnerJobSummary { return engine.PartnerJobSummary(item) }), err
 }
 
 func (a partnerJobReaderAdapter) GetPartnerJobByService(ctx context.Context, orgID, partnerID, leadServiceID uuid.UUID) (*engine.PartnerJobSummary, error) {

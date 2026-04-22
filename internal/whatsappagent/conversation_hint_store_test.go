@@ -1,6 +1,7 @@
 package whatsappagent
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -24,9 +25,9 @@ func TestConversationLeadHintStoreReturnsStoredHint(t *testing.T) {
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if !ok || hint == nil {
 		t.Fatal("expected stored hint to be returned")
 	}
@@ -43,10 +44,10 @@ func TestConversationLeadHintStoreExpiresOldHints(t *testing.T) {
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
 
 	now = now.Add(2 * time.Hour)
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if ok || hint != nil {
 		t.Fatalf("expected hint to expire, got %#v", hint)
 	}
@@ -60,19 +61,19 @@ func TestConversationLeadHintStoreEvictsOldestWhenOverCapacity(t *testing.T) {
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, 24*time.Hour, 2)
-	store.Set(testHintOrgID, testHintPhoneOne, ConversationLeadHint{LeadID: "lead-1"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneOne, ConversationLeadHint{LeadID: "lead-1"})
 	now = now.Add(time.Minute)
-	store.Set(testHintOrgID, testHintPhoneTwo, ConversationLeadHint{LeadID: "lead-2"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneTwo, ConversationLeadHint{LeadID: "lead-2"})
 	now = now.Add(time.Minute)
-	store.Set(testHintOrgID, testHintPhoneTri, ConversationLeadHint{LeadID: "lead-3"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneTri, ConversationLeadHint{LeadID: "lead-3"})
 
-	if _, ok := store.Get(testHintOrgID, testHintPhoneOne); ok {
+	if _, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneOne); ok {
 		t.Fatal("expected oldest hint to be evicted")
 	}
-	if _, ok := store.Get(testHintOrgID, testHintPhoneTwo); !ok {
+	if _, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneTwo); !ok {
 		t.Fatal("expected newer hint to remain")
 	}
-	if _, ok := store.Get(testHintOrgID, testHintPhoneTri); !ok {
+	if _, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneTri); !ok {
 		t.Fatal("expected latest hint to remain")
 	}
 }
@@ -81,9 +82,9 @@ func TestConversationLeadHintStoreIgnoresInvalidKeysAndBlankLeadID(t *testing.T)
 	t.Parallel()
 
 	store := newConversationLeadHintStore(time.Now, time.Hour, 10)
-	store.Set("", testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
-	store.Set(testHintOrgID, "", ConversationLeadHint{LeadID: testHintLeadID})
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: "   "})
+	store.Set(context.Background(), "", testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID})
+	store.Set(context.Background(), testHintOrgID, "", ConversationLeadHint{LeadID: testHintLeadID})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: "   "})
 
 	if len(store.items) != 0 {
 		t.Fatalf("expected invalid hints to be ignored, got %d items", len(store.items))
@@ -95,14 +96,14 @@ func TestConversationLeadHintStorePrunesExpiredEntriesOnSet(t *testing.T) {
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
-	store.Set(testHintOrgID, testHintPhoneOne, ConversationLeadHint{LeadID: "lead-1"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneOne, ConversationLeadHint{LeadID: "lead-1"})
 	now = now.Add(2 * time.Hour)
-	store.Set(testHintOrgID, testHintPhoneTwo, ConversationLeadHint{LeadID: "lead-2"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneTwo, ConversationLeadHint{LeadID: "lead-2"})
 
 	if len(store.items) != 1 {
 		t.Fatalf("expected expired hint to be pruned during set, got %d items", len(store.items))
 	}
-	if _, ok := store.Get(testHintOrgID, testHintPhoneOne); ok {
+	if _, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneOne); ok {
 		t.Fatal("expected expired hint to be gone after prune-on-set")
 	}
 }
@@ -112,7 +113,7 @@ func TestConversationLeadHintStoreRemembersRecentQuotesWithoutLeadID(t *testing.
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
-	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+	store.RememberQuotes(context.Background(), testHintOrgID, testHintPhoneKey, []QuoteSummary{{
 		QuoteID:     "quote-1",
 		QuoteNumber: testQuoteNumber,
 		ClientName:  testQuoteClientName,
@@ -120,7 +121,7 @@ func TestConversationLeadHintStoreRemembersRecentQuotesWithoutLeadID(t *testing.
 		Summary:     "Kogellagerscharnier RVS",
 	}})
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if !ok || hint == nil {
 		t.Fatal("expected hint with recent quotes to be returned")
 	}
@@ -143,16 +144,16 @@ func TestConversationLeadHintStoreMergesRecentAppointmentsIntoExistingHint(t *te
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
 	now = now.Add(5 * time.Minute)
-	store.RememberAppointments(testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
+	store.RememberAppointments(context.Background(), testHintOrgID, testHintPhoneKey, []AppointmentSummary{{
 		AppointmentID: testAppointmentID,
 		Title:         "Bezoek",
 		StartTime:     "2026-03-16T09:00:00Z",
 		Location:      "Alkmaar",
 	}})
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if !ok || hint == nil {
 		t.Fatal("expected merged hint to be returned")
 	}
@@ -172,14 +173,14 @@ func TestConversationLeadHintStoreSetPreservesRecentQuotesWhenUpdatingLead(t *te
 
 	now := time.Date(2026, time.March, 14, 12, 0, 0, 0, time.UTC)
 	store := newConversationLeadHintStore(func() time.Time { return now }, time.Hour, 10)
-	store.RememberQuotes(testHintOrgID, testHintPhoneKey, []QuoteSummary{{
+	store.RememberQuotes(context.Background(), testHintOrgID, testHintPhoneKey, []QuoteSummary{{
 		QuoteNumber: testQuoteNumber,
 		ClientName:  testQuoteClientName,
 	}})
 	now = now.Add(time.Minute)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if !ok || hint == nil {
 		t.Fatal("expected merged hint to be returned")
 	}
@@ -215,10 +216,10 @@ func TestConversationLeadHintStoreClearRemovesStoredHint(t *testing.T) {
 	t.Parallel()
 
 	store := newConversationLeadHintStore(time.Now, time.Hour, 10)
-	store.Set(testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
-	store.Clear(testHintOrgID, testHintPhoneKey)
+	store.Set(context.Background(), testHintOrgID, testHintPhoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Clear(context.Background(), testHintOrgID, testHintPhoneKey)
 
-	hint, ok := store.Get(testHintOrgID, testHintPhoneKey)
+	hint, ok := store.Get(context.Background(), testHintOrgID, testHintPhoneKey)
 	if ok || hint != nil {
 		t.Fatalf("expected cleared hint to be removed, got %#v", hint)
 	}

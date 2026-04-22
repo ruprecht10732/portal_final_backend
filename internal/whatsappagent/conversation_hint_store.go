@@ -1,6 +1,7 @@
 package whatsappagent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -50,11 +51,11 @@ type ConversationLeadHint struct {
 }
 
 type LeadHintStore interface {
-	Get(orgID, phoneKey string) (*ConversationLeadHint, bool)
-	Set(orgID, phoneKey string, hint ConversationLeadHint)
-	RememberQuotes(orgID, phoneKey string, quotes []QuoteSummary)
-	RememberAppointments(orgID, phoneKey string, appointments []AppointmentSummary)
-	Clear(orgID, phoneKey string)
+	Get(ctx context.Context, orgID, phoneKey string) (*ConversationLeadHint, bool)
+	Set(ctx context.Context, orgID, phoneKey string, hint ConversationLeadHint)
+	RememberQuotes(ctx context.Context, orgID, phoneKey string, quotes []QuoteSummary)
+	RememberAppointments(ctx context.Context, orgID, phoneKey string, appointments []AppointmentSummary)
+	Clear(ctx context.Context, orgID, phoneKey string)
 }
 
 type ConversationLeadHintStore struct {
@@ -87,7 +88,7 @@ func newConversationLeadHintStore(now conversationLeadHintClock, ttl time.Durati
 	}
 }
 
-func (s *ConversationLeadHintStore) Get(orgID, phoneKey string) (*ConversationLeadHint, bool) {
+func (s *ConversationLeadHintStore) Get(ctx context.Context, orgID, phoneKey string) (*ConversationLeadHint, bool) {
 	if s == nil {
 		return nil, false
 	}
@@ -111,7 +112,7 @@ func (s *ConversationLeadHintStore) Get(orgID, phoneKey string) (*ConversationLe
 	return &copyHint, true
 }
 
-func (s *ConversationLeadHintStore) Set(orgID, phoneKey string, hint ConversationLeadHint) {
+func (s *ConversationLeadHintStore) Set(ctx context.Context, orgID, phoneKey string, hint ConversationLeadHint) {
 	if s == nil {
 		return
 	}
@@ -134,19 +135,19 @@ func (s *ConversationLeadHintStore) Set(orgID, phoneKey string, hint Conversatio
 	s.mu.Unlock()
 }
 
-func (s *ConversationLeadHintStore) RememberQuotes(orgID, phoneKey string, quotes []QuoteSummary) {
-	s.remember(orgID, phoneKey, func(hint *ConversationLeadHint) {
+func (s *ConversationLeadHintStore) RememberQuotes(ctx context.Context, orgID, phoneKey string, quotes []QuoteSummary) {
+	s.remember(ctx, orgID, phoneKey, func(hint *ConversationLeadHint) {
 		hint.RecentQuotes = summarizeRecentQuotes(quotes)
 	})
 }
 
-func (s *ConversationLeadHintStore) RememberAppointments(orgID, phoneKey string, appointments []AppointmentSummary) {
-	s.remember(orgID, phoneKey, func(hint *ConversationLeadHint) {
+func (s *ConversationLeadHintStore) RememberAppointments(ctx context.Context, orgID, phoneKey string, appointments []AppointmentSummary) {
+	s.remember(ctx, orgID, phoneKey, func(hint *ConversationLeadHint) {
 		hint.RecentAppointments = summarizeRecentAppointments(appointments)
 	})
 }
 
-func (s *ConversationLeadHintStore) Clear(orgID, phoneKey string) {
+func (s *ConversationLeadHintStore) Clear(ctx context.Context, orgID, phoneKey string) {
 	if s == nil {
 		return
 	}
@@ -159,7 +160,7 @@ func (s *ConversationLeadHintStore) Clear(orgID, phoneKey string) {
 	s.mu.Unlock()
 }
 
-func (s *ConversationLeadHintStore) remember(orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
+func (s *ConversationLeadHintStore) remember(ctx context.Context, orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
 	if s == nil || mutate == nil {
 		return
 	}

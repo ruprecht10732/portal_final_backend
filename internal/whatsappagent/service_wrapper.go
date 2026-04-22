@@ -487,7 +487,7 @@ func (s *Service) resetConversation(ctx context.Context, orgID uuid.UUID, phoneK
 		return
 	}
 	if s.leadHintStore != nil {
-		s.leadHintStore.Clear(orgID.String(), phoneKey)
+		s.leadHintStore.Clear(ctx, orgID.String(), phoneKey)
 	}
 	s.sendAssistantReply(ctx, orgID, phoneKey, replyTarget, msgConversationReset)
 }
@@ -708,7 +708,7 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		}
 	}()
 
-	leadHint := s.resolveLeadHint(orgID, phoneKey)
+	leadHint := s.resolveLeadHint(ctx, orgID, phoneKey)
 	inboundBridge := engine.CurrentInboundMessage(*inbound)
 	var runResult AgentRunResult
 	if partnerID != nil {
@@ -773,11 +773,11 @@ func shouldSkipReplayedMessage(role, content string) bool {
 	return false
 }
 
-func (s *Service) resolveLeadHint(orgID uuid.UUID, phoneKey string) *ConversationLeadHint {
+func (s *Service) resolveLeadHint(ctx context.Context, orgID uuid.UUID, phoneKey string) *ConversationLeadHint {
 	if s.leadHintStore == nil {
 		return nil
 	}
-	hint, _ := s.leadHintStore.Get(orgID.String(), phoneKey)
+	hint, _ := s.leadHintStore.Get(ctx, orgID.String(), phoneKey)
 	return hint
 }
 

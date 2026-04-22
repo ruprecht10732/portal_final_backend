@@ -118,28 +118,40 @@ func (o *Orchestrator) SetAutomationScheduler(queue AutomationScheduler) {
 }
 
 func (o *Orchestrator) loadOrgAISettings(ctx context.Context, tenantID uuid.UUID) (ports.OrganizationAISettings, error) {
+	// Fast path: check cache with only a read lock.
 	o.orgSettingsMu.Lock()
-	defer o.orgSettingsMu.Unlock()
-
-	// Cache for a short TTL to avoid hammering identity storage during bursts of events.
 	if cached, ok := o.orgSettingsCache[tenantID]; ok {
 		if time.Since(cached.fetchedAt) < 30*time.Second {
+			o.orgSettingsMu.Unlock()
 			return cached.settings, nil
 		}
 	}
+	o.orgSettingsMu.Unlock()
 
 	if o.orgSettingsReader == nil {
 		settings := ports.DefaultOrganizationAISettings()
+		o.orgSettingsMu.Lock()
 		o.orgSettingsCache[tenantID] = cachedOrgAISettings{settings: settings, fetchedAt: time.Now()}
+		o.orgSettingsMu.Unlock()
 		return settings, nil
 	}
 
+	// Blocking I/O is performed WITHOUT the global mutex so that a slow
+	// settings reader for one tenant cannot stall the entire orchestrator.
 	settings, err := o.orgSettingsReader(ctx, tenantID)
 	if err != nil {
 		return ports.OrganizationAISettings{}, err
 	}
 
+	o.orgSettingsMu.Lock()
 	o.orgSettingsCache[tenantID] = cachedOrgAISettings{settings: settings, fetchedAt: time.Now()}
+	// Opportunistically evict stale entries to prevent unbounded growth.
+	for id, cached := range o.orgSettingsCache {
+		if id != tenantID && time.Since(cached.fetchedAt) > 2*time.Minute {
+			delete(o.orgSettingsCache, id)
+		}
+	}
+	o.orgSettingsMu.Unlock()
 	return settings, nil
 }
 

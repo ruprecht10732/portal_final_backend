@@ -142,11 +142,11 @@ type GetISDEOutput struct {
 var reHouseNumberParts = regexp.MustCompile(`^(\d+)\s*([a-zA-Z]?)\s*(.*)$`)
 
 type LeadHintStore interface {
-	Get(orgID, phoneKey string) (*ConversationLeadHint, bool)
-	Set(orgID, phoneKey string, hint ConversationLeadHint)
-	RememberQuotes(orgID, phoneKey string, quotes []QuoteSummary)
-	RememberAppointments(orgID, phoneKey string, appointments []AppointmentSummary)
-	Clear(orgID, phoneKey string)
+	Get(ctx context.Context, orgID, phoneKey string) (*ConversationLeadHint, bool)
+	Set(ctx context.Context, orgID, phoneKey string, hint ConversationLeadHint)
+	RememberQuotes(ctx context.Context, orgID, phoneKey string, quotes []QuoteSummary)
+	RememberAppointments(ctx context.Context, orgID, phoneKey string, appointments []AppointmentSummary)
+	Clear(ctx context.Context, orgID, phoneKey string)
 }
 
 // ToolHandler implements the function-calling tool handlers.
@@ -392,7 +392,7 @@ func (h *ToolHandler) recordLeadHintFromQuotes(ctx tool.Context, orgID uuid.UUID
 		return
 	}
 	if phoneKey, ok := phoneKeyFromToolContext(ctx); ok {
-		h.leadHintStore.RememberQuotes(orgID.String(), phoneKey, quotes)
+		h.leadHintStore.RememberQuotes(ctx, orgID.String(), phoneKey, quotes)
 	}
 	if len(quotes) != 1 {
 		return
@@ -409,7 +409,7 @@ func (h *ToolHandler) recordLeadHintFromAppointments(ctx tool.Context, orgID uui
 		return
 	}
 	if phoneKey, ok := phoneKeyFromToolContext(ctx); ok {
-		h.leadHintStore.RememberAppointments(orgID.String(), phoneKey, appointments)
+		h.leadHintStore.RememberAppointments(ctx, orgID.String(), phoneKey, appointments)
 	}
 	if len(appointments) != 1 {
 		return

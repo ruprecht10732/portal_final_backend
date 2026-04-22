@@ -584,7 +584,7 @@ func (h *ToolHandler) HandleSendQuotePDF(ctx tool.Context, orgID uuid.UUID, inpu
 	if !ok {
 		return SendQuotePDFOutput{Success: false, Message: "Klantcontext ontbreekt voor het verzenden van de PDF"}, fmt.Errorf("phone context unavailable")
 	}
-	quoteID, quoteNumber, err := h.resolveQuoteForPDF(orgID, phoneKey, input.QuoteID)
+	quoteID, quoteNumber, err := h.resolveQuoteForPDF(ctx, orgID, phoneKey, input.QuoteID)
 	if err != nil {
 		return SendQuotePDFOutput{Success: false, Message: quotePDFClarificationMessage(err), QuoteID: strings.TrimSpace(input.QuoteID)}, nil
 	}
@@ -606,7 +606,7 @@ func (h *ToolHandler) HandleSendQuotePDF(ctx tool.Context, orgID uuid.UUID, inpu
 	return SendQuotePDFOutput{Success: true, Message: "Offerte-pdf verzonden", QuoteID: pdfResult.QuoteID, QuoteNumber: pdfResult.QuoteNumber, FileName: pdfResult.FileName}, nil
 }
 
-func (h *ToolHandler) resolveQuoteForPDF(orgID uuid.UUID, phoneKey string, quoteIDRaw string) (string, string, error) {
+func (h *ToolHandler) resolveQuoteForPDF(ctx context.Context, orgID uuid.UUID, phoneKey string, quoteIDRaw string) (string, string, error) {
 	quoteID := strings.TrimSpace(quoteIDRaw)
 	if quoteID != "" {
 		return quoteID, "", nil
@@ -614,7 +614,7 @@ func (h *ToolHandler) resolveQuoteForPDF(orgID uuid.UUID, phoneKey string, quote
 	if h == nil || h.leadHintStore == nil {
 		return "", "", errors.New(errQuotePDFNeedNumber)
 	}
-	hint, ok := h.leadHintStore.Get(orgID.String(), phoneKey)
+	hint, ok := h.leadHintStore.Get(ctx, orgID.String(), phoneKey)
 	if !ok || len(hint.RecentQuotes) == 0 {
 		return "", "", errors.New(errQuotePDFNeedNumber)
 	}
@@ -818,7 +818,7 @@ func (h *ToolHandler) recordLeadHint(ctx tool.Context, orgID uuid.UUID, leadID, 
 	if !ok {
 		return
 	}
-	h.leadHintStore.Set(orgID.String(), phoneKey, ConversationLeadHint{
+	h.leadHintStore.Set(ctx, orgID.String(), phoneKey, ConversationLeadHint{
 		LeadID:        strings.TrimSpace(leadID),
 		LeadServiceID: strings.TrimSpace(leadServiceID),
 		CustomerName:  strings.TrimSpace(customerName),
@@ -856,7 +856,7 @@ func (h *ToolHandler) hydrateLeadContextFromHint(ctx tool.Context, orgID uuid.UU
 	if !ok {
 		return leadIDText, serviceIDText
 	}
-	hint, ok := h.leadHintStore.Get(orgID.String(), phoneKey)
+	hint, ok := h.leadHintStore.Get(ctx, orgID.String(), phoneKey)
 	if !ok {
 		return leadIDText, serviceIDText
 	}

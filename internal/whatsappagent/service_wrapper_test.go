@@ -400,7 +400,7 @@ func TestServiceHandleIncomingMessageResetClearsConversation(t *testing.T) {
 	store := NewConversationLeadHintStore()
 	orgID := uuid.New()
 	phoneKey := normalizeAgentPhoneKey(serviceWrapperTestPhone)
-	store.Set(orgID.String(), phoneKey, ConversationLeadHint{LeadID: uuid.New().String(), CustomerName: "Robin"})
+	store.Set(context.Background(), orgID.String(), phoneKey, ConversationLeadHint{LeadID: uuid.New().String(), CustomerName: "Robin"})
 	queries := &serviceWrapperTestQueries{lookupUser: whatsappagentdb.GetAgentUserByPhoneRow{OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true}}}
 	transport := &senderTestTransport{sendMessageResult: whatsapp.SendResult{MessageID: testSenderMessageID}}
 	service := &Service{
@@ -419,7 +419,7 @@ func TestServiceHandleIncomingMessageResetClearsConversation(t *testing.T) {
 	if transport.lastSendMessagePhone == "" {
 		t.Fatal("expected reset reply to be sent")
 	}
-	if hint, ok := store.Get(orgID.String(), phoneKey); ok || hint != nil {
+	if hint, ok := store.Get(context.Background(), orgID.String(), phoneKey); ok || hint != nil {
 		t.Fatalf("expected lead hint to be cleared, got %#v", hint)
 	}
 }
@@ -543,7 +543,7 @@ func TestServiceRunAgentReplyPassesLeadHintToPreparedRunner(t *testing.T) {
 	orgID := uuid.New()
 	store := NewConversationLeadHintStore()
 	phoneKey := normalizeAgentPhoneKey(serviceWrapperTestPhone)
-	store.Set(orgID.String(), phoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
+	store.Set(context.Background(), orgID.String(), phoneKey, ConversationLeadHint{LeadID: testHintLeadID, CustomerName: "Robin"})
 	replyRunner := &serviceWrapperTestReplyRunner{result: AgentRunResult{Reply: "Prima"}}
 	service := &Service{
 		queries:       &serviceWrapperTestQueries{},
