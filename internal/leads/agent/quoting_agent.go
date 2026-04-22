@@ -67,7 +67,6 @@ type QuotingAgent struct {
 	sessionService session.Service
 	appName        string
 	modelConfig    openaicompat.Config
-	fallbackConfig *openaicompat.Config
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
 	mode           quotingAgentMode
@@ -108,7 +107,6 @@ type quotingAgentProfile struct {
 // QuotingAgentConfig holds shared dependencies for both quoting modes.
 type QuotingAgentConfig struct {
 	ModelConfig          openaicompat.Config
-	FallbackConfig       *openaicompat.Config
 	Repo                 repository.LeadsRepository
 	EventBus             events.Bus
 	EmbeddingClient      *embeddings.Client
@@ -133,7 +131,7 @@ func NewQuoteGeneratorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
 func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAgent, error) {
 	profile := mode.profile()
 	modelConfig := cfg.ModelConfig
-	llm := BuildLLM(modelConfig, cfg.FallbackConfig, nil)
+	llm := BuildLLM(modelConfig)
 	workspace, err := orchestration.LoadAgentWorkspace(profile.workspace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load %s workspace context: %w", profile.workspace, err)
@@ -185,7 +183,6 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 		sessionService: sessionService,
 		appName:        profile.appName,
 		modelConfig:    modelConfig,
-		fallbackConfig: cfg.FallbackConfig,
 		repo:           cfg.Repo,
 		toolDeps:       deps,
 		mode:           mode,
@@ -1225,7 +1222,7 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 	activeAppName := q.appName
 
 	if len(tools) > 0 {
-		dynamicLLM := BuildLLM(q.modelConfig, q.fallbackConfig, nil)
+		dynamicLLM := BuildLLM(q.modelConfig)
 		workspace, err := orchestration.LoadAgentWorkspace("calculator")
 		if err != nil {
 			return fmt.Errorf("failed to load calculator workspace context: %w", err)

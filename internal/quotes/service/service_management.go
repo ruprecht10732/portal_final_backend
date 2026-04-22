@@ -300,6 +300,14 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, tenantID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
+
+	// Validate extension: only Draft, Sent, or Accepted quotes can be extended
+	if req.ValidUntil != nil && quote.Status != string(transport.QuoteStatusDraft) &&
+		quote.Status != string(transport.QuoteStatusSent) &&
+		quote.Status != string(transport.QuoteStatusAccepted) {
+		return nil, apperr.Validation(fmt.Sprintf("cannot extend quote with status '%s'; only Draft, Sent, or Accepted quotes can be extended", quote.Status))
+	}
+
 	pdfShouldInvalidate := quoteUpdateAffectsRenderedPDF(req)
 	applyQuoteUpdates(quote, req)
 	if err := applyQuoteSubsidySnapshot(quote, req.ISDESubsidy); err != nil {

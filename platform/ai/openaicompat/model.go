@@ -60,6 +60,10 @@ func (m *Model) Name() string {
 	return m.config.Model
 }
 
+func (m *Model) ProviderName() string {
+	return m.config.Provider
+}
+
 // GenerateContent adapts ADK requests to an OpenAI-compatible chat completions API.
 func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {

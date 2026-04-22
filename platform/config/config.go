@@ -15,7 +15,7 @@ import (
 
 const defaultFrontendBaseURL = "http://localhost:4200"
 
-const defaultKimiModel = "kimi-k2.5"
+const defaultKimiModel = "kimi-k2.6"
 
 const (
 	DefaultLLMModel             = defaultKimiModel
@@ -64,7 +64,7 @@ var llmProviderPresets = map[string]LLMProviderPreset{
 		BaseURL:        "https://api.moonshot.ai/v1",
 		DefaultModel:   defaultKimiModel,
 		ReasoningModel: defaultKimiModel,
-		Models:         []string{"kimi-k2.5", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
+		Models:         []string{"kimi-k2.6", "kimi-k2.5", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
 		APIKeyEnv:      "MOONSHOT_API_KEY",
 		SupportsVision: true,
 	},
@@ -101,6 +101,31 @@ func resolveProvider(input string) (provider string, modelOverride string) {
 	}
 	// Unknown input — fall back to default provider, treat input as model.
 	return LLMProviderKimi, input
+}
+
+func llmProviderSelectorWarning(envName, value string) string {
+	selector := strings.TrimSpace(strings.ToLower(value))
+	if selector == "" {
+		return ""
+	}
+	if _, ok := llmProviderPresets[selector]; ok {
+		return ""
+	}
+	provider, modelOverride := resolveProvider(selector)
+	if modelOverride == "" {
+		return ""
+	}
+	if provider != "" && modelOverride != selector {
+		return ""
+	}
+	if preset, ok := llmProviderPresets[provider]; ok {
+		for _, modelName := range preset.Models {
+			if strings.EqualFold(modelName, selector) {
+				return fmt.Sprintf("%s is set to model name %q; prefer provider id %q here and keep model selection in LLM_MODEL_* overrides", envName, value, provider)
+			}
+		}
+	}
+	return fmt.Sprintf("%s has unknown selector %q; this currently falls back to provider %q and treats the value as a model override", envName, value, provider)
 }
 
 // =============================================================================
@@ -269,7 +294,6 @@ type Config struct {
 	MoonshotAPIKey                    string
 	DeepSeekAPIKey                    string
 	LLMProvider                       string // "kimi" (default) or "deepseek"
-	LLMFallbackProvider               string // optional fallback provider name
 	LLMModelDefault                   string
 	LLMModelPhotoAnalyzer             string
 	LLMModelCallLogger                string
@@ -572,14 +596,12 @@ func (c *Config) ResolveVisionProvider() (LLMProviderConfig, bool) {
 	return LLMProviderConfig{}, false
 }
 
-// HasFallbackProvider returns true when a fallback provider is configured and has an API key.
-func (c *Config) HasFallbackProvider() bool {
-	fp := strings.TrimSpace(c.LLMFallbackProvider)
-	if fp == "" {
-		return false
+func (c *Config) LLMSelectorWarnings() []string {
+	warnings := make([]string, 0, 1)
+	if warning := llmProviderSelectorWarning("LLM_PROVIDER", c.LLMProvider); warning != "" {
+		warnings = append(warnings, warning)
 	}
-	provider, _ := resolveProvider(fp)
-	return c.resolveAPIKey(provider) != ""
+	return warnings
 }
 
 // resolveAPIKey returns the API key for the given provider. For providers in
@@ -680,7 +702,6 @@ func Load() (*Config, error) {
 		MoonshotAPIKey:                    getEnv("MOONSHOT_API_KEY", ""),
 		DeepSeekAPIKey:                    getEnv("DEEPSEEK_API_KEY", ""),
 		LLMProvider:                       strings.ToLower(getEnv("LLM_PROVIDER", LLMProviderKimi)),
-		LLMFallbackProvider:               strings.ToLower(getEnv("LLM_FALLBACK_PROVIDER", "")),
 		LLMModelDefault:                   getEnv("LLM_MODEL_DEFAULT", ""),
 		LLMModelPhotoAnalyzer:             getEnv("LLM_MODEL_PHOTO_ANALYZER", ""),
 		LLMModelCallLogger:                getEnv("LLM_MODEL_CALL_LOGGER", ""),
@@ -753,6 +774,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.CORSAllowAll && cfg.CORSAllowCreds {
 		return nil, fmt.Errorf("CORS_ALLOW_CREDENTIALS cannot be true when CORS_ALLOW_ALL is true")
+	}
+	for _, warning := range cfg.LLMSelectorWarnings() {
+		_, _ = fmt.Fprintf(os.Stderr, "config warning: %s\n", warning)
 	}
 
 	return cfg, nil

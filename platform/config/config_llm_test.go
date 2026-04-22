@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const (
 	globalModelName    = "kimi-global"
@@ -122,5 +125,49 @@ func TestResolveProviderConfigLocksBothModelsForSingleModeProviderOverride(t *te
 	}
 	if provCfg.Model != defaultKimiModel || provCfg.ReasoningModel != defaultKimiModel {
 		t.Fatalf("expected both kimi models to be locked to %q, got model=%q reasoning=%q", defaultKimiModel, provCfg.Model, provCfg.ReasoningModel)
+	}
+}
+
+func TestLLMSelectorWarningsFlagModelNamesInProviderSlots(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		LLMProvider: testDeepSeekReason,
+	}
+
+	warnings := cfg.LLMSelectorWarnings()
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %#v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], `LLM_PROVIDER is set to model name "deepseek-reasoner"`) {
+		t.Fatalf("unexpected primary warning: %q", warnings[0])
+	}
+	if !strings.Contains(warnings[0], `prefer provider id "deepseek"`) {
+		t.Fatalf("expected deepseek guidance, got %q", warnings[0])
+	}
+}
+
+func TestLLMSelectorWarningsIgnoreProviderIDs(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{LLMProvider: LLMProviderDeepSeek}
+	if warnings := cfg.LLMSelectorWarnings(); len(warnings) != 0 {
+		t.Fatalf("expected no warnings for provider ids, got %#v", warnings)
+	}
+}
+
+func TestLLMSelectorWarningsFlagUnknownSelectors(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{LLMProvider: "unknown-provider"}
+	warnings := cfg.LLMSelectorWarnings()
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %#v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], `LLM_PROVIDER has unknown selector "unknown-provider"`) {
+		t.Fatalf("unexpected warning: %q", warnings[0])
+	}
+	if !strings.Contains(warnings[0], `falls back to provider "kimi"`) {
+		t.Fatalf("expected fallback explanation, got %q", warnings[0])
 	}
 }

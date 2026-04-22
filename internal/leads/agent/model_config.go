@@ -1,29 +1,15 @@
 package agent
 
 import (
-	"log/slog"
-
 	"google.golang.org/adk/model"
 
-	"portal_final_backend/platform/ai/fallback"
 	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/config"
 )
 
-// BuildLLM creates a model.LLM from a primary config and optional fallback config.
-// When fallbackCfg is non-nil, the returned model transparently falls back to
-// the secondary provider on errors with circuit-breaker protection.
-func BuildLLM(primary openaicompat.Config, fallbackCfg *openaicompat.Config, logger *slog.Logger) model.LLM {
-	primaryModel := openaicompat.NewModel(primary)
-	if fallbackCfg == nil {
-		return primaryModel
-	}
-	secondaryModel := openaicompat.NewModel(*fallbackCfg)
-	return fallback.NewModel(fallback.Config{
-		Primary:   primaryModel,
-		Secondary: secondaryModel,
-		Logger:    logger,
-	})
+// BuildLLM creates a model.LLM from a primary config.
+func BuildLLM(primary openaicompat.Config) model.LLM {
+	return openaicompat.NewModel(primary)
 }
 
 // newModelConfig builds an openaicompat.Config from a resolved provider

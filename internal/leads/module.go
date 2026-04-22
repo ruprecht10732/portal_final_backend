@@ -332,7 +332,7 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(
-		agent.BuildLLM(resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, true), resolveFallbackModelConfig(cfg, true), nil),
+		agent.BuildLLM(resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, true)),
 		repo, eventBus, scorer,
 	)
 	if err != nil {
@@ -348,7 +348,6 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 
 	estimator, err := agent.NewEstimatorAgent(agent.QuotingAgentConfig{
 		ModelConfig:          resolveAgentModelConfig(cfg, config.LLMModelAgentEstimator, true),
-		FallbackConfig:       resolveFallbackModelConfig(cfg, true),
 		Repo:                 repo,
 		EventBus:             eventBus,
 		EmbeddingClient:      aiClients.embeddingClient,
@@ -368,7 +367,6 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 
 	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
 		ModelConfig:          resolveAgentModelConfig(cfg, config.LLMModelAgentQuoteGenerator, true),
-		FallbackConfig:       resolveFallbackModelConfig(cfg, true),
 		Repo:                 repo,
 		EventBus:             eventBus,
 		EmbeddingClient:      aiClients.embeddingClient,
@@ -438,17 +436,6 @@ func resolveVisionModelConfig(cfg *config.Config, agentName string, reasoning bo
 		}
 	}
 	return agent.NewProviderModelConfig(providerCfg, reasoning, modelOverride)
-}
-
-// resolveFallbackModelConfig returns a fallback openaicompat.Config when a
-// fallback provider is configured, or nil otherwise.
-func resolveFallbackModelConfig(cfg *config.Config, reasoning bool) *openaicompat.Config {
-	if !cfg.HasFallbackProvider() {
-		return nil
-	}
-	providerCfg := cfg.ResolveProviderConfig(cfg.LLMFallbackProvider)
-	fbCfg := agent.NewProviderModelConfig(providerCfg, reasoning, "")
-	return &fbCfg
 }
 
 func buildEmbeddingClient(cfg *config.Config) *embeddings.Client {
