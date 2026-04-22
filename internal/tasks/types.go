@@ -102,6 +102,7 @@ type ListTasksRequest struct {
 	LeadServiceID  string `form:"leadServiceId" validate:"omitempty,uuid4"`
 	DueFrom        string `form:"dueFrom" validate:"omitempty"`
 	DueTo          string `form:"dueTo" validate:"omitempty"`
+	Limit          int    `form:"limit" validate:"omitempty,min=1,max=500"`
 }
 
 type listTasksFilter struct {
@@ -112,6 +113,7 @@ type listTasksFilter struct {
 	LeadServiceID  *uuid.UUID
 	DueFrom        *time.Time
 	DueTo          *time.Time
+	Limit          int
 }
 
 type reminderProcessRecord struct {

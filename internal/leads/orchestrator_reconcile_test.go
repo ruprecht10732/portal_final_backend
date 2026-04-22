@@ -92,7 +92,7 @@ func TestDeriveDesiredServiceStateTerminalDoesNotResurrectWithoutFreshChildActiv
 	}
 }
 
-func TestDeriveDesiredServiceStateStaleDraftDecaysToNurturing(t *testing.T) {
+func TestDeriveDesiredServiceStateStaleDraftDoesNotDecayOnReconcile(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-(staleDraftDuration + 2*time.Hour))
 
@@ -110,14 +110,16 @@ func TestDeriveDesiredServiceStateStaleDraftDecaysToNurturing(t *testing.T) {
 	if !ok {
 		t.Fatal(msgExpectedProceed)
 	}
-	if desired.Stage != domain.PipelineStageNurturing {
-		t.Fatalf(fmtExpectedStage, domain.PipelineStageNurturing, desired.Stage)
+	// Stale-draft decay must be driven by a background scheduler, not by lazy
+	// event-driven reconciliation. The lead should remain in Estimation here.
+	if desired.Stage != domain.PipelineStageEstimation {
+		t.Fatalf(fmtExpectedStage, domain.PipelineStageEstimation, desired.Stage)
 	}
-	if desired.Status != domain.LeadStatusAttemptedContact {
-		t.Fatalf(fmtExpectedStatus, domain.LeadStatusAttemptedContact, desired.Status)
+	if desired.Status != domain.LeadStatusInProgress {
+		t.Fatalf(fmtExpectedStatus, domain.LeadStatusInProgress, desired.Status)
 	}
-	if desired.ReasonCode != "stale_draft_decay" {
-		t.Fatalf("expected reasonCode=%q, got %q", "stale_draft_decay", desired.ReasonCode)
+	if desired.ReasonCode != "quote_draft" {
+		t.Fatalf("expected reasonCode=%q, got %q", "quote_draft", desired.ReasonCode)
 	}
 }
 

@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"strings"
+	"sync"
+	"time"
 
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
 	"portal_final_backend/internal/whatsapp"
@@ -17,6 +19,10 @@ type Sender struct {
 	queries     AgentConfigReader
 	inboxWriter InboxWriter
 	log         *logger.Logger
+
+	configMu       sync.Mutex
+	configCache    *whatsappagentdb.RacWhatsappAgentConfig
+	configCachedAt time.Time
 }
 
 // SendReply sends a text message via the global agent device and writes it to the inbox for operator visibility.
@@ -108,7 +114,21 @@ func (s *Sender) SendFileReply(ctx context.Context, orgID uuid.UUID, phone, capt
 }
 
 func (s *Sender) getAgentConfig(ctx context.Context) (whatsappagentdb.RacWhatsappAgentConfig, error) {
-	return s.queries.GetAgentConfig(ctx)
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
+	if s.configCache != nil && time.Since(s.configCachedAt) < 30*time.Second {
+		return *s.configCache, nil
+	}
+
+	cfg, err := s.queries.GetAgentConfig(ctx)
+	if err != nil {
+		return whatsappagentdb.RacWhatsappAgentConfig{}, err
+	}
+
+	s.configCache = &cfg
+	s.configCachedAt = time.Now()
+	return cfg, nil
 }
 
 func (s *Sender) loggerWithContext(ctx context.Context) *logger.Logger {

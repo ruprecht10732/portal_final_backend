@@ -125,7 +125,11 @@ func sanitizeVoicePathSegment(value string) string {
 
 func chooseVoiceFileName(downloadFilename string, contentType string) string {
 	if trimmed := strings.TrimSpace(downloadFilename); trimmed != "" {
-		return trimmed
+		base := path.Base(trimmed)
+		sanitized := voicePathSanitizer.ReplaceAllString(base, "_")
+		if sanitized != "" && sanitized != "." && sanitized != ".." {
+			return sanitized
+		}
 	}
 	ext := ".ogg"
 	if extensions, err := mime.ExtensionsByType(strings.TrimSpace(contentType)); err == nil && len(extensions) > 0 && strings.TrimSpace(extensions[0]) != "" {

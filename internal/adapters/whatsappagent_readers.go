@@ -33,8 +33,14 @@ func (a *WhatsAppAgentTaskReaderAdapter) GetLeadTasks(ctx context.Context, orgID
 		return whatsappagent.GetLeadTasksOutput{}, fmt.Errorf("lead_id is required")
 	}
 
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+
 	req := tasks.ListTasksRequest{
 		LeadID: leadID,
+		Limit:  limit,
 	}
 	if leadServiceID := strings.TrimSpace(input.LeadServiceID); leadServiceID != "" {
 		req.ScopeType = tasks.ScopeLeadService
@@ -46,14 +52,6 @@ func (a *WhatsAppAgentTaskReaderAdapter) GetLeadTasks(ctx context.Context, orgID
 	records, err := a.tasks.List(ctx, orgID, req)
 	if err != nil {
 		return whatsappagent.GetLeadTasksOutput{}, err
-	}
-
-	limit := input.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	if len(records) > limit {
-		records = records[:limit]
 	}
 
 	result := whatsappagent.GetLeadTasksOutput{Count: len(records)}

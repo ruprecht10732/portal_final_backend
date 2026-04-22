@@ -262,6 +262,10 @@ func (r *Repository) listTasks(ctx context.Context, tenantID uuid.UUID, filter l
 		args = append(args, *filter.DueTo)
 	}
 	base += ` ORDER BY t.due_at NULLS LAST, t.created_at DESC`
+	if filter.Limit > 0 {
+		base += fmt.Sprintf(" LIMIT $%d", index)
+		args = append(args, filter.Limit)
+	}
 
 	rows, err := r.pool.Query(ctx, base, args...)
 	if err != nil {

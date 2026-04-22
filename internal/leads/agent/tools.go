@@ -3001,6 +3001,15 @@ func validateCalculateEstimateInput(input CalculateEstimateInput) error {
 		return fmt.Errorf("financial inputs cannot be negative")
 	}
 
+	// Prevent float64->int64 overflow in labor subtotals.
+	const maxSafeLaborValue = 1_000_000.0
+	if input.LaborHoursLow > maxSafeLaborValue || input.LaborHoursHigh > maxSafeLaborValue {
+		return fmt.Errorf("labor hours exceed safety limit of %.2f", maxSafeLaborValue)
+	}
+	if input.HourlyRateLow > maxSafeLaborValue || input.HourlyRateHigh > maxSafeLaborValue {
+		return fmt.Errorf("hourly rate exceeds safety limit of %.2f", maxSafeLaborValue)
+	}
+
 	for _, item := range input.MaterialItems {
 		if item.UnitPrice < 0 || item.Quantity < 0 {
 			return fmt.Errorf("material item price and quantity cannot be negative")
@@ -3265,8 +3274,9 @@ func resolveSearchParams(input SearchProductMaterialsInput) (query string, limit
 }
 
 // searchCatalogCollection searches the catalog Qdrant collection and hydrates results.
-// Returns nil products (not an error) when nothing relevant is found or the search fails.
-func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []float32, limit int, scoreThreshold float64, query string) []ProductResult {
+// Returns an error when the underlying vector search fails so callers can abort rather
+// than hallucinate ad-hoc products.
+func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []float32, limit int, scoreThreshold float64, query string) ([]ProductResult, error) {
 	tenantID, tenantOk := deps.GetTenantID()
 	var filter *qdrant.Filter
 	if tenantOk && tenantID != nil {
@@ -3282,7 +3292,7 @@ func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []
 	if err != nil {
 		log.Printf("SearchProductMaterials: catalog search failed: %v", err)
 		recordCatalogSearch(ctx, deps, query, "catalog", 0, nil)
-		return nil
+		return nil, err
 	}
 	var topScore *float64
 	if len(results) > 0 {
@@ -3293,7 +3303,7 @@ func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []
 	recordCatalogSearch(ctx, deps, query, "catalog", len(products), topScore)
 	if len(products) == 0 {
 		log.Printf("SearchProductMaterials: catalog query=%q found 0 products above threshold %.2f, falling back", query, scoreThreshold)
-		return nil
+		return nil, nil
 	}
 	products = hydrateProductResults(ctx, deps, products)
 	products = rerankCatalogProducts(query, products)
@@ -3301,7 +3311,7 @@ func searchCatalogCollection(ctx tool.Context, deps *ToolDependencies, vector []
 	logCatalogSelectionAudit(query, products)
 	log.Printf("SearchProductMaterials: catalog query=%q found %d products (threshold=%.2f, scores: %s)",
 		query, len(products), scoreThreshold, formatScores(products))
-	return products
+	return products, nil
 }
 
 func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, input SearchProductMaterialsInput) (SearchProductMaterialsOutput, error) {
@@ -3334,7 +3344,10 @@ func handleSearchProductMaterials(ctx tool.Context, deps *ToolDependencies, inpu
 		return SearchProductMaterialsOutput{Products: nil, Message: "Failed to generate embedding for query"}, err
 	}
 
-	catalogOutput, foundInCatalog := tryCatalogSearchFlow(ctx, deps, query, limit, scoreThreshold, useCatalog, vector)
+	catalogOutput, foundInCatalog, catalogErr := tryCatalogSearchFlow(ctx, deps, query, limit, scoreThreshold, useCatalog, vector)
+	if catalogErr != nil {
+		return SearchProductMaterialsOutput{Products: nil, Message: "Product catalog search failed"}, catalogErr
+	}
 	setBothCaches := func(output SearchProductMaterialsOutput) {
 		deps.setSearchCache(cacheKey, output)
 		deps.setSearchCache(normKey, output)
@@ -3522,16 +3535,19 @@ func combineCatalogAndFallbackResults(catalogOutput SearchProductMaterialsOutput
 	}
 }
 
-func tryCatalogSearchFlow(ctx tool.Context, deps *ToolDependencies, query string, limit int, scoreThreshold float64, useCatalog bool, initialVector []float32) (SearchProductMaterialsOutput, bool) {
+func tryCatalogSearchFlow(ctx tool.Context, deps *ToolDependencies, query string, limit int, scoreThreshold float64, useCatalog bool, initialVector []float32) (SearchProductMaterialsOutput, bool, error) {
 	if !useCatalog || deps.CatalogQdrantClient == nil {
-		return SearchProductMaterialsOutput{}, false
+		return SearchProductMaterialsOutput{}, false, nil
 	}
 
-	initialProducts := searchCatalogCollection(ctx, deps, initialVector, limit, scoreThreshold, query)
+	initialProducts, err := searchCatalogCollection(ctx, deps, initialVector, limit, scoreThreshold, query)
+	if err != nil {
+		return SearchProductMaterialsOutput{}, false, err
+	}
 	if len(initialProducts) > 0 {
 		if hasHighConfidenceMatch(initialProducts) {
 			// Original query produced a genuine high-confidence match — authoritative.
-			return catalogSearchOutput(initialProducts, scoreThreshold, false, true), true
+			return catalogSearchOutput(initialProducts, scoreThreshold, false, true), true, nil
 		}
 
 		bestProducts, highConfidenceProducts, _ := runCatalogRetries(ctx, deps, query, limit, scoreThreshold, initialProducts)
@@ -3539,21 +3555,21 @@ func tryCatalogSearchFlow(ctx tool.Context, deps *ToolDependencies, query string
 			// Retry improved confidence but the original query did NOT have high
 			// confidence. Return products but mark highConfidence=false so the
 			// caller still tries fallback reference collections.
-			return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, false), true
+			return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, false), true, nil
 		}
-		return catalogSearchOutput(bestProducts, scoreThreshold, false, false), true
+		return catalogSearchOutput(bestProducts, scoreThreshold, false, false), true, nil
 	}
 
 	bestRetryProducts, highConfidenceProducts, _ := runCatalogRetries(ctx, deps, query, limit, scoreThreshold, nil)
 	if len(highConfidenceProducts) > 0 {
 		// Only retries found something — not authoritative enough to skip fallback.
-		return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, false), true
+		return catalogSearchOutput(highConfidenceProducts, scoreThreshold, true, false), true, nil
 	}
 	if len(bestRetryProducts) > 0 {
-		return catalogSearchOutput(bestRetryProducts, scoreThreshold, true, false), true
+		return catalogSearchOutput(bestRetryProducts, scoreThreshold, true, false), true, nil
 	}
 
-	return SearchProductMaterialsOutput{}, false
+	return SearchProductMaterialsOutput{}, false, nil
 }
 
 func catalogSearchOutput(products []ProductResult, scoreThreshold float64, reworded bool, highConfidence bool) SearchProductMaterialsOutput {
@@ -3594,7 +3610,11 @@ func limitedCatalogRewordedQueries(query string) []string {
 func runCatalogRetries(ctx tool.Context, deps *ToolDependencies, query string, limit int, scoreThreshold float64, currentBest []ProductResult) (bestProducts []ProductResult, highConfidenceProducts []ProductResult, usedRewording bool) {
 	bestProducts = currentBest
 	for _, retryQuery := range limitedCatalogRewordedQueries(query) {
-		retryProducts := searchCatalogRetryQuery(ctx, deps, retryQuery, limit, scoreThreshold)
+		retryProducts, retryErr := searchCatalogRetryQuery(ctx, deps, retryQuery, limit, scoreThreshold)
+		if retryErr != nil {
+			log.Printf("SearchProductMaterials: catalog retry query=%q search failed: %v", retryQuery, retryErr)
+			continue
+		}
 		if len(retryProducts) == 0 {
 			continue
 		}
@@ -3613,13 +3633,13 @@ func runCatalogRetries(ctx tool.Context, deps *ToolDependencies, query string, l
 	return bestProducts, nil, usedRewording
 }
 
-func searchCatalogRetryQuery(ctx tool.Context, deps *ToolDependencies, retryQuery string, limit int, scoreThreshold float64) []ProductResult {
+func searchCatalogRetryQuery(ctx tool.Context, deps *ToolDependencies, retryQuery string, limit int, scoreThreshold float64) ([]ProductResult, error) {
 	retryEmbedCtx, retryEmbedCancel := detachedTimeout(ctx, toolIOTimeout)
 	defer retryEmbedCancel()
 	retryVector, retryErr := deps.EmbeddingClient.Embed(retryEmbedCtx, retryQuery)
 	if retryErr != nil {
 		log.Printf("SearchProductMaterials: catalog retry embedding failed query=%q: %v", retryQuery, retryErr)
-		return nil
+		return nil, retryErr
 	}
 	return searchCatalogCollection(ctx, deps, retryVector, limit, scoreThreshold, retryQuery)
 }

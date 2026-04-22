@@ -278,6 +278,9 @@ func parseListFilter(req ListTasksRequest) (listTasksFilter, error) {
 		}
 		filter.DueTo = &parsed
 	}
+	if req.Limit > 0 {
+		filter.Limit = req.Limit
+	}
 	return filter, nil
 }
 

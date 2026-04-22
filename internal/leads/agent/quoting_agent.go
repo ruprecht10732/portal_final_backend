@@ -70,6 +70,8 @@ type QuotingAgent struct {
 	repo           repository.LeadsRepository
 	toolDeps       *ToolDependencies
 	mode           quotingAgentMode
+	workspace      orchestration.Workspace
+	instruction    string
 
 	mu             sync.Mutex
 	sessionResults []SessionResult
@@ -136,6 +138,10 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 	if err != nil {
 		return nil, fmt.Errorf("failed to load %s workspace context: %w", profile.workspace, err)
 	}
+	instruction, err := orchestration.BuildAgentInstruction(profile.workspace, "Follow prompt instructions and return tool calls only.")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build %s agent instruction: %w", profile.workspace, err)
+	}
 
 	deps := &ToolDependencies{
 		Repo:                 cfg.Repo,
@@ -186,6 +192,8 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 		repo:           cfg.Repo,
 		toolDeps:       deps,
 		mode:           mode,
+		workspace:      workspace,
+		instruction:    instruction,
 	}, nil
 }
 
@@ -1240,20 +1248,12 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 
 	if len(tools) > 0 {
 		dynamicLLM := BuildLLM(q.modelConfig)
-		workspace, err := orchestration.LoadAgentWorkspace("calculator")
-		if err != nil {
-			return fmt.Errorf("failed to load calculator workspace context: %w", err)
-		}
-		instruction, err := orchestration.BuildAgentInstruction("calculator", "Follow prompt instructions and return tool calls only.")
-		if err != nil {
-			return fmt.Errorf("failed to load calculator workspace context: %w", err)
-		}
-		toolsets := orchestration.BuildWorkspaceToolsets(workspace, strings.ToLower(agentName)+"_tools", tools)
+		toolsets := orchestration.BuildWorkspaceToolsets(q.workspace, strings.ToLower(agentName)+"_tools", tools)
 		dynamicAgent, err := llmagent.New(llmagent.Config{
 			Name:        agentName,
 			Model:       dynamicLLM,
 			Description: description,
-			Instruction: instruction,
+			Instruction: q.instruction,
 			Toolsets:    toolsets,
 		})
 		if err != nil {

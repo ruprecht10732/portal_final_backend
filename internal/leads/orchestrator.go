@@ -1434,9 +1434,6 @@ func deriveFromQuotes(aggs repository.ServiceStateAggregates) (stage, status, re
 		return domain.PipelineStageProposal, domain.LeadStatusPending, "quote_sent", "", true
 	}
 	if aggs.DraftQuotes > 0 {
-		if aggs.LatestQuoteAt != nil && time.Since(*aggs.LatestQuoteAt) > staleDraftDuration {
-			return domain.PipelineStageNurturing, domain.LeadStatusAttemptedContact, "stale_draft_decay", "Conceptofferte is verlopen (>30 dagen geen activiteit)", true
-		}
 		return domain.PipelineStageEstimation, domain.LeadStatusInProgress, "quote_draft", "", true
 	}
 	if aggs.RejectedQuotes > 0 {
