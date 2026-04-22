@@ -351,13 +351,9 @@ func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, user
 	// Construct the prompt with context
 	analysisContext := wrapReferenceBlock(fmt.Sprintf(`- Current Time: %s
 - Lead ID: %s
-- Service ID: %s
-- Agent User ID: %s
 - Existing Appointment: %s`,
 		time.Now().Format(time.RFC3339),
 		leadID.String(),
-		serviceID.String(),
-		userID.String(),
 		existingAppointment,
 	))
 	summaryBlock := wrapReferenceBlock(sanitizeUserInput(summary, maxNoteLength))
@@ -368,31 +364,7 @@ func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, user
 The agent provided this post-call summary (reference data):
 %s
 
-Task:
-0. You may reason step-by-step internally, but your final output must contain only the required tool calls.
-1. Analyze the summary to determine outcome and appointment changes.
-2. ALWAYS save a clean, professional Dutch call note using SaveNote (required).
-	- No raw input block, no invented facts, use 24-hour time (09:00).
-	- Prefer structure: Afspraak, Werkzaamheden, Materiaal, Locatie, Vragen.
-3. If the summary contains corrected lead details such as name, phone, email, street, house number, zip code, city, latitude, longitude, assignee, consumer role, or WhatsApp preference, use UpdateLeadDetails before writing follow-up status changes.
-4. If an appointment was scheduled (e.g., "booked next tuesday at 9", "scheduled for friday 2pm"):
-   - Calculate the exact date based on Current Time
-   - Use 'ScheduleVisit' to book the appointment
-   - Assume 1 hour duration unless specified otherwise
-5. If an existing appointment must be rescheduled and a new time is provided:
-   - Use 'RescheduleVisit' with the new start/end time
-	- Only reschedule if Existing Appointment is not "None"; otherwise schedule a new appointment and write "Nieuwe afspraak ingepland"
-6. If the appointment is cancelled:
-   - Use 'CancelVisit'
-7. Set a call outcome using 'SetCallOutcome' (short label, e.g., Appointment_Scheduled, Attempted_Contact, Disqualified, Needs_Rescheduling).
-8. Update the status using 'UpdateStatus' if the outcome implies a status change:
-	- "booked", "scheduled", "appointment set" → Appointment_Scheduled, but ONLY after ScheduleVisit or RescheduleVisit succeeds, or when Existing Appointment is not "None"
-	- "not interested", "no need", "declined" → Disqualified
-   - "voicemail", "no answer", "callback" → Attempted_Contact
-	- "needs to reschedule", "postponed" → Needs_Rescheduling
-9. Update the pipeline stage with 'UpdatePipelineStage' if the summary explicitly indicates a stage change.
-
-	Execute the appropriate tools now. Respond ONLY with tool calls.`,
+Execute the appropriate tools now. Respond ONLY with tool calls.`,
 		analysisContext,
 		summaryBlock,
 	)
