@@ -44,7 +44,6 @@ func TestLoadAgentContextSuccess(t *testing.T) {
 	checks := []string{
 		"root instructions",
 		"Shared Governance",
-		"shared identity",
 		"Gatekeeper",
 		gatekeeperContextText,
 		"save analysis skill",
@@ -57,8 +56,18 @@ func TestLoadAgentContextSuccess(t *testing.T) {
 		}
 	}
 
-	if strings.Index(context, "a shared file") > strings.Index(context, "z shared file") {
-		t.Fatalf("expected shared markdown files to load in alphabetical order")
+	excluded := []string{
+		"shared identity",
+		"shared tool catalog",
+		"shared execution contract",
+		"shared pipeline invariants",
+		"a shared file",
+		"z shared file",
+	}
+	for _, check := range excluded {
+		if strings.Contains(context, check) {
+			t.Fatalf("expected context NOT to contain %q after shared workspace trim", check)
+		}
 	}
 	if strings.Index(context, "a skill file") > strings.Index(context, "z skill file") {
 		t.Fatalf("expected skill markdown files to load in alphabetical order")

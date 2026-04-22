@@ -11,7 +11,7 @@ metadata:
 
 <context>
 This workspace defines repository-wide rules shared by Gatekeeper, Qualifier, Calculator, Matchmaker, and support agents.
-Treat the loaded shared markdown resources as canonical guidance for terminology, communication, status handling, and execution constraints.
+Treat this skill as canonical guidance for terminology, communication, status handling, and execution constraints.
 </context>
 
 ## Instructions
@@ -27,8 +27,7 @@ Treat the loaded shared markdown resources as canonical guidance for terminology
 ### Use Shared Resources
 
 <resources>
-- Read the shared markdown files in this workspace for glossary, execution contract, communication rules, and tool catalog guidance.
-- Treat these resources as supporting material for all other agent workspaces.
+- Treat this skill as the canonical source for shared governance and cross-agent constraints.
 </resources>
 
 ## Output

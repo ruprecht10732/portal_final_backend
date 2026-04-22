@@ -236,14 +236,6 @@ func composeWorkspaceInstruction(rootDir, normalizedName, rootInstructionPath st
 }
 
 func resolveSharedResourceFiles(rootDir string) ([]string, error) {
-	rootFiles, err := collectWorkspaceRootMarkdownFiles(rootDir, sharedWorkspaceDir, skillFileName)
-	if err != nil {
-		return nil, err
-	}
-	promptFiles, err := collectOptionalMarkdownFiles(rootDir, filepath.ToSlash(filepath.Join(sharedWorkspaceDir, promptsDirName)))
-	if err != nil {
-		return nil, err
-	}
 	skillFiles, err := collectOptionalMarkdownFiles(rootDir, filepath.ToSlash(filepath.Join(sharedWorkspaceDir, skillsDirName)))
 	if err != nil {
 		return nil, err
@@ -252,9 +244,7 @@ func resolveSharedResourceFiles(rootDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	combined := append([]string{}, rootFiles...)
-	combined = append(combined, promptFiles...)
-	combined = append(combined, skillFiles...)
+	combined := append([]string{}, skillFiles...)
 	combined = append(combined, referenceFiles...)
 	return uniqueRelativePaths(combined), nil
 }
