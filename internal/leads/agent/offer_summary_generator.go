@@ -25,7 +25,7 @@ type OfferSummaryGenerator struct {
 }
 
 // NewOfferSummaryGenerator creates a summary generator agent without tools.
-func NewOfferSummaryGenerator(modelCfg openaicompat.Config) (*OfferSummaryGenerator, error) {
+func NewOfferSummaryGenerator(modelCfg openaicompat.Config, sessionService session.Service) (*OfferSummaryGenerator, error) {
 	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("offer-summary")
 	if err != nil {
@@ -42,7 +42,6 @@ func NewOfferSummaryGenerator(modelCfg openaicompat.Config) (*OfferSummaryGenera
 		return nil, fmt.Errorf("failed to create offer summary agent: %w", err)
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        "offer-summary-generator",
 		Agent:          adkAgent,

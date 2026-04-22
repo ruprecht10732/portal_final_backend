@@ -27,6 +27,10 @@ func (s *staticToolset) Tools(agent.ReadonlyContext) ([]tool.Tool, error) {
 }
 
 func BuildWorkspaceToolsets(workspace Workspace, name string, tools []tool.Tool) []tool.Toolset {
+	// Always inject on-demand skill loading tools for progressive context disclosure.
+	if st := skillTools(); len(st) > 0 {
+		tools = append(tools, st...)
+	}
 	if len(tools) == 0 {
 		return nil
 	}

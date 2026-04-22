@@ -36,11 +36,13 @@ import (
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/qdrant"
 	"portal_final_backend/platform/validator"
+	adksession "portal_final_backend/platform/adk/session"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/adk/session"
 )
 
 // Module is the RAC_leads bounded context module implementing http.Module.
@@ -91,6 +93,7 @@ type ModuleDeps struct {
 	Config                *config.Config
 	Log                   *logger.Logger
 	OrchestratorLockRedis *redis.Client
+	SessionRedis          *redis.Client
 }
 
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader into
@@ -146,7 +149,17 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	// Score service for lead scoring
 	scorer := scoring.New(repo, log)
 
-	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, emailReplyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader)
+	if deps.SessionRedis == nil {
+		return nil, fmt.Errorf("leads module: SessionRedis is required")
+	}
+	sessionService := adksession.NewService(adksession.Config{
+		Backend:     "redis",
+		RedisClient: deps.SessionRedis,
+		RedisPrefix: "adk:session:",
+		RedisTTL:    24 * time.Hour,
+	})
+
+	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, emailReplyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader, sessionService)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +223,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	h.SetStaleLeadDetector(staleDetector)
 
 	// Stale lead AI-powered re-engagement suggestion generator
-	staleReEngagementAgent := agent.NewStaleReEngagementAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentStaleReEngagement, false), repo)
+	staleReEngagementAgent := agent.NewStaleReEngagementAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentStaleReEngagement, false), repo, sessionService)
 	staleReEngagement := maintenance.NewStaleLeadReEngagementService(pool, staleReEngagementAgent, nil, log)
 	h.SetStaleSuggester(staleReEngagement)
 
@@ -255,6 +268,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		SchedulerClient: nil, // Will be injected from main.go/quotes module
 		Log:             log,
 		ModelConfig:     resolveAgentModelConfig(cfg, config.LLMModelAgentQuoteGenerator, false),
+		SessionService:  sessionService,
 	})
 	module.subsidyAnalyzerSvc = subsidyAnalyzerSvc
 
@@ -315,31 +329,31 @@ func (m *Module) VerifyWiring() error {
 	return nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader, sessionService session.Service) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
 	_ = storageSvc
 	if err := validateAgentConfiguration(); err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	photoAnalyzer, err := agent.NewPhotoAnalyzer(resolveVisionModelConfig(cfg, config.LLMModelAgentPhotoAnalyzer, true), repo)
+	photoAnalyzer, err := agent.NewPhotoAnalyzer(resolveVisionModelConfig(cfg, config.LLMModelAgentPhotoAnalyzer, true), repo, sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	callLogger, err := agent.NewCallLogger(resolveAgentModelConfig(cfg, config.LLMModelAgentCallLogger, true), repo, nil, eventBus)
+	callLogger, err := agent.NewCallLogger(resolveAgentModelConfig(cfg, config.LLMModelAgentCallLogger, true), repo, nil, eventBus, sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(
 		agent.BuildLLM(resolveAgentModelConfig(cfg, config.LLMModelAgentGatekeeper, true)),
-		repo, eventBus, scorer,
+		repo, eventBus, scorer, sessionService,
 	)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	auditor, err := agent.NewAuditor(resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, true), repo, eventBus)
+	auditor, err := agent.NewAuditor(resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, true), repo, eventBus, sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -355,12 +369,12 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		BouwmaatQdrantClient: aiClients.bouwmaatQdrantClient,
 		CatalogQdrantClient:  aiClients.catalogQdrantClient,
 		CatalogReader:        catalogReader,
-	})
+	}, sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	dispatcher, err := agent.NewDispatcher(resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, true), repo, eventBus)
+	dispatcher, err := agent.NewDispatcher(resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, true), repo, eventBus, sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -374,17 +388,17 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		BouwmaatQdrantClient: aiClients.bouwmaatQdrantClient,
 		CatalogQdrantClient:  aiClients.catalogQdrantClient,
 		CatalogReader:        catalogReader,
-	})
+	}, sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(resolveAgentModelConfig(cfg, config.LLMModelAgentOfferSummaryGenerator, false))
+	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(resolveAgentModelConfig(cfg, config.LLMModelAgentOfferSummaryGenerator, false), sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	whatsAppReplyAgent, emailReplyAgent, err := buildReplyAgents(cfg, repo)
+	whatsAppReplyAgent, emailReplyAgent, err := buildReplyAgents(cfg, repo, sessionService)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -470,13 +484,13 @@ func buildScopedQdrantClient(cfg *config.Config, collection string) *qdrant.Clie
 	})
 }
 
-func buildReplyAgents(cfg *config.Config, repo repository.LeadsRepository) (*agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
-	whatsAppReplyAgent, err := agent.NewWhatsAppReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo)
+func buildReplyAgents(cfg *config.Config, repo repository.LeadsRepository, sessionService session.Service) (*agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
+	whatsAppReplyAgent, err := agent.NewWhatsAppReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo, sessionService)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	emailReplyAgent, err := agent.NewEmailReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo)
+	emailReplyAgent, err := agent.NewEmailReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo, sessionService)
 	if err != nil {
 		return nil, nil, err
 	}

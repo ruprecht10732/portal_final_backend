@@ -187,7 +187,7 @@ func (s *ConversationLeadHintStore) Clear(ctx context.Context, orgID, phoneKey s
 	s.mu.Unlock()
 }
 
-func (s *ConversationLeadHintStore) remember(ctx context.Context, orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
+func (s *ConversationLeadHintStore) remember(_ context.Context, orgID, phoneKey string, mutate func(*ConversationLeadHint)) {
 	if s == nil || mutate == nil {
 		return
 	}

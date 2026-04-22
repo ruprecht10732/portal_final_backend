@@ -33,7 +33,7 @@ type SubsidyAnalyzerConfig struct {
 }
 
 // NewSubsidyAnalyzerAgent creates a new subsidy analyzer agent.
-func NewSubsidyAnalyzerAgent(cfg SubsidyAnalyzerConfig) (*SubsidyAnalyzer, error) {
+func NewSubsidyAnalyzerAgent(cfg SubsidyAnalyzerConfig, sessionService session.Service) (*SubsidyAnalyzer, error) {
 	modelConfig := cfg.ModelConfig
 	kimi := openaicompat.NewModel(modelConfig)
 
@@ -47,8 +47,6 @@ func NewSubsidyAnalyzerAgent(cfg SubsidyAnalyzerConfig) (*SubsidyAnalyzer, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subsidy analyzer agent: %w", err)
 	}
-
-	sessionService := session.InMemoryService()
 
 	r, err := runner.New(runner.Config{
 		AppName:        subsidyAnalyzerAppName,

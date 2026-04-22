@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/pgvector/pgvector-go"
 )
 
 type OfferStatus string
@@ -231,6 +232,42 @@ func (ns NullRacQuoteAttachmentSource) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.RacQuoteAttachmentSource), nil
+}
+
+type AgentApproval struct {
+	ID            pgtype.UUID        `json:"id"`
+	AgentName     string             `json:"agent_name"`
+	ToolName      string             `json:"tool_name"`
+	ArgumentsJson []byte             `json:"arguments_json"`
+	Reason        string             `json:"reason"`
+	RequestedAt   pgtype.Timestamptz `json:"requested_at"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	Decision      string             `json:"decision"`
+	DecidedAt     pgtype.Timestamptz `json:"decided_at"`
+	DecidedBy     pgtype.Text        `json:"decided_by"`
+	LeadID        pgtype.UUID        `json:"lead_id"`
+	ServiceID     pgtype.UUID        `json:"service_id"`
+	TenantID      pgtype.UUID        `json:"tenant_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentMemory struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    string             `json:"user_id"`
+	TenantID  pgtype.UUID        `json:"tenant_id"`
+	AgentName string             `json:"agent_name"`
+	Summary   string             `json:"summary"`
+	Embedding pgvector.Vector    `json:"embedding"`
+	SessionID string             `json:"session_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentMemoryMetadatum struct {
+	ID        pgtype.UUID        `json:"id"`
+	MemoryID  pgtype.UUID        `json:"memory_id"`
+	Key       string             `json:"key"`
+	Value     string             `json:"value"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type AgentRun struct {

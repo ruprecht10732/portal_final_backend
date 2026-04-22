@@ -21,8 +21,13 @@ type Querier interface {
 	CompleteLeadService(ctx context.Context, arg CompleteLeadServiceParams) (CompleteLeadServiceRow, error)
 	CountActionItems(ctx context.Context, arg CountActionItemsParams) (int32, error)
 	CountLeads(ctx context.Context, arg CountLeadsParams) (int32, error)
+	CountPendingAgentApprovals(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CreateAIAnalysis(ctx context.Context, arg CreateAIAnalysisParams) (CreateAIAnalysisRow, error)
 	CreateAIDecisionMemory(ctx context.Context, arg CreateAIDecisionMemoryParams) (RacAiDecisionMemory, error)
+	// ============================================================
+	// Agent Approvals (Human-in-the-Loop)
+	// ============================================================
+	CreateAgentApproval(ctx context.Context, arg CreateAgentApprovalParams) (AgentApproval, error)
 	CreateAttachment(ctx context.Context, arg CreateAttachmentParams) (RacLeadServiceAttachment, error)
 	CreateCatalogSearchLog(ctx context.Context, arg CreateCatalogSearchLogParams) error
 	CreateFeedComment(ctx context.Context, arg CreateFeedCommentParams) (RacFeedComment, error)
@@ -46,6 +51,7 @@ type Querier interface {
 	// regardless of actor_name or summary, within the given time window.
 	FindRecentDuplicateAlertByTitle(ctx context.Context, arg FindRecentDuplicateAlertByTitleParams) (FindRecentDuplicateAlertByTitleRow, error)
 	FindRecentDuplicateTimelineEvent(ctx context.Context, arg FindRecentDuplicateTimelineEventParams) (FindRecentDuplicateTimelineEventRow, error)
+	GetAgentApprovalByID(ctx context.Context, arg GetAgentApprovalByIDParams) (AgentApproval, error)
 	GetAgentHealthStats(ctx context.Context, arg GetAgentHealthStatsParams) (GetAgentHealthStatsRow, error)
 	GetAppointmentVisitReport(ctx context.Context, arg GetAppointmentVisitReportParams) (GetAppointmentVisitReportRow, error)
 	GetAttachmentByID(ctx context.Context, arg GetAttachmentByIDParams) (RacLeadServiceAttachment, error)
@@ -102,6 +108,7 @@ type Querier interface {
 	ListLeads(ctx context.Context, arg ListLeadsParams) ([]RacLead, error)
 	ListMentionsByComments(ctx context.Context, commentids []pgtype.UUID) ([]ListMentionsByCommentsRow, error)
 	ListNotesByService(ctx context.Context, arg ListNotesByServiceParams) ([]ListNotesByServiceRow, error)
+	ListPendingAgentApprovals(ctx context.Context, arg ListPendingAgentApprovalsParams) ([]AgentApproval, error)
 	ListPhotoAnalysesByLead(ctx context.Context, arg ListPhotoAnalysesByLeadParams) ([]ListPhotoAnalysesByLeadRow, error)
 	ListPhotoAnalysesByService(ctx context.Context, arg ListPhotoAnalysesByServiceParams) ([]ListPhotoAnalysesByServiceRow, error)
 	ListQuoteOutcomeTrend(ctx context.Context, arg ListQuoteOutcomeTrendParams) ([]ListQuoteOutcomeTrendRow, error)
@@ -122,6 +129,7 @@ type Querier interface {
 	SetGatekeeperNurturingLoopState(ctx context.Context, arg SetGatekeeperNurturingLoopStateParams) error
 	SetLeadPublicToken(ctx context.Context, arg SetLeadPublicTokenParams) error
 	SetLeadViewedBy(ctx context.Context, arg SetLeadViewedByParams) error
+	UpdateAgentApprovalDecision(ctx context.Context, arg UpdateAgentApprovalDecisionParams) error
 	UpdateEnergyLabel(ctx context.Context, arg UpdateEnergyLabelParams) (int64, error)
 	UpdateLead(ctx context.Context, arg UpdateLeadParams) (RacLead, error)
 	UpdateLeadEnrichment(ctx context.Context, arg UpdateLeadEnrichmentParams) (int64, error)

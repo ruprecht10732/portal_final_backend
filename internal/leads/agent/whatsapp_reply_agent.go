@@ -38,6 +38,7 @@ type WhatsAppReplyAgent struct {
 	quoteReader                  ports.ReplyQuoteReader
 	appointmentViewer            ports.AppointmentPublicViewer
 	userReader                   ports.ReplyUserReader
+	sessionService               session.Service
 }
 
 type whatsAppReplyContext struct {
@@ -54,11 +55,12 @@ type whatsAppReplyContext struct {
 	requester      *ports.ReplyUserProfile
 }
 
-func NewWhatsAppReplyAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository) (*WhatsAppReplyAgent, error) {
+func NewWhatsAppReplyAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository, sessionService session.Service) (*WhatsAppReplyAgent, error) {
 	return &WhatsAppReplyAgent{
-		repo:        repo,
-		modelConfig: modelCfg,
-		appName:     whatsAppReplyAppName,
+		repo:           repo,
+		modelConfig:    modelCfg,
+		appName:        whatsAppReplyAppName,
+		sessionService: sessionService,
 	}, nil
 }
 
@@ -88,7 +90,7 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 		replyContext.acceptedQuote != nil,
 		replyContext.upcomingVisit != nil || replyContext.pendingVisit != nil,
 	)
-	r, sessionService, err := a.newRunner(settings.WhatsAppToneOfVoice)
+	r, err := a.newRunner(settings.WhatsAppToneOfVoice)
 	if err != nil {
 		return ports.ReplySuggestionDraft{}, err
 	}
@@ -100,7 +102,7 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 		userID = "whatsapp-reply-" + input.LeadID.String()
 	}
 	outputText, err := runPromptTextSession(ctx, promptRunRequest{
-		SessionService:       sessionService,
+		SessionService:       a.sessionService,
 		Runner:               r,
 		AppName:              a.appName,
 		UserID:               userID,
@@ -121,11 +123,11 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 	return ports.ReplySuggestionDraft{Text: response, EffectiveScenario: resolvedInput.Scenario}, nil
 }
 
-func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
+func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, error) {
 	kimi := openaicompat.NewModel(a.modelConfig)
 	instruction, err := orchestration.BuildAgentInstruction("whatsapp-reply", whatsappReplySystemPrompt(toneOfVoice))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load whatsapp reply workspace context: %w", err)
+		return nil, fmt.Errorf("failed to load whatsapp reply workspace context: %w", err)
 	}
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "WhatsAppReplyAgent",
@@ -134,20 +136,19 @@ func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, sess
 		Instruction: instruction,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        a.appName,
-		SessionService: sessionService,
+		SessionService: a.sessionService,
 		Agent:          adkAgent,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create whatsapp reply runner: %w", err)
+		return nil, fmt.Errorf("failed to create whatsapp reply runner: %w", err)
 	}
 
-	return r, sessionService, nil
+	return r, nil
 }
 
 func (a *WhatsAppReplyAgent) loadOrganizationAISettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {

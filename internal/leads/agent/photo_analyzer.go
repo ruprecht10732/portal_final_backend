@@ -128,7 +128,7 @@ type PhotoAnalyzer struct {
 }
 
 // NewPhotoAnalyzer creates a new photo analyzer agent
-func NewPhotoAnalyzer(modelCfg openaicompat.Config, repo repository.LeadsRepository) (*PhotoAnalyzer, error) {
+func NewPhotoAnalyzer(modelCfg openaicompat.Config, repo repository.LeadsRepository, sessionService session.Service) (*PhotoAnalyzer, error) {
 	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace(photoAnalyzerWorkspaceName)
 	if err != nil {
@@ -160,8 +160,6 @@ func NewPhotoAnalyzer(modelCfg openaicompat.Config, repo repository.LeadsReposit
 	if err != nil {
 		return nil, fmt.Errorf("failed to create photo analyzer agent: %w", err)
 	}
-
-	sessionService := session.InMemoryService()
 
 	r, err := runner.New(runner.Config{
 		AppName:        analyzer.appName,

@@ -22,6 +22,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
+	"portal_final_backend/platform/adk/confirmation"
 	"portal_final_backend/platform/ai/embeddings"
 	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/qdrant"
@@ -121,16 +122,16 @@ type QuotingAgentConfig struct {
 }
 
 // NewEstimatorAgent creates the autonomous estimator agent.
-func NewEstimatorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
-	return newQuotingAgent(cfg, quotingAgentModeEstimator)
+func NewEstimatorAgent(cfg QuotingAgentConfig, sessionService session.Service) (*QuotingAgent, error) {
+	return newQuotingAgent(cfg, quotingAgentModeEstimator, sessionService)
 }
 
 // NewQuoteGeneratorAgent creates the prompt-driven quote generator agent.
-func NewQuoteGeneratorAgent(cfg QuotingAgentConfig) (*QuotingAgent, error) {
-	return newQuotingAgent(cfg, quotingAgentModeQuoteGenerator)
+func NewQuoteGeneratorAgent(cfg QuotingAgentConfig, sessionService session.Service) (*QuotingAgent, error) {
+	return newQuotingAgent(cfg, quotingAgentModeQuoteGenerator, sessionService)
 }
 
-func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAgent, error) {
+func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode, sessionService session.Service) (*QuotingAgent, error) {
 	profile := mode.profile()
 	modelConfig := cfg.ModelConfig
 	llm := BuildLLM(modelConfig)
@@ -173,7 +174,6 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode) (*QuotingAge
 		return nil, fmt.Errorf("failed to create %s agent: %w", mode, err)
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        profile.appName,
 		Agent:          adkAgent,
@@ -356,6 +356,7 @@ func (q *QuotingAgent) Run(ctx context.Context, leadID, serviceID, tenantID uuid
 	log.Printf("quoting-agent[%s]: scheduling run for lead=%s service=%s tenant=%s force=%t", q.mode, leadID, serviceID, tenantID, force)
 	reqDeps := q.toolDeps.NewRequestDeps()
 	bgCtx := context.WithoutCancel(ctx)
+	bgCtx = confirmation.WithTenantID(bgCtx, tenantID)
 	bgCtx = WithDependencies(bgCtx, reqDeps)
 	go func() {
 		defer func() {
@@ -376,6 +377,7 @@ func (q *QuotingAgent) Execute(ctx context.Context, leadID, serviceID, tenantID 
 	}
 
 	reqDeps := q.toolDeps.NewRequestDeps()
+	ctx = confirmation.WithTenantID(ctx, tenantID)
 	ctx = WithDependencies(ctx, reqDeps)
 	return q.executeAutonomousRun(ctx, reqDeps, leadID, serviceID, tenantID, force)
 }
@@ -426,9 +428,12 @@ func (q *QuotingAgent) executeAutonomousRun(ctx context.Context, reqDeps *ToolDe
 	durationMs := int(time.Since(runStart).Milliseconds())
 	sessionResults := q.resetAndGetSessionResults()
 	totalToolCalls := 0
+	var totalTokenInput, totalTokenOutput int32
 	var allTraces []observedToolTrace
 	for _, sr := range sessionResults {
 		totalToolCalls += sr.ToolCallCount
+		totalTokenInput += sr.TokenInput
+		totalTokenOutput += sr.TokenOutput
 		allTraces = append(allTraces, sr.ToolTraces...)
 	}
 	if agentRunID, err := q.repo.InsertAgentRun(ctx, repository.InsertAgentRunParams{
@@ -441,6 +446,8 @@ func (q *QuotingAgent) executeAutonomousRun(ctx context.Context, reqDeps *ToolDe
 		StartedAt:     runStart,
 		DurationMs:    durationMs,
 		ToolCallCount: totalToolCalls,
+		TokenInput:    int(totalTokenInput),
+		TokenOutput:   int(totalTokenOutput),
 		Outcome:       outcome,
 		OutcomeDetail: detail,
 		CycleCount:    service.AgentCycleCount,
@@ -487,30 +494,14 @@ func (q *QuotingAgent) startAutonomousRun(ctx context.Context, reqDeps *ToolDepe
 }
 
 func (q *QuotingAgent) loadAutonomousRunContext(ctx context.Context, leadID, serviceID, tenantID uuid.UUID) (repository.Lead, repository.LeadService, []repository.LeadNote, *repository.PhotoAnalysis, bool) {
-	lead, err := q.repo.GetByID(ctx, leadID, tenantID)
-	if err != nil {
-		log.Printf("quoting-agent: failed to get lead by id: %v", err)
+	lc := fetchLeadContextParallel(ctx, q.repo, leadID, serviceID, tenantID)
+	if lc.lead.ID == uuid.Nil {
 		return repository.Lead{}, repository.LeadService{}, nil, nil, false
 	}
-
-	service, err := q.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
-	if err != nil {
-		log.Printf("quoting-agent: failed to get lead service by id: %v", err)
+	if lc.service.ID == uuid.Nil {
 		return repository.Lead{}, repository.LeadService{}, nil, nil, false
 	}
-
-	notes, err := q.repo.ListNotesByService(ctx, leadID, serviceID, tenantID)
-	if err != nil {
-		log.Printf("quoting-agent: notes fetch failed: %v", err)
-		notes = nil
-	}
-
-	var photo *repository.PhotoAnalysis
-	if analysis, err := q.repo.GetLatestPhotoAnalysis(ctx, serviceID, tenantID); err == nil {
-		photo = &analysis
-	}
-
-	return lead, service, notes, photo, true
+	return lc.lead, lc.service, lc.notes, lc.photo, true
 }
 
 func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, tenantID uuid.UUID) bool {
@@ -518,29 +509,42 @@ func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead reposit
 	reasoningMode, enrichedContext := q.buildEnhancedEstimationContext(ctx, tenantID, lead, service, notes, photo, estimationContext)
 
 	if isInvestigativeMode(reasoningMode) {
-		investigativeTools, err := q.buildInvestigativeTools()
-		if err != nil {
-			log.Printf("quoting-agent: failed to build investigative tools: %v", err)
-			return false
-		}
-
-		missing := make([]string, 0)
-		if analysis, err := q.repo.GetLatestAIAnalysis(ctx, service.ID, tenantID); err == nil {
-			missing = append(missing, analysis.MissingInformation...)
-		}
-
-		promptText := buildInvestigativePrompt(lead, service, notes, photo, missing, enrichedContext)
-		if err := q.runWithPromptUsingTools(ctx, promptText, "estimator-investigative-"+lead.ID.String(), "EstimatorInvestigative", "Investigative intake clarification mode", investigativeTools); err != nil {
-			log.Printf("quoting-agent: error from investigative mode run: %v", err)
-			return false
-		}
-		return true
+		return q.runInvestigativeMode(ctx, lead, service, notes, photo, tenantID, enrichedContext)
 	}
 
+	scopeArtifact, ok := q.runScopeAnalyzer(ctx, lead, service, notes, photo)
+	if !ok {
+		return false
+	}
+
+	return q.runQuoteBuilder(ctx, lead, service, notes, photo, enrichedContext, scopeArtifact)
+}
+
+func (q *QuotingAgent) runInvestigativeMode(ctx context.Context, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, tenantID uuid.UUID, enrichedContext string) bool {
+	investigativeTools, err := q.buildInvestigativeTools()
+	if err != nil {
+		log.Printf("quoting-agent: failed to build investigative tools: %v", err)
+		return false
+	}
+
+	missing := make([]string, 0)
+	if analysis, err := q.repo.GetLatestAIAnalysis(ctx, service.ID, tenantID); err == nil {
+		missing = append(missing, analysis.MissingInformation...)
+	}
+
+	promptText := buildInvestigativePrompt(lead, service, notes, photo, missing, enrichedContext)
+	if err := q.runWithPromptUsingTools(ctx, promptText, "estimator-investigative-"+lead.ID.String(), "EstimatorInvestigative", "Investigative intake clarification mode", investigativeTools); err != nil {
+		log.Printf("quoting-agent: error from investigative mode run: %v", err)
+		return false
+	}
+	return true
+}
+
+func (q *QuotingAgent) runScopeAnalyzer(ctx context.Context, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis) (*ScopeArtifact, bool) {
 	scopeTools, err := q.buildScopeAnalyzerTools()
 	if err != nil {
 		log.Printf("quoting-agent: failed to build scope analyzer tools: %v", err)
-		return false
+		return nil, false
 	}
 
 	scopePrompt := buildScopeAnalyzerPrompt(lead, service, notes, photo)
@@ -559,6 +563,10 @@ func (q *QuotingAgent) executeAutonomousPrompt(ctx context.Context, lead reposit
 		}
 	}
 
+	return scopeArtifact, true
+}
+
+func (q *QuotingAgent) runQuoteBuilder(ctx context.Context, lead repository.Lead, service repository.LeadService, notes []repository.LeadNote, photo *repository.PhotoAnalysis, enrichedContext string, scopeArtifact *ScopeArtifact) bool {
 	deps, err := GetDependencies(ctx)
 	if err != nil {
 		log.Printf("quoting-agent: failed to get dependencies: %v", err)
@@ -908,6 +916,50 @@ func (q *QuotingAgent) runQuoteCriticAndRepair(ctx context.Context, reqDeps *Too
 	)
 }
 
+type criticLoopState struct {
+	previousCritique *SubmitQuoteCritiqueInput
+	maxRepairAttempts int
+}
+
+func (s *criticLoopState) shouldTerminateOnReview(review *quoteCriticLoopReview, ok bool) (string, bool) {
+	if !ok {
+		return "AI-criticus kon de conceptofferte niet beoordelen vanwege een technische fout; menselijke controle vereist.", true
+	}
+	if review == nil || review.result == nil {
+		return "", true
+	}
+	return "", false
+}
+
+func (s *criticLoopState) handleDecision(decision string, summary string) (string, bool) {
+	switch decision {
+	case ports.QuoteAIReviewDecisionApproved:
+		return "", true
+	case ports.QuoteAIReviewDecisionRequiresHuman:
+		return summary, true
+	}
+	return "", false
+}
+
+func (s *criticLoopState) hasRepeatedFindings(current *SubmitQuoteCritiqueInput) bool {
+	if s.previousCritique == nil || current == nil {
+		return false
+	}
+	return quoteCritiquesEquivalent(*s.previousCritique, *current)
+}
+
+func (s *criticLoopState) exceedsMaxAttempts(currentAttempt int) bool {
+	return currentAttempt > s.maxRepairAttempts
+}
+
+func (s *criticLoopState) updateCritique(critique *SubmitQuoteCritiqueInput) {
+	if critique == nil {
+		return
+	}
+	copyCritique := cloneSubmitQuoteCritiqueInput(*critique)
+	s.previousCritique = &copyCritique
+}
+
 func runQuoteCriticRepairLoop(
 	maxRepairAttempts int,
 	runCritic func(attempt int) (*quoteCriticLoopReview, bool),
@@ -916,31 +968,31 @@ func runQuoteCriticRepairLoop(
 	onExhausted func(summary string),
 	onRepeatedFindings func(summary string),
 ) {
-	var previousCritique *SubmitQuoteCritiqueInput
+	state := &criticLoopState{maxRepairAttempts: maxRepairAttempts}
 
 	for attempt := 1; attempt <= maxRepairAttempts+1; attempt++ {
 		review, ok := runCritic(attempt)
-		if !ok || review == nil || review.result == nil {
-			if !ok {
-				onExhausted("AI-criticus kon de conceptofferte niet beoordelen vanwege een technische fout; menselijke controle vereist.")
+
+		if msg, terminate := state.shouldTerminateOnReview(review, ok); terminate {
+			if msg != "" {
+				onExhausted(msg)
 			}
 			return
 		}
 
-		switch review.result.Decision {
-		case ports.QuoteAIReviewDecisionApproved:
-			return
-		case ports.QuoteAIReviewDecisionRequiresHuman:
-			onRequiresHuman(review.result.Summary)
+		if msg, terminate := state.handleDecision(review.result.Decision, review.result.Summary); terminate {
+			if review.result.Decision == ports.QuoteAIReviewDecisionRequiresHuman {
+				onRequiresHuman(msg)
+			}
 			return
 		}
 
-		if previousCritique != nil && review.critique != nil && quoteCritiquesEquivalent(*previousCritique, *review.critique) {
+		if state.hasRepeatedFindings(review.critique) {
 			onRepeatedFindings(review.result.Summary)
 			return
 		}
 
-		if attempt > maxRepairAttempts {
+		if state.exceedsMaxAttempts(attempt) {
 			onExhausted(review.result.Summary)
 			return
 		}
@@ -950,10 +1002,7 @@ func runQuoteCriticRepairLoop(
 			return
 		}
 
-		if review.critique != nil {
-			copyCritique := cloneSubmitQuoteCritiqueInput(*review.critique)
-			previousCritique = &copyCritique
-		}
+		state.updateCritique(review.critique)
 	}
 }
 
@@ -1268,7 +1317,7 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 			return fmt.Errorf("failed to create dynamic quoting agent: %w", err)
 		}
 
-		activeSessionService = session.InMemoryService()
+		activeSessionService = q.sessionService
 		activeAppName = strings.ToLower(agentName)
 		activeRunner, err = runner.New(runner.Config{
 			AppName:        activeAppName,

@@ -71,10 +71,11 @@ type agentRuntime struct {
 }
 
 type agentRuntimeConfig struct {
-	appName     string
-	agentName   string
-	instruction string
-	toolBuilder func(*ToolHandler) ([]tool.Tool, error)
+	appName       string
+	agentName     string
+	instruction   string
+	toolBuilder   func(*ToolHandler) ([]tool.Tool, error)
+	streamingMode agent.StreamingMode
 }
 
 type agentExecutionRequest struct {
@@ -149,7 +150,7 @@ var dutchMonthNumbers = map[string]string{
 }
 
 // NewAgent creates a new WhatsApp agent with function-calling tools.
-func NewAgent(modelCfg openaicompat.Config, toolHandler *ToolHandler, log *logger.Logger) (*Agent, error) {
+func NewAgent(modelCfg openaicompat.Config, toolHandler *ToolHandler, log *logger.Logger, sessionService session.Service, streamingMode agent.StreamingMode) (*Agent, error) {
 	workspace, err := orchestration.LoadAgentWorkspace(agentWorkspaceName)
 	if err != nil {
 		return nil, fmt.Errorf("whatsappagent: failed to load workspace: %w", err)
@@ -158,12 +159,12 @@ func NewAgent(modelCfg openaicompat.Config, toolHandler *ToolHandler, log *logge
 		log.Info("whatsappagent: workspace loaded", "name", workspace.Name, "instruction_length", len(workspace.Instruction), "allowed_tools", workspace.AllowedTools)
 	}
 
-	sessionService := session.InMemoryService()
 	defaultRuntime, err := newAgentRuntime(modelCfg, workspace, sessionService, toolHandler, agentRuntimeConfig{
-		appName:     agentAppName,
-		agentName:   "WhatsAppAgent",
-		instruction: workspace.Instruction,
-		toolBuilder: buildWhatsAppTools,
+		appName:       agentAppName,
+		agentName:     "WhatsAppAgent",
+		instruction:   workspace.Instruction,
+		toolBuilder:   buildWhatsAppTools,
+		streamingMode: streamingMode,
 	})
 	if err != nil {
 		return nil, err
@@ -173,10 +174,11 @@ func NewAgent(modelCfg openaicompat.Config, toolHandler *ToolHandler, log *logge
 		return nil, fmt.Errorf("whatsappagent: failed to load partner workspace: %w", err)
 	}
 	partnerRuntime, err := newAgentRuntime(modelCfg, partnerWorkspace, sessionService, toolHandler, agentRuntimeConfig{
-		appName:     agentPartnerAppName,
-		agentName:   "WhatsAppPartnerAgent",
-		instruction: partnerWorkspace.Instruction,
-		toolBuilder: buildPartnerWhatsAppTools,
+		appName:       agentPartnerAppName,
+		agentName:     "WhatsAppPartnerAgent",
+		instruction:   partnerWorkspace.Instruction,
+		toolBuilder:   buildPartnerWhatsAppTools,
+		streamingMode: streamingMode,
 	})
 	if err != nil {
 		return nil, err
@@ -853,47 +855,80 @@ func formatRecentAppointmentHints(appointments []RecentAppointmentHint) string {
 	return strings.Join(parts, "; ")
 }
 
+// determineStreamingMode extracts the streaming mode from context if available.
+// Defaults to StreamingModeNone for backward compatibility.
+func determineStreamingMode(ctx context.Context, runner *runner.Runner) agent.StreamingMode {
+	if runner == nil {
+		return agent.StreamingModeNone
+	}
+	if v := ctx.Value("whatsapp_streaming_mode"); v != nil {
+		if sm, ok := v.(agent.StreamingMode); ok {
+			return sm
+		}
+	}
+	return agent.StreamingModeNone
+}
+
+// runEventState holds mutable state during event processing.
+type runEventState struct {
+	lastFinalText string
+	evidence      *replyGroundingEvidence
+}
+
+// processRunEvent handles a single event from the runner, updating state.
+// Returns true if processing should continue, false if max iterations reached.
+func (a *Agent) processRunEvent(event *session.Event, state *runEventState) bool {
+	state.evidence.observe(event)
+	// Only keep text from the final response event — intermediate
+	// tool-thinking events produce disjointed fragments that get
+	// concatenated into garbled output.
+	if event.IsFinalResponse() {
+		if text := extractContentText(event.Content); text != "" {
+			state.lastFinalText = text
+		}
+	}
+	if state.evidence.toolResponseCount() >= maxToolIterations {
+		return false
+	}
+	return true
+}
+
+// logGroundingIssue logs grounding issues for observability without blocking.
+func (a *Agent) logGroundingIssue(ctx context.Context, reply string, evidence *replyGroundingEvidence) {
+	decision := detectGroundingIssue(reply, evidence)
+	if decision.Code == "" {
+		return
+	}
+	a.logWarn(ctx, "whatsappagent: grounding issue observed (log-only)",
+		"reason", decision.Code,
+		"unsupported_facts", decision.UnsupportedFacts,
+		"tool_response_names", evidence.toolNames(),
+		"tool_response_count", evidence.toolResponseCount())
+}
+
 func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, userID, sessionID string, userMessage *genai.Content) (AgentRunResult, error) {
-	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
-	var lastFinalText string
-	evidence := newReplyGroundingEvidence()
+	streamingMode := determineStreamingMode(ctx, runtime.runner)
+	runConfig := agent.RunConfig{StreamingMode: streamingMode}
+
+	state := &runEventState{evidence: newReplyGroundingEvidence()}
 
 	for event, err := range runtime.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
 		if err != nil {
 			return AgentRunResult{}, fmt.Errorf("whatsappagent: run failed: %w", err)
 		}
-		evidence.observe(event)
-		// Only keep text from the final response event — intermediate
-		// tool-thinking events produce disjointed fragments that get
-		// concatenated into garbled output.
-		if event.IsFinalResponse() {
-			if text := extractContentText(event.Content); text != "" {
-				lastFinalText = text
-			}
-		}
-		if evidence.toolResponseCount() >= maxToolIterations {
+		if !a.processRunEvent(event, state) {
 			a.logWarn(ctx, "whatsappagent: max tool calls reached; returning best-effort reply", "max_tool_calls", maxToolIterations)
 			break
 		}
 	}
 
-	reply := strings.TrimSpace(lastFinalText)
-
-	// Grounding runs in log-only mode: detect issues for observability but
-	// never block or replace the LLM reply. The model is capable enough to
-	// use tools and interpret results correctly.
-	if decision := detectGroundingIssue(reply, evidence); decision.Code != "" {
-		a.logWarn(ctx, "whatsappagent: grounding issue observed (log-only)",
-			"reason", decision.Code,
-			"unsupported_facts", decision.UnsupportedFacts,
-			"tool_response_names", evidence.toolNames(),
-			"tool_response_count", evidence.toolResponseCount())
-	}
+	reply := strings.TrimSpace(state.lastFinalText)
+	a.logGroundingIssue(ctx, reply, state.evidence)
 
 	return AgentRunResult{
 		Reply:             reply,
-		ToolResponseNames: evidence.toolNames(),
-		ToolResponseCount: evidence.toolResponseCount(),
+		ToolResponseNames: state.evidence.toolNames(),
+		ToolResponseCount: state.evidence.toolResponseCount(),
 	}, nil
 }
 

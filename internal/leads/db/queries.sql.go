@@ -311,6 +311,18 @@ func (q *Queries) CountLeads(ctx context.Context, arg CountLeadsParams) (int32, 
 	return column_1, err
 }
 
+const countPendingAgentApprovals = `-- name: CountPendingAgentApprovals :one
+SELECT COUNT(*) FROM agent_approvals
+WHERE tenant_id = $1 AND decision = 'pending'
+`
+
+func (q *Queries) CountPendingAgentApprovals(ctx context.Context, tenantID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPendingAgentApprovals, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAIAnalysis = `-- name: CreateAIAnalysis :one
 INSERT INTO RAC_lead_ai_analysis (
 	lead_id, organization_id, lead_service_id, urgency_level, urgency_reason,
@@ -454,6 +466,74 @@ func (q *Queries) CreateAIDecisionMemory(ctx context.Context, arg CreateAIDecisi
 		&i.Confidence,
 		&i.ContextSummary,
 		&i.ActionSummary,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createAgentApproval = `-- name: CreateAgentApproval :one
+
+INSERT INTO agent_approvals (
+    id, agent_name, tool_name, arguments_json, reason,
+    requested_at, expires_at, decision, decided_at, decided_by,
+    lead_id, service_id, tenant_id
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13
+) RETURNING id, agent_name, tool_name, arguments_json, reason, requested_at, expires_at, decision, decided_at, decided_by, lead_id, service_id, tenant_id, created_at
+`
+
+type CreateAgentApprovalParams struct {
+	ID            pgtype.UUID        `json:"id"`
+	AgentName     string             `json:"agent_name"`
+	ToolName      string             `json:"tool_name"`
+	ArgumentsJson []byte             `json:"arguments_json"`
+	Reason        string             `json:"reason"`
+	RequestedAt   pgtype.Timestamptz `json:"requested_at"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	Decision      string             `json:"decision"`
+	DecidedAt     pgtype.Timestamptz `json:"decided_at"`
+	DecidedBy     pgtype.Text        `json:"decided_by"`
+	LeadID        pgtype.UUID        `json:"lead_id"`
+	ServiceID     pgtype.UUID        `json:"service_id"`
+	TenantID      pgtype.UUID        `json:"tenant_id"`
+}
+
+// ============================================================
+// Agent Approvals (Human-in-the-Loop)
+// ============================================================
+func (q *Queries) CreateAgentApproval(ctx context.Context, arg CreateAgentApprovalParams) (AgentApproval, error) {
+	row := q.db.QueryRow(ctx, createAgentApproval,
+		arg.ID,
+		arg.AgentName,
+		arg.ToolName,
+		arg.ArgumentsJson,
+		arg.Reason,
+		arg.RequestedAt,
+		arg.ExpiresAt,
+		arg.Decision,
+		arg.DecidedAt,
+		arg.DecidedBy,
+		arg.LeadID,
+		arg.ServiceID,
+		arg.TenantID,
+	)
+	var i AgentApproval
+	err := row.Scan(
+		&i.ID,
+		&i.AgentName,
+		&i.ToolName,
+		&i.ArgumentsJson,
+		&i.Reason,
+		&i.RequestedAt,
+		&i.ExpiresAt,
+		&i.Decision,
+		&i.DecidedAt,
+		&i.DecidedBy,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.TenantID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1567,6 +1647,38 @@ func (q *Queries) FindRecentDuplicateTimelineEvent(ctx context.Context, arg Find
 		&i.Summary,
 		&i.Metadata,
 		&i.Visibility,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getAgentApprovalByID = `-- name: GetAgentApprovalByID :one
+SELECT id, agent_name, tool_name, arguments_json, reason, requested_at, expires_at, decision, decided_at, decided_by, lead_id, service_id, tenant_id, created_at FROM agent_approvals
+WHERE id = $1 AND tenant_id = $2
+`
+
+type GetAgentApprovalByIDParams struct {
+	ID       pgtype.UUID `json:"id"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+}
+
+func (q *Queries) GetAgentApprovalByID(ctx context.Context, arg GetAgentApprovalByIDParams) (AgentApproval, error) {
+	row := q.db.QueryRow(ctx, getAgentApprovalByID, arg.ID, arg.TenantID)
+	var i AgentApproval
+	err := row.Scan(
+		&i.ID,
+		&i.AgentName,
+		&i.ToolName,
+		&i.ArgumentsJson,
+		&i.Reason,
+		&i.RequestedAt,
+		&i.ExpiresAt,
+		&i.Decision,
+		&i.DecidedAt,
+		&i.DecidedBy,
+		&i.LeadID,
+		&i.ServiceID,
+		&i.TenantID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -4262,6 +4374,54 @@ func (q *Queries) ListNotesByService(ctx context.Context, arg ListNotesByService
 	return items, nil
 }
 
+const listPendingAgentApprovals = `-- name: ListPendingAgentApprovals :many
+SELECT id, agent_name, tool_name, arguments_json, reason, requested_at, expires_at, decision, decided_at, decided_by, lead_id, service_id, tenant_id, created_at FROM agent_approvals
+WHERE tenant_id = $1 AND decision = 'pending'
+ORDER BY requested_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListPendingAgentApprovalsParams struct {
+	TenantID pgtype.UUID `json:"tenant_id"`
+	Limit    int32       `json:"limit"`
+	Offset   int32       `json:"offset"`
+}
+
+func (q *Queries) ListPendingAgentApprovals(ctx context.Context, arg ListPendingAgentApprovalsParams) ([]AgentApproval, error) {
+	rows, err := q.db.Query(ctx, listPendingAgentApprovals, arg.TenantID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentApproval
+	for rows.Next() {
+		var i AgentApproval
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentName,
+			&i.ToolName,
+			&i.ArgumentsJson,
+			&i.Reason,
+			&i.RequestedAt,
+			&i.ExpiresAt,
+			&i.Decision,
+			&i.DecidedAt,
+			&i.DecidedBy,
+			&i.LeadID,
+			&i.ServiceID,
+			&i.TenantID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPhotoAnalysesByLead = `-- name: ListPhotoAnalysesByLead :many
 SELECT id, lead_id, service_id, org_id, summary, observations, scope_assessment, cost_indicators,
 	safety_concerns, additional_info, confidence_level, photo_count,
@@ -5427,6 +5587,31 @@ type SetLeadViewedByParams struct {
 
 func (q *Queries) SetLeadViewedBy(ctx context.Context, arg SetLeadViewedByParams) error {
 	_, err := q.db.Exec(ctx, setLeadViewedBy, arg.ID, arg.OrganizationID, arg.ViewedByID)
+	return err
+}
+
+const updateAgentApprovalDecision = `-- name: UpdateAgentApprovalDecision :exec
+UPDATE agent_approvals
+SET decision = $1, decided_at = $2, decided_by = $3
+WHERE id = $4 AND tenant_id = $5 AND decision = 'pending'
+`
+
+type UpdateAgentApprovalDecisionParams struct {
+	Decision  string             `json:"decision"`
+	DecidedAt pgtype.Timestamptz `json:"decided_at"`
+	DecidedBy pgtype.Text        `json:"decided_by"`
+	ID        pgtype.UUID        `json:"id"`
+	TenantID  pgtype.UUID        `json:"tenant_id"`
+}
+
+func (q *Queries) UpdateAgentApprovalDecision(ctx context.Context, arg UpdateAgentApprovalDecisionParams) error {
+	_, err := q.db.Exec(ctx, updateAgentApprovalDecision,
+		arg.Decision,
+		arg.DecidedAt,
+		arg.DecidedBy,
+		arg.ID,
+		arg.TenantID,
+	)
 	return err
 }
 

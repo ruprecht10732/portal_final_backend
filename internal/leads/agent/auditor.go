@@ -139,7 +139,7 @@ func (d *AuditorToolDeps) handleSubmitAuditResult(ctx tool.Context, input Submit
 	return SubmitAuditResultOutput{Status: "ok", Message: "audit stored"}, nil
 }
 
-func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus) (*Auditor, error) {
+func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, sessionService session.Service) (*Auditor, error) {
 	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("auditor")
 	if err != nil {
@@ -171,7 +171,6 @@ func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, e
 		return nil, fmt.Errorf("failed to create audit agent: %w", err)
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        "auditor",
 		Agent:          adkAgent,

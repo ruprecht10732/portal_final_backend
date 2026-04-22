@@ -22,6 +22,7 @@ import (
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/exports"
 	apphttp "portal_final_backend/internal/http"
+	"portal_final_backend/internal/http/agents"
 	"portal_final_backend/internal/http/router"
 	"portal_final_backend/internal/identity"
 	"portal_final_backend/internal/imap"
@@ -29,10 +30,12 @@ import (
 	"portal_final_backend/internal/leadenrichment"
 	"portal_final_backend/internal/leads"
 	leadagent "portal_final_backend/internal/leads/agent"
+	"portal_final_backend/platform/adk/confirmation"
 	leadsmgmt "portal_final_backend/internal/leads/management"
 	leadsports "portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/maps"
 	"portal_final_backend/internal/notification"
+	"portal_final_backend/internal/orchestration"
 	"portal_final_backend/internal/notification/outbox"
 	"portal_final_backend/internal/partners"
 	partnersrepo "portal_final_backend/internal/partners/repository"
@@ -59,6 +62,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+
+	otelprovider "portal_final_backend/platform/otel"
 )
 
 const storageBucketEnsureErrPrefix = "failed to ensure storage bucket exists: "
@@ -87,6 +92,13 @@ func main() {
 	log := logger.New(cfg.Env)
 	log.Info("starting server", "env", cfg.Env, "addr", cfg.HTTPAddr)
 
+	tracerProvider := otelprovider.InitTracerProvider("portal-backend")
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tracerProvider.Shutdown(shutdownCtx)
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -94,9 +106,16 @@ func main() {
 	pool := initDBPoolOrPanic(ctx, cfg, log)
 	defer pool.Close()
 
+	// Initialize Human-in-the-Loop confirmation provider backed by PostgreSQL.
+	hitlProvider := confirmation.NewDBProvider(pool)
+	confirmation.SetGlobalProvider(hitlProvider)
+
+	// Initialize on-demand skill loading for progressive context disclosure.
+	orchestration.MustInitSkillLoader()
+
 	eventBus := events.NewInMemoryBus(log)
-	tokenBlocklistRedis, closeTokenBlocklistRedis := initTokenBlocklistRedis(cfg, log)
-	defer closeTokenBlocklistRedis()
+	sessionRedis, closeSessionRedis := initSessionRedis(cfg, log)
+	defer closeSessionRedis()
 
 	reminderScheduler, closeScheduler := initReminderSchedulerWithCloser(cfg, log)
 	defer closeScheduler()
@@ -116,7 +135,7 @@ func main() {
 		storageSvc:          storageSvc,
 		val:                 val,
 		reminderScheduler:   reminderScheduler,
-		tokenBlocklistRedis: tokenBlocklistRedis,
+		sessionRedis:        sessionRedis,
 	})
 	serveUntilShutdown(ctx, cfg, log, eventBus, app)
 }
@@ -152,15 +171,15 @@ func initDBPoolOrPanic(ctx context.Context, cfg *config.Config, log *logger.Logg
 	return pool
 }
 
-func initTokenBlocklistRedis(cfg *config.Config, log *logger.Logger) (*redis.Client, func()) {
+func initSessionRedis(cfg *config.Config, log *logger.Logger) (*redis.Client, func()) {
 	if cfg.GetRedisURL() == "" {
-		return nil, noOpCloser
+		panic("REDIS_URL is required: sessions, token blocklist, and agent memory depend on Redis")
 	}
 
 	redisClient, redisErr := rediskit.NewClient(cfg.GetRedisURL(), cfg.GetRedisTLSInsecure())
 	if redisErr != nil {
-		log.Warn("failed to initialize redis token blocklist", "error", redisErr)
-		return nil, noOpCloser
+		log.Error("failed to initialize redis", "error", redisErr)
+		panic("failed to initialize redis: " + redisErr.Error())
 	}
 
 	httpkit.SetTokenRevocationLookup(func(ctx context.Context, jti string) (bool, error) {
@@ -273,7 +292,7 @@ type appBuildDeps struct {
 	storageSvc          storage.StorageService
 	val                 *validator.Validator
 	reminderScheduler   *scheduler.Client
-	tokenBlocklistRedis *redis.Client
+	sessionRedis *redis.Client
 }
 
 func buildHTTPApp(deps appBuildDeps) *apphttp.App {
@@ -286,7 +305,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	storageSvc := deps.storageSvc
 	val := deps.val
 	reminderScheduler := deps.reminderScheduler
-	tokenBlocklistRedis := deps.tokenBlocklistRedis
+	sessionRedis := deps.sessionRedis
 
 	notificationModule := notification.New(pool, sender, cfg, log)
 	notificationModule.RegisterHandlers(eventBus)
@@ -311,12 +330,13 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 	}
 
 	authModule := auth.NewModule(pool, identityModule.Service(), cfg, eventBus, log, val)
-	authModule.Service().SetAccessTokenBlocklistRedis(tokenBlocklistRedis)
+	authModule.Service().SetAccessTokenBlocklistRedis(sessionRedis)
 
 	leadsModule, err := leads.NewModule(ctx, pool, eventBus, storageSvc, val, leads.ModuleDeps{
 		Config:                cfg,
 		Log:                   log,
-		OrchestratorLockRedis: tokenBlocklistRedis,
+		OrchestratorLockRedis: sessionRedis,
+		SessionRedis:          sessionRedis,
 	})
 	if err != nil {
 		log.Error("failed to initialize leads module", "error", err)
@@ -509,8 +529,9 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 
 	waProvCfg, waModelOvr := cfg.ResolveAgentModel(config.LLMModelAgentWhatsAppAgent)
 	whatsappagentModule, err := whatsappagent.NewModule(pool, whatsappagent.ModuleConfig{
-		ModelConfig:   leadagent.NewProviderModelConfig(waProvCfg, true, waModelOvr),
-		WebhookSecret: cfg.GetWhatsAppWebhookSecret(),
+		ModelConfig:      leadagent.NewProviderModelConfig(waProvCfg, true, waModelOvr),
+		WebhookSecret:    cfg.GetWhatsAppWebhookSecret(),
+		StreamingEnabled: cfg.GetWhatsAppAgentStreamingEnabled(),
 	}, whatsappagent.ModuleDependencies{
 		WhatsAppClient:               whatsappClient,
 		QuotesReader:                 adapters.NewWhatsAppAgentQuotesAdapter(quotesModule.Service()),
@@ -537,7 +558,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		PartnerJobReader:             adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
 		AppointmentVisitReportWriter: adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
 		AppointmentStatusWriter:      adapters.NewWhatsAppAgentPartnerAdapter(partnersModule.Service(), appointmentsModule.Service),
-		RedisClient:                  tokenBlocklistRedis,
+		RedisClient:                  sessionRedis,
+		SessionRedis:                 sessionRedis,
 		InboxWriter:                  identityModule.Service(),
 		Logger:                       log,
 	})
@@ -552,6 +574,8 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 
 	wireIMAPEncryptionKey(cfg, log, imapModule.Service())
 	wireSMTPEncryptionKeyForIMAP(cfg, log, imapModule.Service())
+
+	agentsModule := agents.NewModule()
 
 	modules := []apphttp.Module{
 		notificationModule,
@@ -571,6 +595,7 @@ func buildHTTPApp(deps appBuildDeps) *apphttp.App {
 		searchModule,
 		webhookModule,
 		exportsModule,
+		agentsModule,
 	}
 
 	if whatsappagentModule != nil {

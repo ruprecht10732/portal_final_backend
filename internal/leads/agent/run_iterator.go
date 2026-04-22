@@ -16,6 +16,7 @@ import (
 	"google.golang.org/genai"
 
 	"portal_final_backend/internal/leads/repository"
+	"portal_final_backend/platform/otel"
 )
 
 const maxToolCallsPerSession = 30
@@ -72,33 +73,100 @@ type SessionResult struct {
 	ToolCallCount int
 	DurationMs    int
 	ToolTraces    []observedToolTrace
+	TokenInput    int32
+	TokenOutput   int32
 }
 
-func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*session.Event)) error {
-	sessionStart := time.Now()
-	if !req.SkipSessionLifecycle {
-		_, err := req.SessionService.Create(ctx, &session.CreateRequest{
+// sessionLifecycle manages the creation and cleanup of a session.
+// Returns a cleanup function that should be deferred by the caller.
+func sessionLifecycle(ctx context.Context, req promptRunRequest) (func(), error) {
+	if req.SkipSessionLifecycle {
+		return func() {}, nil
+	}
+
+	_, err := req.SessionService.Create(ctx, &session.CreateRequest{
+		AppName:   req.AppName,
+		UserID:    req.UserID,
+		SessionID: req.SessionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", req.CreateSessionMessage, err)
+	}
+
+	cleanup := func() {
+		// Use an uncancelled context so cleanup always runs even if the
+		// parent context was cancelled or timed out.
+		_ = req.SessionService.Delete(context.WithoutCancel(ctx), &session.DeleteRequest{
 			AppName:   req.AppName,
 			UserID:    req.UserID,
 			SessionID: req.SessionID,
 		})
-		if err != nil {
-			return fmt.Errorf("%s: %w", req.CreateSessionMessage, err)
-		}
-		defer func() {
-			// Use an uncancelled context so cleanup always runs even if the
-			// parent context was cancelled or timed out.
-			_ = req.SessionService.Delete(context.WithoutCancel(ctx), &session.DeleteRequest{
-				AppName:   req.AppName,
-				UserID:    req.UserID,
-				SessionID: req.SessionID,
-			})
-		}()
 	}
+
+	return cleanup, nil
+}
+
+// tokenAccumulator creates an observer that accumulates token usage from events.
+func tokenAccumulator(tokenInput, tokenOutput *int32) func(*session.Event) {
+	return func(event *session.Event) {
+		if event == nil || event.UsageMetadata == nil {
+			return
+		}
+		*tokenInput += event.UsageMetadata.PromptTokenCount
+		*tokenOutput += event.UsageMetadata.CandidatesTokenCount
+	}
+}
+
+// toolCallLimiter creates an observer that enforces the tool call limit.
+// Returns a function to get the current tool call count.
+func toolCallLimiter(budgetCancel context.CancelFunc, traceLabel, userID, sessionID string) (func(*session.Event), func() int) {
+	count := 0
+	observer := func(event *session.Event) {
+		if event == nil || event.Content == nil {
+			return
+		}
+		for _, part := range event.Content.Parts {
+			if part != nil && part.FunctionCall != nil {
+				count++
+			}
+		}
+		if count >= maxToolCallsPerSession {
+			log.Printf("%s: cancelling session at %d tool calls (limit %d) user=%s session=%s",
+				traceLabel, count, maxToolCallsPerSession, userID, sessionID)
+			budgetCancel()
+		}
+	}
+	getCount := func() int { return count }
+	return observer, getCount
+}
+
+// checkToolCallLimit returns an error if the tool call limit was exceeded.
+func checkToolCallLimit(err error, toolCallCount int, traceLabel string) error {
+	if err == nil || toolCallCount < maxToolCallsPerSession {
+		return err
+	}
+	log.Printf("%s: session aborted after %d tool calls (limit %d)",
+		traceLabel, toolCallCount, maxToolCallsPerSession)
+	return fmt.Errorf("%s: tool call limit exceeded (%d >= %d)", traceLabel, toolCallCount, maxToolCallsPerSession)
+}
+
+func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*session.Event)) error {
+	ctx, span := otel.StartAgentRun(ctx, otel.AgentRunOptions{
+		AgentName: req.TraceLabel,
+		RunID:     req.SessionID,
+	})
+	defer span.End()
+
+	sessionStart := time.Now()
+
+	cleanup, err := sessionLifecycle(ctx, req)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var toolTrace []observedToolTrace
-	toolCallCount := 0
 	budgetCtx, budgetCancel := context.WithCancel(ctx)
 	defer budgetCancel()
 
@@ -108,39 +176,36 @@ func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*se
 		deps.SetSessionDoneFunc(budgetCancel)
 	}
 
-	enforceToolCallLimit := func(event *session.Event) {
-		if event == nil || event.Content == nil {
-			return
-		}
-		for _, part := range event.Content.Parts {
-			if part != nil && part.FunctionCall != nil {
-				toolCallCount++
-			}
-		}
-		if toolCallCount >= maxToolCallsPerSession {
-			log.Printf("%s: cancelling session at %d tool calls (limit %d) user=%s session=%s",
-				req.TraceLabel, toolCallCount, maxToolCallsPerSession, req.UserID, req.SessionID)
-			budgetCancel()
-		}
-	}
-	err := consumeRunEvents(req.Runner.Run(budgetCtx, req.UserID, req.SessionID, req.UserMessage, runConfig), req.RunFailureMessage, handle, observeSessionToolTrace(&toolTrace), enforceToolCallLimit)
+	var tokenInput, tokenOutput int32
+	accumulateTokens := tokenAccumulator(&tokenInput, &tokenOutput)
+	enforceToolCallLimit, getToolCallCount := toolCallLimiter(budgetCancel, req.TraceLabel, req.UserID, req.SessionID)
+
+	err = consumeRunEvents(
+		req.Runner.Run(budgetCtx, req.UserID, req.SessionID, req.UserMessage, runConfig),
+		req.RunFailureMessage,
+		handle,
+		observeSessionToolTrace(&toolTrace),
+		enforceToolCallLimit,
+		accumulateTokens,
+	)
 	logObservedToolTrace(req.TraceLabel, req.UserID, req.SessionID, toolTrace)
 
+	toolCallCount := getToolCallCount()
 	durationMs := int(time.Since(sessionStart).Milliseconds())
+
 	if req.OnSessionComplete != nil {
 		req.OnSessionComplete(SessionResult{
 			ToolCallCount: toolCallCount,
 			DurationMs:    durationMs,
 			ToolTraces:    toolTrace,
+			TokenInput:    tokenInput,
+			TokenOutput:   tokenOutput,
 		})
 	}
 
-	if err != nil && toolCallCount >= maxToolCallsPerSession {
-		log.Printf("%s: session aborted after %d tool calls (limit %d) user=%s session=%s",
-			req.TraceLabel, toolCallCount, maxToolCallsPerSession, req.UserID, req.SessionID)
-		return fmt.Errorf("%s: tool call limit exceeded (%d >= %d)", req.TraceLabel, toolCallCount, maxToolCallsPerSession)
-	}
-	return err
+	otel.RecordAgentRunResult(span, "", toolCallCount, durationMs)
+
+	return checkToolCallLimit(err, toolCallCount, req.TraceLabel)
 }
 
 func runPromptTextSession(ctx context.Context, req promptRunRequest, promptText string) (string, error) {

@@ -117,11 +117,18 @@ type openAIToolDefFunc struct {
 	Parameters  interface{} `json:"parameters,omitempty"`
 }
 
+type openAIUsage struct {
+	PromptTokens     int32 `json:"prompt_tokens"`
+	CompletionTokens int32 `json:"completion_tokens"`
+	TotalTokens      int32 `json:"total_tokens"`
+}
+
 type openAIResponse struct {
 	Choices []struct {
 		Message openAIChoiceMessage `json:"message"`
 	} `json:"choices"`
-	Error interface{} `json:"error"`
+	Usage *openAIUsage  `json:"usage,omitempty"`
+	Error interface{}   `json:"error"`
 }
 
 type openAIChoiceMessage struct {
@@ -146,12 +153,20 @@ func (m *Model) generate(ctx context.Context, req *model.LLMRequest) (*model.LLM
 		return nil, fmt.Errorf("llm api error (%s): model returned empty response (no content, no tool calls)", m.config.Provider)
 	}
 
-	return &model.LLMResponse{
+	resp := &model.LLMResponse{
 		Content: &genai.Content{
 			Role:  genai.RoleModel,
 			Parts: parts,
 		},
-	}, nil
+	}
+	if result.Usage != nil {
+		resp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:     result.Usage.PromptTokens,
+			CandidatesTokenCount: result.Usage.CompletionTokens,
+			TotalTokenCount:      result.Usage.TotalTokens,
+		}
+	}
+	return resp, nil
 }
 
 func (m *Model) buildPayload(req *model.LLMRequest) map[string]interface{} {
@@ -176,6 +191,8 @@ func (m *Model) buildPayload(req *model.LLMRequest) map[string]interface{} {
 
 	if len(tools) > 0 {
 		payload["tools"] = tools
+		// Enforce strict tool sandboxing: the model may only call the provided
+		// tools (equivalent to FunctionCallingConfigModeAny / VALIDATED).
 		payload["tool_choice"] = "auto"
 	}
 
@@ -291,70 +308,131 @@ func roleForContent(role string) string {
 	return "user"
 }
 
+// extractor holds state for extracting content messages from genai parts.
+type extractor struct {
+	toolCalls        []openAIToolCall
+	toolMessages     []openAIMessage
+	textBuilder      strings.Builder
+	reasoningBuilder strings.Builder
+	imageParts       []contentPart
+	hasImages        bool
+	model            *Model
+}
+
+// processToolResponsePart handles function response parts.
+func (e *extractor) processToolResponsePart(part *genai.Part) bool {
+	if part.FunctionResponse == nil {
+		return false
+	}
+	msg := openAIMessage{
+		Role:       "tool",
+		ToolCallID: part.FunctionResponse.ID,
+		Name:       part.FunctionResponse.Name,
+	}
+	if part.FunctionResponse.Response != nil {
+		payload, _ := json.Marshal(part.FunctionResponse.Response)
+		msg.Content = string(payload)
+	}
+	e.toolMessages = append(e.toolMessages, msg)
+	return true
+}
+
+// processToolCallPart handles function call parts.
+func (e *extractor) processToolCallPart(part *genai.Part) bool {
+	if part.FunctionCall == nil {
+		return false
+	}
+	args, _ := json.Marshal(part.FunctionCall.Args)
+	e.toolCalls = append(e.toolCalls, openAIToolCall{
+		ID:   part.FunctionCall.ID,
+		Type: "function",
+		Function: openAIToolCallDetail{
+			Name:      part.FunctionCall.Name,
+			Arguments: string(args),
+		},
+	})
+	return true
+}
+
+// processThoughtPart handles thought/reasoning parts.
+func (e *extractor) processThoughtPart(part *genai.Part) bool {
+	if !part.Thought {
+		return false
+	}
+	appendText(&e.reasoningBuilder, part.Text)
+	return true
+}
+
+// processImagePart handles inline image data parts.
+func (e *extractor) processImagePart(part *genai.Part) bool {
+	if part.InlineData == nil || !strings.HasPrefix(part.InlineData.MIMEType, "image/") {
+		return false
+	}
+	// Safety guard: skip image parts for providers that don't
+	// support multimodal input to avoid deserialization errors.
+	if !e.model.config.SupportsVision {
+		return true
+	}
+	e.hasImages = true
+	dataURL := fmt.Sprintf("data:%s;base64,%s",
+		part.InlineData.MIMEType,
+		base64.StdEncoding.EncodeToString(part.InlineData.Data))
+	e.imageParts = append(e.imageParts, contentPart{
+		Type:     "image_url",
+		ImageURL: &imageURL{URL: dataURL},
+	})
+	return true
+}
+
+// processTextPart handles plain text parts.
+func (e *extractor) processTextPart(part *genai.Part) {
+	appendText(&e.textBuilder, part.Text)
+}
+
+// result builds and returns the extraction result.
+func (e *extractor) result() (interface{}, string, []openAIToolCall, []openAIMessage) {
+	text := strings.TrimSpace(e.textBuilder.String())
+	reasoning := strings.TrimSpace(e.reasoningBuilder.String())
+
+	if e.hasImages {
+		return e.buildMultimodalResult(text), reasoning, e.toolCalls, e.toolMessages
+	}
+	return text, reasoning, e.toolCalls, e.toolMessages
+}
+
+// buildMultimodalResult constructs the content part array for multimodal output.
+func (e *extractor) buildMultimodalResult(text string) []contentPart {
+	parts := make([]contentPart, 0, len(e.imageParts)+1)
+	parts = append(parts, e.imageParts...)
+	if text != "" {
+		parts = append(parts, contentPart{Type: "text", Text: text})
+	}
+	return parts
+}
+
 func (m *Model) extractContentMessages(content *genai.Content) (interface{}, string, []openAIToolCall, []openAIMessage) {
-	var toolCalls []openAIToolCall
-	var toolMessages []openAIMessage
-	var textBuilder strings.Builder
-	var reasoningBuilder strings.Builder
-	var imageParts []contentPart
-	hasImages := false
+	e := &extractor{model: m}
 
 	for _, part := range content.Parts {
 		if part == nil {
 			continue
 		}
-		if msg, ok := buildToolResponseMessage(part); ok {
-			toolMessages = append(toolMessages, msg)
+		if e.processToolResponsePart(part) {
 			continue
 		}
-		if call, ok := buildToolCall(part); ok {
-			toolCalls = append(toolCalls, call)
+		if e.processToolCallPart(part) {
 			continue
 		}
-		if part.Thought {
-			appendText(&reasoningBuilder, part.Text)
+		if e.processThoughtPart(part) {
 			continue
 		}
-		// Check for inline image data (multimodal)
-		if part.InlineData != nil && strings.HasPrefix(part.InlineData.MIMEType, "image/") {
-			if !m.config.SupportsVision {
-				// Safety guard: skip image parts for providers that don't
-				// support multimodal input to avoid deserialization errors.
-				continue
-			}
-			hasImages = true
-			dataURL := fmt.Sprintf("data:%s;base64,%s",
-				part.InlineData.MIMEType,
-				base64.StdEncoding.EncodeToString(part.InlineData.Data))
-			imageParts = append(imageParts, contentPart{
-				Type:     "image_url",
-				ImageURL: &imageURL{URL: dataURL},
-			})
+		if e.processImagePart(part) {
 			continue
 		}
-		appendText(&textBuilder, part.Text)
+		e.processTextPart(part)
 	}
 
-	text := strings.TrimSpace(textBuilder.String())
-	reasoning := strings.TrimSpace(reasoningBuilder.String())
-
-	// If we have images, return multimodal content array
-	if hasImages {
-		var parts []contentPart
-		// Add images first
-		parts = append(parts, imageParts...)
-		// Add text if present
-		if text != "" {
-			parts = append(parts, contentPart{
-				Type: "text",
-				Text: text,
-			})
-		}
-		return parts, reasoning, toolCalls, toolMessages
-	}
-
-	// Text-only: return string
-	return text, reasoning, toolCalls, toolMessages
+	return e.result()
 }
 
 func buildToolResponseMessage(part *genai.Part) (openAIMessage, bool) {

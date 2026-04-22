@@ -18,6 +18,7 @@ import (
 	"portal_final_backend/internal/leads/ports"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/orchestration"
+	"portal_final_backend/platform/adk/confirmation"
 	"portal_final_backend/platform/ai/openaicompat"
 )
 
@@ -32,7 +33,7 @@ type Dispatcher struct {
 }
 
 // NewDispatcher creates a Dispatcher agent.
-func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus) (*Dispatcher, error) {
+func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository, eventBus events.Bus, sessionService session.Service) (*Dispatcher, error) {
 	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("matchmaker")
 	if err != nil {
@@ -72,7 +73,6 @@ func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository
 		return nil, fmt.Errorf("failed to create dispatcher agent: %w", err)
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        "dispatcher",
 		Agent:          adkAgent,
@@ -117,6 +117,7 @@ func (d *Dispatcher) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	runID := reqDeps.GetRunID()
 	fmt.Printf("dispatcher: run started runID=%s lead=%s service=%s tenant=%s\n", runID, leadID, serviceID, tenantID)
 
+	ctx = confirmation.WithTenantID(ctx, tenantID)
 	ctx = WithDependencies(ctx, reqDeps)
 
 	// Preload org settings for consistency across agents (even if not used directly today).

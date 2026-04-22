@@ -149,6 +149,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
 	rg.POST("/:id/transfer", h.Transfer)
 	rg.GET("/agent-health", h.AgentHealth)
+	rg.GET("/agent-approvals", h.ListAgentApprovals)
+	rg.GET("/agent-approvals/count", h.CountPendingAgentApprovals)
+	rg.GET("/agent-approvals/:approvalId", h.GetAgentApproval)
+	rg.POST("/agent-approvals/:approvalId/approve", h.ApproveAgentApproval)
+	rg.POST("/agent-approvals/:approvalId/reject", h.RejectAgentApproval)
 }
 
 func (h *Handler) Transfer(c *gin.Context) {
@@ -1481,4 +1486,162 @@ func (h *Handler) AgentHealth(c *gin.Context) {
 		"totalTokenInput":  stats.TotalTokenInput,
 		"totalTokenOutput": stats.TotalTokenOutput,
 	})
+}
+
+
+// ListAgentApprovals returns pending agent approval requests for the tenant.
+func (h *Handler) ListAgentApprovals(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	limit := 50
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	approvals, err := h.repo.ListPendingAgentApprovals(c.Request.Context(), tenantID, limit, offset)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to list approvals", nil)
+		return
+	}
+
+	httpkit.OK(c, approvals)
+}
+
+// CountPendingAgentApprovals returns the count of pending approvals.
+func (h *Handler) CountPendingAgentApprovals(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	count, err := h.repo.CountPendingAgentApprovals(c.Request.Context(), tenantID)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to count approvals", nil)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"count": count})
+}
+
+// GetAgentApproval returns a single approval by ID.
+func (h *Handler) GetAgentApproval(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("approvalId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	approval, err := h.repo.GetAgentApprovalByID(c.Request.Context(), id, tenantID)
+	if err != nil {
+		httpkit.Error(c, http.StatusNotFound, "approval not found", nil)
+		return
+	}
+
+	httpkit.OK(c, approval)
+}
+
+// approveRejectRequest is the body for approve/reject actions.
+type approveRejectRequest struct {
+	Reason string `json:"reason"`
+}
+
+// ApproveAgentApproval approves a pending agent tool execution.
+func (h *Handler) ApproveAgentApproval(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("approvalId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req approveRejectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// empty body is fine
+		req = approveRejectRequest{}
+	}
+
+	err = h.repo.UpdateAgentApprovalDecision(c.Request.Context(), repository.UpdateAgentApprovalDecisionParams{
+		ID:        id,
+		TenantID:  tenantID,
+		Decision:  "approved",
+		DecidedBy: identity.UserID().String(),
+	})
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to approve", nil)
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "approved"})
+}
+
+// RejectAgentApproval rejects a pending agent tool execution.
+func (h *Handler) RejectAgentApproval(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := mustGetTenantID(c, identity)
+	if !ok {
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("approvalId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req approveRejectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req = approveRejectRequest{}
+	}
+
+	err = h.repo.UpdateAgentApprovalDecision(c.Request.Context(), repository.UpdateAgentApprovalDecisionParams{
+		ID:        id,
+		TenantID:  tenantID,
+		Decision:  "rejected",
+		DecidedBy: identity.UserID().String(),
+	})
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to reject", nil)
+		return
+	}
+
+	httpkit.OK(c, gin.H{"status": "rejected"})
 }

@@ -3,6 +3,8 @@ package tools
 import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
+
+	"portal_final_backend/platform/adk/confirmation"
 )
 
 func newDomainTool[In any, Out any](name, description string, handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -33,7 +35,7 @@ func NewCreateTaskTool[In any, Out any](handler func(tool.Context, In) (Out, err
 }
 
 func NewUpdatePipelineStageTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("UpdatePipelineStage", "Updates the pipeline stage for the lead service and records a timeline event.", handler)
+	return newDomainTool("UpdatePipelineStage", "Updates the pipeline stage for the lead service and records a timeline event.", confirmation.WrapToolHandler("UpdatePipelineStage", handler))
 }
 
 func NewFindMatchingPartnersTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -41,7 +43,7 @@ func NewFindMatchingPartnersTool[In any, Out any](handler func(tool.Context, In)
 }
 
 func NewCreatePartnerOfferTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("CreatePartnerOffer", "Creates a formal job offer for a specific partner. This generates the unique link they use to accept the job.", handler)
+	return newDomainTool("CreatePartnerOffer", "Creates a formal job offer for a specific partner. This generates the unique link they use to accept the job.", confirmation.WrapToolHandler("CreatePartnerOffer", handler))
 }
 
 func NewSaveEstimationTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -105,7 +107,7 @@ func NewSubmitQuoteCritiqueTool[In any, Out any](handler func(tool.Context, In) 
 }
 
 func NewDraftQuoteTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("DraftQuote", "Creates or updates a structured draft quote from the provided line items and pricing metadata.", handler)
+	return newDomainTool("DraftQuote", "Creates or updates a structured draft quote from the provided line items and pricing metadata.", confirmation.WrapToolHandler("DraftQuote", handler))
 }
 
 func NewSaveNoteTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -129,7 +131,7 @@ func NewRescheduleVisitTool[In any, Out any](handler func(tool.Context, In) (Out
 }
 
 func NewCancelVisitTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("CancelVisit", "Cancels the existing lead visit appointment.", handler)
+	return newDomainTool("CancelVisit", "Cancels the existing lead visit appointment.", confirmation.WrapToolHandler("CancelVisit", handler))
 }
 
 func NewSavePhotoAnalysisTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -187,7 +189,7 @@ func NewUpdateAppointmentStatusTool[In any, Out any](handler func(tool.Context, 
 }
 
 func NewGenerateQuoteTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("GenerateQuote", "Generates a draft quote from a grounded natural-language prompt for a resolved lead service in the current organization. Prefer this when the customer asks for a quote without a full explicit item list.", handler)
+	return newDomainTool("GenerateQuote", "Generates a draft quote from a grounded natural-language prompt for a resolved lead service in the current organization. Prefer this when the customer asks for a quote without a full explicit item list.", confirmation.WrapToolHandler("GenerateQuote", handler))
 }
 
 func NewSendQuotePDFTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {

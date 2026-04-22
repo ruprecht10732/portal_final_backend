@@ -23,8 +23,9 @@ type Module struct {
 
 func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*Module, error) {
 	inner, err := engine.NewModule(pool, engine.ModuleConfig{
-		ModelConfig:   cfg.ModelConfig,
-		WebhookSecret: cfg.WebhookSecret,
+		ModelConfig:      cfg.ModelConfig,
+		WebhookSecret:    cfg.WebhookSecret,
+		StreamingEnabled: cfg.StreamingEnabled,
 	}, engine.ModuleDependencies{
 		WhatsAppClient:               deps.WhatsAppClient,
 		QuotesReader:                 adaptQuotesReader(deps.QuotesReader),
@@ -52,6 +53,7 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		AppointmentVisitReportWriter: adaptAppointmentVisitReportWriter(deps.AppointmentVisitReportWriter),
 		AppointmentStatusWriter:      adaptAppointmentStatusWriter(deps.AppointmentStatusWriter),
 		RedisClient:                  deps.RedisClient,
+		SessionRedis:                 deps.SessionRedis,
 		InboxWriter:                  deps.InboxWriter,
 		Logger:                       deps.Logger,
 	})

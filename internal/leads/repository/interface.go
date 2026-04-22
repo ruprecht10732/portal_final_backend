@@ -263,6 +263,15 @@ type AgentRunStore interface {
 	GetAgentHealthStats(ctx context.Context, tenantID uuid.UUID, since time.Time) (AgentHealthStats, error)
 }
 
+// AgentApprovalStore manages human-in-the-loop approval requests for high-stakes tools.
+type AgentApprovalStore interface {
+	CreateAgentApproval(ctx context.Context, params CreateAgentApprovalParams) (AgentApproval, error)
+	ListPendingAgentApprovals(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]AgentApproval, error)
+	GetAgentApprovalByID(ctx context.Context, id, tenantID uuid.UUID) (AgentApproval, error)
+	UpdateAgentApprovalDecision(ctx context.Context, params UpdateAgentApprovalDecisionParams) error
+	CountPendingAgentApprovals(ctx context.Context, tenantID uuid.UUID) (int64, error)
+}
+
 // =====================================
 // Composite Interface (for backward compatibility)
 // =====================================
@@ -305,6 +314,7 @@ type LeadsRepository interface {
 	CatalogSearchLogStore
 	CatalogGapReader
 	AgentRunStore
+	AgentApprovalStore
 	LeadFuzzySearcher
 }
 

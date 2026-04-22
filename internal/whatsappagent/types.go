@@ -135,8 +135,9 @@ type AudioTranscriptionScheduler interface {
 }
 
 type ModuleConfig struct {
-	ModelConfig   openaicompat.Config
-	WebhookSecret string
+	ModelConfig      openaicompat.Config
+	WebhookSecret    string
+	StreamingEnabled bool
 }
 
 type ModuleDependencies struct {
@@ -166,6 +167,7 @@ type ModuleDependencies struct {
 	AppointmentVisitReportWriter AppointmentVisitReportWriter
 	AppointmentStatusWriter      AppointmentStatusWriter
 	RedisClient                  *redis.Client
+	SessionRedis                 *redis.Client
 	InboxWriter                  InboxWriter
 	Logger                       *logger.Logger
 }

@@ -23,6 +23,7 @@ import (
 	"portal_final_backend/internal/leads/transport"
 	"portal_final_backend/internal/orchestration"
 	apptools "portal_final_backend/internal/tools"
+	"portal_final_backend/platform/adk/confirmation"
 	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/phone"
@@ -253,7 +254,7 @@ func (d *CallLoggerToolDeps) NewRequestDeps() *CallLoggerToolDeps {
 }
 
 // NewCallLogger creates a new CallLogger agent
-func NewCallLogger(modelCfg openaicompat.Config, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus) (*CallLogger, error) {
+func NewCallLogger(modelCfg openaicompat.Config, repo repository.LeadsRepository, booker ports.AppointmentBooker, eventBus events.Bus, sessionService session.Service) (*CallLogger, error) {
 	kimi := openaicompat.NewModel(modelCfg)
 	workspace, err := orchestration.LoadAgentWorkspace("call-logger")
 	if err != nil {
@@ -264,7 +265,7 @@ func NewCallLogger(modelCfg openaicompat.Config, repo repository.LeadsRepository
 		repo:           repo,
 		booker:         booker,
 		appName:        "call_logger",
-		sessionService: session.InMemoryService(),
+		sessionService: sessionService,
 		toolDeps: &CallLoggerToolDeps{
 			Repo:     repo,
 			Booker:   booker,
@@ -343,6 +344,7 @@ func (c *CallLogger) executeAgentRun(ctx context.Context, userIDStr, sessionID, 
 func (c *CallLogger) ProcessSummary(ctx context.Context, leadID, serviceID, userID, tenantID uuid.UUID, summary string) (*CallLogResult, error) {
 	reqDeps := c.toolDeps.NewRequestDeps()
 	reqDeps.SetContext(tenantID, userID, leadID, serviceID)
+	ctx = confirmation.WithTenantID(ctx, tenantID)
 	ctx = WithCallLoggerDeps(ctx, reqDeps)
 
 	existingAppointment, hasExistingAppointment := c.resolveExistingAppointment(ctx, tenantID, serviceID, userID)

@@ -333,6 +333,7 @@ type Config struct {
 	WhatsAppKey                       string
 	WhatsAppDeviceID                  string
 	WhatsAppWebhookSecret             string
+	WhatsAppAgentStreamingEnabled     bool
 	RedisURL                          string
 	RedisTLSInsecure                  bool
 	AsynqQueueName                    string
@@ -402,6 +403,10 @@ func (c *Config) GetWhatsAppKey() string      { return c.WhatsAppKey }
 func (c *Config) GetWhatsAppDeviceID() string { return c.WhatsAppDeviceID }
 func (c *Config) GetWhatsAppWebhookSecret() string {
 	return c.WhatsAppWebhookSecret
+}
+
+func (c *Config) GetWhatsAppAgentStreamingEnabled() bool {
+	return c.WhatsAppAgentStreamingEnabled
 }
 
 // SMTPConfig getter

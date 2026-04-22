@@ -24,7 +24,10 @@ import (
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/scoring"
 	"portal_final_backend/internal/orchestration"
+	"portal_final_backend/platform/adk/confirmation"
 )
+
+const errMsgFailedToGetDeps = "gatekeeper: failed to get dependencies: %v"
 
 // Gatekeeper validates intake requirements and advances pipeline stage.
 type Gatekeeper struct {
@@ -39,7 +42,7 @@ type Gatekeeper struct {
 }
 
 // NewGatekeeper creates a Gatekeeper agent.
-func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service) (*Gatekeeper, error) {
+func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus events.Bus, scorer *scoring.Service, sessionService session.Service) (*Gatekeeper, error) {
 	workspace, err := orchestration.LoadAgentWorkspace("gatekeeper")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load gatekeeper workspace context: %w", err)
@@ -81,7 +84,6 @@ func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus even
 		return nil, fmt.Errorf("failed to create gatekeeper agent: %w", err)
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        "gatekeeper",
 		Agent:          adkAgent,
@@ -125,6 +127,7 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	g.lastSessionResult = nil
 	g.mu.Unlock()
 
+	ctx = confirmation.WithTenantID(ctx, tenantID)
 	ctx = WithDependencies(ctx, reqDeps)
 
 	// Preload org AI settings so downstream tools and safeguards can use them.
@@ -181,14 +184,33 @@ func (g *Gatekeeper) Run(ctx context.Context, leadID, serviceID, tenantID uuid.U
 	g.maybeAutoDisqualifyJunk(ctx, leadID, serviceID, tenantID, service)
 	log.Printf("gatekeeper: run finished runID=%s lead=%s service=%s", runID, leadID, serviceID)
 
-	g.persistAgentRun(ctx, leadID, serviceID, tenantID, runID, runStart, reqDeps, service)
+	g.persistAgentRun(ctx, persistAgentRunParams{
+		leadID:    leadID,
+		serviceID: serviceID,
+		tenantID:  tenantID,
+		runID:     runID,
+		runStart:  runStart,
+		reqDeps:   reqDeps,
+		service:   service,
+	})
 
 	return nil
 }
 
-func (g *Gatekeeper) persistAgentRun(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, runID string, runStart time.Time, reqDeps *ToolDependencies, service repository.LeadService) {
+type persistAgentRunParams struct {
+	leadID    uuid.UUID
+	serviceID uuid.UUID
+	tenantID  uuid.UUID
+	runID     string
+	runStart  time.Time
+	reqDeps   *ToolDependencies
+	service   repository.LeadService
+}
+
+func (g *Gatekeeper) persistAgentRun(ctx context.Context, params persistAgentRunParams) {
 	outcome := "success"
 	detail := ""
+	reqDeps := params.reqDeps
 	if !reqDeps.WasSaveAnalysisCalled() {
 		outcome = "fallback"
 		detail = "SaveAnalysis not called"
@@ -203,27 +225,32 @@ func (g *Gatekeeper) persistAgentRun(ctx context.Context, leadID, serviceID, ten
 	}
 
 	toolCallCount := 0
+	var tokenInput, tokenOutput int32
 	g.mu.Lock()
 	sr := g.lastSessionResult
 	g.mu.Unlock()
 	if sr != nil {
 		toolCallCount = sr.ToolCallCount
+		tokenInput = sr.TokenInput
+		tokenOutput = sr.TokenOutput
 	}
-	durationMs := int(time.Since(runStart).Milliseconds())
+	durationMs := int(time.Since(params.runStart).Milliseconds())
 
 	if agentRunID, err := g.repo.InsertAgentRun(ctx, repository.InsertAgentRunParams{
-		LeadID:        leadID,
-		ServiceID:     serviceID,
-		TenantID:      tenantID,
+		LeadID:        params.leadID,
+		ServiceID:     params.serviceID,
+		TenantID:      params.tenantID,
 		AgentName:     "gatekeeper",
-		RunID:         runID,
+		RunID:         params.runID,
 		SessionLabel:  "gatekeeper",
-		StartedAt:     runStart,
+		StartedAt:     params.runStart,
 		DurationMs:    durationMs,
 		ToolCallCount: toolCallCount,
+		TokenInput:    int(tokenInput),
+		TokenOutput:   int(tokenOutput),
 		Outcome:       outcome,
 		OutcomeDetail: detail,
-		CycleCount:    service.AgentCycleCount,
+		CycleCount:    params.service.AgentCycleCount,
 	}); err != nil {
 		log.Printf("gatekeeper: failed to persist agent run record: %v", err)
 	} else if sr != nil {
@@ -283,7 +310,7 @@ func (g *Gatekeeper) applyFallbackNurturingStage(ctx context.Context, leadID, se
 
 	deps, err := GetDependencies(ctx)
 	if err != nil {
-		log.Printf("gatekeeper: failed to get dependencies: %v", err)
+		log.Printf(errMsgFailedToGetDeps, err)
 		return
 	}
 	if out, err := applyPipelineStageUpdate(ctx, deps, UpdatePipelineStageInput{Stage: targetStage, Reason: reason}); err != nil {
@@ -369,7 +396,7 @@ func (g *Gatekeeper) runGatekeeperPrompt(ctx context.Context, req gatekeeperProm
 func (g *Gatekeeper) maybeAutoDisqualifyJunk(ctx context.Context, leadID, serviceID, tenantID uuid.UUID, service repository.LeadService) {
 	reqDeps, err := GetDependencies(ctx)
 	if err != nil {
-		log.Printf("gatekeeper: failed to get dependencies: %v", err)
+		log.Printf(errMsgFailedToGetDeps, err)
 		return
 	}
 	// Respect tenant settings; do not perform autonomous disqualification when disabled.
@@ -453,7 +480,7 @@ func (g *Gatekeeper) createFallbackAnalysis(ctx context.Context, lead repository
 	}
 	deps, err := GetDependencies(ctx)
 	if err != nil {
-		log.Printf("gatekeeper: failed to get dependencies: %v", err)
+		log.Printf(errMsgFailedToGetDeps, err)
 		return
 	}
 	resolvedInformation, extractedFacts := populateAnalysisFacts(ctx, deps, lead, tenantID, serviceID, nil, nil)

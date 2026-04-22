@@ -19,6 +19,13 @@ import (
 	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/apperr"
 	"portal_final_backend/platform/logger"
+
+	"google.golang.org/adk/session"
+)
+
+const (
+	errMsgJobStoreNotConfigured  = "subsidy analyzer job store not configured"
+	errMsgQuoteRepoNotConfigured = "quote repository not configured for subsidy analyzer"
 )
 
 // SubsidyAnalyzerJob represents a subsidy analysis job.
@@ -68,6 +75,7 @@ type SubsidyAnalyzerService struct {
 	schedulerClient subsidyAnalyzerScheduler
 	log             *logger.Logger
 	modelConfig     openaicompat.Config
+	sessionService  session.Service
 }
 
 // SubsidyAnalyzerServiceConfig holds dependencies for the service.
@@ -79,6 +87,7 @@ type SubsidyAnalyzerServiceConfig struct {
 	SchedulerClient *scheduler.Client
 	Log             *logger.Logger
 	ModelConfig     openaicompat.Config
+	SessionService  session.Service
 }
 
 // NewSubsidyAnalyzerService creates a new subsidy analyzer service.
@@ -98,6 +107,7 @@ func NewSubsidyAnalyzerService(cfg SubsidyAnalyzerServiceConfig) *SubsidyAnalyze
 		schedulerClient: cfg.SchedulerClient,
 		log:             cfg.Log,
 		modelConfig:     cfg.ModelConfig,
+		sessionService:  cfg.SessionService,
 	}
 }
 
@@ -127,7 +137,7 @@ func (s *SubsidyAnalyzerService) ensureAnalyzer() (subsidyAnalyzerRunner, error)
 	runner, err := leadagent.NewSubsidyAnalyzerAgent(leadagent.SubsidyAnalyzerConfig{
 		ModelConfig: s.modelConfig,
 		Repo:        s.repo,
-	})
+	}, s.sessionService)
 	if err != nil {
 		return nil, err
 	}
@@ -199,10 +209,10 @@ func (s *SubsidyAnalyzerService) SetSchedulerClient(client scheduler.Client) {
 // StartSubsidyAnalysisJob creates a new subsidy analysis job and enqueues the processing task.
 func (s *SubsidyAnalyzerService) StartSubsidyAnalysisJob(ctx context.Context, quoteID uuid.UUID, userID uuid.UUID, tenantID uuid.UUID, organizationID uuid.UUID) (uuid.UUID, error) {
 	if s.jobStore == nil {
-		return uuid.Nil, fmt.Errorf("subsidy analyzer job store not configured")
+		return uuid.Nil, fmt.Errorf(errMsgJobStoreNotConfigured)
 	}
 	if s.quoteRepo == nil {
-		return uuid.Nil, fmt.Errorf("quote repository not configured for subsidy analyzer")
+		return uuid.Nil, fmt.Errorf(errMsgQuoteRepoNotConfigured)
 	}
 
 	if _, err := s.quoteRepo.GetByID(ctx, quoteID, organizationID); err != nil {
@@ -260,7 +270,7 @@ func (s *SubsidyAnalyzerService) StartSubsidyAnalysisJob(ctx context.Context, qu
 // GetSubsidyAnalysisJob fetches the current status of a job.
 func (s *SubsidyAnalyzerService) GetSubsidyAnalysisJob(ctx context.Context, jobID uuid.UUID, organizationID uuid.UUID) (interface{}, error) {
 	if s.jobStore == nil {
-		return nil, fmt.Errorf("subsidy analyzer job store not configured")
+		return nil, fmt.Errorf(errMsgJobStoreNotConfigured)
 	}
 
 	job, err := s.jobStore.GetSubsidyAnalyzerJob(ctx, jobID, organizationID)
@@ -275,10 +285,10 @@ func (s *SubsidyAnalyzerService) GetSubsidyAnalysisJob(ctx context.Context, jobI
 // This is called by the scheduler worker.
 func (s *SubsidyAnalyzerService) ProcessSubsidyAnalysisJob(ctx context.Context, jobID uuid.UUID, quoteID uuid.UUID, organizationID uuid.UUID) error {
 	if s.jobStore == nil {
-		return fmt.Errorf("subsidy analyzer job store not configured")
+		return fmt.Errorf(errMsgJobStoreNotConfigured)
 	}
 	if s.quoteRepo == nil {
-		return fmt.Errorf("quote repository not configured for subsidy analyzer")
+		return fmt.Errorf(errMsgQuoteRepoNotConfigured)
 	}
 
 	analyzer, err := s.ensureAnalyzer()
@@ -423,7 +433,7 @@ func (s *SubsidyAnalyzerService) publishJobProgress(job *SubsidyAnalyzerJob) {
 // StoreSubsidyResult saves the AI result to the job record.
 func (s *SubsidyAnalyzerService) StoreSubsidyResult(ctx context.Context, jobID uuid.UUID, result map[string]interface{}) error {
 	if s.jobStore == nil {
-		return fmt.Errorf("subsidy analyzer job store not configured")
+		return fmt.Errorf(errMsgJobStoreNotConfigured)
 	}
 
 	_, err := s.jobStore.UpdateSubsidyAnalyzerJob(ctx, repository.UpdateSubsidyAnalyzerJobParams{

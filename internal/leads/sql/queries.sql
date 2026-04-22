@@ -1647,3 +1647,37 @@ SELECT
 FROM agent_runs
 WHERE tenant_id = $1
   AND created_at >= $2;
+
+-- ============================================================
+-- Agent Approvals (Human-in-the-Loop)
+-- ============================================================
+
+-- name: CreateAgentApproval :one
+INSERT INTO agent_approvals (
+    id, agent_name, tool_name, arguments_json, reason,
+    requested_at, expires_at, decision, decided_at, decided_by,
+    lead_id, service_id, tenant_id
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13
+) RETURNING *;
+
+-- name: ListPendingAgentApprovals :many
+SELECT * FROM agent_approvals
+WHERE tenant_id = $1 AND decision = 'pending'
+ORDER BY requested_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: GetAgentApprovalByID :one
+SELECT * FROM agent_approvals
+WHERE id = $1 AND tenant_id = $2;
+
+-- name: UpdateAgentApprovalDecision :exec
+UPDATE agent_approvals
+SET decision = $1, decided_at = $2, decided_by = $3
+WHERE id = $4 AND tenant_id = $5 AND decision = 'pending';
+
+-- name: CountPendingAgentApprovals :one
+SELECT COUNT(*) FROM agent_approvals
+WHERE tenant_id = $1 AND decision = 'pending';

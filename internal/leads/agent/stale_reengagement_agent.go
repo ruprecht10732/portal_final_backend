@@ -37,6 +37,7 @@ type StaleReEngagementAgent struct {
 	modelConfig                  openaicompat.Config
 	appName                      string
 	organizationAISettingsReader ports.OrganizationAISettingsReader
+	sessionService               session.Service
 }
 
 // StaleReEngagementResult is the structured output from the LLM.
@@ -48,11 +49,12 @@ type StaleReEngagementResult struct {
 }
 
 // NewStaleReEngagementAgent creates a new agent instance.
-func NewStaleReEngagementAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository) *StaleReEngagementAgent {
+func NewStaleReEngagementAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository, sessionService session.Service) *StaleReEngagementAgent {
 	return &StaleReEngagementAgent{
-		repo:        repo,
-		modelConfig: modelCfg,
-		appName:     staleReEngagementAppName,
+		repo:           repo,
+		modelConfig:    modelCfg,
+		appName:        staleReEngagementAppName,
+		sessionService: sessionService,
 	}
 }
 
@@ -75,7 +77,7 @@ func (a *StaleReEngagementAgent) GenerateSuggestion(
 
 	settings := a.loadSettings(ctx, orgID)
 
-	r, sessionService, err := a.newRunner(settings.WhatsAppToneOfVoice)
+	r, err := a.newRunner(settings.WhatsAppToneOfVoice)
 	if err != nil {
 		return StaleReEngagementResult{}, fmt.Errorf("stale reengagement: create runner: %w", err)
 	}
@@ -89,7 +91,7 @@ func (a *StaleReEngagementAgent) GenerateSuggestion(
 	userID := "stale-reengage-" + orgID.String()
 
 	outputText, err := runPromptTextSession(ctx, promptRunRequest{
-		SessionService:       sessionService,
+		SessionService:       a.sessionService,
 		Runner:               r,
 		AppName:              a.appName,
 		UserID:               userID,
@@ -105,11 +107,11 @@ func (a *StaleReEngagementAgent) GenerateSuggestion(
 	return parseStaleReEngagementResponse(outputText)
 }
 
-func (a *StaleReEngagementAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
+func (a *StaleReEngagementAgent) newRunner(toneOfVoice string) (*runner.Runner, error) {
 	kimi := openaicompat.NewModel(a.modelConfig)
 	instruction, err := orchestration.BuildAgentInstruction(staleReEngagementAppName, staleReEngagementSystemPrompt(toneOfVoice))
 	if err != nil {
-		return nil, nil, fmt.Errorf("stale reengagement: load workspace: %w", err)
+		return nil, fmt.Errorf("stale reengagement: load workspace: %w", err)
 	}
 
 	adkAgent, err := llmagent.New(llmagent.Config{
@@ -119,19 +121,18 @@ func (a *StaleReEngagementAgent) newRunner(toneOfVoice string) (*runner.Runner, 
 		Instruction: instruction,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        a.appName,
-		SessionService: sessionService,
+		SessionService: a.sessionService,
 		Agent:          adkAgent,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("stale reengagement: create runner: %w", err)
+		return nil, fmt.Errorf("stale reengagement: create runner: %w", err)
 	}
-	return r, sessionService, nil
+	return r, nil
 }
 
 func (a *StaleReEngagementAgent) loadSettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {

@@ -35,6 +35,7 @@ type EmailReplyAgent struct {
 	quoteReader                  ports.ReplyQuoteReader
 	appointmentViewer            ports.AppointmentPublicViewer
 	userReader                   ports.ReplyUserReader
+	sessionService               session.Service
 }
 
 type emailReplyLookupStore interface {
@@ -58,11 +59,12 @@ type emailReplyContext struct {
 	requester      *ports.ReplyUserProfile
 }
 
-func NewEmailReplyAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository) (*EmailReplyAgent, error) {
+func NewEmailReplyAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository, sessionService session.Service) (*EmailReplyAgent, error) {
 	return &EmailReplyAgent{
-		repo:        repo,
-		modelConfig: modelCfg,
-		appName:     emailReplyAppName,
+		repo:           repo,
+		modelConfig:    modelCfg,
+		appName:        emailReplyAppName,
+		sessionService: sessionService,
 	}, nil
 }
 
@@ -91,7 +93,7 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 		replyContext.acceptedQuote != nil,
 		replyContext.upcomingVisit != nil || replyContext.pendingVisit != nil,
 	)
-	r, sessionService, err := a.newRunner(settings.WhatsAppToneOfVoice)
+	r, err := a.newRunner(settings.WhatsAppToneOfVoice)
 	if err != nil {
 		return ports.ReplySuggestionDraft{}, err
 	}
@@ -100,7 +102,7 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 	sessionID := uuid.NewString()
 	userID := "email-reply-" + input.OrganizationID.String() + ":" + sanitizeUserInput(strings.ToLower(strings.TrimSpace(input.CustomerEmail)), 120)
 	outputText, err := runPromptTextSession(ctx, promptRunRequest{
-		SessionService:       sessionService,
+		SessionService:       a.sessionService,
 		Runner:               r,
 		AppName:              a.appName,
 		UserID:               userID,
@@ -121,11 +123,11 @@ func (a *EmailReplyAgent) SuggestEmailReply(ctx context.Context, input ports.Ema
 	return ports.ReplySuggestionDraft{Text: response, EffectiveScenario: resolvedInput.Scenario}, nil
 }
 
-func (a *EmailReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session.Service, error) {
+func (a *EmailReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, error) {
 	kimi := openaicompat.NewModel(a.modelConfig)
 	instruction, err := orchestration.BuildAgentInstruction("email-reply", emailReplySystemPrompt(toneOfVoice))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load email reply workspace context: %w", err)
+		return nil, fmt.Errorf("failed to load email reply workspace context: %w", err)
 	}
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "EmailReplyAgent",
@@ -134,20 +136,19 @@ func (a *EmailReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, session
 		Instruction: instruction,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	sessionService := session.InMemoryService()
 	r, err := runner.New(runner.Config{
 		AppName:        a.appName,
-		SessionService: sessionService,
+		SessionService: a.sessionService,
 		Agent:          adkAgent,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create email reply runner: %w", err)
+		return nil, fmt.Errorf("failed to create email reply runner: %w", err)
 	}
 
-	return r, sessionService, nil
+	return r, nil
 }
 
 func (a *EmailReplyAgent) loadOrganizationAISettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {

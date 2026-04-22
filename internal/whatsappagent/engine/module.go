@@ -11,11 +11,14 @@ import (
 	"portal_final_backend/internal/scheduler"
 	"portal_final_backend/internal/whatsapp"
 	whatsappagentdb "portal_final_backend/internal/whatsappagent/db"
+	adksession "portal_final_backend/platform/adk/session"
 	"portal_final_backend/platform/ai/openaicompat"
 	"portal_final_backend/platform/logger"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/adk/agent"
+	"google.golang.org/adk/session"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -223,8 +226,10 @@ type AgentConfigReader interface {
 
 // ModuleConfig holds whatsappagent configuration.
 type ModuleConfig struct {
-	ModelConfig   openaicompat.Config
-	WebhookSecret string
+	ModelConfig      openaicompat.Config
+	WebhookSecret    string
+	// StreamingEnabled toggles real-time streaming of agent reasoning steps.
+	StreamingEnabled bool
 }
 
 // ModuleDependencies groups external whatsappagent dependencies to keep constructor size manageable.
@@ -257,6 +262,9 @@ type ModuleDependencies struct {
 	RedisClient                  *redis.Client
 	InboxWriter                  InboxWriter
 	Logger                       *logger.Logger
+	// SessionRedis is the Redis client for ADK session persistence.
+	// Required for production; if nil, the module falls back to in-memory.
+	SessionRedis                 *redis.Client
 }
 
 // Module is the whatsappagent bounded context module.
@@ -398,7 +406,24 @@ func NewModule(pool *pgxpool.Pool, cfg ModuleConfig, deps ModuleDependencies) (*
 		appointmentStatusWriter:      deps.AppointmentStatusWriter,
 	}
 
-	agent, err := NewAgent(cfg.ModelConfig, toolHandler, deps.Logger)
+	var sessionService session.Service
+	if deps.SessionRedis != nil {
+		sessionService = adksession.NewService(adksession.Config{
+			Backend:     "redis",
+			RedisClient: deps.SessionRedis,
+			RedisPrefix: "adk:session:wa:",
+			RedisTTL:    24 * time.Hour,
+		})
+	} else {
+		return nil, fmt.Errorf("whatsappagent module: SessionRedis is required")
+	}
+
+	streamingMode := agent.StreamingModeNone
+	if cfg.StreamingEnabled {
+		streamingMode = agent.StreamingModeSSE
+	}
+
+	agent, err := NewAgent(cfg.ModelConfig, toolHandler, deps.Logger, sessionService, streamingMode)
 	if err != nil {
 		if deps.Logger != nil {
 			deps.Logger.Warn("whatsappagent: failed to initialize AI runtime; admin membership routes remain enabled", "error", err)
