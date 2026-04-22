@@ -279,6 +279,7 @@ func NewCallLogger(modelCfg openaicompat.Config, repo repository.LeadsRepository
 		return nil, fmt.Errorf("failed to build call logger tools: %w", err)
 	}
 	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "call_logger_tools", tools)
+	toolsets = applyRBACToolsets(toolsets)
 
 	// Create the ADK agent
 	adkAgent, err := llmagent.New(llmagent.Config{

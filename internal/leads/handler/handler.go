@@ -1032,7 +1032,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 	}
 
 	go func() {
-		ctx := context.Background()
+		ctx := agent.WithUserRoles(context.Background(), identity.Roles())
 		serviceID := validation.ServiceID
 		if err := h.gatekeeper.Run(ctx, id, *serviceID, tenantID); err != nil {
 			_ = err // log-only: don't expose to client

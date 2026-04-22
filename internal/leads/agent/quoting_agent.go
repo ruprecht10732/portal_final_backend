@@ -162,6 +162,7 @@ func newQuotingAgent(cfg QuotingAgentConfig, mode quotingAgentMode, sessionServi
 		return nil, err
 	}
 	toolsets := orchestration.BuildWorkspaceToolsets(workspace, profile.appName+"_tools", tools)
+	toolsets = applyRBACToolsets(toolsets)
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        profile.name,
@@ -1306,6 +1307,7 @@ func (q *QuotingAgent) runWithPromptUsingTools(ctx context.Context, promptText, 
 	if len(tools) > 0 {
 		dynamicLLM := BuildLLM(q.modelConfig)
 		toolsets := orchestration.BuildWorkspaceToolsets(q.workspace, strings.ToLower(agentName)+"_tools", tools)
+	toolsets = applyRBACToolsets(toolsets)
 		dynamicAgent, err := llmagent.New(llmagent.Config{
 			Name:        agentName,
 			Model:       dynamicLLM,

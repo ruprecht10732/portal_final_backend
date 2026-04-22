@@ -6,6 +6,18 @@ import (
 )
 
 type ctxKey struct{}
+type rolesKey struct{}
+
+// WithUserRoles returns a child context carrying the user's JWT roles.
+func WithUserRoles(ctx context.Context, roles []string) context.Context {
+	return context.WithValue(ctx, rolesKey{}, roles)
+}
+
+// GetUserRoles extracts the user roles from ctx.
+func GetUserRoles(ctx context.Context) ([]string, bool) {
+	roles, ok := ctx.Value(rolesKey{}).([]string)
+	return roles, ok
+}
 
 // WithDependencies returns a child context carrying a request-scoped ToolDependencies.
 func WithDependencies(ctx context.Context, deps *ToolDependencies) context.Context {

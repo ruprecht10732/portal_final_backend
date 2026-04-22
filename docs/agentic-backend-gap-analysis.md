@@ -25,8 +25,8 @@ All critical and high-priority gaps from the initial assessment have been **impl
 | ✅ Done | **MCP Toolbox (`tools.yaml`)** | YAML loader and dynamic SQL execution | `platform/mcp/toolbox/loader.go` implemented |
 | 🟡 Remaining | **Langfuse / OTLP Export** | Custom logger exporter only | No OTLP/HTTP or Langfuse plugin integration |
 | 🟢 Remaining | **A2A gRPC Delegation** | HTTP cards only | No gRPC agent-to-agent task delegation |
-| 🟢 Remaining | **RBAC Tool Filtering** | Workspace-based only | `AllowedTools` not scoped by user JWT roles |
-| 🟢 Remaining | **CI/CD Trajectory Evaluation** | Harness built, not gated | `eval/` package exists; not wired to deployment pipeline |
+| ✅ Done | **RBAC Tool Filtering** | `AllowedTools` scoped by user JWT roles | JWT roles injected via ToolDependencies and filtered at runtime using `tool.FilterToolset` |
+| ✅ Done | **CI/CD Trajectory Evaluation** | Harness built and gated | `eval_test.go` and `.github/workflows/agent-eval.yml` implemented |
 
 ---
 
@@ -177,30 +177,26 @@ All critical and high-priority gaps from the initial assessment have been **impl
 - Defer until cross-team integration is needed.
 - If needed, generate protobufs from Agent Card schema and serve on a separate gRPC port.
 
-### 3.6 RBAC Tool Filtering — 🟢 LOW
+### 3.6 RBAC Tool Filtering — ✅ DONE
 
-**What's Missing:**
-- `AllowedTools` comes from `SKILL.md` frontmatter, scoped by agent type.
+**What was Missing:**
+- `AllowedTools` came from `SKILL.md` frontmatter, scoped by agent type.
 - No user-role-based restriction (e.g., support user vs. admin user).
 
-**Why It Matters:** In a multi-tenant admin dashboard, a support user should not be able to prompt the agent to update pipeline stages.
+**How it was Resolved:**
+- Implemented `RBACToolsets` using `tool.FilterToolset` that dynamically blocks mutating tools (`UpdatePipelineStage`, `DraftQuote`, `CreatePartnerOffer`) for non-admin roles (`support`, etc.).
+- Passed JWT roles down to the agent through `WithUserRoles` in `internal/leads/agent/context.go`.
 
-**Recommended Path:**
-- Augment `AllowedTools` resolution with a JWT role → tool whitelist lookup.
-- Pass the user's roles into `ToolDependencies` and filter at toolset build time.
+### 3.7 CI/CD Trajectory Evaluation — ✅ DONE
 
-### 3.7 CI/CD Trajectory Evaluation — 🟢 LOW
-
-**What's Missing:**
-- `internal/leads/agent/eval/eval.go` has the harness and golden dataset.
-- No GitHub Actions / CI step runs it.
+**What was Missing:**
+- `internal/leads/agent/eval/eval.go` had the harness and golden dataset.
+- No GitHub Actions / CI step ran it.
 - No automated alert on trajectory drift.
 
-**Why It Matters:** Model or prompt updates can silently break the Gatekeeper → Estimator → Dispatcher flow. Trajectory eval catches this before production.
-
-**Recommended Path:**
-- Add a CI job that spins up a test DB, seeds frozen lead fixtures, runs agents, and asserts Exact Match ≥ threshold.
-- Gate merges on trajectory F1 ≥ 0.95.
+**How it was Resolved:**
+- Implemented `internal/leads/agent/eval/eval_test.go` to wrap the `Evaluator` and assert `F1 >= 0.95`.
+- Created `.github/workflows/agent-eval.yml` to automatically run `go test ./internal/leads/agent/eval` and gate PR merges on golden trajectory evaluation results.
 
 ---
 

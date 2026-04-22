@@ -72,6 +72,7 @@ func NewGatekeeper(llm model.LLM, repo repository.LeadsRepository, eventBus even
 		return nil, fmt.Errorf("failed to build UpdateLeadDetails tool: %w", err)
 	}
 	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "gatekeeper_tools", []tool.Tool{saveAnalysisTool, updateLeadDetailsTool, updateServiceTypeTool, updateStageTool})
+	toolsets = applyRBACToolsets(toolsets)
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Gatekeeper",

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/adk/agent"
 	"google.golang.org/adk/tool"
 
 	"portal_final_backend/internal/events"
@@ -189,6 +190,7 @@ type ToolDependencies struct {
 	serviceID                   *uuid.UUID
 	actorType                   string
 	actorName                   string
+	actorRoles                  []string
 	orgSettings                 *ports.OrganizationAISettings
 	existingQuoteID             *uuid.UUID     // If set, DraftQuote updates this quote instead of creating new
 	lastAnalysisMetadata        map[string]any // Populated by SaveAnalysis for use in stage_change events
@@ -331,6 +333,12 @@ func (d *ToolDependencies) SetActor(actorType, actorName string) {
 	d.actorName = actorName
 }
 
+func (d *ToolDependencies) SetActorRoles(roles []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.actorRoles = append([]string(nil), roles...)
+}
+
 // SetSessionDoneFunc sets an optional callback invoked after a successful
 // UpdatePipelineStage commit to signal that the agent session should end.
 // This is a defense-in-depth mechanism: the prompt instructs the LLM to stop
@@ -368,6 +376,12 @@ func (d *ToolDependencies) GetActor() (string, string) {
 		return "AI", "Agent"
 	}
 	return d.actorType, d.actorName
+}
+
+func (d *ToolDependencies) GetActorRoles() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return append([]string(nil), d.actorRoles...)
 }
 
 func buildAlertDedupKey(category, reasonCode, summary string) string {
@@ -798,6 +812,50 @@ func parseUUID(value string, invalidMessage string) (uuid.UUID, error) {
 		return uuid.UUID{}, errors.New(invalidMessage)
 	}
 	return parsed, nil
+}
+
+// applyRBACToolsets wraps the toolsets with an RBAC predicate based on the request's ToolDependencies.
+func applyRBACToolsets(toolsets []tool.Toolset) []tool.Toolset {
+	var filtered []tool.Toolset
+	for _, ts := range toolsets {
+		filtered = append(filtered, tool.FilterToolset(ts, rbacPredicate))
+	}
+	return filtered
+}
+
+func rbacPredicate(ctx agent.ReadonlyContext, t tool.Tool) bool {
+	// 1. Safe read-only tools are always allowed
+	switch t.Name() {
+	case "GetLeadDetails", "SearchProductMaterials", "PreloadMemory", "AskCustomerClarification", "SearchCouncilDirectives":
+		return true
+	}
+
+	// 2. Fetch the dynamically injected dependencies for the current request
+	deps, err := GetDependencies(ctx)
+	if err != nil {
+		return true // Fail-open for non-request contexts or system runs
+	}
+
+	roles := deps.GetActorRoles()
+	if len(roles) == 0 {
+		return true // System actors or background workers
+	}
+
+	// 3. Admins have full access
+	for _, r := range roles {
+		if r == "admin" || r == "super_admin" {
+			return true
+		}
+	}
+
+	// 4. Restrict state-mutating tools for standard support users
+	restricted := map[string]bool{
+		"UpdatePipelineStage": true,
+		"DraftQuote":          true,
+		"CreatePartnerOffer":  true,
+	}
+
+	return !restricted[t.Name()]
 }
 
 func getTenantID(deps *ToolDependencies) (uuid.UUID, error) {

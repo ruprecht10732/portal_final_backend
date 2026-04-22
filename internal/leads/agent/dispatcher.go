@@ -61,6 +61,7 @@ func NewDispatcher(modelCfg openaicompat.Config, repo repository.LeadsRepository
 		return nil, fmt.Errorf("failed to build CreatePartnerOffer tool: %w", err)
 	}
 	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "matchmaker_tools", []tool.Tool{findPartnersTool, createOfferTool, updateStageTool})
+	toolsets = applyRBACToolsets(toolsets)
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Dispatcher",

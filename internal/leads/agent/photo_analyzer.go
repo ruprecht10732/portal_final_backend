@@ -149,6 +149,7 @@ func NewPhotoAnalyzer(modelCfg openaicompat.Config, repo repository.LeadsReposit
 		return nil, fmt.Errorf("failed to build photo analyzer tools: %w", err)
 	}
 	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "photo_analyzer_tools", tools)
+	toolsets = applyRBACToolsets(toolsets)
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "PhotoAnalyzer",

@@ -159,6 +159,7 @@ func NewAuditor(modelCfg openaicompat.Config, repo repository.LeadsRepository, e
 		return nil, fmt.Errorf("failed to create SubmitAuditResult tool: %w", err)
 	}
 	toolsets := orchestration.BuildWorkspaceToolsets(workspace, "auditor_tools", []tool.Tool{submitTool})
+	toolsets = applyRBACToolsets(toolsets)
 
 	adkAgent, err := llmagent.New(llmagent.Config{
 		Name:        "AuditAgent",
