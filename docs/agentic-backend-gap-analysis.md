@@ -20,8 +20,8 @@ All critical and high-priority gaps from the initial assessment have been **impl
 | ✅ Done | **A2A Interoperability** | Agent Cards endpoint live | `/api/v1/agents/capabilities` serves workspace manifests |
 | ✅ Done | **Streaming & Transport** | WhatsApp streaming configurable | `StreamingModeSSE` via `WHATSAPP_AGENT_STREAMING_ENABLED` |
 | ✅ Done | **Progressive Context Disclosure** | `load_skill_resource` auto-injected into every agent toolset | L3 resources fetched on demand |
-| 🟡 Remaining | **Long-term Memory Pipeline** | Table exists, pipeline not wired | No `AfterAgentCallback` → summarization → embedding → `agent_memory` |
-| 🟡 Remaining | **Retry & Reflect** | Plugin built, not wired to tools | No tool handler is wrapped with exponential backoff retry |
+| ✅ Done | **Long-term Memory Pipeline** | Summarization, embedding, and `PreloadMemory` tool implemented | Wired into `runPromptSession` termination via `MemoryService` |
+| ✅ Done | **Retry & Reflect** | External API tools wrapped with exponential backoff | `GetEnergyLabel`, `GetISDE`, `SearchProductMaterials`, etc. wrapped |
 | 🟡 Remaining | **Langfuse / OTLP Export** | Custom logger exporter only | No OTLP/HTTP or Langfuse plugin integration |
 | 🟢 Remaining | **MCP Toolbox (`tools.yaml`)** | Not implemented | No declarative SQL exposure for pricing/partner DB queries |
 | 🟢 Remaining | **A2A gRPC Delegation** | HTTP cards only | No gRPC agent-to-agent task delegation |
@@ -124,36 +124,24 @@ All critical and high-priority gaps from the initial assessment have been **impl
 | `fetchLeadContextParallel` | ✅ `errgroup`-based concurrent fetch of lead, service, notes, photo |
 | Active in quoting agent | ✅ `loadAutonomousRunContext` replaced sequential calls |
 
+### 2.11 Long-Term Memory Pipeline (`platform/adk/memory/`)
+
+| Component | Status |
+|-----------|--------|
+| `MemoryService` | ✅ Summarization, embedding, and storing implemented |
+| Lifecycle Hook | ✅ `OnSessionComplete` triggers asynchronous persistence |
+| `PreloadMemory` Tool | ✅ Integrated into domain tools via `ctx.SearchMemory` |
+
+### 2.12 Retry & Reflect (`platform/adk/plugins/`)
+
+| Component | Status |
+|-----------|--------|
+| `WrapHandler` | ✅ Plugin refactored to support `tool.Context` and state injection |
+| External API Tools | ✅ Wrapped (`GetEnergyLabel`, `GetISDE`, `SearchProductMaterials`, `FindMatchingPartners`) |
+
 ---
 
 ## 3. Remaining Gaps (Post-Hardening)
-
-### 3.1 Long-Term Memory Pipeline — 🟡 MEDIUM
-
-**What's Missing:**
-- No `AfterAgentCallback` is registered to trigger summarization when a session ends.
-- No summarization service exists (would call Gemini Flash to condense session logs).
-- No embedding pipeline writes to `agent_memory`.
-- No `preload_memory` or `load_memory` built-in tools for agents to recall past interactions.
-
-**Why It Matters:** Without this, agents start every conversation with zero historical context beyond the 100-message WhatsApp replay. They cannot recognize returning customers or reference past decisions.
-
-**Recommended Path:**
-1. Build `platform/adk/memory/service.go` with three methods: `Summarize(session)`, `Embed(summary)`, `Store(userID, embedding, metadata)`.
-2. Register an `AfterAgentCallback` in `run_iterator.go` that calls `memoryService.AddSession(ctx, session)` on completion.
-3. Add `preload_memory` as a built-in tool that queries `agent_memory` by `user_id` + cosine similarity before the first user message.
-
-### 3.2 Retry & Reflect — 🟡 MEDIUM
-
-**What's Missing:**
-- `platform/adk/plugins/retry_reflect.go` exists as a library.
-- **No tool handler is actually wrapped with it.** The `tool_safeguards.go` file has configuration hooks but no active wrapping.
-
-**Why It Matters:** External API failures (`GetEnergyLabel`, partner timeouts) still fail the agent run immediately. No self-healing.
-
-**Recommended Path:**
-- In `internal/tools/domain_builders.go`, wrap external-API tool handlers with `plugins.WrapHandler`.
-- Start with `GetEnergyLabel`, `GetISDE`, `SearchProductMaterials`, and any partner-facing tools.
 
 ### 3.3 Langfuse / OTLP Export — 🟡 MEDIUM
 
@@ -237,8 +225,8 @@ All critical and high-priority gaps from the initial assessment have been **impl
 
 If prioritizing the remaining gaps:
 
-1. **Retry & Reflect wiring** (1–2 days) — Wrap external API tools; immediate resilience gain.
-2. **Memory pipeline** (3–5 days) — Summarization + embedding + `preload_memory` tool; biggest UX improvement.
+1. ~~**Retry & Reflect wiring**~~ ✅ Completed
+2. ~~**Memory pipeline**~~ ✅ Completed
 3. **OTLP exporter** (1 day) — Replace logger exporter with OTLP/HTTP; production observability.
 4. **CI/CD trajectory eval** (2–3 days) — Gate deployments on trajectory stability.
 

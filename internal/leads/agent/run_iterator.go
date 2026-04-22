@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
+	"google.golang.org/adk/memory"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
@@ -60,6 +61,7 @@ type promptRunRequest struct {
 	// SkipSessionLifecycle skips session creation and deletion when the
 	// caller manages the session lifecycle externally (e.g. photo analyzer
 	// that reuses a session across analysis + retry).
+	MemoryService        memory.Service
 	SkipSessionLifecycle bool
 	// OnSessionComplete is an optional callback invoked at the end of a
 	// session with the accumulated run metrics. Callers that persist
@@ -163,7 +165,18 @@ func runPromptSession(ctx context.Context, req promptRunRequest, handle func(*se
 	if err != nil {
 		return err
 	}
-	defer cleanup()
+	defer func() {
+		if req.MemoryService != nil {
+			if resp, err := req.SessionService.Get(context.WithoutCancel(ctx), &session.GetRequest{
+				AppName:   req.AppName,
+				UserID:    req.UserID,
+				SessionID: req.SessionID,
+			}); err == nil {
+				_ = req.MemoryService.AddSession(context.WithoutCancel(ctx), resp.Session)
+			}
+		}
+		cleanup()
+	}()
 
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var toolTrace []observedToolTrace

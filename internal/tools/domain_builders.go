@@ -15,6 +15,10 @@ func newDomainTool[In any, Out any](name, description string, handler func(tool.
 	}, handler)
 }
 
+func NewPreloadMemoryTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
+	return newDomainTool("PreloadMemory", "Searches the agent's long-term memory for past interactions and preferences from the user. Use this at the start of a session.", handler)
+}
+
 func NewSaveAnalysisTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
 	return newDomainTool("SaveAnalysis", "Saves the gatekeeper triage analysis to the database. Call this ONCE after completing your full analysis. Include urgency, lead quality, recommended action, missing information, resolved information, extracted facts, preferred contact channel, message, and summary.", handler)
 }
