@@ -303,8 +303,8 @@ func (o *Orchestrator) cancelPendingWorkflows(ctx context.Context, tenantID, lea
 	}
 }
 
-func (o *Orchestrator) markReconciliationRunning(serviceID uuid.UUID) bool {
-	ok, err := o.runLocker.TryAcquireReconciliation(serviceID)
+func (o *Orchestrator) markReconciliationRunning(ctx context.Context, serviceID uuid.UUID) bool {
+	ok, err := o.runLocker.TryAcquireReconciliation(ctx, serviceID)
 	if err != nil {
 		o.log.Error("orchestrator: failed to acquire reconciliation lock", "error", err, "serviceId", serviceID)
 		return false
@@ -312,8 +312,8 @@ func (o *Orchestrator) markReconciliationRunning(serviceID uuid.UUID) bool {
 	return ok
 }
 
-func (o *Orchestrator) markReconciliationComplete(serviceID uuid.UUID) {
-	if err := o.runLocker.ReleaseReconciliation(serviceID); err != nil {
+func (o *Orchestrator) markReconciliationComplete(ctx context.Context, serviceID uuid.UUID) {
+	if err := o.runLocker.ReleaseReconciliation(ctx, serviceID); err != nil {
 		o.log.Warn("orchestrator: failed to release reconciliation lock", "error", err, "serviceId", serviceID)
 	}
 }
@@ -510,8 +510,14 @@ func (o *Orchestrator) serviceHasImageAttachments(ctx context.Context, serviceID
 	if err != nil {
 		return false
 	}
+	now := time.Now()
+	const photoAnalysisGatekeeperBlockTimeout = 5 * time.Minute
 	for _, att := range attachments {
 		if att.ContentType != nil && isImageContentType(*att.ContentType) {
+			if now.Sub(att.CreatedAt) > photoAnalysisGatekeeperBlockTimeout {
+				o.log.Warn("orchestrator: image attachment has been unanalyzed for too long; allowing gatekeeper to proceed", "serviceId", serviceID, "attachmentId", att.ID, "createdAt", att.CreatedAt)
+				continue
+			}
 			return true
 		}
 	}
@@ -1033,11 +1039,15 @@ func (o *Orchestrator) reconcileServiceState(ctx context.Context, leadID, servic
 	if !o.reconciliationEnabled {
 		return
 	}
-	if !o.markReconciliationRunning(serviceID) {
+	if !o.markReconciliationRunning(ctx, serviceID) {
 		o.log.Info("orchestrator: reconciliation already running, skipping", "serviceId", serviceID, "trigger", triggerEvent)
 		return
 	}
-	defer o.markReconciliationComplete(serviceID)
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		o.markReconciliationComplete(releaseCtx, serviceID)
+	}()
 
 	svc, err := o.repo.GetLeadServiceByID(ctx, serviceID, tenantID)
 	if err != nil {

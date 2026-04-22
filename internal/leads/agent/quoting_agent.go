@@ -358,6 +358,11 @@ func (q *QuotingAgent) Run(ctx context.Context, leadID, serviceID, tenantID uuid
 	bgCtx := context.WithoutCancel(ctx)
 	bgCtx = WithDependencies(bgCtx, reqDeps)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("quoting-agent[%s]: PANIC recovered in autonomous run lead=%s service=%s tenant=%s: %v", q.mode, leadID, serviceID, tenantID, r)
+			}
+		}()
 		if err := q.executeAutonomousRun(bgCtx, reqDeps, leadID, serviceID, tenantID, force); err != nil {
 			log.Printf("quoting-agent[%s]: autonomous run failed lead=%s service=%s tenant=%s: %v", q.mode, leadID, serviceID, tenantID, err)
 		}
@@ -916,6 +921,9 @@ func runQuoteCriticRepairLoop(
 	for attempt := 1; attempt <= maxRepairAttempts+1; attempt++ {
 		review, ok := runCritic(attempt)
 		if !ok || review == nil || review.result == nil {
+			if !ok {
+				onExhausted("AI-criticus kon de conceptofferte niet beoordelen vanwege een technische fout; menselijke controle vereist.")
+			}
 			return
 		}
 

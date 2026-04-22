@@ -24,7 +24,7 @@ func sanitizeWhatsAppReply(reply string) string {
 	text = reHorizontalRule.ReplaceAllString(text, "")
 	text = reDoubleStar.ReplaceAllString(text, `*$1*`)
 	text = reLeadIDClause.ReplaceAllString(text, "")
-	text = reUUID.ReplaceAllString(text, "")
+	text = stripUUIDsNotInURLs(text)
 	text = reMetaPreamble.ReplaceAllString(text, "")
 	text = reLetMePreamble.ReplaceAllString(text, "")
 	text = reEmptyBullet.ReplaceAllString(text, "")
@@ -40,6 +40,32 @@ func sanitizeWhatsAppReply(reply string) string {
 		cleaned = append(cleaned, strings.TrimSpace(trimmed))
 	}
 	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
+
+func stripUUIDsNotInURLs(text string) string {
+	matches := reUUID.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+	last := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		lookBackStart := start - 10
+		if lookBackStart < 0 {
+			lookBackStart = 0
+		}
+		prefix := text[lookBackStart:start]
+		isInURL := strings.Contains(prefix, "http") || strings.Contains(prefix, "/") || strings.Contains(prefix, ":")
+		b.WriteString(text[last:start])
+		if isInURL {
+			b.WriteString(text[start:end])
+		}
+		last = end
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 func convertMarkdownTables(text string) string {

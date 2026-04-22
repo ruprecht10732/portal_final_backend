@@ -78,6 +78,7 @@ func (q *Queries) DeleteAgentUser(ctx context.Context, arg DeleteAgentUserParams
 const getAgentConfig = `-- name: GetAgentConfig :one
 SELECT id, device_id, account_jid, created_at, updated_at
 FROM RAC_whatsapp_agent_config
+ORDER BY created_at DESC
 LIMIT 1
 `
 

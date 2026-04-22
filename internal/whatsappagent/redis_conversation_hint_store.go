@@ -68,7 +68,7 @@ func (s *RedisConversationLeadHintStore) Get(ctx context.Context, orgID, phoneKe
 	}
 	var record redisConversationLeadHintRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		_ = s.redis.Del(context.Background(), key).Err()
+		_ = s.redis.Del(ctx, key).Err()
 		s.logWarn("whatsappagent: failed to decode redis conversation hint", "key", key, "error", err)
 		return nil, false
 	}

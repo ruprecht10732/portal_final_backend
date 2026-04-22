@@ -130,6 +130,7 @@ WHERE phone_number = $1 AND organization_id = $2;
 -- name: GetAgentConfig :one
 SELECT id, device_id, account_jid, created_at, updated_at
 FROM RAC_whatsapp_agent_config
+ORDER BY created_at DESC
 LIMIT 1;
 
 -- name: UpsertAgentConfig :one

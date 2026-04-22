@@ -237,8 +237,10 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 		s.logWarn(ctx, "whatsappagent: send chat presence start error", "phone", replyTarget, "organization_id", orgID.String(), "error", err)
 	}
 	defer func() {
-		if err := s.sender.SendChatPresence(context.Background(), replyTarget, whatsapp.ChatPresencePaused); err != nil {
-			s.logWarn(context.Background(), "whatsappagent: send chat presence stop error", "phone", replyTarget, "organization_id", orgID.String(), "error", err)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresencePaused); err != nil {
+			s.logWarn(ctx, "whatsappagent: send chat presence stop error", "phone", replyTarget, "organization_id", orgID.String(), "error", err)
 		}
 	}()
 

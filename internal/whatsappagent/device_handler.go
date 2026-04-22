@@ -80,6 +80,8 @@ func (h *DeviceHandler) Register(c *gin.Context) {
 		return
 	}
 
+	_ = h.queries.DeleteAgentConfig(c.Request.Context())
+
 	cfg, err := h.queries.UpsertAgentConfig(c.Request.Context(), whatsappagentdb.UpsertAgentConfigParams{
 		DeviceID:   deviceID,
 		AccountJid: pgtype.Text{},

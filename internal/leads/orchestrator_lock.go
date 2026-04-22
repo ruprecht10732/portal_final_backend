@@ -31,8 +31,8 @@ return 0
 `)
 
 type orchestratorRunLocker interface {
-	TryAcquireReconciliation(serviceID uuid.UUID) (bool, error)
-	ReleaseReconciliation(serviceID uuid.UUID) error
+	TryAcquireReconciliation(ctx context.Context, serviceID uuid.UUID) (bool, error)
+	ReleaseReconciliation(ctx context.Context, serviceID uuid.UUID) error
 }
 
 const reconciliationLockTimeout = 5 * time.Minute
@@ -66,7 +66,7 @@ func newInMemoryOrchestratorRunLocker() orchestratorRunLocker {
 	}
 }
 
-func (l *inMemoryOrchestratorRunLocker) TryAcquireReconciliation(serviceID uuid.UUID) (bool, error) {
+func (l *inMemoryOrchestratorRunLocker) TryAcquireReconciliation(ctx context.Context, serviceID uuid.UUID) (bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -77,7 +77,7 @@ func (l *inMemoryOrchestratorRunLocker) TryAcquireReconciliation(serviceID uuid.
 	return true, nil
 }
 
-func (l *inMemoryOrchestratorRunLocker) ReleaseReconciliation(serviceID uuid.UUID) error {
+func (l *inMemoryOrchestratorRunLocker) ReleaseReconciliation(ctx context.Context, serviceID uuid.UUID) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -110,17 +110,17 @@ func newRedisOrchestratorRunLocker(client *redis.Client, ttl time.Duration, logs
 	}
 }
 
-func (l *redisOrchestratorRunLocker) TryAcquireReconciliation(serviceID uuid.UUID) (bool, error) {
-	return l.tryAcquire(reconciliationLockKey(serviceID))
+func (l *redisOrchestratorRunLocker) TryAcquireReconciliation(ctx context.Context, serviceID uuid.UUID) (bool, error) {
+	return l.tryAcquire(ctx, reconciliationLockKey(serviceID))
 }
 
-func (l *redisOrchestratorRunLocker) ReleaseReconciliation(serviceID uuid.UUID) error {
-	return l.release(reconciliationLockKey(serviceID))
+func (l *redisOrchestratorRunLocker) ReleaseReconciliation(ctx context.Context, serviceID uuid.UUID) error {
+	return l.release(ctx, reconciliationLockKey(serviceID))
 }
 
-func (l *redisOrchestratorRunLocker) tryAcquire(key string) (bool, error) {
+func (l *redisOrchestratorRunLocker) tryAcquire(ctx context.Context, key string) (bool, error) {
 	token := uuid.NewString()
-	ok, err := l.client.SetNX(context.Background(), key, token, l.ttl).Result()
+	ok, err := l.client.SetNX(ctx, key, token, l.ttl).Result()
 	if !ok || err != nil {
 		return ok, err
 	}
@@ -131,7 +131,7 @@ func (l *redisOrchestratorRunLocker) tryAcquire(key string) (bool, error) {
 	return true, nil
 }
 
-func (l *redisOrchestratorRunLocker) release(key string) error {
+func (l *redisOrchestratorRunLocker) release(ctx context.Context, key string) error {
 	ownerValue, ok := l.owners.LoadAndDelete(key)
 	if !ok {
 		return nil
@@ -143,7 +143,7 @@ func (l *redisOrchestratorRunLocker) release(key string) error {
 	}
 	owner.cancel()
 
-	_, err := compareAndDeleteRedisLockScript.Run(context.Background(), l.client, []string{key}, owner.token).Result()
+	_, err := compareAndDeleteRedisLockScript.Run(ctx, l.client, []string{key}, owner.token).Result()
 	return err
 }
 

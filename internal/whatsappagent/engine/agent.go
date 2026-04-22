@@ -854,7 +854,6 @@ func formatRecentAppointmentHints(appointments []RecentAppointmentHint) string {
 func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, userID, sessionID string, userMessage *genai.Content) (AgentRunResult, error) {
 	runConfig := agent.RunConfig{StreamingMode: agent.StreamingModeNone}
 	var lastFinalText string
-	iterations := 0
 	evidence := newReplyGroundingEvidence()
 
 	for event, err := range runtime.runner.Run(ctx, userID, sessionID, userMessage, runConfig) {
@@ -870,9 +869,8 @@ func (a *Agent) collectRunOutput(ctx context.Context, runtime agentRuntime, user
 				lastFinalText = text
 			}
 		}
-		iterations++
-		if iterations >= maxToolIterations {
-			a.logWarn(ctx, "whatsappagent: max iterations reached; returning best-effort reply", "max_iterations", maxToolIterations)
+		if evidence.toolResponseCount() >= maxToolIterations {
+			a.logWarn(ctx, "whatsappagent: max tool calls reached; returning best-effort reply", "max_tool_calls", maxToolIterations)
 			break
 		}
 	}

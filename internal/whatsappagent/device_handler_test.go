@@ -160,6 +160,9 @@ func TestDeviceHandlerRegisterCreatesDeviceAndPersistsConfig(t *testing.T) {
 	if transport.lastCreatedDeviceID == "" {
 		t.Fatal("expected device to be created")
 	}
+	if queries.deleteCalls != 1 {
+		t.Fatalf("expected one delete before upsert, got %d", queries.deleteCalls)
+	}
 	if queries.upsertCalls != 1 {
 		t.Fatalf("expected one upsert, got %d", queries.upsertCalls)
 	}

@@ -1,6 +1,7 @@
 package whatsappagent
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"strings"
@@ -61,6 +62,8 @@ type LeadHintStore interface {
 type ConversationLeadHintStore struct {
 	mu         sync.RWMutex
 	items      map[string]ConversationLeadHint
+	lru        *list.List
+	entryRefs  map[string]*list.Element
 	now        conversationLeadHintClock
 	ttl        time.Duration
 	maxEntries int
@@ -82,6 +85,8 @@ func newConversationLeadHintStore(now conversationLeadHintClock, ttl time.Durati
 	}
 	return &ConversationLeadHintStore{
 		items:      make(map[string]ConversationLeadHint),
+		lru:        list.New(),
+		entryRefs:  make(map[string]*list.Element),
 		now:        now,
 		ttl:        ttl,
 		maxEntries: maxEntries,
@@ -105,9 +110,18 @@ func (s *ConversationLeadHintStore) Get(ctx context.Context, orgID, phoneKey str
 	if s.isExpired(hint) {
 		s.mu.Lock()
 		delete(s.items, key)
+		if elem := s.entryRefs[key]; elem != nil {
+			s.lru.Remove(elem)
+			delete(s.entryRefs, key)
+		}
 		s.mu.Unlock()
 		return nil, false
 	}
+	s.mu.Lock()
+	if elem := s.entryRefs[key]; elem != nil {
+		s.lru.MoveToFront(elem)
+	}
+	s.mu.Unlock()
 	copyHint := hint
 	return &copyHint, true
 }
@@ -126,11 +140,20 @@ func (s *ConversationLeadHintStore) Set(ctx context.Context, orgID, phoneKey str
 	hint = mergeConversationLeadHints(existing, hint)
 	if hintIsEmpty(hint) {
 		delete(s.items, key)
+		if elem := s.entryRefs[key]; elem != nil {
+			s.lru.Remove(elem)
+			delete(s.entryRefs, key)
+		}
 		s.mu.Unlock()
 		return
 	}
 	hint.UpdatedAt = s.currentTime()
 	s.items[key] = hint
+	if elem := s.entryRefs[key]; elem != nil {
+		s.lru.MoveToFront(elem)
+	} else {
+		s.entryRefs[key] = s.lru.PushFront(key)
+	}
 	s.evictOverflowLocked()
 	s.mu.Unlock()
 }
@@ -157,6 +180,10 @@ func (s *ConversationLeadHintStore) Clear(ctx context.Context, orgID, phoneKey s
 	}
 	s.mu.Lock()
 	delete(s.items, key)
+	if elem := s.entryRefs[key]; elem != nil {
+		s.lru.Remove(elem)
+		delete(s.entryRefs, key)
+	}
 	s.mu.Unlock()
 }
 
@@ -175,10 +202,19 @@ func (s *ConversationLeadHintStore) remember(ctx context.Context, orgID, phoneKe
 	mutate(&hint)
 	if hintIsEmpty(hint) {
 		delete(s.items, key)
+		if elem := s.entryRefs[key]; elem != nil {
+			s.lru.Remove(elem)
+			delete(s.entryRefs, key)
+		}
 		return
 	}
 	hint.UpdatedAt = s.currentTime()
 	s.items[key] = hint
+	if elem := s.entryRefs[key]; elem != nil {
+		s.lru.MoveToFront(elem)
+	} else {
+		s.entryRefs[key] = s.lru.PushFront(key)
+	}
 	s.evictOverflowLocked()
 }
 
@@ -200,24 +236,24 @@ func (s *ConversationLeadHintStore) pruneExpiredLocked() {
 	for key, hint := range s.items {
 		if s.isExpired(hint) {
 			delete(s.items, key)
+			if elem := s.entryRefs[key]; elem != nil {
+				s.lru.Remove(elem)
+				delete(s.entryRefs, key)
+			}
 		}
 	}
 }
 
 func (s *ConversationLeadHintStore) evictOverflowLocked() {
 	for len(s.items) > s.maxEntries {
-		oldestKey := ""
-		var oldestAt time.Time
-		for key, hint := range s.items {
-			if oldestKey == "" || hint.UpdatedAt.Before(oldestAt) {
-				oldestKey = key
-				oldestAt = hint.UpdatedAt
-			}
-		}
-		if oldestKey == "" {
+		back := s.lru.Back()
+		if back == nil {
 			return
 		}
-		delete(s.items, oldestKey)
+		key := back.Value.(string)
+		s.lru.Remove(back)
+		delete(s.items, key)
+		delete(s.entryRefs, key)
 	}
 }
 

@@ -3010,6 +3010,10 @@ func validateCalculateEstimateInput(input CalculateEstimateInput) error {
 		return fmt.Errorf("hourly rate exceeds safety limit of %.2f", maxSafeLaborValue)
 	}
 
+	// Prevent float64->int64 overflow in material subtotals.
+	const maxSafeQuantity = 1_000_000_000.0
+	const maxSafeExtraCosts = 5_000_000.0
+
 	for _, item := range input.MaterialItems {
 		if item.UnitPrice < 0 || item.Quantity < 0 {
 			return fmt.Errorf("material item price and quantity cannot be negative")
@@ -3017,6 +3021,13 @@ func validateCalculateEstimateInput(input CalculateEstimateInput) error {
 		if item.UnitPrice > MaxSafeUnitPrice {
 			return fmt.Errorf("unitPrice %.2f exceeds safety limit of %.2f", item.UnitPrice, MaxSafeUnitPrice)
 		}
+		if item.Quantity > maxSafeQuantity {
+			return fmt.Errorf("quantity %.2f exceeds safety limit of %.2f", item.Quantity, maxSafeQuantity)
+		}
+	}
+
+	if input.ExtraCosts > maxSafeExtraCosts {
+		return fmt.Errorf("extra costs %.2f exceed safety limit of %.2f", input.ExtraCosts, maxSafeExtraCosts)
 	}
 
 	return nil
