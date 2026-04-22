@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"google.golang.org/adk/tool"
 )
 
 // RetryPolicy controls backoff behavior for retried tool calls.
@@ -53,17 +55,28 @@ func ReflectAttempt(ctx context.Context) int {
 	return 0
 }
 
+type toolContextWrapper struct {
+	tool.Context
+	ctx context.Context
+}
+
+func (w toolContextWrapper) Value(key any) any { return w.ctx.Value(key) }
+func (w toolContextWrapper) Deadline() (time.Time, bool) { return w.ctx.Deadline() }
+func (w toolContextWrapper) Done() <-chan struct{} { return w.ctx.Done() }
+func (w toolContextWrapper) Err() error { return w.ctx.Err() }
+
 // WrapHandler wraps a tool handler function with automatic retry and structured
 // error reflection. On failure, it serializes the error, feeds it back as
 // context, and retries up to MaxAttempts with exponential backoff.
-func WrapHandler[In any, Out any](base func(context.Context, In) (Out, error), policy RetryPolicy) func(context.Context, In) (Out, error) {
-	return func(ctx context.Context, input In) (Out, error) {
+func WrapHandler[In any, Out any](base func(tool.Context, In) (Out, error), policy RetryPolicy) func(tool.Context, In) (Out, error) {
+	return func(ctx tool.Context, input In) (Out, error) {
 		var zero Out
 		var lastErr error
 		delay := policy.BaseDelay
+		var wrappedCtx tool.Context = ctx
 
 		for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
-			result, err := base(ctx, input)
+			result, err := base(wrappedCtx, input)
 			lastErr = err
 
 			if err == nil {
@@ -85,12 +98,13 @@ func WrapHandler[In any, Out any](base func(context.Context, In) (Out, error), p
 			log.Printf("retry_reflect: handler attempt %d/%d failed: %v. Retrying in %v...",
 				attempt, policy.MaxAttempts, err, delay)
 
-			ctx = context.WithValue(ctx, contextKey("retry_reflect_attempt"), attempt)
-			ctx = context.WithValue(ctx, contextKey("retry_reflect_last_error"), err.Error())
+			injectedCtx := context.WithValue(wrappedCtx, contextKey("retry_reflect_attempt"), attempt)
+			injectedCtx = context.WithValue(injectedCtx, contextKey("retry_reflect_last_error"), err.Error())
+			wrappedCtx = toolContextWrapper{Context: ctx, ctx: injectedCtx}
 
 			select {
-			case <-ctx.Done():
-				return zero, ctx.Err()
+			case <-wrappedCtx.Done():
+				return zero, wrappedCtx.Err()
 			case <-time.After(delay):
 			}
 

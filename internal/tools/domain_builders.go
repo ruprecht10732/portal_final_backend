@@ -5,6 +5,7 @@ import (
 	"google.golang.org/adk/tool/functiontool"
 
 	"portal_final_backend/platform/adk/confirmation"
+	"portal_final_backend/platform/adk/plugins"
 )
 
 func newDomainTool[In any, Out any](name, description string, handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -39,7 +40,7 @@ func NewUpdatePipelineStageTool[In any, Out any](handler func(tool.Context, In) 
 }
 
 func NewFindMatchingPartnersTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("FindMatchingPartners", "Finds partner matches by service type and distance radius. Allows excluding specific partner IDs.", handler)
+	return newDomainTool("FindMatchingPartners", "Finds partner matches by service type and distance radius. Allows excluding specific partner IDs.", plugins.WrapHandler(handler, plugins.DefaultRetryPolicy()))
 }
 
 func NewCreatePartnerOfferTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -71,7 +72,7 @@ func NewGetLeadDetailsTool[In any, Out any](handler func(tool.Context, In) (Out,
 }
 
 func NewGetEnergyLabelTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("GetEnergyLabel", "Returns the energy label for a resolved lead or Dutch address in the current organization. Use this when customers ask about energy class, label validity, or building-energy details.", handler)
+	return newDomainTool("GetEnergyLabel", "Returns the energy label for a resolved lead or Dutch address in the current organization. Use this when customers ask about energy class, label validity, or building-energy details.", plugins.WrapHandler(handler, plugins.DefaultRetryPolicy()))
 }
 
 func NewGetLeadTasksTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -79,7 +80,7 @@ func NewGetLeadTasksTool[In any, Out any](handler func(tool.Context, In) (Out, e
 }
 
 func NewGetISDETool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("GetISDE", "Calculates an ISDE subsidy estimate from the provided insulation and installation measures for the current organization.", handler)
+	return newDomainTool("GetISDE", "Calculates an ISDE subsidy estimate from the provided insulation and installation measures for the current organization.", plugins.WrapHandler(handler, plugins.DefaultRetryPolicy()))
 }
 
 func NewGetNavigationLinkTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
@@ -99,7 +100,7 @@ func NewListCatalogGapsTool[In any, Out any](handler func(tool.Context, In) (Out
 }
 
 func NewSearchProductMaterialsTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
-	return newDomainTool("SearchProductMaterials", "Searches the product/material catalog and returns ranked matches with pricing and confidence metadata.", handler)
+	return newDomainTool("SearchProductMaterials", "Searches the product/material catalog and returns ranked matches with pricing and confidence metadata.", plugins.WrapHandler(handler, plugins.DefaultRetryPolicy()))
 }
 
 func NewSubmitQuoteCritiqueTool[In any, Out any](handler func(tool.Context, In) (Out, error)) (tool.Tool, error) {
