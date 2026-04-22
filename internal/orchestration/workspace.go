@@ -31,6 +31,7 @@ const contextFileName = "context.md"
 
 type workspaceDefinition struct {
 	workspaceDir string
+	skipPrompts  bool
 }
 
 type Workspace struct {
@@ -58,12 +59,12 @@ type skillMetadataFields struct {
 }
 
 var workspaceDefinitions = map[string]workspaceDefinition{
-	"gatekeeper":             {workspaceDir: "agents/gatekeeper"},
+	"gatekeeper":             {workspaceDir: "agents/gatekeeper", skipPrompts: true},
 	"qualifier":              {workspaceDir: "agents/qualifier"},
-	"calculator":             {workspaceDir: "agents/calculator"},
-	"matchmaker":             {workspaceDir: "agents/matchmaker"},
+	"calculator":             {workspaceDir: "agents/calculator", skipPrompts: true},
+	"matchmaker":             {workspaceDir: "agents/matchmaker", skipPrompts: true},
 	"auditor":                {workspaceDir: "agents/support/auditor"},
-	"photo-analyzer":         {workspaceDir: "agents/support/photo_analyzer"},
+	"photo-analyzer":         {workspaceDir: "agents/support/photo_analyzer", skipPrompts: true},
 	"call-logger":            {workspaceDir: "agents/support/call_logger"},
 	"offer-summary":          {workspaceDir: "agents/support/offer_summary"},
 	"subsidy-analyzer":       {workspaceDir: "agents/subsidy-analyzer"},
@@ -166,7 +167,7 @@ func loadAgentWorkspaceFromRoot(rootDir, normalizedName string, definition works
 		return Workspace{}, fmt.Errorf(loadAgentWorkspaceErrorFormat, normalizedName, err)
 	}
 
-	agentResourceFiles, err := resolveAgentResourceFiles(rootDir, definition.workspaceDir)
+	agentResourceFiles, err := resolveAgentResourceFiles(rootDir, definition.workspaceDir, definition.skipPrompts)
 	if err != nil {
 		return Workspace{}, fmt.Errorf(loadAgentWorkspaceErrorFormat, normalizedName, err)
 	}
@@ -249,7 +250,7 @@ func resolveSharedResourceFiles(rootDir string) ([]string, error) {
 	return uniqueRelativePaths(combined), nil
 }
 
-func resolveAgentResourceFiles(rootDir, workspaceDir string) ([]string, error) {
+func resolveAgentResourceFiles(rootDir, workspaceDir string, skipPrompts bool) ([]string, error) {
 	contextPath := filepath.ToSlash(filepath.Join(workspaceDir, contextFileName))
 	if !fileExists(filepath.Join(rootDir, filepath.FromSlash(contextPath))) {
 		return nil, fmt.Errorf("read %s: file not found", contextPath)
@@ -258,9 +259,12 @@ func resolveAgentResourceFiles(rootDir, workspaceDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	promptFiles, err := collectOptionalMarkdownFiles(rootDir, filepath.ToSlash(filepath.Join(workspaceDir, promptsDirName)))
-	if err != nil {
-		return nil, err
+	var promptFiles []string
+	if !skipPrompts {
+		promptFiles, err = collectOptionalMarkdownFiles(rootDir, filepath.ToSlash(filepath.Join(workspaceDir, promptsDirName)))
+		if err != nil {
+			return nil, err
+		}
 	}
 	skillFiles, err := collectMarkdownFiles(rootDir, filepath.ToSlash(filepath.Join(workspaceDir, skillsDirName)))
 	if err != nil {

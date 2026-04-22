@@ -266,6 +266,36 @@ func TestLoadAgentContextUsesConventionOrder(t *testing.T) {
 	}
 }
 
+func TestLoadAgentWorkspaceSkipsPromptsForGoRenderedAgents(t *testing.T) {
+	rootDir := createTestAgentWorkspace(t)
+	t.Setenv("AGENT_WORKSPACE_ROOT", rootDir)
+
+	tests := []struct {
+		agentName string
+		excluded  string
+		included  string
+	}{
+		{"gatekeeper", "gatekeeper prompt base (should be excluded)", ""},
+		{"calculator", "calculator prompt scope analyzer (should be excluded)", ""},
+		{"matchmaker", "matchmaker prompt base (should be excluded)", ""},
+		{"photo-analyzer", "photo analyzer prompt request (should be excluded)", "photo analyzer visual constraints"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.agentName, func(t *testing.T) {
+			workspace, err := orchestration.LoadAgentWorkspace(tc.agentName)
+			if err != nil {
+				t.Fatalf(errLoadAgentWorkspace, err)
+			}
+			if strings.Contains(workspace.Instruction, tc.excluded) {
+				t.Fatalf("expected agent %q instruction NOT to contain Go-rendered prompt %q", tc.agentName, tc.excluded)
+			}
+			if tc.included != "" && !strings.Contains(workspace.Instruction, tc.included) {
+				t.Fatalf("expected agent %q instruction to contain skill content %q", tc.agentName, tc.included)
+			}
+		})
+	}
+}
+
 func createTestAgentWorkspace(t *testing.T) string {
 	t.Helper()
 	rootDir := t.TempDir()
@@ -289,6 +319,7 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/gatekeeper/skills/update_lead_service_type.md":     "update lead service type skill",
 		"agents/gatekeeper/skills/update_pipeline_stage.md":        "update pipeline stage skill",
 		"agents/gatekeeper/skills/z-skill.md":                      "z skill file",
+		"agents/gatekeeper/prompts/base.md":                        "gatekeeper prompt base (should be excluded)",
 		"agents/qualifier/SKILL.md":                                "---\nname: qualifier\ndescription: Use when intake needs a clarification request.\nmetadata:\n  allowed-tools:\n    - AskCustomerClarification\n    - SaveAnalysis\n---\n\n# Qualifier",
 		"agents/qualifier/context.md":                              "qualifier context",
 		"agents/qualifier/skills/ask_customer_clarification.md":    "ask customer clarification skill",
@@ -303,17 +334,21 @@ func createTestAgentWorkspace(t *testing.T) string {
 		"agents/calculator/skills/save_estimation.md":              "save estimation skill",
 		"agents/calculator/skills/submit_quote_critique.md":        "submit quote critique skill",
 		"agents/calculator/skills/commit_scope_artifact.md":        "commit scope artifact skill",
+		"agents/calculator/prompts/scope_analyzer.md":              "calculator prompt scope analyzer (should be excluded)",
 		"agents/matchmaker/SKILL.md":                               "---\nname: matchmaker\ndescription: Use when a fulfillment-ready service needs partner routing.\nmetadata:\n  allowed-tools:\n    - FindMatchingPartners\n    - CreatePartnerOffer\n    - UpdatePipelineStage\n---\n\n# Matchmaker",
 		"agents/matchmaker/context.md":                             "matchmaker context",
 		"agents/matchmaker/skills/find_matching_partners.md":       "find matching partners skill",
 		"agents/matchmaker/skills/create_partner_offer.md":         "create partner offer skill",
 		"agents/matchmaker/skills/update_pipeline_stage.md":        "matchmaker update stage skill",
+		"agents/matchmaker/prompts/base.md":                        "matchmaker prompt base (should be excluded)",
 		"agents/support/auditor/SKILL.md":                          "---\nname: auditor\ndescription: Use when operational evidence must be audited.\nmetadata:\n  allowed-tools:\n    - SubmitAuditResult\n---\n\n# Auditor",
 		"agents/support/auditor/context.md":                        "auditor context",
 		"agents/support/auditor/skills/submit_audit_result.md":     "submit audit result skill",
 		"agents/support/photo_analyzer/SKILL.md":                   "---\nname: photo_analyzer\ndescription: Use when images need structured visual analysis.\nmetadata:\n  allowed-tools:\n    - SavePhotoAnalysis\n    - Calculator\n    - FlagOnsiteMeasurement\n---\n\n# Photo Analyzer",
 		"agents/support/photo_analyzer/context.md":                 "photo analyzer context",
-		"agents/support/photo_analyzer/skills/analyze_photos.md":   "photo analyzer skill",
+		"agents/support/photo_analyzer/skills/analyze_photos.md":              "photo analyzer skill",
+		"agents/support/photo_analyzer/skills/visual_analysis_constraints.md": "photo analyzer visual constraints",
+		"agents/support/photo_analyzer/prompts/request.md":                    "photo analyzer prompt request (should be excluded)",
 		"agents/support/call_logger/SKILL.md":                      "---\nname: call_logger\ndescription: Use when a rough call summary must become structured lead updates.\nmetadata:\n  allowed-tools:\n    - SaveNote\n    - UpdateLeadDetails\n    - SetCallOutcome\n    - UpdateStatus\n    - UpdatePipelineStage\n    - ScheduleVisit\n    - RescheduleVisit\n    - CancelVisit\n---\n\n# Call Logger",
 		"agents/support/call_logger/context.md":                    "call logger context",
 		"agents/support/call_logger/prompts/base.md":               "call logger prompt base",

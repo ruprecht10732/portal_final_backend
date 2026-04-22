@@ -32,7 +32,7 @@ It supports Gatekeeper and Calculator by producing a structured photo-analysis r
 ## Resources
 
 <resources>
-- Use `context.md`, prompt files in `prompts/`, and markdown files in `skills/` for visual-analysis constraints.
+- Use `context.md` and markdown files in `skills/` for visual-analysis constraints.
 </resources>
 
 ## Output
