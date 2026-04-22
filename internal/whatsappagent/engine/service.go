@@ -283,7 +283,13 @@ func buildReplayableMessages(recent []whatsappagentdb.GetRecentAgentMessagesRow)
 		}
 		messages = append(messages, ConversationMessage{Role: msg.Role, Content: msg.Content, SentAt: timestamptzPtr(msg.CreatedAt)})
 	}
-	return MergeTrailingUserMessages(messages)
+	messages = MergeTrailingUserMessages(messages)
+	// Clear SentAt to prevent double timestamp formatting in seedSessionHistory.
+	// MergeTrailingUserMessages already adds timestamps to content when needed.
+	for i := range messages {
+		messages[i].SentAt = nil
+	}
+	return messages
 }
 
 // MergeTrailingUserMessages combines consecutive user messages at the end of

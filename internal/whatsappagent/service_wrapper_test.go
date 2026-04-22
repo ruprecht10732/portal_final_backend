@@ -532,8 +532,15 @@ func TestServiceRunAgentReplySkipsPoisonedAssistantHistory(t *testing.T) {
 
 	service.runAgentReply(context.Background(), orgID, normalizeAgentPhoneKey(serviceWrapperTestPhone), serviceWrapperTestPhone, inbound, nil, "default")
 
-	if len(replyRunner.messages) != 1 || replyRunner.messages[0].Content != "Heeft u mijn offerte?" {
-		t.Fatalf("expected poisoned assistant reply to be filtered, got %#v", replyRunner.messages)
+	// Should have 2 messages: one from DB (poisoned assistant filtered) + inbound message
+	if len(replyRunner.messages) != 2 {
+		t.Fatalf("expected 2 messages (DB message + inbound), got %d: %#v", len(replyRunner.messages), replyRunner.messages)
+	}
+	if replyRunner.messages[0].Content != "Heeft u mijn offerte?" {
+		t.Fatalf("expected first message to be from DB, got %#v", replyRunner.messages[0])
+	}
+	if replyRunner.messages[1].Content != "Kun je helpen?" {
+		t.Fatalf("expected second message to be inbound, got %#v", replyRunner.messages[1])
 	}
 }
 

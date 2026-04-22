@@ -699,6 +699,23 @@ func (s *Service) runAgentReply(ctx context.Context, orgID uuid.UUID, phoneKey, 
 	}
 	messages = engine.MergeTrailingUserMessages(messages)
 
+	// Clear SentAt on all messages to prevent double timestamp formatting.
+	// MergeTrailingUserMessages already adds timestamps to content when needed.
+	for i := range messages {
+		messages[i].SentAt = nil
+	}
+
+	// Ensure the inbound message is always included in the conversation.
+	// There can be a race condition where the DB query doesn't see the message yet.
+	inboundBody := strings.TrimSpace(inbound.Body)
+	if inboundBody != "" && !messageContentExists(messages, inboundBody) {
+		messages = append(messages, ConversationMessage{
+			Role:    "user",
+			Content: inboundBody,
+			SentAt:  nil,
+		})
+	}
+
 	if err := s.sender.SendChatPresence(ctx, replyTarget, whatsapp.ChatPresenceComposing); err != nil {
 		s.logWarn(ctx, "whatsappagent: send chat presence start error", "phone", replyTarget, "organization_id", orgID.String(), "error", err)
 	}
@@ -862,4 +879,16 @@ func agentPhoneCandidates(value string) []string {
 	}
 
 	return result
+}
+
+// messageContentExists checks if a message with the given content already exists
+// in the conversation history (case-insensitive).
+func messageContentExists(messages []ConversationMessage, content string) bool {
+	contentLower := strings.ToLower(strings.TrimSpace(content))
+	for _, msg := range messages {
+		if strings.ToLower(strings.TrimSpace(msg.Content)) == contentLower {
+			return true
+		}
+	}
+	return false
 }
