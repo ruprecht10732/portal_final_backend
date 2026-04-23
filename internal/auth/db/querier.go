@@ -12,8 +12,14 @@ import (
 
 type Querier interface {
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error
-	// Auth Domain SQL Queries
+	// ============================================================================
+	// Auth Domain SQL Queries (sqlc)
+	// ============================================================================
+	// Complexity: O(1) Time. Requires UNIQUE index on email.
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	// ============================================================================
+	// Token Management
+	// ============================================================================
 	CreateUserToken(ctx context.Context, arg CreateUserTokenParams) error
 	// ============================================================================
 	// WebAuthn Credential Queries
@@ -21,17 +27,31 @@ type Querier interface {
 	CreateWebAuthnCredential(ctx context.Context, arg CreateWebAuthnCredentialParams) error
 	DeleteUserRoles(ctx context.Context, userID pgtype.UUID) error
 	DeleteWebAuthnCredential(ctx context.Context, arg DeleteWebAuthnCredentialParams) error
+	// ============================================================================
+	// User Settings & Onboarding
+	// ============================================================================
 	EnsureUserSettings(ctx context.Context, userID pgtype.UUID) error
 	GetRefreshToken(ctx context.Context, tokenHash string) (GetRefreshTokenRow, error)
+	// Complexity: O(log N) Time. Requires UNIQUE index on email.
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
+	// Complexity: O(1) Time (Primary Key lookup).
 	GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error)
+	// Complexity: O(log N) Time. Requires Primary Key index on WebAuthn id.
 	GetUserByWebAuthnCredentialID(ctx context.Context, id []byte) (GetUserByWebAuthnCredentialIDRow, error)
+	// ============================================================================
+	// Role Management (RBAC)
+	// ============================================================================
 	GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error)
 	GetUserSettings(ctx context.Context, userID pgtype.UUID) (string, error)
+	// Complexity: O(log N) Time. Requires Index on (token_hash, type) WHERE used_at IS NULL.
 	GetUserToken(ctx context.Context, arg GetUserTokenParams) (GetUserTokenRow, error)
 	GetValidRoles(ctx context.Context, rolenames []string) ([]string, error)
 	GetWebAuthnCredential(ctx context.Context, id []byte) (RacWebauthnCredential, error)
 	InsertUserRoles(ctx context.Context, arg InsertUserRolesParams) error
+	// ============================================================================
+	// Bulk Read Operations (WARNING: O(N) Complexity Risks)
+	// ============================================================================
+	// WARNING: This requires pagination (LIMIT/OFFSET) in V2 to prevent memory exhaustion.
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
 	ListUsersByOrganization(ctx context.Context, organizationID pgtype.UUID) ([]ListUsersByOrganizationRow, error)
 	ListWebAuthnCredentialsByUser(ctx context.Context, userID pgtype.UUID) ([]RacWebauthnCredential, error)
@@ -41,12 +61,16 @@ type Querier interface {
 	RevokeRefreshToken(ctx context.Context, tokenHash string) error
 	TouchUserUpdatedAt(ctx context.Context, id pgtype.UUID) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
+	// Security: Implicitly resets is_email_verified to false to prevent account takeover.
 	UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (UpdateUserEmailRow, error)
 	UpdateUserNames(ctx context.Context, arg UpdateUserNamesParams) (UpdateUserNamesRow, error)
+	// Optimization: Eliminated verbose CASE/WHEN block. NULLIF(TRIM()) safely coalesces empty/whitespace strings to NULL.
 	UpdateUserPhone(ctx context.Context, arg UpdateUserPhoneParams) (UpdateUserPhoneRow, error)
 	UpdateWebAuthnCredentialNickname(ctx context.Context, arg UpdateWebAuthnCredentialNicknameParams) error
+	// Security: Critical for clone detection during passkey login phase.
 	UpdateWebAuthnCredentialSignCount(ctx context.Context, arg UpdateWebAuthnCredentialSignCountParams) error
 	UpsertUserSettings(ctx context.Context, arg UpsertUserSettingsParams) error
+	// Security: Atomic invalidation prevents TOCTOU replay attacks on verification links.
 	UseUserToken(ctx context.Context, arg UseUserTokenParams) error
 }
 

@@ -14,55 +14,39 @@ import (
 	authdb "portal_final_backend/internal/auth/db"
 )
 
-var ErrNotFound = errors.New("not found")
-var ErrInvalidRole = errors.New("invalid role")
-var ErrSuperAdminAlreadyAssigned = errors.New("superadmin already assigned")
+// Exported standard errors
+var (
+	ErrNotFound                  = errors.New("not found")
+	ErrInvalidRole               = errors.New("invalid role")
+	ErrSuperAdminAlreadyAssigned = errors.New("superadmin already assigned")
+)
 
+// Supported token types
 const (
 	TokenTypeEmailVerify   = "EMAIL_VERIFY"
 	TokenTypePasswordReset = "PASSWORD_RESET"
-	listUsersQuery         = `
-		SELECT
-			u.id,
-			u.email,
-			u.first_name,
-			u.last_name,
-			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
-		FROM RAC_users u
-		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
-		LEFT JOIN RAC_roles r ON r.id = ur.role_id
-		GROUP BY u.id
-		ORDER BY u.email
-	`
-	listUsersByOrganizationQuery = `
-		SELECT
-			u.id,
-			u.email,
-			u.first_name,
-			u.last_name,
-			COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
-		FROM RAC_organization_members om
-		JOIN RAC_users u ON u.id = om.user_id
-		LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
-		LEFT JOIN RAC_roles r ON r.id = ur.role_id
-		WHERE om.organization_id = $1
-		GROUP BY u.id
-		ORDER BY u.email
-	`
 )
 
+// Repository implements the AuthRepository interface using PostgreSQL.
 type Repository struct {
 	pool    *pgxpool.Pool
 	queries *authdb.Queries
 }
 
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool, queries: authdb.New(pool)}
+	return &Repository{
+		pool:    pool,
+		queries: authdb.New(pool),
+	}
 }
 
 func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
 	return r.pool.Begin(ctx)
 }
+
+// =============================================================================
+// Domain Models
+// =============================================================================
 
 type User struct {
 	ID                    uuid.UUID
@@ -85,6 +69,7 @@ type UserWithRoles struct {
 	Roles     []string
 }
 
+// authUserFields is an internal DTO to standardize mapping from various sqlc row types.
 type authUserFields struct {
 	ID                    pgtype.UUID
 	Email                 string
@@ -98,24 +83,20 @@ type authUserFields struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+// =============================================================================
+// User Management ($O(\log N)$ assuming standard B-Tree indexing on ID/Email)
+// =============================================================================
+
 func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string) (User, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return User{}, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	// Safe defer: If tx is committed, Rollback is a safe no-op in pgx.
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	queries := r.queries.WithTx(tx)
-	row, err := queries.CreateUser(ctx, authdb.CreateUserParams{Email: email, PasswordHash: passwordHash})
+	user, err := r.CreateUserTx(ctx, tx, email, passwordHash)
 	if err != nil {
-		return User{}, err
-	}
-
-	if err = queries.EnsureUserSettings(ctx, toPgUUID(row.ID.Bytes)); err != nil {
 		return User{}, err
 	}
 
@@ -123,28 +104,17 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string)
 		return User{}, err
 	}
 
-	return userFromAuthRow(authUserFields{
-		ID:                    row.ID,
-		Email:                 row.Email,
-		PasswordHash:          row.PasswordHash,
-		EmailVerified:         row.IsEmailVerified,
-		FirstName:             row.FirstName,
-		LastName:              row.LastName,
-		Phone:                 row.Phone,
-		OnboardingCompletedAt: row.OnboardingCompletedAt,
-		CreatedAt:             row.CreatedAt,
-		UpdatedAt:             row.UpdatedAt,
-	}), nil
+	return user, nil
 }
 
 func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwordHash string) (User, error) {
-	queries := r.queries.WithTx(tx)
-	row, err := queries.CreateUser(ctx, authdb.CreateUserParams{Email: email, PasswordHash: passwordHash})
+	q := r.queries.WithTx(tx)
+	row, err := q.CreateUser(ctx, authdb.CreateUserParams{Email: email, PasswordHash: passwordHash})
 	if err != nil {
 		return User{}, err
 	}
 
-	if err = queries.EnsureUserSettings(ctx, toPgUUID(row.ID.Bytes)); err != nil {
+	if err = q.EnsureUserSettings(ctx, toPgUUID(row.ID.Bytes)); err != nil {
 		return User{}, err
 	}
 
@@ -164,24 +134,26 @@ func (r *Repository) CreateUserTx(ctx context.Context, tx pgx.Tx, email, passwor
 
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (User, error) {
 	row, err := r.queries.GetUserByEmail(ctx, email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, ErrNotFound
-	}
 	if err != nil {
-		return User{}, err
+		return User{}, handlePgxError(err)
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{
+		ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified,
+		FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone,
+		OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (User, error) {
 	row, err := r.queries.GetUserByID(ctx, toPgUUID(userID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, ErrNotFound
-	}
 	if err != nil {
-		return User{}, err
+		return User{}, handlePgxError(err)
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{
+		ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified,
+		FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone,
+		OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) MarkEmailVerified(ctx context.Context, userID uuid.UUID) error {
@@ -197,7 +169,11 @@ func (r *Repository) UpdateUserEmail(ctx context.Context, userID uuid.UUID, emai
 	if err != nil {
 		return User{}, err
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{
+		ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified,
+		FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone,
+		OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firstName, lastName *string) (User, error) {
@@ -205,12 +181,15 @@ func (r *Repository) UpdateUserNames(ctx context.Context, userID uuid.UUID, firs
 	if err != nil {
 		return User{}, err
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
-
+	return userFromAuthRow(authUserFields{
+		ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified,
+		FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone,
+		OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}), nil
 }
 
 func (r *Repository) UpdateUserPhone(ctx context.Context, userID uuid.UUID, phone *string) (User, error) {
-	phoneValue := ""
+	var phoneValue string
 	if phone != nil {
 		phoneValue = *phone
 	}
@@ -219,19 +198,24 @@ func (r *Repository) UpdateUserPhone(ctx context.Context, userID uuid.UUID, phon
 	if err != nil {
 		return User{}, err
 	}
-	return userFromAuthRow(authUserFields{ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified, FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone, OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}), nil
+	return userFromAuthRow(authUserFields{
+		ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified,
+		FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone,
+		OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}), nil
 }
+
+// =============================================================================
+// User Settings
+// =============================================================================
 
 func (r *Repository) EnsureUserSettings(ctx context.Context, userID uuid.UUID) error {
 	return r.queries.EnsureUserSettings(ctx, toPgUUID(userID))
 }
 
 func (r *Repository) GetUserSettings(ctx context.Context, userID uuid.UUID) (string, error) {
-	preferredLanguage, err := r.queries.GetUserSettings(ctx, toPgUUID(userID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	return preferredLanguage, err
+	lang, err := r.queries.GetUserSettings(ctx, toPgUUID(userID))
+	return lang, handlePgxError(err)
 }
 
 func (r *Repository) UpdateUserSettings(ctx context.Context, userID uuid.UUID, preferredLanguage string) error {
@@ -239,28 +223,28 @@ func (r *Repository) UpdateUserSettings(ctx context.Context, userID uuid.UUID, p
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	queries := r.queries.WithTx(tx)
-	if err = queries.UpsertUserSettings(ctx, authdb.UpsertUserSettingsParams{
+	q := r.queries.WithTx(tx)
+	if err = q.UpsertUserSettings(ctx, authdb.UpsertUserSettingsParams{
 		UserID:            toPgUUID(userID),
 		PreferredLanguage: preferredLanguage,
 	}); err != nil {
 		return err
 	}
 
-	if err = queries.TouchUserUpdatedAt(ctx, toPgUUID(userID)); err != nil {
+	if err = q.TouchUserUpdatedAt(ctx, toPgUUID(userID)); err != nil {
 		return err
 	}
 
 	return tx.Commit(ctx)
 }
 
-func (r *Repository) CreateUserToken(ctx context.Context, userID uuid.UUID, tokenHash string, tokenType string, expiresAt time.Time) error {
+// =============================================================================
+// Token Management ($O(\log N)$ lookup speed)
+// =============================================================================
+
+func (r *Repository) CreateUserToken(ctx context.Context, userID uuid.UUID, tokenHash, tokenType string, expiresAt time.Time) error {
 	return r.queries.CreateUserToken(ctx, authdb.CreateUserTokenParams{
 		UserID:    toPgUUID(userID),
 		TokenHash: tokenHash,
@@ -269,18 +253,15 @@ func (r *Repository) CreateUserToken(ctx context.Context, userID uuid.UUID, toke
 	})
 }
 
-func (r *Repository) GetUserToken(ctx context.Context, tokenHash string, tokenType string) (uuid.UUID, time.Time, error) {
+func (r *Repository) GetUserToken(ctx context.Context, tokenHash, tokenType string) (uuid.UUID, time.Time, error) {
 	row, err := r.queries.GetUserToken(ctx, authdb.GetUserTokenParams{TokenHash: tokenHash, Type: tokenType})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.UUID{}, time.Time{}, ErrNotFound
-	}
 	if err != nil {
-		return uuid.UUID{}, time.Time{}, err
+		return uuid.UUID{}, time.Time{}, handlePgxError(err)
 	}
 	return row.UserID.Bytes, row.ExpiresAt.Time, nil
 }
 
-func (r *Repository) UseUserToken(ctx context.Context, tokenHash string, tokenType string) error {
+func (r *Repository) UseUserToken(ctx context.Context, tokenHash, tokenType string) error {
 	return r.queries.UseUserToken(ctx, authdb.UseUserTokenParams{TokenHash: tokenHash, Type: tokenType})
 }
 
@@ -294,11 +275,8 @@ func (r *Repository) CreateRefreshToken(ctx context.Context, userID uuid.UUID, t
 
 func (r *Repository) GetRefreshToken(ctx context.Context, tokenHash string) (uuid.UUID, time.Time, error) {
 	row, err := r.queries.GetRefreshToken(ctx, tokenHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.UUID{}, time.Time{}, ErrNotFound
-	}
 	if err != nil {
-		return uuid.UUID{}, time.Time{}, err
+		return uuid.UUID{}, time.Time{}, handlePgxError(err)
 	}
 	return row.UserID.Bytes, row.ExpiresAt.Time, nil
 }
@@ -311,47 +289,26 @@ func (r *Repository) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUI
 	return r.queries.RevokeAllRefreshTokens(ctx, toPgUUID(userID))
 }
 
+// =============================================================================
+// Role Management (RBAC)
+// =============================================================================
+
 func (r *Repository) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]string, error) {
 	return r.queries.GetUserRoles(ctx, toPgUUID(userID))
 }
 
 func (r *Repository) SetUserRoles(ctx context.Context, userID uuid.UUID, roles []string) error {
-	if len(roles) == 0 {
-		return ErrInvalidRole
-	}
-
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	queries := r.queries.WithTx(tx)
-	validRoles, err := queries.GetValidRoles(ctx, roles)
-	if err != nil {
-		return err
-	}
-	if len(validRoles) != len(uniqueStrings(roles)) {
-		return ErrInvalidRole
-	}
-
-	if err := queries.DeleteUserRoles(ctx, toPgUUID(userID)); err != nil {
+	if err := r.SetUserRolesTx(ctx, tx, userID, roles); err != nil {
 		return err
 	}
 
-	if err := queries.InsertUserRoles(ctx, authdb.InsertUserRolesParams{UserID: toPgUUID(userID), Column2: roles}); err != nil {
-		return mapRoleWriteError(err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, roles []string) error {
@@ -359,20 +316,22 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 		return ErrInvalidRole
 	}
 
-	queries := r.queries.WithTx(tx)
-	validRoles, err := queries.GetValidRoles(ctx, roles)
+	q := r.queries.WithTx(tx)
+	validRoles, err := q.GetValidRoles(ctx, roles)
 	if err != nil {
 		return err
 	}
+
+	// Data sanitization and integrity check
 	if len(validRoles) != len(uniqueStrings(roles)) {
 		return ErrInvalidRole
 	}
 
-	if err := queries.DeleteUserRoles(ctx, toPgUUID(userID)); err != nil {
+	if err := q.DeleteUserRoles(ctx, toPgUUID(userID)); err != nil {
 		return err
 	}
 
-	if err := queries.InsertUserRoles(ctx, authdb.InsertUserRolesParams{UserID: toPgUUID(userID), Column2: roles}); err != nil {
+	if err := q.InsertUserRoles(ctx, authdb.InsertUserRolesParams{UserID: toPgUUID(userID), Column2: roles}); err != nil {
 		return mapRoleWriteError(err)
 	}
 
@@ -380,6 +339,7 @@ func (r *Repository) SetUserRolesTx(ctx context.Context, tx pgx.Tx, userID uuid.
 }
 
 func (r *Repository) HasAnyUserWithRole(ctx context.Context, role string) (bool, error) {
+	// Uses raw query due to `EXISTS` check optimization ($O(1)$ short-circuit if index on name exists)
 	const query = `
 		SELECT EXISTS (
 			SELECT 1
@@ -395,14 +355,11 @@ func (r *Repository) HasAnyUserWithRole(ctx context.Context, role string) (bool,
 	return exists, nil
 }
 
-func mapRoleWriteError(err error) error {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "ux_single_superadmin_user" {
-		return ErrSuperAdminAlreadyAssigned
-	}
-	return err
-}
+// =============================================================================
+// Bulk Operations & Onboarding
+// =============================================================================
 
+// ListUsers performs an $O(N)$ sequential scan across the users table.
 func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 	rows, err := r.queries.ListUsers(ctx)
 	if err != nil {
@@ -413,7 +370,6 @@ func (r *Repository) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 	for _, row := range rows {
 		users = append(users, userWithRolesFromAuthRow(row.ID, row.Email, row.FirstName, row.LastName, row.Roles))
 	}
-
 	return users, nil
 }
 
@@ -427,7 +383,6 @@ func (r *Repository) ListUsersByOrganization(ctx context.Context, organizationID
 	for _, row := range rows {
 		users = append(users, userWithRolesFromAuthRow(row.ID, row.Email, row.FirstName, row.LastName, row.Roles))
 	}
-
 	return users, nil
 }
 
@@ -435,77 +390,8 @@ func (r *Repository) MarkOnboardingComplete(ctx context.Context, userID uuid.UUI
 	return r.queries.MarkOnboardingComplete(ctx, toPgUUID(userID))
 }
 
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func toPgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
-func toPgText(value *string) pgtype.Text {
-	if value == nil {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: *value, Valid: true}
-}
-
-func toPgTimestamp(value time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: value, Valid: true}
-}
-
-func optionalString(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	text := value.String
-	return &text
-}
-
-func optionalTime(value pgtype.Timestamptz) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	timestamp := value.Time
-	return &timestamp
-}
-
-func userFromAuthRow(fields authUserFields) User {
-	return User{
-		ID:                    fields.ID.Bytes,
-		Email:                 fields.Email,
-		PasswordHash:          fields.PasswordHash,
-		EmailVerified:         fields.EmailVerified,
-		FirstName:             optionalString(fields.FirstName),
-		LastName:              optionalString(fields.LastName),
-		Phone:                 optionalString(fields.Phone),
-		OnboardingCompletedAt: optionalTime(fields.OnboardingCompletedAt),
-		CreatedAt:             fields.CreatedAt.Time,
-		UpdatedAt:             fields.UpdatedAt.Time,
-	}
-}
-
-func userWithRolesFromAuthRow(id pgtype.UUID, email string, firstName, lastName pgtype.Text, roles []string) UserWithRoles {
-	return UserWithRoles{
-		ID:        id.Bytes,
-		Email:     email,
-		FirstName: optionalString(firstName),
-		LastName:  optionalString(lastName),
-		Roles:     roles,
-	}
-}
-
 // =============================================================================
-// WebAuthn Credential Repository Methods
+// WebAuthn Credential Methods
 // =============================================================================
 
 type WebAuthnCredential struct {
@@ -575,28 +461,99 @@ func (r *Repository) DeleteWebAuthnCredential(ctx context.Context, credID []byte
 
 func (r *Repository) GetUserByWebAuthnCredentialID(ctx context.Context, credID []byte) (User, error) {
 	row, err := r.queries.GetUserByWebAuthnCredentialID(ctx, credID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return User{}, ErrNotFound
-	}
 	if err != nil {
-		return User{}, err
+		return User{}, handlePgxError(err)
 	}
 	return userFromAuthRow(authUserFields{
-		ID:                    row.ID,
-		Email:                 row.Email,
-		PasswordHash:          row.PasswordHash,
-		EmailVerified:         row.IsEmailVerified,
-		FirstName:             row.FirstName,
-		LastName:              row.LastName,
-		Phone:                 row.Phone,
-		OnboardingCompletedAt: row.OnboardingCompletedAt,
-		CreatedAt:             row.CreatedAt,
-		UpdatedAt:             row.UpdatedAt,
+		ID: row.ID, Email: row.Email, PasswordHash: row.PasswordHash, EmailVerified: row.IsEmailVerified,
+		FirstName: row.FirstName, LastName: row.LastName, Phone: row.Phone,
+		OnboardingCompletedAt: row.OnboardingCompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}), nil
 }
 
+// =============================================================================
+// Internal Helpers & Mappers
+// =============================================================================
+
+// handlePgxError centrally manages pgx specific errors mapping to domain errors
+func handlePgxError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
+func mapRoleWriteError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "ux_single_superadmin_user" {
+		return ErrSuperAdminAlreadyAssigned
+	}
+	return err
+}
+
+// uniqueStrings operates in $O(N)$ Time and $O(N)$ Space
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func toPgUUID(id uuid.UUID) pgtype.UUID            { return pgtype.UUID{Bytes: id, Valid: true} }
+func toPgTimestamp(v time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: v, Valid: true} }
+func optionalString(v pgtype.Text) *string {
+	if !v.Valid {
+		return nil
+	}
+	return &v.String
+}
+func optionalTime(v pgtype.Timestamptz) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	return &v.Time
+}
+
+func toPgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func userFromAuthRow(fields authUserFields) User {
+	return User{
+		ID:                    fields.ID.Bytes,
+		Email:                 fields.Email,
+		PasswordHash:          fields.PasswordHash,
+		EmailVerified:         fields.EmailVerified,
+		FirstName:             optionalString(fields.FirstName),
+		LastName:              optionalString(fields.LastName),
+		Phone:                 optionalString(fields.Phone),
+		OnboardingCompletedAt: optionalTime(fields.OnboardingCompletedAt),
+		CreatedAt:             fields.CreatedAt.Time,
+		UpdatedAt:             fields.UpdatedAt.Time,
+	}
+}
+
+func userWithRolesFromAuthRow(id pgtype.UUID, email string, firstName, lastName pgtype.Text, roles []string) UserWithRoles {
+	return UserWithRoles{
+		ID:        id.Bytes,
+		Email:     email,
+		FirstName: optionalString(firstName),
+		LastName:  optionalString(lastName),
+		Roles:     roles,
+	}
+}
+
 func webauthnCredFromRow(row authdb.RacWebauthnCredential) WebAuthnCredential {
-	cred := WebAuthnCredential{
+	return WebAuthnCredential{
 		ID:              row.ID,
 		UserID:          row.UserID.Bytes,
 		PublicKey:       row.PublicKey,
@@ -604,14 +561,10 @@ func webauthnCredFromRow(row authdb.RacWebauthnCredential) WebAuthnCredential {
 		Transport:       row.Transport,
 		FlagsJSON:       row.FlagsJson,
 		AAGUID:          row.Aaguid,
-		SignCount:        uint32(row.SignCount),
+		SignCount:       uint32(row.SignCount),
 		CloneWarning:    row.CloneWarning,
 		Nickname:        row.Nickname,
 		CreatedAt:       row.CreatedAt.Time,
+		LastUsedAt:      optionalTime(row.LastUsedAt),
 	}
-	if row.LastUsedAt.Valid {
-		t := row.LastUsedAt.Time
-		cred.LastUsedAt = &t
-	}
-	return cred
 }

@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 
 	"portal_final_backend/internal/auth/transport"
@@ -11,6 +10,31 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func (h *Handler) bind(c *gin.Context, req any) bool {
+	if err := c.ShouldBindJSON(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return false
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return false
+	}
+	return true
+}
+
+func getCredID(c *gin.Context) []byte {
+	credID, err := base64.URLEncoding.DecodeString(c.Param("credentialId"))
+	if err != nil || len(credID) == 0 {
+		httpkit.Error(c, http.StatusBadRequest, "invalid credential id", nil)
+		return nil
+	}
+	return credID
+}
 
 // ---------------------------------------------------------------------------
 // Registration (protected – user adding a passkey)
@@ -37,12 +61,7 @@ func (h *Handler) FinishPasskeyRegistration(c *gin.Context) {
 	}
 
 	var req transport.FinishPasskeyRegistrationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req) {
 		return
 	}
 
@@ -52,8 +71,7 @@ func (h *Handler) FinishPasskeyRegistration(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.FinishPasskeyRegistration(c.Request.Context(), id.UserID(), req.Nickname, credJSON); err != nil {
-		httpkit.HandleError(c, err)
+	if httpkit.HandleError(c, h.svc.FinishPasskeyRegistration(c.Request.Context(), id.UserID(), req.Nickname, credJSON)) {
 		return
 	}
 
@@ -74,28 +92,25 @@ func (h *Handler) BeginPasskeyLogin(c *gin.Context) {
 }
 
 func (h *Handler) FinishPasskeyLogin(c *gin.Context) {
-	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<16))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
+	// Safely and efficiently limit body size while using native JSON binding
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<16)
 
-	var envelope struct {
+	var req struct {
 		Challenge  string          `json:"challenge"`
 		Credential json.RawMessage `json:"credential"`
 	}
-	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Challenge == "" || len(envelope.Credential) == 0 {
+	if err := c.ShouldBindJSON(&req); err != nil || req.Challenge == "" || len(req.Credential) == 0 {
 		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
 		return
 	}
 
-	accessToken, refreshToken, err := h.svc.FinishPasskeyLogin(c.Request.Context(), envelope.Challenge, envelope.Credential)
+	access, refresh, err := h.svc.FinishPasskeyLogin(c.Request.Context(), req.Challenge, req.Credential)
 	if httpkit.HandleError(c, err) {
 		return
 	}
 
-	h.setRefreshCookie(c, refreshToken)
-	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken, RefreshToken: refreshToken})
+	h.setRefreshCookie(c, refresh)
+	httpkit.OK(c, transport.AuthResponse{AccessToken: access, RefreshToken: refresh})
 }
 
 // ---------------------------------------------------------------------------
@@ -132,19 +147,13 @@ func (h *Handler) RenamePasskey(c *gin.Context) {
 		return
 	}
 
-	credID, err := base64.URLEncoding.DecodeString(c.Param("credentialId"))
-	if err != nil || len(credID) == 0 {
-		httpkit.Error(c, http.StatusBadRequest, "invalid credential id", nil)
+	credID := getCredID(c)
+	if credID == nil {
 		return
 	}
 
 	var req transport.RenamePasskeyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	if !h.bind(c, &req) {
 		return
 	}
 
@@ -161,9 +170,8 @@ func (h *Handler) DeletePasskey(c *gin.Context) {
 		return
 	}
 
-	credID, err := base64.URLEncoding.DecodeString(c.Param("credentialId"))
-	if err != nil || len(credID) == 0 {
-		httpkit.Error(c, http.StatusBadRequest, "invalid credential id", nil)
+	credID := getCredID(c)
+	if credID == nil {
 		return
 	}
 

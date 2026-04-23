@@ -18,12 +18,11 @@ import (
 	"portal_final_backend/platform/logger"
 	"portal_final_backend/platform/phone"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
-
-	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const (
@@ -70,6 +69,10 @@ func (s *Service) SetAccessTokenBlocklistRedis(client *redis.Client) {
 	s.redis = client
 }
 
+// =============================================================================
+// Authentication & Registration
+// =============================================================================
+
 func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organizationName *string, inviteToken *string) error {
 	hash, err := password.Hash(plainPassword)
 	if err != nil {
@@ -83,12 +86,8 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	// Safe defer: Rollback is a no-op if tx.Commit() succeeds. Avoids boolean flags.
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	user, err := s.repo.CreateUserTx(ctx, tx, email, hash)
 	if err != nil {
@@ -110,71 +109,14 @@ func (s *Service) SignUp(ctx context.Context, email, plainPassword string, organ
 			return err
 		}
 	}
-	// Note: Organization is NOT created here for non-invite RAC_users.
-	// It will be created during onboarding when the user provides an organization name.
 
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
-	committed = true
 
 	s.log.AuthEvent("signup", email, true, "")
 
-	verifyToken, err := token.GenerateRandomToken(32)
-	if err != nil {
-		return err
-	}
-
-	verifyHash := token.HashSHA256(verifyToken)
-	expiresAt := time.Now().Add(s.cfg.GetVerifyTokenTTL())
-	if err := s.repo.CreateUserToken(ctx, user.ID, verifyHash, repository.TokenTypeEmailVerify, expiresAt); err != nil {
-		return err
-	}
-
-	// Publish event - notification module handles email sending
-	s.eventBus.Publish(ctx, events.UserSignedUp{
-		BaseEvent:   events.NewBaseEvent(),
-		UserID:      user.ID,
-		Email:       user.Email,
-		VerifyToken: verifyToken,
-	})
-
-	return nil
-}
-
-func normalizeInviteToken(inviteToken *string) (string, bool) {
-	if inviteToken == nil {
-		return "", false
-	}
-	trimmed := strings.TrimSpace(*inviteToken)
-	return trimmed, trimmed != ""
-}
-
-func rolesForSignup(usingInvite bool, email, bootstrapSuperAdminEmail string) []string {
-	if usingInvite {
-		return []string{defaultUserRole}
-	}
-	if strings.TrimSpace(bootstrapSuperAdminEmail) != "" && strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(bootstrapSuperAdminEmail)) {
-		return []string{defaultAdminRole, superAdminRole}
-	}
-	return []string{defaultAdminRole}
-}
-
-func (s *Service) applyInvite(ctx context.Context, tx pgx.Tx, tokenValue, email string, userID uuid.UUID) error {
-	invite, err := s.identity.ResolveInvite(ctx, tokenValue)
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(invite.Email, email) {
-		return apperr.Forbidden("invite does not match email")
-	}
-	if err := s.identity.AddMember(ctx, tx, invite.OrganizationID, userID); err != nil {
-		return err
-	}
-	if err := s.identity.UseInvite(ctx, tx, invite.ID, userID); err != nil {
-		return err
-	}
-	return nil
+	return s.enqueueEmailVerification(ctx, user.ID, user.Email)
 }
 
 func (s *Service) SignIn(ctx context.Context, email, plainPassword string) (string, string, error) {
@@ -198,39 +140,6 @@ func (s *Service) SignIn(ctx context.Context, email, plainPassword string) (stri
 	return s.issueTokens(ctx, user.ID, user.Email)
 }
 
-func (s *Service) ensureBootstrapSuperAdmin(ctx context.Context, userID uuid.UUID, email string) error {
-	bootstrapEmail := strings.TrimSpace(s.cfg.GetBootstrapSuperAdminEmail())
-	if bootstrapEmail == "" || !strings.EqualFold(strings.TrimSpace(email), bootstrapEmail) {
-		return nil
-	}
-
-	currentRoles, err := s.repo.GetUserRoles(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if containsString(currentRoles, superAdminRole) {
-		return nil
-	}
-
-	hasSuperAdmin, err := s.repo.HasAnyUserWithRole(ctx, superAdminRole)
-	if err != nil {
-		return err
-	}
-	if hasSuperAdmin {
-		return nil
-	}
-
-	updatedRoles := uniqueRoleList(append(currentRoles, defaultAdminRole, superAdminRole))
-	if err := s.repo.SetUserRoles(ctx, userID, updatedRoles); err != nil {
-		if errors.Is(err, repository.ErrSuperAdminAlreadyAssigned) {
-			return nil
-		}
-		return err
-	}
-
-	return nil
-}
-
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, string, error) {
 	hash := token.HashSHA256(refreshToken)
 	userID, expiresAt, err := s.repo.GetRefreshToken(ctx, hash)
@@ -238,12 +147,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, str
 		return "", "", apperr.Unauthorized(tokenInvalidMessage)
 	}
 
+	// Always revoke the used token (consumed or expired) to prevent reuse.
+	_ = s.repo.RevokeRefreshToken(ctx, hash)
+
 	if time.Now().After(expiresAt) {
-		_ = s.repo.RevokeRefreshToken(ctx, hash)
 		return "", "", apperr.Unauthorized(tokenExpiredMessage)
 	}
-
-	_ = s.repo.RevokeRefreshToken(ctx, hash)
 
 	user, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
@@ -269,10 +178,14 @@ func (s *Service) SignOut(ctx context.Context, refreshToken string, accessToken 
 	return nil
 }
 
+// =============================================================================
+// Password & Email Management
+// =============================================================================
+
 func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return nil
+		return nil // $O(1)$ Time mitigation: silently succeed to prevent user enumeration attacks
 	}
 
 	resetToken, err := token.GenerateRandomToken(32)
@@ -286,7 +199,6 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 		return err
 	}
 
-	// Publish event - notification module handles email sending
 	s.eventBus.Publish(ctx, events.PasswordResetRequested{
 		BaseEvent:  events.NewBaseEvent(),
 		UserID:     user.ID,
@@ -323,6 +235,29 @@ func (s *Service) ResetPassword(ctx context.Context, rawToken, newPassword strin
 	return nil
 }
 
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	if err := password.Compare(user.PasswordHash, currentPassword); err != nil {
+		return apperr.Validation("current password is incorrect")
+	}
+
+	passwordHash, err := password.Hash(newPassword)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.UpdatePassword(ctx, userID, passwordHash); err != nil {
+		return err
+	}
+
+	_ = s.repo.RevokeAllRefreshTokens(ctx, userID)
+	return nil
+}
+
 func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 	hash := token.HashSHA256(rawToken)
 	userID, expiresAt, err := s.repo.GetUserToken(ctx, hash, repository.TokenTypeEmailVerify)
@@ -342,137 +277,52 @@ func (s *Service) VerifyEmail(ctx context.Context, rawToken string) error {
 	return nil
 }
 
-func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID, email string) (string, string, error) {
-	roles, err := s.repo.GetUserRoles(ctx, userID)
+// =============================================================================
+// Profile & User Queries
+// =============================================================================
+
+func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) {
+	user, roles, preferredLang, err := s.loadProfileContext(ctx, userID)
 	if err != nil {
-		return "", "", err
+		if errors.Is(err, repository.ErrNotFound) {
+			return Profile{}, apperr.Unauthorized(invalidCredentialsMessage)
+		}
+		return Profile{}, err
 	}
 
-	var tenantID *uuid.UUID
-	orgID, err := s.identity.GetUserOrganizationID(ctx, userID)
+	_, orgErr := s.identity.GetUserOrganizationID(ctx, userID)
+
+	return s.buildProfile(user, roles, preferredLang, orgErr == nil), nil
+}
+
+func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.UpdateProfileRequest) (Profile, error) {
+	current, roles, preferredLang, err := s.loadProfileContext(ctx, userID)
 	if err != nil {
-		if errors.Is(err, identityrepo.ErrNotFound) {
-			tenantID = nil
-		} else {
-			return "", "", err
-		}
-	} else {
-		tenantID = &orgID
+		return Profile{}, err
 	}
 
-	accessToken, err := s.signJWT(userID, email, tenantID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
+	updatedUser, err := s.applyNameUpdates(ctx, userID, current, req)
 	if err != nil {
-		return "", "", err
+		return Profile{}, err
 	}
 
-	refreshToken, err := token.GenerateRandomToken(48)
+	updatedUser, err = s.applyPhoneUpdate(ctx, userID, current.Phone, updatedUser, req)
 	if err != nil {
-		return "", "", err
+		return Profile{}, err
 	}
 
-	hash := token.HashSHA256(refreshToken)
-	expiresAt := time.Now().Add(s.cfg.GetRefreshTokenTTL())
-	if err := s.repo.CreateRefreshToken(ctx, userID, hash, expiresAt); err != nil {
-		return "", "", err
+	preferredLang, err = s.applyPreferredLanguage(ctx, userID, preferredLang, req)
+	if err != nil {
+		return Profile{}, err
 	}
 
-	return accessToken, refreshToken, nil
-}
-
-func (s *Service) signJWT(userID uuid.UUID, email string, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
-	claims := jwt.MapClaims{
-		"sub":   userID.String(),
-		"email": email,
-		"type":  tokenType,
-		"roles": roles,
-		"jti":   uuid.NewString(),
-		"exp":   time.Now().Add(ttl).Unix(),
-		"iat":   time.Now().Unix(),
-	}
-	if tenantID != nil {
-		claims["tenant_id"] = tenantID.String()
+	updatedUser, err = s.applyEmailUpdate(ctx, userID, current.Email, updatedUser, req)
+	if err != nil {
+		return Profile{}, err
 	}
 
-	tokenObj := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return tokenObj.SignedString([]byte(secret))
-}
-
-func (s *Service) blocklistAccessToken(ctx context.Context, accessToken string) error {
-	if s.redis == nil || strings.TrimSpace(accessToken) == "" {
-		return nil
-	}
-
-	claims := jwt.MapClaims{}
-	if _, _, err := jwt.NewParser(jwt.WithoutClaimsValidation()).ParseUnverified(accessToken, claims); err != nil {
-		return err
-	}
-
-	jti, _ := claims["jti"].(string)
-	jti = strings.TrimSpace(jti)
-	if jti == "" {
-		return nil
-	}
-
-	expValue, ok := claims["exp"]
-	if !ok {
-		return nil
-	}
-
-	expFloat, ok := expValue.(float64)
-	if !ok {
-		return nil
-	}
-
-	ttl := time.Until(time.Unix(int64(expFloat), 0))
-	if ttl <= 0 {
-		return nil
-	}
-
-	return s.redis.Set(ctx, tokenBlocklistKey(jti), "1", ttl).Err()
-}
-
-func tokenBlocklistKey(jti string) string {
-	return "auth:blocklist:jti:" + strings.TrimSpace(jti)
-}
-
-func (s *Service) SetUserRoles(ctx context.Context, actorID uuid.UUID, actorRoles []string, userID uuid.UUID, roles []string) error {
-	_ = actorID
-	if containsString(roles, superAdminRole) && !containsString(actorRoles, superAdminRole) {
-		return apperr.Forbidden("only superadmin can assign the superadmin role")
-	}
-
-	if err := s.repo.SetUserRoles(ctx, userID, roles); err != nil {
-		if errors.Is(err, repository.ErrSuperAdminAlreadyAssigned) {
-			return apperr.Conflict("only one superadmin user is allowed")
-		}
-		return err
-	}
-	return nil
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
-}
-
-func uniqueRoleList(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
+	_, orgErr := s.identity.GetUserOrganizationID(ctx, userID)
+	return s.buildProfile(updatedUser, roles, preferredLang, orgErr == nil), nil
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error) {
@@ -480,19 +330,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]transport.UserSummary, error
 	if err != nil {
 		return nil, err
 	}
-
-	result := make([]transport.UserSummary, 0, len(users))
-	for _, user := range users {
-		result = append(result, transport.UserSummary{
-			ID:        user.ID.String(),
-			Email:     user.Email,
-			FirstName: user.FirstName,
-			LastName:  user.LastName,
-			Roles:     user.Roles,
-		})
-	}
-
-	return result, nil
+	return mapUsersToSummary(users), nil
 }
 
 func (s *Service) ListUsersForRequester(ctx context.Context, requesterID uuid.UUID) ([]transport.UserSummary, error) {
@@ -523,91 +361,230 @@ func (s *Service) ListUsersForRequester(ctx context.Context, requesterID uuid.UU
 	if err != nil {
 		return nil, err
 	}
-
-	result := make([]transport.UserSummary, 0, len(users))
-	for _, user := range users {
-		result = append(result, transport.UserSummary{
-			ID:        user.ID.String(),
-			Email:     user.Email,
-			FirstName: user.FirstName,
-			LastName:  user.LastName,
-			Roles:     user.Roles,
-		})
-	}
-
-	return result, nil
+	return mapUsersToSummary(users), nil
 }
 
-func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (Profile, error) {
-	user, err := s.repo.GetUserByID(ctx, userID)
+// =============================================================================
+// Onboarding & Invites
+// =============================================================================
+
+func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (transport.ResolveInviteResponse, error) {
+	invite, err := s.identity.ResolveInvite(ctx, rawToken)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return Profile{}, apperr.Unauthorized(invalidCredentialsMessage)
-		}
-		return Profile{}, err
+		return transport.ResolveInviteResponse{}, err
 	}
 
-	roles, err := s.repo.GetUserRoles(ctx, userID)
+	org, err := s.identity.GetOrganization(ctx, invite.OrganizationID)
 	if err != nil {
-		return Profile{}, err
+		return transport.ResolveInviteResponse{}, err
 	}
 
-	if err := s.repo.EnsureUserSettings(ctx, userID); err != nil {
-		return Profile{}, err
-	}
-
-	preferredLang, err := s.repo.GetUserSettings(ctx, userID)
-	if err != nil {
-		return Profile{}, err
-	}
-
-	// Check if user belongs to an organization
-	_, orgErr := s.identity.GetUserOrganizationID(ctx, userID)
-	hasOrganization := orgErr == nil
-
-	return Profile{
-		ID:                  user.ID,
-		Email:               user.Email,
-		EmailVerified:       user.EmailVerified,
-		FirstName:           user.FirstName,
-		LastName:            user.LastName,
-		Phone:               user.Phone,
-		PreferredLang:       preferredLang,
-		Roles:               roles,
-		HasOrganization:     hasOrganization,
-		OnboardingCompleted: user.OnboardingCompletedAt != nil,
-		CreatedAt:           user.CreatedAt,
-		UpdatedAt:           user.UpdatedAt,
+	return transport.ResolveInviteResponse{
+		Email:            invite.Email,
+		OrganizationName: org.Name,
 	}, nil
 }
 
-func (s *Service) UpdateMe(ctx context.Context, userID uuid.UUID, req transport.UpdateProfileRequest) (Profile, error) {
-	current, roles, preferredLang, err := s.loadProfileContext(ctx, userID)
-	if err != nil {
-		return Profile{}, err
+func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, req transport.CompleteOnboardingRequest) error {
+	if _, err := s.repo.UpdateUserNames(ctx, userID, &req.FirstName, &req.LastName); err != nil {
+		return err
 	}
 
-	updatedUser, err := s.applyNameUpdates(ctx, userID, current, req)
-	if err != nil {
-		return Profile{}, err
+	if _, err := s.identity.GetUserOrganizationID(ctx, userID); err == nil {
+		return nil // Organization already exists
 	}
 
-	updatedUser, err = s.applyPhoneUpdate(ctx, userID, current.Phone, updatedUser, req)
-	if err != nil {
-		return Profile{}, err
+	return s.createOrganizationFromOnboarding(ctx, userID, req)
+}
+
+func (s *Service) MarkOnboardingComplete(ctx context.Context, userID uuid.UUID) error {
+	return s.repo.MarkOnboardingComplete(ctx, userID)
+}
+
+// =============================================================================
+// RBAC
+// =============================================================================
+
+func (s *Service) SetUserRoles(ctx context.Context, actorID uuid.UUID, actorRoles []string, userID uuid.UUID, roles []string) error {
+	if containsString(roles, superAdminRole) && !containsString(actorRoles, superAdminRole) {
+		return apperr.Forbidden("only superadmin can assign the superadmin role")
 	}
 
-	preferredLang, err = s.applyPreferredLanguage(ctx, userID, preferredLang, req)
-	if err != nil {
-		return Profile{}, err
+	if err := s.repo.SetUserRoles(ctx, userID, roles); err != nil {
+		if errors.Is(err, repository.ErrSuperAdminAlreadyAssigned) {
+			return apperr.Conflict("only one superadmin user is allowed")
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Service) ensureBootstrapSuperAdmin(ctx context.Context, userID uuid.UUID, email string) error {
+	bootstrapEmail := strings.TrimSpace(s.cfg.GetBootstrapSuperAdminEmail())
+	// $O(1)$ fast-path exit for 99.9% of user logins
+	if bootstrapEmail == "" || !strings.EqualFold(strings.TrimSpace(email), bootstrapEmail) {
+		return nil
 	}
 
-	updatedUser, err = s.applyEmailUpdate(ctx, userID, current.Email, updatedUser, req)
+	currentRoles, err := s.repo.GetUserRoles(ctx, userID)
 	if err != nil {
-		return Profile{}, err
+		return err
+	}
+	if containsString(currentRoles, superAdminRole) {
+		return nil
 	}
 
-	return s.buildProfile(updatedUser, roles, preferredLang), nil
+	hasSuperAdmin, err := s.repo.HasAnyUserWithRole(ctx, superAdminRole)
+	if err != nil {
+		return err
+	}
+	if hasSuperAdmin {
+		return nil
+	}
+
+	updatedRoles := uniqueRoleList(append(currentRoles, defaultAdminRole, superAdminRole))
+	if err := s.repo.SetUserRoles(ctx, userID, updatedRoles); err != nil {
+		if errors.Is(err, repository.ErrSuperAdminAlreadyAssigned) {
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}
+
+// =============================================================================
+// Internal Helpers
+// =============================================================================
+
+func (s *Service) blocklistAccessToken(ctx context.Context, accessToken string) error {
+	// Defensive programming: prevent parsing DoS attacks via massively bloated headers
+	if s.redis == nil || len(accessToken) == 0 || len(accessToken) > 8192 {
+		return nil
+	}
+
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser(jwt.WithoutClaimsValidation()).ParseUnverified(accessToken, claims); err != nil {
+		return err
+	}
+
+	jti, _ := claims["jti"].(string)
+	if jti = strings.TrimSpace(jti); jti == "" {
+		return nil
+	}
+
+	expFloat, ok := claims["exp"].(float64)
+	if !ok {
+		return nil
+	}
+
+	ttl := time.Until(time.Unix(int64(expFloat), 0))
+	if ttl <= 0 {
+		return nil
+	}
+
+	return s.redis.Set(ctx, "auth:blocklist:jti:"+jti, "1", ttl).Err()
+}
+
+func (s *Service) issueTokens(ctx context.Context, userID uuid.UUID, email string) (string, string, error) {
+	roles, err := s.repo.GetUserRoles(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+
+	var tenantID *uuid.UUID
+	if orgID, err := s.identity.GetUserOrganizationID(ctx, userID); err == nil {
+		tenantID = &orgID
+	} else if !errors.Is(err, identityrepo.ErrNotFound) {
+		return "", "", err
+	}
+
+	accessToken, err := s.signJWT(userID, email, tenantID, roles, s.cfg.GetAccessTokenTTL(), accessTokenType, s.cfg.GetJWTAccessSecret())
+	if err != nil {
+		return "", "", err
+	}
+
+	refreshToken, err := token.GenerateRandomToken(48)
+	if err != nil {
+		return "", "", err
+	}
+
+	hash := token.HashSHA256(refreshToken)
+	if err := s.repo.CreateRefreshToken(ctx, userID, hash, time.Now().Add(s.cfg.GetRefreshTokenTTL())); err != nil {
+		return "", "", err
+	}
+
+	return accessToken, refreshToken, nil
+}
+
+func (s *Service) signJWT(userID uuid.UUID, email string, tenantID *uuid.UUID, roles []string, ttl time.Duration, tokenType, secret string) (string, error) {
+	claims := jwt.MapClaims{
+		"sub":   userID.String(),
+		"email": email,
+		"type":  tokenType,
+		"roles": roles,
+		"jti":   uuid.NewString(),
+		"exp":   time.Now().Add(ttl).Unix(),
+		"iat":   time.Now().Unix(),
+	}
+	if tenantID != nil {
+		claims["tenant_id"] = tenantID.String()
+	}
+
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+}
+
+func normalizeInviteToken(inviteToken *string) (string, bool) {
+	if inviteToken == nil {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(*inviteToken)
+	return trimmed, trimmed != ""
+}
+
+func rolesForSignup(usingInvite bool, email, bootstrapSuperAdminEmail string) []string {
+	if usingInvite {
+		return []string{defaultUserRole}
+	}
+	if strings.TrimSpace(bootstrapSuperAdminEmail) != "" && strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(bootstrapSuperAdminEmail)) {
+		return []string{defaultAdminRole, superAdminRole}
+	}
+	return []string{defaultAdminRole}
+}
+
+func (s *Service) applyInvite(ctx context.Context, tx pgx.Tx, tokenValue, email string, userID uuid.UUID) error {
+	invite, err := s.identity.ResolveInvite(ctx, tokenValue)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(invite.Email, email) {
+		return apperr.Forbidden("invite does not match email")
+	}
+	if err := s.identity.AddMember(ctx, tx, invite.OrganizationID, userID); err != nil {
+		return err
+	}
+	return s.identity.UseInvite(ctx, tx, invite.ID, userID)
+}
+
+func (s *Service) enqueueEmailVerification(ctx context.Context, userID uuid.UUID, email string) error {
+	verifyToken, err := token.GenerateRandomToken(32)
+	if err != nil {
+		return err
+	}
+
+	verifyHash := token.HashSHA256(verifyToken)
+	if err := s.repo.CreateUserToken(ctx, userID, verifyHash, repository.TokenTypeEmailVerify, time.Now().Add(s.cfg.GetVerifyTokenTTL())); err != nil {
+		return err
+	}
+
+	s.eventBus.Publish(ctx, events.EmailVerificationRequested{
+		BaseEvent:   events.NewBaseEvent(),
+		UserID:      userID,
+		Email:       email,
+		VerifyToken: verifyToken,
+	})
+
+	return nil
 }
 
 func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (repository.User, []string, string, error) {
@@ -626,18 +603,30 @@ func (s *Service) loadProfileContext(ctx context.Context, userID uuid.UUID) (rep
 	}
 
 	preferredLang, err := s.repo.GetUserSettings(ctx, userID)
-	if err != nil {
-		return repository.User{}, nil, "", err
-	}
+	return user, roles, preferredLang, err
+}
 
-	return user, roles, preferredLang, nil
+func (s *Service) buildProfile(user repository.User, roles []string, preferredLang string, hasOrg bool) Profile {
+	return Profile{
+		ID:                  user.ID,
+		Email:               user.Email,
+		EmailVerified:       user.EmailVerified,
+		FirstName:           user.FirstName,
+		LastName:            user.LastName,
+		Phone:               user.Phone,
+		PreferredLang:       preferredLang,
+		Roles:               roles,
+		HasOrganization:     hasOrg,
+		OnboardingCompleted: user.OnboardingCompletedAt != nil,
+		CreatedAt:           user.CreatedAt,
+		UpdatedAt:           user.UpdatedAt,
+	}
 }
 
 func (s *Service) applyNameUpdates(ctx context.Context, userID uuid.UUID, current repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
 	if req.FirstName == nil && req.LastName == nil {
 		return current, nil
 	}
-
 	return s.repo.UpdateUserNames(ctx, userID, req.FirstName, req.LastName)
 }
 
@@ -645,13 +634,11 @@ func (s *Service) applyPreferredLanguage(ctx context.Context, userID uuid.UUID, 
 	if req.PreferredLanguage == nil {
 		return currentLang, nil
 	}
-
-	preferredLang := strings.TrimSpace(*req.PreferredLanguage)
-	if err := s.repo.UpdateUserSettings(ctx, userID, preferredLang); err != nil {
+	lang := strings.TrimSpace(*req.PreferredLanguage)
+	if err := s.repo.UpdateUserSettings(ctx, userID, lang); err != nil {
 		return currentLang, err
 	}
-
-	return preferredLang, nil
+	return lang, nil
 }
 
 func (s *Service) applyPhoneUpdate(ctx context.Context, userID uuid.UUID, currentPhone *string, updatedUser repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
@@ -660,21 +647,21 @@ func (s *Service) applyPhoneUpdate(ctx context.Context, userID uuid.UUID, curren
 	}
 
 	normalizedPhone := strings.TrimSpace(phone.NormalizeE164(*req.Phone))
-	if normalizedPhone == strings.TrimSpace(ptrString(currentPhone)) {
+	current := ""
+	if currentPhone != nil {
+		current = strings.TrimSpace(*currentPhone)
+	}
+
+	if normalizedPhone == current {
 		return updatedUser, nil
 	}
 
-	phoneValue := &normalizedPhone
-	if normalizedPhone == "" {
-		phoneValue = nil
+	var phoneValue *string
+	if normalizedPhone != "" {
+		phoneValue = &normalizedPhone
 	}
 
-	updated, err := s.repo.UpdateUserPhone(ctx, userID, phoneValue)
-	if err != nil {
-		return repository.User{}, err
-	}
-
-	return updated, nil
+	return s.repo.UpdateUserPhone(ctx, userID, phoneValue)
 }
 
 func (s *Service) applyEmailUpdate(ctx context.Context, userID uuid.UUID, currentEmail string, updatedUser repository.User, req transport.UpdateProfileRequest) (repository.User, error) {
@@ -699,111 +686,6 @@ func (s *Service) applyEmailUpdate(ctx context.Context, userID uuid.UUID, curren
 	}
 
 	return updated, nil
-}
-
-func (s *Service) enqueueEmailVerification(ctx context.Context, userID uuid.UUID, email string) error {
-	verifyToken, err := token.GenerateRandomToken(32)
-	if err != nil {
-		return err
-	}
-
-	verifyHash := token.HashSHA256(verifyToken)
-	expiresAt := time.Now().Add(s.cfg.GetVerifyTokenTTL())
-	if err := s.repo.CreateUserToken(ctx, userID, verifyHash, repository.TokenTypeEmailVerify, expiresAt); err != nil {
-		return err
-	}
-
-	// Publish event - notification module handles email sending
-	s.eventBus.Publish(ctx, events.EmailVerificationRequested{
-		BaseEvent:   events.NewBaseEvent(),
-		UserID:      userID,
-		Email:       email,
-		VerifyToken: verifyToken,
-	})
-
-	return nil
-}
-
-func (s *Service) buildProfile(user repository.User, roles []string, preferredLang string) Profile {
-	return Profile{
-		ID:                  user.ID,
-		Email:               user.Email,
-		EmailVerified:       user.EmailVerified,
-		FirstName:           user.FirstName,
-		LastName:            user.LastName,
-		Phone:               user.Phone,
-		PreferredLang:       preferredLang,
-		Roles:               roles,
-		OnboardingCompleted: user.OnboardingCompletedAt != nil,
-		CreatedAt:           user.CreatedAt,
-		UpdatedAt:           user.UpdatedAt,
-	}
-}
-
-func ptrString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
-	user, err := s.repo.GetUserByID(ctx, userID)
-	if err != nil {
-		return err
-	}
-
-	if err := password.Compare(user.PasswordHash, currentPassword); err != nil {
-		return apperr.Validation("current password is incorrect")
-	}
-
-	passwordHash, err := password.Hash(newPassword)
-	if err != nil {
-		return err
-	}
-
-	if err := s.repo.UpdatePassword(ctx, userID, passwordHash); err != nil {
-		return err
-	}
-
-	_ = s.repo.RevokeAllRefreshTokens(ctx, userID)
-	return nil
-}
-
-func (s *Service) ResolveInvite(ctx context.Context, rawToken string) (transport.ResolveInviteResponse, error) {
-	invite, err := s.identity.ResolveInvite(ctx, rawToken)
-	if err != nil {
-		return transport.ResolveInviteResponse{}, err
-	}
-
-	org, err := s.identity.GetOrganization(ctx, invite.OrganizationID)
-	if err != nil {
-		return transport.ResolveInviteResponse{}, err
-	}
-
-	return transport.ResolveInviteResponse{
-		Email:            invite.Email,
-		OrganizationName: org.Name,
-	}, nil
-}
-
-func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, req transport.CompleteOnboardingRequest) error {
-	// Update user profile
-	_, err := s.repo.UpdateUserNames(ctx, userID, &req.FirstName, &req.LastName)
-	if err != nil {
-		return err
-	}
-
-	if s.hasOrganization(ctx, userID) {
-		return nil
-	}
-
-	return s.createOrganizationFromOnboarding(ctx, userID, req)
-}
-
-func (s *Service) hasOrganization(ctx context.Context, userID uuid.UUID) bool {
-	_, err := s.identity.GetUserOrganizationID(ctx, userID)
-	return err == nil
 }
 
 func (s *Service) createOrganizationFromOnboarding(ctx context.Context, userID uuid.UUID, req transport.CompleteOnboardingRequest) error {
@@ -845,6 +727,20 @@ func (s *Service) createOrganizationFromOnboarding(ctx context.Context, userID u
 	return err
 }
 
+func mapUsersToSummary(users []repository.UserWithRoles) []transport.UserSummary {
+	result := make([]transport.UserSummary, len(users))
+	for i, user := range users {
+		result[i] = transport.UserSummary{
+			ID:        user.ID.String(),
+			Email:     user.Email,
+			FirstName: user.FirstName,
+			LastName:  user.LastName,
+			Roles:     user.Roles,
+		}
+	}
+	return result
+}
+
 func requireOrganizationField(value *string, fieldName string) (string, error) {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		return "", apperr.Validation(fieldName + " is required")
@@ -864,13 +760,30 @@ func hasOrganizationProfileUpdate(req transport.CompleteOnboardingRequest) bool 
 		hasOptionalValue(req.Country)
 }
 
-func (s *Service) MarkOnboardingComplete(ctx context.Context, userID uuid.UUID) error {
-	return s.repo.MarkOnboardingComplete(ctx, userID)
+func hasOptionalValue(value *string) bool {
+	return value != nil && strings.TrimSpace(*value) != ""
 }
 
-func hasOptionalValue(value *string) bool {
-	if value == nil {
-		return false
+func containsString(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
 	}
-	return strings.TrimSpace(*value) != ""
+	return false
+}
+
+func uniqueRoleList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		if _, exists := seen[v]; !exists {
+			seen[v] = struct{}{}
+			result = append(result, v)
+		}
+	}
+	return result
 }

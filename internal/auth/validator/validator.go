@@ -14,7 +14,8 @@ func RegisterAuthValidations(v *validator.Validator) error {
 	return v.RegisterValidation("strongpassword", validateStrongPassword)
 }
 
-// validateStrongPassword checks for password complexity:
+// validateStrongPassword checks for password complexity in $O(K)$ time where K is
+// the number of characters evaluated before conditions are met.
 // - At least 8 characters
 // - At least one uppercase letter
 // - At least one lowercase letter
@@ -23,29 +24,33 @@ func RegisterAuthValidations(v *validator.Validator) error {
 func validateStrongPassword(fl gpvalidator.FieldLevel) bool {
 	password := fl.Field().String()
 
-	if len(password) < 8 {
+	// Length constraints.
+	// $O(1)$ fast-path rejections.
+	l := len(password)
+	if l < 8 || l > 1024 {
 		return false
 	}
 
-	var (
-		hasUpper   bool
-		hasLower   bool
-		hasDigit   bool
-		hasSpecial bool
-	)
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
 
 	for _, char := range password {
+		// Optimize by skipping Unicode checks once a flag is already true
 		switch {
-		case unicode.IsUpper(char):
+		case !hasUpper && unicode.IsUpper(char):
 			hasUpper = true
-		case unicode.IsLower(char):
+		case !hasLower && unicode.IsLower(char):
 			hasLower = true
-		case unicode.IsDigit(char):
+		case !hasDigit && unicode.IsDigit(char):
 			hasDigit = true
-		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+		case !hasSpecial && (unicode.IsPunct(char) || unicode.IsSymbol(char)):
 			hasSpecial = true
+		}
+
+		// Optimization: Short-circuit loop early.
+		if hasUpper && hasLower && hasDigit && hasSpecial {
+			return true
 		}
 	}
 
-	return hasUpper && hasLower && hasDigit && hasSpecial
+	return false
 }

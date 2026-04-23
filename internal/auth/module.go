@@ -1,5 +1,5 @@
 // Package auth provides the authentication bounded context module.
-// This file defines the module that encapsulates all auth setup and route registration.
+// This file encapsulates all auth setup, dependency wiring, and route registration.
 package auth
 
 import (
@@ -17,38 +17,51 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// AuthModuleConfig combines the config interfaces needed by the auth module.
-// This ensures the module only receives the configuration it actually needs.
+// AuthModuleConfig enforces the Interface Segregation Principle (ISP).
+// The auth module only receives the exact configuration bounds it requires.
 type AuthModuleConfig interface {
 	config.AuthServiceConfig
 	config.CookieConfig
 	config.WebAuthnConfig
 }
 
-// Module is the auth bounded context module implementing http.Module.
+// Module implements apphttp.Module for the auth bounded context.
 type Module struct {
 	handler    *handler.Handler
 	service    *service.Service
 	repository *repository.Repository
 }
 
-// NewModule creates and initializes the auth module with all its dependencies.
-func NewModule(pool *pgxpool.Pool, identityService *identityservice.Service, cfg AuthModuleConfig, eventBus events.Bus, log *logger.Logger, val *validator.Validator) *Module {
+// NewModule creates and initializes the auth module with all dependencies.
+//
+// Tech Debt (Security/Reliability): This constructor currently returns *Module,
+// forcing it to swallow initialization errors. In v2, change this signature to
+// `(*Module, error)` so the application can Fail-Fast on boot rather than
+// starting in a partially broken, insecure state.
+func NewModule(
+	pool *pgxpool.Pool,
+	identityService *identityservice.Service,
+	cfg AuthModuleConfig,
+	eventBus events.Bus,
+	log *logger.Logger,
+	val *validator.Validator,
+) *Module {
 	repo := repository.New(pool)
 	svc := service.New(repo, identityService, cfg, eventBus, log)
 
-	// Initialize WebAuthn relying party
+	// Security: Do not fail silently. If WebAuthn fails to init, passkeys are dead.
 	if err := svc.InitWebAuthn(cfg); err != nil {
-		log.Error("failed to initialize webauthn", "error", err)
+		log.Error("CRITICAL: failed to initialize webauthn relying party", "error", err)
 	}
 
-	// Register auth-specific validations on the injected validator
-	_ = authvalidator.RegisterAuthValidations(val)
-
-	h := handler.New(svc, cfg, val)
+	// Security: Ignoring validation registration errors can lead to unvalidated,
+	// malicious payloads making it to the database.
+	if err := authvalidator.RegisterAuthValidations(val); err != nil {
+		log.Error("CRITICAL: failed to register auth custom validations", "error", err)
+	}
 
 	return &Module{
-		handler:    h,
+		handler:    handler.New(svc, cfg, val),
 		service:    svc,
 		repository: repo,
 	}
@@ -59,47 +72,62 @@ func (m *Module) Name() string {
 	return "auth"
 }
 
-// Service returns the auth service for use by adapters (e.g., AgentProvider).
+// Service returns the concrete auth service.
+// Tech Debt (Architecture): Other domains should depend on an Anti-Corruption Layer
+// interface (like auth.UserProvider), not this concrete pointer.
 func (m *Module) Service() *service.Service {
 	return m.service
 }
 
-// Repository returns the auth repository for use by adapters (e.g., agent email lookup).
+// Repository returns the concrete auth repository.
+// Tech Debt (Architecture): Severe Bounded Context violation. Leaking the concrete
+// repository allows other modules to bypass the service layer and execute raw queries.
 func (m *Module) Repository() *repository.Repository {
 	return m.repository
 }
 
 // RegisterRoutes mounts auth routes on the provided router context.
+// Clean Code: Grouped by context and authorization level for O(1) human scanning.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	// Public auth routes with stricter rate limiting
+	// ---------------------------------------------------------
+	// Public Routes (Strictly Rate Limited)
+	// ---------------------------------------------------------
 	authGroup := ctx.V1.Group("/auth")
 	authGroup.Use(ctx.AuthRateLimiter.RateLimit())
-	m.handler.RegisterRoutes(authGroup)
+	m.handler.RegisterRoutes(authGroup) // Standard login/signup
 
-	// Public passkey login (rate-limited)
 	authGroup.POST("/passkey/login/begin", m.handler.BeginPasskeyLogin)
 	authGroup.POST("/passkey/login/finish", m.handler.FinishPasskeyLogin)
 
+	// ---------------------------------------------------------
+	// Protected Routes (Requires Valid Session/Token)
+	// ---------------------------------------------------------
 	ctx.Protected.GET("/auth/verify", m.handler.Verify)
 
-	// Protected user routes
-	ctx.Protected.GET("/users/me", m.handler.GetMe)
-	ctx.Protected.GET("/users", m.handler.ListUsers)
-	ctx.Protected.PATCH("/users/me", m.handler.UpdateMe)
-	ctx.Protected.POST("/users/me/password", m.handler.ChangePassword)
-	ctx.Protected.POST("/users/me/onboarding", m.handler.CompleteOnboarding)
-	ctx.Protected.POST("/users/me/onboarding/complete", m.handler.MarkOnboardingComplete)
+	// User Profile & Onboarding
+	usersGroup := ctx.Protected.Group("/users")
+	usersGroup.GET("/me", m.handler.GetMe)
+	usersGroup.PATCH("/me", m.handler.UpdateMe)
+	usersGroup.POST("/me/password", m.handler.ChangePassword)
+	usersGroup.POST("/me/onboarding", m.handler.CompleteOnboarding)
+	usersGroup.POST("/me/onboarding/complete", m.handler.MarkOnboardingComplete)
 
-	// Protected passkey management
-	ctx.Protected.POST("/users/me/passkeys/register/begin", m.handler.BeginPasskeyRegistration)
-	ctx.Protected.POST("/users/me/passkeys/register/finish", m.handler.FinishPasskeyRegistration)
-	ctx.Protected.GET("/users/me/passkeys", m.handler.ListPasskeys)
-	ctx.Protected.PATCH("/users/me/passkeys/:credentialId", m.handler.RenamePasskey)
-	ctx.Protected.DELETE("/users/me/passkeys/:credentialId", m.handler.DeletePasskey)
+	// Passkey Management
+	passkeysGroup := usersGroup.Group("/me/passkeys")
+	passkeysGroup.GET("", m.handler.ListPasskeys)
+	passkeysGroup.POST("/register/begin", m.handler.BeginPasskeyRegistration)
+	passkeysGroup.POST("/register/finish", m.handler.FinishPasskeyRegistration)
+	passkeysGroup.PATCH("/:credentialId", m.handler.RenamePasskey)
+	passkeysGroup.DELETE("/:credentialId", m.handler.DeletePasskey)
 
-	// Admin routes
+	// Legacy / Broad scopes (See auth.go notes on pagination)
+	usersGroup.GET("", m.handler.ListUsers)
+
+	// ---------------------------------------------------------
+	// Admin Routes
+	// ---------------------------------------------------------
 	ctx.Admin.PUT("/users/:id/roles", m.handler.SetUserRoles)
 }
 
-// Compile-time check that Module implements http.Module
+// Compile-time check to ensure Module implements the interface.
 var _ apphttp.Module = (*Module)(nil)

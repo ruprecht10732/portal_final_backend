@@ -52,7 +52,10 @@ type CreateUserRow struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
-// Auth Domain SQL Queries
+// ============================================================================
+// Auth Domain SQL Queries (sqlc)
+// ============================================================================
+// Complexity: O(1) Time. Requires UNIQUE index on email.
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
 	row := q.db.QueryRow(ctx, createUser, arg.Email, arg.PasswordHash)
 	var i CreateUserRow
@@ -72,6 +75,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 }
 
 const createUserToken = `-- name: CreateUserToken :exec
+
 INSERT INTO RAC_user_tokens (user_id, token_hash, type, expires_at)
 VALUES ($1, $2, $3, $4)
 `
@@ -83,6 +87,9 @@ type CreateUserTokenParams struct {
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
 
+// ============================================================================
+// Token Management
+// ============================================================================
 func (q *Queries) CreateUserToken(ctx context.Context, arg CreateUserTokenParams) error {
 	_, err := q.db.Exec(ctx, createUserToken,
 		arg.UserID,
@@ -158,18 +165,23 @@ func (q *Queries) DeleteWebAuthnCredential(ctx context.Context, arg DeleteWebAut
 }
 
 const ensureUserSettings = `-- name: EnsureUserSettings :exec
+
 INSERT INTO RAC_user_settings (user_id)
 VALUES ($1)
 ON CONFLICT (user_id) DO NOTHING
 `
 
+// ============================================================================
+// User Settings & Onboarding
+// ============================================================================
 func (q *Queries) EnsureUserSettings(ctx context.Context, userID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, ensureUserSettings, userID)
 	return err
 }
 
 const getRefreshToken = `-- name: GetRefreshToken :one
-SELECT user_id, expires_at FROM RAC_refresh_tokens
+SELECT user_id, expires_at 
+FROM RAC_refresh_tokens
 WHERE token_hash = $1 AND revoked_at IS NULL
 `
 
@@ -186,7 +198,9 @@ func (q *Queries) GetRefreshToken(ctx context.Context, tokenHash string) (GetRef
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE email = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at 
+FROM RAC_users 
+WHERE email = $1
 `
 
 type GetUserByEmailRow struct {
@@ -202,6 +216,7 @@ type GetUserByEmailRow struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Complexity: O(log N) Time. Requires UNIQUE index on email.
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, email)
 	var i GetUserByEmailRow
@@ -221,7 +236,9 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEm
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at FROM RAC_users WHERE id = $1
+SELECT id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at 
+FROM RAC_users 
+WHERE id = $1
 `
 
 type GetUserByIDRow struct {
@@ -237,6 +254,7 @@ type GetUserByIDRow struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Complexity: O(1) Time (Primary Key lookup).
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error) {
 	row := q.db.QueryRow(ctx, getUserByID, id)
 	var i GetUserByIDRow
@@ -277,6 +295,7 @@ type GetUserByWebAuthnCredentialIDRow struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Complexity: O(log N) Time. Requires Primary Key index on WebAuthn id.
 func (q *Queries) GetUserByWebAuthnCredentialID(ctx context.Context, id []byte) (GetUserByWebAuthnCredentialIDRow, error) {
 	row := q.db.QueryRow(ctx, getUserByWebAuthnCredentialID, id)
 	var i GetUserByWebAuthnCredentialIDRow
@@ -296,12 +315,17 @@ func (q *Queries) GetUserByWebAuthnCredentialID(ctx context.Context, id []byte) 
 }
 
 const getUserRoles = `-- name: GetUserRoles :many
-SELECT r.name FROM RAC_roles r
+
+SELECT r.name 
+FROM RAC_roles r
 JOIN RAC_user_roles ur ON ur.role_id = r.id
 WHERE ur.user_id = $1
 ORDER BY r.name
 `
 
+// ============================================================================
+// Role Management (RBAC)
+// ============================================================================
 func (q *Queries) GetUserRoles(ctx context.Context, userID pgtype.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, getUserRoles, userID)
 	if err != nil {
@@ -336,7 +360,8 @@ func (q *Queries) GetUserSettings(ctx context.Context, userID pgtype.UUID) (stri
 }
 
 const getUserToken = `-- name: GetUserToken :one
-SELECT user_id, expires_at FROM RAC_user_tokens
+SELECT user_id, expires_at 
+FROM RAC_user_tokens
 WHERE token_hash = $1 AND type = $2 AND used_at IS NULL
 `
 
@@ -350,6 +375,7 @@ type GetUserTokenRow struct {
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
 
+// Complexity: O(log N) Time. Requires Index on (token_hash, type) WHERE used_at IS NULL.
 func (q *Queries) GetUserToken(ctx context.Context, arg GetUserTokenParams) (GetUserTokenRow, error) {
 	row := q.db.QueryRow(ctx, getUserToken, arg.TokenHash, arg.Type)
 	var i GetUserTokenRow
@@ -425,12 +451,13 @@ func (q *Queries) InsertUserRoles(ctx context.Context, arg InsertUserRolesParams
 }
 
 const listUsers = `-- name: ListUsers :many
+
 SELECT
-	u.id,
-	u.email,
-	u.first_name,
-	u.last_name,
-	COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
+    u.id,
+    u.email,
+    u.first_name,
+    u.last_name,
+    COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
 FROM RAC_users u
 LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
 LEFT JOIN RAC_roles r ON r.id = ur.role_id
@@ -446,6 +473,10 @@ type ListUsersRow struct {
 	Roles     []string    `json:"roles"`
 }
 
+// ============================================================================
+// Bulk Read Operations (WARNING: O(N) Complexity Risks)
+// ============================================================================
+// WARNING: This requires pagination (LIMIT/OFFSET) in V2 to prevent memory exhaustion.
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 	rows, err := q.db.Query(ctx, listUsers)
 	if err != nil {
@@ -474,11 +505,11 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 
 const listUsersByOrganization = `-- name: ListUsersByOrganization :many
 SELECT
-	u.id,
-	u.email,
-	u.first_name,
-	u.last_name,
-	COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
+    u.id,
+    u.email,
+    u.first_name,
+    u.last_name,
+    COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[])::text[] AS roles
 FROM RAC_organization_members om
 JOIN RAC_users u ON u.id = om.user_id
 LEFT JOIN RAC_user_roles ur ON ur.user_id = u.id
@@ -565,7 +596,9 @@ func (q *Queries) ListWebAuthnCredentialsByUser(ctx context.Context, userID pgty
 }
 
 const markEmailVerified = `-- name: MarkEmailVerified :exec
-UPDATE RAC_users SET is_email_verified = true, updated_at = now() WHERE id = $1
+UPDATE RAC_users 
+SET is_email_verified = true, updated_at = CURRENT_TIMESTAMP 
+WHERE id = $1
 `
 
 func (q *Queries) MarkEmailVerified(ctx context.Context, id pgtype.UUID) error {
@@ -574,7 +607,8 @@ func (q *Queries) MarkEmailVerified(ctx context.Context, id pgtype.UUID) error {
 }
 
 const markOnboardingComplete = `-- name: MarkOnboardingComplete :exec
-UPDATE RAC_users SET onboarding_completed_at = now(), updated_at = now()
+UPDATE RAC_users 
+SET onboarding_completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND onboarding_completed_at IS NULL
 `
 
@@ -584,7 +618,8 @@ func (q *Queries) MarkOnboardingComplete(ctx context.Context, id pgtype.UUID) er
 }
 
 const revokeAllRefreshTokens = `-- name: RevokeAllRefreshTokens :exec
-UPDATE RAC_refresh_tokens SET revoked_at = now()
+UPDATE RAC_refresh_tokens 
+SET revoked_at = CURRENT_TIMESTAMP
 WHERE user_id = $1 AND revoked_at IS NULL
 `
 
@@ -594,7 +629,8 @@ func (q *Queries) RevokeAllRefreshTokens(ctx context.Context, userID pgtype.UUID
 }
 
 const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
-UPDATE RAC_refresh_tokens SET revoked_at = now()
+UPDATE RAC_refresh_tokens 
+SET revoked_at = CURRENT_TIMESTAMP
 WHERE token_hash = $1 AND revoked_at IS NULL
 `
 
@@ -604,7 +640,7 @@ func (q *Queries) RevokeRefreshToken(ctx context.Context, tokenHash string) erro
 }
 
 const touchUserUpdatedAt = `-- name: TouchUserUpdatedAt :exec
-UPDATE RAC_users SET updated_at = now() WHERE id = $1
+UPDATE RAC_users SET updated_at = CURRENT_TIMESTAMP WHERE id = $1
 `
 
 func (q *Queries) TouchUserUpdatedAt(ctx context.Context, id pgtype.UUID) error {
@@ -613,7 +649,9 @@ func (q *Queries) TouchUserUpdatedAt(ctx context.Context, id pgtype.UUID) error 
 }
 
 const updatePassword = `-- name: UpdatePassword :exec
-UPDATE RAC_users SET password_hash = $2, updated_at = now() WHERE id = $1
+UPDATE RAC_users 
+SET password_hash = $2, updated_at = CURRENT_TIMESTAMP 
+WHERE id = $1
 `
 
 type UpdatePasswordParams struct {
@@ -628,7 +666,7 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 
 const updateUserEmail = `-- name: UpdateUserEmail :one
 UPDATE RAC_users
-SET email = $2, is_email_verified = false, updated_at = now()
+SET email = $2, is_email_verified = false, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
 RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at
 `
@@ -651,6 +689,7 @@ type UpdateUserEmailRow struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Security: Implicitly resets is_email_verified to false to prevent account takeover.
 func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (UpdateUserEmailRow, error) {
 	row := q.db.QueryRow(ctx, updateUserEmail, arg.ID, arg.Email)
 	var i UpdateUserEmailRow
@@ -671,7 +710,7 @@ func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams
 
 const updateUserNames = `-- name: UpdateUserNames :one
 UPDATE RAC_users
-SET first_name = $2, last_name = $3, updated_at = now()
+SET first_name = $2, last_name = $3, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
 RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at
 `
@@ -715,11 +754,8 @@ func (q *Queries) UpdateUserNames(ctx context.Context, arg UpdateUserNamesParams
 
 const updateUserPhone = `-- name: UpdateUserPhone :one
 UPDATE RAC_users
-SET phone = CASE
-		WHEN NULLIF(BTRIM($2::text), '') IS NULL THEN NULL
-		ELSE $2::text
-	END,
-	updated_at = now()
+SET phone = NULLIF(BTRIM($2::text), ''),
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
 RETURNING id, email, password_hash, is_email_verified, first_name, last_name, phone, onboarding_completed_at, created_at, updated_at
 `
@@ -742,6 +778,7 @@ type UpdateUserPhoneRow struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Optimization: Eliminated verbose CASE/WHEN block. NULLIF(TRIM()) safely coalesces empty/whitespace strings to NULL.
 func (q *Queries) UpdateUserPhone(ctx context.Context, arg UpdateUserPhoneParams) (UpdateUserPhoneRow, error) {
 	row := q.db.QueryRow(ctx, updateUserPhone, arg.ID, arg.Phone)
 	var i UpdateUserPhoneRow
@@ -779,7 +816,7 @@ func (q *Queries) UpdateWebAuthnCredentialNickname(ctx context.Context, arg Upda
 
 const updateWebAuthnCredentialSignCount = `-- name: UpdateWebAuthnCredentialSignCount :exec
 UPDATE RAC_webauthn_credentials
-SET sign_count = $2, clone_warning = $3, last_used_at = now()
+SET sign_count = $2, clone_warning = $3, last_used_at = CURRENT_TIMESTAMP
 WHERE id = $1
 `
 
@@ -789,6 +826,7 @@ type UpdateWebAuthnCredentialSignCountParams struct {
 	CloneWarning bool   `json:"clone_warning"`
 }
 
+// Security: Critical for clone detection during passkey login phase.
 func (q *Queries) UpdateWebAuthnCredentialSignCount(ctx context.Context, arg UpdateWebAuthnCredentialSignCountParams) error {
 	_, err := q.db.Exec(ctx, updateWebAuthnCredentialSignCount, arg.ID, arg.SignCount, arg.CloneWarning)
 	return err
@@ -798,7 +836,7 @@ const upsertUserSettings = `-- name: UpsertUserSettings :exec
 INSERT INTO RAC_user_settings (user_id, preferred_language)
 VALUES ($1, $2)
 ON CONFLICT (user_id) DO UPDATE
-SET preferred_language = EXCLUDED.preferred_language, updated_at = now()
+SET preferred_language = EXCLUDED.preferred_language, updated_at = CURRENT_TIMESTAMP
 `
 
 type UpsertUserSettingsParams struct {
@@ -812,7 +850,8 @@ func (q *Queries) UpsertUserSettings(ctx context.Context, arg UpsertUserSettings
 }
 
 const useUserToken = `-- name: UseUserToken :exec
-UPDATE RAC_user_tokens SET used_at = now()
+UPDATE RAC_user_tokens 
+SET used_at = CURRENT_TIMESTAMP
 WHERE token_hash = $1 AND type = $2 AND used_at IS NULL
 `
 
@@ -821,6 +860,7 @@ type UseUserTokenParams struct {
 	Type      string `json:"type"`
 }
 
+// Security: Atomic invalidation prevents TOCTOU replay attacks on verification links.
 func (q *Queries) UseUserToken(ctx context.Context, arg UseUserTokenParams) error {
 	_, err := q.db.Exec(ctx, useUserToken, arg.TokenHash, arg.Type)
 	return err

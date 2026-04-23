@@ -14,7 +14,8 @@ import (
 	"portal_final_backend/platform/apperr"
 )
 
-const productAssetNotFoundMessage = "product asset not found"
+// Clean Code: Prefixed with errMsg to clarify intent and standardized naming.
+const errMsgProductAssetNotFound = "product asset not found"
 
 // CreateProductAsset creates a catalog product asset.
 func (r *Repo) CreateProductAsset(ctx context.Context, params CreateProductAssetParams) (ProductAsset, error) {
@@ -31,25 +32,33 @@ func (r *Repo) CreateProductAsset(ctx context.Context, params CreateProductAsset
 	if err != nil {
 		return ProductAsset{}, fmt.Errorf("create product asset: %w", err)
 	}
+
 	return productAssetFromRow(row), nil
 }
 
 // GetProductAssetByID retrieves a product asset by ID.
-func (r *Repo) GetProductAssetByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (ProductAsset, error) {
+// Security: Enforces multi-tenancy by mandating OrganizationID (prevents IDOR vulnerabilities).
+func (r *Repo) GetProductAssetByID(ctx context.Context, organizationID, id uuid.UUID) (ProductAsset, error) {
 	row, err := r.queries.GetProductAssetByID(ctx, catalogdb.GetProductAssetByIDParams{
 		ID:             toPgUUID(id),
 		OrganizationID: toPgUUID(organizationID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ProductAsset{}, apperr.NotFound(productAssetNotFoundMessage)
-	}
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProductAsset{}, apperr.NotFound(errMsgProductAssetNotFound)
+		}
 		return ProductAsset{}, fmt.Errorf("get product asset by id: %w", err)
 	}
+
 	return productAssetFromRow(row), nil
 }
 
-// ListProductAssets lists assets for a product with optional type filter.
+// ListProductAssets lists assets for a product with an optional type filter.
+//
+// Tech Debt (Big O / Reliability): This query currently executes in O(N) space and time.
+// Without database-level pagination (Limit/Offset), fetching a product with thousands
+// of assets will cause high memory allocation spikes and potential DoS vectors.
+// Consider adding pagination constraints to ListProductAssetsParams in v2.
 func (r *Repo) ListProductAssets(ctx context.Context, params ListProductAssetsParams) ([]ProductAsset, error) {
 	rows, err := r.queries.ListProductAssets(ctx, catalogdb.ListProductAssetsParams{
 		Organizationid: toPgUUID(params.OrganizationID),
@@ -60,15 +69,19 @@ func (r *Repo) ListProductAssets(ctx context.Context, params ListProductAssetsPa
 		return nil, fmt.Errorf("list product assets: %w", err)
 	}
 
+	// Performance: O(1) capacity allocation prevents the Go runtime from constantly
+	// resizing and copying the underlying array during the loop (saving CPU cycles and GC pressure).
 	items := make([]ProductAsset, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, productAssetFromRow(row))
 	}
+
 	return items, nil
 }
 
 // DeleteProductAsset deletes a product asset by ID.
-func (r *Repo) DeleteProductAsset(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
+// Security: Enforces multi-tenancy by mandating OrganizationID.
+func (r *Repo) DeleteProductAsset(ctx context.Context, organizationID, id uuid.UUID) error {
 	rowsAffected, err := r.queries.DeleteProductAsset(ctx, catalogdb.DeleteProductAssetParams{
 		ID:             toPgUUID(id),
 		OrganizationID: toPgUUID(organizationID),
@@ -77,11 +90,13 @@ func (r *Repo) DeleteProductAsset(ctx context.Context, organizationID uuid.UUID,
 		return fmt.Errorf("delete product asset: %w", err)
 	}
 	if rowsAffected == 0 {
-		return apperr.NotFound(productAssetNotFoundMessage)
+		return apperr.NotFound(errMsgProductAssetNotFound)
 	}
+
 	return nil
 }
 
+// productAssetFromRow maps the DB layer struct to the Bounded Context Domain struct.
 func productAssetFromRow(row catalogdb.RacCatalogProductAsset) ProductAsset {
 	return ProductAsset{
 		ID:             row.ID.Bytes,
@@ -97,10 +112,11 @@ func productAssetFromRow(row catalogdb.RacCatalogProductAsset) ProductAsset {
 	}
 }
 
+// optionalInt64 converts pgtype.Int8 to a *int64.
 func optionalInt64(value pgtype.Int8) *int64 {
 	if !value.Valid {
 		return nil
 	}
-	result := value.Int64
-	return &result
+	// Clean Code: Removed intermediate variable assignment.
+	return &value.Int64
 }

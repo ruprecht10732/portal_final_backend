@@ -1,3 +1,4 @@
+// Package handler handles HTTP requests for the catalog bounded context.
 package handler
 
 import (
@@ -23,7 +24,6 @@ type Handler struct {
 const (
 	msgInvalidRequest   = "invalid request"
 	msgValidationFailed = "validation failed"
-	msgInvalidID        = "invalid catalog id"
 )
 
 // New creates a new catalog handler.
@@ -35,19 +35,10 @@ func New(svc *service.Service, val *validator.Validator) *Handler {
 // GET /api/v1/catalog/vat-rates
 func (h *Handler) ListVatRates(c *gin.Context) {
 	var req transport.ListVatRatesRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateQuery(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -62,16 +53,11 @@ func (h *Handler) ListVatRates(c *gin.Context) {
 // GetVatRateByID retrieves a VAT rate by ID.
 // GET /api/v1/catalog/vat-rates/:id
 func (h *Handler) GetVatRateByID(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -87,19 +73,10 @@ func (h *Handler) GetVatRateByID(c *gin.Context) {
 // POST /api/v1/admin/catalog/vat-rates
 func (h *Handler) CreateVatRate(c *gin.Context) {
 	var req transport.CreateVatRateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -114,26 +91,15 @@ func (h *Handler) CreateVatRate(c *gin.Context) {
 // UpdateVatRate updates a VAT rate.
 // PUT /api/v1/admin/catalog/vat-rates/:id
 func (h *Handler) UpdateVatRate(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-
 	var req transport.UpdateVatRateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -148,16 +114,11 @@ func (h *Handler) UpdateVatRate(c *gin.Context) {
 // DeleteVatRate deletes a VAT rate.
 // DELETE /api/v1/admin/catalog/vat-rates/:id
 func (h *Handler) DeleteVatRate(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -172,20 +133,10 @@ func (h *Handler) DeleteVatRate(c *gin.Context) {
 // GET /api/v1/catalog/products
 func (h *Handler) ListProducts(c *gin.Context) {
 	var req transport.ListProductsRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateQuery(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -194,7 +145,7 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	if req.VatRateID != "" {
 		parsed, err := uuid.Parse(req.VatRateID)
 		if err != nil {
-			httpkit.Error(c, http.StatusBadRequest, "invalid vatRateId", nil)
+			httpkit.Error(c, http.StatusBadRequest, "invalid vatRateId format", nil)
 			return
 		}
 		vatRateID = &parsed
@@ -210,16 +161,11 @@ func (h *Handler) ListProducts(c *gin.Context) {
 // GetProductByID retrieves a product by ID.
 // GET /api/v1/catalog/products/:id
 func (h *Handler) GetProductByID(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -235,19 +181,10 @@ func (h *Handler) GetProductByID(c *gin.Context) {
 // POST /api/v1/admin/catalog/products
 func (h *Handler) CreateProduct(c *gin.Context) {
 	var req transport.CreateProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -262,11 +199,7 @@ func (h *Handler) CreateProduct(c *gin.Context) {
 // GetNextProductReference returns the next auto-generated product reference.
 // GET /api/v1/admin/catalog/products/next-reference
 func (h *Handler) GetNextProductReference(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -275,33 +208,21 @@ func (h *Handler) GetNextProductReference(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
 	httpkit.OK(c, result)
 }
 
 // UpdateProduct updates a product.
 // PUT /api/v1/admin/catalog/products/:id
 func (h *Handler) UpdateProduct(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-
 	var req transport.UpdateProductRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -316,16 +237,11 @@ func (h *Handler) UpdateProduct(c *gin.Context) {
 // DeleteProduct deletes a product.
 // DELETE /api/v1/admin/catalog/products/:id
 func (h *Handler) DeleteProduct(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -339,16 +255,11 @@ func (h *Handler) DeleteProduct(c *gin.Context) {
 // ListProductMaterials lists materials linked to a product.
 // GET /api/v1/catalog/products/:id/materials
 func (h *Handler) ListProductMaterials(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -363,23 +274,33 @@ func (h *Handler) ListProductMaterials(c *gin.Context) {
 // AddProductMaterials adds materials to a product.
 // POST /api/v1/admin/catalog/products/:id/materials
 func (h *Handler) AddProductMaterials(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-
 	var req transport.ProductMaterialsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	tenantID, ok := h.getTenant(c)
+	if !ok {
 		return
 	}
 
-	links := make([]repository.ProductMaterialLink, 0)
+	// O(1) Allocation Setup: Prevent O(N) slice reallocations under the hood.
+	capacity := len(req.Materials)
+	if capacity == 0 {
+		capacity = len(req.MaterialIDs)
+	}
+
+	if capacity == 0 {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, "materialIds or materials is required")
+		return
+	}
+
+	// Pre-allocating capacity stops the Go runtime from constantly resizing the slice.
+	links := make([]repository.ProductMaterialLink, 0, capacity)
+
 	if len(req.Materials) > 0 {
 		for _, item := range req.Materials {
 			links = append(links, repository.ProductMaterialLink{
@@ -396,20 +317,6 @@ func (h *Handler) AddProductMaterials(c *gin.Context) {
 		}
 	}
 
-	if len(links) == 0 {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, "materialIds or materials is required")
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
-	if !ok {
-		return
-	}
-
 	if err := h.svc.AddProductMaterials(c.Request.Context(), tenantID, id, links); httpkit.HandleError(c, err) {
 		return
 	}
@@ -419,27 +326,15 @@ func (h *Handler) AddProductMaterials(c *gin.Context) {
 // RemoveProductMaterials removes materials from a product.
 // DELETE /api/v1/admin/catalog/products/:id/materials
 func (h *Handler) RemoveProductMaterials(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	id, ok := h.parseUUIDParam(c, "id")
+	if !ok {
 		return
 	}
-
 	var req transport.ProductMaterialsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -453,28 +348,16 @@ func (h *Handler) RemoveProductMaterials(c *gin.Context) {
 // GetCatalogAssetPresign generates a presigned URL for uploading a catalog asset.
 // POST /api/v1/admin/catalog/products/:id/assets/presign
 func (h *Handler) GetCatalogAssetPresign(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	productID, ok := h.parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
-
-	productID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
-		return
-	}
-
 	var req transport.PresignCatalogAssetRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	tenantID, ok := h.getTenant(c)
+	if !ok {
 		return
 	}
 
@@ -482,35 +365,22 @@ func (h *Handler) GetCatalogAssetPresign(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
 	httpkit.OK(c, result)
 }
 
 // CreateCatalogAsset creates a catalog asset after upload to MinIO.
 // POST /api/v1/admin/catalog/products/:id/assets
 func (h *Handler) CreateCatalogAsset(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	productID, ok := h.parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
-
-	productID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
-		return
-	}
-
 	var req transport.CreateCatalogAssetRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	tenantID, ok := h.getTenant(c)
+	if !ok {
 		return
 	}
 
@@ -518,35 +388,22 @@ func (h *Handler) CreateCatalogAsset(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
 	httpkit.JSON(c, http.StatusCreated, result)
 }
 
 // CreateCatalogURLAsset creates a URL-based catalog asset (terms URL).
 // POST /api/v1/admin/catalog/products/:id/assets/url
 func (h *Handler) CreateCatalogURLAsset(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	productID, ok := h.parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
-
-	productID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
-		return
-	}
-
 	var req transport.CreateCatalogURLAssetRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateJSON(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	tenantID, ok := h.getTenant(c)
+	if !ok {
 		return
 	}
 
@@ -554,25 +411,18 @@ func (h *Handler) CreateCatalogURLAsset(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
 	httpkit.JSON(c, http.StatusCreated, result)
 }
 
 // ListCatalogAssets lists assets for a product.
 // GET /api/v1/catalog/products/:id/assets
 func (h *Handler) ListCatalogAssets(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	productID, ok := h.parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
-
-	productID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	tenantID, ok := h.getTenant(c)
+	if !ok {
 		return
 	}
 
@@ -585,31 +435,22 @@ func (h *Handler) ListCatalogAssets(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
 	httpkit.OK(c, result)
 }
 
 // GetCatalogAssetDownloadURL returns a presigned download URL or external URL.
 // GET /api/v1/catalog/products/:id/assets/:assetId/download
 func (h *Handler) GetCatalogAssetDownloadURL(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	productID, ok := h.parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
-
-	productID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	assetID, ok := h.parseUUIDParam(c, "assetId")
+	if !ok {
 		return
 	}
-
-	assetID, err := uuid.Parse(c.Param("assetId"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	tenantID, ok := h.getTenant(c)
+	if !ok {
 		return
 	}
 
@@ -617,59 +458,38 @@ func (h *Handler) GetCatalogAssetDownloadURL(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
 	httpkit.OK(c, result)
 }
 
 // DeleteCatalogAsset deletes a catalog asset and removes it from storage when applicable.
 // DELETE /api/v1/admin/catalog/products/:id/assets/:assetId
 func (h *Handler) DeleteCatalogAsset(c *gin.Context) {
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	productID, ok := h.parseUUIDParam(c, "id")
 	if !ok {
 		return
 	}
-
-	productID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidID, nil)
+	assetID, ok := h.parseUUIDParam(c, "assetId")
+	if !ok {
 		return
 	}
-
-	assetID, err := uuid.Parse(c.Param("assetId"))
-	if err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	tenantID, ok := h.getTenant(c)
+	if !ok {
 		return
 	}
 
 	if err := h.svc.DeleteCatalogAsset(c.Request.Context(), tenantID, productID, assetID); httpkit.HandleError(c, err) {
 		return
 	}
-
 	c.Status(http.StatusNoContent)
 }
 
 // SearchProductsForAutocomplete handles GET /api/v1/catalog/products/search
-// Lightweight search endpoint optimized for quote line autocomplete.
 func (h *Handler) SearchProductsForAutocomplete(c *gin.Context) {
 	var req transport.AutocompleteSearchRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+	if !h.bindAndValidateQuery(c, &req) {
 		return
 	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
-		return
-	}
-
-	identity := httpkit.MustGetIdentity(c)
-	if identity == nil {
-		return
-	}
-	tenantID, ok := mustGetTenantID(c, identity)
+	tenantID, ok := h.getTenant(c)
 	if !ok {
 		return
 	}
@@ -678,15 +498,63 @@ func (h *Handler) SearchProductsForAutocomplete(c *gin.Context) {
 	if httpkit.HandleError(c, err) {
 		return
 	}
-
 	httpkit.OK(c, result)
 }
 
-func mustGetTenantID(c *gin.Context, identity httpkit.Identity) (uuid.UUID, bool) {
+// =====================================================================
+// Internal DRY Helpers
+// =====================================================================
+
+// getTenant safely retrieves the tenant ID, writing HTTP errors if validation fails.
+func (h *Handler) getTenant(c *gin.Context) (uuid.UUID, bool) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		// Security Fix: Prevent silent returns. Failing to write an HTTP status
+		// results in an empty 200 OK, breaking API contracts.
+		httpkit.Error(c, http.StatusUnauthorized, "unauthorized access", nil)
+		return uuid.UUID{}, false
+	}
+
 	tenantID := identity.TenantID()
 	if tenantID == nil {
 		httpkit.Error(c, http.StatusBadRequest, "tenant ID is required", nil)
 		return uuid.UUID{}, false
 	}
 	return *tenantID, true
+}
+
+// parseUUIDParam standardizes UUID URL parameter parsing and error formatting.
+func (h *Handler) parseUUIDParam(c *gin.Context, paramName string) (uuid.UUID, bool) {
+	id, err := uuid.Parse(c.Param(paramName))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, "invalid "+paramName+" format")
+		return uuid.UUID{}, false
+	}
+	return id, true
+}
+
+// bindAndValidateJSON handles JSON payload binding and struct validation.
+func (h *Handler) bindAndValidateJSON(c *gin.Context, req any) bool {
+	if err := c.ShouldBindJSON(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return false
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return false
+	}
+	return true
+}
+
+// bindAndValidateQuery handles Query payload binding and struct validation.
+func (h *Handler) bindAndValidateQuery(c *gin.Context, req any) bool {
+	if err := c.ShouldBindQuery(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return false
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return false
+	}
+	return true
 }

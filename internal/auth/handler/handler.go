@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -23,15 +24,48 @@ const (
 	bearerPrefix        = "Bearer "
 )
 
+// AuthService defines the domain capabilities required by the HTTP handler.
+// Using an interface applies the Dependency Inversion Principle (DIP), decoupling
+// the HTTP transport layer from the concrete business logic implementation.
+type AuthService interface {
+	// User & Profile Management
+	ListUsersForRequester(ctx context.Context, requesterID uuid.UUID) ([]transport.UserSummary, error)
+	GetMe(ctx context.Context, userID uuid.UUID) (service.Profile, error)
+	UpdateMe(ctx context.Context, userID uuid.UUID, req transport.UpdateProfileRequest) (service.Profile, error)
+	CompleteOnboarding(ctx context.Context, userID uuid.UUID, req transport.CompleteOnboardingRequest) error
+	MarkOnboardingComplete(ctx context.Context, userID uuid.UUID) error
+	ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error
+	SetUserRoles(ctx context.Context, actorID uuid.UUID, actorRoles []string, userID uuid.UUID, roles []string) error
+
+	// Authentication & Identity
+	SignUp(ctx context.Context, email, plainPassword string, organizationName *string, inviteToken *string) error
+	SignIn(ctx context.Context, email, plainPassword string) (string, string, error)
+	Refresh(ctx context.Context, refreshToken string) (string, string, error)
+	SignOut(ctx context.Context, refreshToken string, accessToken string) error
+	ForgotPassword(ctx context.Context, email string) error
+	ResetPassword(ctx context.Context, rawToken, newPassword string) error
+	VerifyEmail(ctx context.Context, rawToken string) error
+	ResolveInvite(ctx context.Context, rawToken string) (transport.ResolveInviteResponse, error)
+
+	// WebAuthn Passkeys (implemented in webauthn.go)
+	BeginPasskeyRegistration(ctx context.Context, userID uuid.UUID) (interface{}, error)
+	FinishPasskeyRegistration(ctx context.Context, userID uuid.UUID, nickname string, body []byte) error
+	BeginPasskeyLogin(ctx context.Context) (interface{}, error)
+	FinishPasskeyLogin(ctx context.Context, challenge string, body []byte) (string, string, error)
+	ListPasskeys(ctx context.Context, userID uuid.UUID) ([]service.PasskeyInfo, error)
+	RenamePasskey(ctx context.Context, userID uuid.UUID, credID []byte, nickname string) error
+	DeletePasskey(ctx context.Context, userID uuid.UUID, credID []byte) error
+}
+
 // Handler manages HTTP requests for the authentication domain.
 type Handler struct {
-	svc *service.Service
+	svc AuthService
 	cfg config.CookieConfig
 	val *validator.Validator
 }
 
 // New creates and returns a new auth Handler.
-func New(svc *service.Service, cfg config.CookieConfig, val *validator.Validator) *Handler {
+func New(svc AuthService, cfg config.CookieConfig, val *validator.Validator) *Handler {
 	return &Handler{
 		svc: svc,
 		cfg: cfg,
@@ -189,6 +223,7 @@ func (h *Handler) SignUp(c *gin.Context) {
 	if httpkit.HandleError(c, h.svc.SignUp(c.Request.Context(), req.Email, req.Password, req.OrganizationName, req.InviteToken)) {
 		return
 	}
+
 	httpkit.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
 }
 
@@ -210,23 +245,10 @@ func (h *Handler) SignIn(c *gin.Context) {
 
 // Refresh issues a new access token based on a valid refresh token (from body or cookie).
 func (h *Handler) Refresh(c *gin.Context) {
-	var refreshToken string
-	var usedCookie bool
-
-	// We only bind the JSON (don't strictly validate) because the token might be in the cookie instead
-	var req transport.RefreshRequest
-	if err := c.ShouldBindJSON(&req); err == nil {
-		refreshToken = strings.TrimSpace(req.RefreshToken)
-	}
-
+	refreshToken, usedCookie := h.extractRefreshToken(c)
 	if refreshToken == "" {
-		cookieValue, err := c.Cookie(h.cfg.GetRefreshCookieName())
-		if err != nil || cookieValue == "" {
-			httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
-			return
-		}
-		refreshToken = cookieValue
-		usedCookie = true
+		httpkit.Error(c, http.StatusUnauthorized, "token invalid", nil)
+		return
 	}
 
 	accessToken, newRefreshToken, err := h.svc.Refresh(c.Request.Context(), refreshToken)
@@ -266,18 +288,7 @@ func (h *Handler) Verify(c *gin.Context) {
 // SignOut revokes the user's refresh token and clears the auth cookie.
 func (h *Handler) SignOut(c *gin.Context) {
 	accessToken, _ := bearerTokenFromHeader(c.GetHeader(headerAuthorization))
-	var refreshToken string
-
-	var req transport.SignOutRequest
-	if err := c.ShouldBindJSON(&req); err == nil {
-		refreshToken = strings.TrimSpace(req.RefreshToken)
-	}
-
-	if refreshToken == "" {
-		if cookieValue, err := c.Cookie(h.cfg.GetRefreshCookieName()); err == nil && cookieValue != "" {
-			refreshToken = cookieValue
-		}
-	}
+	refreshToken, _ := h.extractRefreshToken(c)
 
 	if refreshToken != "" {
 		if httpkit.HandleError(c, h.svc.SignOut(c.Request.Context(), refreshToken, accessToken)) {
@@ -375,7 +386,8 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 // Internal Helpers
 // ---------------------------------------------------------------------------
 
-// bindAndValidate acts as a generic helper to decode and validate JSON requests.
+// bindAndValidate is a generic helper to decode and validate JSON requests.
+// Kept as a package-level function because Go does not support generic methods on structs.
 func bindAndValidate[T any](c *gin.Context, val *validator.Validator) (T, bool) {
 	var req T
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -387,6 +399,24 @@ func bindAndValidate[T any](c *gin.Context, val *validator.Validator) (T, bool) 
 		return req, false
 	}
 	return req, true
+}
+
+// extractRefreshToken encapsulates the logic of pulling the refresh token
+// from either the JSON body or the cookie fallback.
+func (h *Handler) extractRefreshToken(c *gin.Context) (token string, fromCookie bool) {
+	var req struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if err := c.ShouldBindJSON(&req); err == nil && strings.TrimSpace(req.RefreshToken) != "" {
+		return strings.TrimSpace(req.RefreshToken), false
+	}
+
+	cookieValue, err := c.Cookie(h.cfg.GetRefreshCookieName())
+	if err == nil && cookieValue != "" {
+		return cookieValue, true
+	}
+
+	return "", false
 }
 
 func bearerTokenFromHeader(authHeader string) (string, bool) {

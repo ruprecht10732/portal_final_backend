@@ -16,57 +16,26 @@ import (
 )
 
 const (
-	vatRateNotFoundMessage = "vat rate not found"
-	productNotFoundMessage = "product not found"
+	errMsgVatRateNotFound = "vat rate not found"
+	errMsgProductNotFound = "product not found"
 )
 
-// productSortFields maps API field names to allowed database sort columns.
-var productSortFields = map[string]string{
-	"title":      "title",
-	"reference":  "reference",
-	"priceCents": "price_cents",
-	"type":       "type",
-	"isDraft":    "is_draft",
-	"vatRateId":  "vat_rate_id",
-	"createdAt":  "created_at",
-	"updatedAt":  "updated_at",
-}
+// O(1) Whitelists for SQL Injection prevention on ORDER BY clauses.
+var (
+	productSortKeys = map[string]string{"title": "title", "reference": "reference", "priceCents": "price_cents", "type": "type", "isDraft": "is_draft", "vatRateId": "vat_rate_id", "createdAt": "created_at", "updatedAt": "updated_at"}
+	vatRateSortKeys = map[string]string{"name": "name", "rateBps": "rate_bps", "createdAt": "created_at", "updatedAt": "updated_at"}
+	sortOrders      = map[string]string{"asc": "asc", "desc": "desc"}
+)
 
-// mapProductSortColumn returns the validated database sort column key.
-func mapProductSortColumn(sortBy string) (string, error) {
-	if sortBy == "" {
-		return "createdAt", nil
+// validateSort generalizes sort validation, eliminating repetitive switch statements.
+func validateSort(val string, whitelist map[string]string, defaultVal string) (string, error) {
+	if val == "" {
+		return defaultVal, nil
 	}
-	if _, ok := productSortFields[sortBy]; ok {
-		return sortBy, nil
+	if mapped, ok := whitelist[val]; ok {
+		return mapped, nil
 	}
-	return "", apperr.BadRequest("invalid sort field")
-}
-
-// mapVatRateSortColumn returns the validated database sort column key.
-func mapVatRateSortColumn(sortBy string) (string, error) {
-	if sortBy == "" {
-		return "name", nil
-	}
-	switch sortBy {
-	case "name", "rateBps", "createdAt", "updatedAt":
-		return sortBy, nil
-	default:
-		return "", apperr.BadRequest("invalid sort field")
-	}
-}
-
-// mapSortOrder returns validated sort order key.
-func mapSortOrder(sortOrder string) (string, error) {
-	if sortOrder == "" {
-		return "desc", nil
-	}
-	switch sortOrder {
-	case "asc", "desc":
-		return sortOrder, nil
-	default:
-		return "", apperr.BadRequest("invalid sort order")
-	}
+	return "", apperr.BadRequest("invalid sort parameter")
 }
 
 // Repo implements the catalog repository.
@@ -83,6 +52,7 @@ func New(pool *pgxpool.Pool) *Repo {
 // Compile-time check that Repo implements Repository.
 var _ Repository = (*Repo)(nil)
 
+// catalogProductFields standardizes intermediate mapping from generated sqlc rows.
 type catalogProductFields struct {
 	ID             pgtype.UUID
 	OrganizationID pgtype.UUID
@@ -124,17 +94,17 @@ func (r *Repo) UpdateVatRate(ctx context.Context, params UpdateVatRateParams) (V
 		ID:             toPgUUID(params.ID),
 		Organizationid: toPgUUID(params.OrganizationID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return VatRate{}, apperr.NotFound(vatRateNotFoundMessage)
-	}
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return VatRate{}, apperr.NotFound(errMsgVatRateNotFound)
+		}
 		return VatRate{}, fmt.Errorf("update vat rate: %w", err)
 	}
 	return vatRateFromRow(row), nil
 }
 
 // DeleteVatRate deletes a VAT rate.
-func (r *Repo) DeleteVatRate(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
+func (r *Repo) DeleteVatRate(ctx context.Context, organizationID, id uuid.UUID) error {
 	rowsAffected, err := r.queries.DeleteVatRate(ctx, catalogdb.DeleteVatRateParams{
 		ID:             toPgUUID(id),
 		OrganizationID: toPgUUID(organizationID),
@@ -143,18 +113,21 @@ func (r *Repo) DeleteVatRate(ctx context.Context, organizationID uuid.UUID, id u
 		return fmt.Errorf("delete vat rate: %w", err)
 	}
 	if rowsAffected == 0 {
-		return apperr.NotFound(vatRateNotFoundMessage)
+		return apperr.NotFound(errMsgVatRateNotFound)
 	}
 	return nil
 }
 
 // GetVatRateByID retrieves a VAT rate by ID.
-func (r *Repo) GetVatRateByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (VatRate, error) {
-	row, err := r.queries.GetVatRateByID(ctx, catalogdb.GetVatRateByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return VatRate{}, apperr.NotFound(vatRateNotFoundMessage)
-	}
+func (r *Repo) GetVatRateByID(ctx context.Context, organizationID, id uuid.UUID) (VatRate, error) {
+	row, err := r.queries.GetVatRateByID(ctx, catalogdb.GetVatRateByIDParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return VatRate{}, apperr.NotFound(errMsgVatRateNotFound)
+		}
 		return VatRate{}, fmt.Errorf("get vat rate by id: %w", err)
 	}
 	return vatRateFromRow(row), nil
@@ -162,16 +135,16 @@ func (r *Repo) GetVatRateByID(ctx context.Context, organizationID uuid.UUID, id 
 
 // ListVatRates lists VAT rates with filters and pagination.
 func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]VatRate, int, error) {
-	searchPattern := likePattern(params.Search)
-	sortBy, err := mapVatRateSortColumn(params.SortBy)
+	sortBy, err := validateSort(params.SortBy, vatRateSortKeys, "createdAt")
 	if err != nil {
 		return nil, 0, err
 	}
-	sortOrder, err := mapSortOrder(params.SortOrder)
+	sortOrder, err := validateSort(params.SortOrder, sortOrders, "desc")
 	if err != nil {
 		return nil, 0, err
 	}
 
+	searchPattern := likePattern(params.Search)
 	total, err := r.queries.CountVatRates(ctx, catalogdb.CountVatRatesParams{
 		Organizationid: toPgUUID(params.OrganizationID),
 		Searchpattern:  searchPattern,
@@ -200,7 +173,7 @@ func (r *Repo) ListVatRates(ctx context.Context, params ListVatRatesParams) ([]V
 }
 
 // HasProductsWithVatRate checks if any products reference a VAT rate.
-func (r *Repo) HasProductsWithVatRate(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (bool, error) {
+func (r *Repo) HasProductsWithVatRate(ctx context.Context, organizationID, id uuid.UUID) (bool, error) {
 	exists, err := r.queries.HasProductsWithVatRate(ctx, catalogdb.HasProductsWithVatRateParams{
 		VatRateID:      toPgUUID(id),
 		OrganizationID: toPgUUID(organizationID),
@@ -231,23 +204,13 @@ func (r *Repo) CreateProduct(ctx context.Context, params CreateProductParams) (P
 	if err != nil {
 		return Product{}, fmt.Errorf("create product: %w", err)
 	}
+
 	return productFromFields(catalogProductFields{
-		ID:             row.ID,
-		OrganizationID: row.OrganizationID,
-		VatRateID:      row.VatRateID,
-		IsDraft:        row.IsDraft,
-		Title:          row.Title,
-		Reference:      row.Reference,
-		Description:    row.Description,
-		PriceCents:     row.PriceCents,
-		UnitPriceCents: row.UnitPriceCents,
-		UnitLabel:      row.UnitLabel,
-		LaborTimeText:  row.LaborTimeText,
-		Type:           row.Type,
-		PeriodCount:    row.PeriodCount,
-		PeriodUnit:     row.PeriodUnit,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID: row.ID, OrganizationID: row.OrganizationID, VatRateID: row.VatRateID, IsDraft: row.IsDraft,
+		Title: row.Title, Reference: row.Reference, Description: row.Description, PriceCents: row.PriceCents,
+		UnitPriceCents: row.UnitPriceCents, UnitLabel: row.UnitLabel, LaborTimeText: row.LaborTimeText,
+		Type: row.Type, PeriodCount: row.PeriodCount, PeriodUnit: row.PeriodUnit,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}), nil
 }
 
@@ -278,80 +241,66 @@ func (r *Repo) UpdateProduct(ctx context.Context, params UpdateProductParams) (P
 		ID:             toPgUUID(params.ID),
 		Organizationid: toPgUUID(params.OrganizationID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Product{}, apperr.NotFound(productNotFoundMessage)
-	}
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Product{}, apperr.NotFound(errMsgProductNotFound)
+		}
 		return Product{}, fmt.Errorf("update product: %w", err)
 	}
+
 	return productFromFields(catalogProductFields{
-		ID:             row.ID,
-		OrganizationID: row.OrganizationID,
-		VatRateID:      row.VatRateID,
-		IsDraft:        row.IsDraft,
-		Title:          row.Title,
-		Reference:      row.Reference,
-		Description:    row.Description,
-		PriceCents:     row.PriceCents,
-		UnitPriceCents: row.UnitPriceCents,
-		UnitLabel:      row.UnitLabel,
-		LaborTimeText:  row.LaborTimeText,
-		Type:           row.Type,
-		PeriodCount:    row.PeriodCount,
-		PeriodUnit:     row.PeriodUnit,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID: row.ID, OrganizationID: row.OrganizationID, VatRateID: row.VatRateID, IsDraft: row.IsDraft,
+		Title: row.Title, Reference: row.Reference, Description: row.Description, PriceCents: row.PriceCents,
+		UnitPriceCents: row.UnitPriceCents, UnitLabel: row.UnitLabel, LaborTimeText: row.LaborTimeText,
+		Type: row.Type, PeriodCount: row.PeriodCount, PeriodUnit: row.PeriodUnit,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}), nil
 }
 
 // DeleteProduct deletes a product.
-func (r *Repo) DeleteProduct(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) error {
-	rowsAffected, err := r.queries.DeleteProduct(ctx, catalogdb.DeleteProductParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
+func (r *Repo) DeleteProduct(ctx context.Context, organizationID, id uuid.UUID) error {
+	rowsAffected, err := r.queries.DeleteProduct(ctx, catalogdb.DeleteProductParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return fmt.Errorf("delete product: %w", err)
 	}
 	if rowsAffected == 0 {
-		return apperr.NotFound(productNotFoundMessage)
+		return apperr.NotFound(errMsgProductNotFound)
 	}
 	return nil
 }
 
 // GetProductByID retrieves a product by ID.
-func (r *Repo) GetProductByID(ctx context.Context, organizationID uuid.UUID, id uuid.UUID) (Product, error) {
-	row, err := r.queries.GetProductByID(ctx, catalogdb.GetProductByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Product{}, apperr.NotFound(productNotFoundMessage)
-	}
+func (r *Repo) GetProductByID(ctx context.Context, organizationID, id uuid.UUID) (Product, error) {
+	row, err := r.queries.GetProductByID(ctx, catalogdb.GetProductByIDParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Product{}, apperr.NotFound(errMsgProductNotFound)
+		}
 		return Product{}, fmt.Errorf("get product by id: %w", err)
 	}
+
 	return productFromFields(catalogProductFields{
-		ID:             row.ID,
-		OrganizationID: row.OrganizationID,
-		VatRateID:      row.VatRateID,
-		IsDraft:        row.IsDraft,
-		Title:          row.Title,
-		Reference:      row.Reference,
-		Description:    row.Description,
-		PriceCents:     row.PriceCents,
-		UnitPriceCents: row.UnitPriceCents,
-		UnitLabel:      row.UnitLabel,
-		LaborTimeText:  row.LaborTimeText,
-		Type:           row.Type,
-		PeriodCount:    row.PeriodCount,
-		PeriodUnit:     row.PeriodUnit,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID: row.ID, OrganizationID: row.OrganizationID, VatRateID: row.VatRateID, IsDraft: row.IsDraft,
+		Title: row.Title, Reference: row.Reference, Description: row.Description, PriceCents: row.PriceCents,
+		UnitPriceCents: row.UnitPriceCents, UnitLabel: row.UnitLabel, LaborTimeText: row.LaborTimeText,
+		Type: row.Type, PeriodCount: row.PeriodCount, PeriodUnit: row.PeriodUnit,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}), nil
 }
 
 // ListProducts lists products with filters and pagination.
 func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]Product, int, error) {
-	sortBy, err := mapProductSortColumn(params.SortBy)
+	sortBy, err := validateSort(params.SortBy, productSortKeys, "createdAt")
 	if err != nil {
 		return nil, 0, err
 	}
-	sortOrder, err := mapSortOrder(params.SortOrder)
+	sortOrder, err := validateSort(params.SortOrder, sortOrders, "desc")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -399,22 +348,11 @@ func (r *Repo) ListProducts(ctx context.Context, params ListProductsParams) ([]P
 	items := make([]Product, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, productFromFields(catalogProductFields{
-			ID:             row.ID,
-			OrganizationID: row.OrganizationID,
-			VatRateID:      row.VatRateID,
-			IsDraft:        row.IsDraft,
-			Title:          row.Title,
-			Reference:      row.Reference,
-			Description:    row.Description,
-			PriceCents:     row.PriceCents,
-			UnitPriceCents: row.UnitPriceCents,
-			UnitLabel:      row.UnitLabel,
-			LaborTimeText:  row.LaborTimeText,
-			Type:           row.Type,
-			PeriodCount:    row.PeriodCount,
-			PeriodUnit:     row.PeriodUnit,
-			CreatedAt:      row.CreatedAt,
-			UpdatedAt:      row.UpdatedAt,
+			ID: row.ID, OrganizationID: row.OrganizationID, VatRateID: row.VatRateID, IsDraft: row.IsDraft,
+			Title: row.Title, Reference: row.Reference, Description: row.Description, PriceCents: row.PriceCents,
+			UnitPriceCents: row.UnitPriceCents, UnitLabel: row.UnitLabel, LaborTimeText: row.LaborTimeText,
+			Type: row.Type, PeriodCount: row.PeriodCount, PeriodUnit: row.PeriodUnit,
+			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		}))
 	}
 	return items, int(total), nil
@@ -433,29 +371,18 @@ func (r *Repo) GetProductsByIDs(ctx context.Context, organizationID uuid.UUID, i
 	items := make([]Product, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, productFromFields(catalogProductFields{
-			ID:             row.ID,
-			OrganizationID: row.OrganizationID,
-			VatRateID:      row.VatRateID,
-			IsDraft:        row.IsDraft,
-			Title:          row.Title,
-			Reference:      row.Reference,
-			Description:    row.Description,
-			PriceCents:     row.PriceCents,
-			UnitPriceCents: row.UnitPriceCents,
-			UnitLabel:      row.UnitLabel,
-			LaborTimeText:  row.LaborTimeText,
-			Type:           row.Type,
-			PeriodCount:    row.PeriodCount,
-			PeriodUnit:     row.PeriodUnit,
-			CreatedAt:      row.CreatedAt,
-			UpdatedAt:      row.UpdatedAt,
+			ID: row.ID, OrganizationID: row.OrganizationID, VatRateID: row.VatRateID, IsDraft: row.IsDraft,
+			Title: row.Title, Reference: row.Reference, Description: row.Description, PriceCents: row.PriceCents,
+			UnitPriceCents: row.UnitPriceCents, UnitLabel: row.UnitLabel, LaborTimeText: row.LaborTimeText,
+			Type: row.Type, PeriodCount: row.PeriodCount, PeriodUnit: row.PeriodUnit,
+			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		}))
 	}
 	return items, nil
 }
 
 // AddProductMaterials adds materials to a product.
-func (r *Repo) AddProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, links []ProductMaterialLink) error {
+func (r *Repo) AddProductMaterials(ctx context.Context, organizationID, productID uuid.UUID, links []ProductMaterialLink) error {
 	if len(links) == 0 {
 		return nil
 	}
@@ -464,9 +391,7 @@ func (r *Repo) AddProductMaterials(ctx context.Context, organizationID uuid.UUID
 	if err != nil {
 		return fmt.Errorf("begin add product materials tx: %w", err)
 	}
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
+	defer tx.Rollback(ctx)
 
 	queries := r.queries.WithTx(tx)
 	for _, link := range links {
@@ -487,7 +412,7 @@ func (r *Repo) AddProductMaterials(ctx context.Context, organizationID uuid.UUID
 }
 
 // RemoveProductMaterials removes materials from a product.
-func (r *Repo) RemoveProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID, materialIDs []uuid.UUID) error {
+func (r *Repo) RemoveProductMaterials(ctx context.Context, organizationID, productID uuid.UUID, materialIDs []uuid.UUID) error {
 	if err := r.queries.RemoveProductMaterials(ctx, catalogdb.RemoveProductMaterialsParams{
 		OrganizationID: toPgUUID(organizationID),
 		ProductID:      toPgUUID(productID),
@@ -499,7 +424,7 @@ func (r *Repo) RemoveProductMaterials(ctx context.Context, organizationID uuid.U
 }
 
 // ListProductMaterials lists materials for a product.
-func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) ([]Product, error) {
+func (r *Repo) ListProductMaterials(ctx context.Context, organizationID, productID uuid.UUID) ([]Product, error) {
 	rows, err := r.queries.ListProductMaterials(ctx, catalogdb.ListProductMaterialsParams{
 		OrganizationID: toPgUUID(organizationID),
 		ProductID:      toPgUUID(productID),
@@ -512,30 +437,18 @@ func (r *Repo) ListProductMaterials(ctx context.Context, organizationID uuid.UUI
 	for _, row := range rows {
 		pricingMode := row.PricingMode
 		items = append(items, productFromFields(catalogProductFields{
-			ID:             row.ID,
-			OrganizationID: row.OrganizationID,
-			VatRateID:      row.VatRateID,
-			IsDraft:        row.IsDraft,
-			Title:          row.Title,
-			Reference:      row.Reference,
-			Description:    row.Description,
-			PriceCents:     row.PriceCents,
-			UnitPriceCents: row.UnitPriceCents,
-			UnitLabel:      row.UnitLabel,
-			LaborTimeText:  row.LaborTimeText,
-			Type:           row.Type,
-			PricingMode:    &pricingMode,
-			PeriodCount:    row.PeriodCount,
-			PeriodUnit:     row.PeriodUnit,
-			CreatedAt:      row.CreatedAt,
-			UpdatedAt:      row.UpdatedAt,
+			ID: row.ID, OrganizationID: row.OrganizationID, VatRateID: row.VatRateID, IsDraft: row.IsDraft,
+			Title: row.Title, Reference: row.Reference, Description: row.Description, PriceCents: row.PriceCents,
+			UnitPriceCents: row.UnitPriceCents, UnitLabel: row.UnitLabel, LaborTimeText: row.LaborTimeText,
+			Type: row.Type, PricingMode: &pricingMode, PeriodCount: row.PeriodCount, PeriodUnit: row.PeriodUnit,
+			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		}))
 	}
 	return items, nil
 }
 
 // HasProductMaterials checks if a product has any materials linked.
-func (r *Repo) HasProductMaterials(ctx context.Context, organizationID uuid.UUID, productID uuid.UUID) (bool, error) {
+func (r *Repo) HasProductMaterials(ctx context.Context, organizationID, productID uuid.UUID) (bool, error) {
 	exists, err := r.queries.HasProductMaterials(ctx, catalogdb.HasProductMaterialsParams{
 		OrganizationID: toPgUUID(organizationID),
 		ProductID:      toPgUUID(productID),
@@ -545,6 +458,10 @@ func (r *Repo) HasProductMaterials(ctx context.Context, organizationID uuid.UUID
 	}
 	return exists, nil
 }
+
+// =====================================================================
+// Internal DRY Helpers
+// =====================================================================
 
 func vatRateFromRow(row catalogdb.RacCatalogVatRate) VatRate {
 	return VatRate{
@@ -587,13 +504,13 @@ func toPgUUIDPtr(id *uuid.UUID) pgtype.UUID {
 	if id == nil {
 		return pgtype.UUID{}
 	}
-	return toPgUUID(*id)
+	return pgtype.UUID{Bytes: *id, Valid: true}
 }
 
 func toPgUUIDSlice(ids []uuid.UUID) []pgtype.UUID {
 	result := make([]pgtype.UUID, 0, len(ids))
 	for _, id := range ids {
-		result = append(result, toPgUUID(id))
+		result = append(result, pgtype.UUID{Bytes: id, Valid: true})
 	}
 	return result
 }
@@ -651,14 +568,13 @@ func optionalString(value pgtype.Text) *string {
 	if !value.Valid {
 		return nil
 	}
-	result := value.String
-	return &result
+	return &value.String
 }
 
 func optionalInt(value pgtype.Int4) *int {
 	if !value.Valid {
 		return nil
 	}
-	result := int(value.Int32)
-	return &result
+	res := int(value.Int32)
+	return &res
 }

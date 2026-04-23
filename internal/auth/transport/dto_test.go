@@ -6,33 +6,65 @@ import (
 	"testing"
 )
 
-func TestAuthResponseOmitsEmptyRefreshToken(t *testing.T) {
+// TestAuthResponseJSONContract ensures that the JSON serialization strictly honors
+// the API contract, specifically verifying that optional tokens do not leak empty keys.
+func TestAuthResponseJSONContract(t *testing.T) {
 	t.Parallel()
 
-	payload, err := json.Marshal(AuthResponse{AccessToken: "access-token"})
-	if err != nil {
-		t.Fatalf("marshal failed: %v", err)
+	tests := []struct {
+		name            string
+		response        AuthResponse
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name:            "omits empty refresh token (omitempty contract)",
+			response:        AuthResponse{AccessToken: "access-token"},
+			wantContains:    []string{`"accessToken":"access-token"`},
+			wantNotContains: []string{`"refreshToken"`},
+		},
+		{
+			name:            "includes populated refresh token",
+			response:        AuthResponse{AccessToken: "access-token", RefreshToken: "refresh-token"},
+			wantContains:    []string{`"accessToken":"access-token"`, `"refreshToken":"refresh-token"`},
+			wantNotContains: nil,
+		},
 	}
 
-	encoded := string(payload)
-	if strings.Contains(encoded, "refreshToken") {
-		t.Fatalf("expected refreshToken to be omitted when empty, got %s", encoded)
-	}
-	if !strings.Contains(encoded, `"accessToken":"access-token"`) {
-		t.Fatalf("expected accessToken in payload, got %s", encoded)
+	for _, tt := range tests {
+		tt := tt
+
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			payload, err := json.Marshal(tt.response)
+			if err != nil {
+				t.Fatalf("failed to marshal AuthResponse: %v", err)
+			}
+
+			assertJSONPayload(t, string(payload), tt.wantContains, tt.wantNotContains)
+		})
 	}
 }
 
-func TestAuthResponseIncludesRefreshTokenWhenPresent(t *testing.T) {
-	t.Parallel()
+// =============================================================================
+// Test Helpers
+// =============================================================================
 
-	payload, err := json.Marshal(AuthResponse{AccessToken: "access-token", RefreshToken: "refresh-token"})
-	if err != nil {
-		t.Fatalf("marshal failed: %v", err)
+// assertJSONPayload validates the presence and absence of required substrings.
+// Extracting this logic drops the main test's Cognitive Complexity to 4.
+func assertJSONPayload(t *testing.T, encoded string, wantContains, wantNotContains []string) {
+	t.Helper()
+
+	for _, want := range wantContains {
+		if !strings.Contains(encoded, want) {
+			t.Errorf("API Contract Violation: expected payload to contain %q, got: %s", want, encoded)
+		}
 	}
 
-	encoded := string(payload)
-	if !strings.Contains(encoded, `"refreshToken":"refresh-token"`) {
-		t.Fatalf("expected refreshToken in payload, got %s", encoded)
+	for _, wantNot := range wantNotContains {
+		if strings.Contains(encoded, wantNot) {
+			t.Errorf("API Contract Violation: expected payload to NOT contain %q, got: %s", wantNot, encoded)
+		}
 	}
 }
