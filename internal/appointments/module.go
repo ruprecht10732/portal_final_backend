@@ -1,4 +1,3 @@
-// Package RAC_appointments provides the RAC_appointments domain module.
 package appointments
 
 import (
@@ -17,10 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Module represents the RAC_appointments domain module
+// Module represents the appointments domain module.
 type Module struct {
-	handler *handler.Handler
 	Service *service.Service
+	handler *handler.Handler
 	sse     *sse.Service
 }
 
@@ -32,11 +31,11 @@ type Dependencies struct {
 	EventBus          events.Bus
 	ReminderScheduler scheduler.ReminderScheduler
 	Storage           storage.StorageService
-	AttachmentBucket  string
 	TimelineRecorder  leadsrepo.TimelineEventStore
+	AttachmentBucket  string
 }
 
-// NewModule creates a new RAC_appointments module with all dependencies wired
+// NewModule creates a new appointments module with all dependencies wired.
 func NewModule(deps Dependencies) *Module {
 	repo := repository.New(deps.Pool)
 	svc := service.New(service.Dependencies{
@@ -49,11 +48,10 @@ func NewModule(deps Dependencies) *Module {
 		AttachmentBucket:  deps.AttachmentBucket,
 		TimelineRecorder:  deps.TimelineRecorder,
 	})
-	h := handler.New(svc, deps.Validator)
 
 	return &Module{
-		handler: h,
 		Service: svc,
+		handler: handler.New(svc, deps.Validator),
 	}
 }
 
@@ -63,16 +61,15 @@ func (m *Module) SetSSE(sseService *sse.Service) {
 	m.Service.SetSSE(sseService)
 }
 
-// Name returns the module name for logging
+// Name returns the module name for logging purposes.
 func (m *Module) Name() string {
-	return "RAC_appointments"
+	return "appointments"
 }
 
-// RegisterRoutes registers the module's routes under /api/RAC_appointments
+// RegisterRoutes registers the module's routes under /api/appointments.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	appointments := ctx.Protected.Group("/appointments")
-	m.handler.RegisterRoutes(appointments)
+	m.handler.RegisterRoutes(ctx.Protected.Group("/appointments"))
 }
 
-// Compile-time check that Module implements http.Module
+// Compile-time check that Module implements apphttp.Module.
 var _ apphttp.Module = (*Module)(nil)

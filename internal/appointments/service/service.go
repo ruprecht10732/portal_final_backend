@@ -311,11 +311,7 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID, i
 		return nil, err
 	}
 
-	var leadInfo *transport.AppointmentLeadInfo
-	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
-	}
-
+	leadInfo := s.getLeadInfoIfPresent(ctx, appt.LeadID, tenantID)
 	resp := appt.ToResponse(leadInfo)
 	return &resp, nil
 }
@@ -407,7 +403,7 @@ func applyAppointmentUpdates(appt *repository.Appointment, req transport.UpdateA
 		appt.Title = sanitize.Text(*req.Title)
 	}
 	if req.Description != nil {
-		appt.Description = sanitize.TextPtr(req.Description)
+		appt.Description = sanitize.TextPtr(nilIfEmpty(*req.Description))
 	}
 	if req.Location != nil {
 		appt.Location = req.Location
@@ -449,17 +445,10 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, userID uuid.UU
 		return nil, err
 	}
 
-	// Refetch to get updated data
-	appt, err = s.repo.GetByID(ctx, id, tenantID)
-	if err != nil {
-		return nil, err
-	}
+	appt.Status = string(req.Status)
+	appt.UpdatedAt = time.Now()
 
-	var leadInfo *transport.AppointmentLeadInfo
-	if appt.LeadID != nil {
-		leadInfo = s.getLeadInfo(ctx, *appt.LeadID, tenantID)
-	}
-
+	leadInfo := s.getLeadInfoIfPresent(ctx, appt.LeadID, tenantID)
 	resp := appt.ToResponse(leadInfo)
 
 	// Broadcast status change via SSE
@@ -637,18 +626,27 @@ func clampPageSize(size int) int {
 
 // buildListResponse converts repository results to transport response.
 func (s *Service) buildListResponse(ctx context.Context, result *repository.ListResult, tenantID uuid.UUID) (*transport.AppointmentListResponse, error) {
-	// Build lead ID list for batch fetching
-	leadIDs := make([]uuid.UUID, 0, len(result.Items))
+	// Build deduplicated lead ID list for batch fetching
+	var leadIDs []uuid.UUID
+	leadIDSet := make(map[uuid.UUID]struct{})
+
 	for _, appt := range result.Items {
 		if appt.LeadID != nil {
-			leadIDs = append(leadIDs, *appt.LeadID)
+			if _, exists := leadIDSet[*appt.LeadID]; !exists {
+				leadIDSet[*appt.LeadID] = struct{}{}
+				leadIDs = append(leadIDs, *appt.LeadID)
+			}
 		}
 	}
 
 	// Batch fetch lead info
-	leadInfoMap, err := s.repo.GetLeadInfoBatch(ctx, leadIDs, tenantID)
-	if err != nil {
-		return nil, err
+	leadInfoMap := make(map[uuid.UUID]*repository.LeadInfo)
+	if len(leadIDs) > 0 {
+		var err error
+		leadInfoMap, err = s.repo.GetLeadInfoBatch(ctx, leadIDs, tenantID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Convert to responses
@@ -694,6 +692,9 @@ func (s *Service) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, u
 	report, err := s.repo.GetVisitReport(ctx, appointmentID, tenantID)
 	if err != nil {
 		return nil, err
+	}
+	if report == nil {
+		return nil, apperr.NotFound("visit report not found")
 	}
 
 	return &transport.AppointmentVisitReportResponse{
@@ -1065,7 +1066,7 @@ func generateSlotsForWindow(windowStart, windowEnd time.Time, slotDurationMinute
 	slotDuration := time.Duration(slotDurationMinutes) * time.Minute
 
 	// Generate slots
-	for slotStart := windowStart; slotStart.Add(slotDuration).Before(windowEnd) || slotStart.Add(slotDuration).Equal(windowEnd); slotStart = slotStart.Add(slotDuration) {
+	for slotStart := windowStart; !slotStart.Add(slotDuration).After(windowEnd); slotStart = slotStart.Add(slotDuration) {
 		slotEnd := slotStart.Add(slotDuration)
 
 		// Check if slot conflicts with any appointment

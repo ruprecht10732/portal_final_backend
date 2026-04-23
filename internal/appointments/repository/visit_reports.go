@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	appointmentsdb "portal_final_backend/internal/appointments/db"
@@ -37,61 +36,46 @@ type AppointmentAttachment struct {
 	CreatedAt      time.Time
 }
 
-func optionalInt64(value pgtype.Int8) *int64 {
-	if !value.Valid {
+// --- Type Helpers ---
+
+func optionalInt64(v pgtype.Int8) *int64 {
+	if !v.Valid {
 		return nil
 	}
-	intValue := value.Int64
-	return &intValue
+	return &v.Int64
 }
 
-func toPgInt64(value *int64) pgtype.Int8 {
-	if value == nil {
+func toPgInt64(v *int64) pgtype.Int8 {
+	if v == nil {
 		return pgtype.Int8{}
 	}
-	return pgtype.Int8{Int64: *value, Valid: true}
+	return pgtype.Int8{Int64: *v, Valid: true}
 }
 
-func visitReportFromModel(model appointmentsdb.RacAppointmentVisitReport) VisitReport {
-	return VisitReport{
-		AppointmentID:       uuid.UUID(model.AppointmentID.Bytes),
-		OrganizationID:      uuid.UUID(model.OrganizationID.Bytes),
-		Measurements:        optionalString(model.Measurements),
-		MeasurementProducts: model.MeasurementProducts,
-		AccessDifficulty:    optionalString(model.AccessDifficulty),
-		Notes:               optionalString(model.Notes),
-		CreatedAt:           model.CreatedAt.Time,
-		UpdatedAt:           model.UpdatedAt.Time,
-	}
-}
+// --- Visit Reports ---
 
-func appointmentAttachmentFromModel(model appointmentsdb.RacAppointmentAttachment) AppointmentAttachment {
-	return AppointmentAttachment{
-		ID:             uuid.UUID(model.ID.Bytes),
-		AppointmentID:  uuid.UUID(model.AppointmentID.Bytes),
-		OrganizationID: uuid.UUID(model.OrganizationID.Bytes),
-		FileKey:        model.FileKey,
-		FileName:       model.FileName,
-		ContentType:    optionalString(model.ContentType),
-		SizeBytes:      optionalInt64(model.SizeBytes),
-		CreatedAt:      model.CreatedAt.Time,
-	}
-}
-
-func (r *Repository) GetVisitReport(ctx context.Context, appointmentID uuid.UUID, organizationID uuid.UUID) (*VisitReport, error) {
+func (r *Repository) GetVisitReport(ctx context.Context, apptID, orgID uuid.UUID) (*VisitReport, error) {
 	row, err := r.queries.GetAppointmentVisitReport(ctx, appointmentsdb.GetAppointmentVisitReportParams{
-		AppointmentID:  toPgUUID(appointmentID),
-		OrganizationID: toPgUUID(organizationID),
+		AppointmentID:  toPgUUID(apptID),
+		OrganizationID: toPgUUID(orgID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apperr.NotFound("visit report not found")
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get visit report: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("visit report not found")
+		}
+		return nil, err
 	}
 
-	report := visitReportFromModel(appointmentsdb.RacAppointmentVisitReport{AppointmentID: row.AppointmentID, Measurements: row.Measurements, MeasurementProducts: row.MeasurementProducts, AccessDifficulty: row.AccessDifficulty, Notes: row.Notes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
-	return &report, nil
+	return &VisitReport{
+		AppointmentID:       uuid.UUID(row.AppointmentID.Bytes),
+		OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
+		Measurements:        optionalString(row.Measurements),
+		MeasurementProducts: row.MeasurementProducts,
+		AccessDifficulty:    optionalString(row.AccessDifficulty),
+		Notes:               optionalString(row.Notes),
+		CreatedAt:           row.CreatedAt.Time,
+		UpdatedAt:           row.UpdatedAt.Time,
+	}, nil
 }
 
 func (r *Repository) UpsertVisitReport(ctx context.Context, report VisitReport) (*VisitReport, error) {
@@ -104,43 +88,71 @@ func (r *Repository) UpsertVisitReport(ctx context.Context, report VisitReport) 
 		Notes:               toPgText(report.Notes),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to upsert visit report: %w", err)
+		return nil, err
 	}
 
-	saved := visitReportFromModel(appointmentsdb.RacAppointmentVisitReport{AppointmentID: row.AppointmentID, Measurements: row.Measurements, MeasurementProducts: row.MeasurementProducts, AccessDifficulty: row.AccessDifficulty, Notes: row.Notes, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, OrganizationID: row.OrganizationID})
-	return &saved, nil
+	return &VisitReport{
+		AppointmentID:       uuid.UUID(row.AppointmentID.Bytes),
+		OrganizationID:      uuid.UUID(row.OrganizationID.Bytes),
+		Measurements:        optionalString(row.Measurements),
+		MeasurementProducts: row.MeasurementProducts,
+		AccessDifficulty:    optionalString(row.AccessDifficulty),
+		Notes:               optionalString(row.Notes),
+		CreatedAt:           row.CreatedAt.Time,
+		UpdatedAt:           row.UpdatedAt.Time,
+	}, nil
 }
 
-func (r *Repository) CreateAttachment(ctx context.Context, attachment AppointmentAttachment) (*AppointmentAttachment, error) {
+// --- Attachments ---
+
+func (r *Repository) CreateAttachment(ctx context.Context, att AppointmentAttachment) (*AppointmentAttachment, error) {
 	row, err := r.queries.CreateAppointmentAttachment(ctx, appointmentsdb.CreateAppointmentAttachmentParams{
-		ID:             toPgUUID(attachment.ID),
-		AppointmentID:  toPgUUID(attachment.AppointmentID),
-		OrganizationID: toPgUUID(attachment.OrganizationID),
-		FileKey:        attachment.FileKey,
-		FileName:       attachment.FileName,
-		ContentType:    toPgText(attachment.ContentType),
-		SizeBytes:      toPgInt64(attachment.SizeBytes),
+		ID:             toPgUUID(att.ID),
+		AppointmentID:  toPgUUID(att.AppointmentID),
+		OrganizationID: toPgUUID(att.OrganizationID),
+		FileKey:        att.FileKey,
+		FileName:       att.FileName,
+		ContentType:    toPgText(att.ContentType),
+		SizeBytes:      toPgInt64(att.SizeBytes),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create appointment attachment: %w", err)
+		return nil, err
 	}
 
-	saved := appointmentAttachmentFromModel(appointmentsdb.RacAppointmentAttachment{ID: row.ID, AppointmentID: row.AppointmentID, FileKey: row.FileKey, FileName: row.FileName, ContentType: row.ContentType, SizeBytes: row.SizeBytes, CreatedAt: row.CreatedAt, OrganizationID: row.OrganizationID})
-	return &saved, nil
+	return &AppointmentAttachment{
+		ID:             uuid.UUID(row.ID.Bytes),
+		AppointmentID:  uuid.UUID(row.AppointmentID.Bytes),
+		OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+		FileKey:        row.FileKey,
+		FileName:       row.FileName,
+		ContentType:    optionalString(row.ContentType),
+		SizeBytes:      optionalInt64(row.SizeBytes),
+		CreatedAt:      row.CreatedAt.Time,
+	}, nil
 }
 
-func (r *Repository) ListAttachments(ctx context.Context, appointmentID uuid.UUID, organizationID uuid.UUID) ([]AppointmentAttachment, error) {
+func (r *Repository) ListAttachments(ctx context.Context, apptID, orgID uuid.UUID) ([]AppointmentAttachment, error) {
 	rows, err := r.queries.ListAppointmentAttachments(ctx, appointmentsdb.ListAppointmentAttachmentsParams{
-		AppointmentID:  toPgUUID(appointmentID),
-		OrganizationID: toPgUUID(organizationID),
+		AppointmentID:  toPgUUID(apptID),
+		OrganizationID: toPgUUID(orgID),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list appointment attachments: %w", err)
+		return nil, err
 	}
 
-	items := make([]AppointmentAttachment, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, appointmentAttachmentFromModel(appointmentsdb.RacAppointmentAttachment{ID: row.ID, AppointmentID: row.AppointmentID, FileKey: row.FileKey, FileName: row.FileName, ContentType: row.ContentType, SizeBytes: row.SizeBytes, CreatedAt: row.CreatedAt, OrganizationID: row.OrganizationID}))
+	// Optimized O(N) allocation with direct index assignment
+	items := make([]AppointmentAttachment, len(rows))
+	for i, row := range rows {
+		items[i] = AppointmentAttachment{
+			ID:             uuid.UUID(row.ID.Bytes),
+			AppointmentID:  uuid.UUID(row.AppointmentID.Bytes),
+			OrganizationID: uuid.UUID(row.OrganizationID.Bytes),
+			FileKey:        row.FileKey,
+			FileName:       row.FileName,
+			ContentType:    optionalString(row.ContentType),
+			SizeBytes:      optionalInt64(row.SizeBytes),
+			CreatedAt:      row.CreatedAt.Time,
+		}
 	}
 
 	return items, nil

@@ -7,7 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// AppointmentType defines the type of appointment
+// --- Constants & Enums ---
+
 type AppointmentType string
 
 const (
@@ -16,7 +17,6 @@ const (
 	AppointmentTypeBlocked    AppointmentType = "blocked"
 )
 
-// AppointmentStatus defines the status of an appointment
 type AppointmentStatus string
 
 const (
@@ -27,7 +27,6 @@ const (
 	AppointmentStatusNoShow    AppointmentStatus = "no_show"
 )
 
-// AccessDifficulty defines accessibility difficulty for visit reports
 type AccessDifficulty string
 
 const (
@@ -36,75 +35,80 @@ const (
 	AccessDifficultyHigh   AccessDifficulty = "High"
 )
 
-// CreateAppointmentRequest is the request body for creating an appointment
+// --- Appointment DTOs ---
+
 type CreateAppointmentRequest struct {
-	LeadID                *uuid.UUID        `json:"leadId,omitempty"`
-	LeadServiceID         *uuid.UUID        `json:"leadServiceId,omitempty"`
-	Type                  AppointmentType   `json:"type" validate:"required,oneof=lead_visit standalone blocked"`
-	Title                 string            `json:"title" validate:"required,min=1,max=200"`
-	Description           string            `json:"description,omitempty" validate:"max=2000"`
-	Location              string            `json:"location,omitempty" validate:"max=500"`
-	MeetingLink           string            `json:"meetingLink,omitempty" validate:"max=500"`
-	StartTime             time.Time         `json:"startTime" validate:"required"`
-	EndTime               time.Time         `json:"endTime" validate:"required,gtfield=StartTime"`
-	AllDay                bool              `json:"allDay"`
-	SendConfirmationEmail *bool             `json:"sendConfirmationEmail,omitempty"` // If true, sends confirmation email to lead
-	InitialStatus         AppointmentStatus `json:"-"`                               // Internal-only: override default "scheduled" status
+	// 24-byte fields
+	StartTime time.Time `json:"startTime" validate:"required"`
+	EndTime   time.Time `json:"endTime" validate:"required,gtfield=StartTime"`
+
+	// 8-byte pointers
+	LeadID                *uuid.UUID `json:"leadId,omitempty" validate:"omitempty,uuid"`
+	LeadServiceID         *uuid.UUID `json:"leadServiceId,omitempty" validate:"omitempty,uuid"`
+	SendConfirmationEmail *bool      `json:"sendConfirmationEmail,omitempty"`
+
+	// 16-byte strings/UUIDs/Header types
+	Type          AppointmentType   `json:"type" validate:"required,oneof=lead_visit standalone blocked"`
+	Title         string            `json:"title" validate:"required,min=1,max=200"`
+	Description   string            `json:"description,omitempty" validate:"max=2000"`
+	Location      string            `json:"location,omitempty" validate:"max=500"`
+	MeetingLink   string            `json:"meetingLink,omitempty" validate:"max=500"`
+	InitialStatus AppointmentStatus `json:"-"` // Internal-only
+
+	// 1-byte fields
+	AllDay bool `json:"allDay"`
 }
 
-// UpdateAppointmentRequest is the request body for updating an appointment
 type UpdateAppointmentRequest struct {
+	StartTime   *time.Time `json:"startTime,omitempty"`
+	EndTime     *time.Time `json:"endTime,omitempty"`
 	Title       *string    `json:"title,omitempty" validate:"omitempty,min=1,max=200"`
 	Description *string    `json:"description,omitempty" validate:"omitempty,max=2000"`
 	Location    *string    `json:"location,omitempty" validate:"omitempty,max=500"`
 	MeetingLink *string    `json:"meetingLink,omitempty" validate:"omitempty,max=500"`
-	StartTime   *time.Time `json:"startTime,omitempty"`
-	EndTime     *time.Time `json:"endTime,omitempty"`
 	AllDay      *bool      `json:"allDay,omitempty"`
 }
 
-// UpdateAppointmentStatusRequest is the request body for updating appointment status
 type UpdateAppointmentStatusRequest struct {
 	Status AppointmentStatus `json:"status" validate:"required,oneof=scheduled requested completed cancelled no_show"`
 }
 
-// ListAppointmentsRequest is the query parameters for listing RAC_appointments
 type ListAppointmentsRequest struct {
-	UserID    string             `form:"userId"`
-	LeadID    string             `form:"leadId"`
+	// Strings/Enums (16 bytes)
+	UserID    string             `form:"userId" validate:"omitempty,uuid"`
+	LeadID    string             `form:"leadId" validate:"omitempty,uuid"`
 	Type      *AppointmentType   `form:"type" validate:"omitempty,oneof=lead_visit standalone blocked"`
 	Status    *AppointmentStatus `form:"status" validate:"omitempty,oneof=scheduled requested completed cancelled no_show"`
-	StartFrom string             `form:"startFrom"` // ISO date
-	StartTo   string             `form:"startTo"`   // ISO date
-	Search    string             `form:"search"`    // Search term for title/location/meeting link
+	StartFrom string             `form:"startFrom"`
+	StartTo   string             `form:"startTo"`
+	Search    string             `form:"search"`
 	SortBy    string             `form:"sortBy" validate:"omitempty,oneof=title type status startTime endTime createdAt"`
 	SortOrder string             `form:"sortOrder" validate:"omitempty,oneof=asc desc"`
-	Page      int                `form:"page" validate:"omitempty,min=1"`
-	PageSize  int                `form:"pageSize" validate:"omitempty,min=1,max=100"`
+
+	// Ints (8 bytes)
+	Page     int `form:"page" validate:"omitempty,min=1"`
+	PageSize int `form:"pageSize" validate:"omitempty,min=1,max=100"`
 }
 
-// AppointmentResponse is the response body for an appointment
 type AppointmentResponse struct {
-	ID            uuid.UUID         `json:"id"`
-	UserID        uuid.UUID         `json:"userId"`
-	LeadID        *uuid.UUID        `json:"leadId,omitempty"`
-	LeadServiceID *uuid.UUID        `json:"leadServiceId,omitempty"`
-	Type          AppointmentType   `json:"type"`
-	Title         string            `json:"title"`
-	Description   *string           `json:"description,omitempty"`
-	Location      *string           `json:"location,omitempty"`
-	MeetingLink   *string           `json:"meetingLink,omitempty"`
-	StartTime     time.Time         `json:"startTime"`
-	EndTime       time.Time         `json:"endTime"`
-	Status        AppointmentStatus `json:"status"`
-	AllDay        bool              `json:"allDay"`
-	CreatedAt     time.Time         `json:"createdAt"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
-	// Embedded lead info for lead_visit type (populated by service)
-	Lead *AppointmentLeadInfo `json:"lead,omitempty"`
+	StartTime     time.Time            `json:"startTime"`
+	EndTime       time.Time            `json:"endTime"`
+	CreatedAt     time.Time            `json:"createdAt"`
+	UpdatedAt     time.Time            `json:"updatedAt"`
+	ID            uuid.UUID            `json:"id"`
+	UserID        uuid.UUID            `json:"userId"`
+	LeadID        *uuid.UUID           `json:"leadId,omitempty"`
+	LeadServiceID *uuid.UUID           `json:"leadServiceId,omitempty"`
+	Lead          *AppointmentLeadInfo `json:"lead,omitempty"`
+	Type          AppointmentType      `json:"type"`
+	Title         string               `json:"title"`
+	Description   *string              `json:"description,omitempty"`
+	Location      *string              `json:"location,omitempty"`
+	MeetingLink   *string              `json:"meetingLink,omitempty"`
+	Status        AppointmentStatus    `json:"status"`
+	AllDay        bool                 `json:"allDay"`
 }
 
-// AppointmentLeadInfo is embedded lead info for appointment responses
 type AppointmentLeadInfo struct {
 	ID        uuid.UUID `json:"id"`
 	FirstName string    `json:"firstName"`
@@ -113,7 +117,6 @@ type AppointmentLeadInfo struct {
 	Address   string    `json:"address"`
 }
 
-// AppointmentListResponse is the paginated response for listing RAC_appointments
 type AppointmentListResponse struct {
 	Items      []AppointmentResponse `json:"items"`
 	Total      int                   `json:"total"`
@@ -122,62 +125,65 @@ type AppointmentListResponse struct {
 	TotalPages int                   `json:"totalPages"`
 }
 
-// Visit report DTOs
+// --- Visit Reports ---
+
 type UpsertVisitReportRequest struct {
-	Measurements        *string           `json:"measurements,omitempty" validate:"omitempty,max=5000"`
 	MeasurementProducts json.RawMessage   `json:"measurementProducts,omitempty"`
+	Measurements        *string           `json:"measurements,omitempty" validate:"omitempty,max=5000"`
 	AccessDifficulty    *AccessDifficulty `json:"accessDifficulty,omitempty" validate:"omitempty,oneof=Low Medium High"`
 	Notes               *string           `json:"notes,omitempty" validate:"omitempty,max=5000"`
 }
 
 type AppointmentVisitReportResponse struct {
-	AppointmentID       uuid.UUID         `json:"appointmentId"`
-	Measurements        *string           `json:"measurements,omitempty"`
-	MeasurementProducts json.RawMessage   `json:"measurementProducts,omitempty"`
-	AccessDifficulty    *AccessDifficulty `json:"accessDifficulty,omitempty"`
-	Notes               *string           `json:"notes,omitempty"`
 	CreatedAt           time.Time         `json:"createdAt"`
 	UpdatedAt           time.Time         `json:"updatedAt"`
+	AppointmentID       uuid.UUID         `json:"appointmentId"`
+	MeasurementProducts json.RawMessage   `json:"measurementProducts,omitempty"`
+	Measurements        *string           `json:"measurements,omitempty"`
+	AccessDifficulty    *AccessDifficulty `json:"accessDifficulty,omitempty"`
+	Notes               *string           `json:"notes,omitempty"`
 }
 
-// Attachment DTOs
+// --- Attachments ---
+
 type PresignedUploadRequest struct {
+	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1,max=104857600"`
 	FileName    string `json:"fileName" validate:"required,min=1,max=255"`
 	ContentType string `json:"contentType" validate:"required,min=1,max=200"`
-	SizeBytes   int64  `json:"sizeBytes" validate:"required,min=1,max=104857600"`
 }
 
 type PresignedUploadResponse struct {
+	ExpiresAt int64  `json:"expiresAt"`
 	UploadURL string `json:"uploadUrl"`
 	FileKey   string `json:"fileKey"`
-	ExpiresAt int64  `json:"expiresAt"`
 }
 
 type PresignedDownloadResponse struct {
-	DownloadURL string `json:"downloadUrl"`
 	ExpiresAt   int64  `json:"expiresAt"`
+	DownloadURL string `json:"downloadUrl"`
 }
 
 type CreateAppointmentAttachmentRequest struct {
+	SizeBytes   *int64  `json:"sizeBytes,omitempty" validate:"omitempty,min=0"`
 	FileKey     string  `json:"fileKey" validate:"required,min=1,max=500"`
 	FileName    string  `json:"fileName" validate:"required,min=1,max=255"`
 	ContentType *string `json:"contentType,omitempty" validate:"omitempty,max=200"`
-	SizeBytes   *int64  `json:"sizeBytes,omitempty" validate:"omitempty,min=0"`
 }
 
 type AppointmentAttachmentResponse struct {
+	CreatedAt     time.Time `json:"createdAt"`
+	SizeBytes     *int64    `json:"sizeBytes,omitempty"`
 	ID            uuid.UUID `json:"id"`
 	AppointmentID uuid.UUID `json:"appointmentId"`
 	FileKey       string    `json:"fileKey"`
 	FileName      string    `json:"fileName"`
 	ContentType   *string   `json:"contentType,omitempty"`
-	SizeBytes     *int64    `json:"sizeBytes,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
 }
 
-// Availability DTOs
+// --- Availability ---
+
 type CreateAvailabilityRuleRequest struct {
-	UserID    *uuid.UUID `json:"userId,omitempty"`
+	UserID    *uuid.UUID `json:"userId,omitempty" validate:"omitempty,uuid"`
 	Weekday   int        `json:"weekday" validate:"min=0,max=6"`
 	StartTime string     `json:"startTime" validate:"required"`
 	EndTime   string     `json:"endTime" validate:"required"`
@@ -192,18 +198,18 @@ type UpdateAvailabilityRuleRequest struct {
 }
 
 type AvailabilityRuleResponse struct {
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 	ID        uuid.UUID `json:"id"`
 	UserID    uuid.UUID `json:"userId"`
 	Weekday   int       `json:"weekday"`
 	StartTime string    `json:"startTime"`
 	EndTime   string    `json:"endTime"`
 	Timezone  string    `json:"timezone"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type CreateAvailabilityOverrideRequest struct {
-	UserID      *uuid.UUID `json:"userId,omitempty"`
+	UserID      *uuid.UUID `json:"userId,omitempty" validate:"omitempty,uuid"`
 	Date        string     `json:"date" validate:"required"`
 	IsAvailable bool       `json:"isAvailable"`
 	StartTime   *string    `json:"startTime,omitempty"`
@@ -220,38 +226,34 @@ type UpdateAvailabilityOverrideRequest struct {
 }
 
 type AvailabilityOverrideResponse struct {
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 	ID          uuid.UUID `json:"id"`
 	UserID      uuid.UUID `json:"userId"`
 	Date        string    `json:"date"`
-	IsAvailable bool      `json:"isAvailable"`
 	StartTime   *string   `json:"startTime,omitempty"`
 	EndTime     *string   `json:"endTime,omitempty"`
 	Timezone    string    `json:"timezone"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	IsAvailable bool      `json:"isAvailable"`
 }
 
-// GetAvailableSlotsRequest is the query parameters for getting available slots
 type GetAvailableSlotsRequest struct {
-	UserID       string `form:"userId"`
-	StartDate    string `form:"startDate" validate:"required"` // ISO date YYYY-MM-DD
-	EndDate      string `form:"endDate" validate:"required"`   // ISO date YYYY-MM-DD
-	SlotDuration int    `form:"slotDuration"`                  // Duration in minutes (default: 60)
+	StartDate    string `form:"startDate" validate:"required"`
+	EndDate      string `form:"endDate" validate:"required"`
+	UserID       string `form:"userId" validate:"omitempty,uuid"`
+	SlotDuration int    `form:"slotDuration"`
 }
 
-// TimeSlot represents a single available time slot
 type TimeSlot struct {
 	StartTime time.Time `json:"startTime"`
 	EndTime   time.Time `json:"endTime"`
 }
 
-// DaySlots represents available slots for a specific day
 type DaySlots struct {
-	Date  string     `json:"date"` // ISO date YYYY-MM-DD
+	Date  string     `json:"date"`
 	Slots []TimeSlot `json:"slots"`
 }
 
-// AvailableSlotsResponse is the response for available slots query
 type AvailableSlotsResponse struct {
 	Days []DaySlots `json:"days"`
 }
