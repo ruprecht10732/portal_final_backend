@@ -276,6 +276,20 @@ func (r *RedisService) AppendEvent(ctx context.Context, s session.Session, event
 	if err := r.client.Set(ctx, key, updated, r.ttl).Err(); err != nil {
 		return fmt.Errorf("redis session: append set: %w", err)
 	}
+
+	// Also mutate the in-memory session object so that callers holding a
+	// reference (e.g. the ADK runner's MutableSession) see the new event
+	// without having to re-fetch from Redis.
+	if rs, ok := s.(*redisSession); ok {
+		rs.events = append(rs.events, event)
+		rs.lastUpdateTime = sd.LastUpdateTime
+		if len(event.Actions.StateDelta) > 0 {
+			for k, v := range event.Actions.StateDelta {
+				rs.state[k] = v
+			}
+		}
+	}
+
 	return nil
 }
 

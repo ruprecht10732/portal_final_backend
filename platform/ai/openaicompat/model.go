@@ -171,6 +171,20 @@ func (m *Model) generate(ctx context.Context, req *model.LLMRequest) (*model.LLM
 
 func (m *Model) buildPayload(req *model.LLMRequest) map[string]interface{} {
 	messages := m.convertMessages(req.Contents)
+	if len(messages) == 0 {
+		log.Printf("llm api warning (%s): messages array is empty after conversion; req.Contents had %d items", m.config.Provider, len(req.Contents))
+	}
+
+	// Prepend system instruction if present. The ADK stores agent instructions
+	// in req.Config.SystemInstruction, but OpenAI-compatible APIs expect them
+	// as a "system" message.
+	if req.Config != nil && req.Config.SystemInstruction != nil {
+		sysMsg := m.convertSystemInstruction(req.Config.SystemInstruction)
+		if sysMsg != nil {
+			messages = append([]openAIMessage{*sysMsg}, messages...)
+		}
+	}
+
 	tools := m.convertTools(req)
 
 	payload := map[string]interface{}{
@@ -306,6 +320,34 @@ func roleForContent(role string) string {
 		return "assistant"
 	}
 	return "user"
+}
+
+// convertSystemInstruction converts a genai system instruction content to an
+// OpenAI-compatible system message.
+func (m *Model) convertSystemInstruction(content *genai.Content) *openAIMessage {
+	if content == nil || len(content.Parts) == 0 {
+		return nil
+	}
+	var sb strings.Builder
+	for _, part := range content.Parts {
+		if part == nil {
+			continue
+		}
+		if strings.TrimSpace(part.Text) != "" {
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(part.Text)
+		}
+	}
+	text := strings.TrimSpace(sb.String())
+	if text == "" {
+		return nil
+	}
+	return &openAIMessage{
+		Role:    "system",
+		Content: text,
+	}
 }
 
 // extractor holds state for extracting content messages from genai parts.
