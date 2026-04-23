@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"text/template"
+	"html/template"
 	"time"
 
 	"portal_final_backend/internal/email"
@@ -231,8 +231,37 @@ func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	m.log.Info("notification module registered event handlers")
 }
 
+func (m *Module) purgeCaches() {
+	now := time.Now()
+	
+	m.senderCache.Range(func(key, value any) bool {
+		if entry, ok := value.(cachedSender); ok && now.After(entry.expiresAt) {
+			m.senderCache.Delete(key)
+		}
+		return true
+	})
+
+	m.orgNameCache.Range(func(key, value any) bool {
+		if entry, ok := value.(cachedOrgName); ok && now.After(entry.expiresAt) {
+			m.orgNameCache.Delete(key)
+		}
+		return true
+	})
+
+	m.quoteViewedDebounce.Range(func(key, value any) bool {
+		if lastSentAt, ok := value.(time.Time); ok && now.Sub(lastSentAt) > 60*time.Minute {
+			m.quoteViewedDebounce.Delete(key)
+		}
+		return true
+	})
+}
+
 // Handle routes events to the appropriate handler method.
 func (m *Module) Handle(ctx context.Context, event events.Event) error {
+	if time.Now().UnixNano()%100 == 0 {
+		m.purgeCaches()
+	}
+
 	switch e := event.(type) {
 	case events.UserSignedUp:
 		return m.handleUserSignedUp(ctx, e)
@@ -576,19 +605,6 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
-}
-
-// urlEncode percent-encodes a string for use in a URL query parameter.
-func urlEncode(s string) string {
-	var b strings.Builder
-	for _, c := range []byte(s) {
-		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' {
-			b.WriteByte(c)
-		} else {
-			fmt.Fprintf(&b, "%%%02X", c)
-		}
-	}
-	return b.String()
 }
 
 func (m *Module) notifyOrgMembersInAppByRoles(ctx context.Context, orgID uuid.UUID, allowedRoles map[string]struct{}, p inapp.SendParams) {

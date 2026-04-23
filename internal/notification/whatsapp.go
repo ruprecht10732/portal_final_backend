@@ -98,28 +98,54 @@ func normalizeWhatsAppMessage(value string) string {
 	}
 
 	text = htmlToWhatsAppMarkdown(text)
-
 	text = htmlstd.UnescapeString(text)
 	text = strings.ReplaceAll(text, "\u00a0", " ")
 
-	lines := strings.Split(text, "\n")
-	cleaned := make([]string, 0, len(lines))
+	var b strings.Builder
+	b.Grow(len(text))
+
+	writeWhatsAppNormalizedBytes(&b, text)
+
+	return strings.TrimSpace(b.String())
+}
+
+func writeWhatsAppNormalizedBytes(b *strings.Builder, text string) {
 	blankCount := 0
-	for _, line := range lines {
-		trimmed := strings.Join(strings.Fields(line), " ")
-		if trimmed == "" {
-			blankCount++
-			if blankCount > 1 {
-				continue
-			}
-			cleaned = append(cleaned, "")
+	inWord := false
+	lineEmpty := true
+
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if c == '\n' {
+			blankCount, lineEmpty, inWord = handleWhatsAppNewline(b, blankCount, lineEmpty)
 			continue
 		}
-		blankCount = 0
-		cleaned = append(cleaned, trimmed)
-	}
 
-	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+		if c == ' ' || c == '\t' || c == '\r' {
+			inWord = false
+			continue
+		}
+
+		if !inWord && !lineEmpty {
+			b.WriteByte(' ')
+		}
+		b.WriteByte(c)
+		inWord = true
+		lineEmpty = false
+	}
+}
+
+func handleWhatsAppNewline(b *strings.Builder, blankCount int, lineEmpty bool) (int, bool, bool) {
+	if lineEmpty {
+		blankCount++
+		if blankCount <= 1 && b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+	} else {
+		blankCount = 0
+		b.WriteByte('\n')
+	}
+	return blankCount, true, false
 }
 
 func htmlToWhatsAppMarkdown(input string) string {

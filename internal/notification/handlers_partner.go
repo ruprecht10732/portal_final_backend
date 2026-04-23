@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"portal_final_backend/internal/events"
 	"portal_final_backend/internal/identity/repository"
 	"portal_final_backend/platform/phone"
@@ -76,7 +77,7 @@ func (m *Module) handlePartnerOfferCreated(ctx context.Context, e events.Partner
 		}
 		return -1
 	}, e.PartnerPhone)
-	whatsappURL := fmt.Sprintf("https://wa.me/%s?text=%s", cleanPhone, urlEncode(whatsappMsg))
+	whatsappURL := fmt.Sprintf("https://wa.me/%s?text=%s", cleanPhone, url.QueryEscape(whatsappMsg))
 
 	m.log.Info("partner offer created — acceptance URL generated",
 		"offerId", e.OfferID,
