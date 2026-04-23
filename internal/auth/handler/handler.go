@@ -15,21 +15,31 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	msgInvalidRequest   = "invalid request"
+	msgValidationFailed = "validation failed"
+
+	headerAuthorization = "Authorization"
+	bearerPrefix        = "Bearer "
+)
+
+// Handler manages HTTP requests for the authentication domain.
 type Handler struct {
 	svc *service.Service
 	cfg config.CookieConfig
 	val *validator.Validator
 }
 
-const (
-	msgInvalidRequest   = "invalid request"
-	msgValidationFailed = "validation failed"
-)
-
+// New creates and returns a new auth Handler.
 func New(svc *service.Service, cfg config.CookieConfig, val *validator.Validator) *Handler {
-	return &Handler{svc: svc, cfg: cfg, val: val}
+	return &Handler{
+		svc: svc,
+		cfg: cfg,
+		val: val,
+	}
 }
 
+// RegisterRoutes binds the authentication endpoints to the provided Gin router group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/sign-up", h.SignUp)
 	rg.POST("/sign-in", h.SignIn)
@@ -41,6 +51,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/invites/resolve", h.ResolveInvite)
 }
 
+// ListUsers retrieves a summary list of all users accessible to the requester.
 func (h *Handler) ListUsers(c *gin.Context) {
 	id := httpkit.MustGetIdentity(c)
 	if id == nil {
@@ -55,6 +66,7 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	httpkit.OK(c, users)
 }
 
+// GetMe retrieves the profile details of the currently authenticated user.
 func (h *Handler) GetMe(c *gin.Context) {
 	id := httpkit.MustGetIdentity(c)
 	if id == nil {
@@ -82,19 +94,15 @@ func (h *Handler) GetMe(c *gin.Context) {
 	})
 }
 
+// UpdateMe modifies the profile details of the currently authenticated user.
 func (h *Handler) UpdateMe(c *gin.Context) {
 	id := httpkit.MustGetIdentity(c)
 	if id == nil {
 		return
 	}
 
-	var req transport.UpdateProfileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.UpdateProfileRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -119,19 +127,15 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	})
 }
 
+// CompleteOnboarding processes the user's initial onboarding information.
 func (h *Handler) CompleteOnboarding(c *gin.Context) {
 	id := httpkit.MustGetIdentity(c)
 	if id == nil {
 		return
 	}
 
-	var req transport.CompleteOnboardingRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.CompleteOnboardingRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -142,6 +146,7 @@ func (h *Handler) CompleteOnboarding(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "onboarding complete"})
 }
 
+// MarkOnboardingComplete flags the authenticated user's onboarding process as finished.
 func (h *Handler) MarkOnboardingComplete(c *gin.Context) {
 	id := httpkit.MustGetIdentity(c)
 	if id == nil {
@@ -155,19 +160,15 @@ func (h *Handler) MarkOnboardingComplete(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "onboarding marked complete"})
 }
 
+// ChangePassword updates the authenticated user's password.
 func (h *Handler) ChangePassword(c *gin.Context) {
 	id := httpkit.MustGetIdentity(c)
 	if id == nil {
 		return
 	}
 
-	var req transport.ChangePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.ChangePasswordRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -178,14 +179,10 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "password updated"})
 }
 
+// SignUp registers a new user in the system.
 func (h *Handler) SignUp(c *gin.Context) {
-	var req transport.SignUpRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.SignUpRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -195,14 +192,10 @@ func (h *Handler) SignUp(c *gin.Context) {
 	httpkit.JSON(c, http.StatusCreated, gin.H{"message": "account created"})
 }
 
+// SignIn authenticates a user and returns an access and refresh token.
 func (h *Handler) SignIn(c *gin.Context) {
-	var req transport.SignInRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.SignInRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -215,10 +208,12 @@ func (h *Handler) SignIn(c *gin.Context) {
 	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken, RefreshToken: refreshToken})
 }
 
+// Refresh issues a new access token based on a valid refresh token (from body or cookie).
 func (h *Handler) Refresh(c *gin.Context) {
-	refreshToken := ""
-	usedCookie := false
+	var refreshToken string
+	var usedCookie bool
 
+	// We only bind the JSON (don't strictly validate) because the token might be in the cookie instead
 	var req transport.RefreshRequest
 	if err := c.ShouldBindJSON(&req); err == nil {
 		refreshToken = strings.TrimSpace(req.RefreshToken)
@@ -248,6 +243,7 @@ func (h *Handler) Refresh(c *gin.Context) {
 	httpkit.OK(c, transport.AuthResponse{AccessToken: accessToken, RefreshToken: newRefreshToken})
 }
 
+// Verify checks the current session and returns basic valid user information.
 func (h *Handler) Verify(c *gin.Context) {
 	id := httpkit.GetIdentity(c)
 	if !id.IsAuthenticated() {
@@ -267,9 +263,10 @@ func (h *Handler) Verify(c *gin.Context) {
 	})
 }
 
+// SignOut revokes the user's refresh token and clears the auth cookie.
 func (h *Handler) SignOut(c *gin.Context) {
-	accessToken, _ := extractBearerToken(c.GetHeader("Authorization"))
-	refreshToken := ""
+	accessToken, _ := bearerTokenFromHeader(c.GetHeader(headerAuthorization))
+	var refreshToken string
 
 	var req transport.SignOutRequest
 	if err := c.ShouldBindJSON(&req); err == nil {
@@ -289,31 +286,13 @@ func (h *Handler) SignOut(c *gin.Context) {
 	}
 
 	h.clearRefreshCookie(c)
-
 	httpkit.OK(c, gin.H{"message": "signed out"})
 }
 
-func extractBearerToken(authHeader string) (string, bool) {
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return "", false
-	}
-
-	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-	if token == "" {
-		return "", false
-	}
-
-	return token, true
-}
-
+// ForgotPassword initiates the password reset workflow by dispatching an email.
 func (h *Handler) ForgotPassword(c *gin.Context) {
-	var req transport.ForgotPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.ForgotPasswordRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -323,14 +302,10 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "if the account exists, a reset link will be sent"})
 }
 
+// ResetPassword finalizes a password reset using the token provided via email.
 func (h *Handler) ResetPassword(c *gin.Context) {
-	var req transport.ResetPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.ResetPasswordRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -341,14 +316,10 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "password reset"})
 }
 
+// VerifyEmail confirms a user's email address using a verification token.
 func (h *Handler) VerifyEmail(c *gin.Context) {
-	var req transport.VerifyEmailRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.VerifyEmailRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -359,6 +330,7 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	httpkit.OK(c, gin.H{"message": "email verified"})
 }
 
+// ResolveInvite looks up an organization invite via token without accepting it yet.
 func (h *Handler) ResolveInvite(c *gin.Context) {
 	tokenValue := c.Query("token")
 	if tokenValue == "" {
@@ -374,6 +346,7 @@ func (h *Handler) ResolveInvite(c *gin.Context) {
 	httpkit.OK(c, resp)
 }
 
+// SetUserRoles allows an admin to update a specific user's assigned roles.
 func (h *Handler) SetUserRoles(c *gin.Context) {
 	identity := httpkit.MustGetIdentity(c)
 	if identity == nil {
@@ -386,13 +359,8 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 		return
 	}
 
-	var req transport.RoleUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
-		return
-	}
-	if err := h.val.Struct(req); err != nil {
-		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+	req, ok := bindAndValidate[transport.RoleUpdateRequest](c, h.val)
+	if !ok {
 		return
 	}
 
@@ -401,6 +369,37 @@ func (h *Handler) SetUserRoles(c *gin.Context) {
 	}
 
 	httpkit.OK(c, transport.RoleUpdateResponse{UserID: userID.String(), Roles: req.Roles})
+}
+
+// ---------------------------------------------------------------------------
+// Internal Helpers
+// ---------------------------------------------------------------------------
+
+// bindAndValidate acts as a generic helper to decode and validate JSON requests.
+func bindAndValidate[T any](c *gin.Context, val *validator.Validator) (T, bool) {
+	var req T
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return req, false
+	}
+	if err := val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return req, false
+	}
+	return req, true
+}
+
+func bearerTokenFromHeader(authHeader string) (string, bool) {
+	if !strings.HasPrefix(authHeader, bearerPrefix) {
+		return "", false
+	}
+
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, bearerPrefix))
+	if token == "" {
+		return "", false
+	}
+
+	return token, true
 }
 
 func (h *Handler) setRefreshCookie(c *gin.Context, value string) {
