@@ -79,7 +79,7 @@ func TestMergeTrailingUserMessages(t *testing.T) {
 	}
 }
 
-func TestMergeTrailingUserMessagesPreservesSentAt(t *testing.T) {
+func TestMergeTrailingUserMessagesPreservesLatestSentAt(t *testing.T) {
 	t1 := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 10, 0, 3, 0, time.UTC)
 
@@ -94,7 +94,8 @@ func TestMergeTrailingUserMessagesPreservesSentAt(t *testing.T) {
 	if got[0].SentAt == nil || !got[0].SentAt.Equal(t2) {
 		t.Fatalf("SentAt = %v, want %v", got[0].SentAt, t2)
 	}
-	wantContent := "[Berichttijd: 2025-01-01T10:00:00Z]\na\n\n[Berichttijd: 2025-01-01T10:00:03Z]\nb"
+	// Timestamps must NOT be injected into the content — they confuse the LLM.
+	wantContent := "a\n\nb"
 	if got[0].Content != wantContent {
 		t.Fatalf("Content = %q, want %q", got[0].Content, wantContent)
 	}

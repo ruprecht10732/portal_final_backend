@@ -300,6 +300,10 @@ func buildReplayableMessages(recent []whatsappagentdb.GetRecentAgentMessagesRow)
 //
 // Example: ["create lead with X", "oh and the service type is Y"] becomes a
 // single user turn "create lead with X\n\noh and the service type is Y".
+//
+// Timestamps are intentionally NOT embedded into the merged content. The LLM
+// prompt explicitly forbids timestamp echoes, and injecting them causes the
+// model to parrot them back into replies.
 func MergeTrailingUserMessages(messages []ConversationMessage) []ConversationMessage {
 	if len(messages) < 2 {
 		return messages
@@ -319,16 +323,13 @@ func MergeTrailingUserMessages(messages []ConversationMessage) []ConversationMes
 		return messages
 	}
 
-	// Combine the streak into one message, preserving individual timestamps.
+	// Combine the streak into one message without injecting timestamps.
 	parts := make([]string, 0, len(messages)-streakStart)
 	var latestSentAt *time.Time
 	for _, m := range messages[streakStart:] {
 		text := strings.TrimSpace(m.Content)
 		if text == "" {
 			continue
-		}
-		if m.SentAt != nil {
-			text = fmt.Sprintf("[Berichttijd: %s]\n%s", m.SentAt.UTC().Format(time.RFC3339), text)
 		}
 		parts = append(parts, text)
 		if m.SentAt != nil {
