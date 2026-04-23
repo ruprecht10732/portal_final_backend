@@ -13,31 +13,50 @@ import (
 type Querier interface {
 	CountProducts(ctx context.Context, arg CountProductsParams) (int64, error)
 	CountVatRates(ctx context.Context, arg CountVatRatesParams) (int64, error)
-	// Products
+	// =============================================================================
+	// PRODUCTS
+	// =============================================================================
 	CreateProduct(ctx context.Context, arg CreateProductParams) (CreateProductRow, error)
-	// Product Assets
+	// =============================================================================
+	// PRODUCT ASSETS
+	// =============================================================================
 	CreateProductAsset(ctx context.Context, arg CreateProductAssetParams) (RacCatalogProductAsset, error)
 	// Catalog Domain SQL Queries
-	// VAT Rates
+	// Optimized for PostgreSQL 16+ and sqlc.
+	// =============================================================================
+	// VAT RATES
+	// =============================================================================
 	CreateVatRate(ctx context.Context, arg CreateVatRateParams) (RacCatalogVatRate, error)
 	DeleteProduct(ctx context.Context, arg DeleteProductParams) (int64, error)
 	DeleteProductAsset(ctx context.Context, arg DeleteProductAssetParams) (int64, error)
 	DeleteVatRate(ctx context.Context, arg DeleteVatRateParams) (int64, error)
+	// Transactional safety: Atomic increment via ON CONFLICT prevents SKU collisions.
 	GetNextProductCounter(ctx context.Context, organizationID pgtype.UUID) (int32, error)
 	GetProductAssetByID(ctx context.Context, arg GetProductAssetByIDParams) (RacCatalogProductAsset, error)
 	GetProductByID(ctx context.Context, arg GetProductByIDParams) (GetProductByIDRow, error)
+	// Complexity: O(M log N) where M is number of IDs. Batch lookup via ANY is highly efficient.
 	GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]GetProductsByIDsRow, error)
+	// O(1) lookup. Security: Enforcement of organization_id prevents IDOR.
 	GetVatRateByID(ctx context.Context, arg GetVatRateByIDParams) (RacCatalogVatRate, error)
 	HasProductMaterials(ctx context.Context, arg HasProductMaterialsParams) (bool, error)
+	// Performance: O(1) existence check using a partial index on vat_rate_id if available.
 	HasProductsWithVatRate(ctx context.Context, arg HasProductsWithVatRateParams) (bool, error)
 	ListProductAssets(ctx context.Context, arg ListProductAssetsParams) ([]RacCatalogProductAsset, error)
+	// O(M + K log K) for Join and Sort. Multicolumn index on (organization_id, product_id) recommended.
 	ListProductMaterials(ctx context.Context, arg ListProductMaterialsParams) ([]ListProductMaterialsRow, error)
+	// O(N log N) runtime. Note: ILIKE with leading wildcards (%) disables B-tree indexes.
+	// Suggestion: Use pg_trgm GIN index for searchPattern/titlePattern performance.
 	ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error)
+	// Complexity: O(N log N) due to dynamic sorting.
+	// Implementation Note: Ensure a GIN index on 'name' exists if searchPattern is used frequently.
 	ListVatRates(ctx context.Context, arg ListVatRatesParams) ([]RacCatalogVatRate, error)
 	RemoveProductMaterials(ctx context.Context, arg RemoveProductMaterialsParams) error
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) (UpdateProductRow, error)
+	// Security: organization_id check ensures cross-tenant updates are impossible.
 	UpdateVatRate(ctx context.Context, arg UpdateVatRateParams) (RacCatalogVatRate, error)
-	// Product Materials
+	// =============================================================================
+	// PRODUCT MATERIALS
+	// =============================================================================
 	UpsertProductMaterial(ctx context.Context, arg UpsertProductMaterialParams) error
 }
 

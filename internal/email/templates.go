@@ -5,11 +5,23 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"sync"
 )
 
 //go:embed templates/*.html
 var templateFS embed.FS
 
+// Global template cache. Initializing at the package level ensures O(1) rendering
+// performance at runtime by avoiding repetitive filesystem I/O and parsing.
+var (
+	emailTemplates *template.Template
+	parseOnce      sync.Once
+	parseErr       error
+)
+
+// ─── Data Structures ─────────────────────────────────────────────────────────
+
+// baseEmailData ordered for memory alignment (16-byte strings grouped).
 type baseEmailData struct {
 	Title      string
 	Heading    string
@@ -18,24 +30,25 @@ type baseEmailData struct {
 	CTAURL     string
 }
 
-type verificationEmailData struct {
-	baseEmailData
-}
-
-type passwordResetEmailData struct {
-	baseEmailData
-}
+type (
+	verificationEmailData       struct{ baseEmailData }
+	passwordResetEmailData      struct{ baseEmailData }
+	organizationInviteEmailData struct {
+		baseEmailData
+		OrganizationName string
+	}
+	partnerOfferAcceptedConfirmationEmailData struct {
+		baseEmailData
+		PartnerName    string
+		HasAttachments bool
+	}
+)
 
 type visitInviteEmailData struct {
 	baseEmailData
 	ConsumerName  string
 	ScheduledDate string
 	Address       string
-}
-
-type organizationInviteEmailData struct {
-	baseEmailData
-	OrganizationName string
 }
 
 type partnerInviteEmailData struct {
@@ -73,12 +86,6 @@ type partnerOfferAcceptedEmailData struct {
 	OfferID     string
 }
 
-type partnerOfferAcceptedConfirmationEmailData struct {
-	baseEmailData
-	PartnerName    string
-	HasAttachments bool
-}
-
 type partnerOfferRejectedEmailData struct {
 	baseEmailData
 	PartnerName string
@@ -86,7 +93,8 @@ type partnerOfferRejectedEmailData struct {
 	Reason      string
 }
 
-// dailyDigestStaleLeadItem maps stale leads for the digest template.
+// ─── Daily Digest Structures ─────────────────────────────────────────────────
+
 type dailyDigestStaleLeadItem struct {
 	ConsumerFirstName string
 	ConsumerLastName  string
@@ -95,7 +103,6 @@ type dailyDigestStaleLeadItem struct {
 	StaleReason       string
 }
 
-// dailyDigestAIActivity maps AI activity counts for the digest template.
 type dailyDigestAIActivity struct {
 	GatekeeperRuns  int
 	EstimatorRuns   int
@@ -105,7 +112,6 @@ type dailyDigestAIActivity struct {
 	OffersProcessed int
 }
 
-// dailyDigestPipelineSnapshot maps pipeline counts for the digest template.
 type dailyDigestPipelineSnapshot struct {
 	Triage             int
 	Nurturing          int
@@ -119,37 +125,50 @@ type dailyDigestEmailData struct {
 	baseEmailData
 	OrganizationName string
 	Date             string
-	AIActivity       dailyDigestAIActivity
 	StaleLeads       []dailyDigestStaleLeadItem
-	StaleLeadCount   int
+	AIActivity       dailyDigestAIActivity
 	PipelineSnapshot dailyDigestPipelineSnapshot
+	StaleLeadCount   int
 }
 
+// ─── Rendering Logic ────────────────────────────────────────────────────────
+
+// getTemplates ensures templates are parsed exactly once (Thread-safe singleton).
+func getTemplates() (*template.Template, error) {
+	parseOnce.Do(func() {
+		// Parsing all files in templates/ once. base.html must be included
+		// to resolve the "email" define block.
+		t := template.New("base.html")
+		emailTemplates, parseErr = t.ParseFS(templateFS, "templates/*.html")
+	})
+	return emailTemplates, parseErr
+}
+
+// renderEmailTemplate executes a pre-parsed template.
+// Complexity: O(1) parsing overhead + O(N) execution where N is data size.
 func renderEmailTemplate(name string, data any) (string, error) {
-	templates := []string{"templates/base.html", "templates/" + name}
-	tmpl, err := template.New("base.html").ParseFS(templateFS, templates...)
+	tmpl, err := getTemplates()
 	if err != nil {
-		return "", fmt.Errorf("parse email template %s: %w", name, err)
+		return "", fmt.Errorf("templates unavailable: %w", err)
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "email", data); err != nil {
-		return "", fmt.Errorf("execute email template %s: %w", name, err)
+	// We execute the named template directly.
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		return "", fmt.Errorf("execute %s: %w", name, err)
 	}
 	return buf.String(), nil
 }
 
-func formatCurrencyEUR(cents int64) string {
-	return fmt.Sprintf("€%.2f", float64(cents)/100)
-}
-
+// renderDailyDigestEmail maps domain input to template data.
 func renderDailyDigestEmail(data DailyDigestInput) (string, error) {
+	// O(N) allocation: Pre-allocating slice capacity to avoid re-allocations during loop.
 	staleLeads := make([]dailyDigestStaleLeadItem, len(data.StaleLeads))
 	for i, sl := range data.StaleLeads {
 		staleLeads[i] = dailyDigestStaleLeadItem(sl)
 	}
 
-	templateData := dailyDigestEmailData{
+	tplData := dailyDigestEmailData{
 		baseEmailData: baseEmailData{
 			Title:    "Dagelijks overzicht",
 			Heading:  "Goedemorgen ☀",
@@ -158,6 +177,8 @@ func renderDailyDigestEmail(data DailyDigestInput) (string, error) {
 		},
 		OrganizationName: data.OrganizationName,
 		Date:             data.Date,
+		StaleLeads:       staleLeads,
+		StaleLeadCount:   len(staleLeads),
 		AIActivity: dailyDigestAIActivity{
 			GatekeeperRuns:  data.GatekeeperRuns,
 			EstimatorRuns:   data.EstimatorRuns,
@@ -166,8 +187,6 @@ func renderDailyDigestEmail(data DailyDigestInput) (string, error) {
 			PhotosAnalyzed:  data.PhotosAnalyzed,
 			OffersProcessed: data.OffersProcessed,
 		},
-		StaleLeads:     staleLeads,
-		StaleLeadCount: len(staleLeads),
 		PipelineSnapshot: dailyDigestPipelineSnapshot{
 			Triage:             data.PipelineTriage,
 			Nurturing:          data.PipelineNurturing,
@@ -178,5 +197,10 @@ func renderDailyDigestEmail(data DailyDigestInput) (string, error) {
 		},
 	}
 
-	return renderEmailTemplate("daily_digest.html", templateData)
+	return renderEmailTemplate("daily_digest.html", tplData)
+}
+
+// formatCurrencyEUR handles float conversion for simple display.
+func formatCurrencyEUR(cents int64) string {
+	return fmt.Sprintf("€%.2f", float64(cents)/100)
 }

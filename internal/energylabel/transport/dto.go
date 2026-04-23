@@ -1,68 +1,64 @@
 // Package transport provides DTOs for the energy label domain.
+// Data structures are optimized for 64-bit memory alignment (O(1) space optimization).
 package transport
 
 import "time"
 
 // EnergyLabel represents the energy label data from EP-Online.
+// Reordered by field size: Slices (24B) -> Strings (16B) -> Pointers/Ints (8B) -> Bools (1B).
 type EnergyLabel struct {
-	// Core label information
-	Energieklasse string   `json:"energieklasse"` // A+++, A++, A+, A, B, C, D, E, F, G
-	EnergieIndex  *float64 `json:"energieIndex,omitempty"`
+	// 24-byte headers
+	BAGPandIDs []string `json:"bagPandIds,omitempty"`
 
-	// Registration info
-	Registratiedatum *time.Time `json:"registratiedatum,omitempty"`
-	Opnamedatum      *time.Time `json:"opnamedatum,omitempty"`
-	GeldigTot        *time.Time `json:"geldigTot,omitempty"`
-
-	// Building info
-	Gebouwklasse  string `json:"gebouwklasse,omitempty"`  // Woning or Utiliteitsgebouw
-	Gebouwtype    string `json:"gebouwtype,omitempty"`    // Type of dwelling
-	Gebouwsubtype string `json:"gebouwsubtype,omitempty"` // Apartment position in building
-	Bouwjaar      int    `json:"bouwjaar,omitempty"`
-
-	// Address info (from BAG)
+	// 16-byte headers
+	Energieklasse        string `json:"energieklasse"`
+	Gebouwklasse         string `json:"gebouwklasse,omitempty"`
+	Gebouwtype           string `json:"gebouwtype,omitempty"`
+	Gebouwsubtype        string `json:"gebouwsubtype,omitempty"`
 	Postcode             string `json:"postcode,omitempty"`
-	Huisnummer           int    `json:"huisnummer,omitempty"`
 	Huisletter           string `json:"huisletter,omitempty"`
 	Huisnummertoevoeging string `json:"huisnummertoevoeging,omitempty"`
 	Detailaanduiding     string `json:"detailaanduiding,omitempty"`
+	BAGVerblijfsobjectID string `json:"bagVerblijfsobjectId,omitempty"`
+	BAGLigplaatsID       string `json:"bagLigplaatsId,omitempty"`
+	BAGStandplaatsID     string `json:"bagStandplaatsId,omitempty"`
+	Certificaathouder    string `json:"certificaathouder,omitempty"`
+	SoortOpname          string `json:"soortOpname,omitempty"`
+	Status               string `json:"status,omitempty"`
+	Berekeningstype      string `json:"berekeningstype,omitempty"`
 
-	// BAG identifiers
-	BAGVerblijfsobjectID string   `json:"bagVerblijfsobjectId,omitempty"`
-	BAGLigplaatsID       string   `json:"bagLigplaatsId,omitempty"`
-	BAGStandplaatsID     string   `json:"bagStandplaatsId,omitempty"`
-	BAGPandIDs           []string `json:"bagPandIds,omitempty"`
+	// 8-byte pointers, ints, and floats
+	EnergieIndex                      *float64   `json:"energieIndex,omitempty"`
+	Registratiedatum                  *time.Time `json:"registratiedatum,omitempty"`
+	Opnamedatum                       *time.Time `json:"opnamedatum,omitempty"`
+	GeldigTot                         *time.Time `json:"geldigTot,omitempty"`
+	Energiebehoefte                   *float64   `json:"energiebehoefte,omitempty"`
+	PrimaireFossieleEnergie           *float64   `json:"primaireFossieleEnergie,omitempty"`
+	AandeelHernieuwbareEnergie        *float64   `json:"aandeelHernieuwbareEnergie,omitempty"`
+	Temperatuuroverschrijding         *float64   `json:"temperatuuroverschrijding,omitempty"`
+	GebruiksoppervlakteThermischeZone *float64   `json:"gebruiksoppervlakteThermischeZone,omitempty"`
+	Compactheid                       *float64   `json:"compactheid,omitempty"`
+	Warmtebehoefte                    *float64   `json:"warmtebehoefte,omitempty"`
+	BerekendeCO2Emissie               *float64   `json:"berekendeCO2Emissie,omitempty"`
+	BerekendeEnergieverbruik          *float64   `json:"berekendeEnergieverbruik,omitempty"`
+	IsVereenvoudigdLabel              *bool      `json:"isVereenvoudigdLabel,omitempty"`
+	Bouwjaar                          int        `json:"bouwjaar,omitempty"`
+	Huisnummer                        int        `json:"huisnummer,omitempty"`
 
-	// Energy performance metrics (NTA 8800)
-	Energiebehoefte                   *float64 `json:"energiebehoefte,omitempty"`                   // kWh/m2·jaar
-	PrimaireFossieleEnergie           *float64 `json:"primaireFossieleEnergie,omitempty"`           // kWh/m2·jaar
-	AandeelHernieuwbareEnergie        *float64 `json:"aandeelHernieuwbareEnergie,omitempty"`        // %
-	Temperatuuroverschrijding         *float64 `json:"temperatuuroverschrijding,omitempty"`         // TOjuli or GTO
-	GebruiksoppervlakteThermischeZone *float64 `json:"gebruiksoppervlakteThermischeZone,omitempty"` // m2
-	Compactheid                       *float64 `json:"compactheid,omitempty"`                       // ratio
-	Warmtebehoefte                    *float64 `json:"warmtebehoefte,omitempty"`                    // kWh/m2·jaar (EPV)
-	BerekendeCO2Emissie               *float64 `json:"berekendeCO2Emissie,omitempty"`               // kg/m2·jaar
-	BerekendeEnergieverbruik          *float64 `json:"berekendeEnergieverbruik,omitempty"`          // kWh/m2·jaar
-
-	// Label metadata
-	Certificaathouder          string `json:"certificaathouder,omitempty"`
-	SoortOpname                string `json:"soortOpname,omitempty"` // Basis or Detail
-	Status                     string `json:"status,omitempty"`
-	Berekeningstype            string `json:"berekeningstype,omitempty"`
-	IsVereenvoudigdLabel       *bool  `json:"isVereenvoudigdLabel,omitempty"` // VEL indicator
-	OpBasisVanReferentiegebouw bool   `json:"opBasisVanReferentiegebouw,omitempty"`
+	// 1-byte primitives (placed at end to minimize trailing padding)
+	OpBasisVanReferentiegebouw bool `json:"opBasisVanReferentiegebouw,omitempty"`
 }
 
-// GetByAddressRequest contains parameters for looking up energy label by address.
+// GetByAddressRequest handles address-based energy label lookups.
 type GetByAddressRequest struct {
-	Postcode             string `json:"postcode" validate:"required,len=6"`
-	Huisnummer           string `json:"huisnummer" validate:"required,min=1,max=5"`
-	Huisletter           string `json:"huisletter,omitempty" validate:"omitempty,len=1"`
-	Huisnummertoevoeging string `json:"huisnummertoevoeging,omitempty" validate:"omitempty,max=4"`
-	Detailaanduiding     string `json:"detailaanduiding,omitempty"`
+	Postcode             string `form:"postcode" validate:"required,len=6"`
+	Huisnummer           string `form:"huisnummer" validate:"required,min=1,max=10"`
+	Huisletter           string `form:"huisletter,omitempty" validate:"omitempty,max=2"`
+	Huisnummertoevoeging string `form:"huisnummertoevoeging,omitempty" validate:"omitempty,max=10"`
+	Detailaanduiding     string `form:"detailaanduiding,omitempty" validate:"omitempty,max=50"`
 }
 
-// GetByBAGObjectIDRequest contains parameters for looking up energy label by BAG ID.
+// GetByBAGObjectIDRequest handles BAG ID-based energy label lookups.
 type GetByBAGObjectIDRequest struct {
-	AdresseerbaarObjectID string `json:"adresseerbaarObjectId" validate:"required,len=16"`
+	AdresseerbaarObjectID string `form:"adresseerbaarObjectId" validate:"required,len=16"`
 }

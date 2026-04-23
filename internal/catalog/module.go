@@ -3,6 +3,7 @@ package catalog
 
 import (
 	"context"
+
 	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/catalog/handler"
 	"portal_final_backend/internal/catalog/repository"
@@ -19,17 +20,36 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Module is the catalog bounded context module implementing http.Module.
+// Internal route path constants to resolve SonarLint S1192 and prevent routing typos.
+const (
+	pathVatRates        = "/catalog/vat-rates"
+	pathProducts        = "/catalog/products"
+	pathProductID       = "/:id"
+	pathMaterials       = pathProductID + "/materials"
+	pathAssets          = pathProductID + "/assets"
+	pathAssetIDDownload = pathAssets + "/:assetId/download"
+	pathAssetID         = pathAssets + "/:assetId"
+)
+
+// Module implements the apphttp.Module interface for the catalog domain.
 type Module struct {
 	handler *handler.Handler
 	service *service.Service
 	repo    repository.Repository
 }
 
-// NewModule creates and initializes the catalog module.
-func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket string, val *validator.Validator, cfg *config.Config, log *logger.Logger) *Module {
+// NewModule initializes the catalog domain with its required adapters and services.
+func NewModule(
+	pool *pgxpool.Pool,
+	storageSvc storage.StorageService,
+	bucket string,
+	val *validator.Validator,
+	cfg *config.Config,
+	log *logger.Logger,
+) *Module {
 	repo := repository.New(pool)
 
+	// --- Semantic Search & AI Wiring ---
 	var embedClient *embeddingapi.Client
 	if cfg.IsCatalogEmbeddingEnabled() {
 		embedClient = embeddingapi.NewClient(embeddingapi.Config{
@@ -39,38 +59,23 @@ func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket str
 		})
 	}
 
-	var searchEmbeddingClient *embeddings.Client
+	var searchEmbed *embeddings.Client
 	if cfg.IsEmbeddingEnabled() {
-		searchEmbeddingClient = embeddings.NewClient(embeddings.Config{
+		searchEmbed = embeddings.NewClient(embeddings.Config{
 			BaseURL: cfg.GetEmbeddingAPIURL(),
 			APIKey:  cfg.GetEmbeddingAPIKey(),
 		})
 	}
 
-	var catalogQdrantClient *qdrant.Client
-	if cfg.GetQdrantURL() != "" && cfg.GetCatalogEmbeddingCollection() != "" {
-		catalogQdrantClient = qdrant.NewClient(qdrant.Config{
+	// Factory helper to avoid repetitive Qdrant client boilerplate.
+	newQdrant := func(collection string) *qdrant.Client {
+		if cfg.GetQdrantURL() == "" || collection == "" {
+			return nil
+		}
+		return qdrant.NewClient(qdrant.Config{
 			BaseURL:    cfg.GetQdrantURL(),
 			APIKey:     cfg.GetQdrantAPIKey(),
-			Collection: cfg.GetCatalogEmbeddingCollection(),
-		})
-	}
-
-	var qdrantClient *qdrant.Client
-	if cfg.IsQdrantEnabled() {
-		qdrantClient = qdrant.NewClient(qdrant.Config{
-			BaseURL:    cfg.GetQdrantURL(),
-			APIKey:     cfg.GetQdrantAPIKey(),
-			Collection: cfg.GetQdrantCollection(),
-		})
-	}
-
-	var bouwmaatQdrantClient *qdrant.Client
-	if cfg.GetQdrantURL() != "" && cfg.GetBouwmaatEmbeddingCollection() != "" {
-		bouwmaatQdrantClient = qdrant.NewClient(qdrant.Config{
-			BaseURL:    cfg.GetQdrantURL(),
-			APIKey:     cfg.GetQdrantAPIKey(),
-			Collection: cfg.GetBouwmaatEmbeddingCollection(),
+			Collection: collection,
 		})
 	}
 
@@ -81,71 +86,90 @@ func NewModule(pool *pgxpool.Pool, storageSvc storage.StorageService, bucket str
 		Logger:              log,
 		EmbeddingClient:     embedClient,
 		EmbeddingCollection: cfg.GetCatalogEmbeddingCollection(),
-		SearchEmbedding:     searchEmbeddingClient,
-		CatalogQdrant:       catalogQdrantClient,
-		QdrantClient:        qdrantClient,
-		BouwmaatQdrant:      bouwmaatQdrantClient,
+		SearchEmbedding:     searchEmbed,
+		CatalogQdrant:       newQdrant(cfg.GetCatalogEmbeddingCollection()),
+		QdrantClient:        newQdrant(cfg.GetQdrantCollection()),
+		BouwmaatQdrant:      newQdrant(cfg.GetBouwmaatEmbeddingCollection()),
 	})
-	h := handler.New(svc, val)
 
 	return &Module{
-		handler: h,
-		service: svc,
 		repo:    repo,
+		service: svc,
+		handler: handler.New(svc, val),
 	}
 }
 
-// Name returns the module identifier.
+// Name returns the unique module identifier.
 func (m *Module) Name() string {
 	return "catalog"
 }
 
-// Service returns the service layer for external use.
+// Service returns the domain service.
 func (m *Module) Service() *service.Service {
 	return m.service
 }
 
-// Repository returns the repository for direct access if needed.
+// Repository returns the domain repository.
 func (m *Module) Repository() repository.Repository {
 	return m.repo
 }
 
-// RegisterRoutes mounts catalog routes on the provided router context.
+// RegisterRoutes mounts catalog routes using centralized path constants.
 func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
-	// Protected read-only endpoints
-	ctx.Protected.GET("/catalog/vat-rates", m.handler.ListVatRates)
-	ctx.Protected.GET("/catalog/vat-rates/:id", m.handler.GetVatRateByID)
-	ctx.Protected.GET("/catalog/products", m.handler.ListProducts)
-	ctx.Protected.GET("/catalog/products/:id", m.handler.GetProductByID)
-	ctx.Protected.GET("/catalog/products/search", m.handler.SearchProductsForAutocomplete)
-	ctx.Protected.GET("/catalog/products/:id/materials", m.handler.ListProductMaterials)
-	ctx.Protected.GET("/catalog/products/:id/assets", m.handler.ListCatalogAssets)
-	ctx.Protected.GET("/catalog/products/:id/assets/:assetId/download", m.handler.GetCatalogAssetDownloadURL)
+	// ---------------------------------------------------------
+	// VAT Rate Management
+	// ---------------------------------------------------------
+	vatProtected := ctx.Protected.Group(pathVatRates)
+	{
+		vatProtected.GET("", m.handler.ListVatRates)
+		vatProtected.GET(pathProductID, m.handler.GetVatRateByID)
+	}
 
-	// Admin CRUD endpoints
-	adminGroup := ctx.Admin.Group("/catalog")
-	adminGroup.POST("/vat-rates", m.handler.CreateVatRate)
-	adminGroup.PUT("/vat-rates/:id", m.handler.UpdateVatRate)
-	adminGroup.DELETE("/vat-rates/:id", m.handler.DeleteVatRate)
+	vatAdmin := ctx.Admin.Group(pathVatRates)
+	{
+		vatAdmin.POST("", m.handler.CreateVatRate)
+		vatAdmin.PUT(pathProductID, m.handler.UpdateVatRate)
+		vatAdmin.DELETE(pathProductID, m.handler.DeleteVatRate)
+	}
 
-	adminGroup.GET("/products/next-reference", m.handler.GetNextProductReference)
-	adminGroup.POST("/products", m.handler.CreateProduct)
-	adminGroup.PUT("/products/:id", m.handler.UpdateProduct)
-	adminGroup.DELETE("/products/:id", m.handler.DeleteProduct)
-	adminGroup.POST("/products/:id/materials", m.handler.AddProductMaterials)
-	adminGroup.DELETE("/products/:id/materials", m.handler.RemoveProductMaterials)
-	adminGroup.POST("/products/:id/assets/presign", m.handler.GetCatalogAssetPresign)
-	adminGroup.POST("/products/:id/assets", m.handler.CreateCatalogAsset)
-	adminGroup.POST("/products/:id/assets/url", m.handler.CreateCatalogURLAsset)
-	adminGroup.DELETE("/products/:id/assets/:assetId", m.handler.DeleteCatalogAsset)
+	// ---------------------------------------------------------
+	// Product Management
+	// ---------------------------------------------------------
+	prodProtected := ctx.Protected.Group(pathProducts)
+	{
+		prodProtected.GET("", m.handler.ListProducts)
+		prodProtected.GET("/search", m.handler.SearchProductsForAutocomplete)
+		prodProtected.GET(pathProductID, m.handler.GetProductByID)
+		prodProtected.GET(pathMaterials, m.handler.ListProductMaterials)
+		prodProtected.GET(pathAssets, m.handler.ListCatalogAssets)
+		prodProtected.GET(pathAssetIDDownload, m.handler.GetCatalogAssetDownloadURL)
+	}
+
+	prodAdmin := ctx.Admin.Group(pathProducts)
+	{
+		prodAdmin.GET("/next-reference", m.handler.GetNextProductReference)
+		prodAdmin.POST("", m.handler.CreateProduct)
+		prodAdmin.PUT(pathProductID, m.handler.UpdateProduct)
+		prodAdmin.DELETE(pathProductID, m.handler.DeleteProduct)
+
+		// Materials
+		prodAdmin.POST(pathMaterials, m.handler.AddProductMaterials)
+		prodAdmin.DELETE(pathMaterials, m.handler.RemoveProductMaterials)
+
+		// Assets
+		prodAdmin.POST(pathProductID+"/assets/presign", m.handler.GetCatalogAssetPresign)
+		prodAdmin.POST(pathAssets, m.handler.CreateCatalogAsset)
+		prodAdmin.POST(pathProductID+"/assets/url", m.handler.CreateCatalogURLAsset)
+		prodAdmin.DELETE(pathAssetID, m.handler.DeleteCatalogAsset)
+	}
 }
 
-// RegisterHandlers subscribes to domain events for seeding tenant defaults.
+// RegisterHandlers subscribes the module to system-wide events.
 func (m *Module) RegisterHandlers(bus *events.InMemoryBus) {
 	bus.Subscribe(events.OrganizationCreated{}.EventName(), m)
 }
 
-// Handle routes events to the appropriate handler method.
+// Handle processes subscribed domain events.
 func (m *Module) Handle(ctx context.Context, event events.Event) error {
 	switch e := event.(type) {
 	case events.OrganizationCreated:
@@ -155,5 +179,5 @@ func (m *Module) Handle(ctx context.Context, event events.Event) error {
 	}
 }
 
-// Compile-time check that Module implements http.Module
+// Compile-time check to ensure Module satisfies the router interface.
 var _ apphttp.Module = (*Module)(nil)

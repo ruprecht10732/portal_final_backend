@@ -14,6 +14,24 @@ import (
 	"portal_final_backend/platform/logger"
 )
 
+const (
+	baseURL    = "https://public.ep-online.nl"
+	apiVersion = "v5"
+)
+
+// Reusable time layouts to avoid allocation on every unmarshal call.
+var timeLayouts = []string{
+	"2006-01-02T15:04:05.9999999",
+	"2006-01-02T15:04:05.999999",
+	"2006-01-02T15:04:05.99999",
+	"2006-01-02T15:04:05.9999",
+	"2006-01-02T15:04:05.999",
+	"2006-01-02T15:04:05.99",
+	"2006-01-02T15:04:05.9",
+	"2006-01-02T15:04:05",
+	"2006-01-02",
+}
+
 // flexTime handles EP-Online timestamps that may lack timezone info.
 type flexTime struct {
 	time.Time
@@ -25,36 +43,21 @@ func (ft *flexTime) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	// Try standard RFC3339 first
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		ft.Time = t
 		return nil
 	}
 
-	// EP-Online often returns local timestamps without timezone
-	layouts := []string{
-		"2006-01-02T15:04:05.9999999",
-		"2006-01-02T15:04:05.999999",
-		"2006-01-02T15:04:05.99999",
-		"2006-01-02T15:04:05.9999",
-		"2006-01-02T15:04:05.999",
-		"2006-01-02T15:04:05.99",
-		"2006-01-02T15:04:05.9",
-		"2006-01-02T15:04:05",
-		"2006-01-02",
-	}
-
-	for _, layout := range layouts {
+	for _, layout := range timeLayouts {
 		if t, err := time.Parse(layout, s); err == nil {
 			ft.Time = t
 			return nil
 		}
 	}
-
 	return fmt.Errorf("cannot parse %q as time", s)
 }
 
-func (ft *flexTime) ToTimePtr() *time.Time {
+func (ft *flexTime) toPtr() *time.Time {
 	if ft == nil || ft.IsZero() {
 		return nil
 	}
@@ -62,19 +65,13 @@ func (ft *flexTime) ToTimePtr() *time.Time {
 	return &t
 }
 
-const (
-	baseURL    = "https://public.ep-online.nl"
-	apiVersion = "v5"
-)
-
-// Client is the HTTP client for EP-Online API.
+// Client provides access to the EP-Online API.
 type Client struct {
 	httpClient *http.Client
-	apiKey     string
 	log        *logger.Logger
+	apiKey     string
 }
 
-// New creates a new EP-Online API client.
 func New(apiKey string, log *logger.Logger) *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: 10 * time.Second},
@@ -83,59 +80,45 @@ func New(apiKey string, log *logger.Logger) *Client {
 	}
 }
 
-// GetByAddress fetches energy label by address.
 func (c *Client) GetByAddress(ctx context.Context, postcode, huisnummer, huisletter, toevoeging, detail string) ([]transport.EnergyLabel, error) {
-	params := url.Values{}
-	params.Set("postcode", postcode)
-	params.Set("huisnummer", huisnummer)
+	v := url.Values{}
+	v.Set("postcode", postcode)
+	v.Set("huisnummer", huisnummer)
 	if huisletter != "" {
-		params.Set("huisletter", huisletter)
+		v.Set("huisletter", huisletter)
 	}
 	if toevoeging != "" {
-		params.Set("huisnummertoevoeging", toevoeging)
+		v.Set("huisnummertoevoeging", toevoeging)
 	}
 	if detail != "" {
-		params.Set("detailaanduiding", detail)
+		v.Set("detailaanduiding", detail)
 	}
 
-	reqURL := fmt.Sprintf("%s/api/%s/PandEnergielabel/Adres?%s", baseURL, apiVersion, params.Encode())
-	return c.doRequest(ctx, reqURL)
+	return c.do(ctx, fmt.Sprintf("%s/api/%s/PandEnergielabel/Adres?%s", baseURL, apiVersion, v.Encode()))
 }
 
-// GetByBAGObjectID fetches energy label by BAG adresseerbaar object ID.
 func (c *Client) GetByBAGObjectID(ctx context.Context, objectID string) ([]transport.EnergyLabel, error) {
-	reqURL := fmt.Sprintf("%s/api/%s/PandEnergielabel/AdresseerbaarObject/%s", baseURL, apiVersion, url.PathEscape(objectID))
-	return c.doRequest(ctx, reqURL)
+	return c.do(ctx, fmt.Sprintf("%s/api/%s/PandEnergielabel/AdresseerbaarObject/%s", baseURL, apiVersion, url.PathEscape(objectID)))
 }
 
-// Ping checks if the API is available.
 func (c *Client) Ping(ctx context.Context) error {
-	reqURL := fmt.Sprintf("%s/api/%s/Ping", baseURL, apiVersion)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return err
-	}
-
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/%s/Ping", baseURL, apiVersion), nil)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ping failed: status %d", resp.StatusCode)
+		return fmt.Errorf("ping failed: %d", resp.StatusCode)
 	}
-
 	return nil
 }
 
-func (c *Client) doRequest(ctx context.Context, reqURL string) ([]transport.EnergyLabel, error) {
+func (c *Client) do(ctx context.Context, reqURL string) ([]transport.EnergyLabel, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, err
 	}
 
 	req.Header.Set("Authorization", c.apiKey)
@@ -143,46 +126,32 @@ func (c *Client) doRequest(ctx context.Context, reqURL string) ([]transport.Ener
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		c.log.Error("ep-online request failed", "error", err, "url", reqURL)
-		return nil, fmt.Errorf("http request: %w", err)
+		return nil, fmt.Errorf("ep-online http: %w", err)
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer resp.Body.Close()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		// Success - continue to decode
-	case http.StatusUnauthorized:
-		c.log.Error("ep-online unauthorized", "status", resp.StatusCode)
-		return nil, fmt.Errorf("unauthorized: invalid API key")
+		var raw []apiEnergyLabel
+		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+			return nil, err
+		}
+		// O(N) allocation: Pre-allocate capacity to minimize GC pressure.
+		res := make([]transport.EnergyLabel, len(raw))
+		for i := range raw {
+			res[i] = raw[i].toTransport()
+		}
+		return res, nil
 	case http.StatusNotFound:
-		// No energy label found for this address - not an error
-		c.log.Debug("ep-online no label found", "url", reqURL)
 		return nil, nil
-	case http.StatusBadRequest:
-		c.log.Error("ep-online bad request", "status", resp.StatusCode, "url", reqURL)
-		return nil, fmt.Errorf("bad request: invalid parameters")
+	case http.StatusUnauthorized:
+		return nil, fmt.Errorf("ep-online: unauthorized")
 	default:
-		c.log.Error("ep-online upstream error", "status", resp.StatusCode, "url", reqURL)
-		return nil, fmt.Errorf("upstream error: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("ep-online: upstream error %d", resp.StatusCode)
 	}
-
-	var apiLabels []apiEnergyLabel
-	if err := json.NewDecoder(resp.Body).Decode(&apiLabels); err != nil {
-		c.log.Error("ep-online decode failed", "error", err)
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	labels := make([]transport.EnergyLabel, 0, len(apiLabels))
-	for _, api := range apiLabels {
-		labels = append(labels, api.toTransport())
-	}
-
-	return labels, nil
 }
 
-// apiEnergyLabel is the raw response from EP-Online API (PandEnergielabelV5).
+// apiEnergyLabel reordered to minimize struct padding.
 type apiEnergyLabel struct {
 	Registratiedatum                        *flexTime `json:"Registratiedatum"`
 	Opnamedatum                             *flexTime `json:"Opnamedatum"`
@@ -191,25 +160,21 @@ type apiEnergyLabel struct {
 	SoortOpname                             *string   `json:"Soort_opname"`
 	Status                                  *string   `json:"Status"`
 	Berekeningstype                         *string   `json:"Berekeningstype"`
-	IsVereenvoudigdLabel                    *bool     `json:"IsVereenvoudigdLabel"`
-	OpBasisVanReferentiegebouw              bool      `json:"Op_basis_van_referentiegebouw"`
 	Gebouwklasse                            *string   `json:"Gebouwklasse"`
 	Gebouwtype                              *string   `json:"Gebouwtype"`
 	Gebouwsubtype                           *string   `json:"Gebouwsubtype"`
 	SBIcode                                 *string   `json:"SBIcode"`
 	Postcode                                *string   `json:"Postcode"`
-	Huisnummer                              int       `json:"Huisnummer"`
 	Huisletter                              *string   `json:"Huisletter"`
 	Huisnummertoevoeging                    *string   `json:"Huisnummertoevoeging"`
 	Detailaanduiding                        *string   `json:"Detailaanduiding"`
 	BAGVerblijfsobjectID                    *string   `json:"BAGVerblijfsobjectID"`
 	BAGLigplaatsID                          *string   `json:"BAGLigplaatsID"`
 	BAGStandplaatsID                        *string   `json:"BAGStandplaatsID"`
+	Energieklasse                           *string   `json:"Energieklasse"`
 	BAGPandIDs                              []string  `json:"BAGPandIDs"`
-	Bouwjaar                                int       `json:"Bouwjaar"`
 	GebruiksoppervlakteThermischeZone       *float64  `json:"Gebruiksoppervlakte_thermische_zone"`
 	Compactheid                             *float64  `json:"Compactheid"`
-	Energieklasse                           *string   `json:"Energieklasse"`
 	EnergieIndex                            *float64  `json:"EnergieIndex"`
 	EnergieIndexEMGForfaitair               *float64  `json:"EnergieIndex_EMG_forfaitair"`
 	Energiebehoefte                         *float64  `json:"Energiebehoefte"`
@@ -225,13 +190,17 @@ type apiEnergyLabel struct {
 	EisTemperatuuroverschrijding            *float64  `json:"Eis_temperatuuroverschrijding"`
 	BerekendeCO2Emissie                     *float64  `json:"BerekendeCO2Emissie"`
 	BerekendeEnergieverbruik                *float64  `json:"BerekendeEnergieverbruik"`
+	Huisnummer                              int       `json:"Huisnummer"`
+	Bouwjaar                                int       `json:"Bouwjaar"`
+	IsVereenvoudigdLabel                    *bool     `json:"IsVereenvoudigdLabel"`
+	OpBasisVanReferentiegebouw              bool      `json:"Op_basis_van_referentiegebouw"`
 }
 
 func (a *apiEnergyLabel) toTransport() transport.EnergyLabel {
-	label := transport.EnergyLabel{
-		Registratiedatum:                  a.Registratiedatum.ToTimePtr(),
-		Opnamedatum:                       a.Opnamedatum.ToTimePtr(),
-		GeldigTot:                         a.GeldigTot.ToTimePtr(),
+	return transport.EnergyLabel{
+		Registratiedatum:                  a.Registratiedatum.toPtr(),
+		Opnamedatum:                       a.Opnamedatum.toPtr(),
+		GeldigTot:                         a.GeldigTot.toPtr(),
 		Huisnummer:                        a.Huisnummer,
 		Bouwjaar:                          a.Bouwjaar,
 		OpBasisVanReferentiegebouw:        a.OpBasisVanReferentiegebouw,
@@ -247,54 +216,27 @@ func (a *apiEnergyLabel) toTransport() transport.EnergyLabel {
 		Warmtebehoefte:                    a.Warmtebehoefte,
 		BerekendeCO2Emissie:               a.BerekendeCO2Emissie,
 		BerekendeEnergieverbruik:          a.BerekendeEnergieverbruik,
+		Energieklasse:                     val(a.Energieklasse),
+		Certificaathouder:                 val(a.Certificaathouder),
+		SoortOpname:                       val(a.SoortOpname),
+		Status:                            val(a.Status),
+		Berekeningstype:                   val(a.Berekeningstype),
+		Gebouwklasse:                      val(a.Gebouwklasse),
+		Gebouwtype:                        val(a.Gebouwtype),
+		Gebouwsubtype:                     val(a.Gebouwsubtype),
+		Postcode:                          val(a.Postcode),
+		Huisletter:                        val(a.Huisletter),
+		Huisnummertoevoeging:              val(a.Huisnummertoevoeging),
+		Detailaanduiding:                  val(a.Detailaanduiding),
+		BAGVerblijfsobjectID:              val(a.BAGVerblijfsobjectID),
+		BAGLigplaatsID:                    val(a.BAGLigplaatsID),
+		BAGStandplaatsID:                  val(a.BAGStandplaatsID),
 	}
+}
 
-	// Copy string pointers
-	if a.Energieklasse != nil {
-		label.Energieklasse = *a.Energieklasse
+func val(s *string) string {
+	if s == nil {
+		return ""
 	}
-	if a.Certificaathouder != nil {
-		label.Certificaathouder = *a.Certificaathouder
-	}
-	if a.SoortOpname != nil {
-		label.SoortOpname = *a.SoortOpname
-	}
-	if a.Status != nil {
-		label.Status = *a.Status
-	}
-	if a.Berekeningstype != nil {
-		label.Berekeningstype = *a.Berekeningstype
-	}
-	if a.Gebouwklasse != nil {
-		label.Gebouwklasse = *a.Gebouwklasse
-	}
-	if a.Gebouwtype != nil {
-		label.Gebouwtype = *a.Gebouwtype
-	}
-	if a.Gebouwsubtype != nil {
-		label.Gebouwsubtype = *a.Gebouwsubtype
-	}
-	if a.Postcode != nil {
-		label.Postcode = *a.Postcode
-	}
-	if a.Huisletter != nil {
-		label.Huisletter = *a.Huisletter
-	}
-	if a.Huisnummertoevoeging != nil {
-		label.Huisnummertoevoeging = *a.Huisnummertoevoeging
-	}
-	if a.Detailaanduiding != nil {
-		label.Detailaanduiding = *a.Detailaanduiding
-	}
-	if a.BAGVerblijfsobjectID != nil {
-		label.BAGVerblijfsobjectID = *a.BAGVerblijfsobjectID
-	}
-	if a.BAGLigplaatsID != nil {
-		label.BAGLigplaatsID = *a.BAGLigplaatsID
-	}
-	if a.BAGStandplaatsID != nil {
-		label.BAGStandplaatsID = *a.BAGStandplaatsID
-	}
-
-	return label
+	return *s
 }

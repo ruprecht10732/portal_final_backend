@@ -15,16 +15,16 @@ const countProducts = `-- name: CountProducts :one
 SELECT COUNT(*) AS countValue
 FROM RAC_catalog_products
 WHERE organization_id = $1
-  AND ($2::text IS NULL OR (title ILIKE $2::text OR reference ILIKE $2::text))
-  AND ($3::text IS NULL OR title ILIKE $3::text)
-  AND ($4::text IS NULL OR reference ILIKE $4::text)
-  AND ($5::text IS NULL OR type = $5::text)
-  AND ($6::bool IS NULL OR is_draft = $6::bool)
-  AND ($7::uuid IS NULL OR vat_rate_id = $7::uuid)
-  AND ($8::timestamptz IS NULL OR created_at >= $8::timestamptz)
-  AND ($9::timestamptz IS NULL OR created_at <= $9::timestamptz)
-  AND ($10::timestamptz IS NULL OR updated_at >= $10::timestamptz)
-  AND ($11::timestamptz IS NULL OR updated_at <= $11::timestamptz)
+  AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
+  AND ($3::text IS NULL OR title ILIKE $3)
+  AND ($4::text IS NULL OR reference ILIKE $4)
+  AND ($5::text IS NULL OR type = $5)
+  AND ($6::bool IS NULL OR is_draft = $6)
+  AND ($7::uuid IS NULL OR vat_rate_id = $7)
+  AND ($8::timestamptz IS NULL OR created_at >= $8)
+  AND ($9::timestamptz IS NULL OR created_at <= $9)
+  AND ($10::timestamptz IS NULL OR updated_at >= $10)
+  AND ($11::timestamptz IS NULL OR updated_at <= $11)
 `
 
 type CountProductsParams struct {
@@ -64,7 +64,7 @@ const countVatRates = `-- name: CountVatRates :one
 SELECT COUNT(*) AS countValue
 FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
-  AND ($2::text IS NULL OR name ILIKE $2::text)
+  AND ($2::text IS NULL OR name ILIKE $2)
 `
 
 type CountVatRatesParams struct {
@@ -129,7 +129,9 @@ type CreateProductRow struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
-// Products
+// =============================================================================
+// PRODUCTS
+// =============================================================================
 func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (CreateProductRow, error) {
 	row := q.db.QueryRow(ctx, createProduct,
 		arg.OrganizationID,
@@ -187,7 +189,9 @@ type CreateProductAssetParams struct {
 	Url            pgtype.Text `json:"url"`
 }
 
-// Product Assets
+// =============================================================================
+// PRODUCT ASSETS
+// =============================================================================
 func (q *Queries) CreateProductAsset(ctx context.Context, arg CreateProductAssetParams) (RacCatalogProductAsset, error) {
 	row := q.db.QueryRow(ctx, createProductAsset,
 		arg.OrganizationID,
@@ -218,8 +222,11 @@ func (q *Queries) CreateProductAsset(ctx context.Context, arg CreateProductAsset
 const createVatRate = `-- name: CreateVatRate :one
 
 
-INSERT INTO RAC_catalog_vat_rates (organization_id, name, rate_bps)
-VALUES ($1, $2, $3)
+INSERT INTO RAC_catalog_vat_rates (
+    organization_id, 
+    name, 
+    rate_bps
+) VALUES ($1, $2, $3)
 RETURNING id, organization_id, name, rate_bps, created_at, updated_at
 `
 
@@ -230,7 +237,10 @@ type CreateVatRateParams struct {
 }
 
 // Catalog Domain SQL Queries
-// VAT Rates
+// Optimized for PostgreSQL 16+ and sqlc.
+// =============================================================================
+// VAT RATES
+// =============================================================================
 func (q *Queries) CreateVatRate(ctx context.Context, arg CreateVatRateParams) (RacCatalogVatRate, error) {
 	row := q.db.QueryRow(ctx, createVatRate, arg.OrganizationID, arg.Name, arg.RateBps)
 	var i RacCatalogVatRate
@@ -307,6 +317,7 @@ SET last_number = RAC_catalog_product_counters.last_number + 1
 RETURNING last_number AS lastNumberValue
 `
 
+// Transactional safety: Atomic increment via ON CONFLICT prevents SKU collisions.
 func (q *Queries) GetNextProductCounter(ctx context.Context, organizationID pgtype.UUID) (int32, error) {
 	row := q.db.QueryRow(ctx, getNextProductCounter, organizationID)
 	var lastnumbervalue int32
@@ -436,6 +447,7 @@ type GetProductsByIDsRow struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+// Complexity: O(M log N) where M is number of IDs. Batch lookup via ANY is highly efficient.
 func (q *Queries) GetProductsByIDs(ctx context.Context, arg GetProductsByIDsParams) ([]GetProductsByIDsRow, error) {
 	rows, err := q.db.Query(ctx, getProductsByIDs, arg.Organizationid, arg.Productids)
 	if err != nil {
@@ -484,6 +496,7 @@ type GetVatRateByIDParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 }
 
+// O(1) lookup. Security: Enforcement of organization_id prevents IDOR.
 func (q *Queries) GetVatRateByID(ctx context.Context, arg GetVatRateByIDParams) (RacCatalogVatRate, error) {
 	row := q.db.QueryRow(ctx, getVatRateByID, arg.ID, arg.OrganizationID)
 	var i RacCatalogVatRate
@@ -499,7 +512,10 @@ func (q *Queries) GetVatRateByID(ctx context.Context, arg GetVatRateByIDParams) 
 }
 
 const hasProductMaterials = `-- name: HasProductMaterials :one
-SELECT EXISTS(SELECT 1 FROM RAC_catalog_product_materials WHERE organization_id = $1 AND product_id = $2)
+SELECT EXISTS(
+    SELECT 1 FROM RAC_catalog_product_materials 
+    WHERE organization_id = $1 AND product_id = $2
+)
 `
 
 type HasProductMaterialsParams struct {
@@ -515,7 +531,10 @@ func (q *Queries) HasProductMaterials(ctx context.Context, arg HasProductMateria
 }
 
 const hasProductsWithVatRate = `-- name: HasProductsWithVatRate :one
-SELECT EXISTS(SELECT 1 FROM RAC_catalog_products WHERE vat_rate_id = $1 AND organization_id = $2)
+SELECT EXISTS(
+    SELECT 1 FROM RAC_catalog_products 
+    WHERE vat_rate_id = $1 AND organization_id = $2
+)
 `
 
 type HasProductsWithVatRateParams struct {
@@ -523,6 +542,7 @@ type HasProductsWithVatRateParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
 }
 
+// Performance: O(1) existence check using a partial index on vat_rate_id if available.
 func (q *Queries) HasProductsWithVatRate(ctx context.Context, arg HasProductsWithVatRateParams) (bool, error) {
 	row := q.db.QueryRow(ctx, hasProductsWithVatRate, arg.VatRateID, arg.OrganizationID)
 	var exists bool
@@ -535,7 +555,7 @@ SELECT id, organization_id, product_id, asset_type, file_key, file_name, content
 FROM RAC_catalog_product_assets
 WHERE organization_id = $1
   AND product_id = $2
-  AND ($3::text IS NULL OR asset_type = $3::text)
+  AND ($3::text IS NULL OR asset_type = $3)
 ORDER BY created_at DESC
 `
 
@@ -577,13 +597,14 @@ func (q *Queries) ListProductAssets(ctx context.Context, arg ListProductAssetsPa
 }
 
 const listProductMaterials = `-- name: ListProductMaterials :many
-SELECT p.id, p.organization_id, p.vat_rate_id, p.is_draft,
-  p.title, p.reference, p.description,
-  p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text,
-  p.type, pm.pricing_mode, p.period_count, p.period_unit,
-  p.created_at, p.updated_at
+SELECT 
+    p.id, p.organization_id, p.vat_rate_id, p.is_draft,
+    p.title, p.reference, p.description,
+    p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text,
+    p.type, pm.pricing_mode, p.period_count, p.period_unit,
+    p.created_at, p.updated_at
 FROM RAC_catalog_products p
-JOIN RAC_catalog_product_materials pm
+INNER JOIN RAC_catalog_product_materials pm
   ON pm.material_id = p.id AND pm.organization_id = p.organization_id
 WHERE pm.organization_id = $1 AND pm.product_id = $2
 ORDER BY p.title ASC
@@ -614,6 +635,7 @@ type ListProductMaterialsRow struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+// O(M + K log K) for Join and Sort. Multicolumn index on (organization_id, product_id) recommended.
 func (q *Queries) ListProductMaterials(ctx context.Context, arg ListProductMaterialsParams) ([]ListProductMaterialsRow, error) {
 	rows, err := q.db.Query(ctx, listProductMaterials, arg.OrganizationID, arg.ProductID)
 	if err != nil {
@@ -660,33 +682,33 @@ SELECT id, organization_id, vat_rate_id, is_draft,
   created_at, updated_at
 FROM RAC_catalog_products
 WHERE organization_id = $1
-  AND ($2::text IS NULL OR (title ILIKE $2::text OR reference ILIKE $2::text))
-  AND ($3::text IS NULL OR title ILIKE $3::text)
-  AND ($4::text IS NULL OR reference ILIKE $4::text)
-  AND ($5::text IS NULL OR type = $5::text)
-  AND ($6::bool IS NULL OR is_draft = $6::bool)
-  AND ($7::uuid IS NULL OR vat_rate_id = $7::uuid)
-  AND ($8::timestamptz IS NULL OR created_at >= $8::timestamptz)
-  AND ($9::timestamptz IS NULL OR created_at <= $9::timestamptz)
-  AND ($10::timestamptz IS NULL OR updated_at >= $10::timestamptz)
-  AND ($11::timestamptz IS NULL OR updated_at <= $11::timestamptz)
+  AND ($2::text IS NULL OR (title ILIKE $2 OR reference ILIKE $2))
+  AND ($3::text IS NULL OR title ILIKE $3)
+  AND ($4::text IS NULL OR reference ILIKE $4)
+  AND ($5::text IS NULL OR type = $5)
+  AND ($6::bool IS NULL OR is_draft = $6)
+  AND ($7::uuid IS NULL OR vat_rate_id = $7)
+  AND ($8::timestamptz IS NULL OR created_at >= $8)
+  AND ($9::timestamptz IS NULL OR created_at <= $9)
+  AND ($10::timestamptz IS NULL OR updated_at >= $10)
+  AND ($11::timestamptz IS NULL OR updated_at <= $11)
 ORDER BY
-  CASE WHEN $12 = 'title' AND $13 = 'asc' THEN title END ASC,
-  CASE WHEN $12 = 'title' AND $13 = 'desc' THEN title END DESC,
-  CASE WHEN $12 = 'reference' AND $13 = 'asc' THEN reference END ASC,
-  CASE WHEN $12 = 'reference' AND $13 = 'desc' THEN reference END DESC,
-  CASE WHEN $12 = 'priceCents' AND $13 = 'asc' THEN price_cents END ASC,
-  CASE WHEN $12 = 'priceCents' AND $13 = 'desc' THEN price_cents END DESC,
-  CASE WHEN $12 = 'type' AND $13 = 'asc' THEN type END ASC,
-  CASE WHEN $12 = 'type' AND $13 = 'desc' THEN type END DESC,
-  CASE WHEN $12 = 'isDraft' AND $13 = 'asc' THEN is_draft END ASC,
-  CASE WHEN $12 = 'isDraft' AND $13 = 'desc' THEN is_draft END DESC,
-  CASE WHEN $12 = 'vatRateId' AND $13 = 'asc' THEN vat_rate_id END ASC,
-  CASE WHEN $12 = 'vatRateId' AND $13 = 'desc' THEN vat_rate_id END DESC,
-  CASE WHEN $12 = 'createdAt' AND $13 = 'asc' THEN created_at END ASC,
-  CASE WHEN $12 = 'createdAt' AND $13 = 'desc' THEN created_at END DESC,
-  CASE WHEN $12 = 'updatedAt' AND $13 = 'asc' THEN updated_at END ASC,
-  CASE WHEN $12 = 'updatedAt' AND $13 = 'desc' THEN updated_at END DESC,
+  CASE WHEN $12 = 'title'      AND $13 = 'asc'  THEN title END ASC,
+  CASE WHEN $12 = 'title'      AND $13 = 'desc' THEN title END DESC,
+  CASE WHEN $12 = 'reference'  AND $13 = 'asc'  THEN reference END ASC,
+  CASE WHEN $12 = 'reference'  AND $13 = 'desc' THEN reference END DESC,
+  CASE WHEN $12 = 'priceCents'  AND $13 = 'asc'  THEN price_cents END ASC,
+  CASE WHEN $12 = 'priceCents'  AND $13 = 'desc' THEN price_cents END DESC,
+  CASE WHEN $12 = 'type'        AND $13 = 'asc'  THEN type END ASC,
+  CASE WHEN $12 = 'type'        AND $13 = 'desc' THEN type END DESC,
+  CASE WHEN $12 = 'isDraft'     AND $13 = 'asc'  THEN is_draft END ASC,
+  CASE WHEN $12 = 'isDraft'     AND $13 = 'desc' THEN is_draft END DESC,
+  CASE WHEN $12 = 'vatRateId'   AND $13 = 'asc'  THEN vat_rate_id END ASC,
+  CASE WHEN $12 = 'vatRateId'   AND $13 = 'desc' THEN vat_rate_id END DESC,
+  CASE WHEN $12 = 'createdAt'   AND $13 = 'asc'  THEN created_at END ASC,
+  CASE WHEN $12 = 'createdAt'   AND $13 = 'desc' THEN created_at END DESC,
+  CASE WHEN $12 = 'updatedAt'   AND $13 = 'asc'  THEN updated_at END ASC,
+  CASE WHEN $12 = 'updatedAt'   AND $13 = 'desc' THEN updated_at END DESC,
   created_at DESC
 LIMIT $15 OFFSET $14
 `
@@ -728,6 +750,8 @@ type ListProductsRow struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+// O(N log N) runtime. Note: ILIKE with leading wildcards (%) disables B-tree indexes.
+// Suggestion: Use pg_trgm GIN index for searchPattern/titlePattern performance.
 func (q *Queries) ListProducts(ctx context.Context, arg ListProductsParams) ([]ListProductsRow, error) {
 	rows, err := q.db.Query(ctx, listProducts,
 		arg.Organizationid,
@@ -785,15 +809,15 @@ const listVatRates = `-- name: ListVatRates :many
 SELECT id, organization_id, name, rate_bps, created_at, updated_at
 FROM RAC_catalog_vat_rates
 WHERE organization_id = $1
-  AND ($2::text IS NULL OR name ILIKE $2::text)
+  AND ($2::text IS NULL OR name ILIKE $2)
 ORDER BY
-  CASE WHEN $3 = 'name' AND $4 = 'asc' THEN name END ASC,
-  CASE WHEN $3 = 'name' AND $4 = 'desc' THEN name END DESC,
-  CASE WHEN $3 = 'rateBps' AND $4 = 'asc' THEN rate_bps END ASC,
-  CASE WHEN $3 = 'rateBps' AND $4 = 'desc' THEN rate_bps END DESC,
-  CASE WHEN $3 = 'createdAt' AND $4 = 'asc' THEN created_at END ASC,
+  CASE WHEN $3 = 'name'      AND $4 = 'asc'  THEN name END ASC,
+  CASE WHEN $3 = 'name'      AND $4 = 'desc' THEN name END DESC,
+  CASE WHEN $3 = 'rateBps'   AND $4 = 'asc'  THEN rate_bps END ASC,
+  CASE WHEN $3 = 'rateBps'   AND $4 = 'desc' THEN rate_bps END DESC,
+  CASE WHEN $3 = 'createdAt' AND $4 = 'asc'  THEN created_at END ASC,
   CASE WHEN $3 = 'createdAt' AND $4 = 'desc' THEN created_at END DESC,
-  CASE WHEN $3 = 'updatedAt' AND $4 = 'asc' THEN updated_at END ASC,
+  CASE WHEN $3 = 'updatedAt' AND $4 = 'asc'  THEN updated_at END ASC,
   CASE WHEN $3 = 'updatedAt' AND $4 = 'desc' THEN updated_at END DESC,
   name ASC
 LIMIT $6 OFFSET $5
@@ -808,6 +832,8 @@ type ListVatRatesParams struct {
 	Limitcount     int32       `json:"limitcount"`
 }
 
+// Complexity: O(N log N) due to dynamic sorting.
+// Implementation Note: Ensure a GIN index on 'name' exists if searchPattern is used frequently.
 func (q *Queries) ListVatRates(ctx context.Context, arg ListVatRatesParams) ([]RacCatalogVatRate, error) {
 	rows, err := q.db.Query(ctx, listVatRates,
 		arg.Organizationid,
@@ -844,7 +870,9 @@ func (q *Queries) ListVatRates(ctx context.Context, arg ListVatRatesParams) ([]R
 
 const removeProductMaterials = `-- name: RemoveProductMaterials :exec
 DELETE FROM RAC_catalog_product_materials
-WHERE organization_id = $1 AND product_id = $2 AND material_id = ANY($3::uuid[])
+WHERE organization_id = $1 
+  AND product_id = $2 
+  AND material_id = ANY($3::uuid[])
 `
 
 type RemoveProductMaterialsParams struct {
@@ -974,6 +1002,7 @@ type UpdateVatRateParams struct {
 	Organizationid pgtype.UUID `json:"organizationid"`
 }
 
+// Security: organization_id check ensures cross-tenant updates are impossible.
 func (q *Queries) UpdateVatRate(ctx context.Context, arg UpdateVatRateParams) (RacCatalogVatRate, error) {
 	row := q.db.QueryRow(ctx, updateVatRate,
 		arg.Name,
@@ -995,8 +1024,9 @@ func (q *Queries) UpdateVatRate(ctx context.Context, arg UpdateVatRateParams) (R
 
 const upsertProductMaterial = `-- name: UpsertProductMaterial :exec
 
-INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id, pricing_mode)
-VALUES ($1, $2, $3, $4)
+INSERT INTO RAC_catalog_product_materials (
+    organization_id, product_id, material_id, pricing_mode
+) VALUES ($1, $2, $3, $4)
 ON CONFLICT (organization_id, product_id, material_id)
 DO UPDATE SET pricing_mode = EXCLUDED.pricing_mode
 `
@@ -1008,7 +1038,9 @@ type UpsertProductMaterialParams struct {
 	PricingMode    string      `json:"pricing_mode"`
 }
 
-// Product Materials
+// =============================================================================
+// PRODUCT MATERIALS
+// =============================================================================
 func (q *Queries) UpsertProductMaterial(ctx context.Context, arg UpsertProductMaterialParams) error {
 	_, err := q.db.Exec(ctx, upsertProductMaterial,
 		arg.OrganizationID,

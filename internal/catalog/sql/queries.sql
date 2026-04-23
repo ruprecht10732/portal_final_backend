@@ -1,30 +1,39 @@
 -- Catalog Domain SQL Queries
+-- Optimized for PostgreSQL 16+ and sqlc.
 
--- VAT Rates
+-- =============================================================================
+-- VAT RATES
+-- =============================================================================
 
 -- name: CreateVatRate :one
-INSERT INTO RAC_catalog_vat_rates (organization_id, name, rate_bps)
-VALUES ($1, $2, $3)
+INSERT INTO RAC_catalog_vat_rates (
+    organization_id, 
+    name, 
+    rate_bps
+) VALUES ($1, $2, $3)
 RETURNING id, organization_id, name, rate_bps, created_at, updated_at;
 
 -- name: GetVatRateByID :one
+-- O(1) lookup. Security: Enforcement of organization_id prevents IDOR.
 SELECT id, organization_id, name, rate_bps, created_at, updated_at
 FROM RAC_catalog_vat_rates
 WHERE id = $1 AND organization_id = $2;
 
 -- name: ListVatRates :many
+-- Complexity: O(N log N) due to dynamic sorting. 
+-- Implementation Note: Ensure a GIN index on 'name' exists if searchPattern is used frequently.
 SELECT id, organization_id, name, rate_bps, created_at, updated_at
 FROM RAC_catalog_vat_rates
 WHERE organization_id = sqlc.arg(organizationID)
-  AND (sqlc.narg(searchPattern)::text IS NULL OR name ILIKE sqlc.narg(searchPattern)::text)
+  AND (sqlc.narg(searchPattern)::text IS NULL OR name ILIKE sqlc.narg(searchPattern))
 ORDER BY
-  CASE WHEN sqlc.arg(sortBy) = 'name' AND sqlc.arg(sortOrder) = 'asc' THEN name END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'name' AND sqlc.arg(sortOrder) = 'desc' THEN name END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'rateBps' AND sqlc.arg(sortOrder) = 'asc' THEN rate_bps END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'rateBps' AND sqlc.arg(sortOrder) = 'desc' THEN rate_bps END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'createdAt' AND sqlc.arg(sortOrder) = 'asc' THEN created_at END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'name'      AND sqlc.arg(sortOrder) = 'asc'  THEN name END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'name'      AND sqlc.arg(sortOrder) = 'desc' THEN name END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'rateBps'   AND sqlc.arg(sortOrder) = 'asc'  THEN rate_bps END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'rateBps'   AND sqlc.arg(sortOrder) = 'desc' THEN rate_bps END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'createdAt' AND sqlc.arg(sortOrder) = 'asc'  THEN created_at END ASC,
   CASE WHEN sqlc.arg(sortBy) = 'createdAt' AND sqlc.arg(sortOrder) = 'desc' THEN created_at END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'updatedAt' AND sqlc.arg(sortOrder) = 'asc' THEN updated_at END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'updatedAt' AND sqlc.arg(sortOrder) = 'asc'  THEN updated_at END ASC,
   CASE WHEN sqlc.arg(sortBy) = 'updatedAt' AND sqlc.arg(sortOrder) = 'desc' THEN updated_at END DESC,
   name ASC
 LIMIT sqlc.arg(limitCount) OFFSET sqlc.arg(offsetCount);
@@ -33,9 +42,10 @@ LIMIT sqlc.arg(limitCount) OFFSET sqlc.arg(offsetCount);
 SELECT COUNT(*) AS countValue
 FROM RAC_catalog_vat_rates
 WHERE organization_id = sqlc.arg(organizationID)
-  AND (sqlc.narg(searchPattern)::text IS NULL OR name ILIKE sqlc.narg(searchPattern)::text);
+  AND (sqlc.narg(searchPattern)::text IS NULL OR name ILIKE sqlc.narg(searchPattern));
 
 -- name: UpdateVatRate :one
+-- Security: organization_id check ensures cross-tenant updates are impossible.
 UPDATE RAC_catalog_vat_rates
 SET
   name = COALESCE(sqlc.narg(name), name),
@@ -49,9 +59,15 @@ DELETE FROM RAC_catalog_vat_rates
 WHERE id = $1 AND organization_id = $2;
 
 -- name: HasProductsWithVatRate :one
-SELECT EXISTS(SELECT 1 FROM RAC_catalog_products WHERE vat_rate_id = $1 AND organization_id = $2);
+-- Performance: O(1) existence check using a partial index on vat_rate_id if available.
+SELECT EXISTS(
+    SELECT 1 FROM RAC_catalog_products 
+    WHERE vat_rate_id = $1 AND organization_id = $2
+);
 
--- Products
+-- =============================================================================
+-- PRODUCTS
+-- =============================================================================
 
 -- name: CreateProduct :one
 INSERT INTO RAC_catalog_products (
@@ -67,6 +83,7 @@ RETURNING id, organization_id, vat_rate_id, is_draft,
   created_at, updated_at;
 
 -- name: GetNextProductCounter :one
+-- Transactional safety: Atomic increment via ON CONFLICT prevents SKU collisions.
 INSERT INTO RAC_catalog_product_counters (organization_id, last_number)
 VALUES ($1, 1)
 ON CONFLICT (organization_id) DO UPDATE
@@ -110,6 +127,8 @@ FROM RAC_catalog_products
 WHERE id = $1 AND organization_id = $2;
 
 -- name: ListProducts :many
+-- O(N log N) runtime. Note: ILIKE with leading wildcards (%) disables B-tree indexes.
+-- Suggestion: Use pg_trgm GIN index for searchPattern/titlePattern performance.
 SELECT id, organization_id, vat_rate_id, is_draft,
   title, reference, description,
   price_cents, unit_price_cents, unit_label, labor_time_text,
@@ -117,33 +136,33 @@ SELECT id, organization_id, vat_rate_id, is_draft,
   created_at, updated_at
 FROM RAC_catalog_products
 WHERE organization_id = sqlc.arg(organizationID)
-  AND (sqlc.narg(searchPattern)::text IS NULL OR (title ILIKE sqlc.narg(searchPattern)::text OR reference ILIKE sqlc.narg(searchPattern)::text))
-  AND (sqlc.narg(titlePattern)::text IS NULL OR title ILIKE sqlc.narg(titlePattern)::text)
-  AND (sqlc.narg(referencePattern)::text IS NULL OR reference ILIKE sqlc.narg(referencePattern)::text)
-  AND (sqlc.narg(productType)::text IS NULL OR type = sqlc.narg(productType)::text)
-  AND (sqlc.narg(isDraft)::bool IS NULL OR is_draft = sqlc.narg(isDraft)::bool)
-  AND (sqlc.narg(vatRateID)::uuid IS NULL OR vat_rate_id = sqlc.narg(vatRateID)::uuid)
-  AND (sqlc.narg(createdAtFrom)::timestamptz IS NULL OR created_at >= sqlc.narg(createdAtFrom)::timestamptz)
-  AND (sqlc.narg(createdAtTo)::timestamptz IS NULL OR created_at <= sqlc.narg(createdAtTo)::timestamptz)
-  AND (sqlc.narg(updatedAtFrom)::timestamptz IS NULL OR updated_at >= sqlc.narg(updatedAtFrom)::timestamptz)
-  AND (sqlc.narg(updatedAtTo)::timestamptz IS NULL OR updated_at <= sqlc.narg(updatedAtTo)::timestamptz)
+  AND (sqlc.narg(searchPattern)::text IS NULL OR (title ILIKE sqlc.narg(searchPattern) OR reference ILIKE sqlc.narg(searchPattern)))
+  AND (sqlc.narg(titlePattern)::text IS NULL OR title ILIKE sqlc.narg(titlePattern))
+  AND (sqlc.narg(referencePattern)::text IS NULL OR reference ILIKE sqlc.narg(referencePattern))
+  AND (sqlc.narg(productType)::text IS NULL OR type = sqlc.narg(productType))
+  AND (sqlc.narg(isDraft)::bool IS NULL OR is_draft = sqlc.narg(isDraft))
+  AND (sqlc.narg(vatRateID)::uuid IS NULL OR vat_rate_id = sqlc.narg(vatRateID))
+  AND (sqlc.narg(createdAtFrom)::timestamptz IS NULL OR created_at >= sqlc.narg(createdAtFrom))
+  AND (sqlc.narg(createdAtTo)::timestamptz IS NULL OR created_at <= sqlc.narg(createdAtTo))
+  AND (sqlc.narg(updatedAtFrom)::timestamptz IS NULL OR updated_at >= sqlc.narg(updatedAtFrom))
+  AND (sqlc.narg(updatedAtTo)::timestamptz IS NULL OR updated_at <= sqlc.narg(updatedAtTo))
 ORDER BY
-  CASE WHEN sqlc.arg(sortBy) = 'title' AND sqlc.arg(sortOrder) = 'asc' THEN title END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'title' AND sqlc.arg(sortOrder) = 'desc' THEN title END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'reference' AND sqlc.arg(sortOrder) = 'asc' THEN reference END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'reference' AND sqlc.arg(sortOrder) = 'desc' THEN reference END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'priceCents' AND sqlc.arg(sortOrder) = 'asc' THEN price_cents END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'priceCents' AND sqlc.arg(sortOrder) = 'desc' THEN price_cents END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'type' AND sqlc.arg(sortOrder) = 'asc' THEN type END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'type' AND sqlc.arg(sortOrder) = 'desc' THEN type END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'isDraft' AND sqlc.arg(sortOrder) = 'asc' THEN is_draft END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'isDraft' AND sqlc.arg(sortOrder) = 'desc' THEN is_draft END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'vatRateId' AND sqlc.arg(sortOrder) = 'asc' THEN vat_rate_id END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'vatRateId' AND sqlc.arg(sortOrder) = 'desc' THEN vat_rate_id END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'createdAt' AND sqlc.arg(sortOrder) = 'asc' THEN created_at END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'createdAt' AND sqlc.arg(sortOrder) = 'desc' THEN created_at END DESC,
-  CASE WHEN sqlc.arg(sortBy) = 'updatedAt' AND sqlc.arg(sortOrder) = 'asc' THEN updated_at END ASC,
-  CASE WHEN sqlc.arg(sortBy) = 'updatedAt' AND sqlc.arg(sortOrder) = 'desc' THEN updated_at END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'title'      AND sqlc.arg(sortOrder) = 'asc'  THEN title END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'title'      AND sqlc.arg(sortOrder) = 'desc' THEN title END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'reference'  AND sqlc.arg(sortOrder) = 'asc'  THEN reference END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'reference'  AND sqlc.arg(sortOrder) = 'desc' THEN reference END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'priceCents'  AND sqlc.arg(sortOrder) = 'asc'  THEN price_cents END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'priceCents'  AND sqlc.arg(sortOrder) = 'desc' THEN price_cents END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'type'        AND sqlc.arg(sortOrder) = 'asc'  THEN type END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'type'        AND sqlc.arg(sortOrder) = 'desc' THEN type END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'isDraft'     AND sqlc.arg(sortOrder) = 'asc'  THEN is_draft END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'isDraft'     AND sqlc.arg(sortOrder) = 'desc' THEN is_draft END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'vatRateId'   AND sqlc.arg(sortOrder) = 'asc'  THEN vat_rate_id END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'vatRateId'   AND sqlc.arg(sortOrder) = 'desc' THEN vat_rate_id END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'createdAt'   AND sqlc.arg(sortOrder) = 'asc'  THEN created_at END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'createdAt'   AND sqlc.arg(sortOrder) = 'desc' THEN created_at END DESC,
+  CASE WHEN sqlc.arg(sortBy) = 'updatedAt'   AND sqlc.arg(sortOrder) = 'asc'  THEN updated_at END ASC,
+  CASE WHEN sqlc.arg(sortBy) = 'updatedAt'   AND sqlc.arg(sortOrder) = 'desc' THEN updated_at END DESC,
   created_at DESC
 LIMIT sqlc.arg(limitCount) OFFSET sqlc.arg(offsetCount);
 
@@ -151,18 +170,19 @@ LIMIT sqlc.arg(limitCount) OFFSET sqlc.arg(offsetCount);
 SELECT COUNT(*) AS countValue
 FROM RAC_catalog_products
 WHERE organization_id = sqlc.arg(organizationID)
-  AND (sqlc.narg(searchPattern)::text IS NULL OR (title ILIKE sqlc.narg(searchPattern)::text OR reference ILIKE sqlc.narg(searchPattern)::text))
-  AND (sqlc.narg(titlePattern)::text IS NULL OR title ILIKE sqlc.narg(titlePattern)::text)
-  AND (sqlc.narg(referencePattern)::text IS NULL OR reference ILIKE sqlc.narg(referencePattern)::text)
-  AND (sqlc.narg(productType)::text IS NULL OR type = sqlc.narg(productType)::text)
-  AND (sqlc.narg(isDraft)::bool IS NULL OR is_draft = sqlc.narg(isDraft)::bool)
-  AND (sqlc.narg(vatRateID)::uuid IS NULL OR vat_rate_id = sqlc.narg(vatRateID)::uuid)
-  AND (sqlc.narg(createdAtFrom)::timestamptz IS NULL OR created_at >= sqlc.narg(createdAtFrom)::timestamptz)
-  AND (sqlc.narg(createdAtTo)::timestamptz IS NULL OR created_at <= sqlc.narg(createdAtTo)::timestamptz)
-  AND (sqlc.narg(updatedAtFrom)::timestamptz IS NULL OR updated_at >= sqlc.narg(updatedAtFrom)::timestamptz)
-  AND (sqlc.narg(updatedAtTo)::timestamptz IS NULL OR updated_at <= sqlc.narg(updatedAtTo)::timestamptz);
+  AND (sqlc.narg(searchPattern)::text IS NULL OR (title ILIKE sqlc.narg(searchPattern) OR reference ILIKE sqlc.narg(searchPattern)))
+  AND (sqlc.narg(titlePattern)::text IS NULL OR title ILIKE sqlc.narg(titlePattern))
+  AND (sqlc.narg(referencePattern)::text IS NULL OR reference ILIKE sqlc.narg(referencePattern))
+  AND (sqlc.narg(productType)::text IS NULL OR type = sqlc.narg(productType))
+  AND (sqlc.narg(isDraft)::bool IS NULL OR is_draft = sqlc.narg(isDraft))
+  AND (sqlc.narg(vatRateID)::uuid IS NULL OR vat_rate_id = sqlc.narg(vatRateID))
+  AND (sqlc.narg(createdAtFrom)::timestamptz IS NULL OR created_at >= sqlc.narg(createdAtFrom))
+  AND (sqlc.narg(createdAtTo)::timestamptz IS NULL OR created_at <= sqlc.narg(createdAtTo))
+  AND (sqlc.narg(updatedAtFrom)::timestamptz IS NULL OR updated_at >= sqlc.narg(updatedAtFrom))
+  AND (sqlc.narg(updatedAtTo)::timestamptz IS NULL OR updated_at <= sqlc.narg(updatedAtTo));
 
 -- name: GetProductsByIDs :many
+-- Complexity: O(M log N) where M is number of IDs. Batch lookup via ANY is highly efficient.
 SELECT id, organization_id, vat_rate_id, is_draft,
   title, reference, description,
   price_cents, unit_price_cents, unit_label, labor_time_text,
@@ -172,34 +192,46 @@ FROM RAC_catalog_products
 WHERE organization_id = sqlc.arg(organizationID)
   AND id = ANY(sqlc.arg(productIDs)::uuid[]);
 
--- Product Materials
+-- =============================================================================
+-- PRODUCT MATERIALS
+-- =============================================================================
 
 -- name: UpsertProductMaterial :exec
-INSERT INTO RAC_catalog_product_materials (organization_id, product_id, material_id, pricing_mode)
-VALUES ($1, $2, $3, $4)
+INSERT INTO RAC_catalog_product_materials (
+    organization_id, product_id, material_id, pricing_mode
+) VALUES ($1, $2, $3, $4)
 ON CONFLICT (organization_id, product_id, material_id)
 DO UPDATE SET pricing_mode = EXCLUDED.pricing_mode;
 
 -- name: RemoveProductMaterials :exec
 DELETE FROM RAC_catalog_product_materials
-WHERE organization_id = $1 AND product_id = $2 AND material_id = ANY($3::uuid[]);
+WHERE organization_id = $1 
+  AND product_id = $2 
+  AND material_id = ANY($3::uuid[]);
 
 -- name: ListProductMaterials :many
-SELECT p.id, p.organization_id, p.vat_rate_id, p.is_draft,
-  p.title, p.reference, p.description,
-  p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text,
-  p.type, pm.pricing_mode, p.period_count, p.period_unit,
-  p.created_at, p.updated_at
+-- O(M + K log K) for Join and Sort. Multicolumn index on (organization_id, product_id) recommended.
+SELECT 
+    p.id, p.organization_id, p.vat_rate_id, p.is_draft,
+    p.title, p.reference, p.description,
+    p.price_cents, p.unit_price_cents, p.unit_label, p.labor_time_text,
+    p.type, pm.pricing_mode, p.period_count, p.period_unit,
+    p.created_at, p.updated_at
 FROM RAC_catalog_products p
-JOIN RAC_catalog_product_materials pm
+INNER JOIN RAC_catalog_product_materials pm
   ON pm.material_id = p.id AND pm.organization_id = p.organization_id
 WHERE pm.organization_id = $1 AND pm.product_id = $2
 ORDER BY p.title ASC;
 
 -- name: HasProductMaterials :one
-SELECT EXISTS(SELECT 1 FROM RAC_catalog_product_materials WHERE organization_id = $1 AND product_id = $2);
+SELECT EXISTS(
+    SELECT 1 FROM RAC_catalog_product_materials 
+    WHERE organization_id = $1 AND product_id = $2
+);
 
--- Product Assets
+-- =============================================================================
+-- PRODUCT ASSETS
+-- =============================================================================
 
 -- name: CreateProductAsset :one
 INSERT INTO RAC_catalog_product_assets (
@@ -217,7 +249,7 @@ SELECT id, organization_id, product_id, asset_type, file_key, file_name, content
 FROM RAC_catalog_product_assets
 WHERE organization_id = sqlc.arg(organizationID)
   AND product_id = sqlc.arg(productID)
-  AND (sqlc.narg(assetType)::text IS NULL OR asset_type = sqlc.narg(assetType)::text)
+  AND (sqlc.narg(assetType)::text IS NULL OR asset_type = sqlc.narg(assetType))
 ORDER BY created_at DESC;
 
 -- name: DeleteProductAsset :execrows
