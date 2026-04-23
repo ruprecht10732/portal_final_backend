@@ -273,6 +273,10 @@ SELECT u.id, u.lead_id, u.organization_id, st.name AS service_type, u.status, u.
 FROM updated u
 JOIN RAC_service_types st ON st.id = u.service_type_id AND st.organization_id = u.organization_id;
 
+-- name: DeleteLeadService :execrows
+DELETE FROM RAC_lead_services
+WHERE id = $1 AND organization_id = $2;
+
 -- name: UpdateServicePreferences :exec
 UPDATE RAC_lead_services
 SET customer_preferences = $3, updated_at = now()

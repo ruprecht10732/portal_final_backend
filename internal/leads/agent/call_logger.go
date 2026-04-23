@@ -888,39 +888,43 @@ func buildUpdateStatusTool() (tool.Tool, error) {
 		if err != nil {
 			return UpdateStatusOutput{Success: false, Message: errMsgMissingContext}, err
 		}
-		tenantID, _, _, serviceID, ok := deps.GetContext()
-		if !ok {
-			return UpdateStatusOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
-		}
-
-		if !validLeadStatuses[input.Status] {
-			return UpdateStatusOutput{Success: false, Message: "Invalid status"}, fmt.Errorf("invalid status: %s", input.Status)
-		}
-		if err := validateAppointmentAvailability(input.Status, deps.HasAppointmentAvailable()); err != nil {
-			return UpdateStatusOutput{Success: false, Message: err.Error()}, err
-		}
-
-		svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
-		if err != nil {
-			return UpdateStatusOutput{Success: false, Message: "Lead service not found"}, err
-		}
-
-		if domain.IsTerminal(svc.Status, svc.PipelineStage) {
-			return UpdateStatusOutput{Success: false, Message: "Cannot update status for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
-		}
-
-		if reason := domain.ValidateStateCombination(input.Status, svc.PipelineStage); reason != "" {
-			return UpdateStatusOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
-		}
-
-		_, err = deps.Repo.UpdateServiceStatus(context.Background(), serviceID, tenantID, input.Status)
-		if err != nil {
-			return UpdateStatusOutput{Success: false, Message: err.Error()}, err
-		}
-
-		deps.MarkStatusUpdated(input.Status)
-		return UpdateStatusOutput{Success: true, Message: fmt.Sprintf("Status updated to %s", input.Status)}, nil
+		return executeUpdateStatus(ctx, deps, input)
 	})
+}
+
+func executeUpdateStatus(ctx tool.Context, deps *CallLoggerToolDeps, input UpdateStatusInput) (UpdateStatusOutput, error) {
+	tenantID, _, _, serviceID, ok := deps.GetContext()
+	if !ok {
+		return UpdateStatusOutput{Success: false, Message: errMsgMissingContext}, errMissingContext
+	}
+
+	if !validLeadStatuses[input.Status] {
+		return UpdateStatusOutput{Success: false, Message: "Invalid status"}, fmt.Errorf("invalid status: %s", input.Status)
+	}
+	if err := validateAppointmentAvailability(input.Status, deps.HasAppointmentAvailable()); err != nil {
+		return UpdateStatusOutput{Success: false, Message: err.Error()}, err
+	}
+
+	svc, err := deps.Repo.GetLeadServiceByID(ctx, serviceID, tenantID)
+	if err != nil {
+		return UpdateStatusOutput{Success: false, Message: "Lead service not found"}, err
+	}
+
+	if domain.IsTerminal(svc.Status, svc.PipelineStage) {
+		return UpdateStatusOutput{Success: false, Message: "Cannot update status for a service in terminal state"}, fmt.Errorf("service %s is terminal", serviceID)
+	}
+
+	if reason := domain.ValidateStateCombination(input.Status, svc.PipelineStage); reason != "" {
+		return UpdateStatusOutput{Success: false, Message: reason}, fmt.Errorf("invalid state combination: %s", reason)
+	}
+
+	_, err = deps.Repo.UpdateServiceStatus(context.Background(), serviceID, tenantID, input.Status)
+	if err != nil {
+		return UpdateStatusOutput{Success: false, Message: err.Error()}, err
+	}
+
+	deps.MarkStatusUpdated(input.Status)
+	return UpdateStatusOutput{Success: true, Message: fmt.Sprintf("Status updated to %s", input.Status)}, nil
 }
 
 func buildScheduleVisitTool() (tool.Tool, error) {
@@ -1189,40 +1193,14 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 
 	if _, err := deps.Booker.GetLeadVisitByService(context.Background(), tenantID, serviceID, userID); err != nil {
 		if apperr.Is(err, apperr.KindNotFound) {
-			deps.MarkRescheduleFallback()
-			scheduled, scheduleErr := executeScheduleVisit(deps, ScheduleVisitInput{
-				StartTime: input.StartTime,
-				EndTime:   input.EndTime,
-				Title:     input.Title,
-			})
-			if scheduleErr != nil {
-				return RescheduleVisitOutput{Success: false, Message: scheduled.Message}, scheduleErr
-			}
-			return RescheduleVisitOutput{Success: true, Message: "Appointment scheduled"}, nil
+			return handleMissingVisitFallback(deps, input)
 		}
 		return RescheduleVisitOutput{Success: false, Message: err.Error()}, err
 	}
 
-	startTime, err := time.Parse(time.RFC3339, input.StartTime)
+	startTime, endTime, title, description, err := parseRescheduleInput(input)
 	if err != nil {
-		return RescheduleVisitOutput{Success: false, Message: "Invalid start time format"}, err
-	}
-
-	endTime, err := time.Parse(time.RFC3339, input.EndTime)
-	if err != nil {
-		return RescheduleVisitOutput{Success: false, Message: "Invalid end time format"}, err
-	}
-
-	var title *string
-	if strings.TrimSpace(input.Title) != "" {
-		value := strings.TrimSpace(input.Title)
-		title = &value
-	}
-
-	var description *string
-	if strings.TrimSpace(input.Description) != "" {
-		value := strings.TrimSpace(input.Description)
-		description = &value
+		return RescheduleVisitOutput{Success: false, Message: err.Error()}, err
 	}
 
 	err = deps.Booker.RescheduleLeadVisit(context.Background(), ports.RescheduleVisitParams{
@@ -1240,6 +1218,43 @@ func executeRescheduleVisit(deps *CallLoggerToolDeps, input RescheduleVisitInput
 
 	deps.MarkAppointmentRescheduled(startTime)
 	return RescheduleVisitOutput{Success: true, Message: "Appointment rescheduled"}, nil
+}
+
+func handleMissingVisitFallback(deps *CallLoggerToolDeps, input RescheduleVisitInput) (RescheduleVisitOutput, error) {
+	deps.MarkRescheduleFallback()
+	scheduled, scheduleErr := executeScheduleVisit(deps, ScheduleVisitInput{
+		StartTime: input.StartTime,
+		EndTime:   input.EndTime,
+		Title:     input.Title,
+	})
+	if scheduleErr != nil {
+		return RescheduleVisitOutput{Success: false, Message: scheduled.Message}, scheduleErr
+	}
+	return RescheduleVisitOutput{Success: true, Message: "Appointment scheduled"}, nil
+}
+
+func parseRescheduleInput(input RescheduleVisitInput) (time.Time, time.Time, *string, *string, error) {
+	startTime, err := time.Parse(time.RFC3339, input.StartTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, nil, nil, errors.New("Invalid start time format")
+	}
+
+	endTime, err := time.Parse(time.RFC3339, input.EndTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, nil, nil, errors.New("Invalid end time format")
+	}
+
+	var title *string
+	if t := strings.TrimSpace(input.Title); t != "" {
+		title = &t
+	}
+
+	var desc *string
+	if d := strings.TrimSpace(input.Description); d != "" {
+		desc = &d
+	}
+
+	return startTime, endTime, title, desc, nil
 }
 
 func executeCancelVisit(deps *CallLoggerToolDeps, input CancelVisitInput) (CancelVisitOutput, error) {

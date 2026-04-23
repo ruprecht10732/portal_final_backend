@@ -18,7 +18,7 @@ func TestBuildWhatsAppReplyPromptWithoutLeadOrServiceContext(t *testing.T) {
 			Direction: "inbound",
 			Body:      "Kunnen jullie volgende week langskomen?",
 		}},
-	}, whatsAppReplyContext{}, "Behulpzaam en direct")
+	}, replyContext{}, "Behulpzaam en direct")
 
 	for _, expected := range []string{
 		"Lead ID: Niet opgegeven",
@@ -67,7 +67,7 @@ func TestBuildWhatsAppReplyPromptIncludesSelectedScenario(t *testing.T) {
 			Body:      "Top, tot morgen",
 			CreatedAt: time.Now().UTC(),
 		}},
-	}, whatsAppReplyContext{}, "Behulpzaam en direct")
+	}, replyContext{}, "Behulpzaam en direct")
 
 	checks := []string{"Selected reply scenario", "afspraakherinnering", "Noem de geplande tijd nogmaals."}
 	for _, expected := range checks {

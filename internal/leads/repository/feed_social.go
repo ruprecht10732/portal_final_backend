@@ -88,7 +88,7 @@ func (r *Repository) CreateComment(ctx context.Context, eventID, eventSource str
 	if err != nil {
 		return FeedComment{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := r.queries.WithTx(tx)
 

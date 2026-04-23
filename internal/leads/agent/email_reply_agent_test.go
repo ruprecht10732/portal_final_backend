@@ -16,7 +16,7 @@ func TestBuildEmailReplyPromptWithoutLeadOrServiceContext(t *testing.T) {
 		CustomerName:  "Robin",
 		Subject:       "Vraag over planning",
 		MessageBody:   "Kunnen jullie volgende week langskomen?",
-	}, emailReplyContext{}, "Behulpzaam en direct")
+	}, replyContext{}, "Behulpzaam en direct")
 
 	checks := []string{
 		"Lead ID: Niet opgegeven",
@@ -44,7 +44,7 @@ func TestBuildEmailReplyPromptIncludesOverviewContext(t *testing.T) {
 		CustomerName:    "Robin",
 		Subject:         "Vraag over offerte",
 		MessageBody:     "Welke offerte hebben we geaccepteerd?",
-	}, emailReplyContext{
+	}, replyContext{
 		requester:     &ports.ReplyUserProfile{Email: "robin@example.com", FirstName: &firstName, LastName: &lastName},
 		acceptedQuote: &ports.PublicQuoteSummary{QuoteNumber: "OFF-2026-0001", Status: "Accepted", TotalCents: 123450, LineItems: []ports.PublicQuoteLineItemSummary{{Title: "Warmtepomp", Description: "Inclusief installatie", Quantity: "1", LineTotalCents: 123450}}},
 		upcomingVisit: &ports.PublicAppointmentSummary{Title: "Inmeting", Status: "scheduled"},

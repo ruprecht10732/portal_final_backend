@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,9 @@ import (
 
 	leadsdb "portal_final_backend/internal/leads/db"
 )
+
+// ErrOrganizationIDRequired is returned when an organization ID is not provided.
+var ErrOrganizationIDRequired = errors.New("organization_id is required")
 
 type CreateCatalogSearchLogParams struct {
 	OrganizationID uuid.UUID
@@ -34,7 +38,7 @@ type CatalogSearchMissSummary struct {
 
 func (r *Repository) CreateCatalogSearchLog(ctx context.Context, params CreateCatalogSearchLogParams) error {
 	if params.OrganizationID == uuid.Nil {
-		return fmt.Errorf("organization_id is required")
+		return ErrOrganizationIDRequired
 	}
 	if params.Query == "" {
 		return fmt.Errorf("query is required")
@@ -69,7 +73,7 @@ func (r *Repository) CreateCatalogSearchLog(ctx context.Context, params CreateCa
 // produced 0 results within the lookback window.
 func (r *Repository) ListFrequentCatalogSearchMisses(ctx context.Context, organizationID uuid.UUID, lookbackDays int, minCount int, limit int) ([]CatalogSearchMissSummary, error) {
 	if organizationID == uuid.Nil {
-		return nil, fmt.Errorf("organization_id is required")
+		return nil, ErrOrganizationIDRequired
 	}
 	if lookbackDays <= 0 {
 		lookbackDays = 14
@@ -117,7 +121,7 @@ type AdHocQuoteItemSummary struct {
 // catalog_product_id is NULL (ad-hoc items), within the lookback window.
 func (r *Repository) ListFrequentAdHocQuoteItems(ctx context.Context, organizationID uuid.UUID, lookbackDays int, minCount int, limit int) ([]AdHocQuoteItemSummary, error) {
 	if organizationID == uuid.Nil {
-		return nil, fmt.Errorf("organization_id is required")
+		return nil, ErrOrganizationIDRequired
 	}
 	if lookbackDays <= 0 {
 		lookbackDays = 30

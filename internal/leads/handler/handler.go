@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"portal_final_backend/internal/leads/domain"
 	"portal_final_backend/internal/leads/maintenance"
 	"portal_final_backend/internal/leads/management"
+	"portal_final_backend/internal/adapters/storage"
 	"portal_final_backend/internal/leads/notes"
 	"portal_final_backend/internal/leads/repository"
 	"portal_final_backend/internal/leads/transport"
@@ -41,20 +43,24 @@ type Handler struct {
 	gatekeeperQueue scheduler.GatekeeperScheduler
 	staleDetector   *maintenance.StaleLeadDetector
 	staleSuggester  *maintenance.StaleLeadReEngagementService
+	storage         storage.StorageService
+	attachmentsBucket string
 }
 
 // HandlerDeps bundles dependencies for Handler construction.
 type HandlerDeps struct {
-	Mgmt            *management.Service
-	NotesSvc        *notes.Service
-	Gatekeeper      *agent.Gatekeeper
-	CallLogger      *agent.CallLogger
-	SSE             *sse.Service
-	EventBus        events.Bus
-	Repo            repository.LeadsRepository
-	Validator       *validator.Validator
-	CallLogQueue    scheduler.CallLogScheduler
-	GatekeeperQueue scheduler.GatekeeperScheduler
+	Mgmt              *management.Service
+	NotesSvc          *notes.Service
+	Gatekeeper        *agent.Gatekeeper
+	CallLogger        *agent.CallLogger
+	SSE               *sse.Service
+	EventBus          events.Bus
+	Repo              repository.LeadsRepository
+	Validator         *validator.Validator
+	CallLogQueue      scheduler.CallLogScheduler
+	GatekeeperQueue   scheduler.GatekeeperScheduler
+	Storage           storage.StorageService
+	AttachmentsBucket string
 }
 
 const (
@@ -68,16 +74,18 @@ const (
 // New creates a new RAC_leads handler with focused services.
 func New(deps HandlerDeps) *Handler {
 	return &Handler{
-		mgmt:            deps.Mgmt,
-		notesSvc:        deps.NotesSvc,
-		gatekeeper:      deps.Gatekeeper,
-		callLogger:      deps.CallLogger,
-		sse:             deps.SSE,
-		eventBus:        deps.EventBus,
-		repo:            deps.Repo,
-		val:             deps.Validator,
-		callLogQueue:    deps.CallLogQueue,
-		gatekeeperQueue: deps.GatekeeperQueue,
+		mgmt:              deps.Mgmt,
+		notesSvc:          deps.NotesSvc,
+		gatekeeper:        deps.Gatekeeper,
+		callLogger:        deps.CallLogger,
+		sse:               deps.SSE,
+		eventBus:          deps.EventBus,
+		repo:              deps.Repo,
+		val:               deps.Validator,
+		callLogQueue:      deps.CallLogQueue,
+		gatekeeperQueue:   deps.GatekeeperQueue,
+		storage:           deps.Storage,
+		attachmentsBucket: deps.AttachmentsBucket,
 	}
 }
 
@@ -136,6 +144,14 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/:id/analysis/history", h.ListAnalyses)
 	// Call Logger routes
 	rg.POST("/:id/services/:serviceId/log-call", h.LogCall)
+	// Attachment routes
+	attachments := rg.Group("/:id/services/:serviceId/attachments")
+	attachments.POST("/presign", h.GetPresignedUploadURL)
+	attachments.POST("", h.CreateAttachment)
+	attachments.GET("", h.ListAttachments)
+	attachments.GET("/:attachmentId", h.GetAttachment)
+	attachments.GET("/:attachmentId/download", h.GetDownloadURL)
+	attachments.DELETE("/:attachmentId", h.DeleteAttachment)
 }
 
 func (h *Handler) RegisterAdminRoutes(rg *gin.RouterGroup) {
@@ -1004,53 +1020,7 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 
 	// Trigger gatekeeper analysis asynchronously
 	if h.gatekeeperQueue != nil {
-		queuedServiceID := validation.ServiceID
-		message := "Analysis queued successfully"
-		run := transport.NewAutomationRunResponse(transport.AutomationRunParams{
-			JobID:           uuid.New(),
-			Kind:            transport.AutomationRunKindLeadAnalysis,
-			Status:          "pending",
-			LeadID:          id,
-			LeadServiceID:   *queuedServiceID,
-			Step:            "Gatekeeper queued",
-			ProgressPercent: 5,
-			Message:         &message,
-		})
-		if err := h.gatekeeperQueue.EnqueueGatekeeperRun(c.Request.Context(), scheduler.GatekeeperRunPayload{
-			TenantID:      tenantID.String(),
-			LeadID:        id.String(),
-			LeadServiceID: queuedServiceID.String(),
-		}); err != nil {
-			if errors.Is(err, scheduler.ErrDuplicateTask) {
-				dupMsg := "Analysis is already queued or recently run for this service"
-				httpkit.JSON(c, http.StatusAccepted, gin.H{
-					"status":  "already_queued",
-					"message": dupMsg,
-					"leadId":  id,
-					"run": transport.NewAutomationRunResponse(transport.AutomationRunParams{
-						JobID:           uuid.New(),
-						Kind:            transport.AutomationRunKindLeadAnalysis,
-						Status:          "pending",
-						LeadID:          id,
-						LeadServiceID:   *queuedServiceID,
-						Step:            "Gatekeeper already queued",
-						ProgressPercent: 5,
-						Message:         &dupMsg,
-					}),
-				})
-				return
-			}
-			if httpkit.HandleError(c, err) {
-				return
-			}
-		}
-
-		httpkit.JSON(c, http.StatusAccepted, gin.H{
-			"status":  "queued",
-			"message": message,
-			"leadId":  id,
-			"run":     run,
-		})
+		h.enqueueGatekeeperAnalysis(c, id, tenantID, validation.ServiceID)
 		return
 	}
 
@@ -1075,6 +1045,55 @@ func (h *Handler) AnalyzeLead(c *gin.Context) {
 			Step:            "Gatekeeper started",
 			ProgressPercent: 10,
 		}),
+	})
+}
+
+func (h *Handler) enqueueGatekeeperAnalysis(c *gin.Context, id, tenantID uuid.UUID, queuedServiceID *uuid.UUID) {
+	message := "Analysis queued successfully"
+	run := transport.NewAutomationRunResponse(transport.AutomationRunParams{
+		JobID:           uuid.New(),
+		Kind:            transport.AutomationRunKindLeadAnalysis,
+		Status:          "pending",
+		LeadID:          id,
+		LeadServiceID:   *queuedServiceID,
+		Step:            "Gatekeeper queued",
+		ProgressPercent: 5,
+		Message:         &message,
+	})
+	if err := h.gatekeeperQueue.EnqueueGatekeeperRun(c.Request.Context(), scheduler.GatekeeperRunPayload{
+		TenantID:      tenantID.String(),
+		LeadID:        id.String(),
+		LeadServiceID: queuedServiceID.String(),
+	}); err != nil {
+		if errors.Is(err, scheduler.ErrDuplicateTask) {
+			dupMsg := "Analysis is already queued or recently run for this service"
+			httpkit.JSON(c, http.StatusAccepted, gin.H{
+				"status":  "already_queued",
+				"message": dupMsg,
+				"leadId":  id,
+				"run": transport.NewAutomationRunResponse(transport.AutomationRunParams{
+					JobID:           uuid.New(),
+					Kind:            transport.AutomationRunKindLeadAnalysis,
+					Status:          "pending",
+					LeadID:          id,
+					LeadServiceID:   *queuedServiceID,
+					Step:            "Gatekeeper already queued",
+					ProgressPercent: 5,
+					Message:         &dupMsg,
+				}),
+			})
+			return
+		}
+		if httpkit.HandleError(c, err) {
+			return
+		}
+	}
+
+	httpkit.JSON(c, http.StatusAccepted, gin.H{
+		"status":  "queued",
+		"message": message,
+		"leadId":  id,
+		"run":     run,
 	})
 }
 
@@ -1785,4 +1804,277 @@ func toSummaryPointer(text string, maxLen int) *string {
 		trimmed = trimmed[:maxLen] + "..."
 	}
 	return &trimmed
+}
+// GetPresignedUploadURL generates a presigned URL for uploading a file to MinIO.
+func (h *Handler) GetPresignedUploadURL(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	leadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.PresignedUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	// Validate content type
+	if err := h.storage.ValidateContentType(req.ContentType); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, "file type not allowed", nil)
+		return
+	}
+
+	// Validate file size
+	if err := h.storage.ValidateFileSize(req.SizeBytes); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	// Build folder path: {org_id}/{lead_id}/{service_id}
+	folder := fmt.Sprintf("%s/%s/%s", tenantID.String(), leadID.String(), serviceID.String())
+
+	// Generate presigned URL
+	presigned, err := h.storage.GenerateUploadURL(c.Request.Context(), h.attachmentsBucket, folder, req.FileName, req.ContentType, req.SizeBytes)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to generate upload URL", nil)
+		return
+	}
+
+	httpkit.OK(c, transport.PresignedUploadResponse{
+		UploadURL: presigned.URL,
+		FileKey:   presigned.FileKey,
+		ExpiresAt: presigned.ExpiresAt.Unix(),
+	})
+}
+
+// CreateAttachment records a file attachment after successful upload to MinIO.
+func (h *Handler) CreateAttachment(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	var req transport.CreateAttachmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+	if err := h.val.Struct(req); err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgValidationFailed, err.Error())
+		return
+	}
+
+	uploaderID := identity.UserID()
+	att, err := h.repo.CreateAttachment(c.Request.Context(), repository.CreateAttachmentParams{
+		LeadServiceID:  serviceID,
+		OrganizationID: tenantID,
+		FileKey:        req.FileKey,
+		FileName:       req.FileName,
+		ContentType:    req.ContentType,
+		SizeBytes:      req.SizeBytes,
+		UploadedBy:     &uploaderID,
+	})
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to create attachment record", nil)
+		return
+	}
+
+	if h.eventBus != nil {
+		if svc, svcErr := h.repo.GetLeadServiceByID(c.Request.Context(), serviceID, tenantID); svcErr == nil {
+			h.eventBus.Publish(c.Request.Context(), events.AttachmentUploaded{
+				BaseEvent:     events.NewBaseEvent(),
+				LeadID:        svc.LeadID,
+				LeadServiceID: serviceID,
+				TenantID:      tenantID,
+				AttachmentID:  att.ID,
+				FileName:      req.FileName,
+				FileKey:       req.FileKey,
+				ContentType:   req.ContentType,
+				SizeBytes:     req.SizeBytes,
+			})
+		}
+	}
+
+	httpkit.JSON(c, http.StatusCreated, toAttachmentResponse(att, nil))
+}
+
+// ListAttachments returns all attachments for a lead service.
+func (h *Handler) ListAttachments(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	serviceID, err := uuid.Parse(c.Param("serviceId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	attachments, err := h.repo.ListAttachmentsByService(c.Request.Context(), serviceID, tenantID)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to list attachments", nil)
+		return
+	}
+
+	items := make([]transport.AttachmentResponse, len(attachments))
+	for i, att := range attachments {
+		items[i] = toAttachmentResponse(att, nil)
+	}
+
+	httpkit.OK(c, transport.AttachmentListResponse{Items: items})
+}
+
+// GetAttachment returns a single attachment by ID.
+func (h *Handler) GetAttachment(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	att, err := h.repo.GetAttachmentByID(c.Request.Context(), attachmentID, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	httpkit.OK(c, toAttachmentResponse(att, nil))
+}
+
+// GetDownloadURL generates a presigned URL for downloading a file.
+func (h *Handler) GetDownloadURL(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	att, err := h.repo.GetAttachmentByID(c.Request.Context(), attachmentID, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	presigned, err := h.storage.GenerateDownloadURL(c.Request.Context(), h.attachmentsBucket, att.FileKey)
+	if err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to generate download URL", nil)
+		return
+	}
+
+	httpkit.OK(c, transport.PresignedDownloadResponse{
+		DownloadURL: presigned.URL,
+		ExpiresAt:   presigned.ExpiresAt.Unix(),
+	})
+}
+
+// DeleteAttachment removes an attachment record and the file from MinIO.
+func (h *Handler) DeleteAttachment(c *gin.Context) {
+	identity := httpkit.MustGetIdentity(c)
+	if identity == nil {
+		return
+	}
+	tenantID, ok := httpkit.RequireTenant(c)
+	if !ok {
+		return
+	}
+
+	attachmentID, err := uuid.Parse(c.Param("attachmentId"))
+	if err != nil {
+		httpkit.Error(c, http.StatusBadRequest, msgInvalidRequest, nil)
+		return
+	}
+
+	// Get attachment to find file key for deletion
+	att, err := h.repo.GetAttachmentByID(c.Request.Context(), attachmentID, tenantID)
+	if httpkit.HandleError(c, err) {
+		return
+	}
+
+	// Delete from MinIO
+	if err := h.storage.DeleteObject(c.Request.Context(), h.attachmentsBucket, att.FileKey); err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to delete file from storage", nil)
+		return
+	}
+
+	// Delete record from database
+	if err := h.repo.DeleteAttachment(c.Request.Context(), attachmentID, tenantID); err != nil {
+		httpkit.Error(c, http.StatusInternalServerError, "failed to delete attachment record", nil)
+		return
+	}
+
+	httpkit.OK(c, gin.H{"message": "attachment deleted"})
+}
+
+// toAttachmentResponse converts a repository attachment to a transport response.
+func toAttachmentResponse(att repository.Attachment, downloadURL *string) transport.AttachmentResponse {
+	var contentType string
+	if att.ContentType != nil {
+		contentType = *att.ContentType
+	}
+	var sizeBytes int64
+	if att.SizeBytes != nil {
+		sizeBytes = *att.SizeBytes
+	}
+
+	return transport.AttachmentResponse{
+		ID:          att.ID,
+		FileKey:     att.FileKey,
+		FileName:    att.FileName,
+		ContentType: contentType,
+		SizeBytes:   sizeBytes,
+		UploadedBy:  att.UploadedBy,
+		CreatedAt:   att.CreatedAt,
+		DownloadURL: downloadURL,
+	}
 }

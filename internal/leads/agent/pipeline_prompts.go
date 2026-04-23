@@ -53,8 +53,6 @@ var sharedPhotoTrustRules = mustReadPromptFile("shared/prompts/photo-trust-rules
 
 var sharedIntakeCompletenessGate = mustReadPromptFile("shared/prompts/intake-completeness-gate.md")
 
-var sharedWhatsAppFormatting = mustReadPromptFile("shared/prompts/whatsapp-formatting.md")
-
 type gatekeeperPromptInput struct {
 	lead               repository.Lead
 	service            repository.LeadService

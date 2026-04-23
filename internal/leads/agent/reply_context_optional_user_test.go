@@ -36,7 +36,7 @@ func TestResolveAppointmentAssigneeNameIgnoresUnauthorizedLookup(t *testing.T) {
 }
 
 func TestWhatsAppReplyLoadRequesterIgnoresUnauthorizedLookup(t *testing.T) {
-	agent := &WhatsAppReplyAgent{userReader: stubReplyUserReader{err: apperr.Unauthorized(unauthorizedLookupMessage)}}
+	agent := &ReplyAgent{userReader: stubReplyUserReader{err: apperr.Unauthorized(unauthorizedLookupMessage)}}
 
 	requester, err := agent.loadRequester(context.Background(), uuid.New())
 	if err != nil {
@@ -48,7 +48,7 @@ func TestWhatsAppReplyLoadRequesterIgnoresUnauthorizedLookup(t *testing.T) {
 }
 
 func TestEmailReplyLoadRequesterIgnoresUnauthorizedLookup(t *testing.T) {
-	agent := &EmailReplyAgent{userReader: stubReplyUserReader{err: apperr.Unauthorized(unauthorizedLookupMessage)}}
+	agent := &ReplyAgent{userReader: stubReplyUserReader{err: apperr.Unauthorized(unauthorizedLookupMessage)}}
 
 	requester, err := agent.loadRequester(context.Background(), uuid.New())
 	if err != nil {
@@ -60,7 +60,7 @@ func TestEmailReplyLoadRequesterIgnoresUnauthorizedLookup(t *testing.T) {
 }
 
 func TestWhatsAppReplyLoadRequesterPreservesOtherErrors(t *testing.T) {
-	agent := &WhatsAppReplyAgent{userReader: stubReplyUserReader{err: errors.New("boom")}}
+	agent := &ReplyAgent{userReader: stubReplyUserReader{err: errors.New("boom")}}
 
 	_, err := agent.loadRequester(context.Background(), uuid.New())
 	if err == nil {

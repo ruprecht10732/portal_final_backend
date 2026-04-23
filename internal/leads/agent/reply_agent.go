@@ -24,13 +24,18 @@ import (
 
 const (
 	whatsAppReplyAppName        = "whatsapp-reply-generator"
+	emailReplyAppName           = "email-reply-generator"
 	maxWhatsAppExampleItems     = 4
+	maxEmailExampleItems        = 4
 	maxWhatsAppTranscriptItems  = 6
 	maxWhatsAppMessageBodyChars = 750
+	maxEmailBodyChars           = 1600
+	maxEmailFeedbackBodyChars   = 900
 	maxLeadNoteItems            = 5
 )
 
-type WhatsAppReplyAgent struct {
+type ReplyAgent struct {
+	channel string
 	repo                         repository.LeadsRepository
 	modelConfig                  openaicompat.Config
 	appName                      string
@@ -41,7 +46,7 @@ type WhatsAppReplyAgent struct {
 	sessionService               session.Service
 }
 
-type whatsAppReplyContext struct {
+type replyContext struct {
 	lead           *repository.Lead
 	service        *repository.LeadService
 	notes          []repository.LeadNote
@@ -55,28 +60,33 @@ type whatsAppReplyContext struct {
 	requester      *ports.ReplyUserProfile
 }
 
-func NewWhatsAppReplyAgent(modelCfg openaicompat.Config, repo repository.LeadsRepository, sessionService session.Service) (*WhatsAppReplyAgent, error) {
-	return &WhatsAppReplyAgent{
+func NewReplyAgent(channel string, modelCfg openaicompat.Config, repo repository.LeadsRepository, sessionService session.Service) (*ReplyAgent, error) {
+	appName := whatsAppReplyAppName
+	if channel == "email" {
+		appName = emailReplyAppName
+	}
+	return &ReplyAgent{
+		channel:        channel,
 		repo:           repo,
 		modelConfig:    modelCfg,
-		appName:        whatsAppReplyAppName,
+		appName:        appName,
 		sessionService: sessionService,
 	}, nil
 }
 
 // SetOrganizationAISettingsReader injects a tenant-scoped settings reader.
-func (a *WhatsAppReplyAgent) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
+func (a *ReplyAgent) SetOrganizationAISettingsReader(reader ports.OrganizationAISettingsReader) {
 	a.organizationAISettingsReader = reader
 }
 
-func (a *WhatsAppReplyAgent) SetContextReaders(quoteReader ports.ReplyQuoteReader, appointmentViewer ports.AppointmentPublicViewer, userReader ports.ReplyUserReader) {
+func (a *ReplyAgent) SetContextReaders(quoteReader ports.ReplyQuoteReader, appointmentViewer ports.AppointmentPublicViewer, userReader ports.ReplyUserReader) {
 	a.quoteReader = quoteReader
 	a.appointmentViewer = appointmentViewer
 	a.userReader = userReader
 }
 
-func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input ports.WhatsAppReplyInput) (ports.ReplySuggestionDraft, error) {
-	replyContext, err := a.loadReplyContext(ctx, input)
+func (a *ReplyAgent) SuggestWhatsAppReply(ctx context.Context, input ports.WhatsAppReplyInput) (ports.ReplySuggestionDraft, error) {
+	rc, err := a.loadWhatsAppReplyContext(ctx, input)
 	if err != nil {
 		return ports.ReplySuggestionDraft{}, err
 	}
@@ -87,15 +97,15 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 		settings.WhatsAppDefaultReplyScenario,
 		settings.QuoteRelatedReplyScenario,
 		settings.AppointmentRelatedReplyScenario,
-		replyContext.acceptedQuote != nil,
-		replyContext.upcomingVisit != nil || replyContext.pendingVisit != nil,
+		rc.acceptedQuote != nil,
+		rc.upcomingVisit != nil || rc.pendingVisit != nil,
 	)
 	r, err := a.newRunner(settings.WhatsAppToneOfVoice)
 	if err != nil {
 		return ports.ReplySuggestionDraft{}, err
 	}
 
-	promptText := buildWhatsAppReplyPrompt(resolvedInput, replyContext, settings.WhatsAppToneOfVoice)
+	promptText := buildWhatsAppReplyPrompt(resolvedInput, rc, settings.WhatsAppToneOfVoice)
 	sessionID := input.ConversationID.String()
 	userID := "whatsapp-reply-conversation-" + input.ConversationID.String()
 	if input.LeadID != nil && *input.LeadID != uuid.Nil {
@@ -107,8 +117,8 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 		AppName:              a.appName,
 		UserID:               userID,
 		SessionID:            sessionID,
-		CreateSessionMessage: "whatsapp reply: create session",
-		RunFailureMessage:    "whatsapp reply: run failed",
+		CreateSessionMessage: "reply agent: create session",
+		RunFailureMessage:    "reply agent: run failed",
 		TraceLabel:           "whatsapp-reply",
 	}, promptText)
 	if err != nil {
@@ -117,22 +127,34 @@ func (a *WhatsAppReplyAgent) SuggestWhatsAppReply(ctx context.Context, input por
 
 	response := strings.TrimSpace(outputText)
 	if response == "" {
-		return ports.ReplySuggestionDraft{}, apperr.Internal("whatsapp reply: empty model response")
+		return ports.ReplySuggestionDraft{}, apperr.Internal("reply agent: empty model response")
 	}
 
 	return ports.ReplySuggestionDraft{Text: response, EffectiveScenario: resolvedInput.Scenario}, nil
 }
 
-func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, error) {
+func (a *ReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, error) {
 	kimi := openaicompat.NewModel(a.modelConfig)
-	instruction, err := orchestration.BuildAgentInstruction("whatsapp-reply", whatsappReplySystemPrompt(toneOfVoice))
+	workspace := "whatsapp-reply"
+	agentName := "WhatsAppReplyAgent"
+	description := "Suggests a single WhatsApp reply draft grounded in lead and conversation context."
+	systemPrompt := whatsappReplySystemPrompt(toneOfVoice)
+	runnerErrMsg := "failed to create whatsapp reply runner"
+	if a.channel == "email" {
+		workspace = "email-reply"
+		agentName = "EmailReplyAgent"
+		description = "Suggests a single email reply draft grounded in lead and service context."
+		systemPrompt = emailReplySystemPrompt(toneOfVoice)
+		runnerErrMsg = "failed to create email reply runner"
+	}
+	instruction, err := orchestration.BuildAgentInstruction(workspace, systemPrompt)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load whatsapp reply workspace context: %w", err)
+		return nil, fmt.Errorf("failed to load %s reply workspace context: %w", a.channel, err)
 	}
 	adkAgent, err := llmagent.New(llmagent.Config{
-		Name:        "WhatsAppReplyAgent",
+		Name:        agentName,
 		Model:       kimi,
-		Description: "Suggests a single WhatsApp reply draft grounded in lead and conversation context.",
+		Description: description,
 		Instruction: instruction,
 	})
 	if err != nil {
@@ -145,13 +167,13 @@ func (a *WhatsAppReplyAgent) newRunner(toneOfVoice string) (*runner.Runner, erro
 		Agent:          adkAgent,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create whatsapp reply runner: %w", err)
+		return nil, fmt.Errorf("%s: %w", runnerErrMsg, err)
 	}
 
 	return r, nil
 }
 
-func (a *WhatsAppReplyAgent) loadOrganizationAISettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {
+func (a *ReplyAgent) loadOrganizationAISettings(ctx context.Context, organizationID uuid.UUID) ports.OrganizationAISettings {
 	settings := ports.DefaultOrganizationAISettings()
 	if a == nil || a.organizationAISettingsReader == nil {
 		return settings
@@ -159,7 +181,7 @@ func (a *WhatsAppReplyAgent) loadOrganizationAISettings(ctx context.Context, org
 
 	loadedSettings, err := a.organizationAISettingsReader(ctx, organizationID)
 	if err != nil {
-		log.Printf("whatsapp reply: failed to load organization AI settings for %s: %v", organizationID, err)
+		log.Printf("reply agent: failed to load organization AI settings for %s: %v", organizationID, err)
 		return settings
 	}
 	if strings.TrimSpace(loadedSettings.WhatsAppToneOfVoice) == "" {
@@ -168,73 +190,73 @@ func (a *WhatsAppReplyAgent) loadOrganizationAISettings(ctx context.Context, org
 	return loadedSettings
 }
 
-func (a *WhatsAppReplyAgent) loadReplyContext(ctx context.Context, input ports.WhatsAppReplyInput) (whatsAppReplyContext, error) {
-	replyContext, err := a.loadLeadLinkedReplyContext(ctx, input)
+func (a *ReplyAgent) loadWhatsAppReplyContext(ctx context.Context, input ports.WhatsAppReplyInput) (replyContext, error) {
+	rc, err := a.loadLeadLinkedReplyContext(ctx, input)
 	if err != nil {
-		return whatsAppReplyContext{}, err
+		return replyContext{}, err
 	}
 
 	requester, err := a.loadRequester(ctx, input.RequesterUserID)
 	if err != nil {
-		return whatsAppReplyContext{}, err
+		return replyContext{}, err
 	}
-	replyContext.requester = requester
-	if replyContext.lead != nil {
+	rc.requester = requester
+	if rc.lead != nil {
 		var serviceID *uuid.UUID
-		if replyContext.service != nil {
-			serviceID = &replyContext.service.ID
+		if rc.service != nil {
+			serviceID = &rc.service.ID
 		}
-		replyContext.recentTimeline, err = loadRecentTimelineEvents(ctx, a.repo, replyContext.lead.ID, serviceID, input.OrganizationID)
+		rc.recentTimeline, err = loadRecentTimelineEvents(ctx, a.repo, rc.lead.ID, serviceID, input.OrganizationID)
 		if err != nil {
-			return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load timeline: %w", err)
+			return replyContext{}, fmt.Errorf("reply agent: load timeline: %w", err)
 		}
 	}
 
-	return replyContext, nil
+	return rc, nil
 }
 
-func (a *WhatsAppReplyAgent) loadLeadLinkedReplyContext(ctx context.Context, input ports.WhatsAppReplyInput) (whatsAppReplyContext, error) {
+func (a *ReplyAgent) loadLeadLinkedReplyContext(ctx context.Context, input ports.WhatsAppReplyInput) (replyContext, error) {
 	if input.LeadID == nil || *input.LeadID == uuid.Nil {
-		return whatsAppReplyContext{}, nil
+		return replyContext{}, nil
 	}
 
 	lead, err := a.repo.GetByID(ctx, *input.LeadID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load lead: %w", err)
+		return replyContext{}, fmt.Errorf("reply agent: load lead: %w", err)
 	}
 	service, err := a.repo.GetCurrentLeadService(ctx, *input.LeadID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load current lead service: %w", err)
+		return replyContext{}, fmt.Errorf("reply agent: load current lead service: %w", err)
 	}
 	notes, err := a.repo.ListNotesByService(ctx, *input.LeadID, service.ID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: load notes: %w", err)
+		return replyContext{}, fmt.Errorf("reply agent: load notes: %w", err)
 	}
 	analysis, err := a.loadLatestAIAnalysis(ctx, service.ID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, err
+		return replyContext{}, err
 	}
 	visitReport, err := a.loadLatestVisitReport(ctx, service.ID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, err
+		return replyContext{}, err
 	}
 	photoAnalysis, err := a.loadLatestPhotoAnalysis(ctx, service.ID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, err
+		return replyContext{}, err
 	}
 	acceptedQuote, err := a.loadAcceptedQuote(ctx, service.ID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, err
+		return replyContext{}, err
 	}
 	upcomingVisit, pendingVisit, err := a.loadAgenda(ctx, lead.ID, input.OrganizationID)
 	if err != nil {
-		return whatsAppReplyContext{}, err
+		return replyContext{}, err
 	}
 	if err := attachAppointmentAssigneeNames(ctx, a.userReader, upcomingVisit, pendingVisit); err != nil {
-		return whatsAppReplyContext{}, fmt.Errorf("whatsapp reply: enrich appointment assignee: %w", err)
+		return replyContext{}, fmt.Errorf("reply agent: enrich appointment assignee: %w", err)
 	}
 
-	return whatsAppReplyContext{
+	return replyContext{
 		lead:          &lead,
 		service:       &service,
 		notes:         notes,
@@ -247,7 +269,7 @@ func (a *WhatsAppReplyAgent) loadLeadLinkedReplyContext(ctx context.Context, inp
 	}, nil
 }
 
-func (a *WhatsAppReplyAgent) loadAcceptedQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (*ports.PublicQuoteSummary, error) {
+func (a *ReplyAgent) loadAcceptedQuote(ctx context.Context, serviceID, organizationID uuid.UUID) (*ports.PublicQuoteSummary, error) {
 	if a == nil || a.quoteReader == nil {
 		return nil, nil
 	}
@@ -256,27 +278,27 @@ func (a *WhatsAppReplyAgent) loadAcceptedQuote(ctx context.Context, serviceID, o
 		if apperr.Is(err, apperr.KindNotFound) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("whatsapp reply: load accepted quote: %w", err)
+		return nil, fmt.Errorf("reply agent: load accepted quote: %w", err)
 	}
 	return quote, nil
 }
 
-func (a *WhatsAppReplyAgent) loadAgenda(ctx context.Context, leadID, organizationID uuid.UUID) (*ports.PublicAppointmentSummary, *ports.PublicAppointmentSummary, error) {
+func (a *ReplyAgent) loadAgenda(ctx context.Context, leadID, organizationID uuid.UUID) (*ports.PublicAppointmentSummary, *ports.PublicAppointmentSummary, error) {
 	if a == nil || a.appointmentViewer == nil {
 		return nil, nil, nil
 	}
 	upcomingVisit, err := a.appointmentViewer.GetUpcomingVisit(ctx, leadID, organizationID)
 	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
-		return nil, nil, fmt.Errorf("whatsapp reply: load upcoming visit: %w", err)
+		return nil, nil, fmt.Errorf("reply agent: load upcoming visit: %w", err)
 	}
 	pendingVisit, err := a.appointmentViewer.GetPendingVisit(ctx, leadID, organizationID)
 	if err != nil && !apperr.Is(err, apperr.KindNotFound) {
-		return nil, nil, fmt.Errorf("whatsapp reply: load pending visit: %w", err)
+		return nil, nil, fmt.Errorf("reply agent: load pending visit: %w", err)
 	}
 	return upcomingVisit, pendingVisit, nil
 }
 
-func (a *WhatsAppReplyAgent) loadRequester(ctx context.Context, requesterUserID uuid.UUID) (*ports.ReplyUserProfile, error) {
+func (a *ReplyAgent) loadRequester(ctx context.Context, requesterUserID uuid.UUID) (*ports.ReplyUserProfile, error) {
 	if a == nil || a.userReader == nil || requesterUserID == uuid.Nil {
 		return nil, nil
 	}
@@ -285,12 +307,12 @@ func (a *WhatsAppReplyAgent) loadRequester(ctx context.Context, requesterUserID 
 		if isIgnorableReplyUserLookupError(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("whatsapp reply: load requester: %w", err)
+		return nil, fmt.Errorf("reply agent: load requester: %w", err)
 	}
 	return requester, nil
 }
 
-func (a *WhatsAppReplyAgent) loadLatestAIAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.AIAnalysis, error) {
+func (a *ReplyAgent) loadLatestAIAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.AIAnalysis, error) {
 	analysis, err := a.repo.GetLatestAIAnalysis(ctx, serviceID, organizationID)
 	if err == nil {
 		return &analysis, nil
@@ -298,10 +320,10 @@ func (a *WhatsAppReplyAgent) loadLatestAIAnalysis(ctx context.Context, serviceID
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, nil
 	}
-	return nil, fmt.Errorf("whatsapp reply: load ai analysis: %w", err)
+	return nil, fmt.Errorf("reply agent: load ai analysis: %w", err)
 }
 
-func (a *WhatsAppReplyAgent) loadLatestVisitReport(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.AppointmentVisitReport, error) {
+func (a *ReplyAgent) loadLatestVisitReport(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.AppointmentVisitReport, error) {
 	visitReport, err := a.repo.GetLatestAppointmentVisitReportByService(ctx, serviceID, organizationID)
 	if err == nil {
 		return visitReport, nil
@@ -309,10 +331,10 @@ func (a *WhatsAppReplyAgent) loadLatestVisitReport(ctx context.Context, serviceI
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, nil
 	}
-	return nil, fmt.Errorf("whatsapp reply: load visit report: %w", err)
+	return nil, fmt.Errorf("reply agent: load visit report: %w", err)
 }
 
-func (a *WhatsAppReplyAgent) loadLatestPhotoAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.PhotoAnalysis, error) {
+func (a *ReplyAgent) loadLatestPhotoAnalysis(ctx context.Context, serviceID, organizationID uuid.UUID) (*repository.PhotoAnalysis, error) {
 	photoAnalysis, err := a.repo.GetLatestPhotoAnalysis(ctx, serviceID, organizationID)
 	if err == nil {
 		return &photoAnalysis, nil
@@ -320,12 +342,12 @@ func (a *WhatsAppReplyAgent) loadLatestPhotoAnalysis(ctx context.Context, servic
 	if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrPhotoAnalysisNotFound) {
 		return nil, nil
 	}
-	return nil, fmt.Errorf("whatsapp reply: load photo analysis: %w", err)
+	return nil, fmt.Errorf("reply agent: load photo analysis: %w", err)
 }
 
 func buildWhatsAppReplyPrompt(
 	input ports.WhatsAppReplyInput,
-	replyContext whatsAppReplyContext,
+	replyContext replyContext,
 	toneOfVoice string,
 ) string {
 	return fmt.Sprintf(`Lead context
@@ -864,4 +886,515 @@ func limitPromptList(values []string, limit int) []string {
 		return values
 	}
 	return values[:limit]
+}
+type emailReplyLookupStore interface {
+	GetByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.Lead, error)
+	GetByPhoneOrEmail(ctx context.Context, phone string, email string, organizationID uuid.UUID) (*repository.LeadSummary, []repository.LeadService, error)
+	GetLeadServiceByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (repository.LeadService, error)
+	GetCurrentLeadService(ctx context.Context, leadID uuid.UUID, organizationID uuid.UUID) (repository.LeadService, error)
+}
+
+func (a *ReplyAgent) SuggestEmailReply(ctx context.Context, input ports.EmailReplyInput) (ports.ReplySuggestionDraft, error) {
+	rc, err := a.loadEmailReplyContext(ctx, input)
+	if err != nil {
+		return ports.ReplySuggestionDraft{}, err
+	}
+	settings := a.loadOrganizationAISettings(ctx, input.OrganizationID)
+	resolvedInput := input
+	resolvedInput.Scenario = resolveEffectiveReplyScenario(
+		input.Scenario,
+		settings.EmailDefaultReplyScenario,
+		settings.QuoteRelatedReplyScenario,
+		settings.AppointmentRelatedReplyScenario,
+		rc.acceptedQuote != nil,
+		rc.upcomingVisit != nil || rc.pendingVisit != nil,
+	)
+	r, err := a.newRunner(settings.WhatsAppToneOfVoice)
+	if err != nil {
+		return ports.ReplySuggestionDraft{}, err
+	}
+
+	promptText := buildEmailReplyPrompt(resolvedInput, rc, settings.WhatsAppToneOfVoice)
+	sessionID := uuid.NewString()
+	userID := "email-reply-" + input.OrganizationID.String() + ":" + sanitizeUserInput(strings.ToLower(strings.TrimSpace(input.CustomerEmail)), 120)
+	outputText, err := runPromptTextSession(ctx, promptRunRequest{
+		SessionService:       a.sessionService,
+		Runner:               r,
+		AppName:              a.appName,
+		UserID:               userID,
+		SessionID:            sessionID,
+		CreateSessionMessage: "email reply: create session",
+		RunFailureMessage:    "email reply: run failed",
+		TraceLabel:           "email-reply",
+	}, promptText)
+	if err != nil {
+		return ports.ReplySuggestionDraft{}, err
+	}
+
+	response := strings.TrimSpace(outputText)
+	if response == "" {
+		return ports.ReplySuggestionDraft{}, apperr.Internal("email reply: empty model response")
+	}
+
+	return ports.ReplySuggestionDraft{Text: response, EffectiveScenario: resolvedInput.Scenario}, nil
+}
+
+func (a *ReplyAgent) loadEmailReplyContext(ctx context.Context, input ports.EmailReplyInput) (replyContext, error) {
+	lead, service, err := resolveEmailReplyLeadAndService(ctx, a.repo, input)
+	if err != nil {
+		return replyContext{}, err
+	}
+
+	contextData := replyContext{
+		lead:    lead,
+		service: service,
+		notes:   nil,
+	}
+	if err := a.applySharedReplyContext(ctx, input, &contextData); err != nil {
+		return replyContext{}, err
+	}
+
+	if service == nil {
+		if err := a.loadLeadOnlyNotes(ctx, input.OrganizationID, &contextData); err != nil {
+			return replyContext{}, err
+		}
+		return contextData, nil
+	}
+
+	if err := a.loadServiceReplyContext(ctx, input.OrganizationID, &contextData); err != nil {
+		return replyContext{}, err
+	}
+	return contextData, nil
+}
+
+func resolveEmailReplyLeadAndService(ctx context.Context, store emailReplyLookupStore, input ports.EmailReplyInput) (*repository.Lead, *repository.LeadService, error) {
+	if store == nil {
+		return nil, nil, nil
+	}
+
+	service, err := loadEmailReplyServiceByID(ctx, store, input)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lead, err := loadEmailReplyLeadByIDOrEmail(ctx, store, input)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lead, err = hydrateEmailReplyLeadFromService(ctx, store, input.OrganizationID, lead, service)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if service == nil && lead != nil && lead.ID != uuid.Nil {
+		service, err = loadEmailReplyCurrentService(ctx, store, lead.ID, input.OrganizationID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return lead, service, nil
+}
+
+func loadEmailReplyServiceByID(ctx context.Context, store emailReplyLookupStore, input ports.EmailReplyInput) (*repository.LeadService, error) {
+	if input.LeadServiceID == nil || *input.LeadServiceID == uuid.Nil {
+		return nil, nil
+	}
+	service, err := store.GetLeadServiceByID(ctx, *input.LeadServiceID, input.OrganizationID)
+	if err == nil {
+		return &service, nil
+	}
+	if errors.Is(err, repository.ErrServiceNotFound) || errors.Is(err, repository.ErrNotFound) {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("email reply: load lead service: %w", err)
+}
+
+func loadEmailReplyLeadByIDOrEmail(ctx context.Context, store emailReplyLookupStore, input ports.EmailReplyInput) (*repository.Lead, error) {
+	if input.LeadID != nil && *input.LeadID != uuid.Nil {
+		lead, err := store.GetByID(ctx, *input.LeadID, input.OrganizationID)
+		if err == nil {
+			return &lead, nil
+		}
+		if !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("email reply: load lead: %w", err)
+		}
+	}
+
+	if strings.TrimSpace(input.CustomerEmail) == "" {
+		return nil, nil
+	}
+
+	summary, _, err := store.GetByPhoneOrEmail(ctx, "", input.CustomerEmail, input.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("email reply: load lead by email: %w", err)
+	}
+	if summary == nil || summary.ID == uuid.Nil {
+		return nil, nil
+	}
+
+	lead, err := store.GetByID(ctx, summary.ID, input.OrganizationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load lead: %w", err)
+	}
+	return &lead, nil
+}
+
+func hydrateEmailReplyLeadFromService(ctx context.Context, store emailReplyLookupStore, organizationID uuid.UUID, lead *repository.Lead, service *repository.LeadService) (*repository.Lead, error) {
+	if lead != nil || service == nil || service.LeadID == uuid.Nil {
+		return lead, nil
+	}
+
+	loadedLead, err := store.GetByID(ctx, service.LeadID, organizationID)
+	if err == nil {
+		return &loadedLead, nil
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("email reply: load lead from service: %w", err)
+}
+
+func loadEmailReplyCurrentService(ctx context.Context, store emailReplyLookupStore, leadID, organizationID uuid.UUID) (*repository.LeadService, error) {
+	service, err := store.GetCurrentLeadService(ctx, leadID, organizationID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrServiceNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("email reply: load current lead service: %w", err)
+	}
+	return &service, nil
+}
+
+func (a *ReplyAgent) applySharedReplyContext(ctx context.Context, input ports.EmailReplyInput, contextData *replyContext) error {
+	requester, err := a.loadRequester(ctx, input.RequesterUserID)
+	if err != nil {
+		return err
+	}
+	contextData.requester = requester
+
+	if contextData.lead == nil {
+		return nil
+	}
+
+	upcomingVisit, pendingVisit, err := a.loadAgenda(ctx, contextData.lead.ID, input.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if err := attachAppointmentAssigneeNames(ctx, a.userReader, upcomingVisit, pendingVisit); err != nil {
+		return fmt.Errorf("email reply: enrich appointment assignee: %w", err)
+	}
+	contextData.upcomingVisit = upcomingVisit
+	contextData.pendingVisit = pendingVisit
+
+	var serviceID *uuid.UUID
+	if contextData.service != nil {
+		serviceID = &contextData.service.ID
+	}
+	recentTimeline, err := loadRecentTimelineEvents(ctx, a.repo, contextData.lead.ID, serviceID, input.OrganizationID)
+	if err != nil {
+		return fmt.Errorf("email reply: load timeline: %w", err)
+	}
+	contextData.recentTimeline = recentTimeline
+	return nil
+}
+
+func (a *ReplyAgent) loadLeadOnlyNotes(ctx context.Context, organizationID uuid.UUID, contextData *replyContext) error {
+	if contextData.lead == nil {
+		return nil
+	}
+	notes, err := a.repo.ListLeadNotes(ctx, contextData.lead.ID, organizationID)
+	if err != nil {
+		return fmt.Errorf("email reply: load lead notes: %w", err)
+	}
+	contextData.notes = notes
+	return nil
+}
+
+func (a *ReplyAgent) loadServiceReplyContext(ctx context.Context, organizationID uuid.UUID, contextData *replyContext) error {
+	service := contextData.service
+	if service == nil {
+		return nil
+	}
+
+	leadID := service.LeadID
+	if contextData.lead != nil && contextData.lead.ID != uuid.Nil {
+		leadID = contextData.lead.ID
+	}
+
+	notes, err := a.repo.ListNotesByService(ctx, leadID, service.ID, organizationID)
+	if err != nil {
+		return fmt.Errorf("email reply: load notes: %w", err)
+	}
+	contextData.notes = notes
+
+	acceptedQuote, err := a.loadAcceptedQuote(ctx, service.ID, organizationID)
+	if err != nil {
+		return err
+	}
+	contextData.acceptedQuote = acceptedQuote
+
+	analysis, err := a.loadLatestAIAnalysis(ctx, service.ID, organizationID)
+	if err != nil {
+		return err
+	}
+	visitReport, err := a.loadLatestVisitReport(ctx, service.ID, organizationID)
+	if err != nil {
+		return err
+	}
+	photoAnalysis, err := a.loadLatestPhotoAnalysis(ctx, service.ID, organizationID)
+	if err != nil {
+		return err
+	}
+
+	contextData.analysis = analysis
+	contextData.visitReport = visitReport
+	contextData.photoAnalysis = photoAnalysis
+	return nil
+}
+
+func buildEmailReplyPrompt(input ports.EmailReplyInput, replyContext replyContext, toneOfVoice string) string {
+	return fmt.Sprintf(`Lead context
+- Lead ID: %s
+- Naam: %s
+- Adres: %s
+- Wooncontext: %s
+- E-mailadres klant: %s
+
+Service context
+- Service ID: %s
+- Service type: %s
+- Status: %s
+- Pipeline stage: %s
+- Consumer note: %s
+- Preferences: %s
+
+Reply style
+- Tone of voice: %s
+
+Current date and time
+%s
+
+Selected reply scenario
+%s
+
+Conversation intent hints
+%s
+
+Communication style hints
+%s
+
+Requesting colleague
+%s
+
+Accepted quote overview
+%s
+
+Agenda overview
+%s
+
+Unknowns or missing context
+%s
+
+Recent timeline
+%s
+
+Latest AI analysis
+%s
+
+Latest visit report
+%s
+
+Latest photo analysis
+%s
+
+Lead notes
+%s
+
+Recent human corrections from this tenant
+%s
+
+Recent real examples from this tenant
+%s
+
+Current customer email
+- Naam: %s
+- Onderwerp: %s
+- Bericht: %s
+
+Task
+- Draft one Dutch email reply for the company to send to this customer.
+- Keep the reply customer-ready and suitable to paste into an email composer.
+- Use a natural greeting when a name is available.
+- Do not add a subject line.
+- If a non-generic reply scenario is selected, treat that scenario as the primary drafting goal.
+- Use the timing context to distinguish clearly between past and future appointments, deadlines, and updates.
+- Use the intent hints and communication style hints as steering context when they fit the email.
+- Use the real examples as style guidance when they fit, but never copy them literally.
+- Use older notes or analysis only when they clearly improve the answer.
+- If lead or service context is missing, rely only on the current email and ask a minimal clarifying question instead of assuming CRM history.
+- If something important is missing, ask at most 2 concrete questions.
+- Do not mention internal systems, AI analysis, or that this is a draft.
+- Do not invent prices, promises, schedules, or technical facts that are not in the context.
+- Output only the email body text.
+`,
+		formatEmailReplyLeadID(replyContext.lead),
+		formatEmailReplyLeadName(replyContext.lead),
+		formatEmailReplyLeadAddress(replyContext.lead),
+		formatEmailReplyHousingContext(replyContext.lead),
+		sanitizePromptField(input.CustomerEmail, 160),
+		formatEmailReplyServiceID(replyContext.service),
+		formatEmailReplyServiceType(replyContext.service),
+		formatEmailReplyServiceStatus(replyContext.service),
+		formatEmailReplyServicePipelineStage(replyContext.service),
+		formatEmailReplyConsumerNote(replyContext.service),
+		formatEmailReplyCustomerPreferences(replyContext.service),
+		sanitizePromptField(toneOfVoice, 200),
+		formatCurrentDateTimeBlock(),
+		formatReplyScenarioBlock(input.Scenario, input.ScenarioNotes),
+		formatEmailIntentBlock(input),
+		formatEmailStyleSummary(input),
+		formatRequesterBlock(replyContext.requester),
+		formatQuoteOverviewBlock(replyContext.acceptedQuote),
+		formatAgendaOverviewBlock(replyContext.upcomingVisit, replyContext.pendingVisit),
+		formatUnknownsBlock(replyContext.service, replyContext.analysis, replyContext.acceptedQuote, replyContext.upcomingVisit, replyContext.pendingVisit, replyContext.lead != nil),
+		formatTimelineBlock(replyContext.recentTimeline),
+		formatAIAnalysisBlock(replyContext.analysis),
+		formatVisitReportBlock(replyContext.visitReport),
+		formatPhotoAnalysisBlock(replyContext.photoAnalysis),
+		formatLeadNotesBlock(replyContext.notes),
+		formatEmailFeedbackMemory(input.Feedback),
+		formatEmailExamples(input.Examples),
+		sanitizePromptField(input.CustomerName, 120),
+		sanitizePromptField(input.Subject, 240),
+		sanitizePromptField(input.MessageBody, maxEmailBodyChars),
+	)
+}
+
+func emailReplySystemPrompt(toneOfVoice string) string {
+	if strings.TrimSpace(toneOfVoice) == "" {
+		toneOfVoice = ports.DefaultOrganizationAISettings().WhatsAppToneOfVoice
+	}
+	return strings.TrimSpace(fmt.Sprintf(`## Tenant Tone Addendum
+
+- Match this tenant tone of voice: %s.`, sanitizePromptField(toneOfVoice, 200)))
+}
+
+func formatEmailFeedbackMemory(items []ports.EmailReplyFeedback) string {
+	if len(items) == 0 {
+		return valueNotProvided
+	}
+
+	limit := len(items)
+	if limit > maxEmailExampleItems {
+		limit = maxEmailExampleItems
+	}
+	lines := make([]string, 0, limit*2)
+	for _, item := range items[:limit] {
+		aiReply := sanitizePromptField(item.AIReply, maxEmailFeedbackBodyChars)
+		humanReply := sanitizePromptField(item.HumanReply, maxEmailFeedbackBodyChars)
+		if aiReply == valueNotProvided || humanReply == valueNotProvided {
+			continue
+		}
+		lines = append(lines,
+			fmt.Sprintf("- [%s] AI-draft: %s", item.CreatedAt.Format(dateTimeLayout), aiReply),
+			fmt.Sprintf("  Menselijke correctie: %s", humanReply),
+		)
+	}
+	if len(lines) == 0 {
+		return valueNotProvided
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatEmailReplyLeadID(lead *repository.Lead) string {
+	if lead == nil || lead.ID == uuid.Nil {
+		return valueNotProvided
+	}
+	return lead.ID.String()
+}
+
+func formatEmailReplyLeadName(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadName(*lead)
+}
+
+func formatEmailReplyLeadAddress(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadAddress(*lead)
+}
+
+func formatEmailReplyHousingContext(lead *repository.Lead) string {
+	if lead == nil {
+		return valueNotProvided
+	}
+	return buildLeadHousingContext(*lead)
+}
+
+func formatEmailReplyServiceID(service *repository.LeadService) string {
+	if service == nil || service.ID == uuid.Nil {
+		return valueNotProvided
+	}
+	return service.ID.String()
+}
+
+func formatEmailReplyServiceType(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.ServiceType, 120)
+}
+
+func formatEmailReplyServiceStatus(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.Status, 80)
+}
+
+func formatEmailReplyServicePipelineStage(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return sanitizePromptField(service.PipelineStage, 80)
+}
+
+func formatEmailReplyConsumerNote(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return optionalPromptString(service.ConsumerNote, 800)
+}
+
+func formatEmailReplyCustomerPreferences(service *repository.LeadService) string {
+	if service == nil {
+		return valueNotProvided
+	}
+	return formatJSONBlock(service.CustomerPreferences)
+}
+
+func formatEmailExamples(examples []ports.EmailReplyExample) string {
+	if len(examples) == 0 {
+		return valueNotProvided
+	}
+	limit := len(examples)
+	if limit > maxEmailExampleItems {
+		limit = maxEmailExampleItems
+	}
+	lines := make([]string, 0, limit*2)
+	for _, example := range examples[:limit] {
+		lines = append(lines,
+			fmt.Sprintf("- [%s] Klant: %s", example.CreatedAt.Format(dateTimeLayout), sanitizePromptField(example.CustomerMessage, maxEmailFeedbackBodyChars)),
+			fmt.Sprintf("  Bedrijf: %s", sanitizePromptField(example.Reply, maxEmailFeedbackBodyChars)),
+		)
+	}
+	return strings.Join(lines, "\n")
 }

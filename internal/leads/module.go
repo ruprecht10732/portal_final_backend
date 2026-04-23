@@ -48,7 +48,6 @@ import (
 // Module is the RAC_leads bounded context module implementing http.Module.
 type Module struct {
 	handler               *handler.Handler
-	attachmentsHandler    *handler.AttachmentsHandler
 	photoAnalysisHandler  *handler.PhotoAnalysisHandler
 	publicHandler         *handler.PublicHandler
 	management            *management.Service
@@ -62,8 +61,7 @@ type Module struct {
 	callLogger            *agent.CallLogger
 	quoteGenerator        agent.QuoteGenerator
 	offerSummaryGenerator *agent.OfferSummaryGenerator
-	whatsAppReplyAgent    *agent.WhatsAppReplyAgent
-	emailReplyAgent       *agent.EmailReplyAgent
+	replyAgent            *agent.ReplyAgent
 	staleReEngagement     *maintenance.StaleLeadReEngagementService
 	subsidyAnalyzerSvc    *SubsidyAnalyzerService
 	sse                   *sse.Service
@@ -118,11 +116,8 @@ func (m *Module) SetOrganizationAISettingsReader(reader ports.OrganizationAISett
 	if m.quoteGenerator != nil {
 		m.quoteGenerator.SetOrganizationAISettingsReader(reader)
 	}
-	if m.whatsAppReplyAgent != nil {
-		m.whatsAppReplyAgent.SetOrganizationAISettingsReader(reader)
-	}
-	if m.emailReplyAgent != nil {
-		m.emailReplyAgent.SetOrganizationAISettingsReader(reader)
+	if m.replyAgent != nil {
+		m.replyAgent.SetOrganizationAISettingsReader(reader)
 	}
 	if m.photoAnalysisHandler != nil {
 		m.photoAnalysisHandler.SetOrganizationAISettingsReader(reader)
@@ -159,7 +154,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		RedisTTL:    24 * time.Hour,
 	})
 
-	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, emailReplyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader, sessionService)
+	photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, err := buildAgents(cfg, repo, storageSvc, scorer, eventBus, catalogReader, sessionService)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +195,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 	subscribeOrchestrator(eventBus, orchestrator)
 
 	// Create handlers
-	h, attachmentsHandler, photoAnalysisHandler := buildHandlers(buildHandlersDeps{
+	h, photoAnalysisHandler := buildHandlers(buildHandlersDeps{
 		MgmtSvc:            mgmtSvc,
 		NotesSvc:           notesSvc,
 		Gatekeeper:         gatekeeper,
@@ -229,7 +224,6 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 
 	module := &Module{
 		handler:               h,
-		attachmentsHandler:    attachmentsHandler,
 		photoAnalysisHandler:  photoAnalysisHandler,
 		publicHandler:         publicHandler,
 		management:            mgmtSvc,
@@ -243,8 +237,7 @@ func NewModule(ctx context.Context, pool *pgxpool.Pool, eventBus events.Bus, sto
 		callLogger:            callLogger,
 		quoteGenerator:        quoteGenerator,
 		offerSummaryGenerator: offerSummaryGenerator,
-		whatsAppReplyAgent:    whatsAppReplyAgent,
-		emailReplyAgent:       emailReplyAgent,
+		replyAgent:            replyAgent,
 		staleReEngagement:     staleReEngagement,
 		subsidyAnalyzerSvc:    nil, // Will be set after instantiation
 		sse:                   sseService,
@@ -329,20 +322,20 @@ func (m *Module) VerifyWiring() error {
 	return nil
 }
 
-func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader, sessionService session.Service) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
+func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc storage.StorageService, scorer *scoring.Service, eventBus events.Bus, catalogReader ports.CatalogReader, sessionService session.Service) (*agent.PhotoAnalyzer, *agent.CallLogger, *agent.Gatekeeper, agent.Estimator, *agent.Dispatcher, *agent.Auditor, agent.QuoteGenerator, *agent.OfferSummaryGenerator, *agent.ReplyAgent, error) {
 	_ = storageSvc
 	if err := validateAgentConfiguration(); err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	photoAnalyzer, err := agent.NewPhotoAnalyzer(resolveVisionModelConfig(cfg, config.LLMModelAgentPhotoAnalyzer, true), repo, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	callLogger, err := agent.NewCallLogger(resolveAgentModelConfig(cfg, config.LLMModelAgentCallLogger, true), repo, nil, eventBus, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	gatekeeper, err := agent.NewGatekeeper(
@@ -350,12 +343,12 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		repo, eventBus, scorer, sessionService,
 	)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	auditor, err := agent.NewAuditor(resolveAgentModelConfig(cfg, config.LLMModelAgentAuditor, true), repo, eventBus, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	aiClients := buildAIClients(cfg)
@@ -371,12 +364,12 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogReader:        catalogReader,
 	}, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	dispatcher, err := agent.NewDispatcher(resolveAgentModelConfig(cfg, config.LLMModelAgentDispatcher, true), repo, eventBus, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	quoteGenerator, err := agent.NewQuoteGeneratorAgent(agent.QuotingAgentConfig{
@@ -390,20 +383,20 @@ func buildAgents(cfg *config.Config, repo repository.LeadsRepository, storageSvc
 		CatalogReader:        catalogReader,
 	}, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	offerSummaryGenerator, err := agent.NewOfferSummaryGenerator(resolveAgentModelConfig(cfg, config.LLMModelAgentOfferSummaryGenerator, false), sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	whatsAppReplyAgent, emailReplyAgent, err := buildReplyAgents(cfg, repo, sessionService)
+	replyAgent, err := buildReplyAgents(cfg, repo, sessionService)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
-	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, whatsAppReplyAgent, emailReplyAgent, nil
+	return photoAnalyzer, callLogger, gatekeeper, estimator, dispatcher, auditor, quoteGenerator, offerSummaryGenerator, replyAgent, nil
 }
 
 type aiClients struct {
@@ -484,18 +477,13 @@ func buildScopedQdrantClient(cfg *config.Config, collection string) *qdrant.Clie
 	})
 }
 
-func buildReplyAgents(cfg *config.Config, repo repository.LeadsRepository, sessionService session.Service) (*agent.WhatsAppReplyAgent, *agent.EmailReplyAgent, error) {
-	whatsAppReplyAgent, err := agent.NewWhatsAppReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo, sessionService)
+func buildReplyAgents(cfg *config.Config, repo repository.LeadsRepository, sessionService session.Service) (*agent.ReplyAgent, error) {
+	replyAgent, err := agent.NewReplyAgent("whatsapp", resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo, sessionService)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	emailReplyAgent, err := agent.NewEmailReplyAgent(resolveAgentModelConfig(cfg, config.LLMModelAgentWhatsAppReply, false), repo, sessionService)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return whatsAppReplyAgent, emailReplyAgent, nil
+	return replyAgent, nil
 }
 
 // OfferSummaryGenerator exposes the AI summary generator for partner offers.
@@ -504,11 +492,11 @@ func (m *Module) OfferSummaryGenerator() ports.OfferSummaryGenerator {
 }
 
 func (m *Module) WhatsAppReplyGenerator() ports.WhatsAppReplyGenerator {
-	return m.whatsAppReplyAgent
+	return m.replyAgent
 }
 
 func (m *Module) EmailReplyGenerator() ports.EmailReplyGenerator {
-	return m.emailReplyAgent
+	return m.replyAgent
 }
 
 func subscribeLeadCreated(eventBus events.Bus, repo repository.LeadsRepository, module *Module, log *logger.Logger) {
@@ -727,24 +715,25 @@ type buildHandlersDeps struct {
 	PhotoAnalysisQueue scheduler.PhotoAnalysisScheduler
 }
 
-func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.AttachmentsHandler, *handler.PhotoAnalysisHandler) {
-	attachmentsHandler := handler.NewAttachmentsHandler(deps.Repo, deps.EventBus, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.Validator)
+func buildHandlers(deps buildHandlersDeps) (*handler.Handler, *handler.PhotoAnalysisHandler) {
 	photoAnalysisHandler := handler.NewPhotoAnalysisHandler(deps.PhotoAnalyzer, deps.Repo, deps.StorageSvc, deps.Config.GetMinioBucketLeadServiceAttachments(), deps.SSEService, deps.Validator, deps.EventBus)
 	photoAnalysisHandler.SetPhotoAnalysisScheduler(deps.PhotoAnalysisQueue)
 	h := handler.New(handler.HandlerDeps{
-		Mgmt:            deps.MgmtSvc,
-		NotesSvc:        deps.NotesSvc,
-		Gatekeeper:      deps.Gatekeeper,
-		CallLogger:      deps.CallLogger,
-		SSE:             deps.SSEService,
-		EventBus:        deps.EventBus,
-		Repo:            deps.Repo,
-		Validator:       deps.Validator,
-		CallLogQueue:    deps.CallLogQueue,
-		GatekeeperQueue: deps.GatekeeperQueue,
+		Mgmt:              deps.MgmtSvc,
+		NotesSvc:          deps.NotesSvc,
+		Gatekeeper:        deps.Gatekeeper,
+		CallLogger:        deps.CallLogger,
+		SSE:               deps.SSEService,
+		EventBus:          deps.EventBus,
+		Repo:              deps.Repo,
+		Validator:         deps.Validator,
+		CallLogQueue:      deps.CallLogQueue,
+		GatekeeperQueue:   deps.GatekeeperQueue,
+		Storage:           deps.StorageSvc,
+		AttachmentsBucket: deps.Config.GetMinioBucketLeadServiceAttachments(),
 	})
 
-	return h, attachmentsHandler, photoAnalysisHandler
+	return h, photoAnalysisHandler
 }
 
 // Name returns the module identifier.
@@ -954,11 +943,8 @@ func (m *Module) SetReplyContextReaders(quoteReader ports.ReplyQuoteReader, appt
 	if m == nil {
 		return
 	}
-	if m.whatsAppReplyAgent != nil {
-		m.whatsAppReplyAgent.SetContextReaders(quoteReader, apptViewer, userReader)
-	}
-	if m.emailReplyAgent != nil {
-		m.emailReplyAgent.SetContextReaders(quoteReader, apptViewer, userReader)
+	if m.replyAgent != nil {
+		m.replyAgent.SetContextReaders(quoteReader, apptViewer, userReader)
 	}
 }
 
@@ -1028,10 +1014,6 @@ func (m *Module) RegisterRoutes(ctx *apphttp.RouterContext) {
 	m.handler.RegisterRoutes(leadsGroup)
 	adminLeadsGroup := ctx.Admin.Group("/leads")
 	m.handler.RegisterAdminRoutes(adminLeadsGroup)
-
-	// Attachment routes: /RAC_leads/:id/services/:serviceId/attachments
-	attachmentsGroup := leadsGroup.Group("/:id/services/:serviceId/attachments")
-	m.attachmentsHandler.RegisterRoutes(attachmentsGroup)
 
 	// Photo analysis routes: /RAC_leads/:id/services/:serviceId/...
 	photoAnalysisGroup := leadsGroup.Group("/:id/services/:serviceId")

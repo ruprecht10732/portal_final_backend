@@ -43,6 +43,7 @@ type Querier interface {
 	DeleteFeedComment(ctx context.Context, arg DeleteFeedCommentParams) (int64, error)
 	DeleteFeedReaction(ctx context.Context, arg DeleteFeedReactionParams) (int64, error)
 	DeleteLead(ctx context.Context, arg DeleteLeadParams) (int64, error)
+	DeleteLeadService(ctx context.Context, arg DeleteLeadServiceParams) (int64, error)
 	DeleteStaleLeadSuggestion(ctx context.Context, arg DeleteStaleLeadSuggestionParams) error
 	FindMatchingPartnersByCoordinates(ctx context.Context, arg FindMatchingPartnersByCoordinatesParams) ([]FindMatchingPartnersByCoordinatesRow, error)
 	FindPartnersByServiceType(ctx context.Context, arg FindPartnersByServiceTypeParams) ([]FindPartnersByServiceTypeRow, error)

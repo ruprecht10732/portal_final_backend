@@ -1308,6 +1308,24 @@ func (q *Queries) DeleteLead(ctx context.Context, arg DeleteLeadParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const deleteLeadService = `-- name: DeleteLeadService :execrows
+DELETE FROM RAC_lead_services
+WHERE id = $1 AND organization_id = $2
+`
+
+type DeleteLeadServiceParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) DeleteLeadService(ctx context.Context, arg DeleteLeadServiceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteLeadService, arg.ID, arg.OrganizationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteStaleLeadSuggestion = `-- name: DeleteStaleLeadSuggestion :exec
 DELETE FROM RAC_stale_lead_suggestions
 WHERE lead_service_id = $1 AND organization_id = $2

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -510,18 +511,41 @@ func (r *Repository) GetByID(ctx context.Context, id uuid.UUID, organizationID u
 	return leadFromDB(row), nil
 }
 
-// GetByIDWithServices returns a lead with all its services populated
+// GetByIDWithServices returns a lead with all its services populated.
+// Uses a transaction so the lead and services are point-in-time consistent.
 func (r *Repository) GetByIDWithServices(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (Lead, []LeadService, error) {
-	lead, err := r.GetByID(ctx, id, organizationID)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Lead{}, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := r.queries.WithTx(tx)
+
+	row, err := qtx.GetLeadByID(ctx, leadsdb.GetLeadByIDParams{ID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Lead{}, nil, ErrNotFound
+	}
 	if err != nil {
 		return Lead{}, nil, err
 	}
+	if row.DeletedAt.Valid {
+		return Lead{}, nil, ErrNotFound
+	}
+	lead := leadFromDB(row)
 
-	services, err := r.ListLeadServices(ctx, id, organizationID)
+	rows, err := qtx.ListLeadServices(ctx, leadsdb.ListLeadServicesParams{LeadID: toPgUUID(id), OrganizationID: toPgUUID(organizationID)})
 	if err != nil {
 		return Lead{}, nil, err
 	}
+	services := make([]LeadService, 0, len(rows))
+	for _, s := range rows {
+		services = append(services, leadServiceFromListRow(s))
+	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return Lead{}, nil, fmt.Errorf("commit tx: %w", err)
+	}
 	return lead, services, nil
 }
 
@@ -903,29 +927,37 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		return nil, 0, err
 	}
 
-	total, err := r.queries.CountLeads(ctx, leadsdb.CountLeadsParams{
-		OrganizationID:  toPgUUID(params.OrganizationID),
-		Status:          filters.status,
-		ServiceType:     filters.serviceType,
-		Search:          filters.search,
-		FirstName:       filters.firstName,
-		LastName:        filters.lastName,
-		Phone:           filters.phone,
-		Email:           filters.email,
-		Role:            filters.role,
-		Street:          filters.street,
-		HouseNumber:     filters.houseNumber,
-		ZipCode:         filters.zipCode,
-		City:            filters.city,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := r.queries.WithTx(tx)
+
+	total, err := qtx.CountLeads(ctx, leadsdb.CountLeadsParams{
+		OrganizationID: toPgUUID(params.OrganizationID),
+		Status:         filters.status,
+		ServiceType:    filters.serviceType,
+		Search:         filters.search,
+		FirstName:      filters.firstName,
+		LastName:       filters.lastName,
+		Phone:          filters.phone,
+		Email:          filters.email,
+		Role:           filters.role,
+		Street:         filters.street,
+		HouseNumber:    filters.houseNumber,
+		ZipCode:        filters.zipCode,
+		City:           filters.city,
 		AssignedAgentID: filters.assignedAgentID,
-		CreatedAtFrom:   filters.createdAtFrom,
-		CreatedAtTo:     filters.createdAtTo,
+		CreatedAtFrom:  filters.createdAtFrom,
+		CreatedAtTo:    filters.createdAtTo,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := r.queries.ListLeads(ctx, leadsdb.ListLeadsParams{
+	rows, err := qtx.ListLeads(ctx, leadsdb.ListLeadsParams{
 		OrganizationID:  toPgUUID(params.OrganizationID),
 		Status:          filters.status,
 		ServiceType:     filters.serviceType,
@@ -956,6 +988,9 @@ func (r *Repository) List(ctx context.Context, params ListParams) ([]Lead, int, 
 		leads = append(leads, leadFromDB(row))
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, fmt.Errorf("commit tx: %w", err)
+	}
 	return leads, int(total), nil
 }
 
@@ -1074,7 +1109,15 @@ type ActionItemListResult struct {
 }
 
 func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UUID, newLeadDays int, limit int, offset int) (ActionItemListResult, error) {
-	total, err := r.queries.CountActionItems(ctx, leadsdb.CountActionItemsParams{
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return ActionItemListResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := r.queries.WithTx(tx)
+
+	total, err := qtx.CountActionItems(ctx, leadsdb.CountActionItemsParams{
 		OrganizationID: toPgUUID(organizationID),
 		Column2:        int32(newLeadDays),
 	})
@@ -1082,7 +1125,7 @@ func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UU
 		return ActionItemListResult{}, err
 	}
 
-	rows, err := r.queries.ListActionItems(ctx, leadsdb.ListActionItemsParams{
+	rows, err := qtx.ListActionItems(ctx, leadsdb.ListActionItemsParams{
 		OrganizationID: toPgUUID(organizationID),
 		Column2:        int32(newLeadDays),
 		Limit:          int32(limit),
@@ -1104,6 +1147,9 @@ func (r *Repository) ListActionItems(ctx context.Context, organizationID uuid.UU
 		})
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return ActionItemListResult{}, fmt.Errorf("commit tx: %w", err)
+	}
 	return ActionItemListResult{Items: items, Total: int(total)}, nil
 }
 
@@ -1119,14 +1165,14 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID, organizationID uu
 }
 
 func (r *Repository) DeleteLeadService(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
-	commandTag, err := r.pool.Exec(ctx, `
-		DELETE FROM RAC_lead_services
-		WHERE id = $1 AND organization_id = $2
-	`, id, organizationID)
+	rowsAffected, err := r.queries.DeleteLeadService(ctx, leadsdb.DeleteLeadServiceParams{
+		ID:             toPgUUID(id),
+		OrganizationID: toPgUUID(organizationID),
+	})
 	if err != nil {
 		return err
 	}
-	if commandTag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrServiceNotFound
 	}
 	return nil

@@ -3,6 +3,7 @@ package leads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -209,10 +210,10 @@ func (s *SubsidyAnalyzerService) SetSchedulerClient(client scheduler.Client) {
 // StartSubsidyAnalysisJob creates a new subsidy analysis job and enqueues the processing task.
 func (s *SubsidyAnalyzerService) StartSubsidyAnalysisJob(ctx context.Context, quoteID uuid.UUID, userID uuid.UUID, tenantID uuid.UUID, organizationID uuid.UUID) (uuid.UUID, error) {
 	if s.jobStore == nil {
-		return uuid.Nil, fmt.Errorf(errMsgJobStoreNotConfigured)
+		return uuid.Nil, errors.New(errMsgJobStoreNotConfigured)
 	}
 	if s.quoteRepo == nil {
-		return uuid.Nil, fmt.Errorf(errMsgQuoteRepoNotConfigured)
+		return uuid.Nil, errors.New(errMsgQuoteRepoNotConfigured)
 	}
 
 	if _, err := s.quoteRepo.GetByID(ctx, quoteID, organizationID); err != nil {
@@ -260,7 +261,7 @@ func (s *SubsidyAnalyzerService) StartSubsidyAnalysisJob(ctx context.Context, qu
 
 	err = s.schedulerClient.EnqueueSubsidyAnalyzerJob(ctx, taskPayload)
 	if err != nil {
-		s.updateJobStatus(ctx, jobID, "failed", "Queueing failed", 0, nil, ptr(err.Error()))
+		_, _ = s.updateJobStatus(ctx, jobID, "failed", "Queueing failed", 0, nil, ptr(err.Error()))
 		return uuid.Nil, fmt.Errorf("failed to enqueue subsidy analyzer task: %w", err)
 	}
 
@@ -270,7 +271,7 @@ func (s *SubsidyAnalyzerService) StartSubsidyAnalysisJob(ctx context.Context, qu
 // GetSubsidyAnalysisJob fetches the current status of a job.
 func (s *SubsidyAnalyzerService) GetSubsidyAnalysisJob(ctx context.Context, jobID uuid.UUID, organizationID uuid.UUID) (interface{}, error) {
 	if s.jobStore == nil {
-		return nil, fmt.Errorf(errMsgJobStoreNotConfigured)
+		return nil, errors.New(errMsgJobStoreNotConfigured)
 	}
 
 	job, err := s.jobStore.GetSubsidyAnalyzerJob(ctx, jobID, organizationID)
@@ -285,15 +286,15 @@ func (s *SubsidyAnalyzerService) GetSubsidyAnalysisJob(ctx context.Context, jobI
 // This is called by the scheduler worker.
 func (s *SubsidyAnalyzerService) ProcessSubsidyAnalysisJob(ctx context.Context, jobID uuid.UUID, quoteID uuid.UUID, organizationID uuid.UUID) error {
 	if s.jobStore == nil {
-		return fmt.Errorf(errMsgJobStoreNotConfigured)
+		return errors.New(errMsgJobStoreNotConfigured)
 	}
 	if s.quoteRepo == nil {
-		return fmt.Errorf(errMsgQuoteRepoNotConfigured)
+		return errors.New(errMsgQuoteRepoNotConfigured)
 	}
 
 	analyzer, err := s.ensureAnalyzer()
 	if err != nil {
-		s.updateJobStatus(ctx, jobID, "failed", "Analyzer setup failed", 0, nil, ptr(err.Error()))
+		_, _ = s.updateJobStatus(ctx, jobID, "failed", "Analyzer setup failed", 0, nil, ptr(err.Error()))
 		return err
 	}
 
@@ -308,18 +309,18 @@ func (s *SubsidyAnalyzerService) ProcessSubsidyAnalysisJob(ctx context.Context, 
 
 	quote, err := s.quoteRepo.GetByID(ctx, quoteID, organizationID)
 	if err != nil {
-		s.updateJobStatus(ctx, jobID, "failed", "Loading quote failed", 10, nil, ptr(err.Error()))
+		_, _ = s.updateJobStatus(ctx, jobID, "failed", "Loading quote failed", 10, nil, ptr(err.Error()))
 		return err
 	}
 
 	items, err := s.quoteRepo.GetItemsByQuoteID(ctx, quoteID, organizationID)
 	if err != nil {
-		s.updateJobStatus(ctx, jobID, "failed", "Loading quote items failed", 20, nil, ptr(err.Error()))
+		_, _ = s.updateJobStatus(ctx, jobID, "failed", "Loading quote items failed", 20, nil, ptr(err.Error()))
 		return err
 	}
 	if len(items) == 0 {
 		err = apperr.Validation("quote has no line items to analyze")
-		s.updateJobStatus(ctx, jobID, "failed", "No quote items found", 20, nil, ptr(err.Error()))
+		_, _ = s.updateJobStatus(ctx, jobID, "failed", "No quote items found", 20, nil, ptr(err.Error()))
 		return err
 	}
 
@@ -330,7 +331,7 @@ func (s *SubsidyAnalyzerService) ProcessSubsidyAnalysisJob(ctx context.Context, 
 	quoteContext := buildPersistedQuoteContext(quote, items)
 	if strings.TrimSpace(quoteContext) == "" {
 		err = apperr.Validation("quote context is empty")
-		s.updateJobStatus(ctx, jobID, "failed", "Quote context is empty", 30, nil, ptr(err.Error()))
+		_, _ = s.updateJobStatus(ctx, jobID, "failed", "Quote context is empty", 30, nil, ptr(err.Error()))
 		return err
 	}
 
@@ -340,7 +341,7 @@ func (s *SubsidyAnalyzerService) ProcessSubsidyAnalysisJob(ctx context.Context, 
 
 	result, err := analyzer.Run(ctx, quoteID, organizationID, quoteContext)
 	if err != nil {
-		s.updateJobStatus(ctx, jobID, "failed", "Analysis failed", 60, nil, ptr(err.Error()))
+		_, _ = s.updateJobStatus(ctx, jobID, "failed", "Analysis failed", 60, nil, ptr(err.Error()))
 		return err
 	}
 
@@ -433,7 +434,7 @@ func (s *SubsidyAnalyzerService) publishJobProgress(job *SubsidyAnalyzerJob) {
 // StoreSubsidyResult saves the AI result to the job record.
 func (s *SubsidyAnalyzerService) StoreSubsidyResult(ctx context.Context, jobID uuid.UUID, result map[string]interface{}) error {
 	if s.jobStore == nil {
-		return fmt.Errorf(errMsgJobStoreNotConfigured)
+		return errors.New(errMsgJobStoreNotConfigured)
 	}
 
 	_, err := s.jobStore.UpdateSubsidyAnalyzerJob(ctx, repository.UpdateSubsidyAnalyzerJobParams{
